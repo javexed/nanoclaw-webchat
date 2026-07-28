@@ -1,0 +1,14 @@
+# Files that exist on the composed seam but are REVERTED by the pre-adaptation
+# patches' counterpart source files, leaving them stranded (they reference the
+# seam's API names, which the patches replace with the fork's variants).
+# Removed at install time. This file DISAPPEARS with the adaptation pass —
+# once the app tree registers via the seam API, nothing is reverted and these
+# tests run as-is.
+# BYOK migrations renamed to the module-* convention (collision-proof; upstream
+# now uses sequential 020+). The fork carries them at 020-024; the split at
+# module-byok-*. Migrations track by `name` field so live installs don't re-run.
+src/db/migrations/020-byok-credentials.ts
+src/db/migrations/021-byok-oauth.ts
+src/db/migrations/022-byok-provider.ts
+src/db/migrations/023-byok-user-credentials.ts
+src/db/migrations/024-rename-user-credentials.ts

@@ -1,0 +1,15 @@
+{
+  "nanoclaw": {
+    "upstreamRepo": "https://github.com/nanocoai/nanoclaw.git",
+    "upstreamRef": "879835bf8bb882672742f0765747312c4948420f",
+    "seamRepo": "https://github.com/javexed/nanoclaw.git",
+    "seamBranch": "pub/module-hooks",
+    "seamRef": "37f31c6121d3d5745bec96d080ca65394f7aa4cb",
+    "seamH5Ref": "37f31c6121d3d5745bec96d080ca65394f7aa4cb",
+    "forkRef": "3e55bebd6ff2a11a56d53923a38b3bda8ba30e11",
+    "forkRefNote": "transitional: coverage-guard reference = channels-webchat tip (post-#372 upstream sync)",
+    "seamNote": "pub/module-hooks: linear 13-commit walkthrough-complete seam (tree-identical to retired merge-history `seam`)"
+  },
+  "seamApiVersion": 4,
+  "status": "working — all adaptation passes complete (H5, H12, R3)"
+}

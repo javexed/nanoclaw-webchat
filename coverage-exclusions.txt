@@ -1,0 +1,58 @@
+# Fork-tip files intentionally NOT delivered by this repo, with reasons.
+# check-coverage.sh treats these as accounted. One path per line; '#' comments.
+
+# Handled by installer STEPS, not file delivery:
+src/channels/index.ts            # barrel append (install.sh step 5)
+src/db/migrations/index.ts       # migration registration (steps 6/6a)
+package.json                     # pinned pnpm add (step 8)
+pnpm-lock.yaml                   # follows package.json
+src/router.seam.test.ts          # pre-adaptation-removals.txt
+webchat-hooks/codex-activity.patch      # shipped as overlays/
+webchat-hooks/codex-activity.test.ts    # shipped as overlays/
+
+# Fork-repo tooling superseded by THIS repo:
+install-webchat.sh               # superseded by install.sh
+uninstall-webchat.sh             # uninstall flow TBD for the split
+verify-webchat-publish.sh        # fork publishing gate
+configure-webchat.sh             # delivered via payload
+versions.json                    # fork release pin (this repo has its own)
+
+# Fork-repo identity / CI — not product content:
+.github/workflows/ci.yml
+.github/workflows/label-pr.yml
+.husky/pre-commit
+.husky/pre-push
+CHANGELOG.md
+CONTRIBUTING.md
+README.md
+README_ja.md
+README_ko.md
+README_zh.md
+
+# Fork edits to upstream docs — extract-and-link policy applies; revisit:
+docs/agent-runner-details.md
+docs/architecture-diagram.html
+docs/architecture-diagram.md
+docs/architecture.md
+docs/ollama.md
+docs/skill-guidelines.md
+
+# Removed-on-fork upstream files (deletions we do NOT propagate):
+.claude/skills/add-opencode/REMOVE.md
+.claude/skills/add-opencode/SKILL.md
+.claude/skills/add-opencode/opencode-dockerfile.test.ts
+
+# Adapted: the seam's text is canonical; the fork tip's variant is superseded
+# (composed tree deliberately differs from the fork here — wording only):
+container/agent-runner/src/destinations.ts
+src/delivery.ts                  # adapted; agentName now lives in the seam (b547a4e3)
+container/agent-runner/src/db/connection.ts   # adapted (H12): DDL+writers moved to status-feed via schema-extension seam
+src/db/session-db.ts             # adapted (H12): readers moved into the agent-status module
+src/db/session-db.test.ts        # adapted (H12): reader tests moved to agent-status/status-events.test.ts
+src/db/schema.ts                 # adapted (H12): the runner declares status_events; host readers tolerate absence
+container/agent-runner/src/providers/hooks.ts   # adapted (R3): exchange observer added seam-side; fork variant superseded
+container/agent-runner/src/runner-hooks.ts       # seam-only (R3): command registry + turn observers live in the seam
+container/agent-runner/src/runner-hooks.test.ts  # seam-only (R3): tests ride the seam branch
+src/container-runtime.seam.test.ts               # seam-only: H2/H3 chain tests ride the seam branch
+src/routing-chains.seam.test.ts                   # seam-only: decision-chain tests (PR #384) ride the seam branch
+src/container-hardening.test.ts   # superseded: upstream #2748 ships hardening inline + its own tests; fork copy retiring

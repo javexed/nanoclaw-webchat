@@ -1,0 +1,396 @@
+diff --git a/src/container-runner.ts b/src/container-runner.ts
+index eb67187e..32edbddb 100644
+--- a/src/container-runner.ts
++++ b/src/container-runner.ts
+@@ -25,10 +25,11 @@ import {
+ } from './config.js';
+ import { materializeContainerJson } from './container-config.js';
+ import { getContainerConfig } from './db/container-configs.js';
+-import { updateContainerConfigScalars } from './db/container-configs.js';
++import { updateContainerConfigScalars, updateContainerConfigJson } from './db/container-configs.js';
+ import {
+   CONTAINER_RUNTIME_BIN,
+   hostGatewayArgs,
++  makeContainerWritable,
+   readonlyMountArgs,
+   resolveAgentIdentity,
+   resolveContainerEnv,
+@@ -36,6 +37,7 @@ import {
+   stopContainer,
+ } from './container-runtime.js';
+ import { EGRESS_NETWORK, egressNetworkArgs, ensureEgressNetwork } from './egress-lockdown.js';
++import { EGRESS_LOCKDOWN } from './config.js';
+ import { composeGroupClaudeMd } from './claude-md-compose.js';
+ import { getAgentGroup } from './db/agent-groups.js';
+ import { getDb, hasTable } from './db/connection.js';
+@@ -58,7 +60,9 @@ import {
+   markContainerStopped,
+   sessionDir,
+   writeSessionRouting,
++  writeOutboundDirect,
+ } from './session-manager.js';
++import { getMessagingGroup } from './db/messaging-groups.js';
+ import type { AgentGroup, Session } from './types.js';
+ 
+ const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
+@@ -130,9 +134,13 @@ export function wakeContainer(session: Session): Promise<boolean> {
+     return existing;
+   }
+   const promise = spawnContainer(session)
+-    .then(() => true)
++    .then(() => {
++      spawnFailures.delete(session.id); // recovered — reset the streak + re-arm the notice
++      return true;
++    })
+     .catch((err) => {
+       log.warn('wakeContainer failed — host-sweep will retry', { sessionId: session.id, err });
++      noteSpawnFailure(session);
+       return false;
+     })
+     .finally(() => {
+@@ -142,6 +150,50 @@ export function wakeContainer(session: Session): Promise<boolean> {
+   return promise;
+ }
+ 
++/**
++ * Consecutive spawn-failure count per session. A spawn failing once is normal
++ * (transient gateway blip, host-sweep retries); failing repeatedly means the
++ * agent genuinely can't start — almost always the OneCLI credential gateway
++ * being unreachable/misconfigured. Without this, host-sweep retries forever and
++ * the room just looks dead, which is the single worst OneCLI failure mode.
++ */
++const spawnFailures = new Map<string, number>();
++const SPAWN_FAILURE_NOTICE_AT = 3;
++
++/**
++ * Record a failed spawn for a session; once it crosses the threshold, post ONE
++ * persistent notice into the room so the silence is explained and an admin
++ * knows to look. Reset on the next successful spawn (re-arms the notice for a
++ * future outage). Best-effort — never throws into the wake path.
++ */
++function noteSpawnFailure(session: Session): void {
++  const n = (spawnFailures.get(session.id) ?? 0) + 1;
++  spawnFailures.set(session.id, n);
++  if (n !== SPAWN_FAILURE_NOTICE_AT) return; // fire exactly once per outage
++  try {
++    const mg = session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined;
++    if (!mg || !mg.platform_id) return; // nowhere to post (e.g. agent-only session)
++    writeOutboundDirect(session.agent_group_id, session.id, {
++      id: `spawn-fail-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
++      kind: 'chat',
++      platformId: mg.platform_id,
++      channelType: mg.channel_type,
++      threadId: session.thread_id ?? null,
++      content: JSON.stringify({
++        text:
++          "⚠️ I couldn't start to handle that — this usually means the credential gateway (OneCLI) is " +
++          'unreachable or misconfigured. An admin may need to check it; I’ll keep retrying and reply once it’s back.',
++      }),
++    });
++    log.warn('Posted spawn-failure notice to room after repeated failures', {
++      sessionId: session.id,
++      failures: n,
++    });
++  } catch (err) {
++    log.warn('Failed to post spawn-failure notice', { sessionId: session.id, err });
++  }
++}
++
+ async function spawnContainer(session: Session): Promise<void> {
+   const agentGroup = getAgentGroup(session.agent_group_id);
+   if (!agentGroup) {
+@@ -395,6 +447,12 @@ export function buildMounts(
+   // Per-group .claude-shared at /home/node/.claude (Claude state, settings,
+   // skill symlinks)
+   if (defaultSurfaces) {
++    // On a root host this dir is created root:root, but it's mounted RW into a
++    // UID-1000 container which must write /home/node/.claude/settings.json —
++    // otherwise the agent-runner dies with EACCES. Chown it to the container UID
++    // (no-op off-root), closing the gap left by the group/session-dir chowns.
++    fs.mkdirSync(claudeDir, { recursive: true });
++    makeContainerWritable(claudeDir, true);
+     mounts.push({ hostPath: claudeDir, containerPath: '/home/node/.claude', readonly: false });
+   }
+ 
+@@ -407,6 +465,19 @@ export function buildMounts(
+   if (fs.existsSync(skillsSrc)) {
+     mounts.push({ hostPath: skillsSrc, containerPath: '/app/skills', readonly: true });
+   }
++  // User-added skills (imported/uploaded at runtime) — a separate read-only
++  // mount so they never mix into the version-controlled container/skills. The
++  // dir is created on demand; a skill's symlink resolves to whichever mount
++  // holds it (see skillContainerPath).
++  const userSkillsSrc = path.join(projectRoot, 'data', 'user-skills');
++  try {
++    fs.mkdirSync(userSkillsSrc, { recursive: true });
++  } catch {
++    /* best-effort */
++  }
++  if (fs.existsSync(userSkillsSrc)) {
++    mounts.push({ hostPath: userSkillsSrc, containerPath: '/app/user-skills', readonly: true });
++  }
+ 
+   // Additional mounts from container config
+   if (containerConfig.additionalMounts && containerConfig.additionalMounts.length > 0) {
+@@ -414,7 +485,7 @@ export function buildMounts(
+     mounts.push(...validated);
+   }
+ 
+-  // Provider-contributed mounts (e.g. opencode-xdg)
++  // Provider-contributed mounts (e.g. a provider's XDG data dir)
+   if (providerContribution.mounts) {
+     mounts.push(...providerContribution.mounts);
+   }
+@@ -445,54 +516,143 @@ function syncSkillSymlinks(claudeDir: string, containerConfig: import('./contain
+     } catch {
+       continue;
+     }
+-    if (isSymlink && !desiredSet.has(entry)) {
++    // Unlink when deselected OR when the skill no longer exists in any mount —
++    // a deleted-but-still-selected skill would otherwise leave a dangling
++    // symlink in .claude/skills (the create loop below can't repair a target
++    // that resolves to nothing).
++    if (isSymlink && (!desiredSet.has(entry) || !skillContainerTarget(entry))) {
+       fs.unlinkSync(entryPath);
+     }
+   }
+ 
+-  // Create symlinks for desired skills (container path targets)
++  // Create/repair symlinks for desired skills, each pointing at whichever mount
++  // actually holds it (/app/skills for shipped, /app/user-skills for imported).
+   for (const skill of desired) {
++    const target = skillContainerTarget(skill);
++    if (!target) continue; // skill no longer exists in either source — skip
+     const linkPath = path.join(skillsDir, skill);
+-    let entry: fs.Stats | undefined;
++    let current: string | null = null;
++    let isRealEntry = false;
+     try {
+-      entry = fs.lstatSync(linkPath);
++      const st = fs.lstatSync(linkPath);
++      if (st.isSymbolicLink()) {
++        current = fs.readlinkSync(linkPath);
++      } else {
++        // A real entry here is either a template overlay (intentional; see
++        // src/group-skills.ts) or a stale pre-refactor skill copy that shadows
++        // the shared skill (#3001). No marker distinguishes them yet, so
++        // surface the skip instead of staying silent — and never delete it.
++        current = '';
++        isRealEntry = true;
++      }
+     } catch {
+-      /* missing */
++      current = null; // no entry
+     }
+-    if (!entry) {
+-      fs.symlinkSync(`/app/skills/${skill}`, linkPath);
+-    } else if (!entry.isSymbolicLink()) {
+-      // A real entry here is either a template overlay (intentional; see
+-      // src/group-skills.ts) or a stale pre-refactor skill copy that shadows
+-      // the shared skill (#3001). No marker distinguishes them yet, so
+-      // surface the skip instead of staying silent.
+-      log.warn(
+-        'Shared skill not symlinked: real entry occupies the path (template overlay or stale pre-refactor copy)',
+-        {
+-          skill,
+-          path: linkPath,
+-        },
+-      );
++    if (current === target) continue; // already correct
++    if (isRealEntry) {
++      log.warn('Skill not symlinked: real entry occupies the path (template overlay or stale pre-refactor copy)', {
++        skill,
++        path: linkPath,
++      });
++      continue;
++    }
++    try {
++      if (current !== null) fs.unlinkSync(linkPath);
++    } catch {
++      /* ignore */
++    }
++    fs.symlinkSync(target, linkPath);
++  }
++}
++
++// The container path for a skill, chosen by which host mount holds it. Shipped
++// skills win over user skills of the same name (a user can't shadow a builtin).
++function skillContainerTarget(name: string): string | null {
++  if (fs.existsSync(path.join(process.cwd(), 'container', 'skills', name))) return `/app/skills/${name}`;
++  if (fs.existsSync(path.join(process.cwd(), 'data', 'user-skills', name))) return `/app/user-skills/${name}`;
++  return null;
++}
++
++// Every skill directory across both mounts (shipped + user), deduped.
++function availableSkillNames(): string[] {
++  const dirs = [path.join(process.cwd(), 'container', 'skills'), path.join(process.cwd(), 'data', 'user-skills')];
++  const names = new Set<string>();
++  for (const dir of dirs) {
++    if (!fs.existsSync(dir)) continue;
++    for (const e of fs.readdirSync(dir)) {
++      try {
++        if (fs.statSync(path.join(dir, e)).isDirectory()) names.add(e);
++      } catch {
++        /* skip unreadable */
++      }
+     }
+   }
++  return [...names];
+ }
+ 
+ /**
+  * Resolve the group's skill selection to concrete names — `'all'` recomputes
+- * from `container/skills/` so newly-added upstream skills appear automatically.
++ * from both skill mounts so newly-added (shipped or imported) skills appear
++ * automatically.
+  */
+ function selectedSkillNames(containerConfig: import('./container-config.js').ContainerConfig): string[] {
+   if (containerConfig.skills !== 'all') return containerConfig.skills;
+-  const sharedSkillsDir = path.join(process.cwd(), 'container', 'skills');
+-  return fs.existsSync(sharedSkillsDir)
+-    ? fs.readdirSync(sharedSkillsDir).filter((e) => {
+-        try {
+-          return fs.statSync(path.join(sharedSkillsDir, e)).isDirectory();
+-        } catch {
+-          return false;
+-        }
+-      })
+-    : [];
++  return availableSkillNames();
++}
++
++/**
++ * Output-token ceiling for the Claude agent SDK.
++ *
++ * Left unset, the SDK caps a turn at 32000 output tokens and kills it with
++ * "Claude's response exceeded the 32000 output token maximum" — which killed real
++ * turns (a long CAD/OpenSCAD answer in rolling-bench). Every current model's real
++ * ceiling is far higher, so there's no reason to leave that headroom unused.
++ *
++ * Model-aware because the ceilings differ and overshooting is a 400:
++ *   Haiku 4.5                                    →  64K
++ *   Opus 4.6/4.7/4.8, Sonnet 4.6/5, Fable 5      → 128K
++ *
++ * Unknown/custom model strings fall back to 64K — the value every current model
++ * accepts. Override with NANOCLAW_MAX_OUTPUT_TOKENS. This is a ceiling, not a
++ * target: raising it costs nothing unless a turn actually needs the room.
++ */
++function maxOutputTokensFor(model: string | null | undefined): number {
++  const override = Number(process.env.NANOCLAW_MAX_OUTPUT_TOKENS);
++  if (Number.isFinite(override) && override > 0) return Math.floor(override);
++  const m = (model ?? '').toLowerCase();
++  if (m.includes('haiku')) return 64_000;
++  if (!m || m.includes('opus') || m.includes('sonnet') || m.includes('fable')) return 128_000;
++  return 64_000;
++}
++
++/**
++ * Container hardening flags (security model §container-isolation). Always on
++ * unless NANOCLAW_CONTAINER_NO_HARDEN=1 (the escape hatch for a workload a
++ * dropped capability genuinely breaks — report it, don't live there).
++ *
++ * The image runs as `node` under tini and never escalates, so the drop-ALL
++ * baseline needs only the file-ownership caps package managers and unzip-ish
++ * tools use. no-new-privileges blocks setuid escalation outright; pids-limit
++ * turns a fork bomb into a contained failure (default 512, override via
++ * NANOCLAW_CONTAINER_PIDS_LIMIT).
++ */
++export function containerHardeningArgs(env: NodeJS.ProcessEnv = process.env): string[] {
++  if (env.NANOCLAW_CONTAINER_NO_HARDEN === '1') return [];
++  const pids = env.NANOCLAW_CONTAINER_PIDS_LIMIT || '512';
++  return [
++    '--cap-drop',
++    'ALL',
++    '--cap-add',
++    'CHOWN',
++    '--cap-add',
++    'DAC_OVERRIDE',
++    '--cap-add',
++    'FOWNER',
++    '--security-opt',
++    'no-new-privileges',
++    '--pids-limit',
++    pids,
++  ];
+ }
+ 
+ async function buildContainerArgs(
+@@ -500,19 +660,21 @@ async function buildContainerArgs(
+   containerName: string,
+   agentGroup: AgentGroup,
+   containerConfig: import('./container-config.js').ContainerConfig,
+-  _provider: string,
++  provider: string,
+   providerContribution: ProviderContainerContribution,
+   agentIdentifier?: string,
+   extraEnv?: Record<string, string>,
+ ): Promise<string[]> {
+   const args: string[] = ['run', '--rm', '--name', containerName, '--label', CONTAINER_INSTALL_LABEL];
+ 
+-  // Per-container resource caps (opt-in; empty = unbounded, today's behavior).
+-  // Only --memory is set. Whether that's a hard cap depends on the host having no
+-  // swap (a deployment concern) — on a swapless host --memory is hard and a runaway
+-  // is OOM-killed; we don't manage swap from here.
++  // Per-container resource caps. Memory now DEFAULTS to a hard 8g cap — a
++  // runaway agent has OOM-killed real installs (the a2a flood) and an
++  // unbounded default privileges the failure case. CONTAINER_MEMORY_LIMIT
++  // overrides; the literal "none" restores unbounded. CPU stays opt-in
++  // (contention degrades, it doesn't take the host down).
+   if (CONTAINER_CPU_LIMIT) args.push('--cpus', CONTAINER_CPU_LIMIT);
+-  if (CONTAINER_MEMORY_LIMIT) args.push('--memory', CONTAINER_MEMORY_LIMIT);
++  const memLimit = CONTAINER_MEMORY_LIMIT || '8g';
++  if (memLimit !== 'none') args.push('--memory', memLimit);
+ 
+   // Docker defaults /dev/shm to 64m, which silently short-writes past that size.
+   // agent-browser passes --disable-dev-shm-usage, but a third-party puppeteer or
+@@ -525,6 +687,22 @@ async function buildContainerArgs(
+   // Everything NanoClaw-specific is in container.json (read by runner at startup).
+   args.push('-e', `TZ=${containerConfig.timezone ?? TIMEZONE}`);
+ 
++  // Persist bun's transpiler cache across container spawns. By default it
++  // lives in the container's ephemeral tmpdir, so every cold spawn re-parses
++  // the agent-runner dependency graph (~130ms measured warm, more cold). The
++  // per-group .claude-shared dir is RW-mounted at /home/node/.claude for
++  // default-surface providers, so the cache survives there; when that mount
++  // is absent the path is just an in-container dir and behavior is unchanged.
++  // Per-group, same trust domain — never share this dir across groups.
++  args.push('-e', 'BUN_RUNTIME_TRANSPILER_CACHE_PATH=/home/node/.claude/.bun-transpiler-cache');
++
++  // Raise the SDK's 32000 output-token cap to the model's real ceiling. Claude
++  // provider only — the var is read by the Claude Agent SDK and means nothing to
++  // other providers (e.g. codex/ollama), whose own limits are configured elsewhere.
++  if (provider === 'claude') {
++    args.push('-e', `CLAUDE_CODE_MAX_OUTPUT_TOKENS=${maxOutputTokensFor(containerConfig.model)}`);
++  }
++
+   // Provider-contributed env vars (e.g. XDG_DATA_HOME, OPENCODE_*, NO_PROXY).
+   if (providerContribution.env) {
+     for (const [key, value] of Object.entries(providerContribution.env)) {
+@@ -532,11 +710,23 @@ async function buildContainerArgs(
+     }
+   }
+ 
+-  // Egress lockdown when enabled — throws if it can't be established, aborting
+-  // the spawn rather than running with open egress. Otherwise the host gateway.
+-  if (ensureEgressNetwork()) {
++  // Egress policy — most restrictive wins:
++  //   config.egress 'none'       → no network at all (fully local agents);
++  //   config.egress 'host-only'  → the install-wide lockdown mechanism,
++  //                                forced for THIS group (internal network,
++  //                                gateway aliased in, fail-fast contract);
++  //   NANOCLAW_EGRESS_LOCKDOWN   → same mechanism for every group;
++  //   otherwise                  → open egress via the host gateway.
++  if (containerConfig.egress === 'none') {
++    args.push('--network', 'none');
++    log.info('Egress: none (per-group)', { containerName });
++  } else if (ensureEgressNetwork(containerConfig.egress === 'host-only')) {
+     args.push(...egressNetworkArgs());
+-    log.info('Egress lockdown active', { containerName, network: EGRESS_NETWORK });
++    log.info('Egress lockdown active', {
++      containerName,
++      network: EGRESS_NETWORK,
++      scope: EGRESS_LOCKDOWN ? 'install-wide' : 'per-group',
++    });
+   } else {
+     args.push(...hostGatewayArgs());
+   }

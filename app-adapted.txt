@@ -1,0 +1,44 @@
+# App-tree files whose content DELIBERATELY differs from the forkRef tree —
+# the composed side is canonical (adaptation passes). Everything else in
+# app/ must be byte-equal to the fork's copy where the fork has one;
+# check-coverage.sh enforces this (the #369 frontend drift got through on
+# a name-only check — this list is the content-level counterpart).
+#
+# R3 adaptation (learning loop self-registers through the runner seam):
+container/agent-runner/src/learning-loop.ts
+container/agent-runner/src/learn-command.test.ts
+container/agent-runner/src/learn-source.test.ts
+container/agent-runner/src/learning-review.test.ts
+# H12 adaptation (status_events module-owned):
+container/agent-runner/src/status-feed.ts
+container/agent-runner/src/db/status-events.test.ts
+src/modules/agent-status/index.ts
+# H5 adaptation (routing seams; module posts its own notice):
+src/channels/webchat/index.ts
+src/channels/webchat/server.ts
+src/channels/webchat/engaged-routing.test.ts
+src/modules/user-credentials/index.ts
+src/modules/user-credentials/fanout.ts
+src/modules/user-credentials/resolver.test.ts
+# charge-invoker /learn (built in repo B first; fork copy predates it):
+src/modules/learning/index.ts
+# moduleInput bag (seam PR #380; fork copies predate it):
+container/agent-runner/src/providers/hooks.test.ts
+container/agent-runner/src/learning-digest.test.ts
+# Repo-B-shaped docs / deploy (rewritten for the two-repo world):
+docs/webchat/install.md
+docs/webchat/design/proxmox-community-script.md
+docs/webchat/approval-prejudge.md   # extended in repo B (producers table, 2026-07-27)
+docs/webchat/e2e.md                 # install-webchat.sh → install.sh
+docs/webchat/guide.md               # install snippet → two-repo compose
+docs/webchat/threads.md             # packaging/status → app-tree+guard terms
+docs/webchat/thread-engaged-agents.md  # §13 hook coordination → seam+patches terms
+docs/webchat/upstream-drift.md      # rewritten for the two-repo model (fork copy = retired methodology)
+docs/webchat/readme.md              # ship-model sections rewritten for the two-repo world
+docs/webchat/webchat.md             # 'How it ships' rewritten for the two-repo world
+deploy/README.md
+deploy/webchat-deploy.sh
+# BYOK migration rename (module-* convention) — edited references:
+docs/webchat/user-credentials.md
+docs/webchat/user-credentials-oauth.md
+.claude/skills/add-routing/resources/core-escalation/patches/01-index.patch
