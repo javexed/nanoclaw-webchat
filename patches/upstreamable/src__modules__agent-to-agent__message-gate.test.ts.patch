@@ -1,0 +1,18 @@
+diff --git a/src/modules/agent-to-agent/message-gate.test.ts b/src/modules/agent-to-agent/message-gate.test.ts
+index 98bd380c..fd23eb2b 100644
+--- a/src/modules/agent-to-agent/message-gate.test.ts
++++ b/src/modules/agent-to-agent/message-gate.test.ts
+@@ -173,7 +173,12 @@ describe('agent message policies', () => {
+       SA,
+     );
+     expect(requestApproval).not.toHaveBeenCalled();
+-    expect(readInbound(A, SA.id)).toHaveLength(1);
++    // channels-webchat divergence: performAgentRoute's self-loop guard drops an
++    // a2a route whose target session IS the source session (anti-flood fix —
++    // see the a2a self-loop incident). So a same-session self-message is a
++    // silent no-op here rather than delivered. The point of THIS test — that a
++    // policy row never gates a self-message — still holds (no approval above).
++    expect(readInbound(A, SA.id)).toHaveLength(0);
+   });
+ 
+   it('ghost policy (policy row, no destination row) still denies — deny beats the policy hold', async () => {

@@ -1,0 +1,13 @@
+diff --git a/.claude/skills/add-mnemon/SKILL.md b/.claude/skills/add-mnemon/SKILL.md
+index 3ab7a864..0bfe7ba2 100644
+--- a/.claude/skills/add-mnemon/SKILL.md
++++ b/.claude/skills/add-mnemon/SKILL.md
+@@ -15,7 +15,7 @@ mnemon hooks fire only under `--target claude-code`. Use this skill on agent gro
+ grep -H '"provider"' groups/*/container.json 2>/dev/null   # no match, or "provider": "claude" = Claude
+ ```
+ 
+-If a group sets a different provider (e.g. `"provider": "opencode"`), it spawns its own process and never invokes the `claude` CLI, so the hooks registered by `mnemon setup` do not run for that group.
++If a group sets a different provider (e.g. `"provider": "codex"`), it spawns its own process and never invokes the `claude` CLI, so the hooks registered by `mnemon setup` do not run for that group.
+ 
+ ## Phase 1: Pre-flight
+ 

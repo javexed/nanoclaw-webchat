@@ -1,0 +1,384 @@
+/**
+ * Auth tests — bearer token gating, loopback auto-pass, IPv4-mapped IPv6
+ * handling, trusted-proxy IP gating, and the Batch-1 minimum-token-length
+ * startup gate.
+ *
+ * Auth.ts reads env vars at module load (`WEBCHAT_TOKEN`, `WEBCHAT_TAILSCALE`,
+ * `WEBCHAT_TRUSTED_PROXY_IPS`). Tests use `vi.resetModules()` + dynamic
+ * imports so each scenario boots auth.ts with its own env snapshot.
+ */
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import type { IncomingMessage } from 'http';
+
+// Each test resets modules to load auth.ts with a fresh env snapshot. That
+// also resets the `db/connection.js` module instance, so the DB has to be
+// re-initialised inside loadAuthWithEnv against the FRESH module instance —
+// importing initTestDb at the top of this file gives us the wrong (already-
+// closed) connection module after reset.
+
+// Minimal IncomingMessage fake — the auth path only reads `socket.remoteAddress`
+// and `headers`, so we don't need a real HTTP server.
+function fakeReq(
+  opts: {
+    remoteAddress?: string;
+    headers?: Record<string, string | string[] | undefined>;
+  } = {},
+): IncomingMessage {
+  return {
+    socket: { remoteAddress: opts.remoteAddress ?? '127.0.0.1' },
+    headers: opts.headers ?? {},
+  } as unknown as IncomingMessage;
+}
+
+afterEach(async () => {
+  vi.unstubAllEnvs();
+  // Close whichever connection module is currently loaded, then drop the
+  // module cache so the next test starts clean.
+  try {
+    const conn = await import('../../db/connection.js');
+    conn.closeDb();
+  } catch {
+    // ignore
+  }
+  vi.resetModules();
+});
+
+async function loadAuthWithEnv(env: Record<string, string | undefined>) {
+  for (const [k, v] of Object.entries(env)) {
+    if (v === undefined) vi.stubEnv(k, '');
+    else vi.stubEnv(k, v);
+  }
+  vi.resetModules();
+  // Init the FRESH connection module so getDb() works inside the freshly
+  // loaded auth.ts/roles.ts.
+  const conn = await import('../../db/connection.js');
+  conn.initTestDb();
+  // permissions module is optional — without `user_roles`, role helpers
+  // degrade to "trust authenticated" and don't INSERT.
+  return await import('./auth.js');
+}
+
+describe('assertBearerTokenStrength', () => {
+  it('passes when no token is set (other auth modes)', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TOKEN: '' });
+    expect(() => auth.assertBearerTokenStrength()).not.toThrow();
+  });
+
+  it('passes for a 24-char token (the minimum)', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TOKEN: 'a'.repeat(24) });
+    expect(() => auth.assertBearerTokenStrength()).not.toThrow();
+  });
+
+  it('throws for a 23-char token (just below minimum)', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TOKEN: 'a'.repeat(23) });
+    expect(() => auth.assertBearerTokenStrength()).toThrow(/at least 24/);
+  });
+
+  it('throws for a trivially short token', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TOKEN: 'hunter2' });
+    expect(() => auth.assertBearerTokenStrength()).toThrow();
+  });
+});
+
+describe('getAuthManagementInfo — loopback (Localhost only)', () => {
+  it('reports loopback when WEBCHAT_HOST is unset (defaults to 127.0.0.1)', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_HOST: undefined });
+    expect(auth.getAuthManagementInfo().loopback).toBe(true);
+  });
+
+  it('reports loopback for loopback bind hosts', async () => {
+    for (const host of ['127.0.0.1', '127.1.2.3', '::1', 'localhost']) {
+      const auth = await loadAuthWithEnv({ WEBCHAT_HOST: host });
+      expect(auth.getAuthManagementInfo().loopback).toBe(true);
+    }
+  });
+
+  it('reports NOT loopback when bound to all interfaces (0.0.0.0)', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_HOST: '0.0.0.0' });
+    expect(auth.getAuthManagementInfo().loopback).toBe(false);
+  });
+});
+
+describe('authenticateRequest — bearer', () => {
+  const TOKEN = 'a'.repeat(32);
+
+  it('accepts a matching Authorization Bearer header', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TOKEN: TOKEN });
+    const req = fakeReq({
+      remoteAddress: '203.0.113.5',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.source).toBe('bearer');
+  });
+
+  it('accepts a bearer subprotocol on the WS upgrade', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TOKEN: TOKEN });
+    const req = fakeReq({
+      remoteAddress: '203.0.113.5',
+      headers: { 'sec-websocket-protocol': `bearer.${TOKEN}` },
+    });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.source).toBe('bearer');
+  });
+
+  it('rejects a wrong token (timing-safe compare returns false)', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TOKEN: TOKEN });
+    const req = fakeReq({
+      remoteAddress: '203.0.113.5',
+      headers: { authorization: `Bearer wrong-token-of-the-same-length-aaaa` },
+    });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok).toBe(false);
+  });
+
+  it('rejects when no token sent and not on loopback', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TOKEN: TOKEN });
+    const req = fakeReq({ remoteAddress: '203.0.113.5' });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('authenticateRequest — loopback bypass', () => {
+  it('auto-passes loopback when no explicit auth is configured', async () => {
+    const auth = await loadAuthWithEnv({});
+    const req = fakeReq({ remoteAddress: '127.0.0.1' });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.source).toBe('localhost');
+  });
+
+  it('treats IPv4-mapped IPv6 (::ffff:127.0.0.1) as loopback', async () => {
+    const auth = await loadAuthWithEnv({});
+    const req = fakeReq({ remoteAddress: '::ffff:127.0.0.1' });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.source).toBe('localhost');
+  });
+
+  it('treats ::1 as loopback', async () => {
+    const auth = await loadAuthWithEnv({});
+    const req = fakeReq({ remoteAddress: '::1' });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok).toBe(true);
+  });
+
+  it('DISABLES loopback bypass when WEBCHAT_TOKEN is set', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TOKEN: 'a'.repeat(32) });
+    const req = fakeReq({ remoteAddress: '127.0.0.1' });
+    const result = await auth.authenticateRequest(req);
+    // No bearer presented — must reject even though it's loopback.
+    expect(result.ok).toBe(false);
+  });
+
+  it('DISABLES loopback bypass when tailscale is enabled', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    const req = fakeReq({ remoteAddress: '127.0.0.1' });
+    const result = await auth.authenticateRequest(req);
+    // Tailscale whois on 127.0.0.1 returns nothing — and loopback is disabled.
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('tailscaleServeIdentity — serve HTTPS header, loopback-gated', () => {
+  it('returns the login when the header arrives on loopback', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    const req = fakeReq({ remoteAddress: '127.0.0.1', headers: { 'tailscale-user-login': 'alice@github' } });
+    expect(auth.tailscaleServeIdentity(req, '127.0.0.1')).toBe('alice@github');
+  });
+
+  it('rejects the header from a non-loopback source (spoof guard)', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    // A LAN attacker hitting :PORT directly and forging the header must NOT be trusted.
+    const req = fakeReq({ remoteAddress: '192.168.1.50', headers: { 'tailscale-user-login': 'attacker@evil' } });
+    expect(auth.tailscaleServeIdentity(req, '192.168.1.50')).toBeNull();
+  });
+
+  it('returns null on loopback when the header is absent', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    expect(auth.tailscaleServeIdentity(fakeReq({ remoteAddress: '127.0.0.1' }), '127.0.0.1')).toBeNull();
+  });
+});
+
+describe('authenticateRequest — tailscale serve header path', () => {
+  it('authenticates a loopback serve request as the same webchat:tailscale id whois mints', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    const req = fakeReq({ remoteAddress: '127.0.0.1', headers: { 'tailscale-user-login': 'Alice@Github' } });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.source).toBe('tailscale');
+      // Same normalization as the whois path → identity continuity across http→https.
+      expect(result.userId).toBe('webchat:tailscale:alice@github');
+    }
+  });
+
+  it('does NOT trust the serve header from a non-loopback IP (falls through to reject)', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    const req = fakeReq({ remoteAddress: '192.168.1.50', headers: { 'tailscale-user-login': 'attacker@evil' } });
+    const result = await auth.authenticateRequest(req);
+    // whois on a LAN IP returns nothing (no tailscale binary in tests) → Unauthorized.
+    expect(result.ok).toBe(false);
+  });
+
+  it('ignores the serve header entirely when WEBCHAT_TAILSCALE is off', async () => {
+    const auth = await loadAuthWithEnv({});
+    const req = fakeReq({ remoteAddress: '127.0.0.1', headers: { 'tailscale-user-login': 'alice@github' } });
+    const result = await auth.authenticateRequest(req);
+    // No tailscale mode + no other explicit auth → plain loopback auto-pass, not a tailscale id.
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.source).toBe('localhost');
+  });
+});
+
+describe('authenticateRequest — trusted proxy header', () => {
+  it('accepts a header from a configured proxy IP', async () => {
+    const auth = await loadAuthWithEnv({
+      WEBCHAT_TRUSTED_PROXY_IPS: '10.0.0.5',
+    });
+    const req = fakeReq({
+      remoteAddress: '10.0.0.5',
+      headers: { 'x-forwarded-user': 'alice@example.com' },
+    });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.source).toBe('proxy-header');
+      expect(result.userId).toContain('alice');
+    }
+  });
+
+  it('rejects a header from a NON-trusted source IP', async () => {
+    const auth = await loadAuthWithEnv({
+      WEBCHAT_TRUSTED_PROXY_IPS: '10.0.0.5',
+    });
+    const req = fakeReq({
+      remoteAddress: '203.0.113.99',
+      headers: { 'x-forwarded-user': 'attacker@example.com' },
+    });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok).toBe(false);
+  });
+
+  it('accepts via CIDR match', async () => {
+    const auth = await loadAuthWithEnv({
+      WEBCHAT_TRUSTED_PROXY_IPS: '10.0.0.0/24',
+    });
+    const req = fakeReq({
+      remoteAddress: '10.0.0.42',
+      headers: { 'x-forwarded-user': 'bob@example.com' },
+    });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a CIDR-out-of-range source', async () => {
+    const auth = await loadAuthWithEnv({
+      WEBCHAT_TRUSTED_PROXY_IPS: '10.0.0.0/24',
+    });
+    const req = fakeReq({
+      remoteAddress: '10.0.1.1',
+      headers: { 'x-forwarded-user': 'bob@example.com' },
+    });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe('canonicalizeWebchatUserId', () => {
+  it('folds an SSO/proxy webchat id to the lowercased form the auth layer mints', async () => {
+    const auth = await import('./auth.js');
+    // Mirrors the proxy-header path: webchat:${normalizeId(identity)}
+    expect(auth.canonicalizeWebchatUserId('webchat:Carl@Example.com')).toBe('webchat:carl@example.com');
+  });
+
+  it('preserves the tailscale infix while folding the handle', async () => {
+    const auth = await import('./auth.js');
+    expect(auth.canonicalizeWebchatUserId('webchat:tailscale:Alice@Tailnet.TS.net')).toBe(
+      'webchat:tailscale:alice@tailnet.ts.net',
+    );
+  });
+
+  it('replaces disallowed characters with hyphens (matching normalizeId)', async () => {
+    const auth = await import('./auth.js');
+    expect(auth.canonicalizeWebchatUserId('webchat:User Name!')).toBe('webchat:user-name-');
+  });
+
+  it('leaves non-webchat ids untouched (other channels own their handles)', async () => {
+    const auth = await import('./auth.js');
+    expect(auth.canonicalizeWebchatUserId('slack:U012AB')).toBe('slack:U012AB');
+    expect(auth.canonicalizeWebchatUserId('discord:Carl#1234')).toBe('discord:Carl#1234');
+  });
+
+  it('is idempotent and leaves fixed ids (owner/local-owner) stable', async () => {
+    const auth = await import('./auth.js');
+    expect(auth.canonicalizeWebchatUserId('webchat:owner')).toBe('webchat:owner');
+    expect(auth.canonicalizeWebchatUserId('webchat:local-owner')).toBe('webchat:local-owner');
+    const once = auth.canonicalizeWebchatUserId('webchat:Carl@Example.com');
+    expect(auth.canonicalizeWebchatUserId(once)).toBe(once);
+  });
+});
+
+describe('tailscaleReprobeDue — re-probe cadence (pure)', () => {
+  it('re-probes eagerly while down/unknown (>= 10s), not before', async () => {
+    const auth = await import('./auth.js');
+    // Unknown (never probed) and explicitly-down both use the eager interval.
+    expect(auth.tailscaleReprobeDue(null, 0, 9_999)).toBe(false);
+    expect(auth.tailscaleReprobeDue(null, 0, 10_000)).toBe(true);
+    expect(auth.tailscaleReprobeDue(false, 100_000, 109_999)).toBe(false);
+    expect(auth.tailscaleReprobeDue(false, 100_000, 110_000)).toBe(true);
+  });
+
+  it('re-probes lazily once up (>= 60s), not before', async () => {
+    const auth = await import('./auth.js');
+    expect(auth.tailscaleReprobeDue(true, 100_000, 159_999)).toBe(false);
+    expect(auth.tailscaleReprobeDue(true, 100_000, 160_000)).toBe(true);
+  });
+});
+
+describe('probeTailscaleHealth — cached flag tracks the probe result', () => {
+  it('self-heals false → true when tailscale appears (the "added later" case)', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    // Boot probe: binary absent → healthy false (this is the bug's starting state).
+    await auth.probeTailscaleHealth(async () => ({ ok: false, notInstalled: true }));
+    expect(auth.getAuthInfo().tailscaleHealthy).toBe(false);
+    // Operator installs tailscale; a later probe must flip the flag without a restart.
+    await auth.probeTailscaleHealth(async () => ({ ok: true, notInstalled: false }));
+    expect(auth.getAuthInfo().tailscaleHealthy).toBe(true);
+  });
+
+  it('flips true → false when a probe later fails (tailscaled down)', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    await auth.probeTailscaleHealth(async () => ({ ok: true, notInstalled: false }));
+    expect(auth.getAuthInfo().tailscaleHealthy).toBe(true);
+    await auth.probeTailscaleHealth(async () => ({ ok: false, notInstalled: false }));
+    expect(auth.getAuthInfo().tailscaleHealthy).toBe(false);
+  });
+
+  it('stays false without running the probe when WEBCHAT_TAILSCALE is off', async () => {
+    const auth = await loadAuthWithEnv({});
+    let ran = false;
+    await auth.probeTailscaleHealth(async () => {
+      ran = true;
+      return { ok: true, notInstalled: false };
+    });
+    expect(ran).toBe(false); // short-circuits before the runner
+    expect(auth.getAuthInfo().tailscaleHealthy).toBe(false);
+  });
+
+  it('collapses concurrent callers onto one in-flight probe', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    let calls = 0;
+    const runner = async () => {
+      calls++;
+      await new Promise((r) => setTimeout(r, 20));
+      return { ok: true, notInstalled: false };
+    };
+    await Promise.all([auth.probeTailscaleHealth(runner), auth.probeTailscaleHealth(runner)]);
+    expect(calls).toBe(1);
+    expect(auth.getAuthInfo().tailscaleHealthy).toBe(true);
+  });
+});

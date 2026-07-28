@@ -1,0 +1,64 @@
+diff --git a/container/agent-runner/src/config.ts b/container/agent-runner/src/config.ts
+index 1546011f..5393c823 100644
+--- a/container/agent-runner/src/config.ts
++++ b/container/agent-runner/src/config.ts
+@@ -7,6 +7,8 @@
+  */
+ import fs from 'fs';
+ 
++import type { McpServerConfig } from './providers/types.js';
++
+ const CONFIG_PATH = '/workspace/agent/container.json';
+ 
+ export interface RunnerConfig {
+@@ -15,9 +17,38 @@ export interface RunnerConfig {
+   groupName: string;
+   agentGroupId: string;
+   maxMessagesPerPrompt: number;
+-  mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }>;
++  mcpServers: Record<string, McpServerConfig>;
+   model?: string;
+   effort?: string;
++  /**
++   * Lenient output mode for weak/local models. When true, a result turn that
++   * produces plain prose with no <message to="..."> envelope is delivered to the
++   * originating room instead of being dropped as scratchpad. Set by the host for
++   * ollama-backed agents (a 4B-class model rarely emits the envelope reliably);
++   * left false for Claude agents, whose unwrapped output is genuine private
++   * scratchpad. See dispatchResultText in poll-loop.ts.
++   */
++  lenientOutput?: boolean;
++  /**
++   * Learning-loop behavior (host's container.json). autoTrigger absent = ON;
++   * cooldownMinutes absent = 30. autoKeep is host-side only — the container
++   * never auto-accepts anything.
++   */
++  learning?: {
++    autoTrigger?: boolean;
++    autoKeep?: boolean;
++    cooldownMinutes?: number;
++    /** Per-room overrides keyed "<channel_type>:<platform_id>"; room wins. */
++    rooms?: Record<string, { autoTrigger?: boolean; autoKeep?: boolean }>;
++    /** Classifier gate — {url, model}: consulted before an auto-review. */
++    classifier?: { url: string; model: string };
++    /** Model for the review pass (overrides NANOCLAW_LEARNING_MODEL). */
++    reviewModel?: string;
++    /** Who pays for /learn outside the invoker's own member session — see learning-loop.ts. */
++    chargeInvoker?: 'off' | 'auto' | 'require';
++    /** Escape hatch: full-transcript fork replay instead of the digest. */
++    replayReview?: boolean;
++  };
+ }
+ 
+ const DEFAULT_MAX_MESSAGES = 10;
+@@ -45,8 +76,10 @@ export function loadConfig(): RunnerConfig {
+     agentGroupId: (raw.agentGroupId as string) || '',
+     maxMessagesPerPrompt: (raw.maxMessagesPerPrompt as number) || DEFAULT_MAX_MESSAGES,
+     mcpServers: (raw.mcpServers as RunnerConfig['mcpServers']) || {},
++    learning: raw.learning as RunnerConfig['learning'],
+     model: (raw.model as string) || undefined,
+     effort: (raw.effort as string) || undefined,
++    lenientOutput: raw.lenientOutput === true,
+   };
+ 
+   return _config;
