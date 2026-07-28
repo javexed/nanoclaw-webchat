@@ -1,0 +1,109 @@
+name: Compose
+
+# The product gate: compose a full nanoclaw+webchat tree from this repo's
+# app/patches against the pinned base + seam, run BOTH suites in the
+# composed tree, and publish the composed tarball as the build artifact —
+# the same artifact a release attaches for the Proxmox / deploy flows.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: compose-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      # Anonymous checkout: this server 401s task-token git auth for repos
+      # under this owner (the literal `forgejo` username appears to collide
+      # with the internal actions identity), while the same mechanism works
+      # for other owners. The repo is public, so fetch without credentials.
+      - name: checkout (anonymous)
+        run: |
+          git init -q .
+          git remote add origin ${{ github.server_url }}/${{ github.repository }}.git
+          git fetch -q --depth 1 origin ${{ github.sha }}
+          git checkout -q FETCH_HEAD
+      # See nanoclaw-dev's ci.yml for why there is no actions/setup-node here
+      # (it breaks on Forgejo Actions; the runner image ships a current Node).
+      - uses: pnpm/action-setup@v4
+        with:
+          # This repo has no package.json for the action to infer from — the
+          # composed TREE is what pnpm operates on. Keep in step with the
+          # base's packageManager field.
+          version: 10.33.0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.12
+
+      - name: Compose (clone base + seam, overlay, patch, register, build)
+        env:
+          # The seam lives on the same Forgejo instance this workflow runs on —
+          # reach it via the server URL the runner already talks to, not the
+          # tailnet hostname in versions.json (containers lack tailnet DNS).
+          NANOCLAW_WEBCHAT_SEAM_REPO: ${{ github.server_url }}/nanoClaw/nanoclaw-dev.git
+          SKIP_CONTAINER_BUILD: '1'
+          # The runner image ships Node 24; .nvmrc pins 22. That combination is
+          # proven here — it installs, passes install.sh's own better-sqlite3
+          # native-binding verification, and runs both suites green. There is no
+          # actions/setup-node to change it (broken on Forgejo Actions) and no
+          # mise in the image, so opt out of the .nvmrc major check explicitly.
+          # The binding verification remains the real gate.
+          NANOCLAW_ALLOW_NODE_MISMATCH: '1'
+        run: bash install.sh --dir "$RUNNER_TEMP/composed"
+
+      - name: Manifest guard self-test (proves it still detects faults)
+        # Runs against throwaway fixtures, never the repo's own tree. A guard
+        # only ever seen to pass is not evidence.
+        run: bash scripts/check-manifest.selftest.sh
+
+      - name: Manifest integrity (migrations register; dev tree matches)
+        # Reference-free. Catches the silent one: a migration file with no
+        # manifest entry ships into installs and never runs. This replaced the
+        # fork-diff coverage guard when channels-webchat was decommissioned —
+        # see docs/coverage-guards.md.
+        run: bash scripts/check-manifest.sh
+
+      - name: Host tests (composed tree)
+        working-directory: ${{ runner.temp }}/composed
+        # vitest's 5s default is tuned for a developer machine. These suites do
+        # real SQLite file IO (journal_mode=DELETE is load-bearing for
+        # cross-mount visibility), and inside a contended runner container the
+        # same tests that pass in ~2.5-4s locally cross 5s and time out — 22 of
+        # them in one observed run, every failure a timeout and not one a failed
+        # assertion. Raising the ceiling here (this workflow is repo-B-owned, so
+        # it needs no patch against upstream) removes the false red without
+        # weakening a single assertion.
+        run: pnpm exec vitest run --testTimeout=30000 --hookTimeout=30000
+
+      - name: Container typecheck + tests (composed tree)
+        working-directory: ${{ runner.temp }}/composed/container/agent-runner
+        run: |
+          # Plain install (not --frozen-lockfile): the composed tree carries
+          # upstream's bun.lock while the app tree adds runner sources; the
+          # proven local compose flow installs the same way.
+          bun install
+          bun run typecheck
+          bun test
+
+      - name: Pack composed tarball
+        run: |
+          cd "$RUNNER_TEMP"
+          # Ship sources, not installs: node_modules re-materialize from the
+          # lockfile on the target; .git stays out of release artifacts.
+          tar --exclude='./composed/node_modules' \
+              --exclude='./composed/container/agent-runner/node_modules' \
+              --exclude='./composed/.git' \
+              -czf nanoclaw-webchat-composed.tar.gz ./composed
+          ls -lh nanoclaw-webchat-composed.tar.gz
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: nanoclaw-webchat-composed
+          path: ${{ runner.temp }}/nanoclaw-webchat-composed.tar.gz
+          retention-days: 14

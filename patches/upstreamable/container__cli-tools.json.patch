@@ -1,0 +1,11 @@
+diff --git a/container/cli-tools.json b/container/cli-tools.json
+index 0445da48..ee514cb0 100644
+--- a/container/cli-tools.json
++++ b/container/cli-tools.json
+@@ -1,5 +1,5 @@
+ [
+   { "name": "vercel", "version": "52.2.1" },
+   { "name": "agent-browser", "version": "0.27.1", "onlyBuilt": true },
+-  { "name": "@anthropic-ai/claude-code", "version": "2.1.197", "onlyBuilt": true }
++  { "name": "@anthropic-ai/claude-code", "version": "2.1.219", "onlyBuilt": true }
+ ]

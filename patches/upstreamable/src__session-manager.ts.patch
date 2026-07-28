@@ -1,0 +1,135 @@
+diff --git a/src/session-manager.ts b/src/session-manager.ts
+index ebf10972..9c5495f3 100644
+--- a/src/session-manager.ts
++++ b/src/session-manager.ts
+@@ -20,6 +20,7 @@ import type { OutboundFile } from './channels/adapter.js';
+ import { DATA_DIR } from './config.js';
+ import { ensureContainedInboxDir, isPathInside } from './inbox-safety.js';
+ import { getMessagingGroup } from './db/messaging-groups.js';
++import { makeContainerWritable } from './container-runtime.js';
+ import {
+   createSession,
+   findSystemSession,
+@@ -37,6 +38,7 @@ import {
+   upsertSessionRouting,
+   insertMessage,
+   migrateMessagesInTable,
++  nextEvenSeq,
+ } from './db/session-db.js';
+ import { log } from './log.js';
+ import type { Session } from './types.js';
+@@ -285,6 +287,12 @@ export function initSessionFolder(agentGroupId: string, sessionId: string): void
+ 
+   ensureSchema(inboundDbPath(agentGroupId, sessionId), 'inbound');
+   ensureSchema(outboundDbPath(agentGroupId, sessionId), 'outbound');
++
++  // Chown AFTER the DBs are created: a root-running host makes this dir (and
++  // outbound.db, which the container WRITES) owned root:root, unwritable by the
++  // container's non-root user. Recursive so outbound.db + outbox/ are covered.
++  // No-op unless the host is root.
++  makeContainerWritable(dir, true);
+ }
+ 
+ /**
+@@ -404,6 +412,48 @@ export function writeSessionMessage(
+   updateSession(sessionId, { last_active: new Date().toISOString() });
+ }
+ 
++export interface ContextMessage {
++  id: string;
++  kind: string;
++  timestamp: string;
++  platformId: string | null;
++  channelType: string | null;
++  threadId: string | null;
++  content: string;
++  trigger: 0 | 1;
++}
++
++/**
++ * Idempotently write a batch of inbound rows into a session (UserCreds shared-context
++ * fan-out). Opens inbound.db once, skips ids already present, and inserts the
++ * rest — so re-syncing the room transcript each turn only adds genuinely new
++ * messages. Caller supplies stable ids (e.g. `user-creds-<session>-<roomMsgId>`).
++ */
++export function syncSessionContext(agentGroupId: string, sessionId: string, messages: ContextMessage[]): void {
++  if (messages.length === 0) return;
++  const db = openInboundDb(agentGroupId, sessionId);
++  try {
++    const existing = new Set((db.prepare('SELECT id FROM messages_in').all() as { id: string }[]).map((r) => r.id));
++    const insert = db.prepare(
++      `INSERT INTO messages_in (id, seq, kind, timestamp, status, platform_id, channel_type, thread_id, content, process_after, recurrence, series_id, trigger, source_session_id, on_wake)
++       VALUES (@id, @seq, @kind, @timestamp, 'pending', @platformId, @channelType, @threadId, @content, NULL, NULL, @id, @trigger, NULL, 0)`,
++    );
++    for (const m of messages) {
++      if (existing.has(m.id)) continue;
++      // Context rows carry attachments too — the UserCreds fan-out replays a
++      // room's file messages into a per-member session. Stage them exactly as
++      // writeSessionMessage does; without this the bytes never reach the
++      // container and the agent gets a message it cannot act on.
++      const content = extractAttachmentFiles(agentGroupId, sessionId, m.id, m.content);
++      insert.run({ ...m, content, seq: nextEvenSeq(db) });
++    }
++  } finally {
++    db.close();
++  }
++  updateSession(sessionId, { last_active: new Date().toISOString() });
++}
++
++
+ /**
+  * If message content has attachments with base64 `data`, save them to
+  * the session's inbox directory and replace with `localPath`.
+@@ -453,7 +503,28 @@ function extractAttachmentFiles(
+ 
+   let changed = false;
+   for (const att of attachments) {
+-    if (typeof att.data !== 'string') continue;
++    // Two delivery forms. `data` is inline base64. `hostPath` points at a file
++    // the adapter already staged on disk — webchat uses it above 25MB so a
++    // large upload is never base64-encoded. Only `data` was handled here, so
++    // every hostPath attachment was silently skipped: the row kept a bare
++    // filename, no bytes reached the container, and nothing logged. Two
++    // production uploads (28MB, 45MB) were lost that way.
++    const inlineData = typeof att.data === 'string' ? (att.data as string) : null;
++    const rawHostPath = typeof att.hostPath === 'string' ? (att.hostPath as string) : null;
++    if (inlineData === null && rawHostPath === null) continue;
++
++    // A hostPath is a stronger primitive than supplied bytes — it copies
++    // whatever the path names. Legitimate producers stage into DATA_DIR, so
++    // require that: an adapter may hand over files it staged, nothing else.
++    let hostPath: string | null = null;
++    if (rawHostPath !== null) {
++      const resolved = path.resolve(rawHostPath);
++      if (!isPathInside(path.resolve(DATA_DIR), resolved)) {
++        log.warn('Refused attachment hostPath outside the data dir', { messageId, hostPath: rawHostPath });
++        continue;
++      }
++      hostPath = resolved;
++    }
+ 
+     const rawName = deriveAttachmentName(att);
+     const filename = isSafeAttachmentName(rawName) ? rawName : `attachment-${Date.now()}`;
+@@ -477,7 +548,13 @@ function extractAttachmentFiles(
+       // wx = exclusive create. Refuses to follow a pre existing symlink or
+       // overwrite any existing file. The host expects to be the sole writer
+       // of these attachments.
+-      fs.writeFileSync(filePath, Buffer.from(att.data as string, 'base64'), { flag: 'wx' });
++      if (inlineData !== null) {
++        fs.writeFileSync(filePath, Buffer.from(inlineData, 'base64'), { flag: 'wx' });
++      } else {
++        // COPYFILE_EXCL mirrors the `wx` guarantee: fail rather than follow a
++        // pre-placed symlink or overwrite an existing file.
++        fs.copyFileSync(hostPath as string, filePath, fs.constants.COPYFILE_EXCL);
++      }
+     } catch (err: unknown) {
+       const e = err as NodeJS.ErrnoException;
+       if (e.code === 'EEXIST') {
+@@ -493,6 +570,7 @@ function extractAttachmentFiles(
+     att.name = filename;
+     att.localPath = `inbox/${messageId}/${filename}`;
+     delete att.data;
++    delete att.hostPath;
+     changed = true;
+     log.debug('Saved attachment to inbox', { messageId, filename, size: att.size });
+   }

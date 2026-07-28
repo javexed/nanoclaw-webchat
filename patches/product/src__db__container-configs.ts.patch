@@ -1,0 +1,32 @@
+diff --git a/src/db/container-configs.ts b/src/db/container-configs.ts
+index d5c6f2e4..091f1f6f 100644
+--- a/src/db/container-configs.ts
++++ b/src/db/container-configs.ts
+@@ -11,8 +11,9 @@ const SCALAR_COLUMNS = new Set([
+   'max_messages_per_prompt',
+   'cli_scope',
+   'timezone',
++  'egress',
+ ]);
+-const JSON_COLUMNS = new Set(['skills', 'mcp_servers', 'packages_apt', 'packages_npm', 'additional_mounts']);
++const JSON_COLUMNS = new Set(['skills', 'mcp_servers', 'packages_apt', 'packages_npm', 'additional_mounts', 'learning']);
+ 
+ export function getContainerConfig(agentGroupId: string): ContainerConfigRow | undefined {
+   return getDb().prepare('SELECT * FROM container_configs WHERE agent_group_id = ?').get(agentGroupId) as
+@@ -87,6 +88,7 @@ export function updateContainerConfigScalars(
+       | 'max_messages_per_prompt'
+       | 'cli_scope'
+       | 'timezone'
++      | 'egress'
+     >
+   >,
+ ): void {
+@@ -113,7 +115,7 @@ export function updateContainerConfigScalars(
+ /** Overwrite a JSON column wholesale. Used for skills, mcp_servers, packages_*, additional_mounts. */
+ export function updateContainerConfigJson(
+   agentGroupId: string,
+-  column: 'skills' | 'mcp_servers' | 'packages_apt' | 'packages_npm' | 'additional_mounts',
++  column: 'skills' | 'mcp_servers' | 'packages_apt' | 'packages_npm' | 'additional_mounts' | 'learning',
+   value: unknown,
+ ): void {
+   if (!JSON_COLUMNS.has(column)) throw new Error(`Invalid JSON column: ${column}`);
