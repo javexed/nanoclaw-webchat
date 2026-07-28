@@ -1,0 +1,20 @@
+diff --git a/src/db/migrations/index.ts b/src/db/migrations/index.ts
+index d01a1064..3f6e37a8 100644
+--- a/src/db/migrations/index.ts
++++ b/src/db/migrations/index.ts
+@@ -19,6 +19,7 @@ import { moduleUserCredentialsOauth } from './module-user-credentials-oauth.js';
+ import { moduleUserCredentialsProvider } from './module-user-credentials-provider.js';
+ import { moduleUserCredentialsTable } from './module-user-credentials-table.js';
+ import { moduleUserCredentialsRename } from './module-user-credentials-rename.js';
++import { migration025 } from './025-fallback-provider.js';
+ import { moduleApprovalsPendingApprovals } from './module-approvals-pending-approvals.js';
+ import { moduleLearningSkillDrafts } from './module-learning-skill-drafts.js';
+ import { moduleLearningConfig } from './module-learning-config.js';
+@@ -115,6 +116,7 @@ export const migrations: Migration[] = [
+   moduleUserCredentialsProvider,
+   moduleUserCredentialsTable,
+   moduleUserCredentialsRename,
++  migration025,
+   moduleWebchatThreads,
+   moduleWebchatThreadEngaged,
+   moduleWebchatThreadContextSync,

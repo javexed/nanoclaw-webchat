@@ -1,0 +1,299 @@
+diff --git a/container/agent-runner/src/providers/claude.ts b/container/agent-runner/src/providers/claude.ts
+index 5fee2eb9..f993c493 100644
+--- a/container/agent-runner/src/providers/claude.ts
++++ b/container/agent-runner/src/providers/claude.ts
+@@ -127,6 +127,16 @@ function mcpAllowPattern(serverName: string): string {
+   return `mcp__${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}__*`;
+ }
+ 
++// Tool-level allowlisting: a server with `enabledTools` gets ONLY those tools
++// listed; everything else the server exposes is filtered out by the SDK and
++// never even enters the agent's context. No allowlist → the whole namespace.
++function mcpAllowEntries(serverName: string, cfg: import('./types.js').McpServerConfig): string[] {
++  const enabled = cfg.enabledTools;
++  if (!Array.isArray(enabled) || enabled.length === 0) return [mcpAllowPattern(serverName)];
++  const ns = serverName.replace(/[^a-zA-Z0-9_-]/g, '_');
++  return enabled.map((t) => `mcp__${ns}__${String(t).replace(/[^a-zA-Z0-9_-]/g, '_')}`);
++}
++
+ interface SDKUserMessage {
+   type: 'user';
+   message: { role: 'user'; content: string };
+@@ -222,6 +232,27 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
+   return lines.join('\n');
+ }
+ 
++/** Max reasoning lines surfaced per thinking block, and per-line char cap. The
++ *  webchat feed only keeps the last few anyway; this just bounds WS/DB volume
++ *  for a long thinking trace. */
++const REASONING_MAX_LINES = 8;
++const REASONING_LINE_MAX = 200;
++
++/**
++ * Turn a raw thinking block into a short list of feed lines: split on
++ * newlines, strip markdown header/bullet noise, drop empties, truncate each,
++ * and cap the count (keeping the LAST lines — the conclusion of the reasoning
++ * is the most informative).
++ */
++export function summarizeThinking(thinking: string): string[] {
++  const lines = thinking
++    .split(/\n+/)
++    .map((l) => l.replace(/^[#>\-*\s]+/, '').trim())
++    .filter((l) => l.length > 0)
++    .map((l) => (l.length > REASONING_LINE_MAX ? `${l.slice(0, REASONING_LINE_MAX - 1)}…` : l));
++  return lines.slice(-REASONING_MAX_LINES);
++}
++
+ /**
+  * PreToolUse hook: record the current tool + its declared timeout so the host
+  * sweep can widen its stuck tolerance while Bash is running a long-declared
+@@ -458,12 +489,62 @@ const CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WIN
+  */
+ const STALE_SESSION_RE = /no conversation found|ENOENT.*\.jsonl|session.*not found/i;
+ 
++/**
++ * Classify a terminal error's text so the poll-loop can react precisely:
++ *
++ *  - `'config'` — the model itself is unusable: not found, invalid, rejected,
++ *    or an auth failure that means the configured model/backend is wrong
++ *    (model-not-found, invalid-model, 401/404, unauthorized). These are the
++ *    cases worth retrying against the SDK default model.
++ *  - `'network'` — the backend was unreachable (connection refused, fetch
++ *    failed, timed out). Retrying the same broken endpoint won't help.
++ *  - `undefined` — unclassified; surfaced verbatim, no special handling.
++ *
++ * Patterns are intentionally broad/lowercased — SDK and Ollama error text
++ * varies, and a false `config` only costs one extra (cheap) default-model try.
++ */
++export function classifyTerminalError(text: string): 'config' | 'network' | undefined {
++  const t = text.toLowerCase();
++
++  // Network first: an ECONNREFUSED to a custom base URL can also mention the
++  // model, but the actionable fault is the unreachable endpoint.
++  if (
++    t.includes('econnrefused') ||
++    t.includes('connection refused') ||
++    t.includes('fetch failed') ||
++    t.includes('etimedout') ||
++    t.includes('timed out')
++  ) {
++    return 'network';
++  }
++
++  if (
++    t.includes('model not found') ||
++    (t.includes('not found') && t.includes('model')) ||
++    t.includes('invalid model') ||
++    t.includes('invalid_model') ||
++    t.includes('unknown model') ||
++    t.includes('unauthorized') ||
++    t.includes('401') ||
++    t.includes('404') ||
++    (t.includes('model') && (t.includes('reject') || t.includes('does not exist') || t.includes('not supported')))
++  ) {
++    return 'config';
++  }
++
++  return undefined;
++}
++
+ export class ClaudeProvider implements AgentProvider {
+   readonly supportsNativeSlashCommands = true;
++  // Both halves are real here: allowedTools drops to draft_skill alone, and the
++  // SDK's forkSession keeps the review off the main session's transcript.
++  readonly supportsRestrictedReview = true;
+ 
+   private assistantName?: string;
+   private mcpServers: Record<string, McpServerConfig>;
+   private env: Record<string, string | undefined>;
++  private settingSources: Array<'project' | 'user' | 'local'>;
+   private additionalDirectories?: string[];
+   private model?: string;
+   private effort?: string;
+@@ -480,6 +561,7 @@ export class ClaudeProvider implements AgentProvider {
+       CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+       CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
+     };
++    this.settingSources = options.settingSources ?? ['project', 'user', 'local'];
+   }
+ 
+   registerMemorySessionHook(hook: MemorySessionHookRegistration): void {
+@@ -550,7 +632,9 @@ export class ClaudeProvider implements AgentProvider {
+         systemPrompt: instructions
+           ? { type: 'preset' as const, preset: 'claude_code' as const, append: instructions }
+           : undefined,
+-        allowedTools: contrib.allowedTools ?? [...TOOL_ALLOWLIST, ...Object.keys(this.mcpServers).map(mcpAllowPattern)],
++        allowedTools:
++          contrib.allowedTools ??
++          [...TOOL_ALLOWLIST, ...Object.entries(this.mcpServers).flatMap(([name, cfg]) => mcpAllowEntries(name, cfg))],
+         disallowedTools: SDK_DISALLOWED_TOOLS,
+         env: this.env,
+         model: contrib.model ?? this.model,
+@@ -558,7 +642,7 @@ export class ClaudeProvider implements AgentProvider {
+         effort: this.effort as any,
+         permissionMode: 'bypassPermissions',
+         allowDangerouslySkipPermissions: true,
+-        settingSources: ['project', 'user', 'local'],
++        settingSources: this.settingSources,
+         mcpServers: this.mcpServers,
+         hooks: {
+           PreToolUse: [{ hooks: [preToolUseHook] }],
+@@ -573,66 +657,101 @@ export class ClaudeProvider implements AgentProvider {
+ 
+     async function* translateEvents(): AsyncGenerator<ProviderEvent> {
+       let messageCount = 0;
+-      for await (const message of sdkResult) {
+-        if (aborted) return;
+-        messageCount++;
+-
+-        // Yield activity for every SDK event so the poll loop knows the agent is working
+-        yield { type: 'activity' };
+-
+-        if (message.type === 'system' && message.subtype === 'init') {
+-          yield { type: 'init', continuation: message.session_id };
+-        } else if (message.type === 'result') {
+-          // `result` text exists only on subtype:"success"; error subtypes
+-          // (e.g. a non-retryable 403 billing_error) carry their message in
+-          // `errors[]` instead. Surface either so the poll-loop can deliver a
+-          // billing/quota notice to the user rather than dropping the turn.
+-          const m = message as { result?: string; is_error?: boolean; errors?: string[] };
+-          const text = m.result ?? (m.errors && m.errors.length > 0 ? m.errors.join('\n') : null);
+-          yield { type: 'result', text, isError: m.is_error === true };
+-        } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'api_retry') {
+-          yield { type: 'error', message: 'API retry', retryable: true };
+-        } else if (message.type === 'rate_limit_event') {
+-          // The SDK emits this "when rate limit info CHANGES" — it is telemetry,
+-          // not necessarily an error. `rate_limit_info.status` is usually
+-          // 'allowed' (here's your remaining headroom). Treating every one of
+-          // these as a terminal quota error logged a spurious rate-limit line
+-          // on healthy turns (#3016) — and aborted them outright wherever the
+-          // classification is acted on. ONLY 'rejected' is an actual block.
+-          //
+-          // When it IS rejected the SDK tells us WHY, so we can finally
+-          // distinguish the two cases properly instead of guessing:
+-          //   errorCode 'credits_required' / overageDisabledReason
+-          //   'out_of_credits'  → genuinely out of credits (billing)
+-          //   otherwise         → a transient window limit that resets.
+-          const info = (message as { rate_limit_info?: SdkRateLimitInfo }).rate_limit_info;
+-          const blocked = classifyRateLimitEvent(info);
+-          if (!blocked) {
+-            // Informational ('allowed' / 'allowed_warning') — never kill the turn.
+-            if (info?.status === 'allowed_warning') {
+-              log(
+-                `rate-limit warning: ${info.rateLimitType ?? 'window'} at ${
+-                  info.utilization != null ? `${Math.round(info.utilization * 100)}%` : 'high'
+-                } utilization`,
+-              );
++      try {
++        for await (const message of sdkResult) {
++          if (aborted) return;
++          messageCount++;
++
++          // Yield activity for every SDK event so the poll loop knows the agent is working
++          yield { type: 'activity' };
++
++          if (message.type === 'system' && message.subtype === 'init') {
++            yield { type: 'init', continuation: message.session_id };
++          } else if (message.type === 'result') {
++            // `result` text exists only on subtype:"success"; error subtypes
++            // (e.g. a non-retryable 403 billing_error) carry their message in
++            // `errors[]` instead. Surface either so the poll-loop can deliver a
++            // billing/quota notice to the user rather than dropping the turn.
++            const m = message as { result?: string; is_error?: boolean; errors?: string[] };
++            const text = m.result ?? (m.errors && m.errors.length > 0 ? m.errors.join('\n') : null);
++            yield { type: 'result', text, isError: m.is_error === true };
++          } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'api_retry') {
++            yield { type: 'error', message: 'API retry', retryable: true };
++          } else if (message.type === 'rate_limit_event') {
++            // The SDK emits this "when rate limit info CHANGES" — it is telemetry,
++            // not necessarily an error. `rate_limit_info.status` is usually
++            // 'allowed' (here's your remaining headroom). Treating every one of
++            // these as a terminal quota error logged a spurious rate-limit line
++            // on healthy turns (#3016) — and aborted them outright wherever the
++            // classification is acted on. ONLY 'rejected' is an actual block.
++            //
++            // When it IS rejected the SDK tells us WHY, so we can finally
++            // distinguish the two cases properly instead of guessing:
++            //   errorCode 'credits_required' / overageDisabledReason
++            //   'out_of_credits'  → genuinely out of credits (billing)
++            //   otherwise         → a transient window limit that resets.
++            const info = (message as { rate_limit_info?: SdkRateLimitInfo }).rate_limit_info;
++            const blocked = classifyRateLimitEvent(info);
++            if (!blocked) {
++              // Informational ('allowed' / 'allowed_warning') — never kill the turn.
++              if (info?.status === 'allowed_warning') {
++                log(
++                  `rate-limit warning: ${info.rateLimitType ?? 'window'} at ${
++                    info.utilization != null ? `${Math.round(info.utilization * 100)}%` : 'high'
++                  } utilization`,
++                );
++              }
++            } else {
++              yield { type: 'error', message: blocked.message, retryable: false, classification: blocked.classification };
++            }
++          } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
++            const meta = (message as { compact_metadata?: { pre_tokens?: number } }).compact_metadata;
++            const detail = meta?.pre_tokens ? ` (${meta.pre_tokens.toLocaleString()} tokens compacted)` : '';
++            // Not a `result`: the poll loop treats result text as the agent's turn
++            // output — a synthetic "Context compacted." result has no <message>
++            // block, so it triggers the "response was not delivered — please
++            // re-send" nudge and the agent duplicates its previous message.
++            // Compaction is bookkeeping: log it, count it as activity only.
++            log(`Context compacted${detail}.`);
++            yield { type: 'activity' };
++          } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
++            const tn = message as { summary?: string };
++            yield { type: 'progress', message: tn.summary || 'Task notification' };
++          } else if (message.type === 'assistant') {
++            // Surface the agent's reasoning (extended-thinking blocks) to rich
++            // clients as a fading feed. Cosmetic; absent when the model emits no
++            // thinking. Text blocks are handled separately as the final result.
++            const content = (message as { message?: { content?: unknown } }).message?.content;
++            if (Array.isArray(content)) {
++              for (const block of content) {
++                if (block && (block as { type?: string }).type === 'thinking') {
++                  const thinking = (block as { thinking?: string }).thinking;
++                  if (typeof thinking === 'string' && thinking.length > 0) {
++                    for (const line of summarizeThinking(thinking)) {
++                      yield { type: 'reasoning', message: line };
++                    }
++                  }
++                }
++              }
+             }
+-          } else {
+-            yield { type: 'error', message: blocked.message, retryable: false, classification: blocked.classification };
+           }
+-        } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
+-          const meta = (message as { compact_metadata?: { pre_tokens?: number } }).compact_metadata;
+-          const detail = meta?.pre_tokens ? ` (${meta.pre_tokens.toLocaleString()} tokens compacted)` : '';
+-          // Not a `result`: the poll loop treats result text as the agent's turn
+-          // output — a synthetic "Context compacted." result has no <message>
+-          // block, so it triggers the "response was not delivered — please
+-          // re-send" nudge and the agent duplicates its previous message.
+-          // Compaction is bookkeeping: log it, count it as activity only.
+-          log(`Context compacted${detail}.`);
+-          yield { type: 'activity' };
+-        } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
+-          const tn = message as { summary?: string };
+-          yield { type: 'progress', message: tn.summary || 'Task notification' };
+         }
++      } catch (err) {
++        // A THROWN SDK failure — model not found, backend unreachable, the
++        // subprocess dying mid-stream — would otherwise escape the generator
++        // and surface as an opaque rejection (or, on the follow-up path,
++        // silence). Re-emit it as a non-retryable terminal error so the
++        // poll-loop can surface it / fall back, then end the stream.
++        if (aborted) return;
++        const detail = err instanceof Error ? err.message : String(err);
++        log(`SDK stream threw: ${detail}`);
++        yield {
++          type: 'error',
++          message: detail,
++          retryable: false,
++          classification: classifyTerminalError(detail),
++        };
++        return;
+       }
+       log(`Query completed after ${messageCount} SDK messages`);
+     }

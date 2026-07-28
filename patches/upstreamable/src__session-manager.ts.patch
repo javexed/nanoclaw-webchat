@@ -1,0 +1,77 @@
+diff --git a/src/session-manager.ts b/src/session-manager.ts
+index bc4bcbcd..5b282e5a 100644
+--- a/src/session-manager.ts
++++ b/src/session-manager.ts
+@@ -20,6 +20,7 @@ import type { OutboundFile } from './channels/adapter.js';
+ import { DATA_DIR } from './config.js';
+ import { ensureContainedInboxDir, isPathInside } from './inbox-safety.js';
+ import { getMessagingGroup } from './db/messaging-groups.js';
++import { makeContainerWritable } from './container-runtime.js';
+ import {
+   createSession,
+   findSystemSession,
+@@ -37,6 +38,7 @@ import {
+   upsertSessionRouting,
+   insertMessage,
+   migrateMessagesInTable,
++  nextEvenSeq,
+ } from './db/session-db.js';
+ import { log } from './log.js';
+ import type { Session } from './types.js';
+@@ -261,6 +263,12 @@ export function initSessionFolder(agentGroupId: string, sessionId: string): void
+ 
+   ensureSchema(inboundDbPath(agentGroupId, sessionId), 'inbound');
+   ensureSchema(outboundDbPath(agentGroupId, sessionId), 'outbound');
++
++  // Chown AFTER the DBs are created: a root-running host makes this dir (and
++  // outbound.db, which the container WRITES) owned root:root, unwritable by the
++  // container's non-root user. Recursive so outbound.db + outbox/ are covered.
++  // No-op unless the host is root.
++  makeContainerWritable(dir, true);
+ }
+ 
+ /**
+@@ -380,6 +388,43 @@ export function writeSessionMessage(
+   updateSession(sessionId, { last_active: new Date().toISOString() });
+ }
+ 
++export interface ContextMessage {
++  id: string;
++  kind: string;
++  timestamp: string;
++  platformId: string | null;
++  channelType: string | null;
++  threadId: string | null;
++  content: string;
++  trigger: 0 | 1;
++}
++
++/**
++ * Idempotently write a batch of inbound rows into a session (UserCreds shared-context
++ * fan-out). Opens inbound.db once, skips ids already present, and inserts the
++ * rest — so re-syncing the room transcript each turn only adds genuinely new
++ * messages. Caller supplies stable ids (e.g. `user-creds-<session>-<roomMsgId>`).
++ */
++export function syncSessionContext(agentGroupId: string, sessionId: string, messages: ContextMessage[]): void {
++  if (messages.length === 0) return;
++  const db = openInboundDb(agentGroupId, sessionId);
++  try {
++    const existing = new Set((db.prepare('SELECT id FROM messages_in').all() as { id: string }[]).map((r) => r.id));
++    const insert = db.prepare(
++      `INSERT INTO messages_in (id, seq, kind, timestamp, status, platform_id, channel_type, thread_id, content, process_after, recurrence, series_id, trigger, source_session_id, on_wake)
++       VALUES (@id, @seq, @kind, @timestamp, 'pending', @platformId, @channelType, @threadId, @content, NULL, NULL, @id, @trigger, NULL, 0)`,
++    );
++    for (const m of messages) {
++      if (existing.has(m.id)) continue;
++      insert.run({ ...m, seq: nextEvenSeq(db) });
++    }
++  } finally {
++    db.close();
++  }
++  updateSession(sessionId, { last_active: new Date().toISOString() });
++}
++
++
+ /**
+  * If message content has attachments with base64 `data`, save them to
+  * the session's inbox directory and replace with `localPath`.
