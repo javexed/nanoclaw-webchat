@@ -1,0 +1,13 @@
+diff --git a/src/modules/approvals/index.ts b/src/modules/approvals/index.ts
+index 8dcb274f..f60e5611 100644
+--- a/src/modules/approvals/index.ts
++++ b/src/modules/approvals/index.ts
+@@ -26,6 +26,8 @@ import { onDeliveryAdapterReady } from '../../delivery.js';
+ import { registerResponseHandler, onShutdown } from '../../response-registry.js';
+ import { handleApprovalsResponse } from './response-handler.js';
+ import { startOneCLIApprovalHandler, stopOneCLIApprovalHandler } from './onecli-approvals.js';
++// Side effect: registers the approval-TTL expiry on the host-sweep seam (H7).
++import './expiry.js';
+ 
+ // Public API re-exports so consumers import from the module root.
+ export { requestApproval, registerApprovalHandler, notifyAgent } from './primitive.js';

@@ -1,0 +1,86 @@
+diff --git a/src/session-manager.attachments.test.ts b/src/session-manager.attachments.test.ts
+index ee79ede0..d38e13b2 100644
+--- a/src/session-manager.attachments.test.ts
++++ b/src/session-manager.attachments.test.ts
+@@ -29,7 +29,7 @@ vi.mock('./config.js', async () => {
+ 
+ import { initTestDb, closeDb, runMigrations, createAgentGroup } from './db/index.js';
+ import { createSession } from './db/sessions.js';
+-import { initSessionFolder, sessionDir, writeSessionMessage } from './session-manager.js';
++import { initSessionFolder, openInboundDb, sessionDir, writeSessionMessage } from './session-manager.js';
+ import type { Session } from './types.js';
+ 
+ const TEST_DIR = '/tmp/nanoclaw-test-saveatt-gap';
+@@ -68,6 +68,72 @@ afterEach(() => {
+   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
+ });
+ 
++describe('extractAttachmentFiles — hostPath attachments', () => {
++  // Attachments arrive in two forms: inline base64 `data`, and `hostPath`
++  // naming a file the adapter already staged (webchat uses it above 25MB so a
++  // large upload is never base64-encoded). Only `data` was handled, so every
++  // hostPath attachment was skipped in silence — the row kept a bare filename,
++  // no bytes reached the container, and nothing was logged. Two production
++  // uploads (28MB, 45MB) were lost this way.
++  it('stages a hostPath attachment into the inbox', () => {
++    const staged = path.join(TEST_DIR, 'uploads', 'big.pdf');
++    fs.mkdirSync(path.dirname(staged), { recursive: true });
++    fs.writeFileSync(staged, 'LARGE-FILE-BYTES');
++
++    writeSessionMessage(AG, SESS, {
++      id: 'msg-hostpath',
++      kind: 'chat',
++      timestamp: now(),
++      platformId: 'webchat:room',
++      channelType: 'webchat',
++      threadId: null,
++      content: JSON.stringify({
++        text: '',
++        attachments: [{ name: 'big.pdf', type: 'file', hostPath: staged, size: 16, mime: 'application/pdf' }],
++      }),
++    });
++
++    const onDisk = path.join(sessionDir(AG, SESS), 'inbox', 'msg-hostpath', 'big.pdf');
++    expect(fs.existsSync(onDisk), 'hostPath attachment must be staged').toBe(true);
++    expect(fs.readFileSync(onDisk, 'utf8')).toBe('LARGE-FILE-BYTES');
++
++    // The stored row must point the agent at the staged copy, and must not
++    // leak the host-side path into the container's view.
++    const db = openInboundDb(AG, SESS);
++    const row = db.prepare('SELECT content FROM messages_in WHERE id = ?').get('msg-hostpath') as { content: string };
++    db.close();
++    const att = (JSON.parse(row.content) as { attachments: Record<string, unknown>[] }).attachments[0];
++    expect(att.localPath).toBe('inbox/msg-hostpath/big.pdf');
++    expect(att.hostPath, 'host-side path must not reach the container').toBeUndefined();
++  });
++
++  it('refuses a hostPath outside the data dir', () => {
++    // A hostPath copies whatever it names, so it is a stronger primitive than
++    // supplied bytes. Legitimate producers stage into DATA_DIR; anything else
++    // is refused rather than copied into the agent's inbox.
++    const outside = path.join('/tmp', `nanoclaw-hostpath-escape-${process.pid}.txt`);
++    fs.writeFileSync(outside, 'SECRET');
++    try {
++      writeSessionMessage(AG, SESS, {
++        id: 'msg-escape',
++        kind: 'chat',
++        timestamp: now(),
++        platformId: 'webchat:room',
++        channelType: 'webchat',
++        threadId: null,
++        content: JSON.stringify({
++          text: '',
++          attachments: [{ name: 'secret.txt', type: 'file', hostPath: outside, size: 6, mime: 'text/plain' }],
++        }),
++      });
++      const leaked = path.join(sessionDir(AG, SESS), 'inbox', 'msg-escape', 'secret.txt');
++      expect(fs.existsSync(leaked), 'must not copy a file from outside the data dir').toBe(false);
++    } finally {
++      fs.rmSync(outside, { force: true });
++    }
++  });
++});
++
+ describe('extractAttachmentFiles — inbox-root symlink containment (#2828 sibling)', () => {
+   it('does not write an attachment outside the session root via a symlinked inbox root', () => {
+     // Attacker-controlled location outside the session sandbox.
