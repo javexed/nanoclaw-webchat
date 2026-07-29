@@ -1,0 +1,13 @@
+diff --git a/setup/service.test.ts b/setup/service.test.ts
+index 9bc899eb..02a64be0 100644
+--- a/setup/service.test.ts
++++ b/setup/service.test.ts
+@@ -67,7 +67,7 @@ Restart=always
+ RestartSec=5
+ KillMode=process
+ Environment=HOME=${homeDir}
+-Environment=PATH=/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin
++Environment=PATH=/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin:/snap/bin
+ StandardOutput=append:${projectRoot}/logs/nanoclaw.log
+ StandardError=append:${projectRoot}/logs/nanoclaw.error.log
+ 

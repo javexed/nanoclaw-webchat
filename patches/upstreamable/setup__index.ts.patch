@@ -1,0 +1,12 @@
+diff --git a/setup/index.ts b/setup/index.ts
+index 5338b6f9..55eace25 100644
+--- a/setup/index.ts
++++ b/setup/index.ts
+@@ -24,6 +24,7 @@ const STEPS: Record<
+   onecli: () => import('./onecli.js'),
+   auth: () => import('./auth.js'),
+   'provider-auth': () => import('./provider-auth.js'),
++  'provider-install': () => import('./provider-install.js'),
+   'cli-agent': () => import('./cli-agent.js'),
+   // >>> nanoclaw:setup-steps
+   // <<< nanoclaw:setup-steps
