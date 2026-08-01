@@ -1,0 +1,41 @@
+diff --git a/src/modules/agent-to-agent/agent-route.ts b/src/modules/agent-to-agent/agent-route.ts
+index ec640cd5..acda87cd 100644
+--- a/src/modules/agent-to-agent/agent-route.ts
++++ b/src/modules/agent-to-agent/agent-route.ts
+@@ -353,6 +353,23 @@ async function performAgentRoute(
+   targetAgentGroupId: string,
+ ): Promise<void> {
+   const targetSession = resolveTargetSession(msg, session, targetAgentGroupId);
++
++  // Loop guard: an agent must never route a message back into the SAME session
++  // it came from. Routing to one's own session is a no-op, but because a
++  // terminal-error turn re-emits the error as a reply (poll-loop
++  // surfaceTerminalError), self-routing turns a single failure into an infinite
++  // wake loop — observed in production when a stale Claude continuation flooded
++  // a session with "No conversation found" ~every 2.5s (tens of thousands of
++  // messages). Drop the self-route; a dead conversation now fails once, quietly.
++  if (targetSession.id === session.id) {
++    log.warn('a2a route skipped: target is the source session (self-loop guard)', {
++      agentGroup: session.agent_group_id,
++      session: session.id,
++      msgId: msg.id,
++    });
++    return;
++  }
++
+   const a2aMsgId = `a2a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+ 
+   // If the source message references files (via `send_file`), forward the
+@@ -376,6 +393,12 @@ async function performAgentRoute(
+     from: session.agent_group_id,
+     to: targetAgentGroupId,
+     targetSession: targetSession.id,
++    // Diagnostic for the a2a self-loop flood: the session guard above only
++    // drops target===source SESSION. A route where selfAgentGroup is true but
++    // sourceSession !== targetSession is the cross-session same-agent-group loop
++    // the guard does NOT catch — log it so a recurrence shows the exact topology.
++    sourceSession: session.id,
++    selfAgentGroup: targetAgentGroupId === session.agent_group_id,
+     a2aMsgId,
+     forwardedFileCount: countForwardedFiles(forwardedContent),
+   });

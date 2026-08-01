@@ -1,0 +1,26 @@
+diff --git a/src/cli/resources/groups.ts b/src/cli/resources/groups.ts
+index 8763323c..8ec3f24d 100644
+--- a/src/cli/resources/groups.ts
++++ b/src/cli/resources/groups.ts
+@@ -315,6 +315,7 @@ registerResource({
+             | 'cli_scope'
+             | 'timezone'
+             | 'egress'
++            | 'fallback_provider'
+           >
+         > = {};
+         if (args.provider !== undefined) updates.provider = args.provider as string;
+@@ -326,6 +327,13 @@ registerResource({
+         if (args.assistant_name !== undefined) updates.assistant_name = args.assistant_name as string;
+         if (args.max_messages_per_prompt !== undefined)
+           updates.max_messages_per_prompt = Number(args.max_messages_per_prompt);
++        // §16c escalation target. 'none' clears it; anything else is stored
++        // verbatim and validated at spawn (an unknown provider disarms
++        // escalation with a log line rather than failing the group).
++        if (args['fallback-provider'] !== undefined || args.fallback_provider !== undefined) {
++          const fp = String(args['fallback-provider'] ?? args.fallback_provider);
++          updates.fallback_provider = fp === 'none' ? null : fp;
++        }
+         if (args['cli-scope'] !== undefined || args.cli_scope !== undefined) {
+           const scope = (args['cli-scope'] ?? args.cli_scope) as string;
+           if (!['disabled', 'group', 'global'].includes(scope)) {

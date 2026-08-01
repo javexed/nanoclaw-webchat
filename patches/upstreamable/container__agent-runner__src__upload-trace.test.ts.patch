@@ -1,0 +1,16 @@
+diff --git a/container/agent-runner/src/upload-trace.test.ts b/container/agent-runner/src/upload-trace.test.ts
+index 4a20ac68..3cee7954 100644
+--- a/container/agent-runner/src/upload-trace.test.ts
++++ b/container/agent-runner/src/upload-trace.test.ts
+@@ -67,7 +67,10 @@ describe('poll loop — /upload-trace command', () => {
+ 
+ async function runPollLoopWithTimeout(provider: MockProvider, signal: AbortSignal, timeoutMs: number): Promise<void> {
+   return Promise.race([
+-    runPollLoop({ provider, providerName: 'mock', cwd: '/tmp' }),
++    // signal is load-bearing: without it this loop is unstoppable and its
++    // poll interval keeps stealing pending messages from every test that
++    // runs after this file in the same process.
++    runPollLoop({ provider, providerName: 'mock', cwd: '/tmp', signal }),
+     new Promise<void>((_, reject) => {
+       signal.addEventListener('abort', () => reject(new Error('aborted')));
+     }),
