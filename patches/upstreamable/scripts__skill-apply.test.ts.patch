@@ -1,0 +1,78 @@
+diff --git a/scripts/skill-apply.test.ts b/scripts/skill-apply.test.ts
+index d246a4cb..92afd8ce 100644
+--- a/scripts/skill-apply.test.ts
++++ b/scripts/skill-apply.test.ts
+@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
+ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+-import { applySkill, removeSkill, planSkill, fullyApplied, firstFailureHint, referenceProse, stepLabel, type ApplyEvent, type InputMeta } from './skill-apply.js';
++import { applySkill, removeSkill, planSkill, fullyApplied, firstFailureHint, referenceProse, stepLabel, substituteForLog, type ApplyEvent, type InputMeta } from './skill-apply.js';
+ import { parseDirectives, validate } from './skill-directives.js';
+ 
+ // A synthetic skill exercising the fs handlers for real (no network), plus one
+@@ -123,6 +123,7 @@ describe('from-branch copy apply path', () => {
+     writeFileSync(join(fskill, 'SKILL.md'), FROM_BRANCH_SKILL);
+     writeFileSync(join(froot, '.env'), '');
+     writeFileSync(join(froot, 'package.json'), '{"name":"scratch"}');
++    mkdirSync(join(froot, '.git'), { recursive: true }); // a git checkout → fetch from the resolved remote
+     // container/skills/demo-formatting/ deliberately absent from root
+ 
+     const { cmds, exec } = recordingExec();
+@@ -138,6 +139,35 @@ describe('from-branch copy apply path', () => {
+     rmSync(fskill, { recursive: true, force: true });
+     rmSync(froot, { recursive: true, force: true });
+   });
++
++  it('gitless deploy (no .git): shallow-fetches the branch into a temp repo and extracts', async () => {
++    const fskill = mkdtempSync(join(tmpdir(), 'nc-skill-fb-'));
++    const froot = mkdtempSync(join(tmpdir(), 'nc-proj-fb-'));
++    writeFileSync(join(fskill, 'SKILL.md'), FROM_BRANCH_SKILL);
++    writeFileSync(join(froot, '.env'), '');
++    writeFileSync(join(froot, 'package.json'), '{"name":"scratch"}');
++    // No .git in froot — a tarball extract. resolveRemote must NOT be used.
++
++    const prev = process.env.NANOCLAW_CHANNELS_REMOTE_URL;
++    process.env.NANOCLAW_CHANNELS_REMOTE_URL = 'https://example.test/nano.git';
++    const { cmds, exec } = recordingExec();
++    const res = await applySkill(fskill, froot, {
++      exec,
++      resolveRemote: () => {
++        throw new Error('resolveRemote must not run without .git');
++      },
++    });
++    process.env.NANOCLAW_CHANNELS_REMOTE_URL = prev;
++
++    expect(existsSync(join(froot, 'container/skills/demo-formatting'))).toBe(true); // parent dir made
++    expect(cmds.some((c) => /^git init -q /.test(c))).toBe(true);
++    expect(cmds.some((c) => /git -C .* fetch --depth 1 "https:\/\/example\.test\/nano\.git" channels$/.test(c))).toBe(true);
++    expect(cmds.some((c) => /git -C .* show FETCH_HEAD:container\/skills\/demo-formatting\/SKILL\.md > container\/skills\/demo-formatting\/SKILL\.md$/.test(c))).toBe(true);
++    expect(res.journal).toContainEqual({ op: 'wrote', path: 'container/skills/demo-formatting/SKILL.md' });
++
++    rmSync(fskill, { recursive: true, force: true });
++    rmSync(froot, { recursive: true, force: true });
++  });
+ });
+ 
+ // json-merge: push a body object into an array-of-objects JSON file, keyed.
+@@ -1496,3 +1526,20 @@ describe('referenceProse (reference-floor slice)', () => {
+     expect(res.referenceProse).not.toContain('## Apply');
+   });
+ });
++
++describe('substituteForLog — secrets never reach the raw setup log', () => {
++  const vars = new Map([
++    ['bot_token', { value: 'xoxb-REAL-SECRET', secret: true }],
++    ['workspace', { value: 'acme', secret: false }],
++  ]);
++
++  it('masks secret vars but substitutes non-secret ones', () => {
++    const out = substituteForLog('curl -H "auth: {{bot_token}}" https://{{workspace}}.example', vars);
++    expect(out).toBe('curl -H "auth: ***" https://acme.example');
++    expect(out).not.toContain('xoxb-REAL-SECRET');
++  });
++
++  it('keeps unresolved refs as placeholders (does not throw, unlike substitute)', () => {
++    expect(substituteForLog('run {{not_set}}', vars)).toBe('run {{not_set}}');
++  });
++});

@@ -1,0 +1,18 @@
+diff --git a/src/egress-lockdown.ts b/src/egress-lockdown.ts
+index 1e6f6ff2..ec341319 100644
+--- a/src/egress-lockdown.ts
++++ b/src/egress-lockdown.ts
+@@ -59,8 +59,11 @@ function gatewayAttached(): boolean {
+  * EgressLockdownError when enabled but unestablishable — fail fast rather than
+  * spawn an agent with open egress.
+  */
+-export function ensureEgressNetwork(): boolean {
+-  if (!EGRESS_LOCKDOWN) return false;
++export function ensureEgressNetwork(force = false): boolean {
++  // Install-wide opt-in (NANOCLAW_EGRESS_LOCKDOWN) or a per-group
++  // egress='host-only' (`force`) — same network, same gateway aliasing,
++  // same fail-fast contract either way.
++  if (!EGRESS_LOCKDOWN && !force) return false;
+ 
+   if (
+     !dockerOk(['network', 'inspect', EGRESS_NETWORK]) &&

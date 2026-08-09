@@ -1,0 +1,16 @@
+diff --git a/src/modules/index.ts b/src/modules/index.ts
+index 2724a53..4477076 100644
+--- a/src/modules/index.ts
++++ b/src/modules/index.ts
+@@ -21,3 +21,11 @@ import './interactive/index.js';
+ import './permissions/index.js';
+ import './agent-to-agent/index.js';
+ import './self-mod/index.js';
++import './user-credentials/index.js';
++import './learning/index.js';
++import './agent-status/index.js';
++import './compact-window/index.js';
++import './deploy-keys/index.js';
++import './tool-secrets/index.js';
++import './fleet-isolation/index.js';
++import './agent-env/index.js';

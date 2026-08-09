@@ -1,0 +1,25 @@
+diff --git a/src/container-config.ts b/src/container-config.ts
+index c16a9bda..a24f6d89 100644
+--- a/src/container-config.ts
++++ b/src/container-config.ts
+@@ -99,6 +99,12 @@ export interface ContainerConfig {
+     /** Classifier gate — small local model consulted before a review. */
+     classifier?: { url: string; model: string };
+   };
++  /**
++   * Escalation provider (llm-router §16c). When set, the agent-runner re-runs
++   * a terminally-failed turn ONCE on this provider (fresh session), capped by
++   * NANOCLAW_ESCALATION_CAP consecutive escalations.
++   */
++  fallbackProvider?: string;
+ }
+ 
+ /**
+@@ -115,6 +121,7 @@ export function resolveGroupTimezone(agentGroupId: string): string {
+ /** Build a `ContainerConfig` from a DB row + agent group identity. */
+ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): ContainerConfig {
+   return {
++    fallbackProvider: row.fallback_provider ?? undefined,
+     mcpServers: JSON.parse(row.mcp_servers) as Record<string, McpServerConfig>,
+     packages: {
+       apt: JSON.parse(row.packages_apt) as string[],

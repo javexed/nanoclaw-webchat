@@ -1,0 +1,79 @@
+diff --git a/src/router.ts b/src/router.ts
+index 57c46005..aa920ad8 100644
+--- a/src/router.ts
++++ b/src/router.ts
+@@ -388,6 +388,11 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
+     const agentGroup = getAgentGroup(agent.agent_group_id);
+     if (!agentGroup) continue;
+ 
++    // Lifecycle gate: only `active` agents respond. `paused` (benched) and
++    // `archived` (retired) keep their wiring but never engage or wake — so a
++    // message addressed to them is silently not delivered to a container.
++    if (agentGroup.status && agentGroup.status !== 'active') continue;
++
+     // Effective thread id for THIS wiring: the event-derived address is
+     // policy-stripped when the wiring (or its channel declaration) opts out
+     // of threads. event.replyTo is operator intent from the CLI admin
+@@ -428,6 +433,13 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
+       continue;
+     }
+ 
++    if (senderAgentGroupId && agent.engage_pattern?.startsWith('^(?!')) {
++      // Prime negative-lookahead: catch-all for unaddressed *human* messages.
++      // Skipping on agent fan-out prevents the prime from sweeping in on every
++      // unaddressed agent reply (which would chain forever).
++      continue;
++    }
++
+     const engages = evaluateEngage(agent, messageText, isMention, mg, effectiveThreadId);
+ 
+     const accessOk = engages && (!accessGate || accessGate(event, userId, mg, agent.agent_group_id).allowed);
+@@ -512,6 +524,26 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
+  *                      a thread has engaged us once, follow-ups arrive
+  *                      with no mention and should still fire.
+  */
++/**
++ * Strip markdown code regions (triple-backtick fences + single-backtick inline)
++ * so engage-pattern regex doesn't treat `@handle` inside a code span as a live
++ * mention. Replacing matches with empty strings is safe — pattern matching is
++ * boolean (presence/absence), so the resulting text just lacks the masked
++ * region. Order matters: fences first (greedy across newlines) so triple
++ * backticks don't get eaten one at a time by the inline pass.
++ *
++ * Edge cases:
++ *   - Unbalanced backticks fall through unstripped (e.g. a single ` with no
++ *     closer leaves the rest of the line addressable — wrong markdown but the
++ *     safer router default is "engage on apparent mentions").
++ *   - The regex is non-greedy so multiple code spans on one line work.
++ */
++export function stripCodeRegions(text: string): string {
++  let t = text.replace(/```[\s\S]*?```/g, '');
++  t = t.replace(/`[^`\n]*`/g, '');
++  return t;
++}
++
+ function evaluateEngage(
+   agent: MessagingGroupAgent,
+   text: string,
+@@ -524,7 +556,12 @@ function evaluateEngage(
+       const pat = agent.engage_pattern ?? '.';
+       if (pat === '.') return true;
+       try {
+-        return new RegExp(pat).test(text);
++        // Strip markdown code regions before pattern matching so handles inside
++        // backticks are treated as literal text, not live mentions. Triple-
++        // backtick fences (```@advisor```) and single-backtick inline code
++        // (`@advisor`) both protect. Unbalanced backticks pass through so a
++        // stray ` doesn't accidentally mask the rest of the message.
++        return new RegExp(pat).test(stripCodeRegions(text));
+       } catch {
+         // Bad regex: fail open so admin sees the agent responding + can fix.
+         return true;
+@@ -691,6 +728,7 @@ async function deliverToAgent(
+     startTypingRefresh(
+       session.id,
+       session.agent_group_id,
++      agentGroup.name,
+       event.channelType,
+       event.platformId,
+       effectiveThreadId,
