@@ -1,0 +1,16 @@
+diff --git a/.gitignore b/.gitignore
+index d337db47..38e5f61e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,5 +1,5 @@
+ # Dependencies
+-node_modules/
++node_modules
+ .npm-cache/
+ # pnpm content-addressable store (created when running in sandbox mode)
+ .pnpm-store/
+@@ -46,3 +46,4 @@ AGENTS.md
+ docs/maintainer-guide.md
+ docs/drafts/
+ forks.md
++test-results/

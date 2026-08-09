@@ -1,0 +1,16 @@
+{
+  "nanoclaw": {
+    "upstreamRepo": "https://github.com/nanocoai/nanoclaw.git",
+    "upstreamRef": "3c8041696410076d32e24de9673b6fa35ec5d90c",
+    "seamRepo": "https://github.com/javexed/nanoclaw.git",
+    "seamBranch": "pub/module-hooks",
+    "seamRef": "becaaaefdba2167291beced973dac9c2f385360a",
+    "seamH5Ref": "becaaaefdba2167291beced973dac9c2f385360a",
+    "forkRef": "3e55bebd6ff2a11a56d53923a38b3bda8ba30e11",
+    "forkArchiveTag": "archive/channels-webchat-2026-07-28",
+    "forkRefNote": "final channels-webchat tip (fork decommissioned 2026-07-28, preserved at forkArchiveTag). NOT a build input and no longer a guard reference — the only consumer is scripts/migrate-from-fork.sh, which resolves this SHA inside a user's own fork install to refuse migrating an install that is NEWER than the split. Keep it pinned for as long as fork installs may still migrate.",
+    "seamNote": "pub/module-hooks: SessionKeyResolver carries the pre-override thread (seam PR: SessionKeyResolver thread), so per-member sessions key by (user, thread)"
+  },
+  "seamApiVersion": 4,
+  "status": "working — all adaptation passes complete (H5, H12, R3)"
+}

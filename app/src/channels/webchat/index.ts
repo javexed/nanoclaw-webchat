@@ -1,0 +1,619 @@
+/**
+ * Webchat channel — embedded HTTP + WebSocket chat server with PWA frontend.
+ *
+ * Disabled by default. Enable with `WEBCHAT_ENABLED=true` in .env. The server
+ * binds to `WEBCHAT_HOST` (default 127.0.0.1) on `WEBCHAT_PORT` (default 3100).
+ *
+ * Auth modes (selected via `WEBCHAT_AUTH_MODE`):
+ *   - localhost      single-machine, no auth (default when host is loopback)
+ *   - bearer         shared token in `WEBCHAT_TOKEN`
+ *   - tailscale      tailnet whois → email becomes the user identity
+ *   - proxy-header   trust X-Forwarded-User from a fronting reverse proxy
+ *
+ * Identity → user_id mapping (used by permissions module if installed):
+ *   - localhost      → "webchat:local-owner"
+ *   - bearer         → "webchat:owner"  (one shared identity per token)
+ *   - tailscale      → "webchat:tailscale:<email>"
+ *   - proxy-header   → "webchat:<x-forwarded-user>"
+ *
+ * Privilege model:
+ *   - First identity to log in is auto-granted role='owner' (when permissions
+ *     module is installed). Subsequent identities have no role until granted.
+ *   - Admin operations (create/delete/wire agents) gated on hasAdminPrivilege().
+ *   - Without the permissions module, the gate degrades to "single trusted
+ *     operator" — anyone with bearer/proxy access has full control.
+ *
+ * Schema lives in central DB (see migration.ts):
+ *   - webchat_rooms        room metadata (id, name, created_at)
+ *   - webchat_messages     full message log for PWA history view
+ *   - webchat_push_subscriptions  Web Push endpoints
+ *
+ * The adapter mirrors agent traffic into webchat_messages so the PWA has a
+ * unified history view; routing/delivery still flows through v2's session
+ * DBs (inbound.db / outbound.db) like every other channel.
+ */
+// Side-effect import — must run before any transitive webchat import that
+// reads `process.env.WEBCHAT_*` at module load (auth.ts, server.ts, push.ts,
+// drafter.ts). See env-load.ts for the rationale.
+import './env-load.js';
+
+import { randomUUID } from 'crypto';
+
+import { log } from '../../log.js';
+import { readEnvFile } from '../../env.js';
+import { getAgentGroup } from '../../db/agent-groups.js';
+import { createMessagingGroup, getMessagingGroup, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
+import { registerContainerConfigAugmentor, registerLearningClassifierResolver } from '../../container-runtime.js';
+import { registerA2aRouteObserver } from '../../modules/agent-to-agent/agent-route.js';
+import { classifierParamsForModel } from './models.js';
+import { registerChannelAdapter } from '../channel-registry.js';
+import type { AgentActivityStatus, ChannelAdapter, ChannelSetup, OutboundMessage } from '../adapter.js';
+import { redactSensitiveData } from './redact.js';
+import { startWebchatServer, stopWebchatServer, type WebchatServer } from './server.js';
+import { sweepMcpHealth } from './mcp-health.js';
+import { startMcpRelay, stopMcpRelay } from './mcp-relay.js';
+import {
+  APPROVAL_INBOX_PREFIX,
+  deleteWebchatApprovalIndex,
+  findActiveAgentForWebchatRoom,
+  getAssignedModelForAgent,
+  getEffectiveModelForAgent,
+  getWebchatApprovalInboxes,
+  getWebchatRoom,
+  isApprovalInbox,
+  markRoomApprovalResolved,
+  markRoomSkillDraftResolved,
+  skillDraftCardPosition,
+  recordWebchatApproval,
+  storeWebchatApprovalCard,
+  storeWebchatSkillDraftCard,
+  storeWebchatMessage,
+  storeWebchatFileMessage,
+  sessionKeyToThread,
+  userForApprovalInbox,
+  type FileMeta,
+  type WebchatRoomAgent,
+} from './db.js';
+import {
+  broadcast,
+  pushApprovalResolvedToUser,
+  pushApprovalToUser,
+  recordTurnStart,
+  recordTurnEnd,
+  surfaceA2aMessage,
+} from './state.js';
+import {
+  registerApprovalIntercept,
+  registerApprovalRequestedListener,
+  registerApprovalResolvedHandler,
+} from '../../modules/approvals/primitive.js';
+import { maybePrejudgeApproval } from '../../modules/approvals/prejudge.js';
+import { startReconcileLoop, stopReconcileLoop } from './reconcile.js';
+import {
+  registerSkillDraftProposedListener,
+  registerSkillDraftResolvedListener,
+} from '../../modules/learning/events.js';
+import { listSkillDrafts, resolveSkillDraft } from '../../db/skill-drafts.js';
+
+export const CHANNEL_TYPE = 'webchat';
+
+function isEnabled(): boolean {
+  return process.env.WEBCHAT_ENABLED === 'true';
+}
+
+function createAdapter(): ChannelAdapter {
+  let server: WebchatServer | null = null;
+  // Captured at setup() time so deliver()'s loop-back fan-out can re-enter
+  // the router. Null before setup, immutable after.
+  let adapterConfig: ChannelSetup | null = null;
+
+  const adapter: ChannelAdapter = {
+    name: 'webchat',
+    channelType: CHANNEL_TYPE,
+    // Threads on: the router keys a per-thread session per (room, thread). A
+    // null/main thread keys the legacy null-thread session, so thread-less rooms
+    // are unchanged until the client sends a real thread id. See
+    // docs/webchat/threads.md and threadToSessionKey().
+    supportsThreads: true,
+
+    async setup(config: ChannelSetup): Promise<void> {
+      adapterConfig = config;
+      server = await startWebchatServer({
+        onInbound: (roomId, message, threadId) => {
+          // Surface the room's display name to the router so messaging_groups
+          // gets a friendly label on first sight (mirrors discord/slack).
+          const room = getWebchatRoom(roomId);
+          if (room) {
+            config.onMetadata(roomId, room.name, true);
+          }
+          // Standard inbound — userId resolution + access gating happens in
+          // the router/permissions module via the `senderId` field that the
+          // server attaches to message.content. threadId is the session key.
+          void config.onInbound(roomId, threadId, message);
+        },
+        onAction: (questionId, selectedOption, userId) => {
+          config.onAction(questionId, selectedOption, userId);
+        },
+      });
+      log.info('Webchat channel listening', { host: server.host, port: server.port, tls: server.tls });
+      // Reconcile loop — recovers messages lost to a known race where
+      // trunk's deliveryAdapter wrapper can transiently log "No adapter
+      // for channel type webchat" and mark a message delivered without
+      // actually delivering. See reconcile.ts for details.
+      startReconcileLoop(server);
+      // Hourly draft-expiry sweep (see sweepExpiredSkillDrafts above).
+      draftExpiryTimer = setInterval(
+        () => {
+          try {
+            sweepExpiredSkillDrafts();
+          } catch (err) {
+            log.error('Draft expiry sweep failed', { err });
+          }
+        },
+        60 * 60 * 1000,
+      );
+      // MCP auth relay (credentials stay host-side) + hourly health/drift sweep.
+      startMcpRelay();
+      mcpHealthTimer = setInterval(
+        () => {
+          sweepMcpHealth().catch((err) => log.error('MCP health sweep failed', { err }));
+        },
+        60 * 60 * 1000,
+      );
+      // First pass shortly after boot so the MCP tab has fresh status.
+      setTimeout(() => {
+        sweepMcpHealth().catch((err) => log.error('MCP health sweep failed', { err }));
+      }, 30_000).unref?.();
+      // Agents spawned outside the PWA (e.g. via a2a's `create_agent` MCP
+      // tool) intentionally have no webchat wiring. The operator wires
+      // them into rooms on demand — agents are entities, rooms are
+      // conversation spaces, and we don't conflate the two.
+    },
+
+    async teardown(): Promise<void> {
+      stopReconcileLoop();
+      stopMcpRelay();
+      if (mcpHealthTimer) {
+        clearInterval(mcpHealthTimer);
+        mcpHealthTimer = null;
+      }
+      if (draftExpiryTimer) {
+        clearInterval(draftExpiryTimer);
+        draftExpiryTimer = null;
+      }
+      if (server) {
+        await stopWebchatServer(server);
+        server = null;
+      }
+    },
+
+    isConnected(): boolean {
+      return server !== null;
+    },
+
+    async openDM(handle: string): Promise<string> {
+      // Per-user approval inbox: synthetic messaging_groups row keyed on the
+      // handle, hidden from the room list. requestApproval() ultimately calls
+      // adapter.deliver(channel_type='webchat', platform_id=this) which we
+      // route to a per-user WS push instead of storing as a chat message.
+      const platformId = `${APPROVAL_INBOX_PREFIX}${handle}`;
+      if (!getMessagingGroupByPlatform('webchat', platformId)) {
+        createMessagingGroup({
+          id: randomUUID(),
+          channel_type: 'webchat',
+          platform_id: platformId,
+          name: `Approvals (${handle})`,
+          is_group: 0,
+          unknown_sender_policy: 'public',
+          created_at: new Date().toISOString(),
+        });
+      }
+      return platformId;
+    },
+
+    async deliver(platformId, threadId, message: OutboundMessage): Promise<string | undefined> {
+      if (!server) return undefined;
+
+      // Approval inbox path: ask_question payloads (and only those) to a
+      // synthetic approvals: platform_id push to the connected approver's
+      // clients via WS. They never become chat messages.
+      if (isApprovalInbox(platformId)) {
+        const handle = platformId.slice(APPROVAL_INBOX_PREFIX.length);
+        const approverUserId = `webchat:${handle}`;
+        const content = message.content as Record<string, unknown> | string | undefined;
+        if (content && typeof content === 'object' && content.type === 'ask_question') {
+          // Stamp the approval into the webchat-side index so the PWA's
+          // /api/approvals/pending query can find it later. We do this in
+          // the deliver() path rather than relying on trunk's
+          // requestApproval to populate pending_approvals.platform_id.
+          // (The questionId field on the ask_question card IS the
+          // pending_approvals.approval_id.)
+          const approvalId = (content as { questionId?: unknown }).questionId;
+          if (typeof approvalId === 'string' && approvalId.length > 0) {
+            recordWebchatApproval(approvalId, platformId);
+          } else {
+            log.warn('Webchat: ask_question card missing questionId — approval not indexed', {
+              platformId,
+            });
+          }
+          pushApprovalToUser(approverUserId, content);
+        } else {
+          log.warn('Webchat: non-ask_question delivery to approval inbox dropped', {
+            platformId,
+            kind: typeof content === 'object' ? (content as { type?: string }).type : typeof content,
+          });
+        }
+        return undefined;
+      }
+
+      const roomId = platformId;
+      const room = getWebchatRoom(roomId);
+      if (!room) {
+        log.warn('Webchat deliver: unknown room', { roomId });
+        return undefined;
+      }
+      // Resolve the producing agent. Prefer the agent_group_id threaded
+      // through `message.senderAgentGroupId` from delivery.ts — that's the
+      // ground truth (we know exactly which session emitted the message
+      // because we polled its outbound.db). Fall back to the heuristic only
+      // for legacy paths that don't set the field (defensive — should be
+      // populated for all real deliveries after the threading change).
+      let producer = message.senderAgentGroupId ? lookupAgentForMessage(message.senderAgentGroupId) : null;
+      if (!producer) producer = findActiveAgentForWebchatRoom(roomId);
+      const senderName = producer?.name ?? agentDisplayName();
+      const text = extractText(message);
+      // The reply belongs to the producing session's thread. The session key
+      // (null = main) maps back to the stored/UI thread id.
+      // roomId lets this reject a per-member session key masquerading as a
+      // thread id (see sessionKeyToThread) instead of minting a phantom thread.
+      const storeThread = sessionKeyToThread(threadId, roomId);
+      let storedMessageId: string | null = null;
+      if (text !== null && text.length > 0) {
+        const stored = storeWebchatMessage(roomId, senderName, 'agent', text, storeThread);
+        server.broadcast(roomId, { type: 'message', ...stored });
+        storedMessageId = stored.id;
+      }
+      // File attachments: stored as separate file messages so the PWA renders
+      // them inline. Each file gets its own message_type='file' row.
+      if (message.files && message.files.length > 0) {
+        for (const file of message.files) {
+          const meta: FileMeta = {
+            url: server.persistOutboundFile(roomId, file),
+            filename: file.filename,
+            mime: guessMime(file.filename),
+            size: file.data.length,
+          };
+          const stored = storeWebchatFileMessage(roomId, senderName, 'agent', file.filename, meta, storeThread);
+          server.broadcast(roomId, { type: 'message', ...stored });
+        }
+      }
+      // Loop-back fan-out: re-enter the router so other wired agents in this
+      // room can react to the producer's text (matches the "agents talk in
+      // the room" mental model). Guarded by:
+      //   • self-exclusion in router (the producer never re-engages itself)
+      //   • prime-skip in router  (catch-all wirings don't fire on agent posts)
+      //   • per-room rate limit   (circuit breaker against pathological chains)
+      // Skipped when producer can't be resolved or there's no text payload
+      // (files alone don't trigger — no @-mention to match against).
+      if (adapterConfig && producer && text !== null && text.length > 0 && shouldLoopBack(roomId)) {
+        const senderAgentGroupId = producer.id;
+        const loopbackId =
+          storedMessageId ?? `webchat-loopback-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        // Display attribution goes through `author.fullName` / `author.userName`
+        // — fields the container-side formatter reads for sender labels but
+        // which the permissions senderResolver ignores for identity (no
+        // `author.userId` set → no fallback user row created). Using a plain
+        // `sender` here would auto-create `webchat:<AgentName>` rows in the
+        // users table on every loop-back, cluttering the permissions tab with
+        // pseudo-users that have no roles or memberships.
+        adapterConfig.onInbound(roomId, threadId, {
+          id: loopbackId,
+          kind: 'chat',
+          content: {
+            text,
+            author: { fullName: senderName, userName: senderName },
+            senderAgentGroupId,
+          },
+          timestamp: new Date().toISOString(),
+          isMention: false,
+          isGroup: true,
+          senderAgentGroupId,
+        });
+      }
+      return undefined;
+    },
+
+    async setTyping(platformId, _threadId, agentName): Promise<void> {
+      if (!server) return;
+      server.broadcast(platformId, {
+        type: 'typing',
+        room_id: platformId,
+        // Prefer the actual typing agent's name (multi-agent rooms); fall back to
+        // the room's default agent for older callers that don't pass it.
+        identity: agentName || senderForRoom(platformId),
+        identity_type: 'agent',
+        is_typing: true,
+      });
+    },
+    async sendStatus(platformId, _threadId, status: AgentActivityStatus): Promise<void> {
+      if (!server) return;
+      // Redact before broadcast — tool targets (file paths, commands) and
+      // reasoning summaries can echo secrets. The whole room sees this frame.
+      const redact = (s: string | null): string | null => (s == null ? null : redactSensitiveData(s));
+      // Track turn lifecycle so a client that re-joins mid-turn can replay the
+      // bubble (a leave→return otherwise loses it — status frames are ephemeral
+      // and room-scoped). Fall back to a stable key when the frame is unnamed.
+      const turnAgent = status.agentName ?? '';
+      if (status.kind === 'start') recordTurnStart(platformId, turnAgent);
+      else if (status.kind === 'done' || status.kind === 'stalled') recordTurnEnd(platformId, turnAgent);
+      server.broadcast(platformId, {
+        type: 'status',
+        room_id: platformId,
+        agent_name: status.agentName ?? null,
+        event: status.kind,
+        text: redact(status.text),
+        detail: redact(status.detail),
+      });
+    },
+  };
+
+  return adapter;
+}
+
+// Per-room sliding-window rate limiter for agent-authored loop-back events.
+// Circuit breaker for pathological chains that escape self-exclusion and
+// prime-skip (e.g. two agents @-mentioning each other in their replies).
+// 30 events / 60s per room — generous enough that legitimate "FOMC posts,
+// Advisor replies, Executor confirms" multi-hop conversations sail through;
+// tight enough that an infinite ping-pong gets clipped quickly.
+const LOOPBACK_WINDOW_MS = 60_000;
+const LOOPBACK_MAX_PER_WINDOW = 30;
+const loopbackHistory = new Map<string, number[]>();
+
+function shouldLoopBack(roomId: string): boolean {
+  const now = Date.now();
+  const cutoff = now - LOOPBACK_WINDOW_MS;
+  const recent = (loopbackHistory.get(roomId) ?? []).filter((t) => t >= cutoff);
+  if (recent.length >= LOOPBACK_MAX_PER_WINDOW) {
+    log.warn('Webchat: loop-back rate limit hit, dropping agent fan-out', {
+      roomId,
+      windowMs: LOOPBACK_WINDOW_MS,
+      cap: LOOPBACK_MAX_PER_WINDOW,
+    });
+    loopbackHistory.set(roomId, recent);
+    return false;
+  }
+  recent.push(now);
+  loopbackHistory.set(roomId, recent);
+  return true;
+}
+
+/**
+ * Exact lookup of an agent by id, returning the WebchatRoomAgent shape.
+ * Used when delivery.ts threads the producing agent's id through; no
+ * heuristic, no most-recently-active race. Returns null if the agent
+ * vanished between produce-time and deliver-time (shouldn't happen in
+ * practice — agents don't disappear mid-flight).
+ */
+function lookupAgentForMessage(agentGroupId: string): WebchatRoomAgent | null {
+  const ag = getAgentGroup(agentGroupId);
+  return ag ? { id: ag.id, name: ag.name, folder: ag.folder } : null;
+}
+
+function extractText(message: OutboundMessage): string | null {
+  const content = message.content as Record<string, unknown> | string | undefined;
+  if (typeof content === 'string') return content;
+  if (content && typeof content === 'object' && typeof content.text === 'string') {
+    return content.text;
+  }
+  return null;
+}
+
+function agentDisplayName(): string {
+  return process.env.AGENT_DISPLAY_NAME || 'Agent';
+}
+
+/**
+ * Resolve the agent display name for a webchat room, preferring the actual
+ * agent_groups.name over the generic env-default fallback. Single-agent
+ * rooms get an exact answer; multi-agent rooms pick the most-recently-
+ * active session (the producer of the in-flight response). Falls back to
+ * the AGENT_DISPLAY_NAME env (or 'Agent') if no wired agents are found —
+ * shouldn't happen in normal operation but keeps the deliver path safe.
+ */
+function senderForRoom(roomId: string): string {
+  const agent = findActiveAgentForWebchatRoom(roomId);
+  return agent?.name || agentDisplayName();
+}
+
+function guessMime(filename: string): string {
+  const ext = filename.toLowerCase().split('.').pop() || '';
+  const map: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    svg: 'image/svg+xml',
+    pdf: 'application/pdf',
+    txt: 'text/plain',
+    md: 'text/markdown',
+    json: 'application/json',
+  };
+  return map[ext] ?? 'application/octet-stream';
+}
+
+registerChannelAdapter('webchat', {
+  factory: () => (isEnabled() ? createAdapter() : null),
+});
+
+// Engaged-agents routing is DISABLED for now: the per-thread engaged set + the
+// chips UI were removed (the model didn't fit the "separate conversations per
+// thread" goal). Threads route like the regular chat — mention an agent to talk
+// to it. The backend (resolveEngagedDecision, webchat_thread_engaged table,
+// /engaged endpoints) is left dormant; re-wire it via registerInboundDeliveryPlanResolver to turn
+// it back on, or remove it when the future "separate conversations" model lands.
+// See docs/webchat/thread-engaged-agents.md.
+
+// An agent is "Ollama-backed" if its webchat effective model is ollama-kind OR
+// — when it has no webchat model at all — the install's global .env
+// ANTHROPIC_BASE_URL points at Ollama (:11434). The latter covers claude-provider
+// agents that hit a local model purely via the global base URL (no per-agent
+// assignment), which is otherwise invisible to webchat. Kept conservative
+// (port match) so a cloud proxy or the LiteLLM router (:4000) is never mistaken
+// for a weak local model, and a per-agent CLOUD assignment still wins (its kind
+// isn't ollama, so no relaxation).
+function isGlobalOllamaBaseUrl(): boolean {
+  const base = readEnvFile(['ANTHROPIC_BASE_URL']).ANTHROPIC_BASE_URL ?? '';
+  return /:11434(\b|\/)/.test(base);
+}
+function isOllamaBackedAgent(agentGroupId: string): boolean {
+  const model = getEffectiveModelForAgent(agentGroupId);
+  return model ? model.kind === 'ollama' : isGlobalOllamaBaseUrl();
+}
+
+// Lenient output + prompt for ollama-backed groups. A small local model (a) rarely
+// emits the <message to="..."> envelope the runner requires — so lenientOutput
+// delivers its unwrapped prose to the origin room instead of dropping it as
+// scratchpad — and (b) drowns in the Claude provider's heavy `claude_code` system
+// prompt, hallucinating tool calls and identities — so lenientPrompt swaps that
+// preset for the plain persona/destinations instructions. Claude/anthropic groups
+// are unaffected (strict protocol + full preset preserved).
+registerContainerConfigAugmentor((agentGroupId) =>
+  isOllamaBackedAgent(agentGroupId) ? { lenientOutput: true, lenientPrompt: true } : {},
+);
+
+// Auto-default the learning classifier to the agent's OWN model when it runs on
+// a local endpoint (ollama/openai-compatible) — zero setup. Claude agents have
+// no local endpoint, so this returns null and the runner keeps the busy-turn
+// heuristic. An explicit Settings override still wins (see container-config.ts).
+registerLearningClassifierResolver((agentGroupId) => classifierParamsForModel(getEffectiveModelForAgent(agentGroupId)));
+
+// Side-channel a2a visibility: if both agents are wired to the same webchat
+// room, surface a read-only copy of each routed message there so humans can
+// watch the exchange. Registered on the a2a route seam (H11); the observer
+// wrapper isolates any failure from routing.
+registerA2aRouteObserver(({ fromAgentGroupId, toAgentGroupId, content }) => {
+  surfaceA2aMessage(fromAgentGroupId, toAgentGroupId, content);
+});
+
+// Optional LLM approval pre-judge (Settings → approvals; off by default). May
+// auto-approve an opted-in low-stakes action through the same dispatch a human
+// Approve takes. Registered on the approval-intercept seam (H6): returning
+// true skips card delivery; anything else falls through to a human.
+registerApprovalIntercept((approvalId, session, question) => maybePrejudgeApproval(approvalId, session, question));
+
+// Fan-out cleanup: when an approval resolves (first responder approves/rejects),
+// push an `approval_resolved` event to every other admin whose inbox got a copy
+// of the card so their PWA hides the stale card in real time, then drop the
+// index rows (dead pointers once the pending row is gone). Offline admins
+// refetch on reconnect, so this is purely the live clear.
+registerApprovalResolvedHandler((event) => {
+  const approvalId = event.approval.approval_id;
+  const resolvedByUserId = event.userId;
+  const indexed = getWebchatApprovalInboxes(approvalId);
+  for (const platformId of indexed) {
+    const userId = userForApprovalInbox(platformId);
+    if (userId) {
+      // An approver inbox — clear the card from that admin's inbox.
+      pushApprovalResolvedToUser(userId, approvalId, resolvedByUserId);
+    } else {
+      // The agent's room — flip the in-room card to resolved + clear live.
+      markRoomApprovalResolved(approvalId, resolvedByUserId);
+      broadcast(platformId, { type: 'approval_resolved', approvalId, resolvedBy: resolvedByUserId });
+    }
+  }
+  if (indexed.length > 0) deleteWebchatApprovalIndex(approvalId);
+});
+
+// Surface an ACTIONABLE approval card into the requesting agent's own room (in
+// addition to the per-approver inboxes), so admins can act without hunting in
+// the Approvals inbox. The room is also indexed so the resolved-listener above
+// clears the card on first response. Best-effort; webchat rooms only.
+registerApprovalRequestedListener((e) => {
+  const mg = e.session.messaging_group_id ? getMessagingGroup(e.session.messaging_group_id) : null;
+  if (!mg || mg.channel_type !== 'webchat') return;
+  const roomId = mg.platform_id;
+  const card = storeWebchatApprovalCard(roomId, e.agentName ?? 'agent', {
+    questionId: e.approvalId,
+    title: e.title,
+    question: e.question,
+    options: e.options,
+    action: e.action,
+    approvers: e.approvers,
+  });
+  recordWebchatApproval(e.approvalId, roomId);
+  broadcast(roomId, { type: 'message', ...card });
+});
+
+// Learning loop: when an agent proposes a skill, drop an actionable card into
+// ITS OWN room — that's where the work happened, so that's where the operator
+// should be able to Keep/Discard it (rather than hunting in the Skills tab).
+// Best-effort; webchat rooms only.
+registerSkillDraftProposedListener((e) => {
+  const mg = e.session.messaging_group_id ? getMessagingGroup(e.session.messaging_group_id) : null;
+  if (!mg || mg.channel_type !== 'webchat') return;
+  const roomId = mg.platform_id;
+  const card = storeWebchatSkillDraftCard(
+    roomId,
+    e.agentName,
+    {
+      draftId: e.draftId,
+      skillName: e.skillName,
+      description: e.description,
+      kind: e.kind,
+      targetSkill: e.targetSkill,
+      agentGroupId: e.agentGroupId,
+      agentName: e.agentName,
+    },
+    // Translate the SESSION key to a UI thread. Passing session.thread_id raw
+    // wrote per-member composite keys straight into webchat_messages, creating
+    // threads nothing could open — this listener bypassed the translation that
+    // the normal reply path already did.
+    sessionKeyToThread(e.session.thread_id, roomId),
+  );
+  broadcast(roomId, { type: 'message', ...card });
+});
+
+// Auto-keep (or any non-webchat resolution) still flips the in-room card, so
+// the room shows '✅ … kept' instead of dangling actionable buttons for a
+// draft that no longer exists.
+registerSkillDraftResolvedListener((e) => {
+  const flipped = markRoomSkillDraftResolved(e.draftId, e.outcome, e.by);
+  if (flipped) broadcast(flipped.roomId, { type: 'message', ...flipped.message });
+});
+
+/**
+ * Draft expiry: a pending draft self-discards only when BOTH are true —
+ * it's older than 24h, AND its in-room card has scrolled out of the chat
+ * (enough newer messages that nobody opening the room sees it). A card still
+ * in view stays actionable forever; age alone never kills something a human
+ * might be looking at. Drafts with no card at all (non-webchat) expire on age.
+ * Discard deletes only the draft — nothing else — so the worst case of a wrong
+ * expiry is re-running /learn.
+ */
+export const DRAFT_EXPIRY_MS = 24 * 60 * 60 * 1000;
+export const DRAFT_SCROLLED_AWAY_MESSAGES = 30;
+
+export function draftHasExpired(ageMs: number, card: { newerMessages: number } | null): boolean {
+  if (ageMs < DRAFT_EXPIRY_MS) return false;
+  if (card === null) return true; // no card anywhere — nothing keeps it in view
+  return card.newerMessages >= DRAFT_SCROLLED_AWAY_MESSAGES;
+}
+
+export function sweepExpiredSkillDrafts(): number {
+  let expired = 0;
+  for (const d of listSkillDrafts()) {
+    const age = Date.now() - d.created_at;
+    if (!draftHasExpired(age, skillDraftCardPosition(d.id))) continue;
+    if (!resolveSkillDraft(d.id, 'discarded')) continue;
+    expired++;
+    const flipped = markRoomSkillDraftResolved(d.id, 'discarded', 'expired');
+    if (flipped) broadcast(flipped.roomId, { type: 'message', ...flipped.message });
+    log.info('Skill draft expired', { id: d.id, skill: d.skill_name, ageHours: Math.round(age / 3_600_000) });
+  }
+  return expired;
+}
+
+let draftExpiryTimer: ReturnType<typeof setInterval> | null = null;
+let mcpHealthTimer: ReturnType<typeof setInterval> | null = null;

@@ -1,0 +1,143 @@
+name: Compose
+
+# The product gate: compose a full nanoclaw+webchat tree from this repo's
+# app/patches against the pinned base + seam, run BOTH suites in the
+# composed tree, and publish the composed tarball as the build artifact —
+# the same artifact a release attaches for the Proxmox / deploy flows.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: compose-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      # Anonymous checkout: on some runners the per-job task token is refused
+      # for repos under this owner. The repo is public, so fetch without
+      # credentials rather than depending on token auth working.
+      - name: checkout (anonymous)
+        run: |
+          git init -q .
+          git remote add origin ${{ github.server_url }}/${{ github.repository }}.git
+          git fetch -q --depth 1 origin ${{ github.sha }}
+          git checkout -q FETCH_HEAD
+      # No actions/setup-node here: it breaks on some Actions implementations,
+      # and the runner image already ships a current Node.
+      - uses: pnpm/action-setup@v4
+        with:
+          # This repo has no package.json for the action to infer from — the
+          # composed TREE is what pnpm operates on. Keep in step with the
+          # base's packageManager field.
+          version: 10.33.0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.12
+
+      - name: Compose (clone base + seam, overlay, patch, register, build)
+        env:
+          # Optional seam override for runners that host a closer mirror of the
+          # seam. Left unset — the normal case — install.sh uses versions.json's
+          # seamRepo, the public seam. Set the NANOCLAW_SEAM_REPO repository
+          # variable to point somewhere else; no location is hardcoded here.
+          #
+          # Either way the gate depends on seamRef being reachable from the
+          # PUBLIC seam, which release.sh already required: it composes from the
+          # public pins, and a pin reachable only from a mirror fails the
+          # release with "not reachable from branch pub/module-hooks".
+          NANOCLAW_WEBCHAT_SEAM_REPO: ${{ vars.NANOCLAW_SEAM_REPO }}
+          SKIP_CONTAINER_BUILD: '1'
+          # The runner image ships Node 24; .nvmrc pins 22. That combination is
+          # proven here — it installs, passes install.sh's own better-sqlite3
+          # native-binding verification, and runs both suites green. There is no
+          # actions/setup-node to change it (broken on some runners) and no
+          # mise in the image, so opt out of the .nvmrc major check explicitly.
+          # The binding verification remains the real gate.
+          NANOCLAW_ALLOW_NODE_MISMATCH: '1'
+        run: bash install.sh --dir "$RUNNER_TEMP/composed"
+
+      - name: Manifest guard self-test (proves it still detects faults)
+        # Runs against throwaway fixtures, never the repo's own tree. A guard
+        # only ever seen to pass is not evidence.
+        run: bash scripts/check-manifest.selftest.sh
+
+      - name: Manifest integrity (migrations register; dev tree matches)
+        # Reference-free. Catches the silent one: a migration file with no
+        # manifest entry ships into installs and never runs. This replaced the
+        # fork-diff coverage guard when channels-webchat was decommissioned —
+        # see docs/coverage-guards.md.
+        run: bash scripts/check-manifest.sh
+
+      - name: Format (owned files are prettier-clean)
+        # The composed tree carries upstream's format:fix pre-commit hook. If our
+        # payload is not already clean, that hook rewrites files during a deploy
+        # commit and the running install stops matching the released artifact.
+        # Scoped to paths this repo owns, so upstream drift can never redden a
+        # gate we cannot fix.
+        run: bash scripts/check-format.sh "$RUNNER_TEMP/composed"
+
+      - name: Host tests (composed tree)
+        working-directory: ${{ runner.temp }}/composed
+        # vitest's 5s default is tuned for a developer machine. These suites do
+        # real SQLite file IO (journal_mode=DELETE is load-bearing for
+        # cross-mount visibility), and inside a contended runner container the
+        # same tests that pass in ~2.5-4s locally cross 5s and time out — 22 of
+        # them in one observed run, every failure a timeout and not one a failed
+        # assertion. Raising the ceiling here (this workflow is repo-B-owned, so
+        # it needs no patch against upstream) removes the false red without
+        # weakening a single assertion.
+        run: pnpm exec vitest run --testTimeout=30000 --hookTimeout=30000
+
+      - name: Container typecheck + tests (composed tree)
+        working-directory: ${{ runner.temp }}/composed/container/agent-runner
+        run: |
+          # Plain install (not --frozen-lockfile): the composed tree carries
+          # upstream's bun.lock while the app tree adds runner sources; the
+          # proven local compose flow installs the same way.
+          bun install
+          bun run typecheck
+          bun test
+
+      - name: Pack composed tarball
+        run: |
+          cd "$RUNNER_TEMP"
+          # Ship sources, not installs: node_modules re-materialize from the
+          # lockfile on the target; .git stays out of release artifacts.
+          tar --exclude='./composed/node_modules' \
+              --exclude='./composed/container/agent-runner/node_modules' \
+              --exclude='./composed/.git' \
+              -czf nanoclaw-webchat-composed.tar.gz ./composed
+          ls -lh nanoclaw-webchat-composed.tar.gz
+
+      # Two Actions implementations need DIFFERENT major versions here, and no
+      # single version satisfies both:
+      #
+      #   GitHub          hard-blocks v3 (deprecated April 2024). A run using it
+      #                   fails at admission, before any step executes.
+      #   Other runners   may implement only the v3 artifact protocol. v4 needs
+      #                   ACTIONS_RESULTS_URL; without it the action dies with
+      #                   `TypeError: Invalid URL … input: '/api/v1'`.
+      #
+      # `uses:` cannot take an expression, so the choice has to be `if:` across
+      # two steps. Keep their inputs in step with each other.
+      - name: Upload composed tarball (GitHub)
+        if: github.server_url == 'https://github.com'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanoclaw-webchat-composed
+          path: ${{ runner.temp }}/nanoclaw-webchat-composed.tar.gz
+          retention-days: 14
+
+      - name: Upload composed tarball (non-GitHub runner)
+        if: github.server_url != 'https://github.com'
+        uses: actions/upload-artifact@v3
+        with:
+          name: nanoclaw-webchat-composed
+          path: ${{ runner.temp }}/nanoclaw-webchat-composed.tar.gz
+          retention-days: 14

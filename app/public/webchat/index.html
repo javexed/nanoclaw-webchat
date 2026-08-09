@@ -1,0 +1,3127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1a1a2e" />
+    <title>NanoClaw Chat</title>
+    <link rel="manifest" href="/manifest.json" />
+    <!-- Declare an icon so the browser doesn't fall back to a (404) /favicon.ico -->
+    <link rel="icon" type="image/png" href="/icon-192.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <!-- Lucide icon sprite (stroke styling via .icon in style.css; follows currentColor). -->
+    <svg aria-hidden="true" focusable="false" style="position: absolute; width: 0; height: 0; overflow: hidden">
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-paperclip" viewBox="0 0 24 24">
+        <path
+          d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"
+        />
+      </symbol>
+      <symbol id="i-camera" viewBox="0 0 24 24">
+        <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" />
+        <circle cx="12" cy="13" r="3" />
+      </symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24">
+        <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+      </symbol>
+      <symbol id="i-key" viewBox="0 0 24 24">
+        <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L21 4" />
+        <path d="m21 2-9.6 9.6" />
+        <circle cx="7.5" cy="15.5" r="5.5" />
+      </symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24">
+        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+        <line x1="12" x2="12" y1="19" y2="22" />
+      </symbol>
+      <symbol id="i-triangle-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3z" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+      <symbol id="i-info" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 16v-4" />
+        <path d="M12 8h.01" />
+      </symbol>
+      <symbol id="i-layout-dashboard" viewBox="0 0 24 24">
+        <rect width="7" height="9" x="3" y="3" rx="1" />
+        <rect width="7" height="5" x="14" y="3" rx="1" />
+        <rect width="7" height="9" x="14" y="12" rx="1" />
+        <rect width="7" height="5" x="3" y="16" rx="1" />
+      </symbol>
+      <symbol id="i-graduation-cap" viewBox="0 0 24 24">
+        <path d="M21.42 10.922a1 1 0 0 0-.019-1.838L12.83 5.18a2 2 0 0 0-1.66 0L2.6 9.08a1 1 0 0 0 0 1.832l8.57 3.908a2 2 0 0 0 1.66 0z" />
+        <path d="M22 10v6" />
+        <path d="M6 12.5V16a6 3 0 0 0 12 0v-3.5" />
+      </symbol>
+      <symbol id="i-sparkles" viewBox="0 0 24 24">
+        <path
+          d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .962 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.962 0z"
+        />
+        <path d="M20 3v4" />
+        <path d="M22 5h-4" />
+        <path d="M4 17v2" />
+        <path d="M5 18H3" />
+      </symbol>
+      <symbol id="i-link" viewBox="0 0 24 24">
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+      </symbol>
+      <symbol id="i-folder" viewBox="0 0 24 24">
+        <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+      </symbol>
+      <symbol id="i-rotate-cw" viewBox="0 0 24 24">
+        <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+      </symbol>
+      <symbol id="i-volume-2" viewBox="0 0 24 24">
+        <path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z" />
+        <path d="M16 9a5 5 0 0 1 0 6" />
+        <path d="M19.364 18.364a9 9 0 0 0 0-12.728" />
+      </symbol>
+      <symbol id="i-square" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" />
+      </symbol>
+      <symbol id="i-bot" viewBox="0 0 24 24">
+        <path d="M12 8V4H8" />
+        <rect width="16" height="12" x="4" y="8" rx="2" />
+        <path d="M2 14h2" />
+        <path d="M20 14h2" />
+        <path d="M15 13v2" />
+        <path d="M9 13v2" />
+      </symbol>
+      <symbol id="i-cpu" viewBox="0 0 24 24">
+        <rect width="16" height="16" x="4" y="4" rx="2" />
+        <rect width="6" height="6" x="9" y="9" rx="1" />
+        <path d="M15 2v2" />
+        <path d="M15 20v2" />
+        <path d="M2 15h2" />
+        <path d="M2 9h2" />
+        <path d="M20 15h2" />
+        <path d="M20 9h2" />
+        <path d="M9 2v2" />
+        <path d="M9 20v2" />
+      </symbol>
+      <symbol id="i-plug" viewBox="0 0 24 24">
+        <path d="M12 22v-5" />
+        <path d="M9 8V2" />
+        <path d="M15 8V2" />
+        <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
+      </symbol>
+      <symbol id="i-book-open" viewBox="0 0 24 24">
+        <path d="M12 7v14" />
+        <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-ellipsis" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="1" />
+        <circle cx="19" cy="12" r="1" />
+        <circle cx="5" cy="12" r="1" />
+      </symbol>
+      <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-star" viewBox="0 0 24 24">
+        <path
+          d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"
+        />
+      </symbol>
+      <symbol id="i-image" viewBox="0 0 24 24">
+        <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+        <circle cx="9" cy="9" r="2" />
+        <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+      </symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24">
+        <path d="M12 17v5" />
+        <path
+          d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"
+        />
+      </symbol>
+      <symbol id="i-file-text" viewBox="0 0 24 24">
+        <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z" />
+        <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+        <path d="M10 9H8" />
+        <path d="M16 13H8" />
+        <path d="M16 17H8" />
+      </symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24">
+        <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+        <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+      </symbol>
+      <symbol id="i-user" viewBox="0 0 24 24">
+        <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+        <circle cx="12" cy="7" r="4" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 24 24">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <path d="m7 10 5 5 5-5" />
+        <path d="M12 15V3" />
+      </symbol>
+      <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></symbol>
+      <symbol id="i-sort" viewBox="0 0 24 24"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/></symbol>
+      <symbol id="i-arrow-down" viewBox="0 0 24 24">
+        <path d="M12 5v14" />
+        <path d="m19 12-7 7-7-7" />
+      </symbol>
+      <symbol id="i-arrow-up" viewBox="0 0 24 24">
+        <path d="M12 19V5" />
+        <path d="m5 12 7-7 7 7" />
+      </symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24">
+        <path d="M3 6h18" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+      </symbol>
+      <symbol id="i-route" viewBox="0 0 24 24">
+        <circle cx="6" cy="19" r="3" />
+        <path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15" />
+        <circle cx="18" cy="5" r="3" />
+      </symbol>
+      <symbol id="i-workflow" viewBox="0 0 24 24">
+        <rect width="8" height="8" x="3" y="3" rx="2" />
+        <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+        <rect width="8" height="8" x="13" y="13" rx="2" />
+      </symbol>
+      <symbol id="i-share" viewBox="0 0 24 24">
+        <circle cx="18" cy="5" r="3" />
+        <circle cx="6" cy="12" r="3" />
+        <circle cx="18" cy="19" r="3" />
+        <line x1="8.59" x2="15.42" y1="13.51" y2="17.49" />
+        <line x1="15.41" x2="8.59" y1="6.51" y2="10.49" />
+      </symbol>
+    </svg>
+    <!-- Login screen (shown when auth required) -->
+    <div id="login-screen" class="login-screen" hidden>
+      <div class="login-card">
+        <img class="logo logo-dark" src="/logo-dark.svg" alt="NanoClaw" style="height: 32px; margin-bottom: 16px" />
+        <img class="logo logo-light" src="/logo-light.svg" alt="NanoClaw" style="height: 32px; margin-bottom: 16px" />
+        <p class="login-subtitle">Enter your access token to continue</p>
+        <form id="login-form" class="login-form">
+          <input id="login-token" type="password" placeholder="Access Token (paste here)" autocomplete="off" required />
+          <button type="submit" class="btn btn-primary">Connect</button>
+        </form>
+        <p id="login-error" class="login-error" hidden></p>
+      </div>
+    </div>
+
+    <div id="app">
+      <!-- Fixed overlay (out of flow): must render from BOTH panes, so it
+           can't live inside #chat, which is display:none on the mobile room
+           list — display:none kills fixed descendants too. -->
+      <div id="connection-banner" class="connection-banner">Connection lost. Reconnecting…</div>
+      <nav id="sidebar">
+        <div class="sidebar-header">
+          <div class="sidebar-header-row">
+            <img class="logo logo-dark" src="/logo-dark.svg" alt="NanoClaw" />
+            <img class="logo logo-light" src="/logo-light.svg" alt="NanoClaw" />
+            <button id="dash-btn" class="settings-btn" aria-label="Dashboard" title="Dashboard">
+              <svg class="icon" aria-hidden="true"><use href="#i-layout-dashboard"></use></svg>
+            </button>
+            <div class="overflow-wrap">
+              <button
+                id="overflow-btn"
+                class="settings-btn"
+                aria-label="Menu"
+                aria-haspopup="true"
+                aria-expanded="false"
+                title="Menu"
+              >
+                <svg class="icon" aria-hidden="true"><use href="#i-ellipsis"></use></svg>
+                <span id="learn-drafts-dot" class="menu-count menu-count-dot" hidden></span>
+              </button>
+              <div id="overflow-menu" class="overflow-menu" hidden role="menu">
+                <button class="overflow-item" data-action="agents" role="menuitem">
+                  <svg class="icon" aria-hidden="true"><use href="#i-bot"></use></svg>&nbsp;&nbsp;Agents
+                </button>
+                <button class="overflow-item" data-action="routing" role="menuitem" hidden>
+                  <svg class="icon" aria-hidden="true"><use href="#i-route"></use></svg>&nbsp;&nbsp;Auto routing
+                </button>
+                <button class="overflow-item" data-action="models" role="menuitem">
+                  <svg class="icon" aria-hidden="true"><use href="#i-cpu"></use></svg>&nbsp;&nbsp;Models
+                </button>
+                <button id="overflow-mcp" class="overflow-item" data-action="mcp" role="menuitem" hidden>
+                  <svg class="icon" aria-hidden="true"><use href="#i-plug"></use></svg>&nbsp;&nbsp;MCP
+                </button>
+                <button id="overflow-skills" class="overflow-item" data-action="skills" role="menuitem" hidden>
+                  <svg class="icon" aria-hidden="true"><use href="#i-book-open"></use></svg>&nbsp;&nbsp;Skills
+                  <span id="learn-drafts-count" class="menu-count" hidden></span>
+                </button>
+                <button id="overflow-journey" class="overflow-item" data-action="journey" role="menuitem" hidden>
+                  <svg class="icon" aria-hidden="true"><use href="#i-graduation-cap"></use></svg>&nbsp;&nbsp;Skills journey
+                </button>
+                <button class="overflow-item" data-action="floor" role="menuitem">
+                  <svg class="icon" aria-hidden="true"><use href="#i-cpu"></use></svg>&nbsp;&nbsp;Floor
+                </button>
+                <button class="overflow-item" data-action="topology" role="menuitem">
+                  <svg class="icon" aria-hidden="true"><use href="#i-workflow"></use></svg>&nbsp;&nbsp;Topology
+                </button>
+                <button class="overflow-item" data-action="wiring" role="menuitem">
+                  <svg class="icon" aria-hidden="true"><use href="#i-share"></use></svg>&nbsp;&nbsp;Wiring
+                </button>
+                <button
+                  id="overflow-permissions"
+                  class="overflow-item"
+                  data-action="permissions"
+                  role="menuitem"
+                  hidden
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg>&nbsp;&nbsp;Permissions
+                </button>
+                <button
+                  id="overflow-admin"
+                  class="overflow-item"
+                  data-action="admin"
+                  role="menuitem"
+                  hidden
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-shield"></use></svg>&nbsp;&nbsp;Admin
+                </button>
+                <button class="overflow-item" data-action="settings" role="menuitem">
+                  <svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>&nbsp;&nbsp;Settings
+                </button>
+                <button class="overflow-item" data-action="help" role="menuitem">
+                  <svg class="icon" aria-hidden="true"><use href="#i-help"></use></svg>&nbsp;&nbsp;Help
+                </button>
+              </div>
+            </div>
+          </div>
+          <span id="identity" class="identity"></span>
+        </div>
+        <div id="approvals-banner" class="approvals-banner" hidden>
+          <button class="approvals-banner-header" id="approvals-banner-toggle" type="button" aria-expanded="false">
+            <span class="approvals-banner-icon"
+              ><svg class="icon" aria-hidden="true"><use href="#i-triangle-alert"></use></svg
+            ></span>
+            <span class="approvals-banner-text"><span id="approvals-count">0</span> approval pending</span>
+            <span class="approvals-banner-chevron"
+              ><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"></use></svg
+            ></span>
+          </button>
+          <ul id="approval-list" class="approvals-banner-list" hidden></ul>
+        </div>
+        <div id="tab-rooms" class="tab-content active">
+          <div class="room-search-wrap">
+            <input
+              id="room-search"
+              class="room-search"
+              type="search"
+              placeholder="Search rooms and messages…"
+              autocomplete="off"
+              aria-label="Filter rooms by name and search messages across them"
+            />
+            <button id="room-sort-az" class="search-icon-btn sort-icon-btn" type="button" aria-pressed="false" title="Sort A–Z (off = recent activity)" aria-label="Sort A–Z">
+              <svg class="icon" aria-hidden="true"><use href="#i-sort"></use></svg>
+            </button>
+            <button id="room-search-close" class="room-search-close" type="button" hidden aria-label="Close search">
+              <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+            </button>
+          </div>
+          <!-- Rooms BEFORE message hits. One box drives both — rooms filter on the
+               keystroke, messages arrive debounced — and typing a room name is
+               usually navigational: you want to land in the room, not read messages
+               that mention it. With results first, every hit pushed the matching
+               room below the fold. The filtered list is short by definition, so it
+               costs little above the results, and with no query #search-results is
+               hidden and the sidebar reads exactly as it always did. -->
+          <ul id="room-list"></ul>
+          <ul id="search-results" class="search-results" hidden></ul>
+          <button id="hidden-toggle" class="archived-toggle" type="button" hidden></button>
+          <button id="archived-toggle" class="archived-toggle" type="button" hidden></button>
+          <button id="create-room-btn" class="btn btn-secondary btn-list-footer" hidden>+ New room</button>
+          <input id="import-room-file" type="file" accept=".tgz,.gz,application/gzip" hidden />
+          <input id="import-any-file" type="file" accept=".tgz,.gz,application/gzip" hidden />
+        </div>
+      </nav>
+      <div id="approval-toasts" class="approval-toasts" aria-live="polite"></div>
+      <div id="toasts" class="toasts" aria-live="polite"></div>
+      <main id="chat">
+        <div id="chat-header">
+          <button id="mobile-back" class="mobile-back" aria-label="Back to rooms">
+            <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+          </button>
+          <!-- Title group: room name › active-thread crumb, then the in-thread
+               sync/delete controls — kept together on the left so they read as
+               one breadcrumb unit (the header itself is space-between). -->
+          <div class="chat-title-group">
+            <span id="room-name" role="button" tabindex="0" title="Room settings">Select a room</span>
+            <!-- Threads switcher — the in-room way to switch/create threads.
+                 The sidebar thread tree is hidden on mobile while in a room, so
+                 this header control is the mobile entry point (shown on mobile
+                 only; desktop has the sidebar tree). -->
+            <button id="thread-switch" class="thread-switch" type="button" hidden aria-label="Threads" title="Threads">
+              #
+            </button>
+            <!-- Active-thread breadcrumb — shown only inside a topic thread. The
+                 name is tinted with the thread's sidebar color. -->
+            <span id="thread-crumb" class="thread-crumb" hidden>
+              <svg class="icon thread-crumb-sep" aria-hidden="true"><use href="#i-chevron-right"></use></svg>
+              <span id="thread-crumb-name" class="thread-crumb-name"></span>
+            </span>
+            <!-- Thread context-sync + delete controls — shown only inside a topic
+                 thread. Pull copies the main chat into this thread; push copies
+                 this thread's messages up; delete removes the thread. See
+                 thread-context-sync.md. -->
+            <div id="thread-sync" class="thread-sync" hidden>
+              <button id="thread-pull" class="thread-sync-btn" type="button" title="Pull main chat into this thread" aria-label="Pull main chat into this thread">
+                <svg class="icon" aria-hidden="true"><use href="#i-arrow-down"></use></svg>
+              </button>
+              <button id="thread-push" class="thread-sync-btn" type="button" title="Push this thread into main chat" aria-label="Push this thread into main chat">
+                <svg class="icon" aria-hidden="true"><use href="#i-arrow-up"></use></svg>
+              </button>
+              <button
+                id="thread-delete"
+                class="thread-sync-btn thread-sync-btn--danger"
+                type="button"
+                title="Delete this thread"
+                aria-label="Delete this thread"
+              >
+                <svg class="icon" aria-hidden="true"><use href="#i-trash"></use></svg>
+              </button>
+            </div>
+          </div>
+          <div class="header-controls">
+            <button id="members-toggle" class="members-toggle" hidden aria-label="Show room members">0</button>
+            <button
+              id="handle-chip"
+              class="handle-chip"
+              type="button"
+              aria-label="Edit your handle"
+              aria-haspopup="dialog"
+              aria-expanded="false"
+            >
+              + set @handle
+            </button>
+          </div>
+        </div>
+        <!-- Handle editor popover — anchored under the header chip. Moved out of
+             Settings so the @handle lives where it's surfaced. -->
+        <div id="handle-popover" class="handle-popover" role="dialog" aria-label="Your handle" hidden>
+          <div class="handle-popover-header">
+            <span></span>
+            <button id="handle-popover-close" class="handle-popover-close" type="button" aria-label="Close">
+              <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+            </button>
+          </div>
+          <div class="handle-row">
+            <span class="handle-at">@</span>
+            <input
+              id="handle-input"
+              type="text"
+              class="handle-input"
+              placeholder="handle"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              maxlength="32"
+            />
+            <button id="handle-save" type="button" class="btn btn-secondary">Save</button>
+          </div>
+          <p id="handle-status" class="handle-status" hidden></p>
+          <!-- User credentials shortcut — shown only when the open room offers UserCreds.
+               A discoverability surface for the connect flow that also lives in the
+               in-room banner; acts on the currently open room. -->
+          <div id="handle-creds" class="handle-creds" hidden>
+            <div class="handle-creds-divider"></div>
+            <div class="handle-creds-row">
+              <span id="handle-creds-status" class="handle-creds-status">User credentials</span>
+              <button id="handle-creds-action" type="button" class="btn btn-secondary">Connect</button>
+            </div>
+          </div>
+        </div>
+        <div id="user-creds-banner" class="user-creds-banner" hidden>
+          <input
+            id="user-creds-key-input"
+            type="password"
+            placeholder="sk-ant-…"
+            autocomplete="off"
+            spellcheck="false"
+            hidden
+          />
+          <button id="user-creds-oauth-btn" type="button" hidden>Connect to Claude</button>
+          <button id="user-creds-connect-btn" type="button" class="secondary">API key</button>
+        </div>
+        <!-- Offered once the operator is on a Tailscale/SSO session as owner and the
+             shared bearer token is still live — the safe moment to retire it (e.g.
+             right after the first Tailscale login is promoted to owner). -->
+        <div id="bearer-retire-banner" class="bearer-retire-banner" hidden>
+          <span class="bearer-retire-text"
+            >You're signed in over Tailscale as owner — the shared bearer token is no longer needed.</span
+          >
+          <button id="bearer-retire-disable" type="button">Disable token</button>
+          <button id="bearer-retire-dismiss" type="button" class="secondary">Not now</button>
+        </div>
+        <div id="chat-body">
+          <div id="chat-content">
+            <div
+              id="messages-wrap"
+              style="position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column"
+            >
+              <div id="messages">
+                <div id="empty-state" class="empty-state">Select a room from the sidebar to start chatting</div>
+              </div>
+            </div>
+            <div id="typing-indicator" class="typing-indicator" aria-hidden="true"></div>
+            <div id="file-preview" class="file-preview" hidden></div>
+            <!-- Learn nudge: appears only after a turn that looked skill-worthy
+                 (tool-heavy). Human-gated — it suggests, you tap, nothing runs on its
+                 own. Dismiss hides it until the next qualifying turn. -->
+            <div id="learn-nudge" class="learn-nudge" hidden>
+              <button type="button" id="learn-nudge-go" class="learn-nudge-go">
+                <svg class="icon" aria-hidden="true"><use href="#i-sparkles"></use></svg>
+                Worth keeping? Distill a skill
+              </button>
+              <button type="button" id="learn-nudge-dismiss" class="learn-nudge-dismiss" aria-label="Dismiss">
+                <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+              </button>
+            </div>
+            <form id="message-form">
+              <div id="slash-menu" class="slash-menu" role="listbox" aria-label="Commands" hidden></div>
+                <div id="learn-menu" class="learn-menu" role="menu" aria-label="Learning" hidden></div>
+              <!-- Overflow "+" — shown only when the composer is too narrow to
+                   hold every tool inline (see the composer breakpoint in the CSS).
+                   Toggles .composer-tools between an inline row and a popover. -->
+              <button type="button" id="composer-more" class="file-picker-btn" title="More"
+                aria-label="More actions" aria-haspopup="true" aria-expanded="false" hidden>
+                <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
+              </button>
+              <div id="composer-tools" class="composer-tools" role="group" aria-label="Composer tools">
+                <button type="button" id="file-picker" class="file-picker-btn" title="Upload file" aria-label="Upload file">
+                  <svg class="icon" aria-hidden="true"><use href="#i-paperclip"></use></svg>
+                </button>
+                <button type="button" id="camera-btn" class="file-picker-btn mobile-only" title="Take photo" aria-label="Take photo">
+                  <svg class="icon" aria-hidden="true"><use href="#i-camera"></use></svg>
+                </button>
+                <button
+                  type="button"
+                  id="learn-btn"
+                  class="file-picker-btn"
+                  title="Distill a skill from this session"
+                  aria-label="Distill a skill from this session"
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                  disabled
+                >
+                  <svg class="icon" aria-hidden="true"><use href="#i-graduation-cap"></use></svg>
+                </button>
+              </div>
+              <!-- Voice dictation — hidden unless the server reports STT configured. -->
+              <button type="button" id="mic-btn" class="file-picker-btn" title="Dictate" aria-label="Start dictation" aria-pressed="false" hidden>
+                <svg class="icon" aria-hidden="true"><use href="#i-mic"></use></svg>
+              </button>
+              <span id="stt-elapsed" class="stt-elapsed" hidden>0:00</span>
+              <span id="stt-status" class="visually-hidden" aria-live="polite"></span>
+              <textarea id="message-input" rows="1" placeholder="Message…" autocomplete="off" disabled></textarea>
+              <button type="submit" id="send-btn" disabled aria-label="Send message">
+                <svg
+                  viewBox="0 0 24 24"
+                  width="18"
+                  height="18"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <line x1="12" y1="19" x2="12" y2="5" />
+                  <polyline points="5 12 12 5 19 12" />
+                </svg>
+              </button>
+            </form>
+          </div>
+          <aside id="members-panel" class="members-panel" hidden>
+            <div class="members-header">
+              <span>Members</span>
+              <button id="members-close" class="members-close" aria-label="Close">
+                <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+              </button>
+            </div>
+            <div class="list-search-wrap">
+              <input
+                id="members-search"
+                class="model-picker-search"
+                type="search"
+                placeholder="Search members…"
+                autocomplete="off"
+                aria-label="Search members"
+              />
+            </div>
+            <ul id="members-list"></ul>
+          </aside>
+          <aside id="agent-detail" class="agent-detail" hidden>
+            <!-- Edit mode -->
+            <div id="agent-edit-view">
+              <div class="agent-detail-header">
+                <span id="agent-detail-title">Agent details</span>
+                <button id="agent-detail-close" class="members-close" aria-label="Close">
+                  <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+                </button>
+              </div>
+              <form id="agent-detail-form" class="agent-detail-form">
+                <div class="agent-subtabs" role="tablist" aria-label="Agent settings sections">
+                  <button type="button" class="agent-subtab active" data-subtab="settings" role="tab" aria-selected="true">Settings</button>
+                  <button type="button" class="agent-subtab" data-subtab="instructions" role="tab" aria-selected="false">Instructions</button>
+                </div>
+                <div class="agent-subtab-panel" data-subtab-panel="settings">
+                <div class="agent-status-field">
+                  <span class="form-label">Status</span>
+                  <div id="agent-status-control" class="setting-options" role="group" aria-label="Agent status">
+                    <button type="button" class="setting-option" data-status="active">Active</button>
+                    <button type="button" class="setting-option" data-status="paused">Paused</button>
+                    <button type="button" class="setting-option" data-status="archived">Archived</button>
+                  </div>
+                </div>
+                <label>
+                  <span class="form-label">Name</span>
+                  <input id="agent-name" type="text" required />
+                </label>
+                <label>
+                  <span class="form-label">Model</span>
+                  <button type="button" id="agent-model-trigger" class="model-picker-trigger">
+                    <span class="model-picker-trigger-content">
+                      <span class="model-picker-trigger-name">Default</span>
+                      <span class="model-picker-trigger-meta">Built-in Anthropic</span>
+                    </span>
+                    <span class="model-picker-trigger-caret" aria-hidden="true">&#9662;</span>
+                  </button>
+                  <input id="agent-model" type="hidden" />
+                </label>
+                <!-- Anthropic model: writes container_configs.model, which the
+                     agent-runner hands to the Claude Agent SDK as its `model`
+                     option. Same lever as `ncl groups config update --model`,
+                     and the only one the built-in harness reads. Free text with
+                     a datalist rather than a <select>: an install outlives any
+                     baked-in model list, so this suggests without gating. -->
+                <label>
+                  <span class="form-label">Anthropic model</span>
+                  <input id="agent-config-model" type="text" list="agent-config-model-options" placeholder="Default" autocomplete="off" spellcheck="false" />
+                  <datalist id="agent-config-model-options"></datalist>
+                  <p class="form-hint">Leave blank for the built-in default. Saving restarts this agent so the change takes effect.</p>
+                </label>
+                <!-- Harness: which agent runtime the group runs on. 'claude' is
+                     the built-in Claude Agent SDK; 'opencode' is the model-agnostic
+                     OpenCode loop (far better on small local models). Switching
+                     restarts the group's containers. -->
+                <div class="agent-status-field">
+                  <span class="form-label">Harness</span>
+                  <div id="agent-harness-control" class="setting-options" role="group" aria-label="Agent harness">
+                    <button type="button" class="setting-option" data-provider="claude">Claude</button>
+                    <button type="button" class="setting-option" data-provider="opencode">OpenCode</button>
+                    <!-- pi (add-pi-stack): the minimal local harness. Server rejects the
+                         switch with a clear error when the stack isn't installed. -->
+                    <button type="button" class="setting-option" data-provider="pi">pi</button>
+                    <!-- grok (add-grok): xAI's harness, driven by a SuperGrok /
+                         X Premium+ subscription. Same contract as pi above — the
+                         server rejects the switch with a clear error when the
+                         provider hasn't registered a container config. -->
+                    <button type="button" class="setting-option" data-provider="grok">Grok</button>
+                  </div>
+                </div>
+                <!-- MCP servers attached to this agent — a compact list + shared
+                     attach picker over the registry (the MCP tab defines servers;
+                     this only attaches/detaches them). -->
+                <details class="agent-accordion" open>
+                  <summary class="agent-accordion-summary"><span class="form-label">MCP servers</span><span class="agent-accordion-count" id="agent-mcp-count"></span></summary>
+                  <div id="agent-mcp-section" class="agent-mcp-section">
+                    <ul id="agent-mcp-list" class="agent-mcp-list"></ul>
+                    <button type="button" id="agent-mcp-attach-toggle" class="btn btn-secondary">+ Attach server</button>
+                  </div>
+                </details>
+                <!-- Skills this agent loads (Anthropic Agent Skills). Toggle then
+                     save; saving respawns the agent so it picks them up. -->
+                <details class="agent-accordion">
+                  <summary class="agent-accordion-summary"><span class="form-label">Skills</span><span class="agent-accordion-count" id="agent-skills-count"></span></summary>
+                  <div class="agent-skills-section">
+                    <!-- Wired to THIS agent only — imported into its own skills
+                         dir, so it never reaches other agents. -->
+                    <div class="agent-scoped">
+                      <span class="form-label">Wired to this agent</span>
+                      <ul id="agent-scoped-list" class="agent-skills-list"></ul>
+                      <div class="agent-scoped-import">
+                        <input id="agent-scoped-url" type="text" autocomplete="off" spellcheck="false" placeholder="https://github.com/owner/repo" />
+                        <button type="button" id="agent-scoped-add" class="btn btn-secondary">Import</button>
+                      </div>
+                    </div>
+                    <span class="form-label">Shared skills</span>
+                    <ul id="agent-skills-list" class="agent-skills-list"></ul>
+                    <button type="button" id="agent-skills-save" class="btn btn-primary" disabled>Save skills</button>
+                  </div>
+                </details>
+                <!-- Secrets scoped to this agent. Only meaningful once the agent
+                     is isolated: in the default `all` mode the gateway offers
+                     every vault secret to every agent, so scoping is a no-op. -->
+                <details class="agent-accordion">
+                  <summary class="agent-accordion-summary"><span class="form-label">Secrets</span><span class="agent-accordion-count" id="agent-secrets-count"></span></summary>
+                  <div id="agent-secrets-section" class="agent-secrets-section">
+                    <p class="room-prime-note" id="agent-secrets-note"></p>
+                    <ul id="agent-secrets-list" class="skill-sources-list"></ul>
+                    <div class="secret-form" id="agent-secret-form">
+                      <label class="secret-field"><span class="form-label">Host</span>
+                        <input id="agent-secret-host" type="text" placeholder="dev.azure.com" autocomplete="off" spellcheck="false" />
+                      </label>
+                      <label class="secret-field"><span class="form-label">Token or key</span>
+                        <input id="agent-secret-value" type="password" autocomplete="new-password" spellcheck="false" />
+                      </label>
+                      <label class="secret-field setting-toggle" id="agent-secret-custom-row"><span class="form-label">Custom header</span>
+                        <input id="agent-secret-custom" type="checkbox" />
+                      </label>
+                      <label class="secret-field secret-custom" id="agent-secret-custom-header-row" hidden><span class="form-label">Header</span>
+                        <input id="agent-secret-custom-header" type="text" placeholder="X-Api-Key" autocomplete="off" spellcheck="false" />
+                      </label>
+                      <label class="secret-field secret-custom" id="agent-secret-custom-format-row" hidden><span class="form-label">Value template</span>
+                        <input id="agent-secret-custom-format" type="text" placeholder="Bearer {value}" autocomplete="off" spellcheck="false" />
+                      </label>
+                      <label class="secret-field secret-personal setting-toggle" id="agent-secret-personal-row">
+                        <span class="form-label">Personal</span>
+                        <input id="agent-secret-personal" type="checkbox" />
+                      </label>
+                      <button id="agent-secret-save" class="btn btn-primary" type="button">Add secret</button>
+                    </div>
+                  </div>
+                </details>
+                <!-- Deploy keys — SSH keypairs for this agent. Generated
+                     host-side; only the PUBLIC half is ever shown, and the
+                     private half never leaves the group folder. -->
+                <details class="agent-accordion">
+                  <summary class="agent-accordion-summary"><span class="form-label">Network</span><span class="agent-accordion-count" id="agent-egress-badge"></span></summary>
+                  <div class="agent-accordion-body">
+                    <div class="setting-group install-row">
+                      <span class="setting-label">Egress</span>
+                      <button class="feature-info-btn" type="button" aria-expanded="false"
+                        aria-controls="agent-egress-info" aria-label="About network egress">
+                        <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+                      </button>
+                      <div id="agent-egress-control" class="setting-options" role="group" aria-label="Network egress">
+                        <button type="button" class="setting-option" data-egress="open">Open</button>
+                        <button type="button" class="setting-option" data-egress="host-only">Locked down</button>
+                      </div>
+                    </div>
+                    <p class="cred-hint feature-info" id="agent-egress-info" hidden>
+                      Locked down puts this agent on an internal network where the
+                      credential gateway is the only way out. Anything it reaches over
+                      HTTPS keeps working; anything direct stops — SSH and rsync, services
+                      on your LAN, and a model server running on this host. Applies the
+                      next time the agent starts.
+                    </p>
+                    <p class="cred-hint" id="agent-egress-note" hidden></p>
+                  </div>
+                </details>
+                <details class="agent-accordion">
+                  <summary class="agent-accordion-summary"><span class="form-label">Environment</span><span class="agent-accordion-count" id="agent-env-count"></span></summary>
+                  <div class="agent-accordion-body">
+                    <div id="agent-env-list" class="secret-list"></div>
+                    <div class="secret-form" id="agent-env-form">
+                      <label class="secret-field"><span class="form-label">Name</span>
+                        <input id="agent-env-name" type="text" placeholder="SERVICE_API_KEY" autocomplete="off" spellcheck="false" />
+                      </label>
+                      <label class="secret-field"><span class="form-label">Value</span>
+                        <input id="agent-env-value" type="password" autocomplete="new-password" spellcheck="false" />
+                      </label>
+                      <button id="agent-env-save" class="btn btn-primary" type="button">Add variable</button>
+                    </div>
+                    <p class="cred-hint">Available to the agent as <code>$NAME</code>; the value is never shown again and never enters the conversation. Applies when the agent restarts.</p>
+                  </div>
+                </details>
+                <details class="agent-accordion">
+                  <summary class="agent-accordion-summary"><span class="form-label">Deploy keys</span><span class="agent-accordion-count" id="agent-keys-count"></span></summary>
+                  <div id="agent-keys-section" class="agent-secrets-section">
+                    <ul id="agent-keys-list" class="skill-sources-list"></ul>
+                    <div class="secret-form">
+                      <label class="secret-field"><span class="form-label">Name</span>
+                        <input id="agent-key-name" type="text" placeholder="app-server" autocomplete="off" spellcheck="false" />
+                      </label>
+                      <label class="secret-field"><span class="form-label">Logs in as</span>
+                        <input id="agent-key-target" type="text" placeholder="deploy@server.example.com" autocomplete="off" spellcheck="false" />
+                      </label>
+                      <button id="agent-key-create" class="btn btn-primary" type="button">Create key</button>
+                    </div>
+                  </div>
+                </details>
+                <!-- Learning defaults (learning loop): the agent-level layer —
+                     applies in every room without a 🎓 room override. -->
+                <details class="agent-accordion">
+                  <summary class="agent-accordion-summary"><span class="form-label">Learning defaults</span><span class="agent-accordion-count" id="agent-learning-count"></span></summary>
+                  <div id="agent-learning-section" class="agent-learning-section">
+                    <p class="room-prime-note">Room 🎓 settings override these.</p>
+                    <div class="agent-learning-row">
+                      <span>Auto-distill busy turns</span>
+                      <div class="setting-options" id="agent-learning-distill" role="group" aria-label="Auto-distill default">
+                        <button type="button" class="setting-option" data-on="1">On</button>
+                        <button type="button" class="setting-option" data-on="0">Off</button>
+                      </div>
+                    </div>
+                    <div class="agent-learning-row" id="agent-learning-keep-row">
+                      <span>Auto-keep drafts</span>
+                      <div class="setting-options" id="agent-learning-keep" role="group" aria-label="Auto-keep default">
+                        <button type="button" class="setting-option" data-on="1">On</button>
+                        <button type="button" class="setting-option" data-on="0">Off</button>
+                      </div>
+                    </div>
+                    <div class="agent-learning-row">
+                      <span>Review model</span>
+                      <select id="agent-learning-review-model" class="stt-cleanup-select" aria-label="Review model"></select>
+                    </div>
+                    <div class="agent-learning-row">
+                      <span>Review input</span>
+                      <div class="setting-options" id="agent-learning-review-input" role="group" aria-label="Review input">
+                        <button type="button" class="setting-option" data-value="digest">Digest</button>
+                        <button type="button" class="setting-option" data-value="replay">Replay</button>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+                <!-- Rooms this agent is wired to (assign / unassign) via the shared
+                     attach picker. -->
+                <details class="agent-accordion" open>
+                  <summary class="agent-accordion-summary"><span class="form-label">Rooms</span><span class="agent-accordion-count" id="agent-rooms-count"></span></summary>
+                  <div id="agent-rooms-section" class="agent-rooms-section">
+                    <ul id="agent-wired-rooms" class="room-wired-agents"></ul>
+                    <button type="button" id="agent-add-room-toggle" class="btn btn-secondary">+ Wire to room</button>
+                  </div>
+                </details>
+                <!-- Active sessions — reset a stuck/thrashing one (injects /clear),
+                     including background a2a sessions no room-typed command reaches. -->
+                <details class="agent-accordion">
+                  <summary class="agent-accordion-summary"><span class="form-label">Sessions</span><span class="agent-accordion-count" id="agent-sessions-count"></span></summary>
+                  <div id="agent-sessions-section" class="agent-sessions-section">
+                    <ul id="agent-sessions-list" class="agent-sessions-list"></ul>
+                  </div>
+                </details>
+                </div>
+                <div class="agent-subtab-panel" data-subtab-panel="instructions" hidden>
+                <label>
+                  <span class="form-label">Instructions</span>
+                  <textarea id="agent-instructions" rows="18" placeholder="Standing instructions…"></textarea>
+                </label>
+                <!-- Why this can be empty on a freshly stamped agent: a
+                     template's persona is OPTIONAL, and only a template that
+                     ships context/instructions.md seeds this. Without the
+                     hint an empty box after stamping reads as a bug. -->
+                <p class="form-hint">
+                  Optional, and editable here. A template only fills this in if it ships a persona — an empty box
+                  after stamping means that template didn't include one.
+                </p>
+                <p id="agent-instructions-legacy" class="form-hint" hidden></p>
+                </div>
+                <div class="agent-detail-actions">
+                  <!-- id, not a class selector: this form CONTAINS another
+                       .btn-primary (#agent-skills-save, added later inside the
+                       Settings panel), and every first-match query for
+                       "the form's primary button" silently started answering
+                       with that one — leaving THIS button permanently disabled
+                       and instructions/name/model edits unsavable for everyone. -->
+                  <button type="submit" id="agent-save-btn" class="btn btn-primary" disabled>Save</button>
+                </div>
+                <!-- Shown only for an agent stamped from a template still in
+                     the library. The plan is the point: it names what resets
+                     and flags local edits that applying would discard. -->
+                <!-- Labelled, because an unheaded hint + ghost button between
+                     Save and Export read as decoration and got missed: the
+                     first operator to use this could not find how to update a
+                     stamped agent at all. -->
+                <div id="agent-template-row" class="agent-export-row" hidden>
+                  <span class="form-label">Template</span>
+                  <span id="agent-template-name" class="form-hint"></span>
+                  <button type="button" id="agent-template-update" class="btn btn-secondary">Check for updates</button>
+                </div>
+                <div class="agent-export-row">
+                  <button type="button" id="agent-export-btn" class="btn btn-ghost">Export agent…</button>
+                  <button type="button" id="agent-export-template-btn" class="btn btn-ghost">Save as template…</button>
+                </div>
+                <div class="agent-detail-danger">
+                  <button type="button" id="agent-delete" class="btn btn-danger">Delete this agent</button>
+                </div>
+              </form>
+            </div>
+            <!-- Create mode (form) -->
+            <div id="agent-create-view" hidden>
+              <div class="agent-detail-header">
+                <span>Create agent</span>
+                <button id="agent-create-close" class="members-close" aria-label="Close">
+                  <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+                </button>
+              </div>
+              <form id="agent-create-form" class="agent-detail-form">
+                <div class="drafter-block">
+                  <label>
+                    <span class="form-label">Describe the agent (optional)</span>
+                    <textarea
+                      id="agent-create-draft-prompt"
+                      rows="2"
+                      placeholder="An agent that…"
+                      autocomplete="off"
+                    ></textarea>
+                  </label>
+                  <button type="button" class="btn btn-ghost drafter-btn" data-drafter-target="agent-create">
+                    <svg class="icon" aria-hidden="true"><use href="#i-sparkles"></use></svg> Suggest from prompt
+                  </button>
+                </div>
+                <label id="agent-create-template-wrap" hidden>
+                  <span class="form-label">Template</span>
+                  <select id="agent-create-template"></select>
+                </label>
+                <label>
+                  <span class="form-label">Name</span>
+                  <input id="agent-create-name" type="text" placeholder="My helper" required autocomplete="off" />
+                </label>
+                <label>
+                  <span class="form-label">Instructions (optional)</span>
+                  <textarea
+                    id="agent-create-instructions"
+                    rows="6"
+                    placeholder="You are…"
+                    autocomplete="off"
+                  ></textarea>
+                </label>
+                <!-- Skill suggestions matched against the description/instructions:
+                     installed skills show as already available; catalog matches get
+                     a checkbox and are imported when the agent is created. -->
+                <div id="agent-create-skills" hidden>
+                  <span class="form-label">Suggested skills</span>
+                  <ul id="agent-create-skills-list" class="agent-create-skills-list"></ul>
+                </div>
+                <div class="agent-detail-actions">
+                  <button type="submit" class="btn btn-primary">Create</button>
+                </div>
+              </form>
+            </div>
+          </aside>
+          <aside id="room-detail" class="agent-detail" hidden>
+            <!-- Edit mode: show wired agents, allow add/remove, delete room -->
+            <div id="room-edit-view">
+              <div class="agent-detail-header">
+                <span id="room-detail-title">Room settings</span>
+                <button id="room-detail-close" class="members-close" aria-label="Close">
+                  <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+                </button>
+              </div>
+              <div class="agent-detail-form">
+                <label id="room-rename-field" hidden>
+                  <span class="form-label">Room name</span>
+                  <span class="room-rename-row">
+                    <input
+                      id="room-rename-input"
+                      type="text"
+                      maxlength="80"
+                      autocomplete="off"
+                      placeholder="Room name"
+                    />
+                    <button type="button" id="room-rename-save" class="btn btn-secondary">Save</button>
+                  </span>
+                </label>
+                <!-- In-room user credentials (owner/admin only; shown by openRoomDetail when
+                     room.canArchive). Mirrors Settings → User credentials, but only the mode
+                     (Off/Optional/Required). Credential TYPES (Claude/Codex, key vs OAuth) are
+                     workspace-admin-only in Settings and inherited by every room. -->
+                <div id="room-credential-mode-section" class="room-cred-section" hidden>
+                  <div class="setting-group">
+                    <span class="setting-label">User credentials</span>
+                    <div
+                      id="room-credential-modes"
+                      class="setting-options"
+                      role="group"
+                      aria-label="Member credential mode"
+                    >
+                      <button class="setting-option" type="button" data-value="disabled">Off</button>
+                      <button class="setting-option" type="button" data-value="optional">Optional</button>
+                      <button class="setting-option" type="button" data-value="required">Required</button>
+                    </div>
+                    <p class="setting-help" id="room-cred-default-hint"></p>
+                  </div>
+                </div>
+                <div>
+                  <div class="form-label-row">
+                    <span class="form-label">Wired agents</span>
+                    <span class="mode-info-wrap">
+                      <button type="button" id="room-mode-info" class="mode-info-btn" aria-label="Reply mode" hidden>
+                        <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+                      </button>
+                    </span>
+                  </div>
+                  <ul id="room-wired-agents" class="room-wired-agents"></ul>
+                  <div id="room-add-agent-form" class="room-add-agent-form">
+                    <div class="room-agent-picker-tabs">
+                      <button type="button" class="room-agent-picker-tab active" data-picker="existing">
+                        Existing
+                      </button>
+                      <button type="button" class="room-agent-picker-tab" data-picker="new">New</button>
+                    </div>
+                    <div id="room-add-agent-existing" class="room-agent-picker-pane">
+                      <ul id="room-add-agent-list" class="room-create-agent-checklist"></ul>
+                      <button type="button" id="room-add-agent-existing-submit" class="btn btn-primary" disabled>
+                        Wire selected
+                      </button>
+                    </div>
+                    <div id="room-add-agent-new" class="room-agent-picker-pane" hidden>
+                      <div class="drafter-block">
+                        <textarea
+                          id="room-add-agent-draft-prompt"
+                          rows="2"
+                          placeholder="Describe the agent (optional)…"
+                          autocomplete="off"
+                        ></textarea>
+                        <button type="button" class="btn btn-ghost drafter-btn" data-drafter-target="room-add-agent">
+                          <svg class="icon" aria-hidden="true"><use href="#i-sparkles"></use></svg> Suggest from prompt
+                        </button>
+                      </div>
+                      <input id="room-add-agent-new-name" type="text" placeholder="Agent name" autocomplete="off" />
+                      <textarea
+                        id="room-add-agent-new-instructions"
+                        rows="3"
+                        placeholder="Optional instructions…"
+                      ></textarea>
+                      <button type="button" id="room-add-agent-new-submit" class="btn btn-primary">
+                        Create &amp; wire
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <!-- Learning loop: everything skill-related for this room, in the room.
+                     Proposals from its agents (Keep wires scoped to the proposer, no
+                     fan-out) and the skills they've already learned. Saves a trip to
+                     the global Skills page. Hidden entirely when there's nothing. -->
+                <div id="room-skills-section" hidden>
+                  <div class="form-label-row">
+                    <span class="form-label">Skills</span>
+                    <span id="room-skills-count" class="room-skills-count"></span>
+                  </div>
+                  <ul id="room-skills-list" class="room-skills-list"></ul>
+                </div>
+                <div class="agent-detail-actions">
+                  <button type="button" id="room-export-btn" class="btn btn-ghost">Export room…</button>
+                  <button type="button" id="room-archive-toggle" class="btn btn-secondary" hidden>Archive room</button>
+                  <button type="button" id="room-delete" class="btn btn-danger">Delete room</button>
+                </div>
+              </div>
+            </div>
+            <!-- Create mode: name + multi-select agents + inline-new-agent toggle -->
+            <div id="room-create-view" hidden>
+              <div class="agent-detail-header">
+                <span>Create room</span>
+                <button id="room-create-close" class="members-close" aria-label="Close">
+                  <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+                </button>
+              </div>
+              <form id="room-create-form" class="agent-detail-form">
+                <label>
+                  <span class="form-label">Room name</span>
+                  <input id="room-create-name" type="text" placeholder="My room" required autocomplete="off" />
+                </label>
+                <div>
+                  <span class="form-label">Wire existing agents</span>
+                  <ul id="room-create-existing-agents" class="room-create-agent-checklist"></ul>
+                </div>
+                <div>
+                  <button type="button" id="room-create-toggle-new" class="btn btn-secondary">
+                    + Create new agent inline
+                  </button>
+                  <div id="room-create-new-block" hidden class="room-create-new-block">
+                    <div class="drafter-block">
+                      <textarea
+                        id="room-create-draft-prompt"
+                        rows="2"
+                        placeholder="Describe the agent (optional)…"
+                        autocomplete="off"
+                      ></textarea>
+                      <button type="button" class="btn btn-ghost drafter-btn" data-drafter-target="room-create">
+                        <svg class="icon" aria-hidden="true"><use href="#i-sparkles"></use></svg> Suggest from prompt
+                      </button>
+                    </div>
+                    <input id="room-create-new-name" type="text" placeholder="New agent name" autocomplete="off" />
+                    <textarea
+                      id="room-create-new-instructions"
+                      rows="3"
+                      placeholder="Optional instructions…"
+                    ></textarea>
+                  </div>
+                </div>
+                <div class="agent-detail-actions">
+                  <button type="submit" class="btn btn-primary">Create</button>
+                </div>
+              </form>
+            </div>
+          </aside>
+          <aside id="route-detail" class="agent-detail" hidden>
+            <div class="agent-detail-header">
+              <span id="route-detail-badge" class="model-kind-badge" hidden></span>
+              <span id="route-detail-title">Route</span>
+              <button id="route-detail-close" class="members-close" aria-label="Close">
+                <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+              </button>
+            </div>
+            <form id="route-detail-form" class="agent-detail-form">
+              <label>
+                <span class="form-label">Name</span>
+                <input id="route-name" type="text" required />
+              </label>
+              <label>
+                <span class="form-label">Description — what the classifier matches</span>
+                <textarea id="route-description" rows="3" required></textarea>
+              </label>
+              <label id="route-binding-label">
+                <span class="form-label">Model</span>
+                <select id="route-binding"></select>
+              </label>
+              <p id="route-escalate-note" class="model-kind-explainer" hidden>
+                Escalate route — no local model; matching prompts hand off to the
+                agent group's fallback provider (Claude) instead.
+              </p>
+              <div class="route-flags">
+                <label class="setting-toggle">
+                  <span>Pin</span>
+                  <input type="checkbox" id="route-pinned" />
+                </label>
+                <label class="setting-toggle">
+                  <span>Default</span>
+                  <input type="checkbox" id="route-default" />
+                </label>
+              </div>
+              <div class="agent-detail-actions">
+                <button type="submit" class="btn btn-primary">Save</button>
+              </div>
+              <div class="agent-detail-danger">
+                <button type="button" id="route-delete" class="btn btn-danger">Delete this route</button>
+              </div>
+            </form>
+          </aside>
+          <aside id="model-detail" class="agent-detail" hidden>
+            <!-- Edit mode -->
+            <div id="model-edit-view">
+              <div class="agent-detail-header">
+                <span id="model-detail-badge" class="model-kind-badge" hidden></span>
+                <span id="model-detail-title">Model</span>
+                <button id="model-detail-close" class="members-close" aria-label="Close">
+                  <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+                </button>
+              </div>
+              <form id="model-detail-form" class="agent-detail-form">
+                <label>
+                  <span class="form-label">Display name</span>
+                  <input id="model-name" type="text" required />
+                </label>
+                <input id="model-kind" type="hidden" />
+                <p id="model-kind-explainer" class="model-kind-explainer"></p>
+                <p id="model-live-facts" class="model-live-facts" hidden></p>
+                <label id="model-endpoint-label">
+                  <span class="form-label">Endpoint</span>
+                  <input id="model-endpoint" type="text" placeholder="http://localhost:11434" autocomplete="off" />
+                </label>
+                <label>
+                  <span class="form-label">Model ID</span>
+                  <div class="model-id-row">
+                    <input id="model-model-id" type="text" required autocomplete="off" />
+                    <button type="button" id="model-discover-btn" class="btn btn-secondary">Browse</button>
+                  </div>
+                  <select id="model-discover-select" hidden></select>
+                </label>
+                <p id="model-detail-usage" class="room-prime-note"></p>
+                <p id="model-detail-rooms" class="room-prime-note" hidden></p>
+                <div class="agent-detail-actions">
+                  <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+                <div class="agent-detail-danger">
+                  <button type="button" id="model-delete" class="btn btn-danger">Delete this model</button>
+                </div>
+              </form>
+            </div>
+            <!-- Create mode -->
+            <div id="model-create-view" hidden>
+              <div class="agent-detail-header">
+                <span>Add model</span>
+                <button id="model-create-close" class="members-close" aria-label="Close">
+                  <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+                </button>
+              </div>
+              <div class="agent-detail-form">
+                <!-- Probe section: paste a URL, classify the provider, bulk-add discovered models -->
+                <div class="model-probe-block">
+                  <label>
+                    <span class="form-label">Endpoint URL</span>
+                    <div class="model-id-row">
+                      <input
+                        id="model-probe-url"
+                        type="text"
+                        placeholder="localhost:11434, api.anthropic.com, … (scheme optional)"
+                        autocomplete="off"
+                      />
+                      <button type="button" id="model-probe-btn" class="btn btn-secondary">Probe</button>
+                    </div>
+                  </label>
+                  <p id="model-probe-status" class="model-probe-status" hidden></p>
+                  <div id="model-probe-results" class="model-probe-results" hidden>
+                    <div class="model-probe-summary">
+                      <span class="model-probe-kind"></span>
+                      <span class="model-probe-notes"></span>
+                    </div>
+                    <ul id="model-probe-list" class="model-probe-list"></ul>
+                    <div class="model-probe-actions">
+                      <button type="button" id="model-probe-select-all" class="btn btn-ghost">Select all</button>
+                      <button type="button" id="model-probe-add-selected" class="btn btn-primary">Add selected</button>
+                    </div>
+                  </div>
+                </div>
+                <details class="model-advanced">
+                  <summary>Advanced — manual entry</summary>
+                  <form id="model-create-form" class="agent-detail-form" style="margin-top: 8px">
+                    <label>
+                      <span class="form-label">Display name</span>
+                      <input
+                        id="model-create-name"
+                        type="text"
+                        placeholder="My Sonnet 4.6"
+                        required
+                        autocomplete="off"
+                      />
+                    </label>
+                    <label>
+                      <span class="form-label">Kind</span>
+                      <select id="model-create-kind">
+                        <option value="anthropic">Anthropic (custom model id)</option>
+                        <option value="ollama">Ollama (local endpoint)</option>
+                        <option value="openai-compatible">OpenAI-compatible endpoint (via LiteLLM)</option>
+                      </select>
+                    </label>
+                    <label id="model-create-endpoint-label" hidden>
+                      <span class="form-label">Endpoint</span>
+                      <input
+                        id="model-create-endpoint"
+                        type="text"
+                        placeholder="http://localhost:11434"
+                        autocomplete="off"
+                      />
+                    </label>
+                    <label>
+                      <span class="form-label">Model ID</span>
+                      <div class="model-id-row">
+                        <input
+                          id="model-create-model-id"
+                          type="text"
+                          required
+                          autocomplete="off"
+                          placeholder="claude-sonnet-4-6 or llama3.1:70b"
+                        />
+                        <button type="button" id="model-create-discover-btn" class="btn btn-secondary">Browse</button>
+                      </div>
+                      <select id="model-create-discover-select" hidden></select>
+                    </label>
+                    <div class="agent-detail-actions">
+                      <button type="submit" class="btn btn-primary">Create</button>
+                    </div>
+                  </form>
+                </details>
+              </div>
+            </div>
+          </aside>
+          <aside id="mcp-detail" class="agent-detail" hidden>
+            <!-- Edit mode -->
+            <div id="mcp-edit-view">
+              <div class="agent-detail-header">
+                <span id="mcp-detail-title">MCP server</span>
+                <button id="mcp-detail-close" class="members-close" aria-label="Close">
+                  <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+                </button>
+              </div>
+              <form id="mcp-detail-form" class="agent-detail-form">
+                <label>
+                  <span class="form-label">Name</span>
+                  <input id="mcp-name" type="text" required autocomplete="off" />
+                </label>
+                <label>
+                  <span class="form-label">Transport</span>
+                  <input id="mcp-transport" type="text" readonly class="readonly" />
+                </label>
+                <label id="mcp-url-label">
+                  <span class="form-label">URL</span>
+                  <input id="mcp-url" type="text" placeholder="http://host:8000/mcp" autocomplete="off" />
+                </label>
+                <label id="mcp-command-label" hidden>
+                  <span class="form-label">Command</span>
+                  <input id="mcp-command" type="text" autocomplete="off" />
+                </label>
+                <!-- Token rotation: stored tokens are never displayed; leaving this
+                     blank keeps the existing one. Remote transports only. -->
+                <label id="mcp-token-label">
+                  <span class="form-label">Replace bearer token</span>
+                  <input
+                    id="mcp-token"
+                    type="password"
+                    placeholder="Leave blank to keep the current token"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                </label>
+                <p id="mcp-detail-usage" class="room-prime-note"></p>
+                <!-- Health / drift / tool-allowlist / OAuth — filled by openMcpDetail. -->
+                <div id="mcp-hardening"></div>
+                <div class="agent-detail-actions">
+                  <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+                <div class="agent-detail-danger">
+                  <button type="button" id="mcp-delete" class="btn btn-danger">Delete this server</button>
+                </div>
+              </form>
+            </div>
+            <!-- Create mode -->
+            <div id="mcp-create-view" hidden>
+              <div class="agent-detail-header">
+                <span>Add MCP server</span>
+                <button id="mcp-create-close" class="members-close" aria-label="Close">
+                  <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+                </button>
+              </div>
+              <div class="agent-detail-form">
+                <!-- Catalog: the public MCP registry. Read-only discovery — picking a
+                     row only PREFILLS the form below, so every server still goes
+                     through probe → add. Remote servers are dialled out to; package
+                     (npm/pypi) servers execute code inside the container, so they're
+                     marked and gated. See mcp-catalog.test.ts. -->
+                <details id="mcp-catalog-block" class="mcp-catalog-block">
+                  <summary>Browse the MCP registry</summary>
+                  <input
+                    id="mcp-catalog-search"
+                    type="search"
+                    placeholder="Search servers…"
+                    autocomplete="off"
+                  />
+                  <p class="mcp-catalog-source">
+                    Source:
+                    <a href="https://registry.modelcontextprotocol.io" target="_blank" rel="noopener noreferrer"
+                      >registry.modelcontextprotocol.io</a
+                    >
+                  </p>
+                  <p class="setting-help mcp-catalog-warning">
+                    Third-party servers, published by anyone — nobody vets them. Read the source, probe it,
+                    and remember a server sees whatever the agent sends it
+                  </p>
+                  <p id="mcp-catalog-status" class="setting-help"></p>
+                  <ul id="mcp-catalog-list" class="mcp-catalog-list"></ul>
+                </details>
+                <!-- Probe section: paste a URL, connect as an MCP client, list the
+                     server's tools before saving (mirrors the model probe). -->
+                <div class="model-probe-block">
+                  <label>
+                    <span class="form-label">Server URL</span>
+                    <div class="model-id-row">
+                      <input
+                        id="mcp-probe-url"
+                        type="text"
+                        placeholder="host:8000/sse, https://…/mcp (scheme optional)"
+                        autocomplete="off"
+                      />
+                      <button type="button" id="mcp-probe-btn" class="btn btn-secondary">Probe</button>
+                    </div>
+                  </label>
+                  <!-- Revealed when a probe comes back 401 — the server wants a
+                       bearer token; filling it re-probes with Authorization. -->
+                  <label id="mcp-probe-token-label" hidden>
+                    <span class="form-label">Bearer token</span>
+                    <input
+                      id="mcp-probe-token"
+                      type="password"
+                      placeholder="Token the server expects"
+                      autocomplete="off"
+                      spellcheck="false"
+                    />
+                  </label>
+                  <p id="mcp-probe-status" class="model-probe-status" hidden></p>
+                  <div id="mcp-probe-results" class="model-probe-results" hidden>
+                    <div class="model-probe-summary">
+                      <span class="model-probe-kind" id="mcp-probe-kind"></span>
+                      <span class="model-probe-notes" id="mcp-probe-notes"></span>
+                    </div>
+                    <ul id="mcp-probe-tools" class="model-probe-list"></ul>
+                    <label>
+                      <span class="form-label">Name</span>
+                      <input
+                        id="mcp-probe-name"
+                        type="text"
+                        placeholder="e.g. windows (becomes the tool prefix)"
+                        autocomplete="off"
+                      />
+                    </label>
+                    <div class="model-probe-actions">
+                      <button type="button" id="mcp-probe-add" class="btn btn-primary">Add server</button>
+                    </div>
+                  </div>
+                </div>
+                <details class="model-advanced">
+                  <summary>Advanced — manual entry</summary>
+                  <form id="mcp-create-form" class="agent-detail-form" style="margin-top: 8px">
+                    <label>
+                      <span class="form-label">Name</span>
+                      <input id="mcp-create-name" type="text" placeholder="e.g. windows" required autocomplete="off" />
+                    </label>
+                    <label>
+                      <span class="form-label">Transport</span>
+                      <select id="mcp-create-transport">
+                        <option value="sse">Remote (SSE)</option>
+                        <option value="http">Remote (HTTP)</option>
+                        <option value="stdio">Local process (stdio)</option>
+                      </select>
+                    </label>
+                    <label id="mcp-create-url-label">
+                      <span class="form-label">URL</span>
+                      <input id="mcp-create-url" type="text" placeholder="http://host:8000/sse" autocomplete="off" />
+                    </label>
+                    <label id="mcp-create-command-label" hidden>
+                      <span class="form-label">Command</span>
+                      <input id="mcp-create-command" type="text" placeholder="e.g. mcp-remote" autocomplete="off" />
+                    </label>
+                    <label id="mcp-create-args-label" hidden>
+                      <span class="form-label">Arguments (one per line)</span>
+                      <textarea id="mcp-create-args" rows="2" placeholder="--flag&#10;value"></textarea>
+                    </label>
+                    <label id="mcp-create-token-label">
+                      <span class="form-label">Bearer token (optional)</span>
+                      <input
+                        id="mcp-create-token"
+                        type="password"
+                        placeholder="Only if the server requires one"
+                        autocomplete="off"
+                        spellcheck="false"
+                      />
+                    </label>
+                    <p class="form-hint">Stored once, never shown again — not for gateway-managed API keys</p>
+                    <div class="agent-detail-actions">
+                      <button type="submit" class="btn btn-primary">Create</button>
+                    </div>
+                  </form>
+                </details>
+              </div>
+            </div>
+          </aside>
+        </div>
+        <button id="scroll-bottom" class="scroll-bottom" hidden aria-label="Jump to bottom">
+          <svg class="icon" aria-hidden="true"><use href="#i-arrow-down"></use></svg
+          ><span id="unread-badge" class="unread-count"></span>
+        </button>
+      </main>
+      <section id="manage" class="manage" hidden>
+        <div class="dash-header">
+          <button id="manage-back" class="mobile-back" aria-label="Back">
+            <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+          </button>
+          <div class="manage-tabs" role="tablist" aria-label="Manage">
+            <button class="manage-tab active" data-mtab="agents" role="tab" aria-selected="true" aria-controls="mtab-agents" aria-label="Agents" title="Agents">
+              <svg class="icon" aria-hidden="true"><use href="#i-bot"></use></svg>
+            </button>
+            <button class="manage-tab" data-mtab="routing" role="tab" aria-selected="false" aria-controls="mtab-routing" aria-label="Auto routing" title="Auto routing" hidden>
+              <svg class="icon" aria-hidden="true"><use href="#i-route"></use></svg>
+            </button>
+            <button class="manage-tab" data-mtab="models" role="tab" aria-selected="false" aria-controls="mtab-models" aria-label="Models" title="Models">
+              <svg class="icon" aria-hidden="true"><use href="#i-cpu"></use></svg>
+            </button>
+            <button id="mtab-mcp-btn" class="manage-tab" data-mtab="mcp" role="tab" aria-selected="false" aria-controls="mtab-mcp" aria-label="MCP" title="MCP" hidden>
+              <svg class="icon" aria-hidden="true"><use href="#i-plug"></use></svg>
+            </button>
+            <button id="mtab-skills-btn" class="manage-tab" data-mtab="skills" role="tab" aria-selected="false" aria-controls="mtab-skills" aria-label="Skills" title="Skills" hidden>
+              <svg class="icon" aria-hidden="true"><use href="#i-book-open"></use></svg>
+            </button>
+          </div>
+          <input id="agent-filter" class="manage-filter" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="Filter agents…" aria-label="Filter agents by name" hidden />
+          <button id="manage-sort-az" class="sort-icon-btn" type="button" aria-pressed="false" title="Sort A–Z" aria-label="Sort A–Z">
+            <svg class="icon" aria-hidden="true"><use href="#i-sort"></use></svg>
+          </button>
+        </div>
+        <div class="manage-body">
+          <div id="mtab-agents" class="manage-pane active" role="tabpanel">
+            <ul id="agent-list"></ul>
+            <button id="agent-show-archived" class="agent-show-archived" hidden type="button"></button>
+            <button id="create-agent-btn" class="btn btn-secondary btn-list-footer" hidden>+ New agent</button>
+            <button id="import-agent-btn" class="btn btn-ghost btn-list-footer" type="button">Import agent…</button>
+            <input id="import-agent-file" type="file" accept=".tgz,.gz,application/gzip" hidden />
+            <!-- Template library — the blueprints an agent can be stamped from,
+                 managed on the same tab where agents are created. Owner/global
+                 admin only; the render hides it for everyone else and the
+                 server enforces. Hidden entirely until the library has
+                 something in it OR a source can be browsed. -->
+            <div id="agent-templates" class="skill-sources" hidden>
+              <div class="ollama-hosts-title">Templates</div>
+              <!-- ollama-model-list, not skill-sources-list: this is a row of
+                   name + a right-hand +/− control, which is the Models-tab row
+                   shape. The class is already general (the router roster uses
+                   it too). skill-sources-list is only a flex COLUMN — it gives
+                   rows no layout, so the toggle sat inline against the name
+                   instead of hard right. -->
+              <ul id="agent-templates-list" class="ollama-model-list"></ul>
+              <button id="template-browse-btn" class="btn btn-secondary btn-list-footer" type="button">+ Add templates…</button>
+              <div id="template-browse" hidden>
+                <select id="template-source-select" aria-label="Template source"></select>
+                <ul id="template-browse-list" class="ollama-model-list"></ul>
+                <div class="skill-source-form">
+                  <input id="template-source-repo" type="text" placeholder="owner/repo" autocomplete="off" spellcheck="false" />
+                  <button id="template-source-add" class="btn btn-secondary" type="button">Add source</button>
+                </div>
+                <!-- The fetcher talks to api.github.com and a source row is
+                     (owner, repo, branch) rather than a URL, so "any https
+                     source" is not a thing here. Say it beside the field
+                     instead of only in the error you get for guessing. -->
+                <p class="form-hint">GitHub repositories only — <code>owner/repo</code>, or paste a GitHub repo URL.</p>
+              </div>
+            </div>
+          </div>
+          <div id="mtab-models" class="manage-pane" role="tabpanel" hidden>
+            <ul id="model-list"></ul>
+            <button id="create-model-btn" class="btn btn-secondary btn-list-footer" hidden>+ Add model endpoint…</button>
+            <div id="ollama-hosts" class="ollama-hosts" hidden>
+              <div class="ollama-hosts-title">Servers</div>
+              <div id="ollama-host-cards"></div>
+            </div>
+                      </div>
+          <div id="mtab-mcp" class="manage-pane" role="tabpanel" hidden>
+            <ul id="mcp-list"></ul>
+            <button id="create-mcp-btn" class="btn btn-secondary btn-list-footer">+ New server</button>
+            <!-- MCP registry — the Add-MCP-server catalog's source, moved from
+                 Settings: managed on the tab it feeds. Global-admin only; the
+                 render hides it on 403. -->
+            <div id="mcp-sources" class="skill-sources" hidden>
+              <div class="ollama-hosts-title">MCP registry</div>
+              <ul id="mcp-sources-list" class="skill-sources-list"></ul>
+            </div>
+          </div>
+          <div id="mtab-skills" class="manage-pane" role="tabpanel" hidden>
+            <!-- Browse view: plain list + footer button, same shape as the other
+                 manage tabs. Adding lives behind "+ Add skill". -->
+            <div id="skills-browse">
+              <!-- Learning loop: skills the agents proposed, awaiting review. -->
+              <div id="skill-drafts" hidden>
+                <span class="form-label">Proposed skills</span>
+                <ul id="skill-drafts-list" class="skills-list"></ul>
+              </div>
+              <!-- Learning loop: the same skill learned independently by several
+                   agents — the signal it belongs in the shared pool. -->
+              <div id="skill-duplicates" hidden>
+                <span class="form-label">Learned by several agents</span>
+                <ul id="skill-duplicates-list" class="skills-list"></ul>
+              </div>
+              <!-- Filter across every section (name + description). While a
+                   query is active, matching sections auto-expand and empty
+                   ones hide; clearing restores the remembered collapse state.
+                   'Add from link…' = learn a skill from a URL, run by an agent
+                   you pick (room-mediated /learn); gated on the learning master. -->
+              <div class="skills-toolbar">
+                <input id="skills-filter" type="search" autocomplete="off" spellcheck="false" placeholder="Search skills…" hidden />
+                <button id="skills-learn-link" class="btn btn-secondary" type="button" hidden>Add from link…</button>
+              </div>
+              <ul id="skills-list"></ul>
+              <button id="skill-add-btn" class="btn btn-secondary btn-list-footer" type="button">+ Add skill</button>
+              <!-- Skill collections registry — the catalog's SOURCES, moved from
+                   Settings: you manage where skills come from on the same tab
+                   where you browse them. Owner/global-admin only; the render
+                   hides it for everyone else and the server enforces. -->
+              <div id="skill-sources" class="skill-sources" hidden>
+                <div class="ollama-hosts-title">Skill collections</div>
+              
+              <ul id="skill-sources-list" class="skill-sources-list"></ul>
+              <div class="skill-source-form">
+                <input id="skill-source-url" type="text" placeholder="https://github.com/owner/repo" autocomplete="off" spellcheck="false" />
+                <button id="skill-source-save" class="btn btn-secondary" type="button">Add</button>
+              </div>
+            
+              </div>
+            </div>
+            <!-- Add view: browse well-known collections, import by URL, or write
+                 your own. -->
+            <div id="skills-add" hidden>
+              <!-- Trust is a deliberate top-level choice, not an emergent property
+                   of which source you pick. Official = Anthropic (direct add).
+                   Community = everything else (persistent warning + review gate). -->
+              <div id="skills-trust" class="agent-subtabs" role="tablist" aria-label="Skill source trust">
+                <button id="skills-trust-official" class="agent-subtab active" role="tab" aria-selected="true" type="button">Official</button>
+                <button id="skills-trust-community" class="agent-subtab" role="tab" aria-selected="false" type="button">Community</button>
+              </div>
+              <!-- Search filters the whole pool — community only. -->
+              <input id="skill-discover-search" type="search" autocomplete="off" spellcheck="false" placeholder="Search skills…" hidden />
+              <!-- One merged pool for the selected tier. Each row is badged with
+                   its origin (which links out), so no per-source picker or credit
+                   line is needed. -->
+              <div id="skills-catalog">
+                <p id="skills-catalog-warn" class="skills-warn" hidden>Community-contributed and unreviewed — a skill's instructions and scripts run in your agents. Review the source before importing.</p>
+                <ul id="skills-catalog-list"></ul>
+              </div>
+              <div class="skills-import">
+                <input id="skill-import-url" type="text" autocomplete="off" spellcheck="false" placeholder="Skill page URL…" />
+                <button id="skill-import-btn" class="btn btn-primary" type="button">Import</button>
+              </div>
+              <div class="skills-editor-actions">
+                <button id="skills-add-back" class="btn btn-secondary" type="button">Back</button>
+                <button id="skill-new-btn" class="btn btn-secondary" type="button">Write your own</button>
+              </div>
+            </div>
+            <!-- SKILL.md viewer/editor: click a skill row to open. User skills are
+                 editable (the upload/manual-edit path); built-ins are read-only. -->
+            <div id="skills-editor" hidden>
+              <div class="skills-editor-head">
+                <input id="skill-editor-name" type="text" autocomplete="off" spellcheck="false" placeholder="skill-name (a-z, 0-9, hyphens)" />
+                <span id="skill-editor-badge" class="skill-badge" hidden></span>
+              </div>
+              <textarea id="skill-editor-content" spellcheck="false"></textarea>
+              <div class="skills-editor-actions">
+                <button id="skill-editor-mode" class="btn btn-ghost" type="button" hidden>Edit</button>
+                <button id="skill-editor-cancel" class="btn btn-secondary" type="button">Back</button>
+                <button id="skill-editor-save" class="btn btn-primary" type="button">Save</button>
+              </div>
+            </div>
+          </div>
+          <div id="mtab-routing" class="manage-pane" role="tabpanel" hidden>
+            <!-- Setup, moved from Settings — the tab is where routing LIVES, so
+                 it is also where it installs. Owners see this tab before routing
+                 exists (probeRoutingAvailability reveals it for isOwnerView);
+                 renderRoutingSetup swaps Install button ↔ Installed badge. -->
+            <div id="routing-setup" class="routing-setup" hidden>
+                  <!-- Install-row pattern: name left, action right — Install button →
+                       progress while running → green ✓ Installed badge. The hint line
+                       only appears when a prerequisite is missing. -->
+                  <div class="setting-group install-row">
+                    <span class="setting-label">Auto routing</span>
+                    <button class="feature-info-btn" type="button" aria-expanded="false"
+                      aria-controls="routing-feature-info" aria-label="About auto routing">
+                      <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+                    </button>
+                    <button id="routing-install-btn" class="btn btn-secondary" type="button">Install</button>
+                    <span id="routing-installed-badge" class="install-badge" hidden
+                      title="Shadow mode — open ⋯ → Auto routing to review decisions and go live">
+                      <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;Installed
+                    </span>
+                  </div>
+                  <p class="cred-hint feature-info" id="routing-feature-info" hidden>
+                    Sends each message to the model that fits it — quick turns go to a
+                    small local model, hard ones escalate to Claude. A local
+                    Arch-Router classifier (running on Ollama) reads the conversation
+                    and picks a route; a LiteLLM proxy carries the call to the chosen
+                    model, falling back to Claude whenever the local answer isn't good
+                    enough. A nightly job recalibrates the routes from real traffic.
+                    Runs fully on this machine — no extra cloud services.
+                  </p>
+                  <p class="cred-hint" id="routing-setup-desc" hidden></p>
+                  <div id="routing-install-progress" hidden>
+                    <div class="ollama-pull-bar" id="routing-pull-bar" hidden><span style="width:0%"></span></div>
+                    <div class="cred-hint" id="routing-pull-label" hidden></div>
+                    <pre id="routing-install-log" class="roster-refresh-log"></pre>
+                  </div>
+                
+            </div>
+            <div id="router-picker" class="router-picker">
+              <label class="router-picker-label">Router
+                <select id="router-select"></select>
+              </label>
+              <button id="router-new-btn" class="btn btn-ghost" type="button" title="New routing profile">+ New</button>
+              <button id="router-delete-btn" class="btn btn-ghost router-delete" type="button" title="Delete this profile">Delete</button>
+            </div>
+            <div class="routing-subtabs" role="tablist">
+              <button class="routing-subtab active" data-rsub="rules" role="tab" aria-selected="true">Rules</button>
+              <button class="routing-subtab" data-rsub="models" role="tab" aria-selected="false">Models</button>
+              <button class="routing-subtab" data-rsub="logs" role="tab" aria-selected="false">Logs</button>
+            </div>
+            <div id="rsub-rules" class="routing-subpane" role="tabpanel">
+              <p class="routing-intro" id="routing-intro"></p>
+              <div class="routing-bench-row">
+                <input id="routing-bench-input" type="text" placeholder="Type a prompt to classify…" />
+                <button id="routing-bench-run" class="btn btn-secondary" type="button">Classify</button>
+              </div>
+              <div id="routing-bench-result" class="routing-bench-result" hidden></div>
+              <ul id="route-list"></ul>
+              <button id="create-route-btn" class="btn btn-secondary btn-list-footer">+ Add route</button>
+            </div>
+            <div id="rsub-models" class="routing-subpane" role="tabpanel" hidden>
+              <div id="route-suggestions" class="route-suggestions" hidden></div>
+              <div class="routing-section-head">
+                <span class="ollama-hosts-title">Router models</span>
+                <button id="roster-refresh-btn" class="btn btn-ghost ollama-card-action icon-only" type="button" aria-label="Refresh roster" title="Refresh roster — re-run the router installers so newly pulled models join (brief router restart)"><svg class="icon" aria-hidden="true"><use href="#i-rotate-cw"></use></svg></button>
+              </div>
+              <ul id="router-roster-list" class="ollama-model-list"></ul>
+              <pre id="roster-refresh-log" class="roster-refresh-log" hidden></pre>
+            </div>
+            <div id="rsub-logs" class="routing-subpane" role="tabpanel" hidden>
+              <div class="routing-bench-row">
+                <input id="routing-bench-input-log" type="text" placeholder="Type a prompt to classify…" />
+                <button id="routing-bench-run-log" class="btn btn-secondary" type="button">Classify</button>
+              </div>
+              <div id="routing-bench-result-log" class="routing-bench-result" hidden></div>
+              <div class="ollama-hosts-title">Recent decisions</div>
+              <div id="routing-decisions-list" class="routing-decisions-list"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section id="permissions" hidden>
+        <div class="dash-header">
+          <button id="perms-exit" class="mobile-back" aria-label="Back">
+            <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+          </button>
+          <span>Permissions</span>
+          <div class="dash-header-actions">
+            <button id="perms-sort-az" class="sort-icon-btn" type="button" aria-pressed="false" title="Sort A–Z (off = you / owners / admins first)" aria-label="Sort A–Z">
+              <svg class="icon" aria-hidden="true"><use href="#i-sort"></use></svg>
+            </button>
+            <button id="perms-refresh" class="btn btn-ghost">
+              <svg class="icon" aria-hidden="true"><use href="#i-rotate-cw"></use></svg> Refresh
+            </button>
+          </div>
+        </div>
+        <div id="perms-body" class="perms-body" data-mode="list">
+          <aside class="perms-list-pane">
+            <div class="list-search-wrap">
+              <input
+                id="perms-user-search"
+                class="model-picker-search"
+                type="search"
+                placeholder="Search users…"
+                autocomplete="off"
+                aria-label="Search users"
+              />
+            </div>
+            <ul id="perms-user-list" class="perms-user-list"></ul>
+            <button id="perms-new-btn" class="btn btn-secondary btn-list-footer">+ New user</button>
+          </aside>
+          <main class="perms-detail-pane">
+            <div id="perms-detail-empty" class="perms-empty-state">
+              <p>Select a user to manage their roles</p>
+              <p class="form-hint">Anyone who authenticates is added automatically</p>
+            </div>
+            <div id="perms-detail-view" class="perms-detail-view" hidden>
+              <div class="agent-detail-header">
+                <button id="perms-detail-back" class="mobile-back" aria-label="Back to list">
+                  <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+                </button>
+                <span id="perms-detail-name">User</span>
+              </div>
+              <div class="perms-detail-body">
+                <div id="perms-detail-id" class="perms-detail-id"></div>
+                <div class="perms-section-title">Global</div>
+                <div id="perms-global-toggles" class="perms-toggle-list"></div>
+                <div class="perms-section-title">Per agent group</div>
+                <div class="perms-matrix-header">
+                  <span class="perms-matrix-name">Group</span>
+                  <span class="perms-matrix-cell-label">Admin</span>
+                  <span class="perms-matrix-cell-label">Member</span>
+                </div>
+                <div id="perms-matrix" class="perms-matrix"></div>
+                <div class="agent-detail-danger" id="perms-delete-zone" hidden>
+                  <button id="perms-delete-btn" type="button" class="btn btn-danger">Delete user</button>
+                </div>
+              </div>
+            </div>
+            <div id="perms-create-view" class="perms-detail-view" hidden>
+              <div class="agent-detail-header">
+                <button id="perms-create-back" class="mobile-back" aria-label="Back to list">
+                  <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+                </button>
+                <span>New user</span>
+              </div>
+              <form id="perms-create-form" class="perms-detail-body">
+                <p class="form-hint">Only for pre-granting — direct sign-ins appear automatically</p>
+                <label>
+                  <span class="form-label">Channel</span>
+                  <select id="perms-create-channel">
+                    <option value="webchat:tailscale">Webchat — Tailscale</option>
+                    <option value="webchat">Webchat — SSO / reverse proxy (Entra ID, Cloudflare Access…)</option>
+                    <option value="slack">Slack</option>
+                    <option value="discord">Discord</option>
+                    <option value="telegram">Telegram</option>
+                    <option value="cli">CLI</option>
+                    <option value="__raw__">— raw user_id (advanced) —</option>
+                  </select>
+                </label>
+                <p id="perms-create-method-hint" class="form-hint" style="margin-top: -4px"></p>
+                <label id="perms-create-handle-label">
+                  <span class="form-label">Handle / email</span>
+                  <input id="perms-create-handle" type="text" placeholder="someone@example.com" autocomplete="off" />
+                </label>
+                <label id="perms-create-raw-label" hidden>
+                  <span class="form-label">Raw user_id</span>
+                  <input id="perms-create-raw" type="text" placeholder="channel:specifics" autocomplete="off" />
+                </label>
+                <p id="perms-create-preview" class="form-hint" style="margin-top: -4px">
+                  Resolved id will appear here.
+                </p>
+                <label>
+                  <span class="form-label">Initial role</span>
+                  <select id="perms-create-kind">
+                    <option value="member">member</option>
+                    <option value="admin">admin</option>
+                    <option value="owner">owner</option>
+                  </select>
+                </label>
+                <label id="perms-create-group-label" hidden>
+                  <span class="form-label">Agent group</span>
+                  <select id="perms-create-group">
+                    <option value="">— global —</option>
+                  </select>
+                </label>
+                <div class="agent-detail-actions">
+                  <button type="submit" class="btn btn-primary">Add user</button>
+                </div>
+              </form>
+            </div>
+          </main>
+        </div>
+      </section>
+      <section id="admin" hidden>
+        <div class="dash-header">
+          <button id="admin-exit" class="mobile-back" aria-label="Back">
+            <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+          </button>
+          <span>Admin</span>
+        </div>
+        <div class="admin-body">
+          <div class="admin-columns">
+            <div class="admin-group">
+              <div class="admin-group-title">Setup</div>
+              <div id="settings-wizard" class="settings-credentials" hidden>
+                <h3 class="settings-section-title">Setup wizard</h3>
+                <div class="setting-group">
+                  <button id="wizard-open-btn" class="btn btn-secondary" type="button">Run setup wizard…</button>
+                </div>
+              </div>
+              <div id="settings-selftest" class="settings-credentials" hidden>
+                <h3 class="settings-section-title">Self-test</h3>
+                <div class="setting-group">
+                  <button id="selftest-run-btn" class="btn btn-secondary" type="button">Run self-test</button>
+                  <div id="selftest-results" class="preflight-results" hidden></div>
+                </div>
+              </div>
+            </div>
+            <div class="admin-group">
+              <div class="admin-group-title">Access &amp; credentials</div>
+              <div id="settings-access" class="settings-credentials" hidden>
+                <h3 class="settings-section-title">Access</h3>
+                <div class="setting-group install-row">
+                  <span class="setting-label">Bearer token</span>
+                  <button id="access-bearer-btn" class="btn btn-secondary" type="button" hidden></button>
+                  <span id="access-bearer-badge" class="install-badge" hidden></span>
+                </div>
+                <p class="cred-hint" id="access-bearer-hint" hidden></p>
+                <!-- HTTPS over Tailscale — runs `tailscale serve` so webchat is
+                     reachable at https://<node>.ts.net with a real cert (secure
+                     context → PWA install / push / voice). Shown only when
+                     tailscaled is detected up on the host. -->
+                <div id="access-https-row" class="setting-group install-row" hidden>
+                  <span class="setting-label">HTTPS over Tailscale</span>
+                  <button id="access-https-btn" class="btn btn-secondary" type="button"></button>
+                  <span id="access-https-badge" class="install-badge" hidden>
+                    <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;On
+                  </span>
+                </div>
+                <p class="cred-hint" id="access-https-hint" hidden></p>
+              </div>
+              <div id="settings-credentials" class="settings-credentials" hidden>
+                <h3 class="settings-section-title">User credentials</h3>
+                <div class="setting-group">
+                  <span class="setting-label">Default for new rooms</span>
+                  <div class="setting-options" id="cred-default-mode">
+                    <button class="setting-option" data-value="disabled">Off</button>
+                    <button class="setting-option" data-value="optional">Optional</button>
+                    <button class="setting-option" data-value="required">Required</button>
+                  </div>
+                </div>
+                <div class="setting-group">
+                  <span class="setting-label">Allowed providers</span>
+                  <div class="setting-options" id="cred-providers">
+                    <button class="setting-option" data-provider="claude">Claude</button>
+                    <button class="setting-option" data-provider="codex">Codex</button>
+                    <!-- Grok is subscription-only, so unlike Claude and Codex this
+                         pill maps to ONE flag rather than a key+subscription pair. -->
+                    <button class="setting-option" data-provider="grok">Grok</button>
+                  </div>
+                </div>
+                <!-- Codex provider install — Install button when Codex isn't in the
+                     agent image yet, green ✓ badge once it is. Runs the SAME two-phase
+                     (build → host restart) flow the wizard uses (shared runCodexInstall);
+                     on success codexAvailable flips and the Codex pill above enables. -->
+                <div class="setting-group install-row" id="settings-codex-install" hidden>
+                  <span class="setting-label">Codex (ChatGPT)</span>
+                  <button id="codex-install-btn" class="btn btn-secondary" type="button">Install Codex…</button>
+                  <span id="codex-installed-badge" class="install-badge" hidden>
+                    <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;Installed
+                  </span>
+                </div>
+                <div id="codex-install-progress" hidden>
+                  <pre id="codex-install-log" class="roster-refresh-log"></pre>
+                </div>
+                <!-- OpenCode harness install — Install button when the OpenCode stack isn't
+                     in the agent image yet, green ✓ badge once it is. Runs the SAME two-phase
+                     (build → host restart) flow the wizard uses (shared runOpencodeInstall);
+                     on success opencodeAvailable flips and an agent's Harness can be set to it. -->
+                <div class="setting-group install-row" id="settings-opencode-install" hidden>
+                  <span class="setting-label">OpenCode harness</span>
+                  <button id="opencode-install-btn" class="btn btn-secondary" type="button">Install OpenCode…</button>
+                  <span id="opencode-installed-badge" class="install-badge" hidden>
+                    <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;Installed
+                  </span>
+                </div>
+                <div id="opencode-install-progress" hidden>
+                  <pre id="opencode-install-log" class="roster-refresh-log"></pre>
+                </div>
+                <!-- Grok provider install — Install button when the Grok payload isn't
+                     in the tree yet, green ✓ badge once it is. Same two-phase (build →
+                     host restart) flow as the others via the shared runner; on success
+                     grokAvailable flips and the Grok pill above enables. Grok's chain
+                     always rebuilds the image: its CLI is a native binary baked by a
+                     Dockerfile ARG, not an npm entry, so a skipped rebuild would leave a
+                     wired provider whose binary does not exist. -->
+                <div class="setting-group install-row" id="settings-grok-install" hidden>
+                  <span class="setting-label">Grok</span>
+                  <button id="grok-install-btn" class="btn btn-secondary" type="button">Install Grok…</button>
+                  <span id="grok-installed-badge" class="install-badge" hidden>
+                    <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;Installed
+                  </span>
+                </div>
+                <div id="grok-install-progress" hidden>
+                  <pre id="grok-install-log" class="roster-refresh-log"></pre>
+                </div>
+                <!-- pi harness install — the minimal local harness (add-pi-stack).
+                     Same two-phase (build → restart) flow via the shared runner;
+                     on success piAvailable flips and Agent → Harness gains pi. -->
+                <div class="setting-group install-row" id="settings-pi-install" hidden>
+                  <span class="setting-label">pi harness</span>
+                  <button id="pi-install-btn" class="btn btn-secondary" type="button">Install pi…</button>
+                  <span id="pi-installed-badge" class="install-badge" hidden>
+                    <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;Installed
+                  </span>
+                </div>
+                <div id="pi-install-progress" hidden>
+                  <pre id="pi-install-log" class="roster-refresh-log"></pre>
+                </div>
+              </div>
+              <div id="settings-secrets" class="settings-credentials" hidden>
+                <h3 class="settings-section-title">System secrets</h3>
+                <ul id="secrets-list" class="skill-sources-list"></ul>
+                <div class="secret-form">
+                  <label class="secret-field"><span class="form-label">Host</span>
+                    <input id="secret-host" type="text" placeholder="dev.azure.com" autocomplete="off" spellcheck="false" />
+                  </label>
+                  <label class="secret-field"><span class="form-label">Token or key</span>
+                    <input id="secret-value" type="password" autocomplete="new-password" spellcheck="false" />
+                  </label>
+                  <label class="secret-field setting-toggle" id="secret-custom-row"><span class="form-label">Custom header</span>
+                    <input id="secret-custom" type="checkbox" />
+                  </label>
+                  <label class="secret-field secret-custom" id="secret-custom-header-row" hidden><span class="form-label">Header</span>
+                    <input id="secret-custom-header" type="text" placeholder="X-Api-Key" autocomplete="off" spellcheck="false" />
+                  </label>
+                  <label class="secret-field secret-custom" id="secret-custom-format-row" hidden><span class="form-label">Value template</span>
+                    <input id="secret-custom-format" type="text" placeholder="Bearer {value}" autocomplete="off" spellcheck="false" />
+                  </label>
+                  <button id="secret-save" class="btn btn-primary" type="button">Add secret</button>
+              <button class="feature-info-btn" type="button" aria-expanded="false"
+                    aria-controls="system-secrets-info" aria-label="About system secrets">
+                <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+              </button>
+                </div>
+                <p class="cred-hint feature-info" id="system-secrets-info" hidden>Available to every agent, injected at the proxy — never shown again, and never visible to the agent</p>
+              </div>
+              <div id="settings-credential-isolation" class="settings-feature" hidden>
+                <div class="setting-group install-row">
+                  <span class="setting-label">Credential isolation</span>
+                  <button class="feature-info-btn" type="button" aria-expanded="false"
+                    aria-controls="credential-isolation-info" aria-label="About credential isolation">
+                    <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+                  </button>
+                  <label class="setting-toggle">
+                    <input id="credential-isolation-toggle" type="checkbox" />
+                  </label>
+                </div>
+                <p class="cred-hint feature-info" id="credential-isolation-info" hidden>
+                  Each agent receives only the credentials assigned to it, instead of
+                  every vault secret whose host matches. New agents are isolated as
+                  they start, so the setting cannot drift as agents are added. Turning
+                  it on means a newly added credential reaches nobody until you assign
+                  it to an agent.
+                </p>
+                <p class="cred-hint" id="credential-isolation-env" hidden></p>
+              </div>
+            </div>
+            <div class="admin-group">
+              <div class="admin-group-title">Policy</div>
+              <div id="settings-prejudge" class="settings-credentials" hidden>
+                <h3 class="settings-section-title">Approval pre-judge</h3>
+                <div class="setting-group">
+                  <span class="setting-label">Judge model</span>
+                  <select id="prejudge-model-select" class="stt-cleanup-select" aria-label="Approval pre-judge model">
+                    <option value="">Off</option>
+                  </select>
+                </div>
+                <div class="setting-group" id="prejudge-actions-group" hidden>
+                  <span class="setting-label">Pre-judged actions</span>
+                  <div id="prejudge-actions-list" class="prejudge-actions"></div>
+                </div>
+              </div>
+              <div id="settings-autolearn" class="settings-feature" hidden>
+                <div class="setting-group install-row">
+                  <span class="setting-label">Auto-learn</span>
+                  <button class="feature-info-btn" type="button" aria-expanded="false"
+                    aria-controls="autolearn-feature-info" aria-label="About auto-learn">
+                    <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+                  </button>
+                </div>
+                <p class="cred-hint feature-info" id="autolearn-feature-info" hidden>
+                  The master switch for skill learning. When on, agents can
+                  auto-distill a skill draft from a busy turn (a human still keeps
+                  it), tunable per agent and per room. Turn this off to disable
+                  learning across the whole workspace — the per-agent and per-room
+                  learning controls disappear, and no turn ever auto-reviews.
+                  Applies to each agent on its next start.
+                </p>
+                <div class="setting-group">
+                  <div class="setting-options" id="autolearn-mode" role="group" aria-label="Auto-learn">
+                    <button class="setting-option" type="button" data-value="off">Off</button>
+                    <button class="setting-option" type="button" data-value="on">On</button>
+                  </div>
+                </div>
+                <div class="setting-group" id="autolearn-classifier-group" hidden>
+                  <span class="setting-label">Classifier model</span>
+                  <select id="autolearn-classifier-select" class="stt-cleanup-select" aria-label="Learning classifier model">
+                    <option value="">None — busy-turn heuristic</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div class="admin-group">
+              <div class="admin-group-title">Maintenance</div>
+              <div class="settings-credentials" id="settings-audit" hidden>
+                <div class="settings-section-head">
+                  <h3 class="settings-section-title">Audit log</h3>
+                  <button class="feature-info-btn" type="button" aria-expanded="false"
+                      aria-controls="audit-feature-info" aria-label="About the audit log">
+                    <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+                  </button>
+                </div>
+                <div class="setting-group install-row">
+                  <span class="setting-label">Forward to syslog</span>
+                  <input id="audit-syslog-target" type="text" autocomplete="off" spellcheck="false"
+                         placeholder="udp://host:514" aria-label="Syslog target URL" />
+                  <button id="audit-syslog-apply" class="btn btn-secondary" type="button">Apply</button>
+                </div>
+                <p class="cred-hint" id="audit-syslog-status" hidden></p>
+                <!-- Read-only viewer. There is no clear/delete control here and
+                     no endpoint behind one: a log an operator can rewrite from
+                     the UI is not an audit trail. -->
+                <div id="audit-log-view"></div>
+                <p class="cred-hint feature-info" id="audit-feature-info" hidden>
+                  Security events (sign-ins, privileged actions, role grants) always append to logs/audit.jsonl
+                  on this machine. Forwarding sends a copy to a syslog collector as RFC 5424 — udp://host:514,
+                  tcp://host:601 or tls://host:6514 (TLS verifies the collector's certificate). Clear the field
+                  and Apply to stop forwarding; the local file stays on either way, and changing this setting is
+                  itself recorded — to both the old and the new collector.
+                </p>
+              </div>
+              <div class="settings-credentials" id="settings-backup" hidden>
+                <h3 class="settings-section-title">Backup</h3>
+                <div class="setting-group install-row">
+                  <span class="setting-label">System backup</span>
+                  <button id="system-export-btn" class="btn btn-secondary" type="button">Download…</button>
+                </div>
+                <div class="setting-group install-row">
+                  <span class="setting-label">Import a room or agent</span>
+                  <button id="import-any-btn" class="btn btn-secondary" type="button">Import…</button>
+                </div>
+                <div class="setting-group install-row">
+                  <span class="setting-label">Restore from backup</span>
+                  <button id="system-import-btn" class="btn btn-danger" type="button">Restore…</button>
+                  <input id="system-import-file" type="file" accept=".tgz,.gz,application/gzip" hidden />
+                </div>
+              </div>
+              <div class="settings-credentials" id="settings-about" hidden>
+                <!-- Title and ⓘ share a row — a block-level info button bought a
+                     whole line for a 16px icon. Same inline placement as the
+                     feature rows (Read aloud, Voice input). -->
+                <div class="settings-section-head">
+                  <h3 class="settings-section-title">About</h3>
+                  <button class="feature-info-btn" type="button" aria-expanded="false"
+                      aria-controls="about-feature-info" aria-label="About versions">
+                    <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+                  </button>
+                </div>
+                <dl id="about-rows" class="about-rows"></dl>
+                <!-- Behind the ⓘ, not standing: DESIGN.md gives the info paragraph
+                     sole ownership of what/how/why copy, and a control never carries
+                     both. -->
+                <p class="cred-hint feature-info" id="about-feature-info" hidden>
+                  Updating is a shell operation, not a button — both components update through git against a
+                  customised tree. Run the /update-nanoclaw skill for nanoclaw, and re-run install.sh from the
+                  nanoclaw-webchat checkout for webchat.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section id="dashboard" hidden>
+        <div class="dash-header">
+          <button id="dash-back" class="mobile-back" aria-label="Back">
+            <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+          </button>
+          <span>Dashboard</span>
+          <button id="dash-refresh" class="btn btn-ghost">
+            <svg class="icon" aria-hidden="true"><use href="#i-rotate-cw"></use></svg> Refresh
+          </button>
+        </div>
+        <div class="dash-body">
+          <div id="dash-health" class="dash-health"></div>
+          <div class="dash-section">
+            <div class="dash-section-title">Metrics</div>
+            <div id="dash-graph" class="dash-graph"></div>
+          </div>
+          <!-- Token usage — owner-only; renderUsagePanel hides it on 403. Moved
+               from Settings: usage is a thing you CHECK, and the dashboard is the
+               checking surface. Inner ids unchanged so the render logic moved
+               without a rewrite. -->
+          <div class="dash-section" id="dash-usage-section" hidden>
+            <div class="dash-section-title">Token usage</div>
+              
+              <div class="setting-group usage-controls">
+                <div class="setting-options" id="usage-range" role="group" aria-label="Usage window">
+                  <button class="setting-option active" type="button" data-days="7">7d</button>
+                  <button class="setting-option" type="button" data-days="30">30d</button>
+                  <button class="setting-option" type="button" data-days="90">90d</button>
+                </div>
+                <span class="cred-hint" id="usage-total"></span>
+            <button class="feature-info-btn" type="button" aria-expanded="false"
+                  aria-controls="usage-feature-info" aria-label="About token usage">
+              <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+            </button>
+              </div>
+              <p class="cred-hint feature-info" id="usage-feature-info" hidden>
+                Estimated from message volume (~4 chars/token) — a proxy for who’s using how
+                much, not a billing figure. Excludes system prompts, tools, and reasoning.
+              </p>
+              <div class="usage-spark" id="usage-spark" hidden></div>
+              <table class="usage-table" id="usage-table" hidden>
+                <thead>
+                  <tr><th>User</th><th>In</th><th>Out</th><th>Total</th><th>Turns</th></tr>
+                </thead>
+                <tbody id="usage-tbody"></tbody>
+              </table>
+              <div class="usage-models" id="usage-models" hidden></div>
+              <p class="cred-hint" id="usage-empty" hidden>No activity in this window</p>
+            
+          </div>
+          <div class="dash-section" id="dash-router-section" hidden>
+            <div class="dash-section-title">Router · last 7 days</div>
+            <div id="dash-router" class="dash-router"></div>
+          </div>
+          <div id="dash-detail" class="dash-detail" hidden>
+            <div class="dash-detail-header">
+              <span id="dash-detail-title">Detail</span>
+              <button id="dash-detail-close" aria-label="Close">
+                <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+              </button>
+            </div>
+            <div id="dash-detail-body"></div>
+          </div>
+        </div>
+      </section>
+      <section id="topology" hidden>
+        <div class="dash-header">
+          <button id="topology-back" class="mobile-back" aria-label="Back">
+            <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+          </button>
+          <span>Topology</span>
+          <button id="topology-refresh" class="btn btn-ghost">
+            <svg class="icon" aria-hidden="true"><use href="#i-rotate-cw"></use></svg> Refresh
+          </button>
+        </div>
+        <div class="topology-body">
+          <div class="topology-legend">
+            <span><b>Rooms</b> → <b>Agents</b> → <b>Models</b></span>
+            <span class="topology-hint">Fan-in shows load; a node with no lines is unused.</span>
+            <button id="topo-focus-pill" class="topo-focus-pill" hidden aria-label="Clear focus"></button>
+          </div>
+          <div id="topology-canvas" class="topology-canvas"></div>
+        </div>
+      </section>
+      <section id="floor" hidden>
+        <div class="dash-header">
+          <button id="floor-back" class="mobile-back" aria-label="Back">
+            <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+          </button>
+          <span>Floor</span>
+          <button id="floor-refresh" class="btn btn-ghost">
+            <svg class="icon" aria-hidden="true"><use href="#i-rotate-cw"></use></svg> Refresh
+          </button>
+        </div>
+        <div class="floor-body">
+          <div class="floor-main">
+            <div id="floor-counts" class="floor-counts"></div>
+            <div id="floor-grid" class="floor-grid"></div>
+          </div>
+          <div id="floor-feed" class="floor-feed" aria-label="Live activity"></div>
+        </div>
+      </section>
+      <section id="journey" hidden>
+        <div class="dash-header">
+          <button id="journey-back" class="mobile-back" aria-label="Back">
+            <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+          </button>
+          <span>Skills journey</span>
+          <button id="journey-refresh" class="btn btn-ghost">
+            <svg class="icon" aria-hidden="true"><use href="#i-rotate-cw"></use></svg> Refresh
+          </button>
+        </div>
+        <div class="journey-body">
+          <!-- Client-side filters over the loaded events (transient — reset on
+               open). Agent options derive from the loaded feed; the skill chip
+               appears via the 'History' deep-links and clears on tap. -->
+          <div class="journey-filters">
+            <select id="journey-agent-filter" aria-label="Agent">
+              <option value="">All agents</option>
+            </select>
+            <div id="journey-kind-filter" class="setting-options" role="group" aria-label="Kind">
+              <button type="button" class="setting-option active" data-kind="">All</button>
+              <button type="button" class="setting-option" data-kind="kept">Kept</button>
+              <button type="button" class="setting-option" data-kind="revised">Revised</button>
+              <button type="button" class="setting-option" data-kind="proposed">Proposed</button>
+            </div>
+            <button type="button" id="journey-skill-chip" class="journey-skill-chip" hidden></button>
+          </div>
+          <div id="journey-list" class="journey-list"></div>
+          <div id="journey-no-match" class="journey-empty" hidden>No matching events</div>
+          <button id="journey-more" class="btn btn-secondary btn-list-footer" hidden>Load more</button>
+        </div>
+      </section>
+      <section id="matrix" hidden>
+        <div class="dash-header">
+          <button id="matrix-back" class="mobile-back" aria-label="Back">
+            <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+          </button>
+          <span>Wiring</span>
+          <button id="matrix-refresh" class="btn btn-ghost">
+            <svg class="icon" aria-hidden="true"><use href="#i-rotate-cw"></use></svg> Refresh
+          </button>
+        </div>
+        <div class="matrix-body">
+          <p class="matrix-hint">Tap a cell to wire or unwire</p>
+          <div id="matrix-canvas" class="matrix-canvas"></div>
+        </div>
+      </section>
+      <section id="help" hidden>
+        <div class="dash-header">
+          <button id="help-back" class="mobile-back" aria-label="Back">
+            <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+          </button>
+          <span>Help</span>
+        </div>
+        <div class="dash-body">
+          <div class="help-content">
+            <p class="help-intro">How the pieces fit together.</p>
+
+            <div class="help-card">
+              <div class="help-card-head">
+                <svg class="icon" aria-hidden="true"><use href="#i-user"></use></svg>
+                <span class="help-card-title">Rooms</span>
+              </div>
+              <p>
+                A room is a chat space. Each room is its own conversation — what you say in one room
+                doesn't show up in another. Pick a room from the sidebar to open it.
+              </p>
+            </div>
+
+            <div class="help-card">
+              <div class="help-card-head">
+                <svg class="icon" aria-hidden="true"><use href="#i-bot"></use></svg>
+                <span class="help-card-title">Agents</span>
+              </div>
+              <p>
+                An agent is the assistant you're talking to — it has its own personality, workspace, and
+                memory. The same agent can be in several rooms at once: it keeps one shared memory across
+                them (tell it something in one room and it can recall it in another), but each room stays
+                a separate conversation.
+              </p>
+            </div>
+
+            <div class="help-card">
+              <div class="help-card-head">
+                <svg class="icon" aria-hidden="true"><use href="#i-cpu"></use></svg>
+                <span class="help-card-title">Models</span>
+              </div>
+              <p>
+                Every agent runs on a model. By default that's Claude. From Models you can assign a
+                different model to an agent — including a local one running on your own hardware via
+                Ollama. The model only changes how the agent thinks; its memory and rooms stay the same.
+              </p>
+            </div>
+
+            <div class="help-card">
+              <div class="help-card-head">
+                <svg class="icon" aria-hidden="true"><use href="#i-layout-dashboard"></use></svg>
+                <span class="help-card-title">Wiring rooms and agents</span>
+              </div>
+              <p>
+                Wiring is the link between a room and an agent. A room can have one agent or several. With
+                one agent, it replies to everything. With several, star one in the room's settings to make
+                it the default that replies to every message; the others reply only when you @-mention them.
+              </p>
+            </div>
+
+            <div class="help-card">
+              <div class="help-card-head">
+                <svg class="icon" aria-hidden="true"><use href="#i-chevron-right"></use></svg>
+                <span class="help-card-title">Threads</span>
+              </div>
+              <p>
+                A thread is a separate conversation inside a room, with the same agent. Use one to take a
+                topic onto its own track without cluttering the main chat. Open a room's threads from the
+                <b>#</b> button in its header, or expand the room in the sidebar; <b>+</b> starts a new one.
+              </p>
+              <p>
+                A thread shares the <b>agent</b> — its personality, workspace, skills, and long-term memory
+                all carry over, so anything the agent has saved to memory it can still recall. What a thread
+                does <b>not</b> share is the conversation itself: it starts blank, and the agent in a thread
+                can't see the main chat or any sibling thread (and they can't see it). That's the point —
+                each topic stays focused, and each turn is smaller, cheaper, and faster.
+              </p>
+            </div>
+
+            <div class="help-card">
+              <div class="help-card-head">
+                <svg class="icon" aria-hidden="true"><use href="#i-rotate-cw"></use></svg>
+                <span class="help-card-title">Pulling &amp; pushing context</span>
+              </div>
+              <p>
+                Because a thread starts blank, two buttons in its header move context across the line.
+                <b>Pull</b> (↓) copies the main chat's recent messages down into the thread — use it to give
+                the thread the background it needs. <b>Push</b> (↑) copies the thread's own messages up into
+                the main chat — use it to fold a thread's outcome back into the main conversation.
+              </p>
+              <p>
+                Both only ever <b>add</b> — they never overwrite or reorder what's already there — and each is
+                <b>incremental</b>: a second pull or push brings only what's new since the last one. A divider
+                marks where the copied-in block begins.
+              </p>
+            </div>
+
+            <div class="help-card">
+              <div class="help-card-head">
+                <svg class="icon" aria-hidden="true"><use href="#i-pin"></use></svg>
+                <span class="help-card-title">Pinning &amp; hiding rooms</span>
+              </div>
+              <p>
+                Drag a room to the top of the sidebar to pin it; drag pinned rooms to reorder them (or use
+                Move up / Move down in a pinned room's … menu). To tuck a room away, choose Hide from its
+                … menu — hidden rooms reappear with the "Show hidden" toggle at the bottom of the list.
+                Admins can also Archive a room, which removes it for everyone.
+              </p>
+            </div>
+
+            <div class="help-card">
+              <div class="help-card-head">
+                <svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg>
+                <span class="help-card-title">User credentials</span>
+              </div>
+              <p>
+                By default an agent bills its work to the workspace's own account. A room owner can turn on
+                user credentials so each person connects their own Anthropic API key or Claude subscription
+                and their turns bill to their own account. Per room it's one of three modes: <b>off</b> (no
+                one connects a key), <b>optional</b> (connect one if you want), or <b>required</b> (you must
+                connect one to chat). When a room offers it, use the key icon in the room to connect or
+                disconnect — your key is never shown to the agent.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+      <div id="members-overlay" class="members-overlay" hidden></div>
+      <!-- Shared tap-to-close backdrop for #agent-detail / #room-detail / #model-detail.
+           Mobile-only (CSS hides it on desktop where panels live in their own column). -->
+      <div id="detail-overlay" class="detail-overlay" hidden></div>
+
+      <!-- Image lightbox — fullscreen viewer for attachment images.
+           Tap backdrop, tap ×, ESC, device back gesture all close it.
+           Supports pinch-zoom/drag-pan, prev/next nav, and download. -->
+      <div id="lightbox" class="lightbox" hidden role="dialog" aria-modal="true" aria-label="Image viewer">
+        <div class="lightbox-toolbar">
+          <a id="lightbox-download" class="lightbox-btn" href="#" download aria-label="Download image" title="Download"
+            ><svg class="icon" aria-hidden="true"><use href="#i-download"></use></svg
+          ></a>
+          <button id="lightbox-close" class="lightbox-btn" aria-label="Close image">
+            <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+          </button>
+        </div>
+        <button id="lightbox-prev" class="lightbox-nav lightbox-nav-prev" aria-label="Previous image" hidden>
+          <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+        </button>
+        <button id="lightbox-next" class="lightbox-nav lightbox-nav-next" aria-label="Next image" hidden>
+          <svg class="icon" aria-hidden="true"><use href="#i-chevron-right"></use></svg>
+        </button>
+        <div id="lightbox-spinner" class="lightbox-spinner" hidden aria-hidden="true"></div>
+        <img id="lightbox-img" class="lightbox-img" alt="" draggable="false" />
+      </div>
+
+      <!-- Settings modal -->
+      <div id="settings-overlay" class="modal-overlay" hidden>
+        <div class="modal">
+          <div class="modal-header">
+            <span>Settings</span>
+            <button id="settings-close" class="members-close" aria-label="Close">
+              <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+            </button>
+          </div>
+          <div class="modal-body">
+            <h3 class="settings-section-title">Preferences</h3>
+            <div class="setting-group">
+              <span class="setting-label">Theme</span>
+              <div class="setting-options" id="theme-options">
+                <button class="setting-option" data-value="dark">Dark</button>
+                <button class="setting-option" data-value="light">Light</button>
+                <button class="setting-option" data-value="system">System</button>
+              </div>
+            </div>
+            <div class="setting-group">
+              <span class="setting-label">Font size</span>
+              <div class="setting-options" id="font-options">
+                <button class="setting-option" data-value="small">Small</button>
+                <button class="setting-option" data-value="medium">Medium</button>
+                <button class="setting-option" data-value="large">Large</button>
+              </div>
+            </div>
+            <div class="setting-group">
+              <span class="setting-label">Send message</span>
+              <div class="setting-options" id="send-options">
+                <button class="setting-option" data-value="enter">Enter</button>
+                <button class="setting-option" data-value="shift-enter">Shift+Enter</button>
+                <button class="setting-option" data-value="ctrl-enter">Ctrl+Enter</button>
+              </div>
+            </div>
+            <div class="setting-group">
+              <label class="setting-toggle">
+                <span>Desktop notifications</span>
+                <input id="notif-toggle" type="checkbox" />
+              </label>
+            </div>
+            <!-- Re-open the first-run setup wizard — owner/global-admin only. -->
+            <!-- Self-test: run capability checks (tailscale, docker, container→host
+                 networking) from the vantage point that matters, with fixes. -->
+            <!-- Default login (Anthropic/Codex) now lives in the setup wizard's
+                 engine picker — reached via "Run setup wizard…" above. -->
+            <!-- My credentials — self-service PERSONAL credentials. Visible to
+                 everyone (not admin-gated): a per-user PAT is only meaningful if
+                 its owner is the one who enters it. Hidden entirely for people
+                 who aren't enrolled in any agent, so it never nags. -->
+            <div id="settings-my-credentials" class="settings-credentials" hidden>
+              <h3 class="settings-section-title">My credentials</h3>
+              <div id="my-credentials-list"></div>
+            </div>
+            <!-- Workspace credentials policy — owner only (shown when canEdit). -->
+            <!-- Access & security — owner/global-admin. The bearer-token opt-out
+                 appears only once Tailscale or SSO (trusted proxy / EntraID) is
+                 live; the server refuses to disable it otherwise. -->
+            <!-- Features — installable capabilities, one column per feature.
+                 Grid flows to one column in the drawer / on phones and can
+                 breathe wider if the pane ever grows. Each block follows the
+                 install-row pattern (label · Install → progress → ✓ badge). -->
+            <div class="settings-credentials" id="settings-features-col">
+              <h3 class="settings-section-title">Features</h3>
+              <div class="settings-features-grid">
+                
+                <div id="settings-tts" class="settings-feature" hidden>
+                  <!-- Primary control is the Off/On radio (right side, where the other
+                       feature rows put their control). Read aloud works on each device's
+                       built-in voices with no install; the optional Kokoro install below
+                       upgrades to local neural voices — it never competes with On/Off. -->
+                  <div class="setting-group install-row">
+                    <span class="setting-label">Read aloud</span>
+                    <button class="feature-info-btn" type="button" aria-expanded="false"
+                      aria-controls="tts-feature-info" aria-label="About read aloud">
+                      <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+                    </button>
+                    <!-- A switch, not an Off/On radio: this is the one BINARY feature
+                         that used the radio idiom, and its neighbour (credential
+                         isolation) already set the pattern for two-state features.
+                         Radios stay for genuine multi-option groups. -->
+                    <label class="setting-toggle">
+                      <input id="tts-readaloud-toggle" type="checkbox" aria-label="Read agent replies aloud" />
+                    </label>
+                  </div>
+                  <p class="cred-hint feature-info" id="tts-feature-info" hidden>
+                    Adds a speaker control to agent replies — nothing plays until you
+                    tap it. On uses each device's built-in voices out of the box.
+                    Installing local voices runs Kokoro — an open-source neural voice —
+                    in a local Docker container (kokoro-fastapi, ~330MB model, loopback
+                    only), so speech is generated on this machine and nothing leaves it.
+                    The switch applies to everyone in the workspace.
+                  </p>
+                  <!-- Secondary, optional: local Kokoro voices. Ghost action so it
+                       reads as an enhancement, not a required install gate. -->
+                  <div class="setting-group install-row tts-secondary">
+                    <button id="tts-install-btn" class="btn btn-ghost" type="button">Install local voices</button>
+                    <span id="tts-installed-badge" class="install-badge" hidden
+                      title="Kokoro neural voices are live on this machine">
+                      <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;Local voices
+                    </span>
+                  </div>
+                  <!-- Voice — populated from the backend's list (Kokoro ships ~67);
+                       picking one plays a short sample. Hidden until installed. -->
+                  <div class="setting-group" id="tts-voice-group" hidden>
+                    <span class="setting-label" id="tts-voice-label">Voice</span>
+                    <select id="tts-voice-select" class="stt-cleanup-select" aria-label="Read aloud voice"></select>
+                  </div>
+                  <div id="tts-install-progress" hidden>
+                    <div class="cred-hint" id="tts-install-label" hidden></div>
+                    <pre id="tts-install-log" class="roster-refresh-log"></pre>
+                  </div>
+                </div>
+                <!-- Voice dictation — owner-only install surface (the /api/webchat/stt/install
+                     endpoint 403s for everyone else, hiding the whole block). -->
+                <div id="settings-stt" class="settings-feature" hidden>
+                  <div class="setting-group install-row">
+                    <span class="setting-label">Voice dictation</span>
+                    <button class="feature-info-btn" type="button" aria-expanded="false"
+                      aria-controls="stt-feature-info" aria-label="About voice dictation">
+                      <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+                    </button>
+                    <button id="stt-install-btn" class="btn btn-secondary" type="button">Install</button>
+                    <span id="stt-installed-badge" class="install-badge" hidden
+                      title="Dictation is live — the mic appears next to the message box">
+                      <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;Installed
+                    </span>
+                  </div>
+                  <p class="cred-hint" id="stt-setup-desc" hidden></p>
+                  <!-- Workspace toggle, same idiom as Read aloud (no label — the
+                       block heading says it; aria-label for screen readers). -->
+                  <div class="setting-group" id="stt-enabled-group" hidden>
+                    <div class="setting-options" id="stt-enabled-mode" role="group" aria-label="Voice dictation for everyone">
+                      <button class="setting-option" type="button" data-value="off">Off</button>
+                      <button class="setting-option" type="button" data-value="on">On</button>
+                    </div>
+                  </div>
+                  <p class="cred-hint feature-info" id="stt-feature-info" hidden>
+                    Adds a mic to the message box: tap, speak, and the transcript lands
+                    in the composer — sending stays your tap. Local (recommended) runs
+                    whisper.cpp in a Docker container with a Whisper model sized to
+                    this machine; audio never leaves it. ElevenLabs transcribes in the
+                    cloud with your API key — audio is sent to ElevenLabs. The cleanup
+                    model optionally tidies punctuation and fillers after you stop.
+                  </p>
+                  <div class="setting-group" id="stt-backend-group" hidden>
+                    <span class="setting-label">Backend</span>
+                    <div class="setting-options" id="stt-backend-mode" role="group" aria-label="Dictation backend">
+                      <button class="setting-option" type="button" data-value="local" title="whisper.cpp on this machine — recommended; audio never leaves it">Local</button>
+                      <button class="setting-option" type="button" data-value="elevenlabs" title="Cloud transcription — audio is sent to ElevenLabs">ElevenLabs</button>
+                    </div>
+                  </div>
+                  <div class="setting-group" id="stt-model-group" hidden>
+                    <span class="setting-label" id="stt-model-label">Model</span>
+                    <select id="stt-model-select" class="stt-cleanup-select" aria-label="Whisper model"></select>
+                  </div>
+                  <div class="setting-group" id="stt-key-group" hidden>
+                    <input id="stt-api-key" type="password" placeholder="ElevenLabs API key" autocomplete="off" spellcheck="false" />
+                    <button id="stt-connect-btn" class="btn btn-secondary" type="button">Connect</button>
+                  </div>
+                  <div class="setting-group" id="stt-cleanup-group" hidden>
+                    <span class="setting-label">Cleanup model</span>
+                    <select id="stt-cleanup-select" class="stt-cleanup-select" aria-label="Transcript cleanup model">
+                      <option value="">None — raw transcript</option>
+                    </select>
+                  </div>
+                  <div class="setting-group install-row" id="stt-prompt-row" hidden>
+                    <span class="setting-label">Cleanup prompt</span>
+                    <button id="stt-prompt-edit" class="btn btn-ghost" type="button"
+                      aria-expanded="false" aria-controls="stt-prompt-editor">Edit…</button>
+                  </div>
+                  <div id="stt-prompt-editor" hidden>
+                    <textarea id="stt-prompt-text" rows="6" spellcheck="false"
+                      aria-label="Transcript cleanup prompt"></textarea>
+                    <div class="setting-group install-row">
+                      <button id="stt-prompt-reset" class="btn btn-ghost" type="button" hidden>Reset to default</button>
+                      <button id="stt-prompt-save" class="btn btn-secondary" type="button">Save</button>
+                    </div>
+                  </div>
+                  <div id="stt-install-progress" hidden>
+                    <pre id="stt-install-log" class="roster-refresh-log"></pre>
+                  </div>
+                </div>
+                <!-- Auto-learn — workspace MASTER switch (owner-only). Off disables
+                     the learning loop everywhere and hides the per-agent / per-room
+                     learning controls. -->
+              </div>
+            </div>
+            <!-- Approval pre-judge — owner-only LLM triage in front of approval
+                 holds (docs/webchat/approval-prejudge.md). Judge model Off =
+                 feature off; the action list appears once a judge is set.
+                 Never-listed actions render disabled (always human). -->
+            
+            <!-- Tool secrets — per-agent API credentials injected by the OneCLI
+                 gateway. Write-only by construction: the server never returns a
+                 stored value, so nothing here can reveal one. -->
+            
+            <!-- hidden by default: renderAboutSettings reveals it once /api/system/versions answers -->
+            <!-- hidden by default: renderAuditSettings reveals it for owners only -->
+            <!-- hidden by default: renderBackupSettings reveals it for owners only -->
+          </div>
+        </div>
+      </div>
+    </div>
+    <!--
+      Host-restart monitor. Shown while the server restarts (e.g. after generating
+      a bearer token). Polls /health (pre-auth) until the server drops and returns,
+      then reloads — which lands on the login screen since a token is now required.
+    -->
+    <div id="restart-overlay" class="modal-overlay" hidden>
+      <div class="modal restart-modal" role="dialog" aria-modal="true" aria-live="polite">
+        <div class="spinner restart-spinner" aria-hidden="true"></div>
+        <h3 id="restart-title">Restarting…</h3>
+        <p class="cred-hint" id="restart-status">Applying your changes — this takes a few seconds.</p>
+        <button id="restart-reload-btn" class="btn btn-secondary" type="button" hidden>Reload now</button>
+      </div>
+    </div>
+    <!--
+      First-run setup wizard — owner/global-admin only. Auto-opens on first login
+      while onboarding is incomplete; re-openable from Settings. Steps are skippable.
+    -->
+    <div id="wizard-overlay" class="modal-overlay" hidden>
+      <div class="modal wizard-modal" role="dialog" aria-modal="true" aria-labelledby="wizard-title">
+        <div class="members-header">
+          <span id="wizard-title">Set up NanoClaw</span>
+          <button id="wizard-close" class="members-close" type="button" aria-label="Close">
+            <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+          </button>
+        </div>
+        <div class="wizard-dots" id="wizard-dots" aria-hidden="true"></div>
+        <div class="wizard-body">
+          <!-- Step 0: pick the default (fallback) engine; each option expands
+               its connect controls inline (accordion) when selected. -->
+          <section class="wizard-step" data-step="0">
+            <h3 class="settings-section-title">Default engine</h3>
+            <div class="wizard-engines" role="radiogroup" aria-label="Default engine">
+              <div class="wizard-engine">
+                <label class="wizard-engine-head">
+                  <input type="radio" name="wizard-engine" value="claude" checked />
+                  <span>Claude</span>
+                  <span class="wizard-engine-rec">Recommended</span>
+                  <span class="wizard-engine-chip" id="wizard-chip-claude" hidden></span>
+                </label>
+                <div class="wizard-engine-body" data-engine="claude">
+                  <div id="wizard-claude-connect">
+                    <div class="setting-group">
+                      <button id="wizard-claude-oauth" class="btn btn-primary" type="button">
+                        Connect with Claude subscription…
+                      </button>
+                    </div>
+                    <div class="setting-group">
+                      <input
+                        id="wizard-claude-key"
+                        type="password"
+                        placeholder="or paste sk-ant-… key / sk-ant-oat… token"
+                        autocomplete="off"
+                        spellcheck="false"
+                      />
+                      <button id="wizard-claude-save" class="btn btn-secondary" type="button">Save</button>
+                    </div>
+                    <p class="cred-hint" id="wizard-claude-status" hidden></p>
+                  </div>
+                  <div class="wizard-connected" id="wizard-claude-connected" hidden>
+                    <span class="wizard-connected-check" aria-hidden="true">✓</span>
+                    <span id="wizard-claude-connected-text">Connected</span>
+                    <button id="wizard-claude-disconnect" class="btn btn-secondary" type="button">Disconnect</button>
+                  </div>
+                </div>
+              </div>
+              <div class="wizard-engine" id="wizard-engine-codex">
+                <label class="wizard-engine-head">
+                  <input type="radio" name="wizard-engine" value="codex" />
+                  <span>Codex (ChatGPT)</span>
+                  <span class="wizard-engine-chip" id="wizard-chip-codex" hidden></span>
+                </label>
+                <div class="wizard-engine-body" data-engine="codex" hidden>
+                  <!-- Shown by app.js when the Codex provider isn't installed. One-click
+                       install: copies the payload, rebuilds the agent image, restarts. -->
+                  <div class="setting-group install-row" id="wizard-codex-install-row" hidden>
+                    <button id="wizard-codex-install" class="btn btn-primary" type="button">Install Codex…</button>
+                  </div>
+                  <pre id="wizard-codex-install-log" class="wizard-code" hidden></pre>
+                  <div id="wizard-codex-connect">
+                    <div class="setting-group">
+                      <button id="wizard-codex-oauth" class="btn btn-primary" type="button">
+                        Connect with ChatGPT subscription…
+                      </button>
+                    </div>
+                    <div class="setting-group">
+                      <input
+                        id="wizard-codex-key"
+                        type="password"
+                        placeholder="or paste an sk-… OpenAI key"
+                        autocomplete="off"
+                        spellcheck="false"
+                      />
+                      <button id="wizard-codex-save" class="btn btn-secondary" type="button">Save</button>
+                    </div>
+                    <p class="cred-hint" id="wizard-codex-status" hidden></p>
+                  </div>
+                  <div class="wizard-connected" id="wizard-codex-connected" hidden>
+                    <span class="wizard-connected-check" aria-hidden="true">✓</span>
+                    <span id="wizard-codex-connected-text">Connected</span>
+                    <button id="wizard-codex-disconnect" class="btn btn-secondary" type="button">Disconnect</button>
+                  </div>
+                </div>
+              </div>
+              <div class="wizard-engine" id="wizard-engine-grok">
+                <label class="wizard-engine-head">
+                  <input type="radio" name="wizard-engine" value="grok" />
+                  <span>Grok</span>
+                  <span class="wizard-engine-chip" id="wizard-chip-grok" hidden></span>
+                </label>
+                <div class="wizard-engine-body" data-engine="grok" hidden>
+                  <!-- Grok is subscription-only: a SuperGrok / X Premium+ device-code
+                       login, with no API-key path at all. So this card has no key input,
+                       unlike Claude and Codex — offering one would imply a route that
+                       does not exist. -->
+                  <!-- Install row, shown only when the provider is absent. Grok's payload
+                       lives on a branch and its CLI is a native binary baked by the image
+                       build, so "install" here is a real chain (copy + wire + build + image
+                       + restart), not a package add. Mirrors Codex. -->
+                  <div class="setting-group install-row" id="wizard-grok-install-row" hidden>
+                    <button id="wizard-grok-install" class="btn btn-primary" type="button">Install Grok…</button>
+                  </div>
+                  <pre id="wizard-grok-install-log" class="wizard-code" hidden></pre>
+                  <div id="wizard-grok-connect">
+                    <div class="setting-group install-row" id="wizard-grok-login-row">
+                      <button id="wizard-grok-login" class="btn btn-primary" type="button">Sign in with a device code…</button>
+                    </div>
+                    <!-- Shown while a login is in flight. The code is the point of the
+                         panel so it carries the emphasis, and the countdown exists
+                         because a device code expires — a silent stall is the worst
+                         outcome here. -->
+                    <div id="wizard-grok-device" hidden>
+                      <!-- The link lives inside .cred-hint deliberately: that is the only
+                           rule in the stylesheet that themes an anchor (--accent-strong +
+                           underline, the AA-contrast pairing per DESIGN.md §1). A bare <a>
+                           inherits nothing and falls back to the browser's default blue,
+                           which is a hardcoded colour in both themes. -->
+                      <p class="cred-hint"><a id="wizard-grok-url" target="_blank" rel="noopener noreferrer"></a></p>
+                      <pre class="wizard-code" id="wizard-grok-code"></pre>
+                      <div class="setting-group install-row">
+                        <button id="wizard-grok-cancel" class="btn btn-secondary" type="button">Cancel</button>
+                      </div>
+                    </div>
+                    <p class="cred-hint" id="wizard-grok-status" hidden></p>
+                  </div>
+                  <div class="wizard-connected" id="wizard-grok-connected" hidden>
+                    <span class="wizard-connected-check" aria-hidden="true">✓</span>
+                    <span id="wizard-grok-connected-text">Connected</span>
+                  </div>
+                </div>
+              </div>
+              <div class="wizard-engine">
+                <label class="wizard-engine-head">
+                  <input type="radio" name="wizard-engine" value="ollama" />
+                  <span>Ollama</span>
+                  <span class="wizard-engine-chip" id="wizard-chip-ollama" hidden></span>
+                </label>
+                <div class="wizard-engine-body" data-engine="ollama" hidden>
+                  <!-- Set-default state, mirroring the Claude/Codex connected card:
+                       shown by app.js only when an Ollama model is the real default. -->
+                  <div class="wizard-connected" id="wizard-ollama-connected" hidden>
+                    <span class="wizard-connected-check" aria-hidden="true">✓</span>
+                    <span id="wizard-ollama-connected-text">Model set as default</span>
+                    <button id="wizard-ollama-change" class="btn btn-secondary" type="button">Change</button>
+                  </div>
+                  <!-- OpenCode harness: offered once a local Ollama model is the default,
+                       since the built-in Claude harness confuses small models. One-click:
+                       installs the OpenCode stack + rebuilds the agent image, then restarts.
+                       Shown by app.js only when Ollama is set and OpenCode isn't installed. -->
+                  <div class="setting-group install-row" id="wizard-opencode-install-row" hidden>
+                    <button id="wizard-opencode-install" class="btn btn-primary" type="button">Install OpenCode harness…</button>
+                    <span id="wizard-opencode-installed-badge" class="install-badge" hidden>
+                      <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;OpenCode installed
+                    </span>
+                  </div>
+                  <p class="cred-hint" id="wizard-opencode-hint" hidden>Recommended</p>
+                  <pre id="wizard-opencode-install-log" class="wizard-code" hidden></pre>
+                  <div id="wizard-ollama-setup">
+                  <div class="setting-group">
+                    <input id="wizard-ollama-url" type="url" placeholder="http://localhost:11434" autocomplete="off" spellcheck="false" />
+                    <button id="wizard-ollama-probe" class="btn btn-secondary" type="button">Probe</button>
+                  </div>
+                  <!-- Shown when nothing answers on this machine's :11434 (Linux only). -->
+                  <div class="setting-group" id="wizard-ollama-install-row" hidden>
+                    <button id="wizard-ollama-install" class="btn btn-secondary" type="button">
+                      Install Ollama on this machine…
+                    </button>
+                  </div>
+                  <pre id="wizard-ollama-install-log" class="wizard-code" hidden></pre>
+                  <p class="cred-hint" id="wizard-ollama-status" hidden></p>
+                  <!-- Pick a model here and it becomes the workspace default —
+                       selecting the radio is the action, no separate button. -->
+                  <div id="wizard-ollama-results" hidden>
+                    <ul id="wizard-ollama-list" class="wizard-list"></ul>
+                  </div>
+                  <!-- Pull a model onto the probed host (progress polled from /api/ollama/pulls). -->
+                  <div class="setting-group" id="wizard-ollama-dl-row" hidden>
+                    <input id="wizard-ollama-dl-model" type="text" placeholder="model to download" autocomplete="off" spellcheck="false" />
+                    <button id="wizard-ollama-dl" class="btn btn-secondary" type="button">Download</button>
+                  </div>
+                  <p class="cred-hint" id="wizard-ollama-rec" hidden></p>
+                  <div class="ollama-pull-bar" id="wizard-ollama-pull-bar" hidden><span style="width:0%"></span></div>
+                  <p class="cred-hint" id="wizard-ollama-dl-status" hidden></p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+          <!-- Step 2 (last): create first agent + room — named after access is set. -->
+          <section class="wizard-step" data-step="2" hidden>
+            <h3 class="settings-section-title">Your first agent</h3>
+            <div class="setting-group">
+              <label class="setting-label" for="wizard-room-name">Room</label>
+              <input id="wizard-room-name" type="text" value="General" placeholder="Room name" autocomplete="off" />
+            </div>
+            <div class="setting-group">
+              <label class="setting-label" for="wizard-agent-name">Agent</label>
+              <input id="wizard-agent-name" type="text" value="Assistant" placeholder="Agent name" autocomplete="off" />
+            </div>
+            <h3 class="settings-section-title">Features</h3>
+            <div class="setting-group">
+              <label class="setting-toggle">
+                <span>Enable MCP &amp; skills catalog</span>
+                <input id="wizard-marketplace" type="checkbox" />
+              </label>
+            </div>
+            <div class="setting-group">
+              <label class="setting-toggle">
+                <span>Enable skill learning (auto-learn)</span>
+                <input id="wizard-autolearn" type="checkbox" />
+              </label>
+            </div>
+            <div class="setting-group">
+              <label class="setting-toggle">
+                <span>Enable read aloud (TTS)</span>
+                <input id="wizard-tts-default" type="checkbox" />
+              </label>
+            </div>
+            <!-- Voice models: on-device neural voices (Kokoro). Recommended once
+                 Read Aloud is on; without it, read-aloud uses the browser's voices. -->
+            <div class="setting-group install-row" id="wizard-tts-install-row" hidden>
+              <button id="wizard-tts-install" class="btn btn-secondary" type="button">Install Kokoro…</button>
+            </div>
+            <span class="install-badge" id="wizard-tts-installed" hidden>
+              <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;Voice models installed
+            </span>
+            <div id="wizard-tts-progress" hidden>
+              <pre id="wizard-tts-log" class="wizard-code"></pre>
+            </div>
+            <!-- Voice dictation (STT) — owner-only surface (the install endpoint 403s
+                 otherwise, keeping this hidden). Enable toggle like Read Aloud; when
+                 on, pick a backend — Local whisper.cpp (private) or ElevenLabs (cloud
+                 key). Mirrors Settings → Features → Voice dictation. -->
+            <div id="wizard-stt-section" hidden>
+              <div class="setting-group">
+                <label class="setting-toggle">
+                  <span>Enable voice dictation (STT)</span>
+                  <input id="wizard-stt-enable" type="checkbox" />
+                </label>
+              </div>
+              <!-- Backend setup — shown once dictation is on. -->
+              <div id="wizard-stt-group" hidden>
+                <div class="setting-group">
+                  <span class="setting-label">Backend</span>
+                  <div class="setting-radios" id="wizard-stt-backend" role="radiogroup" aria-label="Dictation backend">
+                    <label class="setting-radio" title="whisper.cpp on this machine — audio never leaves it">
+                      <input type="radio" name="wizard-stt-backend" value="local" />
+                      <span>Local</span>
+                    </label>
+                    <label class="setting-radio" title="Cloud transcription — audio is sent to ElevenLabs">
+                      <input type="radio" name="wizard-stt-backend" value="elevenlabs" />
+                      <span>ElevenLabs</span>
+                    </label>
+                  </div>
+                  <span class="install-badge" id="wizard-stt-installed" hidden>
+                    <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;<span id="wizard-stt-installed-text">Whisper installed</span>
+                  </span>
+                </div>
+                <div class="setting-group install-row" id="wizard-stt-install-row" hidden>
+                  <button id="wizard-stt-install" class="btn btn-secondary" type="button">Install dictation model…</button>
+                </div>
+                <div class="setting-group" id="wizard-stt-key-row" hidden>
+                  <input id="wizard-stt-key" type="password" placeholder="ElevenLabs API key" autocomplete="off" spellcheck="false" />
+                  <button id="wizard-stt-connect" class="btn btn-secondary" type="button">Connect</button>
+                </div>
+                <pre id="wizard-stt-log" class="wizard-code" hidden></pre>
+              </div>
+            </div>
+            <p class="cred-hint" id="wizard-room-status" hidden></p>
+          </section>
+          <!-- Step 1: Access & security — how you reach NanoClaw and how it's secured.
+               Consolidates the exposure choices: Tailscale identity + one-click HTTPS,
+               reverse-proxy SSO, and retiring the bootstrap bearer token. -->
+          <section class="wizard-step" data-step="1" hidden>
+            <h3 class="settings-section-title">Access &amp; security</h3>
+            <!-- One radio per access method (accordion, like step 0). Selecting one
+                 reveals its detail; picking Tailscale arms first-login owner at Finish. -->
+            <div class="wizard-engines" role="radiogroup" aria-label="Access method">
+              <div class="wizard-engine">
+                <label class="wizard-engine-head">
+                  <input type="radio" name="wizard-access" value="localhost" />
+                  <span>Localhost only</span>
+                  <span class="wizard-engine-rec">Most secure</span>
+                  <span class="wizard-engine-chip" id="wizard-access-localhost-chip" hidden></span>
+                </label>
+              </div>
+              <div class="wizard-engine">
+                <label class="wizard-engine-head">
+                  <input type="radio" name="wizard-access" value="bearer" checked />
+                  <span>Bearer token</span>
+                  <span class="wizard-engine-chip" id="wizard-access-bearer-chip" hidden></span>
+                </label>
+                <div class="wizard-engine-body" data-access="bearer">
+                  <!-- No token set: WEBCHAT_TOKEN is a boot-time value. Offer to
+                       generate one (+ expose on the network — a token on loopback
+                       is pointless) and copy it; the restart that activates it
+                       fires at wizard Finish. The gen row shows (app.js) on
+                       !bearerConfigured. -->
+                  <div class="setting-group install-row" id="wizard-bearer-gen-row" hidden>
+                    <button id="wizard-bearer-gen" class="btn btn-secondary" type="button">Generate token</button>
+                  </div>
+                  <!-- Shown after generate: the token to copy + what happens next. -->
+                  <div id="wizard-bearer-result" hidden>
+                    <div class="setting-group">
+                      <input id="wizard-bearer-token" type="text" readonly spellcheck="false" />
+                      <button id="wizard-bearer-copy" class="btn btn-secondary" type="button">Copy</button>
+                    </div>
+                    <p class="cred-hint err">
+                      Copy this token now — you won't be able to see it again.
+                    </p>
+                  </div>
+                  <!-- Revealed only when it's safe to drop the token (an alternative can
+                       authenticate and this session didn't arrive over the bearer). -->
+                  <div id="wizard-retire-row" class="setting-group install-row" hidden>
+                    <button id="wizard-retire-btn" class="btn btn-secondary" type="button">Retire the bearer token</button>
+                    <span id="wizard-retire-status" class="cred-hint"></span>
+                  </div>
+                </div>
+              </div>
+              <div class="wizard-engine">
+                <label class="wizard-engine-head">
+                  <input type="radio" name="wizard-access" value="tailscale" />
+                  <span>Tailscale</span>
+                  <span class="wizard-engine-rec">Recommended</span>
+                  <span class="wizard-engine-chip" id="wizard-access-ts-chip" hidden></span>
+                </label>
+                <div class="wizard-engine-body" data-access="tailscale">
+                  <!-- No /dev/net/tun (an unprivileged Proxmox LXC / restricted
+                       container): tailscaled can't run without it, and that's a
+                       host-side fix NanoClaw can't do from inside. Shown by app.js
+                       only when tunPresent is false. -->
+                  <p class="cred-hint" id="wizard-ts-helper" hidden>
+                    This host has no <code>/dev/net/tun</code> device, which Tailscale
+                    needs. On a Proxmox LXC, add it with the
+                    <a href="https://community-scripts.github.io/ProxmoxVE/scripts?id=tailscale" target="_blank" rel="noopener">community Tailscale helper</a>;
+                    otherwise enable the TUN device for this container, then reach
+                    NanoClaw over your tailnet.
+                  </p>
+                  <!-- TUN is present but this process isn't root (a normal desktop /
+                       non-root --user service): the install + sign-in need root, so
+                       hand the operator the commands to run in their own terminal.
+                       Shown by app.js when tunPresent && !isRoot. -->
+                  <div id="wizard-ts-manual" hidden>
+                    <p class="cred-hint">To install Tailscale, run this in a terminal:</p>
+                    <div class="setting-group">
+                      <input id="wizard-ts-manual-cmd" type="text" readonly spellcheck="false" value="curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up" />
+                      <button id="wizard-ts-manual-copy" class="btn btn-secondary" type="button">Copy</button>
+                    </div>
+                  </div>
+                  <!-- Shown when the host CAN install (TUN + root): one-click install
+                       + sign-in; the auth link prints into the log below. -->
+                  <div class="setting-group install-row" id="wizard-ts-install-row" hidden>
+                    <button id="wizard-ts-install-btn" class="btn btn-primary" type="button">Install Tailscale…</button>
+              <button class="feature-info-btn" type="button" aria-expanded="false"
+                  aria-controls="wizard-ts-install-info" aria-label="About this install">
+              <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+            </button>
+              <p class="cred-hint feature-info" id="wizard-ts-install-info" hidden>Installs tailscaled and starts sign-in — the auth link appears below.</p>
+                  </div>
+                  <pre id="wizard-ts-install-log" class="wizard-code" hidden></pre>
+                  <!-- Revealed only when tailscaled is up and serve isn't already on. -->
+                  <div id="wizard-https-row" class="setting-group install-row" hidden>
+                    <button id="wizard-https-btn" class="btn btn-secondary" type="button">Enable HTTPS</button>
+                    <span id="wizard-https-status" class="cred-hint"></span>
+                  </div>
+                </div>
+              </div>
+              <div class="wizard-engine">
+                <label class="wizard-engine-head">
+                  <input type="radio" name="wizard-access" value="cloudflare" />
+                  <span>Cloudflare Tunnel</span>
+                  <span class="wizard-engine-chip" id="wizard-access-cf-chip" hidden></span>
+                </label>
+                <div class="wizard-engine-body" data-access="cloudflare">
+                  <!-- Shown when a one-click install can't run here (no root/systemd). -->
+                  <p class="cred-hint" id="wizard-cf-helper" hidden>
+                    Needs root + systemd. Install
+                    <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" target="_blank" rel="noopener">cloudflared</a>
+                    yourself, then paste the token.
+                  </p>
+                  <!-- Step 1: install the cloudflared binary (no token yet). -->
+                  <div class="setting-group install-row" id="wizard-cf-install-row" hidden>
+                    <button id="wizard-cf-install-btn" class="btn btn-primary" type="button">Install cloudflared…</button>
+                  </div>
+                  <!-- Step 2: paste the connector token from a managed tunnel, then connect. -->
+                  <div id="wizard-cf-connect" hidden>
+                    <p class="cred-hint" id="wizard-cf-installed-note">✓ cloudflared installed.</p>
+                    <div class="setting-group">
+                      <input id="wizard-cf-token" type="password" placeholder="tunnel token" autocomplete="off" spellcheck="false" />
+                      <button id="wizard-cf-connect-btn" class="btn btn-primary" type="button">Connect</button>
+                    </div>
+                    <p class="cred-hint">
+                      Create a
+                      <a href="https://one.dash.cloudflare.com/?to=/:account/networks/tunnels" target="_blank" rel="noopener">tunnel</a>,
+                      point it at <code>localhost</code>, add an
+                      <a href="https://developers.cloudflare.com/cloudflare-one/policies/access/" target="_blank" rel="noopener">Access policy</a>,
+                      then paste its token.
+                    </p>
+                  </div>
+                  <pre id="wizard-cf-install-log" class="wizard-code" hidden></pre>
+                  <p class="cred-hint" id="wizard-cf-ready" hidden>Tunnel connector installed and running.</p>
+                </div>
+              </div>
+              <div class="wizard-engine">
+                <label class="wizard-engine-head">
+                  <input type="radio" name="wizard-access" value="sso" />
+                  <span>Cloudflare / Entra ID</span>
+                  <span class="wizard-engine-chip" id="wizard-access-sso-chip" hidden></span>
+                </label>
+                <div class="wizard-engine-body" data-access="sso">
+                  <p class="cred-hint">
+                    Front with
+                    <a href="https://developers.cloudflare.com/cloudflare-one/applications/" target="_blank" rel="noopener">Cloudflare Access</a>
+                    or
+                    <a href="https://learn.microsoft.com/azure/app-service/overview-authentication-authorization" target="_blank" rel="noopener">Entra ID</a>,
+                    set <code>WEBCHAT_TRUSTED_PROXY_IPS</code>, restart.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <p class="cred-hint" id="wizard-access-state">Checking how this instance is secured…</p>
+          </section>
+        </div>
+        <div class="wizard-footer">
+          <button id="wizard-back" class="btn btn-secondary" type="button" hidden>Back</button>
+          <span class="wizard-footer-spacer"></span>
+          <button id="wizard-skip" class="btn btn-secondary" type="button">Skip</button>
+          <button id="wizard-next" class="btn btn-primary" type="button">Next</button>
+        </div>
+      </div>
+    </div>
+    <!--
+      Model picker overlay — bottom sheet on mobile, popover on desktop.
+      Lives at body root so it z-stacks above asides + the overlay backdrop.
+    -->
+    <div id="model-picker" class="model-picker-overlay" hidden>
+      <div class="model-picker-backdrop"></div>
+      <div class="model-picker-sheet" role="dialog" aria-modal="true" aria-label="Choose a model">
+        <div class="model-picker-grabber" aria-hidden="true"></div>
+        <div class="model-picker-header">
+          <span id="model-picker-title">Choose a model</span>
+          <button id="model-picker-close" class="members-close" aria-label="Close">
+            <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+          </button>
+        </div>
+        <div class="model-picker-body">
+          <input
+            id="model-picker-search"
+            type="search"
+            class="model-picker-search"
+            placeholder="Search by name, model id, or endpoint…"
+            autocomplete="off"
+          />
+          <ul id="model-picker-list" class="model-picker-list"></ul>
+        </div>
+        <div class="model-picker-footer">
+          <button type="button" id="model-picker-add-new" class="btn btn-secondary">+ Add new model</button>
+        </div>
+      </div>
+    </div>
+    <!-- Shared multi-select attach picker (MCP servers, rooms) — reuses the
+         model-picker bottom-sheet chrome; each row toggles attach/detach. -->
+    <div id="attach-picker" class="model-picker-overlay" hidden>
+      <div class="model-picker-backdrop"></div>
+      <div class="model-picker-sheet" role="dialog" aria-modal="true" aria-label="Attach">
+        <div class="model-picker-grabber" aria-hidden="true"></div>
+        <div class="model-picker-header">
+          <span id="attach-picker-title">Attach</span>
+          <button id="attach-picker-close" class="members-close" aria-label="Close">
+            <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+          </button>
+        </div>
+        <div class="model-picker-body">
+          <input
+            id="attach-picker-search"
+            type="search"
+            class="model-picker-search"
+            placeholder="Search…"
+            autocomplete="off"
+          />
+          <ul id="attach-picker-list" class="model-picker-list"></ul>
+        </div>
+        <div class="model-picker-footer">
+          <button type="button" id="attach-picker-add-new" class="btn btn-secondary">+ Add new</button>
+        </div>
+      </div>
+    </div>
+    <!-- Member-credential sign-in (subscription OAuth browser-mint) — modal popup. -->
+    <div id="user-creds-oauth-modal" class="modal-overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-creds-oauth-title">
+        <div class="modal-header">
+          <span id="user-creds-oauth-title">Connect to Claude</span>
+          <button id="user-creds-oauth-close" class="members-close" type="button" aria-label="Close">
+            <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="user-creds-oauth-form">
+            <div id="user-creds-oauth-spinner" class="spinner" hidden aria-hidden="true"></div>
+            <!-- Revealed once the sign-in URL is ready (server mints the credential). -->
+            <div id="user-creds-oauth-step2" hidden>
+              <a
+                id="user-creds-oauth-link"
+                href="#"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="btn btn-primary user-creds-oauth-open"
+                >Open Claude sign-in ↗</a
+              >
+              <!-- Codex: enter this pairing code on the sign-in page, then approve. -->
+              <p id="user-creds-oauth-codex-code" class="user-creds-oauth-codex-code" hidden></p>
+              <!-- Claude: paste the code shown on the sign-in page. -->
+              <label id="user-creds-oauth-code-label" class="user-creds-oauth-code-label" for="user-creds-oauth-code"
+                >Then paste the code here</label
+              >
+              <input
+                id="user-creds-oauth-code"
+                type="text"
+                placeholder="Paste the code"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </div>
+            <div id="user-creds-oauth-status" class="user-creds-oauth-status" role="status" aria-live="polite" hidden></div>
+            <div class="user-creds-oauth-actions">
+              <button id="user-creds-oauth-submit" type="button" class="btn btn-primary" hidden>Connect</button>
+              <button id="user-creds-oauth-cancel" type="button" class="btn-cancel">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

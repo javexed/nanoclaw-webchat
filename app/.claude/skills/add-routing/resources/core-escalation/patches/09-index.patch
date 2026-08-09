@@ -1,0 +1,29 @@
+diff --git a/container/agent-runner/src/index.ts b/container/agent-runner/src/index.ts
+index 8cddc6a7..cbd0df12 100644
+--- a/container/agent-runner/src/index.ts
++++ b/container/agent-runner/src/index.ts
+@@ -43,6 +43,7 @@ import './mention-human.js';
+ import { createProvider, type ProviderName } from './providers/factory.js';
+ import type { McpServerConfig } from './providers/types.js';
+ import { runPollLoop } from './poll-loop.js';
++import { armEscalation } from './escalation.js';
+ 
+ function log(msg: string): void {
+   console.error(`[agent-runner] ${msg}`);
+@@ -116,6 +117,16 @@ async function main(): Promise<void> {
+   });
+   provider.registerMemorySessionHook(MEMORY_SESSION_HOOK);
+ 
++  // Provider escalation (§16c) registers a turn-retry handler (R5). It owns
++  // its own consecutive-escalation cap — retries spend real quota and core
++  // cannot know a provider's price. No-op when fallback_provider is unset.
++  armEscalation({
++    fallbackName: config.fallbackProvider,
++    assistantName: config.assistantName,
++    mcpServers,
++    additionalDirectories,
++  });
++
+   await runPollLoop({
+     provider,
+     providerName,
