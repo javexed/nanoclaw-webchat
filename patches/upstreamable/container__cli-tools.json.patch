@@ -1,0 +1,13 @@
+diff --git a/container/cli-tools.json b/container/cli-tools.json
+index 7c4b399..144b3e0 100644
+--- a/container/cli-tools.json
++++ b/container/cli-tools.json
+@@ -6,7 +6,7 @@
+   },
+   {
+     "name": "@anthropic-ai/claude-code",
+-    "version": "2.1.197",
++    "version": "2.1.219",
+     "onlyBuilt": true
+   }
+ ]

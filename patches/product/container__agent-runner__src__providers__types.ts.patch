@@ -1,0 +1,103 @@
+diff --git c/container/agent-runner/src/providers/types.ts w/container/agent-runner/src/providers/types.ts
+index b60ea3ef..3f5bd397 100644
+--- c/container/agent-runner/src/providers/types.ts
++++ w/container/agent-runner/src/providers/types.ts
+@@ -8,6 +8,21 @@ export interface AgentProvider {
+    */
+   readonly supportsNativeSlashCommands: boolean;
+ 
++  /**
++   * Optional. True when the provider can run a QueryInput.learningReview query
++   * with the toolset actually restricted and the session forked. Advertising
++   * this without enforcing it would silently hand a "restricted" review the
++   * full toolset — so only set it where both halves are real.
++   */
++  readonly supportsRestrictedReview?: boolean;
++
++  /**
++   * Optional. When true, the runner scaffolds a persistent `memory/` tree in the
++   * agent's workspace at boot. Providers with their own native memory (e.g.
++   * Claude's `CLAUDE.local.md`) omit this and get nothing — memory is opt-in per
++   * provider, never gated on a provider name.
++   */
++  readonly usesMemoryScaffold?: boolean;
+   /** Register shared memory through the provider's native session-start mechanism. */
+   registerMemorySessionHook(hook: MemorySessionHookRegistration): void;
+ 
+@@ -62,6 +77,13 @@ export interface ProviderExchange {
+  * providers; individual providers may ignore any they don't need.
+  */
+ export interface ProviderOptions {
++  /**
++   * Which Claude settings scopes the provider loads (SDK settingSources).
++   * Default: all of project/user/local. An escalation fallback passes a list
++   * WITHOUT 'user' so the group's settings.json env (e.g. a local-router
++   * ANTHROPIC_BASE_URL, which beats process env) cannot capture its query.
++   */
++  settingSources?: Array<'project' | 'user' | 'local'>;
+   assistantName?: string;
+   mcpServers?: Record<string, McpServerConfig>;
+   env?: Record<string, string | undefined>;
+@@ -76,6 +98,14 @@ export interface ProviderOptions {
+    * through to the underlying SDK. If omitted, the SDK default is used.
+    */
+   effort?: string;
++  /**
++   * Relax the system prompt for weak/local models. When true, the Claude
++   * provider drops the heavy `claude_code` preset and uses the persona/
++   * destinations instructions as the entire system prompt — a small Ollama
++   * model follows that far better than the full agentic preset. The host sets
++   * it for ollama-backed agents (mirrors RunnerConfig.lenientOutput).
++   */
++  lenientPrompt?: boolean;
+ }
+ 
+ export interface QueryInput {
+@@ -108,10 +138,30 @@ export interface QueryInput {
+   };
+ }
+ 
+-export interface McpServerConfig {
++/**
++ * An MCP server wired into an agent. Two transports:
++ *  - stdio (default): a subprocess spawned inside the container.
++ *  - remote (sse | http): a server reached over the network by URL — e.g. a
++ *    tool server running on another machine. Both are passed straight to the
++ *    Agent SDK's `mcpServers`, which accepts the same union.
++ */
++export type McpServerConfig = McpStdioServerConfig | McpRemoteServerConfig;
++
++export interface McpStdioServerConfig {
++  type?: 'stdio';
+   command: string;
+-  args: string[];
+-  env: Record<string, string>;
++  args?: string[];
++  env?: Record<string, string>;
++  /** Tool allowlist for this server — absent means every tool it exposes. */
++  enabledTools?: string[];
++}
++
++export interface McpRemoteServerConfig {
++  type: 'sse' | 'http';
++  url: string;
++  headers?: Record<string, string>;
++  /** Tool allowlist for this server — absent means every tool it exposes. */
++  enabledTools?: string[];
+ }
+ 
+ export interface AgentQuery {
+@@ -150,4 +200,12 @@ export type ProviderEvent =
+    * event (tool call, thinking, partial message, anything) so the
+    * poll-loop's idle timer stays honest during long tool runs.
+    */
+-  | { type: 'activity' };
++  | { type: 'activity' }
++  /**
++   * A file the provider produced this turn (e.g. a codex-generated image).
++   * Carried so provider code that emits it type-checks. NOTE: the poll-loop
++   * does not yet deliver these as attachments — neither does upstream — so a
++   * `file` event is currently ignored at runtime. Wiring delivery (write to the
++   * batch's reply destination) is a separate future enhancement.
++   */
++  | { type: 'file'; path: string };

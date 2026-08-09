@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Pre-push: two gates, in order.
+#   1. LEAK gate (always) — scan the range(s) being pushed for secrets +
+#      operator identifiers before anything leaves the machine. Not skippable by
+#      SKIP_PR_PREFLIGHT (only `git push --no-verify` bypasses, git-standard).
+#   2. Freshness preflight (skippable via SKIP_PR_PREFLIGHT) — the existing
+#      rebase-before-PR check, delegated unchanged.
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+DENY="${LEAK_PATTERNS_FILE:-$HOME/nanoclaw-ops/webchat-leak-patterns.txt}"
+[ -f "$DENY" ] && export LEAK_PATTERNS_FILE="$DENY"
+
+REMOTE="${1:-origin}"
+status=0
+# pre-push stdin: <local-ref> <local-sha> <remote-ref> <remote-sha> per ref.
+ZERO=0000000000000000000000000000000000000000
+while read -r _lref lsha _rref rsha; do
+  [ "$lsha" = "$ZERO" ] && continue                    # branch delete
+  # Scan exactly what THIS branch adds over main: merge-base(main)..lsha. This
+  # is correct for new branches, updates, AND force-pushes after a rebase — the
+  # stale remote-branch sha (rsha) would otherwise pull main's own commits into
+  # range, re-flagging e.g. web-UI `Reviewed-on:` merge trailers already on
+  # main. main's history is not this push's concern; the branch delta is.
+  base=$(git merge-base "$REMOTE/main" "$lsha" 2>/dev/null || true)
+  [ -n "$base" ] && range="$base..$lsha" || range="$lsha"
+  bash "$ROOT/scripts/leak-scan.sh" --range "$range" || status=1
+done
+[ "$status" -eq 0 ] || { echo "pre-push: LEAK gate blocked the push." >&2; exit 1; }
+
+# Freshness preflight (unchanged, still honors SKIP_PR_PREFLIGHT internally).
+[ -x "$ROOT/app/scripts/pre-push-preflight.sh" ] && exec sh "$ROOT/app/scripts/pre-push-preflight.sh"
+exit 0

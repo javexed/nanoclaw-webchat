@@ -1,0 +1,56 @@
+diff --git c/container/agent-runner/src/index.ts w/container/agent-runner/src/index.ts
+index c85873c8..4acbf3b6 100644
+--- c/container/agent-runner/src/index.ts
++++ w/container/agent-runner/src/index.ts
+@@ -33,7 +33,15 @@ import { MEMORY_SESSION_HOOK } from './memory/session-hook.js';
+ // Providers barrel — each enabled provider self-registers on import.
+ // Provider skills append imports to providers/index.ts.
+ import './providers/index.js';
++// Status feed — registers a provider-message observer (seam R1) that turns
++// tool-use events into status_events rows for rich clients.
++import './status-feed.js';
++import './learning-loop.js';
++// Send-file hint — registers a destinations prompt section (seam R4).
++import './send-file-hint.js';
++import './mention-human.js';
+ import { createProvider, type ProviderName } from './providers/factory.js';
++import type { McpServerConfig } from './providers/types.js';
+ import { runPollLoop } from './poll-loop.js';
+ 
+ function log(msg: string): void {
+@@ -84,7 +92,7 @@ async function main(): Promise<void> {
+   const mcpServerPath = path.join(__dirname, 'mcp-tools', 'index.ts');
+ 
+   // Build MCP servers config: nanoclaw built-in + any from container.json
+-  const mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }> = {
++  const mcpServers: Record<string, McpServerConfig> = {
+     nanoclaw: {
+       command: 'bun',
+       args: ['run', mcpServerPath],
+@@ -94,7 +102,8 @@ async function main(): Promise<void> {
+ 
+   for (const [name, serverConfig] of Object.entries(config.mcpServers)) {
+     mcpServers[name] = serverConfig;
+-    log(`Additional MCP server: ${name} (${serverConfig.command})`);
++    const via = 'url' in serverConfig ? `${serverConfig.type} ${serverConfig.url}` : serverConfig.command;
++    log(`Additional MCP server: ${name} (${via})`);
+   }
+ 
+   const provider = createProvider(providerName, {
+@@ -104,6 +113,7 @@ async function main(): Promise<void> {
+     additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
+     model: config.model,
+     effort: config.effort,
++    lenientPrompt: config.lenientPrompt,
+   });
+   provider.registerMemorySessionHook(MEMORY_SESSION_HOOK);
+ 
+@@ -112,6 +122,8 @@ async function main(): Promise<void> {
+     providerName,
+     cwd: CWD,
+     systemContext: { instructions },
++    lenientOutput: config.lenientOutput,
++    learning: config.learning,
+   });
+ }
+ 

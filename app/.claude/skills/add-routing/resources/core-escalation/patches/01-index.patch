@@ -1,0 +1,20 @@
+diff --git a/src/db/migrations/index.ts b/src/db/migrations/index.ts
+index 1d6a0063..e4a54d9a 100644
+--- a/src/db/migrations/index.ts
++++ b/src/db/migrations/index.ts
+@@ -31,6 +31,7 @@ import { moduleApprovalsTitleOptions } from './module-approvals-title-options.js
+ import { migration018 } from './018-approvals-approver-user-id.js';
+ import { migration019 } from './019-wiring-threads.js';
+ import { migration020 } from './020-container-config-timezone.js';
++import { migration025 } from './025-fallback-provider.js';
+ 
+ import {
+   moduleWebchat,
+@@ -103,6 +104,7 @@ export const migrations: Migration[] = [
+   migration016,
+   migration019,
+   migration020,
++  migration025,
+   moduleWebchat,
+   moduleWebchatDropRooms,
+   moduleWebchatRoomPrimes,

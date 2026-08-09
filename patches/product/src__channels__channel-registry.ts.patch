@@ -1,0 +1,64 @@
+diff --git a/src/channels/channel-registry.ts b/src/channels/channel-registry.ts
+index 7d8848f0..ac44f937 100644
+--- a/src/channels/channel-registry.ts
++++ b/src/channels/channel-registry.ts
+@@ -4,7 +4,14 @@
+  * Channels self-register on import. The host calls initChannelAdapters() at startup
+  * to instantiate and set up all registered adapters.
+  */
+-import type { ChannelAdapter, ChannelDefaults, ChannelRegistration, ChannelSetup, OutboundFile } from './adapter.js';
++import type {
++  AgentActivityStatus,
++  ChannelAdapter,
++  ChannelDefaults,
++  ChannelRegistration,
++  ChannelSetup,
++  OutboundFile,
++} from './adapter.js';
+ import type { ChannelDeliveryAdapter } from '../delivery.js';
+ import { log } from '../log.js';
+ 
+@@ -103,21 +110,41 @@ export function createChannelDeliveryAdapter(): ChannelDeliveryAdapter {
+       content: string,
+       files?: OutboundFile[],
+       instance?: string,
++      // webchat hook: thread the producing session/agent so adapters can do
++      // a2a loop-back attribution (senderAgentGroupId). Reversed by uninstall.
++      source?: { sessionId: string; agentGroupId: string },
+     ): Promise<string | undefined> {
+       const adapter = getChannelAdapterExact(instance ?? channelType);
+       if (!adapter) {
+         throw new MissingChannelAdapterError(channelType, instance);
+       }
+-      return adapter.deliver(platformId, threadId, { kind, content: JSON.parse(content), files });
++      return adapter.deliver(platformId, threadId, {
++        kind,
++        content: JSON.parse(content),
++        files,
++        senderSessionId: source?.sessionId,
++        senderAgentGroupId: source?.agentGroupId,
++      });
+     },
+     async setTyping(
+       channelType: string,
+       platformId: string,
+       threadId: string | null,
+       instance?: string,
++      agentName?: string,
++    ): Promise<void> {
++      const adapter = getChannelAdapterExact(instance ?? channelType);
++      await adapter?.setTyping?.(platformId, threadId, agentName);
++    },
++    async sendStatus(
++      channelType: string,
++      platformId: string,
++      threadId: string | null,
++      status: AgentActivityStatus,
++      instance?: string,
+     ): Promise<void> {
+       const adapter = getChannelAdapterExact(instance ?? channelType);
+-      await adapter?.setTyping?.(platformId, threadId);
++      await adapter?.sendStatus?.(platformId, threadId, status);
+     },
+   };
+ }
