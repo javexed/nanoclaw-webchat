@@ -1,0 +1,28 @@
+diff --git a/src/container-config.test.ts b/src/container-config.test.ts
+index b6c2963..60844b9 100644
+--- a/src/container-config.test.ts
++++ b/src/container-config.test.ts
+@@ -54,4 +54,23 @@ describe('resolveGroupTimezone', () => {
+     updateContainerConfigScalars(GROUP.id, { timezone: 'Not/AZone' });
+     expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).timezone).toBeUndefined();
+   });
++
++  /**
++   * Egress is the one config field where a missing line is SILENT: the column,
++   * the `ncl --egress` flag and the container-runner branch all exist, so the
++   * setting stores and reads back fine — it just never reaches the spawn, and
++   * every group runs with open egress regardless. Nothing else catches that,
++   * which is how it shipped unmapped.
++   */
++  it('configFromDb carries egress through to the container', () => {
++    updateContainerConfigScalars(GROUP.id, { egress: 'host-only' });
++    expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).egress).toBe('host-only');
++
++    updateContainerConfigScalars(GROUP.id, { egress: 'none' });
++    expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).egress).toBe('none');
++
++    // Unset means OneCLI's default (open) — undefined, not the string 'open'.
++    updateContainerConfigScalars(GROUP.id, { egress: null });
++    expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).egress).toBeUndefined();
++  });
+ });

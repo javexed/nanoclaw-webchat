@@ -1,0 +1,225 @@
+import fs from 'fs';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('../../config.js', async () => {
+  const actual = await vi.importActual<typeof import('../../config.js')>('../../config.js');
+  return { ...actual, DATA_DIR: '/tmp/nanoclaw-test-learn-route' };
+});
+
+const wakes: string[] = [];
+vi.mock('../../container-runner.js', () => ({
+  wakeContainer: async (session: { id: string }) => {
+    wakes.push(session.id);
+    return true;
+  },
+}));
+
+import { initTestDb, closeDb, getDb } from '../../db/connection.js';
+import { runMigrations } from '../../db/migrations/index.js';
+import { createAgentGroup } from '../../db/agent-groups.js';
+import { createSession, getSessionsByAgentGroup } from '../../db/sessions.js';
+import { openInboundDb, initSessionFolder } from '../../session-manager.js';
+import { upsertUserCredential } from '../user-credentials/db.js';
+import { handleRouteLearningReview } from './route-review.js';
+import type { Session } from '../../types.js';
+
+const AG = 'ag-learn-route';
+const MG = 'mg-room-1';
+
+function seed(learning: Record<string, unknown> | null): Session {
+  createAgentGroup({ id: AG, name: 'Learn Route', folder: 'learn-route', agent_provider: null, created_at: now() });
+  getDb()
+    .prepare(
+      `INSERT INTO container_configs (agent_group_id, skills, mcp_servers, packages_apt, packages_npm, additional_mounts, cli_scope, learning, updated_at)
+       VALUES (?, '["all"]', '{}', '[]', '[]', '[]', 'group', ?, ?)`,
+    )
+    .run(AG, learning ? JSON.stringify(learning) : null, now());
+  getDb()
+    .prepare(
+      `INSERT INTO messaging_groups (id, channel_type, platform_id, name, instance, created_at)
+       VALUES (?, 'webchat', 'room-1', 'Room One', 'webchat', ?)`,
+    )
+    .run(MG, now());
+  const session: Session = {
+    id: 'sess-origin',
+    agent_group_id: AG,
+    messaging_group_id: MG,
+    thread_id: null,
+    agent_provider: null,
+    status: 'active',
+    container_status: 'stopped',
+    created_at: now(),
+    last_active: now(),
+  } as unknown as Session;
+  createSession(session);
+  // Materialize the origin session's dir + DB files — in production the
+  // room's container created them long before anyone typed /learn; the
+  // decline notice writes into the existing outbound.db.
+  initSessionFolder(AG, session.id);
+  return session;
+}
+
+function addUser(id: string): void {
+  getDb()
+    .prepare(`INSERT INTO users (id, kind, display_name, created_at) VALUES (?, 'human', ?, ?)`)
+    .run(id, id, now());
+}
+
+/** Membership is the floor gate in every mode — a non-member never spends. */
+function addMember(id: string): void {
+  addUser(id);
+  getDb()
+    .prepare(`INSERT INTO agent_group_members (user_id, agent_group_id, added_by, added_at) VALUES (?, ?, ?, ?)`)
+    .run(id, AG, id, now());
+}
+
+function now(): string {
+  return new Date().toISOString();
+}
+
+function payload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    action: 'route_learning_review',
+    text: '/learn focus',
+    digest: '<exchange>D</exchange>',
+    requested_by: 'webchat:alice',
+    origin: { channel_type: 'webchat', platform_id: 'room-1' },
+    ...overrides,
+  };
+}
+
+function inboundTexts(sessionId: string): string[] {
+  const db = openInboundDb(AG, sessionId);
+  try {
+    return (db.prepare(`SELECT content FROM messages_in`).all() as { content: string }[]).map(
+      (r) => (JSON.parse(r.content) as { text?: string }).text ?? '',
+    );
+  } finally {
+    db.close();
+  }
+}
+
+function outboundTexts(sessionId: string): string[] {
+  const dir = `/tmp/nanoclaw-test-learn-route/v2-sessions/${AG}/${sessionId}`;
+  if (!fs.existsSync(`${dir}/outbound.db`)) return [];
+  const Database = require('better-sqlite3') as typeof import('better-sqlite3');
+  const db = new Database(`${dir}/outbound.db`, { readonly: true });
+  try {
+    return (db.prepare(`SELECT content FROM messages_out`).all() as { content: string }[]).map(
+      (r) => (JSON.parse(r.content) as { text?: string }).text ?? '',
+    );
+  } finally {
+    db.close();
+  }
+}
+
+beforeEach(() => {
+  fs.rmSync('/tmp/nanoclaw-test-learn-route', { recursive: true, force: true });
+  initTestDb();
+  runMigrations(getDb());
+  wakes.length = 0;
+});
+
+afterEach(() => {
+  closeDb();
+  fs.rmSync('/tmp/nanoclaw-test-learn-route', { recursive: true, force: true });
+});
+
+describe('handleRouteLearningReview — enrollment and policy', () => {
+  it('routes to the invoker’s member session when they have a connected credential', async () => {
+    const origin = seed({ chargeInvoker: 'auto' });
+    addMember('webchat:alice');
+    upsertUserCredential('webchat:alice', 'claude', 'secret-1', 'api_key');
+
+    await handleRouteLearningReview(payload(), origin);
+
+    // A per-member session (thread_id = user id) now exists and got the row.
+    const member = getSessionsByAgentGroup(AG).find((s) => s.thread_id === 'webchat:alice');
+    expect(member).toBeDefined();
+    const texts = inboundTexts(member!.id);
+    expect(texts).toHaveLength(1);
+    expect(texts[0].startsWith('/learn-routed ')).toBe(true);
+    const routed = JSON.parse(texts[0].slice('/learn-routed '.length)) as Record<string, unknown>;
+    expect(routed.text).toBe('/learn focus');
+    expect(routed.digest).toBe('<exchange>D</exchange>');
+    expect(routed.origin).toEqual({ channel_type: 'webchat', platform_id: 'room-1' });
+    expect(wakes).toEqual([member!.id]);
+  });
+
+  it('declines with a notice when unenrolled and chargeInvoker is require', async () => {
+    const origin = seed({ chargeInvoker: 'require' });
+    addMember('webchat:alice');
+
+    await handleRouteLearningReview(payload(), origin);
+
+    expect(getSessionsByAgentGroup(AG).find((s) => s.thread_id === 'webchat:alice')).toBeUndefined();
+    expect(wakes).toHaveLength(0);
+    const notices = outboundTexts(origin.id);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('your own credential');
+  });
+
+  it('falls back to the origin session (workspace credential) for a privileged invoker', async () => {
+    const origin = seed({ chargeInvoker: 'auto' });
+    addUser('webchat:boss');
+    getDb()
+      .prepare(
+        `INSERT INTO user_roles (user_id, role, agent_group_id, granted_at) VALUES ('webchat:boss', 'owner', NULL, ?)`,
+      )
+      .run(now());
+
+    await handleRouteLearningReview(payload({ requested_by: 'webchat:boss' }), origin);
+
+    const texts = inboundTexts(origin.id);
+    expect(texts).toHaveLength(1);
+    expect(texts[0].startsWith('/learn-routed ')).toBe(true);
+    expect(wakes).toEqual([origin.id]);
+  });
+
+  it('DECLINES a non-member in every mode — the membership gate is the floor', async () => {
+    const origin = seed({ chargeInvoker: 'off' }); // even the most permissive mode
+    addUser('webchat:stranger'); // a user, but NOT a member of this agent group
+
+    await handleRouteLearningReview(payload({ requested_by: 'webchat:stranger' }), origin);
+
+    expect(wakes).toHaveLength(0);
+    expect(inboundTexts(origin.id)).toHaveLength(0);
+    expect(outboundTexts(origin.id)[0]).toContain('limited to members');
+  });
+
+  it("'off' lets a plain member spend the workspace credential in the origin session", async () => {
+    const origin = seed({ chargeInvoker: 'off' });
+    addMember('webchat:dave');
+
+    await handleRouteLearningReview(payload({ requested_by: 'webchat:dave', charge_mode: 'off' }), origin);
+
+    const texts = inboundTexts(origin.id);
+    expect(texts).toHaveLength(1);
+    expect(texts[0].startsWith('/learn-routed ')).toBe(true);
+    expect(wakes).toEqual([origin.id]);
+  });
+
+  it('defaults to auto when no mode is configured (a review is real spend)', async () => {
+    const origin = seed({}); // learning configured, but no chargeInvoker key
+    addMember('webchat:erin'); // member, not enrolled, not privileged
+
+    await handleRouteLearningReview(payload({ requested_by: 'webchat:erin', charge_mode: undefined }), origin);
+
+    // auto + unenrolled + unprivileged → declined, NOT a workspace-credential run
+    expect(wakes).toHaveLength(0);
+    expect(outboundTexts(origin.id)[0]).toContain('your own connected credential');
+  });
+
+  it('declines an unenrolled, unprivileged invoker in auto mode', async () => {
+    const origin = seed({ chargeInvoker: 'auto' });
+    addMember('webchat:carol');
+
+    await handleRouteLearningReview(payload({ requested_by: 'webchat:carol' }), origin);
+
+    expect(wakes).toHaveLength(0);
+    expect(inboundTexts(origin.id)).toHaveLength(0);
+    const notices = outboundTexts(origin.id);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toContain('credential');
+  });
+});

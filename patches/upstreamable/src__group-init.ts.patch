@@ -1,0 +1,129 @@
+diff --git a/src/group-init.ts b/src/group-init.ts
+index 08a0c1df..5da997dc 100644
+--- a/src/group-init.ts
++++ b/src/group-init.ts
+@@ -7,9 +7,10 @@ import { stageGroupPersona } from './group-persona.js';
+ import { log } from './log.js';
+ import { migrateClaudeMemorySettings } from './migrate-claude-memory-settings.js';
+ import { providerProvidesAgentSurfaces } from './providers/provider-container-registry.js';
++import { makeContainerWritable } from './container-runtime.js';
+ import type { AgentGroup } from './types.js';
+ 
+-const DEFAULT_SETTINGS_JSON =
++export const DEFAULT_SETTINGS_JSON =
+   JSON.stringify(
+     {
+       autoMemoryEnabled: false,
+@@ -28,6 +29,20 @@ const DEFAULT_SETTINGS_JSON =
+             ],
+           },
+         ],
++        // rtk compresses Bash tool output before it reaches the model. The
++        // binary is baked into the agent image (container/Dockerfile); a
++        // failing/absent hook command is non-blocking for the tool call.
++        PreToolUse: [
++          {
++            matcher: 'Bash',
++            hooks: [
++              {
++                type: 'command',
++                command: 'rtk hook claude',
++              },
++            ],
++          },
++        ],
+       },
+     },
+     null,
+@@ -97,8 +112,14 @@ export function initGroupFilesystem(
+     if (!fs.existsSync(settingsFile)) {
+       fs.writeFileSync(settingsFile, DEFAULT_SETTINGS_JSON);
+       initialized.push('settings.json');
+-    } else if (migrateClaudeMemorySettings(settingsFile)) {
+-      initialized.push('settings.json (reconciled Claude settings)');
++    } else {
++      ensurePreCompactHook(settingsFile, initialized);
++      ensureRtkHook(settingsFile, initialized);
++      // Upstream's provider-agnostic memory reconcile — runs alongside our hooks
++      // (each re-reads settings.json, so the order is independent).
++      if (migrateClaudeMemorySettings(settingsFile)) {
++        initialized.push('settings.json (reconciled Claude settings)');
++      }
+     }
+ 
+     // Skills directory — created empty here; symlinks are synced at spawn
+@@ -110,6 +131,11 @@ export function initGroupFilesystem(
+     }
+   }
+ 
++  // A root-running host creates this tree root:root, but the agent container's
++  // non-root user must write into it (memory/, conversations/, working files).
++  // No-op unless the host is root; see makeContainerWritable.
++  makeContainerWritable(groupDir);
++
+   if (initialized.length > 0) {
+     log.info('Initialized group filesystem', {
+       group: group.name,
+@@ -119,3 +145,62 @@ export function initGroupFilesystem(
+     });
+   }
+ }
++
++const PRE_COMPACT_COMMAND = 'bun /app/src/compact-instructions.ts';
++
++/**
++ * Patch an existing settings.json to add the PreCompact hook if missing.
++ * Runs on every group init so pre-existing groups pick up the hook.
++ */
++function ensurePreCompactHook(settingsFile: string, initialized: string[]): void {
++  try {
++    const raw = fs.readFileSync(settingsFile, 'utf-8');
++    const settings = JSON.parse(raw);
++
++    // Check if there's already a PreCompact hook with our command.
++    const existing = settings.hooks?.PreCompact as unknown[] | undefined;
++    if (existing && JSON.stringify(existing).includes(PRE_COMPACT_COMMAND)) return;
++
++    // Add the hook, preserving existing hooks.
++    if (!settings.hooks) settings.hooks = {};
++    if (!settings.hooks.PreCompact) settings.hooks.PreCompact = [];
++    settings.hooks.PreCompact.push({
++      hooks: [{ type: 'command', command: PRE_COMPACT_COMMAND }],
++    });
++
++    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n');
++    initialized.push('settings.json (added PreCompact hook)');
++  } catch {
++    // Don't break init if settings.json is malformed — it'll use whatever's there.
++  }
++}
++
++const RTK_HOOK_COMMAND = 'rtk hook claude';
++
++/**
++ * Patch an existing settings.json to add the rtk PreToolUse hook if missing.
++ * Same contract as ensurePreCompactHook: runs on every group init, preserves
++ * whatever other hooks the operator has, never breaks init on malformed JSON.
++ * Exported for the wiring test.
++ */
++export function ensureRtkHook(settingsFile: string, initialized: string[]): void {
++  try {
++    const raw = fs.readFileSync(settingsFile, 'utf-8');
++    const settings = JSON.parse(raw);
++
++    const existing = settings.hooks?.PreToolUse as unknown[] | undefined;
++    if (existing && JSON.stringify(existing).includes(RTK_HOOK_COMMAND)) return;
++
++    if (!settings.hooks) settings.hooks = {};
++    if (!settings.hooks.PreToolUse) settings.hooks.PreToolUse = [];
++    settings.hooks.PreToolUse.push({
++      matcher: 'Bash',
++      hooks: [{ type: 'command', command: RTK_HOOK_COMMAND }],
++    });
++
++    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2) + '\n');
++    initialized.push('settings.json (added rtk hook)');
++  } catch {
++    // Don't break init if settings.json is malformed — it'll use whatever's there.
++  }
++}

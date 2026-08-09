@@ -1,0 +1,20 @@
+diff --git a/src/db/container-configs.ts b/src/db/container-configs.ts
+index 091f1f6f..54293290 100644
+--- a/src/db/container-configs.ts
++++ b/src/db/container-configs.ts
+@@ -3,6 +3,7 @@ import type { ContainerConfigRow } from '../types.js';
+ import { getDb } from './connection.js';
+ 
+ const SCALAR_COLUMNS = new Set([
++  'fallback_provider',
+   'provider',
+   'model',
+   'effort',
+@@ -89,6 +90,7 @@ export function updateContainerConfigScalars(
+       | 'cli_scope'
+       | 'timezone'
+       | 'egress'
++      | 'fallback_provider'
+     >
+   >,
+ ): void {

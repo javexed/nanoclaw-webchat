@@ -1,0 +1,81 @@
+# Leak gate — the authoritative, unbypassable check. Local hooks (.githooks) are
+# fast UX but bypassable with --no-verify; this required check gates merge.
+#
+# Two tiers (see scripts/leak-scan.sh): the GENERIC scan (secret shapes, private
+# addresses) runs on every PR including forks, no secret needed. The OPERATOR
+# identifier scan runs only when the LEAK_PATTERNS secret is present — which,
+# by GitHub design, excludes fork PRs (a fork can't read secrets, and an outside
+# contributor can't leak identifiers they don't know). Set the secret in the
+# repo's Actions secrets, sourced from the operator's private patterns file.
+name: Leak gate
+
+on:
+  # No `branches:` filter on pull_request — deliberately. With `branches: [main]`
+  # a PR whose BASE is another branch never triggers, so a stacked PR (one built
+  # on the branch of an earlier, still-open PR) silently gets NO CI at all: no
+  # leak gate, no compose, and a green-looking PR page because nothing ever ran.
+  # Found when a stacked extraction PR sat with zero runs and no explanation.
+  #
+  # Stacking is the normal shape for this work — each UI module comes out on top
+  # of the last — so the checks have to follow the PR, not the base branch.
+  # push stays pinned to main: that is the post-merge run, and running it for
+  # every branch push would double every job for no added signal.
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  leak-gate:
+    runs-on: ubuntu-latest
+    steps:
+      # Anonymous checkout — the SAME pattern compose.yml uses, and for the same
+      # reason: on this runner the per-job task token is refused for repos under
+      # this owner, so actions/checkout fails before any step of ours runs. The
+      # repo is public, so fetch without credentials. Unlike compose.yml this
+      # needs history (the range scan walks commits), so no --depth 1, and the
+      # branches are fetched too so merge-base has something to work with.
+      - name: checkout (anonymous)
+        run: |
+          git init -q .
+          git remote add origin ${{ github.server_url }}/${{ github.repository }}.git
+          git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
+          git fetch -q origin ${{ github.sha }}
+          git checkout -q FETCH_HEAD
+
+      - name: Self-test the gate (a guard only seen to pass is no guard)
+        run: bash scripts/leak-scan.sh --selftest
+
+      - name: Compute range
+        id: r
+        run: |
+          # The branch DELTA against the CURRENT base tip: merge-base(origin/main,
+          # HEAD)..HEAD. Deliberately NOT the PR payload's base.sha — that is the
+          # base as of PR creation, so after a rebase it drags in main's own
+          # commits and re-flags e.g. web-UI `Reviewed-on:` merge trailers that
+          # are already on main. Same logic as the pre-push hook.
+          if git rev-parse --verify -q origin/main >/dev/null; then
+            mb=$(git merge-base origin/main HEAD 2>/dev/null || true)
+            [ -n "$mb" ] && echo "range=${mb}..HEAD" >> "$GITHUB_OUTPUT" \
+                         || echo "range=" >> "$GITHUB_OUTPUT"
+          else
+            echo "range=" >> "$GITHUB_OUTPUT"   # no base to diff → tree scan only
+          fi
+          echo "computed range: $(grep '^range=' "$GITHUB_OUTPUT" | tail -1)"
+
+      # LEAK_REQUIRE_OPERATOR_TIER makes a TRUSTED run fail when the identifier
+      # secret does not load. Without it, renaming or clearing the secret turns
+      # the identifier tier off silently and every run still goes green — the
+      # gate would be half off with nothing but a log warning to say so.
+      # Fork PRs cannot read secrets by GitHub design, so they stay on the
+      # generic tier and must NOT be required (see the header).
+      - name: Scan the introduced commits (added lines + messages)
+        if: steps.r.outputs.range != ''
+        env:
+          LEAK_PATTERNS: ${{ secrets.LEAK_PATTERNS }}
+          LEAK_REQUIRE_OPERATOR_TIER: ${{ github.event.pull_request.head.repo.fork && '0' || '1' }}
+        run: bash scripts/leak-scan.sh --range "${{ steps.r.outputs.range }}"
+
+      - name: Scan the working tree (belt-and-suspenders)
+        env:
+          LEAK_PATTERNS: ${{ secrets.LEAK_PATTERNS }}
+        run: bash scripts/leak-scan.sh --tree .

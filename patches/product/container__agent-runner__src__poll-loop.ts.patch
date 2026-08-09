@@ -1,0 +1,700 @@
+diff --git a/container/agent-runner/src/poll-loop.ts b/container/agent-runner/src/poll-loop.ts
+index a6f12f19..b1ba0ec2 100644
+--- a/container/agent-runner/src/poll-loop.ts
++++ b/container/agent-runner/src/poll-loop.ts
+@@ -1,4 +1,4 @@
+-import { findByName, getAllDestinations, type DestinationEntry } from './destinations.js';
++import { findByName, findByRouting, getAllDestinations, type DestinationEntry } from './destinations.js';
+ import {
+   getPendingMessages,
+   markProcessing,
+@@ -6,7 +6,7 @@ import {
+   markScriptSkipped,
+   type MessageInRow,
+ } from './db/messages-in.js';
+-import { writeMessageOut } from './db/messages-out.js';
++import { writeMessageOut, getMaxOutboundSeq } from './db/messages-out.js';
+ import { getInboundDb, touchHeartbeat, clearStaleProcessingAcks } from './db/connection.js';
+ import {
+   clearContinuation,
+@@ -23,6 +23,7 @@ import {
+   isRunnerCommand,
+   stripInternalTags,
+   type RoutingContext,
++  redactSecrets,
+ } from './formatter.js';
+ import { isUploadTraceCommand, uploadTrace } from './upload-trace.js';
+ import { notifyProviderMessage, notifyProviderExchange } from './providers/hooks.js';
+@@ -34,8 +35,10 @@ import {
+   runTurnRetryHandlers,
+   type RunnerCommandSpec,
+   type RunnerTurnContext,
++  type TurnFailure,
+ } from './runner-hooks.js';
+ import type { AgentProvider, AgentQuery, ProviderEvent, ProviderExchange } from './providers/types.js';
++import type { LearningConfig } from './learning-loop.js';
+ 
+ const POLL_INTERVAL_MS = 1000;
+ const ACTIVE_POLL_INTERVAL_MS = 500;
+@@ -89,7 +92,7 @@ function parseChatContent(msg: MessageInRow): { content: Record<string, unknown>
+ export interface PollLoopConfig {
+   provider: AgentProvider;
+   /**
+-   * Name of the provider (e.g. "claude", "codex", "opencode"). Used to key
++   * Name of the provider (e.g. "claude", "codex"). Used to key
+    * the stored continuation per-provider so flipping providers doesn't
+    * resurrect a stale id from a different backend.
+    */
+@@ -98,14 +101,22 @@ export interface PollLoopConfig {
+   systemContext?: {
+     instructions?: string;
+   };
++  /** Learning-loop behavior from container.json (see docs/webchat/learning-loop.md). */
++  learning?: LearningConfig;
+   /**
+    * Optional stop signal. In production the loop runs until the container
+    * dies; tests pass a signal so an abandoned loop actually exits instead of
+    * polling forever and stealing messages from the next test's DB.
+    */
+   signal?: AbortSignal;
++  /**
++   * Deliver unwrapped prose to the originating room instead of dropping it.
++   * Set for ollama-backed agents (see RunnerConfig.lenientOutput).
++   */
++  lenientOutput?: boolean;
+ }
+ 
++
+ /**
+  * Main poll loop. Runs indefinitely until the process is killed.
+  *
+@@ -150,7 +161,14 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+   while (true) {
+     if (config.signal?.aborted) return;
+     // Skip system messages — they're responses for MCP tools (e.g., ask_user_question)
+-    const messages = getPendingMessages(isFirstPoll).filter((m) => m.kind !== 'system');
++    const rawPending = getPendingMessages(isFirstPoll).filter((m) => m.kind !== 'system');
++    // Interrupt rows are control signals delivered by the host (GUI/CLI "stop").
++    // Mid-turn they're caught by the active-stream poll below and abort the
++    // query; one that lands here (between turns / no live stream) has nothing to
++    // stop — consume it so it never starts a turn of its own.
++    const staleInterrupts = rawPending.filter((m) => m.kind === 'interrupt');
++    if (staleInterrupts.length > 0) markCompleted(staleInterrupts.map((m) => m.id));
++    const messages = rawPending.filter((m) => m.kind !== 'interrupt');
+     isFirstPoll = false;
+     pollCount++;
+ 
+@@ -308,12 +326,9 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+ 
+     log(`Processing ${keep.length} message(s), kinds: ${[...new Set(keep.map((m) => m.kind))].join(',')}`);
+ 
+-    const query = config.provider.query({
+-      prompt,
+-      continuation,
+-      cwd: config.cwd,
+-      systemContext: config.systemContext,
+-    });
++    // A real query runs from here — observers see the turn start (and the
++    // matching turn_done after completion below).
++    notifyProviderMessage({ kind: 'turn_start' });
+ 
+     // Process the query while concurrently polling for new messages
+     const skippedSet = new Set(skipped.map((s) => s.id));
+@@ -321,44 +336,28 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+     // Publish the batch's in_reply_to so MCP tools (send_message, send_file)
+     // can stamp it on outbound rows — needed for a2a return-path routing.
+     setCurrentInReplyTo(routing.inReplyTo);
+-    // A real query runs from here — observers see the turn start (and the
+-    // matching turn_done after completion below).
+-    notifyProviderMessage({ kind: 'turn_start' });
+-    try {
+-      const result = await processQuery(
+-        query,
+-        routing,
+-        processingIds,
+-        config.providerName,
+-        config.provider.onExchangeComplete?.bind(config.provider),
+-        prompt,
+-        continuation,
+-        turnContext,
+-      );
+-      if (result.continuation && result.continuation !== continuation) {
+-        continuation = result.continuation;
+-        setContinuation(config.providerName, continuation);
+-      }
+-    } catch (err) {
+-      const errMsg = err instanceof Error ? err.message : String(err);
+-      log(`Query error: ${errMsg}`);
+-
+-      // Stale/corrupt continuation recovery: ask the provider whether
+-      // this error means the stored continuation is unusable, and clear
+-      // it so the next attempt starts fresh.
+-      if (continuation && config.provider.isSessionInvalid(err)) {
+-        log(`Stale session detected (${continuation}) — clearing for next retry`);
+-        continuation = undefined;
+-        clearContinuation(config.providerName);
+-      }
+-
+-      // Turn-retry seam (runner-hooks.ts): a module may re-run this turn on a
+-      // different provider — e.g. a routing module escalating a turn its
+-      // cheap provider failed. Core owns the query lifecycle via retryWith
+-      // below; the handler only picks the provider (and owns its own spend
+-      // cap). A claimed retry that produced output replaces the error path.
+-      const retried = (await runTurnRetryHandlers({
+-        failure: { message: errMsg },
++    // Rooms this batch came from — a reply defaults back here (origin guard in
++    // dispatchResultText pins a misaddressed lone reply to the originating room).
++    const originDests = resolveOriginDestinations(messages);
++
++    /**
++     * Consult the turn-retry seam (runner-hooks.ts R5). A module may re-run
++     * this turn on a different provider — e.g. a routing module escalating a
++     * turn its cheap provider failed. Core owns the query lifecycle via
++     * retryWith; the handler only picks the provider (and owns its own spend
++     * cap).
++     *
++     * Shared by BOTH failure shapes on purpose. Upstream, an SDK failure
++     * throws and only the catch path exists — but this tree's claude.ts
++     * catches those and re-emits them as `type:'error'` events, which become
++     * a terminalError RESULT instead. That is now the common shape, so a
++     * retry seam wired only to the catch path would essentially never fire.
++     * Measured, not assumed: a probe driving runPollLoop with an error-event
++     * provider saw zero handler calls, while a throwing one saw them.
++     */
++    const consultTurnRetry = async (failure: TurnFailure): Promise<QueryResult | null> =>
++      (await runTurnRetryHandlers({
++        failure,
+         prompt,
+         routing,
+         config,
+@@ -394,6 +393,9 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+               prompt,
+               undefined,
+               turnContext,
++              originDests,
++              config.lenientOutput ?? false,
++              config.signal,
+             );
+           } catch (retryErr) {
+             log(
+@@ -403,6 +405,125 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+           }
+         },
+       })) as QueryResult | null;
++
++    const query = config.provider.query({
++      prompt,
++      continuation,
++      cwd: config.cwd,
++      systemContext: config.systemContext,
++    });
++    try {
++      let result = await processQuery(
++        query,
++        routing,
++        processingIds,
++        config.providerName,
++        config.provider.onExchangeComplete?.bind(config.provider),
++        prompt,
++        continuation,
++        turnContext,
++        originDests,
++        config.lenientOutput ?? false,
++        config.signal,
++      );
++
++      // Shutdown, not turn failure: the stop signal aborted the query
++      // mid-turn. No error message and no empty-turn net — the host (or
++      // test) tearing us down owns the messaging from here.
++      if (config.signal?.aborted) return;
++
++      // Self-heal a dead/stale continuation. Unlike a thrown error (recovered
++      // in the catch block below), an unusable resume id surfaces as a
++      // terminal-error RESULT ("No conversation found …") and would otherwise be
++      // shown to the user every turn forever. Clear the continuation and retry
++      // the turn ONCE with a fresh session, so a single dead conversation fails
++      // silently-and-recovers instead of erroring this turn (or every turn after).
++      if (result.terminalError && continuation && config.provider.isSessionInvalid(result.terminalError.message)) {
++        log(`Dead continuation in terminal error (${continuation}) — clearing and retrying fresh`);
++        continuation = undefined;
++        clearContinuation(config.providerName);
++        result = await processQuery(
++          config.provider.query({
++            prompt,
++            continuation: undefined,
++            cwd: config.cwd,
++            systemContext: config.systemContext,
++          }),
++          routing,
++          processingIds,
++          config.providerName,
++          config.provider.onExchangeComplete?.bind(config.provider),
++          prompt,
++          undefined,
++          turnContext,
++          originDests,
++          config.lenientOutput ?? false,
++          config.signal,
++        );
++      }
++
++      if (result.continuation && result.continuation !== continuation) {
++        continuation = result.continuation;
++        setContinuation(config.providerName, continuation);
++      }
++
++      // (A) Non-quota terminal error (model not found, backend unreachable, an
++      // error result, or the SDK dying mid-stream): surface it to the user
++      // instead of dropping the turn. The quota case writes its own message
++      // inline, so it never reaches here.
++      if (result.terminalError) {
++        // Offer the failure to the retry seam before surfacing it. A handler
++        // that claims it AND produced output replaces the error entirely;
++        // anything else (declined, retry failed, retry silent) falls through
++        // to the original error, which stays the user-visible outcome.
++        const retried = await consultTurnRetry(result.terminalError);
++        if (retried && !retried.terminalError && retried.producedOutput) {
++          log('Terminal error recovered by a retry handler');
++          if (retried.continuation && retried.continuation !== continuation) {
++            continuation = retried.continuation;
++            setContinuation(config.providerName, continuation);
++          }
++          result = retried;
++        } else {
++          if (retried?.terminalError) log(`Retry also failed: ${retried.terminalError.message}`);
++          surfaceTerminalError(routing, result.terminalError);
++          result.producedOutput = true;
++        }
++      }
++
++      // (B) Empty-turn safety net. Neither result text nor an MCP send nor an
++      // error message went out, and no terminal error was surfaced — true
++      // silence, almost always a model/config problem the user must be told
++      // about rather than left staring at nothing.
++      if (!result.producedOutput && !result.terminalError) {
++        log('Turn produced no output and no error — writing empty-turn fallback');
++        writeUserText(
++          routing,
++          "I wasn't able to produce a response — this usually means a model or " +
++            'configuration problem; an admin may need to check this agent.',
++        );
++      }
++    } catch (err) {
++      // Same shutdown guard as the result path — an abort-induced throw is
++      // teardown, not a provider failure to report.
++      if (config.signal?.aborted) return;
++      const errMsg = err instanceof Error ? err.message : String(err);
++      log(`Query error: ${errMsg}`);
++
++      // Stale/corrupt continuation recovery: ask the provider whether
++      // this error means the stored continuation is unusable, and clear
++      // it so the next attempt starts fresh.
++      if (continuation && config.provider.isSessionInvalid(err)) {
++        log(`Stale session detected (${continuation}) — clearing for next retry`);
++        continuation = undefined;
++        clearContinuation(config.providerName);
++      }
++
++      // Turn-retry seam — same consult as the terminalError branch above, via
++      // the shared helper. Upstream this is the ONLY reachable site; in this
++      // tree it is the rarer one, because claude.ts converts thrown SDK
++      // failures into error events.
++      const retried = await consultTurnRetry({ message: errMsg });
+       if (retried) {
+         if (retried.continuation && retried.continuation !== continuation) {
+           continuation = retried.continuation;
+@@ -415,14 +536,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+       }
+ 
+       // Write error response so the user knows something went wrong
+-      writeMessageOut({
+-        id: generateId(),
+-        kind: 'chat',
+-        platform_id: routing.platformId,
+-        channel_type: routing.channelType,
+-        thread_id: routing.threadId,
+-        content: JSON.stringify({ text: `Error: ${errMsg}` }),
+-      });
++      writeUserText(routing, `Error: ${redactSecrets(errMsg)}`);
+ 
+       // The batch is still acked completed below (no redelivery). Without
+       // this line the only log trace of the errored turn is "Query error"
+@@ -442,6 +556,37 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+   }
+ }
+ 
++/** Write a plain chat message to the batch's origin routing. */
++function writeUserText(routing: RoutingContext, text: string): void {
++  writeMessageOut({
++    id: generateId(),
++    kind: 'chat',
++    platform_id: routing.platformId,
++    channel_type: routing.channelType,
++    thread_id: routing.threadId,
++    content: JSON.stringify({ text }),
++  });
++}
++
++/**
++ * (A) Surface a non-quota terminal error to the user. The user-facing text
++ * stays generic for `config` (the raw model error is rarely actionable for
++ * them) but includes the detail otherwise.
++ */
++function surfaceTerminalError(routing: RoutingContext, err: TerminalError | undefined): void {
++  if (!err) return;
++  // Provider errors can echo request headers/URLs — redact credential shapes
++  // before anything reaches a chat room (security model §redaction).
++  err = { ...err, message: redactSecrets(err.message) };
++  const text =
++    err.classification === 'config'
++      ? `I couldn't reach the configured model (${err.message}). An admin may need to check this agent's model setting.`
++      : err.classification === 'network'
++        ? `I couldn't reach the model backend (${err.message}). An admin may need to check the connection.`
++        : `Something went wrong: ${err.message}`;
++  writeUserText(routing, text);
++}
++
+ /**
+  * Format messages, handling passthrough commands differently.
+  * When the provider handles slash commands natively (Claude Code),
+@@ -476,8 +621,26 @@ function formatMessagesWithCommands(messages: MessageInRow[], nativeSlashCommand
+   return parts.join('\n\n');
+ }
+ 
++interface TerminalError {
++  message: string;
++  classification?: string;
++}
++
+ interface QueryResult {
+   continuation?: string;
++  /**
++   * Set when the turn ended on a non-retryable, NON-quota provider error (the
++   * quota case is handled inline — it writes its own user-facing message). The
++   * outer loop surfaces this to the user (A).
++   */
++  terminalError?: TerminalError;
++  /**
++   * True if the turn wrote anything outbound (an MCP send, dispatched result
++   * text, or an inline error message). Measured via an outbound-seq delta, so
++   * it's robust to MCP sends the poll-loop never sees. A turn that produced no
++   * output AND no terminalError is true silence → empty-turn safety net (B).
++   */
++  producedOutput: boolean;
+ }
+ 
+ export async function processQuery(
+@@ -495,6 +658,9 @@ export async function processQuery(
+    * here rather than after processQuery returns.
+    */
+   turnContext?: RunnerTurnContext,
++  originDests: DestinationEntry[] = [],
++  lenient = false,
++  signal?: AbortSignal,
+ ): Promise<QueryResult> {
+   let queryContinuation: string | undefined;
+   let done = false;
+@@ -508,6 +674,15 @@ export async function processQuery(
+   // doesn't implement `onExchangeComplete`.
+   const archivePrompts: string[] = [initialPrompt];
+ 
++  // Capture the outbound high-water mark before the turn. Any write during the
++  // turn (MCP send, dispatched result text, inline error message) advances it;
++  // the delta after the turn tells us whether the agent produced ANY output.
++  // This is the empty-turn detector: a zero delta with no terminalError is
++  // true silence. See db/messages-out.ts getMaxOutboundSeq().
++  const outboundSeqBefore = getMaxOutboundSeq();
++
++  let terminalError: TerminalError | undefined;
++
+   // Concurrent polling: push follow-ups into the active query as they arrive.
+   // We do NOT force-end the stream on silence — keeping the query open avoids
+   // re-spawning the SDK subprocess (~few seconds) and re-loading the .jsonl
+@@ -521,6 +696,16 @@ export async function processQuery(
+   let endedForCommand = false;
+   let corruptionStreak = 0;
+   const pollHandle = setInterval(() => {
++    // Abandoned-loop guard: when the surrounding runPollLoop's stop signal
++    // fires while a hub-style query is still open, this interval would keep
++    // polling — and STEAL pending messages meant for whoever owns the DB now
++    // (in production nobody; in tests, the next test). Kill the query so the
++    // stream closes and this processQuery unwinds.
++    if (signal?.aborted) {
++      endedForCommand = true;
++      query.abort();
++      return;
++    }
+     if (done || pollInFlight || endedForCommand) return;
+     pollInFlight = true;
+ 
+@@ -528,6 +713,24 @@ export async function processQuery(
+       try {
+         const pending = getPendingMessages();
+ 
++        // Interrupt: a host-delivered "stop" signal (GUI Stop button / CLI ESC).
++        // Abort the active stream and mark this turn done — interrupt means
++        // "stop", never "respond", so unlike a slash command we DON'T leave rows
++        // pending for the outer loop: consume the interrupt row(s) and the
++        // triggering batch, then emit a clean 'done' so the host clears the
++        // thinking bubble (a stream that ends with no 'done' is read as a
++        // mid-turn death and warns the room — see src/modules/agent-status).
++        const interruptIds = pending.filter((m) => m.kind === 'interrupt').map((m) => m.id);
++        if (interruptIds.length > 0) {
++          log('Interrupt received — aborting active stream');
++          markCompleted(interruptIds);
++          markCompleted(initialBatchIds);
++          notifyProviderMessage({ kind: 'turn_done' });
++          endedForCommand = true; // stop the poll from re-entering while we abort
++          query.abort();
++          return;
++        }
++
+         // Slash commands need a fresh query: /clear resets the SDK's
+         // resume id (fixed at sdkQuery() time); admin/passthrough commands
+         // (/compact, /cost, …) only dispatch when they're the first input
+@@ -585,10 +788,10 @@ export async function processQuery(
+         const prompt = formatMessages(keep);
+         log(`Pushing ${keep.length} follow-up message(s) into active query`);
+         unwrappedNudged = false;
+-        taskBlockNudged = false;
+         // A follow-up pushed into the active query is a new sub-turn for
+         // observers; resetFeed tells a feed consumer to cycle its display.
+         notifyProviderMessage({ kind: 'turn_start', resetFeed: true });
++        taskBlockNudged = false;
+         query.push(prompt);
+         archivePrompts.push(prompt);
+         markCompleted(keptIds);
+@@ -644,6 +847,32 @@ export async function processQuery(
+         // effectively orphaned and the next message started a blank
+         // Claude session with no prior context.
+         setContinuation(providerName, event.continuation);
++      } else if (event.type === 'error' && (event.classification === 'rate_limit' || event.classification === 'quota')) {
++        markCompleted(initialBatchIds);
++        // A rate limit is TRANSIENT (it resets); credit exhaustion is not. Saying
++        // "you may have run out of credits — check billing" for a rate limit is
++        // alarming AND wrong, so the two now read differently. `event.message`
++        // carries the reset/retry-after detail when the provider supplies one.
++        const rateLimited = event.classification === 'rate_limit';
++        const resetDetail = rateLimited ? /\((?:resets|retry after)[^)]*\)/.exec(event.message || '')?.[0] : undefined;
++        const text = rateLimited
++          ? `I've hit the API rate limit — it's temporary and resets on its own${resetDetail ? ` ${resetDetail}` : ''}. Send that again in a bit and I'll pick it up.`
++          : "I've hit an API usage limit. You may have run out of credits on your Anthropic account — check console.anthropic.com/settings/billing.";
++        writeMessageOut({
++          id: generateId(),
++          kind: 'chat',
++          platform_id: routing.platformId,
++          channel_type: routing.channelType,
++          thread_id: routing.threadId,
++          content: JSON.stringify({ text }),
++        });
++      } else if (event.type === 'error' && !event.retryable) {
++        // A non-retryable, non-quota terminal error (model not found, backend
++        // unreachable, SDK died mid-stream, an error-result subtype). Don't
++        // write here — the outer loop surfaces it to the user (A). Record the
++        // LAST one seen and let the stream finish draining.
++        terminalError = { message: event.message, classification: event.classification };
++        markCompleted(initialBatchIds);
+       } else if (event.type === 'result') {
+         // A result — with or without text — means the turn is done. Mark
+         // the initial batch completed now so the host sweep doesn't see
+@@ -658,13 +887,11 @@ export async function processQuery(
+         // turn_start above.
+         notifyProviderMessage({ kind: 'turn_done' });
+         if (event.text) {
+-          const { sent, hasUnwrapped, taskBlocks } = dispatchResultText(event.text, routing);
++          const { sent, hasUnwrapped, taskBlocks } = dispatchResultText(event.text, routing, originDests, lenient);
+           const willRetryTaskBlocks = shouldNudgeTaskBlocks(routing.taskRun, taskBlocks, taskBlockNudged);
+           // One-door task delivery: the final text becomes the run log entry
+           // while explicit append-log calls remain optional additive notes.
+           // Errors included: a failed run's text belongs in its log, not chat.
+-          // A corrective retry handles delivery only; its result is not a
+-          // second run summary.
+           if (routing.taskRun && !taskBlockNudged) autoAppendTaskLog(event.text);
+           if (sent === 0 && event.isError === true && !routing.taskRun) {
+             // Non-retryable error turn (e.g. a 403 billing_error) with no
+@@ -731,7 +958,13 @@ export async function processQuery(
+     clearInterval(pollHandle);
+   }
+ 
+-  return { continuation: queryContinuation };
++  // Did the turn write anything outbound? Compare the high-water mark now vs.
++  // before. A non-quota terminalError wrote nothing here (deferred to the outer
++  // loop), so a delta of zero with a terminalError is expected; a delta of zero
++  // with NO terminalError is true silence.
++  const producedOutput = getMaxOutboundSeq() > outboundSeqBefore;
++
++  return { continuation: queryContinuation, terminalError, producedOutput };
+ }
+ 
+ function notifyExchangeComplete(
+@@ -784,6 +1017,7 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
+  */
+ function deliverErrorResult(text: string, routing: RoutingContext): void {
+   log('Error result with no <message> envelope — delivering to channel');
++  text = redactSecrets(text);
+   writeMessageOut({
+     id: generateId(),
+     in_reply_to: routing.inReplyTo,
+@@ -803,17 +1037,54 @@ function deliverErrorResult(text: string, routing: RoutingContext): void {
+  * The agent must always wrap output in <message to="name">...</message>
+  * blocks, even with a single destination. Bare text is scratchpad only.
+  */
++/**
++ * Resolve the channel destination(s) this turn's batch arrived from. A reply
++ * defaults back here (see dispatchResultText's origin guard). Returns one entry
++ * per distinct (channel_type, platform_id) in the batch — usually one, but an
++ * agent-shared session can batch messages from several rooms, and a reply to
++ * ANY of them is a legitimate origin.
++ */
++export function resolveOriginDestinations(messages: MessageInRow[]): DestinationEntry[] {
++  const seen = new Set<string>();
++  const dests: DestinationEntry[] = [];
++  for (const m of messages) {
++    if (!m.channel_type || !m.platform_id) continue;
++    const key = `${m.channel_type}:${m.platform_id}`;
++    if (seen.has(key)) continue;
++    seen.add(key);
++    const d = findByRouting(m.channel_type, m.platform_id);
++    if (d) dests.push(d);
++  }
++  return dests;
++}
++
+ export interface TaskMessageBlock {
+   to: string;
+   body: string;
+ }
+ 
++/**
++ * Parse the agent's final text for <message to="name">...</message> blocks and
++ * dispatch each. Text outside blocks is scratchpad.
++ *
++ * Origin guard: a SINGLE reply that resolves to a *channel* the batch did not
++ * come from is almost always the model mis-picking a destination name (the
++ * "agent answered in the wrong room" bug). When that happens we redirect the
++ * block to the originating room. Deliberate cross-room sends still work — they
++ * either address multiple destinations (multiple <message> blocks) or target an
++ * agent-to-agent peer (type 'agent', never guarded). `originDests` is empty in
++ * unit tests, which disables the guard (no behavior change for those paths).
++ */
+ export function dispatchResultText(
+   text: string,
+   routing: RoutingContext,
++  originDests: DestinationEntry[] = [],
++  lenient = false,
+ ): { sent: number; hasUnwrapped: boolean; taskBlocks: TaskMessageBlock[] } {
+   const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
+ 
++  // Collect blocks first so the guard can see whether this is a lone reply
++  // (the misfire signal) vs. a deliberate multi-destination response.
+   let match: RegExpExecArray | null;
+   let sent = 0;
+   // <message to> blocks left inert in a task run — drives the same-turn
+@@ -821,15 +1092,32 @@ export function dispatchResultText(
+   const taskBlocks: TaskMessageBlock[] = [];
+   let lastIndex = 0;
+   const scratchpadParts: string[] = [];
+-
++  const blocks: { toName: string; body: string }[] = [];
+   while ((match = MESSAGE_RE.exec(text)) !== null) {
+     if (match.index > lastIndex) {
+       scratchpadParts.push(text.slice(lastIndex, match.index));
+     }
+-    const toName = match[1];
+-    const body = match[2].trim();
++    blocks.push({ toName: match[1], body: match[2].trim() });
+     lastIndex = MESSAGE_RE.lastIndex;
++  }
++  if (lastIndex < text.length) {
++    scratchpadParts.push(text.slice(lastIndex));
++  }
+ 
++  // Channel origins of this batch + the room to redirect a misfire to (prefer
++  // the routing's room — extractRouting's first message — else any batch room).
++  const originChannels = originDests.filter((d) => d.type === 'channel');
++  const originSet = new Set(originChannels.map((d) => `${d.channelType}:${d.platformId}`));
++  const primaryOrigin =
++    originChannels.find((d) => d.channelType === routing.channelType && d.platformId === routing.platformId) ??
++    originChannels[0];
++  // The exact destination this turn was triggered FROM — a channel OR an a2a
++  // caller (type 'agent'). findByRouting resolves the agent case by
++  // agent_group_id. primaryOrigin is channel-only, so it's undefined for an a2a
++  // turn; triggerOrigin is what lets a reply find its way back to the caller.
++  const triggerOrigin = findByRouting(routing.channelType, routing.platformId);
++
++  for (const { toName, body } of blocks) {
+     // One-door delivery in task sessions: only the send_message tool delivers.
+     // A final-text <message to> block here is either an echo of a tool send the
+     // agent already made (the double-delivery class) or a send down the wrong
+@@ -842,18 +1130,36 @@ export function dispatchResultText(
+       taskBlocks.push({ to: toName, body });
+       continue;
+     }
+-    const dest = findByName(toName);
++    let dest = findByName(toName);
+     if (!dest) {
+       log(`Unknown destination in <message to="${toName}">, dropping block`);
+       scratchpadParts.push(`[dropped: unknown destination "${toName}"] ${body}`);
+       continue;
+     }
++    // Single-reply misfire guard. A lone reply to a channel the turn did NOT come
++    // from is usually the model mis-picking a destination. Redirect to the origin:
++    // the batch's room (primaryOrigin), or — for a weak (lenient) agent answering
++    // an a2a call — the agent that called it (triggerOrigin). A small model often
++    // ignores its caller and replies into a room it can see in its destination
++    // list, leaking the answer to the room instead of back to the caller. Scoped
++    // to lenient so a capable agent's deliberate room-post during an a2a turn is
++    // untouched.
++    const redirectTarget = primaryOrigin ?? (lenient ? triggerOrigin : undefined);
++    if (
++      blocks.length === 1 &&
++      dest.type === 'channel' &&
++      redirectTarget &&
++      !originSet.has(`${dest.channelType}:${dest.platformId}`)
++    ) {
++      log(
++        `Reply addressed to "${dest.name}" but the turn came from "${redirectTarget.name}" — ` +
++          `redirecting to origin (single-reply misfire guard)`,
++      );
++      dest = redirectTarget;
++    }
+     sendToDestination(dest, body, routing);
+     sent++;
+   }
+-  if (lastIndex < text.length) {
+-    scratchpadParts.push(text.slice(lastIndex));
+-  }
+ 
+   const scratchpad = stripInternalTags(scratchpadParts.join(''));
+ 
+@@ -861,9 +1167,27 @@ export function dispatchResultText(
+     log(`[scratchpad] ${scratchpad.slice(0, 500)}${scratchpad.length > 500 ? '…' : ''}`);
+   }
+ 
+-  // In a task run, plain final text is the NORMAL ending (it becomes the run
+-  // log) — never treat it as an undelivered reply or nudge the agent to wrap it.
+-  const hasUnwrapped = !routing.taskRun && sent === 0 && !!scratchpad;
++  let hasUnwrapped = !routing.taskRun && sent === 0 && !!scratchpad;
++  // Lenient output (small local models): a weak model often can't emit the
++  // <message to="..."> envelope, so its plain prose is captured as scratchpad
++  // and dropped — the room stays silent turn after turn. When lenient mode is on
++  // (the host sets it for ollama-backed agents) and there's an unambiguous
++  // origin room, deliver the prose to that room instead of dropping it. This
++  // also clears hasUnwrapped, which suppresses the upstream re-wrap nudge — a
++  // model that can't wrap would only fail it again, re-hammering a slow local
++  // endpoint. Purely-internal output (only an <internal> block) strips to an
++  // empty scratchpad above, so this never sends an empty message.
++  // Deliver unwrapped prose back to whoever triggered the turn — the a2a caller
++  // when that's the source, NOT a room the small model never came from (channel-
++  // only primaryOrigin would leak an a2a reply to a room). Falls back to the
++  // batch's room for a normal channel turn.
++  const lenientTarget = triggerOrigin ?? primaryOrigin;
++  if (hasUnwrapped && lenient && !routing.taskRun && lenientTarget) {
++    log(`Lenient output: no <message> envelope — delivering prose to origin "${lenientTarget.name}"`);
++    sendToDestination(lenientTarget, scratchpad, routing);
++    sent++;
++    hasUnwrapped = false;
++  }
+   if (hasUnwrapped) {
+     log(`WARNING: agent output had no <message to="..."> blocks — nothing was sent`);
+   }
