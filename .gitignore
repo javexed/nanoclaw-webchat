@@ -1,3 +1,6 @@
 
 # Staged release artifacts (release.sh) — never committed.
 dist/releases/
+
+# UI build deps (the BUNDLE at app/public/webchat/app.js is committed; deps are not)
+ui/node_modules/

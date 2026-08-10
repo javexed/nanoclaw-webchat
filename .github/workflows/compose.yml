@@ -40,6 +40,35 @@ jobs:
         with:
           bun-version: 1.3.12
 
+      # ── UI bundle ────────────────────────────────────────────────────────
+      # app/public/webchat/app.js is BUILT from ui/ and committed. Rebuild it
+      # here and fail if the result differs from what the PR carries: that
+      # catches both a hand-edit of the generated bundle and a source change
+      # pushed without rebuilding. Runs before compose, since compose copies
+      # app/ into the composed tree.
+      - name: UI — install
+        run: pnpm --dir ui install --frozen-lockfile
+
+      - name: UI — typecheck
+        run: pnpm --dir ui run typecheck
+
+      - name: UI — build
+        run: pnpm --dir ui run build
+
+      - name: UI — bundle-drift guard (committed bundle == fresh build)
+        run: |
+          # `git status --porcelain`, not `git diff`: diff only reports TRACKED
+          # files, so a build that emits a NEW file would slip through silently.
+          # status covers modified and untracked alike.
+          DRIFT=$(git status --porcelain -- app/public/webchat/)
+          if [ -n "$DRIFT" ]; then
+            echo "::error::app/public/webchat/ differs from a fresh 'pnpm --dir ui run build':"
+            printf '%s\n' "$DRIFT"
+            git diff -- app/public/webchat/ | head -50
+            echo "::error::Edit ui/src/, rebuild, and commit the regenerated bundle."
+            exit 1
+          fi
+
       - name: Compose (clone base + seam, overlay, patch, register, build)
         env:
           # Optional seam override for runners that host a closer mirror of the
