@@ -52,6 +52,16 @@ jobs:
       - name: UI — typecheck
         run: pnpm --dir ui run typecheck
 
+      - name: UI — reference integrity (extracted modules define what they use)
+        # Narrow on purpose: TS2304 only. The modules carved out of legacy.js are
+        # still plain JS with checkJs off, so the compiler is otherwise silent
+        # about them — including about the one failure mode extraction actually
+        # produces, a function moved out while the variable it reads stays behind.
+        # That bundles fine, builds fine, passes e2e, and throws ReferenceError on
+        # the first run of the path. It reached main once already (`lucide`,
+        # unimported in features/voice.js).
+        run: pnpm --dir ui run check:refs
+
       - name: UI — build
         run: pnpm --dir ui run build
 

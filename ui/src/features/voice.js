@@ -9,7 +9,7 @@
 // still in legacy.js. They are exposed as accessors, not bindings, for the same
 // reason core/api.ts does it: an imported binding cannot be assigned. When the
 // settings panels become modules, those call sites move with them.
-import { $ } from '../core/dom.js';
+import { $, lucide } from '../core/dom.js';
 import { showToast } from '../core/toast.js';
 import { authFetch } from '../core/api.js';
 

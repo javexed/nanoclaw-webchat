@@ -5,7 +5,8 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite build --watch",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:refs": "bash check-refs.sh"
   },
   "devDependencies": {
     "typescript": "5.9.3",

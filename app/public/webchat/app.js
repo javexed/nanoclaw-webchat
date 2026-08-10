@@ -5,14 +5,14 @@ import DOMPurify from "/dompurify.min.js";
 var $ = (sel) => document.querySelector(sel);
 /** Inline Lucide icon referencing the SVG sprite in index.html. Returns an HTML
 * string (safe — no user data); styling/color come from the .icon CSS class. */
-function lucide$1(name, cls = "") {
+function lucide(name, cls = "") {
 	return `<svg class="icon${cls ? " " + cls : ""}" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 }
 /** Same icon as a detached DOM node, for inserting NEXT TO user-controlled text
 * without resorting to innerHTML (keeps the surrounding text XSS-safe). */
 function lucideEl(name, cls = "") {
 	const t = document.createElement("template");
-	t.innerHTML = lucide$1(name, cls);
+	t.innerHTML = lucide(name, cls);
 	return t.content.firstChild;
 }
 /** HTML-escape for the few places that still build markup as a string. */
@@ -479,6 +479,150 @@ function setSttConfig(cfg) {
 }
 function isDictationActive() {
 	return sttActive;
+}
+//#endregion
+//#region src/features/thinking.js
+/** @type {Record<string, Function>} */
+var deps = {};
+/** Wire the transcript helpers this module calls. Call once, before any turn. */
+function provideThinkingDeps(provided) {
+	Object.assign(deps, provided);
+}
+function buildThoughtsDisclosure(lines) {
+	const details = document.createElement("details");
+	details.className = "thoughts";
+	const summary = document.createElement("summary");
+	summary.appendChild(lucideEl("sparkles"));
+	summary.append(` Thoughts (${lines.length})`);
+	const last = lines[lines.length - 1] || "";
+	if (last) {
+		const preview = document.createElement("span");
+		preview.className = "thoughts-preview";
+		preview.textContent = " — " + (last.length > 90 ? `${last.slice(0, 89)}…` : last);
+		summary.appendChild(preview);
+	}
+	details.appendChild(summary);
+	const body = document.createElement("div");
+	body.className = "thoughts-body";
+	for (const line of lines) {
+		const row = document.createElement("div");
+		row.className = "thoughts-line";
+		row.textContent = line;
+		body.appendChild(row);
+	}
+	details.appendChild(body);
+	return details;
+}
+var THINKING_DETAIL_MAX = 64;
+var REASONING_LOG_MAX = 500;
+function ensureThinkingBubble(name) {
+	const key = name || deps.getAgentName() || "Agent";
+	let bubble = deps.bubbleFor(key);
+	if (bubble) return bubble;
+	const shouldScroll = deps.isNearBottom() || deps.isForcedScroll();
+	bubble = document.createElement("div");
+	bubble.className = "msg agent thinking-bubble";
+	bubble.dataset.agent = key;
+	bubble._turn = {
+		startedAt: Date.now(),
+		lastActivityAt: Date.now(),
+		reasoningLog: []
+	};
+	const sender = document.createElement("div");
+	sender.className = "sender";
+	sender.appendChild(lucideEl("bot"));
+	sender.appendChild(document.createTextNode(` ${key} — `));
+	const verb = document.createElement("span");
+	verb.className = "thinking-verb";
+	verb.textContent = "Thinking";
+	sender.appendChild(verb);
+	const elapsed = document.createElement("span");
+	elapsed.className = "thinking-elapsed";
+	sender.appendChild(elapsed);
+	const chevron = document.createElement("span");
+	chevron.className = "thinking-chevron";
+	chevron.appendChild(lucideEl("chevron-right"));
+	sender.appendChild(chevron);
+	const stop = document.createElement("button");
+	stop.type = "button";
+	stop.className = "thinking-stop";
+	stop.title = "Stop the agent";
+	stop.setAttribute("aria-label", "Stop the agent");
+	stop.innerHTML = "<span class=\"stop-square\" aria-hidden=\"true\"></span>Stop";
+	stop.addEventListener("click", (e) => {
+		e.stopPropagation();
+		deps.interruptAgent(key);
+	});
+	sender.appendChild(stop);
+	bubble.appendChild(sender);
+	const content = document.createElement("div");
+	content.className = "bubble";
+	content.innerHTML = "<div class=\"thinking-milestone\" hidden></div><div class=\"thinking-target\" hidden></div><div class=\"thinking-feed\" hidden></div><div class=\"thinking-fulltrace\"></div><span class=\"dots\"><span></span><span></span><span></span></span>";
+	bubble.appendChild(content);
+	bubble.addEventListener("click", (e) => {
+		if (e.target.closest("a, button")) return;
+		toggleThinkingExpanded(bubble);
+	});
+	$("#messages").appendChild(bubble);
+	if (shouldScroll) deps.scrollToBottom();
+	return bubble;
+}
+function toggleThinkingExpanded(bubble) {
+	if (bubble.classList.toggle("expanded")) deps.renderFullTrace(bubble);
+}
+function updateThinkingBubble(name, label, detail) {
+	const bubble = ensureThinkingBubble(name);
+	const verbEl = bubble.querySelector(".thinking-verb");
+	if (verbEl) verbEl.textContent = label;
+	const target = bubble.querySelector(".thinking-target");
+	if (target) {
+		if (detail) {
+			target.textContent = detail.length > THINKING_DETAIL_MAX ? `${detail.slice(0, 63)}…` : detail;
+			target.hidden = false;
+		} else target.hidden = true;
+	}
+}
+function setThinkingMilestone(name, text) {
+	const el = ensureThinkingBubble(name).querySelector(".thinking-milestone");
+	if (el) {
+		el.textContent = text;
+		el.hidden = false;
+	}
+}
+var REASONING_FEED_BUFFER = 40;
+var REASONING_FEED_TTL = 7e3;
+var REASONING_FADE_MS = 500;
+function pushReasoning(name, text) {
+	const bubble = ensureThinkingBubble(name);
+	if (!bubble._turn) bubble._turn = {
+		startedAt: Date.now(),
+		lastActivityAt: Date.now(),
+		reasoningLog: []
+	};
+	bubble._turn.reasoningLog.push(text);
+	if (bubble._turn.reasoningLog.length > REASONING_LOG_MAX) bubble._turn.reasoningLog.shift();
+	if (bubble.classList.contains("expanded")) deps.renderFullTrace(bubble);
+	const feed = bubble.querySelector(".thinking-feed");
+	if (!feed) return;
+	feed.hidden = false;
+	const line = document.createElement("div");
+	line.className = "thinking-feed-line";
+	line.textContent = text;
+	feed.appendChild(line);
+	while (feed.children.length > REASONING_FEED_BUFFER) {
+		const oldest = feed.firstChild;
+		if (oldest._fadeTimer) clearTimeout(oldest._fadeTimer);
+		feed.removeChild(oldest);
+	}
+	feed.scrollTop = feed.scrollHeight;
+	line._fadeTimer = setTimeout(() => {
+		line.classList.add("fading");
+		setTimeout(() => {
+			line.remove();
+			if (feed.children.length === 0) feed.hidden = true;
+		}, REASONING_FADE_MS);
+	}, REASONING_FEED_TTL);
+	if (deps.isNearBottom() || deps.isForcedScroll()) deps.scrollToBottom();
 }
 //#endregion
 //#region src/legacy.js
@@ -4732,7 +4876,7 @@ function renderRooms(rooms) {
 		if (room.pinned) {
 			const pin = document.createElement("span");
 			pin.className = "room-pin-indicator";
-			pin.innerHTML = lucide$1("pin");
+			pin.innerHTML = lucide("pin");
 			pin.setAttribute("aria-label", "Pinned");
 			li.appendChild(pin);
 		}
@@ -4785,7 +4929,7 @@ function renderRooms(rooms) {
 		const kebab = document.createElement("button");
 		kebab.className = "room-kebab";
 		kebab.type = "button";
-		kebab.innerHTML = lucide$1("ellipsis");
+		kebab.innerHTML = lucide("ellipsis");
 		kebab.setAttribute("aria-label", "Room actions");
 		kebab.addEventListener("click", (e) => {
 			e.stopPropagation();
@@ -5164,7 +5308,7 @@ function renderThreadList() {
 			const menu = document.createElement("button");
 			menu.className = "thread-kebab";
 			menu.type = "button";
-			menu.innerHTML = lucide$1("ellipsis");
+			menu.innerHTML = lucide("ellipsis");
 			menu.setAttribute("aria-label", "Thread actions");
 			menu.addEventListener("click", (e) => {
 				e.stopPropagation();
@@ -5971,31 +6115,6 @@ function appendSystem(text) {
 	else $("#messages").appendChild(div);
 	return div;
 }
-function buildThoughtsDisclosure(lines) {
-	const details = document.createElement("details");
-	details.className = "thoughts";
-	const summary = document.createElement("summary");
-	summary.appendChild(lucideEl("sparkles"));
-	summary.append(` Thoughts (${lines.length})`);
-	const last = lines[lines.length - 1] || "";
-	if (last) {
-		const preview = document.createElement("span");
-		preview.className = "thoughts-preview";
-		preview.textContent = " — " + (last.length > 90 ? `${last.slice(0, 89)}…` : last);
-		summary.appendChild(preview);
-	}
-	details.appendChild(summary);
-	const body = document.createElement("div");
-	body.className = "thoughts-body";
-	for (const line of lines) {
-		const row = document.createElement("div");
-		row.className = "thoughts-line";
-		row.textContent = line;
-		body.appendChild(row);
-	}
-	details.appendChild(body);
-	return details;
-}
 function applyA2aClamp(bubble, container) {
 	bubble.classList.add("a2a-clamp", "collapsed");
 	if (bubble.scrollHeight <= bubble.clientHeight + 4) {
@@ -6573,14 +6692,14 @@ function renderFileBubble(meta) {
 	}
 	const info = document.createElement("div");
 	info.className = "file-info";
-	const icon = isImage ? lucide$1("image") : meta.mime?.includes("pdf") ? lucide$1("file-text") : lucide$1("paperclip");
+	const icon = isImage ? lucide("image") : meta.mime?.includes("pdf") ? lucide("file-text") : lucide("paperclip");
 	const sizeStr = meta.size < 1024 ? `${meta.size} B` : meta.size < 1048576 ? `${(meta.size / 1024).toFixed(1)} KB` : `${(meta.size / 1048576).toFixed(1)} MB`;
 	info.innerHTML = `<span class="file-icon">${icon}</span><span class="file-name">${esc(meta.filename)}</span><span class="file-size">${sizeStr}</span>`;
 	const dl = document.createElement("a");
 	dl.href = meta.url;
 	dl.download = meta.filename;
 	dl.className = "file-download";
-	dl.innerHTML = lucide$1("download");
+	dl.innerHTML = lucide("download");
 	dl.title = "Download";
 	info.appendChild(dl);
 	wrap.appendChild(info);
@@ -6653,10 +6772,10 @@ function renderFilePreview() {
 				pendingThumbUrls.set(id, url);
 			}
 			html += `<img src="${url}" class="file-preview-thumb" alt="">`;
-		} else html += `<span class="file-preview-icon">${lucide$1("paperclip")}</span>`;
+		} else html += `<span class="file-preview-icon">${lucide("paperclip")}</span>`;
 		html += `<span class="file-preview-name">${esc(file.name)}</span>`;
 		html += `<span class="file-preview-size">${formatFileSize(file.size)}</span>`;
-		html += `<button class="file-preview-remove" data-remove-id="${id}">${lucide$1("x")}</button>`;
+		html += `<button class="file-preview-remove" data-remove-id="${id}">${lucide("x")}</button>`;
 		html += "</div>";
 	}
 	preview.innerHTML = html;
@@ -10454,7 +10573,7 @@ async function showMessagesDetail() {
       <thead><tr><th>Time</th><th>Room</th><th>Sender</th><th>Message</th></tr></thead>
       <tbody>${all.map((m) => {
 		const time = new Date(m.created_at).toLocaleTimeString();
-		const icon = m.sender_type === "agent" ? lucide$1("bot") : lucide$1("user");
+		const icon = m.sender_type === "agent" ? lucide("bot") : lucide("user");
 		return `<tr>
       <td>${esc(time)}</td>
       <td style="color:${roomColor(m.roomId)}">#${esc(m.roomId)}</td>
@@ -10516,7 +10635,7 @@ function renderAgents() {
 		if (agent.id === selectedAgentId) li.classList.add("active");
 		const icon = document.createElement("span");
 		icon.className = "agent-icon";
-		icon.innerHTML = lucide$1("bot");
+		icon.innerHTML = lucide("bot");
 		li.appendChild(icon);
 		const info = document.createElement("span");
 		info.className = "agent-info";
@@ -10835,7 +10954,7 @@ function renderAgentWiredRooms() {
 			const removeBtn = document.createElement("button");
 			removeBtn.type = "button";
 			removeBtn.className = "room-wired-remove";
-			removeBtn.innerHTML = lucide$1("x");
+			removeBtn.innerHTML = lucide("x");
 			removeBtn.title = onlyAgent ? "Cannot unassign — this agent is the room's only agent (delete the room instead)" : `Remove this agent from ${room.name}`;
 			removeBtn.disabled = onlyAgent;
 			removeBtn.addEventListener("click", () => removeRoomFromAgent(room.id, room.name));
@@ -11528,7 +11647,7 @@ async function renderAgentMcp(agentId) {
 		remove.type = "button";
 		remove.className = "agent-mcp-remove";
 		remove.setAttribute("aria-label", `Detach ${s.name}`);
-		remove.innerHTML = lucide$1("x");
+		remove.innerHTML = lucide("x");
 		remove.addEventListener("click", () => detachAgentMcp(agentId, s));
 		li.append(info, remove);
 		list.appendChild(li);
@@ -12228,7 +12347,7 @@ function renderRoomWiredAgents() {
 		const primeBtn = document.createElement("button");
 		primeBtn.type = "button";
 		primeBtn.className = "room-wired-prime" + (agent.is_prime ? " active" : "");
-		primeBtn.innerHTML = agent.is_prime ? lucide$1("star", "icon--fill") : lucide$1("star");
+		primeBtn.innerHTML = agent.is_prime ? lucide("star", "icon--fill") : lucide("star");
 		primeBtn.title = agent.is_prime ? `Stop ${agent.name} replying to everything — back to only when @-mentioned` : `Make ${agent.name} the default — replies to all messages (not just @-mentions)`;
 		primeBtn.addEventListener("click", () => togglePrimeAgent(agent));
 		li.appendChild(primeBtn);
@@ -12260,7 +12379,7 @@ function renderRoomWiredAgents() {
 		const removeBtn = document.createElement("button");
 		removeBtn.type = "button";
 		removeBtn.className = "room-wired-remove";
-		removeBtn.innerHTML = lucide$1("x");
+		removeBtn.innerHTML = lucide("x");
 		removeBtn.title = onlyOne ? "Cannot remove the last agent (delete the room instead)" : `Remove ${agent.name}`;
 		removeBtn.disabled = onlyOne;
 		removeBtn.addEventListener("click", () => removeAgentFromRoom(agent.id, agent.name));
@@ -12967,7 +13086,6 @@ function handleStatusEvent(msg) {
 	}
 }
 var TURN_QUIET_MS = 5e3;
-var REASONING_LOG_MAX = 500;
 var turnElapsedTimer = null;
 function bubbleFor(name) {
 	return $(`#messages .thinking-bubble[data-agent="${window.CSS && CSS.escape ? CSS.escape(name || "Agent") : name || "Agent"}"]`);
@@ -13025,7 +13143,6 @@ function updateTurnElapsed() {
 		turnElapsedTimer = null;
 	}
 }
-var THINKING_DETAIL_MAX = 64;
 function interruptAgent(name) {
 	if (!currentRoom || !ws || ws.readyState !== WebSocket.OPEN) return;
 	ws.send(JSON.stringify({
@@ -13035,61 +13152,6 @@ function interruptAgent(name) {
 	}));
 	endAgentTurn(name);
 	appendSystem(name ? `Stopped ${name}.` : "Stopped.");
-}
-function ensureThinkingBubble(name) {
-	const key = name || agentName || "Agent";
-	let bubble = bubbleFor(key);
-	if (bubble) return bubble;
-	const shouldScroll = isNearBottom() || forceScrollCount > 0 && !userScrolledAway;
-	bubble = document.createElement("div");
-	bubble.className = "msg agent thinking-bubble";
-	bubble.dataset.agent = key;
-	bubble._turn = {
-		startedAt: Date.now(),
-		lastActivityAt: Date.now(),
-		reasoningLog: []
-	};
-	const sender = document.createElement("div");
-	sender.className = "sender";
-	sender.appendChild(lucideEl("bot"));
-	sender.appendChild(document.createTextNode(` ${key} — `));
-	const verb = document.createElement("span");
-	verb.className = "thinking-verb";
-	verb.textContent = "Thinking";
-	sender.appendChild(verb);
-	const elapsed = document.createElement("span");
-	elapsed.className = "thinking-elapsed";
-	sender.appendChild(elapsed);
-	const chevron = document.createElement("span");
-	chevron.className = "thinking-chevron";
-	chevron.appendChild(lucideEl("chevron-right"));
-	sender.appendChild(chevron);
-	const stop = document.createElement("button");
-	stop.type = "button";
-	stop.className = "thinking-stop";
-	stop.title = "Stop the agent";
-	stop.setAttribute("aria-label", "Stop the agent");
-	stop.innerHTML = "<span class=\"stop-square\" aria-hidden=\"true\"></span>Stop";
-	stop.addEventListener("click", (e) => {
-		e.stopPropagation();
-		interruptAgent(key);
-	});
-	sender.appendChild(stop);
-	bubble.appendChild(sender);
-	const content = document.createElement("div");
-	content.className = "bubble";
-	content.innerHTML = "<div class=\"thinking-milestone\" hidden></div><div class=\"thinking-target\" hidden></div><div class=\"thinking-feed\" hidden></div><div class=\"thinking-fulltrace\"></div><span class=\"dots\"><span></span><span></span><span></span></span>";
-	bubble.appendChild(content);
-	bubble.addEventListener("click", (e) => {
-		if (e.target.closest("a, button")) return;
-		toggleThinkingExpanded(bubble);
-	});
-	$("#messages").appendChild(bubble);
-	if (shouldScroll) scrollToBottom();
-	return bubble;
-}
-function toggleThinkingExpanded(bubble) {
-	if (bubble.classList.toggle("expanded")) renderFullTrace(bubble);
 }
 function renderFullTrace(bubble) {
 	const el = bubble.querySelector(".thinking-fulltrace");
@@ -13106,60 +13168,6 @@ function renderFullTrace(bubble) {
 		}
 	}
 	el.scrollTop = el.scrollHeight;
-}
-function updateThinkingBubble(name, label, detail) {
-	const bubble = ensureThinkingBubble(name);
-	const verbEl = bubble.querySelector(".thinking-verb");
-	if (verbEl) verbEl.textContent = label;
-	const target = bubble.querySelector(".thinking-target");
-	if (target) {
-		if (detail) {
-			target.textContent = detail.length > THINKING_DETAIL_MAX ? `${detail.slice(0, 63)}…` : detail;
-			target.hidden = false;
-		} else target.hidden = true;
-	}
-}
-function setThinkingMilestone(name, text) {
-	const el = ensureThinkingBubble(name).querySelector(".thinking-milestone");
-	if (el) {
-		el.textContent = text;
-		el.hidden = false;
-	}
-}
-var REASONING_FEED_BUFFER = 40;
-var REASONING_FEED_TTL = 7e3;
-var REASONING_FADE_MS = 500;
-function pushReasoning(name, text) {
-	const bubble = ensureThinkingBubble(name);
-	if (!bubble._turn) bubble._turn = {
-		startedAt: Date.now(),
-		lastActivityAt: Date.now(),
-		reasoningLog: []
-	};
-	bubble._turn.reasoningLog.push(text);
-	if (bubble._turn.reasoningLog.length > REASONING_LOG_MAX) bubble._turn.reasoningLog.shift();
-	if (bubble.classList.contains("expanded")) renderFullTrace(bubble);
-	const feed = bubble.querySelector(".thinking-feed");
-	if (!feed) return;
-	feed.hidden = false;
-	const line = document.createElement("div");
-	line.className = "thinking-feed-line";
-	line.textContent = text;
-	feed.appendChild(line);
-	while (feed.children.length > REASONING_FEED_BUFFER) {
-		const oldest = feed.firstChild;
-		if (oldest._fadeTimer) clearTimeout(oldest._fadeTimer);
-		feed.removeChild(oldest);
-	}
-	feed.scrollTop = feed.scrollHeight;
-	line._fadeTimer = setTimeout(() => {
-		line.classList.add("fading");
-		setTimeout(() => {
-			line.remove();
-			if (feed.children.length === 0) feed.hidden = true;
-		}, REASONING_FADE_MS);
-	}, REASONING_FEED_TTL);
-	if (isNearBottom() || forceScrollCount > 0 && !userScrolledAway) scrollToBottom();
 }
 var typingTimeout = null;
 var isTyping = false;
@@ -16180,4 +16188,13 @@ async function maybeAssignAfterPickerAdd(createdIds) {
 	return true;
 }
 initApp();
+provideThinkingDeps({
+	bubbleFor,
+	interruptAgent,
+	isNearBottom,
+	renderFullTrace,
+	scrollToBottom,
+	getAgentName: () => agentName,
+	isForcedScroll: () => forceScrollCount > 0 && !userScrolledAway
+});
 //#endregion
