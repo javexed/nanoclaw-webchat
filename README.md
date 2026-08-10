@@ -1,11 +1,12 @@
 # NanoClaw Webchat
 
+Purpose: To not have to deal with external chat programs and api keys, and have a secured webchat instance protected by 
+tailscale (other methods also supported). Useful for having multiple people all chatting to the same agent.
+
 **A local-first chat desk for your [NanoClaw](https://github.com/nanocoai/nanoclaw) agents** —
 multi-agent rooms, per-room threads, per-member credentials, local-model
 routing, and a full operator console, in one installable PWA that binds to
 `127.0.0.1`.
-
-Not Slack. Not a hosted widget. Your agents, your keys, your machine.
 
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![PWA](https://img.shields.io/badge/PWA-installable-5a3.svg)](#)
