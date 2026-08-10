@@ -92,18 +92,27 @@ const CSRF = { 'content-type': 'application/json', 'x-webchat-csrf': '1' };
 const appJsPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../../public/webchat/app.js');
 const appJs = fs.readFileSync(appJsPath, 'utf8');
 
-function extractUrl(varName: string): string {
-  // `=\\s*[^;]*` tolerates a multiline assignment: these URLs are now multi-target
-  // ternaries (member / workspace / workspace-codex), so the value can begin on
-  // the next line. Still pins the LAST /api/user-credentials/* literal the branch
-  // resolves to — the route-drift guard is unchanged.
-  const m = appJs.match(new RegExp(`const ${varName} =\\s*[^;]*'(/api/user-credentials/[a-z/-]+)'`));
-  if (!m) throw new Error(`app.js: could not find a literal URL assigned to ${varName}`);
-  return m[1];
+/**
+ * Assert the shipped bundle really references this route, and hand it back so
+ * the parity tests below hit the exact same string the client does.
+ *
+ * Matches the ROUTE LITERAL, not `const <name> = …`. app.js is built by Vite
+ * now, and a bundler is entitled to inline a single-use const, rename locals
+ * and normalise quotes — it does all three, which broke the old name-based
+ * extraction while the routes themselves were perfectly intact. The contract
+ * this guard exists for is "the client calls this path", so pin the path; the
+ * variable it was briefly held in is incidental.
+ */
+function clientCalls(route: string): string {
+  const literal = new RegExp(`['"\`]${route.replace(/[/-]/g, '\\$&')}['"\`]`);
+  if (!literal.test(appJs)) {
+    throw new Error(`app.js: the client no longer references ${route}`);
+  }
+  return route;
 }
 
-const claudeStartUrl = extractUrl('startUrl'); // non-Codex branch, checked below
-const codexCancelUrl = extractUrl('cancelUrl'); // codex branch, checked below
+const claudeStartUrl = clientCalls('/api/user-credentials/oauth/start');
+const codexCancelUrl = clientCalls('/api/user-credentials/codex/cancel');
 
 describe('user-credentials OAuth-mint routes — client/server path parity', () => {
   it('app.js still points at /api/user-credentials/oauth/* and /api/user-credentials/codex/*', () => {
