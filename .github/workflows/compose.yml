@@ -126,17 +126,15 @@ jobs:
       #
       # `uses:` cannot take an expression, so the choice has to be `if:` across
       # two steps. Keep their inputs in step with each other.
-      - name: Upload composed tarball (GitHub)
-        if: github.server_url == 'https://github.com'
+      # ONE upload step, v4. The previous split (v4 for GitHub, v3 for the
+      # self-hosted forge) auto-failed every GitHub run: GitHub resolves EVERY
+      # action referenced in the workflow during "Set up job", BEFORE any `if:`
+      # is evaluated, so the skipped v3 step still tripped the deprecation block
+      # ("This request has been automatically failed because it uses a
+      # deprecated version of actions/upload-artifact: v3"). A condition cannot
+      # hide a deprecated action from that check — the reference has to go.
+      - name: Upload composed tarball
         uses: actions/upload-artifact@v4
-        with:
-          name: nanoclaw-webchat-composed
-          path: ${{ runner.temp }}/nanoclaw-webchat-composed.tar.gz
-          retention-days: 14
-
-      - name: Upload composed tarball (non-GitHub runner)
-        if: github.server_url != 'https://github.com'
-        uses: actions/upload-artifact@v3
         with:
           name: nanoclaw-webchat-composed
           path: ${{ runner.temp }}/nanoclaw-webchat-composed.tar.gz
