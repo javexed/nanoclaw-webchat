@@ -45,6 +45,10 @@ function makeApproval(overrides: Partial<PendingApproval> = {}): PendingApproval
     expires_at: null,
     status: 'pending',
     title: 'CLI: tasks create',
+    // Required as of the upstream in this bump (d66ee113, migration 021): a
+    // resolved card keeps the text it was approved on instead of re-rendering
+    // from live state. Only valid WITH this pin — hence same PR.
+    question: '*Agent:* ag-1\n*Action:* tasks create',
     options_json: '[]',
     approver_user_id: null,
     ...overrides,
