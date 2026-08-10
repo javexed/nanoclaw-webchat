@@ -45,6 +45,10 @@ function makeApproval(overrides: Partial<PendingApproval> = {}): PendingApproval
     expires_at: null,
     status: 'pending',
     title: 'CLI: tasks create',
+    // Required since upstream d66ee113 ("preserve resolved card content"), which
+    // added the `question` column (migration 021) so a resolved card keeps the
+    // text it was approved on instead of re-rendering from live state.
+    question: '*Agent:* ag-1\n*Action:* tasks create',
     options_json: '[]',
     approver_user_id: null,
     ...overrides,
