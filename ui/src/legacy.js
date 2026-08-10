@@ -3,20 +3,8 @@ import DOMPurify from '/dompurify.min.js';
 
 marked.setOptions({ breaks: true, gfm: true });
 
-const $ = (sel) => document.querySelector(sel);
-
-// Inline Lucide icon referencing the SVG sprite in index.html. Returns an HTML
-// string (safe — no user data); styling/color come from the .icon CSS class.
-function lucide(name, cls = '') {
-  return `<svg class="icon${cls ? ' ' + cls : ''}" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
-}
-// Same icon as a detached DOM node, for inserting NEXT TO user-controlled text
-// without resorting to innerHTML (keeps the surrounding text XSS-safe).
-function lucideEl(name, cls = '') {
-  const t = document.createElement('template');
-  t.innerHTML = lucide(name, cls);
-  return t.content.firstChild;
-}
+// $ / lucide / lucideEl / esc now live in core/dom.ts.
+import { $, lucide, lucideEl, esc } from './core/dom.js';
 
 // ── Code block copy / wrap controls ──────────────────────────────────────
 // Decorates any <pre> inside a container with a toolbar (language label,
@@ -89,10 +77,8 @@ async function copyTextToClipboard(text) {
 // because an imported binding cannot be reassigned, and the token is.
 import { getAuthToken, setAuthToken, getWsUrl, getWsProtocols, authFetch, apiJson } from './core/api.js';
 
-/** Error → toast, one shape everywhere (kind:'error' can't be forgotten). */
-function toastError(err, fallback) {
-  showToast(err?.message || fallback || 'Something went wrong', { kind: 'error' });
-}
+// showToast / toastError now live in core/toast.ts.
+import { showToast, toastError } from './core/toast.js';
 
 /**
  * Three outcomes, not two: 'ok' | 'unauthenticated' | 'unreachable'.
@@ -613,9 +599,6 @@ function roomColor(roomId) {
   return ROOM_COLORS[Math.abs(hash) % ROOM_COLORS.length];
 }
 
-function esc(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
 
 // ── Settings ──────────────────────────────────────────────────────────────
 const DEFAULTS = { theme: 'dark', font: 'medium', sendKey: 'enter', notifications: true,
@@ -7869,24 +7852,6 @@ $('#user-creds-oauth-submit')?.addEventListener('click', async () => {
   }
 });
 
-function showToast(message, { kind = 'info', timeout } = {}) {
-  const container = $('#toasts');
-  if (!container) return null;
-  const toast = document.createElement('div');
-  toast.className = `toast toast-${kind}`;
-  toast.setAttribute('role', kind === 'error' ? 'alert' : 'status');
-  toast.textContent = message;
-  const remove = () => {
-    if (!toast.parentNode) return;
-    toast.classList.add('toast-out');
-    setTimeout(() => toast.remove(), 180);
-  };
-  toast.addEventListener('click', remove);
-  container.appendChild(toast);
-  const ms = timeout ?? (kind === 'error' ? 7000 : 4000);
-  setTimeout(remove, ms);
-  return toast;
-}
 
 /**
  * Promise-based confirmation modal. Resolves true on confirm, false on

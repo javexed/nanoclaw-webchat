@@ -1,5 +1,25 @@
 import { marked } from "/marked.min.js";
 import DOMPurify from "/dompurify.min.js";
+//#region src/core/dom.ts
+/** querySelector, the shorthand the whole UI is written in. */
+var $ = (sel) => document.querySelector(sel);
+/** Inline Lucide icon referencing the SVG sprite in index.html. Returns an HTML
+* string (safe — no user data); styling/color come from the .icon CSS class. */
+function lucide(name, cls = "") {
+	return `<svg class="icon${cls ? " " + cls : ""}" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
+}
+/** Same icon as a detached DOM node, for inserting NEXT TO user-controlled text
+* without resorting to innerHTML (keeps the surrounding text XSS-safe). */
+function lucideEl(name, cls = "") {
+	const t = document.createElement("template");
+	t.innerHTML = lucide(name, cls);
+	return t.content.firstChild;
+}
+/** HTML-escape for the few places that still build markup as a string. */
+function esc(s) {
+	return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+//#endregion
 //#region src/core/api.ts
 var authToken = sessionStorage.getItem("nanoclaw-token") || "";
 function getAuthToken() {
@@ -46,20 +66,35 @@ async function apiJson(url, { method = "GET", body, headers } = {}) {
 	return data;
 }
 //#endregion
+//#region src/core/toast.ts
+function showToast(message, { kind = "info", timeout } = {}) {
+	const container = $("#toasts");
+	if (!container) return null;
+	const toast = document.createElement("div");
+	toast.className = `toast toast-${kind}`;
+	toast.setAttribute("role", kind === "error" ? "alert" : "status");
+	toast.textContent = message;
+	const remove = () => {
+		if (!toast.parentNode) return;
+		toast.classList.add("toast-out");
+		setTimeout(() => toast.remove(), 180);
+	};
+	toast.addEventListener("click", remove);
+	container.appendChild(toast);
+	setTimeout(remove, timeout ?? (kind === "error" ? 7e3 : 4e3));
+	return toast;
+}
+/** Error → toast, one shape everywhere (kind:'error' can't be forgotten). */
+function toastError(err, fallback) {
+	const message = err?.message;
+	showToast(message || fallback || "Something went wrong", { kind: "error" });
+}
+//#endregion
 //#region src/legacy.js
 marked.setOptions({
 	breaks: true,
 	gfm: true
 });
-var $ = (sel) => document.querySelector(sel);
-function lucide(name, cls = "") {
-	return `<svg class="icon${cls ? " " + cls : ""}" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
-}
-function lucideEl(name, cls = "") {
-	const t = document.createElement("template");
-	t.innerHTML = lucide(name, cls);
-	return t.content.firstChild;
-}
 function decorateCodeBlocks(container) {
 	container.querySelectorAll("pre").forEach((pre) => {
 		if (pre.classList.contains("has-code-toolbar")) return;
@@ -110,10 +145,6 @@ async function copyTextToClipboard(text) {
 	}
 	document.body.removeChild(ta);
 	return ok;
-}
-/** Error → toast, one shape everywhere (kind:'error' can't be forgotten). */
-function toastError(err, fallback) {
-	showToast(err?.message || fallback || "Something went wrong", { kind: "error" });
 }
 /**
 * Three outcomes, not two: 'ok' | 'unauthenticated' | 'unreachable'.
@@ -492,9 +523,6 @@ function roomColor(roomId) {
 	let hash = 0;
 	for (let i = 0; i < roomId.length; i++) hash = (hash << 5) - hash + roomId.charCodeAt(i) | 0;
 	return ROOM_COLORS[Math.abs(hash) % ROOM_COLORS.length];
-}
-function esc(s) {
-	return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 var DEFAULTS = {
 	theme: "dark",
@@ -6394,23 +6422,6 @@ $("#user-creds-oauth-submit")?.addEventListener("click", async () => {
 		btn.disabled = false;
 	}
 });
-function showToast(message, { kind = "info", timeout } = {}) {
-	const container = $("#toasts");
-	if (!container) return null;
-	const toast = document.createElement("div");
-	toast.className = `toast toast-${kind}`;
-	toast.setAttribute("role", kind === "error" ? "alert" : "status");
-	toast.textContent = message;
-	const remove = () => {
-		if (!toast.parentNode) return;
-		toast.classList.add("toast-out");
-		setTimeout(() => toast.remove(), 180);
-	};
-	toast.addEventListener("click", remove);
-	container.appendChild(toast);
-	setTimeout(remove, timeout ?? (kind === "error" ? 7e3 : 4e3));
-	return toast;
-}
 /**
 * Promise-based confirmation modal. Resolves true on confirm, false on
 * cancel / backdrop / Escape. `body` may be a string or an HTMLElement (use an
