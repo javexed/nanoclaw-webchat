@@ -79,6 +79,14 @@ import { getAuthToken, setAuthToken, getWsUrl, getWsProtocols, authFetch, apiJso
 
 // showToast / toastError now live in core/toast.ts.
 import { showToast, toastError } from './core/toast.js';
+// Voice (TTS playback + STT dictation) now lives in features/voice.js. The
+// Settings panels below still read/write three pieces of its state, so they go
+// through accessors — see the note in that file.
+import {
+  loadTtsConfig, ttsPlainText, stopTts, buildTtsButton, speak,
+  startDictation, stopDictation, cancelDictation, initSttFeature,
+  getTtsReadAloudEnabled, setTtsReadAloudEnabled, getSttConfig, setSttConfig, isDictationActive,
+} from './features/voice.js';
 
 /**
  * Three outcomes, not two: 'ok' | 'unauthenticated' | 'unreachable'.
@@ -123,8 +131,6 @@ async function checkAuth() {
 // server-side synthesis (Kokoro / any OpenAI-compatible endpoint) when the host
 // has WEBCHAT_TTS_ENABLED, else the browser's built-in Web Speech API (device
 // voices, no backend). See src/channels/webchat/tts.ts and /add-webchat-tts.
-let ttsServerEnabled = false; // set by loadTtsConfig from /api/tts/config
-let ttsReadAloudEnabled = false; // workspace-level (owner-set) — gates the speaker
 let learningMasterEnabled = true; // workspace master (owner-set) — gates ALL learning UI + behavior
 
 // Apply the learning master to the live UI: the composer 🎓 and its nudge only
@@ -147,144 +153,21 @@ async function loadLearningMaster() {
   }
   applyLearningMaster();
 }
-let ttsCurrentAudio = null; // the Audio element currently playing (server mode)
-let ttsCurrentBtn = null; // the button whose message is currently playing
 
-async function loadTtsConfig() {
-  try {
-    const r = await authFetch('/api/tts/config');
-    if (r.ok) {
-      const cfg = await r.json();
-      ttsServerEnabled = cfg.enabled === true;
-      ttsReadAloudEnabled = cfg.readAloud === true;
-    }
-  } catch {
-    ttsServerEnabled = false;
-  }
-}
 
 // True when we can speak at all — server TTS on, or the browser has Web Speech.
-function ttsAvailable() {
-  return ttsServerEnabled || (typeof window !== 'undefined' && 'speechSynthesis' in window);
-}
 
 // Markdown → speakable plain text. Strips syntax so the voice reads prose, not
 // backticks and brackets; fenced code collapses to a short placeholder rather
 // than being read line by line.
-function ttsPlainText(md) {
-  return String(md || '')
-    .replace(/```[\s\S]*?```/g, ' (code block) ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/^[>#\s]*/gm, '')
-    .replace(/[*_~]/g, '')
-    .replace(/\n{2,}/g, '. ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
 
-function resetTtsButton(btn) {
-  if (!btn) return;
-  btn.classList.remove('tts-playing', 'tts-loading');
-  btn.innerHTML = lucide('volume-2');
-  btn.setAttribute('aria-label', 'Read aloud');
-  btn.title = 'Read aloud';
-}
 
-function markTtsPlaying(btn) {
-  btn.classList.remove('tts-loading');
-  btn.classList.add('tts-playing');
-  btn.innerHTML = lucide('square');
-  btn.setAttribute('aria-label', 'Stop');
-  btn.title = 'Stop';
-}
 
-function stopTts() {
-  if (ttsCurrentAudio) {
-    ttsCurrentAudio.pause();
-    if (ttsCurrentAudio.src) URL.revokeObjectURL(ttsCurrentAudio.src);
-    ttsCurrentAudio = null;
-  }
-  if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
-  resetTtsButton(ttsCurrentBtn);
-  ttsCurrentBtn = null;
-}
 
 // Build the read-aloud button for an agent bubble. Returns null when no TTS
 // path exists (so the button is simply omitted). `getText` is called at click
 // time so the freshest bubble content is spoken.
-function buildTtsButton(getText) {
-  // Workspace-gated: the OWNER turns Read aloud on for everyone in
-  // Settings → Features (per-device switches confused shared rooms).
-  // TODO(a11y): an auto-read mode (speak replies as they arrive, no tap)
-  // would help low-vision / hands-free use — likely per-room when it comes.
-  if (!ttsReadAloudEnabled || !ttsAvailable()) return null;
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'tts-btn';
-  resetTtsButton(btn);
-  btn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (ttsCurrentBtn === btn) {
-      stopTts(); // clicking the playing message stops it
-      return;
-    }
-    stopTts(); // stop any other in-flight playback first
-    const text = (getText() || '').trim();
-    if (text) void speak(text, btn);
-  });
-  return btn;
-}
 
-async function speak(text, btn) {
-  ttsCurrentBtn = btn;
-  if (ttsServerEnabled) {
-    btn.classList.add('tts-loading');
-    btn.setAttribute('aria-label', 'Synthesizing…');
-    try {
-      const r = await authFetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      if (!r.ok) throw new Error(`tts ${r.status}`);
-      const blob = await r.blob();
-      if (ttsCurrentBtn !== btn) return; // a later click superseded us mid-fetch
-      const audio = new Audio(URL.createObjectURL(blob));
-      ttsCurrentAudio = audio;
-      audio.addEventListener('ended', () => {
-        if (ttsCurrentBtn === btn) stopTts();
-      });
-      audio.addEventListener('error', () => {
-        if (ttsCurrentBtn === btn) stopTts();
-      });
-      markTtsPlaying(btn);
-      await audio.play();
-      return;
-    } catch (err) {
-      console.error('Server TTS failed; falling back to Web Speech', err);
-      // fall through to the Web Speech path below — unless a later click
-      // superseded this one mid-fetch, in which case stale audio must not
-      // start speaking over the newer playback.
-      if (ttsCurrentBtn !== btn) return;
-    }
-  }
-  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.addEventListener('end', () => {
-      if (ttsCurrentBtn === btn) stopTts();
-    });
-    utter.addEventListener('error', () => {
-      if (ttsCurrentBtn === btn) stopTts();
-    });
-    markTtsPlaying(btn);
-    window.speechSynthesis.speak(utter);
-  } else {
-    stopTts();
-    showToast('Audio playback failed', { kind: 'error' });
-  }
-}
 
 // Shared post-auth entry: reveal the app, open the socket, and run first-run
 // hooks. Called from BOTH initApp (reload with a stored token) and the login
@@ -2310,7 +2193,7 @@ async function renderWizardFeatures() {
   const mkt = $('#wizard-marketplace');
   if (mkt) mkt.checked = marketplaceEnabled === true; // disabled by default — opt-in
   const ttsDefault = $('#wizard-tts-default');
-  if (ttsDefault) ttsDefault.checked = ttsReadAloudEnabled;
+  if (ttsDefault) ttsDefault.checked = getTtsReadAloudEnabled();
   if (!wizardTtsWired) {
     wizardTtsWired = true;
     ttsDefault?.addEventListener('change', async () => {
@@ -2323,7 +2206,7 @@ async function renderWizardFeatures() {
           body: JSON.stringify({ readAloud: on }),
         });
         if (!r.ok) throw new Error('save failed');
-        ttsReadAloudEnabled = on;
+        setTtsReadAloudEnabled(on);
         if (!on) stopTts();
         renderWizardFeatures(); // reveal / hide the voice-model recommendation
       } catch {
@@ -3505,7 +3388,7 @@ async function renderTtsSetupSettings() {
   // Switch shows the workspace truth (fetched at boot; re-fetch is cheap).
   await loadTtsConfig();
   document.querySelectorAll('#tts-default-mode .setting-option').forEach((b) => {
-    b.classList.toggle('active', b.dataset.value === (ttsReadAloudEnabled ? 'on' : 'off'));
+    b.classList.toggle('active', b.dataset.value === (getTtsReadAloudEnabled() ? 'on' : 'off'));
   });
   const desc = $('#tts-setup-desc');
   if (st.installed) {
@@ -3573,270 +3456,29 @@ async function renderTtsSetupSettings() {
 // Esc cancels and discards. On stop, the dictated span is tidied via
 // /api/stt/cleanup (replaced with execCommand so Ctrl/Cmd+Z restores the raw
 // transcript). Sending is ALWAYS an explicit act — no path here submits.
-let sttConfig = null; // { enabled, cleanup, provider?, cleanupModelId?, canEdit? }
-let sttActive = false;
-let sttStopping = false;
-let sttAudioCtx = null;
-let sttStream = null;
-let sttWorkletNode = null;
-let sttSourceNode = null;
-let sttBeforeText = ''; // composer content that predates this dictation
-let sttCommitted = ''; // dictated text committed so far
-let sttPending = 0; // segments in flight
-let sttSegments = []; // Int16Array frames of the current segment
-let sttSegmentMs = 0;
-let sttSilenceMs = 0;
-let sttSpeechInSegment = false;
-let sttNoSpeechMs = 0; // total silence since last speech — drives auto-stop
-let sttInFlight = []; // promises of in-flight segment POSTs
-let sttToastShown = false;
 
-const STT_SAMPLE_RATE = 16000;
-const STT_SILENCE_CUT_MS = 700; // pause that closes a segment
-const STT_MAX_SEGMENT_MS = 5000; // hard cut so long speech still streams
-const STT_RMS_FLOOR = 0.012; // below this a frame counts as silence
-const STT_AUTOSTOP_MS = 12000; // this much continuous silence ends dictation
 
-let sttElapsedTimer = null;
-let sttStartedAt = 0;
 
 /** Recording chrome: mic ⇄ red pulsing stop square + elapsed chip (the
  *  standard voice-recorder idiom, so state is unmistakable at a glance). */
-function sttSetRecordingChrome(on) {
-  const mic = $('#mic-btn');
-  const chip = $('#stt-elapsed');
-  const use = mic?.querySelector('use');
-  if (use) use.setAttribute('href', on ? '#i-square' : '#i-mic');
-  if (on) {
-    sttStartedAt = Date.now();
-    if (chip) {
-      chip.textContent = '0:00';
-      chip.hidden = false;
-    }
-    sttElapsedTimer = setInterval(() => {
-      const sec = Math.floor((Date.now() - sttStartedAt) / 1000);
-      const t = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
-      if (chip) chip.textContent = t;
-      mic?.setAttribute('title', `Recording ${t} — tap to stop`);
-    }, 1000);
-  } else {
-    if (sttElapsedTimer) clearInterval(sttElapsedTimer);
-    sttElapsedTimer = null;
-    if (chip) chip.hidden = true;
-    mic?.setAttribute('title', 'Dictate');
-  }
-}
 
-function sttAnnounce(text) {
-  const el = $('#stt-status');
-  if (el) el.textContent = text;
-}
 
 /** Wrap accumulated PCM16 frames in a minimal 16 kHz mono WAV container. */
-function sttBuildWav(frames) {
-  let samples = 0;
-  for (const f of frames) samples += f.length;
-  const buf = new ArrayBuffer(44 + samples * 2);
-  const dv = new DataView(buf);
-  const writeStr = (off, s) => {
-    for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i));
-  };
-  writeStr(0, 'RIFF');
-  dv.setUint32(4, 36 + samples * 2, true);
-  writeStr(8, 'WAVE');
-  writeStr(12, 'fmt ');
-  dv.setUint32(16, 16, true); // PCM chunk size
-  dv.setUint16(20, 1, true); // PCM format
-  dv.setUint16(22, 1, true); // mono
-  dv.setUint32(24, STT_SAMPLE_RATE, true);
-  dv.setUint32(28, STT_SAMPLE_RATE * 2, true); // byte rate
-  dv.setUint16(32, 2, true); // block align
-  dv.setUint16(34, 16, true); // bits per sample
-  writeStr(36, 'data');
-  dv.setUint32(40, samples * 2, true);
-  let off = 44;
-  for (const f of frames) {
-    for (let i = 0; i < f.length; i++, off += 2) dv.setInt16(off, f[i], true);
-  }
-  return new Blob([buf], { type: 'audio/wav' });
-}
 
-function sttRenderInput() {
-  const input = $('#message-input');
-  if (!input) return;
-  const sep = sttBeforeText && sttCommitted ? ' ' : '';
-  input.value = sttBeforeText + sep + sttCommitted + (sttPending > 0 ? ' …' : '');
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-}
 
 /** Close the current segment and ship it for transcription (if it held speech). */
-function sttCutSegment() {
-  const frames = sttSegments;
-  const hadSpeech = sttSpeechInSegment;
-  sttSegments = [];
-  sttSegmentMs = 0;
-  sttSilenceMs = 0;
-  sttSpeechInSegment = false;
-  if (!hadSpeech || frames.length === 0) return;
-  const wav = sttBuildWav(frames);
-  sttPending++;
-  sttRenderInput();
-  const p = authFetch('/api/stt/transcribe', {
-    method: 'POST',
-    headers: { 'Content-Type': 'audio/wav' },
-    body: wav,
-  })
-    .then(async (r) => {
-      const body = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(body.error || r.statusText);
-      const text = (body.text || '').trim();
-      if (text) {
-        sttCommitted = sttCommitted ? `${sttCommitted} ${text}` : text;
-      }
-    })
-    .catch((err) => {
-      if (!sttToastShown) {
-        sttToastShown = true;
-        showToast('Transcription failed: ' + err.message, { kind: 'error' });
-      }
-    })
-    .finally(() => {
-      sttPending--;
-      sttRenderInput();
-    });
-  sttInFlight.push(p);
-}
 
 /** Per-frame handler: RMS gate → segment bookkeeping → cut on pause/length. */
-function sttOnFrame(int16) {
-  if (!sttActive) return;
-  let sum = 0;
-  for (let i = 0; i < int16.length; i++) {
-    const s = int16[i] / 0x8000;
-    sum += s * s;
-  }
-  const rms = Math.sqrt(sum / int16.length);
-  const frameMs = (int16.length / STT_SAMPLE_RATE) * 1000;
-  sttSegments.push(int16);
-  sttSegmentMs += frameMs;
-  if (rms >= STT_RMS_FLOOR) {
-    sttSpeechInSegment = true;
-    sttSilenceMs = 0;
-    sttNoSpeechMs = 0;
-  } else {
-    sttSilenceMs += frameMs;
-    sttNoSpeechMs += frameMs;
-  }
-  if ((sttSpeechInSegment && sttSilenceMs >= STT_SILENCE_CUT_MS) || sttSegmentMs >= STT_MAX_SEGMENT_MS) {
-    sttCutSegment();
-  }
-  // Long total silence = the user walked away — stop as if the mic was tapped.
-  // Stopping only inserts text; it NEVER sends (F3).
-  if (sttNoSpeechMs >= STT_AUTOSTOP_MS && !sttStopping) {
-    stopDictation();
-  }
-}
 
-async function startDictation() {
-  if (sttActive) return;
-  const input = $('#message-input');
-  if (!input || input.disabled) return;
-  try {
-    sttStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  } catch {
-    showToast('Microphone access denied — allow the mic for this site in browser settings.', { kind: 'error' });
-    return;
-  }
-  try {
-    sttAudioCtx = new AudioContext({ sampleRate: STT_SAMPLE_RATE });
-    await sttAudioCtx.audioWorklet.addModule('/pcm-worklet.js');
-    sttSourceNode = sttAudioCtx.createMediaStreamSource(sttStream);
-    sttWorkletNode = new AudioWorkletNode(sttAudioCtx, 'pcm-worklet');
-    sttWorkletNode.port.onmessage = (e) => sttOnFrame(new Int16Array(e.data));
-    sttSourceNode.connect(sttWorkletNode);
-  } catch (err) {
-    showToast('Could not start audio capture: ' + err.message, { kind: 'error' });
-    sttTeardownAudio();
-    return;
-  }
-  sttActive = true;
-  sttStopping = false;
-  sttToastShown = false;
-  sttBeforeText = input.value.trim();
-  sttCommitted = '';
-  sttPending = 0;
-  sttSegments = [];
-  sttSegmentMs = 0;
-  sttSilenceMs = 0;
-  sttSpeechInSegment = false;
-  sttNoSpeechMs = 0;
-  sttInFlight = [];
-  const mic = $('#mic-btn');
-  mic?.classList.add('recording');
-  mic?.setAttribute('aria-label', 'Stop dictation');
-  mic?.setAttribute('aria-pressed', 'true');
-  sttSetRecordingChrome(true);
-  sttAnnounce('Listening…');
-}
 
-function sttTeardownAudio() {
-  try {
-    sttSourceNode?.disconnect();
-    sttWorkletNode?.disconnect();
-  } catch {
-    /* already gone */
-  }
-  sttStream?.getTracks().forEach((t) => t.stop());
-  sttAudioCtx?.close().catch(() => {});
-  sttStream = null;
-  sttAudioCtx = null;
-  sttWorkletNode = null;
-  sttSourceNode = null;
-}
 
-function sttResetMicButton() {
-  const mic = $('#mic-btn');
-  mic?.classList.remove('recording');
-  mic?.setAttribute('aria-label', 'Start dictation');
-  mic?.setAttribute('aria-pressed', 'false');
-  sttSetRecordingChrome(false);
-}
 
 /** Stop capture, flush the tail segment, wait for transcripts, then tidy. */
-async function stopDictation() {
-  if (!sttActive || sttStopping) return;
-  sttStopping = true;
-  sttActive = false;
-  sttCutSegment(); // flush whatever's buffered
-  sttTeardownAudio();
-  sttResetMicButton();
-  sttAnnounce('Transcribing…');
-  await Promise.allSettled(sttInFlight);
-  sttRenderInput();
-  await sttCleanupPass();
-  sttStopping = false;
-  sttAnnounce('');
-}
 
 /** Esc = cancel: discard everything dictated, restore the prior composer text. */
-function cancelDictation() {
-  if (!sttActive) return;
-  sttActive = false;
-  sttStopping = false;
-  sttTeardownAudio();
-  sttResetMicButton();
-  sttCommitted = '';
-  sttPending = 0;
-  const input = $('#message-input');
-  if (input) {
-    input.value = sttBeforeText;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  }
-  sttAnnounce('Dictation cancelled');
-}
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && sttActive) {
+  if (e.key === 'Escape' && isDictationActive()) {
     e.preventDefault();
     cancelDictation();
   }
@@ -3847,59 +3489,13 @@ document.addEventListener('keydown', (e) => {
  * through execCommand('insertText') over a selection of just the dictated
  * text, so the native undo stack (Ctrl/Cmd+Z) restores the raw transcript.
  */
-async function sttCleanupPass() {
-  if (!sttConfig?.cleanup || !sttCommitted.trim()) return;
-  const input = $('#message-input');
-  if (!input) return;
-  const raw = sttCommitted;
-  const mic = $('#mic-btn');
-  mic?.classList.add('tidying');
-  try {
-    const r = await authFetch('/api/stt/cleanup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: raw }),
-    });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok || !body.cleaned || typeof body.text !== 'string') return;
-    // The composer may have been edited while we waited — only swap if the
-    // dictated span is still exactly where we left it.
-    const sep = sttBeforeText && raw ? ' ' : '';
-    const expected = sttBeforeText + sep + raw;
-    if (input.value !== expected) return;
-    const start = (sttBeforeText + sep).length;
-    input.focus();
-    input.setSelectionRange(start, input.value.length);
-    const before = input.value;
-    document.execCommand('insertText', false, body.text);
-    if (input.value === before) {
-      input.setRangeText(body.text, start, before.length, 'end');
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-    sttCommitted = body.text;
-  } catch {
-    /* raw transcript stays — cleanup is best-effort */
-  } finally {
-    mic?.classList.remove('tidying');
-  }
-}
 
 $('#mic-btn')?.addEventListener('click', () => {
-  if (sttActive) stopDictation();
+  if (isDictationActive()) stopDictation();
   else startDictation();
 });
 
 /** Post-auth: reveal the mic when the server has an STT backend configured. */
-async function initSttFeature() {
-  try {
-    const r = await authFetch('/api/stt/config');
-    if (!r.ok) return;
-    sttConfig = await r.json();
-    $('#mic-btn').hidden = !sttConfig.enabled;
-  } catch {
-    /* feature stays hidden */
-  }
-}
 
 // ── Settings → Features → Voice dictation (install + config, owner-only) ────
 // Backend segmented Local/ElevenLabs; Local shows the hardware-suggested model
@@ -4074,7 +3670,7 @@ async function renderSttSetupSettings() {
           .forEach((x) => x.classList.toggle('active', x === b));
         const mic = $('#mic-btn');
         if (mic) mic.hidden = !on;
-        if (!on && sttActive) cancelDictation();
+        if (!on && isDictationActive()) cancelDictation();
         showToast(on ? 'Voice dictation on for everyone' : 'Voice dictation off for everyone');
       });
     });
@@ -4149,7 +3745,7 @@ async function renderSttSetupSettings() {
         renderSttSetupSettings(); // resync to server truth
         return;
       }
-      sttConfig = { ...sttConfig, cleanup: value !== null, cleanupModelId: value };
+      setSttConfig({ ...getSttConfig(), cleanup: value !== null, cleanupModelId: value });
       showToast(value ? 'Cleanup model saved' : 'Cleanup turned off', { kind: 'success' });
     });
   }
@@ -5003,7 +4599,7 @@ document.querySelectorAll('#tts-default-mode .setting-option').forEach((btn) => 
       showToast('Failed to save: ' + (err.error || r.statusText), { kind: 'error' });
       return;
     }
-    ttsReadAloudEnabled = on;
+    setTtsReadAloudEnabled(on);
     document.querySelectorAll('#tts-default-mode .setting-option')
       .forEach((b) => b.classList.toggle('active', b === btn));
     if (!on) stopTts();

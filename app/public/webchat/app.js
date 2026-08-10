@@ -5,14 +5,14 @@ import DOMPurify from "/dompurify.min.js";
 var $ = (sel) => document.querySelector(sel);
 /** Inline Lucide icon referencing the SVG sprite in index.html. Returns an HTML
 * string (safe — no user data); styling/color come from the .icon CSS class. */
-function lucide(name, cls = "") {
+function lucide$1(name, cls = "") {
 	return `<svg class="icon${cls ? " " + cls : ""}" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 }
 /** Same icon as a detached DOM node, for inserting NEXT TO user-controlled text
 * without resorting to innerHTML (keeps the surrounding text XSS-safe). */
 function lucideEl(name, cls = "") {
 	const t = document.createElement("template");
-	t.innerHTML = lucide(name, cls);
+	t.innerHTML = lucide$1(name, cls);
 	return t.content.firstChild;
 }
 /** HTML-escape for the few places that still build markup as a string. */
@@ -90,110 +90,9 @@ function toastError(err, fallback) {
 	showToast(message || fallback || "Something went wrong", { kind: "error" });
 }
 //#endregion
-//#region src/legacy.js
-marked.setOptions({
-	breaks: true,
-	gfm: true
-});
-function decorateCodeBlocks(container) {
-	container.querySelectorAll("pre").forEach((pre) => {
-		if (pre.classList.contains("has-code-toolbar")) return;
-		pre.classList.add("has-code-toolbar");
-		const code = pre.querySelector("code");
-		const langClass = code && [...code.classList].find((c) => c.startsWith("language-"));
-		const lang = langClass ? langClass.slice(9) : "";
-		const toolbar = document.createElement("div");
-		toolbar.className = "code-toolbar";
-		if (lang) {
-			const label = document.createElement("span");
-			label.className = "code-lang";
-			label.textContent = lang;
-			toolbar.appendChild(label);
-		}
-		const wrapBtn = document.createElement("button");
-		wrapBtn.type = "button";
-		wrapBtn.className = "code-btn wrap-code-btn";
-		wrapBtn.textContent = "Wrap";
-		wrapBtn.setAttribute("aria-label", "Toggle line wrapping");
-		toolbar.appendChild(wrapBtn);
-		const copyBtn = document.createElement("button");
-		copyBtn.type = "button";
-		copyBtn.className = "code-btn copy-code-btn";
-		copyBtn.textContent = "Copy";
-		copyBtn.setAttribute("aria-label", "Copy code to clipboard");
-		toolbar.appendChild(copyBtn);
-		pre.insertBefore(toolbar, pre.firstChild);
-	});
-}
-async function copyTextToClipboard(text) {
-	if (navigator.clipboard && window.isSecureContext) try {
-		await navigator.clipboard.writeText(text);
-		return true;
-	} catch {}
-	const ta = document.createElement("textarea");
-	ta.value = text;
-	ta.setAttribute("readonly", "");
-	ta.style.position = "fixed";
-	ta.style.opacity = "0";
-	document.body.appendChild(ta);
-	ta.select();
-	let ok = false;
-	try {
-		ok = document.execCommand("copy");
-	} catch {
-		ok = false;
-	}
-	document.body.removeChild(ta);
-	return ok;
-}
-/**
-* Three outcomes, not two: 'ok' | 'unauthenticated' | 'unreachable'.
-*
-* The distinction is the whole point. The service worker caches the app shell
-* and serves it cache-first, so the PWA boots fine with no network at all — but
-* `/api/` deliberately bypasses the SW, so this probe goes straight to the
-* network. On a cold start (app launched from the home screen, radio still
-* waking, VPN/Tailscale not up yet, host mid-restart) it can fail while the user
-* is perfectly authenticated. Treating that as "unauthenticated" is what shows
-* the token screen to someone who never needed it — and why a hard refresh
-* "fixes" it: the retry simply succeeds.
-*
-* So: only a real auth verdict (401/403) sends anyone to the login screen.
-* Anything else retries briefly, then defers to the WebSocket reconnect logic
-* and the connection banner, which already handle being offline gracefully.
-*/
-async function checkAuth() {
-	if (location.hostname === "localhost" || location.hostname === "127.0.0.1") return "ok";
-	for (let attempt = 0; attempt < 3; attempt++) {
-		try {
-			const headers = getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {};
-			const res = await fetch("/api/auth/check", {
-				headers,
-				cache: "no-store"
-			});
-			if (res.ok) return "ok";
-			if (res.status === 401 || res.status === 403) return "unauthenticated";
-		} catch {}
-		if (!navigator.onLine) break;
-		await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
-	}
-	return "unreachable";
-}
+//#region src/features/voice.js
 var ttsServerEnabled = false;
 var ttsReadAloudEnabled = false;
-var learningMasterEnabled = true;
-function applyLearningMaster() {
-	const learnBtn = document.getElementById("learn-btn");
-	if (learnBtn) learnBtn.hidden = !learningMasterEnabled;
-	if (!learningMasterEnabled) hideLearnNudge();
-}
-async function loadLearningMaster() {
-	try {
-		const r = await authFetch("/api/learning/config");
-		if (r.ok) learningMasterEnabled = (await r.json()).enabled !== false;
-	} catch {}
-	applyLearningMaster();
-}
 var ttsCurrentAudio = null;
 var ttsCurrentBtn = null;
 async function loadTtsConfig() {
@@ -300,6 +199,389 @@ async function speak(text, btn) {
 		stopTts();
 		showToast("Audio playback failed", { kind: "error" });
 	}
+}
+var sttConfig = null;
+var sttActive = false;
+var sttStopping = false;
+var sttAudioCtx = null;
+var sttStream = null;
+var sttWorkletNode = null;
+var sttSourceNode = null;
+var sttBeforeText = "";
+var sttCommitted = "";
+var sttPending = 0;
+var sttSegments = [];
+var sttSegmentMs = 0;
+var sttSilenceMs = 0;
+var sttSpeechInSegment = false;
+var sttNoSpeechMs = 0;
+var sttInFlight = [];
+var sttToastShown = false;
+var STT_SAMPLE_RATE = 16e3;
+var STT_SILENCE_CUT_MS = 700;
+var STT_MAX_SEGMENT_MS = 5e3;
+var STT_RMS_FLOOR = .012;
+var STT_AUTOSTOP_MS = 12e3;
+var sttElapsedTimer = null;
+var sttStartedAt = 0;
+function sttSetRecordingChrome(on) {
+	const mic = $("#mic-btn");
+	const chip = $("#stt-elapsed");
+	const use = mic?.querySelector("use");
+	if (use) use.setAttribute("href", on ? "#i-square" : "#i-mic");
+	if (on) {
+		sttStartedAt = Date.now();
+		if (chip) {
+			chip.textContent = "0:00";
+			chip.hidden = false;
+		}
+		sttElapsedTimer = setInterval(() => {
+			const sec = Math.floor((Date.now() - sttStartedAt) / 1e3);
+			const t = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+			if (chip) chip.textContent = t;
+			mic?.setAttribute("title", `Recording ${t} — tap to stop`);
+		}, 1e3);
+	} else {
+		if (sttElapsedTimer) clearInterval(sttElapsedTimer);
+		sttElapsedTimer = null;
+		if (chip) chip.hidden = true;
+		mic?.setAttribute("title", "Dictate");
+	}
+}
+function sttAnnounce(text) {
+	const el = $("#stt-status");
+	if (el) el.textContent = text;
+}
+function sttBuildWav(frames) {
+	let samples = 0;
+	for (const f of frames) samples += f.length;
+	const buf = /* @__PURE__ */ new ArrayBuffer(44 + samples * 2);
+	const dv = new DataView(buf);
+	const writeStr = (off, s) => {
+		for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i));
+	};
+	writeStr(0, "RIFF");
+	dv.setUint32(4, 36 + samples * 2, true);
+	writeStr(8, "WAVE");
+	writeStr(12, "fmt ");
+	dv.setUint32(16, 16, true);
+	dv.setUint16(20, 1, true);
+	dv.setUint16(22, 1, true);
+	dv.setUint32(24, STT_SAMPLE_RATE, true);
+	dv.setUint32(28, STT_SAMPLE_RATE * 2, true);
+	dv.setUint16(32, 2, true);
+	dv.setUint16(34, 16, true);
+	writeStr(36, "data");
+	dv.setUint32(40, samples * 2, true);
+	let off = 44;
+	for (const f of frames) for (let i = 0; i < f.length; i++, off += 2) dv.setInt16(off, f[i], true);
+	return new Blob([buf], { type: "audio/wav" });
+}
+function sttRenderInput() {
+	const input = $("#message-input");
+	if (!input) return;
+	input.value = sttBeforeText + (sttBeforeText && sttCommitted ? " " : "") + sttCommitted + (sttPending > 0 ? " …" : "");
+	input.dispatchEvent(new Event("input", { bubbles: true }));
+}
+function sttCutSegment() {
+	const frames = sttSegments;
+	const hadSpeech = sttSpeechInSegment;
+	sttSegments = [];
+	sttSegmentMs = 0;
+	sttSilenceMs = 0;
+	sttSpeechInSegment = false;
+	if (!hadSpeech || frames.length === 0) return;
+	const wav = sttBuildWav(frames);
+	sttPending++;
+	sttRenderInput();
+	const p = authFetch("/api/stt/transcribe", {
+		method: "POST",
+		headers: { "Content-Type": "audio/wav" },
+		body: wav
+	}).then(async (r) => {
+		const body = await r.json().catch(() => ({}));
+		if (!r.ok) throw new Error(body.error || r.statusText);
+		const text = (body.text || "").trim();
+		if (text) sttCommitted = sttCommitted ? `${sttCommitted} ${text}` : text;
+	}).catch((err) => {
+		if (!sttToastShown) {
+			sttToastShown = true;
+			showToast("Transcription failed: " + err.message, { kind: "error" });
+		}
+	}).finally(() => {
+		sttPending--;
+		sttRenderInput();
+	});
+	sttInFlight.push(p);
+}
+function sttOnFrame(int16) {
+	if (!sttActive) return;
+	let sum = 0;
+	for (let i = 0; i < int16.length; i++) {
+		const s = int16[i] / 32768;
+		sum += s * s;
+	}
+	const rms = Math.sqrt(sum / int16.length);
+	const frameMs = int16.length / STT_SAMPLE_RATE * 1e3;
+	sttSegments.push(int16);
+	sttSegmentMs += frameMs;
+	if (rms >= STT_RMS_FLOOR) {
+		sttSpeechInSegment = true;
+		sttSilenceMs = 0;
+		sttNoSpeechMs = 0;
+	} else {
+		sttSilenceMs += frameMs;
+		sttNoSpeechMs += frameMs;
+	}
+	if (sttSpeechInSegment && sttSilenceMs >= STT_SILENCE_CUT_MS || sttSegmentMs >= STT_MAX_SEGMENT_MS) sttCutSegment();
+	if (sttNoSpeechMs >= STT_AUTOSTOP_MS && !sttStopping) stopDictation();
+}
+async function startDictation() {
+	if (sttActive) return;
+	const input = $("#message-input");
+	if (!input || input.disabled) return;
+	try {
+		sttStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+	} catch {
+		showToast("Microphone access denied — allow the mic for this site in browser settings.", { kind: "error" });
+		return;
+	}
+	try {
+		sttAudioCtx = new AudioContext({ sampleRate: STT_SAMPLE_RATE });
+		await sttAudioCtx.audioWorklet.addModule("/pcm-worklet.js");
+		sttSourceNode = sttAudioCtx.createMediaStreamSource(sttStream);
+		sttWorkletNode = new AudioWorkletNode(sttAudioCtx, "pcm-worklet");
+		sttWorkletNode.port.onmessage = (e) => sttOnFrame(new Int16Array(e.data));
+		sttSourceNode.connect(sttWorkletNode);
+	} catch (err) {
+		showToast("Could not start audio capture: " + err.message, { kind: "error" });
+		sttTeardownAudio();
+		return;
+	}
+	sttActive = true;
+	sttStopping = false;
+	sttToastShown = false;
+	sttBeforeText = input.value.trim();
+	sttCommitted = "";
+	sttPending = 0;
+	sttSegments = [];
+	sttSegmentMs = 0;
+	sttSilenceMs = 0;
+	sttSpeechInSegment = false;
+	sttNoSpeechMs = 0;
+	sttInFlight = [];
+	const mic = $("#mic-btn");
+	mic?.classList.add("recording");
+	mic?.setAttribute("aria-label", "Stop dictation");
+	mic?.setAttribute("aria-pressed", "true");
+	sttSetRecordingChrome(true);
+	sttAnnounce("Listening…");
+}
+function sttTeardownAudio() {
+	try {
+		sttSourceNode?.disconnect();
+		sttWorkletNode?.disconnect();
+	} catch {}
+	sttStream?.getTracks().forEach((t) => t.stop());
+	sttAudioCtx?.close().catch(() => {});
+	sttStream = null;
+	sttAudioCtx = null;
+	sttWorkletNode = null;
+	sttSourceNode = null;
+}
+function sttResetMicButton() {
+	const mic = $("#mic-btn");
+	mic?.classList.remove("recording");
+	mic?.setAttribute("aria-label", "Start dictation");
+	mic?.setAttribute("aria-pressed", "false");
+	sttSetRecordingChrome(false);
+}
+async function stopDictation() {
+	if (!sttActive || sttStopping) return;
+	sttStopping = true;
+	sttActive = false;
+	sttCutSegment();
+	sttTeardownAudio();
+	sttResetMicButton();
+	sttAnnounce("Transcribing…");
+	await Promise.allSettled(sttInFlight);
+	sttRenderInput();
+	await sttCleanupPass();
+	sttStopping = false;
+	sttAnnounce("");
+}
+function cancelDictation() {
+	if (!sttActive) return;
+	sttActive = false;
+	sttStopping = false;
+	sttTeardownAudio();
+	sttResetMicButton();
+	sttCommitted = "";
+	sttPending = 0;
+	const input = $("#message-input");
+	if (input) {
+		input.value = sttBeforeText;
+		input.dispatchEvent(new Event("input", { bubbles: true }));
+	}
+	sttAnnounce("Dictation cancelled");
+}
+async function sttCleanupPass() {
+	if (!sttConfig?.cleanup || !sttCommitted.trim()) return;
+	const input = $("#message-input");
+	if (!input) return;
+	const raw = sttCommitted;
+	const mic = $("#mic-btn");
+	mic?.classList.add("tidying");
+	try {
+		const r = await authFetch("/api/stt/cleanup", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ text: raw })
+		});
+		const body = await r.json().catch(() => ({}));
+		if (!r.ok || !body.cleaned || typeof body.text !== "string") return;
+		const sep = sttBeforeText && raw ? " " : "";
+		const expected = sttBeforeText + sep + raw;
+		if (input.value !== expected) return;
+		const start = (sttBeforeText + sep).length;
+		input.focus();
+		input.setSelectionRange(start, input.value.length);
+		const before = input.value;
+		document.execCommand("insertText", false, body.text);
+		if (input.value === before) {
+			input.setRangeText(body.text, start, before.length, "end");
+			input.dispatchEvent(new Event("input", { bubbles: true }));
+		}
+		sttCommitted = body.text;
+	} catch {} finally {
+		mic?.classList.remove("tidying");
+	}
+}
+async function initSttFeature() {
+	try {
+		const r = await authFetch("/api/stt/config");
+		if (!r.ok) return;
+		sttConfig = await r.json();
+		$("#mic-btn").hidden = !sttConfig.enabled;
+	} catch {}
+}
+function getTtsReadAloudEnabled() {
+	return ttsReadAloudEnabled;
+}
+function setTtsReadAloudEnabled(on) {
+	ttsReadAloudEnabled = on;
+}
+function getSttConfig() {
+	return sttConfig;
+}
+function setSttConfig(cfg) {
+	sttConfig = cfg;
+}
+function isDictationActive() {
+	return sttActive;
+}
+//#endregion
+//#region src/legacy.js
+marked.setOptions({
+	breaks: true,
+	gfm: true
+});
+function decorateCodeBlocks(container) {
+	container.querySelectorAll("pre").forEach((pre) => {
+		if (pre.classList.contains("has-code-toolbar")) return;
+		pre.classList.add("has-code-toolbar");
+		const code = pre.querySelector("code");
+		const langClass = code && [...code.classList].find((c) => c.startsWith("language-"));
+		const lang = langClass ? langClass.slice(9) : "";
+		const toolbar = document.createElement("div");
+		toolbar.className = "code-toolbar";
+		if (lang) {
+			const label = document.createElement("span");
+			label.className = "code-lang";
+			label.textContent = lang;
+			toolbar.appendChild(label);
+		}
+		const wrapBtn = document.createElement("button");
+		wrapBtn.type = "button";
+		wrapBtn.className = "code-btn wrap-code-btn";
+		wrapBtn.textContent = "Wrap";
+		wrapBtn.setAttribute("aria-label", "Toggle line wrapping");
+		toolbar.appendChild(wrapBtn);
+		const copyBtn = document.createElement("button");
+		copyBtn.type = "button";
+		copyBtn.className = "code-btn copy-code-btn";
+		copyBtn.textContent = "Copy";
+		copyBtn.setAttribute("aria-label", "Copy code to clipboard");
+		toolbar.appendChild(copyBtn);
+		pre.insertBefore(toolbar, pre.firstChild);
+	});
+}
+async function copyTextToClipboard(text) {
+	if (navigator.clipboard && window.isSecureContext) try {
+		await navigator.clipboard.writeText(text);
+		return true;
+	} catch {}
+	const ta = document.createElement("textarea");
+	ta.value = text;
+	ta.setAttribute("readonly", "");
+	ta.style.position = "fixed";
+	ta.style.opacity = "0";
+	document.body.appendChild(ta);
+	ta.select();
+	let ok = false;
+	try {
+		ok = document.execCommand("copy");
+	} catch {
+		ok = false;
+	}
+	document.body.removeChild(ta);
+	return ok;
+}
+/**
+* Three outcomes, not two: 'ok' | 'unauthenticated' | 'unreachable'.
+*
+* The distinction is the whole point. The service worker caches the app shell
+* and serves it cache-first, so the PWA boots fine with no network at all — but
+* `/api/` deliberately bypasses the SW, so this probe goes straight to the
+* network. On a cold start (app launched from the home screen, radio still
+* waking, VPN/Tailscale not up yet, host mid-restart) it can fail while the user
+* is perfectly authenticated. Treating that as "unauthenticated" is what shows
+* the token screen to someone who never needed it — and why a hard refresh
+* "fixes" it: the retry simply succeeds.
+*
+* So: only a real auth verdict (401/403) sends anyone to the login screen.
+* Anything else retries briefly, then defers to the WebSocket reconnect logic
+* and the connection banner, which already handle being offline gracefully.
+*/
+async function checkAuth() {
+	if (location.hostname === "localhost" || location.hostname === "127.0.0.1") return "ok";
+	for (let attempt = 0; attempt < 3; attempt++) {
+		try {
+			const headers = getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {};
+			const res = await fetch("/api/auth/check", {
+				headers,
+				cache: "no-store"
+			});
+			if (res.ok) return "ok";
+			if (res.status === 401 || res.status === 403) return "unauthenticated";
+		} catch {}
+		if (!navigator.onLine) break;
+		await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+	}
+	return "unreachable";
+}
+var learningMasterEnabled = true;
+function applyLearningMaster() {
+	const learnBtn = document.getElementById("learn-btn");
+	if (learnBtn) learnBtn.hidden = !learningMasterEnabled;
+	if (!learningMasterEnabled) hideLearnNudge();
+}
+async function loadLearningMaster() {
+	try {
+		const r = await authFetch("/api/learning/config");
+		if (r.ok) learningMasterEnabled = (await r.json()).enabled !== false;
+	} catch {}
+	applyLearningMaster();
 }
 /**
 * We entered the app without a verdict (see checkAuth). Once the network is
@@ -1977,7 +2259,7 @@ async function renderWizardFeatures() {
 	const mkt = $("#wizard-marketplace");
 	if (mkt) mkt.checked = marketplaceEnabled === true;
 	const ttsDefault = $("#wizard-tts-default");
-	if (ttsDefault) ttsDefault.checked = ttsReadAloudEnabled;
+	if (ttsDefault) ttsDefault.checked = getTtsReadAloudEnabled();
 	if (!wizardTtsWired) {
 		wizardTtsWired = true;
 		ttsDefault?.addEventListener("change", async () => {
@@ -1988,7 +2270,7 @@ async function renderWizardFeatures() {
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify({ readAloud: on })
 				})).ok) throw new Error("save failed");
-				ttsReadAloudEnabled = on;
+				setTtsReadAloudEnabled(on);
 				if (!on) stopTts();
 				renderWizardFeatures();
 			} catch {
@@ -2978,7 +3260,7 @@ async function renderTtsSetupSettings() {
 	section.hidden = false;
 	await loadTtsConfig();
 	document.querySelectorAll("#tts-default-mode .setting-option").forEach((b) => {
-		b.classList.toggle("active", b.dataset.value === (ttsReadAloudEnabled ? "on" : "off"));
+		b.classList.toggle("active", b.dataset.value === (getTtsReadAloudEnabled() ? "on" : "off"));
 	});
 	const desc = $("#tts-setup-desc");
 	if (st.installed) {
@@ -3027,240 +3309,15 @@ async function renderTtsSetupSettings() {
 		btn.title = "Run a local Kokoro voice model (~330MB, no cloud, no key). Without it the control uses your device voices.";
 	}
 }
-var sttConfig = null;
-var sttActive = false;
-var sttStopping = false;
-var sttAudioCtx = null;
-var sttStream = null;
-var sttWorkletNode = null;
-var sttSourceNode = null;
-var sttBeforeText = "";
-var sttCommitted = "";
-var sttPending = 0;
-var sttSegments = [];
-var sttSegmentMs = 0;
-var sttSilenceMs = 0;
-var sttSpeechInSegment = false;
-var sttNoSpeechMs = 0;
-var sttInFlight = [];
-var sttToastShown = false;
-var STT_SAMPLE_RATE = 16e3;
-var STT_SILENCE_CUT_MS = 700;
-var STT_MAX_SEGMENT_MS = 5e3;
-var STT_RMS_FLOOR = .012;
-var STT_AUTOSTOP_MS = 12e3;
-var sttElapsedTimer = null;
-var sttStartedAt = 0;
 /** Recording chrome: mic ⇄ red pulsing stop square + elapsed chip (the
 *  standard voice-recorder idiom, so state is unmistakable at a glance). */
-function sttSetRecordingChrome(on) {
-	const mic = $("#mic-btn");
-	const chip = $("#stt-elapsed");
-	const use = mic?.querySelector("use");
-	if (use) use.setAttribute("href", on ? "#i-square" : "#i-mic");
-	if (on) {
-		sttStartedAt = Date.now();
-		if (chip) {
-			chip.textContent = "0:00";
-			chip.hidden = false;
-		}
-		sttElapsedTimer = setInterval(() => {
-			const sec = Math.floor((Date.now() - sttStartedAt) / 1e3);
-			const t = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
-			if (chip) chip.textContent = t;
-			mic?.setAttribute("title", `Recording ${t} — tap to stop`);
-		}, 1e3);
-	} else {
-		if (sttElapsedTimer) clearInterval(sttElapsedTimer);
-		sttElapsedTimer = null;
-		if (chip) chip.hidden = true;
-		mic?.setAttribute("title", "Dictate");
-	}
-}
-function sttAnnounce(text) {
-	const el = $("#stt-status");
-	if (el) el.textContent = text;
-}
 /** Wrap accumulated PCM16 frames in a minimal 16 kHz mono WAV container. */
-function sttBuildWav(frames) {
-	let samples = 0;
-	for (const f of frames) samples += f.length;
-	const buf = /* @__PURE__ */ new ArrayBuffer(44 + samples * 2);
-	const dv = new DataView(buf);
-	const writeStr = (off, s) => {
-		for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i));
-	};
-	writeStr(0, "RIFF");
-	dv.setUint32(4, 36 + samples * 2, true);
-	writeStr(8, "WAVE");
-	writeStr(12, "fmt ");
-	dv.setUint32(16, 16, true);
-	dv.setUint16(20, 1, true);
-	dv.setUint16(22, 1, true);
-	dv.setUint32(24, STT_SAMPLE_RATE, true);
-	dv.setUint32(28, STT_SAMPLE_RATE * 2, true);
-	dv.setUint16(32, 2, true);
-	dv.setUint16(34, 16, true);
-	writeStr(36, "data");
-	dv.setUint32(40, samples * 2, true);
-	let off = 44;
-	for (const f of frames) for (let i = 0; i < f.length; i++, off += 2) dv.setInt16(off, f[i], true);
-	return new Blob([buf], { type: "audio/wav" });
-}
-function sttRenderInput() {
-	const input = $("#message-input");
-	if (!input) return;
-	input.value = sttBeforeText + (sttBeforeText && sttCommitted ? " " : "") + sttCommitted + (sttPending > 0 ? " …" : "");
-	input.dispatchEvent(new Event("input", { bubbles: true }));
-}
 /** Close the current segment and ship it for transcription (if it held speech). */
-function sttCutSegment() {
-	const frames = sttSegments;
-	const hadSpeech = sttSpeechInSegment;
-	sttSegments = [];
-	sttSegmentMs = 0;
-	sttSilenceMs = 0;
-	sttSpeechInSegment = false;
-	if (!hadSpeech || frames.length === 0) return;
-	const wav = sttBuildWav(frames);
-	sttPending++;
-	sttRenderInput();
-	const p = authFetch("/api/stt/transcribe", {
-		method: "POST",
-		headers: { "Content-Type": "audio/wav" },
-		body: wav
-	}).then(async (r) => {
-		const body = await r.json().catch(() => ({}));
-		if (!r.ok) throw new Error(body.error || r.statusText);
-		const text = (body.text || "").trim();
-		if (text) sttCommitted = sttCommitted ? `${sttCommitted} ${text}` : text;
-	}).catch((err) => {
-		if (!sttToastShown) {
-			sttToastShown = true;
-			showToast("Transcription failed: " + err.message, { kind: "error" });
-		}
-	}).finally(() => {
-		sttPending--;
-		sttRenderInput();
-	});
-	sttInFlight.push(p);
-}
 /** Per-frame handler: RMS gate → segment bookkeeping → cut on pause/length. */
-function sttOnFrame(int16) {
-	if (!sttActive) return;
-	let sum = 0;
-	for (let i = 0; i < int16.length; i++) {
-		const s = int16[i] / 32768;
-		sum += s * s;
-	}
-	const rms = Math.sqrt(sum / int16.length);
-	const frameMs = int16.length / STT_SAMPLE_RATE * 1e3;
-	sttSegments.push(int16);
-	sttSegmentMs += frameMs;
-	if (rms >= STT_RMS_FLOOR) {
-		sttSpeechInSegment = true;
-		sttSilenceMs = 0;
-		sttNoSpeechMs = 0;
-	} else {
-		sttSilenceMs += frameMs;
-		sttNoSpeechMs += frameMs;
-	}
-	if (sttSpeechInSegment && sttSilenceMs >= STT_SILENCE_CUT_MS || sttSegmentMs >= STT_MAX_SEGMENT_MS) sttCutSegment();
-	if (sttNoSpeechMs >= STT_AUTOSTOP_MS && !sttStopping) stopDictation();
-}
-async function startDictation() {
-	if (sttActive) return;
-	const input = $("#message-input");
-	if (!input || input.disabled) return;
-	try {
-		sttStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-	} catch {
-		showToast("Microphone access denied — allow the mic for this site in browser settings.", { kind: "error" });
-		return;
-	}
-	try {
-		sttAudioCtx = new AudioContext({ sampleRate: STT_SAMPLE_RATE });
-		await sttAudioCtx.audioWorklet.addModule("/pcm-worklet.js");
-		sttSourceNode = sttAudioCtx.createMediaStreamSource(sttStream);
-		sttWorkletNode = new AudioWorkletNode(sttAudioCtx, "pcm-worklet");
-		sttWorkletNode.port.onmessage = (e) => sttOnFrame(new Int16Array(e.data));
-		sttSourceNode.connect(sttWorkletNode);
-	} catch (err) {
-		showToast("Could not start audio capture: " + err.message, { kind: "error" });
-		sttTeardownAudio();
-		return;
-	}
-	sttActive = true;
-	sttStopping = false;
-	sttToastShown = false;
-	sttBeforeText = input.value.trim();
-	sttCommitted = "";
-	sttPending = 0;
-	sttSegments = [];
-	sttSegmentMs = 0;
-	sttSilenceMs = 0;
-	sttSpeechInSegment = false;
-	sttNoSpeechMs = 0;
-	sttInFlight = [];
-	const mic = $("#mic-btn");
-	mic?.classList.add("recording");
-	mic?.setAttribute("aria-label", "Stop dictation");
-	mic?.setAttribute("aria-pressed", "true");
-	sttSetRecordingChrome(true);
-	sttAnnounce("Listening…");
-}
-function sttTeardownAudio() {
-	try {
-		sttSourceNode?.disconnect();
-		sttWorkletNode?.disconnect();
-	} catch {}
-	sttStream?.getTracks().forEach((t) => t.stop());
-	sttAudioCtx?.close().catch(() => {});
-	sttStream = null;
-	sttAudioCtx = null;
-	sttWorkletNode = null;
-	sttSourceNode = null;
-}
-function sttResetMicButton() {
-	const mic = $("#mic-btn");
-	mic?.classList.remove("recording");
-	mic?.setAttribute("aria-label", "Start dictation");
-	mic?.setAttribute("aria-pressed", "false");
-	sttSetRecordingChrome(false);
-}
 /** Stop capture, flush the tail segment, wait for transcripts, then tidy. */
-async function stopDictation() {
-	if (!sttActive || sttStopping) return;
-	sttStopping = true;
-	sttActive = false;
-	sttCutSegment();
-	sttTeardownAudio();
-	sttResetMicButton();
-	sttAnnounce("Transcribing…");
-	await Promise.allSettled(sttInFlight);
-	sttRenderInput();
-	await sttCleanupPass();
-	sttStopping = false;
-	sttAnnounce("");
-}
 /** Esc = cancel: discard everything dictated, restore the prior composer text. */
-function cancelDictation() {
-	if (!sttActive) return;
-	sttActive = false;
-	sttStopping = false;
-	sttTeardownAudio();
-	sttResetMicButton();
-	sttCommitted = "";
-	sttPending = 0;
-	const input = $("#message-input");
-	if (input) {
-		input.value = sttBeforeText;
-		input.dispatchEvent(new Event("input", { bubbles: true }));
-	}
-	sttAnnounce("Dictation cancelled");
-}
 document.addEventListener("keydown", (e) => {
-	if (e.key === "Escape" && sttActive) {
+	if (e.key === "Escape" && isDictationActive()) {
 		e.preventDefault();
 		cancelDictation();
 	}
@@ -3270,51 +3327,11 @@ document.addEventListener("keydown", (e) => {
 * through execCommand('insertText') over a selection of just the dictated
 * text, so the native undo stack (Ctrl/Cmd+Z) restores the raw transcript.
 */
-async function sttCleanupPass() {
-	if (!sttConfig?.cleanup || !sttCommitted.trim()) return;
-	const input = $("#message-input");
-	if (!input) return;
-	const raw = sttCommitted;
-	const mic = $("#mic-btn");
-	mic?.classList.add("tidying");
-	try {
-		const r = await authFetch("/api/stt/cleanup", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ text: raw })
-		});
-		const body = await r.json().catch(() => ({}));
-		if (!r.ok || !body.cleaned || typeof body.text !== "string") return;
-		const sep = sttBeforeText && raw ? " " : "";
-		const expected = sttBeforeText + sep + raw;
-		if (input.value !== expected) return;
-		const start = (sttBeforeText + sep).length;
-		input.focus();
-		input.setSelectionRange(start, input.value.length);
-		const before = input.value;
-		document.execCommand("insertText", false, body.text);
-		if (input.value === before) {
-			input.setRangeText(body.text, start, before.length, "end");
-			input.dispatchEvent(new Event("input", { bubbles: true }));
-		}
-		sttCommitted = body.text;
-	} catch {} finally {
-		mic?.classList.remove("tidying");
-	}
-}
 $("#mic-btn")?.addEventListener("click", () => {
-	if (sttActive) stopDictation();
+	if (isDictationActive()) stopDictation();
 	else startDictation();
 });
 /** Post-auth: reveal the mic when the server has an STT backend configured. */
-async function initSttFeature() {
-	try {
-		const r = await authFetch("/api/stt/config");
-		if (!r.ok) return;
-		sttConfig = await r.json();
-		$("#mic-btn").hidden = !sttConfig.enabled;
-	} catch {}
-}
 var sttInstallWired = false;
 var sttInstallActive = false;
 var sttChosenBackend = "local";
@@ -3470,7 +3487,7 @@ async function renderSttSetupSettings() {
 				document.querySelectorAll("#stt-enabled-mode .setting-option").forEach((x) => x.classList.toggle("active", x === b));
 				const mic = $("#mic-btn");
 				if (mic) mic.hidden = !on;
-				if (!on && sttActive) cancelDictation();
+				if (!on && isDictationActive()) cancelDictation();
 				showToast(on ? "Voice dictation on for everyone" : "Voice dictation off for everyone");
 			});
 		});
@@ -3546,11 +3563,11 @@ async function renderSttSetupSettings() {
 				renderSttSetupSettings();
 				return;
 			}
-			sttConfig = {
-				...sttConfig,
+			setSttConfig({
+				...getSttConfig(),
 				cleanup: value !== null,
 				cleanupModelId: value
-			};
+			});
 			showToast(value ? "Cleanup model saved" : "Cleanup turned off", { kind: "success" });
 		});
 	}
@@ -4261,7 +4278,7 @@ document.querySelectorAll("#tts-default-mode .setting-option").forEach((btn) => 
 			showToast("Failed to save: " + ((await r.json().catch(() => ({}))).error || r.statusText), { kind: "error" });
 			return;
 		}
-		ttsReadAloudEnabled = on;
+		setTtsReadAloudEnabled(on);
 		document.querySelectorAll("#tts-default-mode .setting-option").forEach((b) => b.classList.toggle("active", b === btn));
 		if (!on) stopTts();
 		showToast(on ? "Read aloud on for everyone — hover an agent reply for the speaker" : "Read aloud off for everyone");
@@ -4715,7 +4732,7 @@ function renderRooms(rooms) {
 		if (room.pinned) {
 			const pin = document.createElement("span");
 			pin.className = "room-pin-indicator";
-			pin.innerHTML = lucide("pin");
+			pin.innerHTML = lucide$1("pin");
 			pin.setAttribute("aria-label", "Pinned");
 			li.appendChild(pin);
 		}
@@ -4768,7 +4785,7 @@ function renderRooms(rooms) {
 		const kebab = document.createElement("button");
 		kebab.className = "room-kebab";
 		kebab.type = "button";
-		kebab.innerHTML = lucide("ellipsis");
+		kebab.innerHTML = lucide$1("ellipsis");
 		kebab.setAttribute("aria-label", "Room actions");
 		kebab.addEventListener("click", (e) => {
 			e.stopPropagation();
@@ -5147,7 +5164,7 @@ function renderThreadList() {
 			const menu = document.createElement("button");
 			menu.className = "thread-kebab";
 			menu.type = "button";
-			menu.innerHTML = lucide("ellipsis");
+			menu.innerHTML = lucide$1("ellipsis");
 			menu.setAttribute("aria-label", "Thread actions");
 			menu.addEventListener("click", (e) => {
 				e.stopPropagation();
@@ -6556,14 +6573,14 @@ function renderFileBubble(meta) {
 	}
 	const info = document.createElement("div");
 	info.className = "file-info";
-	const icon = isImage ? lucide("image") : meta.mime?.includes("pdf") ? lucide("file-text") : lucide("paperclip");
+	const icon = isImage ? lucide$1("image") : meta.mime?.includes("pdf") ? lucide$1("file-text") : lucide$1("paperclip");
 	const sizeStr = meta.size < 1024 ? `${meta.size} B` : meta.size < 1048576 ? `${(meta.size / 1024).toFixed(1)} KB` : `${(meta.size / 1048576).toFixed(1)} MB`;
 	info.innerHTML = `<span class="file-icon">${icon}</span><span class="file-name">${esc(meta.filename)}</span><span class="file-size">${sizeStr}</span>`;
 	const dl = document.createElement("a");
 	dl.href = meta.url;
 	dl.download = meta.filename;
 	dl.className = "file-download";
-	dl.innerHTML = lucide("download");
+	dl.innerHTML = lucide$1("download");
 	dl.title = "Download";
 	info.appendChild(dl);
 	wrap.appendChild(info);
@@ -6636,10 +6653,10 @@ function renderFilePreview() {
 				pendingThumbUrls.set(id, url);
 			}
 			html += `<img src="${url}" class="file-preview-thumb" alt="">`;
-		} else html += `<span class="file-preview-icon">${lucide("paperclip")}</span>`;
+		} else html += `<span class="file-preview-icon">${lucide$1("paperclip")}</span>`;
 		html += `<span class="file-preview-name">${esc(file.name)}</span>`;
 		html += `<span class="file-preview-size">${formatFileSize(file.size)}</span>`;
-		html += `<button class="file-preview-remove" data-remove-id="${id}">${lucide("x")}</button>`;
+		html += `<button class="file-preview-remove" data-remove-id="${id}">${lucide$1("x")}</button>`;
 		html += "</div>";
 	}
 	preview.innerHTML = html;
@@ -10437,7 +10454,7 @@ async function showMessagesDetail() {
       <thead><tr><th>Time</th><th>Room</th><th>Sender</th><th>Message</th></tr></thead>
       <tbody>${all.map((m) => {
 		const time = new Date(m.created_at).toLocaleTimeString();
-		const icon = m.sender_type === "agent" ? lucide("bot") : lucide("user");
+		const icon = m.sender_type === "agent" ? lucide$1("bot") : lucide$1("user");
 		return `<tr>
       <td>${esc(time)}</td>
       <td style="color:${roomColor(m.roomId)}">#${esc(m.roomId)}</td>
@@ -10499,7 +10516,7 @@ function renderAgents() {
 		if (agent.id === selectedAgentId) li.classList.add("active");
 		const icon = document.createElement("span");
 		icon.className = "agent-icon";
-		icon.innerHTML = lucide("bot");
+		icon.innerHTML = lucide$1("bot");
 		li.appendChild(icon);
 		const info = document.createElement("span");
 		info.className = "agent-info";
@@ -10818,7 +10835,7 @@ function renderAgentWiredRooms() {
 			const removeBtn = document.createElement("button");
 			removeBtn.type = "button";
 			removeBtn.className = "room-wired-remove";
-			removeBtn.innerHTML = lucide("x");
+			removeBtn.innerHTML = lucide$1("x");
 			removeBtn.title = onlyAgent ? "Cannot unassign — this agent is the room's only agent (delete the room instead)" : `Remove this agent from ${room.name}`;
 			removeBtn.disabled = onlyAgent;
 			removeBtn.addEventListener("click", () => removeRoomFromAgent(room.id, room.name));
@@ -11511,7 +11528,7 @@ async function renderAgentMcp(agentId) {
 		remove.type = "button";
 		remove.className = "agent-mcp-remove";
 		remove.setAttribute("aria-label", `Detach ${s.name}`);
-		remove.innerHTML = lucide("x");
+		remove.innerHTML = lucide$1("x");
 		remove.addEventListener("click", () => detachAgentMcp(agentId, s));
 		li.append(info, remove);
 		list.appendChild(li);
@@ -12211,7 +12228,7 @@ function renderRoomWiredAgents() {
 		const primeBtn = document.createElement("button");
 		primeBtn.type = "button";
 		primeBtn.className = "room-wired-prime" + (agent.is_prime ? " active" : "");
-		primeBtn.innerHTML = agent.is_prime ? lucide("star", "icon--fill") : lucide("star");
+		primeBtn.innerHTML = agent.is_prime ? lucide$1("star", "icon--fill") : lucide$1("star");
 		primeBtn.title = agent.is_prime ? `Stop ${agent.name} replying to everything — back to only when @-mentioned` : `Make ${agent.name} the default — replies to all messages (not just @-mentions)`;
 		primeBtn.addEventListener("click", () => togglePrimeAgent(agent));
 		li.appendChild(primeBtn);
@@ -12243,7 +12260,7 @@ function renderRoomWiredAgents() {
 		const removeBtn = document.createElement("button");
 		removeBtn.type = "button";
 		removeBtn.className = "room-wired-remove";
-		removeBtn.innerHTML = lucide("x");
+		removeBtn.innerHTML = lucide$1("x");
 		removeBtn.title = onlyOne ? "Cannot remove the last agent (delete the room instead)" : `Remove ${agent.name}`;
 		removeBtn.disabled = onlyOne;
 		removeBtn.addEventListener("click", () => removeAgentFromRoom(agent.id, agent.name));
