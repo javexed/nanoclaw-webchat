@@ -1,0 +1,19641 @@
+import { marked } from '/marked.min.js';
+import DOMPurify from '/dompurify.min.js';
+
+marked.setOptions({ breaks: true, gfm: true });
+
+const $ = (sel) => document.querySelector(sel);
+
+// Inline Lucide icon referencing the SVG sprite in index.html. Returns an HTML
+// string (safe — no user data); styling/color come from the .icon CSS class.
+function lucide(name, cls = '') {
+  return `<svg class="icon${cls ? ' ' + cls : ''}" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
+}
+// Same icon as a detached DOM node, for inserting NEXT TO user-controlled text
+// without resorting to innerHTML (keeps the surrounding text XSS-safe).
+function lucideEl(name, cls = '') {
+  const t = document.createElement('template');
+  t.innerHTML = lucide(name, cls);
+  return t.content.firstChild;
+}
+
+// ── Code block copy / wrap controls ──────────────────────────────────────
+// Decorates any <pre> inside a container with a toolbar (language label,
+// wrap toggle, copy button). Called after marked+DOMPurify renders agent
+// messages. Event handling is delegated on #messages below.
+function decorateCodeBlocks(container) {
+  container.querySelectorAll('pre').forEach((pre) => {
+    if (pre.classList.contains('has-code-toolbar')) return;
+    pre.classList.add('has-code-toolbar');
+
+    const code = pre.querySelector('code');
+    const langClass = code && [...code.classList].find((c) => c.startsWith('language-'));
+    const lang = langClass ? langClass.slice('language-'.length) : '';
+
+    const toolbar = document.createElement('div');
+    toolbar.className = 'code-toolbar';
+
+    if (lang) {
+      const label = document.createElement('span');
+      label.className = 'code-lang';
+      label.textContent = lang;
+      toolbar.appendChild(label);
+    }
+
+    const wrapBtn = document.createElement('button');
+    wrapBtn.type = 'button';
+    wrapBtn.className = 'code-btn wrap-code-btn';
+    wrapBtn.textContent = 'Wrap';
+    wrapBtn.setAttribute('aria-label', 'Toggle line wrapping');
+    toolbar.appendChild(wrapBtn);
+
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'code-btn copy-code-btn';
+    copyBtn.textContent = 'Copy';
+    copyBtn.setAttribute('aria-label', 'Copy code to clipboard');
+    toolbar.appendChild(copyBtn);
+
+    pre.insertBefore(toolbar, pre.firstChild);
+  });
+}
+
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      /* fall through */
+    }
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+// Auth token + fetch helpers now live in core/api.ts — it owns the token
+// because an imported binding cannot be reassigned, and the token is.
+import { getAuthToken, setAuthToken, getWsUrl, getWsProtocols, authFetch, apiJson } from './core/api.js';
+
+/** Error → toast, one shape everywhere (kind:'error' can't be forgotten). */
+function toastError(err, fallback) {
+  showToast(err?.message || fallback || 'Something went wrong', { kind: 'error' });
+}
+
+/**
+ * Three outcomes, not two: 'ok' | 'unauthenticated' | 'unreachable'.
+ *
+ * The distinction is the whole point. The service worker caches the app shell
+ * and serves it cache-first, so the PWA boots fine with no network at all — but
+ * `/api/` deliberately bypasses the SW, so this probe goes straight to the
+ * network. On a cold start (app launched from the home screen, radio still
+ * waking, VPN/Tailscale not up yet, host mid-restart) it can fail while the user
+ * is perfectly authenticated. Treating that as "unauthenticated" is what shows
+ * the token screen to someone who never needed it — and why a hard refresh
+ * "fixes" it: the retry simply succeeds.
+ *
+ * So: only a real auth verdict (401/403) sends anyone to the login screen.
+ * Anything else retries briefly, then defers to the WebSocket reconnect logic
+ * and the connection banner, which already handle being offline gracefully.
+ */
+async function checkAuth() {
+  // Localhost doesn't need auth
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+    return 'ok';
+  }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const headers = getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {};
+      const res = await fetch('/api/auth/check', { headers, cache: 'no-store' });
+      if (res.ok) return 'ok';
+      // A real verdict from the server — stop retrying, show the login screen.
+      if (res.status === 401 || res.status === 403) return 'unauthenticated';
+      // Anything else (502 while the host restarts, other 5xx) is worth a retry.
+    } catch {
+      // Network error — retry.
+    }
+    if (!navigator.onLine) break; // no point spinning with no network
+    await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+  }
+  return 'unreachable';
+}
+
+// ── Text-to-speech ─────────────────────────────────────────────────────────
+// Agent replies get a "read aloud" control. Two backends, one affordance:
+// server-side synthesis (Kokoro / any OpenAI-compatible endpoint) when the host
+// has WEBCHAT_TTS_ENABLED, else the browser's built-in Web Speech API (device
+// voices, no backend). See src/channels/webchat/tts.ts and /add-webchat-tts.
+let ttsServerEnabled = false; // set by loadTtsConfig from /api/tts/config
+let ttsReadAloudEnabled = false; // workspace-level (owner-set) — gates the speaker
+let learningMasterEnabled = true; // workspace master (owner-set) — gates ALL learning UI + behavior
+
+// Apply the learning master to the live UI: the composer 🎓 and its nudge only
+// exist while learning is on. Agent/room panels re-read the flag when opened.
+function applyLearningMaster() {
+  const learnBtn = document.getElementById('learn-btn');
+  if (learnBtn) learnBtn.hidden = !learningMasterEnabled;
+  if (!learningMasterEnabled) hideLearnNudge();
+}
+
+async function loadLearningMaster() {
+  try {
+    const r = await authFetch('/api/learning/config');
+    if (r.ok) {
+      const cfg = await r.json();
+      learningMasterEnabled = cfg.enabled !== false;
+    }
+  } catch {
+    /* keep default (on) */
+  }
+  applyLearningMaster();
+}
+let ttsCurrentAudio = null; // the Audio element currently playing (server mode)
+let ttsCurrentBtn = null; // the button whose message is currently playing
+
+async function loadTtsConfig() {
+  try {
+    const r = await authFetch('/api/tts/config');
+    if (r.ok) {
+      const cfg = await r.json();
+      ttsServerEnabled = cfg.enabled === true;
+      ttsReadAloudEnabled = cfg.readAloud === true;
+    }
+  } catch {
+    ttsServerEnabled = false;
+  }
+}
+
+// True when we can speak at all — server TTS on, or the browser has Web Speech.
+function ttsAvailable() {
+  return ttsServerEnabled || (typeof window !== 'undefined' && 'speechSynthesis' in window);
+}
+
+// Markdown → speakable plain text. Strips syntax so the voice reads prose, not
+// backticks and brackets; fenced code collapses to a short placeholder rather
+// than being read line by line.
+function ttsPlainText(md) {
+  return String(md || '')
+    .replace(/```[\s\S]*?```/g, ' (code block) ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/^[>#\s]*/gm, '')
+    .replace(/[*_~]/g, '')
+    .replace(/\n{2,}/g, '. ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function resetTtsButton(btn) {
+  if (!btn) return;
+  btn.classList.remove('tts-playing', 'tts-loading');
+  btn.innerHTML = lucide('volume-2');
+  btn.setAttribute('aria-label', 'Read aloud');
+  btn.title = 'Read aloud';
+}
+
+function markTtsPlaying(btn) {
+  btn.classList.remove('tts-loading');
+  btn.classList.add('tts-playing');
+  btn.innerHTML = lucide('square');
+  btn.setAttribute('aria-label', 'Stop');
+  btn.title = 'Stop';
+}
+
+function stopTts() {
+  if (ttsCurrentAudio) {
+    ttsCurrentAudio.pause();
+    if (ttsCurrentAudio.src) URL.revokeObjectURL(ttsCurrentAudio.src);
+    ttsCurrentAudio = null;
+  }
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
+  resetTtsButton(ttsCurrentBtn);
+  ttsCurrentBtn = null;
+}
+
+// Build the read-aloud button for an agent bubble. Returns null when no TTS
+// path exists (so the button is simply omitted). `getText` is called at click
+// time so the freshest bubble content is spoken.
+function buildTtsButton(getText) {
+  // Workspace-gated: the OWNER turns Read aloud on for everyone in
+  // Settings → Features (per-device switches confused shared rooms).
+  // TODO(a11y): an auto-read mode (speak replies as they arrive, no tap)
+  // would help low-vision / hands-free use — likely per-room when it comes.
+  if (!ttsReadAloudEnabled || !ttsAvailable()) return null;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'tts-btn';
+  resetTtsButton(btn);
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (ttsCurrentBtn === btn) {
+      stopTts(); // clicking the playing message stops it
+      return;
+    }
+    stopTts(); // stop any other in-flight playback first
+    const text = (getText() || '').trim();
+    if (text) void speak(text, btn);
+  });
+  return btn;
+}
+
+async function speak(text, btn) {
+  ttsCurrentBtn = btn;
+  if (ttsServerEnabled) {
+    btn.classList.add('tts-loading');
+    btn.setAttribute('aria-label', 'Synthesizing…');
+    try {
+      const r = await authFetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      if (!r.ok) throw new Error(`tts ${r.status}`);
+      const blob = await r.blob();
+      if (ttsCurrentBtn !== btn) return; // a later click superseded us mid-fetch
+      const audio = new Audio(URL.createObjectURL(blob));
+      ttsCurrentAudio = audio;
+      audio.addEventListener('ended', () => {
+        if (ttsCurrentBtn === btn) stopTts();
+      });
+      audio.addEventListener('error', () => {
+        if (ttsCurrentBtn === btn) stopTts();
+      });
+      markTtsPlaying(btn);
+      await audio.play();
+      return;
+    } catch (err) {
+      console.error('Server TTS failed; falling back to Web Speech', err);
+      // fall through to the Web Speech path below — unless a later click
+      // superseded this one mid-fetch, in which case stale audio must not
+      // start speaking over the newer playback.
+      if (ttsCurrentBtn !== btn) return;
+    }
+  }
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    const utter = new SpeechSynthesisUtterance(text);
+    utter.addEventListener('end', () => {
+      if (ttsCurrentBtn === btn) stopTts();
+    });
+    utter.addEventListener('error', () => {
+      if (ttsCurrentBtn === btn) stopTts();
+    });
+    markTtsPlaying(btn);
+    window.speechSynthesis.speak(utter);
+  } else {
+    stopTts();
+    showToast('Audio playback failed', { kind: 'error' });
+  }
+}
+
+// Shared post-auth entry: reveal the app, open the socket, and run first-run
+// hooks. Called from BOTH initApp (reload with a stored token) and the login
+// form (fresh token entry) — the wizard must auto-open in both, not only on a
+// later reload, or a just-logged-in owner never sees it.
+/**
+ * We entered the app without a verdict (see checkAuth). Once the network is
+ * genuinely back, settle it: a real 401/403 means show the login screen after
+ * all. Runs at most once, and only while still on the optimistic path.
+ */
+async function reprobeAuthWhenOnline() {
+  if (!navigator.onLine) {
+    await new Promise((r) => window.addEventListener('online', r, { once: true }));
+  }
+  const verdict = await checkAuth();
+  if (verdict !== 'unauthenticated') return; // 'ok', or still unreachable — leave the banner to it
+  $('#login-screen').hidden = false;
+  $('#app').hidden = true;
+  void applyLoginHint();
+}
+
+function enterAuthedApp() {
+  $('#login-screen').hidden = true;
+  $('#app').hidden = false;
+  connect();
+  // Cache the server's auth mode so the connection-lost banner can suggest
+  // Tailscale later, even if the network drops (authed users skip the login
+  // screen where applyLoginHint would otherwise cache it).
+  void cacheAuthHint();
+  // Auto-subscribe to push if the user has already granted permission.
+  // Browsers require a user gesture for `Notification.requestPermission()`,
+  // so a fresh install will still need one flip of the Settings toggle to
+  // trigger the prompt — but after that, every reload re-subscribes silently.
+  if (settings.notifications && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    enableWebPush();
+  }
+  // First-run: owner/global-admin sees the setup wizard once until finished.
+  void maybeAutoOpenWizard();
+  // Nudge to retire the shared bearer token once a stronger identity is live.
+  void maybeSuggestBearerRetire();
+  // Voice dictation: reveal the mic when the server has an STT backend.
+  void initSttFeature();
+  // Learning master: gate the 🎓 controls workspace-wide.
+  void loadLearningMaster();
+  // Probe whether server-backed TTS is available so agent bubbles can offer a
+  // play control (falls back to the browser's Web Speech voices when off).
+  void loadTtsConfig();
+}
+
+// ── Suggest retiring the bearer token once a stronger identity is live ───────
+// Fires when THIS session authenticated via Tailscale/proxy (not bearer), the
+// shared bearer token is still active, and it's safe to drop (an alternative
+// method works). That's the natural moment — e.g. right after the first
+// Tailscale login is promoted to owner — so the operator doesn't have to hunt
+// through Settings. Dismissible; the same control lives in Settings → Access.
+let bearerRetireWired = false;
+async function maybeSuggestBearerRetire() {
+  const banner = $('#bearer-retire-banner');
+  if (!banner) return;
+  if (localStorage.getItem('nanoclaw-bearer-retire-dismissed') === '1') return;
+  let info = null;
+  try {
+    const r = await authFetch('/api/webchat/auth'); // owner/global-admin only (403 otherwise)
+    if (r.ok) info = await r.json();
+  } catch {
+    info = null;
+  }
+  // Only when the token is still live, an alternative can authenticate, AND this
+  // very session is non-bearer — otherwise the retire endpoint would refuse it.
+  if (!info || !info.bearerActive || !info.canDisableBearer || info.sessionSource === 'bearer') return;
+
+  if (!bearerRetireWired) {
+    bearerRetireWired = true;
+    $('#bearer-retire-disable')?.addEventListener('click', () => retireBearerFromBanner());
+    $('#bearer-retire-dismiss')?.addEventListener('click', () => {
+      localStorage.setItem('nanoclaw-bearer-retire-dismissed', '1');
+      banner.hidden = true;
+    });
+  }
+  banner.hidden = false;
+}
+
+async function retireBearerFromBanner() {
+  const banner = $('#bearer-retire-banner');
+  const btn = $('#bearer-retire-disable');
+  if (btn) btn.disabled = true;
+  try {
+    const r = await authFetch('/api/webchat/auth/bearer', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ active: false }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok) {
+      showToast('Bearer token disabled — access is via Tailscale/SSO', { kind: 'success' });
+      localStorage.setItem('nanoclaw-bearer-retire-dismissed', '1');
+      if (banner) banner.hidden = true;
+    } else {
+      showToast(data.error || 'Could not disable the bearer token', { kind: 'error', timeout: 8000 });
+    }
+  } catch {
+    showToast('Connection failed', { kind: 'error' });
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function initApp() {
+  const verdict = await checkAuth();
+  if (verdict === 'ok' || verdict === 'unreachable') {
+    // 'unreachable' enters the app deliberately: the session is probably fine and
+    // the WS reconnect + connection banner explain the state far better than a
+    // token prompt would. If it turns out we really are unauthenticated, the
+    // re-probe below catches it once the network is back.
+    enterAuthedApp();
+    if (verdict === 'unreachable') void reprobeAuthWhenOnline();
+  } else {
+    $('#login-screen').hidden = false;
+    $('#app').hidden = true;
+    // Tailor the login subtitle to whichever auth methods the server has
+    // configured. Best-effort: if the endpoint isn't there or the fetch
+    // fails, the static "enter your token" subtitle stands.
+    void applyLoginHint();
+  }
+}
+
+// Whether this server uses Tailscale auth. Cached from /api/auth/info and
+// persisted to localStorage so the connection-lost banner can suggest starting
+// Tailscale even when the device is currently offline (cold start, no network).
+let serverUsesTailscale = (() => {
+  try {
+    return localStorage.getItem('webchat-server-tailscale') === '1';
+  } catch {
+    return false;
+  }
+})();
+
+function rememberServerAuthHint(methods) {
+  if (!methods) return;
+  serverUsesTailscale = !!methods.tailscale;
+  try {
+    localStorage.setItem('webchat-server-tailscale', serverUsesTailscale ? '1' : '0');
+  } catch {}
+}
+
+// ── Connection diagnosis ───────────────────────────────────────────────────
+// "Reconnecting…" alone can't tell the user WHERE the path broke. Three states
+// are distinguishable from a browser:
+//   offline — navigator.onLine is false (no network at all)
+//   no-path — an internet probe succeeds but the server stays unreachable; on
+//             a Tailscale-auth install that means Tailscale is off on THIS
+//             device (we can't probe tailscaled itself: Quad100 is plain HTTP,
+//             blocked as mixed content from an HTTPS page)
+//   unknown — the probe failed too; plain "no internet" wording
+// The probe races two no-cors /generate_204 fetches (Tailscale's own DERP
+// relay + gstatic; both CSP-allowed in server.ts): an opaque response
+// resolving proves internet works without reading any content. Throttled —
+// reconnect retries fire on a backoff and don't each need a fresh probe.
+let lastProbeAt = 0;
+let lastDiagnosis = null; // { text, offer } from the most recent probe
+
+async function probeInternet() {
+  const hit = (url) =>
+    fetch(url, {
+      mode: 'no-cors',
+      cache: 'no-store',
+      signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(4000) : undefined,
+    });
+  try {
+    await Promise.any([
+      hit('https://derp1.tailscale.com/generate_204'),
+      hit('https://www.gstatic.com/generate_204'),
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function setConnectionBanner(text, offerOpenTailscale) {
+  const banner = $('#connection-banner');
+  banner.replaceChildren(document.createTextNode(text));
+  // Best-effort app-scheme hop, mobile only — desktop has no tailscale://
+  // handler and the tray UI is one click away anyway.
+  if (offerOpenTailscale && /iPhone|iPad|Android/i.test(navigator.userAgent)) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'banner-action';
+    btn.textContent = 'Open Tailscale';
+    btn.addEventListener('click', () => {
+      location.href = 'tailscale://';
+    });
+    banner.appendChild(btn);
+  }
+  banner.classList.add('visible');
+}
+
+async function diagnoseConnection() {
+  if (!navigator.onLine) {
+    setConnectionBanner('You’re offline. Reconnecting when the network returns…');
+    return;
+  }
+  if (Date.now() - lastProbeAt < 10000) {
+    // Throttled — but each retry's onclose resets the banner to the generic
+    // text, so re-apply the standing diagnosis instead of losing it.
+    if (lastDiagnosis) setConnectionBanner(lastDiagnosis.text, lastDiagnosis.offer);
+    return;
+  }
+  lastProbeAt = Date.now();
+  const internetUp = await probeInternet();
+  // The socket may have recovered while the probe ran — never overwrite a
+  // hidden banner.
+  if (ws && ws.readyState === WebSocket.OPEN) return;
+  lastDiagnosis = internetUp
+    ? {
+        text: serverUsesTailscale
+          ? 'Internet is up but the server is unreachable — check that Tailscale is connected on this device.'
+          : 'Internet is up but the server is unreachable — it may be down.',
+        offer: serverUsesTailscale,
+      }
+    : { text: 'No internet connection. Reconnecting…', offer: false };
+  setConnectionBanner(lastDiagnosis.text, lastDiagnosis.offer);
+}
+
+// Best-effort: cache the server's auth mode even for already-authenticated
+// users who never see the login screen (so applyLoginHint never runs for them).
+async function cacheAuthHint() {
+  try {
+    const r = await fetch('/api/auth/info');
+    if (r.ok) rememberServerAuthHint((await r.json()).methods);
+  } catch {}
+}
+
+/**
+ * Fetch `/api/auth/info` and rewrite the login subtitle so the user knows
+ * what's expected (Tailscale on this device vs token entry vs server
+ * misconfig) instead of facing a generic token prompt.
+ *
+ * The common failure mode is the client device (this phone / laptop) not
+ * having Tailscale running — the server's almost always fine because the
+ * operator had to install Tailscale to set up this server in the first
+ * place. The copy reflects that.
+ */
+async function applyLoginHint() {
+  let info;
+  try {
+    const r = await fetch('/api/auth/info');
+    if (!r.ok) return;
+    info = await r.json();
+  } catch {
+    return;
+  }
+  const subtitle = $('.login-subtitle');
+  subtitle.hidden = false; // default visible; a branch below may hide it
+  const m = info.methods || {};
+  rememberServerAuthHint(m);
+
+  // Hide the token entry path when the server has no bearer method
+  // configured — a tailscale-only or proxy-only deployment shouldn't show
+  // a token field that can never work.
+  if (!m.bearer) {
+    $('#login-form').hidden = true;
+  }
+
+  if (m.tailscale && info.tailscaleHealthy) {
+    // The common case: tailscale is set up on the server; the user just
+    // needs Tailscale running on the device they're reading this on.
+    subtitle.textContent =
+      'Tailscale should sign you in automatically — make sure it’s running on this device, then refresh.';
+  } else if (m.tailscale && !info.tailscaleHealthy) {
+    // The rare case: server-side Tailscale is actually down — no prose, the token
+    // box speaks for itself.
+    subtitle.hidden = true;
+  } else if (m.proxy && !m.bearer) {
+    subtitle.innerHTML =
+      "Couldn't sign you in — your reverse proxy didn't pass an identity through. " +
+      'Try refreshing, or ask whoever sent you the link.';
+  } else if (m.bearer) {
+    subtitle.textContent = 'Enter the access token you were given below.';
+  } else {
+    subtitle.textContent = "This server isn't ready to sign anyone in yet. Whoever installed it needs to finish setup.";
+    $('#login-form').hidden = true;
+  }
+}
+
+$('#login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const token = $('#login-token').value.trim();
+  if (!token) return;
+  // Test the token
+  try {
+    const res = await fetch('/api/auth/check', { headers: { Authorization: `Bearer ${token}` } });
+    if (res.ok) {
+      setAuthToken(token);
+      sessionStorage.setItem('nanoclaw-token', token);
+      enterAuthedApp();
+    } else {
+      $('#login-error').textContent = 'Invalid token';
+      $('#login-error').hidden = false;
+    }
+  } catch {
+    $('#login-error').textContent = 'Connection failed';
+    $('#login-error').hidden = false;
+  }
+});
+
+const ROOM_COLORS = ['#4fc3f7', '#69f0ae', '#ffd54f', '#ff8a80', '#b388ff', '#80deea', '#ffab91', '#a5d6a7'];
+
+function roomColor(roomId) {
+  let hash = 0;
+  for (let i = 0; i < roomId.length; i++) hash = ((hash << 5) - hash + roomId.charCodeAt(i)) | 0;
+  return ROOM_COLORS[Math.abs(hash) % ROOM_COLORS.length];
+}
+
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────
+const DEFAULTS = { theme: 'dark', font: 'medium', sendKey: 'enter', notifications: true,
+};
+
+function loadSettings() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('nanoclaw-settings') || '{}');
+    delete raw.readAloud;
+    delete raw.readAloudRooms; // short-lived per-room experiment
+    delete raw.readAloudDefault; // moved to the workspace (owner-set) setting
+    return { ...DEFAULTS, ...raw };
+  } catch {
+    return { ...DEFAULTS };
+  }
+}
+
+function saveSettings(settings) {
+  localStorage.setItem('nanoclaw-settings', JSON.stringify(settings));
+}
+
+let settings = loadSettings();
+
+
+function applySettings() {
+  document.documentElement.setAttribute('data-theme', settings.theme);
+  document.documentElement.setAttribute('data-font', settings.font);
+  // Update meta theme-color for mobile browsers
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) {
+    const surface = getComputedStyle(document.documentElement).getPropertyValue('--surface').trim();
+    if (surface) meta.setAttribute('content', surface);
+  }
+}
+
+// ── Token usage (Settings → Token usage, owner-only) ──
+let usageRangeDays = 7;
+let usageWired = false;
+async function renderUsageSettings() {
+  const section = $('#settings-usage');
+  if (!section) return;
+  let data = null;
+  try {
+    const r = await authFetch('/api/webchat/usage?days=' + usageRangeDays);
+    if (!r.ok) {
+      section.hidden = true; // 403 for non-owners → hide the whole section
+      return;
+    }
+    data = await r.json();
+  } catch {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  if (!usageWired) {
+    usageWired = true;
+    document.querySelectorAll('#usage-range .setting-option').forEach((b) => {
+      b.addEventListener('click', () => {
+        usageRangeDays = Number(b.dataset.days) || 7;
+        document.querySelectorAll('#usage-range .setting-option').forEach((x) => x.classList.toggle('active', x === b));
+        renderUsageSettings();
+      });
+    });
+  }
+  const fmt = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n));
+  $('#usage-total').textContent =
+    '~' +
+    fmt(data.totals.tokens) +
+    ' tokens · ' +
+    data.totals.turns +
+    ' turns · ' +
+    data.totals.users +
+    ' user' +
+    (data.totals.users === 1 ? '' : 's');
+
+  const table = $('#usage-table');
+  const tbody = $('#usage-tbody');
+  const empty = $('#usage-empty');
+  tbody.textContent = '';
+  if (!data.perUser.length) {
+    table.hidden = true;
+    empty.hidden = false;
+  } else {
+    table.hidden = false;
+    empty.hidden = true;
+    for (const u of data.perUser) {
+      const tr = document.createElement('tr');
+      const cells = [
+        String(u.user).split(':').pop(),
+        '~' + fmt(u.inputTokens),
+        '~' + fmt(u.outputTokens),
+        '~' + fmt(u.totalTokens),
+        String(u.turns),
+      ];
+      cells.forEach((c, i) => {
+        const td = document.createElement('td');
+        td.textContent = c;
+        if (i > 0) td.className = 'usage-num';
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    }
+  }
+
+  // Per-day sparkline.
+  const spark = $('#usage-spark');
+  spark.textContent = '';
+  if (data.perDay.length > 1) {
+    const max = Math.max.apply(null, data.perDay.map((d) => d.tokens).concat(1));
+    for (const d of data.perDay) {
+      const bar = document.createElement('span');
+      bar.className = 'usage-bar';
+      bar.style.height = Math.max(4, Math.round((d.tokens / max) * 36)) + 'px';
+      bar.title = d.day + ': ~' + fmt(d.tokens);
+      spark.appendChild(bar);
+    }
+    spark.hidden = false;
+  } else {
+    spark.hidden = true;
+  }
+
+  // Model breakdown (via each room's agent's current model).
+  const models = $('#usage-models');
+  models.textContent = '';
+  if (data.byModel.length) {
+    for (const m of data.byModel) {
+      const chip = document.createElement('span');
+      chip.className = 'usage-model-chip';
+      chip.textContent = m.model + ' · ~' + fmt(m.tokens);
+      models.appendChild(chip);
+    }
+    models.hidden = false;
+  } else {
+    models.hidden = true;
+  }
+}
+
+// ── Model management (Settings → Models, owner-only) ──
+let mmWired = false;
+function mmFmtGB(bytes) {
+  return bytes == null ? '?' : (bytes / 1e9).toFixed(1) + 'GB';
+}
+function mmBadge(text, kind) {
+  const b = document.createElement('span');
+  b.className = 'mm-badge ' + (kind || '');
+  b.textContent = text;
+  return b;
+}
+async function renderModelManage() {
+  const section = $('#settings-models-manage');
+  if (!section) return;
+  let inv = null;
+  try {
+    const r = await authFetch('/api/models/manage');
+    if (!r.ok) {
+      section.hidden = true; // 403 for non-owners
+      return;
+    }
+    inv = await r.json();
+  } catch {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  $('#mm-gpu-line').textContent = inv.gpu
+    ? `GPU: ${(inv.gpu.totalMB / 1024).toFixed(0)}GB VRAM (${(inv.gpu.usedMB / 1024).toFixed(1)}GB in use) · agent prompt ~${(inv.agentPromptTokens.lean / 1000).toFixed(1)}k tokens`
+    : 'No NVIDIA GPU detected — VRAM fit unknown';
+
+  const list = $('#mm-list');
+  list.textContent = '';
+  for (const m of inv.models) {
+    const card = document.createElement('div');
+    card.className = 'mm-card';
+
+    const head = document.createElement('div');
+    head.className = 'mm-head';
+    const name = document.createElement('span');
+    name.className = 'mm-name';
+    name.textContent = m.tag;
+    head.appendChild(name);
+    if (m.isDefault) head.appendChild(mmBadge('DEFAULT', 'ok'));
+    if (!m.pulled) head.appendChild(mmBadge('not pulled', 'warn'));
+    if (m.loadedVramBytes != null) head.appendChild(mmBadge('loaded', 'ok'));
+    const spec = document.createElement('span');
+    spec.className = 'mm-spec';
+    spec.textContent = [m.paramSize, m.quant, mmFmtGB(m.sizeBytes)].filter(Boolean).join(' · ');
+    head.appendChild(spec);
+    card.appendChild(head);
+
+    // Fitness line — the whole point of the screen.
+    const fitRow = document.createElement('div');
+    fitRow.className = 'mm-fit';
+    const ctxTxt = `context ${Math.round(m.configuredCtx / 1024)}k${m.maxContext ? ` of ${Math.round(m.maxContext / 1024)}k max` : ''}`;
+    fitRow.appendChild(
+      mmBadge(
+        m.fit.context === 'fits' ? `✓ ${ctxTxt} — prompt fits` : `⚠ ${ctxTxt} — prompt truncates`,
+        m.fit.context === 'fits' ? 'ok' : 'warn',
+      ),
+    );
+    if (m.loadedVramBytes != null) {
+      const fits = m.loadedVramBytes >= (m.loadedTotalBytes ?? 0);
+      fitRow.appendChild(
+        mmBadge(fits ? `✓ VRAM ${mmFmtGB(m.loadedVramBytes)} (live)` : `⚠ spills to CPU (live)`, fits ? 'ok' : 'warn'),
+      );
+    } else if (m.fit.vram !== 'unknown') {
+      fitRow.appendChild(
+        mmBadge(
+          m.fit.vram === 'fits' ? `✓ VRAM fits (~${mmFmtGB(m.fit.estFootprintBytes)} est.)` : `⚠ spills to CPU (~${mmFmtGB(m.fit.estFootprintBytes)} est.) — slow`,
+          m.fit.vram === 'fits' ? 'ok' : 'warn',
+        ),
+      );
+    }
+    card.appendChild(fitRow);
+
+    // Actions
+    const actions = document.createElement('div');
+    actions.className = 'mm-actions';
+    if (m.pulled && m.fit.context === 'truncates') {
+      const fix = document.createElement('button');
+      fix.className = 'btn btn-primary';
+      fix.type = 'button';
+      fix.textContent = 'Fix: create 16k variant';
+      fix.title = 'Creates a copy of this model with a 16k context window (num_ctx) and registers it — the agent prompt then fits without truncation.';
+      fix.addEventListener('click', async () => {
+        fix.disabled = true;
+        fix.textContent = 'Creating…';
+        try {
+          const r = await authFetch('/api/models/context-variant', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+            body: JSON.stringify({ tag: m.tag, ctx: 16384 }),
+          });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.error || r.statusText);
+          showToast(`${d.tag} created and registered`, { kind: 'success' });
+        } catch (err) {
+          showToast('Variant failed: ' + err.message, { kind: 'error' });
+        }
+        renderModelManage();
+      });
+      actions.appendChild(fix);
+    }
+    if (m.registryId && !m.isDefault) {
+      const def = document.createElement('button');
+      def.className = 'btn btn-secondary';
+      def.type = 'button';
+      def.textContent = 'Set default';
+      def.addEventListener('click', async () => {
+        def.disabled = true;
+        const r = await authFetch('/api/workspace-model', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+          body: JSON.stringify({ modelId: m.registryId }),
+        });
+        if (r.ok) showToast(`${m.tag} is now the workspace default`, { kind: 'success' });
+        else showToast('Could not set default', { kind: 'error' });
+        renderModelManage();
+      });
+      actions.appendChild(def);
+    }
+    if (actions.children.length) card.appendChild(actions);
+    list.appendChild(card);
+  }
+
+  if (!mmWired) {
+    mmWired = true;
+    $('#mm-pull-btn')?.addEventListener('click', async () => {
+      const model = $('#mm-pull-input').value.trim();
+      if (!model) return;
+      const status = $('#mm-pull-status');
+      status.hidden = false;
+      status.textContent = 'Starting pull…';
+      try {
+        const r = await authFetch('/api/ollama/pull', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+          body: JSON.stringify({ host: 'http://localhost:11434', model }),
+        });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+        // Poll the pull job until it settles, then refresh the inventory.
+        const poll = setInterval(async () => {
+          const jobs = await (await authFetch('/api/ollama/pulls')).json().catch(() => []);
+          const job = Array.isArray(jobs) ? jobs.find((j) => j.model.includes(model.toLowerCase().replace(/\s+/g, ''))) : null;
+          if (!job) return;
+          if (job.status === 'pulling') {
+            const pct = job.total ? Math.round((job.completed / job.total) * 100) : 0;
+            status.textContent = `${job.detail || 'downloading…'} (${pct}%)`;
+          } else {
+            clearInterval(poll);
+            status.textContent = job.status === 'success' ? `${job.model} pulled.` : `Pull failed: ${job.error || 'unknown'}`;
+            renderModelManage();
+          }
+        }, 2500);
+      } catch (err) {
+        status.textContent = 'Pull failed: ' + err.message;
+      }
+    });
+  }
+}
+
+function renderSettingsModal() {
+  // Theme buttons
+  document.querySelectorAll('#theme-options .setting-option').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.value === settings.theme);
+  });
+  // Font buttons
+  document.querySelectorAll('#font-options .setting-option').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.value === settings.font);
+  });
+  // Send key buttons
+  document.querySelectorAll('#send-options .setting-option').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.value === settings.sendKey);
+  });
+  // Notifications
+  $('#notif-toggle').checked = settings.notifications;
+
+}
+
+// ── Workspace credentials policy (Settings → User credentials, owner-only) ──
+let credConfigWired = false;
+async function renderCredentialsSettings() {
+  const section = $('#settings-credentials');
+  if (!section) return;
+  let cfg;
+  try {
+    const r = await authFetch('/api/webchat/credentials-config');
+    if (!r.ok) {
+      section.hidden = true;
+      return;
+    }
+    cfg = await r.json();
+  } catch {
+    section.hidden = true;
+    return;
+  }
+  if (!cfg.canEdit) {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  document.querySelectorAll('#cred-default-mode .setting-option').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.value === cfg.defaultMode);
+  });
+  // Allowed providers — pill toggles (multi-select). "on" = accept BOTH a key
+  // and a subscription for that provider. Displayed with AND (not OR) so the
+  // pill can't read "on" while one half (e.g. OAuth) is actually off — that
+  // mismatch hid the "Connect to <provider>" (OAuth) action even though the
+  // pill looked enabled (allowClaudeOauth defaults off, allowAnthropicKey on).
+  const providerOn = {
+    claude: !!(cfg.allowAnthropicKey && cfg.allowClaudeOauth),
+    codex: !!(cfg.allowOpenaiKey && cfg.allowCodexOauth),
+  };
+  // Greyed-but-clickable when unavailable, so a click can explain why (rather
+  // than a native `disabled` button that swallows the click). Claude is always
+  // available; Codex needs its provider installed.
+  const providerAvailable = { claude: true, codex: !!cfg.codexAvailable };
+  document.querySelectorAll('#cred-providers .setting-option').forEach((btn) => {
+    const p = btn.dataset.provider;
+    btn.classList.toggle('active', !!providerOn[p]);
+    btn.classList.toggle('is-unavailable', !providerAvailable[p]);
+  });
+
+  // Codex install-row: Install button when the provider isn't in the agent image,
+  // green ✓ badge once it is — same install-row pattern as Auto routing / Read
+  // aloud. Install runs the wizard's two-phase build→restart flow (runCodexInstall).
+  // Leave the button alone mid-install so its spinner isn't clobbered by a re-render.
+  const codexRow = $('#settings-codex-install');
+  if (codexRow) codexRow.hidden = false;
+  const codexInstallBtn = $('#codex-install-btn');
+  const codexBadge = $('#codex-installed-badge');
+  if (codexInstallBtn && !codexInstallActive) codexInstallBtn.hidden = !!cfg.codexAvailable;
+  if (codexBadge) codexBadge.hidden = !cfg.codexAvailable;
+
+  // OpenCode harness install-row — same install-row pattern as Codex, driven by the
+  // opencodeAvailable flag on the credentials-config payload. Leave the button alone
+  // mid-install so its spinner isn't clobbered by a re-render.
+  const opencodeRow = $('#settings-opencode-install');
+  if (opencodeRow) opencodeRow.hidden = false;
+  const opencodeInstallBtn = $('#opencode-install-btn');
+  const opencodeBadge = $('#opencode-installed-badge');
+  if (opencodeInstallBtn && !opencodeInstallActive) opencodeInstallBtn.hidden = !!cfg.opencodeAvailable;
+  if (opencodeBadge) opencodeBadge.hidden = !cfg.opencodeAvailable;
+
+  // pi harness install-row — same pattern, driven by piAvailable. The shared
+  // opencodeInstallActive flag serializes harness installs (both rebuild the image).
+  const piRow = $('#settings-pi-install');
+  if (piRow) piRow.hidden = false;
+  const piInstallBtn = $('#pi-install-btn');
+  const piBadge = $('#pi-installed-badge');
+  if (piInstallBtn && !opencodeInstallActive) piInstallBtn.hidden = !!cfg.piAvailable;
+  if (piBadge) piBadge.hidden = !cfg.piAvailable;
+
+  if (credConfigWired) return;
+  credConfigWired = true;
+  $('#codex-install-btn')?.addEventListener('click', () => runCodexInstall(CODEX_SETTINGS_ELS));
+  $('#opencode-install-btn')?.addEventListener('click', () => runOpencodeInstall(OPENCODE_SETTINGS_ELS));
+  $('#pi-install-btn')?.addEventListener('click', () => runOpencodeInstall(PI_SETTINGS_ELS));
+  const putConfig = async (patch) => {
+    const r = await authFetch('/api/webchat/credentials-config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify(patch),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      showToast('Failed to save: ' + (err.error || r.statusText), { kind: 'error' });
+      renderCredentialsSettings(); // resync to server truth
+      return false;
+    }
+    return true;
+  };
+  document.querySelectorAll('#cred-default-mode .setting-option').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (await putConfig({ defaultMode: btn.dataset.value })) {
+        document
+          .querySelectorAll('#cred-default-mode .setting-option')
+          .forEach((b) => b.classList.toggle('active', b === btn));
+        // The effective mode for the open room may have changed — refresh its
+        // credential banner so the connect controls appear/disappear at once.
+        if (currentRoom) updateUserCredsBanner(currentRoom);
+      }
+    });
+  });
+  // Each provider pill toggles its key + subscription flags together. An
+  // unavailable pill explains how to enable it instead of toggling.
+  const PROVIDER_FLAGS = {
+    claude: ['allowAnthropicKey', 'allowClaudeOauth'],
+    codex: ['allowOpenaiKey', 'allowCodexOauth'],
+  };
+  const PROVIDER_UNAVAILABLE = {
+    codex: 'Codex isn’t installed yet — use “Install Codex…” above to add it.',
+    claude: 'Claude isn’t available in this workspace.',
+  };
+  document.querySelectorAll('#cred-providers .setting-option').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const p = btn.dataset.provider;
+      if (btn.classList.contains('is-unavailable')) {
+        showToast(PROVIDER_UNAVAILABLE[p] || 'This provider isn’t available yet.', { kind: 'info', timeout: 9000 });
+        return;
+      }
+      const [keyFlag, oauthFlag] = PROVIDER_FLAGS[p] || [];
+      if (!keyFlag) return;
+      const on = !btn.classList.contains('active'); // flipping to this state
+      if (await putConfig({ [keyFlag]: on, [oauthFlag]: on })) {
+        btn.classList.toggle('active', on);
+        // Reflect the policy change in the open chat's credential banner right
+        // away (show/hide "Connect to <provider>") instead of waiting for the
+        // next room open — the gap that made enabling OAuth look like a no-op.
+        if (currentRoom) updateUserCredsBanner(currentRoom);
+      }
+    });
+  });
+}
+
+// ── Settings → "Run setup wizard" (owner/global-admin only) ──────────────────
+// The default engine/login is set in the wizard now, not here. Admin-gated: the
+// admin-only GET /api/workspace-credential 403s for non-admins, so the button
+// only appears for those who can actually run setup.
+let wizardBtnWired = false;
+async function renderSettingsWizardButton() {
+  const wizardSection = $('#settings-wizard');
+  if (!wizardSection) return;
+  let ok = false;
+  try {
+    ok = (await authFetch('/api/workspace-credential')).ok;
+  } catch {
+    ok = false;
+  }
+  wizardSection.hidden = !ok;
+  if (!ok || wizardBtnWired) return;
+  wizardBtnWired = true;
+  $('#wizard-open-btn')?.addEventListener('click', () => {
+    closeSettings();
+    openWizard();
+  });
+}
+
+// ── Self-test (preflight) ────────────────────────────────────────────────────
+// Runs capability checks (tailscale, docker, container→host networking) from
+// the vantage point that matters and shows verdicts + copy-paste fixes. Owner-
+// gated to match the endpoint (GET 401s everyone else → section stays hidden).
+let selftestWired = false;
+async function renderSelfTest() {
+  const section = $('#settings-selftest');
+  if (!section) return;
+  let ok = false;
+  try {
+    ok = (await authFetch('/api/workspace-credential')).ok;
+  } catch {
+    ok = false;
+  }
+  section.hidden = !ok;
+  if (!ok || selftestWired) return;
+  selftestWired = true;
+  const btn = $('#selftest-run-btn');
+  const out = $('#selftest-results');
+  btn?.addEventListener('click', async () => {
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = 'Running…';
+    out.hidden = false;
+    out.textContent = 'Running checks (this may spin a probe container)…';
+    try {
+      const res = await authFetch('/api/webchat/preflight');
+      const data = await res.json();
+      if (!res.ok) {
+        out.textContent = data.error || res.statusText;
+        return;
+      }
+      renderPreflightChecks(out, data.checks || []);
+    } catch (err) {
+      out.textContent = String(err.message || err);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  });
+}
+
+const PREFLIGHT_ICON = { ok: '✓', warn: '⚠', fail: '✕', info: '•' };
+function renderPreflightChecks(container, checks) {
+  container.hidden = false;
+  container.innerHTML = '';
+  if (!checks.length) {
+    container.textContent = 'No checks ran.';
+    return;
+  }
+  for (const c of checks) {
+    const row = document.createElement('div');
+    row.className = `preflight-check status-${c.status}`;
+    const head = document.createElement('div');
+    head.className = 'preflight-check-head';
+    head.textContent = `${PREFLIGHT_ICON[c.status] || '•'} ${c.label} — ${c.detail}`;
+    row.appendChild(head);
+    if (c.fix) {
+      const pre = document.createElement('pre');
+      pre.className = 'preflight-fix';
+      pre.textContent = c.fix;
+      row.appendChild(pre);
+      const copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'btn btn-ghost';
+      copy.textContent = 'Copy fix';
+      copy.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(c.fix);
+          copy.textContent = 'Copied';
+          setTimeout(() => (copy.textContent = 'Copy fix'), 1500);
+        } catch {
+          showToast('Copy failed — select the text manually.', { kind: 'error' });
+        }
+      });
+      row.appendChild(copy);
+    }
+    container.appendChild(row);
+  }
+}
+
+// ── Access & security: bearer-token retirement ───────────────────────────────
+// Owner/global-admin only (GET 403s everyone else → section stays hidden). The
+// bootstrap bearer token can be retired once Tailscale or SSO/trusted-proxy is
+// live; the server refuses to disable it otherwise, so the UI only offers the
+// action when it will actually be accepted.
+let accessBearerWired = false;
+let bearerConfirmTimer = null;
+let accessHttpsWired = false;
+async function renderAccessSettings() {
+  const section = $('#settings-access');
+  if (!section) return;
+  let info = null;
+  try {
+    const r = await authFetch('/api/webchat/auth');
+    if (r.ok) info = await r.json();
+  } catch {
+    info = null;
+  }
+  section.hidden = !info;
+  if (!info) return;
+
+  const btn = $('#access-bearer-btn');
+  if (!accessBearerWired) {
+    accessBearerWired = true;
+    btn?.addEventListener('click', () => toggleBearerToken(btn.dataset.want === 'enable'));
+  }
+  // Reset any half-finished confirm from a previous open.
+  clearTimeout(bearerConfirmTimer);
+  btn.dataset.confirming = '';
+
+  // Install-row idiom (like Auto routing): state lives in the badge, the
+  // explanation in its tooltip — no standing prose.
+  const badge = $('#access-bearer-badge');
+  const setBadge = (text, title) => {
+    badge.hidden = false;
+    badge.textContent = text;
+    badge.title = title;
+  };
+  if (!info.bearerConfigured) {
+    btn.hidden = true;
+    setBadge('Not set', 'No bearer token is configured — access is controlled by your other auth method.');
+  } else if (info.bearerActive && info.canDisableBearer) {
+    btn.hidden = false;
+    btn.dataset.want = 'disable';
+    btn.textContent = 'Disable';
+    setBadge('Active', 'You also have Tailscale or SSO, so the shared bearer token is no longer needed.');
+  } else if (info.bearerActive) {
+    btn.hidden = true;
+    setBadge('Required', 'Required for access. Set up Tailscale or SSO to retire this shared token.');
+  } else {
+    btn.hidden = false;
+    btn.dataset.want = 'enable';
+    btn.textContent = 'Re-enable';
+    setBadge('Disabled', 'Access is via Tailscale or SSO. The token in .env is ignored until re-enabled.');
+  }
+
+  renderHttpsSettings();
+}
+
+// ── HTTPS over Tailscale (`tailscale serve`) ─────────────────────────────────
+// Owner/global-admin. Shown only when tailscaled is detected up on the host.
+// Enabling fronts webchat with a real *.ts.net cert so it's a secure context
+// (PWA install / push / voice). Identity stays continuous across http→https
+// (auth.ts maps Serve's header back to the whois id), so an owner claimed over
+// http://<node>.ts.net:PORT stays owner over https.
+async function renderHttpsSettings() {
+  const row = $('#access-https-row');
+  const hint = $('#access-https-hint');
+  const btn = $('#access-https-btn');
+  if (!row || !hint || !btn) return;
+  if (!accessHttpsWired) {
+    accessHttpsWired = true;
+    btn.addEventListener('click', () => enableTailscaleHttps());
+  }
+  let state = null;
+  try {
+    const r = await authFetch('/api/webchat/tailscale-https');
+    if (r.ok) state = await r.json();
+  } catch {
+    state = null;
+  }
+  // Nothing to offer until Tailscale is up on the host.
+  if (!state || !state.available) {
+    row.hidden = true;
+    hint.hidden = true;
+    return;
+  }
+  row.hidden = false;
+  const badge = $('#access-https-badge');
+  hint.hidden = true; // prose only for errors (written by enableTailscaleHttps)
+  if (state.active) {
+    btn.hidden = true;
+    badge.hidden = false;
+    // Both flavors (serve / native cert) are tailnet-scoped — the tooltip
+    // carries the URL + scope instead of standing prose.
+    badge.title = `${state.url || 'HTTPS via Tailscale'} — only reachable over your tailnet.`;
+  } else {
+    badge.hidden = true;
+    btn.hidden = false;
+    btn.disabled = false;
+    btn.textContent = 'Enable';
+    btn.title = 'Serve over Tailscale with a real certificate — enables PWA install, push, and voice.';
+  }
+}
+
+async function enableTailscaleHttps() {
+  const hint = $('#access-https-hint');
+  const btn = $('#access-https-btn');
+  btn.disabled = true;
+  btn.textContent = 'Enabling…';
+  try {
+    const r = await authFetch('/api/webchat/tailscale-https', {
+      method: 'POST',
+      headers: { 'X-Webchat-CSRF': '1' },
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.ok) {
+      showToast('HTTPS enabled over Tailscale', { kind: 'success' });
+    } else {
+      const parts = [data.error, data.hint].filter(Boolean).join(' ');
+      showToast(data.error || 'Could not enable HTTPS', { kind: 'error', timeout: 9000 });
+      if (parts) {
+        hint.hidden = false;
+        hint.innerHTML = data.hintUrl
+          ? `${esc(parts)} <a href="${esc(data.hintUrl)}" target="_blank" rel="noopener">Open admin console</a>`
+          : esc(parts);
+      }
+    }
+  } catch {
+    showToast('Connection failed', { kind: 'error' });
+  } finally {
+    renderHttpsSettings();
+  }
+}
+
+async function toggleBearerToken(wantActive) {
+  const btn = $('#access-bearer-btn');
+  const hint = $('#access-bearer-hint');
+  // Two-step confirm for the destructive direction (disabling auth).
+  if (!wantActive && btn.dataset.confirming !== '1') {
+    btn.dataset.confirming = '1';
+    const restore = btn.textContent;
+    btn.textContent = 'Click again to disable';
+    bearerConfirmTimer = setTimeout(() => {
+      btn.dataset.confirming = '';
+      btn.textContent = restore;
+    }, 4000);
+    return;
+  }
+  clearTimeout(bearerConfirmTimer);
+  btn.dataset.confirming = '';
+  btn.disabled = true;
+  try {
+    const r = await authFetch('/api/webchat/auth/bearer', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ active: wantActive }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      showToast(data.error || 'Could not change the bearer setting', { kind: 'error', timeout: 8000 });
+      if (data.error) {
+        hint.hidden = false;
+        hint.textContent = data.error;
+      }
+    } else {
+      showToast(wantActive ? 'Bearer token re-enabled' : 'Bearer token disabled — access is via Tailscale/SSO', {
+        kind: 'success',
+      });
+    }
+  } catch {
+    showToast('Connection failed', { kind: 'error' });
+  } finally {
+    btn.disabled = false;
+    renderAccessSettings();
+  }
+}
+
+
+// Show/hide the MCP + Skills nav for the current session (admin AND enabled).
+/**
+ * Credential isolation — an install policy, shown only to someone who can change
+ * it. `credentialIsolation` is null when no choice has been made here, in which
+ * case .env decides and the row says so; the toggle still reflects what is
+ * actually in force (`credentialIsolationEffective`) so it never contradicts
+ * the agent panel's "Not private yet" note.
+ */
+function renderCredentialIsolation(feats) {
+  const box = $('#settings-credential-isolation');
+  if (!box) return;
+  box.hidden = !feats.canEdit;
+  if (!feats.canEdit) return;
+  const toggle = $('#credential-isolation-toggle');
+  toggle.checked = feats.credentialIsolationEffective === true;
+  const envNote = $('#credential-isolation-env');
+  const following = feats.credentialIsolation === null || feats.credentialIsolation === undefined;
+  envNote.hidden = !following;
+  if (following) envNote.textContent = 'Following CREDENTIAL_ISOLATION in .env';
+  if (toggle.dataset.wired) return;
+  toggle.dataset.wired = '1';
+  toggle.addEventListener('change', async () => {
+    const want = toggle.checked;
+    toggle.disabled = true;
+    try {
+      const r = await authFetch('/api/webchat/features', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+        body: JSON.stringify({ credentialIsolation: want }),
+      });
+      if (!r.ok) throw new Error('save failed');
+      envNote.hidden = true;
+      // Applied per spawn, so running agents keep their current scope until they
+      // next start — say so rather than implying it took effect everywhere now.
+      showToast(want ? 'Credential isolation on — applies as agents restart' : 'Credential isolation off');
+    } catch {
+      toggle.checked = !want;
+      showToast('Could not change credential isolation', { kind: 'error' });
+    } finally {
+      toggle.disabled = false;
+    }
+  });
+}
+
+function applyMarketplaceNav() {
+  const show = marketplaceEnabled && isAdminView;
+  for (const id of ['#overflow-mcp', '#mtab-mcp-btn', '#mtab-skills-btn', '#overflow-skills']) {
+    const el = $(id);
+    if (el) el.hidden = !show;
+  }
+}
+
+// ── First-run setup wizard ───────────────────────────────────────────────────
+// Owner/global-admin only. Auto-opens on first login while onboarding is
+// incomplete (see maybeAutoOpenWizard); re-openable from Settings. Every step is
+// skippable and reuses existing endpoints. Closing (X) or reaching Finish marks
+// onboarding complete so it never re-nags.
+const WIZARD_STEPS = 3;
+let wizardStep = 0;
+let wizardWired = false;
+let wizardOllamaProbe = null; // last successful Ollama probe { kind, endpoint, models }
+let wizardEngine = 'claude'; // default (fallback) engine chosen in step 0
+let wizardCodexAvailable = false;
+let codexInstallActive = false;
+let wizardCred = null; // last /api/workspace-credential snapshot — gates step-0 Next
+
+// Codex install DOM sets — the wizard engine step and Settings → User credentials
+// drive the SAME two-phase server install (/api/codex/install: build → host
+// restart). Each surface passes its own element ids so one runner serves both.
+const CODEX_WIZARD_ELS = {
+  btn: '#wizard-codex-install',
+  log: '#wizard-codex-install-log',
+  doneMsg: 'Codex loaded — connect your credentials below.',
+};
+const CODEX_SETTINGS_ELS = { btn: '#codex-install-btn', log: '#codex-install-log', progress: '#codex-install-progress' };
+
+// One-click Codex provider install from the wizard engine step OR Settings →
+// User credentials. Unlike Ollama/LiteLLM, this mutates the source tree, rebuilds
+// the agent image (minutes), and then RESTARTS the host — codexAvailable only
+// flips once the process re-imports the provider barrel. So the poll rides through
+// the restart: the connection drops, recovers, and by then `installed` is true.
+async function runCodexInstall(els = CODEX_WIZARD_ELS) {
+  const btn = $(els.btn);
+  const log = $(els.log);
+  if (!btn || codexInstallActive) return;
+  codexInstallActive = true;
+  const progress = els.progress ? $(els.progress) : null;
+  if (progress) progress.hidden = false;
+  log.hidden = false;
+  log.textContent = 'Installing…';
+  let done = wizardBusy(btn, 'Installing…');
+  const finish = () => {
+    log.textContent = els.doneMsg || 'Codex installed.';
+    showToast('Codex installed', { kind: 'success' });
+  };
+  try {
+    const res = await authFetch('/api/codex/install', { method: 'POST' });
+    if (!res.ok && res.status !== 202) {
+      const err = await res.json().catch(() => ({}));
+      log.textContent = 'Install failed: ' + (err.error || res.status);
+      showToast(err.error || 'Codex install failed', { kind: 'error' });
+      return;
+    }
+    // Phase 1 — build. Poll until the host fires its restart (green build → exit
+    // 0, not running), the build fails, or the connection drops (host going down).
+    let restarting = false;
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 2500));
+      let st;
+      try {
+        st = await (await authFetch('/api/codex/install')).json();
+      } catch {
+        restarting = true; // host went down — the restart is underway
+        break;
+      }
+      if (Array.isArray(st.lines) && st.lines.length) log.textContent = st.lines.slice(-14).join('\n');
+      if (st.installed) {
+        finish();
+        return;
+      }
+      if (!st.running && st.exitCode === 0) {
+        restarting = true; // chain green → restart just fired
+        break;
+      }
+      // Non-zero exit, no restart → build failed; tree is unchanged-but-partial.
+      if (!st.running && st.exitCode != null && st.exitCode !== 0) {
+        log.textContent = 'Install failed — see log:\n' + (st.lines || []).slice(-14).join('\n');
+        showToast('Codex install failed — see log', { kind: 'error' });
+        return;
+      }
+    }
+    // Phase 2 — restart probe. The host is restarting to load the provider barrel;
+    // `installed` only flips once it re-imports at boot. Probe until it answers,
+    // or give up after the deadline and point at a manual restart (no infinite spin).
+    if (restarting) {
+      done();
+      done = wizardBusy(btn, 'Restarting…');
+      log.textContent = 'Restarting…';
+      const deadline = Date.now() + 150000;
+      let sawResponsive = false;
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 2500));
+        let st = null;
+        try {
+          st = await (await authFetch('/api/codex/install')).json();
+          sawResponsive = true; // host is answering again
+        } catch {
+          st = null; // still down — keep probing
+        }
+        if (st?.installed) {
+          finish();
+          return;
+        }
+        if (Date.now() > deadline) {
+          // Two distinct end states: the host answered again but Codex still isn't
+          // registered → the restart didn't reload the provider (the auto-restart
+          // likely didn't take); a manual service restart fixes it. Never answered
+          // → it's still down. Both resolve with a restart, but say which happened.
+          log.textContent = sawResponsive
+            ? 'Codex didn’t load — restart the service, then reopen setup.'
+            : 'Server didn’t come back — restart it, then reopen setup.';
+          showToast('Codex built — restart the server to finish', { kind: 'error' });
+          return;
+        }
+      }
+    }
+  } catch (err) {
+    log.textContent = 'Install error: ' + err.message;
+    showToast('Codex install error', { kind: 'error' });
+  } finally {
+    done();
+    codexInstallActive = false;
+    // Re-render BOTH surfaces so whichever the operator is viewing flips
+    // Installing… → Installed (the active-guard means only one runner exists).
+    refreshWizardCredState(); // wizard: installed → show connect controls
+    renderCredentialsSettings(); // settings: installed → hide Install, enable pill
+  }
+}
+
+let opencodeInstallActive = false;
+let opencodeGateFromServer = false; // gate from the server's 'running' truth (survives a page reload)
+let opencodeGatePoll = null;
+const OPENCODE_WIZARD_ELS = {
+  btn: '#wizard-opencode-install',
+  log: '#wizard-opencode-install-log',
+  doneMsg: 'OpenCode installed — your local agent can now use it (Agent → Harness).',
+};
+const OPENCODE_SETTINGS_ELS = {
+  btn: '#opencode-install-btn',
+  log: '#opencode-install-log',
+  progress: '#opencode-install-progress',
+};
+const PI_SETTINGS_ELS = {
+  btn: '#pi-install-btn',
+  log: '#pi-install-log',
+  progress: '#pi-install-progress',
+  url: '/api/pi/install',
+  name: 'pi',
+  doneMsg: 'pi installed — switch an agent to it under Agent → Harness.',
+};
+
+// One-click OpenCode stack install (wizard Ollama step or Settings). Same two-phase
+// build→restart shape as runCodexInstall: the chain mutates the tree, rebuilds the
+// agent image (minutes), restarts the host; opencodeAvailable only flips once the
+// process re-imports the provider barrel, so the poll rides through the restart.
+async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
+  // Shared harness-install runner: els.url + els.name parameterize it for any
+  // stack with the same GET/POST install contract (OpenCode, pi).
+  const url = els.url || '/api/opencode/install';
+  const name = els.name || 'OpenCode';
+  const btn = $(els.btn);
+  const log = $(els.log);
+  if (!btn || opencodeInstallActive) return;
+  opencodeInstallActive = true;
+  refreshWizardNextGate(); // hold Next/Finish for the duration of the install
+  const progress = els.progress ? $(els.progress) : null;
+  if (progress) progress.hidden = false;
+  log.hidden = false;
+  log.textContent = 'Installing…';
+  let done = wizardBusy(btn, 'Installing…');
+  const finish = () => {
+    log.textContent = els.doneMsg || name + ' installed.';
+    showToast(name + ' installed', { kind: 'success' });
+  };
+  try {
+    const res = await authFetch(url, { method: 'POST' });
+    if (!res.ok && res.status !== 202) {
+      const err = await res.json().catch(() => ({}));
+      // Already installed isn't a failure — it's the desired end state. Reflect it
+      // (badge + re-render) instead of a scary "Install failed" line.
+      if (err.code === 'already-installed') {
+        finish();
+        return;
+      }
+      log.textContent = 'Install failed: ' + (err.error || res.status);
+      showToast(err.error || name + ' install failed', { kind: 'error' });
+      return;
+    }
+    // Phase 1 — build. Poll until the host fires its restart (green build → exit 0,
+    // not running), the build fails, or the connection drops (host going down).
+    let restarting = false;
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 2500));
+      let st;
+      try {
+        st = await (await authFetch(url)).json();
+      } catch {
+        restarting = true; // host went down — the restart is underway
+        break;
+      }
+      if (Array.isArray(st.lines) && st.lines.length) log.textContent = st.lines.slice(-14).join('\n');
+      if (st.installed) {
+        finish();
+        return;
+      }
+      if (!st.running && st.exitCode === 0) {
+        restarting = true;
+        break;
+      }
+      if (!st.running && st.exitCode != null && st.exitCode !== 0) {
+        log.textContent = 'Install failed — see log:\n' + (st.lines || []).slice(-14).join('\n');
+        showToast(name + ' install failed — see log', { kind: 'error' });
+        return;
+      }
+    }
+    // Phase 2 — restart probe. installed only flips once the host re-imports the
+    // provider barrel at boot. Probe until it answers, or give up after the deadline.
+    if (restarting) {
+      done();
+      done = wizardBusy(btn, 'Restarting…');
+      log.textContent = 'Restarting…';
+      const deadline = Date.now() + 150000;
+      let sawResponsive = false;
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 2500));
+        let st = null;
+        try {
+          st = await (await authFetch(url)).json();
+          sawResponsive = true;
+        } catch {
+          st = null;
+        }
+        if (st?.installed) {
+          finish();
+          return;
+        }
+        if (Date.now() > deadline) {
+          log.textContent = sawResponsive
+            ? 'OpenCode didn’t load — restart the service, then reopen setup.'
+            : 'Server didn’t come back — restart it, then reopen setup.';
+          showToast(name + ' built — restart the server to finish', { kind: 'error' });
+          return;
+        }
+      }
+    }
+  } catch (err) {
+    log.textContent = 'Install error: ' + err.message;
+    showToast(name + ' install error', { kind: 'error' });
+  } finally {
+    done();
+    opencodeInstallActive = false;
+    refreshWizardNextGate(); // install settled → release Next/Finish
+    renderWizardOpencodeInstall(); // wizard: installed → badge
+    renderCredentialsSettings(); // settings: installed → hide Install, show ✓ badge
+    fetchAgents(); // an agent's Harness can now be set to OpenCode
+  }
+}
+
+// The wizard OpenCode install-row: offered (prominently, one-click) once a local
+// Ollama model is the workspace default and OpenCode isn't installed — because the
+// built-in harness confuses small models. Not auto-run: installing rebuilds the
+// image and RESTARTS the host, which would yank the wizard session out from under
+// the operator, so it's a deliberate click (the restart-poll handles reconnect).
+async function renderWizardOpencodeInstall() {
+  const row = $('#wizard-opencode-install-row');
+  const hint = $('#wizard-opencode-hint');
+  if (!row) return;
+  const ollamaConnected = !($('#wizard-ollama-connected')?.hidden ?? true);
+  if (!ollamaConnected) {
+    row.hidden = true;
+    if (hint) hint.hidden = true;
+    return;
+  }
+  let installed = false;
+  let running = false;
+  try {
+    const st = await (await authFetch('/api/opencode/install')).json();
+    installed = !!st.installed;
+    running = !!st.running;
+  } catch {
+    /* endpoint absent on an older host → just show the install button */
+  }
+  const badge = $('#wizard-opencode-installed-badge');
+  const btn = $('#wizard-opencode-install');
+  row.hidden = false;
+  if (hint) hint.hidden = installed;
+  if (badge) badge.hidden = !installed;
+  if (btn && !opencodeInstallActive) btn.hidden = installed;
+  // Gate Next/Finish from server truth so a page reload mid-install can't slip
+  // past the client flag; re-poll while it's still running so the gate lifts on
+  // its own once the install + restart settle.
+  opencodeGateFromServer = running;
+  refreshWizardNextGate();
+  if (running) {
+    clearTimeout(opencodeGatePoll);
+    opencodeGatePoll = setTimeout(renderWizardOpencodeInstall, 3000);
+  }
+}
+$('#wizard-opencode-install')?.addEventListener('click', () => runOpencodeInstall(OPENCODE_WIZARD_ELS));
+
+function buildWizardDots() {
+  const dots = $('#wizard-dots');
+  if (!dots) return;
+  dots.innerHTML = '';
+  for (let i = 0; i < WIZARD_STEPS; i++) {
+    const d = document.createElement('span');
+    d.className = 'wizard-dot';
+    dots.appendChild(d);
+  }
+}
+/**
+ * Reflect live credential state on the engine list: connected engines swap
+ * their connect controls for a prominent ✓ card (standard OAuth-connect UX —
+ * the action you completed disappears), and the radio chips update without a
+ * wizard reopen. Also greys Codex out when its provider isn't installed.
+ */
+async function refreshWizardCredState() {
+  let s;
+  try {
+    const r = await authFetch('/api/workspace-credential');
+    if (!r.ok) return;
+    s = await r.json();
+  } catch {
+    return; // non-fatal — controls stay as-is
+  }
+  wizardCred = s;
+  wizardCodexAvailable = !!s.codexAvailable;
+  const credWord = (t) => (t === 'oauth_token' ? 'subscription' : 'API key');
+
+  // Every engine row carries an at-a-glance readiness chip in the same three
+  // states — not connected / not installed → ✓ connected — so step 0 reads as
+  // one mental model: pick an engine, finish its inline setup, Next unlocks.
+  const claudeChip = $('#wizard-chip-claude');
+  if (claudeChip) {
+    claudeChip.hidden = false;
+    claudeChip.textContent = s.connected ? '✓ connected' : 'not connected';
+    claudeChip.classList.toggle('ok', !!s.connected);
+  }
+  $('#wizard-claude-connect').hidden = !!s.connected;
+  $('#wizard-claude-connected').hidden = !s.connected;
+  if (s.connected)
+    $('#wizard-claude-connected-text').textContent = s.external
+      ? 'Claude connected'
+      : `Claude connected — ${credWord(s.credType)}`;
+  // An externally-managed credential (OneCLI vault / setup) isn't the webchat's to
+  // revoke — hide Disconnect so the card doesn't offer an action that can't run.
+  $('#wizard-claude-disconnect').hidden = !!s.external;
+
+  const codexChip = $('#wizard-chip-codex');
+  if (codexChip) {
+    codexChip.hidden = false;
+    codexChip.textContent = s.codex?.connected ? '✓ connected' : wizardCodexAvailable ? 'not connected' : 'not installed';
+    codexChip.classList.toggle('ok', !!s.codex?.connected);
+  }
+  // The Codex radio is always selectable (no dead-end grey): selecting it opens
+  // this engine's body, which shows the one-click install first when the provider
+  // isn't present, then the connect controls once it is. Next stays gated until
+  // it reaches ✓ connected (wizardEngineConnected + the readiness line below).
+  const codexInstallRow = $('#wizard-codex-install-row');
+  if (codexInstallRow && !codexInstallActive) codexInstallRow.hidden = wizardCodexAvailable;
+  $('#wizard-codex-connect').hidden = !wizardCodexAvailable || !!s.codex?.connected;
+  $('#wizard-codex-connected').hidden = !s.codex?.connected;
+  if (s.codex?.connected)
+    $('#wizard-codex-connected-text').textContent = s.codex.external
+      ? 'Codex connected'
+      : `Codex connected — ${credWord(s.codex.credType)}`;
+  const codexDisconnect = $('#wizard-codex-disconnect');
+  if (codexDisconnect) codexDisconnect.hidden = !!s.codex?.external;
+
+  // An Ollama model is the workspace default only when the default row's kind is
+  // 'ollama' — authoritative, so the chip/card never claims "set" for a Claude/Codex
+  // default. Same three-state idiom as Claude: no model → ✓ <model>, with a
+  // Change action mirroring Disconnect.
+  const ollamaSet = s.defaultModelKind === 'ollama' && !!s.defaultModelId;
+  const ollamaModel = s.defaultModelModelId || s.defaultModelName;
+  const ollamaChip = $('#wizard-chip-ollama');
+  if (ollamaChip) {
+    ollamaChip.hidden = false;
+    ollamaChip.textContent = ollamaSet ? `✓ ${ollamaModel}` : 'no model';
+    ollamaChip.classList.toggle('ok', ollamaSet);
+  }
+  const ollamaCard = $('#wizard-ollama-connected');
+  const ollamaSetup = $('#wizard-ollama-setup');
+  if (ollamaCard && ollamaSetup) {
+    ollamaCard.hidden = !ollamaSet;
+    ollamaSetup.hidden = ollamaSet;
+    if (ollamaSet) $('#wizard-ollama-connected-text').textContent = `${ollamaModel} · default`;
+  }
+  // Once a local model is the default, offer the OpenCode harness (it follows small
+  // models far better than the built-in one). Hidden again if Ollama isn't the default.
+  void renderWizardOpencodeInstall();
+}
+
+/** Reveal the wizard's install-Ollama row when nothing answers locally (Linux
+ *  only), or prefill the endpoint when a local Ollama is already running. */
+async function wizardCheckLocalOllama() {
+  try {
+    const r = await authFetch('/api/ollama/local');
+    if (!r.ok) return;
+    const st = await r.json();
+    if (st.reachable) {
+      const url = $('#wizard-ollama-url');
+      if (url && !url.value) url.value = 'http://localhost:11434';
+      $('#wizard-ollama-install-row').hidden = true;
+      $('#wizard-ollama-dl-row').hidden = false;
+      void wizardLoadRecommendation();
+      void wizardReattachPull(); // resume a pull that a page reload orphaned
+    } else {
+      $('#wizard-ollama-install-row').hidden = !st.canInstall;
+    }
+  } catch {
+    /* leave defaults */
+  }
+}
+
+// Follow a pull to completion: drive the progress bar + status, disable the
+// download button while it runs, refresh the model radios on success. Shared
+// by a fresh download and reattach-after-reload.
+async function wizardFollowPull(host, model) {
+  const btn = $('#wizard-ollama-dl');
+  const bar = $('#wizard-ollama-pull-bar');
+  const done = wizardBusy(btn, 'Downloading…');
+  bar.hidden = false;
+  try {
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const { pulls } = await (await authFetch('/api/ollama/pulls')).json();
+      const job = (pulls || []).find((j) => j.model === model && j.host === host);
+      if (!job) continue;
+      const pct = job.total > 0 ? Math.round((job.completed / job.total) * 100) : 0;
+      bar.querySelector('span').style.width = pct + '%';
+      wizardSetStatus('#wizard-ollama-dl-status', `${job.detail || 'downloading…'} (${pct}%)`, null);
+      if (job.status === 'success') {
+        bar.hidden = true;
+        wizardSetStatus('#wizard-ollama-dl-status', `${model} downloaded — setting it as the default…`, 'ok');
+        // A pull is a deliberate "I want this model" — probe, then set it as the
+        // workspace default so Next unlocks without a separate pick step.
+        const probed = await wizardProbeOllama();
+        if (probed && (probed.models || []).some((m) => String(m) === model)) {
+          const radio = [...document.querySelectorAll('input[name="wizard-ollama-model"]')].find((el) => el.value === model);
+          if (radio) radio.checked = true;
+          await wizardSelectOllamaModel(model);
+          wizardSetStatus('#wizard-ollama-dl-status', `${model} downloaded and set as the workspace default.`, 'ok');
+        } else {
+          wizardSetStatus('#wizard-ollama-dl-status', `${model} downloaded — pick it above to set the default.`, 'ok');
+        }
+        return;
+      }
+      if (job.status === 'error') {
+        bar.hidden = true;
+        return wizardSetStatus('#wizard-ollama-dl-status', job.error || 'Pull failed.', 'err');
+      }
+    }
+  } finally {
+    done();
+  }
+}
+
+// Probe the Ollama endpoint and render one radio per model. No pre-selection:
+// picking a radio IS choosing the workspace default (wizardSelectOllamaModel),
+// so an unselected list reads honestly as "no default yet". Returns the probe
+// body, or null on failure.
+async function wizardProbeOllama() {
+  const url = ($('#wizard-ollama-url')?.value || '').trim() || 'http://localhost:11434';
+  const btn = $('#wizard-ollama-probe');
+  const done = wizardBusy(btn, 'Probing…');
+  $('#wizard-ollama-status').hidden = true; // stale result out of the way while probing
+  try {
+    const r = await authFetch('/api/models/probe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      wizardSetStatus('#wizard-ollama-status', body.error || `Probe failed (${r.status}).`, 'err');
+      return null;
+    }
+    if (!body.kind || !(body.models || []).length) {
+      wizardSetStatus('#wizard-ollama-status', body.reason || 'No models found at that endpoint.', 'err');
+      return null;
+    }
+    wizardOllamaProbe = body;
+    const list = $('#wizard-ollama-list');
+    list.innerHTML = '';
+    body.models.forEach((m) => {
+      const value = String(m);
+      const li = document.createElement('li');
+      const label = document.createElement('label');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'wizard-ollama-model';
+      radio.value = value;
+      const span = document.createElement('span');
+      span.textContent = value;
+      label.appendChild(radio);
+      label.appendChild(span);
+      li.appendChild(label);
+      list.appendChild(li);
+    });
+    $('#wizard-ollama-results').hidden = false;
+    $('#wizard-ollama-dl-row').hidden = false;
+    void wizardLoadRecommendation();
+    // The model radios below are self-explanatory (selecting one sets the
+    // default) — no redundant "Found N model(s)…" line. Clear any prior status
+    // (e.g. "Probing…") so the results stand on their own.
+    const ollamaStatusEl = $('#wizard-ollama-status');
+    if (ollamaStatusEl) ollamaStatusEl.hidden = true;
+    return body;
+  } finally {
+    done();
+  }
+}
+
+// Register the chosen Ollama model and make it the WORKSPACE DEFAULT — the fallback
+// every agent without its own model runs on. Called when a model radio is picked:
+// selecting IS the action, no separate button. Reuses an existing roster row for
+// the same endpoint+model so repeated selection never spawns duplicates (the
+// roster has no uniqueness constraint). Other probed models stay unregistered —
+// Manage → Models covers the rest.
+async function wizardSelectOllamaModel(modelId) {
+  if (!wizardOllamaProbe || !modelId) return;
+  const endpoint = String(wizardOllamaProbe.endpoint || '').replace(/\/+$/, '');
+  const host = (() => {
+    try {
+      return new URL(wizardOllamaProbe.endpoint).host;
+    } catch {
+      return wizardOllamaProbe.endpoint;
+    }
+  })();
+  wizardSetStatus('#wizard-ollama-status', `Setting ${modelId} as the default…`, null);
+  try {
+    let id = null;
+    try {
+      const roster = await (await authFetch('/api/models')).json();
+      id =
+        (Array.isArray(roster) ? roster : []).find(
+          (m) =>
+            m.kind === 'ollama' &&
+            String(m.endpoint || '').replace(/\/+$/, '') === endpoint &&
+            m.model_id === modelId,
+        )?.id ?? null;
+    } catch {
+      /* no roster read — fall through to create */
+    }
+    if (!id) {
+      const r = await authFetch('/api/models/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          models: [{ name: `${host} · ${modelId}`, kind: wizardOllamaProbe.kind, endpoint: wizardOllamaProbe.endpoint, model_id: modelId }],
+        }),
+      });
+      const out = await r.json().catch(() => ({}));
+      const created = out.created?.[0];
+      if (!r.ok || !created) {
+        wizardSetStatus('#wizard-ollama-status', out.error || out.failed?.[0]?.error || 'Add failed.', 'err');
+        return;
+      }
+      id = created.id;
+    }
+    const dr = await authFetch('/api/workspace-model', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelId: id }),
+    });
+    if (!dr.ok) {
+      const derr = await dr.json().catch(() => ({}));
+      wizardSetStatus('#wizard-ollama-status', 'Setting the default failed: ' + (derr.error || dr.statusText), 'err');
+      return;
+    }
+    $('#wizard-ollama-status').hidden = true; // the ✓ connected card is the confirmation now
+    await refreshWizardCredState(); // swaps the picker for the ✓ <model> · default card
+  } catch {
+    wizardSetStatus('#wizard-ollama-status', 'Setting the default failed.', 'err');
+  }
+}
+
+// Clear the Ollama workspace default (mirror of wizardSelectOllamaModel) when the
+// operator switches to Claude/Codex — otherwise unassigned claude-family agents
+// keep inheriting the local model as their fallback and never run on the engine
+// just chosen. No-op unless an Ollama default is actually set.
+async function wizardClearOllamaDefault() {
+  if (wizardCred?.defaultModelKind !== 'ollama' || !wizardCred?.defaultModelId) return;
+  try {
+    await authFetch('/api/workspace-model', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelId: null }),
+    });
+    await refreshWizardCredState(); // reflects the cleared default in wizardCred + the cards
+  } catch {
+    /* non-fatal — the operator can still finish; the default just lingers */
+  }
+}
+
+// Fetch a hardware-based model recommendation and prefill the download field.
+// Deterministic server-side lookup (no model needed to recommend one). Only
+// fills an empty field so it never clobbers what the operator typed.
+let wizardRecLoaded = false;
+async function wizardLoadRecommendation() {
+  if (wizardRecLoaded) return;
+  const hint = $('#wizard-ollama-rec');
+  const input = $('#wizard-ollama-dl-model');
+  try {
+    const r = await authFetch('/api/ollama/recommend');
+    if (!r.ok) return;
+    const { recommendation: rec, remoteOllama } = await r.json();
+    wizardRecLoaded = true;
+    if (input && !input.value) input.value = rec.model.id;
+    if (hint) {
+      // Minimal line: model + one-word fit verdict. The full hardware profile
+      // (cores / RAM / GPU) lives in the tooltip — no 'Detected:…' dump inline.
+      // A remote Ollama in the roster means this host's RAM isn't the limit, so
+      // a local "tight fit" isn't a warning — it runs on the remote box.
+      const remote = remoteOllama?.present === true;
+      const fit = remote ? 'remote Ollama' : rec.tight ? 'tight fit' : rec.basis === 'gpu' ? 'GPU' : 'good fit';
+      hint.hidden = false;
+      hint.textContent = `Recommended: ${rec.model.id} · ${fit}`;
+      hint.title = remote ? `Runs on your remote Ollama (${remoteOllama.endpoint}). ${rec.detected}` : rec.detected;
+      hint.classList.toggle('err', !remote && !!rec.tight);
+    }
+  } catch {
+    // No recommendation — fall back to the field's own default on download.
+    if (input && !input.value) input.value = 'qwen3:1.7b';
+  }
+}
+
+// A model pull runs server-side and survives a page reload, but the client
+// state that drove the progress bar doesn't. On panel open, adopt any pull
+// still in flight for the current host and follow it to completion.
+async function wizardReattachPull() {
+  try {
+    const host = ($('#wizard-ollama-url')?.value || '').trim() || 'http://localhost:11434';
+    const { pulls } = await (await authFetch('/api/ollama/pulls')).json();
+    const job = (pulls || []).find((j) => j.host === host && j.status === 'pulling');
+    if (!job) return;
+    $('#wizard-ollama-dl-model').value = job.model;
+    await wizardFollowPull(host, job.model);
+  } catch {
+    /* nothing to reattach */
+  }
+}
+
+// Accordion: only the selected engine's connect controls are expanded.
+function syncWizardEngineBodies() {
+  document.querySelectorAll('.wizard-engine-body').forEach((b) => {
+    b.hidden = b.dataset.engine !== wizardEngine;
+  });
+}
+// True once the engine picked in step 0 has a usable credential/default set, from
+// the last refreshWizardCredState snapshot. Gates the step-0 Next so the operator
+// can't advance with an engine that can't answer a message.
+function wizardEngineConnected() {
+  const s = wizardCred || {};
+  if (wizardEngine === 'codex') return !!s.codex?.connected;
+  if (wizardEngine === 'ollama') return !!s.defaultModelId;
+  return !!s.connected; // claude (default)
+}
+function showWizardStep(i) {
+  wizardStep = Math.max(0, Math.min(WIZARD_STEPS - 1, i));
+  document.querySelectorAll('.wizard-step').forEach((s) => {
+    s.hidden = Number(s.dataset.step) !== wizardStep;
+  });
+  if (wizardStep === 0) syncWizardEngineBodies();
+  if (wizardStep === 1) void renderWizardAccess();
+  if (wizardStep === 2) void renderWizardFeatures();
+  document.querySelectorAll('#wizard-dots .wizard-dot').forEach((d, idx) => {
+    d.classList.toggle('active', idx === wizardStep);
+    d.classList.toggle('done', idx < wizardStep);
+  });
+  $('#wizard-back').hidden = wizardStep === 0;
+  const isLast = wizardStep === WIZARD_STEPS - 1;
+  // Finish DOES the work (creates the first agent + room from the prefilled
+  // fields); Skip closes without creating, for operators wiring agents their
+  // own way.
+  $('#wizard-next').textContent = isLast ? 'Finish' : 'Next';
+  refreshWizardNextGate();
+}
+
+// Block advancing/finishing while OpenCode is installing. The install ends in a
+// host restart that auto-assigns the harness and respawns the agent container —
+// finishing before that settles drops the operator into chat just as their first
+// message gets killed mid-turn. opencodeInstallActive stays true across the whole
+// build + restart poll, so this holds Next/Finish until the harness is stable.
+function refreshWizardNextGate() {
+  const btn = $('#wizard-next');
+  if (!btn) return;
+  if (opencodeInstallActive || opencodeGateFromServer) {
+    btn.disabled = true;
+    btn.dataset.gated = '1';
+    btn.textContent = 'Installing OpenCode…';
+    btn.title = 'Hang tight — finishing now would interrupt your first message when the harness restarts.';
+  } else if (btn.dataset.gated) {
+    delete btn.dataset.gated;
+    btn.disabled = false;
+    btn.title = '';
+    btn.textContent = wizardStep === WIZARD_STEPS - 1 ? 'Finish' : 'Next';
+  }
+}
+async function openWizard() {
+  wireWizard();
+  buildWizardDots();
+  showWizardStep(0);
+  await refreshWizardCredState();
+  $('#wizard-overlay').hidden = false;
+}
+function closeWizard() {
+  $('#wizard-overlay').hidden = true;
+}
+async function finishWizard() {
+  try {
+    await authFetch('/api/webchat/onboarding', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ complete: true }),
+    });
+  } catch {
+    /* best-effort — closing is more important than persisting the flag */
+  }
+  wizardStopTsPoll(); // don't keep polling health after the wizard is gone
+  closeWizard();
+}
+/**
+ * Put an async wizard button into a busy state: disabled, label swapped, and a
+ * small inline spinner — the "doing something" signal lives ON the control the
+ * user just pressed. Returns a restore function for the finally block.
+ */
+function wizardBusy(btn, busyLabel) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '';
+  const spin = document.createElement('span');
+  spin.className = 'btn-spinner';
+  spin.setAttribute('aria-hidden', 'true');
+  btn.appendChild(spin);
+  btn.appendChild(document.createTextNode(busyLabel));
+  return () => {
+    btn.disabled = false;
+    btn.textContent = original;
+  };
+}
+
+function wizardSetStatus(id, text, kind) {
+  const el = $(id);
+  if (!el) return;
+  el.hidden = false;
+  el.textContent = text;
+  el.classList.toggle('ok', kind === 'ok');
+  el.classList.toggle('err', kind === 'err');
+}
+
+// Show the wizard's one-click Enable HTTPS only when tailscaled is up on the
+// host and serve isn't already on — otherwise the how-to note (add Tailscale,
+// then enable HTTPS in Settings later) is the right guidance.
+async function wizardProbeHttps() {
+  const row = $('#wizard-https-row');
+  if (!row) return;
+  let state = null;
+  try {
+    const r = await authFetch('/api/webchat/tailscale-https');
+    if (r.ok) state = await r.json();
+  } catch {
+    state = null;
+  }
+  if (state && state.available && !state.active) {
+    row.hidden = false;
+    wizardSetStatus('#wizard-https-status', '', null);
+    $('#wizard-https-status').hidden = true;
+  } else if (state && state.active) {
+    row.hidden = false;
+    $('#wizard-https-btn').hidden = true;
+    wizardSetStatus('#wizard-https-status', 'HTTPS is already on.', 'ok');
+  } else {
+    row.hidden = true;
+  }
+}
+
+async function wizardEnableHttps() {
+  const btn = $('#wizard-https-btn');
+  btn.disabled = true;
+  const restore = btn.textContent;
+  btn.textContent = 'Enabling…';
+  try {
+    const r = await authFetch('/api/webchat/tailscale-https', { method: 'POST', headers: { 'X-Webchat-CSRF': '1' } });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.ok) {
+      btn.hidden = true;
+      wizardSetStatus('#wizard-https-status', data.url ? `HTTPS on — reach this at ${data.url}` : 'HTTPS enabled.', 'ok');
+      showToast('HTTPS enabled over Tailscale', { kind: 'success' });
+    } else {
+      const msg = [data.error, data.hint].filter(Boolean).join(' ') || 'Could not enable HTTPS';
+      wizardSetStatus('#wizard-https-status', msg, 'err');
+      // Some failures are external prerequisites the operator must go fix — most
+      // commonly "HTTPS certificates not enabled for your tailnet". Render the
+      // admin-console link so the fix is one click, not a copy-paste hunt.
+      if (data.hintUrl) {
+        const el = $('#wizard-https-status');
+        el.innerHTML = `${esc(msg)} <a href="${esc(data.hintUrl)}" target="_blank" rel="noopener">Open admin console</a>`;
+      }
+      showToast(data.error || 'Could not enable HTTPS', { kind: 'error', timeout: 9000 });
+    }
+  } catch {
+    wizardSetStatus('#wizard-https-status', 'Connection failed.', 'err');
+  } finally {
+    btn.disabled = false;
+    if (!btn.hidden) btn.textContent = restore;
+  }
+}
+
+// Step 2 (Access): summarize how this instance is reached + secured, surface the
+// one-click Tailscale HTTPS when available, and offer to retire the bootstrap
+// bearer token once a stronger method (Tailscale/SSO) can authenticate. Owner-
+// only endpoint — a 403 just leaves the neutral "owner-only" line.
+// Show the body for the selected access radio (accordion, like step 0). When
+// Tailscale is picked, probe for the one-click HTTPS affordance.
+function syncWizardAccessBodies() {
+  const sel = document.querySelector('input[name="wizard-access"]:checked')?.value || 'bearer';
+  document.querySelectorAll('.wizard-engine-body[data-access]').forEach((b) => {
+    b.hidden = b.dataset.access !== sel;
+  });
+  if (sel === 'tailscale') void wizardProbeHttps();
+  // Start/stop the "waiting for Tailscale" poll as the operator opens/leaves it.
+  wizardStartTsPollIfNeeded();
+}
+
+// Step 1 "Features" — reflect the MCP + read-aloud toggles from state and surface
+// the TTS voice-model install (same /api/webchat/tts/install as Settings → Features,
+// via the shared runTtsInstall/pollTtsInstall with wizard element ids).
+let wizardTtsWired = false;
+const WIZARD_TTS_ELS = { btn: '#wizard-tts-install', log: '#wizard-tts-log', progress: '#wizard-tts-progress' };
+// Wizard voice-dictation control — mirrors Settings → Features → Voice dictation:
+// pick a backend (Local whisper.cpp / ElevenLabs cloud), install (local) or connect
+// a key (ElevenLabs). Drives the same /api/webchat/stt/install as Settings via the
+// shared run/pollSttInstall. Owner-only: the endpoint 403s → the whole block hides.
+let wizardSttWired = false;
+let wizardSttBackend = 'local';
+const WIZARD_STT_ELS = { btn: '#wizard-stt-install', log: '#wizard-stt-log', progress: '#wizard-stt-log' };
+async function renderWizardDictation() {
+  const section = $('#wizard-stt-section');
+  if (!section) return;
+  let st = null;
+  try {
+    const r = await authFetch('/api/webchat/stt/install');
+    if (r.ok) st = await r.json();
+  } catch {
+    st = null;
+  }
+  if (!st) {
+    section.hidden = true; // non-owner or unavailable — no dictation surface
+    return;
+  }
+  section.hidden = false;
+  const enable = $('#wizard-stt-enable');
+  if (enable) enable.checked = !!st.enabled;
+  if (!wizardSttWired) {
+    wizardSttWired = true;
+    // Enable/disable toggle — the workspace WEBCHAT_STT_ENABLED, like Read Aloud.
+    enable?.addEventListener('change', async () => {
+      const on = enable.checked;
+      const r = await authFetch('/api/stt/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: on }),
+      });
+      if (!r.ok) {
+        enable.checked = !on;
+        showToast('Could not update voice dictation', { kind: 'error' });
+        return;
+      }
+      void renderWizardDictation();
+    });
+    document.querySelectorAll('#wizard-stt-backend input[type="radio"]').forEach((b) => {
+      b.addEventListener('change', () => {
+        if (!b.checked) return;
+        wizardSttBackend = b.value;
+        void renderWizardDictation();
+      });
+    });
+    $('#wizard-stt-install')?.addEventListener('click', () =>
+      runSttInstall({ provider: 'local' }, WIZARD_STT_ELS, renderWizardDictation),
+    );
+    $('#wizard-stt-connect')?.addEventListener('click', () => {
+      const key = ($('#wizard-stt-key')?.value || '').trim();
+      if (!key) {
+        showToast('Enter the ElevenLabs API key first', { kind: 'error' });
+        return;
+      }
+      runSttInstall({ provider: 'elevenlabs', apiKey: key }, WIZARD_STT_ELS, renderWizardDictation);
+      $('#wizard-stt-key').value = '';
+    });
+  }
+  // Backend setup only matters once dictation is on (mirrors Read Aloud → voice models).
+  const group = $('#wizard-stt-group');
+  if (group) group.hidden = !st.enabled;
+  if (!st.enabled) return;
+  const installed = !!st.installed;
+  // Once installed, reflect the live backend; otherwise the operator's pick.
+  const backend = installed ? st.provider || wizardSttBackend : wizardSttBackend;
+  document
+    .querySelectorAll('#wizard-stt-backend input[type="radio"]')
+    .forEach((b) => {
+      b.checked = b.value === backend;
+    });
+  const local = backend === 'local';
+  const badge = $('#wizard-stt-installed');
+  if (badge) badge.hidden = !installed;
+  // Provider-specific label: Local runs a model (installed), ElevenLabs is a key (connected).
+  const badgeText = $('#wizard-stt-installed-text');
+  if (badgeText) badgeText.textContent = local ? 'Whisper installed' : 'ElevenLabs connected';
+  // Local + not installed + installer present → the install button; ElevenLabs +
+  // not installed → the API-key row. Installed → just the badge.
+  const installRow = $('#wizard-stt-install-row');
+  if (installRow) installRow.hidden = installed || !local || !st.installerPresent;
+  const keyRow = $('#wizard-stt-key-row');
+  if (keyRow) keyRow.hidden = installed || local;
+  if (st.running) pollSttInstall(WIZARD_STT_ELS, renderWizardDictation);
+}
+
+async function renderWizardFeatures() {
+  void renderWizardDictation(); // independent owner surface; renders alongside TTS
+  const mkt = $('#wizard-marketplace');
+  if (mkt) mkt.checked = marketplaceEnabled === true; // disabled by default — opt-in
+  const ttsDefault = $('#wizard-tts-default');
+  if (ttsDefault) ttsDefault.checked = ttsReadAloudEnabled;
+  if (!wizardTtsWired) {
+    wizardTtsWired = true;
+    ttsDefault?.addEventListener('change', async () => {
+      // Workspace-level (owner-set) — the wizard is an owner surface.
+      const on = ttsDefault.checked;
+      try {
+        const r = await authFetch('/api/tts/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ readAloud: on }),
+        });
+        if (!r.ok) throw new Error('save failed');
+        ttsReadAloudEnabled = on;
+        if (!on) stopTts();
+        renderWizardFeatures(); // reveal / hide the voice-model recommendation
+      } catch {
+        ttsDefault.checked = !on; // revert so the control never lies about saved state
+        showToast('Failed to save Read aloud', { kind: 'error' });
+      }
+    });
+    $('#wizard-tts-install')?.addEventListener('click', () => runTtsInstall(WIZARD_TTS_ELS));
+    // Auto-learn — workspace master (owner surface). Instant, no install; toggling
+    // The classifier auto-defaults to the agent's own model server-side (or the
+    // busy-turn heuristic for Claude agents) — no picker here; override in Settings.
+    $('#wizard-autolearn')?.addEventListener('change', async () => {
+      const on = $('#wizard-autolearn').checked;
+      try {
+        const r = await authFetch('/api/learning/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: on }),
+        });
+        if (!r.ok) throw new Error('save failed');
+        learningMasterEnabled = on;
+        applyLearningMaster();
+      } catch {
+        $('#wizard-autolearn').checked = !on;
+        showToast('Failed to save auto-learn', { kind: 'error' });
+      }
+    });
+  }
+  // Reflect current state on (re)render.
+  const alBox = $('#wizard-autolearn');
+  if (alBox) alBox.checked = learningMasterEnabled;
+  const row = $('#wizard-tts-install-row');
+  const badge = $('#wizard-tts-installed');
+  const progress = $('#wizard-tts-progress');
+  const btn = $('#wizard-tts-install');
+  const ttsOn = !!ttsDefault?.checked;
+  let st = null;
+  try {
+    const res = await authFetch('/api/webchat/tts/install');
+    if (res.ok) st = await res.json();
+  } catch {
+    st = null;
+  }
+  // The voice-model surface only matters once Read Aloud is on — off = device
+  // voices, no model needed. Non-owner (no st) = no install surface either way.
+  if (!st || !ttsOn) {
+    if (row) row.hidden = true;
+    if (badge) badge.hidden = true;
+    if (progress) progress.hidden = !(st && st.running); // keep a live run visible
+    if (st && st.running) pollTtsInstall(WIZARD_TTS_ELS);
+    return;
+  }
+  if (st.installed) {
+    if (row) row.hidden = true;
+    if (badge) badge.hidden = false;
+    if (progress) progress.hidden = !st.running;
+    if (btn) btn.textContent = 'Install Kokoro…'; // clear any stale "Installing…"
+    if (st.running) pollTtsInstall(WIZARD_TTS_ELS);
+    return;
+  }
+  // Read Aloud on but no model yet → recommend the install.
+  if (badge) badge.hidden = true;
+  if (row) row.hidden = !st.installerPresent;
+  if (st.running) {
+    pollTtsInstall(WIZARD_TTS_ELS);
+  } else if (btn) {
+    btn.disabled = false;
+    btn.textContent = 'Install Kokoro…';
+  }
+}
+
+let wizardAuthInfo = null; // last /api/webchat/auth snapshot — gates the Access-step Next
+// True once the selected exposure method is actually live: Tailscale signed in,
+// or a reverse proxy configured. Bearer is the current method, always valid.
+// Re-fetches auth so a just-completed sign-in / restart is picked up immediately.
+async function wizardAccessReady() {
+  const sel = document.querySelector('input[name="wizard-access"]:checked')?.value || 'bearer';
+  // Bearer (the bootstrap default) and Localhost (loopback, auto-owner) need
+  // nothing configured to be usable — always ready to advance.
+  if (sel === 'bearer' || sel === 'localhost') return true;
+  let info = wizardAuthInfo;
+  try {
+    const r = await authFetch('/api/webchat/auth');
+    if (r.ok) {
+      info = await r.json();
+      wizardAuthInfo = info;
+    }
+  } catch {
+    /* keep the last snapshot */
+  }
+  if (sel === 'tailscale') return !!(info && info.tailscale && info.tailscale.healthy);
+  if (sel === 'sso') return !!(info && info.proxy); // WEBCHAT_TRUSTED_PROXY_IPS configured
+  return true;
+}
+
+// One-click Tailscale install (wizard Access step). Runs the install + sign-in on
+// the host; `tailscale up` prints its auth URL into the log for the operator to
+// open. Same install-row + progress-log shape as the other wizard installers.
+let tailscaleInstallActive = false;
+let cloudflaredInstallActive = false;
+async function runTailscaleInstall() {
+  const btn = $('#wizard-ts-install-btn');
+  const log = $('#wizard-ts-install-log');
+  if (log) {
+    log.hidden = false;
+    log.textContent = 'Starting…';
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Installing…';
+  }
+  try {
+    const res = await authFetch('/api/webchat/tailscale/install', { method: 'POST', headers: { 'X-Webchat-CSRF': '1' } });
+    if (!res.ok && res.status !== 202) {
+      const err = await res.json().catch(() => ({}));
+      if (log) log.textContent = err.error || 'Install failed to start.';
+      showToast(err.error || 'Tailscale install failed', { kind: 'error', timeout: 9000 });
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Install Tailscale…';
+      }
+      return;
+    }
+    pollTailscaleInstall();
+  } catch (err) {
+    if (log) log.textContent = 'Install failed: ' + err.message;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Install Tailscale…';
+    }
+  }
+}
+async function pollTailscaleInstall() {
+  if (tailscaleInstallActive) return;
+  tailscaleInstallActive = true;
+  const btn = $('#wizard-ts-install-btn');
+  const log = $('#wizard-ts-install-log');
+  if (log) log.hidden = false;
+  if (btn) btn.disabled = true;
+  try {
+    for (;;) {
+      const st = await (await authFetch('/api/webchat/tailscale/install')).json();
+      if (log) {
+        log.textContent = (st.lines || []).slice(-14).join('\n') || 'Starting…';
+        log.scrollTop = log.scrollHeight;
+      }
+      if (!st.running) {
+        if (st.exitCode === 0) showToast('Tailscale is up — first tailnet sign-in becomes owner', { kind: 'success' });
+        else showToast('Tailscale install/sign-in didn’t finish — see the log', { kind: 'error', timeout: 9000 });
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  } catch (err) {
+    showToast('Tailscale install error: ' + err.message, { kind: 'error' });
+  } finally {
+    tailscaleInstallActive = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Install Tailscale…';
+    }
+    void renderWizardAccess(); // re-check health → flip to the connected note when up
+  }
+}
+
+// Cloudflare Tunnel in two explicit steps. Step 1 installs just the cloudflared
+// binary (signed apt repo, no token). Step 2 takes the connector token from a
+// managed tunnel and `service install`s it — auth is enforced by the tunnel's
+// Access policy dashboard-side; the token is the only secret and never persists
+// in the field once submitted.
+async function runCloudflaredBinaryInstall() {
+  const btn = $('#wizard-cf-install-btn');
+  const log = $('#wizard-cf-install-log');
+  if (log) {
+    log.hidden = false;
+    log.textContent = 'Starting…';
+  }
+  const done = btn ? wizardBusy(btn, 'Installing…') : null;
+  try {
+    const res = await authFetch('/api/webchat/cloudflared/install', {
+      method: 'POST',
+      headers: { 'X-Webchat-CSRF': '1' },
+    });
+    if (!res.ok && res.status !== 202) {
+      const err = await res.json().catch(() => ({}));
+      if (log) log.textContent = err.error || 'Install failed to start.';
+      showToast(err.error || 'cloudflared install failed', { kind: 'error', timeout: 9000 });
+      done?.();
+      return;
+    }
+    done?.();
+    pollCloudflared({ btn: '#wizard-cf-install-btn', success: 'cloudflared installed — paste your tunnel token' });
+  } catch (err) {
+    if (log) log.textContent = 'Install failed: ' + err.message;
+    done?.();
+  }
+}
+async function runCloudflaredConnect() {
+  const btn = $('#wizard-cf-connect-btn');
+  const log = $('#wizard-cf-install-log');
+  const tokenEl = $('#wizard-cf-token');
+  const token = (tokenEl?.value || '').trim();
+  if (!token) {
+    showToast('Paste the tunnel token first', { kind: 'error' });
+    return;
+  }
+  if (log) {
+    log.hidden = false;
+    log.textContent = 'Starting…';
+  }
+  const done = btn ? wizardBusy(btn, 'Connecting…') : null;
+  try {
+    const res = await authFetch('/api/webchat/cloudflared/connect', {
+      method: 'POST',
+      headers: { 'X-Webchat-CSRF': '1', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    if (!res.ok && res.status !== 202) {
+      const err = await res.json().catch(() => ({}));
+      if (log) log.textContent = err.error || 'Connect failed to start.';
+      showToast(err.error || 'Cloudflare Tunnel connect failed', { kind: 'error', timeout: 9000 });
+      done?.();
+      return;
+    }
+    if (tokenEl) tokenEl.value = ''; // don't leave the secret sitting in the field
+    done?.();
+    pollCloudflared({ btn: '#wizard-cf-connect-btn', success: 'Cloudflare Tunnel connected' });
+  } catch (err) {
+    if (log) log.textContent = 'Connect failed: ' + err.message;
+    done?.();
+  }
+}
+async function pollCloudflared({ btn: btnSel, success }) {
+  if (cloudflaredInstallActive) return;
+  cloudflaredInstallActive = true;
+  const btn = btnSel ? $(btnSel) : null;
+  const log = $('#wizard-cf-install-log');
+  if (log) log.hidden = false;
+  const done = btn ? wizardBusy(btn, 'Working…') : null;
+  try {
+    for (;;) {
+      const st = await (await authFetch('/api/webchat/cloudflared')).json();
+      if (log) {
+        log.textContent = (st.lines || []).slice(-14).join('\n') || 'Starting…';
+        log.scrollTop = log.scrollHeight;
+      }
+      if (!st.running) {
+        if (st.exitCode === 0) showToast(success, { kind: 'success' });
+        else showToast('cloudflared step didn’t finish — see the log', { kind: 'error', timeout: 9000 });
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  } catch (err) {
+    showToast('cloudflared error: ' + err.message, { kind: 'error' });
+  } finally {
+    cloudflaredInstallActive = false;
+    done?.();
+    void renderWizardAccess(); // re-check → advance to the next step / ready note
+  }
+}
+
+let wizardAccessDefaulted = false;
+// Set true once a bearer token is generated in the wizard. The token is written
+// to .env immediately, but the host restart that ACTIVATES it is deferred to
+// Finish (so the operator can copy the token first).
+let wizardBearerPendingRestart = false;
+
+// While the Tailscale option is open and not yet up, poll health so the panel
+// flips from "not detected" to the signed-in/owner state on its own once the
+// operator runs the install in their terminal — no manual refresh needed.
+let wizardTsPoll = null;
+function wizardStopTsPoll() {
+  if (wizardTsPoll) {
+    clearInterval(wizardTsPoll);
+    wizardTsPoll = null;
+  }
+}
+function wizardStartTsPollIfNeeded() {
+  const sel = document.querySelector('input[name="wizard-access"]:checked')?.value;
+  const healthy = !!(wizardAuthInfo && wizardAuthInfo.tailscale && wizardAuthInfo.tailscale.healthy);
+  if (sel !== 'tailscale' || healthy) {
+    wizardStopTsPoll();
+    return;
+  }
+  if (wizardTsPoll) return; // already polling
+  wizardTsPoll = setInterval(async () => {
+    try {
+      const r = await authFetch('/api/webchat/auth');
+      if (!r.ok) return;
+      const info = await r.json();
+      if (info && info.tailscale && info.tailscale.healthy) {
+        wizardStopTsPoll();
+        void renderWizardAccess(); // repaint into the up/owner state
+      }
+    } catch {
+      /* transient — keep polling */
+    }
+  }, 4000);
+}
+async function renderWizardAccess() {
+  const stateEl = $('#wizard-access-state');
+  let info = null;
+  try {
+    const r = await authFetch('/api/webchat/auth');
+    if (r.ok) info = await r.json();
+  } catch {
+    info = null;
+  }
+  wizardAuthInfo = info;
+  // tsHealthy = a tailnet is UP on this host (detection — drives the "✓ up"
+  // chip and the install offer). tsAuthActive = tailscale is actually ENABLED
+  // as an auth method here. They differ: a host can run Tailscale without it
+  // guarding webchat. "Network auth in play" must use tsAuthActive, or a plain
+  // localhost install on a Tailscale host mislabels itself as not-loopback.
+  const tsHealthy = !!(info && info.tailscale && info.tailscale.healthy);
+  const tsAuthActive = !!(info && info.tailscale && info.tailscale.enabled && info.tailscale.healthy);
+  const proxyOn = !!(info && info.proxy);
+  const bearerOn = !!(info && info.bearerActive);
+  // "Localhost only" = bound to loopback with no network auth in play.
+  const localhostOnly = !!(info && info.loopback) && !bearerOn && !tsAuthActive && !proxyOn;
+
+  // Per-method chip: active/available at a glance (mirrors step 0).
+  const chip = (id, text, ok) => {
+    const el = $(id);
+    if (!el) return;
+    el.hidden = !info;
+    el.textContent = text;
+    el.classList.toggle('ok', ok);
+  };
+  chip('#wizard-access-localhost-chip', localhostOnly ? 'active' : 'off', localhostOnly);
+  chip('#wizard-access-bearer-chip', bearerOn ? 'active' : 'off', bearerOn);
+  chip('#wizard-access-ts-chip', tsHealthy ? '✓ up' : 'not detected', tsHealthy);
+  chip('#wizard-access-sso-chip', proxyOn ? '✓ active' : 'not configured', proxyOn);
+
+  // First render of the Access step: preselect the mode that's actually live.
+  // Loopback with no network auth → Localhost only; otherwise leave the bootstrap
+  // Bearer default. Done once so it never fights a manual pick on re-render.
+  if (!wizardAccessDefaulted && info) {
+    wizardAccessDefaulted = true;
+    if (localhostOnly) {
+      const r = document.querySelector('input[name="wizard-access"][value="localhost"]');
+      if (r) r.checked = true;
+    }
+  }
+
+  // Tailscale body: connected → ready/owner note; otherwise offer a one-click
+  // install when the host can bring it up (TUN + root), else the helper link.
+  const tsReady = $('#wizard-ts-ready');
+  if (tsReady) tsReady.hidden = !tsHealthy;
+  const tsHelper = $('#wizard-ts-helper');
+  const tsRow = $('#wizard-ts-install-row');
+  const tsManual = $('#wizard-ts-manual');
+  if (tsHealthy) {
+    if (tsHelper) tsHelper.hidden = true;
+    if (tsRow) tsRow.hidden = true;
+    if (tsManual) tsManual.hidden = true;
+  } else {
+    let ts = null;
+    try {
+      const r = await authFetch('/api/webchat/tailscale/install');
+      if (r.ok) ts = await r.json();
+    } catch {
+      ts = null;
+    }
+    const canInstall = !!(ts && ts.canInstall);
+    const tunPresent = !!(ts && ts.tunPresent);
+    const isRoot = !!(ts && ts.isRoot);
+    // Three distinct "not connected" states, so we never show Proxmox guidance
+    // to a plain desktop: (a) TUN+root → one-click install button; (b) TUN but
+    // not root (normal non-root host) → run-in-terminal commands; (c) no TUN
+    // (unprivileged LXC / restricted container) → the host-side helper.
+    if (tsRow) tsRow.hidden = !canInstall;
+    if (tsManual) tsManual.hidden = !(!canInstall && tunPresent && !isRoot);
+    if (tsHelper) tsHelper.hidden = !(!canInstall && !tunPresent);
+    if (canInstall && ts.running) pollTailscaleInstall();
+  }
+
+  // Cloudflare Tunnel body: connector service registered → ready note; else offer
+  // the token install when we can run it here (Linux + root), otherwise the helper.
+  let cf = null;
+  try {
+    const r = await authFetch('/api/webchat/cloudflared');
+    if (r.ok) cf = await r.json();
+  } catch {
+    cf = null;
+  }
+  const cfService = !!(cf && cf.serviceInstalled); // connector running
+  const cfBinary = !!(cf && cf.installed); // cloudflared present
+  const cfCanInstall = !!(cf && cf.canInstall);
+  chip('#wizard-access-cf-chip', cfService ? '✓ running' : cfBinary ? 'installed' : 'not set up', cfService);
+  const cfReady = $('#wizard-cf-ready');
+  if (cfReady) cfReady.hidden = !cfService;
+  const cfHelper = $('#wizard-cf-helper');
+  if (cfHelper) cfHelper.hidden = cfService || cfCanInstall; // link only when we can't install here
+  // Step 1 (install binary) → step 2 (paste token + connect) → ready note.
+  const cfInstallRow = $('#wizard-cf-install-row');
+  if (cfInstallRow) cfInstallRow.hidden = cfService || !cfCanInstall || cfBinary;
+  const cfConnect = $('#wizard-cf-connect');
+  if (cfConnect) cfConnect.hidden = cfService || !cfCanInstall || !cfBinary;
+  if (cfCanInstall && cf.running) pollCloudflared({ btn: null, success: 'cloudflared step complete' });
+
+  // Retire the bearer only when it's safe: an alternative can authenticate AND
+  // this session didn't arrive over the bearer token (canDisableBearer).
+  const retireRow = $('#wizard-retire-row');
+  if (retireRow) retireRow.hidden = !(info && info.canDisableBearer);
+  // No token configured → show the Generate button (writes WEBCHAT_TOKEN + binds
+  // 0.0.0.0, then restarts at Finish). Once a token exists it hides and the
+  // retire row shows instead.
+  const bearerUnset = !!(info && !info.bearerConfigured);
+  const bearerGenRow = $('#wizard-bearer-gen-row');
+  // Keep the generate row hidden once a token's been generated this session
+  // (the result panel is showing instead).
+  if (bearerGenRow && !wizardBearerPendingRestart) bearerGenRow.hidden = !bearerUnset;
+
+  if (stateEl) {
+    if (!info) {
+      stateEl.textContent = 'Access settings are available to the owner.';
+    } else {
+      const methods = [];
+      if (tsAuthActive) methods.push('Tailscale identity');
+      if (proxyOn) methods.push('reverse-proxy SSO');
+      if (bearerOn) methods.push('a bearer token');
+      stateEl.textContent = methods.length
+        ? `Secured by ${methods.join(' + ')}.`
+        : 'Loopback-only — no network auth configured.';
+    }
+  }
+  syncWizardAccessBodies();
+}
+
+async function wizardRetireBearer() {
+  const btn = $('#wizard-retire-btn');
+  const done = wizardBusy(btn, 'Retiring…');
+  try {
+    const r = await authFetch('/api/webchat/auth/bearer', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ active: false }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok) {
+      showToast('Bearer token retired — access is via Tailscale/SSO', { kind: 'success' });
+      await renderWizardAccess(); // refresh the state line + hide the button
+    } else {
+      wizardSetStatus('#wizard-retire-status', data.error || 'Could not retire the token', 'err');
+    }
+  } catch {
+    wizardSetStatus('#wizard-retire-status', 'Connection failed.', 'err');
+  } finally {
+    done();
+  }
+}
+
+// Generate a bearer token (server writes WEBCHAT_TOKEN + binds 0.0.0.0) and show
+// it to copy. The restart that activates it is deferred to Finish.
+async function wizardGenerateBearer() {
+  const btn = $('#wizard-bearer-gen');
+  const done = wizardBusy(btn, 'Generating…');
+  try {
+    const r = await authFetch('/api/webchat/auth/bearer/generate', {
+      method: 'POST',
+      headers: { 'X-Webchat-CSRF': '1' },
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok || !data.token) {
+      showToast(data.error || 'Could not generate a token', { kind: 'error', timeout: 8000 });
+      return;
+    }
+    // Adopt the token immediately AND persist it, so the client keeps
+    // authenticating across the restart-at-Finish. Enabling the bearer token
+    // disables the loopback auto-owner bypass; without this the reloaded page
+    // sends no token and 401s on everything (a self-inflicted lockout).
+    setAuthToken(data.token);
+    sessionStorage.setItem('nanoclaw-token', data.token);
+    const field = $('#wizard-bearer-token');
+    if (field) field.value = data.token;
+    if ($('#wizard-bearer-result')) $('#wizard-bearer-result').hidden = false;
+    if ($('#wizard-bearer-gen-row')) $('#wizard-bearer-gen-row').hidden = true;
+    wizardBearerPendingRestart = true;
+  } catch {
+    showToast('Connection failed.', { kind: 'error' });
+  } finally {
+    done();
+  }
+}
+
+// Copy the generated token — clipboard API, with a select+execCommand fallback
+// for non-secure contexts where navigator.clipboard is unavailable.
+async function wizardCopyBearerToken() {
+  const field = $('#wizard-bearer-token');
+  const value = field?.value || '';
+  if (!value) return;
+  try {
+    await navigator.clipboard.writeText(value);
+    showToast('Token copied', { kind: 'success' });
+  } catch {
+    field?.select();
+    try {
+      document.execCommand('copy');
+      showToast('Token copied', { kind: 'success' });
+    } catch {
+      showToast('Copy failed — select the token and copy manually', { kind: 'error' });
+    }
+  }
+}
+
+// Copy an element's value (input) or text (pre/span), with the same
+// clipboard-plus-fallback pattern as the token copy.
+async function wizardCopyText(selector, okMsg) {
+  const el = $(selector);
+  const text = (el && 'value' in el ? el.value : el?.textContent || '').trim();
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast(okMsg || 'Copied', { kind: 'success' });
+  } catch {
+    el?.select?.();
+    showToast('Copy failed — select and copy manually', { kind: 'error' });
+  }
+}
+
+// Fire the deferred host restart at Finish and monitor it: a blocking overlay
+// with a spinner, then poll the pre-auth /health until the server drops and
+// returns, then reload — which lands on the login screen (a token is now
+// required), so the operator is actually prompted for the token they saved.
+async function wizardTriggerRestart() {
+  const overlay = $('#restart-overlay');
+  const titleEl = $('#restart-title');
+  const statusEl = $('#restart-status');
+  const reloadBtn = $('#restart-reload-btn');
+  const setStatus = (t) => {
+    if (statusEl) statusEl.textContent = t;
+  };
+  if (overlay) overlay.hidden = false;
+  reloadBtn?.addEventListener('click', () => location.reload(), { once: true });
+
+  // Snapshot the current process uptime BEFORE restarting — the new process
+  // reports a lower uptime, which detects the restart even when it's fast enough
+  // that /health never appears to drop between polls.
+  const readUptime = async () => {
+    try {
+      const r = await fetch('/health', { cache: 'no-store' });
+      if (!r.ok) return null;
+      const b = await r.json();
+      return typeof b.uptime === 'number' ? b.uptime : null;
+    } catch {
+      return null; // unreachable (restart in flight)
+    }
+  };
+  const baseUptime = (await readUptime()) ?? Infinity;
+
+  // Fire the restart (fire-and-forget — the socket may drop mid-response).
+  try {
+    await authFetch('/api/webchat/restart', { method: 'POST', headers: { 'X-Webchat-CSRF': '1' } });
+  } catch {
+    /* expected as the host goes down */
+  }
+
+  // Poll until the server reports a fresh (lower) uptime — i.e., it restarted.
+  const started = Date.now();
+  const DEADLINE_MS = 90_000;
+  while (Date.now() - started < DEADLINE_MS) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const up = await readUptime();
+    if (up !== null && up < baseUptime) {
+      setStatus('Back online — reloading…');
+      await new Promise((r) => setTimeout(r, 700));
+      location.reload();
+      return;
+    }
+    setStatus('Restarting the server…');
+  }
+  // Never came back in time — let the operator reload by hand.
+  if (titleEl) titleEl.textContent = 'Still restarting…';
+  setStatus('This is taking longer than usual. Reload once you can reach the server.');
+  if (reloadBtn) reloadBtn.hidden = false;
+}
+function wireWizard() {
+  if (wizardWired) return;
+  wizardWired = true;
+  $('#wizard-next')?.addEventListener('click', async () => {
+    // The Access step won't advance until the chosen exposure method is actually
+    // live — Tailscale signed in, or a reverse proxy configured. Bearer (the
+    // current method) is always valid; Skip bypasses. Detected by the step's own
+    // radios, so it holds wherever the Access step sits in the order.
+    const onAccessStep = !!document.querySelector(`.wizard-step[data-step="${wizardStep}"] input[name="wizard-access"]`);
+    if (onAccessStep && !(await wizardAccessReady())) {
+      const sel = document.querySelector('input[name="wizard-access"]:checked')?.value;
+      showToast(
+        sel === 'tailscale'
+          ? 'Connect Tailscale first — sign in over your tailnet (install it above if needed), then continue.'
+          : 'Configure the reverse proxy first — set WEBCHAT_TRUSTED_PROXY_IPS and restart, then continue.',
+        { kind: 'info', timeout: 8000 },
+      );
+      return;
+    }
+    if (wizardStep === WIZARD_STEPS - 1) {
+      wizardCreateAndFinish();
+      return;
+    }
+    // Step 0 can't advance until the chosen engine is actually connected — a
+    // selected-but-unconnected engine would leave the first agent unable to reply.
+    // The row's own chip + connect controls say what's needed; a brief toast is
+    // the only nudge on a blocked click (Skip bypasses, for operators wiring their
+    // credentials their own way).
+    if (wizardStep === 0 && !wizardEngineConnected()) {
+      const how =
+        wizardEngine === 'ollama'
+          ? 'set a default Ollama model'
+          : wizardEngine === 'codex' && !wizardCodexAvailable
+            ? 'install then connect Codex'
+            : `connect ${wizardEngine === 'codex' ? 'Codex' : 'Claude'}`;
+      showToast(`Finish this engine first — ${how} above.`, { kind: 'info', timeout: 6000 });
+      return;
+    }
+    showWizardStep(wizardStep + 1);
+  });
+  $('#wizard-back')?.addEventListener('click', () => showWizardStep(wizardStep - 1));
+  $('#wizard-skip')?.addEventListener('click', () => {
+    if (wizardStep === WIZARD_STEPS - 1) finishWizard(); // skip = close without creating
+    else showWizardStep(wizardStep + 1);
+  });
+  $('#wizard-close')?.addEventListener('click', () => finishWizard());
+
+  // Step 2 (Access) — one radio per method; selecting one opens its body (and,
+  // for Tailscale, surfaces one-click HTTPS when tailscaled is up).
+  document.querySelectorAll('input[name="wizard-access"]').forEach((radio) => {
+    radio.addEventListener('change', () => syncWizardAccessBodies());
+  });
+  $('#wizard-https-btn')?.addEventListener('click', () => wizardEnableHttps());
+  $('#wizard-ts-install-btn')?.addEventListener('click', () => runTailscaleInstall());
+  $('#wizard-cf-install-btn')?.addEventListener('click', () => runCloudflaredBinaryInstall());
+  $('#wizard-cf-connect-btn')?.addEventListener('click', () => runCloudflaredConnect());
+  $('#wizard-retire-btn')?.addEventListener('click', () => wizardRetireBearer());
+  $('#wizard-bearer-gen')?.addEventListener('click', () => wizardGenerateBearer());
+  $('#wizard-bearer-copy')?.addEventListener('click', () => wizardCopyBearerToken());
+  $('#wizard-ts-manual-copy')?.addEventListener('click', () => wizardCopyText('#wizard-ts-manual-cmd', 'Copied'));
+
+  // Step 0 — default engine radios. Every engine (incl. an uninstalled Codex) is
+  // selectable: picking it opens its body, whose progressive controls (install →
+  // connect → ✓) carry the operator to "connected". Next stays gated on that state
+  // (wizardEngineConnected) and the readiness line narrates what's still needed.
+  document.querySelectorAll('input[name="wizard-engine"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      wizardEngine = radio.value;
+      syncWizardEngineBodies();
+      if (wizardEngine === 'ollama') {
+        void wizardCheckLocalOllama();
+      } else {
+        // Switching to a non-Ollama engine: drop any Ollama workspace default,
+        // or claude-family agents keep falling back to that local model (running
+        // on it, not the engine you just picked). Mirror of picking an Ollama
+        // model, which SETS the default. Only fires when one is actually set.
+        void wizardClearOllamaDefault();
+      }
+    });
+  });
+
+  // Step 1 (claude panel) — browser mint for subscriptions, or paste either
+  // credential shape (auto-detected).
+  $('#wizard-claude-oauth')?.addEventListener('click', () => openOauthMintModal('workspace'));
+  $('#wizard-codex-install')?.addEventListener('click', () => runCodexInstall());
+  $('#wizard-codex-oauth')?.addEventListener('click', () => openOauthMintModal('workspace-codex'));
+  // Step 1 (codex panel) — paste an OpenAI API key as the workspace Codex default.
+  $('#wizard-codex-save')?.addEventListener('click', async () => {
+    const key = ($('#wizard-codex-key')?.value || '').trim();
+    if (!/^sk-/.test(key)) return wizardSetStatus('#wizard-codex-status', 'Expected an OpenAI API key (sk-…).', 'err');
+    const btn = $('#wizard-codex-save');
+    const done = wizardBusy(btn, 'Saving…');
+    try {
+      const r = await authFetch('/api/workspace-credential', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'codex', type: 'api_key', apiKey: key }),
+      });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) return wizardSetStatus('#wizard-codex-status', out.error || 'Save failed.', 'err');
+      $('#wizard-codex-key').value = '';
+      await refreshWizardCredState(); // controls swap to the ✓ connected card
+    } finally {
+      done(); // restores label + disabled state
+    }
+  });
+  $('#wizard-claude-save')?.addEventListener('click', async () => {
+    const key = ($('#wizard-claude-key')?.value || '').trim();
+    if (!/^sk-ant-/.test(key))
+      return wizardSetStatus(
+        '#wizard-claude-status',
+        'Expected an Anthropic API key (sk-ant-…) or setup token (sk-ant-oat…).',
+        'err',
+      );
+    const isOauth = /^sk-ant-oat/.test(key);
+    const btn = $('#wizard-claude-save');
+    const done = wizardBusy(btn, 'Saving…');
+    try {
+      const r = await authFetch('/api/workspace-credential', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(isOauth ? { type: 'oauth_token', token: key } : { type: 'api_key', apiKey: key }),
+      });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) return wizardSetStatus('#wizard-claude-status', out.error || 'Save failed.', 'err');
+      $('#wizard-claude-key').value = '';
+      await refreshWizardCredState(); // controls swap to the ✓ connected card
+    } finally {
+      done();
+    }
+  });
+  $('#wizard-claude-disconnect')?.addEventListener('click', async () => {
+    const r = await authFetch('/api/workspace-credential', { method: 'DELETE' });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      showToast('Failed to disconnect: ' + (err.error || r.statusText), { kind: 'error' });
+      return;
+    }
+    await refreshWizardCredState();
+  });
+  $('#wizard-codex-disconnect')?.addEventListener('click', async () => {
+    const r = await authFetch('/api/workspace-credential?provider=codex', { method: 'DELETE' });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      showToast('Failed to disconnect: ' + (err.error || r.statusText), { kind: 'error' });
+      return;
+    }
+    await refreshWizardCredState();
+  });
+
+  // Step 1 — Ollama probe; selecting a model radio sets it as the workspace
+  // default (wizardSelectOllamaModel), so there's no separate "set default" step.
+  $('#wizard-ollama-probe')?.addEventListener('click', () => void wizardProbeOllama());
+  $('#wizard-ollama-list')?.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t && t.name === 'wizard-ollama-model' && t.value) void wizardSelectOllamaModel(t.value);
+  });
+  // "Change" on the connected card reopens the picker (mirrors Disconnect).
+  $('#wizard-ollama-change')?.addEventListener('click', () => {
+    $('#wizard-ollama-connected').hidden = true;
+    $('#wizard-ollama-setup').hidden = false;
+  });
+
+
+  // Ollama panel: one-click rootless install when nothing answers locally.
+  $('#wizard-ollama-install')?.addEventListener('click', async () => {
+    const btn = $('#wizard-ollama-install');
+    const done = wizardBusy(btn, 'Installing…');
+    const log = $('#wizard-ollama-install-log');
+    log.hidden = false;
+    log.textContent = 'Starting…';
+    try {
+      const r = await authFetch('/api/ollama/install', { method: 'POST' });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        // An install already in flight (e.g. after a reconnect) → follow it, don't
+        // restart. The server dedupes, and the download resumes on its own.
+        if (err.error !== 'already-running') {
+          log.textContent = err.error || 'Install failed to start.';
+          return;
+        }
+        log.textContent = 'Resuming the install already in progress…';
+      }
+      // Poll until the installer exits; the state carries its log tail.
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const st = await (await authFetch('/api/ollama/local')).json();
+        log.textContent = (st.lines || []).join('\n') || 'Working…';
+        log.scrollTop = log.scrollHeight;
+        if (!st.running) {
+          if (st.exitCode === 0 && st.reachable) {
+            $('#wizard-ollama-install-row').hidden = true;
+            $('#wizard-ollama-url').value = 'http://localhost:11434';
+            wizardSetStatus('#wizard-ollama-status', 'Ollama installed and running — download a model below.', 'ok');
+            $('#wizard-ollama-dl-row').hidden = false;
+            void wizardLoadRecommendation();
+          } else {
+            wizardSetStatus('#wizard-ollama-status', 'Install failed — see the log above.', 'err');
+          }
+          return;
+        }
+      }
+    } finally {
+      done();
+    }
+  });
+
+  // Ollama panel: pull a model onto the probed host, with live progress.
+  $('#wizard-ollama-dl')?.addEventListener('click', async () => {
+    const model = ($('#wizard-ollama-dl-model')?.value || '').trim() || 'qwen3:1.7b';
+    const host = ($('#wizard-ollama-url')?.value || '').trim() || 'http://localhost:11434';
+    const r = await authFetch('/api/ollama/pull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, model }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      return wizardSetStatus('#wizard-ollama-dl-status', err.error || 'Pull failed to start.', 'err');
+    }
+    await wizardFollowPull(host, model);
+  });
+}
+
+// Finish = create the first agent + room from the (prefilled, editable) fields,
+// wired to the chosen engine, then close into the chat. Codex rides the
+// room-create body (provider pinned before first spawn); Claude/Ollama inherit
+// the workspace defaults. Failure keeps the wizard open with the error inline.
+async function wizardCreateAndFinish() {
+  const roomName = ($('#wizard-room-name')?.value || '').trim() || 'General';
+  const agentName = ($('#wizard-agent-name')?.value || '').trim() || 'Assistant';
+  // Belt-and-suspenders: if the operator finishes on a non-Ollama engine, make
+  // sure no stale Ollama default lingers (covers the case where Claude was the
+  // pre-selected radio, so the engine `change` handler never fired to clear it).
+  if (wizardEngine !== 'ollama') await wizardClearOllamaDefault();
+  // Persist the MCP + skills marketplace choice (default on / recommended).
+  const mktEnabled = $('#wizard-marketplace')?.checked !== false;
+  try {
+    await authFetch('/api/webchat/features', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ marketplaceEnabled: mktEnabled }),
+    });
+    marketplaceEnabled = mktEnabled;
+    applyMarketplaceNav();
+  } catch {
+    /* non-fatal — defaults to on */
+  }
+  // Arm the one-shot "first Tailscale login becomes owner" if the operator opted
+  // in — so their real (tailnet) identity gets owner, not just the bearer boot id.
+  try {
+    await authFetch('/api/webchat/tailscale-owner', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({
+        armed: document.querySelector('input[name="wizard-access"]:checked')?.value === 'tailscale',
+      }),
+    });
+  } catch {
+    /* non-fatal */
+  }
+  const btn = $('#wizard-next');
+  const done = wizardBusy(btn, 'Creating…');
+  {
+    try {
+      const agentRef = { kind: 'new', name: agentName };
+      if (wizardEngine === 'codex') agentRef.provider = 'codex';
+      const r = await authFetch('/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: roomName, agents: [agentRef] }),
+      });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        // A room with this name already exists (409) — the operator is re-running
+        // the wizard on an install that's already set up. That's not a failure to
+        // dead-end on: the room+agent they'd create are effectively already there,
+        // so just finish instead of blocking them behind an error they can't
+        // resolve from this step.
+        if (r.status === 409) {
+          wizardSetStatus('#wizard-room-status', 'Already set up — finishing…', 'ok');
+          await finishWizard();
+          if (wizardBearerPendingRestart) await wizardTriggerRestart();
+          return;
+        }
+        return wizardSetStatus('#wizard-room-status', out.error || 'Create failed.', 'err');
+      }
+      // No per-agent model assignment here: an Ollama engine is the WORKSPACE
+      // default (set when the models were added), so the new agent — like every
+      // unassigned agent — inherits it automatically.
+      wizardSetStatus('#wizard-room-status', 'Created. Finishing…', 'ok');
+      await finishWizard();
+      // A bearer token generated earlier is written but inert until the host
+      // reloads .env — fire that restart now, after onboarding is marked done.
+      if (wizardBearerPendingRestart) await wizardTriggerRestart();
+      if (typeof fetchAgents === 'function') fetchAgents().catch(() => {});
+    } finally {
+      done();
+    }
+  }
+}
+
+// Auto-open the wizard once on first login for owner/global-admin when onboarding
+// isn't finished. Non-admins get {complete:true} from the endpoint, so this no-ops.
+async function maybeAutoOpenWizard() {
+  try {
+    const r = await authFetch('/api/webchat/onboarding');
+    if (!r.ok) return;
+    const s = await r.json();
+    if (s.canEdit && !s.complete) openWizard();
+  } catch {
+    /* non-fatal — the wizard is always reachable from Settings */
+  }
+}
+
+// Persist the @handle from the Settings field. Inline feedback (per DESIGN.md):
+// success/taken/invalid all surface on the #handle-status line, not a toast.
+async function saveHandle() {
+  const input = $('#handle-input');
+  const status = $('#handle-status');
+  if (!input || !status) return;
+  const next = input.value.trim().toLowerCase().replace(/^@/, '');
+  const showStatus = (text, ok) => {
+    status.hidden = false;
+    status.textContent = text;
+    status.classList.toggle('ok', !!ok);
+    status.classList.toggle('err', !ok);
+  };
+  if (!/^[a-z0-9-]{1,32}$/.test(next)) {
+    showStatus('Use 1–32 letters, numbers, or hyphens.', false);
+    return;
+  }
+  if (next === myHandle) {
+    showStatus('That’s already your handle.', true);
+    return;
+  }
+  try {
+    const res = await authFetch('/api/me/handle', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ handle: next }),
+    });
+    if (res.ok) {
+      myHandle = (((await res.json()).handle || next) + '').toLowerCase();
+      input.value = myHandle;
+      renderHandleChip();
+      // Keep the popover open briefly showing the inline "Saved." status,
+      // consistent with the prior in-Settings behavior.
+      showStatus('Saved.', true);
+    } else if (res.status === 409) {
+      showStatus('That handle is taken.', false);
+    } else if (res.status === 400) {
+      showStatus('Use 1–32 letters, numbers, or hyphens.', false);
+    } else {
+      showStatus('Couldn’t save — try again.', false);
+    }
+  } catch {
+    showStatus('Couldn’t save — try again.', false);
+  }
+}
+
+// ── Header @handle chip + popover ────────────────────────────────────────────
+// The chip lives top-right in the header; clicking it opens a focused popover to
+// edit + save the handle. The editor (same #handle-input/#handle-save/
+// #handle-status ids) lives here, not in Settings. Inline status only.
+function renderHandleChip() {
+  const chip = $('#handle-chip');
+  if (!chip) return;
+  const label = myHandle ? `@${myHandle}` : '+ set @handle';
+  // When the member has connected their own credential, the handle chip doubles
+  // as the credential indicator (a 🔑 prefix) — there's no separate key chip.
+  // The connect/disconnect controls live in the chip's popover (#handle-creds).
+  chip.textContent = userCredsConnected ? `🔑 ${label}` : label;
+  chip.classList.toggle('is-unset', !myHandle);
+  chip.classList.toggle('has-cred', userCredsConnected);
+  chip.title = userCredsConnected ? 'Billing your own account — click to manage' : 'Edit your handle';
+  // Accessible name tracks the connected state (the 🔑/title are visual-only).
+  chip.setAttribute('aria-label', userCredsConnected ? 'Billing your own account — manage credentials' : 'Edit your handle');
+}
+
+function openHandlePopover() {
+  const pop = $('#handle-popover');
+  const input = $('#handle-input');
+  const status = $('#handle-status');
+  if (!pop) return;
+  if (input) input.value = myHandle || '';
+  if (status) {
+    status.hidden = true;
+    status.textContent = '';
+    status.classList.remove('ok', 'err');
+  }
+  updateHandleCreds();
+  pop.hidden = false;
+  $('#handle-chip')?.setAttribute('aria-expanded', 'true');
+  if (input) input.focus();
+}
+
+function closeHandlePopover() {
+  const pop = $('#handle-popover');
+  if (!pop || pop.hidden) return;
+  pop.hidden = true;
+  $('#handle-chip')?.setAttribute('aria-expanded', 'false');
+}
+
+$('#handle-chip')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const pop = $('#handle-popover');
+  if (pop && pop.hidden) openHandlePopover();
+  else closeHandlePopover();
+});
+$('#handle-popover-close')?.addEventListener('click', closeHandlePopover);
+// Click outside the popover (and not on the chip) closes it.
+document.addEventListener('click', (e) => {
+  const pop = $('#handle-popover');
+  if (!pop || pop.hidden) return;
+  if (pop.contains(e.target) || e.target === $('#handle-chip')) return;
+  closeHandlePopover();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeHandlePopover();
+});
+
+// Apply on load
+applySettings();
+
+// Personal credentials panel (Settings → My credentials). "patchset C" (b5fc2ab)
+// shipped the openSettings() call below and the #settings-my-credentials markup,
+// but NOT this renderer — so opening Settings threw `ReferenceError:
+// renderMyCredentials is not defined`, which aborted the whole modal open. Until
+// the panel is fully wired (against /api/user-credentials/credential), keep it
+// hidden rather than crash Settings.
+// Settings modal open/close
+function openSettings() {
+  renderSettingsModal();
+  renderSettingsWizardButton();
+  void renderSelfTest();
+  renderCredentialsSettings();
+  renderRoutingSetupSettings();
+  renderTtsSetupSettings();
+  renderSttSetupSettings();
+  renderAutoLearnSetting();
+  renderPrejudgeSettings();
+  renderSkillSourcesSettings();
+  void renderMcpSources();
+  void renderToolSecrets();
+  void renderMyCredentials();
+  renderAccessSettings();
+  void renderUsageSettings();
+  void renderModelManage();
+  $('#settings-overlay').hidden = false;
+  // Focus trap
+  const modal = $('#settings-overlay .modal');
+  const focusable = modal.querySelectorAll('button, input, select, [tabindex]:not([tabindex="-1"])');
+  if (focusable.length) focusable[0].focus();
+}
+function closeSettings() {
+  $('#settings-overlay').hidden = true;
+}
+
+// ── Settings → Features → ⓘ info toggles ────────────────────────────────────
+// Each .feature-info-btn opens/closes the description named by aria-controls.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.feature-info-btn');
+  if (!btn) return;
+  const info = document.getElementById(btn.getAttribute('aria-controls'));
+  if (!info) return;
+  const open = info.hidden;
+  info.hidden = !open;
+  btn.setAttribute('aria-expanded', String(open));
+});
+
+// ── Settings → Features → Read aloud (one-click Kokoro install) ─────────────
+// Owner-only endpoint; non-owners still see the block (hidden install row —
+// the per-device toggle works for everyone via Web Speech). Same install-row
+// + progress-log pattern as Auto routing; the health-check phase covers the
+// ~330MB first-boot model download, and the final step activates the .env
+// flags in-process, so no host restart.
+let ttsInstallWired = false;
+let ttsInstallActive = false;
+
+// TTS install DOM sets — the Settings → Features section and the wizard's Features
+// step drive the SAME server install (/api/webchat/tts/install); each passes its
+// own element ids + a re-render callback so one poll loop serves both surfaces.
+const TTS_SETTINGS_ELS = { btn: '#tts-install-btn', log: '#tts-install-log', progress: '#tts-install-progress' };
+
+async function pollTtsInstall(els = TTS_SETTINGS_ELS) {
+  if (ttsInstallActive) return;
+  ttsInstallActive = true;
+  const btn = $(els.btn);
+  const log = $(els.log);
+  const progress = $(els.progress);
+  if (progress) progress.hidden = false;
+  if (btn) btn.disabled = true;
+  try {
+    while (true) {
+      const st = await (await authFetch('/api/webchat/tts/install')).json();
+      if (log) {
+        log.textContent = (st.lines || []).slice(-12).join('\n') || 'Starting…';
+        log.scrollTop = log.scrollHeight;
+      }
+      if (!st.running) {
+        if (st.exitCode === 0) {
+          showToast('Read aloud installed — Kokoro voices are live', { kind: 'success' });
+          await loadTtsConfig(); // pick up server-side synthesis immediately
+        } else {
+          showToast('Read aloud install failed — see log', { kind: 'error' });
+        }
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  } catch (err) {
+    showToast('Read aloud install error: ' + err.message, { kind: 'error' });
+  } finally {
+    ttsInstallActive = false;
+    // Re-render BOTH TTS surfaces (Settings + wizard) so whichever the operator is
+    // viewing flips Installing… → Installed. The shared active-guard means only one
+    // poll runs, so it can't rely on a single caller's re-render.
+    renderTtsSetupSettings();
+    renderWizardFeatures();
+  }
+}
+
+async function runTtsInstall(els = TTS_SETTINGS_ELS) {
+  const btn = $(els.btn);
+  const log = $(els.log);
+  const progress = $(els.progress);
+  if (progress) progress.hidden = false;
+  const done = btn ? wizardBusy(btn, 'Installing…') : null; // spinner, like the step-0 installs
+  if (log) log.textContent = 'Starting…';
+  try {
+    const res = await authFetch('/api/webchat/tts/install', { method: 'POST' });
+    if (!res.ok && res.status !== 202) {
+      const err = await res.json().catch(() => ({}));
+      if (log) log.textContent = 'Install failed: ' + (err.error || res.status);
+      showToast('Read aloud install failed', { kind: 'error' });
+      done?.();
+      return;
+    }
+    pollTtsInstall(els); // completion re-renders the surface, clearing the spinner
+  } catch (err) {
+    if (log) log.textContent = 'Install failed: ' + err.message;
+    done?.();
+  }
+}
+
+async function renderTtsSetupSettings() {
+  const section = $('#settings-tts');
+  if (!section) return;
+  const btn = $('#tts-install-btn');
+  const badge = $('#tts-installed-badge');
+  const progress = $('#tts-install-progress');
+  if (!ttsInstallWired) {
+    ttsInstallWired = true;
+    btn.addEventListener('click', () => runTtsInstall());
+    // Voice picker: save is workspace-wide (env-persisted, no restart), then a
+    // short sample plays so you hear what you picked.
+    $('#tts-voice-select')?.addEventListener('change', async () => {
+      const voice = $('#tts-voice-select').value;
+      const r = await authFetch('/api/tts/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ voice }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        showToast('Failed to save voice: ' + (err.error || r.statusText), { kind: 'error' });
+        renderTtsSetupSettings();
+        return;
+      }
+      showToast('Voice saved', { kind: 'success' });
+      try {
+        const sample = await authFetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: 'This is how I sound.', voice }),
+        });
+        if (sample.ok) {
+          const blob = await sample.blob();
+          void new Audio(URL.createObjectURL(blob)).play();
+        }
+      } catch {
+        /* preview is best-effort */
+      }
+    });
+  }
+  let st = null;
+  try {
+    const res = await authFetch('/api/webchat/tts/install');
+    if (res.ok) st = await res.json();
+  } catch {
+    st = null;
+  }
+  if (!st) {
+    // Non-owner: the whole block is the owner's control surface now that the
+    // switch applies workspace-wide.
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  // Switch shows the workspace truth (fetched at boot; re-fetch is cheap).
+  await loadTtsConfig();
+  document.querySelectorAll('#tts-default-mode .setting-option').forEach((b) => {
+    b.classList.toggle('active', b.dataset.value === (ttsReadAloudEnabled ? 'on' : 'off'));
+  });
+  const desc = $('#tts-setup-desc');
+  if (st.installed) {
+    btn.hidden = true;
+    badge.hidden = false;
+    if (desc) desc.hidden = true;
+    progress.hidden = !st.running;
+    if (st.running) pollTtsInstall();
+    // Voice picker — needs the backend up (voices proxy 502s otherwise).
+    try {
+      const [voicesRes, cfgRes] = await Promise.all([authFetch('/api/tts/voices'), authFetch('/api/tts/config')]);
+      if (voicesRes.ok) {
+        const { voices } = await voicesRes.json();
+        const cfg = cfgRes.ok ? await cfgRes.json() : {};
+        const select = $('#tts-voice-select');
+        if (select && Array.isArray(voices) && voices.length) {
+          select.innerHTML = '';
+          for (const v of voices) {
+            const opt = document.createElement('option');
+            opt.value = v;
+            opt.textContent = v;
+            select.appendChild(opt);
+          }
+          if (cfg.voice) select.value = cfg.voice;
+          if (cfg.model) {
+            const label = $('#tts-voice-label');
+            if (label) label.textContent = `Voice (${cfg.model.charAt(0).toUpperCase()}${cfg.model.slice(1)})`;
+          }
+          $('#tts-voice-group').hidden = false;
+        }
+      }
+    } catch {
+      /* picker stays hidden — the feature works regardless */
+    }
+    return;
+  }
+  badge.hidden = true;
+  $('#tts-voice-group').hidden = true;
+  btn.hidden = !st.installerPresent;
+  // Prereq hint (the only prose this block is allowed): explain the hidden
+  // Install button instead of leaving a silent dead row.
+  if (desc) {
+    desc.hidden = false;
+    if (st.installerPresent) {
+      desc.textContent = 'Using each device’s built-in voices.';
+    } else {
+      desc.textContent =
+        'Server voices need the add-webchat-tts skill, which isn\u2019t in this install — re-run install-webchat.sh to add it. Device voices still work.';
+    }
+  }
+  if (st.running) {
+    pollTtsInstall();
+  } else {
+    btn.disabled = false;
+    btn.textContent = 'Install local voices';
+    btn.title = 'Run a local Kokoro voice model (~330MB, no cloud, no key). Without it the control uses your device voices.';
+  }
+}
+
+// ── Voice dictation (capture → /api/stt/transcribe → composer) ──────────────
+// mic → getUserMedia → AudioContext(16k) + pcm-worklet → PCM16 frames.
+// RMS silence detection cuts a segment (~700ms pause or 5s max) → WAV built
+// client-side → POST /api/stt/transcribe → committed text appends into the
+// composer as segments return. Tap the mic (or long trailing silence) to stop;
+// Esc cancels and discards. On stop, the dictated span is tidied via
+// /api/stt/cleanup (replaced with execCommand so Ctrl/Cmd+Z restores the raw
+// transcript). Sending is ALWAYS an explicit act — no path here submits.
+let sttConfig = null; // { enabled, cleanup, provider?, cleanupModelId?, canEdit? }
+let sttActive = false;
+let sttStopping = false;
+let sttAudioCtx = null;
+let sttStream = null;
+let sttWorkletNode = null;
+let sttSourceNode = null;
+let sttBeforeText = ''; // composer content that predates this dictation
+let sttCommitted = ''; // dictated text committed so far
+let sttPending = 0; // segments in flight
+let sttSegments = []; // Int16Array frames of the current segment
+let sttSegmentMs = 0;
+let sttSilenceMs = 0;
+let sttSpeechInSegment = false;
+let sttNoSpeechMs = 0; // total silence since last speech — drives auto-stop
+let sttInFlight = []; // promises of in-flight segment POSTs
+let sttToastShown = false;
+
+const STT_SAMPLE_RATE = 16000;
+const STT_SILENCE_CUT_MS = 700; // pause that closes a segment
+const STT_MAX_SEGMENT_MS = 5000; // hard cut so long speech still streams
+const STT_RMS_FLOOR = 0.012; // below this a frame counts as silence
+const STT_AUTOSTOP_MS = 12000; // this much continuous silence ends dictation
+
+let sttElapsedTimer = null;
+let sttStartedAt = 0;
+
+/** Recording chrome: mic ⇄ red pulsing stop square + elapsed chip (the
+ *  standard voice-recorder idiom, so state is unmistakable at a glance). */
+function sttSetRecordingChrome(on) {
+  const mic = $('#mic-btn');
+  const chip = $('#stt-elapsed');
+  const use = mic?.querySelector('use');
+  if (use) use.setAttribute('href', on ? '#i-square' : '#i-mic');
+  if (on) {
+    sttStartedAt = Date.now();
+    if (chip) {
+      chip.textContent = '0:00';
+      chip.hidden = false;
+    }
+    sttElapsedTimer = setInterval(() => {
+      const sec = Math.floor((Date.now() - sttStartedAt) / 1000);
+      const t = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+      if (chip) chip.textContent = t;
+      mic?.setAttribute('title', `Recording ${t} — tap to stop`);
+    }, 1000);
+  } else {
+    if (sttElapsedTimer) clearInterval(sttElapsedTimer);
+    sttElapsedTimer = null;
+    if (chip) chip.hidden = true;
+    mic?.setAttribute('title', 'Dictate');
+  }
+}
+
+function sttAnnounce(text) {
+  const el = $('#stt-status');
+  if (el) el.textContent = text;
+}
+
+/** Wrap accumulated PCM16 frames in a minimal 16 kHz mono WAV container. */
+function sttBuildWav(frames) {
+  let samples = 0;
+  for (const f of frames) samples += f.length;
+  const buf = new ArrayBuffer(44 + samples * 2);
+  const dv = new DataView(buf);
+  const writeStr = (off, s) => {
+    for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  dv.setUint32(4, 36 + samples * 2, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  dv.setUint32(16, 16, true); // PCM chunk size
+  dv.setUint16(20, 1, true); // PCM format
+  dv.setUint16(22, 1, true); // mono
+  dv.setUint32(24, STT_SAMPLE_RATE, true);
+  dv.setUint32(28, STT_SAMPLE_RATE * 2, true); // byte rate
+  dv.setUint16(32, 2, true); // block align
+  dv.setUint16(34, 16, true); // bits per sample
+  writeStr(36, 'data');
+  dv.setUint32(40, samples * 2, true);
+  let off = 44;
+  for (const f of frames) {
+    for (let i = 0; i < f.length; i++, off += 2) dv.setInt16(off, f[i], true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+function sttRenderInput() {
+  const input = $('#message-input');
+  if (!input) return;
+  const sep = sttBeforeText && sttCommitted ? ' ' : '';
+  input.value = sttBeforeText + sep + sttCommitted + (sttPending > 0 ? ' …' : '');
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/** Close the current segment and ship it for transcription (if it held speech). */
+function sttCutSegment() {
+  const frames = sttSegments;
+  const hadSpeech = sttSpeechInSegment;
+  sttSegments = [];
+  sttSegmentMs = 0;
+  sttSilenceMs = 0;
+  sttSpeechInSegment = false;
+  if (!hadSpeech || frames.length === 0) return;
+  const wav = sttBuildWav(frames);
+  sttPending++;
+  sttRenderInput();
+  const p = authFetch('/api/stt/transcribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'audio/wav' },
+    body: wav,
+  })
+    .then(async (r) => {
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || r.statusText);
+      const text = (body.text || '').trim();
+      if (text) {
+        sttCommitted = sttCommitted ? `${sttCommitted} ${text}` : text;
+      }
+    })
+    .catch((err) => {
+      if (!sttToastShown) {
+        sttToastShown = true;
+        showToast('Transcription failed: ' + err.message, { kind: 'error' });
+      }
+    })
+    .finally(() => {
+      sttPending--;
+      sttRenderInput();
+    });
+  sttInFlight.push(p);
+}
+
+/** Per-frame handler: RMS gate → segment bookkeeping → cut on pause/length. */
+function sttOnFrame(int16) {
+  if (!sttActive) return;
+  let sum = 0;
+  for (let i = 0; i < int16.length; i++) {
+    const s = int16[i] / 0x8000;
+    sum += s * s;
+  }
+  const rms = Math.sqrt(sum / int16.length);
+  const frameMs = (int16.length / STT_SAMPLE_RATE) * 1000;
+  sttSegments.push(int16);
+  sttSegmentMs += frameMs;
+  if (rms >= STT_RMS_FLOOR) {
+    sttSpeechInSegment = true;
+    sttSilenceMs = 0;
+    sttNoSpeechMs = 0;
+  } else {
+    sttSilenceMs += frameMs;
+    sttNoSpeechMs += frameMs;
+  }
+  if ((sttSpeechInSegment && sttSilenceMs >= STT_SILENCE_CUT_MS) || sttSegmentMs >= STT_MAX_SEGMENT_MS) {
+    sttCutSegment();
+  }
+  // Long total silence = the user walked away — stop as if the mic was tapped.
+  // Stopping only inserts text; it NEVER sends (F3).
+  if (sttNoSpeechMs >= STT_AUTOSTOP_MS && !sttStopping) {
+    stopDictation();
+  }
+}
+
+async function startDictation() {
+  if (sttActive) return;
+  const input = $('#message-input');
+  if (!input || input.disabled) return;
+  try {
+    sttStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    showToast('Microphone access denied — allow the mic for this site in browser settings.', { kind: 'error' });
+    return;
+  }
+  try {
+    sttAudioCtx = new AudioContext({ sampleRate: STT_SAMPLE_RATE });
+    await sttAudioCtx.audioWorklet.addModule('/pcm-worklet.js');
+    sttSourceNode = sttAudioCtx.createMediaStreamSource(sttStream);
+    sttWorkletNode = new AudioWorkletNode(sttAudioCtx, 'pcm-worklet');
+    sttWorkletNode.port.onmessage = (e) => sttOnFrame(new Int16Array(e.data));
+    sttSourceNode.connect(sttWorkletNode);
+  } catch (err) {
+    showToast('Could not start audio capture: ' + err.message, { kind: 'error' });
+    sttTeardownAudio();
+    return;
+  }
+  sttActive = true;
+  sttStopping = false;
+  sttToastShown = false;
+  sttBeforeText = input.value.trim();
+  sttCommitted = '';
+  sttPending = 0;
+  sttSegments = [];
+  sttSegmentMs = 0;
+  sttSilenceMs = 0;
+  sttSpeechInSegment = false;
+  sttNoSpeechMs = 0;
+  sttInFlight = [];
+  const mic = $('#mic-btn');
+  mic?.classList.add('recording');
+  mic?.setAttribute('aria-label', 'Stop dictation');
+  mic?.setAttribute('aria-pressed', 'true');
+  sttSetRecordingChrome(true);
+  sttAnnounce('Listening…');
+}
+
+function sttTeardownAudio() {
+  try {
+    sttSourceNode?.disconnect();
+    sttWorkletNode?.disconnect();
+  } catch {
+    /* already gone */
+  }
+  sttStream?.getTracks().forEach((t) => t.stop());
+  sttAudioCtx?.close().catch(() => {});
+  sttStream = null;
+  sttAudioCtx = null;
+  sttWorkletNode = null;
+  sttSourceNode = null;
+}
+
+function sttResetMicButton() {
+  const mic = $('#mic-btn');
+  mic?.classList.remove('recording');
+  mic?.setAttribute('aria-label', 'Start dictation');
+  mic?.setAttribute('aria-pressed', 'false');
+  sttSetRecordingChrome(false);
+}
+
+/** Stop capture, flush the tail segment, wait for transcripts, then tidy. */
+async function stopDictation() {
+  if (!sttActive || sttStopping) return;
+  sttStopping = true;
+  sttActive = false;
+  sttCutSegment(); // flush whatever's buffered
+  sttTeardownAudio();
+  sttResetMicButton();
+  sttAnnounce('Transcribing…');
+  await Promise.allSettled(sttInFlight);
+  sttRenderInput();
+  await sttCleanupPass();
+  sttStopping = false;
+  sttAnnounce('');
+}
+
+/** Esc = cancel: discard everything dictated, restore the prior composer text. */
+function cancelDictation() {
+  if (!sttActive) return;
+  sttActive = false;
+  sttStopping = false;
+  sttTeardownAudio();
+  sttResetMicButton();
+  sttCommitted = '';
+  sttPending = 0;
+  const input = $('#message-input');
+  if (input) {
+    input.value = sttBeforeText;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  sttAnnounce('Dictation cancelled');
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && sttActive) {
+    e.preventDefault();
+    cancelDictation();
+  }
+});
+
+/**
+ * Tidy the dictated span via the server's cleanup model. The replacement goes
+ * through execCommand('insertText') over a selection of just the dictated
+ * text, so the native undo stack (Ctrl/Cmd+Z) restores the raw transcript.
+ */
+async function sttCleanupPass() {
+  if (!sttConfig?.cleanup || !sttCommitted.trim()) return;
+  const input = $('#message-input');
+  if (!input) return;
+  const raw = sttCommitted;
+  const mic = $('#mic-btn');
+  mic?.classList.add('tidying');
+  try {
+    const r = await authFetch('/api/stt/cleanup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: raw }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok || !body.cleaned || typeof body.text !== 'string') return;
+    // The composer may have been edited while we waited — only swap if the
+    // dictated span is still exactly where we left it.
+    const sep = sttBeforeText && raw ? ' ' : '';
+    const expected = sttBeforeText + sep + raw;
+    if (input.value !== expected) return;
+    const start = (sttBeforeText + sep).length;
+    input.focus();
+    input.setSelectionRange(start, input.value.length);
+    const before = input.value;
+    document.execCommand('insertText', false, body.text);
+    if (input.value === before) {
+      input.setRangeText(body.text, start, before.length, 'end');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    sttCommitted = body.text;
+  } catch {
+    /* raw transcript stays — cleanup is best-effort */
+  } finally {
+    mic?.classList.remove('tidying');
+  }
+}
+
+$('#mic-btn')?.addEventListener('click', () => {
+  if (sttActive) stopDictation();
+  else startDictation();
+});
+
+/** Post-auth: reveal the mic when the server has an STT backend configured. */
+async function initSttFeature() {
+  try {
+    const r = await authFetch('/api/stt/config');
+    if (!r.ok) return;
+    sttConfig = await r.json();
+    $('#mic-btn').hidden = !sttConfig.enabled;
+  } catch {
+    /* feature stays hidden */
+  }
+}
+
+// ── Settings → Features → Voice dictation (install + config, owner-only) ────
+// Backend segmented Local/ElevenLabs; Local shows the hardware-suggested model
+// select + Install, ElevenLabs swaps to key + Connect. Same install-row/log/
+// badge flow as Read aloud, through /api/webchat/stt/install.
+let sttInstallWired = false;
+let sttInstallActive = false;
+let sttChosenBackend = 'local';
+let sttLastState = null; // last /api/webchat/stt/install snapshot (render + change guard)
+
+// STT install DOM sets — Settings → Features and the wizard's Features step drive
+// the SAME /api/webchat/stt/install, each passing its own element ids so one
+// install/poll path serves both surfaces (mirrors the TTS pattern).
+const STT_SETTINGS_ELS = { btn: '#stt-install-btn', log: '#stt-install-log', progress: '#stt-install-progress' };
+
+async function pollSttInstall(els = STT_SETTINGS_ELS, onDone) {
+  if (sttInstallActive) return;
+  sttInstallActive = true;
+  const btn = $(els.btn);
+  const log = $(els.log);
+  const progress = $(els.progress);
+  if (progress) progress.hidden = false;
+  if (btn) btn.disabled = true;
+  try {
+    while (true) {
+      const st = await (await authFetch('/api/webchat/stt/install')).json();
+      if (log) {
+        log.textContent = (st.lines || []).slice(-12).join('\n') || 'Starting…';
+        log.scrollTop = log.scrollHeight;
+      }
+      if (!st.running) {
+        if (st.exitCode === 0) {
+          showToast('Voice dictation installed — the mic is live', { kind: 'success' });
+          await initSttFeature(); // reveal the composer mic immediately
+        } else {
+          showToast('Voice dictation install failed — see log', { kind: 'error' });
+        }
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  } catch (err) {
+    showToast('Voice dictation install error: ' + err.message, { kind: 'error' });
+  } finally {
+    sttInstallActive = false;
+    renderSttSetupSettings();
+    if (onDone) onDone();
+  }
+}
+
+async function runSttInstall(payload, els = STT_SETTINGS_ELS, onDone) {
+  const btn = $(els.btn);
+  const log = $(els.log);
+  const progress = $(els.progress);
+  if (progress) progress.hidden = false;
+  const done = btn ? wizardBusy(btn, 'Installing…') : null; // spinner, like the step-0 installs
+  if (log) log.textContent = 'Starting…';
+  try {
+    const res = await authFetch('/api/webchat/stt/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok && res.status !== 202) {
+      const err = await res.json().catch(() => ({}));
+      if (log) log.textContent = 'Install failed: ' + (err.error || res.status);
+      showToast('Voice dictation install failed', { kind: 'error' });
+      done?.();
+      return;
+    }
+    pollSttInstall(els, onDone); // completion re-renders the surface, clearing the spinner
+  } catch (err) {
+    if (log) log.textContent = 'Install failed: ' + err.message;
+    done?.();
+  }
+}
+
+function sttPopulateModelSelect(st) {
+  const select = $('#stt-model-select');
+  if (!select || !Array.isArray(st.models)) return;
+  if (select.options.length === 0) {
+    for (const m of st.models) {
+      const opt = document.createElement('option');
+      opt.value = m;
+      opt.textContent = m === st.suggestedModel ? `${m} (suggested)` : m;
+      select.appendChild(opt);
+    }
+  }
+  select.value = st.model || st.suggestedModel || st.models[0];
+}
+
+/** Show/hide the pre-install pickers for the chosen backend. */
+function sttRenderBackendChoice(st) {
+  document
+    .querySelectorAll('#stt-backend-mode .setting-option')
+    .forEach((b) => b.classList.toggle('active', b.dataset.value === sttChosenBackend));
+  const local = sttChosenBackend === 'local';
+  $('#stt-model-group').hidden = !local || !st.installerPresent;
+  $('#stt-install-btn').hidden = !local || !st.installerPresent;
+  $('#stt-key-group').hidden = local;
+  if (local) sttPopulateModelSelect(st);
+}
+
+/** Populate the cleanup select from the roster (owner path of /api/stt/config). */
+async function renderSttCleanupSelect(cfg) {
+  const group = $('#stt-cleanup-group');
+  const select = $('#stt-cleanup-select');
+  if (!group || !select) return;
+  group.hidden = false;
+  try {
+    const models = await (await authFetch('/api/models')).json();
+    select.innerHTML = '<option value="">None — raw transcript</option>';
+    for (const m of models) {
+      if ((m.kind !== 'ollama' && m.kind !== 'openai-compatible') || !m.endpoint) continue;
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = `${m.name} (${m.model_id})`;
+      select.appendChild(opt);
+    }
+    select.value = cfg.cleanupModelId || '';
+  } catch {
+    /* leave the None option */
+  }
+}
+
+async function renderSttSetupSettings() {
+  const section = $('#settings-stt');
+  if (!section) return;
+  let st = null;
+  try {
+    const res = await authFetch('/api/webchat/stt/install');
+    if (res.ok) st = await res.json();
+  } catch {
+    st = null;
+  }
+  if (!st) {
+    section.hidden = true; // non-owner: no install surface at all
+    return;
+  }
+  sttLastState = st;
+  section.hidden = false;
+  const btn = $('#stt-install-btn');
+  const badge = $('#stt-installed-badge');
+  const progress = $('#stt-install-progress');
+  const desc = $('#stt-setup-desc');
+  if (!sttInstallWired) {
+    sttInstallWired = true;
+    document.querySelectorAll('#stt-backend-mode .setting-option').forEach((b) => {
+      b.addEventListener('click', () => {
+        sttChosenBackend = b.dataset.value;
+        renderSttSetupSettings();
+      });
+    });
+    btn?.addEventListener('click', () => {
+      runSttInstall({ provider: 'local', model: $('#stt-model-select')?.value || undefined });
+    });
+    // Workspace Off/On — mirrors Read aloud: owner flips the mic for everyone.
+    document.querySelectorAll('#stt-enabled-mode .setting-option').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const on = b.dataset.value === 'on';
+        const r = await authFetch('/api/stt/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: on }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          showToast('Failed to save: ' + (err.error || r.statusText), { kind: 'error' });
+          return;
+        }
+        document.querySelectorAll('#stt-enabled-mode .setting-option')
+          .forEach((x) => x.classList.toggle('active', x === b));
+        const mic = $('#mic-btn');
+        if (mic) mic.hidden = !on;
+        if (!on && sttActive) cancelDictation();
+        showToast(on ? 'Voice dictation on for everyone' : 'Voice dictation off for everyone');
+      });
+    });
+    // Installed + local: picking a different model re-runs the installer for it
+    // (downloads if new, restarts the container) with the usual progress log.
+    $('#stt-model-select')?.addEventListener('change', () => {
+      if (!sttLastState?.installed || sttLastState.provider !== 'local') return;
+      const model = $('#stt-model-select').value;
+      if (!model || model === sttLastState.model) return;
+      showToast(`Switching to ${model}…`, { kind: 'info' });
+      runSttInstall({ provider: 'local', model });
+    });
+    $('#stt-connect-btn')?.addEventListener('click', () => {
+      const key = ($('#stt-api-key')?.value || '').trim();
+      if (!key) {
+        showToast('Enter the ElevenLabs API key first', { kind: 'error' });
+        return;
+      }
+      runSttInstall({ provider: 'elevenlabs', apiKey: key });
+      $('#stt-api-key').value = '';
+    });
+    // Cleanup-prompt editor: Edit… disclosure → textarea + Save / Reset.
+    $('#stt-prompt-edit')?.addEventListener('click', () => {
+      const editor = $('#stt-prompt-editor');
+      const open = editor.hidden;
+      editor.hidden = !open;
+      $('#stt-prompt-edit').setAttribute('aria-expanded', String(open));
+      if (open) $('#stt-prompt-text').focus();
+    });
+    $('#stt-prompt-save')?.addEventListener('click', async () => {
+      const value = $('#stt-prompt-text').value.trim();
+      const r = await authFetch('/api/stt/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cleanupPrompt: value || null }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        showToast('Failed to save: ' + (body.error || r.statusText), { kind: 'error' });
+        return;
+      }
+      $('#stt-prompt-editor').hidden = true;
+      $('#stt-prompt-edit').setAttribute('aria-expanded', 'false');
+      showToast(body.cleanupPrompt ? 'Cleanup prompt saved' : 'Cleanup prompt reset to default', { kind: 'success' });
+      renderSttSetupSettings();
+    });
+    $('#stt-prompt-reset')?.addEventListener('click', async () => {
+      const r = await authFetch('/api/stt/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cleanupPrompt: null }),
+      });
+      if (!r.ok) {
+        showToast('Failed to reset', { kind: 'error' });
+        return;
+      }
+      $('#stt-prompt-editor').hidden = true;
+      $('#stt-prompt-edit').setAttribute('aria-expanded', 'false');
+      showToast('Cleanup prompt reset to default', { kind: 'success' });
+      renderSttSetupSettings();
+    });
+    $('#stt-cleanup-select')?.addEventListener('change', async () => {
+      const value = $('#stt-cleanup-select').value || null;
+      const r = await authFetch('/api/stt/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cleanupModelId: value }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        showToast('Failed to save: ' + (err.error || r.statusText), { kind: 'error' });
+        renderSttSetupSettings(); // resync to server truth
+        return;
+      }
+      sttConfig = { ...sttConfig, cleanup: value !== null, cleanupModelId: value };
+      showToast(value ? 'Cleanup model saved' : 'Cleanup turned off', { kind: 'success' });
+    });
+  }
+  if (st.installed) {
+    badge.hidden = false;
+    btn.hidden = true;
+    $('#stt-backend-group').hidden = true;
+    $('#stt-key-group').hidden = true;
+    $('#stt-enabled-group').hidden = false;
+    document.querySelectorAll('#stt-enabled-mode .setting-option').forEach((b) => {
+      b.classList.toggle('active', b.dataset.value === (st.enabled ? 'on' : 'off'));
+    });
+    // Local backend: the model stays visible and switchable after install.
+    const localModel = st.provider === 'local' && st.installerPresent;
+    $('#stt-model-group').hidden = !localModel;
+    if (localModel) {
+      sttPopulateModelSelect(st);
+      const label = $('#stt-model-label');
+      if (label) label.textContent = 'Model (Whisper)';
+    }
+    if (desc) desc.hidden = true;
+    progress.hidden = !st.running;
+    if (st.running) pollSttInstall();
+    // Cleanup model applies whichever backend transcribes.
+    try {
+      const cfg = await (await authFetch('/api/stt/config')).json();
+      if (cfg.canEdit) {
+        await renderSttCleanupSelect(cfg);
+        // Prompt editor: prefill with the effective prompt; Reset only shows
+        // when a custom prompt is stored.
+        $('#stt-prompt-row').hidden = false;
+        $('#stt-prompt-text').value = cfg.cleanupPrompt || cfg.defaultCleanupPrompt || '';
+        $('#stt-prompt-reset').hidden = !cfg.cleanupPrompt;
+      }
+    } catch {
+      /* cleanup select stays as-is */
+    }
+    return;
+  }
+  badge.hidden = true;
+  $('#stt-enabled-group').hidden = true;
+  $('#stt-cleanup-group').hidden = true;
+  $('#stt-prompt-row').hidden = true;
+  $('#stt-prompt-editor').hidden = true;
+  $('#stt-backend-group').hidden = false;
+  // Prereq hint (the only prose allowed here): explain a hidden Install button.
+  if (desc) {
+    desc.hidden = st.installerPresent || sttChosenBackend !== 'local';
+    if (!st.installerPresent) {
+      desc.textContent =
+        'The local backend needs the add-webchat-dictation skill, which isn’t in this install — re-run install-webchat.sh to add it, or use ElevenLabs.';
+    }
+  }
+  sttRenderBackendChoice(st);
+  if (st.running) {
+    pollSttInstall();
+  } else if (btn) {
+    btn.disabled = false;
+    btn.textContent = 'Install';
+    btn.title = 'Run whisper.cpp locally with the selected model — no cloud, no key. Model download sized to this machine.';
+  }
+}
+
+// ── Settings → Features → Auto-learn (workspace master, owner-only) ─────────
+// The master kill switch for the learning loop. Owner-gated (the section hides
+// for non-owners). Off disables learning workspace-wide and, via the flag,
+// removes the per-agent / per-room learning controls. Behavior applies to each
+// agent on its next spawn.
+let autoLearnWired = false;
+async function renderAutoLearnSetting() {
+  const section = document.getElementById('settings-autolearn');
+  if (!section) return;
+  let cfg = null;
+  try {
+    const r = await authFetch('/api/learning/config');
+    if (r.ok) cfg = await r.json();
+  } catch {
+    cfg = null;
+  }
+  if (!cfg || !cfg.canEdit) {
+    section.hidden = true; // non-owner: no master control surface
+    return;
+  }
+  section.hidden = false;
+  learningMasterEnabled = cfg.enabled !== false;
+  document.querySelectorAll('#autolearn-mode .setting-option').forEach((b) => {
+    b.classList.toggle('active', b.dataset.value === (learningMasterEnabled ? 'on' : 'off'));
+  });
+  // Classifier picker — only meaningful while learning is on.
+  const clfGroup = document.getElementById('autolearn-classifier-group');
+  const clfSelect = document.getElementById('autolearn-classifier-select');
+  if (clfGroup) clfGroup.hidden = !learningMasterEnabled;
+  if (learningMasterEnabled && clfSelect && clfSelect.options.length <= 1) {
+    try {
+      const models = await (await authFetch('/api/models')).json();
+      clfSelect.innerHTML = '<option value="">None — busy-turn heuristic</option>';
+      for (const m of models) {
+        if ((m.kind !== 'ollama' && m.kind !== 'openai-compatible') || !m.endpoint) continue;
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = `${m.name} (${m.model_id})`;
+        clfSelect.appendChild(opt);
+      }
+    } catch {
+      /* leave the None option */
+    }
+  }
+  if (clfSelect) clfSelect.value = cfg.classifierModelId || '';
+  if (autoLearnWired) return;
+  autoLearnWired = true;
+  document.querySelectorAll('#autolearn-mode .setting-option').forEach((b) => {
+    b.addEventListener('click', async () => {
+      const on = b.dataset.value === 'on';
+      const r = await authFetch('/api/learning/config', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: on }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        showToast('Failed to save: ' + (err.error || r.statusText), { kind: 'error' });
+        return;
+      }
+      learningMasterEnabled = on;
+      document.querySelectorAll('#autolearn-mode .setting-option')
+        .forEach((x) => x.classList.toggle('active', x === b));
+      applyLearningMaster();
+      if (clfGroup) clfGroup.hidden = !on;
+      showToast(on
+        ? 'Auto-learn on — takes effect as each agent restarts'
+        : 'Auto-learn off for the whole workspace — takes effect as each agent restarts');
+    });
+  });
+  clfSelect?.addEventListener('change', async () => {
+    const value = clfSelect.value || null;
+    const r = await authFetch('/api/learning/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ classifierModelId: value }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      showToast('Failed to save: ' + (err.error || r.statusText), { kind: 'error' });
+      renderAutoLearnSetting();
+      return;
+    }
+    showToast(value
+      ? 'Classifier set — decides skill-worthy turns (applies as agents restart)'
+      : 'Classifier off — back to the busy-turn heuristic', { kind: 'success' });
+  });
+}
+
+// ── Settings → Approval pre-judge (owner-only) ──────────────────────────────
+// An optional LLM triage tier in front of approval holds (docs/webchat/
+// approval-prejudge.md). Judge model Off = feature off; the action opt-ins
+// appear once a judge is set. Never-listed actions render disabled — they
+// always reach a human, no matter what.
+async function renderPrejudgeSettings() {
+  const section = $('#settings-prejudge');
+  if (!section) return;
+  section.hidden = !isOwnerView;
+  if (!isOwnerView) return;
+  let cfg = null;
+  try {
+    const r = await authFetch('/api/approvals/prejudge');
+    if (r.ok) cfg = await r.json();
+  } catch {}
+  if (!cfg) {
+    section.hidden = true; // endpoint 403'd or failed — no surface
+    return;
+  }
+  const sel = $('#prejudge-model-select');
+  // Rebuild the options every open — the roster may have changed. Only
+  // models the PUT accepts are listed: anthropic kind (OneCLI-proxied), or
+  // a local kind with an endpoint.
+  sel.innerHTML = '';
+  const off = document.createElement('option');
+  off.value = '';
+  off.textContent = 'Off';
+  sel.appendChild(off);
+  try {
+    const models = await (await authFetch('/api/models')).json();
+    for (const m of models) {
+      const usable = m.kind === 'anthropic' || ((m.kind === 'ollama' || m.kind === 'openai-compatible') && m.endpoint);
+      if (!usable) continue;
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      opt.textContent = `${m.name} (${m.model_id})`;
+      sel.appendChild(opt);
+    }
+  } catch {
+    /* roster unavailable — Off still renders */
+  }
+  sel.value = cfg.modelId || '';
+  if (sel.value !== (cfg.modelId || '')) sel.value = ''; // stored judge left the roster
+  renderPrejudgeActions(cfg);
+  sel.onchange = async () => {
+    try {
+      const out = await apiJson('/api/approvals/prejudge', {
+        method: 'PUT',
+        body: { modelId: sel.value || null },
+      });
+      showToast(sel.value ? 'Approval pre-judge on' : 'Approval pre-judge off', { kind: 'success' });
+      renderPrejudgeActions(out);
+    } catch (err) {
+      showToast('Could not save: ' + (err?.message || err), { kind: 'error' });
+      renderPrejudgeSettings();
+    }
+  };
+}
+
+function renderPrejudgeActions(cfg) {
+  const group = $('#prejudge-actions-group');
+  const list = $('#prejudge-actions-list');
+  if (!group || !list) return;
+  group.hidden = !cfg.modelId;
+  if (!cfg.modelId) return;
+  list.innerHTML = '';
+  const never = new Set(cfg.neverList?.actions || []);
+  const opted = new Set(cfg.actions || []);
+  // Everything a handler is registered for, plus the never-list (shown
+  // disabled) and anything already opted in on an older install.
+  const actions = [...new Set([...(cfg.knownActions || []), ...never, ...opted])].sort();
+  for (const action of actions) {
+    const label = document.createElement('label');
+    label.className = 'setting-toggle';
+    const name = document.createElement('span');
+    name.textContent = action;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.dataset.action = action;
+    cb.checked = opted.has(action);
+    if (never.has(action)) {
+      cb.checked = false;
+      cb.disabled = true;
+      label.classList.add('prejudge-never');
+      label.title = 'Always needs a human';
+    } else {
+      cb.addEventListener('change', async () => {
+        const next = [...list.querySelectorAll('input:not(:disabled):checked')].map((el) => el.dataset.action);
+        try {
+          await apiJson('/api/approvals/prejudge', { method: 'PUT', body: { actions: next } });
+          showToast('Approval pre-judge saved', { kind: 'success' });
+        } catch (err) {
+          cb.checked = !cb.checked;
+          showToast('Could not save: ' + (err?.message || err), { kind: 'error' });
+        }
+      });
+    }
+    label.append(name, cb);
+    list.appendChild(label);
+  }
+}
+
+// ── Settings → "Set up routing" (one-click add-routing install) ─────────────
+// Owner-only (the /api/router/install endpoint 403s otherwise, hiding the whole
+// section). Scaffolds routing + pulls the classifier model, then the Routing tab
+// appears via probeRoutingAvailability().
+let routingInstallWired = false;
+let routingInstallActive = false;
+
+// Element ids for the routing-install progress surfaces. Settings and the wizard
+// each own a copy of the same three nodes; the install/poll logic is shared and
+// just targets whichever set it's handed.
+const ROUTING_ELS_SETTINGS = { log: '#routing-install-log', bar: '#routing-pull-bar', label: '#routing-pull-label' };
+
+function renderRoutingInstallProgress(st, els = ROUTING_ELS_SETTINGS) {
+  const log = $(els.log);
+  const bar = $(els.bar);
+  const label = $(els.label);
+  log.textContent = (st.lines || []).slice(-12).join('\n') || 'Starting…';
+  log.scrollTop = log.scrollHeight;
+  const pull = st.pull;
+  if (pull) {
+    bar.hidden = false;
+    label.hidden = false;
+    const pct = pull.total > 0 ? Math.min(100, Math.round((100 * pull.completed) / pull.total)) : 0;
+    bar.querySelector('span').style.width = pct + '%';
+    if (pull.status === 'pulling') label.textContent = 'Classifier model: ' + (pull.detail || 'downloading…') + ' (' + pct + '%)';
+    else if (pull.status === 'success') label.textContent = 'Classifier model ready.';
+    else label.textContent = 'Classifier model pull failed: ' + (pull.error || '');
+  } else {
+    bar.hidden = true;
+    label.hidden = true;
+  }
+}
+
+// Poll until the install chain finishes (Routing tab appears then) AND the model
+// pull is no longer downloading (so the progress bar reaches completion).
+async function pollRoutingInstall() {
+  if (routingInstallActive) return;
+  routingInstallActive = true;
+  const btn = $('#routing-install-btn');
+  $('#routing-install-progress').hidden = false;
+  btn.disabled = true;
+  let chainHandled = false;
+  try {
+    while (true) {
+      const st = await (await authFetch('/api/router/install')).json();
+      renderRoutingInstallProgress(st);
+      if (!st.running && !chainHandled) {
+        chainHandled = true;
+        if (st.exitCode === 0) {
+          // Installing routing means using it — flip it live (the server registers
+          // the selectable 'auto' model on this PUT) instead of leaving it in
+          // shadow behind a separate toggle.
+          try {
+            await authFetch('/api/router/routes', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ live: { enabled: true } }),
+            });
+          } catch {
+            /* non-fatal — routing still installed; the roster refresh below shows state */
+          }
+          await fetchModels(); // pick up the freshly-registered 'auto' model
+          showToast('Auto routing installed and live — assign the “auto” model to an agent.', { kind: 'success' });
+          await probeRoutingAvailability(); // un-hides the Auto routing tab + menu item
+        } else {
+          showToast('Auto routing setup failed — see log', { kind: 'error' });
+          break;
+        }
+      }
+      const pullDone = !st.pull || st.pull.status !== 'pulling';
+      if (!st.running && pullDone) break;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  } catch (err) {
+    showToast('Auto routing setup error: ' + err.message, { kind: 'error' });
+  } finally {
+    routingInstallActive = false;
+    renderRoutingSetupSettings(); // reflect installed state / re-enable
+  }
+}
+
+// Phase-1 helper: install the LiteLLM router (routing's prerequisite) and
+// stream its log into the shared routing-install box, resolving true on
+// success. Automates what used to require running /add-litellm in a shell, so
+// the one-click Install flow no longer dead-ends on the missing prerequisite.
+async function installLitellmPhase(log) {
+  log.textContent = 'Installing the LiteLLM router…';
+  let res;
+  try {
+    res = await authFetch('/api/router/litellm-install', { method: 'POST' });
+  } catch (err) {
+    log.textContent = 'LiteLLM install failed: ' + err.message;
+    showToast('LiteLLM install failed', { kind: 'error' });
+    return false;
+  }
+  if (!res.ok && res.status !== 202) {
+    const err = await res.json().catch(() => ({}));
+    log.textContent = 'LiteLLM install failed: ' + (err.error || res.status);
+    showToast('LiteLLM install failed', { kind: 'error' });
+    return false;
+  }
+  while (true) {
+    const st = await (await authFetch('/api/router/litellm-install')).json();
+    if (Array.isArray(st.lines) && st.lines.length) log.textContent = st.lines.slice(-12).join('\n');
+    if (!st.running) {
+      if (st.exitCode === 0) {
+        showToast('LiteLLM router installed', { kind: 'success' });
+        return true;
+      }
+      showToast('LiteLLM install failed — see log', { kind: 'error' });
+      return false;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
+async function runRoutingInstall() {
+  const btn = $('#routing-install-btn');
+  const log = $('#routing-install-log');
+  $('#routing-install-progress').hidden = false;
+  btn.disabled = true;
+  btn.textContent = 'Installing…';
+  log.textContent = 'Starting…';
+  try {
+    // Phase 1 — ensure the LiteLLM router is present. If it's missing, install
+    // it here and wait for it to finish before layering routing on top.
+    const pre = await (await authFetch('/api/router/install')).json().catch(() => ({}));
+    if (!pre.litellmReady) {
+      const ok = await installLitellmPhase(log);
+      if (!ok) {
+        btn.disabled = false;
+        btn.textContent = 'Install';
+        return;
+      }
+    }
+    // Phase 2 — install auto routing (shadow mode).
+    const res = await authFetch('/api/router/install', { method: 'POST' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      log.textContent = 'Install failed: ' + (err.error || res.status);
+      showToast('Auto routing setup failed', { kind: 'error' });
+      btn.disabled = false;
+      btn.textContent = 'Install';
+      return;
+    }
+    pollRoutingInstall();
+  } catch (err) {
+    log.textContent = 'Install failed: ' + err.message;
+    showToast('Auto routing setup failed', { kind: 'error' });
+    btn.disabled = false;
+    btn.textContent = 'Install';
+  }
+}
+
+async function renderRoutingSetupSettings() {
+  const section = $('#settings-routing');
+  let st;
+  try {
+    const res = await authFetch('/api/router/install');
+    if (!res.ok) { section.hidden = true; return; } // 403 (non-owner) etc. → no surface
+    st = await res.json();
+  } catch {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+
+  const btn = $('#routing-install-btn');
+  const desc = $('#routing-setup-desc');
+  const badge = $('#routing-installed-badge');
+  const progress = $('#routing-install-progress');
+
+  if (!routingInstallWired) {
+    routingInstallWired = true;
+    btn.addEventListener('click', runRoutingInstall);
+  }
+
+  // "Busy" = the install chain is running OR the classifier model is still
+  // downloading. Either way, show the progress surfaces and keep polling.
+  const pulling = Boolean(st.pull && st.pull.status === 'pulling');
+  const busy = st.running || pulling;
+
+  // Already scaffolded → green ✓ Installed (badge title points at the Auto
+  // routing tab). Keep the pull bar visible if the classifier model is still
+  // coming down.
+  if (st.installed) {
+    btn.hidden = true;
+    desc.hidden = true;
+    badge.hidden = false;
+    if (busy) {
+      progress.hidden = false;
+      renderRoutingInstallProgress(st);
+      pollRoutingInstall();
+    } else {
+      progress.hidden = true;
+    }
+    return;
+  }
+  badge.hidden = true;
+  btn.hidden = false;
+  btn.textContent = busy ? 'Installing…' : 'Install';
+  // The Install flow sets up the LiteLLM router first if it's missing, so the
+  // button stays live either way.
+  btn.disabled = busy;
+  desc.hidden = true;
+  if (busy) {
+    progress.hidden = false;
+    renderRoutingInstallProgress(st);
+    pollRoutingInstall(); // resume streaming if a reopen happened mid-install
+  } else {
+    progress.hidden = true;
+  }
+}
+
+// ── Sidebar overflow menu (Dashboard / Permissions / Settings) ──────────────
+// Replaces the three unlabeled glyph buttons with one self-labeling menu, so
+// the occasional surfaces are discoverable (no more cryptic ▦/key/⚙ icons).
+function closeOverflowMenu() {
+  const menu = $('#overflow-menu');
+  if (!menu) return;
+  menu.hidden = true;
+  $('#overflow-btn')?.setAttribute('aria-expanded', 'false');
+}
+$('#overflow-btn')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const menu = $('#overflow-menu');
+  const open = menu.hidden;
+  menu.hidden = !open;
+  $('#overflow-btn').setAttribute('aria-expanded', String(open));
+  // Re-probe on open so a routing install done elsewhere (in-app, CLI, another
+  // tab) reveals Auto routing here without a full reload.
+  if (open) void probeRoutingAvailability();
+});
+$('#overflow-menu')?.addEventListener('click', (e) => {
+  const item = e.target.closest('.overflow-item');
+  if (!item) return;
+  closeOverflowMenu();
+  const action = item.dataset.action;
+  if (action === 'agents') openManage('agents');
+  else if (action === 'models') openManage('models');
+  else if (action === 'mcp') openManage('mcp');
+  else if (action === 'skills') openManage('skills');
+  else if (action === 'routing') openManage('routing');
+  else if (action === 'journey') toggleJourney();
+  else if (action === 'topology') toggleTopology();
+  else if (action === 'wiring') toggleMatrix();
+  else if (action === 'dashboard') toggleDashboard();
+  else if (action === 'permissions') togglePermissions();
+  else if (action === 'settings') openSettings();
+  else if (action === 'help') toggleHelp();
+});
+document.addEventListener('click', (e) => {
+  const menu = $('#overflow-menu');
+  if (menu && !menu.hidden && !menu.contains(e.target) && e.target !== $('#overflow-btn')) closeOverflowMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeOverflowMenu();
+});
+$('#settings-close').addEventListener('click', closeSettings);
+$('#settings-overlay').addEventListener('click', (e) => {
+  if (e.target === $('#settings-overlay')) closeSettings();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#settings-overlay').hidden) closeSettings();
+});
+
+// Image lightbox — opened from file-bubble image clicks. Closes via ×, backdrop tap,
+// ESC, or device back gesture. pushState lets the OS back gesture / Android back
+// button dismiss the viewer instead of leaving the app (the common mobile pain).
+//
+// Features: prev/next nav over all images in the current room, pinch-zoom +
+// drag-to-pan on touch, native browser zoom on desktop, loading spinner for
+// slow images, explicit download button, fade-out on close, body-scroll lock.
+let lightboxOpen = false;
+let lightboxImages = []; // [{ url, alt }] snapshot taken on open
+let lightboxIndex = 0;
+let prevBodyOverflow = '';
+let lightboxCloseTimer = null;
+
+// Transform state for pinch-zoom + pan.
+const lightboxXf = { scale: 1, x: 0, y: 0 };
+const lightboxGesture = {
+  startScale: 1,
+  startDist: 0,
+  startX: 0,
+  startY: 0,
+  startTouchX: 0,
+  startTouchY: 0,
+  mode: null, // 'pinch' | 'pan' | null
+};
+
+function applyLightboxTransform() {
+  const img = $('#lightbox-img');
+  img.style.transform = `translate(${lightboxXf.x}px, ${lightboxXf.y}px) scale(${lightboxXf.scale})`;
+}
+function resetLightboxTransform() {
+  lightboxXf.scale = 1;
+  lightboxXf.x = 0;
+  lightboxXf.y = 0;
+  applyLightboxTransform();
+}
+function snapshotRoomImages() {
+  // Snapshot all currently-rendered file-image-previews in DOM (top-to-bottom)
+  // order so prev/next walks the room's image attachments.
+  const imgs = document.querySelectorAll('#messages .file-image-preview');
+  return Array.from(imgs).map((el) => ({ url: el.src, alt: el.alt || '' }));
+}
+function setLightboxImage(idx) {
+  if (idx < 0 || idx >= lightboxImages.length) return;
+  lightboxIndex = idx;
+  const { url, alt } = lightboxImages[idx];
+  const img = $('#lightbox-img');
+  const spinner = $('#lightbox-spinner');
+  resetLightboxTransform();
+  spinner.hidden = false;
+  img.style.visibility = 'hidden';
+  // Assign via property (not addEventListener) so each new load cleanly
+  // replaces the previous handler — rapid next/next doesn't stack callbacks.
+  img.onload = img.onerror = () => {
+    spinner.hidden = true;
+    img.style.visibility = '';
+  };
+  img.src = url;
+  img.alt = alt;
+  // Download href tracks the current image. Filename derived from URL tail.
+  const dl = $('#lightbox-download');
+  dl.href = url;
+  try {
+    const tail = new URL(url, location.href).pathname.split('/').pop();
+    if (tail) dl.setAttribute('download', tail);
+  } catch {
+    dl.setAttribute('download', '');
+  }
+  // Toggle prev/next visibility
+  $('#lightbox-prev').hidden = idx <= 0;
+  $('#lightbox-next').hidden = idx >= lightboxImages.length - 1;
+}
+function openLightbox(url, alt) {
+  // If a previous close is still mid-fade, cancel its pending hide so we
+  // don't slam the freshly-opened lightbox closed 150ms from now.
+  if (lightboxCloseTimer) {
+    clearTimeout(lightboxCloseTimer);
+    lightboxCloseTimer = null;
+  }
+  lightboxImages = snapshotRoomImages();
+  // Find which image was clicked. Match by URL; fall back to a 1-entry list.
+  let idx = lightboxImages.findIndex((it) => it.url === url);
+  if (idx === -1) {
+    lightboxImages = [{ url, alt: alt || '' }];
+    idx = 0;
+  }
+  const overlay = $('#lightbox');
+  overlay.classList.remove('closing');
+  overlay.hidden = false;
+  lightboxOpen = true;
+  prevBodyOverflow = document.body.style.overflow;
+  document.body.style.overflow = 'hidden';
+  setLightboxImage(idx);
+  history.pushState({ lightbox: true }, '');
+  // Defer focus so the dialog is on-screen before focus moves
+  requestAnimationFrame(() => $('#lightbox-close').focus());
+}
+function closeLightbox(fromPopstate = false) {
+  if (!lightboxOpen) return;
+  const overlay = $('#lightbox');
+  lightboxOpen = false;
+  overlay.classList.add('closing');
+  document.body.style.overflow = prevBodyOverflow;
+  lightboxCloseTimer = setTimeout(() => {
+    lightboxCloseTimer = null;
+    overlay.hidden = true;
+    overlay.classList.remove('closing');
+    $('#lightbox-img').src = '';
+    $('#lightbox-img').style.transform = '';
+    $('#lightbox-img').style.visibility = '';
+  }, 150);
+  if (!fromPopstate && history.state && history.state.lightbox) {
+    history.back();
+  }
+}
+function navigateLightbox(delta) {
+  const next = lightboxIndex + delta;
+  if (next < 0 || next >= lightboxImages.length) return;
+  setLightboxImage(next);
+}
+
+$('#lightbox-close').addEventListener('click', () => closeLightbox());
+$('#lightbox-prev').addEventListener('click', (e) => {
+  e.stopPropagation();
+  navigateLightbox(-1);
+});
+$('#lightbox-next').addEventListener('click', (e) => {
+  e.stopPropagation();
+  navigateLightbox(1);
+});
+$('#lightbox-download').addEventListener('click', (e) => e.stopPropagation());
+$('#lightbox').addEventListener('click', (e) => {
+  // Backdrop tap closes; tapping the image, toolbar, nav, or spinner does not.
+  if (e.target === $('#lightbox')) closeLightbox();
+});
+document.addEventListener('keydown', (e) => {
+  if (!lightboxOpen) return;
+  if (e.key === 'Escape') closeLightbox();
+  else if (e.key === 'ArrowLeft') navigateLightbox(-1);
+  else if (e.key === 'ArrowRight') navigateLightbox(1);
+});
+// ── View router ────────────────────────────────────────────────────────────
+// Overlay surfaces (dashboard, permissions, …) stacked above the base
+// rooms/chat view. Opening a surface pushes a history entry so the OS/browser
+// back gesture closes it instead of exiting the PWA; the popstate handler below
+// unwinds the stack. Programmatic closes (X buttons, in-app back) go through
+// closeView() so the stack and history stay in sync.
+const viewStack = []; // [{ name, teardown }]
+function openView(name, teardown) {
+  viewStack.push({ name, teardown });
+  history.pushState({ viewDepth: viewStack.length }, '');
+}
+function closeView(name) {
+  const idx = viewStack.map((v) => v.name).lastIndexOf(name);
+  if (idx === -1) return;
+  history.go(-(viewStack.length - idx)); // drives popstate, which runs teardown
+}
+window.addEventListener('popstate', (e) => {
+  // The lightbox manages its own history entry — handle it first.
+  if (lightboxOpen) {
+    closeLightbox(true);
+    return;
+  }
+  // Unwind overlay surfaces down to the depth the restored history state implies.
+  const targetDepth = (e.state && e.state.viewDepth) || 0;
+  while (viewStack.length > targetDepth) {
+    const top = viewStack.pop();
+    try {
+      top.teardown();
+    } catch (err) {
+      console.error('view teardown failed', err);
+    }
+  }
+});
+
+// True when a modal / popover / menu is open that should consume Escape before a
+// full-screen view does. These each have their own ESC handler (bubble phase);
+// the view-close handler below runs in the CAPTURE phase, so it sees the overlay
+// still open and yields to it — one Escape closes exactly one layer.
+function blockingOverlayOpen() {
+  // `.modal-overlay` covers the settings, user-creds, and (dynamically mounted)
+  // confirm modals; the rest are listed explicitly. Visible = present and not
+  // [hidden].
+  if (document.querySelector('.modal-overlay:not([hidden])')) return true;
+  const others = ['model-picker', 'lightbox', 'members-overlay', 'handle-popover', 'overflow-menu', 'search-results', 'learn-menu'];
+  return others.some((id) => {
+    const el = document.getElementById(id);
+    return el && !el.hidden;
+  });
+}
+
+// Escape closes the topmost full-screen view (dashboard, topology, wiring,
+// permissions, agents/models) — the same path as its Back button, so history
+// and the OS back gesture stay in sync. Capture phase so it can defer to any
+// open modal/menu (which closes on its own bubble-phase handler instead).
+// Detail asides (model/agent/MCP/members) sit one layer above their view:
+// Escape closes the aside first, the next Escape closes the view — same
+// "one layer per press" rule as everything else (DESIGN.md §4).
+function closeTopDetailAside() {
+  const layers = [
+    ['members-panel', () => { $('#members-panel').hidden = true; }],
+    ['route-detail', closeRouteDetail],
+    ['model-detail', closeModelDetail],
+    ['agent-detail', closeAgentDetail],
+    ['mcp-detail', closeMcpDetail],
+  ];
+  for (const [id, close] of layers) {
+    const el = document.getElementById(id);
+    if (el && !el.hidden) {
+      close();
+      return true;
+    }
+  }
+  return false;
+}
+
+document.addEventListener(
+  'keydown',
+  (e) => {
+    if (e.key !== 'Escape' || viewStack.length === 0) return;
+    if (blockingOverlayOpen()) return; // a higher layer owns this Escape
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (closeTopDetailAside()) return; // aside is the topmost layer
+    closeView(viewStack[viewStack.length - 1].name);
+  },
+  true,
+);
+
+// Pinch-zoom + drag-to-pan on the image. Native pinch-zoom on a fixed-position
+// overlay doesn't work reliably on iOS Safari, so we handle touches ourselves.
+function getTouchDist(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
+}
+const lightboxImg = $('#lightbox-img');
+lightboxImg.addEventListener(
+  'touchstart',
+  (e) => {
+    if (e.touches.length === 2) {
+      e.preventDefault();
+      lightboxGesture.mode = 'pinch';
+      lightboxGesture.startScale = lightboxXf.scale;
+      lightboxGesture.startDist = getTouchDist(e.touches);
+      lightboxGesture.startX = lightboxXf.x;
+      lightboxGesture.startY = lightboxXf.y;
+      lightboxImg.classList.add('dragging');
+    } else if (e.touches.length === 1 && lightboxXf.scale > 1) {
+      e.preventDefault();
+      lightboxGesture.mode = 'pan';
+      lightboxGesture.startTouchX = e.touches[0].clientX;
+      lightboxGesture.startTouchY = e.touches[0].clientY;
+      lightboxGesture.startX = lightboxXf.x;
+      lightboxGesture.startY = lightboxXf.y;
+      lightboxImg.classList.add('dragging');
+    }
+  },
+  { passive: false },
+);
+lightboxImg.addEventListener(
+  'touchmove',
+  (e) => {
+    if (lightboxGesture.mode === 'pinch' && e.touches.length === 2) {
+      e.preventDefault();
+      const dist = getTouchDist(e.touches);
+      const ratio = dist / lightboxGesture.startDist;
+      lightboxXf.scale = Math.max(0.5, Math.min(4, lightboxGesture.startScale * ratio));
+      applyLightboxTransform();
+    } else if (lightboxGesture.mode === 'pan' && e.touches.length === 1) {
+      e.preventDefault();
+      lightboxXf.x = lightboxGesture.startX + (e.touches[0].clientX - lightboxGesture.startTouchX);
+      lightboxXf.y = lightboxGesture.startY + (e.touches[0].clientY - lightboxGesture.startTouchY);
+      applyLightboxTransform();
+    }
+  },
+  { passive: false },
+);
+lightboxImg.addEventListener('touchend', () => {
+  lightboxGesture.mode = null;
+  lightboxImg.classList.remove('dragging');
+  // Snap back to 1x and centered if user zoomed out below ~identity.
+  if (lightboxXf.scale < 1.05) resetLightboxTransform();
+});
+
+// Theme selection
+document.querySelectorAll('#theme-options .setting-option').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    settings.theme = btn.dataset.value;
+    saveSettings(settings);
+    applySettings();
+    renderSettingsModal();
+  });
+});
+
+// Font size selection
+document.querySelectorAll('#font-options .setting-option').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    settings.font = btn.dataset.value;
+    saveSettings(settings);
+    applySettings();
+    renderSettingsModal();
+  });
+});
+
+// Send key selection
+document.querySelectorAll('#send-options .setting-option').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    settings.sendKey = btn.dataset.value;
+    saveSettings(settings);
+    renderSettingsModal();
+  });
+});
+
+// Read aloud (Settings → Features) — WORKSPACE-level: the owner flips it for
+// everyone (PUT /api/tts/config, owner-gated server-side). Newly rendered
+// messages pick it up immediately; existing bubbles on next render; other
+// members see it after their next reload. Server voices when the
+// /add-webchat-tts backend is on, device voices otherwise.
+document.querySelectorAll('#tts-default-mode .setting-option').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    const on = btn.dataset.value === 'on';
+    const r = await authFetch('/api/tts/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ readAloud: on }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      showToast('Failed to save: ' + (err.error || r.statusText), { kind: 'error' });
+      return;
+    }
+    ttsReadAloudEnabled = on;
+    document.querySelectorAll('#tts-default-mode .setting-option')
+      .forEach((b) => b.classList.toggle('active', b === btn));
+    if (!on) stopTts();
+    showToast(on
+      ? 'Read aloud on for everyone — hover an agent reply for the speaker'
+      : 'Read aloud off for everyone');
+  });
+});
+
+// Notifications toggle — handles both foreground Notifications and Web Push
+$('#notif-toggle').addEventListener('change', async () => {
+  if ($('#notif-toggle').checked) {
+    if (Notification.permission !== 'granted') {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') {
+        $('#notif-toggle').checked = false;
+        settings.notifications = false;
+        saveSettings(settings);
+        showToast('Notifications need browser permission to turn on', { kind: 'info' });
+        return;
+      }
+    }
+    await enableWebPush({ interactive: true });
+  } else {
+    await disableWebPush();
+  }
+  settings.notifications = $('#notif-toggle').checked;
+  saveSettings(settings);
+});
+
+// @handle save — button click and Enter-in-field both commit.
+$('#handle-save')?.addEventListener('click', saveHandle);
+$('#handle-input')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    saveHandle();
+  }
+});
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const buf = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+  return buf;
+}
+
+// Push setup is operational, not conversational — it must NOT write to the chat
+// transcript (see DESIGN.md §4). Step-by-step progress goes to the console;
+// only outcomes surface, and only for an explicit user action (the Settings
+// toggle, interactive=true) via toast. The silent auto-resubscribe on reload
+// stays quiet on success and logs failures to the console.
+async function enableWebPush({ interactive = false } = {}) {
+  const fail = (msg, err) => {
+    console.warn('[push]', msg, err ?? '');
+    if (interactive) showToast(msg, { kind: 'error' });
+  };
+  try {
+    if (!('serviceWorker' in navigator)) return fail('Notifications aren’t supported in this browser');
+    if (!('PushManager' in window)) {
+      console.warn('[push] PushManager unavailable');
+      if (interactive) {
+        showToast('To enable notifications on iOS, add this app to your home screen and open it from there', {
+          kind: 'info',
+          timeout: 6000,
+        });
+      }
+      return;
+    }
+    console.log('[push] fetching VAPID key');
+    const keyRes = await authFetch('/api/push/vapid-public');
+    if (!keyRes.ok) return fail('Couldn’t enable notifications — the server has no push key');
+    const { key } = await keyRes.json();
+    if (!key) return fail('Couldn’t enable notifications — the server has no push key');
+
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      console.log('[push] subscribing');
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(key),
+      });
+    } else {
+      console.log('[push] reusing existing subscription');
+    }
+
+    const res = await authFetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sub.toJSON()),
+    });
+    if (!res.ok) return fail('Couldn’t save your notification subscription');
+    console.log('[push] subscribed', sub.endpoint.slice(-24));
+    if (interactive) showToast('Notifications enabled', { kind: 'success' });
+  } catch (err) {
+    fail('Couldn’t enable notifications', err);
+  }
+}
+
+async function disableWebPush() {
+  try {
+    if (!('serviceWorker' in navigator)) return;
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      await authFetch('/api/push/unsubscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: sub.endpoint }),
+      });
+      await sub.unsubscribe();
+      console.log('[push] unsubscribed');
+    }
+  } catch (err) {
+    console.error('[push] unsubscribe failed:', err);
+  }
+}
+
+let ws,
+  currentRoom = null,
+  myIdentity = '',
+  myHandle = '';
+const pendingMessages = new Map();
+const typingUsers = new Map();
+const unreadRooms = new Set();
+const mentionedRooms = new Set(); // rooms with an unread @-mention of me (distinct badge)
+let roomMentionPeople = []; // current room's human members as @ autocomplete candidates
+let showArchived = sessionStorage.getItem('webchat:showArchived') === '1';
+let showHidden = sessionStorage.getItem('webchat:showHidden') === '1';
+// A–Z sort toggles per list. Off = the list's natural "auto" order (rooms by
+// recent activity, agents newest-first, models by provider); on = alphabetical.
+let roomSortAz = sessionStorage.getItem('webchat:roomSortAz') === '1';
+let agentSortAz = sessionStorage.getItem('webchat:agentSortAz') === '1';
+let modelSortAz = sessionStorage.getItem('webchat:modelSortAz') === '1';
+let usersSortAz = sessionStorage.getItem('webchat:usersSortAz') === '1';
+let manageTab = 'agents'; // active Manage tab; the header sort icon acts on this
+let agentName = '';
+let lastSeenMessageId = sessionStorage.getItem('lastSeenMessageId') || null;
+let reconnectDelay = 1000;
+
+function setLastSeenMessageId(id) {
+  lastSeenMessageId = id;
+  if (id) sessionStorage.setItem('lastSeenMessageId', id);
+}
+
+// Load my @-mention handle (server-stored, settable in Settings). Used to
+// highlight + notify when a message @-mentions me. Best-effort.
+async function fetchMyHandle() {
+  try {
+    const r = await authFetch('/api/me/handle');
+    if (r.ok) myHandle = ((await r.json()).handle || '').toLowerCase();
+  } catch {
+    /* non-fatal — mentions just won't self-highlight until next load */
+  }
+  // Reflect the loaded handle in the header chip.
+  renderHandleChip();
+}
+
+// True when `text` contains an @-mention of the current user's handle. Mirrors
+// the token boundary used by decorateMentions so highlight + notify agree.
+function messageMentionsMe(text) {
+  if (!myHandle || typeof text !== 'string') return false;
+  const re = new RegExp('(?:^|[^a-z0-9_-])@' + myHandle + '(?![a-z0-9-])', 'i');
+  return re.test(text);
+}
+
+function connect() {
+  // Close any existing socket cleanly before opening a new one. The
+  // intentional-close flag lives ON the socket so two rapid reconnects
+  // don't collapse into one — the OLD socket's onclose checks the OLD
+  // socket's flag, while the new socket runs independently.
+  if (ws) {
+    ws._intentionalClose = true;
+    try {
+      ws.close();
+    } catch {}
+  }
+  const sock = new WebSocket(getWsUrl(), getWsProtocols());
+  ws = sock;
+
+  sock.onopen = () => {
+    $('#connection-banner').classList.remove('visible');
+    reconnectDelay = 1000;
+    lastProbeAt = 0; // next drop diagnoses fresh, not against a stale probe
+    lastDiagnosis = null;
+    sock.send(JSON.stringify({ type: 'auth' }));
+  };
+
+  sock.onmessage = (evt) => {
+    const msg = JSON.parse(evt.data);
+    switch (msg.type) {
+      case 'system':
+        if (msg.message && !myIdentity) {
+          const m = msg.message.match(/^(?:Connected as|Welcome,)\s+(.+)$/);
+          if (m) myIdentity = m[1].trim();
+        }
+        appendSystem(msg.message);
+        return;
+      case 'rooms':
+        if (!lastRoomsList.length && msg.rooms.length) void refreshDraftBadge();
+        lastRoomsList = msg.rooms;
+        // Seed persistent unread badges from the server's per-user read markers
+        // so messages that arrived while away surface on reconnect — not just
+        // live ones. Never dot the open room (the join that follows reads it).
+        msg.rooms.forEach((r) => {
+          if (r.unread && r.id !== currentRoom) unreadRooms.add(r.id);
+          if (r.mention && r.id !== currentRoom) mentionedRooms.add(r.id);
+          else if (!r.mention) mentionedRooms.delete(r.id);
+          else unreadRooms.delete(r.id);
+        });
+        // Render rooms immediately from the WS payload — renderRooms doesn't use
+        // allAgents, so don't block first paint on the /api/agents round-trip
+        // (it reset per page load, delaying every load by a round-trip). Load
+        // agents in parallel for the later consumers that do need them (which
+        // already lazy-load via fetchAgents() when the list is empty).
+        renderRooms(msg.rooms);
+        if (allAgents.length === 0) {
+          authFetch('/api/agents')
+            .then((r) => r.json())
+            .then((b) => {
+              allAgents = b;
+            })
+            .catch(() => {});
+        }
+        // Catch up on approvals queued while offline / mid-reconnect. Idempotent.
+        fetchApprovals();
+        // (Re)load my @-mention handle so self-highlight/notify work this session.
+        fetchMyHandle();
+        // Reveal the Permissions header button if the caller is owner.
+        // Idempotent: probe runs every reconnect, but the button only
+        // toggles visible.
+        probeIsOwner();
+        // Wirings or prime designations may have changed — refresh the
+        // mention-autocomplete caches for the active room.
+        refreshWiredAgentsForCurrentRoom();
+        fetchMentionablePeople();
+        if (currentRoom) {
+          // Rejoin after reconnect — catch up on missed messages
+          ws.send(JSON.stringify({ type: 'join', room_id: currentRoom }));
+          if (lastSeenMessageId) {
+            authFetch(`/api/rooms/${currentRoom}/messages?after_id=${lastSeenMessageId}`)
+              .then((r) => r.json())
+              .then((missed) => {
+                if (missed.length > 0) {
+                  // Capture before append: if the user was scrolled up reading
+                  // history when the WS dropped, don't yank them down on reconnect.
+                  const wasNearBottom = isNearBottom();
+                  missed.forEach((m) => appendMessage(m));
+                  setLastSeenMessageId(missed[missed.length - 1].id);
+                  if (wasNearBottom) scrollToBottom();
+                  else updateScrollButton();
+                }
+              })
+              .catch(() => {});
+          }
+        } else {
+          const saved = localStorage.getItem('lastRoom');
+          if (saved) {
+            const room = msg.rooms.find((r) => r.id === saved);
+            if (room) {
+              // Resume the exact thread too (not just the room), so a thread you
+              // were in survives a full PWA close/reopen.
+              const savedThread = localStorage.getItem('lastThread:' + saved);
+              joinRoom(room.id, room.name, undefined, savedThread && savedThread !== 'main' ? savedThread : undefined);
+            }
+          }
+        }
+        break;
+      case 'history': {
+        $('#messages').innerHTML = '';
+        msg.messages.forEach((m) => appendMessage(m));
+        // Reset scroll-back pagination for the freshly loaded room. The oldest
+        // rendered id anchors the first ?before_id= fetch; a window shorter than
+        // the server's initial page (50) means there's nothing older to load.
+        oldestMessageId = msg.messages.length ? msg.messages[0].id : null;
+        noMoreOlder = msg.messages.length < 50;
+        loadingOlder = false;
+        if (msg.messages.length === 0) {
+          $('#messages').innerHTML = '<div class="empty-state">No messages yet. Start the conversation!</div>';
+        }
+        // New content is in place — fade the transcript back to full (it was
+        // dimmed during the switch instead of blanked).
+        endTranscriptSwitch();
+        if (msg.messages.length > 0) {
+          setLastSeenMessageId(msg.messages[msg.messages.length - 1].id);
+        }
+        const sendAfter = pendingSendAfterJoin;
+        pendingSendAfterJoin = null;
+        if (sendAfter) triggerLearn(sendAfter);
+        const jumpTo = pendingJumpMessageId;
+        pendingJumpMessageId = null;
+        if (jumpTo) {
+          // Arrived from a search result — center + flash that message instead of
+          // scrolling to the bottom (paging older history in if it's not loaded).
+          void jumpToMessage(jumpTo);
+        } else {
+          scrollToBottom(true);
+          requestAnimationFrame(() => scrollToBottom(true));
+          // Extra scrolls for mobile layout settle
+          setTimeout(() => scrollToBottom(true), 100);
+          setTimeout(() => scrollToBottom(true), 300);
+        }
+        break;
+      }
+      case 'members':
+        if (msg.room_id === currentRoom) {
+          renderMembers(msg.members);
+          // Membership may have changed (someone gained/lost access) — refresh
+          // the @-mention candidate pool. (The pool itself comes from the
+          // server, not this connected-members list — see fetchMentionablePeople.)
+          fetchMentionablePeople();
+        }
+        break;
+      case 'message': {
+        // Bump the room's activity so it floats up in the Recent-sorted sidebar
+        // without waiting for a server rooms refresh.
+        if (msg.room_id && msg.created_at) {
+          roomActivity.set(msg.room_id, Math.max(roomActivity.get(msg.room_id) || 0, msg.created_at));
+          if (lastRoomsList.length) renderRooms(lastRoomsList);
+        }
+        // Thread routing: a message for another thread of the open room doesn't
+        // belong in this view — flag that thread unread and stop. (Messages for
+        // other rooms never reach this client; the server scopes broadcasts.)
+        const msgThread = msg.thread_id || 'main';
+        if ((msg.room_id || currentRoom) === currentRoom && msgThread !== currentThread) {
+          if (msg.sender !== myIdentity) {
+            threadUnread.add(msgThread);
+            // Don't rebuild the thread list while the user is naming a new
+            // thread or renaming one — renderThreadList reseeds that inline
+            // input from scratch, so a message landing on some OTHER thread
+            // would silently discard whatever they'd already typed. The
+            // unread flag above is still recorded; the rebuild (and the dot)
+            // lands next time renderThreadList runs for another reason.
+            if (!threadCreating && !threadRenaming) renderThreadList();
+          }
+          break;
+        }
+        // Snapshot the scroll position BEFORE appending. If we check after,
+        // the newly-inserted message has already pushed the bottom past our
+        // 80px threshold and `isNearBottom()` lies about the user's intent.
+        // That's why long agent replies sometimes silently failed to scroll.
+        const wasNearBottom = isNearBottom();
+        // Desktop notification for messages from others when tab is not focused
+        if (
+          settings.notifications &&
+          document.hidden &&
+          msg.sender !== myIdentity &&
+          msg.message_type !== 'a2a' &&
+          msg.sender_type !== 'a2a'
+        ) {
+          try {
+            const mentioned = messageMentionsMe(msg.content);
+            new Notification(mentioned ? `${msg.sender} mentioned you` : `${msg.sender}`, {
+              body: msg.content.slice(0, 100),
+              tag: msg.id || 'nanoclaw-msg',
+              requireInteraction: mentioned,
+            });
+          } catch {}
+        }
+        let appendedEl = null;
+        if (msg.sender === myIdentity && msg.client_id && pendingMessages.has(msg.client_id)) {
+          const el = pendingMessages.get(msg.client_id);
+          const status = el.querySelector('.status');
+          if (status) status.textContent = '✓✓';
+          if (status) status.classList.add('delivered');
+          pendingMessages.delete(msg.client_id);
+          // Upgrade with server-assigned id and delete button
+          if (msg.id) {
+            el.dataset.messageId = msg.id;
+            addDeleteButton(el, msg.id);
+          }
+        } else {
+          appendedEl = appendMessage(msg);
+        }
+        if (msg.id && msg.room_id === currentRoom) {
+          setLastSeenMessageId(msg.id);
+          // Reading in the open, focused room: advance the server marker so the
+          // badge stays cleared across this user's other devices too. Skip when
+          // backgrounded — a hidden tab hasn't actually been seen.
+          if (!document.hidden && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'read', room_id: currentRoom, thread_id: currentThread }));
+          }
+        }
+        const shouldScroll = wasNearBottom || (forceScrollCount > 0 && !userScrolledAway);
+        if (shouldScroll) {
+          scrollToBottom();
+          // Follow late-rendering content. Markdown + DOMPurify run sync, but
+          // image loads / code-block toolbars / reflow can grow the message
+          // after the initial scroll. Re-scroll at rAF + 200ms so the bottom
+          // tracks the final height instead of stopping mid-message.
+          requestAnimationFrame(() => {
+            if (!userScrolledAway) scrollToBottom();
+          });
+          setTimeout(() => {
+            if (!userScrolledAway) scrollToBottom();
+          }, 200);
+          // Catch images that load after the 200ms re-scroll window expires
+          // (slow network, large attachments). Multiple images loading in
+          // quick succession coalesce into a single rAF re-scroll so we don't
+          // spam scrollTo calls if a message has many images.
+          if (appendedEl) {
+            appendedEl.querySelectorAll('img').forEach((img) => {
+              if (img.complete) return;
+              img.addEventListener('load', scheduleFollowScroll, { once: true });
+            });
+          }
+          if (forceScrollCount > 0) forceScrollCount--;
+        } else {
+          incrementMissedMessages();
+        }
+        break;
+      }
+      case 'typing':
+        handleTypingEvent(msg);
+        break;
+      case 'status':
+        handleStatusEvent(msg);
+        break;
+      case 'unread':
+        if (msg.room_id && msg.room_id !== currentRoom) {
+          unreadRooms.add(msg.room_id);
+          updateUnreadDots();
+        }
+        break;
+      case 'mention':
+        // Server says an @-mention of me landed in a room I'm not viewing.
+        // Distinct, higher-signal badge than plain unread.
+        if (msg.room_id && msg.room_id !== currentRoom) {
+          mentionedRooms.add(msg.room_id);
+          unreadRooms.add(msg.room_id);
+          updateUnreadDots();
+        }
+        break;
+      case 'read_cleared': {
+        // Another of this user's devices read the room — drop the stale badges.
+        const cleared = (msg.room_id && unreadRooms.delete(msg.room_id)) | 0;
+        const clearedMention = (msg.room_id && mentionedRooms.delete(msg.room_id)) | 0;
+        if (cleared || clearedMention) updateUnreadDots();
+        break;
+      }
+      case 'delete_message':
+        if (msg.message_id) {
+          const el = document.querySelector(`[data-message-id="${CSS.escape(msg.message_id)}"]`);
+          if (el) {
+            el.classList.add('deleting');
+            setTimeout(() => el.remove(), 350);
+          }
+        }
+        break;
+      case 'approval':
+        handleApprovalEvent(msg);
+        break;
+      case 'approval_resolved':
+        handleApprovalResolvedEvent(msg);
+        break;
+      case 'skill_draft_review':
+        // Outcome of an async Keep (learning loop) — see handleSkillDraftReview.
+        handleSkillDraftReview(msg);
+        break;
+      case 'error':
+        console.error('WS error:', msg.error);
+        break;
+    }
+  };
+
+  sock.onclose = () => {
+    // Per-socket flag — the new socket that replaced this one is already
+    // running, so we don't reconnect from here.
+    if (sock._intentionalClose) return;
+    // If another socket has since taken over (rapid reconnects, visibility
+    // change), let it own the reconnect lifecycle.
+    if (ws !== sock) return;
+    setConnectionBanner('Connection lost. Reconnecting…');
+    void diagnoseConnection();
+    myIdentity = '';
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+  };
+}
+
+// iOS/mobile: when the app returns from background, the WebSocket may be
+// silently dead without onclose firing. Force a full reconnect on resume.
+// Also: even when the socket is alive, browsers can throttle a backgrounded
+// tab so that WS-pushed approvals never get rendered. On foreground, refetch
+// the canonical pending-approvals list so anything that arrived while we
+// were hidden surfaces immediately. (If we have to reconnect, fetchApprovals
+// also runs from the system message handler — so this branch is the
+// "WS still up but we may have missed an event" case.)
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (ws && ws.readyState !== WebSocket.OPEN) {
+    connect();
+  } else {
+    fetchApprovals();
+    // Returning to a focused tab with a room open means its messages are now
+    // seen — advance the server marker (and sync other devices). The reconnect
+    // path already re-joins (which reads) when the socket was actually down.
+    if (currentRoom) ws.send(JSON.stringify({ type: 'read', room_id: currentRoom, thread_id: currentThread }));
+  }
+});
+
+// Network edges. An 'online' edge is the earliest possible reconnect moment —
+// don't sit out a backoff (up to 30s) that started while the radio was off.
+// An 'offline' edge re-diagnoses immediately (no probe needed on that path)
+// so the banner says "offline" instead of a doomed "reconnecting…".
+window.addEventListener('online', () => {
+  if (ws && ws.readyState !== WebSocket.OPEN) {
+    reconnectDelay = 1000;
+    connect();
+  }
+});
+window.addEventListener('offline', () => {
+  if (ws && ws.readyState !== WebSocket.OPEN) void diagnoseConnection();
+});
+
+// Safety-net poll for approvals. WS push + the reconnect/visibilitychange
+// refetches above cover the common cases, but a *foreground* socket can go
+// silently dead (zombie/throttled connection) and drop an `approval` push with
+// no onclose, no reconnect, and no visibility change to trigger a catch-up — so
+// the card would hang until the next unrelated push or a manual refocus. Poll
+// the canonical pending list on a short interval while the tab is visible so a
+// missed approval still surfaces within seconds. Cheap + idempotent
+// (fetchApprovals just re-renders the scoped list); skipped while hidden since
+// the visibilitychange handler already refetches on return to foreground.
+const APPROVAL_POLL_MS = 10000;
+setInterval(() => {
+  if (document.visibilityState === 'visible') fetchApprovals();
+}, APPROVAL_POLL_MS);
+
+// ── Rooms ─────────────────────────────────────────────────────────────────
+// ── Room ordering ─────────────────────────────────────────────────────────
+// Live last-activity overrides keyed by room id. The rooms payload carries a
+// server-computed `last_activity`; as messages arrive while the app is open we
+// bump this map so the active room floats to the top without a server round-trip.
+const roomActivity = new Map();
+function activityOf(room) {
+  return Math.max(room.last_activity || room.created_at || 0, roomActivity.get(room.id) || 0);
+}
+
+// Sentinel rendered as a horizontal rule between the pinned group and the rest.
+const ROOM_DIVIDER = Symbol('room-divider');
+
+// Deferred retry for renderRooms when it's skipped because a kebab menu is
+// open — see the guard at the top of renderRooms.
+let renderRoomsRetryTimer = null;
+
+function renderRooms(rooms) {
+  const list = $('#room-list');
+  // A background event (a message landing in ANY room, an unread/mention/read
+  // update) calls this via updateUnreadDots — don't let that tear down an open
+  // kebab menu out from under the user mid-click. Retry shortly instead of
+  // dropping the update.
+  if (list.querySelector('.room-menu')) {
+    clearTimeout(renderRoomsRetryTimer);
+    renderRoomsRetryTimer = setTimeout(() => renderRooms(rooms), 400);
+    return;
+  }
+  // The rebuild below replaces every <li>, which resets scroll — restore it so
+  // a message landing elsewhere doesn't visibly snap the list back to the top
+  // while the user is scrolled down browsing rooms.
+  const prevScrollTop = list.scrollTop;
+  // Drag-to-pin: wire the list as a drop target once (survives innerHTML reset).
+  // Dropping a dragged room anywhere on the list pins it; pinned rooms sort to
+  // the top automatically. Unpin lives in the kebab.
+  if (!list.dataset.dropWired) {
+    list.dataset.dropWired = '1';
+    list.addEventListener('dragover', (e) => {
+      if (!list.classList.contains('room-list-dragging')) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    });
+    list.addEventListener('drop', async (e) => {
+      if (!list.classList.contains('room-list-dragging')) return;
+      e.preventDefault();
+      const id = e.dataTransfer ? e.dataTransfer.getData('text/plain') : '';
+      list.classList.remove('room-list-dragging');
+      if (id) await toggleRoomPin(id, true);
+    });
+  }
+  list.innerHTML = '';
+
+  // Recent-first: newest activity (last message) at the top. Pinned rooms are
+  // lifted into a sticky group above a divider; the rest follow in activity
+  // order. (Replaces the old manual drag-order, which lived only in this
+  // browser's localStorage and never synced across devices.)
+  const byActivity = (a, b) => activityOf(b) - activityOf(a);
+  // A–Z toggle: alphabetical by the displayed `#id` when on, recent-activity
+  // ("auto") when off. Applies to the unpinned + archived groups; pinned rooms
+  // always keep their manual pin_position order.
+  const byName = (a, b) => String(a.id).localeCompare(String(b.id));
+  const roomCmp = roomSortAz ? byName : byActivity;
+
+  // Partition:
+  //   - hidden (per-user "hide") — dropped unless `showHidden` is on.
+  //   - archived (global flag) — collected in a collapsed "Archived" section at
+  //     the bottom, revealed by the toggle.
+  //   - active — split into pinned (top) and unpinned.
+  const visibleRooms = showHidden ? [...rooms] : rooms.filter((r) => !r.hidden);
+  const active = visibleRooms.filter((r) => !r.archived);
+  const archived = visibleRooms.filter((r) => r.archived).sort(roomCmp);
+  // Pinned rooms hold the user's MANUAL drag order (pin_position); the rest follow
+  // the active sort. Fall back to activity when positions are absent/equal.
+  const pinned = active
+    .filter((r) => r.pinned)
+    .sort((a, b) => (a.pin_position ?? 0) - (b.pin_position ?? 0) || byActivity(a, b));
+  const unpinned = active.filter((r) => !r.pinned).sort(roomCmp);
+  const toggleBtn = $('#archived-toggle');
+  if (archived.length === 0) {
+    toggleBtn.hidden = true;
+  } else {
+    toggleBtn.hidden = false;
+    toggleBtn.textContent = showArchived ? `Hide ${archived.length} archived` : `Show ${archived.length} archived`;
+  }
+  // Hidden-rooms toggle — mirrors the archived one. Without it a hidden room can
+  // never be brought back from the GUI (the only way to un-hide is to see it first).
+  const hiddenCount = rooms.filter((r) => r.hidden).length;
+  const hiddenBtn = $('#hidden-toggle');
+  if (hiddenCount === 0) {
+    hiddenBtn.hidden = true;
+  } else {
+    hiddenBtn.hidden = false;
+    hiddenBtn.textContent = showHidden ? `Hide ${hiddenCount} hidden` : `Show ${hiddenCount} hidden`;
+  }
+  // Divider sentinel between the pinned group and the rest — only when both
+  // groups are non-empty.
+  const showDivider = pinned.length > 0 && unpinned.length > 0;
+  const toRender = [...pinned, ...(showDivider ? [ROOM_DIVIDER] : []), ...unpinned, ...(showArchived ? archived : [])];
+
+  for (let i = 0; i < toRender.length; i++) {
+    const room = toRender[i];
+    if (room === ROOM_DIVIDER) {
+      const sep = document.createElement('li');
+      sep.className = 'room-divider';
+      sep.setAttribute('role', 'separator');
+      list.appendChild(sep);
+      continue;
+    }
+    const li = document.createElement('li');
+    const color = roomColor(room.id);
+    li.dataset.roomId = room.id;
+    li.style.borderLeftColor = color;
+    if (room.archived) li.classList.add('archived');
+
+    const text = document.createElement('span');
+    text.className = 'room-row-name';
+    text.textContent = `#${room.id}`;
+    li.appendChild(text);
+
+    // A room where you were @-mentioned gets a distinct "@" badge that takes
+    // precedence over the plain unread dot.
+    if (mentionedRooms.has(room.id)) {
+      const badge = document.createElement('span');
+      badge.className = 'mention-dot';
+      badge.textContent = '@';
+      badge.title = 'You were mentioned here';
+      li.appendChild(badge);
+    } else if (unreadRooms.has(room.id)) {
+      const dot = document.createElement('span');
+      dot.className = 'unread-dot';
+      dot.style.background = color;
+      li.appendChild(dot);
+    }
+
+    if (room.pinned) {
+      const pin = document.createElement('span');
+      pin.className = 'room-pin-indicator';
+      pin.innerHTML = lucide('pin');
+      pin.setAttribute('aria-label', 'Pinned');
+      li.appendChild(pin);
+    }
+
+    // Drag behavior (archived rooms are never draggable):
+    //   - unpinned room → drag onto the list to PIN it (list-level drop handler,
+    //     gated on the `room-list-dragging` class).
+    //   - pinned room   → drag over another pinned row to REORDER (row-level
+    //     handlers below, gated on `room-list-reordering` + draggedPinId).
+    // The two modes use different classes so the list's pin-drop never fires
+    // during a reorder and vice-versa.
+    if (!room.archived) {
+      li.draggable = true;
+      li.addEventListener('dragstart', (e) => {
+        if (e.dataTransfer) {
+          e.dataTransfer.setData('text/plain', room.id);
+          e.dataTransfer.effectAllowed = 'move';
+        }
+        if (room.pinned) {
+          draggedPinId = room.id;
+          list.classList.add('room-list-reordering');
+        } else {
+          draggedPinId = null;
+          list.classList.add('room-list-dragging');
+        }
+      });
+      li.addEventListener('dragend', () => {
+        draggedPinId = null;
+        list.classList.remove('room-list-dragging', 'room-list-reordering');
+        list.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+      });
+    }
+
+    // Reorder target: a pinned row accepts a dragged pinned room, inserting it
+    // above or below depending on which half of the row the cursor is over.
+    if (room.pinned) {
+      const clearMarkers = () => li.classList.remove('drop-before', 'drop-after');
+      li.addEventListener('dragover', (e) => {
+        if (!draggedPinId || draggedPinId === room.id) return;
+        e.preventDefault();
+        e.stopPropagation(); // don't bubble to the list-level pin-drop handler
+        const rect = li.getBoundingClientRect();
+        const after = e.clientY > rect.top + rect.height / 2;
+        li.classList.toggle('drop-after', after);
+        li.classList.toggle('drop-before', !after);
+      });
+      li.addEventListener('dragleave', clearMarkers);
+      li.addEventListener('drop', async (e) => {
+        if (!draggedPinId || draggedPinId === room.id) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = li.getBoundingClientRect();
+        const after = e.clientY > rect.top + rect.height / 2;
+        const moved = draggedPinId;
+        draggedPinId = null;
+        clearMarkers();
+        list.classList.remove('room-list-reordering');
+        await reorderPinnedRoom(moved, room.id, after);
+      });
+    }
+
+    // Kebab — opens a tiny menu with up to two actions:
+    //   - Hide / Unhide (per-user sidebar preference) — always present
+    //     for anyone with room access.
+    //   - Archive / Unarchive (global state) — present only when the
+    //     caller can archive this room (owner / global admin / scoped
+    //     admin of a wired agent). Server provides `room.canArchive`.
+    // Archive is ALSO available in Room Settings (the gear icon at the
+    // top of the chat header) for owners/admins; the kebab is the
+    // shortcut.
+    // Click stops propagation so it doesn't bubble to the `<li>` click
+    // (which joins the room). Only one menu open at a time across the list.
+    const kebab = document.createElement('button');
+    kebab.className = 'room-kebab';
+    kebab.type = 'button';
+    kebab.innerHTML = lucide('ellipsis');
+    kebab.setAttribute('aria-label', 'Room actions');
+    kebab.addEventListener('click', (e) => {
+      e.stopPropagation();
+      list.querySelectorAll('.room-menu').forEach((m) => m.remove());
+      const menu = document.createElement('div');
+      menu.className = 'room-menu';
+
+      // Pinning is now drag-and-drop; the kebab keeps Unpin for pinned rooms.
+      // On touch — where HTML5 drag is unreliable — also keep a Pin action so
+      // mobile can still pin.
+      const coarsePointer = window.matchMedia('(pointer: coarse)').matches;
+      if (room.pinned || coarsePointer) {
+        const pinBtn = document.createElement('button');
+        pinBtn.type = 'button';
+        pinBtn.textContent = room.pinned ? 'Unpin' : 'Pin';
+        pinBtn.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          menu.remove();
+          await toggleRoomPin(room.id, !room.pinned);
+        });
+        menu.appendChild(pinBtn);
+      }
+      // Reorder pinned rooms from the menu — the touch/keyboard-friendly path
+      // since dragging is mouse-only. Shown for any pinned room when more than
+      // one is pinned (works on desktop too — also serves accessibility).
+      if (room.pinned && pinned.length > 1) {
+        const pinIdx = pinned.findIndex((r) => r.id === room.id);
+        if (pinIdx > 0) {
+          const upBtn = document.createElement('button');
+          upBtn.type = 'button';
+          upBtn.textContent = 'Move up';
+          upBtn.addEventListener('click', async (ev) => {
+            ev.stopPropagation();
+            menu.remove();
+            await movePinnedRoom(room.id, -1);
+          });
+          menu.appendChild(upBtn);
+        }
+        if (pinIdx < pinned.length - 1) {
+          const downBtn = document.createElement('button');
+          downBtn.type = 'button';
+          downBtn.textContent = 'Move down';
+          downBtn.addEventListener('click', async (ev) => {
+            ev.stopPropagation();
+            menu.remove();
+            await movePinnedRoom(room.id, 1);
+          });
+          menu.appendChild(downBtn);
+        }
+      }
+
+      const hideBtn = document.createElement('button');
+      hideBtn.type = 'button';
+      hideBtn.textContent = room.hidden ? 'Unhide' : 'Hide';
+      hideBtn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        menu.remove();
+        await toggleRoomHide(room.id, !room.hidden);
+      });
+      menu.appendChild(hideBtn);
+
+      if (room.canArchive) {
+        const archiveBtn = document.createElement('button');
+        archiveBtn.type = 'button';
+        archiveBtn.textContent = room.archived ? 'Unarchive' : 'Archive';
+        archiveBtn.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          menu.remove();
+          await toggleRoomArchive(room.id, !room.archived);
+        });
+        menu.appendChild(archiveBtn);
+      }
+
+      li.appendChild(menu);
+      const close = () => {
+        menu.remove();
+        document.removeEventListener('click', close);
+      };
+      setTimeout(() => document.addEventListener('click', close), 0);
+    });
+    // Right-anchored actions: the kebab + the new-thread "+". On a hover-capable
+    // desktop this group is absolutely positioned (see .room-actions) so it takes
+    // NO flex space and floats OVER the row's right edge — the room name keeps its
+    // full width and never reflows when the actions reveal on hover. On touch it
+    // stays in normal flow and always visible.
+    const actions = document.createElement('span');
+    actions.className = 'room-actions';
+    actions.appendChild(kebab);
+
+    // A "+" on every OTHER room row so a new thread can be started in any room
+    // straight from the list (the active room's "+" comes from its thread tree
+    // below, via renderThreadList). Clicking opens an inline name input on the row.
+    if (room.id !== currentRoom) {
+      if (threadAddRoom === room.id) {
+        appendRoomThreadInput(li, room);
+      } else {
+        const add = document.createElement('button');
+        add.className = 'thread-add-inline';
+        add.type = 'button';
+        add.textContent = '+';
+        add.title = 'New thread';
+        add.setAttribute('aria-label', `New thread in #${room.id}`);
+        add.addEventListener('click', (e) => {
+          e.stopPropagation();
+          threadAddRoom = room.id;
+          threadCreating = false;
+          renderRooms(lastRoomsList);
+        });
+        actions.appendChild(add);
+      }
+    }
+    li.appendChild(actions);
+
+    // Thread expander: rooms that HAVE topic threads get a disclosure chevron to
+    // expand/collapse their thread list inline. It's absolutely positioned in the
+    // row's left gutter so it never shifts the room name (every room name aligns,
+    // thread or not) and it stays put when a room becomes active. thread_count
+    // comes from the server's rooms payload.
+    const threadCount = room.thread_count || 0;
+    if (threadCount > 0) {
+      const open = expandedRooms.has(room.id);
+      const chev = document.createElement('button');
+      chev.className = 'room-thread-toggle';
+      chev.type = 'button';
+      chev.textContent = open ? '▾' : '▸';
+      const lbl = `${threadCount} thread${threadCount === 1 ? '' : 's'}`;
+      chev.title = lbl;
+      chev.setAttribute('aria-label', `${open ? 'Collapse' : 'Show'} ${lbl}`);
+      chev.setAttribute('aria-expanded', open ? 'true' : 'false');
+      chev.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleRoomThreads(room.id);
+      });
+      li.insertBefore(chev, li.firstChild); // left-most, like a tree disclosure
+    }
+
+    if (room.id === currentRoom) li.classList.add('active');
+    li.setAttribute('role', 'button');
+    li.setAttribute('tabindex', '0');
+
+    li.addEventListener('click', () => joinRoom(room.id, room.name));
+    li.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        joinRoom(room.id, room.name);
+      }
+    });
+    list.appendChild(li);
+
+    // Nest a thread tree under the row: the active room's (populated by
+    // renderThreadList below), or an EXPANDED non-active room's (its own tree).
+    if (room.id === currentRoom) {
+      if (expandedRooms.has(room.id)) {
+        const threadHost = document.createElement('div');
+        threadHost.className = 'thread-list';
+        li.appendChild(threadHost);
+      }
+    } else if (expandedRooms.has(room.id)) {
+      const threadHost = document.createElement('div');
+      threadHost.className = 'thread-list';
+      li.appendChild(threadHost);
+      renderRoomThreads(li, room.id);
+    }
+  }
+  // Populate the active room's thread tree when it's expanded (no-op otherwise).
+  if (currentRoom && expandedRooms.has(currentRoom)) renderThreadList();
+  list.scrollTop = prevScrollTop;
+}
+
+let lastRoomsList = [];
+function updateUnreadDots() {
+  if (lastRoomsList.length) renderRooms(lastRoomsList);
+}
+
+async function toggleRoomArchive(roomId, archive) {
+  // GLOBAL archive (owner + admin only). Optimistic: flip locally and
+  // re-render immediately; server success replays the same state via
+  // broadcastRooms; failure rolls back.
+  const target = lastRoomsList.find((r) => r.id === roomId);
+  if (target) target.archived = archive;
+  renderRooms(lastRoomsList);
+  try {
+    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/${archive ? 'archive' : 'unarchive'}`, {
+      method: 'POST',
+      headers: { 'X-Webchat-CSRF': '1' },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    console.error('toggleRoomArchive failed:', err);
+    if (target) target.archived = !archive; // roll back
+    renderRooms(lastRoomsList);
+  }
+}
+
+// Id of the pinned room currently being dragged for reorder (null while
+// dragging an unpinned room to pin it, or when nothing is dragging).
+let draggedPinId = null;
+
+// Move a pinned room before/after another within the pinned group and persist
+// the new order. Optimistic: reindex pin_position locally and re-render, then
+// POST; the server's broadcastRooms re-syncs authoritative order to every device.
+async function reorderPinnedRoom(movedId, targetId, after) {
+  const order = lastRoomsList
+    .filter((r) => r.pinned && !r.archived)
+    .sort((a, b) => (a.pin_position ?? 0) - (b.pin_position ?? 0))
+    .map((r) => r.id);
+  const from = order.indexOf(movedId);
+  if (from === -1) return;
+  order.splice(from, 1);
+  let to = order.indexOf(targetId);
+  if (to === -1) return;
+  if (after) to += 1;
+  order.splice(to, 0, movedId);
+
+  order.forEach((id, i) => {
+    const r = lastRoomsList.find((x) => x.id === id);
+    if (r) r.pin_position = i;
+  });
+  renderRooms(lastRoomsList);
+
+  try {
+    const res = await authFetch('/api/rooms/pins/order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ order }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    console.error('reorderPinnedRoom failed:', err);
+    // The next authoritative `rooms` broadcast (or a manual refresh) restores
+    // the server's order; no local rollback needed for a cosmetic reorder.
+  }
+}
+
+// Touch-friendly pinned-room reorder: drag is mouse-only (native HTML5 DnD
+// doesn't fire from touch), so the kebab's Move up / Move down call this to swap
+// a pinned room with its neighbour. Same optimistic reindex + persist as
+// reorderPinnedRoom. `dir` is -1 (up) or +1 (down).
+async function movePinnedRoom(roomId, dir) {
+  const order = lastRoomsList
+    .filter((r) => r.pinned && !r.archived)
+    .sort((a, b) => (a.pin_position ?? 0) - (b.pin_position ?? 0))
+    .map((r) => r.id);
+  const i = order.indexOf(roomId);
+  const j = i + dir;
+  if (i === -1 || j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  order.forEach((id, k) => {
+    const r = lastRoomsList.find((x) => x.id === id);
+    if (r) r.pin_position = k;
+  });
+  renderRooms(lastRoomsList);
+  try {
+    const res = await authFetch('/api/rooms/pins/order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ order }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    console.error('movePinnedRoom failed:', err);
+    // The next authoritative `rooms` broadcast restores order; no rollback needed.
+  }
+}
+
+async function toggleRoomPin(roomId, pin) {
+  // PER-USER pin. Optimistic flip + re-render, same pattern as hide/archive.
+  // The server replays authoritative state via broadcastRooms (which also syncs
+  // the pin to this user's other devices).
+  const target = lastRoomsList.find((r) => r.id === roomId);
+  if (target) target.pinned = pin;
+  renderRooms(lastRoomsList);
+  try {
+    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/${pin ? 'pin' : 'unpin'}`, {
+      method: 'POST',
+      headers: { 'X-Webchat-CSRF': '1' },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    console.error('toggleRoomPin failed:', err);
+    if (target) target.pinned = !pin; // roll back
+    renderRooms(lastRoomsList);
+  }
+}
+
+async function toggleRoomHide(roomId, hide) {
+  // PER-USER hide. Optimistic flip, same pattern as toggleRoomArchive.
+  // Lives on a separate endpoint and table from archive so the two
+  // concepts don't conflate.
+  const target = lastRoomsList.find((r) => r.id === roomId);
+  if (target) target.hidden = hide;
+  renderRooms(lastRoomsList);
+  try {
+    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/${hide ? 'hide' : 'unhide'}`, {
+      method: 'POST',
+      headers: { 'X-Webchat-CSRF': '1' },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch (err) {
+    console.error('toggleRoomHide failed:', err);
+    if (target) target.hidden = !hide; // roll back
+    renderRooms(lastRoomsList);
+  }
+}
+
+// ── Threads ─────────────────────────────────────────────────────────────────
+// A webchat thread maps to an isolated agent session. The sidebar nests a
+// room's threads under it; switching a thread re-joins the room scoped to that
+// thread (server filters history). See docs/webchat/threads.md.
+let currentThread = 'main';
+let threadCreating = false; // true while the inline "new thread" input is open
+let threadAddRoom = null; // room id whose row is showing the inline new-thread input
+let threadRenaming = null; // thread_id whose row is showing the inline rename input
+const threadUnread = new Set(); // thread_ids with unread activity in the open room
+const expandedRooms = new Set(); // rooms whose thread tree is expanded in the sidebar (the active room is added on join)
+// Single source of truth for a room's threads (roomId → threads[]), keyed by
+// room. The active room's threads are just threadCache.get(currentRoom) — see
+// roomThreads(). loadThreadList/loadRoomThreads write it; render reads it. One
+// cache means one invalidation point (no roomThreads-vs-threadsByRoom drift).
+const threadCache = new Map();
+function roomThreads() {
+  return threadCache.get(currentRoom) || [];
+}
+
+// Expand/collapse a non-active room's thread tree inline in the sidebar (the
+// "▸/▾" chevron), lazy-loading that room's threads on first expand.
+function toggleRoomThreads(roomId) {
+  if (expandedRooms.has(roomId)) {
+    expandedRooms.delete(roomId);
+    renderRooms(lastRoomsList);
+    return;
+  }
+  expandedRooms.add(roomId);
+  if (!threadCache.has(roomId)) {
+    void loadRoomThreads(roomId).then(() => {
+      if (expandedRooms.has(roomId)) renderRooms(lastRoomsList);
+    });
+  }
+  renderRooms(lastRoomsList); // immediate (shows "Loading…" until the fetch resolves)
+}
+
+async function loadRoomThreads(roomId) {
+  try {
+    const r = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/threads`);
+    threadCache.set(roomId, r.ok ? ((await r.json()) ?? []) : []);
+  } catch {
+    threadCache.set(roomId, []);
+  }
+}
+
+// Render an expanded non-active room's thread rows into its .thread-list host.
+// Tapping a row enters that room AND the thread in a single clean join.
+function renderRoomThreads(li, roomId) {
+  const host = li.querySelector('.thread-list');
+  if (!host) return;
+  host.innerHTML = '';
+  const threads = threadCache.get(roomId);
+  if (!Array.isArray(threads)) {
+    host.innerHTML = '<div class="thread-loading">Loading…</div>';
+    return;
+  }
+  const room = lastRoomsList.find((r) => r.id === roomId);
+  for (const t of threads.filter((t) => t.kind !== 'main')) {
+    const row = document.createElement('div');
+    row.className = 'thread-row';
+    row.dataset.threadId = t.thread_id;
+    row.style.setProperty('--thread-color', roomColor(t.thread_id));
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    row.setAttribute('aria-label', `Open thread ${t.title}`);
+    const glyph = document.createElement('span');
+    glyph.className = 'thread-glyph';
+    glyph.textContent = '#';
+    glyph.setAttribute('aria-hidden', 'true');
+    row.appendChild(glyph);
+    const label = document.createElement('span');
+    label.className = 'thread-label';
+    label.textContent = t.title;
+    row.appendChild(label);
+    const enter = () => joinRoom(roomId, room ? room.name : roomId, undefined, t.thread_id);
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      enter();
+    });
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        enter();
+      }
+    });
+    host.appendChild(row);
+  }
+}
+
+async function loadThreadList(roomId) {
+  try {
+    const r = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/threads`);
+    if (roomId !== currentRoom) return; // raced past a room switch
+    if (!r.ok) {
+      threadCache.set(roomId, []);
+      renderThreadList();
+      // 404 = the room is gone (e.g. deleted in another tab / this session).
+      // That's stale client state, not a failure — stay quiet; the room list
+      // refresh will drop it. Only real errors get a toast.
+      if (r.status !== 404) showToast('Could not load threads', { kind: 'error' });
+      return;
+    }
+    const threads = await r.json();
+    const list = Array.isArray(threads) ? threads : [];
+    threadCache.set(roomId, list);
+    for (const t of list) if (t.unread && t.thread_id !== currentThread) threadUnread.add(t.thread_id);
+    renderThreadList();
+    updateThreadSyncControls(); // refresh the breadcrumb title (covers rename + late load)
+  } catch {
+    if (roomId !== currentRoom) return;
+    threadCache.set(roomId, []);
+    renderThreadList();
+    showToast('Could not load threads', { kind: 'error' });
+  }
+}
+
+function threadGlyph(kind) {
+  return kind === 'agent' ? '@' : '#';
+}
+
+// Render the thread tree under the active room's sidebar row. Called from
+// renderRooms (so it survives room-list re-renders) and on thread changes.
+function renderThreadList() {
+  const li = document.querySelector(`#room-list li[data-room-id="${cssEscape(currentRoom)}"]`);
+  // Drop any prior inline "+" so its placement is recomputed cleanly each render.
+  li?.querySelector('.thread-add-inline')?.remove();
+  const host = li?.querySelector('.thread-list');
+  if (!host) return;
+  host.innerHTML = '';
+  // Only non-main threads render as rows (the room row is the regular chat).
+  const nonMain = roomThreads().filter((t) => t.kind !== 'main');
+  for (const t of nonMain) {
+    if (t.thread_id === threadRenaming) {
+      // Inline rename in place — mirrors the inline "new thread" input.
+      host.appendChild(buildThreadRenameRow(t));
+      continue;
+    }
+    const row = document.createElement('div');
+    row.className = 'thread-row' + (t.thread_id === currentThread ? ' active' : '');
+    row.dataset.threadId = t.thread_id;
+    // Keyboard-operable like the room rows: role + tabindex + Enter/Space.
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+    row.setAttribute('aria-label', `Open thread ${t.title}`);
+    if (t.thread_id === currentThread) row.setAttribute('aria-current', 'true');
+    // Per-thread identity hue on the spine (mirrors rooms' colored left bar). The
+    // active thread overrides to accent via CSS for an unmistakable selection.
+    row.style.setProperty('--thread-color', roomColor(t.thread_id));
+
+    const glyph = document.createElement('span');
+    glyph.className = 'thread-glyph';
+    glyph.textContent = threadGlyph(t.kind);
+    glyph.setAttribute('aria-hidden', 'true');
+    row.appendChild(glyph);
+
+    const label = document.createElement('span');
+    label.className = 'thread-label';
+    label.textContent = t.title;
+    row.appendChild(label);
+
+    if (t.thread_id !== currentThread && threadUnread.has(t.thread_id)) {
+      const dot = document.createElement('span');
+      dot.className = 'thread-unread';
+      row.appendChild(dot);
+    }
+
+    // Rename/delete for non-main threads (delete owner-only; server re-checks).
+    if (t.kind !== 'main') {
+      const menu = document.createElement('button');
+      menu.className = 'thread-kebab';
+      menu.type = 'button';
+      menu.innerHTML = lucide('ellipsis');
+      menu.setAttribute('aria-label', 'Thread actions');
+      menu.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openThreadMenu(t, menu);
+      });
+      row.appendChild(menu);
+    }
+
+    row.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't bubble to the room <li> (which re-joins)
+      openThread(t.thread_id);
+    });
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        openThread(t.thread_id);
+      }
+    });
+    host.appendChild(row);
+  }
+
+  if (threadCreating) {
+    // Inline new-thread creation — type a name, Enter creates, Esc/blur cancels.
+    host.appendChild(
+      makeThreadNameInput({
+        ariaLabel: 'New thread name',
+        onCancel: () => {
+          threadCreating = false;
+          renderThreadList();
+        },
+        onSubmit: (title) => {
+          threadCreating = false;
+          createThread(title);
+        },
+      }),
+    );
+  } else if (nonMain.length === 0) {
+    // No threads yet → put the "+" inline on the room row (right of the name).
+    // The empty .thread-list collapses (:empty), so this costs no extra line.
+    const add = document.createElement('button');
+    add.className = 'thread-add-inline';
+    add.type = 'button';
+    add.textContent = '+';
+    add.title = 'New thread';
+    add.setAttribute('aria-label', 'New thread');
+    add.addEventListener('click', (e) => {
+      e.stopPropagation();
+      threadCreating = true;
+      renderThreadList();
+    });
+    // Put it in the row's actions group (beside the kebab) so it hover-hides on
+    // desktop and is never left BEHIND the actions overlay — which would cover it
+    // and swallow the click on hover.
+    (li.querySelector('.room-actions') || li).appendChild(add);
+  } else {
+    // Has threads → the "+" goes inline on the LAST thread row (right of its
+    // name), mirroring the no-threads case where it sits on the room row. No
+    // separate "+" line.
+    const add = document.createElement('button');
+    add.className = 'thread-add-inline';
+    add.type = 'button';
+    add.textContent = '+';
+    add.title = 'New thread';
+    add.setAttribute('aria-label', 'New thread');
+    add.addEventListener('click', (e) => {
+      e.stopPropagation();
+      threadCreating = true;
+      renderThreadList();
+    });
+    const lastRow = host.lastElementChild;
+    if (lastRow) lastRow.appendChild(add);
+    else li.appendChild(add);
+  }
+}
+
+function openThread(threadId) {
+  if (!currentRoom || threadId === currentThread) return;
+  // Make the chat pane visible — on mobile, opening a thread from the room-list
+  // view must switch INTO the chat (mirror joinRoom), otherwise the click just
+  // changes state behind the still-shown sidebar and looks like it did nothing.
+  hideOtherFullViews();
+  $('#chat').hidden = false;
+  $('#app').classList.add('in-room');
+  $('#app').classList.remove('in-dashboard');
+  currentThread = threadId;
+  localStorage.setItem('lastThread:' + currentRoom, threadId);
+  threadUnread.delete(threadId);
+  beginTranscriptSwitch();
+  // Re-join the room scoped to this thread; the server returns thread history.
+  ws.send(JSON.stringify({ type: 'join', room_id: currentRoom, thread_id: threadId }));
+  renderThreadList();
+  updateThreadSyncControls();
+}
+
+// The breadcrumb + pull/push/delete controls only make sense inside a topic
+// thread — the main chat ('main') is the trunk both directions sync against, so
+// it has nothing of its own to pull/push. See thread-context-sync.md.
+function updateThreadSyncControls() {
+  const inThread = !!(currentRoom && currentThread && currentThread !== 'main');
+  // The header thread switcher shows whenever a room is open (CSS gates it to
+  // mobile, where the sidebar thread tree is hidden in-room). Badge it with the
+  // topic-thread count + accent it, so it's obvious the room HAS threads to open.
+  const sw = $('#thread-switch');
+  if (sw) {
+    sw.hidden = !currentRoom;
+    const topicCount = roomThreads().filter((t) => t.kind !== 'main').length;
+    sw.textContent = topicCount > 0 ? `#${topicCount}` : '#';
+    sw.classList.toggle('has-threads', topicCount > 0);
+    sw.title = topicCount > 0 ? `${topicCount} thread${topicCount === 1 ? '' : 's'}` : 'Threads';
+  }
+  const sync = $('#thread-sync');
+  if (sync) sync.hidden = !inThread;
+  const crumb = $('#thread-crumb');
+  if (crumb) {
+    crumb.hidden = !inThread;
+    if (inThread) {
+      const thread = roomThreads().find((t) => t.thread_id === currentThread);
+      const nameEl = $('#thread-crumb-name');
+      if (nameEl) {
+        nameEl.textContent = thread ? thread.title : currentThread;
+        nameEl.style.setProperty('--thread-color', roomColor(currentThread));
+      }
+    }
+  }
+}
+
+async function createThread(title, roomId = currentRoom) {
+  try {
+    const thread = await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/threads`, {
+      method: 'POST',
+      body: { title },
+    });
+    // Create AND enter the new (blank) thread — but cleanly, via a SINGLE WS
+    // join, so main's transcript can't bleed in (the old joinRoom+openThread
+    // double-join race). Same room → openThread (one join into the thread);
+    // another room → joinRoom straight into the thread.
+    if (roomId === currentRoom) {
+      await loadThreadList(roomId); // so the tree shows it as active
+      openThread(thread.thread_id);
+    } else {
+      const room = lastRoomsList.find((x) => x.id === roomId);
+      joinRoom(roomId, room ? room.name : roomId, undefined, thread.thread_id);
+    }
+  } catch (err) {
+    showToast('Could not create thread: ' + (err.message || err), { kind: 'error' });
+    if (roomId === currentRoom) renderThreadList();
+  }
+}
+
+// Inline "new thread" input on a NON-active room's row — dropped onto its own
+// full-width line via the reused .thread-list wrap, so it's reachable from the
+// room list on both desktop and mobile. Submit creates the thread in that room
+// and switches into it.
+// Shared inline thread-name input (create + rename). Builds the styled input and
+// wires the common behavior — Enter=submit, Escape=cancel, click-stop, blur, and
+// autofocus — so the four call sites only supply value/aria + their onSubmit /
+// onCancel. `blurSubmits` commits on blur (the switcher) instead of cancelling;
+// `selectAll` pre-selects the text (rename). An empty or unchanged value cancels.
+function makeThreadNameInput({
+  value = '',
+  placeholder = 'Thread name…',
+  ariaLabel,
+  selectAll = false,
+  blurSubmits = false,
+  onSubmit,
+  onCancel,
+}) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'thread-add-input';
+  input.maxLength = 80;
+  if (value) input.value = value;
+  else input.placeholder = placeholder;
+  if (ariaLabel) input.setAttribute('aria-label', ariaLabel);
+  let settled = false;
+  const cancel = () => {
+    if (settled) return;
+    settled = true;
+    onCancel?.();
+  };
+  const submit = () => {
+    if (settled) return;
+    const title = input.value.trim();
+    if (!title || title === value) return cancel(); // empty or unchanged → cancel
+    settled = true;
+    onSubmit(title);
+  };
+  input.addEventListener('click', (e) => e.stopPropagation());
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancel();
+    }
+  });
+  input.addEventListener('blur', blurSubmits ? submit : cancel);
+  setTimeout(() => {
+    input.focus();
+    if (selectAll) input.select();
+  }, 0);
+  return input;
+}
+
+function appendRoomThreadInput(li, room) {
+  const host = document.createElement('div');
+  host.className = 'thread-list';
+  host.appendChild(
+    makeThreadNameInput({
+      ariaLabel: `New thread in #${room.id}`,
+      onCancel: () => {
+        threadAddRoom = null;
+        renderRooms(lastRoomsList);
+      },
+      onSubmit: (title) => {
+        threadAddRoom = null;
+        createThread(title, room.id);
+      },
+    }),
+  );
+  li.appendChild(host);
+}
+
+function openThreadMenu(thread, anchor) {
+  closeThreadMenus();
+  const menu = document.createElement('div');
+  menu.className = 'thread-menu';
+  const rename = document.createElement('button');
+  rename.textContent = 'Rename';
+  rename.addEventListener('click', () => {
+    closeThreadMenus();
+    startThreadRename(thread);
+  });
+  menu.appendChild(rename);
+  if (isOwnerView) {
+    const del = document.createElement('button');
+    del.className = 'danger';
+    del.textContent = 'Delete';
+    del.addEventListener('click', () => {
+      closeThreadMenus();
+      deleteThreadConfirm(thread, anchor.closest('.thread-row'));
+    });
+    menu.appendChild(del);
+  }
+  anchor.parentElement.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', closeThreadMenus, { once: true }), 0);
+}
+
+function closeThreadMenus() {
+  document.querySelectorAll('.thread-menu').forEach((m) => m.remove());
+}
+
+// In-room thread switcher (the chat-header '#' button). The sidebar thread tree
+// is hidden on mobile while a room is open, so this is the mobile way to switch
+// between Main/topic threads and create a new one without backing out.
+function closeThreadSwitcher() {
+  document.querySelectorAll('.thread-switcher').forEach((m) => m.remove());
+}
+
+function openThreadSwitcher() {
+  closeThreadSwitcher();
+  if (!currentRoom) return;
+  const btn = $('#thread-switch');
+  if (!btn) return;
+  const pop = document.createElement('div');
+  pop.className = 'thread-switcher';
+  pop.setAttribute('role', 'menu');
+
+  const addRow = (label, threadId, tinted) => {
+    const b = document.createElement('button');
+    b.className = 'thread-switcher-item' + (threadId === currentThread ? ' active' : '');
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    if (tinted) {
+      const dot = document.createElement('span');
+      dot.className = 'thread-switcher-dot';
+      dot.style.background = roomColor(threadId);
+      b.appendChild(dot);
+    }
+    const name = document.createElement('span');
+    name.className = 'thread-switcher-label';
+    name.textContent = label;
+    b.appendChild(name);
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeThreadSwitcher();
+      openThread(threadId); // openThread handles 'main' too (no-op if already there)
+    });
+    pop.appendChild(b);
+  };
+
+  addRow('Main chat', 'main', false);
+  for (const t of roomThreads().filter((t) => t.kind !== 'main')) addRow(t.title, t.thread_id, true);
+
+  const add = document.createElement('button');
+  add.className = 'thread-switcher-item thread-switcher-new';
+  add.type = 'button';
+  add.textContent = '+ New thread';
+  add.addEventListener('click', (e) => {
+    e.stopPropagation();
+    switcherCreate(pop, add);
+  });
+  pop.appendChild(add);
+
+  btn.parentElement.appendChild(pop);
+  setTimeout(() => document.addEventListener('click', closeThreadSwitcher, { once: true }), 0);
+}
+
+// Replace the "+ New thread" row with an inline name input (no native prompt).
+function switcherCreate(pop, addBtn) {
+  addBtn.replaceWith(
+    makeThreadNameInput({
+      ariaLabel: 'New thread name',
+      blurSubmits: true, // clicking away commits, matching the prior switcher behavior
+      onCancel: closeThreadSwitcher,
+      onSubmit: (title) => {
+        closeThreadSwitcher();
+        createThread(title);
+      },
+    }),
+  );
+}
+
+// Open the inline rename input on a thread row (no native prompt() — DESIGN.md §4).
+function startThreadRename(thread) {
+  threadRenaming = thread.thread_id;
+  threadCreating = false;
+  renderThreadList();
+}
+
+// Build a thread row showing an inline rename input, mirroring the create input.
+function buildThreadRenameRow(t) {
+  const row = document.createElement('div');
+  row.className = 'thread-row';
+  row.dataset.threadId = t.thread_id;
+  row.style.setProperty('--thread-color', roomColor(t.thread_id));
+  row.appendChild(
+    makeThreadNameInput({
+      value: t.title,
+      ariaLabel: 'Rename thread',
+      selectAll: true,
+      onCancel: () => {
+        threadRenaming = null;
+        renderThreadList();
+      },
+      onSubmit: (title) => {
+        threadRenaming = null;
+        submitThreadRename(t.thread_id, title);
+      },
+    }),
+  );
+  return row;
+}
+
+async function submitThreadRename(threadId, title) {
+  try {
+    await apiJson(`/api/rooms/${encodeURIComponent(currentRoom)}/threads/${encodeURIComponent(threadId)}`, {
+      method: 'PATCH',
+      body: { title },
+    });
+    await loadThreadList(currentRoom);
+  } catch (err) {
+    showToast('Rename failed: ' + (err.message || err), { kind: 'error' });
+  }
+}
+
+// Thread removal uses the same sliding-undo pattern as draft Keep/Discard: the
+// row swaps to a countdown; the DELETE only fires when the bar drains. Undo
+// restores the row untouched, and a tab closed mid-countdown deletes nothing —
+// the safe default. Falls back to the old confirm modal when no row is on
+// screen to host the countdown.
+async function deleteThreadConfirm(thread, rowEl) {
+  const commit = async () => {
+    try {
+      await apiJson(`/api/rooms/${encodeURIComponent(currentRoom)}/threads/${encodeURIComponent(thread.thread_id)}`, {
+        method: 'DELETE',
+      });
+      if (currentThread === thread.thread_id) openThread('main');
+      await loadThreadList(currentRoom);
+      showToast('Thread deleted', { kind: 'success' });
+    } catch (err) {
+      showToast('Delete failed: ' + (err.message || err), { kind: 'error' });
+      await loadThreadList(currentRoom); // restore the real row state
+    }
+  };
+  const row = rowEl || document.querySelector(`.thread-row[data-thread-id="${cssEscape(thread.thread_id)}"]`);
+  if (!row) {
+    const confirmed = await showConfirmModal({
+      title: `Delete "${thread.title}"?`,
+      body: '',
+      confirmLabel: 'Delete',
+      destructive: true,
+    });
+    if (confirmed) await commit();
+    return;
+  }
+  row.classList.add('deleting'); // blocks navigation into a half-deleted thread
+  armUndo(row, `Removing ${thread.title}…`, UNDO_SECONDS, () => {
+    row.classList.remove('deleting');
+    void commit();
+  });
+  // armUndo restores the row's children on Undo; the class must go too.
+  const undoBtn = row.querySelector('.undo-timer .btn');
+  if (undoBtn)
+    undoBtn.addEventListener('click', (e) => {
+      e.stopPropagation(); // the row is a click-to-open button — Undo must not open it
+      row.classList.remove('deleting');
+    });
+}
+
+// CSS.escape shim for older webviews.
+function cssEscape(s) {
+  if (window.CSS && CSS.escape) return CSS.escape(String(s));
+  return String(s).replace(/["\\\]]/g, '\\$&');
+}
+
+let pendingJumpMessageId = null;
+// One-shot message queued behind a programmatic room switch (the Skills page's
+// 'Add from link…'): sending in the same tick as the join loses the optimistic
+// bubble to the incoming history render, so the 'history' handler flushes this
+// once the transcript is in place. Same idiom as pendingJumpMessageId.
+let pendingSendAfterJoin = null;
+
+// Smooth room/thread switches: instead of blanking the transcript to a
+// "Loading…" flash (a jarring gap while the async `history` message is in
+// flight), keep the previous messages visible but dimmed until the new history
+// arrives and swaps them in (the 'history' handler calls endTranscriptSwitch).
+// A fallback un-dims if history never lands (e.g. a socket hiccup).
+let roomSwitchDimTimer = null;
+function beginTranscriptSwitch() {
+  const el = $('#messages');
+  el.classList.add('room-switching');
+  clearTimeout(roomSwitchDimTimer);
+  roomSwitchDimTimer = setTimeout(() => el.classList.remove('room-switching'), 2000);
+}
+function endTranscriptSwitch() {
+  clearTimeout(roomSwitchDimTimer);
+  $('#messages').classList.remove('room-switching');
+}
+
+function joinRoom(roomId, roomName, jumpMessageId, initialThread) {
+  // When set (e.g. from a search-result click), the `history` handler lands on
+  // this message instead of scrolling to the bottom.
+  pendingJumpMessageId = jumpMessageId || null;
+  // A queued post-join send belongs to the join that queued it (set AFTER the
+  // joinRoom call) — a newer switch must not deliver it into the wrong room.
+  pendingSendAfterJoin = null;
+  closeAgentDetail();
+  closeRoomDetail();
+  closeModelDetail();
+  closeMcpDetail();
+  // Opening a room exits any full view (Agents/Models/Topology/Wiring/
+  // Permissions/Dashboard) and restores the chat pane as the backdrop —
+  // otherwise the room "opens" behind a still-visible full view.
+  hideOtherFullViews();
+  $('#chat').hidden = false;
+  // Reset any in-progress turn state from the previous room so its bubbles /
+  // elapsed timer / reasoning traces can't leak into the new room.
+  endAllAgentTurns();
+  const prevRoom = currentRoom;
+  currentRoom = roomId;
+  // The active room's thread tree is expanded by default; collapse the room we
+  // just left (its chevron re-opens it) so stale trees don't linger open.
+  if (prevRoom && prevRoom !== roomId) expandedRooms.delete(prevRoom);
+  expandedRooms.add(roomId);
+  threadAddRoom = null; // clear any other room's pending inline new-thread input
+  unreadRooms.delete(roomId);
+  mentionedRooms.delete(roomId);
+  void refreshRoomAutoLearn(roomId);
+  updateUnreadDots();
+  updateUserCredsBanner(roomId);
+  // Set agent name for thinking bubble from the agent wired to this room.
+  const roomAgent = allAgents.find((b) => b.room_id === roomId);
+  if (roomAgent) agentName = roomAgent.name;
+  $('#app').classList.add('in-room');
+  $('#app').classList.remove('in-dashboard');
+  for (const t of typingUsers.values()) clearTimeout(t.timeout);
+  typingUsers.clear();
+  renderTypingIndicator();
+  $('#members-panel').hidden = true;
+  $('#members-overlay').classList.remove('visible');
+  renderMembers([]);
+  beginTranscriptSwitch();
+  // No "Main" thread row — the room itself IS the regular chat. Entering a room
+  // always lands in that regular chat ('main' keys the room's shared session);
+  // threads are opened explicitly from the sidebar.
+  // Normally land in the regular chat ('main'); `initialThread` lets a caller
+  // (e.g. just-created a thread) enter that thread directly in a SINGLE join —
+  // avoiding the join('main')+join(thread) race that bled main's transcript in.
+  currentThread = initialThread || 'main';
+  // Persist in localStorage (NOT sessionStorage, which iOS wipes when the PWA is
+  // fully closed) so reopening resumes the same room AND thread.
+  localStorage.setItem('lastThread:' + roomId, currentThread);
+  threadUnread.clear();
+  threadCache.delete(roomId); // clear this room's cached threads; loadThreadList refills
+  updateThreadSyncControls();
+  ws.send(JSON.stringify({ type: 'join', room_id: roomId, thread_id: currentThread }));
+  loadThreadList(roomId);
+  localStorage.setItem('lastRoom', roomId);
+  $('#room-name').textContent = `#${roomId}`;
+  $('#message-input').disabled = false;
+  const learnBtn = $('#learn-btn');
+  if (learnBtn) {
+    learnBtn.disabled = false;
+    learnBtn.hidden = !learningMasterEnabled;
+  }
+  hideLearnNudge(); // a suggestion about one room's turn doesn't follow you around
+  learnTurnToolCount = 0;
+  $('#message-form button[type=submit]').disabled = false;
+  showRoomSettingsToggle(true);
+  // Re-render the room list so the now-active room gets its nested thread
+  // tree container (renderRooms adds .thread-list for the active room, then
+  // loadThreadList populates it when its fetch resolves).
+  if (lastRoomsList.length) renderRooms(lastRoomsList);
+  // Prime the mention-autocomplete caches so the first '@' the user types
+  // doesn't have to wait on a fetch.
+  refreshWiredAgentsForCurrentRoom();
+  fetchMentionablePeople();
+}
+
+// ── Message search (FTS) ────────────────────────────────────────────────────
+// Sidebar search across the user's accessible rooms. Results replace the room
+// list while a query is active; clearing the box (or picking a result) restores
+// it. Backend: GET /api/search (scoped server-side to rooms the user can see).
+let searchDebounce = null;
+
+function clearRoomSearch() {
+  const list = $('#search-results');
+  if (list) {
+    list.hidden = true;
+    list.innerHTML = '';
+  }
+  const roomList = $('#room-list');
+  if (roomList) roomList.hidden = false;
+  const sortBtn = $('#room-sort-az');
+  if (sortBtn) sortBtn.hidden = false; // sort icon returns to the search bar's right slot
+  const close = $('#room-search-close');
+  if (close) close.hidden = true;
+}
+
+function renderSearchResults(results) {
+  const list = $('#search-results');
+  if (!list) return;
+  if (!results || results.length === 0) {
+    list.innerHTML = '<li class="search-empty">No matches</li>';
+  } else {
+    list.innerHTML = results
+      .map((r) => {
+        // snippet carries «…» highlight delimiters from FTS5 — escape the text
+        // first (XSS-safe), then turn the markers into <mark>.
+        const snip = esc(r.snippet || '')
+          .replace(/«/g, '<mark>')
+          .replace(/»/g, '</mark>');
+        return `<li class="search-result" data-room-id="${esc(r.roomId)}" data-room-name="${esc(r.roomName)}" data-message-id="${esc(r.id)}">
+            <div class="search-result-head">
+              <span class="search-result-room">#${esc(r.roomName)}</span>
+              <span class="search-result-time">${esc(relativeTime(r.createdAt))}</span>
+            </div>
+            <div class="search-result-snip"><span class="search-result-sender">${esc(r.sender)}:</span> ${snip}</div>
+          </li>`;
+      })
+      .join('');
+  }
+  list.hidden = false;
+  const roomList = $('#room-list');
+  if (roomList) roomList.hidden = true;
+  const sortBtn = $('#room-sort-az');
+  if (sortBtn) sortBtn.hidden = true; // hide sort icon during search (close button takes the slot)
+}
+
+$('#room-search')?.addEventListener('input', (e) => {
+  const q = e.target.value.trim();
+  // Show the close/back affordance whenever a query is active (immediate, not
+  // debounced) so the dismissal control is there the moment search begins.
+  const closeBtn = $('#room-search-close');
+  if (closeBtn) closeBtn.hidden = !q;
+  clearTimeout(searchDebounce);
+  if (!q) {
+    clearRoomSearch();
+    return;
+  }
+  searchDebounce = setTimeout(async () => {
+    try {
+      const r = await authFetch(`/api/search?q=${encodeURIComponent(q)}`);
+      if (!r.ok) return renderSearchResults([]); // e.g. backend without the route yet
+      const body = await r.json();
+      renderSearchResults(body.results || []);
+    } catch {
+      renderSearchResults([]);
+    }
+  }, 250);
+});
+
+// Close/back button — the visible dismissal affordance the search pane lacked.
+// Mobile has no Escape key and the native search clear is unreliable, so this is
+// the tap target that returns you to the room list (same effect as Escape).
+$('#room-search-close')?.addEventListener('click', () => {
+  const input = $('#room-search');
+  if (input) input.value = '';
+  clearRoomSearch();
+  if (input) input.blur();
+});
+
+$('#search-results')?.addEventListener('click', (e) => {
+  const li = e.target.closest('.search-result');
+  if (!li) return;
+  const { roomId, roomName, messageId } = li.dataset;
+  // Keep the search pane open so you can jump through several hits in a row.
+  // Mark the one you're viewing; close via Escape or by clearing the search box.
+  $('#search-results .search-result.active')?.classList.remove('active');
+  li.classList.add('active');
+  joinRoom(roomId, roomName, messageId);
+});
+
+// Escape closes the search pane (DESIGN §3 dismissal contract — same key that
+// closes settings / lightbox / modals). Clearing the box also closes it.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const list = $('#search-results');
+  if (!list || list.hidden) return;
+  const input = $('#room-search');
+  if (input) input.value = '';
+  clearRoomSearch();
+});
+
+// ── Messages ──────────────────────────────────────────────────────────────
+function createDeleteButton(messageId) {
+  const delBtn = document.createElement('button');
+  delBtn.className = 'msg-delete';
+  delBtn.textContent = '🗑';
+  delBtn.title = 'Delete message';
+  let confirmTimer = null;
+  delBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (delBtn.classList.contains('confirm')) {
+      clearTimeout(confirmTimer);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'delete_message', message_id: messageId }));
+      }
+    } else {
+      delBtn.classList.add('confirm');
+      delBtn.textContent = 'delete?';
+      confirmTimer = setTimeout(() => {
+        delBtn.classList.remove('confirm');
+        delBtn.textContent = '🗑';
+      }, 3000);
+    }
+  });
+  return delBtn;
+}
+
+function addDeleteButton(msgEl, messageId) {
+  if (msgEl.querySelector('.msg-delete')) return;
+  const bubble = msgEl.querySelector('.bubble');
+  if (!bubble) return;
+  // Wrap bubble in a msg-body row if not already
+  let bodyRow = msgEl.querySelector('.msg-body');
+  if (!bodyRow) {
+    bodyRow = document.createElement('div');
+    bodyRow.className = 'msg-body';
+    bubble.parentNode.insertBefore(bodyRow, bubble);
+    bodyRow.appendChild(bubble);
+  }
+  bodyRow.insertBefore(createDeleteButton(messageId), bubble);
+}
+
+// Stable per-name colour for a2a side-channel agent labels. Hashes the name to
+// a hue so the same agent is always tinted the same; fixed saturation/lightness
+// stay legible on both the light and dark themes.
+function agentColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return `hsl(${h % 360}, 60%, 55%)`;
+}
+
+function formatTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  // Today's messages stay time-only to avoid clutter; anything older gets a date
+  // so you can tell at a glance how old it is.
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return time;
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return `Yesterday ${time}`;
+  // Same calendar year → "Jun 20, 14:32"; older → include the year.
+  const dateOpts =
+    d.getFullYear() === now.getFullYear()
+      ? { month: 'short', day: 'numeric' }
+      : { month: 'short', day: 'numeric', year: 'numeric' };
+  return `${d.toLocaleDateString([], dateOpts)}, ${time}`;
+}
+
+// Render an in-room approval card. Actionable (approve/deny buttons) only for
+// users in the card's `approvers` list — others see a read-only "pending" note.
+// A resolved card renders as a static note. Tagged with data-question-id so the
+// approval_resolved handler can update it in place.
+// Learning loop: an agent proposed a skill from the work it just did. The card
+// lands in ITS OWN room so you can Keep/Discard in context — same shape as the
+// approval card. Keep wires it scoped to the proposing agent (no fan-out).
+function appendSkillDraftCard(msg, beforeNode) {
+  void refreshDraftBadge();
+  let d = {};
+  try {
+    d = JSON.parse(msg.content) || {};
+  } catch {
+    d = {};
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'msg skill-draft-msg';
+  wrap.dataset.draftId = d.draftId || msg.id;
+  const resolved = d.status === 'kept' || d.status === 'discarded';
+  const title = d.kind === 'patch' ? `Proposed change to ${d.targetSkill || d.skillName}` : `Proposed skill: ${d.skillName}`;
+
+  if (resolved) {
+    const note = document.createElement('div');
+    note.className = 'approval-inroom-note resolved';
+    note.textContent = d.status === 'kept' ? `✅ ${title} — kept` : `🗑 ${title} — discarded`;
+    wrap.appendChild(note);
+  } else {
+    const card = document.createElement('div');
+    card.className = 'skill-draft-card';
+    const head = document.createElement('div');
+    head.className = 'skill-head';
+    const name = document.createElement('span');
+    name.className = 'skill-name';
+    name.textContent = title;
+    head.appendChild(name);
+    if (d.agentName) {
+      const badge = originBadgeEl({ label: `learned · ${d.agentName}`, official: false });
+      head.appendChild(badge);
+    }
+    const desc = document.createElement('div');
+    desc.className = 'skill-desc';
+    desc.textContent = d.description || '';
+    const actions = document.createElement('div');
+    actions.className = 'skill-draft-actions';
+    const view = document.createElement('button');
+    view.type = 'button';
+    view.className = 'btn btn-ghost';
+    view.textContent = 'View';
+    view.addEventListener('click', () => openSkillDraft(d.draftId));
+    const keep = document.createElement('button');
+    keep.type = 'button';
+    keep.className = 'btn btn-primary';
+    keep.textContent = 'Keep';
+    keep.title = `Wire to ${d.agentName}`;
+    keep.dataset.draftId = d.draftId;
+    // A re-render mid-review must not resurrect a clickable Keep.
+    if (reviewingDrafts.has(d.draftId)) markDraftReviewing(keep, true);
+    keep.addEventListener('click', () =>
+      // restore() first: the card lives on through 'Keeping…' → 'Reviewing…',
+      // which must land on the real (connected) Keep button.
+      armUndo(actions, `Keeping ${d.skillName}…`, UNDO_SECONDS, (restore) => {
+        restore();
+        return keepSkillDraft({ id: d.draftId, agentGroupId: d.agentGroupId, agentName: d.agentName }, keep);
+      }),
+    );
+    const drop = document.createElement('button');
+    drop.type = 'button';
+    drop.className = 'skill-delete';
+    drop.textContent = 'Discard';
+    drop.addEventListener('click', () =>
+      armUndo(actions, `Discarding ${d.skillName}…`, UNDO_SECONDS, () => discardSkillDraft(d.draftId)),
+    );
+    actions.append(view, keep, drop);
+    card.append(head, desc, actions);
+    wrap.appendChild(card);
+  }
+  // Resolving re-broadcasts the SAME card id — replace in place, don't duplicate.
+  const existing = $(`#messages .skill-draft-msg[data-draft-id="${wrap.dataset.draftId}"]`);
+  if (existing) {
+    existing.replaceWith(wrap);
+    return;
+  }
+  const tb = $('#messages .thinking-bubble');
+  if (beforeNode) $('#messages').insertBefore(wrap, beforeNode);
+  else if (tb) $('#messages').insertBefore(wrap, tb);
+  else $('#messages').appendChild(wrap);
+}
+
+function appendApprovalCard(msg, beforeNode) {
+  let data = {};
+  try {
+    data = JSON.parse(msg.content) || {};
+  } catch {
+    data = {};
+  }
+  const wrap = document.createElement('div');
+  wrap.className = 'msg approval-msg';
+  wrap.dataset.questionId = data.questionId || msg.id;
+  const resolved = msg.message_type === 'approval_resolved' || !!data.resolvedBy;
+  const eligible = Array.isArray(data.approvers) && data.approvers.includes(myIdentity);
+  if (resolved) {
+    const who = data.resolvedBy ? ' by ' + String(data.resolvedBy).split(':').pop().split('@')[0] : '';
+    const note = document.createElement('div');
+    note.className = 'approval-inroom-note resolved';
+    note.textContent = `🔒 ${data.title || 'Approval'} — resolved${who}`;
+    wrap.appendChild(note);
+  } else if (eligible) {
+    wrap.appendChild(
+      renderApprovalCard(
+        { questionId: data.questionId, title: data.title, payload: data.question, options: data.options },
+        {},
+      ),
+    );
+  } else {
+    const note = document.createElement('div');
+    note.className = 'approval-inroom-note';
+    note.textContent = `🔒 ${data.title || 'Approval requested'} — awaiting an admin`;
+    wrap.appendChild(note);
+  }
+  const tb = $('#messages .thinking-bubble');
+  if (beforeNode) $('#messages').insertBefore(wrap, beforeNode);
+  else if (tb) $('#messages').insertBefore(wrap, tb);
+  else $('#messages').appendChild(wrap);
+}
+
+// `beforeNode`, when given, inserts the message before that node instead of at
+// the bottom — used to PREPEND older messages during scroll-back pagination.
+function appendMessage(msg, statusText, beforeNode) {
+  if (msg.type === 'system') {
+    appendSystem(msg.message);
+    return;
+  }
+  // In-room approval cards (actionable for eligible approvers; the action still
+  // posts to the same /respond endpoint, and resolution clears it everywhere).
+  if (msg.message_type === 'approval' || msg.message_type === 'approval_resolved') {
+    appendApprovalCard(msg, beforeNode);
+    return;
+  }
+  if (msg.message_type === 'skill_draft') {
+    appendSkillDraftCard(msg, beforeNode);
+    return;
+  }
+  // Context-sync divider: a labelled rule marking where pulled/pushed messages
+  // begin. See docs/webchat/thread-context-sync.md.
+  if (msg.message_type === 'context-divider') {
+    const rule = document.createElement('div');
+    rule.className = 'context-divider';
+    const label = document.createElement('span');
+    label.textContent = msg.content || 'Synced context';
+    rule.appendChild(label);
+    const tb = $('#messages .thinking-bubble');
+    if (beforeNode) $('#messages').insertBefore(rule, beforeNode);
+    else if (tb) $('#messages').insertBefore(rule, tb);
+    else $('#messages').appendChild(rule);
+    return rule;
+  }
+  const div = document.createElement('div');
+  const isMine = msg.sender === myIdentity;
+  // Side-channel a2a copy (agent→agent surfaced into a shared room). Marked via
+  // message_type/sender_type='a2a'; content is {to, text}. Rendered distinctly
+  // and NOT treated as an agent message (so it never removes the thinking bubble
+  // or counts as the room's active agent reply).
+  const isA2a = msg.message_type === 'a2a' || msg.sender_type === 'a2a';
+  const isAgent = !isA2a && msg.sender_type === 'agent';
+  let a2aTo = null;
+  let a2aText = msg.content;
+  if (isA2a) {
+    try {
+      const parsed = JSON.parse(msg.content);
+      a2aTo = parsed.to ?? null;
+      a2aText = typeof parsed.text === 'string' ? parsed.text : msg.content;
+    } catch {
+      /* legacy/plain content — render as-is */
+    }
+  }
+  // An agent message means the turn produced output — end the turn (clears the
+  // bubble + elapsed timer). Covers reconnect catch-up too. Snapshot the turn's
+  // reasoning so it can be folded onto THIS reply as a "Thoughts" disclosure,
+  // then clear it so only the first reply of the turn carries it.
+  let thoughtsForThisMsg = null;
+  if (isAgent) {
+    // Fold THIS agent's reasoning onto its reply and clear ITS bubble only — not
+    // another agent's that may still be thinking. Match the reply's sender to its
+    // bubble by name; if there's a lone bubble (single-agent room), use it even
+    // on a name mismatch.
+    let senderBubble = bubbleFor(msg.sender);
+    if (!senderBubble) {
+      const all = document.querySelectorAll('#messages .thinking-bubble');
+      if (all.length === 1) senderBubble = all[0];
+    }
+    if (senderBubble) {
+      const log = senderBubble._turn && senderBubble._turn.reasoningLog;
+      if (log && log.length > 0) thoughtsForThisMsg = log.slice();
+      endAgentTurn(senderBubble.dataset.agent);
+    }
+  }
+  div.className = isA2a ? 'msg a2a' : isMine ? 'msg mine' : isAgent ? 'msg agent' : 'msg other';
+  // Highlight messages that @-mention me (not my own). Bubble-level accent +
+  // the per-token .mention-me chip from decorateMentions.
+  if (!isMine && messageMentionsMe(isA2a ? a2aText : msg.content)) div.classList.add('mentions-me');
+  if (msg.id) div.dataset.messageId = msg.id;
+  if (isA2a) {
+    // Tint the card's accent bar in the sending agent's colour (see .msg.a2a
+    // border-left in style.css). The header names below carry the same colours.
+    div.style.setProperty('--a2a-accent', agentColor(msg.sender));
+  }
+
+  const sender = document.createElement('div');
+  sender.className = 'sender';
+  if (isA2a) {
+    // "from → to" header — each agent name tinted by a stable per-name colour;
+    // the accent bar already signals this is a side-channel, so no icon needed.
+    sender.classList.add('a2a-label');
+    const fromSpan = document.createElement('span');
+    fromSpan.className = 'a2a-agent';
+    fromSpan.textContent = msg.sender;
+    fromSpan.style.color = agentColor(msg.sender);
+    sender.appendChild(fromSpan);
+    if (a2aTo) {
+      const arrow = document.createElement('span');
+      arrow.className = 'a2a-arrow';
+      arrow.textContent = '→';
+      sender.appendChild(arrow);
+      const toSpan = document.createElement('span');
+      toSpan.className = 'a2a-agent';
+      toSpan.textContent = a2aTo;
+      toSpan.style.color = agentColor(a2aTo);
+      sender.appendChild(toSpan);
+    }
+  } else {
+    if (isAgent) {
+      sender.textContent = '';
+      sender.appendChild(lucideEl('bot'));
+      sender.append(' ' + msg.sender);
+    } else {
+      sender.textContent = isMine ? 'You' : msg.sender;
+    }
+  }
+  div.appendChild(sender);
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble';
+  if (msg.message_type === 'file' && msg.file_meta) {
+    bubble.appendChild(renderFileBubble(msg.file_meta));
+    if (msg.content && msg.content !== msg.file_meta.filename) {
+      const caption = document.createElement('div');
+      caption.className = 'file-caption';
+      caption.textContent = msg.content;
+      bubble.appendChild(caption);
+    }
+  } else if (isMine) {
+    // Your own messages render as full Markdown too (bold/lists/links/code
+    // blocks + agent-tinted @mentions), same pipeline as agent replies. Markdown
+    // re-flows whitespace, so fenced ``` blocks keep code exact; falls back to
+    // plain text if marked/DOMPurify throws (escaped by the DOM, no XSS risk).
+    try {
+      bubble.innerHTML = DOMPurify.sanitize(marked.parse(msg.content));
+      decorateCodeBlocks(bubble);
+      decorateMentions(bubble);
+    } catch (err) {
+      console.error('Message render failed; falling back to plain text', err);
+      bubble.textContent = msg.content;
+    }
+  } else {
+    // Markdown render is best-effort: a malformed message must not crash the
+    // whole render loop and leave #messages half-populated. Fall back to
+    // text-content (escaped by the DOM, no XSS risk) if marked or DOMPurify
+    // throws.
+    try {
+      bubble.innerHTML = DOMPurify.sanitize(marked.parse(a2aText));
+      decorateCodeBlocks(bubble);
+      decorateMentions(bubble);
+    } catch (err) {
+      console.error('Message render failed; falling back to plain text', err);
+      bubble.textContent = a2aText;
+    }
+  }
+
+  if (isMine) {
+    // Always wrap own messages in the .msg-body row — even the optimistic echo
+    // that has no server id yet. A bare bubble that's a direct flex child of
+    // .msg.mine (align-items:flex-end) shrink-collapses its block Markdown (<p>)
+    // to ~zero width and renders invisible; the row gives the bubble a proper
+    // width context (this is why a message only appeared after leaving and
+    // re-entering, where history re-renders it WITH an id and the row). The
+    // delete button is added now if we have an id, else by addDeleteButton when
+    // the server echo upgrades the pending element.
+    const bodyRow = document.createElement('div');
+    bodyRow.className = 'msg-body';
+    if (msg.id) bodyRow.appendChild(createDeleteButton(msg.id));
+    bodyRow.appendChild(bubble);
+    div.appendChild(bodyRow);
+  } else {
+    div.appendChild(bubble);
+  }
+
+  // Fold this turn's reasoning onto the reply as a collapsible disclosure.
+  if (thoughtsForThisMsg && thoughtsForThisMsg.length > 0) {
+    div.appendChild(buildThoughtsDisclosure(thoughtsForThisMsg));
+  }
+
+  // Read-aloud control for agent replies — overlaid on the bubble's corner
+  // (hover-revealed, standard chat-UI pattern) so it reserves no space.
+  if (isAgent && msg.content) {
+    const ttsBtn = buildTtsButton(() => ttsPlainText(msg.content));
+    if (ttsBtn) bubble.appendChild(ttsBtn);
+  }
+
+  // Timestamp
+  const timeStr = formatTime(msg.created_at);
+  if (timeStr) {
+    const time = document.createElement('div');
+    time.className = 'timestamp';
+    time.textContent = timeStr;
+    // Full date + time on hover, for exact age regardless of the compact label.
+    if (msg.created_at) time.title = new Date(msg.created_at).toLocaleString();
+    div.appendChild(time);
+  }
+  if (isMine && statusText) {
+    const status = document.createElement('div');
+    status.className = 'status' + (statusText === '✓✓' ? ' delivered' : '');
+    status.textContent = statusText;
+    div.appendChild(status);
+  }
+  // Prepend (older-message pagination) inserts before the given node; otherwise
+  // insert before the thinking bubble so live messages stay at the bottom.
+  const thinkingBubble = $('#messages .thinking-bubble');
+  if (beforeNode) {
+    $('#messages').insertBefore(div, beforeNode);
+  } else if (thinkingBubble) {
+    $('#messages').insertBefore(div, thinkingBubble);
+  } else {
+    $('#messages').appendChild(div);
+  }
+  // a2a cards clamp to ~5 lines (measured now that the element is attached).
+  if (isA2a) applyA2aClamp(bubble, div);
+  return div;
+}
+
+function appendSystem(text) {
+  const div = document.createElement('div');
+  div.className = 'msg system';
+  div.textContent = text;
+  const thinkingBubble = $('#messages .thinking-bubble');
+  if (thinkingBubble) {
+    $('#messages').insertBefore(div, thinkingBubble);
+  } else {
+    $('#messages').appendChild(div);
+  }
+  return div;
+}
+
+// Collapsible "Thoughts" disclosure folded onto an agent reply — the full
+// reasoning trace captured during the turn. Collapsed by default, but the summary
+// carries a muted preview of the latest line so there's visible detail without
+// expanding (CSS hides the preview once the disclosure is open).
+function buildThoughtsDisclosure(lines) {
+  const details = document.createElement('details');
+  details.className = 'thoughts';
+  const summary = document.createElement('summary');
+  summary.appendChild(lucideEl('sparkles'));
+  summary.append(` Thoughts (${lines.length})`);
+  const last = lines[lines.length - 1] || '';
+  if (last) {
+    const preview = document.createElement('span');
+    preview.className = 'thoughts-preview';
+    preview.textContent = ' — ' + (last.length > 90 ? `${last.slice(0, 89)}…` : last);
+    summary.appendChild(preview);
+  }
+  details.appendChild(summary);
+  const body = document.createElement('div');
+  body.className = 'thoughts-body';
+  for (const line of lines) {
+    const row = document.createElement('div');
+    row.className = 'thoughts-line';
+    row.textContent = line;
+    body.appendChild(row);
+  }
+  details.appendChild(body);
+  return details;
+}
+
+// Clamp an a2a side-channel card to ~5 lines with a show more/less toggle.
+// Must run AFTER the element is attached to the DOM (needs layout to measure).
+function applyA2aClamp(bubble, container) {
+  bubble.classList.add('a2a-clamp', 'collapsed');
+  // Fits within the clamp → no toggle needed; drop the clamp classes.
+  if (bubble.scrollHeight <= bubble.clientHeight + 4) {
+    bubble.classList.remove('a2a-clamp', 'collapsed');
+    return;
+  }
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'a2a-more';
+  toggle.textContent = 'Show more';
+  toggle.addEventListener('click', () => {
+    const collapsed = bubble.classList.toggle('collapsed');
+    toggle.textContent = collapsed ? 'Show more' : 'Show less';
+  });
+  container.appendChild(toggle);
+}
+
+// ── Scroll-back (older-message pagination) ──────────────────────────────────
+// Join loads only the most recent window; older history (it's all in SQLite)
+// is fetched on demand when the user scrolls to the top, via ?before_id=. State
+// is reset per room in the `history` handler above.
+let oldestMessageId = null;
+let loadingOlder = false;
+let noMoreOlder = false;
+// During a search-jump we page older history in a tight loop; suppress
+// loadOlderMessages' per-page scroll re-pin so the viewport doesn't bounce —
+// jumpToMessage does one clean scroll at the end instead.
+let suppressScrollRestore = false;
+
+async function loadOlderMessages() {
+  if (loadingOlder || noMoreOlder || !currentRoom || !oldestMessageId) return;
+  loadingOlder = true;
+  const el = $('#messages');
+  // Snapshot scroll geometry so the viewport stays pinned to the same message
+  // after prepending — on desktop #messages scrolls, on mobile the window does.
+  const prevElHeight = el.scrollHeight;
+  const prevElTop = el.scrollTop;
+  const prevDocHeight = document.documentElement.scrollHeight;
+  const prevWinY = window.scrollY;
+  try {
+    const r = await authFetch(
+      `/api/rooms/${encodeURIComponent(currentRoom)}/messages?before_id=${encodeURIComponent(oldestMessageId)}`,
+    );
+    if (!r.ok) return;
+    const older = await r.json();
+    if (!Array.isArray(older) || older.length === 0) {
+      noMoreOlder = true;
+      return;
+    }
+    // Dedupe against what's already rendered: guards page-boundary overlaps and
+    // stays correct if the request hit a backend that doesn't honor before_id
+    // (it would echo recent messages — all already on screen → nothing fresh).
+    const fresh = older.filter((m) => !m.id || !el.querySelector(`[data-message-id="${CSS.escape(m.id)}"]`));
+    if (fresh.length === 0) {
+      noMoreOlder = true;
+      return;
+    }
+    const anchor = el.firstChild; // current oldest rendered node
+    fresh.forEach((m) => appendMessage(m, undefined, anchor));
+    oldestMessageId = older[0].id; // advance from the oldest FETCHED id (paging anchor)
+    if (older.length < 50) noMoreOlder = true; // short page → reached the start
+    // Restore position: add the height the prepend introduced. Skipped during a
+    // search-jump — jumpToMessage scrolls to the target once at the end, so
+    // per-page re-pinning would just make the viewport bounce.
+    if (!suppressScrollRestore) {
+      requestAnimationFrame(() => {
+        el.scrollTop = prevElTop + (el.scrollHeight - prevElHeight);
+        window.scrollTo(0, prevWinY + (document.documentElement.scrollHeight - prevDocHeight));
+      });
+    }
+  } catch {
+    /* leave noMoreOlder false so a later scroll-to-top retries */
+  } finally {
+    loadingOlder = false;
+  }
+}
+
+// Center + briefly flash a specific message (used by search-result clicks). If
+// the target isn't in the loaded window, page older history in until it appears
+// (or we run out / hit a safety cap), then scroll to it. Reuses the same
+// ?before_id= pagination as scroll-back, so no backend change is needed.
+async function jumpToMessage(messageId) {
+  if (!messageId) return;
+  const find = () => $('#messages').querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
+  let el = find();
+  if (!el) {
+    // Off-screen hit: page older history in (no per-page re-pin) until it appears.
+    suppressScrollRestore = true;
+    try {
+      let guard = 0;
+      while (!el && !noMoreOlder && guard < 40) {
+        const before = oldestMessageId;
+        await loadOlderMessages();
+        el = find();
+        if (oldestMessageId === before) break; // no progress (error / nothing fresh) — stop
+        guard++;
+      }
+    } finally {
+      suppressScrollRestore = false;
+    }
+  }
+  if (!el) {
+    showToast('Couldn’t find that message — it may be too old to load.', { kind: 'info' });
+    return;
+  }
+  // Let the prepends/layout settle, then do ONE definitive scroll + flash so the
+  // message is stably centered (and in view) for the whole highlight.
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  el.scrollIntoView({ block: 'center' });
+  el.classList.add('jump-highlight');
+  setTimeout(() => el.classList.remove('jump-highlight'), 2500);
+}
+
+// ── Toasts + confirm modal ────────────────────────────────────────────────
+// One feedback vocabulary for the whole app. showToast replaces post-action
+// alert()s; showConfirmModal replaces destructive confirm()s. Both reuse the
+// existing modal-overlay / toast container styling so there are no native
+// browser dialogs in the installed PWA.
+
+/**
+ * Transient corner notification. `kind` is 'info' (default), 'success', or
+ * 'error'. Errors linger longer and must be dismissed-or-time-out; all toasts
+ * are click-to-dismiss. Returns the element so callers can remove it early.
+ */
+// ── UserCreds: per-member key banner ───────────────────────────────────────────
+// Shown in a room whose credential_mode is optional/required when the current
+// user hasn't connected their own Anthropic key. Connecting onboards the key
+// into the OneCLI vault (host-side) so the member's turns bill their account.
+// The room's model provider decides the connect vocabulary + which mint runs.
+let userCredsProvider = 'claude';
+// Latest banner state, so the @handle popover credentials shortcut can mirror it.
+let userCredsState = null;
+// Whether the member has a connected credential for the open room — drives the
+// 🔑 indicator on the @handle chip (the standalone key chip was merged into it).
+let userCredsConnected = false;
+
+function userCredsWords(provider) {
+  return provider === 'codex'
+    ? { name: 'Codex', subWord: 'ChatGPT subscription', keyWord: 'OpenAI key', keyPlaceholder: 'sk-…' }
+    : { name: 'Claude', subWord: 'Claude subscription', keyWord: 'Anthropic key', keyPlaceholder: 'sk-ant-…' };
+}
+
+async function updateUserCredsBanner(roomId) {
+  const banner = $('#user-creds-banner');
+  if (!banner || !roomId) return;
+  const hideAll = () => {
+    banner.hidden = true;
+    userCredsState = null;
+    userCredsConnected = false;
+    updateHandleCreds();
+    renderHandleChip();
+  };
+  try {
+    const r = await authFetch(`/api/user-credentials/credential?roomId=${encodeURIComponent(roomId)}`);
+    if (!r.ok) {
+      hideAll();
+      return;
+    }
+    const { connected, mode, oauthAllowed, apiKeyAllowed = true, provider = 'claude' } = await r.json();
+    userCredsProvider = provider;
+    const { name, subWord, keyWord, keyPlaceholder } = userCredsWords(provider);
+    // The room's mode is the master switch: 'disabled' (User credentials: Off)
+    // means no UserCreds at all — neither API keys NOR OAuth — regardless of what the
+    // workspace accepts. When the room is on, each method is offered if the
+    // workspace accepts it (credential types are workspace-wide).
+    const apiOffered = mode !== 'disabled' && apiKeyAllowed;
+    const oauthOffered = mode !== 'disabled' && oauthAllowed;
+    if (!apiOffered && !oauthOffered) {
+      hideAll();
+      return;
+    }
+
+    userCredsState = { offered: true, connected, provider, oauthAllowed: oauthOffered, apiOffered, subWord, keyWord };
+    userCredsConnected = connected;
+    updateHandleCreds();
+    renderHandleChip();
+
+    // Connected → the @handle chip shows the 🔑 indicator (see renderHandleChip);
+    // the full banner is only the actionable "connect" prompt, done once connected.
+    if (connected) {
+      banner.hidden = true;
+      return;
+    }
+
+    // Not connected → show the actionable banner.
+    const connectBtn = $('#user-creds-connect-btn');
+    const oauthBtn = $('#user-creds-oauth-btn');
+    const input = $('#user-creds-key-input');
+    banner.hidden = false;
+    input.hidden = true;
+    input.value = '';
+    input.placeholder = keyPlaceholder;
+    // Primary action: connect via subscription sign-in. Secondary: paste a key.
+    if (oauthBtn) {
+      oauthBtn.hidden = !oauthOffered;
+      oauthBtn.textContent = `Connect to ${name}`;
+    }
+    connectBtn.hidden = !apiOffered;
+    if (connectBtn) connectBtn.textContent = 'API key';
+  } catch {
+    hideAll();
+  }
+}
+
+// The @handle popover mirrors the in-room banner state as a credentials shortcut
+// (discoverability). Shown only when the open room offers UserCreds; acts on that room.
+function updateHandleCreds() {
+  const wrap = $('#handle-creds');
+  if (!wrap) return;
+  if (!userCredsState || !userCredsState.offered) {
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+  const statusEl = $('#handle-creds-status');
+  const actionBtn = $('#handle-creds-action');
+  // Minimalist integrations-row style: a status dot + the provider name carry
+  // the connected/not state; the action button does the rest.
+  const { name } = userCredsWords(userCredsState.provider);
+  if (statusEl) {
+    // Text carries the connected/not state too (not just the dot colour) — for
+    // screen readers and colour-blind users.
+    statusEl.textContent = `${name} — ${userCredsState.connected ? 'connected' : 'not connected'}`;
+    statusEl.classList.toggle('is-connected', userCredsState.connected);
+  }
+  if (actionBtn) actionBtn.textContent = userCredsState.connected ? 'Disconnect' : 'Connect';
+}
+
+$('#handle-creds-action')?.addEventListener('click', async () => {
+  if (!userCredsState) return;
+  closeHandlePopover();
+  if (userCredsState.connected) {
+    const confirmed = await showConfirmModal({
+      title: `Disconnect ${userCredsWords(userCredsState.provider).name}?`,
+      confirmLabel: 'Disconnect',
+      destructive: true,
+    });
+    if (confirmed) await disconnectUserCreds();
+  } else if (userCredsState.oauthAllowed) {
+    // Subscriptions allowed → open the sign-in helper directly (what users expect
+    // from a "Connect" action), rather than just surfacing the banner.
+    $('#user-creds-oauth-btn')?.click();
+  } else {
+    // API-key-only room → reveal the banner and its key input.
+    const banner = $('#user-creds-banner');
+    if (banner) {
+      banner.hidden = false;
+      banner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      banner.classList.add('user-creds-banner-flash');
+      setTimeout(() => banner.classList.remove('user-creds-banner-flash'), 1200);
+    }
+    $('#user-creds-connect-btn')?.click(); // reveal the key input
+  }
+});
+
+$('#user-creds-connect-btn')?.addEventListener('click', async (e) => {
+  const input = $('#user-creds-key-input');
+  // First click reveals the input; second (with a value) submits.
+  if (input.hidden) {
+    input.hidden = false;
+    input.focus();
+    return;
+  }
+  const apiKey = input.value.trim();
+  if (!apiKey) return;
+  // Busy-guard + try/catch: without them a network failure here was an
+  // unhandled rejection — the user's key submit died with zero feedback.
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    const r = await authFetch('/api/user-credentials/credential', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ roomId: currentRoom, apiKey }),
+    });
+    if (r.ok) {
+      showToast(`Connected your ${userCredsWords(userCredsProvider).keyWord}.`, { kind: 'success' });
+      await updateUserCredsBanner(currentRoom);
+    } else {
+      const err = await r.json().catch(() => ({}));
+      showToast('Failed to connect key: ' + (err.error || r.statusText), { kind: 'error' });
+    }
+  } catch (err) {
+    showToast('Failed to connect key: ' + (err?.message || 'network error'), { kind: 'error' });
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('#user-creds-key-input')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('#user-creds-connect-btn').click();
+});
+
+async function disconnectUserCreds() {
+  const r = await authFetch('/api/user-credentials/credential', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+    body: JSON.stringify({ roomId: currentRoom }),
+  });
+  if (r.ok) {
+    showToast('Disconnected your account.', { kind: 'success' });
+    await updateUserCredsBanner(currentRoom);
+  } else {
+    const err = await r.json().catch(() => ({}));
+    showToast('Failed to disconnect: ' + (err.error || r.statusText), { kind: 'error' });
+  }
+}
+
+// The connected state lives as a compact key chip in the header; clicking it
+// disconnects (after a confirm), so the full banner no longer sits over the chat.
+// ── UserCreds OAuth: connect a Claude subscription token ────────────────────────
+// Browser-mint OAuth: no terminal. Opening the form starts a server-side mint
+// (a throwaway container runs `claude setup-token`), surfaces the sign-in URL,
+// takes the pasted code, and onboards the resulting token per-member.
+let userCredsOauthSessionId = null;
+let userCredsOauthReturnFocus = null; // element to restore focus to when the modal closes
+
+function userCredsOauthStatus(msg, kind) {
+  const el = $('#user-creds-oauth-status');
+  if (!el) return;
+  if (!msg) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.textContent = msg;
+  el.className = 'user-creds-oauth-status' + (kind ? ' ' + kind : '');
+}
+
+// The same modal serves three flows: a MEMBER connecting their own credential
+// (per-member endpoints, room-gated), and the OWNER setting a WORKSPACE DEFAULT
+// (admin-only endpoints, no room) for Claude ('workspace') or Codex
+// ('workspace-codex'). `userCredsOauthTarget` selects the endpoints.
+let userCredsOauthTarget = 'member';
+async function openOauthMintModal(target) {
+  userCredsOauthTarget = target;
+  const modal = $('#user-creds-oauth-modal');
+  if (!modal) return;
+  const isWorkspace = target.startsWith('workspace');
+  const isCodex = target === 'workspace-codex' || (!isWorkspace && userCredsProvider === 'codex');
+  const title = $('#user-creds-oauth-title');
+  if (title)
+    title.textContent = isWorkspace
+      ? `Connect ${isCodex ? 'ChatGPT' : 'Claude'} (workspace default)`
+      : `Connect to ${userCredsWords(userCredsProvider).name}`;
+  $('#user-creds-oauth-step2').hidden = true;
+  $('#user-creds-oauth-submit').hidden = true;
+  $('#user-creds-oauth-spinner').hidden = false; // spinner while the mint warms up
+  const code = $('#user-creds-oauth-code');
+  if (code) code.value = '';
+  const codexCode = $('#user-creds-oauth-codex-code');
+  userCredsOauthReturnFocus = document.activeElement; // restore focus here on close
+  modal.hidden = false;
+  $('#user-creds-oauth-close')?.focus(); // move focus into the dialog
+  userCredsOauthStatus('Preparing sign-in…', '');
+  try {
+    const startUrl = isWorkspace
+      ? isCodex
+        ? '/api/workspace-credential/codex/start'
+        : '/api/workspace-credential/oauth/start'
+      : isCodex
+        ? '/api/user-credentials/codex/start'
+        : '/api/user-credentials/oauth/start';
+    const r = await authFetch(startUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify(isWorkspace ? {} : { roomId: currentRoom }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    userCredsOauthSessionId = data.sessionId;
+    const link = $('#user-creds-oauth-link');
+    if (link) {
+      link.href = data.url;
+      link.textContent = isWorkspace
+        ? `Open ${isCodex ? 'ChatGPT' : 'Claude'} sign-in ↗`
+        : `Open ${userCredsWords(userCredsProvider).name} sign-in ↗`;
+    }
+    // Claude: paste a code back. Codex: enter a pairing code at the site, then approve.
+    if (code) code.hidden = isCodex;
+    const codeLabel = $('#user-creds-oauth-code-label');
+    if (codeLabel) codeLabel.hidden = isCodex;
+    if (codexCode) {
+      codexCode.hidden = !isCodex;
+      codexCode.textContent = '';
+      if (isCodex && data.userCode) {
+        // Render the pairing code with a one-click copy button — the operator has
+        // to enter this code at the ChatGPT sign-in page, so copy beats retyping.
+        codexCode.append('Pairing code: ');
+        const codeEl = document.createElement('code');
+        codeEl.textContent = data.userCode;
+        const copyBtn = document.createElement('button');
+        copyBtn.type = 'button';
+        copyBtn.className = 'codex-code-copy';
+        copyBtn.title = 'Copy';
+        copyBtn.setAttribute('aria-label', 'Copy pairing code');
+        copyBtn.innerHTML = '<svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg>';
+        copyBtn.addEventListener('click', async () => {
+          const use = copyBtn.querySelector('use');
+          if (await copyTextToClipboard(data.userCode)) {
+            copyBtn.classList.add('copied');
+            use?.setAttribute('href', '#i-check');
+            setTimeout(() => {
+              copyBtn.classList.remove('copied');
+              use?.setAttribute('href', '#i-copy');
+            }, 1500);
+          }
+        });
+        codexCode.append(codeEl, copyBtn);
+      } else if (isCodex) {
+        codexCode.textContent = 'Open the link, then approve the sign-in.';
+      }
+    }
+    const submit = $('#user-creds-oauth-submit');
+    if (submit) submit.textContent = isCodex ? 'I’ve approved — connect' : 'Connect';
+    $('#user-creds-oauth-spinner').hidden = true;
+    $('#user-creds-oauth-step2').hidden = false;
+    $('#user-creds-oauth-submit').hidden = false;
+    userCredsOauthStatus(isCodex ? 'Open the link, enter the code, and approve — then click connect.' : '', '');
+    $('#user-creds-oauth-link').focus();
+  } catch (err) {
+    $('#user-creds-oauth-spinner').hidden = true;
+    userCredsOauthStatus(err.message || 'Could not start sign-in.', 'error');
+  }
+}
+$('#user-creds-oauth-btn')?.addEventListener('click', () => openOauthMintModal('member'));
+
+function closeUserCredsOauthModal() {
+  if (userCredsOauthSessionId) {
+    const cancelUrl =
+      userCredsOauthTarget === 'workspace-codex'
+        ? '/api/workspace-credential/codex/cancel'
+        : userCredsOauthTarget === 'workspace'
+          ? '/api/workspace-credential/oauth/cancel'
+          : userCredsProvider === 'codex'
+            ? '/api/user-credentials/codex/cancel'
+            : '/api/user-credentials/oauth/cancel';
+    authFetch(cancelUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ sessionId: userCredsOauthSessionId }),
+    }).catch(() => {});
+    userCredsOauthSessionId = null;
+  }
+  const modal = $('#user-creds-oauth-modal');
+  if (modal) modal.hidden = true;
+  // Return focus to whatever opened the dialog (a11y dismissal contract).
+  if (userCredsOauthReturnFocus && typeof userCredsOauthReturnFocus.focus === 'function') userCredsOauthReturnFocus.focus();
+  userCredsOauthReturnFocus = null;
+}
+$('#user-creds-oauth-cancel')?.addEventListener('click', closeUserCredsOauthModal);
+$('#user-creds-oauth-close')?.addEventListener('click', closeUserCredsOauthModal);
+// Click the backdrop (outside the modal card) to close.
+$('#user-creds-oauth-modal')?.addEventListener('click', (e) => {
+  if (e.target === $('#user-creds-oauth-modal')) closeUserCredsOauthModal();
+});
+// Escape closes; Tab is trapped within the dialog (a11y, matches other modals).
+document.addEventListener('keydown', (e) => {
+  const modal = $('#user-creds-oauth-modal');
+  if (!modal || modal.hidden) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    closeUserCredsOauthModal();
+    return;
+  }
+  if (e.key !== 'Tab') return;
+  const focusable = Array.from(
+    modal.querySelectorAll('button:not([hidden]), a[href], input:not([hidden])'),
+  ).filter((el) => el.offsetParent !== null && !el.disabled);
+  if (focusable.length === 0) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && document.activeElement === last) {
+    e.preventDefault();
+    first.focus();
+  }
+});
+// Auto-submit once a code is pasted (Claude path) — no separate Connect click.
+$('#user-creds-oauth-code')?.addEventListener('paste', () => {
+  setTimeout(() => {
+    const submit = $('#user-creds-oauth-submit');
+    if (submit && !submit.hidden && ($('#user-creds-oauth-code')?.value || '').trim()) submit.click();
+  }, 0);
+});
+
+$('#user-creds-oauth-submit')?.addEventListener('click', async () => {
+  const isWorkspace = userCredsOauthTarget.startsWith('workspace');
+  const isCodex = userCredsOauthTarget === 'workspace-codex' || (!isWorkspace && userCredsProvider === 'codex');
+  const code = ($('#user-creds-oauth-code')?.value || '').trim();
+  if (!userCredsOauthSessionId) return;
+  if (!isCodex && !code) return; // Claude needs the pasted code; Codex needs none.
+  const btn = $('#user-creds-oauth-submit');
+  btn.disabled = true;
+  $('#user-creds-oauth-step2').hidden = true;
+  $('#user-creds-oauth-spinner').hidden = false; // spinner while connecting
+  const { subWord } = userCredsWords(userCredsProvider);
+  userCredsOauthStatus('Connecting…', '');
+  try {
+    const finishUrl = isWorkspace
+      ? isCodex
+        ? '/api/workspace-credential/codex/finish'
+        : '/api/workspace-credential/oauth/code'
+      : isCodex
+        ? '/api/user-credentials/codex/finish'
+        : '/api/user-credentials/oauth/code';
+    const body = isWorkspace
+      ? isCodex
+        ? { sessionId: userCredsOauthSessionId }
+        : { sessionId: userCredsOauthSessionId, code }
+      : isCodex
+        ? { roomId: currentRoom, sessionId: userCredsOauthSessionId }
+        : { roomId: currentRoom, sessionId: userCredsOauthSessionId, code };
+    const r = await authFetch(finishUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || r.statusText);
+    userCredsOauthSessionId = null;
+    if (isWorkspace) {
+      showToast(`Workspace default ${isCodex ? 'ChatGPT' : 'Claude'} subscription connected.`, { kind: 'success' });
+      $('#user-creds-oauth-modal').hidden = true;
+      // Refresh the wizard engine list (controls swap to the ✓ connected card
+      // + chip). The default login lives only in the wizard now.
+      refreshWizardCredState();
+    } else {
+      showToast(`Connected your ${subWord}.`, { kind: 'success' });
+      $('#user-creds-oauth-modal').hidden = true;
+      await updateUserCredsBanner(currentRoom);
+    }
+  } catch (err) {
+    $('#user-creds-oauth-spinner').hidden = true;
+    $('#user-creds-oauth-step2').hidden = false; // restore so they can retry
+    userCredsOauthStatus(err.message || 'Could not connect.', 'error');
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function showToast(message, { kind = 'info', timeout } = {}) {
+  const container = $('#toasts');
+  if (!container) return null;
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${kind}`;
+  toast.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+  toast.textContent = message;
+  const remove = () => {
+    if (!toast.parentNode) return;
+    toast.classList.add('toast-out');
+    setTimeout(() => toast.remove(), 180);
+  };
+  toast.addEventListener('click', remove);
+  container.appendChild(toast);
+  const ms = timeout ?? (kind === 'error' ? 7000 : 4000);
+  setTimeout(remove, ms);
+  return toast;
+}
+
+/**
+ * Promise-based confirmation modal. Resolves true on confirm, false on
+ * cancel / backdrop / Escape. `body` may be a string or an HTMLElement (use an
+ * element when the message contains user-supplied text, so it stays escaped).
+ * `destructive` styles the confirm button as a delete action and focuses
+ * Cancel by default.
+ */
+// `extraActions` (optional): buttons rendered between Cancel and the primary
+// Confirm, each `{ label, value, className? }`. Clicking one resolves the promise
+// with its `value` (Confirm still resolves `true`, Cancel/Escape `false`), so a
+// caller can offer more than a yes/no without a bespoke modal.
+// `beforeConfirm` (optional): runs on every confirm attempt (button or Enter);
+// returning false keeps the modal open — the inline-validation hook.
+function showConfirmModal({ title, body, confirmLabel = 'Confirm', cancelLabel = 'Cancel', destructive = false, extraActions = [], beforeConfirm = null }) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay confirm-overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'modal confirm-modal' + (body ? '' : ' confirm-modal--titleonly');
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    const titleSpan = document.createElement('span');
+    titleSpan.textContent = title || 'Confirm';
+    header.appendChild(titleSpan);
+
+    // Body is optional: a title-only confirm (no dead space) for reversible
+    // actions whose title says it all. Only render the body when there's content.
+    let bodyEl = null;
+    if (body) {
+      bodyEl = document.createElement('div');
+      bodyEl.className = 'modal-body';
+      const message = document.createElement('div');
+      message.className = 'confirm-message';
+      if (body instanceof HTMLElement) message.appendChild(body);
+      else message.textContent = body;
+      bodyEl.appendChild(message);
+    }
+
+    const footer = document.createElement('div');
+    footer.className = 'confirm-actions';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'btn-cancel';
+    cancelBtn.textContent = cancelLabel;
+    const confirmBtn = document.createElement('button');
+    confirmBtn.type = 'button';
+    confirmBtn.className = destructive ? 'btn btn-danger' : 'btn btn-primary';
+    confirmBtn.textContent = confirmLabel;
+    const extraBtns = extraActions.map((a) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = a.className || 'btn btn-secondary';
+      b.textContent = a.label;
+      b.addEventListener('click', () => close(a.value));
+      return b;
+    });
+    footer.append(cancelBtn, ...extraBtns, confirmBtn);
+
+    modal.append(header, ...(bodyEl ? [bodyEl] : []), footer);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    let settled = false;
+    const close = (result) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener('keydown', onKey);
+      overlay.remove();
+      resolve(result);
+    };
+    const confirm = () => {
+      if (beforeConfirm && beforeConfirm() === false) return;
+      close(true);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') close(false);
+      else if (e.key === 'Enter') confirm();
+    };
+    cancelBtn.addEventListener('click', () => close(false));
+    confirmBtn.addEventListener('click', confirm);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close(false);
+    });
+    document.addEventListener('keydown', onKey);
+    // Focus Cancel for destructive actions so an accidental Enter doesn't delete.
+    (destructive ? cancelBtn : confirmBtn).focus();
+  });
+}
+
+/** Single-line text prompt in the app's modal chrome — replaces native prompt()
+ * (unstylable, ESC-inconsistent, blocked in some PWA contexts). Returns the
+ * trimmed value, or null on cancel/empty.
+ * `validate(trimmedValue)` (optional): return an error string to keep the modal
+ * open with that message inline (DESIGN §5 — field validation is inline text),
+ * or null/undefined to accept. */
+async function showInputModal({ title, placeholder = '', value = '', confirmLabel = 'Create', validate = null }) {
+  const wrap = document.createElement('div');
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'confirm-input';
+  input.placeholder = placeholder;
+  input.value = value;
+  input.autocomplete = 'off';
+  wrap.appendChild(input);
+  let beforeConfirm = null;
+  if (validate) {
+    const err = document.createElement('div');
+    err.className = 'confirm-input-error';
+    err.hidden = true;
+    wrap.appendChild(err);
+    input.addEventListener('input', () => {
+      err.hidden = true;
+      input.classList.remove('invalid');
+    });
+    beforeConfirm = () => {
+      const msg = validate(input.value.trim());
+      if (!msg) return true;
+      err.textContent = msg;
+      err.hidden = false;
+      input.classList.add('invalid');
+      input.focus();
+      return false;
+    };
+  }
+  const done = showConfirmModal({ title, body: wrap, confirmLabel, beforeConfirm });
+  input.focus(); // after showConfirmModal's own focus call, so the input wins
+  const ok = await done;
+  return ok ? input.value.trim() || null : null;
+}
+
+function renderFileBubble(meta) {
+  const wrap = document.createElement('div');
+  wrap.className = 'file-bubble';
+  const isImage = meta.mime?.startsWith('image/');
+  if (isImage) {
+    const img = document.createElement('img');
+    img.src = meta.url;
+    img.alt = meta.filename;
+    img.className = 'file-image-preview';
+    img.loading = 'lazy';
+    img.addEventListener('click', () => openLightbox(meta.url, meta.filename));
+    wrap.appendChild(img);
+  }
+  const info = document.createElement('div');
+  info.className = 'file-info';
+  const icon = isImage ? lucide('image') : meta.mime?.includes('pdf') ? lucide('file-text') : lucide('paperclip');
+  const sizeStr =
+    meta.size < 1024
+      ? `${meta.size} B`
+      : meta.size < 1048576
+        ? `${(meta.size / 1024).toFixed(1)} KB`
+        : `${(meta.size / 1048576).toFixed(1)} MB`;
+  info.innerHTML = `<span class="file-icon">${icon}</span><span class="file-name">${esc(meta.filename)}</span><span class="file-size">${sizeStr}</span>`;
+  const dl = document.createElement('a');
+  dl.href = meta.url;
+  dl.download = meta.filename;
+  dl.className = 'file-download';
+  dl.innerHTML = lucide('download');
+  dl.title = 'Download';
+  info.appendChild(dl);
+  wrap.appendChild(info);
+  return wrap;
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+let pendingFiles = [];
+let pendingFileSeq = 0;
+const pendingThumbUrls = new Map();
+
+function stageFile(file) {
+  if (!currentRoom) return;
+  const id = ++pendingFileSeq;
+  pendingFiles.push({ id, file });
+  renderFilePreview();
+  const input = $('#message-input');
+  input.focus();
+  input.placeholder =
+    pendingFiles.length === 1
+      ? `Add a message about ${file.name}…`
+      : `Add a message about ${pendingFiles.length} files…`;
+}
+
+function stageFiles(fileList) {
+  for (const f of fileList) stageFile(f);
+}
+
+function removeStagedFile(id) {
+  const url = pendingThumbUrls.get(id);
+  if (url) {
+    URL.revokeObjectURL(url);
+    pendingThumbUrls.delete(id);
+  }
+  pendingFiles = pendingFiles.filter((p) => p.id !== id);
+  if (pendingFiles.length === 0) {
+    clearStagedFiles();
+  } else {
+    renderFilePreview();
+    $('#message-input').placeholder =
+      pendingFiles.length === 1
+        ? `Add a message about ${pendingFiles[0].file.name}…`
+        : `Add a message about ${pendingFiles.length} files…`;
+  }
+}
+
+function clearStagedFiles() {
+  for (const url of pendingThumbUrls.values()) URL.revokeObjectURL(url);
+  pendingThumbUrls.clear();
+  pendingFiles = [];
+  const preview = $('#file-preview');
+  if (preview) {
+    preview.hidden = true;
+    preview.innerHTML = '';
+  }
+  $('#message-input').placeholder = 'Message…';
+}
+
+function renderFilePreview() {
+  const preview = $('#file-preview');
+  if (!preview) return;
+  if (pendingFiles.length === 0) {
+    preview.hidden = true;
+    preview.innerHTML = '';
+    return;
+  }
+  preview.hidden = false;
+  let html = '';
+  for (const { id, file } of pendingFiles) {
+    const isImage = file.type.startsWith('image/');
+    html += `<div class="file-preview-content" data-id="${id}">`;
+    if (isImage) {
+      let url = pendingThumbUrls.get(id);
+      if (!url) {
+        url = URL.createObjectURL(file);
+        pendingThumbUrls.set(id, url);
+      }
+      html += `<img src="${url}" class="file-preview-thumb" alt="">`;
+    } else {
+      html += `<span class="file-preview-icon">${lucide('paperclip')}</span>`;
+    }
+    html += `<span class="file-preview-name">${esc(file.name)}</span>`;
+    html += `<span class="file-preview-size">${formatFileSize(file.size)}</span>`;
+    html += `<button class="file-preview-remove" data-remove-id="${id}">${lucide('x')}</button>`;
+    html += '</div>';
+  }
+  preview.innerHTML = html;
+  preview.querySelectorAll('[data-remove-id]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      removeStagedFile(Number(btn.dataset.removeId));
+    });
+  });
+}
+
+const CHUNK_THRESHOLD = 512 * 1024; // Use chunked upload for files > 512KB
+const CHUNK_SIZE = 512 * 1024; // 512KB per chunk
+
+async function uploadFile(file, caption) {
+  if (!currentRoom) return;
+  if (file.size > CHUNK_THRESHOLD) {
+    return uploadFileChunked(file, caption);
+  }
+  const form = new FormData();
+  form.append('file', file);
+  if (caption) form.append('caption', caption);
+  try {
+    const res = await authFetch(
+      `/api/rooms/${encodeURIComponent(currentRoom)}/upload?thread_id=${encodeURIComponent(currentThread)}`,
+      {
+        method: 'POST',
+        body: form,
+      },
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.error('Upload failed:', err.error || res.statusText);
+      appendSystem('Upload failed: ' + (err.error || res.statusText));
+    }
+  } catch (err) {
+    console.error('Upload error:', err);
+    appendSystem('Upload failed: ' + err.message);
+  }
+}
+
+function arrayBufferToBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+// crypto.randomUUID is only exposed in secure contexts (HTTPS / localhost).
+// Webchat is commonly served over plain HTTP on a tailnet hostname where it
+// is absent — fall back to a getRandomValues-based v4 builder, which IS
+// available in non-secure contexts. Format matches the server's UUID regex
+// in src/channels/webchat/files.ts (handleChunkedUpload).
+function uuidv4() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+async function uploadFileChunked(file, caption) {
+  const uploadId = uuidv4();
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  const statusMsg = appendSystem(`Uploading ${file.name} (0/${totalChunks})…`);
+
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, file.size);
+    const slice = file.slice(start, end);
+    const buf = await slice.arrayBuffer();
+    const b64 = arrayBufferToBase64(buf);
+
+    const body = {
+      uploadId,
+      chunkIndex: i,
+      totalChunks,
+      filename: file.name,
+      mime: file.type || 'application/octet-stream',
+      data: b64,
+    };
+    // Include caption on the last chunk
+    if (i === totalChunks - 1 && caption) body.caption = caption;
+
+    try {
+      const res = await authFetch(
+        `/api/rooms/${encodeURIComponent(currentRoom)}/upload/chunk?thread_id=${encodeURIComponent(currentThread)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        if (statusMsg) statusMsg.textContent = `Upload failed: ${err.error || res.statusText}`;
+        return;
+      }
+    } catch (err) {
+      if (statusMsg) statusMsg.textContent = `Upload failed: ${err.message}`;
+      return;
+    }
+    if (statusMsg) statusMsg.textContent = `Uploading ${file.name} (${i + 1}/${totalChunks})…`;
+  }
+  if (statusMsg) statusMsg.remove();
+}
+
+function scrollToBottom(instant) {
+  const el = $('#messages');
+  el.scrollTo({ top: el.scrollHeight, behavior: instant ? 'instant' : 'smooth' });
+  // Also scroll window for mobile where body scrolls instead of #messages
+  window.scrollTo({ top: document.body.scrollHeight, behavior: instant ? 'instant' : 'smooth' });
+}
+
+function isNearBottom() {
+  const el = $('#messages');
+  const elNear = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  const winNear = document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 80;
+  // Both must be near bottom — on mobile the window scrolls (elNear is always
+  // true because #messages doesn't overflow), on desktop #messages scrolls.
+  return elNear && winNear;
+}
+
+// Coalesce multiple image-load re-scroll requests into a single rAF call so
+// many simultaneous loads don't queue up overlapping scrollTo invocations.
+let pendingFollowScroll = false;
+function scheduleFollowScroll() {
+  if (pendingFollowScroll) return;
+  pendingFollowScroll = true;
+  requestAnimationFrame(() => {
+    pendingFollowScroll = false;
+    if (!userScrolledAway) scrollToBottom();
+  });
+}
+
+let missedMsgCount = 0;
+let forceScrollCount = 0; // force scroll for next N incoming messages after send
+let userScrolledAway = false; // true once user scrolls up after sending
+
+function updateScrollButton() {
+  if (isNearBottom()) {
+    $('#scroll-bottom').hidden = true;
+    missedMsgCount = 0;
+    $('#unread-badge').textContent = '';
+  } else {
+    $('#scroll-bottom').hidden = false;
+    $('#unread-badge').textContent = missedMsgCount > 0 ? String(missedMsgCount) : '';
+  }
+}
+
+function incrementMissedMessages() {
+  if (!isNearBottom()) {
+    missedMsgCount++;
+    updateScrollButton();
+  }
+}
+
+// Delegated clicks for code-block toolbar buttons (copy + wrap).
+$('#messages').addEventListener('click', async (e) => {
+  const btn = e.target.closest('.code-btn');
+  if (!btn) return;
+  const pre = btn.closest('pre');
+  if (!pre) return;
+  if (btn.classList.contains('copy-code-btn')) {
+    const code = pre.querySelector('code');
+    const text = code ? code.textContent : pre.textContent;
+    const ok = await copyTextToClipboard(text || '');
+    btn.classList.add(ok ? 'copied' : 'error');
+    btn.textContent = ok ? 'Copied ✓' : 'Failed';
+    setTimeout(() => {
+      btn.classList.remove('copied', 'error');
+      btn.textContent = 'Copy';
+    }, 1500);
+  } else if (btn.classList.contains('wrap-code-btn')) {
+    const wrapping = pre.classList.toggle('wrap');
+    btn.textContent = wrapping ? 'Unwrap' : 'Wrap';
+    btn.classList.toggle('active', wrapping);
+  }
+});
+
+// Show/hide scroll-to-bottom button; detect user scrolling away.
+//
+// Programmatic scrolls (our scrollToBottom) fire scroll events too. Without
+// gating, those mid-animation events see "not at bottom yet" and flip
+// userScrolledAway=true / forceScrollCount=0 — which then prevents
+// late-arriving thinking bubbles from auto-scrolling. Only treat a scroll
+// event as user-driven if the user actually did something to cause it
+// (wheel, touch, or a scroll-relevant key) recently.
+//
+// Touch is tracked specially: iOS momentum scrolling continues to fire scroll
+// events for up to ~1s after touchend with no touchmove in between. We arm a
+// `momentumUntil` window when a real flick gesture ends so those events still
+// count as user-driven.
+let lastUserScrollAt = 0;
+let touchMovedThisGesture = false;
+let momentumUntil = 0;
+const markUserScroll = () => {
+  lastUserScrollAt = Date.now();
+};
+window.addEventListener('wheel', markUserScroll, { passive: true });
+window.addEventListener(
+  'touchstart',
+  () => {
+    touchMovedThisGesture = false;
+  },
+  { passive: true },
+);
+window.addEventListener(
+  'touchmove',
+  () => {
+    touchMovedThisGesture = true;
+    markUserScroll();
+  },
+  { passive: true },
+);
+window.addEventListener(
+  'touchend',
+  () => {
+    if (touchMovedThisGesture) {
+      momentumUntil = Date.now() + 1000;
+    }
+    touchMovedThisGesture = false;
+  },
+  { passive: true },
+);
+window.addEventListener('keydown', (e) => {
+  // Skip when the user is typing into an input — space, arrows, home/end
+  // are all editing keys there, not scroll intent. Without this gate, every
+  // space typed in the message textarea would mark scroll-intent and trip
+  // the very bug this whole module exists to prevent.
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+  if (
+    e.key === 'ArrowUp' ||
+    e.key === 'ArrowDown' ||
+    e.key === 'PageUp' ||
+    e.key === 'PageDown' ||
+    e.key === 'Home' ||
+    e.key === 'End' ||
+    e.key === ' '
+  ) {
+    markUserScroll();
+  }
+});
+
+function handleScroll() {
+  updateScrollButton();
+  // Near the top → pull in older history. #messages scrolls on desktop, the
+  // window scrolls on mobile; check whichever actually overflows so we don't
+  // false-trigger on the axis that never moves.
+  const el = $('#messages');
+  const elScrolls = el.scrollHeight - el.clientHeight > 4;
+  const winScrolls = document.documentElement.scrollHeight - window.innerHeight > 4;
+  if ((elScrolls && el.scrollTop < 80) || (winScrolls && window.scrollY < 80)) loadOlderMessages();
+  const now = Date.now();
+  const userDriven = now - lastUserScrollAt < 300 || now < momentumUntil;
+  if (!isNearBottom()) {
+    if (userDriven) {
+      userScrolledAway = true;
+      forceScrollCount = 0;
+    }
+  } else {
+    // Always reset when we land at bottom — programmatic or not, we're caught up.
+    userScrolledAway = false;
+  }
+}
+$('#messages').addEventListener('scroll', handleScroll);
+window.addEventListener('scroll', handleScroll);
+$('#scroll-bottom').addEventListener('click', () => {
+  missedMsgCount = 0;
+  userScrolledAway = false;
+  // Clear input markers so the imminent smooth scroll doesn't get tagged as
+  // user-driven by a stale wheel/touch from just before the click.
+  lastUserScrollAt = 0;
+  momentumUntil = 0;
+  $('#unread-badge').textContent = '';
+  scrollToBottom();
+});
+
+let clientMsgSeq = 0;
+
+function sendCurrentMessage() {
+  const input = $('#message-input');
+  const text = input.value.trimEnd(); // trimEnd not trim — preserves leading indentation
+  if (!currentRoom) return;
+
+  // Files + optional caption (caption attaches to the first upload)
+  if (pendingFiles.length > 0) {
+    const files = pendingFiles.map((p) => p.file);
+    const caption = text;
+    clearStagedFiles();
+    input.value = '';
+    input.style.height = 'auto';
+    (async () => {
+      for (let i = 0; i < files.length; i++) {
+        await uploadFile(files[i], i === 0 ? caption : '');
+      }
+    })();
+    return;
+  }
+
+  if (!text) return;
+  // Bulk "/clear all" / "/compact all" fan out host-side to every session of
+  // the room's agent(s) — intercepted here, not delivered as a chat message.
+  const bulk = BULK_COMMANDS[text.toLowerCase()];
+  if (bulk) {
+    input.value = '';
+    input.style.height = 'auto';
+    $('#slash-menu').hidden = true;
+    setTimeout(() => broadcastSessionCommand(bulk), 0);
+    return;
+  }
+  // Don't send into a non-open socket — like the read/typing/interrupt sends.
+  // ws.send on a CONNECTING/CLOSING socket throws or silently drops; bail and
+  // keep the input so the user can resend once reconnected.
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    showToast('Not connected — try again in a moment.', { kind: 'error' });
+    return;
+  }
+  const clientId = `local-${++clientMsgSeq}-${Date.now()}`;
+  ws.send(JSON.stringify({ type: 'message', content: text, client_id: clientId, thread_id: currentThread }));
+  const el = appendMessage({ sender: myIdentity, sender_type: 'user', content: text }, '✓');
+  pendingMessages.set(clientId, el);
+  userScrolledAway = false;
+  forceScrollCount = 3; // ensure agent response scrolls into view
+  // Clear input markers so the smooth scroll below isn't mistaken for
+  // user-driven by a stale wheel/touch immediately before send.
+  lastUserScrollAt = 0;
+  momentumUntil = 0;
+  scrollToBottom();
+  input.value = '';
+  input.style.height = 'auto';
+}
+
+// Fan a bulk command (/clear or /compact) out to every active session of the
+// room's agent(s) — the "… all" slash commands. The server resolves the room's
+// wired agents and enforces admin (incl. their background a2a sessions).
+async function broadcastSessionCommand(command) {
+  if (!currentRoom) return;
+  const verb = command === '/clear' ? 'Reset' : 'Compact';
+  const ok = await showConfirmModal({
+    title: `${verb} all sessions`,
+    body: `${verb} every active session of this room's agent(s) — including background agent-to-agent sessions${command === '/clear' ? '. Each drops its context and starts fresh on the next turn.' : '.'}`,
+    confirmLabel: verb,
+    destructive: command === '/clear',
+  });
+  if (!ok) return;
+  try {
+    const res = await authFetch(`/api/rooms/${encodeURIComponent(currentRoom)}/sessions/broadcast`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || res.status);
+    showToast(`${verb} queued for ${body.count} session(s)`, { kind: 'success' });
+  } catch (err) {
+    showToast(`${verb} all failed: ${err.message}`, { kind: 'error' });
+  }
+}
+
+$('#message-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  sendCurrentMessage();
+});
+
+$('#message-input').addEventListener('keydown', (e) => {
+  // Slash-command menu (when open) consumes nav/select/dismiss keys first.
+  if (slashKeydown(e)) return;
+  // If mention popover is showing, let it consume Enter/Tab before send fires.
+  if (mentionMatches.length > 0 && (e.key === 'Enter' || e.key === 'Tab')) return;
+  if (e.key !== 'Enter') return;
+  if (settings.sendKey === 'enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    sendCurrentMessage();
+  }
+  if (settings.sendKey === 'shift-enter' && e.shiftKey) {
+    e.preventDefault();
+    sendCurrentMessage();
+  }
+  if (settings.sendKey === 'ctrl-enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    sendCurrentMessage();
+  }
+});
+
+// ── Slash-command autocomplete (/clear, /compact, …) ──────────────────────────
+//
+// The agent-runner handles these admin commands directly (formatter.ts). Webchat
+// already passes the raw text through, so this is pure discoverability: type "/"
+// to see the set, pick one, send it. Per-session — resets/compacts the session
+// you're in, not background a2a sessions (use the agent's Sessions panel for those).
+const SLASH_COMMANDS = [
+  { cmd: '/clear', desc: 'Reset this session — drop context, start fresh' },
+  { cmd: '/clear all', desc: "Reset ALL of this agent's sessions (incl. background a2a)" },
+  { cmd: '/compact', desc: 'Compact the context now' },
+  { cmd: '/compact all', desc: "Compact ALL of this agent's sessions" },
+  { cmd: '/context', desc: 'Show context-window usage' },
+  { cmd: '/cost', desc: 'Show token cost so far' },
+  { cmd: '/files', desc: 'List files in the workspace' },
+  { cmd: '/learn', desc: 'Distill a reusable skill from this session' },
+];
+// The bulk "… all" commands fan out host-side to every session of the room's
+// agent(s); they're intercepted on send rather than delivered as chat.
+const BULK_COMMANDS = { '/clear all': '/clear', '/compact all': '/compact' };
+let slashMatches = [];
+let slashActive = 0;
+
+function updateSlashMenu() {
+  const menu = $('#slash-menu');
+  // These commands are all admin-only (see command-gate.ts) — don't surface
+  // them to non-admins, who'd only get "Permission denied".
+  if (!isAdminView) {
+    slashMatches = [];
+    menu.hidden = true;
+    return;
+  }
+  const input = $('#message-input');
+  const v = input.value;
+  // Match while typing a command, incl. the "/clear all" form (one trailing word).
+  const m = /^\/[a-z-]*( [a-z-]*)?$/i.exec(v);
+  slashMatches = m ? SLASH_COMMANDS.filter((c) => c.cmd.startsWith(v.toLowerCase())) : [];
+  if (slashMatches.length === 0) {
+    menu.hidden = true;
+    return;
+  }
+  if (slashActive >= slashMatches.length) slashActive = 0;
+  menu.innerHTML = '';
+  slashMatches.forEach((c, i) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'slash-item' + (i === slashActive ? ' active' : '');
+    item.setAttribute('role', 'option');
+    item.innerHTML = `<span class="slash-cmd">${esc(c.cmd)}</span><span class="slash-desc">${esc(c.desc)}</span>`;
+    item.addEventListener('mousedown', (e) => {
+      e.preventDefault(); // keep focus in the input
+      pickSlash(i);
+    });
+    menu.appendChild(item);
+  });
+  menu.hidden = false;
+}
+
+function pickSlash(i) {
+  const c = slashMatches[i];
+  if (!c) return;
+  const input = $('#message-input');
+  slashMatches = [];
+  $('#slash-menu').hidden = true;
+  // Bulk "… all" commands are actions, not text — fire them straight away
+  // instead of dropping them in the composer to be sent. Defer past this
+  // keypress so the confirm modal doesn't catch the same Enter and auto-confirm.
+  const bulk = BULK_COMMANDS[c.cmd];
+  if (bulk) {
+    input.value = '';
+    input.style.height = 'auto';
+    setTimeout(() => broadcastSessionCommand(bulk), 0);
+    return;
+  }
+  input.value = c.cmd + ' ';
+  input.focus();
+}
+
+// Returns true if it consumed the key (caller should stop).
+function slashKeydown(e) {
+  if (slashMatches.length === 0) return false;
+  if (e.key === 'ArrowDown') {
+    slashActive = (slashActive + 1) % slashMatches.length;
+    updateSlashMenu();
+    e.preventDefault();
+    return true;
+  }
+  if (e.key === 'ArrowUp') {
+    slashActive = (slashActive - 1 + slashMatches.length) % slashMatches.length;
+    updateSlashMenu();
+    e.preventDefault();
+    return true;
+  }
+  if (e.key === 'Enter' || e.key === 'Tab') {
+    pickSlash(slashActive);
+    e.preventDefault();
+    return true;
+  }
+  if (e.key === 'Escape') {
+    slashMatches = [];
+    $('#slash-menu').hidden = true;
+    e.preventDefault();
+    return true;
+  }
+  return false;
+}
+
+// ── Mention autocomplete (@<folder>) + chip rendering ─────────────────────────
+//
+// The router engages an agent when a wired-room message matches the agent's
+// engage_pattern (`\B@<folder>\b`, case-insensitive — see ciFolderToken in
+// server.ts). The autocomplete here is purely UX — it lets the user pick from
+// wired agents instead of remembering folder slugs. The chip styling is
+// purely cosmetic — confirmation that the @ token will be matched.
+//
+// Cache is refreshed on join + on the same broadcastRooms event the room list
+// listens for, so adds/removes/prime-changes stay current without polling.
+
+let wiredAgentsForCurrentRoom = []; // [{ id, name, folder, is_prime }]
+
+async function refreshWiredAgentsForCurrentRoom() {
+  const roomId = currentRoom;
+  if (!roomId) {
+    wiredAgentsForCurrentRoom = [];
+    return;
+  }
+  try {
+    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/agents`);
+    const next = await res.json();
+    // Race guard: if the user navigated to a different room while this was
+    // in flight, drop the stale result.
+    if (currentRoom === roomId) wiredAgentsForCurrentRoom = next;
+  } catch {
+    // network blip — leave stale cache rather than blanking
+  }
+}
+
+// People you can @-mention here: anyone with a handle who can access the room,
+// online or not (mentions notify on return). Sourced from the server, NOT the
+// connected-members list — so you can mention offline teammates and the list
+// isn't empty just because you're the only one currently in the room.
+async function fetchMentionablePeople() {
+  const roomId = currentRoom;
+  if (!roomId) {
+    roomMentionPeople = [];
+    return;
+  }
+  try {
+    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/mentionable`);
+    if (!res.ok) return; // leave stale on error rather than blanking
+    const people = await res.json();
+    if (currentRoom === roomId) {
+      roomMentionPeople = people.map((p) => ({ folder: p.handle, name: p.name, isUser: true }));
+    }
+  } catch {
+    // network blip — leave stale cache
+  }
+}
+
+let mentionPopover = null;
+let mentionStart = -1;
+let mentionMatches = [];
+let mentionSelectedIndex = 0;
+
+function ensureMentionPopover() {
+  if (mentionPopover) return mentionPopover;
+  const el = document.createElement('div');
+  el.id = 'mention-popover';
+  el.className = 'mention-popover';
+  el.hidden = true;
+  // Anchor INSIDE the composer (absolute, bottom:100% — see CSS), not
+  // body+fixed: iOS shifts the visual viewport when the on-screen keyboard
+  // opens while fixed elements stay pinned to the layout viewport, which
+  // painted the popover off-screen on iPhone PWAs. In-layout anchoring rides
+  // with the input under every keyboard state, with no JS positioning math.
+  $('#message-form').appendChild(el);
+  mentionPopover = el;
+  return el;
+}
+
+function dismissMentionPopover() {
+  mentionStart = -1;
+  mentionMatches = [];
+  if (mentionPopover) mentionPopover.hidden = true;
+}
+
+function renderMentionPopover(input) {
+  const el = ensureMentionPopover();
+  if (mentionMatches.length === 0) {
+    el.hidden = true;
+    return;
+  }
+  el.innerHTML = '';
+  mentionMatches.forEach((agent, i) => {
+    const item = document.createElement('div');
+    item.className = 'mention-popover-item' + (i === mentionSelectedIndex ? ' active' : '');
+    const slug = document.createElement('span');
+    slug.className = 'mention-popover-slug';
+    slug.textContent = `@${agent.folder}`;
+    item.appendChild(slug);
+    if (agent.name && agent.name !== agent.folder) {
+      const name = document.createElement('span');
+      name.className = 'mention-popover-name';
+      name.textContent = ` — ${agent.name}`;
+      item.appendChild(name);
+    }
+    if (agent.isUser) {
+      const badge = document.createElement('span');
+      badge.className = 'mention-popover-person';
+      badge.textContent = 'person';
+      item.appendChild(badge);
+    } else if (agent.is_prime) {
+      const badge = document.createElement('span');
+      badge.className = 'mention-popover-prime';
+      badge.textContent = 'default';
+      item.appendChild(badge);
+    }
+    // mousedown (not click) so the input doesn't blur and dismiss the popover
+    // before we can read the selection — plus touchstart for iOS, where the
+    // synthesized mouse events can land after the blur-dismiss timer.
+    const pick = (e) => {
+      e.preventDefault();
+      mentionSelectedIndex = i;
+      acceptMention(input);
+    };
+    item.addEventListener('mousedown', pick);
+    item.addEventListener('touchstart', pick, { passive: false });
+    el.appendChild(item);
+  });
+  // Placement is pure CSS (absolute above the composer) — nothing to compute.
+  el.hidden = false;
+}
+
+function tryActivateMention(input) {
+  // Candidates: wired agents (trigger the agent) + human members with handles
+  // (notify/surface only). De-dup by folder so a handle that collides with an
+  // agent folder doesn't double-list.
+  const seen = new Set();
+  const mentionPool = [];
+  for (const a of [...wiredAgentsForCurrentRoom, ...roomMentionPeople]) {
+    const key = (a.folder || '').toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    mentionPool.push(a);
+  }
+  if (mentionPool.length === 0) {
+    dismissMentionPopover();
+    return;
+  }
+  const value = input.value;
+  const cursor = input.selectionStart ?? value.length;
+  // Walk back from cursor to find the most recent '@' that's at a word boundary
+  // (start of string or preceded by whitespace). Bail if we hit a non-slug char
+  // first — that means the cursor is no longer inside a mention token.
+  let i = cursor - 1;
+  while (i >= 0) {
+    const c = value[i];
+    if (c === '@') {
+      if (i !== 0 && !/\s/.test(value[i - 1])) {
+        dismissMentionPopover();
+        return;
+      }
+      break;
+    }
+    if (!/[a-zA-Z0-9-]/.test(c)) {
+      dismissMentionPopover();
+      return;
+    }
+    i--;
+  }
+  if (i < 0) {
+    dismissMentionPopover();
+    return;
+  }
+  mentionStart = i;
+  const token = value.slice(i + 1, cursor).toLowerCase();
+  mentionMatches = mentionPool.filter((a) => a.folder.toLowerCase().startsWith(token)).slice(0, 8);
+  mentionSelectedIndex = 0;
+  if (mentionMatches.length === 0) {
+    dismissMentionPopover();
+    return;
+  }
+  renderMentionPopover(input);
+}
+
+function acceptMention(input) {
+  if (mentionStart < 0 || mentionMatches.length === 0) return;
+  const agent = mentionMatches[mentionSelectedIndex];
+  if (!agent) return;
+  const before = input.value.slice(0, mentionStart);
+  const after = input.value.slice(input.selectionStart ?? input.value.length);
+  const inserted = `@${agent.folder} `;
+  input.value = before + inserted + after;
+  const newCursor = before.length + inserted.length;
+  input.setSelectionRange(newCursor, newCursor);
+  dismissMentionPopover();
+  // Fire input so the textarea auto-resize logic (if any) catches up.
+  input.dispatchEvent(new Event('input'));
+}
+
+(() => {
+  const input = $('#message-input');
+  input.addEventListener('input', () => tryActivateMention(input));
+  input.addEventListener('blur', () => {
+    // Defer so a click on a popover item registers before we tear down.
+    setTimeout(dismissMentionPopover, 120);
+  });
+  // Capture phase so we intercept Enter/Tab before the send-message handler
+  // fires. Only intercept when the popover is actually showing.
+  input.addEventListener(
+    'keydown',
+    (e) => {
+      if (mentionMatches.length === 0) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        mentionSelectedIndex = (mentionSelectedIndex + 1) % mentionMatches.length;
+        renderMentionPopover(input);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        mentionSelectedIndex = (mentionSelectedIndex - 1 + mentionMatches.length) % mentionMatches.length;
+        renderMentionPopover(input);
+      } else if (e.key === 'Tab' || e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        acceptMention(input);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        dismissMentionPopover();
+      }
+    },
+    true,
+  );
+})();
+
+/**
+ * Walk a rendered bubble's text nodes and wrap `@<slug>` tokens in a styled
+ * span. Cosmetic only — even if the token doesn't match a wired agent, the
+ * styling tells the user "this looks like a mention." Server-side matching
+ * is what actually decides routing.
+ */
+// Map a mention handle (folder/slug) to its wired agent's colour, matching the
+// per-name tint used on a2a labels. Humans / unknown handles → null (default chip).
+function mentionAgentColor(handle) {
+  const a = (wiredAgentsForCurrentRoom || []).find((x) => (x.folder || '').toLowerCase() === handle);
+  return a && a.name ? agentColor(a.name) : null;
+}
+
+function decorateMentions(bubble) {
+  const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      // Skip code/pre — we don't want to chip-style stuff inside backticks.
+      let p = node.parentNode;
+      while (p && p !== bubble) {
+        const tag = p.nodeName;
+        if (tag === 'CODE' || tag === 'PRE') return NodeFilter.FILTER_REJECT;
+        p = p.parentNode;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const nodes = [];
+  let n;
+  while ((n = walker.nextNode())) nodes.push(n);
+  const re = /(^|\s)@([a-z0-9-]+)\b/gi;
+  for (const node of nodes) {
+    const txt = node.nodeValue;
+    if (!/@[a-z0-9-]/i.test(txt)) continue;
+    re.lastIndex = 0;
+    let last = 0;
+    let m;
+    const frag = document.createDocumentFragment();
+    let touched = false;
+    while ((m = re.exec(txt)) !== null) {
+      const fullStart = m.index + m[1].length; // skip the leading whitespace match
+      if (fullStart > last) frag.appendChild(document.createTextNode(txt.slice(last, fullStart)));
+      const span = document.createElement('span');
+      span.className = 'mention';
+      const handle = m[2].toLowerCase();
+      if (myHandle && handle === myHandle) {
+        // A mention of me keeps the distinct self-highlight (warning tint).
+        span.classList.add('mention-me');
+      } else {
+        // A mention of a wired agent is tinted in that agent's colour (the same
+        // hash palette as a2a labels), so @code-reviewer reads in its colour.
+        const color = mentionAgentColor(handle);
+        if (color) span.style.background = color;
+      }
+      span.textContent = `@${m[2]}`;
+      frag.appendChild(span);
+      last = fullStart + 1 + m[2].length;
+      touched = true;
+    }
+    if (!touched) continue;
+    if (last < txt.length) frag.appendChild(document.createTextNode(txt.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  }
+}
+
+// ── Members panel ─────────────────────────────────────────────────────────
+let currentMembers = [];
+
+let membersFilter = ''; // lowercased; filters the room members list
+
+function renderMembers(members) {
+  currentMembers = members;
+  const toggle = $('#members-toggle');
+  toggle.textContent = members.length; // full count — independent of the filter
+  toggle.hidden = !currentRoom;
+  paintMembersList();
+}
+
+// Render #members-list from currentMembers, applying the search filter. Split
+// from renderMembers so the search box can re-paint without a re-fetch.
+function paintMembersList() {
+  const list = $('#members-list');
+  list.innerHTML = '';
+  let sorted = [...currentMembers].sort((a, b) => {
+    if (a.identity_type !== b.identity_type) return a.identity_type === 'agent' ? -1 : 1;
+    return a.identity.localeCompare(b.identity);
+  });
+  if (membersFilter) {
+    sorted = sorted.filter((m) => `${m.identity} ${m.handle || ''}`.toLowerCase().includes(membersFilter));
+  }
+  if (sorted.length === 0) {
+    list.innerHTML = '<li class="member-empty">No members match.</li>';
+    return;
+  }
+  for (const m of sorted) {
+    const li = document.createElement('li');
+    const dot = document.createElement('span');
+    dot.className = `member-dot ${m.identity_type}`;
+    li.appendChild(dot);
+    const name = document.createElement('span');
+    name.className = 'member-name';
+    name.textContent = m.identity === myIdentity ? `${m.identity} (you)` : m.identity;
+    li.appendChild(name);
+    if (m.identity_type === 'agent') {
+      const tag = document.createElement('span');
+      tag.className = 'member-tag';
+      tag.textContent = 'AGENT';
+      li.appendChild(tag);
+    } else if (m.handle) {
+      // Show how to @-mention this person, right-aligned like the AGENT tag.
+      const handle = document.createElement('span');
+      handle.className = 'member-handle';
+      handle.textContent = `@${m.handle}`;
+      li.appendChild(handle);
+    }
+    list.appendChild(li);
+  }
+}
+
+function toggleMembersPanel() {
+  const panel = $('#members-panel');
+  const overlay = $('#members-overlay');
+  const visible = panel.hidden;
+  panel.hidden = !visible;
+  if (visible) overlay.classList.add('visible');
+  else overlay.classList.remove('visible');
+}
+
+$('#members-toggle').addEventListener('click', toggleMembersPanel);
+$('#members-close').addEventListener('click', toggleMembersPanel);
+$('#members-search')?.addEventListener('input', (e) => {
+  membersFilter = e.target.value.trim().toLowerCase();
+  paintMembersList();
+});
+$('#members-overlay').addEventListener('click', toggleMembersPanel);
+
+// ── Detail-panel backdrop (mobile-only via CSS) ─────────────────────────────
+// Shared view-stack state for the detail drawers (mirrored from panel `.hidden`
+// by the observer below). Hoisted to module scope so full-view openers can close
+// an open drawer and wait for its router teardown before pushing themselves.
+let detailRouterOpen = false; // a detail drawer owns the top view-stack entry
+let afterDetailClose = null; // deferred full-view open, run once the drawer's router teardown completes
+function closeAllDetailDrawers() {
+  $('#agent-detail').hidden = true;
+  $('#room-detail').hidden = true;
+  $('#model-detail').hidden = true;
+  $('#mcp-detail').hidden = true;
+}
+// Open a full-screen view. If a detail drawer is open it owns the top of the view
+// stack, so close it FIRST and defer opening the full view until the drawer's
+// ASYNC router teardown finishes. Otherwise the two happen in one tick: the view
+// is pushed, then the drawer's history.go unwinds it too — so the first click
+// just closed the drawer and you had to click again. No drawer open → immediate.
+/**
+ * The one loading primitive (DESIGN.md §5): a list that's fetching shows an inline
+ * ring as its FIRST ROW — never a blank pane, never a toast. Toasts are outcomes;
+ * a spinner is the wait.
+ */
+function loadingRow(label) {
+  return `<li class="skills-empty"><span class="btn-spinner" aria-hidden="true"></span>${label}</li>`;
+}
+
+function openFullView(fn) {
+  if (detailRouterOpen) {
+    afterDetailClose = fn;
+    closeAllDetailDrawers();
+    return;
+  }
+  fn();
+}
+
+// Shared tap-to-close for #agent-detail / #room-detail / #model-detail. There
+// are 14-ish call sites that toggle `.hidden` on those panels; rather than
+// patch each one, a MutationObserver mirrors panel state onto the backdrop.
+(function () {
+  const overlay = $('#detail-overlay');
+  if (!overlay) return; // index.html older than this build — graceful no-op
+  const panels = ['#agent-detail', '#room-detail', '#model-detail', '#mcp-detail'].map((s) => $(s)).filter(Boolean);
+  const app = $('#app');
+  const sync = () => {
+    const allHidden = panels.every((p) => p.hidden);
+    overlay.hidden = allHidden;
+    // The three detail panels are nested inside <section id="chat">, which
+    // mobile CSS hides (`display: none`) unless `#app.in-room`. Without this
+    // class the panels stay invisible while the backdrop (a sibling of #chat)
+    // dims the screen — looked like a frozen grey UI when opened from a
+    // sidebar tab. Toggling `detail-open` keeps #chat displayed for the
+    // panel's lifetime.
+    if (app) app.classList.toggle('detail-open', !allHidden);
+    // Router: a detail pane is an overlay surface, so the OS/browser back
+    // gesture closes it (and, when opened over Manage, returns there). Guarded
+    // by detailRouterOpen so the teardown's own .hidden writes don't recurse.
+    if (!allHidden && !detailRouterOpen) {
+      detailRouterOpen = true;
+      openView('detail', () => {
+        detailRouterOpen = false;
+        closeAllDetailDrawers();
+        // A full-view open that closed this drawer waits here for the teardown.
+        // Defer a tick so its openView/pushState runs after popstate settles.
+        const next = afterDetailClose;
+        afterDetailClose = null;
+        if (next) queueMicrotask(next);
+      });
+    } else if (allHidden && detailRouterOpen) {
+      detailRouterOpen = false;
+      closeView('detail');
+    }
+  };
+  const obs = new MutationObserver(sync);
+  for (const p of panels) obs.observe(p, { attributes: true, attributeFilter: ['hidden'] });
+  sync();
+  // Tap on backdrop closes whichever panel(s) are currently open. The close
+  // functions each set their own `.hidden = true`, which fires the observer
+  // and hides the backdrop on the next tick.
+  overlay.addEventListener('click', () => {
+    if (!$('#agent-detail').hidden) closeAgentDetail();
+    if (!$('#room-detail').hidden) closeRoomDetail();
+    if (!$('#model-detail').hidden) closeModelDetail();
+    if (!$('#mcp-detail').hidden) closeMcpDetail();
+  });
+})();
+
+// ── Sidebar tabs ──────────────────────────────────────────────────────────
+// ── Manage section (Agents / Models) ────────────────────────────────────────
+// Full-screen surface reached from the ⋯ menu — replaces the old sidebar
+// Agents/Models tabs (the sidebar is now Rooms-only). Router-managed so the
+// back gesture returns to chat; detail panes (z-index above) overlay it.
+let manageActive = false;
+function openManage(tab = 'agents') {
+  // openFullView closes any open detail drawer first, then runs this (see there
+  // for why the deferral matters). Close any other full view too; manage overlays
+  // the chat pane, so restore chat as its backdrop (a prior full view had hidden
+  // it + set in-dashboard).
+  openFullView(() => {
+    hideOtherFullViews('manage');
+    $('#chat').hidden = false;
+    $('#app').classList.remove('in-dashboard');
+    manageActive = true;
+    $('#manage').hidden = false;
+    $('#overflow-btn')?.classList.add('active');
+    switchManageTab(tab);
+    if (!viewStack.some((v) => v.name === 'manage')) openView('manage', teardownManage);
+    probeRoutingAvailability();
+  });
+}
+function teardownManage() {
+  manageActive = false;
+  $('#manage').hidden = true;
+  $('#overflow-btn')?.classList.remove('active');
+}
+function switchManageTab(tab) {
+  manageTab = tab;
+  document.querySelectorAll('.manage-tab').forEach((t) => {
+    const on = t.dataset.mtab === tab;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', String(on));
+  });
+  $('#mtab-agents').hidden = tab !== 'agents';
+  $('#mtab-models').hidden = tab !== 'models';
+  $('#mtab-mcp').hidden = tab !== 'mcp';
+  $('#mtab-skills').hidden = tab !== 'skills';
+  $('#mtab-routing').hidden = tab !== 'routing';
+  if (typeof syncManageSortIcon === 'function') syncManageSortIcon(); // reflect the active tab's sort
+  if (tab === 'agents') fetchAgents();
+  else if (tab === 'models') fetchModels();
+  else if (tab === 'mcp') fetchMcpServers();
+  else if (tab === 'skills') renderSkillsRegistry();
+  else if (tab === 'routing') {
+    if (!routingAvailable) return switchManageTab('agents');
+    loadRoutingTab();
+  }
+}
+$('#manage-back')?.addEventListener('click', () => closeView('manage'));
+document.querySelectorAll('.manage-tab').forEach((t) => {
+  t.addEventListener('click', () => switchManageTab(t.dataset.mtab));
+});
+
+// ── Skills registry tab ─────────────────────────────────────────────────────
+// Browse every skill (shipped + imported), import one from a GitHub folder, and
+// delete imported ones. Assignment to agents stays in the agent detail's Skills
+// panel; this is the catalog.
+// Learning loop: skills the agents proposed, staged for review (keep + wire, or
+// discard). See docs/webchat/design/learning-loop.md.
+// Pending-drafts badge (learning loop): a count on the ⋯ menu so staged drafts
+// aren't invisible until someone happens to open Skills. Non-admins get a 403
+// from the endpoint → count 0 → badge hidden, correct for who can act on them.
+async function refreshDraftBadge(known) {
+  let n = known;
+  if (typeof n !== 'number') {
+    try {
+      const res = await authFetch('/api/skill-drafts');
+      n = res.ok ? ((await res.json()).drafts || []).length : 0;
+    } catch {
+      n = 0;
+    }
+  }
+  const dot = $('#learn-drafts-dot');
+  const pill = $('#learn-drafts-count');
+  if (dot) dot.hidden = n === 0;
+  if (pill) {
+    pill.hidden = n === 0;
+    pill.textContent = n > 0 ? String(n) : '';
+  }
+}
+
+async function renderSkillDrafts() {
+  const wrap = $('#skill-drafts');
+  const list = $('#skill-drafts-list');
+  if (!wrap || !list) return;
+  let drafts = [];
+  try {
+    const res = await authFetch('/api/skill-drafts');
+    if (res.ok) drafts = (await res.json()).drafts || [];
+  } catch {}
+  wrap.hidden = drafts.length === 0;
+  void refreshDraftBadge(drafts.length);
+  list.innerHTML = '';
+  for (const d of drafts) {
+    const li = document.createElement('li');
+    li.className = 'skill-row';
+    li.dataset.draftId = d.id; // stable row hook (the Keep button detaches during the undo countdown)
+    const info = document.createElement('div');
+    info.className = 'skill-info';
+    info.style.cursor = 'pointer';
+    const head = document.createElement('div');
+    head.className = 'skill-head';
+    const name = document.createElement('span');
+    name.className = 'skill-name';
+    name.textContent = d.kind === 'patch' ? `${d.targetSkill || d.skillName} (change)` : d.skillName;
+    const badge = document.createElement('span');
+    badge.className = 'skill-badge skill-badge-origin';
+    badge.style.setProperty('--badge-hue', '48'); // amber "learned"
+    badge.textContent = `learned · ${d.agentName}`;
+    head.append(name, badge);
+    const desc = document.createElement('span');
+    desc.className = 'skill-desc';
+    desc.textContent = d.description || '';
+    if (d.roomId) {
+      // The draft is a claim about a conversation — one click back to the
+      // evidence beats trusting the description.
+      const src = document.createElement('a');
+      src.href = '#';
+      src.className = 'skill-draft-source';
+      src.textContent = 'from this conversation →';
+      src.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const room = lastRoomsList.find((r) => r.id === d.roomId);
+        joinRoom(d.roomId, room ? room.name : d.roomId);
+      });
+      desc.append(' ', src);
+    }
+    info.append(head, desc);
+    info.addEventListener('click', () => openSkillDraft(d.id));
+    li.appendChild(info);
+    const keep = document.createElement('button');
+    keep.type = 'button';
+    keep.className = 'btn btn-secondary skill-catalog-add';
+    keep.textContent = 'Keep';
+    keep.title = `Wire to ${d.agentName}`;
+    keep.dataset.draftId = d.id;
+    // A re-render mid-review must not resurrect a clickable Keep.
+    if (reviewingDrafts.has(d.id)) markDraftReviewing(keep, true);
+    const actions = document.createElement('span');
+    actions.className = 'skill-draft-actions';
+    keep.addEventListener('click', () =>
+      // Restore the buttons before the keep runs: the row lives on through
+      // 'Keeping…' → 'Reviewing…', which must land on the real (connected)
+      // Keep button, not linger as a drained countdown.
+      armUndo(actions, `Keeping ${d.skillName}…`, UNDO_SECONDS, (restore) => {
+        restore();
+        return keepSkillDraft(d, keep);
+      }),
+    );
+    const drop = document.createElement('button');
+    drop.type = 'button';
+    drop.className = 'skill-delete';
+    drop.textContent = 'Discard';
+    drop.addEventListener('click', () =>
+      armUndo(actions, `Discarding ${d.skillName}…`, UNDO_SECONDS, () => discardSkillDraft(d.id)),
+    );
+    actions.append(keep, drop);
+    li.append(actions);
+    list.appendChild(li);
+  }
+}
+
+/**
+ * Minimal LCS line diff. A revision is only reviewable if you can see what
+ * CHANGED — showing the whole new file and asking someone to spot the edit is not
+ * review, it's proofreading. Skills are small, so O(m×n) is fine and beats pulling
+ * in a diff dependency.
+ */
+function lineDiff(oldText, newText) {
+  const a = String(oldText).split('\n');
+  const b = String(newText).split('\n');
+  const m = a.length;
+  const n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Uint32Array(n + 1));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out = [];
+  let i = 0;
+  let j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) {
+      out.push('  ' + a[i]);
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      out.push('- ' + a[i++]);
+    } else {
+      out.push('+ ' + b[j++]);
+    }
+  }
+  while (i < m) out.push('- ' + a[i++]);
+  while (j < n) out.push('+ ' + b[j++]);
+  return out.join('\n');
+}
+
+// Draft-editor state. Non-null while the SKILL.md editor is showing a DRAFT
+// (as opposed to an installed skill) — saveSkillEditor branches on it.
+let skillEditorDraft = null;
+
+// A self-contained SKILL.md viewer/editor modal that overlays the CURRENT view
+// (opened from the agent page, so you never leave it). onSave(content) returns a
+// promise; a thrown error keeps the modal open and surfaces the message.
+// `actions` (optional): [{ label, onClick }] — low-emphasis buttons rendered
+// before Cancel/Close; clicking one closes the modal, then runs onClick (e.g.
+// the scoped editor's 'History' jump into Journey).
+function openSkillEditorModal({ name, body, editable, badgeText, onSave, actions = [] }) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'modal skill-edit-modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  modal.setAttribute('aria-labelledby', 'skill-edit-modal-title');
+
+  const header = document.createElement('div');
+  header.className = 'modal-header';
+  const title = document.createElement('span');
+  title.id = 'skill-edit-modal-title';
+  title.textContent = name;
+  header.appendChild(title);
+  if (badgeText) {
+    const badge = document.createElement('span');
+    badge.className = 'skill-badge skill-badge-user';
+    badge.textContent = badgeText;
+    header.appendChild(badge);
+  }
+
+  const bodyEl = document.createElement('div');
+  bodyEl.className = 'modal-body';
+  const ta = document.createElement('textarea');
+  ta.className = 'skill-edit-textarea';
+  ta.value = body;
+  ta.readOnly = !editable;
+  ta.spellcheck = false;
+  bodyEl.appendChild(ta);
+
+  const footer = document.createElement('div');
+  footer.className = 'confirm-actions';
+  const actionBtns = actions.map((a) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn btn-ghost';
+    b.textContent = a.label;
+    b.addEventListener('click', () => {
+      close();
+      a.onClick();
+    });
+    footer.appendChild(b);
+    return b;
+  });
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'btn-cancel';
+  closeBtn.textContent = editable ? 'Cancel' : 'Close';
+  footer.appendChild(closeBtn);
+  let saveBtn = null;
+  if (editable) {
+    saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'btn btn-primary';
+    saveBtn.textContent = 'Save';
+    footer.appendChild(saveBtn);
+  }
+
+  modal.append(header, bodyEl, footer);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      close();
+      return;
+    }
+    // Focus trap: Tab cycles within the dialog (keyboard users must not land
+    // behind the overlay — see manual-checks SC 2.1.2).
+    if (e.key === 'Tab') {
+      const focusables = [ta, ...actionBtns, closeBtn, saveBtn].filter(Boolean);
+      const i = focusables.indexOf(document.activeElement);
+      if (e.shiftKey && (i <= 0)) {
+        e.preventDefault();
+        focusables[focusables.length - 1].focus();
+      } else if (!e.shiftKey && (i === -1 || i === focusables.length - 1)) {
+        e.preventDefault();
+        focusables[0].focus();
+      }
+    }
+  };
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  closeBtn.addEventListener('click', close);
+  if (saveBtn) {
+    saveBtn.addEventListener('click', async () => {
+      saveBtn.disabled = true;
+      const prev = saveBtn.textContent;
+      saveBtn.textContent = 'Saving…';
+      try {
+        await onSave(ta.value);
+        close();
+      } catch (err) {
+        showToast('Save failed: ' + (err?.message || err), { kind: 'error' });
+        saveBtn.disabled = false;
+        saveBtn.textContent = prev;
+      }
+    });
+  }
+  setTimeout(() => ta.focus(), 0);
+}
+
+// View/edit a skill scoped to ONE agent (its own .claude-shared/skills — where a
+// learned-and-kept skill lives). Opens the in-place modal. Scoped skills only
+// affect that agent, so a per-group admin may edit; the server re-checks.
+async function openScopedSkillEditor(agentId, name) {
+  let data = null;
+  try {
+    data = await apiJson(
+      `/api/agents/${encodeURIComponent(agentId)}/skills/scoped/${encodeURIComponent(name)}/content`,
+    );
+  } catch (err) {
+    return showToast('Couldn’t load skill: ' + (err?.message || err), { kind: 'error' });
+  }
+  openSkillEditorModal({
+    name: data.name,
+    body: data.body,
+    editable: !!data.editable,
+    badgeText: data.editable ? 'learned · editable (this agent)' : 'read-only',
+    // Deep-link into Journey pre-filtered to this skill's history.
+    actions: [{ label: 'History', onClick: () => openJourney({ agentGroupId: agentId, skill: name }) }],
+    onSave: async (content) => {
+      const out = await apiJson(
+        `/api/agents/${encodeURIComponent(agentId)}/skills/scoped/${encodeURIComponent(name)}/content`,
+        { method: 'PUT', body: { content } },
+      );
+      showToast(`Saved ${out.name} — applies on this agent's next spawn`, { kind: 'success' });
+      if (selectedAgentId) renderAgentSkills(selectedAgentId);
+    },
+  });
+}
+
+// View a shared-pool skill from the agent page, in-place. User-pool skills are
+// editable (server enforces owner/global-admin on save); built-ins are read-only.
+async function openPoolSkillFromAgent(name) {
+  let data = null;
+  try {
+    data = await apiJson(`/api/skills/${encodeURIComponent(name)}`);
+  } catch (err) {
+    return showToast('Couldn’t load skill: ' + (err?.message || err), { kind: 'error' });
+  }
+  const editable = data.source === 'user';
+  openSkillEditorModal({
+    name: data.name,
+    body: data.content,
+    editable,
+    badgeText: editable ? 'imported · editable' : 'built-in · read-only',
+    onSave: async (content) => {
+      const out = await apiJson(`/api/skills/${encodeURIComponent(name)}`, { method: 'PUT', body: { content } });
+      showToast(`Saved ${out.name} — applies on each agent's next spawn`, { kind: 'success' });
+    },
+  });
+}
+
+async function openSkillDraft(id) {
+  try {
+    const d = await apiJson(`/api/skill-drafts/${encodeURIComponent(id)}`);
+    const isPatch = d.kind === 'patch' && d.targetSkill;
+    skillEditorDraft = {
+      id: d.id,
+      name: isPatch ? d.targetSkill : d.skillName,
+      isPatch,
+      body: d.body,
+      currentBody: d.currentBody || '',
+      // A revision opens on the DIFF (review first); a brand-new skill opens
+      // straight into editing.
+      mode: isPatch && d.currentBody ? 'diff' : 'edit',
+    };
+    // The editor lives inside the Skills view — from a room (in-room card, room
+    // settings) that parent is hidden, and filling a hidden editor is a no-op the
+    // user reads as "nothing happened". Open the Skills view first; its renderer
+    // force-lands on 'browse' synchronously, so the editor flip runs a tick later.
+    const draft = skillEditorDraft;
+    if ($('#manage').hidden || $('#mtab-skills').hidden) {
+      openManage('skills');
+      // renderSkillsRegistry force-lands on 'browse' AND clears draft state via
+      // showSkillEditor(false) — so re-arm the draft when the editor flips open.
+      setTimeout(() => {
+        skillEditorDraft = draft;
+        renderDraftEditor();
+      }, 200);
+    } else {
+      renderDraftEditor();
+    }
+  } catch (err) {
+    showToast('Could not open draft: ' + (err?.message || err), { kind: 'error' });
+  }
+}
+
+/**
+ * Undo window: swaps an actions row for a sliding countdown + Undo. The action
+ * commits when the bar empties; Undo restores the row untouched. The timer only
+ * ever starts from a human CLICK — automation (auto-keep) stays instant — and a
+ * tab closed mid-countdown commits nothing: the draft simply stays pending,
+ * which is the safe default.
+ */
+/** Paint the editor from skillEditorDraft (diff-review or edit mode). */
+function renderDraftEditor() {
+  const d = skillEditorDraft;
+  if (!d) return;
+  const content = $('#skill-editor-content');
+  $('#skill-editor-name').value = d.name;
+  $('#skill-editor-name').readOnly = true; // the name is the draft's identity
+  const badge = $('#skill-editor-badge');
+  if (badge) {
+    badge.hidden = false;
+    badge.className = 'skill-badge';
+    badge.textContent = d.isPatch ? `proposed revision of ${d.name}` : 'proposed skill';
+  }
+  const modeBtn = $('#skill-editor-mode');
+  if (d.mode === 'diff') {
+    content.value = lineDiff(d.currentBody, d.body);
+    content.readOnly = true;
+    $('#skill-editor-save').hidden = true;
+    if (modeBtn) {
+      modeBtn.hidden = false;
+      modeBtn.textContent = 'Edit';
+    }
+  } else {
+    content.value = d.body;
+    content.readOnly = false;
+    $('#skill-editor-save').hidden = false;
+    if (modeBtn) {
+      // The diff view only exists when there's a current version to diff against.
+      modeBtn.hidden = !(d.isPatch && d.currentBody);
+      modeBtn.textContent = 'View diff';
+    }
+  }
+  showSkillEditor(true);
+}
+
+$('#skill-editor-mode')?.addEventListener('click', () => {
+  const d = skillEditorDraft;
+  if (!d) return;
+  if (d.mode === 'edit') {
+    // Leaving edit mode: carry the edits into the diff, don't lose them.
+    d.body = $('#skill-editor-content').value;
+    d.mode = 'diff';
+  } else {
+    d.mode = 'edit';
+  }
+  renderDraftEditor();
+});
+
+// Swaps actionsEl's children for a countdown (label + draining bar + Undo)
+// and calls onCommit(restore) when it expires. The container's width is
+// frozen for the countdown: the undo widget is wider than the buttons it
+// replaces, and letting it grow the box squeezes the sibling info column —
+// the row's name wraps and its description re-truncates (DESIGN.md: a state
+// change alters only the control, never sibling typography or layout).
+// onCommit receives `restore`: callers whose row lives on after the commit
+// (Keep → 'Reviewing…') call it to put the original buttons back; callers
+// whose row is about to disappear (Discard, thread delete) ignore it.
+function armUndo(actionsEl, label, seconds, onCommit) {
+  const original = [...actionsEl.childNodes];
+  const { width } = actionsEl.getBoundingClientRect();
+  if (width) actionsEl.style.width = `${width}px`;
+  const restore = () => {
+    actionsEl.style.width = '';
+    actionsEl.textContent = '';
+    for (const n of original) actionsEl.appendChild(n);
+  };
+  actionsEl.textContent = '';
+  const wrap = document.createElement('span');
+  wrap.className = 'undo-timer';
+  const text = document.createElement('span');
+  text.className = 'undo-timer-label';
+  text.textContent = label;
+  const bar = document.createElement('span');
+  bar.className = 'undo-timer-bar';
+  const fill = document.createElement('span');
+  bar.appendChild(fill);
+  const undo = document.createElement('button');
+  undo.type = 'button';
+  undo.className = 'btn btn-ghost';
+  undo.textContent = 'Undo';
+  wrap.append(text, bar, undo);
+  actionsEl.appendChild(wrap);
+  // Two frames so the initial 100% width paints before the transition starts.
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      fill.style.transitionDuration = `${seconds}s`;
+      fill.style.width = '0%';
+    }),
+  );
+  const t = setTimeout(() => onCommit(restore), seconds * 1000);
+  undo.addEventListener('click', () => {
+    clearTimeout(t);
+    restore();
+  });
+}
+const UNDO_SECONDS = 10;
+
+// Draft ids whose keep is under server-side overlap review (Keep pressed,
+// 202 received, outcome not yet pushed). A re-render keeps those rows in
+// their 'Reviewing…' state, and the WS handler re-enables exactly the right
+// button. Per-draft, so OTHER drafts stay keepable in parallel.
+const reviewingDrafts = new Set();
+
+/** The Keep button currently rendered for a draft (null after navigation). */
+function draftKeepButton(draftId) {
+  return document.querySelector(`button[data-draft-id="${CSS.escape(draftId)}"]`);
+}
+
+/** Reflect a draft's in-flight review on its Keep button, if one is rendered. */
+function markDraftReviewing(btn, reviewing) {
+  if (!btn) return;
+  btn.disabled = reviewing;
+  btn.textContent = reviewing ? 'Reviewing…' : 'Keep';
+}
+
+// Overlap review outcome: the server found existing skills/drafts that cover
+// the same ground. Offer to update one of them (apply this draft over it),
+// keep this as a new skill anyway, or discard the draft. Only 'scoped'/'pool'
+// skills are updatable — a 'pending-draft' overlap is another draft, not a
+// skill to patch. A global modal, so it reaches the user even if they
+// navigated away while the review ran.
+async function showOverlapChoice(d, overlaps) {
+  const el = document.createElement('div');
+  for (const o of overlaps) {
+    const row = document.createElement('div');
+    row.className = 'import-warning';
+    row.textContent = `⚠ ${o.name} (${o.source === 'pending-draft' ? 'pending draft' : o.source}) — ${o.reason}`;
+    el.appendChild(row);
+  }
+  const updatable = overlaps.filter((o) => o.source !== 'pending-draft');
+  // Adaptive primary: a single existing skill → "Update <name>" is the
+  // recommended action; otherwise the primary stays "Keep as new".
+  let confirmLabel;
+  let confirmDecision;
+  const extras = [];
+  if (updatable.length === 1) {
+    confirmLabel = `Update ${updatable[0].name}`;
+    confirmDecision = { action: 'update', target: updatable[0].name };
+    extras.push({ label: 'Keep as new', value: { action: 'keep-new' }, className: 'btn btn-secondary' });
+  } else {
+    confirmLabel = 'Keep as new';
+    confirmDecision = { action: 'keep-new' };
+    for (const o of updatable.slice(0, 3))
+      extras.push({ label: `Update ${o.name}`, value: { action: 'update', target: o.name }, className: 'btn btn-secondary' });
+  }
+  extras.push({ label: 'Discard draft', value: { action: 'discard' }, className: 'btn btn-danger' });
+  const choice = await showConfirmModal({
+    title: `Overlaps with ${overlaps.length === 1 ? overlaps[0].name : overlaps.length + ' existing skills'}`,
+    body: el,
+    confirmLabel,
+    extraActions: extras,
+  });
+  const decision = choice === true ? confirmDecision : choice || { action: 'cancel' };
+  // force / updateTarget skip the server-side review, so these re-drives
+  // resolve synchronously through the same keepSkillDraft.
+  if (decision.action === 'update') return keepSkillDraft(d, draftKeepButton(d.id), false, decision.target);
+  if (decision.action === 'keep-new') return keepSkillDraft(d, draftKeepButton(d.id), true);
+  if (decision.action === 'discard') {
+    await discardSkillDraft(d.id);
+    showToast(`Discarded ${d.skillName || 'draft'}`, { kind: 'success' });
+  }
+}
+
+// Async keep-review outcome, pushed by the server after a 202-queued Keep.
+// kept → success toast + list refresh; overlaps → the overlap-choice modal
+// (re-drives keep with force/updateTarget); error → toast. Fires on every
+// open tab of the pressing user, so the outcome lands as a toast even after
+// navigating away from the Skills view.
+function handleSkillDraftReview(msg) {
+  reviewingDrafts.delete(msg.draftId);
+  const d = { id: msg.draftId, skillName: msg.skillName, agentGroupId: msg.agentGroupId, agentName: msg.agentName };
+  if (msg.outcome === 'kept') {
+    showToast(
+      msg.updated
+        ? `Updated ${msg.name || d.skillName} — wired to ${d.agentName}`
+        : `Kept ${msg.name || d.skillName} — wired to ${d.agentName}`,
+      { kind: 'success' },
+    );
+    void refreshDraftBadge();
+    renderSkillsRegistry();
+    return;
+  }
+  markDraftReviewing(draftKeepButton(msg.draftId), false);
+  if (msg.outcome === 'overlaps' && Array.isArray(msg.overlaps) && msg.overlaps.length) {
+    void showOverlapChoice(d, msg.overlaps);
+    return;
+  }
+  toastError(new Error(msg.error || 'Review failed'), 'Keep failed');
+}
+
+// Keep a staged draft. A plain Keep is asynchronous: the server validates,
+// answers 202 { queued: true }, runs the (slow, LLM-backed) overlap review in
+// the background, and pushes the outcome as a 'skill_draft_review' WS event —
+// so only THIS row goes busy, other drafts stay keepable, and navigation is
+// never blocked. force / updateTarget skip the review and resolve here.
+async function keepSkillDraft(d, btn, force, updateTarget) {
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = updateTarget ? 'Updating…' : 'Keeping…';
+  }
+  try {
+    const qs = updateTarget ? `?updateTarget=${encodeURIComponent(updateTarget)}` : force ? '?force=1' : '';
+    const res = await authFetch(`/api/skill-drafts/${encodeURIComponent(d.id)}/keep${qs}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agentGroupId: d.agentGroupId }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (res.status === 202 && body.queued) {
+      reviewingDrafts.add(d.id);
+      markDraftReviewing(btn, true);
+      return;
+    }
+    if (!res.ok) throw new Error(body.error || res.statusText);
+    showToast(
+      body.updated ? `Updated ${body.name} — wired to ${d.agentName}` : `Kept ${body.name} — wired to ${d.agentName}`,
+      { kind: 'success' },
+    );
+    void refreshDraftBadge();
+    renderSkillsRegistry();
+  } catch (err) {
+    toastError(err, 'Keep failed');
+    markDraftReviewing(btn, false);
+  }
+}
+
+// No confirm modal here: every caller arms the 10s undo timer first — the
+// countdown IS the confirmation, and stacking a modal on top of it double-asks.
+async function discardSkillDraft(id) {
+  try {
+    await apiJson(`/api/skill-drafts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    void refreshDraftBadge();
+    renderSkillDrafts();
+  } catch (err) {
+    showToast('Discard failed: ' + (err?.message || err), { kind: 'error' });
+  }
+}
+
+// Learning loop: the same skill learned independently on 2+ agents → offer to
+// promote ONE copy to the shared pool. Owner-gated server-side; the section
+// simply stays hidden for everyone else (403 → empty).
+async function renderSkillDuplicates() {
+  const wrap = $('#skill-duplicates');
+  const list = $('#skill-duplicates-list');
+  if (!wrap || !list) return;
+  let dups = [];
+  try {
+    const res = await authFetch('/api/skills/duplicates');
+    if (res.ok) dups = (await res.json()).duplicates || [];
+  } catch {}
+  wrap.hidden = dups.length === 0;
+  list.innerHTML = '';
+  for (const d of dups) {
+    const li = document.createElement('li');
+    li.className = 'skill-row';
+    const info = document.createElement('div');
+    info.className = 'skill-info';
+    const head = document.createElement('div');
+    head.className = 'skill-head';
+    const name = document.createElement('span');
+    name.className = 'skill-name';
+    name.textContent = d.name;
+    const badge = document.createElement('span');
+    badge.className = 'skill-badge skill-badge-origin';
+    badge.style.setProperty('--badge-hue', '48');
+    badge.textContent = `learned · ${d.agents.length} agents`;
+    head.append(name, badge);
+    const desc = document.createElement('span');
+    desc.className = 'skill-desc';
+    desc.textContent = d.agents.join(', ');
+    info.append(head, desc);
+    li.appendChild(info);
+    const promote = document.createElement('button');
+    promote.type = 'button';
+    promote.className = 'btn btn-secondary skill-catalog-add';
+    promote.textContent = 'Promote';
+    promote.addEventListener('click', async () => {
+      const ok = await showConfirmModal({
+        title: `Promote ${d.name} to the shared pool?`,
+        body: `The newest copy serves every agent; each agent's own copy moves to its archive.`,
+        confirmLabel: 'Promote',
+      });
+      if (!ok) return;
+      promote.disabled = true;
+      try {
+        await apiJson('/api/skills/promote', { method: 'POST', body: { name: d.name } });
+        showToast(`${d.name} promoted — shared with all agents`, { kind: 'success' });
+        renderSkillsRegistry();
+      } catch (err) {
+        showToast('Promote failed: ' + (err?.message || err), { kind: 'error' });
+        promote.disabled = false;
+      }
+    });
+    li.appendChild(promote);
+    list.appendChild(li);
+  }
+}
+
+// ── Skills page sections: 'Workspace' (the shared pool) first, then one
+// section per agent that carries scoped skills. Collapse state is remembered
+// per section (same idiom as the Ollama server cards): Workspace defaults
+// open, agent sections default closed.
+function skillsSectionOpen(key) {
+  const v = localStorage.getItem('skillsSectionOpen:' + key);
+  return v === null ? key === 'pool' : v === '1';
+}
+function setSkillsSectionOpen(key, open) {
+  localStorage.setItem('skillsSectionOpen:' + key, open ? '1' : '0');
+}
+function skillsFilterQuery() {
+  return ($('#skills-filter')?.value || '').trim().toLowerCase();
+}
+// One visibility pass over the rendered list — no re-fetch, no re-render.
+// Without a query: headers always visible, rows follow the persisted collapse
+// state. With a query: rows show iff name+description match, sections with
+// matches are forced open, empty sections hide entirely.
+function applySkillsSections() {
+  const list = $('#skills-list');
+  if (!list) return;
+  const q = skillsFilterQuery();
+  let anyMatch = false;
+  for (const head of list.querySelectorAll('li[data-section-head]')) {
+    const key = head.dataset.sectionHead;
+    const rows = list.querySelectorAll(`li.skill-row[data-section="${CSS.escape(key)}"]`);
+    let shown = 0;
+    for (const row of rows) {
+      const visible = q ? (row.dataset.search || '').includes(q) : skillsSectionOpen(key);
+      row.hidden = !visible;
+      if (visible) shown++;
+    }
+    const open = q ? shown > 0 : skillsSectionOpen(key);
+    head.hidden = q ? shown === 0 : false;
+    head.classList.toggle('open', open);
+    head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (q && shown > 0) anyMatch = true;
+  }
+  const none = $('#skills-no-match');
+  if (none) none.hidden = !q || anyMatch;
+}
+function buildSkillsSectionHead(key, label, roomName, count) {
+  const li = document.createElement('li');
+  li.className = 'skills-section-head';
+  li.dataset.sectionHead = key;
+  const chev = document.createElement('span');
+  chev.className = 'skills-section-chevron';
+  chev.textContent = '›';
+  const name = document.createElement('span');
+  name.className = 'skills-section-label';
+  name.textContent = label;
+  li.append(chev, name);
+  // Same location logic as the row pill: the room name only when the agent
+  // serves exactly one room — otherwise the agent name (the label) is the
+  // clearest context on its own.
+  if (roomName) {
+    const pill = document.createElement('span');
+    pill.className = 'skill-badge skill-badge-scope';
+    pill.textContent = roomName;
+    li.appendChild(pill);
+  }
+  const n = document.createElement('span');
+  n.className = 'skills-section-count';
+  n.textContent = String(count);
+  li.appendChild(n);
+  li.setAttribute('role', 'button');
+  li.setAttribute('tabindex', '0');
+  const toggle = () => {
+    if (skillsFilterQuery()) return; // an active filter owns expansion
+    setSkillsSectionOpen(key, !skillsSectionOpen(key));
+    applySkillsSections();
+  };
+  li.addEventListener('click', toggle);
+  li.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggle();
+    }
+  });
+  return li;
+}
+
+async function renderSkillsRegistry() {
+  const list = $('#skills-list');
+  if (!list) return;
+  showSkillEditor(false); // always land on the browse view
+  renderSkillDrafts();
+  void renderSkillDuplicates();
+  // 'Add from link…' rides the learning loop (it sends /learn into a room), so
+  // it follows the same master gate as the composer 🎓. The page itself is
+  // already admin-gated, and the picker only offers agents the caller admins.
+  const learnLink = $('#skills-learn-link');
+  if (learnLink) learnLink.hidden = !learningMasterEnabled;
+  list.innerHTML = '<li class="skills-empty">Loading…</li>';
+  let skills = [];
+  try {
+    const res = await authFetch('/api/skills');
+    if (res.ok) skills = (await res.json()).skills || [];
+  } catch (err) {
+    console.error('Failed to load skills:', err);
+  }
+  list.innerHTML = '';
+  const filterEl = $('#skills-filter');
+  if (!skills.length) {
+    if (filterEl) filterEl.hidden = true;
+    list.innerHTML = '<li class="skills-empty">No skills yet — import one above.</li>';
+    return;
+  }
+  if (filterEl) filterEl.hidden = false;
+  // Partition into sections: the shared pool, then one section per agent
+  // holding scoped skills, sorted by agent name.
+  const pool = [];
+  const byAgent = new Map();
+  for (const s of skills) {
+    if (s.source === 'scoped') {
+      let g = byAgent.get(s.agentGroupId);
+      if (!g) byAgent.set(s.agentGroupId, (g = { name: s.agentName || '', rooms: s.rooms || [], skills: [] }));
+      g.skills.push(s);
+    } else pool.push(s);
+  }
+  const sections = [];
+  if (pool.length) sections.push({ key: 'pool', label: 'Workspace', roomName: null, skills: pool });
+  for (const [gid, g] of [...byAgent].sort((a, b) => a[1].name.localeCompare(b[1].name))) {
+    sections.push({
+      key: gid,
+      label: g.name,
+      roomName: g.rooms.length === 1 ? g.rooms[0].name : null,
+      skills: g.skills,
+    });
+  }
+  for (const section of sections) {
+    list.appendChild(buildSkillsSectionHead(section.key, section.label, section.roomName, section.skills.length));
+    for (const s of section.skills) appendSkillRow(list, section.key, s);
+  }
+  const none = document.createElement('li');
+  none.id = 'skills-no-match';
+  none.className = 'skills-empty';
+  none.textContent = 'No matching skills';
+  none.hidden = true;
+  list.appendChild(none);
+  applySkillsSections();
+  void markSkillUpdates(list);
+}
+
+function appendSkillRow(list, sectionKey, s) {
+  const li = document.createElement('li');
+  li.className = 'skill-row';
+  const info = document.createElement('div');
+  info.className = 'skill-info';
+  const head = document.createElement('div');
+  head.className = 'skill-head';
+  const name = document.createElement('span');
+  name.className = 'skill-name';
+  name.textContent = s.name;
+  // Provenance badge: where the skill came from. Shipped skills are "built-in";
+  // imported ones show their origin ("Anthropic", "obra/superpowers",
+  // "awesomeskill.ai", "custom"); legacy imports with no recorded origin fall
+  // back to "imported". Agent-scoped skills get a scope pill instead — the
+  // room's name when the agent serves exactly one room, otherwise the
+  // agent's name (a room name would be ambiguous, a count says nothing) —
+  // plus their origin badge when recorded (learned skills carry one).
+  let badge;
+  if (s.source === 'scoped') {
+    badge = document.createElement('span');
+    badge.className = 'skill-badge skill-badge-scope';
+    badge.textContent = s.rooms && s.rooms.length === 1 ? s.rooms[0].name : s.agentName;
+  } else if (s.source === 'shipped') {
+    badge = document.createElement('span');
+    badge.className = 'skill-badge';
+    badge.textContent = 'built-in';
+  } else if (s.origin && s.origin.label) {
+    badge = originBadgeEl(s.origin);
+  } else {
+    badge = document.createElement('span');
+    badge.className = 'skill-badge skill-badge-user';
+    badge.textContent = 'imported';
+  }
+  head.append(name, badge);
+  if (s.source === 'scoped' && s.origin && s.origin.label) head.appendChild(originBadgeEl(s.origin));
+  const desc = document.createElement('span');
+  desc.className = 'skill-desc';
+  desc.textContent = s.description || '';
+  info.append(head, desc);
+  // Click the row to open the SKILL.md viewer/editor (user skills editable).
+  // Scoped rows open the agent's own copy via the scoped content endpoint.
+  const open = () =>
+    s.source === 'scoped' ? openScopedSkillEditor(s.agentGroupId, s.name) : openSkillEditor(s.name);
+  info.style.cursor = 'pointer';
+  info.setAttribute('role', 'button');
+  info.setAttribute('tabindex', '0');
+  info.addEventListener('click', open);
+  info.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      open();
+    }
+  });
+  li.appendChild(info);
+  if (s.source === 'user') {
+    li.dataset.skill = s.name;
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'skill-delete';
+    del.textContent = 'Remove';
+    del.addEventListener('click', () => deleteSkill(s.name));
+    li.appendChild(del);
+  } else if (s.source === 'scoped') {
+    // 'View history': jump to Journey pre-filtered to this skill (same
+    // affordance weight as the row's other secondary actions).
+    const hist = document.createElement('button');
+    hist.type = 'button';
+    hist.className = 'btn btn-ghost skill-history-btn';
+    hist.textContent = 'History';
+    hist.addEventListener('click', () =>
+      openJourney({ agentGroupId: s.agentGroupId, agentName: s.agentName, skill: s.name }),
+    );
+    li.appendChild(hist);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'skill-delete';
+    del.textContent = 'Remove';
+    del.addEventListener('click', () => removeAgentScopedSkill(s.agentGroupId, s.name, del, renderSkillsRegistry));
+    li.appendChild(del);
+  }
+  li.dataset.section = sectionKey;
+  li.dataset.search = (s.name + ' ' + (s.description || '')).toLowerCase();
+  list.appendChild(li);
+}
+
+// Update checks ride AFTER render (one GitHub probe per pinned import, cached
+// server-side an hour) — rows get an Update button as results land. Imports
+// from before SHA-pinning simply never show one.
+async function markSkillUpdates(list) {
+  let updates = [];
+  try {
+    const res = await authFetch('/api/skills/updates');
+    if (res.ok) updates = (await res.json()).updates || [];
+  } catch {}
+  for (const u of updates) {
+    if (!u.hasUpdate) continue;
+    const li = list.querySelector(`li[data-skill="${CSS.escape(u.name)}"]`);
+    if (!li || li.querySelector('.skill-update-btn')) continue;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-secondary skill-update-btn';
+    btn.textContent = 'Update';
+    btn.title = 'The source repo has newer commits — re-import from it';
+    btn.addEventListener('click', async () => {
+      const ok = await showConfirmModal({
+        title: `Update ${u.name}?`,
+        body: 'Re-imports from its source at the latest commit. The current version is kept in history.',
+        confirmLabel: 'Update',
+      });
+      if (!ok) return;
+      btn.disabled = true;
+      btn.textContent = 'Updating…';
+      try {
+        const body = await apiJson(`/api/skills/${encodeURIComponent(u.name)}/update`, { method: 'POST' });
+        showToast(`Updated ${u.name}`, { kind: 'success' });
+        for (const w of body.warnings || []) showToast(`⚠ ${w}`, { kind: 'error' });
+        renderSkillsRegistry();
+      } catch (err) {
+        showToast('Update failed: ' + (err?.message || err), { kind: 'error' });
+        btn.disabled = false;
+        btn.textContent = 'Update';
+      }
+    });
+    li.insertBefore(btn, li.querySelector('.skill-delete'));
+  }
+}
+
+// ── SKILL.md editor — view any skill; create/edit user skills (the upload +
+// manual-edit path). Built-ins are read-only (repo files).
+const SKILL_TEMPLATE = `---
+name: my-skill
+description: One line saying what this skill is for and when to use it.
+---
+
+# My Skill
+
+Instructions the agent follows when this skill applies.
+`;
+
+// Three sub-views: browse (the list), add (catalog + URL import), editor.
+function showSkillsView(view) {
+  $('#skills-browse').hidden = view !== 'browse';
+  $('#skills-add').hidden = view !== 'add';
+  $('#skills-editor').hidden = view !== 'editor';
+}
+// Leaving the editor always drops draft mode — the next opener (an installed
+// skill, or "write your own") starts from a clean slate.
+function resetSkillEditorState() {
+  skillEditorDraft = null;
+  const m = $('#skill-editor-mode');
+  if (m) m.hidden = true;
+}
+// Guards against a second closeView('skill-editor') firing before the first
+// history.go settles (e.g. saveSkillEditor closes, then re-renders the list,
+// which closes again) — two go() calls would over-pop and close Manage.
+let skillEditorClosing = false;
+function showSkillEditor(show) {
+  if (show) {
+    skillEditorClosing = false;
+    showSkillsView('editor');
+    // Register the editor as a router view so ONE back gesture (or the in-app
+    // Back button) returns to the skills list, and a second leaves Manage —
+    // instead of the gesture skipping the un-tracked editor and closing Manage
+    // outright, which read as "back does nothing, then closes".
+    if (!viewStack.some((v) => v.name === 'skill-editor')) {
+      openView('skill-editor', () => {
+        skillEditorClosing = false;
+        resetSkillEditorState();
+        showSkillsView('browse');
+      });
+    }
+    return;
+  }
+  // Programmatic close drives through the router so history and the view stack
+  // stay in sync — a bare showSkillsView would strand the pushed history entry
+  // and make the next back gesture a dead press.
+  if (viewStack.some((v) => v.name === 'skill-editor')) {
+    if (!skillEditorClosing) {
+      skillEditorClosing = true;
+      closeView('skill-editor');
+    }
+    return;
+  }
+  // No registered view (e.g. a fresh browse render) → plain reset.
+  resetSkillEditorState();
+  showSkillsView('browse');
+}
+
+// ── Add view: browse well-known collections + import by URL ────────────────
+// Trust is a deliberate top-level mode (Official vs Community), not something
+// that mutates as you flip a mixed source dropdown. The source picker only ever
+// lists one tier's collections, so switching sources never changes trust chrome.
+
+// A network-loading list row: inline spinner + label, matching the busy-button
+// spinner (.btn-spinner) so "loading" reads the same everywhere.
+function skillsLoadingRow(label) {
+  // Thin alias over loadingRow() — DESIGN.md §5 wants ONE wait primitive, so every
+  // fetching list shows the same ring rather than growing its own variant.
+  return loadingRow(label);
+}
+
+// Stable hue from a label, so every collection keeps its own distinct colour
+// across renders — and any newly added collection gets one for free. The green
+// band (~90–175°) is skipped so a community colour never reads as the reserved
+// official green (Anthropic ≈148°); the hash maps into the remaining wheel.
+function labelHue(str) {
+  const BAND_LO = 60;
+  const BAND_HI = 190;
+  const usable = 360 - (BAND_HI - BAND_LO);
+  let h = 0;
+  for (let i = 0; i < String(str).length; i++) h = (h * 31 + str.charCodeAt(i)) % usable;
+  return h < BAND_LO ? h : h + (BAND_HI - BAND_LO);
+}
+
+// Provenance badge — where a skill comes from. One clickable element shared by
+// the installed list and the catalog/marketplace pool so origin reads the same
+// everywhere. Official (Anthropic) is green; every other collection gets its own
+// colour keyed off its label. Links out to the source.
+function originBadgeEl(origin) {
+  const safeUrlEl = /^https?:\/\//i.test(origin.url || '') ? origin.url : null;
+  const el = document.createElement(safeUrlEl ? 'a' : 'span');
+  el.className = 'skill-badge skill-badge-origin' + (origin.official ? ' skill-badge-official' : '');
+  el.textContent = origin.label;
+  if (!origin.official) el.style.setProperty('--badge-hue', String(labelHue(origin.label)));
+  // Only http(s) — never let a javascript:/data: URL become a click-XSS sink
+  // (defense-in-depth; the source list is owner-gated config).
+  if (safeUrlEl) {
+    el.href = safeUrlEl;
+    el.target = '_blank';
+    el.rel = 'noopener noreferrer';
+    el.title = `${origin.label} — open source ↗`;
+    // The installed-list row is itself clickable (opens the editor); don't let a
+    // click on the badge trigger it.
+    el.addEventListener('click', (e) => e.stopPropagation());
+  }
+  return el;
+}
+
+let skillTrust = 'official';
+let poolSearchTimer = null;
+let poolSeq = 0;
+
+async function openSkillsAdd() {
+  showSkillsView('add');
+  $('#skill-discover-search').value = '';
+  await setSkillTrust('official');
+}
+
+// Switch trust tier: toggle the segment, gate the search box to Community (the
+// persistent community warning too), then load that tier's merged pool.
+async function setSkillTrust(mode) {
+  skillTrust = mode;
+  const official = mode === 'official';
+  $('#skills-trust-official').classList.toggle('active', official);
+  $('#skills-trust-official').setAttribute('aria-selected', String(official));
+  $('#skills-trust-community').classList.toggle('active', !official);
+  $('#skills-trust-community').setAttribute('aria-selected', String(!official));
+  const search = $('#skill-discover-search');
+  search.hidden = official;
+  if (official) search.value = '';
+  $('#skills-catalog-warn').hidden = official; // community warning is persistent
+  await renderSkillPool();
+}
+
+// Render ONE merged, badged pool for the current tier. Community pools every
+// collection + the awesomeskill.ai marketplace equally; the search box filters
+// it. No per-source picker — each row's origin badge carries (and links to) its
+// provenance.
+async function renderSkillPool() {
+  const tier = skillTrust;
+  const community = tier === 'community';
+  const q = community ? $('#skill-discover-search').value.trim() : '';
+  const list = $('#skills-catalog-list');
+  const seq = ++poolSeq;
+  list.innerHTML = skillsLoadingRow(q ? 'Searching…' : 'Loading skills…');
+  let data = null;
+  try {
+    const res = await authFetch(`/api/skills/catalog?tier=${tier}&q=${encodeURIComponent(q)}`);
+    if (res.ok) data = await res.json();
+  } catch {}
+  if (seq !== poolSeq) return; // superseded by a newer tier switch / keystroke
+  if (!data) {
+    list.innerHTML = '<li class="skills-empty">Couldn’t load skills — import by URL below.</li>';
+    return;
+  }
+  const skills = data.skills || [];
+  list.innerHTML = '';
+  if (!skills.length) {
+    list.innerHTML = `<li class="skills-empty">${q ? 'No matches.' : 'Nothing here yet.'}</li>`;
+    return;
+  }
+  for (const s of skills) {
+    const li = document.createElement('li');
+    li.className = 'skill-row';
+    const info = document.createElement('div');
+    info.className = 'skill-info';
+    const head = document.createElement('div');
+    head.className = 'skill-head';
+    const name = document.createElement('span');
+    name.className = 'skill-name';
+    name.textContent = s.name;
+    head.append(name, originBadgeEl(s.origin));
+    const desc = document.createElement('span');
+    desc.className = 'skill-desc';
+    desc.textContent = s.description || '';
+    info.append(head, desc);
+    li.appendChild(info);
+    if (community && s.review) {
+      const review = document.createElement('a');
+      review.className = 'skill-review';
+      review.href = s.review;
+      review.target = '_blank';
+      review.rel = 'noopener noreferrer';
+      review.textContent = 'Review ↗';
+      li.appendChild(review);
+    }
+    if (s.installed) {
+      const got = document.createElement('span');
+      got.className = 'skill-badge skill-badge-user';
+      got.textContent = 'added';
+      li.appendChild(got);
+    } else {
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'btn btn-secondary skill-catalog-add';
+      add.textContent = 'Add';
+      add.addEventListener('click', () => openWireToAgentsPicker({ ...s.ref, origin: s.origin }, s.name, { community }));
+      li.appendChild(add);
+    }
+    list.appendChild(li);
+  }
+}
+
+
+// Adding a skill asks WHICH agents up front — the same multi-select attach picker
+// MCP uses. Each toggle wires the skill to just that agent (per-agent scoped
+// import, no pool fan-out); "Wire to all agents" does the shared-pool import.
+let wireSkillState = null;
+async function openWireToAgentsPicker(importBody, displayName, opts = {}) {
+  if (!(await inspectAndConfirmImport(importBody, displayName, !!opts.community))) return;
+  if (!allAgents.length) await fetchAgents();
+  wireSkillState = { importBody, name: null, wired: new Set() };
+  openAttachPicker({
+    title: `Wire ${displayName} to agents`,
+    searchPlaceholder: 'Search agents…',
+    emptyText: 'No agents yet.',
+    addNewLabel: 'Wire to all agents',
+    items: () => allAgents,
+    searchText: (a) => a.name,
+    name: (a) => a.name,
+    isAttached: (a) => wireSkillState.wired.has(a.id),
+    onToggle: async (a, add) => {
+      if (add) {
+        const body = await apiJson(`/api/agents/${encodeURIComponent(a.id)}/skills/import`, {
+          method: 'POST',
+          body: importBody,
+        });
+        wireSkillState.name = body.name;
+        wireSkillState.wired.add(a.id);
+        showToast(`Wired ${body.name} to ${a.name}`, { kind: 'success' });
+      } else {
+        await apiJson(
+          `/api/agents/${encodeURIComponent(a.id)}/skills/scoped/${encodeURIComponent(wireSkillState.name)}`,
+          { method: 'DELETE' },
+        );
+        wireSkillState.wired.delete(a.id);
+        showToast(`Unwired from ${a.name}`, { kind: 'success' });
+      }
+    },
+    onAddNew: async () => {
+      // "Wire to all agents" = the shared pool (every 'all' agent picks it up).
+      closeAttachPicker();
+      try {
+        const body = await apiJson('/api/skills/import', { method: 'POST', body: importBody });
+        showToast(`Added ${body.name} to all agents`, { kind: 'success' });
+      } catch (err) {
+        showToast('Import failed: ' + (err?.message || err), { kind: 'error' });
+      }
+    },
+  });
+}
+
+// The pre-import gate: fetch the skill's contents (nothing is written) and show
+// what's inside — files, scripts, size, external links, lint findings — before
+// the user commits. Falls back to a text-only confirm if inspection fails, so a
+// GitHub hiccup can't brick importing.
+async function inspectAndConfirmImport(importBody, displayName, community) {
+  let insp = null;
+  try {
+    const res = await authFetch('/api/skills/inspect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...importBody, official: !community }),
+    });
+    if (res.ok) insp = await res.json();
+  } catch {}
+  if (!insp) {
+    return showConfirmModal({
+      title: `Import ${displayName}?`,
+      body: community
+        ? 'This is a community skill — its instructions and scripts will run in your agents. Review it first.'
+        : undefined,
+      confirmLabel: 'Import',
+      destructive: !!community,
+    });
+  }
+  const el = document.createElement('div');
+  const line = (text, cls) => {
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = text;
+    el.appendChild(d);
+  };
+  const kb = Math.max(1, Math.round(insp.totalBytes / 1024));
+  line(`${insp.files} file${insp.files === 1 ? '' : 's'} · ${kb} KB · SKILL.md ≈ ${insp.skillMdTokens.toLocaleString()} tokens of agent context`);
+  line(
+    insp.scripts.length
+      ? `Scripts: ${insp.scripts.slice(0, 5).join(', ')}${insp.scripts.length > 5 ? ` +${insp.scripts.length - 5} more` : ''}`
+      : 'No scripts — instructions only',
+  );
+  if (insp.externalHosts.length) line(`Links out to: ${insp.externalHosts.slice(0, 6).join(', ')}`);
+  for (const w of insp.warnings) line(`⚠ ${w}`, 'import-warning');
+  if (community) line('Community skill — unvetted. Its instructions and any scripts run in your agents.', 'import-note');
+  return showConfirmModal({
+    title: `Import ${displayName}?`,
+    body: el,
+    confirmLabel: 'Import',
+    destructive: !!community || insp.warnings.length > 0,
+  });
+}
+
+async function openSkillEditor(name) {
+  skillEditorDraft = null;
+  const modeBtn = $('#skill-editor-mode');
+  if (modeBtn) modeBtn.hidden = true;
+  const nameInput = $('#skill-editor-name');
+  const content = $('#skill-editor-content');
+  const badge = $('#skill-editor-badge');
+  const save = $('#skill-editor-save');
+  if (name) {
+    let data = null;
+    try {
+      const res = await authFetch(`/api/skills/${encodeURIComponent(name)}`);
+      if (res.ok) data = await res.json();
+    } catch {}
+    if (!data) return showToast('Couldn’t load skill', { kind: 'error' });
+    nameInput.value = data.name;
+    nameInput.readOnly = true;
+    content.value = data.content;
+    const editable = data.source === 'user';
+    content.readOnly = !editable;
+    save.hidden = !editable;
+    badge.hidden = false;
+    badge.className = 'skill-badge skill-badge-' + data.source;
+    badge.textContent = editable ? 'imported — editable' : 'built-in — read-only';
+  } else {
+    nameInput.value = '';
+    nameInput.readOnly = false;
+    content.value = SKILL_TEMPLATE;
+    content.readOnly = false;
+    save.hidden = false;
+    badge.hidden = true;
+  }
+  showSkillEditor(true);
+  (name ? content : nameInput).focus();
+}
+
+async function saveSkillEditor() {
+  // A draft saves to the draft, not to an installed skill.
+  if (skillEditorDraft) {
+    const d = skillEditorDraft;
+    const body = d.mode === 'edit' ? $('#skill-editor-content').value : d.body;
+    const save = $('#skill-editor-save');
+    save.disabled = true;
+    try {
+      await apiJson(`/api/skill-drafts/${encodeURIComponent(d.id)}`, { method: 'PUT', body: { body } });
+      d.body = body;
+      showToast('Draft updated — Keep applies this version', { kind: 'success' });
+      renderSkillDrafts();
+      void renderRoomSkills();
+    } catch (err) {
+      showToast('Save failed: ' + (err?.message || err), { kind: 'error' });
+    } finally {
+      save.disabled = false;
+    }
+    return;
+  }
+  const name = $('#skill-editor-name').value.trim();
+  const content = $('#skill-editor-content').value;
+  if (!name) return showToast('Give the skill a name', { kind: 'error' });
+  const save = $('#skill-editor-save');
+  save.disabled = true;
+  try {
+    const body = await apiJson(`/api/skills/${encodeURIComponent(name)}`, { method: 'PUT', body: { content } });
+    showToast(`Saved ${body.name} — applies on each agent's next spawn`, { kind: 'success' });
+    showSkillEditor(false);
+    await renderSkillsRegistry();
+  } catch (err) {
+    showToast('Save failed: ' + (err?.message || err), { kind: 'error' });
+  } finally {
+    save.disabled = false;
+  }
+}
+
+$('#skill-add-btn')?.addEventListener('click', openSkillsAdd);
+$('#skill-discover-search')?.addEventListener('input', () => {
+  clearTimeout(poolSearchTimer);
+  poolSearchTimer = setTimeout(() => renderSkillPool(), 400);
+});
+$('#skills-add-back')?.addEventListener('click', () => renderSkillsRegistry()); // re-render → lands on browse with fresh list
+
+// Filter-as-you-type over the rendered sections — a pure visibility pass, so
+// a light debounce is plenty even with a large registry.
+let skillsFilterTimer = 0;
+$('#skills-filter')?.addEventListener('input', () => {
+  clearTimeout(skillsFilterTimer);
+  skillsFilterTimer = setTimeout(applySkillsSections, 100);
+});
+$('#skills-trust-official')?.addEventListener('click', () => setSkillTrust('official'));
+$('#skills-trust-community')?.addEventListener('click', () => setSkillTrust('community'));
+
+// ── 'Add from link…' — learn a skill from a URL, run by an agent ───────────
+// /learn is room-mediated by design: the command must run IN a session of the
+// chosen agent, so we resolve one of its webchat rooms, join it, and send
+// `/learn <url>` as the user — the command and the draft card that follows are
+// visible in the room, exactly like typing it there.
+async function pickLearnTarget() {
+  let agents = [];
+  try {
+    agents = await apiJson('/api/agents');
+  } catch (err) {
+    toastError(err, 'Could not load agents');
+    return null;
+  }
+  if (!Array.isArray(agents) || agents.length === 0) {
+    showToast('No agents you administer', { kind: 'error' });
+    return null;
+  }
+  // Rooms per agent (webchat only). /api/agents already returns only the
+  // agents the caller administers, so these reads succeed for every entry.
+  const roomsByAgent = new Map();
+  await Promise.all(
+    agents.map(async (a) => {
+      try {
+        const r = await authFetch(`/api/agents/${encodeURIComponent(a.id)}/rooms`);
+        roomsByAgent.set(a.id, r.ok ? await r.json() : []);
+      } catch {
+        roomsByAgent.set(a.id, []);
+      }
+    }),
+  );
+  const firstWithRoom = agents.find((a) => (roomsByAgent.get(a.id) || []).length > 0);
+  if (!firstWithRoom) {
+    showToast('No agent has a room — wire one to a room first', { kind: 'error' });
+    return null;
+  }
+  const body = document.createElement('div');
+  body.className = 'learn-target-picker';
+  const agentSel = document.createElement('select');
+  agentSel.className = 'confirm-input';
+  agentSel.setAttribute('aria-label', 'Agent');
+  for (const a of agents) {
+    const opt = new Option(a.name, a.id);
+    if ((roomsByAgent.get(a.id) || []).length === 0) {
+      opt.disabled = true;
+      opt.title = 'No room';
+    }
+    agentSel.appendChild(opt);
+  }
+  agentSel.value = firstWithRoom.id;
+  const roomSel = document.createElement('select');
+  roomSel.className = 'confirm-input';
+  roomSel.setAttribute('aria-label', 'Room');
+  const syncRooms = () => {
+    const rooms = roomsByAgent.get(agentSel.value) || [];
+    roomSel.innerHTML = '';
+    for (const r of rooms) roomSel.appendChild(new Option(r.name, r.id));
+    // The room pick only appears when the agent serves several rooms.
+    roomSel.hidden = rooms.length <= 1;
+  };
+  agentSel.addEventListener('change', syncRooms);
+  syncRooms();
+  body.append(agentSel, roomSel);
+  const ok = await showConfirmModal({ title: 'Learn with which agent?', body, confirmLabel: 'Learn' });
+  if (!ok) return null;
+  const rooms = roomsByAgent.get(agentSel.value) || [];
+  const room = rooms.length > 1 ? rooms.find((r) => r.id === roomSel.value) : rooms[0];
+  return room || null;
+}
+
+$('#skills-learn-link')?.addEventListener('click', async () => {
+  const v = await promptLearnSource({
+    title: 'Learn from a link',
+    placeholder: 'https://…',
+    check: isLearnUrlToken,
+    invalid: 'Start with a full link (http:// or https://)',
+  });
+  if (!v) return;
+  const room = await pickLearnTarget();
+  if (!room) return;
+  closeView('manage'); // unwind the Skills view's history entry before the room takes over
+  joinRoom(room.id, room.name);
+  // Sent by the 'history' handler once the room's transcript is in — sending
+  // now would lose the optimistic bubble to the history render.
+  pendingSendAfterJoin = '/learn ' + v;
+});
+
+// ── Settings: skill-collections registry (global admin) ────────────────────
+// Owners/global admins manage the Skills tab's catalog sources: label + a
+// GitHub folder URL per collection. Server verifies the folder actually lists
+// skills before saving.
+async function renderSkillSourcesSettings() {
+  const section = $('#settings-skill-sources');
+  if (!section) return;
+  section.hidden = !isOwnerView;
+  if (!isOwnerView) return;
+  const list = $('#skill-sources-list');
+  list.innerHTML = '';
+  let sources = [];
+  let builtins = [];
+  try {
+    const res = await authFetch('/api/skills/sources');
+    if (res.ok) {
+      const b = await res.json();
+      sources = b.sources || [];
+      builtins = b.builtins || [];
+    }
+  } catch {}
+  // Each row leads with the same coloured origin badge as the pool, so a
+  // collection's colour is consistent between Settings and the catalog.
+  const sourceRow = (origin, meta) => {
+    const li = document.createElement('li');
+    li.className = 'skill-source-row';
+    const info = document.createElement('div');
+    info.className = 'skill-info';
+    const head = document.createElement('div');
+    head.className = 'skill-head';
+    head.appendChild(originBadgeEl(origin));
+    const m = document.createElement('span');
+    m.className = 'skill-desc';
+    m.textContent = meta;
+    info.append(head, m);
+    li.appendChild(info);
+    return li;
+  };
+  // Editable GitHub collections.
+  for (const s of sources) {
+    const origin = s.official
+      ? { label: s.label.replace(/\s*\((?:official|community)\)\s*$/i, ''), url: `https://github.com/${s.owner}/${s.repo}`, official: true }
+      : { label: `${s.owner}/${s.repo}`, url: `https://github.com/${s.owner}/${s.repo}`, official: false };
+    const li = sourceRow(origin, s.dir ? `${s.dir} · ${s.branch}` : `whole repo · ${s.branch}`);
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'btn btn-ghost';
+    edit.textContent = 'Edit';
+    edit.addEventListener('click', () => {
+      $('#skill-source-url').value = `https://github.com/${s.owner}/${s.repo}/tree/${s.branch}/${s.dir}`;
+      const save = $('#skill-source-save');
+      save.textContent = 'Save';
+      save.dataset.editId = s.id;
+    });
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'skill-delete';
+    del.textContent = 'Remove';
+    del.addEventListener('click', async () => {
+      const ok = await showConfirmModal({
+        title: `Remove ${origin.label}?`,
+        body: 'The collection disappears from the Skills catalog. Already-imported skills are unaffected.',
+        confirmLabel: 'Remove',
+        destructive: true,
+      });
+      if (!ok) return;
+      try {
+        await apiJson(`/api/skills/sources/${encodeURIComponent(s.id)}`, { method: 'DELETE' });
+        renderSkillSourcesSettings();
+      } catch (err) {
+        showToast('Remove failed: ' + (err?.message || err), { kind: 'error' });
+      }
+    });
+    li.append(edit, del);
+    list.appendChild(li);
+  }
+  // Built-in sources (the marketplace) — nothing to edit, but removable from the
+  // pool (a reversible toggle, since there's no URL to re-paste).
+  for (const bi of builtins) {
+    const li = sourceRow(
+      { label: bi.label, url: bi.url, official: false },
+      bi.disabled ? 'Built-in marketplace — removed from the pool' : 'Built-in marketplace — pooled into Community',
+    );
+    if (bi.disabled) li.classList.add('source-disabled');
+    const tag = document.createElement('span');
+    tag.className = 'skill-badge';
+    tag.textContent = 'built-in';
+    li.appendChild(tag);
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = bi.disabled ? 'btn btn-ghost' : 'skill-delete';
+    toggle.textContent = bi.disabled ? 'Add' : 'Remove';
+    toggle.addEventListener('click', () => toggleBuiltinSource(bi.id, bi.disabled));
+    li.appendChild(toggle);
+    list.appendChild(li);
+  }
+}
+
+// Enable/disable a built-in source (the marketplace). DELETE switches it off,
+// PUT switches it back on — reversible, so no destructive confirm.
+async function toggleBuiltinSource(id, wasDisabled) {
+  try {
+    const res = await authFetch(`/api/skills/sources/${encodeURIComponent(id)}`, {
+      method: wasDisabled ? 'PUT' : 'DELETE',
+      ...(wasDisabled ? { headers: { 'Content-Type': 'application/json' }, body: '{}' } : {}),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    showToast(wasDisabled ? 'Marketplace added back to the pool' : 'Marketplace removed from the pool', { kind: 'success' });
+    renderSkillSourcesSettings();
+  } catch (err) {
+    showToast('Failed: ' + (err?.message || err), { kind: 'error' });
+  }
+}
+
+$('#skill-source-save')?.addEventListener('click', async () => {
+  const save = $('#skill-source-save');
+  const url = $('#skill-source-url').value.trim();
+  if (!url) return showToast('Paste a GitHub repo or folder URL', { kind: 'error' });
+  // No label to type — a new collection's id is derived from what it pulls in
+  // (owner-repo[-dir]); the server names it owner/repo. Editing keeps the id.
+  const folder = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)\/(.+?)\/?$/);
+  const root = url.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  const slug = folder ? `${folder[1]}-${folder[2]}-${folder[4]}` : root ? `${root[1]}-${root[2]}` : '';
+  const derivedId = slug.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '');
+  const id = save.dataset.editId || derivedId;
+  if (!id) return showToast('Expected a GitHub repo or folder URL', { kind: 'error' });
+  save.disabled = true;
+  try {
+    const body = await apiJson(`/api/skills/sources/${encodeURIComponent(id)}`, { method: 'PUT', body: { url } });
+    showToast(`Added ${body.source?.label || 'collection'}`, { kind: 'success' });
+    $('#skill-source-url').value = '';
+    save.textContent = 'Add';
+    delete save.dataset.editId;
+    renderSkillSourcesSettings(); // the pool refetches on next open, picking up the new collection
+  } catch (err) {
+    showToast('Save failed: ' + (err?.message || err), { kind: 'error' });
+  } finally {
+    save.disabled = false;
+  }
+});
+$('#skill-new-btn')?.addEventListener('click', () => openSkillEditor(null));
+$('#skill-editor-cancel')?.addEventListener('click', () => showSkillEditor(false));
+$('#skill-editor-save')?.addEventListener('click', saveSkillEditor);
+
+// Import-by-URL now asks which agents up front (same picker as the catalog rows).
+function importSkill() {
+  const input = $('#skill-import-url');
+  const url = (input.value || '').trim();
+  if (!url) return;
+  const label = url.replace(/^https?:\/\/github\.com\//, '').replace(/\/tree\/.*$/, '');
+  input.value = '';
+  openWireToAgentsPicker({ url }, label || 'skill', { community: true });
+}
+
+async function deleteSkill(name) {
+  const ok = await showConfirmModal({
+    title: `Delete ${name}?`,
+    body: 'Removes this imported skill. Agents that use it lose it on their next spawn.',
+    confirmLabel: 'Delete',
+    destructive: true,
+  });
+  if (!ok) return;
+  try {
+    await apiJson(`/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    showToast(`Deleted ${name}`, { kind: 'success' });
+    await renderSkillsRegistry();
+  } catch (err) {
+    showToast('Delete failed: ' + (err?.message || err), { kind: 'error' });
+  }
+}
+
+$('#skill-import-btn')?.addEventListener('click', importSkill);
+$('#skill-import-url')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    importSkill();
+  }
+});
+
+// ── Approvals ─────────────────────────────────────────────────────────────
+// Pending approvals (install_packages, add_mcp_server, etc.) surface as an
+// inline banner above the active sidebar tab — only when count > 0, so
+// users with no pending items see nothing. The banner expands to reveal
+// the cards in place; click Approve/Reject directly without leaving the
+// current tab. Live arrival also fires a top-right toast.
+let pendingApprovals = []; // {questionId, action, title, options, payload, created_at}
+
+function setApprovalsBanner(count) {
+  const banner = $('#approvals-banner');
+  // Defensive: if the cached HTML doesn't include the banner element yet,
+  // bail silently. Avoids a throw that would break unrelated WS handling.
+  if (!banner) return;
+  const countEl = $('#approvals-count');
+  const textEl = banner.querySelector('.approvals-banner-text');
+  if (count <= 0) {
+    banner.hidden = true;
+    banner.classList.remove('expanded');
+    $('#approval-list').hidden = true;
+    $('#approvals-banner-toggle').setAttribute('aria-expanded', 'false');
+    return;
+  }
+  banner.hidden = false;
+  countEl.textContent = String(count);
+  // Pluralize the trailing word: "1 approval pending" / "2 approvals pending".
+  // The number itself stays inside #approvals-count; we just rewrite the
+  // sibling text node around it.
+  const noun = count === 1 ? 'approval' : 'approvals';
+  // Reset textEl content but keep the count span: rebuild it.
+  textEl.innerHTML = '';
+  textEl.appendChild(countEl);
+  textEl.appendChild(document.createTextNode(` ${noun} pending`));
+}
+
+function renderApprovalCard(a, options) {
+  const opts = options || {};
+  const card = document.createElement(opts.toast ? 'div' : 'li');
+  card.className = opts.toast ? 'approval-toast' : 'approval-card';
+  card.dataset.questionId = a.questionId;
+
+  const title = document.createElement('div');
+  title.className = 'approval-title';
+  title.textContent = a.title || a.action || 'Approval requested';
+  card.appendChild(title);
+
+  if (a.payload && !opts.toast) {
+    const pre = document.createElement('pre');
+    pre.className = 'approval-payload';
+    pre.textContent = typeof a.payload === 'string' ? a.payload : JSON.stringify(a.payload, null, 2);
+    card.appendChild(pre);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'approval-actions';
+  const optionList =
+    Array.isArray(a.options) && a.options.length
+      ? a.options
+      : [
+          { label: 'Approve', value: 'approve' },
+          { label: 'Reject', value: 'reject' },
+        ];
+  optionList.forEach((opt) => {
+    const btn = document.createElement('button');
+    btn.textContent = opt.label || opt.value;
+    btn.className = opt.value === 'approve' ? 'approve' : opt.value === 'reject' ? 'reject' : '';
+    btn.addEventListener('click', () => respondToApproval(a.questionId, opt.value, card));
+    actions.appendChild(btn);
+  });
+  card.appendChild(actions);
+  return card;
+}
+
+function renderApprovalsList() {
+  const list = $('#approval-list');
+  if (list) {
+    list.innerHTML = '';
+    pendingApprovals.forEach((a) => list.appendChild(renderApprovalCard(a)));
+  }
+  setApprovalsBanner(pendingApprovals.length);
+}
+
+// Banner toggle: expand/collapse the inline approvals list. Guarded with
+// an existence check so a stale cached HTML (without the banner element)
+// can't kill the rest of the script with a null.addEventListener throw.
+const approvalsBannerToggle = $('#approvals-banner-toggle');
+if (approvalsBannerToggle) {
+  approvalsBannerToggle.addEventListener('click', () => {
+    const banner = $('#approvals-banner');
+    const list = $('#approval-list');
+    const expanded = banner.classList.toggle('expanded');
+    list.hidden = !expanded;
+    approvalsBannerToggle.setAttribute('aria-expanded', String(expanded));
+  });
+}
+
+async function fetchApprovals() {
+  try {
+    const r = await authFetch('/api/approvals/pending');
+    if (!r.ok) return;
+    pendingApprovals = await r.json();
+    renderApprovalsList();
+  } catch (err) {
+    console.error('fetchApprovals failed:', err);
+  }
+}
+
+function showApprovalToast(a) {
+  const container = $('#approval-toasts');
+  if (!container) return;
+  const toast = renderApprovalCard(a, { toast: true });
+  container.appendChild(toast);
+  // Auto-remove after 30s if user takes no action — they can still respond
+  // via the Approvals tab.
+  setTimeout(() => {
+    if (toast.parentNode) toast.remove();
+  }, 30_000);
+}
+
+// Fired when another admin handled an approval that was fanned out to us.
+// Drop the card from local state, re-render the list, and clear any toast.
+function handleApprovalResolvedEvent(msg) {
+  // msg shape: { type: 'approval_resolved', approvalId, resolvedBy }
+  const approvalId = msg.approvalId;
+  if (!approvalId) return;
+  pendingApprovals = pendingApprovals.filter((a) => a.questionId !== approvalId);
+  renderApprovalsList();
+  document.querySelectorAll(`.approval-toast[data-question-id="${approvalId}"]`).forEach((el) => el.remove());
+  // Flip any in-room card to a resolved note.
+  document.querySelectorAll(`.approval-msg[data-question-id="${approvalId}"]`).forEach((el) => {
+    const who = msg.resolvedBy ? ' by ' + String(msg.resolvedBy).split(':').pop().split('@')[0] : '';
+    el.innerHTML = '';
+    const note = document.createElement('div');
+    note.className = 'approval-inroom-note resolved';
+    note.textContent = `🔒 Approval — resolved${who}`;
+    el.appendChild(note);
+  });
+}
+
+function handleApprovalEvent(msg) {
+  // msg shape: { type: 'approval', questionId, title, question, options, ... }
+  // We re-fetch the canonical list so we don't drift if multiple events
+  // arrive close together; the toast is purely for live visibility.
+  showApprovalToast(msg);
+  fetchApprovals();
+  // Desktop notification when settings allow + tab not focused.
+  if (
+    settings.notifications &&
+    document.hidden &&
+    typeof Notification !== 'undefined' &&
+    Notification.permission === 'granted'
+  ) {
+    try {
+      new Notification(msg.title || 'Approval requested', { body: msg.question || '' });
+    } catch {}
+  }
+}
+
+async function respondToApproval(questionId, value, cardEl) {
+  if (!cardEl) cardEl = document.querySelector(`[data-question-id="${questionId}"]`);
+  if (cardEl) cardEl.querySelectorAll('button').forEach((b) => (b.disabled = true));
+  try {
+    const r = await authFetch(`/api/approvals/${encodeURIComponent(questionId)}/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ value }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      console.error('Approval respond failed:', r.status, body);
+      if (cardEl) {
+        cardEl.querySelectorAll('button').forEach((b) => (b.disabled = false));
+        // Inline error so the user actually sees why nothing happened.
+        let errEl = cardEl.querySelector('.approval-error');
+        if (!errEl) {
+          errEl = document.createElement('div');
+          errEl.className = 'approval-error';
+          cardEl.appendChild(errEl);
+        }
+        errEl.textContent = `Couldn't respond (${r.status}): ${body.error || r.statusText}`;
+      }
+      return;
+    }
+    pendingApprovals = pendingApprovals.filter((a) => a.questionId !== questionId);
+    renderApprovalsList();
+    // Remove the toast version too if it's currently visible.
+    document.querySelectorAll(`.approval-toast[data-question-id="${questionId}"]`).forEach((el) => el.remove());
+  } catch (err) {
+    console.error('Approval respond errored:', err);
+    if (cardEl) cardEl.querySelectorAll('button').forEach((b) => (b.disabled = false));
+  }
+}
+
+// ── Mobile back button ────────────────────────────────────────────────────
+$('#mobile-back').addEventListener('click', () => {
+  $('#app').classList.remove('in-room');
+});
+
+// ── Dashboard ─────────────────────────────────────────────────────────────
+// On-open + manual refresh only — no background polling. The dashboard
+// surfaces a snapshot of webchat-internal state (rooms, sessions, agents,
+// 24h messages) plus host-level system metrics for owner-only callers.
+// Non-owner admins see a graceful-degrade view: their visible agents,
+// session count, channel breakdown — no system info or busiest-rooms.
+
+let dashboardActive = false;
+
+// The full-width surfaces (dashboard/permissions/topology/matrix) are flex
+// siblings of #chat — only one may be visible at a time, or they'd split the
+// pane. Each opener hides its peers synchronously (the router stack still
+// unwinds normally on back).
+function hideOtherFullViews(keep) {
+  // `manage` (the Agents/Models pane) is a full surface like the rest — it must
+  // close when another view opens, or it lingers on top with the new view
+  // underneath. (Pass no `keep` to close them all, e.g. when opening a room.)
+  if (keep !== 'manage' && manageActive) {
+    manageActive = false;
+    $('#manage').hidden = true;
+    $('#overflow-btn')?.classList.remove('active');
+  }
+  if (keep !== 'dashboard' && dashboardActive) {
+    dashboardActive = false;
+    $('#dashboard').hidden = true;
+    $('#dash-btn')?.classList.remove('active');
+  }
+  if (keep !== 'permissions' && permsActive) {
+    permsActive = false;
+    $('#permissions').hidden = true;
+  }
+  if (keep !== 'topology' && topologyActive) {
+    topologyActive = false;
+    $('#topology').hidden = true;
+  }
+  if (keep !== 'journey' && journeyActive) {
+    journeyActive = false;
+    $('#journey').hidden = true;
+  }
+  if (keep !== 'matrix' && matrixActive) {
+    matrixActive = false;
+    $('#matrix').hidden = true;
+  }
+  if (keep !== 'help' && helpActive) {
+    helpActive = false;
+    $('#help').hidden = true;
+  }
+}
+
+function openDashboard() {
+  openFullView(() => {
+    hideOtherFullViews('dashboard');
+    dashboardActive = true;
+    $('#chat').hidden = true;
+    $('#dashboard').hidden = false;
+    $('#dash-btn')?.classList.add('active');
+    $('#app').classList.add('in-dashboard');
+    $('#app').classList.remove('in-room');
+    refreshDashboard();
+    openView('dashboard', teardownDashboard);
+  });
+}
+function teardownDashboard() {
+  dashboardActive = false;
+  $('#chat').hidden = false;
+  $('#dashboard').hidden = true;
+  $('#dash-btn')?.classList.remove('active');
+  $('#app').classList.remove('in-dashboard');
+}
+function toggleDashboard() {
+  if (dashboardActive) closeView('dashboard');
+  else openDashboard();
+}
+
+$('#dash-btn')?.addEventListener('click', toggleDashboard); // ▦ quick-toggle, left of the ⋯ menu
+$('#dash-back').addEventListener('click', toggleDashboard);
+$('#dash-refresh').addEventListener('click', refreshDashboard);
+
+// ── Topology (room → agent → model explore graph) ──────────────────────────
+// Full-width SVG view (no graph library): fixed three columns, barycenter
+// ordering to minimize edge crossings. Fan-in = load; a node with no lines is
+// unused. Data: GET /api/topology (access-scoped server-side).
+let topologyActive = false;
+function openTopology() {
+  openFullView(() => {
+    hideOtherFullViews('topology');
+    topologyActive = true;
+    $('#chat').hidden = true;
+    $('#topology').hidden = false;
+    $('#app').classList.add('in-dashboard'); // reuse the full-view mobile layout
+    $('#app').classList.remove('in-room');
+    refreshTopology();
+    openView('topology', teardownTopology);
+  });
+}
+function teardownTopology() {
+  topologyActive = false;
+  $('#chat').hidden = false;
+  $('#topology').hidden = true;
+  $('#app').classList.remove('in-dashboard');
+}
+function toggleTopology() {
+  if (topologyActive) closeView('topology');
+  else openTopology();
+}
+$('#topology-back')?.addEventListener('click', toggleTopology);
+$('#topology-refresh')?.addEventListener('click', refreshTopology);
+
+// ── Journey (learning timeline) ─────────────────────────────────────────────
+// A day-grouped, newest-first feed of what each agent learned: proposed /
+// kept / discarded / revised / archived. Data: GET /api/learning/timeline
+// (admin-scoped server-side, cursor-paged). Kept and revised rows open the
+// existing scoped SKILL.md editor; the newest revision of a live skill offers
+// Revert through the existing revert endpoint. Everything else is a record.
+let journeyActive = false;
+// Client-side visibility filters over the loaded events (same posture as the
+// Skills search — no refetch). Transient view state: reset on every open, not
+// persisted. `preset` (agentGroupId/agentName/skill) is the 'View history'
+// deep-link — views aren't URL-routed, so it travels as in-memory args.
+const journeyFilter = { agent: '', kind: '', skill: '' };
+const journeyAgents = new Map(); // agentGroupId → agentName, from loaded events
+function setJourneyPreset(preset) {
+  journeyFilter.agent = preset?.agentGroupId || '';
+  journeyFilter.kind = '';
+  journeyFilter.skill = preset?.skill || '';
+  if (journeyFilter.agent && !journeyAgents.has(journeyFilter.agent)) {
+    const known = typeof allAgents !== 'undefined' && allAgents.find?.((a) => a.id === journeyFilter.agent);
+    journeyAgents.set(journeyFilter.agent, preset?.agentName || (known && known.name) || journeyFilter.agent);
+  }
+  renderJourneyFilterControls();
+}
+function openJourney(preset) {
+  if (journeyActive) {
+    // Already open (e.g. History from a skill editor launched off a Journey
+    // row): just retarget the filters — no second view-stack entry.
+    setJourneyPreset(preset);
+    applyJourneyFilters();
+    return;
+  }
+  openFullView(() => {
+    hideOtherFullViews('journey');
+    journeyActive = true;
+    $('#chat').hidden = true;
+    $('#journey').hidden = false;
+    $('#app').classList.add('in-dashboard'); // reuse the full-view mobile layout
+    $('#app').classList.remove('in-room');
+    journeyAgents.clear();
+    setJourneyPreset(preset);
+    void refreshJourney(true);
+    openView('journey', teardownJourney);
+  });
+}
+function teardownJourney() {
+  journeyActive = false;
+  $('#chat').hidden = false;
+  $('#journey').hidden = true;
+  $('#app').classList.remove('in-dashboard');
+}
+function toggleJourney() {
+  if (journeyActive) closeView('journey');
+  else openJourney();
+}
+$('#journey-back')?.addEventListener('click', toggleJourney);
+$('#journey-refresh')?.addEventListener('click', () => void refreshJourney(true));
+$('#journey-more')?.addEventListener('click', () => void refreshJourney(false));
+
+let journeyCursor = null;
+let journeyLastDay = '';
+async function refreshJourney(reset) {
+  const list = $('#journey-list');
+  if (!list) return;
+  if (reset) {
+    journeyCursor = null;
+    journeyLastDay = '';
+    list.textContent = 'Loading…';
+  }
+  const more = $('#journey-more');
+  try {
+    const q = !reset && journeyCursor ? `&before=${journeyCursor}` : '';
+    const data = await apiJson(`/api/learning/timeline?limit=100${q}`);
+    const events = data.events || [];
+    if (reset) list.innerHTML = '';
+    renderJourneyEvents(list, events);
+    journeyCursor = data.nextBefore || null;
+    if (more) more.hidden = !journeyCursor;
+    if (reset && !events.length) {
+      list.innerHTML = '<div class="journey-empty">Nothing learned yet.</div>';
+    }
+    renderJourneyFilterControls(); // newly loaded events may add agents
+    applyJourneyFilters(); // 'Load more' rows obey the active filters too
+  } catch (err) {
+    if (reset) list.textContent = 'Could not load the timeline.';
+    else toastError(err, 'Could not load more');
+  }
+}
+
+const JOURNEY_VERBS = {
+  proposed: 'Proposed',
+  kept: 'Kept',
+  discarded: 'Discarded',
+  revised: 'Revised',
+  archived: 'Archived',
+};
+function journeyMeta(ev) {
+  const bits = [];
+  if (ev.kind === 'kept' && ev.by === 'auto-keep') bits.push('kept automatically');
+  else if (ev.kind === 'discarded' && ev.by === 'expired') bits.push('expired unreviewed');
+  else if (ev.kind === 'discarded' && ev.by === 'superseded') bits.push('replaced by a newer draft');
+  else if (ev.kind === 'archived') bits.push('unused, moved to the archive');
+  if (ev.roomName) bits.push(ev.roomName);
+  return bits.join(' · ');
+}
+function renderJourneyEvents(list, events) {
+  const now = new Date();
+  for (const ev of events) {
+    const d = new Date(ev.ts);
+    const day = d.toDateString();
+    if (day !== journeyLastDay) {
+      journeyLastDay = day;
+      const h = document.createElement('div');
+      h.className = 'journey-day';
+      h.textContent =
+        day === now.toDateString()
+          ? 'Today'
+          : d.toLocaleDateString(
+              [],
+              d.getFullYear() === now.getFullYear()
+                ? { month: 'long', day: 'numeric' }
+                : { year: 'numeric', month: 'long', day: 'numeric' },
+            );
+      list.appendChild(h);
+    }
+    const row = document.createElement('div');
+    row.className = 'journey-row';
+    // Filter facets (client-side visibility — see applyJourneyFilters).
+    row.dataset.kind = ev.kind;
+    row.dataset.agent = ev.agentGroupId || '';
+    row.dataset.skill = ev.skillName || '';
+    if (ev.agentGroupId && !journeyAgents.has(ev.agentGroupId)) {
+      journeyAgents.set(ev.agentGroupId, ev.agentName || ev.agentGroupId);
+    }
+    const verb = document.createElement('span');
+    verb.className = `journey-verb journey-verb-${ev.kind}`;
+    verb.textContent = JOURNEY_VERBS[ev.kind] || ev.kind;
+    const name = document.createElement('span');
+    name.className = 'journey-skill';
+    name.textContent = ev.skillName;
+    const pill = document.createElement('span');
+    pill.className = 'skill-badge skill-badge-scope';
+    pill.textContent = ev.agentName;
+    const meta = document.createElement('span');
+    meta.className = 'journey-meta';
+    meta.textContent = journeyMeta(ev);
+    const time = document.createElement('span');
+    time.className = 'journey-time';
+    time.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (ev.description) row.title = ev.description;
+    row.append(verb, name, pill, meta, time);
+    if ((ev.kind === 'kept' || ev.kind === 'revised') && ev.skillExists) {
+      row.classList.add('journey-linked');
+      row.setAttribute('role', 'button');
+      row.setAttribute('tabindex', '0');
+      const open = () => openScopedSkillEditor(ev.agentGroupId, ev.skillName);
+      row.addEventListener('click', open);
+      row.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          open();
+        }
+      });
+    }
+    if (ev.canRevert) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-secondary';
+      btn.textContent = 'Revert';
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const ok = await showConfirmModal({
+          title: `Revert ${ev.skillName}?`,
+          body: 'Restores the previous version. The current version is kept in history.',
+          confirmLabel: 'Revert',
+          destructive: true,
+        });
+        if (!ok) return;
+        btn.disabled = true;
+        try {
+          await apiJson(
+            `/api/agents/${encodeURIComponent(ev.agentGroupId)}/skills/scoped/${encodeURIComponent(ev.skillName)}/revert`,
+            { method: 'POST' },
+          );
+          showToast(`Reverted ${ev.skillName}`, { kind: 'success' });
+          void refreshJourney(true);
+        } catch (err) {
+          toastError(err, 'Revert failed');
+          btn.disabled = false;
+        }
+      });
+      row.appendChild(btn);
+    }
+    list.appendChild(row);
+  }
+}
+
+// ── Journey filters ─────────────────────────────────────────────────────────
+// Agent select options come from the loaded feed (plus a deep-linked agent),
+// so no extra endpoint is needed; they grow as 'Load more' pages in.
+function renderJourneyFilterControls() {
+  const sel = $('#journey-agent-filter');
+  if (sel) {
+    sel.innerHTML = '';
+    sel.appendChild(new Option('All agents', ''));
+    for (const [id, name] of [...journeyAgents].sort((a, b) => a[1].localeCompare(b[1]))) {
+      sel.appendChild(new Option(name, id));
+    }
+    sel.value = journeyFilter.agent;
+    if (sel.value !== journeyFilter.agent) journeyFilter.agent = ''; // option vanished
+  }
+  for (const b of document.querySelectorAll('#journey-kind-filter .setting-option')) {
+    const active = (b.dataset.kind || '') === journeyFilter.kind;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-pressed', String(active));
+  }
+  const chip = $('#journey-skill-chip');
+  if (chip) {
+    chip.hidden = !journeyFilter.skill;
+    if (journeyFilter.skill) chip.textContent = `skill: ${journeyFilter.skill} ✕`;
+  }
+}
+
+function applyJourneyFilters() {
+  const list = $('#journey-list');
+  if (!list) return;
+  let curDay = null;
+  let dayShown = 0;
+  let shown = 0;
+  let total = 0;
+  const flushDay = () => {
+    if (curDay) curDay.hidden = dayShown === 0;
+  };
+  for (const el of list.children) {
+    if (el.classList.contains('journey-day')) {
+      flushDay();
+      curDay = el;
+      dayShown = 0;
+    } else if (el.classList.contains('journey-row')) {
+      total++;
+      const show =
+        (!journeyFilter.agent || el.dataset.agent === journeyFilter.agent) &&
+        (!journeyFilter.kind || el.dataset.kind === journeyFilter.kind) &&
+        (!journeyFilter.skill || el.dataset.skill === journeyFilter.skill);
+      el.hidden = !show;
+      if (show) {
+        dayShown++;
+        shown++;
+      }
+    }
+  }
+  flushDay();
+  const none = $('#journey-no-match');
+  if (none) none.hidden = !(total > 0 && shown === 0);
+}
+
+$('#journey-agent-filter')?.addEventListener('change', (e) => {
+  journeyFilter.agent = e.target.value;
+  applyJourneyFilters();
+});
+$('#journey-kind-filter')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.setting-option');
+  if (!btn) return;
+  journeyFilter.kind = btn.dataset.kind || '';
+  renderJourneyFilterControls();
+  applyJourneyFilters();
+});
+$('#journey-skill-chip')?.addEventListener('click', () => {
+  journeyFilter.skill = '';
+  renderJourneyFilterControls();
+  applyJourneyFilters();
+});
+
+async function refreshTopology() {
+  const canvas = $('#topology-canvas');
+  if (!canvas) return;
+  canvas.textContent = 'Loading…';
+  try {
+    const r = await authFetch('/api/topology');
+    if (!r.ok) {
+      canvas.textContent = 'Could not load topology.';
+      return;
+    }
+    renderTopology(await r.json());
+  } catch {
+    canvas.textContent = 'Could not load topology.';
+  }
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const k in attrs) el.setAttribute(k, attrs[k]);
+  return el;
+}
+
+function renderTopology(data) {
+  const canvas = $('#topology-canvas');
+  if (!canvas) return;
+  topoData = data;
+  topoFocus = null; // every (re)render starts on the full graph
+  updateTopoFocusPill();
+  canvas.textContent = '';
+  const rooms = data.rooms || [];
+  const agents = data.agents || [];
+  const models = data.models || [];
+  const edges = data.edges || [];
+  // MCP servers are the agent's reach OUTWARD — worth seeing on the same canvas as
+  // the rooms feeding it, not buried in a settings drawer.
+  const mcpServers = data.mcpServers || [];
+  const mcpEdges = data.mcpEdges || [];
+  // SCOPED skills only — a skill wired to one agent. The shared pool is on nearly
+  // every agent, so its edges would be a uniform wall that hides the few that
+  // actually distinguish an agent (including anything the learning loop produced).
+  const skills = data.skills || [];
+  const skillEdges = data.skillEdges || [];
+  if (rooms.length === 0) {
+    canvas.textContent = 'No rooms yet.';
+    return;
+  }
+
+  // Adjacency.
+  const push = (m, k, v) => {
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(v);
+  };
+  const agentRooms = new Map();
+  const roomAgents = new Map();
+  const modelAgents = new Map();
+  for (const e of edges) {
+    push(agentRooms, e.agent, e.room);
+    push(roomAgents, e.room, e.agent);
+  }
+  for (const a of agents) if (a.modelId) push(modelAgents, a.modelId, a.id);
+  const mcpAgents = new Map();
+  const agentMcps = new Map();
+  for (const e of mcpEdges) {
+    push(mcpAgents, e.mcp, e.agent);
+    push(agentMcps, e.agent, e.mcp);
+  }
+  const skillAgents = new Map();
+  for (const e of skillEdges) push(skillAgents, e.skill, e.agent);
+
+  // Barycenter ordering: average a node's y over its neighbors. Orphans (no
+  // neighbors) sink to the bottom. Forward (agents←rooms, models←agents), one
+  // reverse (rooms←agents), then re-settle — two-ish passes cut most crossings.
+  const indexMap = (arr) => new Map(arr.map((x, i) => [x.id, i]));
+  const bary = (neighbors, posMap) =>
+    !neighbors || neighbors.length === 0
+      ? Number.POSITIVE_INFINITY
+      : neighbors.reduce((s, n) => s + (posMap.get(n) ?? 0), 0) / neighbors.length;
+  const reorder = (items, neighborsOf, posMap) => {
+    const ranked = items.map((it, i) => ({ id: it.id, b: bary(neighborsOf(it.id), posMap), i }));
+    ranked.sort((x, y) => x.b - y.b || x.i - y.i); // stable on ties
+    return new Map(ranked.map((r, i) => [r.id, i]));
+  };
+  let roomY = indexMap(rooms);
+  let agentY = reorder(agents, (id) => agentRooms.get(id), roomY);
+  let modelY = reorder(models, (id) => modelAgents.get(id), agentY);
+  roomY = reorder(rooms, (id) => roomAgents.get(id), agentY);
+  agentY = reorder(agents, (id) => agentRooms.get(id), roomY);
+  modelY = reorder(models, (id) => modelAgents.get(id), agentY);
+  const mcpY = reorder(mcpServers, (id) => mcpAgents.get(id), agentY);
+  const skillY = reorder(skills, (id) => skillAgents.get(id), agentY);
+
+  // Pixel layout.
+  const ROW = 46;
+  const PAD = 28;
+  const COLW = 240;
+  const cols = {
+    room: PAD,
+    agent: PAD + COLW,
+    model: PAD + COLW * 2,
+    mcp: PAD + COLW * 3,
+    skill: PAD + COLW * 4,
+  };
+  const rowsCount = Math.max(rooms.length, agents.length, models.length, mcpServers.length, skills.length, 1);
+  // Only widen the canvas for columns that actually have something in them.
+  const lastCol = skills.length ? cols.skill : mcpServers.length ? cols.mcp : cols.model;
+  const W = lastCol + COLW;
+  const H = PAD * 2 + 20 + rowsCount * ROW;
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'topology-svg', preserveAspectRatio: 'xMidYMin meet' });
+  const NODE_X = 6; // circle radius; line attaches just past the label gap
+  const LABEL_W = 84; // px reserved before an edge leaves a node's right side
+  const yPx = (yMap, id) => PAD + 20 + (yMap.get(id) ?? 0) * ROW + ROW / 2;
+
+  // Column headers.
+  for (const [label, x] of [
+    ['Rooms', cols.room],
+    ['Agents', cols.agent],
+    ['Models', cols.model],
+    ...(mcpServers.length ? [['MCP servers', cols.mcp]] : []),
+    ...(skills.length ? [['Skills', cols.skill]] : []),
+  ]) {
+    const h = svgEl('text', { x, y: PAD, class: 'topo-col-head' });
+    h.textContent = label;
+    svg.appendChild(h);
+  }
+
+  // Edges (under nodes). Room→agent edges are tinted with the room's own color
+  // (the same palette as the sidebar dots) so you can trace each room's fan-out
+  // at a glance. Inline style beats the `.topo-edge` CSS stroke. Agent→model
+  // edges stay neutral — an agent can belong to several rooms, so there's no one
+  // room color to give them.
+  const edgeLine = (x1, y1, x2, y2, stroke) => {
+    const ln = svgEl('line', { x1, y1, x2, y2, class: 'topo-edge' });
+    if (stroke) ln.style.stroke = stroke;
+    return svg.appendChild(ln);
+  };
+  for (const e of edges) {
+    const ln = edgeLine(cols.room + LABEL_W, yPx(roomY, e.room), cols.agent - NODE_X, yPx(agentY, e.agent), roomColor(e.room));
+    ln.setAttribute('data-room', e.room);
+    ln.setAttribute('data-agent', e.agent);
+  }
+  for (const a of agents)
+    if (a.modelId) {
+      const ln = edgeLine(cols.agent + LABEL_W, yPx(agentY, a.id), cols.model - NODE_X, yPx(modelY, a.modelId));
+      ln.setAttribute('data-agent', a.id);
+      ln.setAttribute('data-model', a.modelId);
+    }
+
+  // Agent→MCP edges. Both the model and the MCP servers hang off the AGENT, so this
+  // starts at the agent and spans the models column (edges draw under nodes, so it
+  // passes behind them). Dashed, so a line crossing that column reads as a different
+  // relation rather than as model→server.
+  for (const e of mcpEdges) {
+    const ln = edgeLine(cols.agent + LABEL_W, yPx(agentY, e.agent), cols.mcp - NODE_X, yPx(mcpY, e.mcp));
+    ln.classList.add('topo-edge-mcp');
+    ln.setAttribute('data-agent', e.agent);
+    ln.setAttribute('data-mcp', e.mcp);
+  }
+
+  // Agent→skill edges. Like MCP, these hang off the agent and span the columns
+  // between, so they pass behind those nodes. DOTTED rather than dashed, so a
+  // skill edge and a tool-server edge stay tellable apart when they cross.
+  for (const e of skillEdges) {
+    const ln = edgeLine(cols.agent + LABEL_W, yPx(agentY, e.agent), cols.skill - NODE_X, yPx(skillY, e.skill));
+    ln.classList.add('topo-edge-skill');
+    ln.setAttribute('data-agent', e.agent);
+    ln.setAttribute('data-skill', e.skill);
+  }
+
+  // Nodes.
+  const drawNode = (x, yMap, item, kind, degree, stroke) => {
+    const y = yPx(yMap, item.id);
+    const g = svgEl('g', { class: `topo-node topo-${kind}${degree === 0 ? ' topo-orphan' : ''}` });
+    // Click a node to open that item's settings drawer (overlays the graph;
+    // closing it returns here). Keyboard-accessible too.
+    g.style.cursor = 'pointer';
+    g.setAttribute('role', 'button');
+    g.setAttribute('tabindex', '0');
+    g.setAttribute('aria-label', `Open ${kind} settings: ${item.name}`);
+    g.setAttribute('data-kind', kind);
+    g.setAttribute('data-node-id', item.id);
+    // Clicking a node focuses the graph on its connections (dims the rest) AND
+    // opens its settings drawer — the drawer is a right-side panel on desktop,
+    // so the dimmed graph stays visible beside it.
+    const activate = () => {
+      setTopoFocus(kind, item.id, item.name);
+      openTopologyItem(kind, item.id);
+    };
+    g.addEventListener('click', activate);
+    g.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        activate();
+      }
+    });
+    const c = svgEl('circle', { cx: x, cy: y, r: NODE_X });
+    // Match the room node to its edge color (skip orphans — they keep the
+    // red-dashed "unused" treatment).
+    if (stroke && degree > 0) c.style.stroke = stroke;
+    g.appendChild(c);
+    const t = svgEl('text', { x: x + 11, y: y + 4, class: 'topo-label' });
+    t.textContent = degree > 0 ? `${item.name} · ${degree}` : item.name;
+    g.appendChild(t);
+    svg.appendChild(g);
+  };
+  for (const r of rooms) drawNode(cols.room, roomY, r, 'room', (roomAgents.get(r.id) || []).length, roomColor(r.id));
+  for (const a of agents) drawNode(cols.agent, agentY, a, 'agent', (agentRooms.get(a.id) || []).length);
+  for (const m of models) drawNode(cols.model, modelY, m, 'model', (modelAgents.get(m.id) || []).length);
+  for (const srv of mcpServers) drawNode(cols.mcp, mcpY, srv, 'mcp', (mcpAgents.get(srv.id) || []).length);
+  for (const sk of skills) drawNode(cols.skill, skillY, sk, 'skill', (skillAgents.get(sk.id) || []).length);
+
+  // Click empty canvas to clear a focus (nodes handle their own clicks).
+  svg.addEventListener('click', (ev) => {
+    if (ev.target === svg) clearTopoFocus();
+  });
+  canvas.appendChild(svg);
+}
+
+// ── Topology focus ─────────────────────────────────────────────────────────
+// Clicking a node dims everything not connected to it. For a model that's the
+// model + the agents assigned to it + the rooms those agents serve; for an agent
+// its rooms + model; for a room its agents + their models. A directed reach (not
+// the whole component) — focusing a model doesn't fan back out to a room's other
+// agents. Reversible via the "Focused: …" pill, an empty-canvas click, or refresh.
+let topoData = null;
+let topoFocus = null; // { kind, id, name } or null
+
+function computeTopoFocus(data, kind, id) {
+  const agents = data?.agents || [];
+  const edges = data?.edges || [];
+  const mcpEdges = data?.mcpEdges || [];
+  const skillEdges = data?.skillEdges || [];
+  const rooms = new Set();
+  const ags = new Set();
+  const models = new Set();
+  const mcps = new Set();
+  const skls = new Set();
+  const agentModel = new Map(agents.map((a) => [a.id, a.modelId]));
+  const roomsOfAgent = new Map();
+  const agentsOfRoom = new Map();
+  const agentsOfModel = new Map();
+  const agentsOfMcp = new Map();
+  const mcpsOfAgent = new Map();
+  const agentsOfSkill = new Map();
+  const skillsOfAgent = new Map();
+  const push = (m, k, v) => {
+    if (k == null) return;
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(v);
+  };
+  for (const e of edges) {
+    push(roomsOfAgent, e.agent, e.room);
+    push(agentsOfRoom, e.room, e.agent);
+  }
+  for (const a of agents) if (a.modelId) push(agentsOfModel, a.modelId, a.id);
+  for (const e of mcpEdges) {
+    push(agentsOfMcp, e.mcp, e.agent);
+    push(mcpsOfAgent, e.agent, e.mcp);
+  }
+  for (const e of skillEdges) {
+    push(agentsOfSkill, e.skill, e.agent);
+    push(skillsOfAgent, e.agent, e.skill);
+  }
+  if (kind === 'model') {
+    models.add(id);
+    for (const a of agentsOfModel.get(id) || []) {
+      ags.add(a);
+      for (const r of roomsOfAgent.get(a) || []) rooms.add(r);
+    }
+  } else if (kind === 'agent') {
+    ags.add(id);
+    if (agentModel.get(id)) models.add(agentModel.get(id));
+    for (const r of roomsOfAgent.get(id) || []) rooms.add(r);
+  } else if (kind === 'room') {
+    rooms.add(id);
+    for (const a of agentsOfRoom.get(id) || []) {
+      ags.add(a);
+      if (agentModel.get(a)) models.add(agentModel.get(a));
+    }
+  } else if (kind === 'mcp') {
+    // Focusing a server answers the question that matters about it: who can
+    // reach it — and therefore whose messages can end up there.
+    mcps.add(id);
+    for (const a of agentsOfMcp.get(id) || []) {
+      ags.add(a);
+      if (agentModel.get(a)) models.add(agentModel.get(a));
+      for (const r of roomsOfAgent.get(a) || []) rooms.add(r);
+    }
+  } else if (kind === 'skill') {
+    // Focusing a skill: which agents carry it, and therefore which rooms it
+    // can act in. For a learned skill that's exactly the blast radius.
+    skls.add(id);
+    for (const a of agentsOfSkill.get(id) || []) {
+      ags.add(a);
+      if (agentModel.get(a)) models.add(agentModel.get(a));
+      for (const r of roomsOfAgent.get(a) || []) rooms.add(r);
+    }
+  }
+  // Whatever agents are in view, so are the servers and skills they carry.
+  for (const a of ags) {
+    for (const m of mcpsOfAgent.get(a) || []) mcps.add(m);
+    for (const k of skillsOfAgent.get(a) || []) skls.add(k);
+  }
+  return { rooms, agents: ags, models, mcps, skills: skls };
+}
+
+function applyTopoFocus() {
+  const svg = $('#topology-canvas')?.querySelector('svg');
+  if (!svg) return;
+  if (!topoFocus) {
+    svg.querySelectorAll('.topo-dimmed').forEach((el) => el.classList.remove('topo-dimmed'));
+    return;
+  }
+  const hl = computeTopoFocus(topoData, topoFocus.kind, topoFocus.id);
+  const setFor = (k) =>
+    k === 'room'
+      ? hl.rooms
+      : k === 'agent'
+        ? hl.agents
+        : k === 'mcp'
+          ? hl.mcps
+          : k === 'skill'
+            ? hl.skills
+            : hl.models;
+  svg.querySelectorAll('.topo-node').forEach((g) => {
+    const on = setFor(g.getAttribute('data-kind')).has(g.getAttribute('data-node-id'));
+    g.classList.toggle('topo-dimmed', !on);
+  });
+  svg.querySelectorAll('.topo-edge').forEach((ln) => {
+    const on = ln.hasAttribute('data-skill')
+      ? hl.agents.has(ln.getAttribute('data-agent')) && hl.skills.has(ln.getAttribute('data-skill'))
+      : ln.hasAttribute('data-mcp')
+        ? hl.agents.has(ln.getAttribute('data-agent')) && hl.mcps.has(ln.getAttribute('data-mcp'))
+        : ln.hasAttribute('data-model')
+        ? hl.agents.has(ln.getAttribute('data-agent')) && hl.models.has(ln.getAttribute('data-model'))
+        : hl.rooms.has(ln.getAttribute('data-room')) && hl.agents.has(ln.getAttribute('data-agent'));
+    ln.classList.toggle('topo-dimmed', !on);
+  });
+}
+
+function setTopoFocus(kind, id, name) {
+  topoFocus = { kind, id, name };
+  applyTopoFocus();
+  updateTopoFocusPill();
+}
+
+function clearTopoFocus() {
+  topoFocus = null;
+  applyTopoFocus();
+  updateTopoFocusPill();
+}
+
+function updateTopoFocusPill() {
+  const pill = $('#topo-focus-pill');
+  if (!pill) return;
+  if (topoFocus) {
+    pill.textContent = `Focused: ${topoFocus.name} ✕`;
+    pill.hidden = false;
+  } else {
+    pill.hidden = true;
+  }
+}
+
+$('#topo-focus-pill')?.addEventListener('click', clearTopoFocus);
+
+// Open the settings drawer for a clicked topology node. The detail drawers are
+// fixed overlays (z-index 110), so they layer over the graph and closing one
+// returns here. fetchAgents/fetchModels are lazy so the lookup data exists even
+// when the user jumped straight to the topology view.
+async function openTopologyItem(kind, id) {
+  try {
+    if (kind === 'room') {
+      await openRoomDetail(id);
+    } else if (kind === 'agent') {
+      if (!allAgents.length) await fetchAgents();
+      await openAgentDetail(id);
+    } else if (kind === 'model') {
+      if (!allModels.length) await fetchModels();
+      await openModelDetail(id);
+    } else if (kind === 'mcp') {
+      // Same affordance as every other node: click it, get its settings.
+      await openMcpDetail(id);
+    }
+    // A skill has no per-item drawer, and opening the Skills view would REPLACE
+    // the graph — throwing away the focus the click just set. Every other node
+    // opens an overlay and leaves the graph visible, so a skill click focuses
+    // only: who carries it, and where it therefore acts. Manage from ⋯ → Skills.
+  } catch (err) {
+    showToast('Couldn’t open settings: ' + (err?.message || err), { kind: 'error' });
+  }
+}
+
+// ── Wiring matrix (rooms × agents management console) ──────────────────────
+// Same /api/topology data as the graph, rendered as a grid: tap a cell to
+// wire/unwire via the existing endpoints. Empty cells make gaps visible. Agents
+// shown are those in use (wired somewhere); brand-new unwired agents appear once
+// wired via a room's add-agent flow. Plain table — sticky headers, scrolls on
+// mobile.
+let matrixActive = false;
+let matrixWired = new Set(); // "roomId|agentId" for currently-wired pairs
+function openMatrix() {
+  openFullView(() => {
+    hideOtherFullViews('matrix');
+    matrixActive = true;
+    $('#chat').hidden = true;
+    $('#matrix').hidden = false;
+    $('#app').classList.add('in-dashboard');
+    $('#app').classList.remove('in-room');
+    refreshMatrix();
+    openView('matrix', teardownMatrix);
+  });
+}
+function teardownMatrix() {
+  matrixActive = false;
+  $('#chat').hidden = false;
+  $('#matrix').hidden = true;
+  $('#app').classList.remove('in-dashboard');
+}
+function toggleMatrix() {
+  if (matrixActive) closeView('matrix');
+  else openMatrix();
+}
+$('#matrix-back')?.addEventListener('click', toggleMatrix);
+$('#matrix-refresh')?.addEventListener('click', refreshMatrix);
+
+// Help — a static full-view (no data to load); same open/close mechanics as the
+// matrix/topology dashboards so the back gesture and view stacking work for free.
+let helpActive = false;
+function openHelp() {
+  closeAgentDetail();
+  closeRoomDetail();
+  closeModelDetail();
+  closeMcpDetail();
+  hideOtherFullViews('help');
+  helpActive = true;
+  $('#chat').hidden = true;
+  $('#help').hidden = false;
+  $('#app').classList.add('in-dashboard');
+  $('#app').classList.remove('in-room');
+  openView('help', teardownHelp);
+}
+function teardownHelp() {
+  helpActive = false;
+  $('#chat').hidden = false;
+  $('#help').hidden = true;
+  $('#app').classList.remove('in-dashboard');
+}
+function toggleHelp() {
+  if (helpActive) closeView('help');
+  else openHelp();
+}
+$('#help-back')?.addEventListener('click', toggleHelp);
+
+async function refreshMatrix() {
+  const canvas = $('#matrix-canvas');
+  if (!canvas) return;
+  canvas.textContent = 'Loading…';
+  try {
+    const r = await authFetch('/api/topology');
+    if (!r.ok) {
+      canvas.textContent = 'Could not load wiring.';
+      return;
+    }
+    renderMatrix(await r.json());
+  } catch {
+    canvas.textContent = 'Could not load wiring.';
+  }
+}
+
+function renderMatrix(data) {
+  const canvas = $('#matrix-canvas');
+  if (!canvas) return;
+  canvas.textContent = '';
+  const rooms = data.rooms || [];
+  const agents = data.agents || [];
+  if (rooms.length === 0 || agents.length === 0) {
+    canvas.textContent = 'Nothing to wire yet — create a room and an agent first.';
+    return;
+  }
+  matrixWired = new Set((data.edges || []).map((e) => `${e.room}|${e.agent}`));
+
+  const table = document.createElement('table');
+  table.className = 'matrix-table';
+
+  // Header row: corner + one column per agent (name + model chip).
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  const corner = document.createElement('th');
+  corner.className = 'matrix-corner';
+  corner.textContent = 'Room \\ Agent';
+  hr.appendChild(corner);
+  for (const a of agents) {
+    const th = document.createElement('th');
+    th.className = 'matrix-agent-head';
+    const name = document.createElement('div');
+    name.className = 'matrix-agent-name';
+    name.textContent = a.name;
+    th.appendChild(name);
+    const chip = document.createElement('div');
+    chip.className = 'matrix-model-chip' + (a.modelName ? '' : ' none');
+    chip.textContent = a.modelName || 'no model';
+    th.appendChild(chip);
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  table.appendChild(thead);
+
+  // One row per room; cells toggle wiring.
+  const tbody = document.createElement('tbody');
+  for (const room of rooms) {
+    const tr = document.createElement('tr');
+    const rh = document.createElement('th');
+    rh.className = 'matrix-room-head';
+    rh.textContent = room.name;
+    tr.appendChild(rh);
+    for (const a of agents) {
+      const td = document.createElement('td');
+      const on = matrixWired.has(`${room.id}|${a.id}`);
+      td.className = 'matrix-cell' + (on ? ' on' : '');
+      td.dataset.room = room.id;
+      td.dataset.agent = a.id;
+      td.title = `${room.name} ↔ ${a.name}`;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  canvas.appendChild(table);
+}
+
+$('#matrix-canvas')?.addEventListener('click', async (e) => {
+  const cell = e.target.closest('.matrix-cell');
+  if (!cell || cell.classList.contains('pending')) return;
+  const roomId = cell.dataset.room;
+  const agentId = cell.dataset.agent;
+  const wantWired = !cell.classList.contains('on');
+  cell.classList.add('pending');
+  cell.classList.toggle('on', wantWired); // optimistic
+  try {
+    const r = wantWired
+      ? await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/agents`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: 'existing', id: agentId }),
+        })
+      : await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/agents/${encodeURIComponent(agentId)}`, {
+          method: 'DELETE',
+        });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+    matrixWired[wantWired ? 'add' : 'delete'](`${roomId}|${agentId}`);
+  } catch (err) {
+    cell.classList.toggle('on', !wantWired); // revert
+    showToast('Could not update wiring: ' + (err.message || err), { kind: 'error' });
+  } finally {
+    cell.classList.remove('pending');
+  }
+});
+
+// ── Permissions section (owner-only) ──────────────────────────────────────
+// List + detail pattern (mirrors the Agents tab). Header button is hidden
+// by default and revealed by probeIsOwner() once /api/users succeeds. The
+// detail pane has two views — selected user (chips + add-role form) and
+// new-user form — plus an empty-state shown when nothing is selected.
+let permsActive = false;
+let permsAgents = []; // cached agent_groups for group dropdowns
+let permsUsers = []; // cached most-recent /api/users result
+let permsSelectedUserId = null;
+let myUserId = null; // populated by probeIsOwner via /api/auth/check
+let isOwnerView = false; // set by probeIsOwner — gates owner-only write controls (e.g. room assignment)
+let isAdminView = false; // set by probeIsOwner — true for any admin+ (gates the slash menu, MCP)
+let marketplaceEnabled = false; // MCP + skills catalog — disabled by default (opt-in); set by probeIsOwner from /api/webchat/features
+
+function openPermissions() {
+  openFullView(() => {
+    hideOtherFullViews('permissions');
+    permsActive = true;
+    $('#chat').hidden = true;
+    $('#permissions').hidden = false;
+    $('#overflow-btn')?.classList.add('active');
+    $('#app').classList.add('in-dashboard');
+    $('#app').classList.remove('in-room');
+    permsShowList();
+    refreshPermissions();
+    openView('permissions', teardownPermissions);
+  });
+}
+function teardownPermissions() {
+  permsActive = false;
+  $('#chat').hidden = false;
+  $('#permissions').hidden = true;
+  $('#overflow-btn')?.classList.remove('active');
+  $('#app').classList.remove('in-dashboard');
+}
+function togglePermissions() {
+  if (permsActive) closeView('permissions');
+  else openPermissions();
+}
+
+async function probeIsOwner() {
+  try {
+    const [check, users] = await Promise.all([authFetch('/api/auth/check'), authFetch('/api/users')]);
+    if (check.ok) {
+      const body = await check.json();
+      if (body && typeof body.userId === 'string') myUserId = body.userId;
+    }
+    if (users.ok) {
+      // /api/users is now open to any admin (not just owners), so its success
+      // only means "I can see the permissions panel". Reveal the toggle for
+      // every admin, but derive true-owner status from my own roles in the
+      // response — isOwnerView must stay owner-only since it gates owner-only
+      // write controls (e.g. room assignment).
+      $('#overflow-permissions').hidden = false;
+      // Journey (the learning timeline) is admin-tier like the drafts list it
+      // mirrors — not marketplace-gated; the server 403s non-admins anyway.
+      $('#overflow-journey')?.removeAttribute('hidden');
+      // /api/users success = admin+ → gates the admin-only slash menu.
+      isAdminView = true;
+      // MCP + skills registries are admin-only AND can be turned off workspace-
+      // wide (the marketplace toggle). Reveal their menu items + tabs only when
+      // both hold; the server 403s the endpoints when off, so this is just UX.
+      try {
+        const fr = await authFetch('/api/webchat/features');
+        const feats = fr.ok ? await fr.json() : {};
+        marketplaceEnabled = feats.marketplaceEnabled === true;
+        renderCredentialIsolation(feats);
+      } catch {
+        marketplaceEnabled = false;
+      }
+      if (marketplaceEnabled) {
+        $('#overflow-mcp')?.removeAttribute('hidden');
+        $('#mtab-mcp-btn')?.removeAttribute('hidden');
+        $('#mtab-skills-btn')?.removeAttribute('hidden');
+        $('#overflow-skills')?.removeAttribute('hidden');
+      }
+      const list = await users.json().catch(() => []);
+      const me = Array.isArray(list) ? list.find((u) => u.id === myUserId) : null;
+      isOwnerView = !!(me && userIsOwner(me));
+      return true;
+    }
+  } catch {}
+  isOwnerView = false;
+  isAdminView = false;
+  return false;
+}
+
+async function refreshPermissions() {
+  try {
+    const [usersRes, agentsRes] = await Promise.all([authFetch('/api/users'), authFetch('/api/agents')]);
+    if (!usersRes.ok) {
+      $('#perms-user-list').innerHTML = '<li class="perms-empty">Failed to load users.</li>';
+      return;
+    }
+    permsUsers = await usersRes.json();
+    permsAgents = agentsRes.ok ? await agentsRes.json() : [];
+    populatePermsAgentDropdowns();
+    renderPermsUserList();
+    if (permsSelectedUserId && permsUsers.find((u) => u.id === permsSelectedUserId)) {
+      renderPermsDetail(permsSelectedUserId);
+    } else if (permsSelectedUserId) {
+      // The selected user got revoked-into-nonexistence or otherwise vanished.
+      permsSelectedUserId = null;
+      permsShowList();
+    }
+  } catch (err) {
+    console.error('refreshPermissions failed:', err);
+  }
+}
+
+function populatePermsAgentDropdowns() {
+  // Only the wizard uses an agent-group dropdown now (the matrix UI lists
+  // each group as its own row). Repopulate from the latest /api/agents.
+  const el = $('#perms-create-group');
+  if (!el) return;
+  el.innerHTML = '<option value="">— global —</option>';
+  permsAgents.forEach((a) => {
+    const opt = document.createElement('option');
+    opt.value = a.id;
+    opt.textContent = a.name || a.id;
+    el.appendChild(opt);
+  });
+}
+
+
+function userDisplayName(u) {
+  // Prefer the channel-supplied display name, else extract a readable token
+  // from the namespaced id (handle/email after the last colon).
+  if (u.display_name && u.display_name.trim()) return u.display_name.trim();
+  const lastColon = u.id.lastIndexOf(':');
+  return lastColon >= 0 ? u.id.slice(lastColon + 1) : u.id;
+}
+
+function userIsOwner(u) {
+  return !!u.roles.find((r) => r.kind === 'owner' && r.agent_group_id === null);
+}
+function userIsGlobalAdmin(u) {
+  return !!u.roles.find((r) => r.kind === 'admin' && r.agent_group_id === null);
+}
+function userScopedAdminCount(u) {
+  return u.roles.filter((r) => r.kind === 'admin' && r.agent_group_id).length;
+}
+function userMemberCount(u) {
+  return u.memberships.length;
+}
+
+function userRoleSummary(u) {
+  const parts = [];
+  if (userIsOwner(u)) parts.push('owner');
+  if (userIsGlobalAdmin(u)) parts.push('global admin');
+  const sa = userScopedAdminCount(u);
+  if (sa) parts.push(`admin · ${sa} group${sa > 1 ? 's' : ''}`);
+  const m = userMemberCount(u);
+  if (m) parts.push(`member · ${m} group${m > 1 ? 's' : ''}`);
+  return parts.join(' · ') || 'no roles';
+}
+
+let permsUserFilter = ''; // lowercased; filters the user list by name + id
+
+function renderPermsUserList() {
+  const list = $('#perms-user-list');
+  list.innerHTML = '';
+  if (permsUsers.length === 0) {
+    list.innerHTML =
+      '<li class="perms-empty" style="padding:16px;">No users yet — anyone who authenticates will appear here.</li>';
+    return;
+  }
+  // A–Z toggle: flat alphabetical when on; the tiered "auto" order when off —
+  // you first, then owners, then admins, then everyone else, alpha within tier.
+  const byName = (a, b) => userDisplayName(a).localeCompare(userDisplayName(b));
+  const sorted = usersSortAz
+    ? [...permsUsers].sort(byName)
+    : [...permsUsers].sort((a, b) => {
+        const tier = (u) =>
+          u.id === myUserId ? 0 : userIsOwner(u) ? 1 : userIsGlobalAdmin(u) || userScopedAdminCount(u) ? 2 : 3;
+        const ta = tier(a);
+        const tb = tier(b);
+        return ta !== tb ? ta - tb : byName(a, b);
+      });
+  // Filter by the search box — match on display name AND the namespaced id, so
+  // you can find someone by handle/email or by channel prefix (e.g. "slack:").
+  const rows = permsUserFilter
+    ? sorted.filter((u) => `${userDisplayName(u)} ${u.id}`.toLowerCase().includes(permsUserFilter))
+    : sorted;
+  if (rows.length === 0) {
+    list.innerHTML = '<li class="perms-empty" style="padding:16px;">No users match.</li>';
+    return;
+  }
+  rows.forEach((u) => {
+    const li = document.createElement('li');
+    li.tabIndex = 0;
+    if (u.id === permsSelectedUserId) li.classList.add('active');
+
+    const nameRow = document.createElement('div');
+    nameRow.className = 'perms-user-name';
+    const nameText = document.createElement('span');
+    nameText.className = 'perms-name-text';
+    nameText.textContent = userDisplayName(u);
+    nameRow.appendChild(nameText);
+    if (u.id === myUserId) {
+      const youTag = document.createElement('span');
+      youTag.className = 'perms-you-tag';
+      youTag.textContent = 'YOU';
+      nameRow.appendChild(youTag);
+    }
+    li.appendChild(nameRow);
+
+    const idLine = document.createElement('div');
+    idLine.className = 'perms-user-id-sub';
+    idLine.textContent = u.id;
+    li.appendChild(idLine);
+
+    const summary = document.createElement('div');
+    summary.className = 'perms-user-summary';
+    summary.textContent = userRoleSummary(u);
+    li.appendChild(summary);
+
+    li.addEventListener('click', () => permsSelectUser(u.id));
+    li.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        permsSelectUser(u.id);
+      }
+    });
+    list.appendChild(li);
+  });
+}
+
+$('#perms-user-search')?.addEventListener('input', (e) => {
+  permsUserFilter = e.target.value.trim().toLowerCase();
+  renderPermsUserList();
+});
+
+function permsSelectUser(userId) {
+  permsSelectedUserId = userId;
+  renderPermsDetail(userId);
+  // Highlight the selected row.
+  $('#perms-user-list')
+    .querySelectorAll('li')
+    .forEach((li) => li.classList.remove('active'));
+  // Re-render to pick up the active state (cheap; the list is short).
+  renderPermsUserList();
+  permsShowDetail();
+}
+
+// Audit-aware lookup helpers driven by the new /api/users response shape.
+// `roles[]` carries `{kind, agent_group_id, granted_by, granted_at}`,
+// `memberships[]` carries `{agent_group_id, added_by, added_at}`.
+function findRole(u, kind, agentGroupId) {
+  return u.roles.find((r) => r.kind === kind && r.agent_group_id === agentGroupId);
+}
+function findMembership(u, agentGroupId) {
+  return u.memberships.find((m) => m.agent_group_id === agentGroupId);
+}
+
+function auditTooltip(audit) {
+  if (!audit) return '';
+  const who = audit.granted_by || audit.added_by || 'system';
+  const whenIso = audit.granted_at || audit.added_at || '';
+  const when = whenIso ? new Date(whenIso).toLocaleString() : '';
+  return `Granted by ${who}${when ? ' on ' + when : ''}`;
+}
+
+function renderPermsDetail(userId) {
+  const u = permsUsers.find((x) => x.id === userId);
+  if (!u) return;
+  $('#perms-detail-name').textContent = userDisplayName(u);
+  $('#perms-detail-id').textContent = u.id;
+
+  // ── GLOBAL section: Owner + Global admin toggles ──
+  const globalEl = $('#perms-global-toggles');
+  globalEl.innerHTML = '';
+  globalEl.appendChild(
+    buildToggleRow(u, 'Owner', '👑 ', findRole(u, 'owner', null), () =>
+      togglePerm(u.id, 'owner', null, !findRole(u, 'owner', null)),
+    ),
+  );
+  globalEl.appendChild(
+    buildToggleRow(u, 'Global admin', '', findRole(u, 'admin', null), () =>
+      togglePerm(u.id, 'admin', null, !findRole(u, 'admin', null)),
+    ),
+  );
+
+  // ── PER-AGENT-GROUP matrix ──
+  const matrix = $('#perms-matrix');
+  matrix.innerHTML = '';
+  if (permsAgents.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'perms-matrix-empty';
+    empty.textContent = 'No agent groups yet.';
+    matrix.appendChild(empty);
+  } else {
+    permsAgents.forEach((a) => {
+      const adminRole = findRole(u, 'admin', a.id);
+      const member = findMembership(u, a.id);
+      const row = document.createElement('div');
+      row.className = 'perms-matrix-row';
+
+      const name = document.createElement('span');
+      name.className = 'perms-group-name';
+      name.textContent = a.name || a.id;
+      name.title = a.id;
+      row.appendChild(name);
+
+      // Admin cell
+      const adminBtn = document.createElement('button');
+      adminBtn.type = 'button';
+      adminBtn.className = `perms-cell${adminRole ? ' on' : ''}`;
+      adminBtn.textContent = adminRole ? '✓' : '·';
+      if (adminRole) adminBtn.title = auditTooltip(adminRole);
+      adminBtn.setAttribute('aria-label', `${adminRole ? 'Revoke' : 'Grant'} admin · ${a.name || a.id}`);
+      adminBtn.addEventListener('click', () => togglePerm(u.id, 'admin', a.id, !adminRole, adminBtn));
+      row.appendChild(adminBtn);
+
+      // Member cell
+      const memberBtn = document.createElement('button');
+      memberBtn.type = 'button';
+      memberBtn.className = `perms-cell member-style${member ? ' on' : ''}`;
+      memberBtn.textContent = member ? '✓' : '·';
+      if (member) memberBtn.title = auditTooltip(member);
+      memberBtn.setAttribute('aria-label', `${member ? 'Revoke' : 'Grant'} member · ${a.name || a.id}`);
+      memberBtn.addEventListener('click', () => togglePerm(u.id, 'member', a.id, !member, memberBtn));
+      row.appendChild(memberBtn);
+
+      matrix.appendChild(row);
+    });
+  }
+
+  // ── Delete user button ──────────────────────────────────────────────────
+  // Always show the danger zone (except for yourself). Disable the button
+  // with an explanation if roles or memberships are still present — the
+  // server would reject it anyway, but this surfaces the blocker upfront.
+  const deleteZone = $('#perms-delete-zone');
+  const deleteBtn = $('#perms-delete-btn');
+  const isSelf = u.id === myUserId;
+  const hasRolesOrMemberships = u.roles.length > 0 || u.memberships.length > 0;
+  if (deleteZone) {
+    deleteZone.hidden = isSelf;
+    if (deleteBtn) {
+      deleteBtn.disabled = hasRolesOrMemberships;
+      deleteBtn.title = hasRolesOrMemberships ? 'Revoke all roles and memberships before deleting' : '';
+    }
+  }
+}
+
+function buildToggleRow(u, label, prefix, audit, onClick) {
+  const row = document.createElement('div');
+  row.className = 'perms-toggle-row';
+
+  const lbl = document.createElement('span');
+  lbl.className = 'perms-toggle-label';
+  lbl.textContent = `${prefix}${label}`;
+  if (audit) {
+    const meta = document.createElement('span');
+    meta.className = 'perms-toggle-meta';
+    meta.textContent = `(${auditTooltip(audit)})`;
+    lbl.appendChild(meta);
+  }
+  row.appendChild(lbl);
+
+  const sw = document.createElement('button');
+  sw.type = 'button';
+  sw.className = `perms-switch${audit ? ' on' : ''}`;
+  sw.setAttribute('role', 'switch');
+  sw.setAttribute('aria-checked', audit ? 'true' : 'false');
+  sw.setAttribute('aria-label', label);
+  sw.addEventListener('click', () => onClick(sw));
+  row.appendChild(sw);
+
+  return row;
+}
+
+/**
+ * Toggle a permission on or off. `granting=true` calls /grant; false calls
+ * /revoke. The cell is briefly disabled while the request is in flight, then
+ * the canonical state is re-fetched from the server.
+ */
+async function togglePerm(targetUserId, kind, agentGroupId, granting, cellEl) {
+  if (cellEl) cellEl.classList.add('busy');
+  const ok = granting
+    ? await grantPerm(targetUserId, kind, agentGroupId)
+    : await revokePermSilent(targetUserId, kind, agentGroupId);
+  if (cellEl) cellEl.classList.remove('busy');
+  if (ok) await refreshPermissions();
+}
+
+async function revokePermSilent(targetUserId, kind, agentGroupId) {
+  // Same as revokePerm but no confirm() prompt — the matrix's tap-to-revoke
+  // model relies on the visual "on → off" feedback being immediate. Last-
+  // owner protection still trips the server's 409 response, surfaced as an
+  // alert rather than a confirmation prompt.
+  try {
+    const r = await authFetch('/api/permissions/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ userId: targetUserId, kind, agentGroupId }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      showToast('Revoke failed: ' + (err.error || r.statusText), { kind: 'error' });
+      return false;
+    }
+    return true;
+  } catch (err) {
+    showToast('Revoke failed: ' + err.message, { kind: 'error' });
+    return false;
+  }
+}
+
+async function deleteUser(targetUserId) {
+  const confirmed = await showConfirmModal({
+    title: 'Delete user',
+    body: `Delete ${targetUserId}? This removes the user record. They will be re-added automatically if they authenticate again.`,
+    confirmLabel: 'Delete',
+    destructive: true,
+  });
+  if (!confirmed) return;
+  try {
+    const r = await authFetch(`/api/users/${encodeURIComponent(targetUserId)}`, {
+      method: 'DELETE',
+      headers: { 'X-Webchat-CSRF': '1' },
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      showToast('Delete failed: ' + (err.error || r.statusText), { kind: 'error' });
+      return;
+    }
+    showToast(`Deleted user ${targetUserId}.`, { kind: 'success' });
+    permsSelectedUserId = null;
+    await refreshPermissions();
+    permsShowList();
+  } catch (err) {
+    showToast('Delete failed: ' + err.message, { kind: 'error' });
+  }
+}
+
+// View switching within the detail pane (also flips the mobile data-mode)
+function permsShowList() {
+  $('#perms-body').dataset.mode = 'list';
+  $('#perms-detail-empty').hidden = false;
+  $('#perms-detail-view').hidden = true;
+  $('#perms-create-view').hidden = true;
+}
+function permsShowDetail() {
+  $('#perms-body').dataset.mode = 'detail';
+  $('#perms-detail-empty').hidden = true;
+  $('#perms-detail-view').hidden = false;
+  $('#perms-create-view').hidden = true;
+}
+// ── + New User wizard: auth-aware id defaults ────────────────────────────────
+// The composed user_id must match EXACTLY what the auth layer mints at login.
+// We default the channel prefix to whatever this install actually uses (from
+// /api/auth/info) so admins don't, e.g., create a Tailscale-shaped id on an
+// SSO/Entra install. Fetched once, best-effort.
+let serverAuthMethods = null;
+let permsCreateChannelTouched = false;
+async function ensureServerAuthMethods() {
+  if (serverAuthMethods) return serverAuthMethods;
+  try {
+    const r = await fetch('/api/auth/info');
+    if (r.ok) serverAuthMethods = (await r.json()).methods || null;
+  } catch {}
+  return serverAuthMethods;
+}
+// Mirror of normalizeId() in src/channels/webchat/auth.ts — fold a webchat
+// handle to the canonical (lowercased, restricted-charset) form so the live
+// preview shows the id the server will actually store and match.
+function normalizeWebchatHandle(raw) {
+  return raw.toLowerCase().replace(/[^a-z0-9._@+-]/g, '-');
+}
+function applyCreateAuthDefault() {
+  const m = serverAuthMethods || {};
+  // Don't clobber a prefix the admin picked by hand (the change listener marks
+  // it touched); this only steers the untouched default.
+  if (!permsCreateChannelTouched) {
+    $('#perms-create-channel').value = m.tailscale ? 'webchat:tailscale' : 'webchat';
+  }
+  const hint = $('#perms-create-method-hint');
+  if (m.tailscale) {
+    hint.textContent = 'This install signs people in via Tailscale — they appear as webchat:tailscale:<email>.';
+  } else if (m.proxy) {
+    hint.textContent =
+      'This install signs people in via SSO / reverse proxy (e.g. Entra ID) — they appear as webchat:<email>.';
+  } else if (m.bearer) {
+    hint.textContent =
+      'This install uses a shared bearer token — per-user ids only differ when a proxy or Tailscale also fronts it.';
+  } else {
+    hint.textContent = '';
+  }
+  permsRefreshCreateUI();
+}
+function permsShowCreate() {
+  $('#perms-body').dataset.mode = 'detail';
+  $('#perms-detail-empty').hidden = true;
+  $('#perms-detail-view').hidden = true;
+  $('#perms-create-view').hidden = false;
+  // Reset the wizard fields each time it opens.
+  permsCreateChannelTouched = false;
+  $('#perms-create-handle').value = '';
+  $('#perms-create-raw').value = '';
+  $('#perms-create-kind').value = 'member';
+  $('#perms-create-group').value = '';
+  // Only owners can grant admin/owner roles — hide those options for everyone
+  // else so the wizard matches the server's member-only rule for non-owners.
+  const me = permsUsers.find((u) => u.id === myUserId);
+  const canGrantRoles = !!(me && userIsOwner(me));
+  const kindSel = $('#perms-create-kind');
+  if (kindSel) {
+    kindSel.querySelectorAll('option').forEach((opt) => {
+      opt.hidden = !canGrantRoles && opt.value !== 'member';
+    });
+    if (!canGrantRoles) kindSel.value = 'member';
+  }
+  applyCreateAuthDefault();
+  ensureServerAuthMethods().then(applyCreateAuthDefault);
+  $('#perms-create-handle').focus();
+}
+
+async function grantPerm(targetUserId, kind, agentGroupId) {
+  try {
+    const r = await authFetch('/api/permissions/grant', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ userId: targetUserId, kind, agentGroupId }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      showToast('Grant failed: ' + (err.error || r.statusText), { kind: 'error' });
+      return false;
+    }
+    return true;
+  } catch (err) {
+    showToast('Grant failed: ' + err.message, { kind: 'error' });
+    return false;
+  }
+}
+
+
+// Wiring
+$('#perms-exit').addEventListener('click', togglePermissions);
+$('#perms-refresh').addEventListener('click', refreshPermissions);
+$('#perms-new-btn').addEventListener('click', () => {
+  permsSelectedUserId = null;
+  $('#perms-user-list')
+    .querySelectorAll('li')
+    .forEach((li) => li.classList.remove('active'));
+  permsShowCreate();
+});
+$('#perms-detail-back').addEventListener('click', permsShowList);
+$('#perms-create-back').addEventListener('click', permsShowList);
+$('#perms-delete-btn').addEventListener('click', () => {
+  if (permsSelectedUserId) deleteUser(permsSelectedUserId);
+});
+
+// ── + New User wizard ────────────────────────────────────────────────
+// The dropdown picks a channel "namespace prefix"; the handle/email input
+// is appended after a colon to compose the full user_id. Picking
+// "__raw__" reveals a single raw input instead. The preview line shows
+// the resolved id as the user types.
+function permsCreateComposedId() {
+  const channel = $('#perms-create-channel').value;
+  if (channel === '__raw__') return $('#perms-create-raw').value.trim();
+  let handle = $('#perms-create-handle').value.trim();
+  if (!handle) return '';
+  // Webchat ids are case/charset-folded by the auth layer; fold here too so the
+  // preview and the stored grant match the eventual login.
+  if (channel === 'webchat' || channel.startsWith('webchat:')) handle = normalizeWebchatHandle(handle);
+  return `${channel}:${handle}`;
+}
+function permsRefreshCreateUI() {
+  const channel = $('#perms-create-channel').value;
+  const isRaw = channel === '__raw__';
+  $('#perms-create-handle-label').hidden = isRaw;
+  $('#perms-create-raw-label').hidden = !isRaw;
+  const composed = permsCreateComposedId();
+  $('#perms-create-preview').textContent = composed ? `Resolved id: ${composed}` : 'Resolved id will appear here.';
+  // Show/hide the agent-group selector based on initial-role choice.
+  const kind = $('#perms-create-kind').value;
+  const wantsGroup = kind === 'admin' || kind === 'member';
+  $('#perms-create-group-label').hidden = !wantsGroup;
+}
+$('#perms-create-channel').addEventListener('change', () => {
+  permsCreateChannelTouched = true;
+  permsRefreshCreateUI();
+});
+$('#perms-create-handle').addEventListener('input', permsRefreshCreateUI);
+$('#perms-create-raw').addEventListener('input', permsRefreshCreateUI);
+$('#perms-create-kind').addEventListener('change', permsRefreshCreateUI);
+
+$('#perms-create-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const userId = permsCreateComposedId();
+  if (!userId) {
+    showToast('Enter a handle / email (or pick "raw user_id" and enter the full id).', { kind: 'error' });
+    return;
+  }
+  if (!userId.includes(':')) {
+    showToast('user_id must be namespaced (channel:handle).', { kind: 'error' });
+    return;
+  }
+  const kind = $('#perms-create-kind').value;
+  const groupVal = $('#perms-create-group').value;
+  const agentGroupId = groupVal || null;
+  if (kind === 'owner' && agentGroupId) {
+    showToast('owner role is always global — pick "— global —".', { kind: 'error' });
+    return;
+  }
+  if (kind === 'member' && !agentGroupId) {
+    showToast('member role requires an agent group.', { kind: 'error' });
+    return;
+  }
+  if (await grantPerm(userId, kind, agentGroupId)) {
+    permsSelectedUserId = userId;
+    await refreshPermissions();
+    permsShowDetail();
+  }
+});
+
+function relativeTime(ts) {
+  const diff = Date.now() - (typeof ts === 'number' ? ts : new Date(ts).getTime());
+  if (diff < 0 || diff < 60000) return 'just now';
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+  return `${Math.floor(diff / 86400000)}d ago`;
+}
+
+function formatUptime(seconds) {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+async function refreshDashboard() {
+  let snap;
+  try {
+    const res = await authFetch('/api/overview');
+    if (!res.ok) {
+      $('#dash-graph').innerHTML = `<div class="dash-empty">Unable to load overview (${res.status})</div>`;
+      return;
+    }
+    snap = await res.json();
+  } catch (err) {
+    $('#dash-graph').innerHTML = `<div class="dash-empty">Unable to load overview: ${esc(err.message)}</div>`;
+    return;
+  }
+  renderHealthStrip(snap);
+  renderMetrics(snap);
+  refreshRouterMetrics();
+}
+
+// Router traffic panel: per-model request counts from the routing decision
+// log (the shadow hook classifies every LiteLLM completion, so the log IS
+// the request ledger). Owner-only; the section stays hidden when the
+// routing skill isn't installed or the viewer isn't the owner.
+async function refreshRouterMetrics() {
+  const section = $('#dash-router-section');
+  if (!section) return;
+  try {
+    const res = await authFetch('/api/router/metrics?days=7');
+    if (!res.ok) {
+      section.hidden = true;
+      return;
+    }
+    const m = await res.json();
+    if (!m.available || m.total === 0) {
+      section.hidden = true;
+      return;
+    }
+    section.hidden = false;
+    const max = Math.max(...m.byModel.map((x) => x.count), 1);
+    const bars = m.byModel
+      .map(
+        (x) => `
+      <div class="router-bar-row" title="${esc(x.model)}">
+        <span class="router-bar-label">${esc(x.model)}</span>
+        <span class="router-bar-track"><span class="router-bar-fill" style="width:${Math.max(3, Math.round((100 * x.count) / max))}%"></span></span>
+        <span class="router-bar-count">${x.count}</span>
+      </div>`,
+      )
+      .join('');
+    const routes = m.byRoute
+      .filter((r) => r.route !== '__error__')
+      .map((r) => `${esc(r.route)} ${r.count}`)
+      .join(' · ');
+    const health = [];
+    health.push(`${m.total} request${m.total === 1 ? '' : 's'}`);
+    health.push(`${m.live} via auto`);
+    if (m.escalations > 0) health.push(`${m.escalations} escalated to Claude`);
+    if (m.errors > 0) health.push(`${m.errors} classifier error${m.errors === 1 ? '' : 's'}`);
+    $('#dash-router').innerHTML =
+      `<div class="router-summary">${esc(health.join(' · '))}</div>` +
+      bars +
+      (routes ? `<div class="router-routes">Routes: ${routes}</div>` : '');
+  } catch {
+    section.hidden = true;
+  }
+}
+
+function renderHealthStrip(snap) {
+  const wsOk = ws && ws.readyState === WebSocket.OPEN;
+  const pills = [
+    { dot: 'ok', label: 'Server', value: 'Online' },
+    { dot: 'ok', label: 'Uptime', value: snap.health.uptime ? formatUptime(snap.health.uptime) : '—' },
+    { dot: wsOk ? 'ok' : 'err', label: 'WebSocket', value: wsOk ? 'Connected' : 'Disconnected' },
+  ];
+  if (snap.health.container_runtime_ok !== undefined && !snap.restricted) {
+    pills.push({
+      dot: snap.health.container_runtime_ok ? 'ok' : 'warn',
+      label: 'Containers',
+      value: snap.health.container_runtime_ok ? 'Up' : 'Unreachable',
+    });
+  }
+  $('#dash-health').innerHTML = pills
+    .map(
+      (p) =>
+        `<div class="dash-pill"><span class="pill-dot ${p.dot}"></span><span class="pill-label">${esc(p.label)}</span><span class="pill-value">${esc(p.value)}</span></div>`,
+    )
+    .join('');
+}
+
+function renderMetrics(snap) {
+  const el = $('#dash-graph');
+  const num = (v) => esc(String(Number(v) || 0));
+
+  const agentsLabel = snap.restricted ? 'Visible agents' : 'Agents';
+  const agentsCount = snap.restricted ? snap.agents.visible : snap.agents.total;
+  const agentsCard = `<div class="metric-card clickable" data-detail="agents">
+    <div class="metric-value">${num(agentsCount)}</div>
+    <div class="metric-label">${esc(agentsLabel)}</div>
+  </div>`;
+
+  const sessionsCard = `<div class="metric-card">
+    <div class="metric-value">${num(snap.sessions.active)}</div>
+    <div class="metric-label">Active sessions</div>
+    <div class="metric-sub">${num(snap.sessions.total)} total</div>
+  </div>`;
+
+  const messagesCard = `<div class="metric-card clickable" data-detail="messages">
+    <div class="metric-value">${num(snap.messages.webchat_24h)}</div>
+    <div class="metric-label">Webchat messages (24h)</div>
+  </div>`;
+
+  let containersCard;
+  if (snap.restricted || snap.active_containers === null) {
+    containersCard = `<div class="metric-card">
+      <div class="metric-value">—</div>
+      <div class="metric-label">Containers</div>
+    </div>`;
+  } else {
+    containersCard = `<div class="metric-card clickable" data-detail="containers">
+      <div class="metric-value">${num(snap.active_containers)}</div>
+      <div class="metric-label">Active containers</div>
+    </div>`;
+  }
+
+  const topRow = `<div class="metrics-grid">${agentsCard}${sessionsCard}${messagesCard}${containersCard}</div>`;
+
+  // System (owner-only).
+  let systemCards = '';
+  if (snap.system) {
+    const memBar = snap.system.memory_used_pct;
+    const memColor = memBar > 85 ? 'var(--delete-color)' : memBar > 60 ? '#ffd54f' : 'var(--accent)';
+    const loadStr = snap.system.load_avg.join(' / ');
+    const sysCard = `<div class="metric-card wide">
+      <div class="metric-label">System</div>
+      <div class="sys-row"><span>Memory</span><span>${num(snap.system.memory_used_gb)} / ${num(snap.system.memory_total_gb)} GB (${num(memBar)}%)</span></div>
+      <div class="progress-bar"><div class="progress-fill" style="width:${num(memBar)}%;background:${memColor}"></div></div>
+      <div class="sys-row"><span>CPU Load (1/5/15m)</span><span>${esc(loadStr)}</span></div>
+      <div class="sys-row"><span>CPUs</span><span>${num(snap.system.cpus)}</span></div>
+      <div class="sys-row"><span>Platform</span><span>${esc(snap.system.platform)}</span></div>
+    </div>`;
+    let ollamaCard;
+    if (!snap.ollama) {
+      ollamaCard = `<div class="metric-card wide">
+        <div class="metric-label">Ollama</div>
+        <div class="metric-sub">Not configured</div>
+      </div>`;
+    } else {
+      const dot = snap.ollama.ok ? '<span class="pill-dot ok"></span>' : '<span class="pill-dot err"></span>';
+      const models =
+        snap.ollama.models && snap.ollama.models.length
+          ? snap.ollama.models.map((m) => `<span class="model-tag">${esc(m)}</span>`).join(' ')
+          : '<span class="metric-sub">No models</span>';
+      ollamaCard = `<div class="metric-card wide">
+        <div class="metric-label">${dot} Ollama</div>
+        <div class="sys-row"><span>Host</span><span>${esc(snap.ollama.host)}</span></div>
+        <div class="sys-row"><span>Status</span><span>${snap.ollama.ok ? 'Connected' : 'Unreachable'}</span></div>
+        <div style="margin-top:6px">${models}</div>
+      </div>`;
+    }
+    systemCards = `<div class="metrics-grid two-col">${sysCard}${ollamaCard}</div>`;
+  }
+
+  // Channels.
+  const channelEntries = Object.entries(snap.channels).sort((a, b) => b[1] - a[1]);
+  const channelHtml =
+    channelEntries.length === 0
+      ? '<div class="metric-sub">No channels wired</div>'
+      : channelEntries
+          .map(
+            ([ch, count]) =>
+              `<div class="channel-row"><span class="channel-name">${esc(ch)}</span><span class="channel-count">${count}</span></div>`,
+          )
+          .join('');
+  const channelsCard = `<div class="metric-card">
+    <div class="metric-label">Channels</div>
+    ${channelHtml}
+  </div>`;
+
+  // Busiest rooms (owner-only).
+  let busiestCard;
+  if (snap.busiest_rooms !== null) {
+    const rows =
+      snap.busiest_rooms.length === 0
+        ? '<div class="metric-sub">No activity</div>'
+        : snap.busiest_rooms
+            .map(
+              (r) =>
+                `<div class="channel-row"><span class="channel-name">#${esc(r.id)}</span><span class="channel-count">${r.count} msgs</span></div>`,
+            )
+            .join('');
+    busiestCard = `<div class="metric-card">
+      <div class="metric-label">Busiest rooms (24h)</div>
+      ${rows}
+    </div>`;
+  } else {
+    busiestCard = '';
+  }
+
+  const breakdownRow = busiestCard
+    ? `<div class="metrics-grid two-col">${channelsCard}${busiestCard}</div>`
+    : `<div class="metrics-grid two-col">${channelsCard}</div>`;
+
+  el.innerHTML = topRow + systemCards + breakdownRow;
+  // Wire the clickable cards here rather than inline onclick= — inline handlers
+  // force these functions global and break under a stricter CSP.
+  const details = { agents: showAgentsDetail, messages: showMessagesDetail, containers: showContainersDetail };
+  el.querySelectorAll('[data-detail]').forEach((card) => {
+    card.addEventListener('click', details[card.dataset.detail]);
+  });
+}
+
+// ── Dashboard detail panels ───────────────────────────────────────────────
+
+function showDetail(title, html) {
+  $('#dash-detail-title').textContent = title;
+  $('#dash-detail-body').innerHTML = html;
+  $('#dash-detail').hidden = false;
+  $('#dash-detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function hideDetail() {
+  $('#dash-detail').hidden = true;
+}
+
+$('#dash-detail-close').addEventListener('click', hideDetail);
+
+async function showMessagesDetail() {
+  // Aggregate recent messages across rooms — same approach as v1.
+  const rooms = await authFetch('/api/rooms')
+    .then((r) => r.json())
+    .catch(() => []);
+  const since = Date.now() - 86400000;
+  const perRoom = await Promise.all(
+    rooms.map((room) =>
+      authFetch(`/api/rooms/${encodeURIComponent(room.id)}/messages`)
+        .then((r) => r.json())
+        .then((msgs) => msgs.filter((m) => m.created_at > since).map((m) => ({ ...m, roomId: room.id })))
+        .catch(() => []),
+    ),
+  );
+  const all = perRoom
+    .flat()
+    .sort((a, b) => b.created_at - a.created_at)
+    .slice(0, 50);
+  if (all.length === 0) {
+    showDetail('Messages (24h)', '<div class="metric-sub">No messages in the last 24 hours</div>');
+    return;
+  }
+  const rows = all
+    .map((m) => {
+      const time = new Date(m.created_at).toLocaleTimeString();
+      const icon = m.sender_type === 'agent' ? lucide('bot') : lucide('user');
+      return `<tr>
+      <td>${esc(time)}</td>
+      <td style="color:${roomColor(m.roomId)}">#${esc(m.roomId)}</td>
+      <td>${icon} ${esc(m.sender)}</td>
+      <td class="msg-content">${esc(String(m.content || '').slice(0, 100))}</td>
+    </tr>`;
+    })
+    .join('');
+  showDetail(
+    'Messages (24h)',
+    `<table class="detail-table">
+      <thead><tr><th>Time</th><th>Room</th><th>Sender</th><th>Message</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`,
+  );
+}
+
+async function showContainersDetail() {
+  showDetail(
+    'Active containers',
+    `<div class="metric-sub">Run <code>docker ps --filter name=nanoclaw-</code> on the host to see container details. The number on the card reflects what was running at the moment of the last refresh.</div>`,
+  );
+}
+
+async function showAgentsDetail() {
+  const agents = await authFetch('/api/agents')
+    .then((r) => r.json())
+    .catch(() => []);
+  if (agents.length === 0) {
+    showDetail('Agents', '<div class="metric-sub">No agents</div>');
+    return;
+  }
+  const sorted = [...agents].sort((a, b) => a.name.localeCompare(b.name));
+  const rows = sorted
+    .map((b) => {
+      const room = b.room_id ? `<code>${esc(b.room_id)}</code>` : '<span class="metric-sub">—</span>';
+      return `<tr>
+      <td>${esc(b.name)}</td>
+      <td><code>${esc(b.folder)}</code></td>
+      <td>${room}</td>
+      <td><span class="metric-sub">${esc(new Date(b.created_at).toLocaleString())}</span></td>
+    </tr>`;
+    })
+    .join('');
+  showDetail(
+    'Agents',
+    `<table class="detail-table">
+      <thead><tr><th>Name</th><th>Folder</th><th>Room</th><th>Created</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`,
+  );
+}
+
+// Make detail handlers globally accessible for inline onclick.
+window.showMessagesDetail = showMessagesDetail;
+window.showContainersDetail = showContainersDetail;
+window.showAgentsDetail = showAgentsDetail;
+
+// ── Agent management ────────────────────────────────────────────────────────
+
+let allAgents = [];
+let selectedAgentId = null;
+// Archived agents are hidden by default (server-side). The Agents tab can opt
+// in to see them so they can be unarchived; pickers/topology never do.
+let showArchivedAgents = false;
+
+async function fetchAgents() {
+  try {
+    const res = await authFetch('/api/agents' + (showArchivedAgents ? '?includeArchived=1' : ''));
+    allAgents = await res.json();
+    renderAgents();
+  } catch (err) {
+    console.error('Failed to fetch agents:', err);
+  }
+}
+
+// Status labels + the one-line hint shown under the detail control.
+const AGENT_STATUS_HINTS = {
+  active: 'Responds normally and appears everywhere.',
+  paused: 'Wiring is kept, but the agent never responds. Still listed.',
+  archived: 'Retired: never responds and hidden from lists, pickers, and the map.',
+};
+
+function renderAgents() {
+  const list = $('#agent-list');
+  list.innerHTML = '';
+
+  // A–Z toggle: alphabetical when on; newest-first ("auto") when off.
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  const sorted = agentSortAz
+    ? [...allAgents].sort(byName)
+    : [...allAgents].sort((a, b) => (b.created_at || 0) - (a.created_at || 0) || byName(a, b));
+
+  for (const agent of sorted) {
+    const li = document.createElement('li');
+    li.dataset.agentId = agent.id;
+    if (agent.id === selectedAgentId) li.classList.add('active');
+
+    const icon = document.createElement('span');
+    icon.className = 'agent-icon';
+    icon.innerHTML = lucide('bot');
+    li.appendChild(icon);
+
+    const info = document.createElement('span');
+    info.className = 'agent-info';
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'agent-info-name';
+    nameSpan.textContent = agent.name;
+    info.appendChild(nameSpan);
+    // Badge for any non-active state so paused/archived agents read at a glance.
+    const status = agent.status || 'active';
+    if (status !== 'active') {
+      const badge = document.createElement('span');
+      badge.className = 'agent-status-badge status-' + status;
+      badge.textContent = status;
+      info.appendChild(badge);
+    }
+    // Harness badge — only the non-default OpenCode harness is flagged (Claude
+    // is the baseline). Rooms show their wired agents, so this surfaces there too.
+    if (agent.provider === 'opencode') {
+      const hb = document.createElement('span');
+      hb.className = 'agent-harness-badge';
+      hb.textContent = 'OpenCode';
+      hb.title = 'Runs on the OpenCode harness';
+      info.appendChild(hb);
+    }
+    li.appendChild(info);
+
+    li.setAttribute('role', 'button');
+    li.setAttribute('tabindex', '0');
+    li.addEventListener('click', () => {
+      if (selectedAgentId === agent.id && !$('#agent-detail').hidden) {
+        closeAgentDetail();
+      } else {
+        openAgentDetail(agent.id);
+      }
+    });
+    li.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openAgentDetail(agent.id);
+      }
+    });
+    list.appendChild(li);
+  }
+
+  // "Show / hide archived" toggle. Always available from the Agents tab so
+  // archived agents can be brought back; pickers and the map never show them.
+  const toggle = $('#agent-show-archived');
+  if (toggle) {
+    toggle.hidden = false;
+    toggle.textContent = showArchivedAgents ? 'Hide archived agents' : 'Show archived agents';
+  }
+}
+
+// Reflect the agent's egress mode on the segmented control + badge. 'none' is
+// only settable via ncl, so if an agent carries it, show it read-only rather
+// than silently rendering as one of the two we offer.
+function setAgentEgressControl(egress) {
+  const mode = egress || 'open';
+  const ctl = $('#agent-egress-control');
+  if (!ctl) return;
+  ctl.querySelectorAll('.setting-option').forEach((b) => {
+    b.classList.toggle('active', b.dataset.egress === mode);
+  });
+  const badge = $('#agent-egress-badge');
+  if (badge) badge.textContent = mode === 'open' ? '' : mode === 'host-only' ? 'Locked down' : mode;
+  const note = $('#agent-egress-note');
+  if (!note) return;
+  const cliOnly = mode !== 'open' && mode !== 'host-only';
+  note.hidden = !cliOnly;
+  if (cliOnly) note.textContent = `Set to "${mode}" with ncl — not changeable here`;
+  ctl.querySelectorAll('.setting-option').forEach((b) => (b.disabled = cliOnly));
+}
+
+// Reflect the agent's status on the 3-button segmented control + hint.
+function setAgentStatusControl(status) {
+  const s = status || 'active';
+  document.querySelectorAll('#agent-status-control .setting-option').forEach((b) => {
+    b.classList.toggle('active', b.dataset.status === s);
+  });
+}
+
+function setAgentHarnessControl(provider) {
+  const p = provider === 'opencode' ? 'opencode' : 'claude';
+  document.querySelectorAll('#agent-harness-control .setting-option').forEach((b) => {
+    const on = b.dataset.provider === p;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+  const hint = $('#agent-harness-hint');
+  if (hint) {
+    hint.textContent =
+      p === 'opencode'
+        ? 'OpenCode — a model-agnostic loop; much cleaner on small local models.'
+        : 'Claude — the built-in Claude Agent SDK harness (default).';
+  }
+}
+
+// Switch the agent harness (provider). Restarts the group's containers, so it's
+// an admin action with a restart toast. OpenCode is gated server-side on the
+// stack being installed (400 if not).
+$('#agent-harness-control')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.setting-option');
+  if (!btn || !selectedAgentId) return;
+  const provider = btn.dataset.provider;
+  const agent = allAgents.find((a) => a.id === selectedAgentId);
+  if (!agent || (agent.provider || 'claude') === provider) return; // no change
+  setAgentHarnessControl(provider); // optimistic
+  try {
+    const res = await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId)}/provider`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
+    showToast(`Harness → ${provider === 'opencode' ? 'OpenCode' : 'Claude'} — restarting the agent…`, {
+      kind: 'success',
+    });
+    await fetchAgents();
+  } catch (err) {
+    setAgentHarnessControl(agent.provider); // revert
+    toastError(err, 'Could not change harness');
+  }
+});
+
+// Agent-detail sub-tabs: Settings (status/name/model/MCP/rooms) vs Instructions.
+// Instructions lives behind a tab so it doesn't dominate a panel that's mostly
+// used for quick status/model/wiring tweaks. All fields share one <form>, so a
+// hidden tab's values still submit on Save.
+function setAgentSubtab(name) {
+  document.querySelectorAll('#agent-edit-view .agent-subtab').forEach((t) => {
+    const on = t.dataset.subtab === name;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  document.querySelectorAll('#agent-edit-view .agent-subtab-panel').forEach((p) => {
+    p.hidden = p.dataset.subtabPanel !== name;
+  });
+}
+document.querySelectorAll('#agent-edit-view .agent-subtab').forEach((tab) => {
+  tab.addEventListener('click', () => setAgentSubtab(tab.dataset.subtab));
+});
+
+async function openAgentDetail(id) {
+  const agent = allAgents.find((b) => b.id === id);
+  if (!agent) return;
+  selectedAgentId = id;
+  renderAgents();
+  closeRoomDetail();
+  closeModelDetail();
+  closeMcpDetail();
+
+  // Show edit view, hide create view
+  $('#agent-edit-view').hidden = false;
+  $('#agent-create-view').hidden = true;
+  setAgentSubtab('settings'); // always open on Settings, not the last-used tab
+
+  $('#agent-detail-title').textContent = agent.name;
+  $('#agent-name').value = agent.name;
+
+  // Models dropdown — refresh the list lazily so a freshly-added model
+  // shows up without a tab-switch round trip.
+  if (allModels.length === 0) await fetchModels();
+  populateAgentModelSelect(agent.assigned_model_id);
+
+  // Pinned Anthropic model (container_configs.model). Suggestions are
+  // best-effort — the field stays usable if the fetch fails.
+  $('#agent-config-model').value = agent.config_model || '';
+  void populateKnownModelOptions();
+
+  setAgentStatusControl(agent.status);
+  setAgentHarnessControl(agent.provider);
+  setAgentEgressControl(agent.egress);
+  void renderAgentEnv(id);
+
+  // Load instructions (instructions.prepend.md — the provider-neutral standing
+  // instructions composed into every provider's CLAUDE.md at spawn).
+  try {
+    const res = await authFetch(`/api/agents/${encodeURIComponent(id)}/instructions`);
+    if (res.ok) {
+      const { content, legacyBytes } = await res.json();
+      $('#agent-instructions').value = content;
+      // A group can hold a big pre-cutover CLAUDE.local.md that this editor no
+      // longer writes. Say so, rather than showing an empty box for an agent
+      // that visibly has instructions.
+      const note = $('#agent-instructions-legacy');
+      if (note) {
+        const show = !content && legacyBytes > 0;
+        note.hidden = !show;
+        if (show) {
+          note.textContent =
+            `This agent also has a ${Math.round(legacyBytes / 1024)} KB CLAUDE.local.md from before ` +
+            'standing instructions moved here. It is not edited on this screen — run /migrate-memory to fold it in.';
+        }
+      }
+    }
+  } catch {}
+
+  // Rooms this agent is wired to (assign / unassign).
+  await loadAgentRooms(id);
+
+  // MCP servers wired to this agent (external tool servers).
+  renderAgentMcp(id);
+  void renderAgentLearning(id);
+
+  // Skills (Anthropic Agent Skills) this agent loads.
+  renderAgentSkills(id);
+
+  // Credentials scoped to this agent (needs isolation to mean anything).
+  void renderAgentSecrets(id);
+  void renderAgentKeys(id);
+
+  // Active sessions — reset a stuck one (incl. background a2a sessions).
+  renderAgentSessions(id);
+
+  // Name / model / instructions are now populated — snapshot them so Save
+  // starts disabled and only lights up on a real edit.
+  captureAgentDetailBaseline();
+
+  $('#agent-detail').hidden = false;
+  $('#members-panel').hidden = true;
+}
+
+function closeAgentDetail() {
+  $('#agent-detail').hidden = true;
+  $('#agent-edit-view').hidden = false;
+  $('#agent-create-view').hidden = true;
+  selectedAgentId = null;
+  agentDetailBaseline = null;
+  renderAgents();
+}
+
+$('#agent-detail-close').addEventListener('click', closeAgentDetail);
+$('#agent-create-close').addEventListener('click', closeAgentDetail);
+
+// The bottom agent-detail "Save" persists only name / model / instructions —
+// status, learning defaults, MCP, skills, secrets and rooms each auto-save on
+// their own controls. Dirty-track those three so Save is disabled when there's
+// nothing to persist; otherwise it flashes "✓ Saved" on a no-op click and reads
+// as doing nothing. Mirrors the disabled-until-dirty "Save skills" button.
+let agentDetailBaseline = null;
+function agentDetailSnapshot() {
+  return {
+    name: $('#agent-name').value.trim(),
+    model: $('#agent-model').value || '',
+    configModel: $('#agent-config-model').value.trim(),
+    instructions: $('#agent-instructions').value,
+  };
+}
+
+// Known Anthropic model ids for the "Anthropic model" datalist. Fetched once per
+// page load; a failure is silent because the field is free text either way.
+let knownModelOptions = null;
+async function populateKnownModelOptions() {
+  const list = $('#agent-config-model-options');
+  if (!list) return;
+  if (knownModelOptions === null) {
+    try {
+      const res = await authFetch('/api/models/known');
+      knownModelOptions = res.ok ? (await res.json()).models || [] : [];
+    } catch {
+      knownModelOptions = [];
+    }
+  }
+  if (list.childElementCount === knownModelOptions.length) return;
+  list.textContent = '';
+  for (const id of knownModelOptions) {
+    const opt = document.createElement('option');
+    opt.value = id;
+    list.appendChild(opt);
+  }
+}
+function captureAgentDetailBaseline() {
+  agentDetailBaseline = agentDetailSnapshot();
+  refreshAgentSaveDirty();
+}
+function refreshAgentSaveDirty() {
+  const btn = $('#agent-detail-form button.btn-primary');
+  if (!btn || !agentDetailBaseline) return;
+  // Don't fight the transient "Saving…" / "✓ Saved" button states.
+  if (btn.classList.contains('success') || btn.textContent === 'Saving…') return;
+  const now = agentDetailSnapshot();
+  btn.disabled =
+    now.name === agentDetailBaseline.name &&
+    now.model === agentDetailBaseline.model &&
+    now.configModel === agentDetailBaseline.configModel &&
+    now.instructions === agentDetailBaseline.instructions;
+}
+$('#agent-name').addEventListener('input', refreshAgentSaveDirty);
+$('#agent-instructions').addEventListener('input', refreshAgentSaveDirty);
+$('#agent-config-model').addEventListener('input', refreshAgentSaveDirty);
+
+// Status control: each button PUTs the new status, then refreshes the list so
+// the badge + (if archived) visibility update immediately.
+$('#agent-status-control').addEventListener('click', async (e) => {
+  const btn = e.target.closest('.setting-option');
+  if (!btn || !selectedAgentId) return;
+  const status = btn.dataset.status;
+  const agent = allAgents.find((b) => b.id === selectedAgentId);
+  if (agent && (agent.status || 'active') === status) return;
+  setAgentStatusControl(status); // optimistic
+  try {
+    const res = await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId)}/status`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) throw new Error('status ' + res.status);
+    if (agent) agent.status = status;
+    showToast(`${status[0].toUpperCase()}${status.slice(1)} — ${AGENT_STATUS_HINTS[status] || ''}`);
+    renderAgents();
+  } catch (err) {
+    console.error('Failed to set agent status:', err);
+    showToast('Could not change status', { kind: 'error' });
+    if (agent) setAgentStatusControl(agent.status); // revert
+  }
+});
+
+// Egress control. Locking down is the direction that can silently break an
+// agent — and it breaks at NEXT SPAWN, so it surfaces as a broken agent rather
+// than as a setting someone changed. So that direction confirms; unlocking
+// never does, because restoring reachability cannot break anything.
+$('#agent-egress-control').addEventListener('click', async (e) => {
+  const btn = e.target.closest('.setting-option');
+  if (!btn || btn.disabled || !selectedAgentId) return;
+  const egress = btn.dataset.egress;
+  const agent = allAgents.find((b) => b.id === selectedAgentId);
+  const current = (agent && agent.egress) || 'open';
+  if (current === egress) return;
+
+  if (egress === 'host-only') {
+    const ok = await showConfirmModal({
+      title: 'Lock down this agent?',
+      body:
+        'It will only reach the network through the credential gateway. Anything ' +
+        'it does over HTTPS keeps working. Direct connections stop — SSH and rsync, ' +
+        'services on your LAN, and a model server running on this host. ' +
+        'Applies the next time the agent starts.',
+      confirmLabel: 'Lock down',
+      destructive: true,
+    });
+    if (!ok) return;
+  }
+
+  setAgentEgressControl(egress); // optimistic
+  try {
+    const res = await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId)}/egress`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ egress }),
+    });
+    if (!res.ok) throw new Error('status ' + res.status);
+    if (agent) agent.egress = egress;
+    showToast(egress === 'host-only' ? 'Locked down — applies when the agent restarts' : 'Open network');
+  } catch (err) {
+    console.error('Failed to set agent egress:', err);
+    showToast('Could not change network mode', { kind: 'error' });
+    setAgentEgressControl(current); // revert
+  }
+});
+
+// Show / hide archived agents in the list.
+$('#agent-show-archived').addEventListener('click', async () => {
+  showArchivedAgents = !showArchivedAgents;
+  await fetchAgents();
+});
+
+// ── Agent ↔ Room wiring (agent-centric; mirror of the room-detail panel) ──────
+// Read = GET /api/agents/:id/rooms (any admin of the agent). Writes go to
+// POST/DELETE /api/rooms/:roomId/agents, which allow owners plus scoped admins
+// of this agent (the backend enforces per-room access). The GET succeeding
+// (res.ok) already means the caller administers this agent, so we reuse it as
+// the signal for showing the assign / remove controls — no owner-only gate.
+let agentDetailRooms = [];
+let canManageAgentRooms = false;
+
+async function loadAgentRooms(agentId) {
+  try {
+    const res = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/rooms`);
+    canManageAgentRooms = res.ok;
+    agentDetailRooms = res.ok ? await res.json() : [];
+  } catch {
+    canManageAgentRooms = false;
+    agentDetailRooms = [];
+  }
+  renderAgentWiredRooms();
+  $('#agent-rooms-section').hidden = false;
+}
+
+function renderAgentWiredRooms() {
+  const list = $('#agent-wired-rooms');
+  list.innerHTML = '';
+  const roomCount = $('#agent-rooms-count');
+  if (roomCount) roomCount.textContent = agentDetailRooms.length ? String(agentDetailRooms.length) : '';
+  if (agentDetailRooms.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty-note';
+    li.textContent = 'Not assigned to any room yet.';
+    list.appendChild(li);
+  }
+  for (const room of agentDetailRooms) {
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.className = 'room-wired-name room-wired-name-link';
+    name.textContent = room.name;
+    // Mirror of the room-settings → agent jump: click a room to open its
+    // settings (openRoomDetail handles any roomId; it closes this agent panel).
+    name.setAttribute('role', 'button');
+    name.setAttribute('tabindex', '0');
+    name.title = `Open ${room.name} settings`;
+    const openRoomSettings = () => openRoomDetail(room.id);
+    name.addEventListener('click', openRoomSettings);
+    name.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openRoomSettings();
+      }
+    });
+    if (room.is_prime) {
+      const badge = document.createElement('span');
+      badge.className = 'room-wired-prime-badge';
+      badge.textContent = ' default';
+      name.appendChild(badge);
+    }
+    li.appendChild(name);
+    if (canManageAgentRooms) {
+      const onlyAgent = room.agent_count <= 1;
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'room-wired-remove';
+      removeBtn.innerHTML = lucide('x');
+      removeBtn.title = onlyAgent
+        ? "Cannot unassign — this agent is the room's only agent (delete the room instead)"
+        : `Remove this agent from ${room.name}`;
+      removeBtn.disabled = onlyAgent;
+      removeBtn.addEventListener('click', () => removeRoomFromAgent(room.id, room.name));
+      li.appendChild(removeBtn);
+    }
+    list.appendChild(li);
+  }
+  // Assign control: any admin of this agent (owner or scoped). The backend
+  // limits the actual targets to rooms the caller can access.
+  $('#agent-add-room-toggle').hidden = !canManageAgentRooms;
+}
+
+async function removeRoomFromAgent(roomId, roomName) {
+  if (!selectedAgentId) return;
+  const confirmed = await showConfirmModal({
+    title: 'Remove from room',
+    body: `Remove this agent from "${roomName}"? The room and its other agents are unaffected.`,
+    confirmLabel: 'Remove',
+    destructive: true,
+  });
+  if (!confirmed) return;
+  try {
+    const res = await authFetch(
+      `/api/rooms/${encodeURIComponent(roomId)}/agents/${encodeURIComponent(selectedAgentId)}`,
+      { method: 'DELETE' },
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast('Failed to remove from room: ' + (err.error || res.statusText), { kind: 'error' });
+      return;
+    }
+    showToast(`Removed from "${roomName}".`, { kind: 'success' });
+    await loadAgentRooms(selectedAgentId);
+  } catch (err) {
+    showToast('Failed to remove from room: ' + err.message, { kind: 'error' });
+  }
+}
+
+// "+ Wire to room" opens the shared attach picker — toggle the agent in/out of
+// any room. (Rooms are created from the room list, so no "+ Add new" here.)
+$('#agent-add-room-toggle').addEventListener('click', async () => {
+  const agentId = selectedAgentId;
+  if (!agentId) return;
+  let allRooms = [];
+  try {
+    const res = await authFetch('/api/rooms');
+    allRooms = res.ok ? await res.json() : [];
+  } catch {}
+  openAttachPicker({
+    title: 'Rooms',
+    searchPlaceholder: 'Search rooms…',
+    emptyText: 'No rooms yet.',
+    items: () => allRooms,
+    searchText: (r) => r.name || r.id,
+    name: (r) => r.name || r.id,
+    isAttached: (r) => agentDetailRooms.some((x) => x.id === r.id),
+    onToggle: async (r, add) => {
+      const res = add
+        ? await authFetch(`/api/rooms/${encodeURIComponent(r.id)}/agents`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind: 'existing', id: agentId }),
+          })
+        : await authFetch(`/api/rooms/${encodeURIComponent(r.id)}/agents/${encodeURIComponent(agentId)}`, {
+            method: 'DELETE',
+          });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+      showToast(add ? `Wired to ${r.name || r.id}` : `Unwired from ${r.name || r.id}`, { kind: 'success' });
+      await loadAgentRooms(agentId);
+    },
+  });
+});
+
+// ── Per-agent MCP servers (attach/detach over the registry) ─────────────────
+// Servers are DEFINED in the MCP tab (the registry); the agent panel only
+// attaches/detaches them — a compact list + checklist picker mirroring the
+// Rooms wiring block. GET/PUT /api/agents/:id/mcp-servers (admin-gated; the
+// server never returns env/headers).
+
+let agentMcpServers = []; // servers attached to the currently-open agent
+
+// Active sessions for an agent, each with a Reset control that injects /clear
+// host-side — the only way to clear a background a2a session (a room-typed
+// /clear only reaches the session you're in). Admin-gated server-side.
+async function renderAgentSessions(agentId) {
+  const list = $('#agent-sessions-list');
+  const countEl = $('#agent-sessions-count');
+  if (!list) return;
+  list.innerHTML = '<li class="agent-session-row muted">Loading…</li>';
+  let sessions = [];
+  try {
+    const res = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/sessions`);
+    if (!res.ok) throw new Error((await res.json()).error || res.status);
+    sessions = (await res.json()).sessions || [];
+  } catch (err) {
+    list.innerHTML = `<li class="agent-session-row muted">Sessions unavailable: ${esc(err.message)}</li>`;
+    if (countEl) countEl.textContent = '';
+    return;
+  }
+  if (countEl) countEl.textContent = sessions.length ? String(sessions.length) : '';
+  list.innerHTML = '';
+  if (sessions.length === 0) {
+    list.innerHTML = '<li class="agent-session-row muted">No active sessions.</li>';
+    return;
+  }
+  for (const s of sessions) {
+    const li = document.createElement('li');
+    li.className = 'agent-session-row';
+    const label = s.thread_id ? `thread: ${s.thread_id}` : 'main / a2a';
+    const when = s.last_active ? new Date(s.last_active).toLocaleString() : '—';
+    const meta = document.createElement('div');
+    meta.className = 'agent-session-meta';
+    meta.innerHTML = `<span class="agent-session-label">${esc(label)}</span><span class="agent-session-sub">${esc(s.container_status || 'stopped')} · ${esc(when)}</span>`;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-ghost agent-session-reset';
+    btn.textContent = 'Reset';
+    btn.title = 'Reset this session (inject /clear — drops context, next turn starts fresh)';
+    btn.addEventListener('click', () => resetAgentSession(agentId, s.id, btn));
+    li.appendChild(meta);
+    li.appendChild(btn);
+    list.appendChild(li);
+  }
+}
+
+async function resetAgentSession(agentId, sessionId, btn) {
+  const ok = await showConfirmModal({
+    title: 'Reset session',
+    body: 'Inject /clear into this session — it drops the accumulated context and the next turn starts fresh. Useful when a session is stuck or "autocompact is thrashing".',
+    confirmLabel: 'Reset',
+  });
+  if (!ok) return;
+  btn.disabled = true;
+  btn.textContent = 'Resetting…';
+  try {
+    const res = await authFetch(`/api/sessions/${encodeURIComponent(sessionId)}/reset`, { method: 'POST' });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || res.status);
+    showToast('Session reset — /clear queued', { kind: 'success' });
+    renderAgentSessions(agentId);
+  } catch (err) {
+    showToast('Could not reset: ' + err.message, { kind: 'error' });
+    btn.disabled = false;
+    btn.textContent = 'Reset';
+  }
+}
+
+// Per-agent skills: list every available skill with a toggle reflecting whether
+// this agent loads it. Changes batch behind Save (one PUT → one respawn) rather
+// than restarting the agent on every toggle.
+async function renderAgentSkills(agentId) {
+  const list = $('#agent-skills-list');
+  const saveBtn = $('#agent-skills-save');
+  if (!list) return;
+  list.innerHTML = '';
+  let data = { available: [], enabled: [] };
+  try {
+    const res = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/skills`);
+    if (res.ok) data = await res.json();
+  } catch (err) {
+    console.error('Failed to load skills:', err);
+  }
+  const enabled = new Set(data.enabled || []);
+  const count = $('#agent-skills-count');
+  const scoped = data.scoped || [];
+  if (count) count.textContent = enabled.size + scoped.length ? String(enabled.size + scoped.length) : '';
+  if (saveBtn) saveBtn.disabled = true;
+  renderAgentScopedSkills(agentId, scoped);
+  if (!(data.available || []).length) {
+    const empty = document.createElement('li');
+    empty.className = 'agent-mcp-empty';
+    empty.textContent = 'No skills available in this install';
+    list.appendChild(empty);
+    return;
+  }
+  for (const s of data.available) {
+    const li = document.createElement('li');
+    li.className = 'agent-skill-row';
+    const info = document.createElement('div');
+    info.className = 'agent-mcp-info';
+    const name = document.createElement('span');
+    name.className = 'agent-mcp-name';
+    name.textContent = s.name;
+    const meta = document.createElement('span');
+    meta.className = 'agent-mcp-meta';
+    meta.textContent = s.description || '';
+    info.append(name, meta);
+    // Click the info (not the toggle) to view the skill's SKILL.md in place.
+    // Pool skills are editable only by owner/global-admin (server-enforced);
+    // built-ins are read-only. The toggle still owns enable/disable.
+    info.style.cursor = 'pointer';
+    info.setAttribute('role', 'button');
+    info.setAttribute('tabindex', '0');
+    info.title = 'View skill details';
+    info.addEventListener('click', () => openPoolSkillFromAgent(s.name));
+    info.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openPoolSkillFromAgent(s.name);
+      }
+    });
+    const toggle = document.createElement('input');
+    toggle.type = 'checkbox';
+    toggle.className = 'agent-skill-toggle';
+    toggle.checked = enabled.has(s.name);
+    toggle.dataset.skill = s.name;
+    toggle.setAttribute('aria-label', `Enable skill ${s.name}`);
+    toggle.addEventListener('change', () => {
+      if (saveBtn) saveBtn.disabled = false;
+    });
+    li.append(info, toggle);
+    list.appendChild(li);
+  }
+  if (saveBtn) saveBtn.onclick = () => saveAgentSkills(agentId);
+}
+
+// Skills wired to this one agent (imported into its own dir) + the import row.
+function renderAgentScopedSkills(agentId, scoped) {
+  const list = $('#agent-scoped-list');
+  const addBtn = $('#agent-scoped-add');
+  const urlInput = $('#agent-scoped-url');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!scoped.length) {
+    const empty = document.createElement('li');
+    empty.className = 'agent-mcp-empty';
+    empty.textContent = 'None yet — import one below (this agent only).';
+    list.appendChild(empty);
+  }
+  for (const s of scoped) {
+    const li = document.createElement('li');
+    li.className = 'agent-skill-row';
+    const info = document.createElement('div');
+    info.className = 'agent-mcp-info';
+    const head = document.createElement('div');
+    head.className = 'skill-head';
+    const name = document.createElement('span');
+    name.className = 'agent-mcp-name';
+    name.textContent = s.name;
+    head.appendChild(name);
+    if (s.origin && s.origin.label) head.appendChild(originBadgeEl(s.origin));
+    const meta = document.createElement('span');
+    meta.className = 'agent-mcp-meta';
+    meta.textContent = s.description || '';
+    info.append(head, meta);
+    // Click the info to view/edit this agent's own copy of the skill.
+    info.style.cursor = 'pointer';
+    info.setAttribute('role', 'button');
+    info.setAttribute('tabindex', '0');
+    info.title = 'View / edit this skill';
+    info.addEventListener('click', () => openScopedSkillEditor(agentId, s.name));
+    info.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openScopedSkillEditor(agentId, s.name);
+      }
+    });
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'skill-delete';
+    del.textContent = 'Remove';
+    del.addEventListener('click', () => removeAgentScopedSkill(agentId, s.name, del));
+    li.append(info, del);
+    list.appendChild(li);
+  }
+  if (addBtn) addBtn.onclick = () => importAgentScopedSkill(agentId, addBtn, urlInput);
+}
+
+async function importAgentScopedSkill(agentId, btn, urlInput) {
+  const url = (urlInput?.value || '').trim();
+  if (!url) return showToast('Paste a GitHub repo or folder URL', { kind: 'error' });
+  btn.disabled = true;
+  btn.textContent = 'Importing…';
+  try {
+    const body = await apiJson(`/api/agents/${encodeURIComponent(agentId)}/skills/import`, {
+      method: 'POST',
+      body: { url },
+    });
+    showToast(`Wired ${body.name} to this agent — applies on its next turn`, { kind: 'success' });
+    if (urlInput) urlInput.value = '';
+    renderAgentSkills(agentId);
+  } catch (err) {
+    showToast('Import failed: ' + (err?.message || err), { kind: 'error' });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Import';
+  }
+}
+
+async function removeAgentScopedSkill(agentId, name, btn, onDone) {
+  if (!(await showConfirmModal({ title: `Remove ${name}?`, body: 'Unwires it from this agent.', confirmLabel: 'Remove', destructive: true }))) return;
+  btn.disabled = true;
+  try {
+    await apiJson(`/api/agents/${encodeURIComponent(agentId)}/skills/scoped/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    });
+    showToast(`Removed ${name}`, { kind: 'success' });
+    if (onDone) onDone();
+    else renderAgentSkills(agentId);
+  } catch (err) {
+    showToast('Remove failed: ' + (err?.message || err), { kind: 'error' });
+    btn.disabled = false;
+  }
+}
+
+async function saveAgentSkills(agentId) {
+  const saveBtn = $('#agent-skills-save');
+  const skills = [...document.querySelectorAll('#agent-skills-list .agent-skill-toggle')]
+    .filter((t) => t.checked)
+    .map((t) => t.dataset.skill);
+  if (saveBtn) saveBtn.disabled = true;
+  try {
+    const body = await apiJson(`/api/agents/${encodeURIComponent(agentId)}/skills`, {
+      method: 'PUT',
+      body: { skills },
+    });
+    showToast(body.restarted ? 'Skills saved — agent restarting' : 'Skills saved (applies on next message)', {
+      kind: 'success',
+    });
+    await renderAgentSkills(agentId);
+  } catch (err) {
+    showToast('Couldn’t save skills: ' + (err?.message || err), { kind: 'error' });
+    if (saveBtn) saveBtn.disabled = false;
+  }
+}
+
+// Learning defaults (agent-level layer): two On/Off pill pairs backed by the
+// per-agent API. Room 🎓 settings override these — the section says so. The
+// whole accordion hides for non-admins (the GET 403s).
+/** Confirm modal with one switch option — the modal twin of .setting-toggle
+ * (DESIGN.md §2b: binary choices are switches, never raw checkboxes). */
+async function confirmWithToggle({ title, toggleLabel, note, confirmLabel }) {
+  const el = document.createElement('div');
+  const lbl = document.createElement('label');
+  lbl.className = 'setting-toggle';
+  const txt = document.createElement('span');
+  txt.textContent = toggleLabel;
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  lbl.append(txt, cb);
+  el.appendChild(lbl);
+  if (note) {
+    const n = document.createElement('div');
+    n.className = 'import-note';
+    n.textContent = note;
+    el.appendChild(n);
+  }
+  const ok = await showConfirmModal({ title, body: el, confirmLabel });
+  return { ok, checked: cb.checked };
+}
+
+// ── Agent export / import (backup Phase 1) ──────────────────────────────
+$('#agent-export-btn')?.addEventListener('click', async () => {
+  if (!selectedAgentId) return;
+  const { ok, checked } = await confirmWithToggle({
+    title: 'Export this agent?',
+    toggleLabel: 'Include conversations (larger; briefly stops this agent)',
+    note: 'Credentials never export — the bundle lists what to reconnect on import.',
+    confirmLabel: 'Export',
+  });
+  if (!ok) return;
+  const a = document.createElement('a');
+  a.href = `/api/agents/${encodeURIComponent(selectedAgentId)}/export${checked ? '?conversations=1' : ''}`;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  showToast('Export started — check your downloads', { kind: 'success' });
+});
+
+// ── Room export/import (backup Phase 3) ──
+$('#room-export-btn')?.addEventListener('click', () => {
+  const roomId = selectedRoomId || currentRoom;
+  if (!roomId) return;
+  const a = document.createElement('a');
+  a.href = `/api/rooms/${encodeURIComponent(roomId)}/export`;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  showToast('Room export started', { kind: 'success' });
+});
+
+// Settings → "Import…" routes by bundle type: peek is cheap, both flows
+// share the room/agent file inputs' logic.
+$('#import-any-btn')?.addEventListener('click', () => {
+  const el = document.createElement('div');
+  el.className = 'import-note';
+  el.textContent = 'Pick a .tgz exported from NanoClaw — an agent bundle or a room bundle.';
+  showConfirmModal({ title: 'Import from bundle', body: el, confirmLabel: 'Choose file…' }).then((ok) => {
+    if (ok) $('#import-any-file')?.click();
+  });
+});
+$('#import-any-file')?.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  // Sniff the manifest by trying the room endpoint first; a format mismatch
+  // comes back as 422 "Not a NanoClaw room export" → retry as agent.
+  const tryUpload = async (endpoint) => {
+    const fd = new FormData();
+    fd.append('bundle', file);
+    const res = await authFetch(endpoint, { method: 'POST', body: fd });
+    const body = await res.json().catch(() => ({}));
+    return { ok: res.ok, body };
+  };
+  showToast('Uploading bundle…', { kind: 'info' });
+  let kind = 'room';
+  let up = await tryUpload('/api/rooms/import');
+  if (!up.ok && /room export/i.test(up.body.error || '')) {
+    kind = 'agent';
+    up = await tryUpload('/api/agents/import');
+  }
+  if (!up.ok) {
+    showToast('Import failed: ' + (up.body.error || 'unrecognized bundle'), { kind: 'error' });
+    return;
+  }
+  if (kind === 'room') return continueRoomImport(up.body);
+  return continueAgentImport(up.body);
+});
+
+$('#import-room-file')?.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  showToast('Uploading room bundle…', { kind: 'info' });
+  let up;
+  try {
+    const fd = new FormData();
+    fd.append('bundle', file);
+    const res = await authFetch('/api/rooms/import', { method: 'POST', body: fd });
+    up = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(up.error || res.statusText);
+  } catch (err) {
+    showToast('Import failed: ' + (err?.message || err), { kind: 'error' });
+    return;
+  }
+  return continueRoomImport(up);
+});
+
+async function continueRoomImport(up) {
+  const p = up.preview;
+  const el = document.createElement('div');
+  const line = (t, cls) => {
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = t;
+    el.appendChild(d);
+  };
+  line(`${p.manifest.entity.name} → imports as #${p.suggestedRoomId}`);
+  line(`${p.manifest.counts.messages} messages · ${p.manifest.counts.threads} threads · ${p.manifest.counts.files} files`);
+  const found = p.agents.filter((a) => a.found).map((a) => a.name);
+  const missing = p.agents.filter((a) => !a.found).map((a) => a.name);
+  if (found.length) line(`Re-wires agents: ${found.join(', ')}`);
+  if (missing.length) line(`⚠ Agents not on this install (wiring skipped): ${missing.join(', ')}`, 'import-warning');
+  const ok = await showConfirmModal({ title: 'Import this room?', body: el, confirmLabel: 'Import' });
+  if (!ok) return;
+  try {
+    const out = await apiJson('/api/rooms/import/apply', { method: 'POST', body: { token: up.token } });
+    showToast(`Imported #${out.roomId} — ${out.messages} messages`, { kind: 'success' });
+  } catch (err) {
+    showToast('Import failed: ' + (err?.message || err), { kind: 'error' });
+  }
+}
+
+// ── System backup (Phase 2) ──
+$('#system-export-btn')?.addEventListener('click', async () => {
+  const { ok, checked } = await confirmWithToggle({
+    title: 'Download system backup?',
+    toggleLabel: 'Lean (skip conversation history — much smaller)',
+    note: 'Secrets and host identity never travel; a restored install keeps its own credentials.',
+    confirmLabel: 'Download',
+  });
+  if (!ok) return;
+  const a = document.createElement('a');
+  a.href = `/api/system/export${checked ? '?lean=1' : ''}`;
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  showToast('Backup started — this can take a while for large installs', { kind: 'success' });
+});
+
+$('#system-import-btn')?.addEventListener('click', () => $('#system-import-file')?.click());
+$('#system-import-file')?.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  showToast('Uploading backup…', { kind: 'info' });
+  let up;
+  try {
+    const fd = new FormData();
+    fd.append('bundle', file);
+    const res = await authFetch('/api/system/import', { method: 'POST', body: fd });
+    up = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(up.error || res.statusText);
+  } catch (err) {
+    showToast('Restore failed: ' + (err?.message || err), { kind: 'error' });
+    return;
+  }
+  const m = up.preview.manifest;
+  const el = document.createElement('div');
+  const line = (t, cls) => {
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = t;
+    el.appendChild(d);
+  };
+  line(`Backup from ${new Date(m.createdAt).toLocaleString()}${m.lean ? ' (lean — no conversations)' : ''}`);
+  line(`${m.counts.agents} agents · ${m.counts.rooms} rooms · ${m.counts.models} models · ${m.counts.mcpServers} MCP servers`);
+  line('⚠ REPLACES everything on this install. Current state is kept aside as *.pre-restore-* for manual rollback.', 'import-warning');
+  line('The host restarts to finish the restore — the app will reconnect.', 'import-note');
+  const ok = await showConfirmModal({ title: 'Restore this backup?', body: el, confirmLabel: 'Restore and restart', destructive: true });
+  if (!ok) return;
+  try {
+    await apiJson('/api/system/import/apply', { method: 'POST', body: { token: up.token } });
+    showToast('Restoring — the host is restarting…', { kind: 'info' });
+  } catch (err) {
+    showToast('Restore failed: ' + (err?.message || err), { kind: 'error' });
+  }
+});
+
+$('#import-agent-btn')?.addEventListener('click', () => $('#import-agent-file')?.click());
+$('#import-agent-file')?.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  showToast('Uploading bundle…', { kind: 'info' });
+  let up;
+  try {
+    const fd = new FormData();
+    fd.append('bundle', file);
+    const res = await authFetch('/api/agents/import', { method: 'POST', body: fd });
+    up = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(up.error || res.statusText);
+  } catch (err) {
+    showToast('Import failed: ' + (err?.message || err), { kind: 'error' });
+    return;
+  }
+  return continueAgentImport(up);
+});
+
+async function continueAgentImport(up) {
+  const p = up.preview;
+  const el = document.createElement('div');
+  const line = (t, cls) => {
+    const d = document.createElement('div');
+    if (cls) d.className = cls;
+    d.textContent = t;
+    el.appendChild(d);
+  };
+  line(`${p.manifest.entity.name} → imports as “${p.suggestedName}” (${p.suggestedFolder})`);
+  line(p.manifest.includesConversations ? 'Includes conversation history' : 'Config, memory and skills only');
+  const roomsOk = p.rooms.filter((r) => r.found).map((r) => r.platform_id);
+  const roomsMiss = p.rooms.filter((r) => !r.found).map((r) => r.platform_id);
+  if (roomsOk.length) line(`Re-links rooms: ${roomsOk.join(', ')}`);
+  if (roomsMiss.length) line(`⚠ Rooms not on this install (skipped): ${roomsMiss.join(', ')}`, 'import-warning');
+  const mcpMiss = p.mcpServers.filter((m) => !m.found).map((m) => m.name);
+  if (mcpMiss.length) line(`⚠ MCP servers to recreate: ${mcpMiss.join(', ')}`, 'import-warning');
+  if (!p.modelFound && p.manifest.references.model) line(`⚠ Model not found here: ${p.manifest.references.model.model_id}`, 'import-warning');
+  for (const c of p.manifest.requiredCredentials) line(`⚠ Needs: ${c}`, 'import-warning');
+  const ok = await showConfirmModal({ title: 'Import this agent?', body: el, confirmLabel: 'Import' });
+  if (!ok) return;
+  try {
+    const out = await apiJson('/api/agents/import/apply', { method: 'POST', body: { token: up.token } });
+    showToast(`Imported ${out.name}`, { kind: 'success' });
+    await fetchAgents();
+    renderAgents();
+  } catch (err) {
+    showToast('Import failed: ' + (err?.message || err), { kind: 'error' });
+  }
+}
+
+async function renderAgentLearning(agentId) {
+  const section = $('#agent-learning-section');
+  const accordion = section?.closest('details');
+  if (!section) return;
+  if (!learningMasterEnabled) {
+    if (accordion) accordion.hidden = true; // master off — agents don't see it
+    return;
+  }
+  let cfg = null;
+  try {
+    const res = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/learning`);
+    if (res.ok) cfg = await res.json();
+  } catch {}
+  if (!cfg) {
+    if (accordion) accordion.hidden = true;
+    return;
+  }
+  if (accordion) accordion.hidden = false;
+  $('#agent-learning-keep-row').hidden = !cfg.canAutoKeep;
+  const paint = (groupEl, on) => {
+    groupEl.querySelectorAll('.setting-option').forEach((b) => {
+      b.classList.toggle('active', (b.dataset.on === '1') === on);
+    });
+  };
+  paint($('#agent-learning-distill'), cfg.autoTrigger);
+  paint($('#agent-learning-keep'), cfg.autoKeep);
+  const wire = (groupEl, key) => {
+    groupEl.querySelectorAll('.setting-option').forEach((b) => {
+      b.onclick = async () => {
+        const on = b.dataset.on === '1';
+        try {
+          const res = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/learning`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [key]: on }),
+          });
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed');
+          paint(groupEl, on);
+          showToast('Learning defaults saved');
+        } catch (err) {
+          toastError(err, 'Could not save');
+        }
+      };
+    });
+  };
+  wire($('#agent-learning-distill'), 'autoTrigger');
+  wire($('#agent-learning-keep'), 'autoKeep');
+
+  const put = async (patch) => {
+    const res = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/learning`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed');
+  };
+
+  // Review model — the agent's own model by default, or a roster entry / a
+  // fixed Claude id (so Claude-only installs with an empty roster still have
+  // choices). Roster options carry the roster id; the fixed entries carry
+  // the raw Claude model id. Dormant until the digest review lands (#353).
+  const reviewSel = $('#agent-learning-review-model');
+  if (reviewSel) {
+    reviewSel.innerHTML = '';
+    const addOpt = (value, label) => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = label;
+      reviewSel.appendChild(opt);
+    };
+    addOpt('', "Agent's model");
+    try {
+      const models = await (await authFetch('/api/models')).json();
+      for (const m of models) addOpt(m.id, `${m.name} (${m.model_id})`);
+    } catch {
+      /* roster unavailable — the default + Claude entries still render */
+    }
+    for (const id of ['claude-haiku-4-5', 'claude-sonnet-5']) {
+      if (![...reviewSel.options].some((o) => o.value === id)) addOpt(id, id);
+    }
+    let stored = cfg.reviewModel || '';
+    // A stored value no longer in the roster still shows as itself rather
+    // than silently reading as the default.
+    if (stored && ![...reviewSel.options].some((o) => o.value === stored)) addOpt(stored, stored);
+    reviewSel.value = stored;
+    reviewSel.onchange = async () => {
+      try {
+        await put({ reviewModel: reviewSel.value || null });
+        stored = reviewSel.value;
+        showToast('Learning defaults saved');
+      } catch (err) {
+        toastError(err, 'Could not save');
+        reviewSel.value = stored;
+      }
+    };
+  }
+
+  // Review input — digest (default) or replay the full turn.
+  const inputGroup = $('#agent-learning-review-input');
+  if (inputGroup) {
+    const paintInput = (replay) => {
+      inputGroup.querySelectorAll('.setting-option').forEach((b) => {
+        b.classList.toggle('active', b.dataset.value === (replay ? 'replay' : 'digest'));
+      });
+    };
+    paintInput(cfg.replayReview === true);
+    inputGroup.querySelectorAll('.setting-option').forEach((b) => {
+      b.onclick = async () => {
+        const replay = b.dataset.value === 'replay';
+        try {
+          await put({ replayReview: replay });
+          paintInput(replay);
+          showToast('Learning defaults saved');
+        } catch (err) {
+          toastError(err, 'Could not save');
+        }
+      };
+    });
+  }
+}
+
+async function renderAgentMcp(agentId) {
+  const list = $('#agent-mcp-list');
+  list.innerHTML = '';
+  agentMcpServers = [];
+  try {
+    const res = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/mcp-servers`);
+    if (res.ok) agentMcpServers = (await res.json()).servers || [];
+  } catch (err) {
+    console.error('Failed to load MCP servers:', err);
+  }
+  const mcpCount = $('#agent-mcp-count');
+  if (mcpCount) mcpCount.textContent = agentMcpServers.length ? String(agentMcpServers.length) : '';
+  // No empty-state prose — the "+ Attach server" button below is self-explanatory.
+  if (agentMcpServers.length === 0) return;
+  for (const s of agentMcpServers) {
+    const li = document.createElement('li');
+    li.className = 'agent-mcp-row';
+    const info = document.createElement('div');
+    info.className = 'agent-mcp-info';
+    const name = document.createElement('span');
+    name.className = 'agent-mcp-name';
+    name.textContent = s.name;
+    const meta = document.createElement('span');
+    meta.className = 'agent-mcp-meta';
+    meta.textContent = `${s.transport} · ${s.target}`;
+    info.append(name, meta);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'agent-mcp-remove';
+    remove.setAttribute('aria-label', `Detach ${s.name}`);
+    remove.innerHTML = lucide('x');
+    remove.addEventListener('click', () => detachAgentMcp(agentId, s));
+    li.append(info, remove);
+    list.appendChild(li);
+  }
+}
+
+async function setAgentMcp(agentId, body, okMsg) {
+  await apiJson(`/api/agents/${encodeURIComponent(agentId)}/mcp-servers`, { method: 'PUT', body });
+  showToast(okMsg, { kind: 'success' });
+  await renderAgentMcp(agentId);
+}
+
+async function detachAgentMcp(agentId, server) {
+  const ok = await showConfirmModal({
+    title: `Detach ${server.name}?`,
+    body: 'The agent loses these tools on its next message.',
+    confirmLabel: 'Detach',
+    destructive: true,
+  });
+  if (!ok) return;
+  try {
+    await setAgentMcp(agentId, { remove: [server.id] }, `Detached ${server.name}`);
+  } catch (err) {
+    showToast('Detach failed: ' + (err.message || err), { kind: 'error' });
+  }
+}
+
+// ── Shared multi-select attach picker (MCP servers, rooms) ──────────────────
+// A single bottom-sheet reused by every "attach" surface. The caller supplies a
+// config describing the item source, how to render/search a row, whether an item
+// is already attached, and what to do on toggle. Reuses the model-picker chrome.
+let attachPickerCfg = null;
+
+function openAttachPicker(cfg) {
+  attachPickerCfg = cfg;
+  $('#attach-picker-title').textContent = cfg.title;
+  const search = $('#attach-picker-search');
+  search.value = '';
+  search.placeholder = cfg.searchPlaceholder || 'Search…';
+  const addBtn = $('#attach-picker-add-new');
+  addBtn.hidden = !cfg.onAddNew;
+  addBtn.textContent = cfg.addNewLabel || '+ Add new';
+  renderAttachPickerList('');
+  const picker = $('#attach-picker');
+  picker.hidden = false;
+  void picker.offsetHeight; // reflow so the open transition runs
+  picker.classList.add('open');
+  if (window.matchMedia('(min-width: 720px)').matches) setTimeout(() => search.focus(), 60);
+}
+
+function closeAttachPicker() {
+  const picker = $('#attach-picker');
+  picker.classList.remove('open');
+  setTimeout(() => {
+    picker.hidden = true;
+  }, 220);
+}
+
+function renderAttachPickerList(filterText) {
+  const cfg = attachPickerCfg;
+  const list = $('#attach-picker-list');
+  list.innerHTML = '';
+  if (!cfg) return;
+  const q = (filterText || '').trim().toLowerCase();
+  const items = cfg.items().filter((it) => !q || cfg.searchText(it).toLowerCase().includes(q));
+  if (items.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'model-picker-empty';
+    empty.textContent = q ? `No matches for "${filterText}".` : cfg.emptyText || 'Nothing to show.';
+    list.appendChild(empty);
+    return;
+  }
+  for (const it of items) {
+    const attached = cfg.isAttached(it);
+    const li = document.createElement('li');
+    li.className = 'model-picker-row attach-picker-row' + (attached ? ' selected' : '');
+    li.tabIndex = 0;
+    const top = document.createElement('div');
+    top.className = 'model-picker-row-top';
+    const name = document.createElement('span');
+    name.className = 'model-picker-row-name';
+    name.textContent = cfg.name(it);
+    const toggle = document.createElement('span');
+    toggle.className = 'attach-picker-toggle';
+    toggle.textContent = attached ? '−' : '+';
+    top.append(name, toggle);
+    li.appendChild(top);
+    const meta = cfg.meta ? cfg.meta(it) : '';
+    if (meta) {
+      const sub = document.createElement('div');
+      sub.className = 'model-picker-row-sub';
+      sub.textContent = meta;
+      li.appendChild(sub);
+    }
+    const act = async () => {
+      li.style.pointerEvents = 'none';
+      try {
+        await cfg.onToggle(it, !attached);
+      } catch (err) {
+        showToast('Failed: ' + (err.message || err), { kind: 'error' });
+      }
+      renderAttachPickerList($('#attach-picker-search').value);
+    };
+    li.addEventListener('click', act);
+    li.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        act();
+      }
+    });
+    list.appendChild(li);
+  }
+}
+
+$('#attach-picker-close').addEventListener('click', closeAttachPicker);
+$('#attach-picker .model-picker-backdrop').addEventListener('click', closeAttachPicker);
+$('#attach-picker-search').addEventListener('input', (e) => renderAttachPickerList(e.target.value));
+$('#attach-picker-add-new').addEventListener('click', () => attachPickerCfg?.onAddNew?.());
+
+// "+ Attach server" now opens the shared picker (attach/detach any registry
+// server; "+ Add new server" creates one and auto-attaches).
+$('#agent-mcp-attach-toggle').addEventListener('click', async () => {
+  const agentId = selectedAgentId;
+  if (!agentId) return;
+  await fetchMcpServers();
+  openAttachPicker({
+    title: 'MCP servers',
+    searchPlaceholder: 'Search servers…',
+    emptyText: 'No servers yet — use “+ Add new server”.',
+    addNewLabel: '+ Add new server',
+    items: () => allMcpServers,
+    searchText: (s) => `${s.name} ${s.transport} ${s.target}`,
+    name: (s) => s.name,
+    meta: (s) => `${s.transport} · ${s.target}`,
+    isAttached: (s) => agentMcpServers.some((a) => a.id === s.id),
+    onToggle: (s, add) =>
+      setAgentMcp(agentId, add ? { add: [s.id] } : { remove: [s.id] }, add ? `Attached ${s.name}` : `Detached ${s.name}`),
+    onAddNew: () => {
+      mcpAddInProgress = true;
+      mcpAgentForAdd = agentId;
+      closeAttachPicker();
+      setTimeout(() => $('#create-mcp-btn').click(), 180);
+    },
+  });
+});
+// State for the attach picker's "+ Add new server": on a successful create,
+// maybeAttachAfterMcpAdd auto-attaches the new server to the agent and returns.
+let mcpAddInProgress = false;
+let mcpAgentForAdd = null;
+async function maybeAttachAfterMcpAdd(newId, name) {
+  if (!mcpAddInProgress) return;
+  const agentId = mcpAgentForAdd;
+  mcpAddInProgress = false;
+  mcpAgentForAdd = null;
+  if (!agentId || !newId) return;
+  try {
+    await setAgentMcp(agentId, { add: [newId] }, `Attached ${name}`);
+  } catch (err) {
+    showToast('Attach failed: ' + (err.message || err), { kind: 'error' });
+  }
+  await openAgentDetail(agentId);
+}
+
+// Save existing agent
+$('#agent-detail-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!selectedAgentId) return;
+  const btn = $('#agent-detail-form button.btn-primary');
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  btn.classList.remove('success');
+  const updates = {
+    name: $('#agent-name').value.trim(),
+  };
+  try {
+    // Update agent config
+    await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    // Update instructions
+    await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId)}/instructions`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: $('#agent-instructions').value }),
+    });
+    // Update model assignment (empty string in the select = unassign).
+    const selectedModel = $('#agent-model').value || null;
+    const currentModel = allAgents.find((b) => b.id === selectedAgentId)?.assigned_model_id || null;
+    if (selectedModel !== currentModel) {
+      const mRes = await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId)}/model`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelId: selectedModel }),
+      });
+      try {
+        if (mRes.ok) warnIfUnreachable((await mRes.json()).reachability);
+      } catch {
+        /* reachability is best-effort */
+      }
+    }
+    // Pinned Anthropic model (container_configs.model). Unlike the fields above
+    // this one restarts the agent, so only send it when it actually changed.
+    // A rejection here must be surfaced, not swallowed: silently keeping the old
+    // model is exactly the failure this field exists to fix.
+    const configModel = $('#agent-config-model').value.trim();
+    const currentConfigModel = allAgents.find((b) => b.id === selectedAgentId)?.config_model || '';
+    if (configModel !== currentConfigModel) {
+      const cRes = await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId)}/config-model`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: configModel }),
+      });
+      if (!cRes.ok) {
+        let detail = `HTTP ${cRes.status}`;
+        try {
+          detail = (await cRes.json()).error || detail;
+        } catch {
+          /* keep the status */
+        }
+        $('#agent-config-model').value = currentConfigModel; // don't leave a lie on screen
+        throw new Error(detail);
+      }
+    }
+    await fetchAgents();
+    // Don't re-openAgentDetail — that re-fetches instructions and resets the
+    // user's cursor position. The form values already reflect what they typed,
+    // and the agent list re-render is what we actually need for the rename
+    // to be visible.
+    agentDetailBaseline = agentDetailSnapshot(); // what we just saved is the new clean state
+    btn.textContent = '✓ Saved';
+    btn.classList.add('success');
+    setTimeout(() => {
+      // Only restore if the user hasn't navigated away (form still mounted).
+      if (btn.isConnected) {
+        btn.textContent = originalLabel;
+        btn.classList.remove('success');
+        refreshAgentSaveDirty(); // baseline == current → back to disabled
+      }
+    }, 1500);
+  } catch (err) {
+    console.error('Failed to update agent:', err);
+    showToast('Failed to save agent: ' + (err.message || 'Unknown error'), { kind: 'error' });
+    btn.textContent = originalLabel;
+    btn.classList.remove('success');
+    btn.disabled = false;
+  }
+});
+
+// Delete agent
+$('#agent-delete').addEventListener('click', async () => {
+  if (!selectedAgentId) return;
+  const agent = allAgents.find((b) => b.id === selectedAgentId);
+  const confirmed = await showConfirmModal({
+    title: 'Delete agent',
+    body: `Delete "${agent?.name}"? This removes the agent, its workspace, and all session history. This cannot be undone.`,
+    confirmLabel: 'Delete',
+    destructive: true,
+  });
+  if (!confirmed) return;
+  try {
+    const res = await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(`Failed to delete agent: ${err.error || res.statusText}`, { kind: 'error' });
+      return;
+    }
+    showToast(`Deleted "${agent?.name}".`, { kind: 'success' });
+    closeAgentDetail();
+    await fetchAgents();
+  } catch (err) {
+    showToast(`Failed to delete agent: ${err.message}`, { kind: 'error' });
+  }
+});
+
+// ── Create agent ────────────────────────────────────────────────────────────
+
+$('#create-agent-btn').addEventListener('click', () => {
+  selectedAgentId = null;
+  renderAgents();
+  $('#agent-edit-view').hidden = true;
+  $('#agent-create-view').hidden = false;
+  $('#agent-create-name').value = '';
+  $('#agent-detail').hidden = false;
+  $('#members-panel').hidden = true;
+  $('#agent-create-name').focus();
+});
+
+// ── Skill suggestions in the create form ────────────────────────────────────
+// As the operator describes the agent, match installed skills + the catalog
+// collections and surface fits. Installed matches are informational (new agents
+// load all installed skills by default); catalog matches get a checkbox and are
+// imported when the agent is created.
+let suggestTimer = null;
+let suggestSeq = 0;
+function scheduleSkillSuggest() {
+  clearTimeout(suggestTimer);
+  suggestTimer = setTimeout(refreshSkillSuggestions, 700);
+}
+async function refreshSkillSuggestions() {
+  const text = [$('#agent-create-draft-prompt').value, $('#agent-create-name').value, $('#agent-create-instructions').value]
+    .join(' ')
+    .trim();
+  const block = $('#agent-create-skills');
+  if (text.length < 12) {
+    block.hidden = true;
+    return;
+  }
+  const seq = ++suggestSeq;
+  let suggestions = [];
+  try {
+    const res = await authFetch(`/api/skills/suggest?text=${encodeURIComponent(text.slice(0, 2000))}`);
+    if (res.ok) suggestions = (await res.json()).suggestions || [];
+  } catch {}
+  if (seq !== suggestSeq) return; // a newer request superseded this one
+  const list = $('#agent-create-skills-list');
+  list.innerHTML = '';
+  if (!suggestions.length) {
+    block.hidden = true;
+    return;
+  }
+  for (const s of suggestions) {
+    const li = document.createElement('li');
+    li.className = 'agent-create-skill-row';
+    const info = document.createElement('div');
+    info.className = 'skill-info';
+    const head = document.createElement('div');
+    head.className = 'skill-head';
+    const name = document.createElement('span');
+    name.className = 'skill-name';
+    name.textContent = s.name;
+    head.appendChild(name);
+    const desc = document.createElement('span');
+    desc.className = 'skill-desc';
+    desc.textContent = s.description || '';
+    info.append(head, desc);
+    li.appendChild(info);
+    if (s.source === 'installed') {
+      const got = document.createElement('span');
+      got.className = 'skill-badge';
+      got.textContent = 'available';
+      li.appendChild(got);
+    } else {
+      const check = document.createElement('input');
+      check.type = 'checkbox';
+      check.className = 'agent-create-skill-check';
+      check.dataset.url = s.url;
+      check.dataset.name = s.name;
+      check.setAttribute('aria-label', `Add skill ${s.name} (${s.source})`);
+      li.appendChild(check);
+    }
+    list.appendChild(li);
+  }
+  block.hidden = false;
+}
+for (const sel of ['#agent-create-draft-prompt', '#agent-create-name', '#agent-create-instructions']) {
+  $(sel)?.addEventListener('input', scheduleSkillSuggest);
+}
+
+$('#agent-create-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = $('#agent-create-name').value.trim();
+  if (!name) return;
+  const instructions = $('#agent-create-instructions').value;
+  try {
+    const res = await authFetch('/api/agents', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, instructions: instructions || undefined }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast('Failed to create agent: ' + (err.error || res.statusText), { kind: 'error' });
+      return;
+    }
+    // Import any checked suggested skills — new agents default to "all skills",
+    // so imports attach automatically on the agent's first spawn.
+    const checked = [...document.querySelectorAll('#agent-create-skills-list .agent-create-skill-check:checked')];
+    if (checked.length) showToast(`Adding ${checked.length} suggested skill(s)…`, { kind: 'info' });
+    for (const c of checked) {
+      try {
+        await apiJson('/api/skills/import', { method: 'POST', body: { url: c.dataset.url } });
+        showToast(`Added skill ${c.dataset.name}`, { kind: 'success' });
+      } catch (err) {
+        showToast(`Skill ${c.dataset.name} failed: ` + (err?.message || err), { kind: 'error' });
+      }
+    }
+    $('#agent-create-skills').hidden = true;
+    $('#agent-create-skills-list').innerHTML = '';
+    await fetchAgents();
+    closeAgentDetail();
+  } catch (err) {
+    showToast('Failed to create agent: ' + err.message, { kind: 'error' });
+  }
+});
+
+// ── Drafter: ✨ Suggest from prompt ───────────────────────────────────────
+//
+// Three target sets keyed on data-drafter-target:
+//   agent-create   → #agent-create-draft-prompt → #agent-create-name + -instructions
+//   room-create    → #room-create-draft-prompt  → #room-create-new-name + -instructions
+//   room-add-agent → #room-add-agent-draft-prompt → #room-add-agent-new-name + -instructions
+//
+// Each ✨ click POSTs the prompt to /api/agents/draft (host-side LLM call,
+// routed through the OneCLI proxy for the webchat-drafter identifier).
+// The response populates the corresponding name + instructions inputs and
+// focuses the name so the operator can tweak before submitting. Never
+// auto-creates — review is always required.
+const DRAFTER_TARGETS = {
+  'agent-create': {
+    prompt: '#agent-create-draft-prompt',
+    name: '#agent-create-name',
+    instructions: '#agent-create-instructions',
+  },
+  'room-create': {
+    prompt: '#room-create-draft-prompt',
+    name: '#room-create-new-name',
+    instructions: '#room-create-new-instructions',
+  },
+  'room-add-agent': {
+    prompt: '#room-add-agent-draft-prompt',
+    name: '#room-add-agent-new-name',
+    instructions: '#room-add-agent-new-instructions',
+  },
+};
+
+document.querySelectorAll('.drafter-btn').forEach((btn) => {
+  btn.addEventListener('click', () => draftFor(btn));
+});
+
+async function draftFor(btn) {
+  const targetKey = btn.dataset.drafterTarget;
+  const target = DRAFTER_TARGETS[targetKey];
+  if (!target) return;
+  const promptEl = $(target.prompt);
+  const nameEl = $(target.name);
+  const instructionsEl = $(target.instructions);
+  const prompt = (promptEl?.value || '').trim();
+  if (!prompt) {
+    showToast('Type a description first, e.g. "An agent that helps me draft replies to emails".', { kind: 'error' });
+    return;
+  }
+  const original = btn.innerHTML;
+  btn.disabled = true;
+  // The wait shows the one spinner primitive (DESIGN.md §5), not a static
+  // sparkles icon which reads as frozen. innerHTML save/restore (not
+  // wizardBusy's textContent) because this button carries an SVG icon.
+  btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span> Drafting…';
+  try {
+    const res = await authFetch('/api/agents/draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast('Drafter failed: ' + (body.error || res.statusText), { kind: 'error' });
+      return;
+    }
+    if (nameEl) nameEl.value = body.name || '';
+    if (instructionsEl) instructionsEl.value = body.instructions || '';
+    nameEl?.focus();
+    nameEl?.select();
+  } catch (err) {
+    showToast('Drafter failed: ' + err.message, { kind: 'error' });
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = original;
+  }
+}
+
+// ── Room management ─────────────────────────────────────────────────────────
+
+let selectedRoomId = null;
+let roomDetailWiredAgents = [];
+
+function showRoomSettingsToggle(visible) {
+  // The room name itself is the settings affordance (Telegram/WhatsApp pattern);
+  // `.has-settings` adds the pointer + chevron and gates the click.
+  $('#room-name').classList.toggle('has-settings', visible);
+}
+
+async function openRoomDetail(roomId) {
+  selectedRoomId = roomId;
+  closeAgentDetail();
+  closeMcpDetail();
+  $('#room-create-view').hidden = true;
+  $('#room-edit-view').hidden = false;
+
+  const room = lastRoomsList.find((r) => r.id === roomId);
+  $('#room-detail-title').textContent = room ? `${room.name} — settings` : 'Room settings';
+
+  // Rename field — owner-only (the server also enforces). Prefilled with the
+  // current name; saving PUTs /name and the server's broadcastRooms refreshes
+  // the sidebar + this panel's title.
+  const renameField = $('#room-rename-field');
+  if (isOwnerView && room) {
+    renameField.hidden = false;
+    $('#room-rename-input').value = room.name || '';
+  } else {
+    renameField.hidden = true;
+  }
+
+  // Archive toggle: server tells us per room whether the caller can
+  // archive (owner / admin / scoped-admin-of-wired-agent). Show the
+  // button only when allowed; flip label based on current state.
+  const archiveBtn = $('#room-archive-toggle');
+  if (room && room.canArchive) {
+    archiveBtn.hidden = false;
+    archiveBtn.textContent = room.archived ? 'Unarchive room' : 'Archive room';
+  } else {
+    archiveBtn.hidden = true;
+  }
+
+  await refreshRoomWiredAgents(roomId);
+
+  // UserCreds credential-mode selector — admin/owner only (canArchive implies that).
+  const credSection = $('#room-credential-mode-section');
+  if (credSection) {
+    if (room && room.canArchive) {
+      credSection.hidden = false;
+      // Clear any prior room's selection FIRST so a failed/mismatched fetch can't
+      // leave the previous room's mode showing as this room's policy.
+      document
+        .querySelectorAll('#room-credential-modes .setting-option')
+        .forEach((b) => b.classList.remove('active'));
+      const hintEl = $('#room-cred-default-hint');
+      if (hintEl) hintEl.textContent = '';
+      authFetch(`/api/rooms/${encodeURIComponent(roomId)}/credential-mode`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (!d) {
+            if (hintEl) hintEl.textContent = '(couldn’t load — try reopening)';
+            return;
+          }
+          // No explicit override → the room follows the workspace default: highlight
+          // that value. An explicit pick highlights itself.
+          const effective = d.mode === 'inherit' ? d.defaultMode : d.mode;
+          document
+            .querySelectorAll('#room-credential-modes .setting-option')
+            .forEach((b) => b.classList.toggle('active', b.dataset.value === effective));
+          if (hintEl) hintEl.textContent = '';
+        })
+        .catch(() => {
+          if (hintEl) hintEl.textContent = '(couldn’t load — try reopening)';
+        });
+    } else {
+      credSection.hidden = true;
+    }
+  }
+
+  $('#room-detail').hidden = false;
+  $('#members-panel').hidden = true;
+  $('#agent-detail').hidden = true;
+}
+
+function closeRoomDetail() {
+  $('#room-detail').hidden = true;
+  $('#room-edit-view').hidden = false;
+  $('#room-create-view').hidden = true;
+  selectedRoomId = null;
+}
+
+// Rename the selected room. Owner-only (the field is hidden otherwise, and the
+// server re-checks). The server's broadcastRooms() pushes the new name, so the
+// sidebar + panel title update via the 'rooms' handler — no manual refresh.
+async function saveRoomName() {
+  const id = selectedRoomId;
+  if (!id) return;
+  const name = $('#room-rename-input').value.trim();
+  if (!name) {
+    showToast('Enter a room name', { kind: 'error' });
+    return;
+  }
+  try {
+    await apiJson(`/api/rooms/${encodeURIComponent(id)}/name`, { method: 'PUT', body: { name } });
+    showToast('Room renamed', { kind: 'success' });
+  } catch (err) {
+    showToast('Rename failed: ' + (err.message || err), { kind: 'error' });
+  }
+}
+
+// Engage mode for the currently-loaded room. Populated alongside the agents
+// list. Only 'mention-only' surfaces here now (un-primed agents fire only when
+// @-mentioned); the legacy 'broadcast' mode has been retired. Mode-aware
+// rendering is in renderRoomWiredAgents.
+let roomDetailEngageMode = 'mention-only';
+
+async function refreshRoomWiredAgents(roomId) {
+  try {
+    const [agentsRes, modeRes] = await Promise.all([
+      authFetch(`/api/rooms/${encodeURIComponent(roomId)}/agents`),
+      authFetch(`/api/rooms/${encodeURIComponent(roomId)}/engage-mode`),
+    ]);
+    roomDetailWiredAgents = await agentsRes.json();
+    await modeRes.json().catch(() => ({}));
+    roomDetailEngageMode = 'mention-only';
+  } catch (err) {
+    console.error('Failed to fetch wired agents:', err);
+    roomDetailWiredAgents = [];
+    roomDetailEngageMode = 'mention-only';
+  }
+  renderRoomWiredAgents();
+  await populateAddAgentSelect();
+  void renderRoomSkills();
+}
+
+/**
+ * Learning loop, room-level view: what this room's agents have proposed and what
+ * they've learned — in the room, rather than buried in the global Skills page.
+ * Pending proposals first (they need a decision); learned skills below, removable.
+ * Purely a view over existing endpoints — no new backend.
+ */
+async function renderRoomSkills() {
+  const section = $('#room-skills-section');
+  const list = $('#room-skills-list');
+  const count = $('#room-skills-count');
+  if (!section || !list) return;
+  const agents = roomDetailWiredAgents.slice();
+  if (agents.length === 0) {
+    section.hidden = true;
+    return;
+  }
+  const ids = new Set(agents.map((a) => a.id));
+  const nameOf = (id) => agents.find((a) => a.id === id)?.name || 'agent';
+
+  let drafts = [];
+  let learned = [];
+  let archived = [];
+  try {
+    const [draftRes, ...skillRes] = await Promise.all([
+      authFetch('/api/skill-drafts'),
+      ...agents.map((a) => authFetch(`/api/agents/${encodeURIComponent(a.id)}/skills`)),
+    ]);
+    drafts = ((await draftRes.json()).drafts || []).filter((d) => ids.has(d.agentGroupId));
+    const perAgent = await Promise.all(skillRes.map((r) => r.json().catch(() => ({}))));
+    perAgent.forEach((payload, i) => {
+      for (const s of payload.scoped || []) learned.push({ ...s, agentId: agents[i].id });
+      for (const s of payload.archived || []) archived.push({ ...s, agentId: agents[i].id });
+    });
+  } catch (err) {
+    console.error('Failed to load room skills:', err);
+    section.hidden = true;
+    return;
+  }
+
+  // The section stays even when empty — it carries the "Distill a skill" trigger,
+  // and a room that has learned nothing yet is exactly where you'd want to press it.
+  section.hidden = false;
+  count.textContent = drafts.length + learned.length ? String(drafts.length + learned.length) : '';
+  list.innerHTML = '';
+  renderDistillButton(agents);
+  if (drafts.length === 0 && learned.length === 0 && archived.length === 0) {
+    return;
+  }
+
+  // Proposals first — they're the ones asking for a decision.
+  for (const d of drafts) {
+    const li = document.createElement('li');
+    li.className = 'room-skill-row proposed';
+    const head = document.createElement('div');
+    head.className = 'room-skill-head';
+    const name = document.createElement('span');
+    name.className = 'room-skill-name';
+    name.textContent = d.kind === 'patch' ? `Change to ${d.targetSkill || d.skillName}` : d.skillName;
+    head.append(name, originBadgeEl({ label: `proposed · ${d.agentName || nameOf(d.agentGroupId)}`, official: false }));
+    const desc = document.createElement('div');
+    desc.className = 'room-skill-desc';
+    desc.textContent = d.description || '';
+    const actions = document.createElement('div');
+    actions.className = 'room-skill-actions';
+    const view = document.createElement('button');
+    view.type = 'button';
+    view.className = 'btn btn-ghost';
+    view.textContent = 'View';
+    view.addEventListener('click', () => openSkillDraft(d.id));
+    const keep = document.createElement('button');
+    keep.type = 'button';
+    keep.className = 'btn btn-primary';
+    keep.textContent = 'Keep';
+    keep.title = `Wire to ${d.agentName || nameOf(d.agentGroupId)}`;
+    keep.dataset.draftId = d.id;
+    // A re-render mid-review must not resurrect a clickable Keep.
+    if (reviewingDrafts.has(d.id)) markDraftReviewing(keep, true);
+    keep.addEventListener('click', () =>
+      armUndo(actions, `Keeping ${d.skillName}…`, UNDO_SECONDS, async (restore) => {
+        restore(); // the row lives on through 'Keeping…' → 'Reviewing…'
+        await keepSkillDraft({ id: d.id, agentGroupId: d.agentGroupId, agentName: d.agentName }, keep);
+        void renderRoomSkills();
+      }),
+    );
+    const drop = document.createElement('button');
+    drop.type = 'button';
+    drop.className = 'skill-delete';
+    drop.textContent = 'Discard';
+    drop.addEventListener('click', () =>
+      armUndo(actions, `Discarding ${d.skillName}…`, UNDO_SECONDS, async () => {
+        await discardSkillDraft(d.id);
+        void renderRoomSkills();
+      }),
+    );
+    actions.append(view, keep, drop);
+    li.append(head, desc, actions);
+    list.appendChild(li);
+  }
+
+  // Then what's already wired to these agents.
+  for (const s of learned) {
+    const li = document.createElement('li');
+    li.className = 'room-skill-row';
+    const head = document.createElement('div');
+    head.className = 'room-skill-head';
+    const name = document.createElement('span');
+    name.className = 'room-skill-name';
+    name.textContent = s.name;
+    head.appendChild(name);
+    if (s.origin) head.appendChild(originBadgeEl(s.origin));
+    if (agents.length > 1) {
+      const who = document.createElement('span');
+      who.className = 'room-skill-agent';
+      who.textContent = nameOf(s.agentId);
+      head.appendChild(who);
+    }
+    if (s.invocations > 0) {
+      const uses = document.createElement('span');
+      uses.className = 'room-skill-agent';
+      uses.textContent = `used ${s.invocations}×`;
+      head.appendChild(uses);
+    }
+    if (s.hasHistory) {
+      const revert = document.createElement('button');
+      revert.type = 'button';
+      revert.className = 'btn btn-ghost';
+      revert.textContent = 'Revert';
+      revert.title = 'Back to the previous revision';
+      revert.addEventListener('click', async () => {
+        const ok = await showConfirmModal({
+          title: `Revert ${s.name}?`,
+          body: 'Back to the previous revision. The current version stays in history — a revert can itself be reverted.',
+          confirmLabel: 'Revert',
+        });
+        if (!ok) return;
+        try {
+          const res = await authFetch(
+            `/api/agents/${encodeURIComponent(s.agentId)}/skills/scoped/${encodeURIComponent(s.name)}/revert`,
+            { method: 'POST' },
+          );
+          if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed');
+          showToast(`Reverted ${s.name}`);
+          void renderRoomSkills();
+        } catch (err) {
+          toastError(err, 'Could not revert');
+        }
+      });
+      head.appendChild(revert);
+    }
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'skill-delete';
+    del.title = `Remove from ${nameOf(s.agentId)}`;
+    del.textContent = '✕';
+    del.addEventListener('click', async () => {
+      // DESIGN.md §5: no native confirm() — destructive actions use the modal.
+      const ok = await showConfirmModal({
+        title: `Remove ${s.name}?`,
+        body: `It will no longer be available to ${nameOf(s.agentId)}.`,
+        confirmLabel: 'Remove',
+        destructive: true,
+      });
+      if (!ok) return;
+      try {
+        const res = await authFetch(
+          `/api/agents/${encodeURIComponent(s.agentId)}/skills/scoped/${encodeURIComponent(s.name)}`,
+          { method: 'DELETE' },
+        );
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed');
+        showToast(`Removed ${s.name}`);
+        void renderRoomSkills();
+      } catch (err) {
+        toastError(err, 'Failed to remove skill');
+      }
+    });
+    li.append(head, del);
+    list.appendChild(li);
+  }
+
+  // Archived by the curator (unused for months) — dim, restorable, never deleted.
+  for (const s of archived) {
+    const li = document.createElement('li');
+    li.className = 'room-skill-row room-skill-archived';
+    const head = document.createElement('div');
+    head.className = 'room-skill-head';
+    const name = document.createElement('span');
+    name.className = 'room-skill-name';
+    name.textContent = s.name;
+    head.appendChild(name);
+    const tag = document.createElement('span');
+    tag.className = 'room-skill-agent';
+    tag.textContent = 'archived — unused';
+    head.appendChild(tag);
+    const restore = document.createElement('button');
+    restore.type = 'button';
+    restore.className = 'btn btn-ghost';
+    restore.textContent = 'Restore';
+    restore.addEventListener('click', async () => {
+      try {
+        const res = await authFetch(
+          `/api/agents/${encodeURIComponent(s.agentId)}/skills/archived/${encodeURIComponent(s.name)}/restore`,
+          { method: 'POST' },
+        );
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed');
+        showToast(`Restored ${s.name}`);
+        void renderRoomSkills();
+      } catch (err) {
+        toastError(err, 'Could not restore');
+      }
+    });
+    li.append(head, restore);
+    list.appendChild(li);
+  }
+}
+
+function renderRoomWiredAgents() {
+  const list = $('#room-wired-agents');
+  list.innerHTML = '';
+  const anyPrime = roomDetailWiredAgents.some((a) => a.is_prime);
+  // The effective mode the operator sees: prime if anyone's starred, otherwise
+  // whatever engage_default is set to. With this build's UI never producing
+  // 'broadcast', the no-prime case is 'mention-only' in practice.
+  const effectiveMode = anyPrime ? 'prime' : roomDetailEngageMode;
+  for (const agent of roomDetailWiredAgents) {
+    const li = document.createElement('li');
+
+    // Prime toggle (★) — clicking sets this agent as prime, or clears if already prime.
+    // Always shown now: even a single-agent room in mention-only mode benefits
+    // from showing the toggle, because clicking ★ flips the room into prime
+    // mode (the one agent then answers everything, regardless of @-mention).
+    const primeBtn = document.createElement('button');
+    primeBtn.type = 'button';
+    primeBtn.className = 'room-wired-prime' + (agent.is_prime ? ' active' : '');
+    primeBtn.innerHTML = agent.is_prime ? lucide('star', 'icon--fill') : lucide('star');
+    primeBtn.title = agent.is_prime
+      ? `Stop ${agent.name} replying to everything — back to only when @-mentioned`
+      : `Make ${agent.name} the default — replies to all messages (not just @-mentions)`;
+    primeBtn.addEventListener('click', () => togglePrimeAgent(agent));
+    li.appendChild(primeBtn);
+
+    const onlyOne = roomDetailWiredAgents.length <= 1;
+    const name = document.createElement('span');
+    name.className = 'room-wired-name room-wired-name-link';
+    name.textContent = agent.name;
+    // Click the agent name to jump to its settings (the agent-detail overlay is
+    // standalone, so it opens over the room view; openAgentDetail closes this
+    // room panel). Keeps the ★ / × controls to the sides clickable on their own.
+    name.setAttribute('role', 'button');
+    name.setAttribute('tabindex', '0');
+    name.title = `Open ${agent.name} settings`;
+    const openAgentSettings = async () => {
+      if (!allAgents.some((x) => x.id === agent.id)) await fetchAgents();
+      await openAgentDetail(agent.id);
+    };
+    name.addEventListener('click', openAgentSettings);
+    name.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openAgentSettings();
+      }
+    });
+    if (agent.is_prime) {
+      const badge = document.createElement('span');
+      badge.className = 'room-wired-prime-badge';
+      badge.textContent = ' default';
+      name.appendChild(badge);
+    }
+    li.appendChild(name);
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'room-wired-remove';
+    removeBtn.innerHTML = lucide('x');
+    removeBtn.title = onlyOne ? 'Cannot remove the last agent (delete the room instead)' : `Remove ${agent.name}`;
+    removeBtn.disabled = onlyOne;
+    removeBtn.addEventListener('click', () => removeAgentFromRoom(agent.id, agent.name));
+    li.appendChild(removeBtn);
+
+    list.appendChild(li);
+  }
+
+  // Reply-mode info icon, lives on the "Wired agents" label line. Clicking it
+  // pops up the explanation — kept off the page until asked for.
+  const modeTip =
+    effectiveMode === 'prime'
+      ? `Replies to everything: ${roomDetailWiredAgents.find((a) => a.is_prime)?.name ?? 'unknown'} — except messages that @-mention a different agent.`
+      : 'No agents reply unless @-mentioned. Star an agent to make it reply to everything.';
+  const modeInfo = $('#room-mode-info');
+  if (modeInfo) {
+    modeInfo.hidden = false;
+    modeInfo.className = `mode-info-btn mode-${effectiveMode}`;
+    modeInfo.setAttribute('aria-label', `Reply mode — ${modeTip}`);
+    // Reassign (not addEventListener) so re-renders don't stack handlers.
+    modeInfo.onclick = (e) => {
+      e.stopPropagation();
+      toggleModeInfoPopup(modeInfo, modeTip);
+    };
+  }
+}
+
+// Click-to-open help popup for the reply-mode icon. Toggles, and dismisses on
+// outside-click or Escape (mirrors the thread/room menu dismissal pattern).
+function toggleModeInfoPopup(anchor, text) {
+  // Anchor to the label row (not the icon) so the popup left-aligns to the
+  // panel content and never overflows the narrow drawer's right edge.
+  const wrap = anchor.closest('.form-label-row');
+  const existing = wrap.querySelector('.mode-info-popup');
+  if (existing) {
+    existing.remove();
+    return;
+  }
+  const pop = document.createElement('div');
+  pop.className = 'mode-info-popup';
+  pop.setAttribute('role', 'tooltip');
+  pop.textContent = text;
+  wrap.appendChild(pop);
+  const close = (e) => {
+    if (e && (pop.contains(e.target) || anchor.contains(e.target))) return;
+    pop.remove();
+    document.removeEventListener('click', close);
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (e) => {
+    if (e.key === 'Escape') close();
+  };
+  setTimeout(() => {
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+  }, 0);
+}
+
+async function togglePrimeAgent(agent) {
+  if (!selectedRoomId) return;
+  const url = `/api/rooms/${encodeURIComponent(selectedRoomId)}/prime`;
+  try {
+    const res = agent.is_prime
+      ? await authFetch(url, { method: 'DELETE' })
+      : await authFetch(url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agentId: agent.id }),
+        });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast('Could not update the default agent: ' + (err.error || res.statusText), { kind: 'error' });
+      return;
+    }
+    await refreshRoomWiredAgents(selectedRoomId);
+  } catch (err) {
+    showToast('Could not update the default agent: ' + err.message, { kind: 'error' });
+  }
+}
+
+async function populateAddAgentSelect() {
+  // Make sure allAgents is fresh for the picker (avoid showing stale list).
+  if (allAgents.length === 0) await fetchAgents();
+  const wiredIds = new Set(roomDetailWiredAgents.map((a) => a.id));
+  // Never offer archived agents for wiring (even if the list toggle is on).
+  const candidates = allAgents.filter((a) => !wiredIds.has(a.id) && a.status !== 'archived');
+  const list = $('#room-add-agent-list');
+  list.innerHTML = '';
+  if (candidates.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty-note';
+    li.textContent = 'No unwired agents — switch to "New" to create one.';
+    list.appendChild(li);
+    updateAddAgentSubmitLabel();
+    return;
+  }
+  const sorted = [...candidates].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id));
+  for (const agent of sorted) {
+    const li = document.createElement('li');
+    li.className = 'room-add-agent-row';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = agent.id;
+    cb.id = `room-add-agent-${agent.id}`;
+    cb.addEventListener('change', updateAddAgentSubmitLabel);
+    const lbl = document.createElement('label');
+    lbl.htmlFor = cb.id;
+    lbl.className = 'room-add-agent-label';
+    const name = document.createElement('span');
+    name.className = 'room-add-agent-name';
+    name.textContent = agent.name || agent.id;
+    const sub = document.createElement('span');
+    sub.className = 'room-add-agent-sub';
+    sub.textContent = agent.folder || agent.id;
+    lbl.appendChild(name);
+    lbl.appendChild(sub);
+    li.appendChild(cb);
+    li.appendChild(lbl);
+    list.appendChild(li);
+  }
+  updateAddAgentSubmitLabel();
+}
+
+function updateAddAgentSubmitLabel() {
+  const checked = $('#room-add-agent-list').querySelectorAll('input[type=checkbox]:checked');
+  const btn = $('#room-add-agent-existing-submit');
+  const n = checked.length;
+  btn.textContent = n > 0 ? `Wire selected (${n})` : 'Wire selected';
+  btn.disabled = n === 0;
+}
+
+async function addExistingAgentToRoom() {
+  if (!selectedRoomId) return;
+  const checked = Array.from($('#room-add-agent-list').querySelectorAll('input[type=checkbox]:checked'));
+  if (checked.length === 0) return;
+  const ids = checked.map((cb) => cb.value);
+  // Add each selected agent. POST /api/rooms/:id/agents currently takes one
+  // agent per call; we issue them sequentially so a failure surfaces with
+  // the matching agent and partial progress is preserved.
+  $('#room-add-agent-existing-submit').disabled = true;
+  try {
+    for (const id of ids) {
+      await addAgentToRoom(selectedRoomId, { kind: 'existing', id });
+    }
+  } finally {
+    // populateAddAgentSelect re-runs after each addAgentToRoom (via the
+    // refresh path), so the list is now empty of just-added entries.
+    updateAddAgentSubmitLabel();
+  }
+}
+
+async function addNewAgentToRoom() {
+  if (!selectedRoomId) return;
+  const name = $('#room-add-agent-new-name').value.trim();
+  if (!name) return;
+  const instructions = $('#room-add-agent-new-instructions').value;
+  await addAgentToRoom(selectedRoomId, { kind: 'new', name, instructions });
+}
+
+async function addAgentToRoom(roomId, ref) {
+  try {
+    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ref),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast('Failed to add agent: ' + (err.error || res.statusText), { kind: 'error' });
+      return;
+    }
+    $('#room-add-agent-new-name').value = '';
+    $('#room-add-agent-new-instructions').value = '';
+    // Refresh agents (in case a new one was created), then re-render wirings.
+    await fetchAgents();
+    await refreshRoomWiredAgents(roomId);
+  } catch (err) {
+    showToast('Failed to add agent: ' + err.message, { kind: 'error' });
+  }
+}
+
+async function removeAgentFromRoom(agentId, agentName) {
+  if (!selectedRoomId) return;
+  const confirmed = await showConfirmModal({
+    title: 'Remove agent',
+    body: `Remove "${agentName}" from this room? The agent itself will not be deleted.`,
+    confirmLabel: 'Remove',
+    destructive: true,
+  });
+  if (!confirmed) return;
+  try {
+    const res = await authFetch(
+      `/api/rooms/${encodeURIComponent(selectedRoomId)}/agents/${encodeURIComponent(agentId)}`,
+      { method: 'DELETE' },
+    );
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast('Failed to remove agent: ' + (err.error || res.statusText), { kind: 'error' });
+      return;
+    }
+    showToast(`Removed "${agentName}" from the room.`, { kind: 'success' });
+    await refreshRoomWiredAgents(selectedRoomId);
+  } catch (err) {
+    showToast('Failed to remove agent: ' + err.message, { kind: 'error' });
+  }
+}
+
+async function deleteCurrentRoom() {
+  if (!selectedRoomId) return;
+  const room = lastRoomsList.find((r) => r.id === selectedRoomId);
+  const label = room ? room.name : selectedRoomId;
+  const confirmed = await showConfirmModal({
+    title: 'Delete room',
+    body: `Delete room "${label}"? Wired agents will be preserved — delete them separately if you want them gone.`,
+    confirmLabel: 'Delete',
+    destructive: true,
+  });
+  if (!confirmed) return;
+  const roomToClose = selectedRoomId;
+  try {
+    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomToClose)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast('Failed to delete room: ' + (err.error || res.statusText), { kind: 'error' });
+      return;
+    }
+    showToast(`Deleted room "${label}".`, { kind: 'success' });
+    closeRoomDetail();
+    if (currentRoom === roomToClose) {
+      currentRoom = null;
+      $('#room-name').textContent = 'Select a room';
+      $('#message-input').disabled = true;
+      $('#message-form button[type=submit]').disabled = true;
+      $('#messages').innerHTML = '<div class="empty-state">Select a room from the sidebar to start chatting</div>';
+      showRoomSettingsToggle(false);
+    }
+  } catch (err) {
+    showToast('Failed to delete room: ' + err.message, { kind: 'error' });
+  }
+}
+
+// Wire up room-detail UI.
+// Tapping the room name opens/closes room settings (frees the chat-header slot
+// and kills the duplicate ⚙). Keyboard-accessible since it's a role="button".
+function toggleRoomSettings() {
+  if (!currentRoom) return;
+  if (selectedRoomId === currentRoom && !$('#room-detail').hidden) closeRoomDetail();
+  else openRoomDetail(currentRoom);
+}
+$('#room-name').addEventListener('click', toggleRoomSettings);
+$('#room-name').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    toggleRoomSettings();
+  }
+});
+// Thread context-sync: pull the regular chat into this thread / push this
+// thread back up. Confirm first (the copy is verbatim and additive), then
+// report the count — "nothing new" when the delta is empty.
+async function syncThread(direction) {
+  if (!currentRoom || currentThread === 'main') return;
+  const room = currentRoom;
+  const thread = currentThread;
+  const isPull = direction === 'pull';
+  const ok = await showConfirmModal({
+    title: isPull ? 'Pull main chat down' : 'Push this thread up',
+    body: '',
+    confirmLabel: isPull ? 'Pull down' : 'Push up',
+  });
+  if (!ok) return;
+  try {
+    const r = await authFetch(
+      `/api/rooms/${encodeURIComponent(room)}/threads/${encodeURIComponent(thread)}/${direction}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+    );
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+    const { copied = 0 } = await r.json();
+    if (copied === 0) showToast(isPull ? 'Nothing new to pull' : 'Nothing new to push', { kind: 'info' });
+    else showToast(`Copied ${copied} message${copied === 1 ? '' : 's'}`, { kind: 'success' });
+  } catch (err) {
+    showToast('Sync failed: ' + (err.message || err), { kind: 'error' });
+  }
+}
+$('#thread-switch')?.addEventListener('click', (e) => {
+  e.stopPropagation();
+  openThreadSwitcher();
+});
+$('#thread-pull')?.addEventListener('click', () => syncThread('pull'));
+$('#thread-push')?.addEventListener('click', () => syncThread('push'));
+$('#thread-delete')?.addEventListener('click', () => {
+  if (!currentRoom || currentThread === 'main') return;
+  const thread = roomThreads().find((t) => t.thread_id === currentThread);
+  if (thread) deleteThreadConfirm(thread);
+});
+
+$('#room-detail-close').addEventListener('click', closeRoomDetail);
+$('#room-delete').addEventListener('click', deleteCurrentRoom);
+$('#room-credential-modes')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.setting-option');
+  if (!btn || !selectedRoomId) return;
+  const mode = btn.dataset.value; // disabled | optional | required (explicit override)
+  const r = await authFetch(`/api/rooms/${encodeURIComponent(selectedRoomId)}/credential-mode`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+    body: JSON.stringify({ mode }),
+  });
+  if (r.ok) {
+    document
+      .querySelectorAll('#room-credential-modes .setting-option')
+      .forEach((b) => b.classList.toggle('active', b === btn));
+    // Picking a pill sets an explicit override, so it's no longer inheriting.
+    const hintEl = $('#room-cred-default-hint');
+    if (hintEl) hintEl.textContent = '';
+    const label = { disabled: 'off', optional: 'optional', required: 'required' }[mode] ?? mode;
+    showToast(`User credentials: ${label}.`, { kind: 'success' });
+    if (selectedRoomId === currentRoom) updateUserCredsBanner(currentRoom);
+  } else {
+    const err = await r.json().catch(() => ({}));
+    showToast('Failed to set mode: ' + (err.error || r.statusText), { kind: 'error' });
+  }
+});
+// Per-room credential TYPES moved to Settings → User credentials (global); the
+// room only sets the mode override above.
+$('#room-rename-save')?.addEventListener('click', saveRoomName);
+$('#room-rename-input')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    saveRoomName();
+  }
+});
+$('#room-archive-toggle').addEventListener('click', async () => {
+  if (!selectedRoomId) return;
+  const room = lastRoomsList.find((r) => r.id === selectedRoomId);
+  if (!room) return;
+  await toggleRoomArchive(selectedRoomId, !room.archived);
+  // Refresh the panel so the button label flips.
+  if (!$('#room-detail').hidden) openRoomDetail(selectedRoomId);
+});
+$('#room-add-agent-existing-submit').addEventListener('click', addExistingAgentToRoom);
+$('#room-add-agent-new-submit').addEventListener('click', addNewAgentToRoom);
+document.querySelectorAll('.room-agent-picker-tab').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.room-agent-picker-tab').forEach((t) => t.classList.remove('active'));
+    tab.classList.add('active');
+    const which = tab.dataset.picker;
+    $('#room-add-agent-existing').hidden = which !== 'existing';
+    $('#room-add-agent-new').hidden = which !== 'new';
+  });
+});
+
+// ── Create room ─────────────────────────────────────────────────────────────
+
+async function openRoomCreate() {
+  selectedRoomId = null;
+  closeAgentDetail();
+  $('#room-edit-view').hidden = true;
+  $('#room-create-view').hidden = false;
+  $('#room-create-name').value = '';
+  $('#room-create-new-name').value = '';
+  $('#room-create-new-instructions').value = '';
+  $('#room-create-new-block').hidden = true;
+  await fetchAgents();
+  renderRoomCreateAgentChecklist();
+  $('#room-detail').hidden = false;
+  $('#members-panel').hidden = true;
+  $('#agent-detail').hidden = true;
+  $('#room-create-name').focus();
+}
+
+function renderRoomCreateAgentChecklist() {
+  const list = $('#room-create-existing-agents');
+  list.innerHTML = '';
+  if (allAgents.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty-note';
+    li.textContent = 'No agents yet — create one inline below.';
+    list.appendChild(li);
+    return;
+  }
+  const sorted = [...allAgents].filter((a) => a.status !== 'archived').sort((a, b) => a.name.localeCompare(b.name));
+  for (const agent of sorted) {
+    const li = document.createElement('li');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = agent.id;
+    cb.id = `room-create-agent-${agent.id}`;
+    const lbl = document.createElement('label');
+    lbl.htmlFor = cb.id;
+    lbl.textContent = agent.name;
+    li.appendChild(cb);
+    li.appendChild(lbl);
+    list.appendChild(li);
+  }
+}
+
+$('#create-room-btn').addEventListener('click', openRoomCreate);
+$('#archived-toggle').addEventListener('click', () => {
+  showArchived = !showArchived;
+  sessionStorage.setItem('webchat:showArchived', showArchived ? '1' : '0');
+  if (lastRoomsList.length) renderRooms(lastRoomsList);
+});
+$('#hidden-toggle').addEventListener('click', () => {
+  showHidden = !showHidden;
+  sessionStorage.setItem('webchat:showHidden', showHidden ? '1' : '0');
+  if (lastRoomsList.length) renderRooms(lastRoomsList);
+});
+// A–Z sort toggles (rooms / agents / models). One small button each: off = the
+// list's natural order, on = alphabetical. State persists per-list.
+function wireSortToggle(btnId, storageKey, isOn, setOn, rerender) {
+  const btn = $(btnId);
+  if (!btn) return;
+  const sync = () => {
+    btn.classList.toggle('active', isOn());
+    btn.setAttribute('aria-pressed', isOn() ? 'true' : 'false');
+  };
+  sync();
+  btn.addEventListener('click', () => {
+    setOn(!isOn());
+    sessionStorage.setItem(storageKey, isOn() ? '1' : '0');
+    sync();
+    rerender();
+  });
+}
+wireSortToggle('#room-sort-az', 'webchat:roomSortAz', () => roomSortAz, (v) => (roomSortAz = v), () => {
+  if (lastRoomsList.length) renderRooms(lastRoomsList);
+});
+wireSortToggle(
+  '#perms-sort-az',
+  'webchat:usersSortAz',
+  () => usersSortAz,
+  (v) => (usersSortAz = v),
+  () => renderPermsUserList(),
+);
+// The Manage view shares ONE sort icon (in the header) that acts on the active
+// tab — toggling agents' or models' sort and reflecting that tab's state.
+function syncManageSortIcon() {
+  const btn = $('#manage-sort-az');
+  if (!btn) return;
+  const on = manageTab === 'models' ? modelSortAz : agentSortAz;
+  btn.classList.toggle('active', on);
+  btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+}
+$('#manage-sort-az')?.addEventListener('click', () => {
+  if (manageTab === 'models') {
+    modelSortAz = !modelSortAz;
+    sessionStorage.setItem('webchat:modelSortAz', modelSortAz ? '1' : '0');
+    renderModels();
+  } else {
+    agentSortAz = !agentSortAz;
+    sessionStorage.setItem('webchat:agentSortAz', agentSortAz ? '1' : '0');
+    renderAgents();
+  }
+  syncManageSortIcon();
+});
+$('#room-create-close').addEventListener('click', closeRoomDetail);
+$('#room-create-toggle-new').addEventListener('click', () => {
+  $('#room-create-new-block').hidden = !$('#room-create-new-block').hidden;
+  if (!$('#room-create-new-block').hidden) $('#room-create-new-name').focus();
+});
+
+$('#room-create-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const name = $('#room-create-name').value.trim();
+  if (!name) return;
+  const checked = Array.from($('#room-create-existing-agents').querySelectorAll('input[type=checkbox]'))
+    .filter((cb) => cb.checked)
+    .map((cb) => ({ kind: 'existing', id: cb.value }));
+  const newName = $('#room-create-new-name').value.trim();
+  const refs = [...checked];
+  if (newName) {
+    refs.push({
+      kind: 'new',
+      name: newName,
+      instructions: $('#room-create-new-instructions').value || undefined,
+    });
+  }
+  if (refs.length === 0) {
+    showToast('Pick at least one existing agent or create a new one inline.', { kind: 'error' });
+    return;
+  }
+  try {
+    const res = await authFetch('/api/rooms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, agents: refs }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast('Failed to create room: ' + (err.error || res.statusText), { kind: 'error' });
+      return;
+    }
+    const body = await res.json();
+    closeRoomDetail();
+    await fetchAgents();
+    // The broadcastRooms() server-side will push the updated list via WS,
+    // but join immediately so the user lands in the new room.
+    if (body.room) joinRoom(body.room.id, body.room.name);
+  } catch (err) {
+    showToast('Failed to create room: ' + err.message, { kind: 'error' });
+  }
+});
+
+// ── Typing indicators ─────────────────────────────────────────────────────
+function handleTypingEvent(msg) {
+  if (msg.room_id !== currentRoom) return;
+  const { identity, identity_type, is_typing } = msg;
+
+  if (is_typing) {
+    if (identity_type === 'agent') agentName = identity;
+    if (typingUsers.has(identity)) clearTimeout(typingUsers.get(identity).timeout);
+    const timeout = setTimeout(
+      () => {
+        typingUsers.delete(identity);
+        renderTypingIndicator();
+      },
+      identity_type === 'agent' ? 120000 : 5000,
+    );
+    typingUsers.set(identity, { timeout, identity_type });
+  } else {
+    if (typingUsers.has(identity)) clearTimeout(typingUsers.get(identity).timeout);
+    typingUsers.delete(identity);
+  }
+  renderTypingIndicator();
+}
+
+function renderTypingIndicator() {
+  const el = $('#typing-indicator');
+  const entries = [...typingUsers.entries()];
+  const userTypers = entries.filter(([, v]) => v.identity_type !== 'agent');
+  const typingAgents = entries.filter(([, v]) => v.identity_type === 'agent').map(([n]) => n);
+
+  // Per-agent thinking bubbles persist while EITHER an authoritative status turn
+  // owns them (data-statusLive, cleared by removal on 'done') OR the heartbeat
+  // typing signal says that agent is working (covers pre-status warm containers).
+  // So a quiet typing stretch never drops a live turn's bubble. Ensure a bubble
+  // for each typing agent; remove only bubbles that are neither status-live nor
+  // currently typing.
+  for (const name of typingAgents) {
+    if (!bubbleFor(name)) ensureThinkingBubble(name);
+  }
+  for (const b of document.querySelectorAll('#messages .thinking-bubble')) {
+    if (b.dataset.statusLive === '1') continue;
+    if (typingAgents.includes(b.dataset.agent)) continue;
+    b.remove();
+  }
+
+  if (userTypers.length > 0) {
+    // esc() each name: the display name is an IdP/tailnet/proxy-supplied string
+    // (NOT the validated [a-z0-9-] handle), so it can contain markup — this is an
+    // innerHTML sink. Escape before interpolating.
+    const names = userTypers.map(([n]) => esc(n));
+    const label =
+      names.length === 1
+        ? `${names[0]} is typing`
+        : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} are typing`;
+    el.innerHTML = `${label}<span class="dots"><span></span><span></span><span></span></span>`;
+    el.className = 'typing-indicator is-visible';
+    el.removeAttribute('aria-hidden');
+  } else {
+    el.classList.remove('is-visible');
+    el.setAttribute('aria-hidden', 'true');
+  }
+}
+
+// ── Agent status events ───────────────────────────────────────────────────
+const TOOL_LABELS = {
+  Bash: 'Running command',
+  Read: 'Reading file',
+  Write: 'Writing file',
+  Edit: 'Editing file',
+  Glob: 'Searching files',
+  Grep: 'Searching code',
+  WebSearch: 'Searching the web',
+  WebFetch: 'Fetching page',
+  Task: 'Managing tasks',
+  NotebookEdit: 'Editing notebook',
+};
+
+// Status frames carry fine-grained turn activity from the agent (see
+// src/channels/webchat/index.ts sendStatus). `event` is the kind:
+//   start     → a turn began; show the bubble and keep it up until done/stalled
+//   tool      → text = tool name, detail = target (file/command/query)
+//   progress  → text = milestone message
+//   reasoning → text = a reasoning summary line (rendered by the fading feed)
+//   done      → turn finished cleanly; clear the bubble
+//   stalled   → turn ended abnormally (agent died/killed); notice + clear
+// ── Learn surfaces ───────────────────────────────────────────────────────────
+// One path for every learn trigger (composer 🎓, nudge chip, room-settings
+// button, typing /learn): set the input and send. No second implementation.
+// `command` lets source-directed callers send `/learn <url|path>` through the
+// exact same gate (in a room, composer enabled) and send path.
+function triggerLearn(command = '/learn') {
+  const input = $('#message-input');
+  if (!input || input.disabled || !currentRoom) return;
+  hideLearnNudge();
+  input.value = command;
+  sendCurrentMessage();
+}
+
+// Client-side mirror of classifyLearnHint's first-token rule (container/
+// agent-runner/src/learning-loop.ts): only the FIRST token decides whether the
+// hint is a source; anything after it is focus text. Pre-validating here keeps
+// a typo from silently degrading into a free-text steering hint.
+function learnSourceFirstToken(value) {
+  return value.trim().split(/\s+/)[0] || '';
+}
+function isLearnUrlToken(tok) {
+  if (!/^https?:\/\/\S+$/i.test(tok)) return false;
+  try {
+    new URL(tok);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function isLearnPathToken(tok) {
+  return tok === '~' || tok === '.' || tok === '..' || /^(\/|\.\/|\.\.\/|~\/)/.test(tok);
+}
+
+// Shared source prompt: one input — the source first, optional focus text
+// after it — composed into `/learn <value>` and sent through triggerLearn.
+async function promptLearnSource({ title, placeholder, check, invalid }) {
+  const v = await showInputModal({
+    title,
+    placeholder,
+    confirmLabel: 'Learn',
+    validate: (val) => (val && check(learnSourceFirstToken(val)) ? null : invalid),
+  });
+  return v; // trimmed source (+ optional focus), or null on cancel
+}
+
+// The nudge: Hermes' bare heuristic (a tool-heavy turn), but human-gated — it
+// suggests, the user taps, nothing runs or costs anything on its own. Dismiss
+// hides it until the NEXT qualifying turn; switching rooms clears it.
+const LEARN_NUDGE_MIN_TOOLS = 5;
+// Rooms whose wired agents auto-run the review: nudging a human to press the
+// button the machine already presses is pure noise. Refreshed on join and when
+// the 🎓 toggle changes; unknown (fetch failed / non-admin) keeps the nudge.
+const roomAutoLearn = new Map();
+async function refreshRoomAutoLearn(roomId) {
+  try {
+    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/learning`);
+    if (!res.ok) return;
+    const cfg = await res.json();
+    roomAutoLearn.set(roomId, cfg.autoTrigger === true);
+  } catch {
+    /* keep whatever we knew */
+  }
+}
+let learnTurnToolCount = 0;
+
+function showLearnNudge() {
+  if (!learningMasterEnabled) return;
+  const n = $('#learn-nudge');
+  if (n) n.hidden = false;
+}
+function hideLearnNudge() {
+  const n = $('#learn-nudge');
+  if (n) n.hidden = true;
+}
+
+/**
+ * 🎓 popover (DESIGN.md § Composer popups — mirrors .mention-popover, no third
+ * style). Click the icon → "Distill now" plus the per-agent automation toggles:
+ *   Auto-distill — admin-tier; it only stages drafts (default ON).
+ *   Auto-keep    — owner-tier; it writes live agent context, so the server
+ *                  refuses the toggle for anyone else and the row only renders
+ *                  when the server says canAutoKeep.
+ */
+async function toggleLearnMenu() {
+  const menu = $('#learn-menu');
+  if (!menu) return;
+  if (!menu.hidden) {
+    closeLearnMenu();
+    return;
+  }
+  if (!currentRoom) return;
+  menu.innerHTML = '';
+
+  const item = (icon, label, onPick) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'learn-menu-item';
+    b.setAttribute('role', 'menuitem');
+    b.innerHTML = `<svg class="icon" aria-hidden="true"><use href="#${icon}"></use></svg><span class="learn-menu-key">${label}</span>`;
+    b.addEventListener('click', () => {
+      closeLearnMenu();
+      onPick();
+    });
+    return b;
+  };
+  menu.appendChild(item('i-sparkles', 'This session', () => triggerLearn()));
+  // Source-directed learning: one input (source first, optional focus text
+  // after), composed into `/learn <value>` — the same message the user could
+  // type; the container-side classifier does the rest.
+  menu.appendChild(
+    item('i-link', 'From a link…', async () => {
+      const v = await promptLearnSource({
+        title: 'Learn from a link',
+        placeholder: 'https://…',
+        check: isLearnUrlToken,
+        invalid: 'Start with a full link (http:// or https://)',
+      });
+      if (v) triggerLearn('/learn ' + v);
+    }),
+  );
+  menu.appendChild(
+    item('i-folder', 'From a folder…', async () => {
+      const v = await promptLearnSource({
+        title: 'Learn from a folder',
+        placeholder: '/workspace/…',
+        check: isLearnPathToken,
+        invalid: 'Start with a path (/, ./ or ~/)',
+      });
+      if (v) triggerLearn('/learn ' + v);
+    }),
+  );
+
+  // ONE pair of toggles, scoped to THIS room — the room layer overrides the
+  // wired agents' defaults, so many agents never means many switches.
+  let cfg = null;
+  try {
+    const res = await authFetch(`/api/rooms/${encodeURIComponent(currentRoom)}/learning`);
+    if (res.ok) cfg = await res.json();
+  } catch {
+    /* room without learning surface (no wired agents) — trigger row only */
+  }
+  if (cfg && cfg.canManage && learningMasterEnabled) {
+    menu.appendChild(
+      learnToggleRow('Auto-distill busy turns (this room)', cfg.autoTrigger, (on) => putRoomLearning({ autoTrigger: on })),
+    );
+    menu.appendChild(
+      learnToggleRow('Auto-keep drafts (this room)', cfg.autoKeep, (on) => putRoomLearning({ autoKeep: on })),
+    );
+  }
+  menu.hidden = false;
+  $('#learn-btn')?.setAttribute('aria-expanded', 'true');
+}
+
+function closeLearnMenu() {
+  const menu = $('#learn-menu');
+  if (menu) menu.hidden = true;
+  $('#learn-btn')?.setAttribute('aria-expanded', 'false');
+}
+
+async function putRoomLearning(patch) {
+  try {
+    const res = await authFetch(`/api/rooms/${encodeURIComponent(currentRoom)}/learning`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed');
+    showToast('Learning settings saved for this room');
+    void refreshRoomAutoLearn(currentRoom);
+    return true;
+  } catch (err) {
+    toastError(err, 'Could not save');
+    return false;
+  }
+}
+
+function learnToggleRow(label, on, onChange) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'learn-menu-item';
+  row.setAttribute('role', 'menuitemcheckbox');
+  row.setAttribute('aria-checked', String(!!on));
+  const state = document.createElement('span');
+  state.className = 'learn-menu-state' + (on ? ' on' : '');
+  state.textContent = on ? 'on' : 'off';
+  const text = document.createElement('span');
+  text.textContent = label;
+  row.append(text, state);
+  row.addEventListener('click', async () => {
+    const next = state.textContent !== 'on';
+    const ok = await onChange(next);
+    if (ok) {
+      state.textContent = next ? 'on' : 'off';
+      state.classList.toggle('on', next);
+      row.setAttribute('aria-checked', String(next));
+    }
+  });
+  return row;
+}
+
+
+$('#learn-btn')?.addEventListener('click', toggleLearnMenu);
+
+// Composer overflow "+": on narrow screens the tools (attach/camera/learn)
+// live in a popover this button toggles. Closes on outside-tap and whenever a
+// tool inside is chosen (each opens its own dialog/menu).
+(() => {
+  const more = document.getElementById('composer-more');
+  const tools = document.getElementById('composer-tools');
+  if (!more || !tools) return;
+  const close = () => {
+    tools.classList.remove('open');
+    more.setAttribute('aria-expanded', 'false');
+  };
+  more.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = !tools.classList.contains('open');
+    tools.classList.toggle('open', open);
+    more.setAttribute('aria-expanded', String(open));
+  });
+  // Selecting any tool inside closes the popover (the dialog/menu takes over).
+  tools.addEventListener('click', (e) => {
+    if (e.target.closest('button')) close();
+  });
+  document.addEventListener('click', (e) => {
+    if (tools.classList.contains('open') && !tools.contains(e.target) && e.target.closest('#composer-more') === null) {
+      close();
+    }
+  });
+})();
+document.addEventListener('click', (e) => {
+  const menu = $('#learn-menu');
+  if (menu && !menu.hidden && !menu.contains(e.target) && e.target.closest('#learn-btn') === null) {
+    closeLearnMenu();
+  }
+});
+// Escape closes the 🎓 popover (bubble phase — the capture-phase view handler
+// yields via blockingOverlayOpen while the menu is open).
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !($('#learn-menu')?.hidden ?? true)) closeLearnMenu();
+});
+$('#learn-nudge-go')?.addEventListener('click', () => triggerLearn());
+$('#learn-nudge-dismiss')?.addEventListener('click', hideLearnNudge);
+
+function handleStatusEvent(msg) {
+  if (msg.room_id !== currentRoom) return;
+  // Each frame names its agent (host stamps agent_name); fall back to the room's
+  // single agent name so old/unattributed frames still land on one bubble.
+  const name = msg.agent_name || agentName || 'Agent';
+  switch (msg.event) {
+    case 'start':
+      beginAgentTurn(name);
+      learnTurnToolCount = 0;
+      break;
+    case 'tool': {
+      markTurnActivity(name);
+      learnTurnToolCount++;
+      const verb = msg.text ? TOOL_LABELS[msg.text] || `Using ${msg.text}` : 'Working';
+      updateThinkingBubble(name, verb, msg.detail || null);
+      break;
+    }
+    case 'progress':
+      markTurnActivity(name);
+      if (msg.text) setThinkingMilestone(name, msg.text);
+      break;
+    case 'reasoning':
+      markTurnActivity(name);
+      if (msg.text) pushReasoning(name, msg.text);
+      break;
+    case 'done':
+      endAgentTurn(name);
+      // A tool-heavy turn is the design's first heuristic signal — worth
+      // offering to keep. Never fires for /learn's own turn: the review pass
+      // uses one restricted tool at most.
+      if (learnTurnToolCount >= LEARN_NUDGE_MIN_TOOLS && roomAutoLearn.get(currentRoom) !== true) showLearnNudge();
+      learnTurnToolCount = 0;
+      break;
+    case 'stalled':
+      endAgentTurn(name);
+      appendSystem(msg.text || 'The agent stopped responding. You may want to resend your message.');
+      break;
+  }
+}
+
+// ── Turn liveness ─────────────────────────────────────────────────────────
+// The thinking bubble is tied to the actual turn lifecycle (start → done/
+// stalled), NOT the heartbeat-driven typing signal — so it stays up through
+// long quiet operations and only clears on a real terminal signal. While a
+// turn is active an elapsed counter ticks so liveness is always explicit.
+// Per-agent turn state lives ON each bubble element (._turn = {startedAt,
+// lastActivityAt, reasoningLog}), keyed by agent name (data-agent). A
+// multi-agent room shows one bubble per agent instead of interleaving everyone's
+// activity into one; a single-agent room is unchanged. One shared ticker updates
+// every live bubble's elapsed counter.
+const TURN_QUIET_MS = 5000; // after this much silence, say "still working"
+const REASONING_LOG_MAX = 500; // cap a single agent's retained reasoning lines
+let turnElapsedTimer = null;
+
+// Selector-safe lookup of a specific agent's bubble.
+function bubbleFor(name) {
+  const k = window.CSS && CSS.escape ? CSS.escape(name || 'Agent') : name || 'Agent';
+  return $(`#messages .thinking-bubble[data-agent="${k}"]`);
+}
+function ensureElapsedTimer() {
+  if (!turnElapsedTimer) turnElapsedTimer = setInterval(updateTurnElapsed, 1000);
+}
+
+function beginAgentTurn(name) {
+  const bubble = ensureThinkingBubble(name);
+  bubble._turn = { startedAt: Date.now(), lastActivityAt: Date.now(), reasoningLog: [] };
+  // Mark the bubble as owned by an active status turn so the typing-heartbeat
+  // path won't remove it during a quiet stretch; cleared by removal on 'done'.
+  bubble.dataset.statusLive = '1';
+  ensureElapsedTimer();
+  updateTurnElapsed();
+  return bubble;
+}
+
+function endAgentTurn(name) {
+  const bubble = bubbleFor(name);
+  if (bubble) bubble.remove();
+  if (turnElapsedTimer && !$('#messages .thinking-bubble')) {
+    clearInterval(turnElapsedTimer);
+    turnElapsedTimer = null;
+  }
+}
+
+// Remove every agent's bubble (room switch / reset).
+function endAllAgentTurns() {
+  for (const b of document.querySelectorAll('#messages .thinking-bubble')) b.remove();
+  if (turnElapsedTimer) {
+    clearInterval(turnElapsedTimer);
+    turnElapsedTimer = null;
+  }
+}
+
+function markTurnActivity(name) {
+  const bubble = bubbleFor(name);
+  if (bubble && bubble._turn) bubble._turn.lastActivityAt = Date.now();
+}
+
+function updateTurnElapsed() {
+  let any = false;
+  for (const bubble of document.querySelectorAll('#messages .thinking-bubble')) {
+    any = true;
+    const t = bubble._turn;
+    const el = bubble.querySelector('.thinking-elapsed');
+    if (!t || !el) continue;
+    const secs = Math.floor((Date.now() - t.startedAt) / 1000);
+    if (secs < 2) {
+      el.textContent = '';
+      continue;
+    }
+    const quiet = Date.now() - t.lastActivityAt > TURN_QUIET_MS;
+    el.textContent = quiet ? ` · still working ${secs}s` : ` · ${secs}s`;
+  }
+  if (!any && turnElapsedTimer) {
+    clearInterval(turnElapsedTimer);
+    turnElapsedTimer = null;
+  }
+}
+
+const THINKING_DETAIL_MAX = 64;
+
+// Interrupt ONE agent's in-progress turn (per-agent Stop) — sends a "stop" over
+// the WS targeting that agent (the host resolves the name to its session). The
+// GUI equivalent of the CLI's ESC. Removes that agent's bubble optimistically;
+// the host's stream-abort + 'done' keep it gone.
+function interruptAgent(name) {
+  if (!currentRoom || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'interrupt', room_id: currentRoom, agent_name: name || null }));
+  endAgentTurn(name);
+  appendSystem(name ? `Stopped ${name}.` : 'Stopped.');
+}
+
+// Ensure the thinking bubble exists and is laid out with: a verb in the sender
+// line, a target line (the file/command/query), a milestone line (latest
+// progress), and the animated dots. Shared with the heartbeat typing path —
+// both create-or-reuse the single `.thinking-bubble`, so activity persists
+// through the turn and clears when the agent's message lands.
+function ensureThinkingBubble(name) {
+  const key = name || agentName || 'Agent';
+  let bubble = bubbleFor(key);
+  if (bubble) return bubble;
+  // Same shouldScroll formula as the 'message' handler — honors forceScrollCount
+  // so the bubble follows even when a smooth scroll is still mid-animation.
+  const shouldScroll = isNearBottom() || (forceScrollCount > 0 && !userScrolledAway);
+  bubble = document.createElement('div');
+  bubble.className = 'msg agent thinking-bubble';
+  bubble.dataset.agent = key; // one bubble per agent, keyed by name
+  bubble._turn = { startedAt: Date.now(), lastActivityAt: Date.now(), reasoningLog: [] };
+  // Sender line: icon + "{agent} — " + a verb span (refined by tool events) +
+  // an elapsed span (ticked while the turn is active). Verb/elapsed live in
+  // their own spans so each updates without clobbering the other.
+  const sender = document.createElement('div');
+  sender.className = 'sender';
+  sender.appendChild(lucideEl('bot'));
+  sender.appendChild(document.createTextNode(` ${key} — `));
+  const verb = document.createElement('span');
+  verb.className = 'thinking-verb';
+  verb.textContent = 'Thinking';
+  sender.appendChild(verb);
+  const elapsed = document.createElement('span');
+  elapsed.className = 'thinking-elapsed';
+  sender.appendChild(elapsed);
+  // Chevron affordance — the bubble is click-to-expand into the full trace.
+  const chevron = document.createElement('span');
+  chevron.className = 'thinking-chevron';
+  chevron.appendChild(lucideEl('chevron-right'));
+  sender.appendChild(chevron);
+  // Stop button — interrupt the in-progress turn (the GUI equivalent of CLI ESC).
+  // stopPropagation so it doesn't also fire the bubble's expand-toggle handler.
+  const stop = document.createElement('button');
+  stop.type = 'button';
+  stop.className = 'thinking-stop';
+  stop.title = 'Stop the agent';
+  stop.setAttribute('aria-label', 'Stop the agent');
+  stop.innerHTML = '<span class="stop-square" aria-hidden="true"></span>Stop';
+  stop.addEventListener('click', (e) => {
+    e.stopPropagation();
+    interruptAgent(key);
+  });
+  sender.appendChild(stop);
+  bubble.appendChild(sender);
+  const content = document.createElement('div');
+  content.className = 'bubble';
+  // .thinking-feed = compact fading window (collapsed view); .thinking-fulltrace
+  // = the whole turn's reasoning, scrollable (expanded view). CSS swaps them on
+  // the bubble's .expanded class.
+  content.innerHTML =
+    '<div class="thinking-milestone" hidden></div>' +
+    '<div class="thinking-target" hidden></div>' +
+    '<div class="thinking-feed" hidden></div>' +
+    '<div class="thinking-fulltrace"></div>' +
+    '<span class="dots"><span></span><span></span><span></span></span>';
+  bubble.appendChild(content);
+  // Click toggles the full reasoning trace. Ignore clicks on links/buttons so
+  // selecting text or tapping a link inside doesn't toggle.
+  bubble.addEventListener('click', (e) => {
+    if (e.target.closest('a, button')) return;
+    toggleThinkingExpanded(bubble);
+  });
+  $('#messages').appendChild(bubble);
+  if (shouldScroll) scrollToBottom();
+  return bubble;
+}
+
+// Toggle the bubble between the compact fading feed and the full scrollable
+// reasoning trace. Rebuilds the trace from reasoningLog on expand so it always
+// reflects everything captured this turn.
+function toggleThinkingExpanded(bubble) {
+  const expanded = bubble.classList.toggle('expanded');
+  if (expanded) renderFullTrace(bubble);
+}
+
+function renderFullTrace(bubble) {
+  const el = bubble.querySelector('.thinking-fulltrace');
+  if (!el) return;
+  const log = (bubble._turn && bubble._turn.reasoningLog) || [];
+  if (log.length === 0) {
+    el.textContent = 'No reasoning captured for this turn yet.';
+  } else {
+    el.textContent = '';
+    for (const line of log) {
+      const row = document.createElement('div');
+      row.className = 'thinking-fulltrace-line';
+      row.textContent = line;
+      el.appendChild(row);
+    }
+  }
+  el.scrollTop = el.scrollHeight;
+}
+
+function updateThinkingBubble(name, label, detail) {
+  const bubble = ensureThinkingBubble(name);
+  const verbEl = bubble.querySelector('.thinking-verb');
+  if (verbEl) verbEl.textContent = label;
+  const target = bubble.querySelector('.thinking-target');
+  if (target) {
+    if (detail) {
+      const trimmed = detail.length > THINKING_DETAIL_MAX ? `${detail.slice(0, THINKING_DETAIL_MAX - 1)}…` : detail;
+      target.textContent = trimmed;
+      target.hidden = false;
+    } else {
+      target.hidden = true;
+    }
+  }
+}
+
+function setThinkingMilestone(name, text) {
+  const bubble = ensureThinkingBubble(name);
+  const el = bubble.querySelector('.thinking-milestone');
+  if (el) {
+    el.textContent = text;
+    el.hidden = false;
+  }
+}
+
+const REASONING_FEED_BUFFER = 40; // max lines kept in the DOM (scroll history)
+const REASONING_FEED_TTL = 7000; // ms a line lingers before it fades out
+const REASONING_FADE_MS = 500; // fade-out transition duration (matches CSS)
+
+// Append one reasoning line to the bubble's feed. The feed is a fixed-height
+// window (CSS max-height + overflow): new lines land at the bottom and the
+// window auto-scrolls to follow, so longer reasoning scrolls upward and fades
+// under the top gradient mask. Each line also self-fades after REASONING_FEED_TTL
+// so the feed drains when reasoning pauses; the whole thing clears with the
+// bubble when the agent's message lands. A bounded DOM buffer caps memory.
+function pushReasoning(name, text) {
+  const bubble = ensureThinkingBubble(name);
+  if (!bubble._turn) bubble._turn = { startedAt: Date.now(), lastActivityAt: Date.now(), reasoningLog: [] };
+
+  // Retain the full line for the click-to-expand view and the reply disclosure.
+  bubble._turn.reasoningLog.push(text);
+  if (bubble._turn.reasoningLog.length > REASONING_LOG_MAX) bubble._turn.reasoningLog.shift();
+  // If the user is currently viewing the expanded trace, keep it live.
+  if (bubble.classList.contains('expanded')) renderFullTrace(bubble);
+
+  const feed = bubble.querySelector('.thinking-feed');
+  if (!feed) return;
+  feed.hidden = false;
+
+  const line = document.createElement('div');
+  line.className = 'thinking-feed-line';
+  line.textContent = text;
+  feed.appendChild(line);
+
+  // Trim the DOM buffer — drop the oldest (already scrolled out of view),
+  // cancelling its pending fade timer so it can't fire after removal.
+  while (feed.children.length > REASONING_FEED_BUFFER) {
+    const oldest = feed.firstChild;
+    if (oldest._fadeTimer) clearTimeout(oldest._fadeTimer);
+    feed.removeChild(oldest);
+  }
+
+  // Follow the newest line within the feed's own scroll viewport.
+  feed.scrollTop = feed.scrollHeight;
+
+  line._fadeTimer = setTimeout(() => {
+    line.classList.add('fading');
+    setTimeout(() => {
+      line.remove();
+      if (feed.children.length === 0) feed.hidden = true;
+    }, REASONING_FADE_MS);
+  }, REASONING_FEED_TTL);
+
+  const shouldScroll = isNearBottom() || (forceScrollCount > 0 && !userScrolledAway);
+  if (shouldScroll) scrollToBottom();
+}
+
+// ── Typing send (debounced) ───────────────────────────────────────────────
+let typingTimeout = null;
+let isTyping = false;
+
+$('#message-input').addEventListener('input', function () {
+  updateSlashMenu(); // slash-command autocomplete
+  // Auto-grow textarea — only resize when content overflows or shrinks
+  const prevH = this._prevScrollHeight || this.clientHeight;
+  if (this.scrollHeight > this.clientHeight || this.scrollHeight < prevH) {
+    this.style.height = '0';
+    this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+  }
+  this._prevScrollHeight = this.scrollHeight;
+  if (!currentRoom || !ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!isTyping) {
+    isTyping = true;
+    ws.send(JSON.stringify({ type: 'typing', is_typing: true }));
+  }
+  clearTimeout(typingTimeout);
+  typingTimeout = setTimeout(() => {
+    isTyping = false;
+    ws.send(JSON.stringify({ type: 'typing', is_typing: false }));
+  }, 2000);
+});
+
+$('#message-form').addEventListener('submit', () => {
+  if (isTyping) {
+    isTyping = false;
+    clearTimeout(typingTimeout);
+    ws.send(JSON.stringify({ type: 'typing', is_typing: false }));
+  }
+});
+
+// ── File upload (drag-drop, paste, picker) ────────────────────────────────
+const messagesEl = $('#messages');
+
+messagesEl.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  messagesEl.classList.add('drag-over');
+});
+messagesEl.addEventListener('dragleave', () => {
+  messagesEl.classList.remove('drag-over');
+});
+messagesEl.addEventListener('drop', (e) => {
+  e.preventDefault();
+  messagesEl.classList.remove('drag-over');
+  if (e.dataTransfer.files.length > 0) stageFiles(e.dataTransfer.files);
+});
+
+document.addEventListener('paste', (e) => {
+  if (!currentRoom) return;
+  const files = [...(e.clipboardData?.files || [])];
+  if (files.length > 0) {
+    e.preventDefault();
+    stageFiles(files);
+  }
+});
+
+// Multi-line pastes → fenced code block. Pasted code/errors otherwise render as
+// Markdown (backticks/asterisks/# reformat; stray @handles chip). Wrapping in a
+// fence renders them verbatim — monospace + copy button — and suppresses BOTH
+// Markdown and mention decoration inside (decorateMentions skips <pre>/<code>),
+// while typed @mentions OUTSIDE the block keep working. Single-line pastes stay
+// inline; Ctrl/Cmd+Z reverts the wrap in one step. Files are handled above.
+$('#message-input').addEventListener('paste', (e) => {
+  if (e.clipboardData?.files?.length) return; // images/files handled by the document listener
+  const text = e.clipboardData?.getData('text/plain') ?? '';
+  if (!text.includes('\n')) return; // single-line pastes stay inline
+  e.preventDefault();
+  const input = e.currentTarget;
+  // Fence must be longer than any backtick run inside so nested ``` survive.
+  const longestTicks = (text.match(/`+/g) || []).reduce((m, r) => Math.max(m, r.length), 0);
+  const fence = '`'.repeat(Math.max(3, longestTicks + 1));
+  const before = input.value.slice(0, input.selectionStart);
+  const lead = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
+  const body = text.replace(/\n+$/, ''); // trim trailing blank lines inside the block
+  const insert = `${lead}${fence}\n${body}\n${fence}\n`;
+  // execCommand keeps the native undo stack so Ctrl/Cmd+Z reverts the wrap; fall
+  // back to setRangeText only if it genuinely didn't insert (value unchanged).
+  const valBefore = input.value;
+  document.execCommand('insertText', false, insert);
+  if (input.value === valBefore) {
+    input.setRangeText(insert, input.selectionStart, input.selectionEnd, 'end');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+});
+
+$('#file-picker').addEventListener('click', () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.multiple = true;
+  input.addEventListener('change', () => {
+    if (input.files.length > 0) stageFiles(input.files);
+  });
+  input.click();
+});
+
+$('#camera-btn').addEventListener('click', () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.capture = 'environment';
+  input.addEventListener('change', () => {
+    if (input.files.length > 0) stageFile(input.files[0]);
+  });
+  input.click();
+});
+
+// ── App badge (unread counter) ───────────────────────────────────────────
+async function clearBadgeCount() {
+  try {
+    const db = await new Promise((resolve, reject) => {
+      const r = indexedDB.open('nanoclaw-badge', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('state');
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    await new Promise((resolve) => {
+      const tx = db.transaction('state', 'readwrite');
+      tx.objectStore('state').put(0, 'count');
+      tx.oncomplete = () => resolve();
+    });
+  } catch {
+    /* ignore */
+  }
+  if ('clearAppBadge' in navigator) {
+    try {
+      await navigator.clearAppBadge();
+    } catch {}
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) clearBadgeCount();
+});
+if (!document.hidden) clearBadgeCount();
+
+// ── Init ──────────────────────────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  let swReg = null;
+  const checkForUpdate = () => swReg && swReg.update().catch(() => {});
+  navigator.serviceWorker.register('/sw.js').then((reg) => {
+    // reg can be undefined in environments that block service workers
+    // (automation, some embedded webviews).
+    if (!reg) return;
+    swReg = reg;
+    // Check immediately, then every 60s. The interval is frozen while the PWA
+    // is backgrounded (especially on iOS), so the foreground re-check below is
+    // what actually catches a new build on relaunch — without it a stale shell
+    // (e.g. a login screen for a retired bearer token) can render and just sit
+    // there versions behind.
+    reg.update().catch(() => {});
+    setInterval(checkForUpdate, 60000);
+    // A worker reaching 'installed' while one already controls the page is a
+    // staged update. skipWaiting makes it self-activate → controllerchange →
+    // tryReload; wire the banner here too so we never wait on that event.
+    reg.addEventListener('updatefound', () => {
+      const nw = reg.installing;
+      if (nw)
+        nw.addEventListener('statechange', () => {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller) tryReload();
+        });
+    });
+  });
+
+  // Reload when a new service worker takes over.
+  // Don't yank the user mid-message: if there's text in the input, a staged
+  // file, or the tab is currently visible-and-interactive, defer the reload
+  // until the next time the tab is hidden. (`visibilitychange` to hidden →
+  // user switched away → safe to reload.)
+  let refreshing = false;
+  let reloadPending = false;
+  function safeToReload() {
+    const input = document.getElementById('message-input');
+    const hasDraft = input && input.value.trim().length > 0;
+    // pendingFiles is the module-scoped staged-files array.
+    const hasStagedFile = Array.isArray(pendingFiles) && pendingFiles.length > 0;
+    if (hasDraft || hasStagedFile) return false;
+    // On the login screen there's no in-app work to lose, so reload straight
+    // away instead of waiting for the tab to hide — this is exactly the stuck
+    // case (a stale PWA showing a retired-token prompt): the fresh build then
+    // auto-signs-in via Tailscale. Only hold off if a token is mid-entry.
+    const loginScreen = document.getElementById('login-screen');
+    const tokenField = document.getElementById('login-token');
+    const onLogin = loginScreen && !loginScreen.hidden;
+    const typingToken = tokenField && tokenField.value.trim().length > 0;
+    if (onLogin && !typingToken) return true;
+    return document.hidden;
+  }
+  function tryReload() {
+    if (refreshing) return;
+    if (safeToReload()) {
+      refreshing = true;
+      location.reload();
+    } else {
+      // Silent deferral was invisible on mobile: the tab is always visible in
+      // use, and iOS freezes JS on background so the hidden-tab reload often
+      // never fires — clients sat versions behind with no signal. Surface an
+      // actionable banner instead; the hidden-tab auto-reload path still runs.
+      reloadPending = true;
+      showUpdateBanner();
+    }
+  }
+  function showUpdateBanner() {
+    if (document.getElementById('update-banner')) return;
+    const b = document.createElement('button');
+    b.id = 'update-banner';
+    b.type = 'button';
+    b.className = 'update-banner';
+    b.textContent = 'A new version is ready — tap to refresh';
+    b.addEventListener('click', () => {
+      refreshing = true;
+      location.reload();
+    });
+    document.body.appendChild(b);
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (reloadPending) tryReload();
+    } else {
+      // Foregrounded — the 60s interval was frozen while backgrounded, so this
+      // is when a relaunched PWA must re-check for a new build.
+      checkForUpdate();
+    }
+  });
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    tryReload();
+  });
+
+  // Navigate to a room when the SW (notification click) asks us to.
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data && e.data.type === 'open-room' && e.data.roomId) {
+      const agent = allAgents.find((b) => b.room_id === e.data.roomId);
+      joinRoom(e.data.roomId, agent?.name || e.data.roomId);
+    }
+  });
+
+  // Cold launch from notification (?room=...) — open that room after init.
+  const params = new URLSearchParams(location.search);
+  const coldRoom = params.get('room');
+  if (coldRoom) {
+    const tryJoin = () => {
+      const agent = allAgents.find((b) => b.room_id === coldRoom);
+      if (allAgents.length) joinRoom(coldRoom, agent?.name || coldRoom);
+      else setTimeout(tryJoin, 200);
+    };
+    tryJoin();
+  }
+}
+
+// ── Models ─────────────────────────────────────────────────────────────────
+//
+// Sidebar tab + create/edit/delete + per-agent assignment dropdown. Mirrors
+// the agents tab shape. Models are skill-owned (webchat_models) and the
+// assignment-to-agent flows through PUT /api/agents/:id/model, which the
+// host turns into per-agent settings.json env overrides on next spawn.
+
+let allModels = [];
+let selectedModelId = null;
+
+async function fetchModels() {
+  try {
+    const res = await authFetch('/api/models');
+    allModels = await res.json();
+    renderModels();
+    loadOllamaHosts();
+  } catch (err) {
+    console.error('Failed to fetch models:', err);
+  }
+}
+
+// ── Servers & selection (owner-only; hidden entirely for non-owners) ──
+// One mental model: SERVERS (Ollama hosts + the LiteLLM router) each list
+// what they serve; +/− on a server row adds/removes that model from the
+// SELECTABLE list at the top (what agent settings offers). Server rows are
+// never clickable-for-detail — only selectable-list rows are. Everything
+// renders in one pass from loadServers() so sections can't race each other.
+let ollamaPullPoller = null;
+
+async function loadOllamaHosts() {
+  const wrap = $('#ollama-hosts');
+  if (!wrap) return;
+  // Learn the routing classifier id before host models render so it sections
+  // into "System" rather than flashing as a selectable "+".
+  if (routingClassifierModel === null) await probeRoutingAvailability();
+  try {
+    const hostsRes = await authFetch('/api/ollama/hosts');
+    if (!hostsRes.ok) {
+      wrap.hidden = true; // non-owner
+      return;
+    }
+    const { hosts } = await hostsRes.json();
+    wrap.hidden = hosts.length === 0;
+    if (wrap.hidden) return;
+    const cards = $('#ollama-host-cards');
+    cards.innerHTML = '';
+    for (const host of hosts) {
+      cards.appendChild(buildOllamaHostCard(host));
+      loadOllamaHostModels(host);
+    }
+    pollOllamaPulls(); // pick up any pull still running from a previous visit
+  } catch (err) {
+    console.error('Failed to load servers:', err);
+    wrap.hidden = true;
+  }
+}
+
+function ollamaCardId(host) {
+  return 'ollama-card-' + host.replace(/[^a-z0-9]/gi, '-');
+}
+
+// The selectable-list entry a server row corresponds to, if any.
+function findSelectable(kind, endpoint, modelId) {
+  const norm = (e) => (e || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  return allModels.find((r) => {
+    if (r.model_id !== modelId) return false;
+    if (kind === 'ollama') return r.kind === 'ollama' && norm(r.endpoint) === norm(endpoint);
+    // Router rows: any openai-compatible registration pointing at the router,
+    // whichever host form an older registration used (127.0.0.1 vs
+    // host.docker.internal, with or without /v1). Port 4000 is LiteLLM's
+    // /add-litellm default — mirrored in ollama-manage.ts and bind-routes.mjs.
+    return r.kind === 'openai-compatible' && /:4000(\/v1)?$/.test(norm(r.endpoint));
+  });
+}
+
+// The +/− control every server row carries. Adding registers the model as a
+// selectable (kind decided by the server type); removing deletes the
+// selectable — refused with names when agents are assigned to it.
+function buildSelectToggle(kind, endpoint, modelId, displayName) {
+  const existing = findSelectable(kind, endpoint, modelId);
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn btn-ghost select-toggle' + (existing ? ' on' : '');
+  btn.textContent = existing ? '−' : '+';
+  btn.title = existing ? 'Remove from selectable models' : 'Add to selectable models';
+  btn.setAttribute('aria-label', btn.title);
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      if (existing) {
+        const r = await authFetch('/api/models/' + encodeURIComponent(existing.id), { method: 'DELETE' });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          const who = (existing.agents || []).map((a) => a.name).join(', ');
+          throw new Error(who ? 'in use by ' + who + ' — unassign first' : body.error || r.status);
+        }
+        showToast('Removed from selectable models');
+      } else {
+        const r = await authFetch('/api/models', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: displayName, kind, endpoint, model_id: modelId }),
+        });
+        if (!r.ok) throw new Error((await r.json()).error || r.status);
+        showToast('Added to selectable models', { kind: 'success' });
+      }
+      await fetchModels(); // one pass re-renders selection AND servers
+      if (!$('#mtab-routing').hidden) renderRouterRoster(); // keep the Routing tab's roster in sync
+    } catch (err) {
+      showToast(String(err.message || err), { kind: 'error' });
+      btn.disabled = false;
+    }
+  });
+  return btn;
+}
+
+// Accordion state per server card, remembered across visits.
+function cardOpen(key) {
+  return localStorage.getItem('serverCardOpen:' + key) === '1';
+}
+function setCardOpen(key, open) {
+  localStorage.setItem('serverCardOpen:' + key, open ? '1' : '0');
+}
+// Collapsible card chrome: chevron + clickable header + a body wrapper that
+// hides when collapsed. Returns the body element to append content into.
+function makeCardAccordion(card, head, key, summaryEl) {
+  const chev = document.createElement('span');
+  chev.className = 'ollama-card-chevron';
+  chev.textContent = '\u203a';
+  head.prepend(chev);
+  const body = document.createElement('div');
+  card.appendChild(body);
+  const apply = () => {
+    const open = cardOpen(key);
+    body.hidden = !open;
+    if (summaryEl) summaryEl.hidden = open;
+    chev.classList.toggle('open', open);
+  };
+  head.classList.add('clickable');
+  head.setAttribute('role', 'button');
+  head.setAttribute('tabindex', '0');
+  head.addEventListener('click', (e) => {
+    if (e.target.closest('button')) return; // card actions keep working
+    setCardOpen(key, !cardOpen(key));
+    apply();
+  });
+  apply();
+  return body;
+}
+
+function buildOllamaHostCard(host) {
+  const card = document.createElement('div');
+  card.className = 'ollama-host-card';
+  card.id = ollamaCardId(host);
+  card.dataset.host = host;
+
+  const head = document.createElement('div');
+  head.className = 'ollama-host-head';
+  const label = document.createElement('span');
+  label.className = 'ollama-host-name';
+  label.textContent = host.replace(/^https?:\/\//, '');
+  head.appendChild(label);
+  const summary = document.createElement('span');
+  summary.className = 'ollama-card-summary';
+  summary.textContent = '…';
+  head.appendChild(summary);
+  card.appendChild(head);
+  const body = makeCardAccordion(card, head, host, summary);
+  card._summary = summary;
+
+  const ul = document.createElement('ul');
+  ul.className = 'ollama-model-list';
+  ul.innerHTML = '<li class="ollama-muted">Loading…</li>';
+  body.appendChild(ul);
+
+  const pullRow = document.createElement('div');
+  pullRow.className = 'ollama-pull-row';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.placeholder = 'Model to pull, e.g. qwen3.5:4b…';
+  input.className = 'ollama-pull-input';
+  const btn = document.createElement('button');
+  btn.className = 'btn btn-secondary';
+  btn.type = 'button';
+  btn.textContent = 'Pull';
+  btn.addEventListener('click', () => startOllamaPull(host, input.value.trim(), input, btn));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') startOllamaPull(host, input.value.trim(), input, btn);
+  });
+  pullRow.appendChild(input);
+  pullRow.appendChild(btn);
+  body.appendChild(pullRow);
+
+  const progress = document.createElement('div');
+  progress.className = 'ollama-pull-status';
+  progress.hidden = true;
+  card.appendChild(progress); // outside the body: pull progress stays visible collapsed
+
+  return card;
+}
+
+async function loadOllamaHostModels(host) {
+  const card = document.getElementById(ollamaCardId(host));
+  if (!card) return;
+  const ul = card.querySelector('.ollama-model-list');
+  try {
+    const res = await authFetch('/api/ollama/models?host=' + encodeURIComponent(host));
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || res.status);
+    ul.innerHTML = '';
+    const sum = card._summary;
+    if (sum) sum.textContent = body.models.length + ' model' + (body.models.length === 1 ? '' : 's');
+    if (body.models.length === 0) {
+      ul.innerHTML = '<li class="ollama-muted">No models installed</li>';
+      return;
+    }
+    const buildModelRow = (m, selectable) => {
+      const li = document.createElement('li');
+      const name = document.createElement('span');
+      name.className = 'ollama-model-name';
+      name.textContent = m.name;
+      li.appendChild(name);
+      const meta = document.createElement('span');
+      meta.className = 'ollama-model-meta';
+      meta.textContent = (m.size / 1e9).toFixed(1) + ' GB';
+      li.appendChild(meta);
+      if (m.loaded) {
+        const badge = document.createElement('span');
+        badge.className = 'ollama-loaded-badge';
+        badge.textContent = 'in memory';
+        badge.title = (m.size_vram / 1e9).toFixed(1) + ' GB in VRAM';
+        li.appendChild(badge);
+      }
+      if (selectable) {
+        li.appendChild(buildSelectToggle('ollama', host, m.name, m.name));
+      } else {
+        const tag = document.createElement('span');
+        tag.className = 'ollama-model-systag';
+        tag.textContent = 'classifier';
+        tag.title = 'Auto-routing classifier — infrastructure, not selectable as an agent model';
+        li.appendChild(tag);
+      }
+      ul.appendChild(li);
+    };
+    // The routing classifier is a model on the host but not an agent model — list
+    // it in a separate, non-selectable "System" group rather than offering a "+"
+    // that would register infrastructure as a selectable chat model.
+    const isClassifier = (m) => routingClassifierModel && m.name === routingClassifierModel;
+    const selectableModels = body.models.filter((m) => !isClassifier(m));
+    const systemModels = body.models.filter(isClassifier);
+    for (const m of selectableModels) buildModelRow(m, true);
+    if (systemModels.length) {
+      const head = document.createElement('li');
+      head.className = 'ollama-model-sysheading';
+      head.textContent = 'System — not selectable';
+      ul.appendChild(head);
+      for (const m of systemModels) buildModelRow(m, false);
+    }
+  } catch (err) {
+    ul.innerHTML = '';
+    const li = document.createElement('li');
+    li.className = 'ollama-muted';
+    li.textContent = 'Unreachable: ' + err.message;
+    ul.appendChild(li);
+  }
+}
+
+async function startOllamaPull(host, model, input, btn) {
+  if (!model) return;
+  btn.disabled = true;
+  try {
+    const res = await authFetch('/api/ollama/pull', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, model }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || res.status);
+    input.value = '';
+    pollOllamaPulls();
+  } catch (err) {
+    showToast('Pull failed to start: ' + err.message, { kind: 'error' });
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderOllamaPulls(pulls) {
+  for (const job of pulls) {
+    const card = document.getElementById(ollamaCardId(job.host));
+    if (!card) continue;
+    const box = card.querySelector('.ollama-pull-status');
+    box.hidden = false;
+    const pct = job.total > 0 ? Math.min(100, Math.round((100 * job.completed) / job.total)) : 0;
+    if (job.status === 'pulling') {
+      box.innerHTML =
+        '<div class="ollama-pull-line">Pulling ' + job.model + ' — ' + job.detail + '</div>' +
+        '<div class="ollama-pull-bar"><span style="width:' + pct + '%"></span></div>';
+    } else if (job.status === 'success') {
+      box.innerHTML = '<div class="ollama-pull-line ok">Pulled ' + job.model + '</div>';
+    } else {
+      box.innerHTML = '<div class="ollama-pull-line err">Pull of ' + job.model + ' failed: ' + (job.error || '') + '</div>';
+    }
+    if (job.status !== 'pulling' && !box.dataset['done_' + job.model]) {
+      box.dataset['done_' + job.model] = '1';
+      if (job.status === 'success') {
+        showToast('Pulled ' + job.model, { kind: 'success' });
+        loadOllamaHostModels(job.host);
+      }
+    }
+  }
+}
+
+async function pollOllamaPulls() {
+  if (ollamaPullPoller) return; // one poller
+  const tick = async () => {
+    try {
+      const res = await authFetch('/api/ollama/pulls');
+      if (!res.ok) throw new Error(res.status);
+      const { pulls } = await res.json();
+      renderOllamaPulls(pulls);
+      if (pulls.some((p) => p.status === 'pulling')) {
+        ollamaPullPoller = setTimeout(tick, 1500);
+      } else {
+        ollamaPullPoller = null;
+      }
+    } catch {
+      ollamaPullPoller = null;
+    }
+  };
+  ollamaPullPoller = setTimeout(tick, 0);
+}
+
+// ── Routing aside: routes editor + test bench + recent decisions ─────────
+// Opened from the router server card. Edits write routes.json through the
+// server (validated); the hook re-reads per request, so Save is immediate.
+let routingDraft = null; // {routes:[...], live:{...}, default_route}
+let routingRouterInfo = null; // {endpoint, models} — for the Router models section
+let routingAvailable = false;
+let routingClassifierModel = null; // classifier model id (infra — never selectable)
+
+// The Routing tab exists only when the LLM stack answers: the routing skill
+// installed (routes.json present) AND the viewer is the owner — anyone else
+// gets no tab, no menu item, no dead surface. Probed lazily, re-checked when
+// the manage view opens so installing the stack shows up without a reload.
+async function probeRoutingAvailability() {
+  try {
+    const res = await authFetch('/api/router/routes');
+    // The endpoint answers 200 either way; `installed:false` means the routing
+    // skill isn't set up (no 404 to log). Treat a missing flag as installed so
+    // an older server that still 404s degrades to res.ok.
+    const data = await res.json().catch(() => ({}));
+    routingAvailable = res.ok && data.installed !== false;
+    routingClassifierModel = data.classifier || null;
+  } catch {
+    routingAvailable = false;
+  }
+  document.querySelectorAll('.manage-tab[data-mtab="routing"], .overflow-item[data-action="routing"]').forEach((el) => {
+    el.hidden = !routingAvailable;
+  });
+  if (!routingAvailable && manageTab === 'routing') switchManageTab('agents');
+}
+
+// Which router (routing profile) the tab is currently editing. null → the
+// server picks the primary (auto).
+let routingCurrentRouter = null;
+
+async function loadRoutingTab() {
+  try {
+    const q = routingCurrentRouter ? `?router=${encodeURIComponent(routingCurrentRouter)}` : '';
+    const [routesRes, rosterRes] = await Promise.all([
+      authFetch('/api/router/routes' + q),
+      authFetch('/api/router/models'),
+    ]);
+    if (!routesRes.ok) throw new Error((await routesRes.json()).error || routesRes.status);
+    routingDraft = await routesRes.json();
+    routingCurrentRouter = routingDraft.router ?? null; // the server tells us which it returned
+    routingRouterInfo = rosterRes.ok ? await rosterRes.json() : null;
+  } catch (err) {
+    showToast('Auto routing config unavailable: ' + err.message, { kind: 'error' });
+    return;
+  }
+  if (allModels.length === 0) await fetchModels(); // ± states need the registry
+  renderRouterPicker();
+  renderRouteList();
+  renderRouterRoster();
+  renderRouteSuggestions();
+  if (routingSubtab === 'logs') refreshRoutingDecisions();
+  $('#routing-bench-result').hidden = true;
+  $('#routing-bench-result-log').hidden = true;
+}
+
+// The router (profile) picker: a dropdown of all routers + new/delete. Shown
+// only when the config exposes a routers list (multi-router aware). Switching
+// reloads the tab for the selected router.
+function renderRouterPicker() {
+  const sel = $('#router-select');
+  const names = routingDraft?.routers ?? [routingCurrentRouter ?? 'auto'];
+  const picker = $('#router-picker');
+  // With a single router the picker is redundant — hide it until there's a choice.
+  picker.hidden = names.length <= 1;
+  sel.innerHTML = '';
+  for (const n of names) {
+    const o = document.createElement('option');
+    o.value = n;
+    o.textContent = n;
+    if (n === routingCurrentRouter) o.selected = true;
+    sel.appendChild(o);
+  }
+  $('#router-delete-btn').disabled = names.length <= 1;
+
+  void updateRoutingIntro();
+}
+
+// DESIGN.md §6 (prose budget): the intro is a PREREQUISITE hint, so it only
+// exists while the prerequisite is unmet — no agent routes through this
+// profile yet. Once the router's model is assigned somewhere, the line goes
+// away; the controls explain themselves.
+async function updateRoutingIntro() {
+  const intro = $('#routing-intro');
+  if (intro) intro.hidden = true;
+}
+
+$('#router-select')?.addEventListener('change', (e) => {
+  routingCurrentRouter = e.target.value;
+  loadRoutingTab();
+});
+
+$('#router-new-btn')?.addEventListener('click', async () => {
+  const name = await showInputModal({
+    title: 'New routing profile',
+    placeholder: 'letters, digits, dash',
+  });
+  if (!name) return;
+  try {
+    const res = await authFetch('/api/router/routers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, target }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || res.status);
+    routingCurrentRouter = name; // clone of the current profile; edit from here
+    showToast(`Created routing profile "${name}" (cloned)`, { kind: 'success' });
+    await fetchModels(); // the new router auto-registered as a model
+    loadRoutingTab();
+  } catch (err) {
+    showToast('Could not create profile: ' + err.message, { kind: 'error' });
+  }
+});
+
+$('#router-delete-btn')?.addEventListener('click', async () => {
+  const name = routingCurrentRouter;
+  if (!name) return;
+  const ok = await showConfirmModal({
+    title: 'Delete routing profile',
+    body: `Delete the "${name}" routing profile? Agents must be unassigned from it first.`,
+    confirmLabel: 'Delete',
+    destructive: true,
+  });
+  if (!ok) return;
+  try {
+    const res = await authFetch('/api/router/routers/' + encodeURIComponent(name), { method: 'DELETE' });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || res.status);
+    routingCurrentRouter = null; // fall back to primary
+    showToast(`Deleted "${name}"`);
+    await fetchModels();
+    loadRoutingTab();
+  } catch (err) {
+    showToast('Could not delete: ' + err.message, { kind: 'error' });
+  }
+});
+
+// Routing pane has three sub-tabs: Rules (bench + routes), Models (the router
+// roster with +/− select toggles + suggestions), and Logs (recent decisions).
+let routingSubtab = 'rules';
+function switchRoutingSubtab(which) {
+  routingSubtab = which;
+  document.querySelectorAll('.routing-subtab').forEach((b) => {
+    const on = b.dataset.rsub === which;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  $('#rsub-rules').hidden = which !== 'rules';
+  $('#rsub-models').hidden = which !== 'models';
+  $('#rsub-logs').hidden = which !== 'logs';
+  if (which === 'logs') refreshRoutingDecisions();
+}
+document.querySelectorAll('.routing-subtab').forEach((b) => {
+  b.addEventListener('click', () => switchRoutingSubtab(b.dataset.rsub));
+});
+
+// Router models: the LiteLLM roster with the same +/− selection controls as
+// the Ollama host cards — one row per roster model, nothing else.
+function renderRouterRoster() {
+  const list = $('#router-roster-list');
+  list.innerHTML = '';
+  if (!routingRouterInfo || routingRouterInfo.models.length === 0) {
+    list.innerHTML = '<li class="ollama-muted">Router not reachable right now…</li>';
+    return;
+  }
+  const buildRow = (id, selectable) => {
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.className = 'ollama-model-name';
+    name.textContent = id;
+    li.appendChild(name);
+    if (selectable) {
+      li.appendChild(buildSelectToggle('openai-compatible', routingRouterInfo.endpoint, id, id));
+    } else {
+      const tag = document.createElement('span');
+      tag.className = 'ollama-model-systag';
+      tag.textContent = 'classifier';
+      tag.title = 'Auto-routing classifier — infrastructure, not a selectable or route-target model';
+      li.appendChild(tag);
+    }
+    list.appendChild(li);
+  };
+  // The classifier is served by the router but is infrastructure ("never a route
+  // target") — list it under a separate, non-selectable "System" group, not with
+  // a +/− toggle among the assignable route models.
+  const isClassifier = (id) => routingClassifierModel && id === routingClassifierModel;
+  const selectable = routingRouterInfo.models.filter((id) => !isClassifier(id));
+  const system = routingRouterInfo.models.filter(isClassifier);
+  for (const id of selectable) buildRow(id, true);
+  if (system.length) {
+    const head = document.createElement('li');
+    head.className = 'ollama-model-sysheading';
+    head.textContent = 'System — not selectable';
+    list.appendChild(head);
+    for (const id of system) buildRow(id, false);
+  }
+}
+
+// A roster model may have a capability (per the routing skill's catalog) that
+// no route covers yet — e.g. adding a vision model with no vision route. Offer
+// to create the route with a default description + the best-scoring binding;
+// the operator tunes it afterward in Rules. Existing routes still auto-rebind
+// via the capability binder — this only fills GAPS.
+async function renderRouteSuggestions() {
+  const box = $('#route-suggestions');
+  if (!box) return;
+  let suggestions = [];
+  try {
+    const res = await authFetch('/api/router/suggestions');
+    if (res.ok) suggestions = (await res.json()).suggestions || [];
+  } catch {
+    /* skill not installed / router down — no suggestions */
+  }
+  box.innerHTML = '';
+  box.hidden = suggestions.length === 0;
+  for (const s of suggestions) {
+    const row = document.createElement('div');
+    row.className = 'route-suggestion';
+    const text = document.createElement('span');
+    text.className = 'route-suggestion-text';
+    text.innerHTML = `<strong>${esc(s.model)}</strong> can do <strong>${esc(s.capability)}</strong> — no route covers it yet.`;
+    row.appendChild(text);
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-secondary';
+    btn.type = 'button';
+    btn.textContent = `Create ${s.capability} route`;
+    btn.addEventListener('click', () => createRouteFromSuggestion(s, btn));
+    row.appendChild(btn);
+    box.appendChild(row);
+  }
+}
+
+async function createRouteFromSuggestion(s, btn) {
+  if (!routingDraft) return;
+  if (routingDraft.routes.some((r) => r.name === s.capability)) return; // already added
+  btn.disabled = true;
+  routingDraft.routes.push({ name: s.capability, description: s.description, model: s.model });
+  try {
+    await saveRoutingConfig();
+    showToast(`Created ${s.capability} route → ${s.model}`, { kind: 'success' });
+    renderRouteSuggestions(); // it drops off the list now that it's covered
+  } catch (err) {
+    routingDraft.routes = routingDraft.routes.filter((r) => r.name !== s.capability); // roll back
+    showToast('Could not create route: ' + err.message, { kind: 'error' });
+    btn.disabled = false;
+  }
+}
+
+// Refresh roster: run the installer chain, stream the log, then re-render.
+async function runRosterRefresh() {
+  const btn = $('#roster-refresh-btn');
+  const log = $('#roster-refresh-log');
+  btn.disabled = true;
+  log.hidden = false;
+  log.textContent = 'Starting…';
+  try {
+    const res = await authFetch('/api/router/roster-refresh', { method: 'POST' });
+    if (!res.ok) throw new Error((await res.json()).error || res.status);
+    while (true) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const st = await (await authFetch('/api/router/roster-refresh')).json();
+      log.textContent = st.lines.slice(-12).join('\n');
+      log.scrollTop = log.scrollHeight;
+      if (!st.running) {
+        if (st.exitCode === 0) {
+          showToast('Roster refreshed', { kind: 'success' });
+          setTimeout(() => { log.hidden = true; }, 4000);
+          loadRoutingTab();
+        } else {
+          showToast('Roster refresh failed — see log', { kind: 'error' });
+        }
+        break;
+      }
+    }
+  } catch (err) {
+    log.textContent = 'Refresh failed: ' + err.message;
+    showToast('Roster refresh failed', { kind: 'error' });
+  } finally {
+    btn.disabled = false;
+  }
+}
+$('#roster-refresh-btn')?.addEventListener('click', runRosterRefresh);
+
+// PUT the whole draft (routes + default + live controls) — the server
+// validates; the hook picks it up on the next request.
+async function saveRoutingConfig() {
+  const q = routingCurrentRouter ? `?router=${encodeURIComponent(routingCurrentRouter)}` : '';
+  const res = await authFetch('/api/router/routes' + q, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    // Only routes + default_route are editable in the UI. Omitting `live`
+    // leaves the server's existing live config (enabled / timeout_ms) untouched
+    // — those controls were removed from the UI (live-routing was a footgun for
+    // 'auto'-assigned agents; timeout is an install-tuning detail).
+    body: JSON.stringify({
+      routes: routingDraft.routes,
+      default_route: routingDraft.default_route,
+    }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error || res.status);
+  routingDraft = body;
+  renderRouteList();
+}
+
+let selectedRouteIdx = null;
+
+// Make a list <li> behave as a button for both pointer and keyboard users:
+// role + tabindex + click + Enter/Space. The manage-tab list rows (route /
+// model / mcp) are non-<button> elements, so without the keydown a keyboard or
+// screen-reader user can focus a row but can't open it (WCAG 2.1.1). One
+// helper so all three lists stay accessible and consistent.
+function makeRowActivatable(li, activate) {
+  li.setAttribute('role', 'button');
+  li.setAttribute('tabindex', '0');
+  li.addEventListener('click', activate);
+  li.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      activate();
+    }
+  });
+}
+
+// Same list grammar as Agents/Models/MCP: rows open a detail aside; chips
+// carry state (default / pinned / escalates); bound model rides as dim meta.
+function renderRouteList() {
+  const list = $('#route-list');
+  list.innerHTML = '';
+  if (routingDraft.routes.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'ollama-muted';
+    empty.textContent = 'No routes yet — add one, or a suggestion will offer to.';
+    list.appendChild(empty);
+    return;
+  }
+  routingDraft.routes.forEach((r, i) => {
+    const li = document.createElement('li');
+    li.classList.add('route-row');
+    if (i === selectedRouteIdx && !$('#route-detail').hidden) li.classList.add('active');
+
+    // Top line: name + state chips + bound model (the house row layout).
+    const top = document.createElement('div');
+    top.className = 'route-row-top';
+    if (r.escalate) {
+      const badge = document.createElement('span');
+      badge.className = 'model-kind-badge kind-anthropic';
+      badge.textContent = 'escalate';
+      top.appendChild(badge);
+    }
+    const name = document.createElement('span');
+    name.className = 'model-row-name';
+    name.textContent = r.name;
+    top.appendChild(name);
+    if (routingDraft.default_route === r.name) {
+      const chip = document.createElement('span');
+      chip.className = 'model-kind-badge model-default-badge';
+      chip.textContent = 'default';
+      top.appendChild(chip);
+    }
+    if (r.pinned) {
+      const chip = document.createElement('span');
+      chip.className = 'model-row-uses';
+      chip.textContent = 'pinned';
+      top.appendChild(chip);
+    }
+    if (!r.escalate) {
+      const host = document.createElement('span');
+      host.className = 'model-row-host';
+      host.textContent = r.model || '';
+      top.appendChild(host);
+    }
+    li.appendChild(top);
+
+    // Second line: the rule itself — the description the classifier matches
+    // against. Visible at a glance; click the row to edit it.
+    const desc = document.createElement('div');
+    desc.className = 'route-row-desc';
+    desc.textContent = r.description || 'No description — click to add the rule';
+    if (!r.description) desc.classList.add('empty');
+    li.appendChild(desc);
+
+    makeRowActivatable(li, () => {
+      if (selectedRouteIdx === i && !$('#route-detail').hidden) closeRouteDetail();
+      else openRouteDetail(i);
+    });
+    list.appendChild(li);
+  });
+}
+
+// selectedRouteIdx === -1 means "new route being drafted in the detail aside" —
+// nothing is added to routingDraft until Save succeeds, so cancelling leaves no
+// phantom row and a failed save doesn't strand one.
+function openRouteDetail(i) {
+  const r = routingDraft.routes[i];
+  if (!r) return;
+  selectedRouteIdx = i;
+  populateRouteDetail(r, false);
+}
+
+function openNewRouteDetail() {
+  if (!routingDraft) return;
+  selectedRouteIdx = -1;
+  populateRouteDetail({ name: '', description: '', model: (routingRouterInfo?.models ?? [])[0] || '' }, true);
+}
+
+function populateRouteDetail(r, isNew) {
+  closeModelDetail();
+  renderRouteList();
+
+  $('#route-detail-title').textContent = isNew ? 'New route' : r.name;
+  const badge = $('#route-detail-badge');
+  badge.hidden = !r.escalate;
+  if (r.escalate) {
+    badge.className = 'model-kind-badge kind-anthropic';
+    badge.textContent = 'escalate';
+  }
+  $('#route-name').value = r.name;
+  $('#route-description').value = r.description || '';
+  $('#route-binding-label').hidden = Boolean(r.escalate);
+  $('#route-escalate-note').hidden = !r.escalate;
+  if (!r.escalate) {
+    const sel = $('#route-binding');
+    sel.innerHTML = '';
+    for (const m of [...new Set([r.model, ...(routingRouterInfo?.models ?? [])])].filter(Boolean)) {
+      const o = document.createElement('option');
+      o.value = m;
+      o.textContent = m;
+      if (m === r.model) o.selected = true;
+      sel.appendChild(o);
+    }
+  }
+  const pin = $('#route-pinned');
+  pin.checked = Boolean(r.pinned);
+  pin.parentElement.hidden = Boolean(r.escalate);
+  const def = $('#route-default');
+  def.checked = routingDraft.default_route === r.name;
+  def.disabled = def.checked; // pick a new default elsewhere instead of unsetting
+  def.parentElement.hidden = Boolean(r.escalate);
+
+  $('#route-detail').hidden = false;
+  $('#members-panel').hidden = true;
+}
+
+function closeRouteDetail() {
+  $('#route-detail').hidden = true;
+  selectedRouteIdx = null;
+  if (routingDraft) renderRouteList();
+}
+$('#route-detail-close')?.addEventListener('click', closeRouteDetail);
+
+$('#route-detail-form')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const isNew = selectedRouteIdx === -1;
+  const r = isNew ? { name: '', description: '', model: '' } : routingDraft.routes[selectedRouteIdx];
+  if (!r) return;
+  const prevName = r.name;
+  r.name = $('#route-name').value.trim();
+  r.description = $('#route-description').value;
+  if (!r.escalate) {
+    r.model = $('#route-binding').value;
+    r.pinned = $('#route-pinned').checked;
+    if ($('#route-default').checked) routingDraft.default_route = r.name;
+    else if (routingDraft.default_route === prevName) routingDraft.default_route = r.name;
+  }
+  // Append a new route only now, right before the save that validates it; pop
+  // it back off on failure so the draft never keeps an unsaved/invalid row.
+  if (isNew) {
+    routingDraft.routes.push(r);
+    selectedRouteIdx = routingDraft.routes.length - 1;
+  }
+  try {
+    await saveRoutingConfig();
+    showToast('Route saved — live now', { kind: 'success' });
+    if (isNew) closeRouteDetail();
+    else $('#route-detail-title').textContent = r.name;
+  } catch (err) {
+    if (isNew) {
+      routingDraft.routes.pop();
+      selectedRouteIdx = -1;
+    }
+    showToast('Save failed: ' + err.message, { kind: 'error' });
+  }
+});
+
+$('#route-delete')?.addEventListener('click', async () => {
+  const r = routingDraft.routes[selectedRouteIdx];
+  if (!r) return;
+  // Destructive + persisted immediately — the confirm modal is universal at
+  // delete sites (DESIGN.md §5); this was the one that slipped through.
+  const ok = await showConfirmModal({
+    title: `Delete the route "${r.name || r.model || 'unnamed'}"?`,
+    confirmLabel: 'Delete',
+    destructive: true,
+  });
+  if (!ok) return;
+  routingDraft.routes.splice(selectedRouteIdx, 1);
+  try {
+    await saveRoutingConfig();
+    closeRouteDetail();
+    showToast('Route removed');
+  } catch (err) {
+    showToast('Delete failed: ' + err.message, { kind: 'error' });
+    loadRoutingTab(); // resync the draft we just mutated
+  }
+});
+
+$('#create-route-btn')?.addEventListener('click', openNewRouteDetail);
+
+// The classify bench appears at the top of both the Rules and Logs sub-tabs, so
+// tuning and log-reading each have the tester at hand. One helper, two mounts.
+async function runBench(inputEl, outEl) {
+  const prompt = inputEl.value.trim();
+  if (!prompt) return;
+  outEl.hidden = false;
+  outEl.classList.remove('err');
+  outEl.textContent = 'Classifying…';
+  try {
+    const res = await authFetch('/api/router/classify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    outEl.textContent = `→ ${body.route} · ${body.model ?? '(no binding)'} · ${body.ms} ms`;
+  } catch (err) {
+    // Errors must not read like a green success — flip to the warning colour.
+    outEl.classList.add('err');
+    outEl.textContent = 'Could not classify — ' + (err.message || 'classifier unavailable');
+  }
+}
+function wireBench(inputId, runId, outId) {
+  const input = document.getElementById(inputId);
+  const out = document.getElementById(outId);
+  if (!input || !out) return;
+  document.getElementById(runId)?.addEventListener('click', () => runBench(input, out));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') runBench(input, out);
+  });
+}
+wireBench('routing-bench-input', 'routing-bench-run', 'routing-bench-result');
+wireBench('routing-bench-input-log', 'routing-bench-run-log', 'routing-bench-result-log');
+// Startup probe (deferred so auth is settled before the first owner-gated call).
+setTimeout(probeRoutingAvailability, 3000);
+
+async function refreshRoutingDecisions() {
+  const list = $('#routing-decisions-list');
+  try {
+    // Over-fetch and filter client-side to the selected profile — the log
+    // interleaves every router's traffic. (Legacy lines with no `router` field
+    // are attributed to the primary `auto`.)
+    const res = await authFetch('/api/router/decisions?limit=60');
+    if (!res.ok) throw new Error(res.status);
+    let { decisions } = await res.json();
+    const cur = routingCurrentRouter ?? 'auto';
+    decisions = decisions.filter((d) => (d.router ?? 'auto') === cur).slice(0, 15);
+    list.innerHTML = '';
+    if (decisions.length === 0) {
+      list.innerHTML = `<div class="ollama-muted">No decisions yet for ${esc(cur)}</div>`;
+      return;
+    }
+    for (const d of decisions) {
+      const row = document.createElement('div');
+      row.className = 'routing-decision-row' + (d.route === '__error__' ? ' err' : '');
+      const when = new Date(d.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      // Translate the log's internal sentinels to plain language for display.
+      const route = d.route === '__error__' ? 'classifier error' : d.route;
+      const rawModel = d.final_model || d.bound_model || '';
+      const model = rawModel === '__escalate__' ? 'escalated to Claude' : rawModel;
+      row.textContent = `${when} · ${d.mode || 'shadow'} · ${route} → ${model} · ${d.ms} ms`;
+      row.title = d.prompt_head || '';
+      list.appendChild(row);
+    }
+  } catch {
+    list.innerHTML = '<div class="ollama-muted">Log unavailable</div>';
+  }
+}
+
+// Display label for a model kind. The STORED kind stays 'openai-compatible'
+// (it names the endpoint's protocol — what the probe detects); the UI says
+// "openai" for brevity. All kinds run the default Claude provider — LiteLLM
+// fronts openai-compatible models through its Anthropic-spec /v1/messages.
+function modelKindLabel(kind) {
+  return kind === 'openai-compatible' ? 'openai' : kind;
+}
+
+// A model registered as an openai-compatible endpoint pointing at the LiteLLM
+// router (:4000) is an auto-routing BACKEND, not a standalone selectable — it is
+// added/removed in Auto routing → Models. Hide it from the main Models list so
+// it doesn't clutter it with a misleading "openai" badge. The virtual 'auto'
+// model (also :4000) is the exception: it IS the selectable routing entry.
+function isRouterBackendModel(m) {
+  if (m.kind !== 'openai-compatible' || m.model_id === 'auto') return false;
+  const host = (m.endpoint || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  return /:4000(\/v1)?$/.test(host);
+}
+
+// One identity convention everywhere (list rows, detail header, host cards):
+// kind badge + bare model name + dim host meta. Older registrations baked
+// "host · " into the display name — strip it for DISPLAY when it matches the
+// endpoint, so both naming eras render identically. Stored names untouched.
+function modelDisplayParts(model) {
+  const host = model.endpoint ? model.endpoint.replace(/^https?:\/\//, '').replace(/\/+$/, '') : null;
+  let title = model.name;
+  if (host && title.startsWith(host + ' \u00b7 ')) title = title.slice(host.length + 3);
+  return { title, host };
+}
+
+function modelKindExplainer(kind) {
+  // Local/compat endpoints need no prose \u2014 the kind badge already says it, and
+  // reachability is now shown live below. Keep only the anthropic note, which
+  // conveys the distinct per-request credential model.
+  if (kind === 'anthropic') return 'Anthropic model \u2014 credentials injected per request by the OneCLI gateway.';
+  return '';
+}
+
+function renderModels() {
+  const list = $('#model-list');
+  list.innerHTML = '';
+  // Router backends (openai-compatible :4000 registrations) are managed in
+  // Auto routing -> Models, not here — keep this list to real selectables.
+  const visibleModels = allModels.filter((m) => !isRouterBackendModel(m));
+  if (visibleModels.length === 0) {
+    const li = document.createElement('li');
+    li.style.cursor = 'default';
+    li.style.opacity = '0.6';
+    li.textContent = 'No models selected yet \u2014 use + on a server below, or \u201cAdd model endpoint\u2026\u201d for anything else.';
+    list.appendChild(li);
+    return;
+  }
+  // A–Z toggle: alphabetical when on; by provider ("auto", Claude/anthropic
+  // first, then local) when off.
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  const sortedModels = modelSortAz
+    ? [...visibleModels].sort(byName)
+    : [...visibleModels].sort((a, b) => (a.kind === 'anthropic' ? 0 : 1) - (b.kind === 'anthropic' ? 0 : 1) || byName(a, b));
+  for (const model of sortedModels) {
+    const li = document.createElement('li');
+    li.dataset.modelId = model.id;
+    if (model.id === selectedModelId) li.classList.add('active');
+
+    // The virtual routing model ('auto') is not a real endpoint — its stored
+    // kind is 'openai-compatible' (it points at the LiteLLM router), but the
+    // badge "openai" reads as a provider it isn't. Give it an honest "auto"
+    // badge and route its row into the Auto routing tab instead of a
+    // model-detail sheet, which has nothing meaningful for a virtual model.
+    const isAuto = model.model_id === 'auto';
+
+    const badge = document.createElement('span');
+    badge.className = `model-kind-badge kind-${isAuto ? 'auto' : model.kind}`;
+    badge.textContent = isAuto ? 'auto' : modelKindLabel(model.kind);
+    li.appendChild(badge);
+
+    const parts = modelDisplayParts(model);
+    const name = document.createElement('span');
+    name.className = 'model-row-name';
+    name.textContent = parts.title;
+    li.appendChild(name);
+
+    if (isAuto) {
+      // The click-through affordance (in place of the noisy router host meta):
+      // this row navigates rather than opening a detail sheet.
+      const hint = document.createElement('span');
+      hint.className = 'model-row-hint';
+      hint.textContent = 'Manage in Auto routing →';
+      li.appendChild(hint);
+    } else if (parts.host) {
+      const host = document.createElement('span');
+      host.className = 'model-row-host';
+      host.textContent = parts.host;
+      li.appendChild(host);
+    }
+
+    if (model.agents_assigned > 0) {
+      const uses = document.createElement('span');
+      uses.className = 'model-row-uses';
+      uses.textContent = `${model.agents_assigned}×`;
+      li.appendChild(uses);
+    }
+
+    // Same − as the server cards: remove from the selectable list right here.
+    // Refuses with names when agents are assigned; row click still opens the
+    // detail (the button stops propagation).
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn btn-ghost select-toggle on';
+    remove.textContent = '−';
+    remove.title = 'Remove from selectable models';
+    remove.setAttribute('aria-label', remove.title);
+    remove.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      remove.disabled = true;
+      try {
+        const r = await authFetch('/api/models/' + encodeURIComponent(model.id), { method: 'DELETE' });
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          const who = (model.agents || []).map((a) => a.name).join(', ');
+          throw new Error(who ? 'in use by ' + who + ' — unassign first' : body.error || r.status);
+        }
+        showToast('Removed from selectable models');
+        if (selectedModelId === model.id) closeModelDetail();
+        fetchModels();
+      } catch (err) {
+        showToast(String(err.message || err), { kind: 'error' });
+        remove.disabled = false;
+      }
+    });
+    li.appendChild(remove);
+
+    makeRowActivatable(li, () => {
+      if (isAuto) {
+        // Send owners to where 'auto' is actually configured. Fall back to the
+        // detail sheet only if the routing tab isn't available for some reason.
+        if (routingAvailable) switchManageTab('routing');
+        else openModelDetail(model.id);
+        return;
+      }
+      if (selectedModelId === model.id && !$('#model-detail').hidden) {
+        closeModelDetail();
+      } else {
+        openModelDetail(model.id);
+      }
+    });
+    list.appendChild(li);
+  }
+}
+
+// ── Container-side reachability preflight ──────────────────────────────────
+// The model probe validates from the host, but the agent runs in a container.
+// A loopback endpoint the host reaches becomes host.docker.internal in the
+// container — a path a firewall or loopback-only bind can silently drop, which
+// surfaces only as endless "API retry". These helpers make that visible.
+const REACH_META = {
+  ok: { label: 'Reachable', warn: false },
+  timeout: { label: 'Blocked (timeout)', warn: true },
+  refused: { label: 'Refused', warn: true },
+  dns: { label: "Can't resolve", warn: true },
+  incompatible: { label: 'Reachable, wrong API', warn: true },
+  skipped: { label: 'Not preflighted', warn: false },
+  error: { label: 'Probe error', warn: true },
+};
+
+// Toast a concise warning when a just-registered/assigned model isn't reachable
+// from a container. Opening the model re-runs the check and shows the full fix.
+function warnIfUnreachable(result) {
+  if (!result || !REACH_META[result.verdict] || !REACH_META[result.verdict].warn) return;
+  showToast(`Agent containers can't reach this model — ${result.detail} Open the model to see the fix.`, {
+    kind: 'error',
+    timeout: 10000,
+  });
+}
+
+// Render (or refresh) the reachability panel inside the open model detail.
+// Bumped on every model-detail open so a slow (container-spawning) probe that
+// returns after the operator switched models can't paint the wrong panel.
+let reachabilityReqSeq = 0;
+async function renderReachabilityPanel(model) {
+  const facts = $('#model-live-facts');
+  if (!facts) return;
+  let panel = $('#model-reachability-panel');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'model-reachability-panel';
+    panel.className = 'model-reachability';
+    facts.insertAdjacentElement('afterend', panel);
+  }
+  panel.innerHTML = '';
+  // Only endpoints an agent dials directly (loopback → host.docker.internal)
+  // are meaningful to probe; hide the panel for hosted Anthropic models.
+  if (!model.endpoint) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+
+  const out = document.createElement('div');
+  out.className = 'model-reachability-result';
+  out.textContent = 'Checking reachability…';
+  panel.appendChild(out);
+
+  // Probe automatically on open — no button. Spins a throwaway container, so it
+  // takes a few seconds; the reqId/selectedModelId guards drop a stale result.
+  const reqId = ++reachabilityReqSeq;
+  try {
+    const res = await authFetch('/api/models/reachability', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint: model.endpoint }),
+    });
+    if (reqId !== reachabilityReqSeq || selectedModelId !== model.id) return;
+    const result = await res.json();
+    if (!res.ok) {
+      out.classList.add('warn');
+      out.textContent = result.error || res.statusText;
+      return;
+    }
+    renderReachabilityOutcome(out, result);
+  } catch (err) {
+    if (reqId !== reachabilityReqSeq) return;
+    out.classList.add('warn');
+    out.textContent = String(err.message || err);
+  }
+}
+
+// Paint a verdict + (on failure) the copy-paste fix into a result element.
+function renderReachabilityOutcome(out, result) {
+  out.hidden = false;
+  out.innerHTML = '';
+  const meta = REACH_META[result.verdict] || REACH_META.error;
+  out.classList.toggle('warn', meta.warn);
+  const head = document.createElement('div');
+  head.className = 'model-reachability-verdict';
+  head.textContent = `${meta.warn ? '✕' : '✓'} ${meta.label} — ${result.detail}`;
+  out.appendChild(head);
+  if (result.fix) {
+    const pre = document.createElement('pre');
+    pre.className = 'model-reachability-fix';
+    pre.textContent = result.fix;
+    out.appendChild(pre);
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'btn btn-ghost';
+    copy.textContent = 'Copy fix';
+    copy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(result.fix);
+        copy.textContent = 'Copied';
+        setTimeout(() => (copy.textContent = 'Copy fix'), 1500);
+      } catch {
+        showToast('Copy failed — select the text manually.', { kind: 'error' });
+      }
+    });
+    out.appendChild(copy);
+  }
+}
+
+async function openModelDetail(id) {
+  const model = allModels.find((m) => m.id === id);
+  if (!model) return;
+  selectedModelId = id;
+  renderModels();
+  if (typeof closeRouteDetail === 'function') closeRouteDetail();
+  closeAgentDetail();
+  closeRoomDetail();
+  closeMcpDetail();
+
+  $('#model-edit-view').hidden = false;
+  $('#model-create-view').hidden = true;
+
+  const parts = modelDisplayParts(model);
+  $('#model-detail-title').textContent = parts.title;
+  const badge = $('#model-detail-badge');
+  badge.textContent = modelKindLabel(model.kind);
+  badge.className = `model-kind-badge kind-${model.kind}`;
+  badge.hidden = false;
+  const kindExplainer = modelKindExplainer(model.kind);
+  $('#model-kind-explainer').textContent = kindExplainer;
+  $('#model-kind-explainer').hidden = !kindExplainer;
+  $('#model-name').value = model.name;
+  // The RAW kind rides on the hidden input because the Browse (discover)
+  // button reads it back as the API `kind` parameter.
+  $('#model-kind').value = modelKindLabel(model.kind);
+  $('#model-kind').dataset.kind = model.kind;
+  $('#model-endpoint').value = model.endpoint || '';
+  $('#model-endpoint-label').hidden = model.kind !== 'ollama';
+  $('#model-model-id').value = model.model_id;
+  $('#model-discover-select').hidden = true;
+  loadModelLiveFacts(model);
+  renderReachabilityPanel(model);
+
+  const usage = $('#model-detail-usage');
+  usage.innerHTML = '';
+  if (model.agents && model.agents.length > 0) {
+    usage.appendChild(document.createTextNode('Assigned to: '));
+    for (const a of model.agents) {
+      const chip = document.createElement('span');
+      chip.className = 'model-assignee-chip';
+      chip.textContent = a.name;
+      usage.appendChild(chip);
+    }
+  } else {
+    usage.textContent = 'Not assigned to any agent yet.';
+  }
+
+  // Rooms this model reaches (via its assigned agents) — click one to open its
+  // settings. Hidden entirely when the model isn't wired into any room.
+  const roomsEl = $('#model-detail-rooms');
+  roomsEl.innerHTML = '';
+  if (model.rooms && model.rooms.length > 0) {
+    roomsEl.hidden = false;
+    roomsEl.appendChild(document.createTextNode('In rooms: '));
+    for (const r of model.rooms) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'model-assignee-chip model-room-chip';
+      chip.textContent = r.name;
+      chip.title = 'Open room settings';
+      chip.addEventListener('click', () => openRoomDetail(r.id));
+      roomsEl.appendChild(chip);
+    }
+  } else {
+    roomsEl.hidden = true;
+  }
+
+  $('#model-detail').hidden = false;
+  $('#members-panel').hidden = true;
+}
+
+// Live facts for ollama-kind models: is the model actually installed on its
+// endpoint, how big is it, is it in memory right now — the same facts the
+// host cards below show, so the two surfaces agree.
+async function loadModelLiveFacts(model) {
+  const el = $('#model-live-facts');
+  el.hidden = true;
+  el.classList.remove('warn');
+  if (model.kind !== 'ollama' || !model.endpoint) return;
+  try {
+    const res = await authFetch('/api/ollama/models?host=' + encodeURIComponent(model.endpoint));
+    if (!res.ok) return; // non-owner or unreachable — facts are best-effort
+    const { models } = await res.json();
+    if (selectedModelId !== model.id) return; // panel moved on
+    const hit = models.find((m) => m.name === model.model_id);
+    if (!hit) {
+      el.textContent = 'Not installed on this endpoint \u2014 pull it below or pick another model id.';
+      el.classList.add('warn');
+    } else {
+      const gb = (hit.size / 1e9).toFixed(1);
+      el.textContent = hit.loaded
+        ? `Installed \u00b7 ${gb} GB \u00b7 in memory (${(hit.size_vram / 1e9).toFixed(1)} GB VRAM)`
+        : `Installed \u00b7 ${gb} GB`;
+    }
+    el.hidden = false;
+  } catch {
+    /* best-effort */
+  }
+}
+
+function closeModelDetail() {
+  $('#model-detail').hidden = true;
+  $('#model-edit-view').hidden = false;
+  $('#model-create-view').hidden = true;
+  selectedModelId = null;
+  renderModels();
+}
+
+$('#model-detail-close').addEventListener('click', closeModelDetail);
+$('#model-create-close').addEventListener('click', closeModelDetail);
+
+$('#create-model-btn').addEventListener('click', () => {
+  selectedModelId = null;
+  renderModels();
+  $('#model-edit-view').hidden = true;
+  $('#model-create-view').hidden = false;
+  $('#model-create-name').value = '';
+  $('#model-create-endpoint').value = '';
+  $('#model-create-model-id').value = '';
+  $('#model-create-discover-select').hidden = true;
+  // Reset kind to default + sync conditional fields
+  $('#model-create-kind').value = 'anthropic';
+  syncCreateFormToKind();
+  // Reset the probe block (used between successive opens)
+  $('#model-probe-url').value = '';
+  $('#model-probe-status').hidden = true;
+  $('#model-probe-results').hidden = true;
+  lastProbeResult = null;
+  $('#model-detail').hidden = false;
+  $('#members-panel').hidden = true;
+  $('#model-probe-url').focus();
+});
+
+function syncCreateFormToKind() {
+  const kind = $('#model-create-kind').value;
+  // Endpoint field shows for ollama AND openai-compatible — both need an endpoint.
+  $('#model-create-endpoint-label').hidden = kind === 'anthropic';
+  const placeholders = {
+    anthropic: 'claude-sonnet-4-6',
+    ollama: 'llama3.1:70b',
+    'openai-compatible': 'gpt-4o-mini or qwen2.5:14b',
+  };
+  $('#model-create-model-id').placeholder = placeholders[kind] || '';
+}
+$('#model-create-kind').addEventListener('change', syncCreateFormToKind);
+
+// ── Probe-by-URL flow ──────────────────────────────────────────────────────
+
+let lastProbeResult = null; // { kind, endpoint, models, requires_credential, notes, reason }
+
+$('#model-probe-btn').addEventListener('click', runProbe);
+$('#model-probe-url').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    runProbe();
+  }
+});
+$('#model-probe-select-all').addEventListener('click', () => {
+  document.querySelectorAll('#model-probe-list input[type=checkbox]').forEach((cb) => {
+    cb.checked = true;
+  });
+});
+$('#model-probe-add-selected').addEventListener('click', addSelectedFromProbe);
+
+async function runProbe() {
+  const url = $('#model-probe-url').value.trim();
+  if (!url) {
+    showToast('Enter a URL or host first (e.g. localhost:11434, api.anthropic.com).', { kind: 'error' });
+    return;
+  }
+  // Scheme is optional — server races http+https when omitted. Reject only
+  // obvious garbage (whitespace, angle brackets) early so we don't burn a
+  // round-trip on malformed input.
+  if (/\s|[<>]/.test(url)) {
+    showToast('URL contains invalid characters.', { kind: 'error' });
+    return;
+  }
+  const status = $('#model-probe-status');
+  const results = $('#model-probe-results');
+  status.classList.remove('error');
+  status.textContent = 'Probing…';
+  status.hidden = false;
+  results.hidden = true;
+  $('#model-probe-btn').disabled = true;
+  try {
+    const res = await authFetch('/api/models/probe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      status.textContent = body.error || `Probe failed (${res.status})`;
+      status.classList.add('error');
+      return;
+    }
+    lastProbeResult = body;
+    if (!body.kind) {
+      status.textContent = body.reason || 'No known provider responded.';
+      status.classList.add('error');
+      return;
+    }
+    status.hidden = true;
+    renderProbeResults(body);
+  } catch (err) {
+    status.textContent = 'Probe failed: ' + err.message;
+    status.classList.add('error');
+  } finally {
+    $('#model-probe-btn').disabled = false;
+  }
+}
+
+function renderProbeResults(probe) {
+  const summary = $('#model-probe-results .model-probe-summary');
+  const kindBadge = summary.querySelector('.model-probe-kind');
+  const notesEl = summary.querySelector('.model-probe-notes');
+  kindBadge.className = `model-probe-kind kind-${probe.kind}`;
+  kindBadge.textContent = modelKindLabel(probe.kind);
+  notesEl.textContent = probe.notes || '';
+
+  const list = $('#model-probe-list');
+  list.innerHTML = '';
+  if (probe.models.length === 0) {
+    // Auth-gated endpoint or no models advertised — let user type a model id.
+    const li = document.createElement('li');
+    li.className = 'empty-note';
+    li.textContent = probe.requires_credential
+      ? 'Endpoint detected, but the model list is gated. Use the Advanced section below to add a specific model id manually.'
+      : 'No models advertised — use the Advanced section to add manually.';
+    list.appendChild(li);
+  } else {
+    const host = (() => {
+      try {
+        return new URL(probe.endpoint).host;
+      } catch {
+        return probe.endpoint;
+      }
+    })();
+    for (const modelId of probe.models) {
+      const li = document.createElement('li');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = modelId;
+      cb.checked = probe.models.length === 1; // pre-check if only one
+      const lbl = document.createElement('label');
+      lbl.appendChild(cb);
+      const slug = document.createElement('span');
+      slug.textContent = modelId;
+      slug.style.flex = '1';
+      lbl.appendChild(slug);
+      li.appendChild(lbl);
+      // Editable display name — defaults to "<host> · <model_id>".
+      const nameInput = document.createElement('input');
+      nameInput.type = 'text';
+      nameInput.value = `${host} · ${modelId}`;
+      nameInput.placeholder = 'Display name';
+      nameInput.dataset.modelId = modelId;
+      li.appendChild(nameInput);
+      list.appendChild(li);
+    }
+  }
+  $('#model-probe-results').hidden = false;
+}
+
+async function addSelectedFromProbe() {
+  if (!lastProbeResult || !lastProbeResult.kind) return;
+  const checked = Array.from(document.querySelectorAll('#model-probe-list input[type=checkbox]:checked'));
+  if (checked.length === 0) {
+    showToast('Select at least one model.', { kind: 'error' });
+    return;
+  }
+  const items = checked.map((cb) => {
+    const li = cb.closest('li');
+    const nameInput = li.querySelector('input[type=text]');
+    return {
+      name: (nameInput?.value || cb.value).trim(),
+      kind: lastProbeResult.kind,
+      endpoint: lastProbeResult.endpoint,
+      model_id: cb.value,
+    };
+  });
+  const btn = $('#model-probe-add-selected');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = `Adding ${items.length}…`;
+  try {
+    const res = await authFetch('/api/models/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ models: items }),
+    });
+    const out = await res.json();
+    if (!res.ok) {
+      showToast('Bulk add failed: ' + (out.error || res.statusText), { kind: 'error' });
+      return;
+    }
+    if (out.failed && out.failed.length > 0) {
+      const lines = out.failed.map((f) => `  • ${items[f.index].model_id}: ${f.error}`).join('\n');
+      showToast(`Added ${out.created_count}, ${out.failed.length} failed:\n${lines}`, { kind: 'error' });
+    }
+    await fetchModels();
+    closeModelDetail();
+    // If the picker kicked off this add, return user to the agent detail
+    // and auto-assign the new model when there's exactly one.
+    const createdIds = (out.created || []).map((m) => m.id);
+    await maybeAssignAfterPickerAdd(createdIds);
+  } catch (err) {
+    showToast('Bulk add failed: ' + err.message, { kind: 'error' });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
+async function discoverModels(kind, endpoint) {
+  const body = kind === 'anthropic' ? { kind } : { kind, endpoint };
+  const res = await authFetch('/api/models/discover', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const out = await res.json();
+  if (!res.ok) throw new Error(out.error || 'discover failed');
+  return out.models || [];
+}
+
+function bindDiscover(buttonId, kindGetter, endpointGetter, modelIdInput, selectEl) {
+  $(buttonId).addEventListener('click', async () => {
+    const kind = kindGetter();
+    const endpoint = endpointGetter();
+    if (kind === 'ollama' && !endpoint) {
+      showToast('Enter an Ollama endpoint first (e.g. http://localhost:11434)', { kind: 'error' });
+      return;
+    }
+    const btn = $(buttonId);
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      const models = await discoverModels(kind, endpoint);
+      const select = $(selectEl);
+      select.innerHTML = '<option value="">— pick a model —</option>';
+      for (const m of models) {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        select.appendChild(opt);
+      }
+      select.hidden = models.length === 0;
+      if (models.length === 0) showToast('No models found at that endpoint.', { kind: 'error' });
+      select.onchange = () => {
+        if (select.value) {
+          $(modelIdInput).value = select.value;
+          select.hidden = true;
+        }
+      };
+    } catch (err) {
+      showToast('Discover failed: ' + err.message, { kind: 'error' });
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  });
+}
+
+bindDiscover(
+  '#model-create-discover-btn',
+  () => $('#model-create-kind').value,
+  () => $('#model-create-endpoint').value.trim(),
+  '#model-create-model-id',
+  '#model-create-discover-select',
+);
+bindDiscover(
+  '#model-discover-btn',
+  // Raw kind from the data attribute — the visible value is the display label,
+  // which the discover API wouldn't recognize.
+  () => $('#model-kind').dataset.kind || $('#model-kind').value,
+  () => $('#model-endpoint').value.trim(),
+  '#model-model-id',
+  '#model-discover-select',
+);
+
+$('#model-create-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const body = {
+    name: $('#model-create-name').value.trim(),
+    kind: $('#model-create-kind').value,
+    model_id: $('#model-create-model-id').value.trim(),
+    endpoint: $('#model-create-endpoint').value.trim() || null,
+  };
+  if (!body.name || !body.model_id) {
+    showToast('Name and Model ID are required.', { kind: 'error' });
+    return;
+  }
+  try {
+    const res = await authFetch('/api/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const out = await res.json();
+    if (!res.ok) {
+      showToast('Failed to create model: ' + (out.error || res.statusText), { kind: 'error' });
+      return;
+    }
+    warnIfUnreachable(out.reachability);
+    await fetchModels();
+    closeModelDetail();
+    // If the picker kicked off this add, auto-assign + return to agent.
+    const createdId = out.model && out.model.id;
+    if (createdId) {
+      await maybeAssignAfterPickerAdd([createdId]);
+    }
+  } catch (err) {
+    showToast('Failed to create model: ' + err.message, { kind: 'error' });
+  }
+});
+
+$('#model-detail-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!selectedModelId) return;
+  const btn = $('#model-detail-form button.btn-primary');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  btn.classList.remove('success');
+  const patch = {
+    name: $('#model-name').value.trim(),
+    model_id: $('#model-model-id').value.trim(),
+    endpoint: $('#model-endpoint').value.trim() || null,
+  };
+  try {
+    const res = await authFetch(`/api/models/${encodeURIComponent(selectedModelId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    const out = await res.json();
+    if (!res.ok) {
+      showToast('Failed to save model: ' + (out.error || res.statusText), { kind: 'error' });
+      btn.textContent = original;
+      btn.disabled = false;
+      return;
+    }
+    await fetchModels();
+    btn.textContent = '✓ Saved';
+    btn.classList.add('success');
+    setTimeout(() => {
+      if (btn.isConnected) {
+        btn.textContent = original;
+        btn.classList.remove('success');
+        btn.disabled = false;
+      }
+    }, 1500);
+  } catch (err) {
+    showToast('Failed to save model: ' + err.message, { kind: 'error' });
+    btn.textContent = original;
+    btn.disabled = false;
+  }
+});
+
+$('#model-delete').addEventListener('click', async () => {
+  if (!selectedModelId) return;
+  const model = allModels.find((m) => m.id === selectedModelId);
+  if (!model) return;
+  // First DELETE: server returns 409 with the impact list. We surface it
+  // and prompt; on confirm we re-DELETE with ?force=1.
+  try {
+    const res = await authFetch(`/api/models/${encodeURIComponent(selectedModelId)}`, { method: 'DELETE' });
+    if (res.status === 409) {
+      const impact = await res.json();
+      const n = (impact.assigned_agent_group_ids || []).length;
+      const routes = impact.routes_bound || [];
+      const parts = [];
+      if (n > 0) {
+        parts.push(
+          `"${model.name}" is assigned to ${n} agent${n === 1 ? '' : 's'} — they fall back to the default model on their next spawn.`,
+        );
+      }
+      if (routes.length > 0) {
+        // The rule goes WITH the model — say which ones, per router.
+        parts.push(
+          `Also removes routing rule${routes.length === 1 ? '' : 's'}: ` +
+            routes.map((r) => `${r.route} (${r.router})`).join(', ') +
+            '.',
+        );
+      }
+      const confirmed = await showConfirmModal({
+        title: 'Delete model',
+        body: parts.join(' ') || impact.error || 'This model is in use.',
+        confirmLabel: 'Delete anyway',
+        destructive: true,
+      });
+      if (!confirmed) return;
+      const force = await authFetch(`/api/models/${encodeURIComponent(selectedModelId)}?force=1`, { method: 'DELETE' });
+      if (!force.ok) {
+        const err = await force.json().catch(() => ({}));
+        showToast(`Failed to delete: ${err.error || force.statusText}`, { kind: 'error' });
+        return;
+      }
+    } else if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(`Failed to delete: ${err.error || res.statusText}`, { kind: 'error' });
+      return;
+    }
+    showToast(`Deleted model "${model.name}".`, { kind: 'success' });
+    closeModelDetail();
+    await fetchModels();
+    // Refresh the agents list too — assigned_model_id may have changed for some.
+    if (allAgents.length > 0) await fetchAgents();
+  } catch (err) {
+    showToast(`Failed to delete: ${err.message}`, { kind: 'error' });
+  }
+});
+
+// ── MCP server registry (the MCP tab) ───────────────────────────────────────
+//
+// Mirrors the models registry: a list pane, a detail/create aside, and a probe
+// that connects to a URL as a real MCP client and lists the server's tools
+// before saving. Servers defined here are attached to agents from the agent
+// panel (many-to-many, unlike a model's 1:1 assignment).
+
+let allMcpServers = [];
+let selectedMcpId = null;
+let lastMcpProbe = null;
+
+async function fetchMcpServers() {
+  try {
+    const res = await authFetch('/api/mcp-servers');
+    allMcpServers = await res.json();
+    renderMcpServers();
+  } catch (err) {
+    console.error('Failed to fetch MCP servers:', err);
+  }
+}
+
+/**
+ * MCP catalog — browse the public registry, prefill the add form.
+ *
+ * Discovery only: choosing a row never writes anything. It fills in the form below,
+ * and the server still has to be probed and added like any hand-entered one.
+ *
+ * The remote/package split is the security line. A REMOTE server is a URL the
+ * container dials out to. A PACKAGE server is npm/pypi code that runs INSIDE the
+ * agent container, next to its credentials — so it's labelled, and picking one costs
+ * an explicit confirm naming the exact command. Browsing must never be one click
+ * away from executing a stranger's code.
+ */
+let mcpCatalogTimer = null;
+let mcpRegistryDisabled = false;
+
+/**
+ * The MCP registry is a switchable source, exactly like a skill collection: the
+ * same webchat_disabled_sources row, surfaced in Settings the same way. Off means
+ * off server-side too — the catalog block disappears and no request is made.
+ */
+// ── Tool secrets ────────────────────────────────────────────────────────────
+// Per-agent API credentials (PATs, tokens) held in the OneCLI vault and injected
+// by the gateway. The point of this panel is that a token never has to be typed
+// into a room, where it would persist in the message DB and every archived
+// transcript. Write-only: the server returns metadata only, so there is nothing
+// here that can display a stored value.
+
+let secretsWired = false;
+
+// System-wide secrets: created unassigned, so every agent in the default `all`
+// secret mode can use them. Per-agent secrets live on the agent (see
+// renderAgentSecrets) and require that agent to be isolated first.
+async function renderToolSecrets() {
+  const section = $('#settings-secrets');
+  if (!section) return;
+  section.hidden = !isOwnerView;
+  if (!isOwnerView) return;
+  if (!secretsWired) {
+    secretsWired = true;
+    $('#secret-save').addEventListener('click', () => void saveToolSecret());
+    wireCustomScheme('#secret');
+  }
+  await loadToolSecretList();
+}
+
+/**
+ * Scope → query string. `null` = system-wide, a string = that agent,
+ * `{agentGroupId,userId}` = that one person's credential.
+ */
+function toolSecretUrl(scope, extra = '') {
+  if (scope && typeof scope === 'object')
+    return `/api/tool-secrets?agentGroupId=${encodeURIComponent(scope.agentGroupId)}&userId=${encodeURIComponent(scope.userId)}${extra}`;
+  return `/api/tool-secrets?agentGroupId=${encodeURIComponent(scope ?? '*')}${extra}`;
+}
+
+async function loadToolSecretList(scope = null, listSel = '#secrets-list') {
+  const list = $(listSel);
+  if (!list) return;
+  list.innerHTML = '';
+  let secrets = [];
+  try {
+    const r = await authFetch(toolSecretUrl(scope));
+    if (r.ok) secrets = (await r.json()).secrets || [];
+  } catch {
+    secrets = [];
+  }
+  if (!secrets.length) {
+    const li = document.createElement('li');
+    li.className = 'skill-desc';
+    li.textContent = 'No system secrets';
+    list.appendChild(li);
+    return;
+  }
+  for (const s of secrets) {
+    const li = document.createElement('li');
+    li.className = 'skill-source-row secret-row';
+    const info = document.createElement('div');
+    info.className = 'skill-info';
+    const head = document.createElement('div');
+    head.className = 'skill-head';
+    const hostEl = document.createElement('span');
+    hostEl.textContent = s.hostPattern;
+    const pill = document.createElement('span');
+    pill.className = 'skill-badge secret-scope';
+    pill.textContent = 'shared';
+    head.append(hostEl, pill);
+    info.appendChild(head);
+    const del = document.createElement('button');
+    del.className = 'btn btn-danger';
+    del.type = 'button';
+    del.textContent = 'Remove';
+    del.addEventListener('click', () => void removeToolSecret(scope, s, listSel));
+    li.append(info, del);
+    list.appendChild(li);
+  }
+}
+
+/**
+ * Reveal the header/template fields only when the operator opts into stating
+ * them. Wired once per form; the rows stay in the DOM so values survive a
+ * toggle away and back, and are cleared on a successful save with the rest.
+ */
+function wireCustomScheme(p) {
+  const box = $(`${p}-custom`);
+  if (!box || box.dataset.wired) return;
+  box.dataset.wired = '1';
+  const sync = () => {
+    $(`${p}-custom-header-row`).hidden = !box.checked;
+    $(`${p}-custom-format-row`).hidden = !box.checked;
+  };
+  box.addEventListener('change', sync);
+  sync();
+}
+
+async function saveToolSecret(scope = null, p = '#secret') {
+  const hostPattern = $(`${p}-host`).value.trim();
+  const value = $(`${p}-value`).value;
+  if (!hostPattern || !value) {
+    showToast('Host and value are required', { kind: 'error' });
+    return;
+  }
+  // The auth scheme (and any encoding, e.g. Azure DevOps' base64 Basic) is
+  // inferred from the host on the server — one place, not a dropdown. The
+  // Service select is the escape hatch for a self-hosted API on a LAN IP, where
+  // the host cannot say which service answers. Empty = infer, as before. It
+  // names a service, never a raw header, so the scheme table stays server-side.
+  // Unchecked = infer the auth header from the host, which is right for a
+  // public API. Checked = the operator states it, for a host that cannot say
+  // which service answers there. The server validates the pair; the client
+  // never decides what is a safe header.
+  let scheme;
+  if ($(`${p}-custom`)?.checked) {
+    const headerName = $(`${p}-custom-header`)?.value.trim() || '';
+    const valueFormat = $(`${p}-custom-format`)?.value.trim() || '';
+    if (!headerName || !valueFormat) {
+      showToast('A custom header needs both a name and a value template', { kind: 'error' });
+      return;
+    }
+    scheme = { headerName, valueFormat };
+  }
+
+  const btn = $(`${p}-save`);
+  btn.disabled = true;
+  try {
+    const r = await authFetch(toolSecretUrl(scope), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify(scheme ? { value, hostPattern, scheme } : { value, hostPattern }),
+    });
+    if (!r.ok) {
+      showToast((await r.json().catch(() => ({}))).error || 'Could not add secret', { kind: 'error' });
+      return;
+    }
+    // Clear the value field first and always — it is the sensitive one and must
+    // not linger in the DOM after a successful write.
+    $(`${p}-value`).value = '';
+    $(`${p}-host`).value = '';
+    if ($(`${p}-custom-header`)) $(`${p}-custom-header`).value = '';
+    if ($(`${p}-custom-format`)) $(`${p}-custom-format`).value = '';
+    showToast(`Added ${hostPattern}`);
+    if (scope) await renderAgentSecrets(typeof scope === 'object' ? scope.agentGroupId : scope);
+    else await loadToolSecretList(null, '#secrets-list');
+  } catch {
+    showToast('Could not add secret', { kind: 'error' });
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function removeToolSecret(scope, secret, listSel = '#secrets-list', agentGroupId = null) {
+  const ok = await showConfirmModal({
+    title: 'Remove secret',
+    body: `Delete the credential for ${secret.hostPattern}? Requests that rely on it will start failing.`,
+    confirmLabel: 'Remove',
+    destructive: true,
+  });
+  if (!ok) return;
+  try {
+    const r = await authFetch(toolSecretUrl(scope, `&id=${encodeURIComponent(secret.id)}`), {
+      method: 'DELETE',
+      headers: { 'X-Webchat-CSRF': '1' },
+    });
+    if (!r.ok) {
+      showToast('Could not remove secret', { kind: 'error' });
+      return;
+    }
+    showToast(`Removed ${secret.label}`);
+    if (agentGroupId) await renderAgentSecrets(agentGroupId);
+    else if (listSel) await loadToolSecretList(scope, listSel);
+    // listSel === null: the caller owns its own re-render (My credentials).
+  } catch {
+    showToast('Could not remove secret', { kind: 'error' });
+  }
+}
+
+// Per-agent secrets. Isolation is the prerequisite, not a nicety: in the default
+// `all` mode the gateway offers every vault secret to every agent, so a secret
+// "for this agent" would in fact be handed to all of them. Isolating pins the
+// agent's model credential and switches it to `selective` first.
+let agentSecretsWired = false;
+
+/**
+ * Per-agent env vars. The list shows NAMES only — the server never returns a
+ * value, so there is nothing to render and nothing to leak into a screenshot.
+ */
+async function renderAgentEnv(agentGroupId) {
+  const box = $('#agent-env-list');
+  if (!box) return;
+  let names = [];
+  try {
+    const r = await authFetch(`/api/agents/${encodeURIComponent(agentGroupId)}/env`);
+    if (r.ok) names = (await r.json()).names || [];
+  } catch {}
+  $('#agent-env-count').textContent = names.length ? String(names.length) : '';
+  box.innerHTML = '';
+  for (const name of names) {
+    const row = document.createElement('div');
+    row.className = 'secret-row';
+    const label = document.createElement('code');
+    label.textContent = '$' + name;
+    const del = document.createElement('button');
+    del.className = 'btn btn-ghost';
+    del.type = 'button';
+    del.textContent = 'Remove';
+    del.addEventListener('click', async () => {
+      del.disabled = true;
+      try {
+        const r = await authFetch(
+          `/api/agents/${encodeURIComponent(agentGroupId)}/env?name=${encodeURIComponent(name)}`,
+          { method: 'DELETE', headers: { 'X-Webchat-CSRF': '1' } },
+        );
+        if (!r.ok) throw new Error('delete failed');
+        showToast(`Removed $${name} — applies when the agent restarts`);
+        void renderAgentEnv(agentGroupId);
+      } catch {
+        del.disabled = false;
+        showToast('Could not remove variable', { kind: 'error' });
+      }
+    });
+    row.append(label, del);
+    box.append(row);
+  }
+  const save = $('#agent-env-save');
+  if (save && !save.dataset.wired) {
+    save.dataset.wired = '1';
+    save.addEventListener('click', async () => {
+      const id = $('#agent-secrets-section').dataset.agentId;
+      const name = $('#agent-env-name').value.trim();
+      const value = $('#agent-env-value').value;
+      if (!name || !value) {
+        showToast('Name and value are required', { kind: 'error' });
+        return;
+      }
+      save.disabled = true;
+      try {
+        const r = await authFetch(`/api/agents/${encodeURIComponent(id)}/env`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+          body: JSON.stringify({ name, value }),
+        });
+        if (!r.ok) {
+          showToast((await r.json().catch(() => ({}))).error || 'Could not add variable', { kind: 'error' });
+          return;
+        }
+        // Clear the value first and always — it is the sensitive field.
+        $('#agent-env-value').value = '';
+        $('#agent-env-name').value = '';
+        showToast(`Added $${name} — applies when the agent restarts`);
+        void renderAgentEnv(id);
+      } finally {
+        save.disabled = false;
+      }
+    });
+  }
+}
+
+async function renderAgentSecrets(agentGroupId) {
+  const section = $('#agent-secrets-section');
+  if (!section) return;
+  if (!agentSecretsWired) {
+    agentSecretsWired = true;
+    $('#agent-secret-save').addEventListener('click', () => {
+      const agentGroupId = $('#agent-secrets-section').dataset.agentId;
+      // "Personal" can only ever mean the person typing. Letting an admin pick
+      // someone else would require them to paste that person's token — which
+      // defeats the point of per-user credentials.
+      const personal = $('#agent-secret-personal').checked;
+      void saveToolSecret(personal ? { agentGroupId, userId: myUserId } : agentGroupId, '#agent-secret');
+    });
+    wireCustomScheme('#agent-secret');
+  }
+  section.dataset.agentId = agentGroupId;
+
+  let isolation = null;
+  let secrets = [];
+  let members = [];
+  try {
+    const r = await authFetch(toolSecretUrl(agentGroupId));
+    if (r.ok) {
+      const b = await r.json();
+      isolation = b.isolation;
+      secrets = b.secrets || [];
+      members = b.members || [];
+    }
+  } catch {}
+
+  // Isolation is install policy (CREDENTIAL_ISOLATION=fleet), not a per-agent
+  // switch — a toggle here would appear to work and then be undone at the next
+  // spawn. Report the state, and only explain when it is NOT private.
+  // The form is always available: a group with no vault identity yet gets one
+  // created (and isolated) on first use, server-side. The note only speaks up
+  // in the state that would actually be unsafe.
+  const isolated = !!isolation?.isolated;
+  $('#agent-secrets-note').textContent =
+    !isolated && isolation?.available ? 'Not private yet — secrets added here would also reach other agents' : '';
+  $('#agent-secret-form').hidden = false;
+
+  // Personal credentials attach to the caller's own per-member agent, which
+  // only exists once they have connected their credentials — so the option is
+  // offered only when it would actually work.
+  const enrolled = members.some((m) => m.userId === myUserId);
+  const personalBox = $('#agent-secret-personal');
+  const personalRow = $('#agent-secret-personal-row');
+  personalRow.hidden = !enrolled;
+  if (!enrolled) personalBox.checked = false;
+
+  renderAgentSecretList(agentGroupId, secrets, members);
+  const total = secrets.length + members.reduce((n, m) => n + m.secrets.length, 0);
+  $('#agent-secrets-count').textContent = total ? String(total) : '';
+}
+
+/**
+ * One row per credential: the host, a scope pill, and Remove.
+ *
+ * The pill (not prose) carries ownership because it is the thing you scan for —
+ * and `personal` gets the accent colour because it is the EXCEPTION worth
+ * noticing; shared is the default and stays neutral. Reuses the `.skill-badge`
+ * vocabulary already used for skill provenance, so the panel doesn't invent a
+ * second badge language.
+ */
+function renderAgentSecretList(agentGroupId, secrets, members) {
+  const list = $('#agent-secrets-list');
+  list.innerHTML = '';
+  const row = (sec, scope, personal, ownerLabel) => {
+    const li = document.createElement('li');
+    li.className = 'skill-source-row secret-row';
+    const info = document.createElement('div');
+    info.className = 'skill-info';
+    const head = document.createElement('div');
+    head.className = 'skill-head';
+    const hostEl = document.createElement('span');
+    hostEl.textContent = sec.hostPattern;
+    const pill = document.createElement('span');
+    pill.className = 'skill-badge secret-scope' + (personal ? ' skill-badge-user' : '');
+    pill.textContent = personal ? 'personal' : 'shared';
+    head.append(hostEl, pill);
+    info.appendChild(head);
+    // Only personal rows need to say WHOSE — "shared" already says everyone's.
+    if (personal) {
+      const who = document.createElement('span');
+      who.className = 'skill-desc';
+      who.textContent = ownerLabel;
+      info.appendChild(who);
+    }
+    const del = document.createElement('button');
+    del.className = 'btn btn-danger';
+    del.type = 'button';
+    del.textContent = 'Remove';
+    del.addEventListener('click', () => void removeToolSecret(scope, sec, '#agent-secrets-list', agentGroupId));
+    li.append(info, del);
+    return li;
+  };
+  for (const s of secrets) list.appendChild(row(s, agentGroupId, false));
+  for (const m of members)
+    for (const s of m.secrets)
+      list.appendChild(row(s, { agentGroupId, userId: m.userId }, true, userDisplayName({ id: m.userId })));
+}
+
+// ── My credentials ──────────────────────────────────────────────────────────
+// Self-service personal credentials, one block per agent the person is enrolled
+// in. Not admin-gated by design: a per-user PAT is only worth having if its
+// owner is the only one who ever handles it.
+async function renderMyCredentials() {
+  const section = $('#settings-my-credentials');
+  if (!section) return;
+  let groups = [];
+  try {
+    const r = await authFetch('/api/tool-secrets/mine');
+    if (r.ok) groups = (await r.json()).groups || [];
+  } catch {
+    groups = [];
+  }
+  // Nothing to manage until you have connected credentials somewhere — show
+  // nothing at all rather than an empty panel explaining itself.
+  section.hidden = groups.length === 0;
+  if (!groups.length) return;
+
+  const host = $('#my-credentials-list');
+  host.innerHTML = '';
+  for (const g of groups) host.appendChild(myCredentialGroupEl(g));
+}
+
+function myCredentialGroupEl(group) {
+  const scope = { agentGroupId: group.agentGroupId, userId: myUserId };
+  const wrap = document.createElement('div');
+  wrap.className = 'my-cred-group';
+
+  const title = document.createElement('span');
+  title.className = 'form-label';
+  title.textContent = group.name;
+  wrap.appendChild(title);
+
+  const list = document.createElement('ul');
+  list.className = 'skill-sources-list';
+  for (const sec of group.secrets) {
+    const li = document.createElement('li');
+    li.className = 'skill-source-row secret-row';
+    const info = document.createElement('div');
+    info.className = 'skill-info';
+    const head = document.createElement('div');
+    head.className = 'skill-head';
+    head.textContent = sec.hostPattern;
+    info.appendChild(head);
+    const del = document.createElement('button');
+    del.className = 'btn btn-danger';
+    del.type = 'button';
+    del.textContent = 'Remove';
+    del.addEventListener('click', async () => {
+      await removeToolSecret(scope, sec, null);
+      await renderMyCredentials();
+    });
+    li.append(info, del);
+    list.appendChild(li);
+  }
+  wrap.appendChild(list);
+
+  // One form per agent — a shared form with an agent picker would just be the
+  // "Used by" dropdown again, and this list is short by construction.
+  const form = document.createElement('div');
+  form.className = 'secret-form';
+  const hostField = fieldEl('Host', 'text', 'dev.azure.com');
+  const valField = fieldEl('Token or key', 'password', '');
+  const save = document.createElement('button');
+  save.className = 'btn btn-primary';
+  save.type = 'button';
+  save.textContent = 'Add secret';
+  save.addEventListener('click', async () => {
+    const hostPattern = hostField.input.value.trim();
+    const value = valField.input.value;
+    if (!hostPattern || !value) {
+      showToast('Host and value are required', { kind: 'error' });
+      return;
+    }
+    save.disabled = true;
+    try {
+      const r = await authFetch(toolSecretUrl(scope), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+        body: JSON.stringify({ hostPattern, value }),
+      });
+      if (!r.ok) {
+        showToast((await r.json().catch(() => ({}))).error || 'Could not add secret', { kind: 'error' });
+        return;
+      }
+      valField.input.value = '';
+      hostField.input.value = '';
+      showToast(`Added ${hostPattern}`);
+      await renderMyCredentials();
+    } catch {
+      showToast('Could not add secret', { kind: 'error' });
+    } finally {
+      save.disabled = false;
+    }
+  });
+  form.append(hostField.label, valField.label, save);
+  wrap.appendChild(form);
+  return wrap;
+}
+
+/** Labelled input matching the .secret-field pattern used in the static forms. */
+function fieldEl(labelText, type, placeholder) {
+  const label = document.createElement('label');
+  label.className = 'secret-field';
+  const span = document.createElement('span');
+  span.className = 'form-label';
+  span.textContent = labelText;
+  const input = document.createElement('input');
+  input.type = type;
+  if (placeholder) input.placeholder = placeholder;
+  input.autocomplete = type === 'password' ? 'new-password' : 'off';
+  input.spellcheck = false;
+  label.append(span, input);
+  return { label, input };
+}
+
+// ── Deploy keys ─────────────────────────────────────────────────────────────
+// SSH keypairs live as files in the group folder (OneCLI injects into HTTPS,
+// and SSH is not HTTP). The private half never leaves the host and is never
+// returned by the API — the UI can only ever show the public key, which is the
+// half you paste into a server's authorized_keys or a git host.
+let agentKeysWired = false;
+
+async function renderAgentKeys(agentGroupId) {
+  const section = $('#agent-keys-section');
+  if (!section) return;
+  if (!agentKeysWired) {
+    agentKeysWired = true;
+    $('#agent-key-create').addEventListener('click', () => void createAgentKey());
+  }
+  section.dataset.agentId = agentGroupId;
+
+  let keys = [];
+  try {
+    const r = await authFetch(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId)}`);
+    if (r.ok) keys = (await r.json()).keys || [];
+  } catch {}
+
+  const list = $('#agent-keys-list');
+  list.innerHTML = '';
+  for (const k of keys) list.appendChild(deployKeyRowEl(agentGroupId, k));
+  $('#agent-keys-count').textContent = keys.length ? String(keys.length) : '';
+}
+
+function deployKeyRowEl(agentGroupId, key) {
+  const li = document.createElement('li');
+  li.className = 'skill-source-row secret-row';
+  const info = document.createElement('div');
+  info.className = 'skill-info';
+  const head = document.createElement('div');
+  head.className = 'skill-head';
+  head.textContent = key.name;
+  const meta = document.createElement('span');
+  meta.className = 'skill-desc';
+  meta.textContent = key.target ? `ssh -i ${key.path} ${key.target}` : `${key.path} · no login target set`;
+  info.append(head, meta);
+
+  const actions = document.createElement('div');
+  actions.className = 'secret-actions';
+  // Copying the PUBLIC key is the whole workflow — it's what you paste into the
+  // server or git host — so it gets the prominent action.
+  const copy = document.createElement('button');
+  copy.className = 'btn btn-secondary';
+  copy.type = 'button';
+  copy.textContent = 'Copy public key';
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(key.publicKey);
+      showToast('Public key copied');
+    } catch {
+      showToast('Could not copy', { kind: 'error' });
+    }
+  });
+  const del = document.createElement('button');
+  del.className = 'btn btn-danger';
+  del.type = 'button';
+  del.textContent = 'Remove';
+  del.addEventListener('click', () => void removeAgentKey(agentGroupId, key));
+  actions.append(copy, del);
+  li.append(info, actions);
+  return li;
+}
+
+async function createAgentKey() {
+  const agentGroupId = $('#agent-keys-section').dataset.agentId;
+  const name = $('#agent-key-name').value.trim().toLowerCase();
+  const target = $('#agent-key-target').value.trim();
+  if (!name) {
+    showToast('Name is required', { kind: 'error' });
+    return;
+  }
+  const btn = $('#agent-key-create');
+  btn.disabled = true;
+  try {
+    const r = await authFetch(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ name }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      showToast(body.error || 'Could not create key', { kind: 'error' });
+      return;
+    }
+    $('#agent-key-name').value = '';
+    $('#agent-key-target').value = '';
+    // The public key is only useful once it's on the far end, so put it on the
+    // clipboard immediately rather than making them hunt for the copy button.
+    try {
+      await navigator.clipboard.writeText(body.key.publicKey);
+      showToast(`Created ${name} — public key copied`);
+    } catch {
+      showToast(`Created ${name}`);
+    }
+    await renderAgentKeys(agentGroupId);
+  } catch {
+    showToast('Could not create key', { kind: 'error' });
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function removeAgentKey(agentGroupId, key) {
+  const ok = await showConfirmModal({
+    title: 'Remove deploy key',
+    body: `Delete “${key.name}”? Anything using it to authenticate will stop working.`,
+    confirmLabel: 'Remove',
+    destructive: true,
+  });
+  if (!ok) return;
+  const r = await authFetch(
+    `/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId)}&name=${encodeURIComponent(key.name)}`,
+    { method: 'DELETE', headers: { 'X-Webchat-CSRF': '1' } },
+  );
+  if (!r.ok) {
+    showToast('Could not remove key', { kind: 'error' });
+    return;
+  }
+  showToast(`Removed ${key.name}`);
+  await renderAgentKeys(agentGroupId);
+}
+
+async function renderMcpSources() {
+  const list = $('#mcp-sources-list');
+  const section = $('#settings-mcp-sources');
+  if (!list || !section) return;
+  let sources = [];
+  try {
+    const res = await authFetch('/api/mcp-sources');
+    if (!res.ok) {
+      section.hidden = true; // not a global admin — don't tease a control they can't use
+      return;
+    }
+    sources = (await res.json()).sources || [];
+  } catch {
+    section.hidden = true;
+    return;
+  }
+  section.hidden = false;
+  list.innerHTML = '';
+  for (const src of sources) {
+    const off = !!(src.removed || src.disabled);
+    mcpRegistryDisabled = off;
+    // Same row idiom as the skill collections' built-in source: info column
+    // (name + meta), a built-in badge, and a reversible Remove/Add — no
+    // standing prose, no confirm (adding it back is one click).
+    const li = document.createElement('li');
+    li.className = 'skill-source-row';
+    if (off) li.classList.add('source-disabled');
+
+    const info = document.createElement('div');
+    info.className = 'skill-info';
+    const head = document.createElement('div');
+    head.className = 'skill-head';
+    // Same compact origin pill the skill collections lead with — a long plain
+    // name breaks .skill-head's pill-sized layout.
+    head.appendChild(originBadgeEl({ label: 'MCP registry', url: src.url, official: false }));
+    const meta = document.createElement('span');
+    meta.className = 'skill-desc';
+    meta.textContent = off ? 'Removed from Add MCP server' : src.url.replace(/^https?:\/\//, '');
+    info.append(head, meta);
+    li.appendChild(info);
+
+    const tag = document.createElement('span');
+    tag.className = 'skill-badge';
+    tag.textContent = 'built-in';
+    li.appendChild(tag);
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = off ? 'btn btn-ghost' : 'skill-delete';
+    toggle.textContent = off ? 'Add' : 'Remove';
+    toggle.addEventListener('click', async () => {
+      try {
+        const res = await authFetch(`/api/mcp-sources/${encodeURIComponent(src.id)}`, {
+          method: off ? 'POST' : 'DELETE',
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed');
+        void renderMcpSources();
+        applyMcpCatalogVisibility();
+      } catch (err) {
+        toastError(err, 'Could not update the source');
+      }
+    });
+    li.appendChild(toggle);
+    list.appendChild(li);
+  }
+  applyMcpCatalogVisibility();
+}
+
+/**
+ * The learning loop's explicit trigger (docs/webchat/design/learning-loop.md §1): reviews
+ * THIS session and drafts a skill only if it taught something. It just sends
+ * `/learn` — one path, the same one the slash command takes, so there's no second
+ * implementation to keep in step.
+ *
+ * Only offered for the room you're actually in: `/learn` reviews the session, and
+ * the session is the one you have open.
+ */
+function renderDistillButton(agents) {
+  const host = $('#room-skills-section .form-label-row');
+  const existing = $('#room-distill-btn');
+  if (existing) existing.remove();
+  if (!host || !agents.length || selectedRoomId !== currentRoom) return;
+  const btn = document.createElement('button');
+  btn.id = 'room-distill-btn';
+  btn.type = 'button';
+  btn.className = 'btn btn-secondary';
+  btn.textContent = 'Distill a skill…';
+  btn.title = 'Review this session and draft a skill if it taught something worth keeping';
+  btn.addEventListener('click', () => {
+    closeRoomDetail(); // get out of the way — the answer arrives in the room
+    triggerLearn();
+  });
+  host.appendChild(btn);
+}
+
+/** Hide the catalog entirely when its source is switched off. */
+function applyMcpCatalogVisibility() {
+  const block = $('#mcp-catalog-block');
+  if (block) block.hidden = mcpRegistryDisabled;
+}
+
+
+async function loadMcpCatalog(q = '') {
+  const list = $('#mcp-catalog-list');
+  const status = $('#mcp-catalog-status');
+  if (!list) return;
+  // DESIGN.md §5: the wait lives inline as the list's first row, not as a blank
+  // pane and not as a toast.
+  list.innerHTML = loadingRow(q ? 'Searching…' : 'Loading catalog…');
+  status.textContent = '';
+  let servers = [];
+  try {
+    const payload = await apiJson(`/api/mcp-catalog${q ? `?q=${encodeURIComponent(q)}` : ''}`);
+    if (payload.disabled) {
+      mcpRegistryDisabled = true;
+      applyMcpCatalogVisibility();
+      return;
+    }
+    servers = payload.servers || [];
+  } catch (err) {
+    list.innerHTML = '';
+    status.textContent = err.message || "Couldn't reach the registry";
+    return;
+  }
+  status.textContent = servers.length ? `${servers.length} servers` : 'No servers matched';
+  list.innerHTML = '';
+
+  for (const s of servers) {
+    const li = document.createElement('li');
+    li.className = 'mcp-catalog-row';
+
+    const head = document.createElement('div');
+    head.className = 'mcp-catalog-head';
+    const title = document.createElement('span');
+    title.className = 'mcp-catalog-title';
+    title.textContent = s.title || s.name;
+    head.appendChild(title);
+    // The badge links to the source, so "who published this" is one tap from
+    // readable code — the whole basis for deciding whether to trust it. Plain
+    // (unlinked) badge when the entry gives us nowhere to go.
+    if (s.publisher) {
+      head.appendChild(
+        originBadgeEl({ label: s.publisher, official: false, url: s.repoUrl || s.websiteUrl || '' }),
+      );
+    }
+
+    const kind = document.createElement('span');
+    kind.className = s.runsCode ? 'mcp-kind mcp-kind-code' : 'mcp-kind';
+    kind.textContent = s.runsCode ? `${s.command === 'uvx' ? 'pypi' : 'npm'} · runs in container` : 'remote';
+    head.appendChild(kind);
+
+    const desc = document.createElement('div');
+    desc.className = 'mcp-catalog-desc';
+    desc.textContent = s.description || '';
+
+    // Show WHERE this actually goes. A remote server means the container talks to
+    // someone else's host; a package means a command runs locally. Either way the
+    // operator should see the destination before wiring it, not after.
+    const target = document.createElement('div');
+    target.className = 'mcp-catalog-target';
+    if (s.runsCode) {
+      target.textContent = `${s.command} ${(s.args || []).join(' ')}`;
+    } else if (s.url) {
+      try {
+        target.textContent = `connects to ${new URL(s.url).host}`;
+      } catch {
+        target.textContent = `connects to ${s.url}`;
+      }
+    }
+
+    const actions = document.createElement('div');
+    actions.className = 'mcp-catalog-actions';
+    const use = document.createElement('button');
+    use.type = 'button';
+    use.className = 'btn btn-secondary';
+    use.textContent = 'Use';
+    use.addEventListener('click', () => useMcpCatalogEntry(s));
+    actions.appendChild(use);
+
+    li.append(head, desc, target, actions);
+    list.appendChild(li);
+  }
+}
+
+/** Prefill the add form from a catalog row. Package servers gate on an explicit confirm. */
+async function useMcpCatalogEntry(s) {
+  if (s.runsCode) {
+    // DESIGN.md §5: no native confirm() — and this is the destructive-weight one,
+    // so it gets the danger role like every other consequential action.
+    const cmd = `${s.command} ${(s.args || []).join(' ')}`;
+    const okToRun = await showConfirmModal({
+      title: `Run ${s.name} in your container?`,
+      body:
+        `This isn't a hosted server. It runs code inside your agent container, alongside the agent's credentials:\n\n${cmd}\n\n` +
+        `Only continue if you trust the publisher (${s.publisher || 'unknown'}).`,
+      confirmLabel: 'I trust it — fill in the form',
+      destructive: true,
+    });
+    if (!okToRun) return;
+  }
+  // A valid config key. Don't just take the last segment: half the registry names
+  // end in a generic "/mcp", so `ac.inference.sh/mcp` and `ai.other/mcp` would both
+  // land on "mcp" and collide. Slug the whole name — unique and predictable, and
+  // it's a prefill the operator can still edit.
+  const shortName = String(s.name)
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  $('#mcp-create-name').value = shortName;
+  const transport = $('#mcp-create-transport');
+  if (s.kind === 'remote') {
+    transport.value = s.transport === 'sse' ? 'sse' : 'http';
+    transport.dispatchEvent(new Event('change'));
+    $('#mcp-create-url').value = s.url || '';
+    // The probe field is the one that proves it works before anything is saved.
+    const probeUrl = $('#mcp-probe-url');
+    if (probeUrl) probeUrl.value = s.url || '';
+  } else {
+    transport.value = 'stdio';
+    transport.dispatchEvent(new Event('change'));
+    $('#mcp-create-command').value = s.command || '';
+    $('#mcp-create-args').value = (s.args || []).join(' ');
+  }
+  const block = $('#mcp-catalog-block');
+  if (block) block.open = false;
+  showToast(
+    s.kind === 'remote' ? `Filled in ${shortName} — probe it, then add` : `Filled in ${shortName} — review the command, then add`,
+  );
+  $('#mcp-create-name').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// Catalog wiring: load on first expand, debounce the search.
+(function wireMcpCatalog() {
+  const block = document.getElementById('mcp-catalog-block');
+  const search = document.getElementById('mcp-catalog-search');
+  if (!block || !search) return;
+  let loaded = false;
+  block.addEventListener('toggle', () => {
+    if (block.open && !loaded) {
+      loaded = true;
+      void loadMcpCatalog('');
+    }
+  });
+  search.addEventListener('input', () => {
+    clearTimeout(mcpCatalogTimer);
+    mcpCatalogTimer = setTimeout(() => void loadMcpCatalog(search.value.trim()), 300);
+  });
+})();
+
+function renderMcpServers() {
+  const list = $('#mcp-list');
+  list.innerHTML = '';
+  if (allMcpServers.length === 0) {
+    const li = document.createElement('li');
+    li.style.cursor = 'default';
+    li.style.opacity = '0.6';
+    li.textContent = 'No MCP servers registered. Click "+ New server" to add one.';
+    list.appendChild(li);
+    return;
+  }
+  const sorted = [...allMcpServers].sort((a, b) => a.name.localeCompare(b.name));
+  for (const server of sorted) {
+    const li = document.createElement('li');
+    li.dataset.mcpId = server.id;
+    if (server.id === selectedMcpId) li.classList.add('active');
+
+    const badge = document.createElement('span');
+    badge.className = `model-kind-badge kind-${server.transport}`;
+    badge.textContent = server.transport;
+    li.appendChild(badge);
+
+    if (server.health && server.transport !== 'stdio') {
+      const dot = document.createElement('span');
+      const st = server.health.status;
+      dot.className = `mcp-health-dot mcp-health-${st}`;
+      dot.title =
+        st === 'ok'
+          ? `Healthy — ${server.health.toolCount ?? '?'} tools`
+          : st === 'drift'
+            ? 'Tool surface changed since approval'
+            : st === 'auth'
+              ? 'Rejecting credentials'
+              : `Unreachable${server.health.reason ? `: ${server.health.reason}` : ''}`;
+      li.appendChild(dot);
+    }
+
+    const name = document.createElement('span');
+    name.className = 'model-row-name';
+    name.textContent = server.name;
+    li.appendChild(name);
+
+    if (server.agents_assigned > 0) {
+      const uses = document.createElement('span');
+      uses.className = 'model-row-uses';
+      uses.textContent = `${server.agents_assigned}×`;
+      li.appendChild(uses);
+    }
+
+    makeRowActivatable(li, () => {
+      if (selectedMcpId === server.id && !$('#mcp-detail').hidden) {
+        closeMcpDetail();
+      } else {
+        openMcpDetail(server.id);
+      }
+    });
+    list.appendChild(li);
+  }
+}
+
+function openMcpDetail(id) {
+  const server = allMcpServers.find((s) => s.id === id);
+  if (!server) return;
+  // Close the sibling panels BEFORE claiming selection (a blanket
+  // closeMcpDetail() in that group would null a selection made earlier).
+  closeAgentDetail();
+  closeRoomDetail();
+  closeModelDetail();
+  closeMcpDetail();
+  selectedMcpId = id;
+  renderMcpServers();
+
+  $('#mcp-edit-view').hidden = false;
+  $('#mcp-create-view').hidden = true;
+
+  $('#mcp-detail-title').textContent = server.name;
+  $('#mcp-name').value = server.name;
+  $('#mcp-transport').value = server.transport;
+  const remote = server.transport !== 'stdio';
+  $('#mcp-url-label').hidden = !remote;
+  $('#mcp-command-label').hidden = remote;
+  $('#mcp-token-label').hidden = !remote;
+  $('#mcp-token').value = ''; // stored tokens are never displayed; blank = keep
+  if (remote) $('#mcp-url').value = server.target;
+  else $('#mcp-command').value = server.target;
+
+  const usage = $('#mcp-detail-usage');
+  usage.textContent =
+    server.agents_assigned > 0
+      ? `Attached to ${server.agents_assigned} agent${server.agents_assigned === 1 ? '' : 's'}.`
+      : 'Not attached to any agent yet.';
+  renderMcpHardening(server);
+
+  $('#mcp-detail').hidden = false;
+  $('#members-panel').hidden = true;
+}
+
+// Health, drift re-approval, tool allowlist, OAuth connect — the hardening
+// surface of one server's detail panel (remote servers only).
+function renderMcpHardening(server) {
+  const host = $('#mcp-hardening');
+  if (!host) return;
+  host.innerHTML = '';
+  if (server.transport === 'stdio') return;
+
+  if (server.health) {
+    const line = document.createElement('p');
+    line.className = 'room-prime-note';
+    const st = server.health.status;
+    const when = server.health.at ? new Date(server.health.at).toLocaleString() : '';
+    line.textContent =
+      st === 'ok'
+        ? `● Healthy — ${server.health.toolCount ?? '?'} tools (checked ${when})`
+        : st === 'auth'
+          ? `● Rejecting credentials (checked ${when})`
+          : st === 'down'
+            ? `● Unreachable (checked ${when})`
+            : `● Tool surface changed (checked ${when})`;
+    line.classList.add(`mcp-health-text-${st}`);
+    host.appendChild(line);
+  }
+
+  // Drift: the rug-pull alarm. Loud until a human re-approves.
+  if (server.drift) {
+    const banner = document.createElement('div');
+    banner.className = 'mcp-drift-banner';
+    const head = document.createElement('div');
+    head.textContent = 'Tools changed since you approved this server';
+    head.style.fontWeight = '600';
+    banner.appendChild(head);
+    const parts = [];
+    if (server.drift.added?.length) parts.push(`new: ${server.drift.added.join(', ')}`);
+    if (server.drift.removed?.length) parts.push(`removed: ${server.drift.removed.join(', ')}`);
+    if (server.drift.changed?.length) parts.push(`descriptions changed: ${server.drift.changed.join(', ')}`);
+    const detail = document.createElement('div');
+    detail.textContent = parts.join(' · ');
+    banner.appendChild(detail);
+    const approve = document.createElement('button');
+    approve.type = 'button';
+    approve.className = 'btn btn-secondary';
+    approve.textContent = 'Review + re-approve';
+    approve.addEventListener('click', async () => {
+      const ok = await showConfirmModal({
+        title: `Approve ${server.name}'s new tools?`,
+        body: parts.join('\n') || 'The tool surface changed.',
+        confirmLabel: 'Approve current tools',
+      });
+      if (!ok) return;
+      try {
+        await apiJson(`/api/mcp-servers/${encodeURIComponent(server.id)}/repin`, { method: 'POST' });
+        showToast('Tool surface re-approved', { kind: 'success' });
+        await fetchMcpServers();
+        openMcpDetail(server.id);
+      } catch (err) {
+        showToast('Re-approve failed: ' + (err.message || err), { kind: 'error' });
+      }
+    });
+    banner.appendChild(approve);
+    host.appendChild(banner);
+  }
+
+  // Tool allowlist — checkboxes over the pinned surface. All checked = no
+  // restriction (stored as null, future tools flow through automatically).
+  if (Array.isArray(server.pinned_tools) && server.pinned_tools.length) {
+    const wrap = document.createElement('div');
+    const label = document.createElement('span');
+    label.className = 'form-label';
+    label.textContent = `Tools (${server.pinned_tools.length})`;
+    wrap.appendChild(label);
+    const listEl = document.createElement('div');
+    listEl.className = 'mcp-tools-list';
+    const enabled = Array.isArray(server.enabled_tools) ? new Set(server.enabled_tools) : null;
+    for (const t of server.pinned_tools) {
+      const row = document.createElement('label');
+      row.className = 'mcp-tool-row';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = enabled ? enabled.has(t.name) : true;
+      cb.dataset.tool = t.name;
+      const nm = document.createElement('span');
+      nm.textContent = t.name;
+      nm.title = t.description || '';
+      row.append(cb, nm);
+      listEl.appendChild(row);
+    }
+    wrap.appendChild(listEl);
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'btn btn-secondary';
+    save.textContent = 'Save tool selection';
+    save.addEventListener('click', async () => {
+      const boxes = [...listEl.querySelectorAll('input[type=checkbox]')];
+      const chosen = boxes.filter((b) => b.checked).map((b) => b.dataset.tool);
+      const body = { enabled: chosen.length === boxes.length ? null : chosen };
+      try {
+        await apiJson(`/api/mcp-servers/${encodeURIComponent(server.id)}/tools`, { method: 'PUT', body });
+        showToast(
+          body.enabled ? `${chosen.length} of ${boxes.length} tools enabled` : 'All tools enabled',
+          { kind: 'success' },
+        );
+        await fetchMcpServers();
+      } catch (err) {
+        showToast('Save failed: ' + (err.message || err), { kind: 'error' });
+      }
+    });
+    wrap.appendChild(save);
+    host.appendChild(wrap);
+  }
+
+  // OAuth connect — for servers whose API wants a real OAuth flow instead of a
+  // pasted token. Opens the authorization server in a new tab.
+  const oauthBtn = document.createElement('button');
+  oauthBtn.type = 'button';
+  oauthBtn.className = 'btn btn-ghost';
+  oauthBtn.textContent = server.auth?.kind === 'oauth' ? 'Reconnect (OAuth)' : 'Connect with OAuth…';
+  oauthBtn.addEventListener('click', async () => {
+    oauthBtn.disabled = true;
+    try {
+      const res = await authFetch(`/api/mcp-servers/${encodeURIComponent(server.id)}/oauth/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      window.open(body.authorizeUrl, '_blank', 'noopener');
+      showToast('Finish authorizing in the new tab, then come back', { kind: 'info' });
+    } catch (err) {
+      showToast('OAuth failed: ' + (err.message || err), { kind: 'error' });
+    } finally {
+      oauthBtn.disabled = false;
+    }
+  });
+  host.appendChild(oauthBtn);
+  if (server.auth) {
+    const note = document.createElement('p');
+    note.className = 'room-prime-note';
+    note.textContent =
+      server.auth.kind === 'oauth'
+        ? 'Connected via OAuth — the token lives on the host; agents go through the relay.'
+        : 'Bearer token stored on the host — agents go through the relay, the token never enters a container.';
+    host.appendChild(note);
+  }
+}
+
+function closeMcpDetail() {
+  $('#mcp-detail').hidden = true;
+  $('#mcp-edit-view').hidden = false;
+  $('#mcp-create-view').hidden = true;
+  selectedMcpId = null;
+  if (manageActive && manageTab === 'mcp') renderMcpServers();
+}
+
+$('#mcp-detail-close').addEventListener('click', closeMcpDetail);
+$('#mcp-create-close').addEventListener('click', closeMcpDetail);
+
+$('#create-mcp-btn').addEventListener('click', () => {
+  selectedMcpId = null;
+  renderMcpServers();
+  closeAgentDetail();
+  closeRoomDetail();
+  closeModelDetail();
+  closeMcpDetail();
+  $('#mcp-edit-view').hidden = true;
+  $('#mcp-create-view').hidden = false;
+  // Reset the probe block + manual form between opens.
+  $('#mcp-probe-url').value = '';
+  $('#mcp-probe-status').hidden = true;
+  $('#mcp-probe-results').hidden = true;
+  $('#mcp-probe-name').value = '';
+  $('#mcp-probe-token').value = '';
+  $('#mcp-probe-token-label').hidden = true;
+  lastMcpProbe = null;
+  lastMcpProbeToken = '';
+  $('#mcp-create-name').value = '';
+  $('#mcp-create-url').value = '';
+  $('#mcp-create-command').value = '';
+  $('#mcp-create-args').value = '';
+  $('#mcp-create-token').value = '';
+  $('#mcp-create-transport').value = 'sse';
+  syncMcpCreateTransportFields();
+  $('#mcp-detail').hidden = false;
+  $('#members-panel').hidden = true;
+});
+
+// Manual-entry transport select swaps url vs command/args fields (the bearer
+// token is a remote-transport concept — hidden for stdio).
+function syncMcpCreateTransportFields() {
+  const remote = $('#mcp-create-transport').value !== 'stdio';
+  $('#mcp-create-token-label').hidden = !remote;
+  $('#mcp-create-url-label').hidden = !remote;
+  $('#mcp-create-command-label').hidden = remote;
+  $('#mcp-create-args-label').hidden = remote;
+}
+$('#mcp-create-transport').addEventListener('change', syncMcpCreateTransportFields);
+
+// ── MCP probe — connect to the URL as an MCP client, list its tools ──
+// The bearer token used by the LAST SUCCESSFUL probe — carried into the add
+// body so the registered server keeps working. Kept out of lastMcpProbe (the
+// server response) so it can't leak via logging of that object.
+let lastMcpProbeToken = '';
+
+function mcpProbeAuthHeaders() {
+  const token = $('#mcp-probe-token').value.trim();
+  return token ? { Authorization: `Bearer ${token}` } : undefined;
+}
+
+async function runMcpProbe() {
+  const url = $('#mcp-probe-url').value.trim();
+  if (!url) {
+    showToast('Enter a server URL first (e.g. host:8000/sse).', { kind: 'error' });
+    return;
+  }
+  if (/\s|[<>]/.test(url)) {
+    showToast('URL contains invalid characters.', { kind: 'error' });
+    return;
+  }
+  const status = $('#mcp-probe-status');
+  const results = $('#mcp-probe-results');
+  status.classList.remove('error');
+  status.textContent = 'Probing… (connects to the server and lists its tools)';
+  status.hidden = false;
+  results.hidden = true;
+  $('#mcp-probe-btn').disabled = true;
+  try {
+    const headers = mcpProbeAuthHeaders();
+    const res = await authFetch('/api/mcp-servers/probe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(headers ? { url, headers } : { url }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      status.textContent = body.error || `Probe failed (${res.status})`;
+      status.classList.add('error');
+      return;
+    }
+    if (!body.transport) {
+      // Auth-gated server: reveal the token field and invite a re-probe. A
+      // WRONG token lands here too — same affordance, different message.
+      if (body.requiresAuth) {
+        const tokenLabel = $('#mcp-probe-token-label');
+        const hadToken = Boolean(headers);
+        tokenLabel.hidden = false;
+        status.textContent = hadToken
+          ? 'The server rejected that token — check it and probe again.'
+          : 'This server requires a bearer token — enter it below and probe again.';
+        status.classList.add('error');
+        $('#mcp-probe-token').focus();
+        return;
+      }
+      status.textContent = body.reason || 'No MCP server responded.';
+      status.classList.add('error');
+      return;
+    }
+    lastMcpProbe = body;
+    lastMcpProbeToken = $('#mcp-probe-token').value.trim();
+    status.hidden = true;
+    renderMcpProbeResults(body);
+  } catch (err) {
+    status.textContent = 'Probe failed: ' + err.message;
+    status.classList.add('error');
+  } finally {
+    $('#mcp-probe-btn').disabled = false;
+  }
+}
+
+function renderMcpProbeResults(probe) {
+  $('#mcp-probe-kind').className = `model-probe-kind kind-${probe.transport}`;
+  $('#mcp-probe-kind').textContent = probe.transport;
+  const n = probe.tools.length;
+  $('#mcp-probe-notes').textContent =
+    `${probe.serverName || 'MCP server'}${probe.serverVersion ? ' v' + probe.serverVersion : ''} — ` +
+    `${n} tool${n === 1 ? '' : 's'}`;
+  const list = $('#mcp-probe-tools');
+  list.innerHTML = '';
+  if (n === 0) {
+    const li = document.createElement('li');
+    li.className = 'empty-note';
+    li.textContent = 'Connected, but the server advertises no tools.';
+    list.appendChild(li);
+  } else {
+    for (const tool of probe.tools) {
+      const li = document.createElement('li');
+      const name = document.createElement('b');
+      name.textContent = tool.name;
+      li.appendChild(name);
+      if (tool.description) {
+        const desc = document.createElement('span');
+        desc.textContent = ` — ${tool.description}`;
+        desc.style.opacity = '0.75';
+        li.appendChild(desc);
+      }
+      list.appendChild(li);
+    }
+  }
+  // Suggest a name from the server's self-reported identity.
+  if (!$('#mcp-probe-name').value && probe.serverName) {
+    $('#mcp-probe-name').value = probe.serverName.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+  $('#mcp-probe-results').hidden = false;
+}
+
+$('#mcp-probe-btn').addEventListener('click', runMcpProbe);
+$('#mcp-probe-url').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    runMcpProbe();
+  }
+});
+
+// Add-from-probe: the URL + detected transport come from the probe result; the
+// token that made the probe succeed rides along so the saved server works too.
+$('#mcp-probe-add').addEventListener('click', async () => {
+  if (!lastMcpProbe) return;
+  const name = $('#mcp-probe-name').value.trim();
+  if (!name) {
+    showToast('Give the server a name first.', { kind: 'error' });
+    return;
+  }
+  const body = { name, transport: lastMcpProbe.transport, url: lastMcpProbe.endpoint };
+  if (lastMcpProbeToken) body.headers = { Authorization: `Bearer ${lastMcpProbeToken}` };
+  await createMcpServer(body, $('#mcp-probe-add'));
+});
+
+// Manual entry (Advanced).
+$('#mcp-create-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const transport = $('#mcp-create-transport').value;
+  const body = { name: $('#mcp-create-name').value.trim(), transport };
+  if (transport === 'stdio') {
+    body.command = $('#mcp-create-command').value.trim();
+    body.args = $('#mcp-create-args')
+      .value.split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+  } else {
+    body.url = $('#mcp-create-url').value.trim();
+    const token = $('#mcp-create-token').value.trim();
+    if (token) body.headers = { Authorization: `Bearer ${token}` };
+  }
+  await createMcpServer(body, $('#mcp-create-form button.btn-primary'));
+});
+
+async function createMcpServer(body, btn) {
+  btn.disabled = true;
+  try {
+    const created = await apiJson('/api/mcp-servers', { method: 'POST', body });
+    showToast(`Added ${body.name}`, { kind: 'success' });
+    closeMcpDetail();
+    await fetchMcpServers();
+    // If this create was launched from an agent's "+ Add new server", attach
+    // it to that agent and return to its settings (mirrors the models picker).
+    await maybeAttachAfterMcpAdd(created.id || allMcpServers.find((s) => s.name === body.name)?.id, body.name);
+  } catch (err) {
+    showToast('Add failed: ' + (err.message || err), { kind: 'error' });
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Save (rename / retarget) from the edit view.
+$('#mcp-detail-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!selectedMcpId) return;
+  const server = allMcpServers.find((s) => s.id === selectedMcpId);
+  if (!server) return;
+  const body = { name: $('#mcp-name').value.trim() };
+  if (server.transport === 'stdio') body.command = $('#mcp-command').value.trim();
+  else {
+    body.url = $('#mcp-url').value.trim();
+  }
+  // Token rotation: a typed token goes to the HOST-side credential store (the
+  // relay injects it per request) — never into headers/container.json.
+  const token = server.transport !== 'stdio' ? $('#mcp-token').value.trim() : '';
+  try {
+    await apiJson(`/api/mcp-servers/${encodeURIComponent(selectedMcpId)}`, { method: 'PUT', body });
+    if (token) {
+      await apiJson(`/api/mcp-servers/${encodeURIComponent(selectedMcpId)}/auth`, { method: 'PUT', body: { token } });
+    }
+    showToast('Saved', { kind: 'success' });
+    closeMcpDetail();
+    await fetchMcpServers();
+  } catch (err) {
+    showToast('Save failed: ' + (err.message || err), { kind: 'error' });
+  }
+});
+
+// Delete with cascade-with-confirmation (409 → impact list → ?force=1).
+$('#mcp-delete').addEventListener('click', async () => {
+  if (!selectedMcpId) return;
+  const server = allMcpServers.find((s) => s.id === selectedMcpId);
+  if (!server) return;
+  try {
+    const res = await authFetch(`/api/mcp-servers/${encodeURIComponent(selectedMcpId)}`, { method: 'DELETE' });
+    if (res.status === 409) {
+      const impact = await res.json();
+      const n = (impact.assigned_agent_group_ids || []).length;
+      const confirmed = await showConfirmModal({
+        title: 'Delete MCP server',
+        body: `"${server.name}" is attached to ${n} agent${n === 1 ? '' : 's'}. They lose its tools on their next message.`,
+        confirmLabel: 'Delete anyway',
+        destructive: true,
+      });
+      if (!confirmed) return;
+      const force = await authFetch(`/api/mcp-servers/${encodeURIComponent(selectedMcpId)}?force=1`, {
+        method: 'DELETE',
+      });
+      if (!force.ok) {
+        const err = await force.json().catch(() => ({}));
+        showToast(`Failed to delete: ${err.error || force.statusText}`, { kind: 'error' });
+        return;
+      }
+    } else if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(`Failed to delete: ${err.error || res.statusText}`, { kind: 'error' });
+      return;
+    }
+    showToast(`Deleted "${server.name}".`, { kind: 'success' });
+    closeMcpDetail();
+    await fetchMcpServers();
+  } catch (err) {
+    showToast(`Failed to delete: ${err.message}`, { kind: 'error' });
+  }
+});
+
+// ── Agent → Model assignment ──────────────────────────────────────────────
+//
+// The Model dropdown in the agent edit form. Populated from /api/models on
+// every openAgentDetail (cheap; a handful of rows). Saved alongside the
+// other agent fields when the user clicks Save.
+
+function populateAgentModelSelect(currentModelId) {
+  // The <select> was replaced by a button-driven picker; agent-model is now
+  // a hidden input that holds the chosen id. The existing save handler in
+  // saveAgentDetail still reads `$('#agent-model').value`.
+  $('#agent-model').value = currentModelId || '';
+  refreshAgentModelTrigger();
+}
+
+/**
+ * Update the picker trigger button's labels to reflect the currently-
+ * assigned model. Two-line layout: name on top, kind+model_id+host underneath.
+ * No selection → "Default" / "Built-in Anthropic".
+ */
+function refreshAgentModelTrigger() {
+  const trigger = $('#agent-model-trigger');
+  if (!trigger) return;
+  const id = $('#agent-model').value;
+  const nameEl = trigger.querySelector('.model-picker-trigger-name');
+  const metaEl = trigger.querySelector('.model-picker-trigger-meta');
+  if (!id) {
+    nameEl.textContent = 'Default';
+    // No webchat model assigned. If the agent runs on a non-Claude provider,
+    // surface its real model instead of the misleading "Built-in Anthropic".
+    const derived = allAgents.find((a) => a.id === selectedAgentId)?.effective_model_label;
+    metaEl.textContent = derived ? `${derived} · auto-detected` : 'Built-in Anthropic';
+    return;
+  }
+  const m = allModels.find((mm) => mm.id === id);
+  if (!m) {
+    nameEl.textContent = 'Unknown model';
+    metaEl.textContent = id;
+    return;
+  }
+  nameEl.textContent = m.name;
+  const host = endpointHost(m.endpoint);
+  metaEl.textContent = host
+    ? `${modelKindLabel(m.kind)} · ${m.model_id} · ${host}`
+    : `${modelKindLabel(m.kind)} · ${m.model_id}`;
+}
+
+function endpointHost(endpoint) {
+  if (!endpoint) return '';
+  try {
+    return new URL(endpoint).host;
+  } catch {
+    return endpoint;
+  }
+}
+
+// ── Model picker ──────────────────────────────────────────────────────────
+//
+// Bottom-sheet (mobile) / centered popover (desktop) for assigning a model
+// to the open agent. Default is always pinned at the top. Search filters by
+// name + model_id + endpoint host. "+ Add new model" delegates to the
+// existing model-detail create flow with a flag set so we auto-assign on
+// success.
+
+let pickerAddInProgress = false;
+let pickerAgentForAdd = null;
+
+function openModelPicker() {
+  const picker = $('#model-picker');
+  picker.hidden = false;
+  // Force reflow so the open-state transition runs from the initial state.
+  void picker.offsetHeight;
+  picker.classList.add('open');
+  $('#model-picker-search').value = '';
+  renderPickerList('');
+  // Autofocus the search on desktop only — mobile autofocus pops the
+  // soft keyboard immediately, which is jarring when you're scanning a list.
+  if (window.matchMedia('(min-width: 720px)').matches) {
+    setTimeout(() => $('#model-picker-search').focus(), 60);
+  }
+}
+
+function closeModelPicker() {
+  const picker = $('#model-picker');
+  picker.classList.remove('open');
+  // Wait for the slide-out animation before hiding so the close is animated.
+  setTimeout(() => {
+    picker.hidden = true;
+  }, 220);
+}
+
+function renderPickerList(filterText) {
+  const list = $('#model-picker-list');
+  list.innerHTML = '';
+  const q = (filterText || '').trim().toLowerCase();
+  const currentSelected = $('#agent-model').value || '';
+
+  // Default row — always pinned at the top, even when there's a search query.
+  // We never filter it out (the user might be searching to confirm "yeah, no
+  // model here matches what I want, fall back to default").
+  // When no model is assigned but the agent runs on a non-Claude provider,
+  // the Default row's sub should name that model — showing "Built-in Anthropic"
+  // there would be contradictory.
+  const derived = allAgents.find((a) => a.id === selectedAgentId)?.effective_model_label;
+  const defaultRow = createPickerRow(
+    {
+      id: '',
+      isDefault: true,
+      name: 'Default',
+      sub: derived ? `${derived} · auto-detected` : 'Built-in Anthropic',
+    },
+    currentSelected,
+  );
+  list.appendChild(defaultRow);
+
+  const matches = allModels.filter((m) => {
+    // Routing backends (openai-compatible :4000) are managed in Auto routing →
+    // Models, not assignable here — the 'auto' entry represents routing instead.
+    // Mirrors renderModels so the picker and the Models list agree.
+    if (isRouterBackendModel(m)) return false;
+    if (!q) return true;
+    const host = endpointHost(m.endpoint).toLowerCase();
+    return [m.name, m.model_id, host, m.kind].some((s) => (s || '').toLowerCase().includes(q));
+  });
+
+  if (matches.length === 0 && allModels.length > 0 && q) {
+    const empty = document.createElement('li');
+    empty.className = 'model-picker-empty';
+    empty.textContent = `No models match "${filterText}".`;
+    list.appendChild(empty);
+  } else if (allModels.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'model-picker-empty';
+    empty.textContent = 'No models registered yet. Use "+ Add new model" below.';
+    list.appendChild(empty);
+  }
+
+  for (const m of matches) {
+    list.appendChild(createPickerRow(m, currentSelected));
+  }
+}
+
+function createPickerRow(m, currentSelected) {
+  const li = document.createElement('li');
+  li.className = 'model-picker-row';
+  li.tabIndex = 0;
+  if (m.isDefault) li.classList.add('is-default');
+  li.dataset.modelId = m.id || '';
+  if ((m.id || '') === currentSelected) li.classList.add('selected');
+
+  const top = document.createElement('div');
+  top.className = 'model-picker-row-top';
+  const name = document.createElement('span');
+  name.className = 'model-picker-row-name';
+  name.textContent = m.name;
+  top.appendChild(name);
+  const badge = document.createElement('span');
+  if (m.isDefault) {
+    badge.className = 'model-kind-badge model-default-badge';
+    badge.textContent = 'default';
+  } else {
+    badge.className = `model-kind-badge kind-${m.kind}`;
+    badge.textContent = modelKindLabel(m.kind);
+  }
+  top.appendChild(badge);
+  li.appendChild(top);
+
+  const sub = document.createElement('div');
+  sub.className = 'model-picker-row-sub';
+  if (m.isDefault) {
+    sub.textContent = m.sub || 'Built-in Anthropic';
+  } else {
+    const host = endpointHost(m.endpoint);
+    sub.textContent = host ? `${m.model_id} · ${host}` : m.model_id;
+  }
+  li.appendChild(sub);
+
+  const onPick = () => selectFromPicker(m.id || '');
+  li.addEventListener('click', onPick);
+  li.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onPick();
+    }
+  });
+  return li;
+}
+
+function selectFromPicker(modelId) {
+  $('#agent-model').value = modelId;
+  refreshAgentModelTrigger();
+  refreshAgentSaveDirty(); // a model change is a savable edit
+  closeModelPicker();
+  // Note: we don't auto-persist on select. Existing flow waits for the
+  // agent-detail Save button, matching the pre-picker behavior.
+}
+
+// Trigger button → open picker. Only meaningful when an agent is open.
+$('#agent-model-trigger').addEventListener('click', () => {
+  if (selectedAgentId) openModelPicker();
+});
+
+// Picker close paths.
+$('#model-picker-close').addEventListener('click', closeModelPicker);
+$('#model-picker .model-picker-backdrop').addEventListener('click', closeModelPicker);
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#model-picker').hidden) closeModelPicker();
+});
+
+// Live filter.
+$('#model-picker-search').addEventListener('input', (e) => {
+  renderPickerList(e.target.value);
+});
+
+// "+ Add new model" → close picker, set the auto-assign flag, then trigger
+// the existing model-create flow. After a successful create we auto-assign
+// the new model id to the agent and return them to the agent detail.
+$('#model-picker-add-new').addEventListener('click', () => {
+  if (!selectedAgentId) return;
+  pickerAddInProgress = true;
+  pickerAgentForAdd = selectedAgentId;
+  closeModelPicker();
+  // Existing path: opens model-detail aside in create mode.
+  setTimeout(() => $('#create-model-btn').click(), 180);
+});
+
+/**
+ * Called from both the manual create and the probe bulk-add success paths.
+ * If the picker initiated this add, assign the newly-created model to the
+ * agent and return the user to the agent detail. Bulk-add of >1 doesn't
+ * auto-assign — we leave the user on the agent detail and they can re-open
+ * the picker to choose explicitly.
+ */
+async function maybeAssignAfterPickerAdd(createdIds) {
+  if (!pickerAddInProgress) return false;
+  const agentId = pickerAgentForAdd;
+  pickerAddInProgress = false;
+  pickerAgentForAdd = null;
+  if (!agentId) return false;
+  // Persist the assignment server-side (the same endpoint the agent Save
+  // handler hits). Then refresh the agent detail so the trigger shows the
+  // new model.
+  if (createdIds.length === 1) {
+    try {
+      const mRes = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/model`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ modelId: createdIds[0] }),
+      });
+      if (mRes.ok) warnIfUnreachable((await mRes.json()).reachability);
+    } catch (err) {
+      console.error('Auto-assign new model failed:', err);
+    }
+  }
+  // Re-fetch agents so the in-memory list has the new assignment.
+  await fetchAgents();
+  // Reopen the agent detail so the user lands back where they started.
+  if (typeof openAgentDetail === 'function') {
+    await openAgentDetail(agentId);
+  }
+  return true;
+}
+
+initApp();

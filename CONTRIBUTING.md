@@ -12,12 +12,32 @@ install from three pinned inputs (see [README](README.md#how-its-built)). So
 | You want to change… | Edit | Not |
 |---|---|---|
 | Webchat's own code | `app/…` (pure additions, laid out in nanoclaw's tree shape) | a composed install |
+| The browser UI (`app.js`) | **`ui/src/…`** — `app/public/webchat/app.js` is a BUILT artifact | editing the generated `app.js` |
 | A nanoclaw-owned file | a patch under `patches/` (`scripts/regen-patches.sh`) | `app/` |
 | Docs operators read in a running install | `app/docs/webchat/` — these ship | `docs/` |
 | Docs about this repo | `docs/` — these do not ship | `app/docs/` |
 
 `~/nanoclaw` (or wherever you installed) is a **build output**. Never edit it and
 expect the change to persist — re-run `install.sh` after changing sources.
+
+## The browser UI is built
+
+`app/public/webchat/app.js` is **generated** from `ui/src/` by Vite and committed
+to the repo (same filename, no content hash — `index.html` and `sw.js` reference
+it by name). Editing the generated file directly will be reverted by the next
+build, and CI's bundle-drift guard fails the PR either way.
+
+```bash
+pnpm --dir ui install
+pnpm --dir ui run build                      # regenerate the committed bundle
+pnpm --dir ui run dev                        # rebuild on save while working
+pnpm --dir ui run typecheck                  # ui/ is TypeScript
+```
+
+Commit the regenerated bundle together with your source change. The migration
+out of the single-file era is in progress: `ui/src/legacy.js` is the original
+monolith, and modules are being carved out of it into `ui/src/core/…` — prefer
+adding new code as a module rather than growing `legacy.js`.
 
 ## Before you push: install the hooks
 
