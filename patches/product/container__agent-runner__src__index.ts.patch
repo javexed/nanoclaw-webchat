@@ -1,8 +1,8 @@
-diff --git c/container/agent-runner/src/index.ts w/container/agent-runner/src/index.ts
-index c85873c8..4acbf3b6 100644
---- c/container/agent-runner/src/index.ts
-+++ w/container/agent-runner/src/index.ts
-@@ -33,7 +33,15 @@ import { MEMORY_SESSION_HOOK } from './memory/session-hook.js';
+diff --git a/container/agent-runner/src/index.ts b/container/agent-runner/src/index.ts
+index 8cc00fb6..b18a46e7 100644
+--- a/container/agent-runner/src/index.ts
++++ b/container/agent-runner/src/index.ts
+@@ -33,6 +33,13 @@ import { MEMORY_SESSION_HOOK } from './memory/session-hook.js';
  // Providers barrel — each enabled provider self-registers on import.
  // Provider skills append imports to providers/index.ts.
  import './providers/index.js';
@@ -14,30 +14,23 @@ index c85873c8..4acbf3b6 100644
 +import './send-file-hint.js';
 +import './mention-human.js';
  import { createProvider, type ProviderName } from './providers/factory.js';
-+import type { McpServerConfig } from './providers/types.js';
- import { runPollLoop } from './poll-loop.js';
- 
- function log(msg: string): void {
-@@ -84,7 +92,7 @@ async function main(): Promise<void> {
-   const mcpServerPath = path.join(__dirname, 'mcp-tools', 'index.ts');
- 
-   // Build MCP servers config: nanoclaw built-in + any from container.json
--  const mcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }> = {
-+  const mcpServers: Record<string, McpServerConfig> = {
-     nanoclaw: {
-       command: 'bun',
-       args: ['run', mcpServerPath],
-@@ -94,7 +102,8 @@ async function main(): Promise<void> {
- 
-   for (const [name, serverConfig] of Object.entries(config.mcpServers)) {
-     mcpServers[name] = serverConfig;
--    log(`Additional MCP server: ${name} (${serverConfig.command})`);
+ import { resolvePluginServer } from './plugin-mcp.js';
+ import type { McpServerConfig } from './providers/types.js';
+@@ -98,11 +105,8 @@ async function main(): Promise<void> {
+     // Plugin-shipped servers get ${PLUGIN_ROOT}/${PLUGIN_DATA} expansion and
+     // the two injected env vars; everything else passes through untouched.
+     mcpServers[name] = resolvePluginServer(serverConfig);
+-    log(
+-      serverConfig.type === 'http'
+-        ? `Additional MCP server: ${name} (HTTP)`
+-        : `Additional MCP server: ${name} (${serverConfig.command})`,
+-    );
 +    const via = 'url' in serverConfig ? `${serverConfig.type} ${serverConfig.url}` : serverConfig.command;
 +    log(`Additional MCP server: ${name} (${via})`);
    }
  
    const provider = createProvider(providerName, {
-@@ -104,6 +113,7 @@ async function main(): Promise<void> {
+@@ -112,6 +116,7 @@ async function main(): Promise<void> {
      additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
      model: config.model,
      effort: config.effort,
@@ -45,7 +38,7 @@ index c85873c8..4acbf3b6 100644
    });
    provider.registerMemorySessionHook(MEMORY_SESSION_HOOK);
  
-@@ -112,6 +122,8 @@ async function main(): Promise<void> {
+@@ -120,6 +125,8 @@ async function main(): Promise<void> {
      providerName,
      cwd: CWD,
      systemContext: { instructions },

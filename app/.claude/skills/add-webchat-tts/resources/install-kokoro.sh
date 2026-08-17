@@ -18,6 +18,7 @@
 #   --port <n>     host loopback port for the backend        (default 8880)
 #   --voice <id>   default voice (af_heart, am_adam, bf_emma, …) (default af_heart)
 #   --tag <t>      Kokoro-FastAPI image tag (KOKORO_TAG env)  (default: pinned below)
+#   KOKORO_MEMORY / KOKORO_MEMORY_SWAP — container memory cap (default 2g / 3g)
 #   --gpu          use the CUDA image instead of the CPU image
 #   --skip-run     write .env config only, don't (re)start the container
 #   --no-env       start the container only, don't touch .env
@@ -38,6 +39,15 @@ VOICE="af_heart"
 TAG="${KOKORO_TAG:-v0.2.4}"
 VARIANT="cpu"
 NAME="nanoclaw-kokoro-tts"
+# Cap the container. Unbounded, this process has been observed at 2.2–3.2GB of
+# anon RSS and was the trigger for four of eight global OOM incidents in five
+# weeks on a 7.6GB host — one of which killed the webchat host itself and both
+# CI runners before anything could log why. A bounded container OOMs ITSELF,
+# which fails one synthesis request, instead of letting the kernel pick a victim
+# anywhere on the box. Raise it if synthesis starts failing under load; the
+# `--memory-swap` headroom lets it page rather than die at exactly the limit.
+MEMORY="${KOKORO_MEMORY:-2g}"
+MEMORY_SWAP="${KOKORO_MEMORY_SWAP:-3g}"
 DRY=0
 SKIP_RUN=0
 NO_ENV=0
@@ -99,6 +109,7 @@ if [ "$SKIP_RUN" = 0 ]; then
     echo "  (GPU variant — requires the NVIDIA container toolkit on the host)"
   fi
   run docker run -d --name "$NAME" --restart unless-stopped \
+    --memory "$MEMORY" --memory-swap "$MEMORY_SWAP" \
     -p "127.0.0.1:${PORT}:8880" \
     ${GPU_ARGS[@]+"${GPU_ARGS[@]}"} \
     "$IMAGE"

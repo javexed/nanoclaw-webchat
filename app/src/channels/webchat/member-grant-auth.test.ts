@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
-import { checkMemberGrantAuth } from './server.js';
+import { checkMemberGrantAuth } from './server/routes-users.js';
 
 const now = '2026-06-10T00:00:00.000Z';
 

@@ -20,11 +20,12 @@ import { type IncomingMessage } from 'http';
 import { execFile } from 'child_process';
 import { timingSafeEqual } from 'crypto';
 
+import { audit } from '../../audit.js';
 import { hasTable, getDb } from '../../db/connection.js';
 import { log } from '../../log.js';
 import { upsertUser } from '../../modules/permissions/db/users.js';
 import { getBearerTokenDisabled, getPromoteFirstTailscaleOwner, setPromoteFirstTailscaleOwner } from './db.js';
-import { ensureOwnerRoleOnFirstLogin, grantOwnerRole } from './roles.js';
+import { ensureOwnerRoleOnFirstLogin, grantOwnerRole, isOwner } from './roles.js';
 
 const WEBCHAT_TOKEN = process.env.WEBCHAT_TOKEN || '';
 const TRUSTED_PROXY_RAW = (process.env.WEBCHAT_TRUSTED_PROXY_IPS || '').trim();
@@ -77,7 +78,46 @@ export interface AuthFailure {
   reason: string;
 }
 
+/**
+ * Auth events, deduplicated. authenticateRequest runs on EVERY HTTP request
+ * and WS upgrade, so raw emission would write a line per API call and turn
+ * the audit log into an access log. What an incident review needs is
+ * TRANSITIONS: the first time an identity shows up over a given source+ip
+ * since boot, and refusals. The concrete case this must answer: "which
+ * identity consumed the fresh-install owner grant, and from where?" — a
+ * question that was unanswerable when exactly that happened.
+ */
+const auditedSessions = new Set<string>();
+const auditedDenials = new Map<string, number>();
+
 export async function authenticateRequest(req: IncomingMessage): Promise<AuthResult | AuthFailure> {
+  const result = await authenticate(req);
+  const remoteIp = (req.socket.remoteAddress ?? '127.0.0.1').replace(/^::ffff:/, '');
+  if (result.ok) {
+    const key = `${result.userId}|${result.source}|${remoteIp}`;
+    if (!auditedSessions.has(key)) {
+      auditedSessions.add(key);
+      audit({
+        type: 'auth.session',
+        actor: `human:${result.userId}`,
+        effect: 'allow',
+        detail: { source: result.source, ip: remoteIp },
+      });
+    }
+  } else {
+    // Refusals are the interesting half, but a scanner hammering an exposed
+    // port must not be able to grow the file unboundedly — one line per ip
+    // per minute is enough to see the attempt and its persistence.
+    const last = auditedDenials.get(remoteIp) ?? 0;
+    if (Date.now() - last > 60_000) {
+      auditedDenials.set(remoteIp, Date.now());
+      audit({ type: 'auth.denied', effect: 'deny', detail: { ip: remoteIp } });
+    }
+  }
+  return result;
+}
+
+async function authenticate(req: IncomingMessage): Promise<AuthResult | AuthFailure> {
   const remoteIp = (req.socket.remoteAddress ?? '127.0.0.1').replace(/^::ffff:/, '');
 
   // 1. Bearer token from Authorization header or WebSocket subprotocol.
@@ -550,8 +590,15 @@ function finalize(args: { source: AuthResult['source']; userId: string; displayN
   // tailscale identity to authenticate is promoted to owner (co-owner with the
   // bearer bootstrap), then the flag disarms so later tailnet peers don't get it.
   if (args.source === 'tailscale' && getPromoteFirstTailscaleOwner()) {
-    grantOwnerRole(args.userId, 'webchat:first-tailscale-owner');
-    setPromoteFirstTailscaleOwner(false);
+    const granted = grantOwnerRole(args.userId, 'webchat:first-tailscale-owner');
+    // Disarm on the END STATE, not on the return value. `granted` is false in
+    // two very different cases — the grant failed, and this identity already
+    // held owner — and clearing the flag unconditionally conflates them. That
+    // conflation is unrecoverable in the direction that matters: the one-shot
+    // is spent, no role exists, and the operator is left holding a tailnet
+    // identity that can authenticate but not administer, with the only UI for
+    // re-arming gated behind the owner they just failed to become.
+    if (granted || isOwner(args.userId)) setPromoteFirstTailscaleOwner(false);
   }
   return { ok: true, userId: args.userId, displayName: args.displayName, source: args.source };
 }

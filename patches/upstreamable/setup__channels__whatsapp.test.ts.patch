@@ -1,0 +1,32 @@
+diff --git c/setup/channels/whatsapp.test.ts w/setup/channels/whatsapp.test.ts
+index 269391bd..78d430ee 100644
+--- c/setup/channels/whatsapp.test.ts
++++ w/setup/channels/whatsapp.test.ts
+@@ -10,10 +10,18 @@ import fs from 'fs';
+ import os from 'os';
+ import path from 'path';
+ 
+-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
++import { afterEach, beforeEach, describe, expect, it, afterAll } from 'vitest';
+ 
+ import { parseDirectives, type Directive } from '../../scripts/skill-directives.js';
+ 
++/** Scratch dirs this file makes, removed when it finishes. */
++const ENGAGE_SCRATCH: string[] = [];
++afterAll(() => {
++  for (const d of ENGAGE_SCRATCH) fs.rmSync(d, { recursive: true, force: true });
++  ENGAGE_SCRATCH.length = 0;
++});
++
++
+ const SKILL_MD = path.join(process.cwd(), '.claude/skills/add-whatsapp/SKILL.md');
+ const directives = parseDirectives(fs.readFileSync(SKILL_MD, 'utf-8'));
+ 
+@@ -38,6 +46,7 @@ function bash(body: string[], vars: Record<string, string>, cwd: string): string
+ describe('self-chat engage pattern fence', () => {
+   const fence = runFence((d) => d.attrs.capture === 'engage_pattern');
+   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-engage-'));
++  ENGAGE_SCRATCH.push(dir);
+   const patternFor = (name: string): string => bash(fence.body, { agent_name: name }, dir).trim();
+ 
+   it('matches messages starting with @<name> and nothing else', () => {

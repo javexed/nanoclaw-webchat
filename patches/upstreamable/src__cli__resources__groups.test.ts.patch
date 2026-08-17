@@ -1,8 +1,8 @@
 diff --git a/src/cli/resources/groups.test.ts b/src/cli/resources/groups.test.ts
-index c11f9435..c2790cd3 100644
+index 5ad0b957..2a9ba2cc 100644
 --- a/src/cli/resources/groups.test.ts
 +++ b/src/cli/resources/groups.test.ts
-@@ -220,6 +220,75 @@ describe('groups CLI delete cascades dependent rows (#2525)', () => {
+@@ -220,6 +220,84 @@ describe('groups CLI delete cascades dependent rows (#2525)', () => {
    });
  });
  
@@ -40,10 +40,19 @@ index c11f9435..c2790cd3 100644
 +      ).mcp_servers,
 +    );
 +
-+  it('adds a remote (sse) server from --url', async () => {
-+    const resp = await addMcp({ id: GID, name: 'windows', url: 'http://100.1.2.3:8000/sse' });
++  // Synthetic CGNAT (100.64/10) address exercising the fork's private-LAN
++  // http allowance; not a real host.
++  const LAN_URL = 'http://100.100.1.2:8000/sse'; // leak-scan-allow
++
++  it('defaults a bare --url to http, and honours an explicit --type sse', async () => {
++    // Upstream's parse infers url → http (the modern transport); the fork keeps
++    // sse reachable behind an explicit --type for legacy servers.
++    const resp = await addMcp({ id: GID, name: 'windows', url: LAN_URL });
 +    expect(resp.ok).toBe(true);
-+    expect(servers().windows).toEqual({ type: 'sse', url: 'http://100.1.2.3:8000/sse', headers: {} });
++    expect(servers().windows).toMatchObject({ type: 'http', url: LAN_URL });
++    const sse = await addMcp({ id: GID, name: 'legacy', url: LAN_URL, type: 'sse' });
++    expect(sse.ok).toBe(true);
++    expect(servers().legacy).toMatchObject({ type: 'sse', url: LAN_URL });
 +  });
 +
 +  it('honours --type http and --headers', async () => {

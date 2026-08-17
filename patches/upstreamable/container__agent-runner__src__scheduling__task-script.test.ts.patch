@@ -1,0 +1,40 @@
+diff --git a/container/agent-runner/src/scheduling/task-script.test.ts b/container/agent-runner/src/scheduling/task-script.test.ts
+index 7f38a851..86218733 100644
+--- a/container/agent-runner/src/scheduling/task-script.test.ts
++++ b/container/agent-runner/src/scheduling/task-script.test.ts
+@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+ 
+ import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from '../db/connection.js';
+ import { getPendingMessages, markScriptSkipped } from '../db/messages-in.js';
+-import { applyPreTaskScripts } from './task-script.js';
++import { applyPreTaskScripts, runScript } from './task-script.js';
+ 
+ beforeEach(() => {
+   initTestSessionDb();
+@@ -70,3 +70,26 @@ describe('script-skip ack chain (container leg)', () => {
+     expect(JSON.parse(keep[0].content).scriptOutput).toEqual({ alerts: 2 });
+   });
+ });
++
++describe('runScript concurrency (temp-file path collision)', () => {
++  // applyPreTaskScripts runs scripts SERIALLY, so this can't happen through
++  // it today — but runScript itself is exported, and a real task id is a
++  // caller-supplied string with no uniqueness guarantee beyond "current DB
++  // row". Two overlapping callers sharing one (a retry racing the original,
++  // or a future concurrent caller) used to write, exec and unlink the SAME
++  // /tmp path. Reliably reproduced pre-fix: 5 concurrent calls sharing one
++  // taskId clobbered each other's output in 30/30 trials outside this suite
++  // (writeFileSync is synchronous, so a later writer's write can land before
++  // an earlier writer's still-starting bash has read the file) — 0/30 once
++  // the path carries a random UUID. Kept at n=8 here for margin.
++  it('concurrent calls sharing a taskId never see each other\'s script', async () => {
++    const n = 8;
++    const results = await Promise.all(
++      Array.from({ length: n }, (_, i) =>
++        runScript(`echo '{"wakeAgent": true, "data": {"marker": ${i}}}'`, 'shared-task-id'),
++      ),
++    );
++    const markers = results.map((r) => r?.data as { marker: number } | undefined);
++    expect(markers).toEqual(Array.from({ length: n }, (_, i) => ({ marker: i })));
++  });
++});

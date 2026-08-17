@@ -93,6 +93,7 @@ describe('moduleWebchat migration', () => {
       'webchat-approvals-index',
       'webchat-approvals-index-fanout',
       'webchat-archive-split',
+      'webchat-audit-syslog',
       'webchat-bearer-auth',
       'webchat-credential-isolation',
       'webchat-credentials-config',

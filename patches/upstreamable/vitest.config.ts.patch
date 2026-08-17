@@ -1,0 +1,13 @@
+diff --git c/vitest.config.ts w/vitest.config.ts
+index 24b4b5cf..9d8ad3d1 100644
+--- c/vitest.config.ts
++++ w/vitest.config.ts
+@@ -2,6 +2,8 @@ import { defineConfig } from 'vitest/config';
+ 
+ export default defineConfig({
+   test: {
++    // Redirects audit-log writes out of the working tree — see vitest.setup.ts.
++    setupFiles: ['./vitest.setup.ts'],
+     // container/agent-runner tests run under Bun (they depend on bun:sqlite).
+     // See container/agent-runner/package.json "test" script.
+     // container/*.test.ts: top-level only — container/agent-runner tests run

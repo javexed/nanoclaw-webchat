@@ -75,6 +75,7 @@ tokens can be used anywhere without reasoning about ancestors.
 | `--fs-base` | 15 | body text, messages |
 | `--fs-lg` | 18 | section / panel titles |
 | `--fs-xl` | 21 | view headings |
+| `--fs-input` | 16 | text-entry controls **only** — 16px is the iOS threshold below which focusing an input auto-zooms the page. Not part of the visual scale; never for non-form text |
 
 The px→rem conversion **preserved exact sizes** (faithful `N/15rem`); it did not
 snap to the scale above. Consolidating the long tail of one-off sizes onto these
@@ -88,6 +89,10 @@ mapping:
 | `14–15px` (`~0.933–1rem`) | `--fs-base` |
 | `16–18px` (`~1.067–1.2rem`) | `--fs-lg` |
 | `20px+` (`≥1.333rem`) | `--fs-xl` |
+
+Monospace is one token — `--font-mono` (`ui-monospace, SFMono-Regular, Menlo,
+Consolas, monospace`). Don't spell a mono stack inline; the second stack this
+replaced fell through to the generic mono everywhere except macOS.
 
 The 32 existing `em` font-sizes were left as-is — they already scale via
 inheritance (they resolve against `#app`, which inherits the scaling root).

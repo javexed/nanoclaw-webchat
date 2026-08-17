@@ -1,9 +1,9 @@
 diff --git a/src/templates/create-agent.test.ts b/src/templates/create-agent.test.ts
-index caf10bf7..82efc4a2 100644
+index fd3a8611..b0d442a5 100644
 --- a/src/templates/create-agent.test.ts
 +++ b/src/templates/create-agent.test.ts
-@@ -26,6 +26,12 @@ import { PERSONA_PREPEND_FILE } from '../group-persona.js';
- import { inboundDbPath } from '../session-manager.js';
+@@ -28,6 +28,12 @@ import { NANOCLAW_EXTENSION_NS } from './extension.js';
+ import { MCP_SCHEMA_URL, PLUGIN_SCHEMA_URL } from './manifest.js';
  import { createAgentFromTemplate } from './create-agent.js';
  
 +// This suite drives real better-sqlite3 + fs + migrations per test. Uncontended
@@ -12,6 +12,6 @@ index caf10bf7..82efc4a2 100644
 +// headroom — correctness is unaffected, only the wall-clock ceiling.
 +vi.setConfig({ testTimeout: 30_000 });
 +
- function writeTemplate(): void {
-   const t = path.join(TEMPLATES_DIR, 'sales', 'sdr');
-   fs.mkdirSync(path.join(t, 'context', 'additional_context'), { recursive: true });
+ const TPL = path.join(TEMPLATES_DIR, 'sales', 'sdr');
+ 
+ function writeTemplate(manifestExtras: Record<string, unknown> = {}): void {

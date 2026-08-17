@@ -4,6 +4,7 @@
  * All tailscale calls go through an injected runner, so no daemon is needed.
  */
 import { describe, it, expect } from 'vitest';
+import os from 'os';
 
 import {
   getTailscaleServeState,
@@ -103,6 +104,33 @@ describe('enableTailscaleServe', () => {
     );
     expect(r.ok).toBe(false);
     expect(r.hint).toMatch(/operator/i);
+    // No placeholder left for the operator to decode, and sudo is spelled out:
+    // the hint has to be a command someone can paste at the exact moment they
+    // are least equipped to guess the missing pieces.
+    expect(r.hint).not.toMatch(/<user>/);
+    expect(r.hint).toMatch(/sudo/);
+  });
+
+  it("resolves the username rather than relaying the daemon's $USER", async () => {
+    // Verbatim stderr from tailscale 1.92.5 (snap). Relaying the line it
+    // suggests looks helpful and is not: `--operator=$USER` is a shell
+    // variable, and nothing expands it on the way to a web page — so the hint
+    // would swap one unexpanded placeholder for another. This asserts we
+    // answer with a name someone can actually paste.
+    const real = [
+      'sending serve config: Access denied: serve config denied',
+      '',
+      "Use 'sudo tailscale --socket /var/snap/tailscale/common/socket/tailscaled.sock serve --bg 3100'.",
+      "To not require root, use 'sudo tailscale set --operator=$USER' once.",
+    ].join('\n');
+    const r = await enableTailscaleServe(
+      3100,
+      runner({ 'status --json': ok(STATUS_UP), 'serve status --json': ok('{}'), 'serve --bg 3100': fail(real) }),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.hint).toContain('sudo tailscale set --operator=');
+    expect(r.hint).not.toContain('$USER');
+    expect(r.hint).toMatch(new RegExp(`--operator=${os.userInfo().username}\\b`));
   });
 
   it('handles a missing tailscale binary', async () => {

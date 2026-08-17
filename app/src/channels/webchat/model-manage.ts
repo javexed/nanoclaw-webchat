@@ -131,6 +131,75 @@ function estimateFootprint(sizeBytes: number | null, ctx: number, paramSize: str
   return sizeBytes + kvBytes + overhead;
 }
 
+export interface PrepullEstimate {
+  /** Total registry download, or null when the manifest was unreachable. */
+  sizeBytes: number | null;
+  estFootprintBytes: number | null;
+  vramFit: 'fits' | 'spills' | 'unknown';
+  gpu: GpuInfo | null;
+}
+
+/**
+ * What would pulling this model mean for THIS machine — answered BEFORE any
+ * bytes move. Ollama's registry serves image manifests over plain HTTPS, so
+ * the download size is knowable up front: sum the layer sizes. Only the
+ * default registry is inspected; a ref carrying its own registry host
+ * (`host.tld/name`, `host:port/name`) returns unknown rather than a guess.
+ *
+ * Size and VRAM only. The 4k-context caveat used to ride along here and was
+ * removed: pre-pull it compares Ollama's fixed 4k default against a fixed
+ * prompt budget, so it produced the identical warning for every model on
+ * every pull — a constant cannot inform a choice between models, and a
+ * warning that always fires is one people stop reading. The context verdict
+ * belongs after the pull (gatherModelInventory), where it reads the model's
+ * REAL configured num_ctx and where creating a variant can actually fix it.
+ */
+export async function prepullEstimate(model: string): Promise<PrepullEstimate> {
+  const gpu = await readGpu();
+  // The footprint estimate still needs a context to size the KV cache against;
+  // Ollama's default is what an un-tuned pull will actually load at.
+  const assumedCtx = OLLAMA_DEFAULT_CTX;
+  const unknown: PrepullEstimate = { sizeBytes: null, estFootprintBytes: null, vramFit: 'unknown', gpu };
+
+  const raw = (model || '').trim();
+  if (!raw) return unknown;
+  const [refPart, tag = 'latest'] = raw.split(':');
+  const segs = refPart.split('/');
+  // A registry host can only BE a host when something follows it. Testing the
+  // first segment for a dot unconditionally rejected every bare name that has
+  // one — llama3.2, qwen2.5, phi3.5 — which is most of the popular families,
+  // and they are exactly the refs whose size a user most wants up front.
+  if (segs.length > 2) return unknown;
+  if (segs.length === 2 && (segs[0].includes('.') || segs[0].includes(':'))) return unknown; // custom registry — no guess
+  const ns = segs.length === 2 ? segs[0] : 'library';
+  const name = segs.length === 2 ? segs[1] : segs[0];
+  if (!/^[a-z0-9._-]+$/i.test(ns) || !/^[a-z0-9._-]+$/i.test(name) || !/^[a-z0-9._-]+$/i.test(tag)) return unknown;
+
+  let sizeBytes: number | null = null;
+  try {
+    const res = await fetch(`https://registry.ollama.ai/v2/${ns}/${name}/manifests/${encodeURIComponent(tag)}`, {
+      headers: { Accept: 'application/vnd.docker.distribution.manifest.v2+json' },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (res.ok) {
+      const m = (await res.json()) as { layers?: Array<{ size?: number }>; config?: { size?: number } };
+      const total = (m.layers ?? []).reduce((a, l) => a + (l.size ?? 0), 0) + (m.config?.size ?? 0);
+      if (total > 0) sizeBytes = total;
+    }
+  } catch {
+    /* registry unreachable — the verdict degrades to unknown, the pull is unaffected */
+  }
+  if (sizeBytes == null) return unknown;
+
+  // Parameter count guessed from the tag ("14b", "1.7b") — good enough for the
+  // KV-cache term; estimateFootprint falls back to 8B when unparseable.
+  const paramGuess = /(^|[^0-9.])(\d+(?:\.\d+)?)b\b/i.exec(tag)?.[2] ?? null;
+  const est = estimateFootprint(sizeBytes, assumedCtx, paramGuess ? `${paramGuess}B` : null);
+  let vramFit: PrepullEstimate['vramFit'] = 'unknown';
+  if (gpu && est != null) vramFit = est <= gpu.totalMB * 1_000_000 ? 'fits' : 'spills';
+  return { sizeBytes, estFootprintBytes: est, vramFit, gpu };
+}
+
 /**
  * Assemble the inventory for one Ollama endpoint: every pulled tag (api/tags),
  * enriched with api/show details, live-load state (api/ps), registry links,
