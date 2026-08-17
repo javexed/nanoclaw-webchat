@@ -51,7 +51,8 @@ function referencingTables(): string[] {
 }
 
 const IMPLEMENTATIONS = [
-  { label: 'webchat deleteAgentHandler', file: 'src/channels/webchat/server.ts' },
+  // deleteAgentHandler moved out of server.ts with the rest of the agent routes.
+  { label: 'webchat deleteAgentHandler', file: 'src/channels/webchat/server/routes-agents.ts' },
   { label: 'ncl groups delete', file: 'src/cli/resources/groups.ts' },
 ];
 

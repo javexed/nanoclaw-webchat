@@ -67,36 +67,9 @@ import {
 } from 'http';
 import { json, safeParseJson, readBody, readJsonBody, BodyTooLargeError, MAX_JSON_BODY_BYTES } from './server/http.js';
 import {
-  rOllamaDeletePost,
-  rOllamaHostsGet,
-  rOllamaLocalGet,
-  rOllamaModelsGet,
-  rOllamaPrepullGet,
-  rOllamaPullCancelPost,
-  rOllamaPullPost,
-  rOllamaPullsGet,
-  rOllamaRecommendGet,
-} from './server/routes-ollama.js';
-import { buildFloor, deskState, lastKindFor } from './server/floor.js';
-import { readFloorEvents } from './server/floor-feed.js';
-import { buildOverview } from './server/overview.js';
-import { registerGrokReauthPrompter } from './server/grok-reauth-prompter.js';
-import {
   rAgentsGet,
   rAgentsDraftPost,
   rAgentsPost,
-  rAgentsFromTemplatePost,
-  rAgentExportTemplatePost,
-  rAgentTemplateApplyPost,
-  rAgentTemplatePlanGet,
-  rTemplateDelete,
-  rTemplateDetailGet,
-  rTemplateFetchPost,
-  rTemplateSourceBrowseGet,
-  rTemplateSourceDelete,
-  rTemplateSourcePost,
-  rTemplateSourcesGet,
-  rTemplatesGet,
   rAgentPut,
   rAgentDelete,
   rAgentRoomsGet,
@@ -291,31 +264,29 @@ import {
   sweepPendingImports,
 } from './server/archive.js';
 import {
-  GrantBody,
-  MembershipEntry,
-  RoleEntry,
-  UserWithPermissions,
-  checkMemberGrantAuth,
-  deleteUserHandler,
-  deriveUserKind,
-  grantPermissionHandler,
-  listUsersWithPermissions,
-  rGrokMemberLoginRoute,
-  rPermissionsGrantPost,
-  rPermissionsRevokePost,
   rUserCredentialsCredential,
   rUserCredsMintPost,
-  rUserIdDelete,
   rUsersGet,
-  revokePermissionHandler,
+  rUserIdDelete,
+  rPermissionsGrantPost,
+  rPermissionsRevokePost,
+  RoleEntry,
+  MembershipEntry,
+  UserWithPermissions,
+  listUsersWithPermissions,
+  deriveUserKind,
+  GrantBody,
   validateGrantBody,
+  checkMemberGrantAuth,
+  grantPermissionHandler,
+  deleteUserHandler,
+  revokePermissionHandler,
 } from './server/routes-users.js';
 import { USER_CREDS_MIN_INTERVAL_MS, userCredsActionAt, userCredsRateLimited } from './server/rate-limit.js';
 import {
   rWebchatCredentialsConfig,
   rWebchatOnboarding,
   rWebchatFeatures,
-  rWebchatAuditLog,
   rWebchatAuditSyslog,
   rWebchatTailscaleOwner,
   rWebchatTailscaleHttps,
@@ -388,25 +359,18 @@ import {
   rRouterLitellmInstallPost,
 } from './server/routes-router.js';
 import { codexAvailable, opencodeAvailable, piAvailable } from './server/providers.js';
-import { grokStatus } from './server/grok-status.js';
 import {
-  rCodexInstallGet,
-  rGrokInstallGet,
-  rGrokInstallPost,
-  rCodexInstallPost,
-  rGrokLoginGet,
-  rGrokLoginPost,
   rOllamaInstallPost,
+  rCodexInstallGet,
+  rCodexInstallPost,
   rOpencodeInstallGet,
   rOpencodeInstallPost,
   rPiInstallGet,
   rPiInstallPost,
-  rWebchatSttInstallGet,
-  rWebchatSttInstallPost,
   rWebchatTtsInstallGet,
   rWebchatTtsInstallPost,
-  rWorkspaceProviderGet,
-  rWorkspaceProviderPut,
+  rWebchatSttInstallGet,
+  rWebchatSttInstallPost,
 } from './server/routes-install.js';
 import { createServer as createHttpsServer } from 'https';
 import { createHash, randomUUID, randomBytes } from 'crypto';
@@ -446,7 +410,7 @@ import {
 import { syncSessionContext, type ContextMessage } from '../../session-manager.js';
 import { getPendingApproval, getSession, getSessionsByAgentGroup } from '../../db/sessions.js';
 import { insertMessage, openInboundDb } from '../../db/session-db.js';
-import { isContainerRunning, killContainer } from '../../container-runner.js';
+import { killContainer } from '../../container-runner.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import {
@@ -635,7 +599,7 @@ import {
   validateModel,
   writeAgentSettingsForAssignedModel,
   syncAgentProviderForAssignedModel,
-  writeLocalModelForAgent,
+  writeOpencodeModelForAgent,
   classifierParamsForModel,
 } from './models.js';
 import { handleChunkedUpload, handleFileServe, handleMultipartUpload } from './files.js';
@@ -674,7 +638,6 @@ import {
 } from './stt.js';
 import { canAccessRoom, canArchiveRoom, filterRoomsForUser } from './access.js';
 import { canAccessAgentGroup } from '../../modules/permissions/access.js';
-import { audit, auditActor } from '../../audit.js';
 import { configureSyslog } from './audit-syslog.js';
 import {
   getRoomOauthAllowed,
@@ -875,7 +838,7 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
 
   // Refuse to start if the server is reachable from the network without any
   // explicit auth method configured. Localhost-only installs are fine.
-  if (requiresExplicitAuth(host) && !(await hasExplicitAuth())) {
+  if (requiresExplicitAuth(host) && !hasExplicitAuth()) {
     throw new Error(
       `Webchat refusing to bind to ${host}:${port}: no auth method configured. ` +
         'Set WEBCHAT_TOKEN, WEBCHAT_TAILSCALE=true, or WEBCHAT_TRUSTED_PROXY_IPS, ' +
@@ -886,17 +849,12 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
   assertBearerTokenStrength();
 
   initWebPush();
-  void warnIfNoPermissionsModule();
-  // Lets a Grok re-auth DM carry a device code rather than only telling the
-  // reader to go and find a desktop. No-ops when Grok is not installed.
-  void registerGrokReauthPrompter().then((attached) => {
-    if (attached) log.info('Grok re-auth notices will carry a device code');
-  });
+  warnIfNoPermissionsModule();
   // Re-establish the audit forwarder from the persisted target, so a restart
   // does not silently turn forwarding off. Invalid persisted value → off, and
   // the health status says so; it cannot brick boot.
-  configureSyslog(await getAuditSyslogTarget());
-  await convergeAgentProviders();
+  configureSyslog(getAuditSyslogTarget());
+  convergeAgentProviders();
   // Background probe — finishes before any client can hit /api/auth/info in
   // practice (boot completes synchronously to listen()), and the endpoint
   // tolerates the not-yet-probed state by treating it as unhealthy. No await:
@@ -1061,7 +1019,7 @@ async function handleHttp(
   // tailscale-on-server health flag; no tokens, IPs, or detailed failure
   // reasons. See `getAuthInfo` for why this is safe to expose.
   if (url.pathname === '/api/auth/info' && method === 'GET') {
-    return json(res, 200, await getAuthInfo());
+    return json(res, 200, getAuthInfo());
   }
 
   // Static PWA assets — the app shell that CONTAINS the login screen — must be
@@ -1102,16 +1060,16 @@ async function handleHttp(
   // non-bearer method — so the admin proves the alternative works for their own
   // device and can't lock themselves (or everyone) out.
   if (url.pathname === '/api/webchat/auth' && method === 'GET') {
-    if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
+    if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
     // sessionSource lets the client tell whether disabling the bearer token will
     // actually succeed from THIS session: the retire endpoint refuses a disable
     // requested over bearer (self-lockout guard), so the "retire it now" prompt
     // should only surface when the caller arrived via tailscale / proxy.
-    return json(res, 200, { ...(await getAuthManagementInfo()), sessionSource: auth.source });
+    return json(res, 200, { ...getAuthManagementInfo(), sessionSource: auth.source });
   }
   if (url.pathname === '/api/webchat/auth/bearer' && method === 'PUT') {
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-    if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
+    if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
     const raw = await readJsonBody(req, res);
     if (raw === null) return;
     let body: { active?: unknown };
@@ -1121,7 +1079,7 @@ async function handleHttp(
       return json(res, 400, { error: 'Invalid JSON' });
     }
     if (typeof body.active !== 'boolean') return json(res, 400, { error: 'active must be a boolean' });
-    const info = await getAuthManagementInfo();
+    const info = getAuthManagementInfo();
     if (!info.bearerConfigured) {
       return json(res, 400, { error: 'No bearer token is configured (WEBCHAT_TOKEN is unset).' });
     }
@@ -1138,11 +1096,11 @@ async function handleHttp(
             'Reconnect via Tailscale or SSO first, then disable the bearer token — otherwise this session would be locked out.',
         });
       }
-      await setBearerTokenDisabled(true);
+      setBearerTokenDisabled(true);
     } else {
-      await setBearerTokenDisabled(false);
+      setBearerTokenDisabled(false);
     }
-    return json(res, 200, await getAuthManagementInfo());
+    return json(res, 200, getAuthManagementInfo());
   }
 
   // ── Generate a bearer token + expose on the network ─────────────────────────
@@ -1153,8 +1111,8 @@ async function handleHttp(
   // Refuses if one already exists (retire it first).
   if (url.pathname === '/api/webchat/auth/bearer/generate' && method === 'POST') {
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-    if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
-    if ((await getAuthManagementInfo()).bearerConfigured) {
+    if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+    if (getAuthManagementInfo().bearerConfigured) {
       return json(res, 400, { error: 'A bearer token is already set. Retire it first to replace it.' });
     }
     // 24 random bytes → 32 base64url chars, comfortably over the 24-char floor.
@@ -1166,7 +1124,7 @@ async function handleHttp(
     // (auth.ts). On a --local install the owner role sits on `webchat:local-owner`,
     // so without this the operator's own token authenticates as a NON-owner →
     // 403 on every owner endpoint (a self-inflicted lockout on the next restart).
-    await grantOwnerRole('webchat:owner', userId);
+    grantOwnerRole('webchat:owner', userId);
     return json(res, 200, { token });
   }
   // ── Restart the host to load a freshly-written .env (bearer token / bind) ────
@@ -1174,7 +1132,7 @@ async function handleHttp(
   // before the process goes down. The client reconnects on its own.
   if (url.pathname === '/api/webchat/restart' && method === 'POST') {
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-    if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
+    if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
     scheduleHostRestart();
     return json(res, 202, { restarting: true });
   }
@@ -1191,7 +1149,7 @@ async function handleHttp(
       url.pathname.startsWith('/api/mcp-servers/') ||
       url.pathname === '/api/skills' ||
       url.pathname.startsWith('/api/skills/')) &&
-    (await getMarketplaceDisabled())
+    getMarketplaceDisabled()
   ) {
     return json(res, 403, { error: 'MCP and the skills marketplace are disabled by the workspace owner.' });
   }
@@ -1209,30 +1167,10 @@ async function handleHttp(
     for (const g of r.guards ?? []) {
       if (g === 'csrf' && req.headers['x-webchat-csrf'] !== '1')
         return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-      if (g === 'owner' && !(await isOwner(userId))) return json(res, 403, { error: 'Owner only' });
-      if (g === 'anyAdmin' && !(await isAnyAdmin(userId))) return json(res, 403, { error: 'Admin privilege required' });
+      if (g === 'owner' && !isOwner(userId)) return json(res, 403, { error: 'Owner only' });
+      if (g === 'anyAdmin' && !isAnyAdmin(userId)) return json(res, 403, { error: 'Admin privilege required' });
     }
-    if (!r.audit) return r.h({ req, res, url, method, userId, senderIdentity, hooks }, m);
-    // Audited routes are awaited so the recorded outcome is the real one.
-    // try/finally, not a happy path: a handler that throws still performed an
-    // attempt, and "the request that blew up" is precisely the line someone
-    // will be looking for later.
-    try {
-      await r.h({ req, res, url, method, userId, senderIdentity, hooks }, m);
-    } finally {
-      audit({
-        type: r.audit,
-        actor: auditActor({ kind: 'human', userId }),
-        action: `${method} ${url.pathname}`,
-        effect: res.statusCode >= 400 ? 'failed' : 'ok',
-        // Identifiers only — the captured path segment (room id, model id,
-        // user id) and the status. Never the body: request payloads carry
-        // message text, tokens and env values, and audit.ts is explicit that
-        // a log which hoards secrets becomes the thing you leak.
-        detail: { status: res.statusCode, ...(m[1] ? { id: m[1] } : {}) },
-      });
-    }
-    return;
+    return r.h({ req, res, url, method, userId, senderIdentity, hooks }, m);
   }
 
   // The engaged-agents routes stay inline (not in API_ROUTES): while the
@@ -1254,18 +1192,18 @@ async function handleHttp(
   if (ENGAGED_AGENTS_ENABLED && roomThreadEngagedMatch && method === 'GET') {
     const roomId = decodeURIComponent(roomThreadEngagedMatch[1]);
     const threadId = decodeURIComponent(roomThreadEngagedMatch[2]);
-    if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-    if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-    return json(res, 200, await engagedAgentsForThread(roomId, threadId));
+    if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+    if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+    return json(res, 200, engagedAgentsForThread(roomId, threadId));
   }
   if (ENGAGED_AGENTS_ENABLED && roomThreadEngagedMatch && method === 'POST') {
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
     const roomId = decodeURIComponent(roomThreadEngagedMatch[1]);
     const threadId = decodeURIComponent(roomThreadEngagedMatch[2]);
-    if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-    if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+    if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+    if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
     if (threadId === 'main') return json(res, 400, { error: 'The regular chat cannot engage agents' });
-    if (!(await getWebchatThread(roomId, threadId))) return json(res, 404, { error: 'Thread not found' });
+    if (!getWebchatThread(roomId, threadId)) return json(res, 404, { error: 'Thread not found' });
     const raw = await readJsonBody(req, res);
     if (raw === null) return;
     let body: { agentGroupId?: unknown };
@@ -1276,12 +1214,12 @@ async function handleHttp(
     }
     const agentGroupId = typeof body.agentGroupId === 'string' ? body.agentGroupId : '';
     // Only agents actually wired to this room can be engaged.
-    if (!(await getAgentsForWebchatRoom(roomId)).some((a) => a.id === agentGroupId)) {
+    if (!getAgentsForWebchatRoom(roomId).some((a) => a.id === agentGroupId)) {
       return json(res, 400, { error: 'Agent is not wired to this room' });
     }
-    await engageAgent(roomId, threadId, agentGroupId);
+    engageAgent(roomId, threadId, agentGroupId);
     broadcastEngagedSet(roomId, threadId);
-    return json(res, 200, { ok: true, engaged: await engagedAgentsForThread(roomId, threadId) });
+    return json(res, 200, { ok: true, engaged: engagedAgentsForThread(roomId, threadId) });
   }
   const roomThreadDisengageMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/threads\/([^/]+)\/engaged\/([^/]+)$/);
   if (ENGAGED_AGENTS_ENABLED && roomThreadDisengageMatch && method === 'DELETE') {
@@ -1289,11 +1227,11 @@ async function handleHttp(
     const roomId = decodeURIComponent(roomThreadDisengageMatch[1]);
     const threadId = decodeURIComponent(roomThreadDisengageMatch[2]);
     const agentGroupId = decodeURIComponent(roomThreadDisengageMatch[3]);
-    if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-    if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-    await disengageAgent(roomId, threadId, agentGroupId);
+    if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+    if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+    disengageAgent(roomId, threadId, agentGroupId);
     broadcastEngagedSet(roomId, threadId);
-    return json(res, 200, { ok: true, engaged: await engagedAgentsForThread(roomId, threadId) });
+    return json(res, 200, { ok: true, engaged: engagedAgentsForThread(roomId, threadId) });
   }
 
   // Static PWA is served pre-auth (see the servePwa call above the auth gate).
@@ -1325,32 +1263,9 @@ interface ApiRoute {
   path: string | RegExp; // string = exact url.pathname match
   guards?: RouteGuard[]; // applied IN ORDER before the handler
   h: (ctx: RouteCtx, m: RegExpMatchArray) => void | Promise<void>;
-  /**
-   * Record this route in the audit log under this dotted kind.
-   *
-   * Declared on the ROUTE rather than called from inside each handler. Twelve
-   * scattered audit() calls would be twelve chances to forget one, to record a
-   * different shape, or to emit before knowing whether the thing succeeded —
-   * and a handler that quietly stops emitting is exactly the failure an audit
-   * trail cannot afford. Here it is one line per route, and the dispatcher
-   * below reports the real outcome because it emits after the handler has run.
-   *
-   * Not every privileged route is listed. The bar is audit.ts's own: would
-   * this line answer a "who did what" question during an incident? Probes,
-   * discovery and progress polls are privileged but say nothing after the
-   * fact, and burying the twelve that matter under them helps nobody.
-   */
-  audit?: string;
 }
 
 const RE_ROOM_ID = /^\/api\/rooms\/([^/]+)$/;
-// Parameterised paths must be RegExp: a STRING path is compared with `===`,
-// so a pattern written as a string silently never matches (404).
-const RE_AGENT_EXPORT_TEMPLATE = /^\/api\/agents\/([^/]+)\/export-template$/;
-const RE_AGENT_TEMPLATE = /^\/api\/agents\/([^/]+)\/template$/;
-const RE_AGENT_TEMPLATE_APPLY = /^\/api\/agents\/([^/]+)\/template\/apply$/;
-const RE_TEMPLATE_SOURCE_BROWSE = /^\/api\/template-sources\/([^/]+)\/browse$/;
-const RE_TEMPLATE_SOURCE = /^\/api\/template-sources\/([^/]+)$/;
 const RE_ROOM_AGENTS = /^\/api\/rooms\/([^/]+)\/agents$/;
 const RE_ROOM_MENTIONABLE = /^\/api\/rooms\/([^/]+)\/mentionable$/;
 const RE_ROOM_CRED_MODE = /^\/api\/rooms\/([^/]+)\/credential-mode$/;
@@ -1359,12 +1274,6 @@ const RE_USER_CREDS_MINT = /^\/api\/user-credentials\/oauth\/(start|code|cancel)
 const RE_CODEX_MINT = /^\/api\/user-credentials\/codex\/(start|finish|cancel)$/;
 const RE_WS_CRED_MINT = /^\/api\/workspace-credential\/oauth\/(start|code|cancel)$/;
 const RE_WS_CODEX_MINT = /^\/api\/workspace-credential\/codex\/(start|finish|cancel)$/;
-// Grok's device login: POST start|cancel drives it, GET reports it. Polling is a
-// GET so it stays cache-neutral and needs no CSRF header on every tick.
-const RE_WS_GROK_LOGIN = /^\/api\/workspace-credential\/grok\/(start|cancel)$/;
-// The MEMBER equivalent. Not owner-guarded — any member the workspace lets
-// bring a credential must be able to mint one, which is the whole point.
-const RE_MEMBER_GROK_LOGIN = /^\/api\/user-credentials\/grok\/(start|cancel|status)$/;
 const RE_ROOM_AGENT = /^\/api\/rooms\/([^/]+)\/agents\/([^/]+)$/;
 const RE_ROOM_PRIME = /^\/api\/rooms\/([^/]+)\/prime$/;
 const RE_ROOM_ARCHIVE = /^\/api\/rooms\/([^/]+)\/(archive|unarchive)$/;
@@ -1425,55 +1334,6 @@ async function rOverviewGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
   return json(res, 200, await buildOverview(userId));
 }
 
-// ── Floor ─────────────────────────────────────────────────────────────
-// Scope-aware inside buildFloor (a caller only sees desks for agent groups they
-// can access), so this needs no gate of its own — same contract as overview.
-async function rFloorGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  return json(res, 200, await buildFloor(userId));
-}
-
-// The desks say WHAT each session is; the feed says what it is DOING. Same
-// scope rule as the floor itself (readFloorEvents filters per caller), and the
-// cursor keeps the server stateless — the client sends back the newest
-// timestamp it has seen.
-async function rFloorFeedGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res, url, userId } = ctx;
-  const since = url.searchParams.get('since') || undefined;
-  return json(res, 200, await readFloorEvents(userId, since));
-}
-
-const RE_FLOOR_SESSION_RESTART = /^\/api\/floor\/sessions\/([^/]+)\/restart$/;
-
-// Kill one stuck session's container from the floor. Deliberately NOT the
-// group restart the agent settings use — a floor problem is one desk, and the
-// container comes back on the session's next message anyway. Privilege mirrors
-// the floor's own shape: owner or admin, and the admin must be able to access
-// the group the session belongs to (a scoped admin cannot unstick a desk they
-// cannot see).
-async function rFloorSessionRestartPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  const session = await getSession(decodeURIComponent(m[1]!));
-  if (!session) return json(res, 404, { error: 'Session not found' });
-  if (!(await hasAdminPrivilege(userId, session.agent_group_id))) {
-    return json(res, 403, { error: 'Admin privilege required' });
-  }
-  const wasRunning = isContainerRunning(session.id);
-  // A 5s-stale popover can offer Restart on a desk that un-stuck meanwhile.
-  // Killing an idle container is harmless (it respawns on demand); killing a
-  // MID-TURN one loses the turn — refuse and let the client re-poll.
-  if (wasRunning) {
-    const lastKind = lastKindFor(session.agent_group_id, session.id);
-    const parsed = session.last_active ? Date.parse(session.last_active) : NaN;
-    const idleMs = Number.isNaN(parsed) ? null : Math.max(0, Date.now() - parsed);
-    if (deskState(true, lastKind, idleMs) === 'working') {
-      return json(res, 409, { error: 'Session is mid-turn' });
-    }
-  }
-  killContainer(session.id, 'floor-restart');
-  return json(res, 200, { ok: true, was_running: wasRunning });
-}
-
 // ── UserCreds Codex browser-mint: connect a ChatGPT subscription without a terminal
 // `codex login --device-auth` runs in a throwaway container; the user enters
 // the pairing code at OpenAI's site (no code pasted back here). 'start' returns
@@ -1496,13 +1356,13 @@ async function rCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void>
     return json(res, 200, { ok: true });
   }
   const roomId = typeof body.roomId === 'string' ? body.roomId : '';
-  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-  if (!(await getCredentialsConfig()).allowCodexOauth)
+  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!getCredentialsConfig().allowCodexOauth)
     return json(res, 403, {
       error: 'This workspace does not accept Codex (ChatGPT) subscription (OAuth) connections.',
     });
-  const groups = await getAgentsForWebchatRoom(roomId);
+  const groups = getAgentsForWebchatRoom(roomId);
   if (groups.length === 0) return json(res, 400, { error: 'Room has no wired agent' });
   try {
     if (step === 'start') {
@@ -1533,10 +1393,10 @@ async function rToolSecretsMine(ctx: RouteCtx, _m: RegExpMatchArray): Promise<vo
   const seen = new Set<string>();
   const groups: { agentGroupId: string; name: string; secrets: unknown[] }[] = [];
   for (const provider of ['claude', 'codex'] as const) {
-    for (const row of await listEnrolledGroups(userId, provider)) {
+    for (const row of listEnrolledGroups(userId, provider)) {
       if (seen.has(row.agent_group_id)) continue;
       seen.add(row.agent_group_id);
-      const group = await getAgentGroup(row.agent_group_id);
+      const group = getAgentGroup(row.agent_group_id);
       if (!group) continue;
       groups.push({
         agentGroupId: group.id,
@@ -1565,7 +1425,7 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
   const rawGroup = url.searchParams.get('agentGroupId');
   const rawUser = url.searchParams.get('userId');
   const agentGroupId = rawGroup && rawGroup !== '*' ? rawGroup : null;
-  if (agentGroupId && !(await getAgentGroup(agentGroupId))) return json(res, 400, { error: 'Unknown agent group' });
+  if (agentGroupId && !getAgentGroup(agentGroupId)) return json(res, 400, { error: 'Unknown agent group' });
   if (rawUser && !agentGroupId) return json(res, 400, { error: 'userId needs an agentGroupId' });
   const scope: Scope = !agentGroupId
     ? WORKSPACE
@@ -1583,8 +1443,8 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
   //    token, which is what per-user credentials exist to prevent.
   //  - user (someone else): nobody, at any privilege level.
   const isSelfScope = scope.kind === 'user' && scope.userId === userId;
-  const isElevated = (await isOwner(userId)) || (await isGlobalAdmin(userId));
-  const canAdminGroup = agentGroupId ? isElevated || (await hasAdminPrivilege(userId, agentGroupId)) : isElevated;
+  const isElevated = isOwner(userId) || isGlobalAdmin(userId);
+  const canAdminGroup = agentGroupId ? isElevated || hasAdminPrivilege(userId, agentGroupId) : isElevated;
   const permitted = scope.kind === 'workspace' ? isElevated : scope.kind === 'agent' ? canAdminGroup : isSelfScope;
   if (!permitted)
     return json(res, 403, {
@@ -1599,7 +1459,7 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
       const members =
         agentGroupId && !rawUser
           ? await Promise.all(
-              (await listGroupMemberEnrollments(agentGroupId)).map(async (row) => ({
+              listGroupMemberEnrollments(agentGroupId).map(async (row) => ({
                 userId: row.user_id,
                 secrets: await listToolSecrets(realOnecliAdmin, {
                   kind: 'user' as const,
@@ -1681,8 +1541,8 @@ async function rToolSecretsIsolation(ctx: RouteCtx, _m: RegExpMatchArray): Promi
   // but unable to turn on the isolation that makes them mean anything.
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const agentGroupId = url.searchParams.get('agentGroupId') ?? '';
-  if (!(await getAgentGroup(agentGroupId))) return json(res, 400, { error: 'Unknown agent group' });
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)) && !(await hasAdminPrivilege(userId, agentGroupId)))
+  if (!getAgentGroup(agentGroupId)) return json(res, 400, { error: 'Unknown agent group' });
+  if (!isOwner(userId) && !isGlobalAdmin(userId) && !hasAdminPrivilege(userId, agentGroupId))
     return json(res, 403, { error: 'Forbidden' });
   try {
     const raw = await readJsonBody(req, res);
@@ -1707,17 +1567,17 @@ async function rToolSecretsIsolation(ctx: RouteCtx, _m: RegExpMatchArray): Promi
 async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, url, method, userId } = ctx;
   const agentGroupId = url.searchParams.get('agentGroupId') ?? '';
-  if (!(await getAgentGroup(agentGroupId))) return json(res, 400, { error: 'Unknown agent group' });
+  if (!getAgentGroup(agentGroupId)) return json(res, 400, { error: 'Unknown agent group' });
   // Per-agent resource → whoever administers that agent, scoped admins included.
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)) && !(await hasAdminPrivilege(userId, agentGroupId)))
+  if (!isOwner(userId) && !isGlobalAdmin(userId) && !hasAdminPrivilege(userId, agentGroupId))
     return json(res, 403, { error: 'Forbidden' });
-  if (method === 'GET') return json(res, 200, { keys: await listDeployKeys(agentGroupId) });
+  if (method === 'GET') return json(res, 200, { keys: listDeployKeys(agentGroupId) });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (userCredsRateLimited(userId, 'deploy-key'))
     return json(res, 429, { error: 'Too many attempts — wait a moment and try again.' });
   try {
     if (method === 'DELETE') {
-      const removed = await deleteDeployKey(agentGroupId, url.searchParams.get('name') ?? '');
+      const removed = deleteDeployKey(agentGroupId, url.searchParams.get('name') ?? '');
       if (removed) await refreshCredentialNote(realOnecliAdmin, agentGroupId);
       return removed ? json(res, 200, { ok: true }) : json(res, 404, { error: 'No such key' });
     }
@@ -1728,7 +1588,7 @@ async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
     const target = (body.target ?? '').trim() || undefined;
     // Re-stamping an existing key's target must not regenerate it — anything
     // already trusting the public half would break.
-    const key = (await listDeployKeys(agentGroupId)).some((k) => k.name === name)
+    const key = listDeployKeys(agentGroupId).some((k) => k.name === name)
       ? setDeployKeyTarget(agentGroupId, name, target ?? '')
       : createDeployKey(agentGroupId, name, target);
     await refreshCredentialNote(realOnecliAdmin, agentGroupId);
@@ -1752,7 +1612,7 @@ async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
 // UIs can see accepted types).
 async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, url, method, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
+  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
   // The OneCLI vault, loaded lazily + once per request: only the GET path needs
   // it (to detect a pre-existing credential), and only when there's no webchat
   // row to short-circuit on.
@@ -1767,7 +1627,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
     }
     return vaultSecrets;
   };
-  const trackedSecretIds = new Set(await listAllTrackedSecretIds());
+  const trackedSecretIds = new Set(listAllTrackedSecretIds());
   // `connected` is true when the webchat manages a workspace-default credential
   // (`external:false`) OR when a usable provider credential already lives in the
   // OneCLI vault from `/setup` or a legacy path (`external:true`) — the latter is
@@ -1775,7 +1635,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   // not nag the operator to "connect" an engine that already works. An external
   // credential is webchat-unmanaged: no cred_type to show, and not disconnectable.
   const credState = async (provider: 'claude' | 'codex') => {
-    const row = await getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider);
+    const row = getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider);
     if (row?.status === 'active') return { connected: true, credType: row.cred_type ?? null, external: false };
     const secType = provider === 'codex' ? 'openai' : 'anthropic';
     const external = (await loadVault()).some((s) => s.type === secType && !trackedSecretIds.has(s.id));
@@ -1784,16 +1644,13 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   if (method === 'GET') {
     // Flat claude fields (the original shape) + a codex block + the workspace
     // default MODEL (the Ollama-engine analogue of the default credential).
-    const defaultModelId = await getDefaultModelId();
-    const defaultModel = defaultModelId ? await getWebchatModel(defaultModelId) : undefined;
+    const defaultModelId = getDefaultModelId();
+    const defaultModel = defaultModelId ? getWebchatModel(defaultModelId) : undefined;
     return json(res, 200, {
       ...(await credState('claude')),
       provider: 'claude',
       codex: await credState('codex'),
       codexAvailable: codexAvailable(),
-      // Grok resolves from a host credential file, not a user_credentials row
-      // or a vault secret — see server/grok-status.ts for why.
-      grok: grokStatus(),
       defaultModelId: defaultModel?.id ?? null,
       defaultModelName: defaultModel ? `${defaultModel.name} (${defaultModel.model_id})` : null,
       // Real fields so the wizard's Ollama card only claims "set" when an Ollama
@@ -1809,9 +1666,9 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   try {
     if (method === 'DELETE') {
       const provider = url.searchParams.get('provider') === 'codex' ? 'codex' : 'claude';
-      const priorOauth = (await getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider))?.cred_type === 'oauth_token';
+      const priorOauth = getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider)?.cred_type === 'oauth_token';
       await revokeUserCredential(realOnecliAdmin, WORKSPACE_DEFAULT_USER_ID, provider);
-      await restartGroupsForWorkspaceCredChange(provider, priorOauth, false);
+      restartGroupsForWorkspaceCredChange(provider, priorOauth, false);
       return json(res, 200, { ok: true });
     }
     const raw = await readJsonBody(req, res);
@@ -1825,7 +1682,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
     const provider = body.provider === 'codex' ? 'codex' : 'claude';
     if (provider === 'codex' && !codexAvailable())
       return json(res, 400, { error: 'Codex support isn’t installed yet — add it with /add-codex first.' });
-    const priorOauth = (await getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider))?.cred_type === 'oauth_token';
+    const priorOauth = getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider)?.cred_type === 'oauth_token';
     if (body.type === 'oauth_token') {
       const token = typeof body.token === 'string' ? body.token.trim() : '';
       if (provider === 'codex') {
@@ -1851,7 +1708,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
         });
       }
       await setWorkspaceDefaultCredential(realOnecliAdmin, provider, token, 'oauth_token');
-      await afterWorkspaceCredentialSet(provider, priorOauth, true);
+      afterWorkspaceCredentialSet(provider, priorOauth, true);
       return json(res, 200, { ok: true });
     }
     const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
@@ -1861,7 +1718,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       return json(res, 400, { error: 'Expected an Anthropic API key (sk-ant-…)' });
     }
     await setWorkspaceDefaultCredential(realOnecliAdmin, provider, apiKey, 'api_key');
-    await afterWorkspaceCredentialSet(provider, priorOauth, false);
+    afterWorkspaceCredentialSet(provider, priorOauth, false);
     return json(res, 200, { ok: true });
   } catch (err) {
     log.error('Workspace default credential failed', {
@@ -1879,7 +1736,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 // policy governs members; the operator setting the workspace fallback is above it).
 async function rWsCredMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
+  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -1907,11 +1764,11 @@ async function rWsCredMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void
     // sentinel mode may have changed (none/key → oauth) — respawn containers.
     if (typeof body.sessionId !== 'string' || typeof body.code !== 'string')
       return json(res, 400, { error: 'sessionId and code required' });
-    const priorRow = await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude');
+    const priorRow = getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude');
     const priorOauth = priorRow?.status === 'active' && priorRow.cred_type === 'oauth_token';
     const token = await mintClaudeToken(userId, body.sessionId, body.code);
     await setWorkspaceDefaultCredential(realOnecliAdmin, 'claude', token, 'oauth_token');
-    await afterWorkspaceCredentialSet('claude', priorOauth, true);
+    afterWorkspaceCredentialSet('claude', priorOauth, true);
     return json(res, 200, { ok: true });
   } catch (err) {
     return json(res, 502, { error: err instanceof Error ? err.message : String(err) });
@@ -1924,7 +1781,7 @@ async function rWsCredMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void
 // (synthetic id) `openai` secret that `all`-mode Codex base agents auto-inject.
 async function rWsCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
+  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -1952,11 +1809,11 @@ async function rWsCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<voi
     }
     // step === 'finish': wait for auth.json, then store as the workspace default.
     if (typeof body.sessionId !== 'string') return json(res, 400, { error: 'sessionId required' });
-    const priorRow = await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'codex');
+    const priorRow = getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'codex');
     const priorOauth = priorRow?.status === 'active' && priorRow.cred_type === 'oauth_token';
     const authJson = await finishCodexMint(userId, body.sessionId);
     await setWorkspaceDefaultCredential(realOnecliAdmin, 'codex', authJson, 'oauth_token');
-    await afterWorkspaceCredentialSet('codex', priorOauth, true);
+    afterWorkspaceCredentialSet('codex', priorOauth, true);
     return json(res, 200, { ok: true });
   } catch (err) {
     return json(res, 502, { error: err instanceof Error ? err.message : String(err) });
@@ -1970,7 +1827,7 @@ async function rWsCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<voi
 // admin gating as the workspace credential.
 async function rWorkspaceModelPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
+  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -1983,7 +1840,7 @@ async function rWorkspaceModelPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
   if (body.modelId !== null) {
     if (typeof body.modelId !== 'string' || !body.modelId.trim())
       return json(res, 400, { error: 'modelId must be a string or null' });
-    const model = await getWebchatModel(body.modelId.trim());
+    const model = getWebchatModel(body.modelId.trim());
     if (!model) return json(res, 404, { error: 'Model not found' });
     if (model.kind !== 'ollama')
       return json(res, 400, { error: 'The workspace default model must be an ollama roster model' });
@@ -1992,19 +1849,19 @@ async function rWorkspaceModelPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
   } else {
     setDefaultModelId(null);
   }
-  await refreshUnassignedGroupsForDefaultModel('Workspace default model changed');
-  return json(res, 200, { ok: true, defaultModelId: await getDefaultModelId() });
+  refreshUnassignedGroupsForDefaultModel('Workspace default model changed');
+  return json(res, 200, { ok: true, defaultModelId: getDefaultModelId() });
 }
 
 // Room → agent → model topology for the explore view, scoped to the caller's
 // accessible rooms (and only the agents/models reachable from them).
 async function rTopologyGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const rooms = await filterRoomsForUser(userId, await getAllWebchatRooms());
+  const rooms = filterRoomsForUser(userId, getAllWebchatRooms());
   // ALL agents the caller manages become columns/nodes (not just wired ones),
   // so unused agents show as orphans and can be wired from the matrix.
-  const agents = (await listAgentsForUser(userId)).map((a) => ({ id: a.id, name: a.name }));
-  const topo = await getWebchatTopology(rooms, agents);
+  const agents = listAgentsForUser(userId).map((a) => ({ id: a.id, name: a.name }));
+  const topo = getWebchatTopology(rooms, agents);
   // SCOPED skills only — the ones wired to a specific agent (including anything
   // the learning loop produced). The shared pool is on ~every agent, so drawing
   // it would add hundreds of identical edges that say nothing about any one
@@ -2029,9 +1886,9 @@ async function rSearchGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, url, userId } = ctx;
   const q = url.searchParams.get('q') ?? '';
   if (!q.trim()) return json(res, 200, { results: [] });
-  const rooms = await filterRoomsForUser(userId, await getAllWebchatRooms());
+  const rooms = filterRoomsForUser(userId, getAllWebchatRooms());
   const nameById = new Map(rooms.map((r) => [r.id, r.name]));
-  const hits = await searchWebchatMessages(
+  const hits = searchWebchatMessages(
     rooms.map((r) => r.id),
     q,
     50,
@@ -2051,20 +1908,18 @@ async function rSearchGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
 
 async function rHistGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, url, userId } = ctx;
-  const room = await getWebchatRoom(m[1]);
+  const room = getWebchatRoom(m[1]);
   if (!room) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, room.id))) return json(res, 403, { error: 'Access denied' });
+  if (!canAccessRoom(userId, room.id)) return json(res, 403, { error: 'Access denied' });
   const afterId = url.searchParams.get('after_id');
   const beforeId = url.searchParams.get('before_id');
   // Optional thread filter — absent = the whole room (back-compat).
   const threadId = url.searchParams.get('thread_id') || undefined;
-  // `await afterId ? …` awaited the CONDITION (a string), so the whole chain
-  // stayed un-awaited. Parenthesise the ternary and await its result.
-  const msgs = await (afterId
+  const msgs = afterId
     ? getWebchatMessagesAfterId(room.id, afterId, 200, threadId)
     : beforeId
       ? getWebchatMessagesBeforeId(room.id, beforeId, 50, threadId)
-      : getWebchatMessages(room.id, 100, threadId));
+      : getWebchatMessages(room.id, 100, threadId);
   return json(
     res,
     200,
@@ -2081,7 +1936,7 @@ async function rUploadPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, url, userId, senderIdentity, hooks } = ctx;
   const roomId = decodeURIComponent(m[1]);
   const csrfOk = req.headers['x-webchat-csrf'] === '1';
-  const accessOk = await canAccessRoom(userId, roomId);
+  const accessOk = canAccessRoom(userId, roomId);
   log.info('Webchat upload (multipart) request', {
     roomId,
     userId,
@@ -2107,7 +1962,7 @@ async function rChunkPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, url, userId, senderIdentity, hooks } = ctx;
   const roomId = decodeURIComponent(m[1]);
   const csrfOk = req.headers['x-webchat-csrf'] === '1';
-  const accessOk = await canAccessRoom(userId, roomId);
+  const accessOk = canAccessRoom(userId, roomId);
   log.info('Webchat upload (chunked) request', {
     roomId,
     userId,
@@ -2132,23 +1987,23 @@ async function rChunkPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
 async function rFileGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
   return handleFileServe(res, roomId, decodeURIComponent(m[2]));
 }
 
 async function rInstrGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
+  const group = resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
   return readInstructions(res, group.id);
 }
 
 async function rInstrPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
+  const group = resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
   return writeInstructions(req, res, group.id);
 }
 
@@ -2169,9 +2024,9 @@ async function rInstrPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
 // The /content suffix keeps this distinct from the scoped wire/unwire routes.
 async function rScopedSkillContent(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
+  const group = resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
   const name = sanitizeSkillName(decodeURIComponent(m[2]));
   if (!name) return json(res, 400, { error: 'Invalid skill name' });
   if (method === 'GET') return getScopedSkillContentHandler(res, group.id, name);
@@ -2196,53 +2051,8 @@ async function rScopedSkillContent(ctx: RouteCtx, m: RegExpMatchArray): Promise<
  * install composed before the provenance stamp existed has no stamp, and a
  * partial answer is far more useful than a 500.
  */
-/**
- * Compare the payload on disk against the fingerprint install.sh stamped.
- *
- * Answers the question the old `dirty` flag only appeared to: has anything in
- * this install changed since it was composed? Hand-copying a single file into
- * a running tree is a real and easy thing to do — it is how you ship a fix
- * ahead of a merge — and the failure mode is that the install quietly stops
- * being any released version, with nothing on screen saying so.
- *
- * Reports the count checked alongside the drift so "nothing changed" and
- * "nothing was checked" cannot be confused: a missing stamp returns null and
- * About says the install predates the check, rather than claiming it is clean.
- *
- * Cost is bounded by the payload (the overlay plus patch targets, a few
- * hundred small files), not the tree, and it runs only when About is opened.
- */
-export function checkComposition(root: string): { checked: number; drifted: string[]; matches: boolean } | null {
-  let stamp: { files?: Record<string, string> };
-  try {
-    stamp = JSON.parse(fs.readFileSync(path.join(root, '.webchat-payload.json'), 'utf8')) as typeof stamp;
-  } catch {
-    return null; // composed before this existed, or a tarball install
-  }
-  const files = stamp.files;
-  if (!files || typeof files !== 'object') return null;
-
-  const drifted: string[] = [];
-  let checked = 0;
-  for (const [rel, want] of Object.entries(files)) {
-    checked++;
-    try {
-      const got = createHash('sha256')
-        .update(fs.readFileSync(path.join(root, rel)))
-        .digest('hex');
-      if (got !== want) drifted.push(rel);
-    } catch {
-      drifted.push(rel); // gone is a form of changed, and the more alarming one
-    }
-  }
-  drifted.sort();
-  return { checked, drifted, matches: drifted.length === 0 };
-}
-
 export function collectVersions(root = process.cwd()): {
-  nanoclaw: { version: string | null; commit: string | null };
-  /** Does the payload on disk still match what the composition wrote? */
-  composition: { checked: number; drifted: string[]; matches: boolean } | null;
+  nanoclaw: { version: string | null; commit: string | null; dirty: boolean | null };
   webchat: {
     ref: string | null;
     dirty: boolean | null;
@@ -2267,24 +2077,20 @@ export function collectVersions(root = process.cwd()): {
   const comps = readJson('versions.json') ?? {};
 
   let commit: string | null = null;
+  let dirty: boolean | null = null;
   try {
     commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, timeout: 3000 }).toString().trim() || null;
+    dirty = execFileSync('git', ['status', '--porcelain'], { cwd: root, timeout: 3000 }).toString().trim().length > 0;
   } catch {
     /* not a git checkout, or git is absent — both fine */
   }
-  // `git status` used to ride along here as `dirty`. It was true on every
-  // install that ever worked — the composed tree carries the overlay and every
-  // patch, so it is modified by construction — which made it a constant
-  // wearing a warning's clothes. What an operator actually wants to know is
-  // whether the payload still matches the release, and that is below.
 
   const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
   const components: Record<string, string> = {};
   for (const [k, v] of Object.entries(comps)) if (typeof v === 'string') components[k] = v;
 
   return {
-    nanoclaw: { version: str(pkg?.version), commit },
-    composition: checkComposition(root),
+    nanoclaw: { version: str(pkg?.version), commit, dirty },
     webchat: prov
       ? {
           ref: str(prov.webchatRef),
@@ -2351,10 +2157,9 @@ async function rDraftPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   // Edit a pending draft's body before keeping it. Same tier as Keep: admin
   // over the agent the draft belongs to — editing shapes what gets kept.
   const id = decodeURIComponent(m[1]);
-  const draft = await getSkillDraft(id);
+  const draft = getSkillDraft(id);
   if (!draft || draft.status !== 'pending') return json(res, 404, { error: 'Draft not found' });
-  if (!(await hasAdminPrivilege(userId, draft.agent_group_id)))
-    return json(res, 403, { error: 'Admin privilege required' });
+  if (!hasAdminPrivilege(userId, draft.agent_group_id)) return json(res, 403, { error: 'Admin privilege required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -2367,20 +2172,19 @@ async function rDraftPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   if (!/^---\s*\n[\s\S]*?description:\s*\S[\s\S]*?\n---/.test(body)) {
     return json(res, 400, { error: 'Body must be a SKILL.md with YAML front-matter including a description' });
   }
-  if (!(await updateSkillDraftBody(id, body))) return json(res, 404, { error: 'Draft not found' });
+  if (!updateSkillDraftBody(id, body)) return json(res, 404, { error: 'Draft not found' });
   return json(res, 200, { ok: true });
 }
 
 async function rDraft(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
   const id = decodeURIComponent(m[1]);
-  const draft = await getSkillDraft(id);
+  const draft = getSkillDraft(id);
   if (!draft || draft.status !== 'pending') return json(res, 404, { error: 'Draft not found' });
   // Same tier as PUT/Keep: admin over the agent the draft belongs to. A
   // scoped admin of group B must not read or discard group A's drafts —
   // isAnyAdmin above only hides existence from non-admins.
-  if (!(await hasAdminPrivilege(userId, draft.agent_group_id)))
-    return json(res, 403, { error: 'Admin privilege required' });
+  if (!hasAdminPrivilege(userId, draft.agent_group_id)) return json(res, 403, { error: 'Admin privilege required' });
   if (method === 'GET') {
     // For a patch, hand back the version it would REPLACE too, so the reviewer
     // sees what actually changes rather than a wall of unchanged text.
@@ -2400,8 +2204,8 @@ async function rDraft(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
     });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  if (!(await resolveSkillDraft(id, 'discarded'))) return json(res, 404, { error: 'Draft not found' });
-  await resolveDraftCard(id, 'discarded', userId);
+  if (!resolveSkillDraft(id, 'discarded')) return json(res, 404, { error: 'Draft not found' });
+  resolveDraftCard(id, 'discarded', userId);
   return json(res, 200, { ok: true });
 }
 
@@ -2409,14 +2213,13 @@ async function rDraft(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
 async function rDraftKeepPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   const id = decodeURIComponent(m[1]);
-  const draft = await getSkillDraft(id);
+  const draft = getSkillDraft(id);
   if (!draft || draft.status !== 'pending') return json(res, 404, { error: 'Draft not found' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   // Admin over the draft's OWN group is required here; the handler separately
   // checks admin over the body-supplied TARGET group. Without this, a scoped
   // admin of group B could wire group A's draft content into group B.
-  if (!(await hasAdminPrivilege(userId, draft.agent_group_id)))
-    return json(res, 403, { error: 'Admin privilege required' });
+  if (!hasAdminPrivilege(userId, draft.agent_group_id)) return json(res, 403, { error: 'Admin privilege required' });
   return keepSkillDraftHandler(req, res, userId, draft);
 }
 
@@ -2473,23 +2276,22 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   const beforeRaw = Number(url.searchParams.get('before'));
   const cutoff = Number.isFinite(beforeRaw) && beforeRaw > 0 ? beforeRaw : Number.MAX_SAFE_INTEGER;
 
-  const owner = await isOwner(userId);
+  const owner = isOwner(userId);
   const allowed = new Map<string, string>();
-  for (const g of await getAllAgentGroups()) {
-    if ((await owner) || (await hasAdminPrivilege(userId, g.id))) allowed.set(g.id, g.name || g.id);
+  for (const g of getAllAgentGroups()) {
+    if (owner || hasAdminPrivilege(userId, g.id)) allowed.set(g.id, g.name || g.id);
   }
 
   const events: LearningTimelineEvent[] = [];
-  const roomNameOf = async (roomId: string | null): Promise<string | null> =>
-    roomId ? ((await getWebchatRoom(roomId))?.name ?? null) : null;
+  const roomNameOf = (roomId: string | null): string | null => (roomId ? (getWebchatRoom(roomId)?.name ?? null) : null);
   const skillLives = (gid: string, name: string): boolean =>
     !!name && fs.existsSync(path.join(scopedSkillsDir(gid), name, 'SKILL.md'));
 
   // 1. Draft cards — fetched unwindowed (bounded) so the kept-card dedupe set
   // is complete regardless of the page cursor; the sort+slice below pages.
-  const cards = await listSkillDraftCards(undefined, 1000);
+  const cards = listSkillDraftCards(undefined, 1000);
   const keptCardSkills = new Set<string>();
-  for (const c of await cards) {
+  for (const c of cards) {
     if (!allowed.has(c.agentGroupId)) continue;
     const landed = sanitizeSkillName(c.kind === 'patch' && c.targetSkill ? c.targetSkill : c.skillName);
     if (c.status === 'kept' && landed) keptCardSkills.add(`${c.agentGroupId}/${landed}`);
@@ -2504,7 +2306,7 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       skillName: landed || c.skillName,
       description: c.description || undefined,
       roomId: c.roomId,
-      roomName: await roomNameOf(c.roomId),
+      roomName: roomNameOf(c.roomId),
       by: c.resolvedBy,
       draftId: c.draftId,
       skillExists: kind === 'kept' ? skillLives(c.agentGroupId, landed) : undefined,
@@ -2512,9 +2314,9 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   }
 
   // 2. Pending drafts that never got a card (proposed from a non-webchat session).
-  for (const d of await listSkillDrafts()) {
+  for (const d of listSkillDrafts()) {
     if (!allowed.has(d.agent_group_id) || d.created_at >= cutoff) continue;
-    if (await skillDraftCardPosition(d.id)) continue; // its card is the event
+    if (skillDraftCardPosition(d.id)) continue; // its card is the event
     events.push({
       id: `draft-${d.id}`,
       kind: 'proposed',
@@ -2523,8 +2325,8 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       agentName: allowed.get(d.agent_group_id) as string,
       skillName: d.kind === 'patch' && d.target_skill ? d.target_skill : d.skill_name,
       description: d.description || undefined,
-      roomId: await draftSourceRoom(d.session_id),
-      roomName: await roomNameOf(await draftSourceRoom(d.session_id)),
+      roomId: draftSourceRoom(d.session_id),
+      roomName: roomNameOf(draftSourceRoom(d.session_id)),
       draftId: d.id,
     });
   }
@@ -2610,9 +2412,9 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 
 async function rSessionResetPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const session = await getSession(decodeURIComponent(m[1]));
+  const session = getSession(decodeURIComponent(m[1]));
   if (!session) return json(res, 404, { error: 'Session not found' });
-  if (!(await hasAdminPrivilege(userId, session.agent_group_id))) {
+  if (!hasAdminPrivilege(userId, session.agent_group_id)) {
     return json(res, 403, { error: 'Admin privilege required' });
   }
   try {
@@ -2621,6 +2423,141 @@ async function rSessionResetPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<vo
   } catch (err) {
     return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+// ── Ollama host management (owner-only; SSRF-gated in ollama-manage) ──
+async function rOllamaHostsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  const hosts = new Set<string>();
+  for (const m of listWebchatModels()) {
+    if (m.kind === 'ollama' && m.endpoint) hosts.add(m.endpoint.replace(/\/+$/, ''));
+  }
+  try {
+    const cfg = fs.readFileSync(path.join(process.cwd(), 'data/litellm/config.yaml'), 'utf8');
+    for (const h of (parseConfiguredHosts(cfg) ?? '').split(',')) {
+      if (h.trim()) hosts.add(h.trim().replace(/\/+$/, ''));
+    }
+  } catch {
+    /* no litellm installed — models-derived hosts only */
+  }
+  return json(res, 200, { hosts: [...hosts].sort() });
+}
+
+async function rOllamaModelsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res, url } = ctx;
+  const host = url.searchParams.get('host') || '';
+  if (!host) return json(res, 400, { error: 'host required' });
+  try {
+    return json(res, 200, { models: await listHostModels(host) });
+  } catch (err) {
+    return json(res, 502, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function rOllamaPullsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  return json(res, 200, { pulls: getPullsSnapshot() });
+}
+
+// Wizard: hardware profile + a recommended local model to prefill the download.
+// Also report whether a REMOTE Ollama is already in the roster — if so, local
+// RAM isn't the constraint (models run on that box), so the client softens the
+// "tight fit" warning.
+async function rOllamaRecommendGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  const remote = listWebchatModels().find((m) => {
+    if (m.kind !== 'ollama' || !m.endpoint) return false;
+    const host = (() => {
+      try {
+        return new URL(m.endpoint).hostname;
+      } catch {
+        return '';
+      }
+    })();
+    return host && !['127.0.0.1', 'localhost', '::1', 'host.docker.internal'].includes(host);
+  });
+  return json(res, 200, {
+    ...recommendForHost(),
+    remoteOllama: remote ? { present: true, endpoint: remote.endpoint } : { present: false },
+  });
+}
+
+// Local Ollama for the wizard: status probe + one-click rootless install.
+async function rOllamaLocalGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  return json(res, 200, await getOllamaLocalState());
+}
+
+// Pre-pull check: what would this model mean for this machine, BEFORE any
+// bytes move. Read-only; the pull itself remains a separate deliberate POST.
+async function rOllamaPrepullGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res, url } = ctx;
+  const model = url.searchParams.get('model') || '';
+  if (!model.trim()) return json(res, 400, { error: 'model required' });
+  return json(res, 200, await prepullEstimate(model));
+}
+
+// Remove a model's files from an Ollama host. Destructive, so csrf+owner —
+// the same posture as the pull that created them.
+async function rOllamaDeletePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { req, res } = ctx;
+  const raw = await readJsonBody(req, res);
+  if (raw === null) return;
+  let body: { host?: unknown; model?: unknown };
+  try {
+    body = JSON.parse(raw) as typeof body;
+  } catch {
+    return json(res, 400, { error: 'Invalid JSON' });
+  }
+  if (typeof body.host !== 'string' || !body.host.trim()) return json(res, 400, { error: 'host required' });
+  if (typeof body.model !== 'string' || !body.model.trim()) return json(res, 400, { error: 'model required' });
+  try {
+    await deleteHostModel(body.host.trim(), body.model.trim());
+    return json(res, 200, { ok: true });
+  } catch (err) {
+    return json(res, 502, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function rOllamaPullPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { req, res } = ctx;
+  const raw = await readJsonBody(req, res);
+  if (raw === null) return;
+  let body: { host?: unknown; model?: unknown };
+  try {
+    body = JSON.parse(raw) as typeof body;
+  } catch {
+    return json(res, 400, { error: 'Invalid JSON' });
+  }
+  if (typeof body.host !== 'string' || !body.host.trim()) return json(res, 400, { error: 'host required' });
+  if (typeof body.model !== 'string' || !body.model.trim()) return json(res, 400, { error: 'model required' });
+  try {
+    const job = await startPull(body.host.trim(), body.model.trim());
+    return json(res, 202, { pull: job });
+  } catch (err) {
+    return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+// Stop an in-flight pull. Same csrf+owner posture as starting one: whoever may
+// begin a multi-gigabyte download may also call it off.
+async function rOllamaPullCancelPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { req, res } = ctx;
+  const raw = await readJsonBody(req, res);
+  if (raw === null) return;
+  let body: { host?: unknown; model?: unknown };
+  try {
+    body = JSON.parse(raw) as typeof body;
+  } catch {
+    return json(res, 400, { error: 'Invalid JSON' });
+  }
+  if (typeof body.host !== 'string' || !body.host.trim()) return json(res, 400, { error: 'host required' });
+  if (typeof body.model !== 'string' || !body.model.trim()) return json(res, 400, { error: 'model required' });
+  // 404, not 200: "there was no such pull running" is a different fact from
+  // "it is stopped now", and a UI that cannot tell them apart will claim to
+  // have cancelled a pull that actually completed a moment earlier.
+  if (!cancelPull(body.host.trim(), body.model.trim())) return json(res, 404, { error: 'no pull in progress' });
+  return json(res, 200, { ok: true });
 }
 
 // Voice list, proxied from the TTS backend (Kokoro serves ~67). Owner-only —
@@ -2643,14 +2580,14 @@ async function rTtsVoicesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void>
 // PUT is owner-only. Enforced at spawn in materializeContainerJson.
 async function rLearningConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
+  const canEdit = isOwner(userId) || isGlobalAdmin(userId);
   if (method === 'GET') {
-    const base = { enabled: await getLearningMasterEnabled() };
+    const base = { enabled: getLearningMasterEnabled() };
     return json(
       res,
-      (await canEdit) ? 200 : 200,
-      (await canEdit)
-        ? { ...base, canEdit: true, classifierModelId: (await getLearningClassifier()).modelId }
+      canEdit ? 200 : 200,
+      canEdit
+        ? { ...base, canEdit: true, classifierModelId: getLearningClassifier().modelId }
         : { ...base, canEdit: false },
     );
   }
@@ -2668,23 +2605,23 @@ async function rLearningConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<voi
   // call params so the agent-runner (a Docker container) can reach it.
   if ('classifierModelId' in body) {
     if (body.classifierModelId === null) {
-      await setLearningClassifier(null, null, null);
+      setLearningClassifier(null, null, null);
       return json(res, 200, { ok: true, classifierModelId: null });
     }
     if (typeof body.classifierModelId !== 'string' || !body.classifierModelId.trim())
       return json(res, 400, { error: 'classifierModelId must be a string or null' });
-    const model = await getWebchatModel(body.classifierModelId.trim());
+    const model = getWebchatModel(body.classifierModelId.trim());
     if (!model) return json(res, 404, { error: 'Model not found' });
     const clf = classifierParamsForModel(model);
     if (!clf)
       return json(res, 400, {
         error: 'Classifier must be an ollama or openai-compatible roster model with an endpoint',
       });
-    await setLearningClassifier(model.id, clf.url, clf.model);
+    setLearningClassifier(model.id, clf.url, clf.model);
     return json(res, 200, { ok: true, classifierModelId: model.id });
   }
   if (typeof body.enabled !== 'boolean') return json(res, 400, { error: 'enabled must be a boolean' });
-  await setLearningMasterEnabled(body.enabled);
+  setLearningMasterEnabled(body.enabled);
   return json(res, 200, { ok: true, enabled: body.enabled });
 }
 
@@ -2718,18 +2655,18 @@ async function rTtsConfigPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void>
 // `enabled`); provider/cleanup details only for owners/global admins.
 async function rSttConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
+  const canEdit = isOwner(userId) || isGlobalAdmin(userId);
   if (method === 'GET') {
-    const base = { enabled: sttEnabled(), cleanup: (await getSttCleanupModelId()) !== null };
+    const base = { enabled: sttEnabled(), cleanup: getSttCleanupModelId() !== null };
     return json(
       res,
       200,
-      (await canEdit)
+      canEdit
         ? {
             ...base,
             provider: sttProvider(),
-            cleanupModelId: await getSttCleanupModelId(),
-            cleanupPrompt: await getSttCleanupPrompt(),
+            cleanupModelId: getSttCleanupModelId(),
+            cleanupPrompt: getSttCleanupPrompt(),
             defaultCleanupPrompt: DEFAULT_CLEANUP_PROMPT,
             canEdit: true,
           }
@@ -2771,7 +2708,7 @@ async function rSttConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   }
   if (typeof body.cleanupModelId !== 'string' || !body.cleanupModelId.trim())
     return json(res, 400, { error: 'cleanupModelId must be a string or null' });
-  const model = await getWebchatModel(body.cleanupModelId.trim());
+  const model = getWebchatModel(body.cleanupModelId.trim());
   if (!model) return json(res, 404, { error: 'Model not found' });
   if (model.kind !== 'ollama' && model.kind !== 'openai-compatible')
     return json(res, 400, { error: 'Cleanup model must be an ollama or openai-compatible roster model' });
@@ -2836,10 +2773,10 @@ async function rSttCleanupPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<voi
 // ── Approval pre-judge config (owner-only; Settings → Approval pre-judge) ──
 // See src/modules/approvals/prejudge.ts and docs/webchat/approval-prejudge.md.
 
-async function prejudgeConfigView(): Promise<Record<string, unknown>> {
+function prejudgeConfigView(): Record<string, unknown> {
   return {
-    modelId: await getApprovalPrejudgeModelId(),
-    actions: await getApprovalPrejudgeActions(),
+    modelId: getApprovalPrejudgeModelId(),
+    actions: getApprovalPrejudgeActions(),
     // Every action registered with an approval handler — the opt-in
     // candidates the settings UI lists.
     knownActions: listRegisteredApprovalActions(),
@@ -2851,7 +2788,7 @@ async function prejudgeConfigView(): Promise<Record<string, unknown>> {
 }
 
 async function rApprovalPrejudgeGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  return json(ctx.res, 200, await prejudgeConfigView());
+  return json(ctx.res, 200, prejudgeConfigView());
 }
 
 async function rApprovalPrejudgePut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
@@ -2873,8 +2810,8 @@ async function rApprovalPrejudgePut(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       // Same gate as the runtime consult (prejudge.ts): anthropic-kind
       // models qualify with a NULL endpoint — they route through the
       // OneCLI gateway rather than a local /v1/chat/completions server.
-      const model = await getWebchatModel(body.modelId);
-      if (!isUsableJudgeModel(await model)) {
+      const model = getWebchatModel(body.modelId);
+      if (!isUsableJudgeModel(model)) {
         return json(res, 400, {
           error:
             'modelId must name an anthropic roster model, or an ollama/openai-compatible roster model with an endpoint',
@@ -2896,12 +2833,12 @@ async function rApprovalPrejudgePut(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 
   if ('modelId' in body) setApprovalPrejudgeModelId((body.modelId as string | null) ?? null);
   if (actions !== undefined) setApprovalPrejudgeActions(actions);
-  return json(res, 200, { ok: true, ...(await prejudgeConfigView()) });
+  return json(res, 200, { ok: true, ...prejudgeConfigView() });
 }
 
 async function rApprovalsPendingGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const rows = await getWebchatPendingApprovalsForUser(userId);
+  const rows = getWebchatPendingApprovalsForUser(userId);
   return json(
     res,
     200,
@@ -2922,7 +2859,7 @@ async function rApprovalsPendingGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 async function rApprovePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId, hooks } = ctx;
   const approvalId = decodeURIComponent(m[1]);
-  const pending = await getPendingApproval(approvalId);
+  const pending = getPendingApproval(approvalId);
   if (!pending || pending.status !== 'pending') {
     return json(res, 404, { error: 'Approval not found or already resolved' });
   }
@@ -2931,7 +2868,7 @@ async function rApprovePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   // platform_id, so those are NULL on every webchat-routed approval. Same
   // constraint that drove the read path's JOIN against webchat_approvals_index.
   const expectedPlatformId = approvalInboxForUser(userId);
-  if (!expectedPlatformId || !(await isWebchatApprovalIndexedFor(approvalId, expectedPlatformId))) {
+  if (!expectedPlatformId || !isWebchatApprovalIndexedFor(approvalId, expectedPlatformId)) {
     return json(res, 403, { error: 'Not the intended approver for this request' });
   }
   const raw = await readJsonBody(req, res);
@@ -2979,18 +2916,9 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/me/handle', h: rMeHandleGet },
   { method: 'PUT', path: '/api/me/handle', guards: ['csrf'], h: rMeHandlePut },
   { method: 'GET', path: '/api/overview', h: rOverviewGet },
-  { method: 'GET', path: '/api/floor', h: rFloorGet },
-  { method: 'GET', path: '/api/floor/feed', h: rFloorFeedGet },
-  {
-    method: 'POST',
-    path: RE_FLOOR_SESSION_RESTART,
-    guards: ['csrf'],
-    h: rFloorSessionRestartPost,
-    audit: 'session.restart',
-  },
   { method: 'GET', path: '/api/rooms', h: rRoomsGet },
   { method: 'POST', path: '/api/rooms', guards: ['csrf', 'owner'], h: rRoomsPost },
-  { method: 'DELETE', path: RE_ROOM_ID, guards: ['owner', 'csrf'], h: rRoomIdDelete, audit: 'room.delete' },
+  { method: 'DELETE', path: RE_ROOM_ID, guards: ['owner', 'csrf'], h: rRoomIdDelete },
   { method: 'GET', path: RE_ROOM_AGENTS, h: rRoomAgentsGet },
   { method: 'GET', path: RE_ROOM_MENTIONABLE, h: rRoomMentionableGet },
   { method: 'POST', path: RE_ROOM_AGENTS, guards: ['csrf'], h: rRoomAgentsPost },
@@ -3009,12 +2937,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: ['GET', 'POST', 'DELETE'], path: '/api/deploy-keys', h: rDeployKeys },
   { method: 'POST', path: RE_WS_CRED_MINT, h: rWsCredMintPost },
   { method: 'POST', path: RE_WS_CODEX_MINT, h: rWsCodexMintPost },
-  { method: 'POST', path: RE_WS_GROK_LOGIN, guards: ['csrf', 'owner'], h: rGrokLoginPost },
-  { method: 'GET', path: '/api/workspace-credential/grok', guards: ['owner'], h: rGrokLoginGet },
-  { method: ['GET', 'POST'], path: RE_MEMBER_GROK_LOGIN, h: rGrokMemberLoginRoute },
   { method: 'PUT', path: '/api/workspace-model', h: rWorkspaceModelPut },
-  { method: 'GET', path: '/api/workspace-provider', guards: ['owner'], h: rWorkspaceProviderGet },
-  { method: 'PUT', path: '/api/workspace-provider', guards: ['owner', 'csrf'], h: rWorkspaceProviderPut },
   { method: ['GET', 'PUT'], path: '/api/webchat/onboarding', h: rWebchatOnboarding },
   { method: ['GET', 'PUT'], path: '/api/webchat/features', h: rWebchatFeatures },
   { method: 'GET', path: '/api/webchat/usage', guards: ['owner'], h: rWebchatUsageGet },
@@ -3022,7 +2945,6 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: '/api/models/context-variant', guards: ['csrf', 'owner'], h: rModelsContextVariantPost },
   { method: ['GET', 'PUT'], path: '/api/webchat/tailscale-owner', h: rWebchatTailscaleOwner },
   { method: ['GET', 'PUT'], path: '/api/webchat/audit-syslog', h: rWebchatAuditSyslog },
-  { method: 'GET', path: '/api/webchat/audit-log', h: rWebchatAuditLog },
   { method: ['GET', 'POST'], path: '/api/webchat/tailscale-https', h: rWebchatTailscaleHttps },
   { method: 'GET', path: '/api/webchat/cloudflared', h: rWebchatCloudflaredGet },
   { method: 'POST', path: '/api/webchat/cloudflared/install', guards: ['csrf'], h: rWebchatCloudflaredInstallPost },
@@ -3054,22 +2976,6 @@ const API_ROUTES: ApiRoute[] = [
   // (which would otherwise match 'draft' as an id) AND before the bare
   // /api/agents POST so the literal-path handlers stay distinct.
   { method: 'POST', path: '/api/agents/draft', h: rAgentsDraftPost },
-  { method: 'POST', path: RE_AGENT_EXPORT_TEMPLATE, guards: ['csrf'], h: rAgentExportTemplatePost },
-  { method: 'GET', path: RE_AGENT_TEMPLATE, h: rAgentTemplatePlanGet },
-  { method: 'POST', path: RE_AGENT_TEMPLATE_APPLY, guards: ['csrf'], h: rAgentTemplateApplyPost },
-  { method: 'GET', path: '/api/templates', h: rTemplatesGet },
-  // `detail` and `fetch` are literal segments and must precede nothing here —
-  // /api/templates takes no :id pattern — but they stay adjacent for clarity.
-  { method: 'GET', path: '/api/templates/detail', h: rTemplateDetailGet },
-  { method: 'DELETE', path: '/api/templates', guards: ['csrf'], h: rTemplateDelete },
-  { method: 'POST', path: '/api/templates/fetch', guards: ['csrf'], h: rTemplateFetchPost },
-  { method: 'GET', path: '/api/template-sources', h: rTemplateSourcesGet },
-  { method: 'POST', path: '/api/template-sources', guards: ['csrf'], h: rTemplateSourcePost },
-  { method: 'GET', path: RE_TEMPLATE_SOURCE_BROWSE, h: rTemplateSourceBrowseGet },
-  { method: 'DELETE', path: RE_TEMPLATE_SOURCE, guards: ['csrf'], h: rTemplateSourceDelete },
-  // Literal path — must precede the /api/agents/:id patterns, which would
-  // otherwise match 'from-template' as an agent id.
-  { method: 'POST', path: '/api/agents/from-template', guards: ['csrf'], h: rAgentsFromTemplatePost },
   { method: 'POST', path: '/api/agents', guards: ['csrf'], h: rAgentsPost },
   { method: 'PUT', path: RE_AGENT, h: rAgentPut },
   { method: 'DELETE', path: RE_AGENT, h: rAgentDelete },
@@ -3082,7 +2988,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'PUT', path: RE_AGENT_EGRESS, h: rAgentEgressPut },
   { method: ['GET', 'PUT', 'DELETE'], path: RE_AGENT_ENV, h: rAgentEnv },
   { method: 'GET', path: '/api/mcp-servers', guards: ['anyAdmin'], h: rMcpServersGet },
-  { method: 'POST', path: '/api/mcp-servers', guards: ['csrf', 'anyAdmin'], h: rMcpServersPost, audit: 'mcp.create' },
+  { method: 'POST', path: '/api/mcp-servers', guards: ['csrf', 'anyAdmin'], h: rMcpServersPost },
   { method: 'GET', path: '/api/mcp-sources', guards: ['anyAdmin'], h: rMcpSourcesGet },
   { method: 'PUT', path: RE_MCP_SOURCE, h: rMcpSourcePut },
   { method: 'DELETE', path: RE_MCP_SOURCE, h: rMcpSourceDelete },
@@ -3094,8 +3000,8 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: RE_MCP_REPIN, guards: ['anyAdmin', 'csrf'], h: rMcpRepinPost },
   { method: 'PUT', path: RE_MCP_TOOLS, guards: ['anyAdmin', 'csrf'], h: rMcpToolsPut },
   { method: 'PUT', path: RE_MCP_AUTH, h: rMcpAuthPut },
-  { method: 'PUT', path: RE_MCP_SERVER_ID, guards: ['owner', 'csrf'], h: rMcpServerIdPut, audit: 'mcp.update' },
-  { method: 'DELETE', path: RE_MCP_SERVER_ID, guards: ['owner', 'csrf'], h: rMcpServerIdDelete, audit: 'mcp.delete' },
+  { method: 'PUT', path: RE_MCP_SERVER_ID, guards: ['owner', 'csrf'], h: rMcpServerIdPut },
+  { method: 'DELETE', path: RE_MCP_SERVER_ID, guards: ['owner', 'csrf'], h: rMcpServerIdDelete },
   { method: ['GET', 'PUT'], path: RE_AGENT_MCP, h: rAgentMcp },
   { method: 'GET', path: '/api/skills', guards: ['anyAdmin'], h: rSkillsGet },
   { method: 'POST', path: '/api/skills/import', h: rSkillsImportPost },
@@ -3119,21 +3025,9 @@ const API_ROUTES: ApiRoute[] = [
   // reconnaissance, and this install now hides every other owner-only surface
   // from non-owners. Consistency beats a marginal convenience here.
   { method: 'GET', path: '/api/system/versions', guards: ['anyAdmin'], h: rSystemVersionsGet },
-  { method: 'GET', path: '/api/system/export', guards: ['owner'], h: rSystemExportGet, audit: 'system.export' },
-  {
-    method: 'POST',
-    path: '/api/system/import',
-    guards: ['owner', 'csrf'],
-    h: rSystemImportPost,
-    audit: 'system.import',
-  },
-  {
-    method: 'POST',
-    path: '/api/system/import/apply',
-    guards: ['owner', 'csrf'],
-    h: rSystemImportApplyPost,
-    audit: 'system.restore',
-  },
+  { method: 'GET', path: '/api/system/export', guards: ['owner'], h: rSystemExportGet },
+  { method: 'POST', path: '/api/system/import', guards: ['owner', 'csrf'], h: rSystemImportPost },
+  { method: 'POST', path: '/api/system/import/apply', guards: ['owner', 'csrf'], h: rSystemImportApplyPost },
   { method: 'GET', path: RE_ROOM_EXPORT, h: rRoomExportGet },
   { method: 'POST', path: '/api/rooms/import', h: rRoomsImportPost },
   { method: 'POST', path: '/api/rooms/import/apply', h: rRoomsImportApplyPost },
@@ -3168,49 +3062,17 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/ollama/pulls', guards: ['owner'], h: rOllamaPullsGet },
   { method: 'GET', path: '/api/ollama/recommend', guards: ['owner'], h: rOllamaRecommendGet },
   { method: 'GET', path: '/api/ollama/local', guards: ['owner'], h: rOllamaLocalGet },
-  {
-    method: 'POST',
-    path: '/api/ollama/install',
-    guards: ['csrf', 'owner'],
-    h: rOllamaInstallPost,
-    audit: 'provider.install',
-  },
+  { method: 'POST', path: '/api/ollama/install', guards: ['csrf', 'owner'], h: rOllamaInstallPost },
   { method: 'GET', path: '/api/codex/install', guards: ['owner'], h: rCodexInstallGet },
-  {
-    method: 'POST',
-    path: '/api/codex/install',
-    guards: ['csrf', 'owner'],
-    h: rCodexInstallPost,
-    audit: 'provider.install',
-  },
-  { method: 'GET', path: '/api/grok/install', guards: ['owner'], h: rGrokInstallGet },
-  {
-    method: 'POST',
-    path: '/api/grok/install',
-    guards: ['csrf', 'owner'],
-    h: rGrokInstallPost,
-    audit: 'provider.install',
-  },
+  { method: 'POST', path: '/api/codex/install', guards: ['csrf', 'owner'], h: rCodexInstallPost },
   { method: 'GET', path: '/api/opencode/install', guards: ['owner'], h: rOpencodeInstallGet },
-  {
-    method: 'POST',
-    path: '/api/opencode/install',
-    guards: ['csrf', 'owner'],
-    h: rOpencodeInstallPost,
-    audit: 'provider.install',
-  },
+  { method: 'POST', path: '/api/opencode/install', guards: ['csrf', 'owner'], h: rOpencodeInstallPost },
   { method: 'GET', path: '/api/pi/install', guards: ['owner'], h: rPiInstallGet },
-  { method: 'POST', path: '/api/pi/install', guards: ['csrf', 'owner'], h: rPiInstallPost, audit: 'provider.install' },
+  { method: 'POST', path: '/api/pi/install', guards: ['csrf', 'owner'], h: rPiInstallPost },
   { method: 'GET', path: '/api/ollama/prepull', guards: ['owner'], h: rOllamaPrepullGet },
   { method: 'POST', path: '/api/ollama/pull', guards: ['csrf', 'owner'], h: rOllamaPullPost },
   { method: 'POST', path: '/api/ollama/pull/cancel', guards: ['csrf', 'owner'], h: rOllamaPullCancelPost },
-  {
-    method: 'POST',
-    path: '/api/ollama/delete',
-    guards: ['csrf', 'owner'],
-    h: rOllamaDeletePost,
-    audit: 'model.files.delete',
-  },
+  { method: 'POST', path: '/api/ollama/delete', guards: ['csrf', 'owner'], h: rOllamaDeletePost },
   { method: 'GET', path: '/api/router/roster-refresh', guards: ['owner'], h: rRouterRosterRefreshGet },
   { method: 'POST', path: '/api/router/roster-refresh', guards: ['csrf', 'owner'], h: rRouterRosterRefreshPost },
   { method: 'GET', path: '/api/webchat/tts/install', guards: ['owner'], h: rWebchatTtsInstallGet },
@@ -3232,35 +3094,23 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: '/api/stt/transcribe', guards: ['csrf'], h: rSttTranscribePost },
   { method: 'POST', path: '/api/stt/cleanup', guards: ['csrf'], h: rSttCleanupPost },
   { method: 'GET', path: '/api/router/install', guards: ['owner'], h: rRouterInstallGet },
-  {
-    method: 'POST',
-    path: '/api/router/install',
-    guards: ['csrf', 'owner'],
-    h: rRouterInstallPost,
-    audit: 'provider.install',
-  },
+  { method: 'POST', path: '/api/router/install', guards: ['csrf', 'owner'], h: rRouterInstallPost },
   { method: 'GET', path: '/api/router/litellm-install', guards: ['owner'], h: rRouterLitellmInstallGet },
   { method: 'POST', path: '/api/router/litellm-install', guards: ['csrf', 'owner'], h: rRouterLitellmInstallPost },
-  { method: 'POST', path: '/api/models', guards: ['csrf', 'owner'], h: rModelsPost, audit: 'model.create' },
+  { method: 'POST', path: '/api/models', guards: ['csrf', 'owner'], h: rModelsPost },
   { method: 'GET', path: '/api/models/known', h: rModelsKnownGet },
   { method: 'POST', path: '/api/models/discover', guards: ['csrf', 'owner'], h: rModelsDiscoverPost },
   { method: 'POST', path: '/api/models/probe', guards: ['csrf', 'owner'], h: rModelsProbePost },
   { method: 'POST', path: '/api/models/reachability', guards: ['csrf', 'owner'], h: rModelsReachabilityPost },
   { method: 'POST', path: '/api/models/bulk', guards: ['csrf', 'owner'], h: rModelsBulkPost },
   { method: 'PUT', path: RE_MODEL_ID, guards: ['owner', 'csrf'], h: rModelIdPut },
-  { method: 'DELETE', path: RE_MODEL_ID, guards: ['owner', 'csrf'], h: rModelIdDelete, audit: 'model.delete' },
+  { method: 'DELETE', path: RE_MODEL_ID, guards: ['owner', 'csrf'], h: rModelIdDelete },
   { method: 'GET', path: '/api/approvals/pending', h: rApprovalsPendingGet },
   { method: 'GET', path: '/api/approvals/prejudge', guards: ['owner'], h: rApprovalPrejudgeGet },
-  {
-    method: 'PUT',
-    path: '/api/approvals/prejudge',
-    guards: ['csrf', 'owner'],
-    h: rApprovalPrejudgePut,
-    audit: 'policy.prejudge',
-  },
+  { method: 'PUT', path: '/api/approvals/prejudge', guards: ['csrf', 'owner'], h: rApprovalPrejudgePut },
   { method: 'POST', path: RE_APPROVE, guards: ['csrf'], h: rApprovePost },
   { method: 'GET', path: '/api/users', h: rUsersGet },
-  { method: 'DELETE', path: RE_USER_ID, guards: ['csrf', 'owner'], h: rUserIdDelete, audit: 'user.delete' },
+  { method: 'DELETE', path: RE_USER_ID, guards: ['csrf', 'owner'], h: rUserIdDelete },
   { method: 'POST', path: '/api/permissions/grant', guards: ['csrf'], h: rPermissionsGrantPost },
   { method: 'POST', path: '/api/permissions/revoke', guards: ['csrf'], h: rPermissionsRevokePost },
   { method: 'GET', path: '/api/push/vapid-public', h: rPushVapidPublicGet },
@@ -3433,23 +3283,22 @@ function persistOutboundFile(roomId: string, file: OutboundFile): string {
  */
 
 /** Engaged agents in a thread, resolved to {id, name, folder} for the UI. */
-async function engagedAgentsForThread(
-  roomId: string,
-  threadId: string,
-): Promise<Array<{ id: string; name: string; folder: string }>> {
-  const ids = new Set(await getEngagedAgents(roomId, threadId));
+function engagedAgentsForThread(roomId: string, threadId: string): Array<{ id: string; name: string; folder: string }> {
+  const ids = new Set(getEngagedAgents(roomId, threadId));
   if (ids.size === 0) return [];
-  return (await getAgentsForWebchatRoom(roomId))
+  return getAgentsForWebchatRoom(roomId)
     .filter((a) => ids.has(a.id))
     .map((a) => ({ id: a.id, name: a.name, folder: a.folder }));
 }
 
 /** Push the current engaged set for a thread to all room clients (live chips). */
 function broadcastEngagedSet(roomId: string, threadId: string): void {
-  // Resolve first, then broadcast — an embedded promise serializes as {}.
-  void engagedAgentsForThread(roomId, threadId).then((engaged) =>
-    broadcast(roomId, { type: 'engaged_set_changed', room_id: roomId, thread_id: threadId, engaged }),
-  );
+  broadcast(roomId, {
+    type: 'engaged_set_changed',
+    room_id: roomId,
+    thread_id: threadId,
+    engaged: engagedAgentsForThread(roomId, threadId),
+  });
 }
 
 const ENGAGE_FOLDER_ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
@@ -3463,16 +3312,16 @@ const ENGAGE_FOLDER_ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
  * Returns null when engagement doesn't apply so the router falls back to normal
  * mention-only routing. See docs/webchat/thread-engaged-agents.md.
  */
-export async function resolveInboundDeliveryPlan(
+export function resolveInboundDeliveryPlan(
   mg: MessagingGroup,
   threadId: string | null,
   messageText: string,
   senderAgentGroupId: string | undefined,
-): Promise<InboundDeliveryPlan | null> {
+): InboundDeliveryPlan | null {
   if (mg.channel_type !== 'webchat') return null;
   if (threadId === null || threadId === 'main') return null;
   const roomId = mg.platform_id;
-  const wired = await getAgentsForWebchatRoom(roomId);
+  const wired = getAgentsForWebchatRoom(roomId);
   if (wired.length === 0) return null;
   const wiredIds = new Set(wired.map((a) => a.id));
 
@@ -3480,7 +3329,7 @@ export async function resolveInboundDeliveryPlan(
   // agents as silent context (isPeerReply, trigger=0) so they stay in sync but
   // never reply to a peer (no cascades). The producer is excluded.
   if (senderAgentGroupId) {
-    const allEngaged = [...(await getEngagedAgents(roomId, threadId))].filter((id) => wiredIds.has(id));
+    const allEngaged = [...getEngagedAgents(roomId, threadId)].filter((id) => wiredIds.has(id));
     const recipients = allEngaged.filter((id) => id !== senderAgentGroupId);
     if (recipients.length === 0) return null;
     const perAgent = new Map<string, 'expected' | 'defer'>();
@@ -3496,11 +3345,11 @@ export async function resolveInboundDeliveryPlan(
   }
 
   // Auto-engage any newly-mentioned wired agent (broadcast the chip change once).
-  const engaged = new Set([...(await getEngagedAgents(roomId, threadId))].filter((id) => wiredIds.has(id)));
+  const engaged = new Set([...getEngagedAgents(roomId, threadId)].filter((id) => wiredIds.has(id)));
   let changed = false;
   for (const id of mentioned) {
     if (!engaged.has(id)) {
-      await engageAgent(roomId, threadId, id);
+      engageAgent(roomId, threadId, id);
       engaged.add(id);
       changed = true;
     }
@@ -3515,6 +3364,222 @@ export async function resolveInboundDeliveryPlan(
     perAgent.set(id, addressed ? 'expected' : 'defer');
   }
   return { participants: [...engaged], perAgent };
+}
+
+// ── Overview / dashboard ──────────────────────────────────────────────
+
+interface OverviewSnapshot {
+  restricted: boolean;
+  // `uptime` and `agents.total` are install-wide facts, so they are null for a
+  // restricted caller rather than sent-and-not-rendered. Withholding in the
+  // GUI is not withholding: the response is one devtools tab away.
+  health: { uptime: number | null; container_runtime_ok: boolean };
+  agents: { total: number | null; visible: number };
+  sessions: { active: number; total: number };
+  messages: { webchat_24h: number };
+  // Null for a restricted caller. There is no meaningful per-user version of
+  // "which platforms this install has wired", so it is dropped rather than
+  // scoped — the same treatment as busiest_rooms.
+  channels: Record<string, number> | null;
+  system: {
+    memory_used_pct: number;
+    memory_used_gb: number;
+    memory_total_gb: number;
+    load_avg: number[];
+    cpus: number;
+    platform: string;
+  } | null;
+  ollama: { ok: boolean; host: string; models?: string[] } | null;
+  recent_agents: Array<{
+    id: string;
+    name: string;
+    folder: string;
+    room_id: string | null;
+  }>;
+  busiest_rooms: Array<{ id: string; name: string; count: number }> | null;
+  active_containers: number | null;
+}
+
+const ACTIVE_SESSION_WINDOW_MS = 5 * 60 * 1000;
+
+async function buildOverview(userId: string): Promise<OverviewSnapshot> {
+  const db = getDb();
+  const ownerCaller = isOwner(userId);
+
+  // Visible agent count — owners see everything; admins see ones they
+  // explicitly admin (matches how /api/agents filters).
+  const allAgents = db.prepare(`SELECT id FROM agent_groups`).all() as { id: string }[];
+  const visibleAgents = ownerCaller ? allAgents : allAgents.filter((a) => hasAdminPrivilege(userId, a.id));
+
+  // SCOPING RULE for the activity counts below. A restricted caller counts
+  // only sessions on agent groups they can ACCESS and messages in rooms they
+  // can ACCESS — `canAccessAgentGroup` / `canAccessRoom`, which is exactly
+  // what the drill-down panels already enforce. Before this, the headline was
+  // install-wide while the drill-down was scoped, so a member could read
+  // "247 messages (24h)", click it, and find four: the number described rooms
+  // they had no right to see.
+  //
+  // Note this is a DIFFERENT predicate from `visibleAgents` above, on purpose.
+  // The agents card counts what you can ADMINISTER (hasAdminPrivilege, so it
+  // agrees with /api/agents and the Agents view); these count what you are a
+  // party to, which includes plain membership.
+  const scopedGroupIds = ownerCaller
+    ? null
+    : allAgents.filter((a) => canAccessAgentGroup(userId, a.id).allowed).map((a) => a.id);
+  const scopedRoomIds = ownerCaller ? null : filterRoomsForUser(userId, getAllWebchatRooms()).map((r) => r.id);
+
+  // `ids === null` means "owner, no scoping"; an EMPTY array means "scoped to
+  // nothing", which must count zero rather than fall through to unfiltered —
+  // and cannot be expressed as SQL, since `IN ()` is a syntax error. Every
+  // base query carries its own WHERE so the scope clause is a pure suffix.
+  const countScoped = (base: string, column: string, ids: string[] | null, ...leading: unknown[]): number => {
+    if (ids !== null && ids.length === 0) return 0;
+    const where = ids === null ? '' : ` AND ${column} IN (${ids.map(() => '?').join(',')})`;
+    const params = ids === null ? leading : [...leading, ...ids];
+    return (db.prepare(base + where).get(...params) as { c: number }).c;
+  };
+
+  // Sessions — `last_active` is an ISO timestamp string.
+  const fiveMinAgo = new Date(Date.now() - ACTIVE_SESSION_WINDOW_MS).toISOString();
+  const sessionsTotal = countScoped(`SELECT COUNT(*) AS c FROM sessions WHERE 1=1`, 'agent_group_id', scopedGroupIds);
+  const sessionsActive = countScoped(
+    `SELECT COUNT(*) AS c FROM sessions WHERE last_active > ?`,
+    'agent_group_id',
+    scopedGroupIds,
+    fiveMinAgo,
+  );
+
+  // Webchat messages in the last 24h — cheap, single table.
+  const yesterdayMs = Date.now() - 86_400_000;
+  const messages24h = countScoped(
+    `SELECT COUNT(*) AS c FROM webchat_messages WHERE created_at > ?`,
+    'room_id',
+    scopedRoomIds,
+    yesterdayMs,
+  );
+
+  // Channel breakdown — count of messaging_groups per channel_type. Owner-only
+  // (see the interface note); a restricted caller gets null.
+  let channels: Record<string, number> | null = null;
+  if (ownerCaller) {
+    const channelRows = db
+      .prepare(`SELECT channel_type, COUNT(*) AS c FROM messaging_groups GROUP BY channel_type`)
+      .all() as { channel_type: string; c: number }[];
+    channels = {};
+    for (const row of channelRows) channels[row.channel_type] = row.c;
+  }
+
+  // Recent agents — last 5 created. Restricted set when not owner.
+  const recentLimit = 5;
+  const visibleIds = new Set(visibleAgents.map((a) => a.id));
+  const recentSql = ownerCaller
+    ? `SELECT id, name, folder, created_at FROM agent_groups ORDER BY created_at DESC LIMIT ${recentLimit}`
+    : `SELECT id, name, folder, created_at FROM agent_groups ORDER BY created_at DESC`;
+  const recentRaw = db.prepare(recentSql).all() as { id: string; name: string; folder: string; created_at: string }[];
+  const recentFiltered = ownerCaller ? recentRaw : recentRaw.filter((r) => visibleIds.has(r.id)).slice(0, recentLimit);
+  const recentAgents = recentFiltered.map((r) => {
+    const room = getWebchatRoom(r.folder);
+    return {
+      id: r.id,
+      name: r.name,
+      folder: r.folder,
+      room_id: room ? room.id : null,
+    };
+  });
+
+  // Owner-only: system metrics, busiest webchat rooms, container runtime probe,
+  // ollama probe.
+  if (!ownerCaller) {
+    return {
+      restricted: true,
+      health: { uptime: null, container_runtime_ok: false },
+      agents: { total: null, visible: visibleAgents.length },
+      sessions: { active: sessionsActive, total: sessionsTotal },
+      messages: { webchat_24h: messages24h },
+      channels,
+      system: null,
+      ollama: null,
+      recent_agents: recentAgents,
+      busiest_rooms: null,
+      active_containers: null,
+    };
+  }
+
+  // Busiest webchat rooms (24h) — top 5 by message count.
+  const busiestRows = db
+    .prepare(
+      `SELECT m.room_id AS id, mg.name AS name, COUNT(*) AS count
+       FROM webchat_messages m
+       LEFT JOIN messaging_groups mg
+         ON mg.channel_type = 'webchat' AND mg.platform_id = m.room_id
+       WHERE m.created_at > ?
+       GROUP BY m.room_id
+       ORDER BY count DESC
+       LIMIT 5`,
+    )
+    .all(yesterdayMs) as { id: string; name: string | null; count: number }[];
+  const busiestRooms = busiestRows.map((r) => ({ id: r.id, name: r.name ?? r.id, count: r.count }));
+
+  // System.
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const system = {
+    memory_used_pct: Math.round(((totalMem - freeMem) / totalMem) * 100),
+    memory_used_gb: +((totalMem - freeMem) / 1073741824).toFixed(1),
+    memory_total_gb: +(totalMem / 1073741824).toFixed(1),
+    load_avg: os.loadavg().map((v) => +v.toFixed(2)),
+    cpus: os.cpus().length,
+    platform: os.platform(),
+  };
+
+  // Active containers — `docker ps --filter name=nanoclaw-`. Best-effort.
+  const activeContainers = await countNanoClawContainers();
+
+  // Ollama — probe only if env-configured. Mirrors v1.
+  const ollama = await probeOllama();
+
+  return {
+    restricted: false,
+    health: { uptime: process.uptime(), container_runtime_ok: activeContainers !== null },
+    agents: { total: allAgents.length, visible: visibleAgents.length },
+    sessions: { active: sessionsActive, total: sessionsTotal },
+    messages: { webchat_24h: messages24h },
+    channels,
+    system,
+    ollama,
+    recent_agents: recentAgents,
+    busiest_rooms: busiestRooms,
+    active_containers: activeContainers,
+  };
+}
+
+async function countNanoClawContainers(): Promise<number | null> {
+  try {
+    const out = await new Promise<string>((resolve, reject) =>
+      execFile(
+        'docker',
+        ['ps', '--filter', 'name=nanoclaw-', '--format', '{{.Names}}'],
+        { timeout: 3000 },
+        (err, stdout) => (err ? reject(err) : resolve(stdout)),
+      ),
+    );
+    return out.trim().split('\n').filter(Boolean).length;
+  } catch {
+    return null;
+  }
+}
+
+async function probeOllama(): Promise<{ ok: boolean; host: string; models?: string[] } | null> {
+  const host = process.env.OLLAMA_HOST || '';
+  if (!host) return null;
+  try {
+    const res = await fetch(`${host}/api/tags`, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return { ok: false, host };
+    const data = (await res.json()) as { models?: Array<{ name: string }> };
+    return { ok: true, host, models: (data.models ?? []).map((m) => m.name) };
+  } catch {
+    return { ok: false, host };
+  }
 }
 
 // Staged bundles can be GBs — sweep on a timer, not only on the next upload
@@ -3551,7 +3616,7 @@ async function importSystemUploadHandler(req: IncomingMessage, res: ServerRespon
         code === 0 ? resolve() : reject(new Error(`tar -x failed: ${err.slice(0, 200)}`)),
       );
     });
-    const preview = await previewSystemImport(dir);
+    const preview = previewSystemImport(dir);
     const token = randomUUID();
     pendingAgentImports.set(token, { dir, at: Date.now() });
     return json(res, 200, { token, preview });
@@ -3573,9 +3638,9 @@ async function importSystemApplyHandler(req: IncomingMessage, res: ServerRespons
   }
   const staged = pendingAgentImports.get(String(body.token || ''));
   if (!staged) return json(res, 410, { error: 'Import expired — upload the bundle again' });
-  let preview: Awaited<ReturnType<typeof previewSystemImport>>;
+  let preview: ReturnType<typeof previewSystemImport>;
   try {
-    preview = await previewSystemImport(staged.dir);
+    preview = previewSystemImport(staged.dir);
   } catch (err) {
     return json(res, 422, { error: err instanceof Error ? err.message : String(err) });
   }
@@ -3604,8 +3669,8 @@ async function importSystemApplyHandler(req: IncomingMessage, res: ServerRespons
  * the UI can say where that content went instead of showing an empty box for a
  * group that plainly has instructions.
  */
-async function readInstructions(res: ServerResponse, id: string): Promise<void> {
-  const group = await getAgentGroup(id);
+function readInstructions(res: ServerResponse, id: string): void {
+  const group = getAgentGroup(id);
   if (!group) return json(res, 404, { error: 'Agent not found' });
   const dir = path.resolve(GROUPS_DIR, group.folder);
   const content = readGroupPersona(dir) ?? '';
@@ -3620,7 +3685,7 @@ async function readInstructions(res: ServerResponse, id: string): Promise<void> 
 }
 
 async function writeInstructions(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
-  const group = await getAgentGroup(id);
+  const group = getAgentGroup(id);
   if (!group) return json(res, 404, { error: 'Agent not found' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -3674,17 +3739,17 @@ async function writeInstructions(req: IncomingMessage, res: ServerResponse, id: 
  * `codex` → Codex groups only. Value-only rotation (same mode) needs no restart —
  * OneCLI swaps the real credential on the wire per request.
  */
-async function restartGroupsForWorkspaceCredChange(
+function restartGroupsForWorkspaceCredChange(
   provider: 'claude' | 'codex',
   priorOauth: boolean,
   nowOauth: boolean,
-): Promise<void> {
+): void {
   if (priorOauth === nowOauth) return;
-  for (const g of await getAllAgentGroups()) {
-    const groupProvider = (await getContainerConfig(g.id))?.provider === 'codex' ? 'codex' : 'claude';
+  for (const g of getAllAgentGroups()) {
+    const groupProvider = getContainerConfig(g.id)?.provider === 'codex' ? 'codex' : 'claude';
     if (groupProvider !== provider) continue;
     try {
-      await restartAgentGroupContainers(g.id, 'Workspace default credential mode changed');
+      restartAgentGroupContainers(g.id, 'Workspace default credential mode changed');
     } catch (err) {
       log.warn('Webchat: container restart after workspace-cred change failed', { agentGroupId: g.id, err });
     }
@@ -3699,23 +3764,17 @@ async function restartGroupsForWorkspaceCredChange(
  * would silently keep agents on the local model. Clear the default model, then
  * respawn the affected groups (the respawn also applies the OAuth sentinel).
  */
-async function afterWorkspaceCredentialSet(
-  provider: 'claude' | 'codex',
-  priorOauth: boolean,
-  nowOauth: boolean,
-): Promise<void> {
+function afterWorkspaceCredentialSet(provider: 'claude' | 'codex', priorOauth: boolean, nowOauth: boolean): void {
   // The default model is always an ollama-kind (claude-family) model, so it only
   // conflicts with a claude engine — a codex credential leaves it untouched.
-  // (Pre-review this compared the PROMISE to null — always true — so the claude
-  // path unconditionally cleared the model and the restart branch never ran.)
-  const clearModel = provider === 'claude' && (await getDefaultModelId()) !== null;
+  const clearModel = provider === 'claude' && getDefaultModelId() !== null;
   if (clearModel) {
-    await setDefaultModelId(null);
+    setDefaultModelId(null);
     // Rewrites settings.json (drops the ollama env) + respawns unassigned
     // claude-family groups; the respawn also picks up the new OAuth sentinel.
-    await refreshUnassignedGroupsForDefaultModel(`Workspace engine set to ${provider}`);
+    refreshUnassignedGroupsForDefaultModel(`Workspace engine set to ${provider}`);
   } else {
-    await restartGroupsForWorkspaceCredChange(provider, priorOauth, nowOauth);
+    restartGroupsForWorkspaceCredChange(provider, priorOauth, nowOauth);
   }
 }
 
@@ -3729,10 +3788,10 @@ async function afterWorkspaceCredentialSet(
  * non-restarting: containers pick up the change on their next spawn. Per-group
  * failures are logged, never fatal to boot.
  */
-async function convergeAgentProviders(): Promise<void> {
-  for (const g of await getAllAgentGroups()) {
+function convergeAgentProviders(): void {
+  for (const g of getAllAgentGroups()) {
     try {
-      await syncAgentProviderForAssignedModel(g.id);
+      syncAgentProviderForAssignedModel(g.id);
     } catch (err) {
       log.warn('Webchat: provider convergence at boot failed', { agentGroupId: g.id, err });
     }
@@ -3824,15 +3883,15 @@ async function putScopedSkillContentHandler(
     /* best-effort history; never block the save */
   }
   fs.writeFileSync(path.join(skillDir, 'SKILL.md'), content, 'utf8');
-  const restarted = await restartAgentGroupContainers(agentGroupId, `Scoped skill ${name} edited`);
+  const restarted = restartAgentGroupContainers(agentGroupId, `Scoped skill ${name} edited`);
   return json(res, 200, { ok: true, name, restarted });
 }
 
 // Flip the in-room "proposed skill" card (if the draft was surfaced in a webchat
 // room) so it stops being actionable, and push the update to connected clients.
-async function resolveDraftCard(draftId: string, outcome: 'kept' | 'discarded', userId: string): Promise<void> {
-  const flipped = await markRoomSkillDraftResolved(draftId, outcome, userId);
-  if (flipped) await broadcast(flipped.roomId, { type: 'message', ...flipped.message });
+function resolveDraftCard(draftId: string, outcome: 'kept' | 'discarded', userId: string): void {
+  const flipped = markRoomSkillDraftResolved(draftId, outcome, userId);
+  if (flipped) broadcast(flipped.roomId, { type: 'message', ...flipped.message });
 }
 
 // A draft as the keep routes see it — the metadata the apply/review paths need.
@@ -3857,21 +3916,21 @@ export function keepReviewJobFor(draftId: string): Promise<void> | undefined {
  * drift. An "update existing" choice re-types the draft as a patch of the
  * chosen skill. sanitizeSkillName in apply.ts guards the path.
  */
-async function applyKeepDecision(
+function applyKeepDecision(
   draft: KeepDraftMeta,
   groupId: string,
   updateTarget: string,
   userId: string,
-): Promise<{ status: number; body: Record<string, unknown> }> {
+): { status: number; body: Record<string, unknown> } {
   const toApply = updateTarget
     ? { ...draft, agent_group_id: groupId, kind: 'patch' as const, target_skill: updateTarget }
     : { ...draft, agent_group_id: groupId };
-  const r = await applySkillDraft(
+  const r = applySkillDraft(
     toApply as Parameters<typeof applySkillDraft>[0],
     updateTarget || draft.kind === 'patch' ? 'Webchat skill revision applied' : 'Webchat learned skill kept',
   );
   if (!r.ok) return { status: r.status, body: { error: r.error } };
-  await resolveDraftCard(draft.id, 'kept', userId);
+  resolveDraftCard(draft.id, 'kept', userId);
   return {
     status: 200,
     body: {
@@ -3903,7 +3962,7 @@ async function runKeepReview(draft: KeepDraftMeta, group: { id: string; name: st
   try {
     // Re-fetch: the draft may have been discarded (or kept via a concurrent
     // force) between the 202 and the job actually running.
-    const fresh = await getSkillDraft(draft.id);
+    const fresh = getSkillDraft(draft.id);
     if (!fresh || fresh.status !== 'pending') {
       // Both bail-outs below log. They report 'error' to the pressing user's
       // tab, and until now did so with nothing server-side — so an operator
@@ -3935,7 +3994,7 @@ async function runKeepReview(draft: KeepDraftMeta, group: { id: string; name: st
       });
       return;
     }
-    const r = await applyKeepDecision(draft, group.id, '', userId);
+    const r = applyKeepDecision(draft, group.id, '', userId);
     if (r.status !== 200) {
       log.warn('Keep review: apply refused the draft', {
         draftId: draft.id,
@@ -3972,9 +4031,9 @@ async function keepSkillDraftHandler(
   } catch {
     return json(res, 400, { error: 'Invalid JSON' });
   }
-  const group = await resolveAgent(agentGroupId);
+  const group = resolveAgent(agentGroupId);
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
   const params = new URL(req.url || '', 'http://x').searchParams;
   const force = params.get('force') === '1';
   // `updateTarget` = the operator chose "Update <existing skill>" in the overlap
@@ -3982,7 +4041,7 @@ async function keepSkillDraftHandler(
   // version) instead of creating a duplicate.
   const updateTarget = (params.get('updateTarget') || '').trim();
   if (force || updateTarget) {
-    const r = await applyKeepDecision(draft, group.id, updateTarget, userId);
+    const r = applyKeepDecision(draft, group.id, updateTarget, userId);
     return json(res, r.status, r.body);
   }
   if (keepReviewJobs.has(draft.id)) return json(res, 409, { error: 'Review already in progress' });
@@ -4014,7 +4073,7 @@ async function pushSubscribe(req: IncomingMessage, res: ServerResponse, userId: 
   if (p256dh.length > 256 || auth.length > 64) return json(res, 400, { error: 'Key material too long' });
 
   // Prevent identity-hijack on known endpoints.
-  const existing = (await db.get(`SELECT identity FROM webchat_push_subscriptions WHERE endpoint = ?`, endpoint)) as
+  const existing = db.prepare(`SELECT identity FROM webchat_push_subscriptions WHERE endpoint = ?`).get(endpoint) as
     | { identity: string }
     | undefined;
   if (existing && existing.identity !== userId) {
@@ -4025,15 +4084,11 @@ async function pushSubscribe(req: IncomingMessage, res: ServerResponse, userId: 
     });
     return json(res, 409, { error: 'Endpoint already registered to a different identity' });
   }
-  await db.run(
+  db.prepare(
     `INSERT INTO webchat_push_subscriptions (endpoint, identity, keys_json, created_at)
      VALUES (?, ?, ?, ?)
      ON CONFLICT(endpoint) DO UPDATE SET identity = excluded.identity, keys_json = excluded.keys_json`,
-    endpoint,
-    userId,
-    JSON.stringify({ p256dh, auth }),
-    Date.now(),
-  );
+  ).run(endpoint, userId, JSON.stringify({ p256dh, auth }), Date.now());
   return json(res, 200, { ok: true });
 }
 
@@ -4048,11 +4103,9 @@ async function pushUnsubscribe(req: IncomingMessage, res: ServerResponse, userId
   }
   if (typeof body.endpoint !== 'string') return json(res, 400, { error: 'Missing endpoint' });
   // Only allow deleting your own subscription.
-  await getDb().run(
-    `DELETE FROM webchat_push_subscriptions WHERE endpoint = ? AND identity = ?`,
-    body.endpoint,
-    userId,
-  );
+  getDb()
+    .prepare(`DELETE FROM webchat_push_subscriptions WHERE endpoint = ? AND identity = ?`)
+    .run(body.endpoint, userId);
   return json(res, 200, { ok: true });
 }
 

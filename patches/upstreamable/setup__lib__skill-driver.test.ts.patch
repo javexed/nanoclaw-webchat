@@ -1,0 +1,120 @@
+diff --git c/setup/lib/skill-driver.test.ts w/setup/lib/skill-driver.test.ts
+index ed76e3e5..46703487 100644
+--- c/setup/lib/skill-driver.test.ts
++++ w/setup/lib/skill-driver.test.ts
+@@ -1,3 +1,3 @@
+-import { describe, it, expect, vi } from 'vitest';
+-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
++import { describe, it, expect, vi, afterAll } from 'vitest';
++import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+ import { tmpdir } from 'node:os';
+@@ -8,2 +8,23 @@ import { fullyApplied, type ApplyEvent } from '../../scripts/skill-apply.js';
+ 
++/**
++ * Every scratch dir this file makes, removed when the file finishes.
++ *
++ * These tests created ~20 dirs under os.tmpdir() per run and removed none, so a
++ * full suite left thousands behind. On a tmpfs /tmp that is an INODE leak, not a
++ * disk one: the filesystem reports gigabytes free while every write fails with
++ * ENOSPC. It is a nasty way to be wrong — a run in that state reported 32 test
++ * failures that all passed once the inodes were freed.
++ */
++const SCRATCH: string[] = [];
++function scratchDir(prefix: string): string {
++  const d = mkdtempSync(join(tmpdir(), prefix));
++  SCRATCH.push(d);
++  return d;
++}
++afterAll(() => {
++  for (const d of SCRATCH) rmSync(d, { recursive: true, force: true });
++  SCRATCH.length = 0;
++});
++
++
+ // Shared test state for the clack + claude-handoff mocks (hoisted so the vi.mock
+@@ -63,4 +84,4 @@ ncl wire --token {{token}}
+ function scratch(): { root: string; skill: string } {
+-  const root = mkdtempSync(join(tmpdir(), 'driver-'));
+-  const skill = mkdtempSync(join(tmpdir(), 'driver-skill-'));
++  const root = scratchDir('driver-');
++  const skill = scratchDir('driver-skill-');
+   writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
+@@ -121,3 +142,3 @@ describe('thin skill driver', () => {
+   it('hostExec puts the project bin/ on PATH so a bare command resolves to it', async () => {
+-    const root = mkdtempSync(join(tmpdir(), 'driver-bin-'));
++    const root = scratchDir('driver-bin-');
+     mkdirSync(join(root, 'bin'));
+@@ -130,3 +151,3 @@ describe('thin skill driver', () => {
+   it('hostExec returns stdout so a capture run can bind it', async () => {
+-    const root = mkdtempSync(join(tmpdir(), 'driver-cap-'));
++    const root = scratchDir('driver-cap-');
+     expect(String(await hostExec(root)('echo D0CHANNEL')).trim()).toBe('D0CHANNEL');
+@@ -135,3 +156,3 @@ describe('thin skill driver', () => {
+   it('hostExec recomposes a failure as `exit <code>: <first stderr line>` with the full stderr kept below', async () => {
+-    const root = mkdtempSync(join(tmpdir(), 'driver-fail-'));
++    const root = scratchDir('driver-fail-');
+     const run = (): Promise<string> => hostExec(root)('echo "boom: first line" >&2; echo "stack line two" >&2; exit 7');
+@@ -142,3 +163,3 @@ describe('thin skill driver', () => {
+   it('hostExec tees each command + stdout/stderr to the raw log, success and failure alike', async () => {
+-    const root = mkdtempSync(join(tmpdir(), 'driver-tee-'));
++    const root = scratchDir('driver-tee-');
+     const rawLog = join(root, 'raw.log');
+@@ -156,3 +177,3 @@ describe('thin skill driver', () => {
+   it('hostExecStream runs a step and captures the terminal status block fields (for effect:step)', async () => {
+-    const root = mkdtempSync(join(tmpdir(), 'driver-step-'));
++    const root = scratchDir('driver-step-');
+     const out = await hostExecStream(root)(
+@@ -165,3 +186,3 @@ describe('thin skill driver', () => {
+   it('hostExecStream children run with LOG_LEVEL=warn — host logger info noise stays off the wizard', async () => {
+-    const root = mkdtempSync(join(tmpdir(), 'driver-loglevel-'));
++    const root = scratchDir('driver-loglevel-');
+     const prev = process.env.LOG_LEVEL;
+@@ -179,4 +200,4 @@ describe('thin skill driver', () => {
+   function reuseScratch(): { root: string; skill: string } {
+-    const root = mkdtempSync(join(tmpdir(), 'reuse-'));
+-    const skill = mkdtempSync(join(tmpdir(), 'reuse-skill-'));
++    const root = scratchDir('reuse-');
++    const skill = scratchDir('reuse-skill-');
+     writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
+@@ -231,4 +252,4 @@ describe('thin skill driver', () => {
+   function helperReuseScratch(): { root: string; skill: string } {
+-    const root = mkdtempSync(join(tmpdir(), 'reuse-helper-'));
+-    const skill = mkdtempSync(join(tmpdir(), 'reuse-helper-skill-'));
++    const root = scratchDir('reuse-helper-');
++    const skill = scratchDir('reuse-helper-skill-');
+     writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
+@@ -270,4 +291,4 @@ describe('thin skill driver', () => {
+   it('reuse: a stale .env value failing the prompt validate is never offered — prompted fresh', async () => {
+-    const root = mkdtempSync(join(tmpdir(), 'reuse-stale-'));
+-    const skill = mkdtempSync(join(tmpdir(), 'reuse-stale-skill-'));
++    const root = scratchDir('reuse-stale-');
++    const skill = scratchDir('reuse-stale-skill-');
+     writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
+@@ -299,4 +320,4 @@ describe('thin skill driver', () => {
+   it('reuse pre-filter mirrors bind order: normalize-then-validate, so a normalizable value still offers', async () => {
+-    const root = mkdtempSync(join(tmpdir(), 'reuse-norm-'));
+-    const skill = mkdtempSync(join(tmpdir(), 'reuse-norm-skill-'));
++    const root = scratchDir('reuse-norm-');
++    const skill = scratchDir('reuse-norm-skill-');
+     writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
+@@ -326,4 +347,4 @@ describe('thin skill driver', () => {
+   it('default handler: offers the operator-body URL, then the barrier confirm — in that order', async () => {
+-    const root = mkdtempSync(join(tmpdir(), 'offer-'));
+-    const skill = mkdtempSync(join(tmpdir(), 'offer-skill-'));
++    const root = scratchDir('offer-');
++    const skill = scratchDir('offer-skill-');
+     writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
+@@ -353,4 +374,4 @@ describe('thin skill driver', () => {
+   it('default handler: readiness flavor before an effect:step; decline = proceed (never an abort)', async () => {
+-    const root = mkdtempSync(join(tmpdir(), 'gate-step-'));
+-    const skill = mkdtempSync(join(tmpdir(), 'gate-step-skill-'));
++    const root = scratchDir('gate-step-');
++    const skill = scratchDir('gate-step-skill-');
+     writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
+@@ -377,4 +398,4 @@ describe('thin skill driver', () => {
+   it('default handler: declining the URL offer skips the open', async () => {
+-    const root = mkdtempSync(join(tmpdir(), 'offer-no-'));
+-    const skill = mkdtempSync(join(tmpdir(), 'offer-no-skill-'));
++    const root = scratchDir('offer-no-');
++    const skill = scratchDir('offer-no-skill-');
+     writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');

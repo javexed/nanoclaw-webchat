@@ -78,15 +78,41 @@ registerProviderContainerConfig('pi', (ctx) => {
   };
   fs.writeFileSync(path.join(piDir, 'models.json'), JSON.stringify(modelsJson, null, 2) + '\n');
 
+  // Hostname only — NO_PROXY matches on host, which also covers the port. An
+  // unparseable baseURL falls back to the local-only list rather than throwing
+  // at spawn time.
+  let modelHost = '';
+  try {
+    modelHost = new URL(baseURL).hostname;
+  } catch {
+    /* keep the local defaults */
+  }
+  const noProxyList = ['127.0.0.1', 'localhost', 'host.docker.internal', modelHost]
+    .filter(Boolean)
+    .join(',');
+
   return {
     mounts: [{ hostPath: piDir, containerPath: '/pi-agent', readonly: false }],
     env: {
       PI_CODING_AGENT_DIR: '/pi-agent',
       PI_PROVIDER: provider,
       PI_MODEL: modelId,
-      // Local backend is reached directly, past the OneCLI proxy.
-      NO_PROXY: mergeNoProxy(ctx.hostEnv.NO_PROXY, '127.0.0.1,localhost,host.docker.internal'),
-      no_proxy: mergeNoProxy(ctx.hostEnv.no_proxy, '127.0.0.1,localhost,host.docker.internal'),
+      // The model backend is reached directly, past the OneCLI proxy.
+      //
+      // The three literals below describe a LOCAL Ollama. Once inference moves
+      // off-box — a LAN GPU host, the normal shape at any size — that hostname is
+      // absent from the list, pi's requests route through the egress proxy, and
+      // every turn fails with a bare "Connection error.": three retries, zero
+      // tokens, an empty turn, and nothing in any log naming the cause.
+      //
+      // What makes it hard to place is that `curl` through the SAME proxy from the
+      // SAME container succeeds. pi is Node/undici behind EnvHttpProxyAgent, and
+      // the two clients do not treat this proxy alike — so every check reaching for
+      // curl reports a healthy network while pi cannot talk at all.
+      //
+      // Derive the host from the resolved baseURL rather than assuming locality.
+      NO_PROXY: mergeNoProxy(ctx.hostEnv.NO_PROXY, noProxyList),
+      no_proxy: mergeNoProxy(ctx.hostEnv.no_proxy, noProxyList),
     },
   };
 });

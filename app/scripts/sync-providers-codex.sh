@@ -20,7 +20,12 @@
 set -euo pipefail
 
 UPSTREAM="${UPSTREAM_REMOTE:-origin}"
-FORK="${FORK_REMOTE:-$(git remote | grep -vx github | head -1)}"
+# Pick the private remote by its URL, NOT by its name. `git remote | grep -vx
+# github | head -1` looked like it excluded the public mirror, but it only
+# excludes a remote literally NAMED "github" — and in a checkout where the
+# GitHub remote is called `origin` (the common case) it selects exactly the
+# remote it meant to skip, silently.
+FORK="${FORK_REMOTE:-$(git remote -v | awk '$3 == "(fetch)" && $2 !~ /github\.com/ { print $1; exit }')}"
 UP_BRANCH="providers"
 FORK_BRANCH="providers-codex"
 # Paths the Codex payload lives under — used only to summarise upstream changes.

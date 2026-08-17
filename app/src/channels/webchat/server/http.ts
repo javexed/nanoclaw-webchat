@@ -1,0 +1,61 @@
+// ── HTTP + request-body helpers, shared by every route module ────────────────
+// json() alone is called 870 times across server.ts, readJsonBody 83.
+//
+// Extracting these FIRST is what makes the route-module split possible: a
+// routes-*.ts importing them from server.ts would form a cycle, because
+// server.ts imports the handlers back. Both sides importing this file keeps the
+// graph acyclic — the same reason core/dom came out first in the UI split.
+import type { IncomingMessage, ServerResponse } from 'http';
+
+export function json(res: ServerResponse, status: number, data: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(data));
+}
+
+export function safeParseJson(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return s;
+  }
+}
+
+// Cap JSON request bodies at 1 MB. Larger payloads use the chunked upload
+// endpoint, which has its own (higher) cap in files.ts.
+export const MAX_JSON_BODY_BYTES = 1024 * 1024;
+
+export class BodyTooLargeError extends Error {
+  constructor() {
+    super('Request body too large');
+  }
+}
+
+export function readBody(req: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    let size = 0;
+    req.on('data', (d: Buffer) => {
+      size += d.length;
+      if (size > maxBytes) {
+        req.destroy();
+        reject(new BodyTooLargeError());
+        return;
+      }
+      body += d;
+    });
+    req.on('end', () => resolve(body));
+    req.on('error', (err) => reject(err));
+  });
+}
+
+export async function readJsonBody(req: IncomingMessage, res: ServerResponse): Promise<string | null> {
+  try {
+    return await readBody(req);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      json(res, 413, { error: 'Request body too large' });
+      return null;
+    }
+    throw err;
+  }
+}

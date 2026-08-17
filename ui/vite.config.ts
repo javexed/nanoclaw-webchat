@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import vue from '@vitejs/plugin-vue';
 
 // The bundle REPLACES app/public/webchat/app.js in place — same path, same
 // filename, no content hash. Three things depend on that and none of them are
@@ -11,6 +12,20 @@ import { defineConfig } from 'vite';
 // a hand-edit or a forgotten build fails the PR instead of shipping.
 export default defineConfig({
   root: import.meta.dirname,
+  plugins: [vue()],
+  resolve: {
+    // `import { shallowReactive } from 'vue'` has to emit an import of the
+    // VENDORED runtime, not pull Vue into the bundle. The alias rewrites the
+    // bare specifier to the web-root path, and the external list below then
+    // leaves it alone — the same shape marked and dompurify already use.
+    //
+    // Runtime-only build on purpose: @vitejs/plugin-vue compiles every SFC
+    // template to a render function at build time, so the template compiler
+    // (60KB more) is never needed in the browser. Importing a build WITH the
+    // compiler would work and silently ship dead weight, which is why this
+    // points at an exact filename rather than the package.
+    alias: { vue: '/vue.runtime.min.js' },
+  },
   build: {
     outDir: '../app/public/webchat',
     emptyOutDir: false,          // index.html, style.css, sw.js, icons live there
@@ -28,7 +43,7 @@ export default defineConfig({
       // pattern match externalised legacy.js itself and emitted a 0.02 kB
       // bundle that "built" fine. An allowlist fails loudly on a new vendored
       // import instead of silently dropping real code.
-      external: ['/marked.min.js', '/dompurify.min.js'],
+      external: ['/marked.min.js', '/dompurify.min.js', '/vue.runtime.min.js'],
       output: {
         format: 'es',
         entryFileNames: 'app.js',

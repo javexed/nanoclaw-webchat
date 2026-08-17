@@ -5,9 +5,13 @@
 // the token is private here and reached through accessors — the pattern every
 // later extraction that owns mutable state will follow.
 
-// sessionStorage (not localStorage) so a stored-XSS attack can't exfiltrate the
-// token from a long-lived background tab — the worst case shrinks to "active
-// session in the same tab", which already has full access anyway.
+// sessionStorage (not localStorage). Precision matters here: sessionStorage is
+// fully readable by ANY script running in this page, so it does NOT protect the
+// token from XSS — the CSP and sanitizer do that. What it buys is scope: no
+// persistence across restarts and no sharing across tabs, so a token can't be
+// lifted later from a long-lived localStorage entry. The real exfil guards are
+// elsewhere: the token travels only in the Authorization header on same-origin
+// relative URLs and in the WS subprotocol — never in a URL.
 let authToken: string = sessionStorage.getItem('nanoclaw-token') || '';
 
 export function getAuthToken(): string {

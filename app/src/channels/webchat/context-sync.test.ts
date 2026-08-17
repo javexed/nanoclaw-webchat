@@ -15,7 +15,7 @@ import {
   insertSyncedMessages,
   deleteWebchatThread,
 } from './db.js';
-import { syncThreadContext } from './server.js';
+import { syncThreadContext } from './server/routes-rooms.js';
 
 beforeEach(() => {
   initTestDb();
