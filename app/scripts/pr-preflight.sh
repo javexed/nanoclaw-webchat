@@ -19,7 +19,12 @@ base="${1:-${PR_PREFLIGHT_BASE:-channels-webchat}}"
 ref="${2:-HEAD}"
 # Default to the first remote that is not the public mirror, so no instance
 # name is hardcoded in a published file. Override with PR_PREFLIGHT_REMOTE.
-remote="${PR_PREFLIGHT_REMOTE:-$(git remote | grep -vx github | head -1)}"
+# Pick the private remote by its URL, NOT by its name. `git remote | grep -vx
+# github | head -1` looked like it excluded the public mirror, but it only
+# excludes a remote literally NAMED "github" — and in a checkout where the
+# GitHub remote is called `origin` (the common case) it selects exactly the
+# remote it meant to skip, silently.
+remote="${PR_PREFLIGHT_REMOTE:-$(git remote -v | awk '$3 == "(fetch)" && $2 !~ /github\.com/ { print $1; exit }')}"
 upstream="$remote/$base"
 
 # Refuse to guess if the ref doesn't resolve.
@@ -42,6 +47,22 @@ fi
 
 behind="$(git rev-list --count "$ref..$upstream")"
 ahead="$(git rev-list --count "$upstream..$ref")"
+
+# A PR delta in the hundreds means this is measuring against the WRONG base —
+# almost always a stale public mirror that the real work never lands on. That
+# is not hypothetical: with the old name-based remote selection this script
+# compared against GitHub's main, reported "at the top of origin/main. PR would
+# contain 314 commit(s)", exited 0, and let a branch push that was six commits
+# behind the actual base. The count was the only visible tell and nothing drew
+# attention to it. Warn loudly; do not block, since a genuinely large PR is
+# possible and this script's contract is to warn rather than wedge.
+if [ "$ahead" -gt 50 ]; then
+  echo "" >&2
+  echo "  !! pr-preflight: $ahead commit(s) ahead of $upstream — that is a lot for one PR." >&2
+  echo "     If '$remote' is not where these branches actually land, this check is measuring" >&2
+  echo "     nothing. Confirm with:  git remote -v" >&2
+  echo "" >&2
+fi
 
 if [ "$behind" -ne 0 ]; then
   echo "" >&2

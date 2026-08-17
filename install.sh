@@ -373,6 +373,37 @@ if [ "${SKIP_SQLITE_VERIFY:-0}" != "1" ]; then
     || { echo "ERROR: better-sqlite3 native binding failed. On Node ${REQUIRED_NODE_MAJOR:-the target line} a prebuilt should install; a source-build fallback needs node-gyp + a C toolchain (make/cc/python3). Install those, or 'pnpm rebuild better-sqlite3'." >&2; exit 1; }
 fi
 
+# ── 8a. Provenance stamp ─────────────────────────────────────────────────────
+# Which webchat is this? Nothing in a composed install answered that. The
+# install's own versions.json is NANOCLAW's (onecli + agent-image pins) — this
+# repo's versions.json is a build input and is never copied in — so an operator
+# could read the nanoclaw version off package.json and had no way at all to tell
+# which overlay was layered on top of it.
+#
+# Written here, BEFORE the --local hand-off below `exec`s away, so both the
+# turnkey and the plain path get it. Every field is best-effort: a tarball
+# install has no git, and a missing stamp must degrade to "unknown" rather than
+# fail an install over a display nicety.
+say "Stamping webchat provenance"
+WEBCHAT_SHA="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo '')"
+WEBCHAT_DIRTY="false"
+[ -n "$WEBCHAT_SHA" ] && [ -n "$(git -C "$HERE" status --porcelain 2>/dev/null)" ] && WEBCHAT_DIRTY="true"
+python3 - "$DIR/.webchat-provenance.json" "$WEBCHAT_SHA" "$WEBCHAT_DIRTY" \
+         "$(jsonval "['nanoclaw']['upstreamRef']" 2>/dev/null || echo '')" \
+         "$(jsonval "['nanoclaw']['seamRef']" 2>/dev/null || echo '')" <<'PY' || echo "  !! could not write the provenance stamp (non-fatal)"
+import json, sys, datetime
+out, sha, dirty, upstream, seam = sys.argv[1:6]
+json.dump({
+    "webchatRef": sha or None,
+    # An install composed from a dirty checkout is NOT the commit it names, and
+    # silently reporting the SHA would be a lie the operator cannot detect.
+    "webchatDirty": dirty == "true",
+    "upstreamRef": upstream or None,
+    "seamRef": seam or None,
+    "composedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+}, open(out, "w"), indent=2)
+PY
+
 # ── 8b. Local turnkey hand-off ───────────────────────────────────────────────
 # --local: the compose is done and deps are in the lockfile; hand off to the
 # shared turnkey deploy (deploy/webchat-deploy.sh, overlaid in step 3). It runs

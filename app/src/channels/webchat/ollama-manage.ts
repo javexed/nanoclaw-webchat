@@ -82,7 +82,7 @@ export async function listHostModels(host: string): Promise<HostModel[]> {
 export interface PullJob {
   host: string;
   model: string;
-  status: 'pulling' | 'success' | 'error';
+  status: 'pulling' | 'success' | 'error' | 'cancelled';
   /** Last status line from Ollama ("pulling 4f…", "verifying sha256 digest"). */
   detail: string;
   completed: number;
@@ -94,6 +94,21 @@ export interface PullJob {
 
 const FINISHED_JOB_TTL_MS = 10 * 60 * 1000;
 const pulls = new Map<string, PullJob>();
+
+/**
+ * Abort handles for in-flight pulls, keyed exactly like `pulls`.
+ *
+ * A SEPARATE map rather than a field on PullJob because that struct is
+ * serialized to the browser verbatim by getPullsSnapshot — an AbortController
+ * on it would ride along as a meaningless `{}` in every poll response.
+ *
+ * Cancelling works because Ollama drives the download from the request
+ * handler: drop the connection and the daemon stops fetching. Verified against
+ * a live daemon rather than assumed. Already-downloaded blobs are kept, so a
+ * later re-pull of the same model resumes instead of starting over — which is
+ * what makes cancel a cheap, low-regret action worth offering.
+ */
+const pullAborts = new Map<string, AbortController>();
 
 function pullKey(host: string, model: string): string {
   return `${host.replace(/\/+$/, '')}|${model}`;
@@ -112,6 +127,8 @@ export function getPullsSnapshot(): PullJob[] {
 
 /** Test hook — the module-level Map survives across vitest cases otherwise. */
 export function _resetPullsForTest(): void {
+  for (const c of pullAborts.values()) c.abort();
+  pullAborts.clear();
   pulls.clear();
 }
 
@@ -127,6 +144,28 @@ export function _resetPullsForTest(): void {
  */
 export function normalizeOllamaModelName(raw: string): string {
   return raw.trim().toLowerCase().replace(/\s+/g, '');
+}
+
+/**
+ * Remove a model's files from an Ollama host — Ollama's DELETE /api/delete.
+ * Goes through safeFetch, so the host passes the same SSRF gate as every
+ * other Ollama call; the server never talks to an address the roster/registry
+ * plumbing wouldn't. Errors surface to the caller — a delete that silently
+ * "succeeded" while the files remain is worse than a loud failure.
+ */
+export async function deleteHostModel(host: string, rawModel: string): Promise<void> {
+  const model = normalizeOllamaModelName(rawModel);
+  const base = host.replace(/\/+$/, '');
+  const res = await safeFetch(`${base}/api/delete`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: model }),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`ollama delete failed: HTTP ${res.status}${body ? ` — ${body.slice(0, 120)}` : ''}`);
+  }
 }
 
 export async function startPull(host: string, rawModel: string): Promise<PullJob> {
@@ -147,30 +186,57 @@ export async function startPull(host: string, rawModel: string): Promise<PullJob
     error: null,
   };
   pulls.set(key, job);
+  const abort = new AbortController();
+  pullAborts.set(key, abort);
 
   // Validate the endpoint (SSRF gate) BEFORE returning, so a blocked URL is
   // a synchronous 4xx for the caller instead of a background failure.
   // No overall timeout on the stream itself: model pulls legitimately run
-  // for many minutes (the curl --max-time lesson).
+  // for many minutes (the curl --max-time lesson). The signal is the ONLY
+  // thing that ends it early, and only when a human asks.
   let res: Response;
   try {
     res = await safeFetch(`${job.host}/api/pull`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model, stream: true }),
+      signal: abort.signal,
     });
   } catch (err) {
+    pullAborts.delete(key);
     job.status = 'error';
     job.error = err instanceof Error ? err.message : String(err);
     job.finishedAt = Date.now();
     throw err;
   }
 
-  void consumePullStream(job, res);
+  void consumePullStream(job, res, key);
   return job;
 }
 
-async function consumePullStream(job: PullJob, res: Response): Promise<void> {
+/**
+ * Stop an in-flight pull. Returns false when there is nothing to stop — an
+ * unknown pair, or one that already finished — so the route can answer 404
+ * rather than pretend it cancelled something.
+ *
+ * The status is set HERE, before the abort unwinds consumePullStream, so the
+ * stream's catch can tell "a human cancelled this" from "the download broke"
+ * and not overwrite it with an error the operator never caused.
+ */
+export function cancelPull(host: string, rawModel: string): boolean {
+  const model = normalizeOllamaModelName(rawModel);
+  const key = pullKey(host, model);
+  const job = pulls.get(key);
+  if (!job || job.status !== 'pulling') return false;
+  job.status = 'cancelled';
+  job.detail = 'cancelled';
+  job.finishedAt = Date.now();
+  pullAborts.get(key)?.abort();
+  pullAborts.delete(key);
+  return true;
+}
+
+async function consumePullStream(job: PullJob, res: Response, key: string): Promise<void> {
   try {
     if (!res.ok || !res.body) {
       // A 400/404 here almost always means the model ref doesn't exist in the
@@ -216,10 +282,16 @@ async function consumePullStream(job: PullJob, res: Response): Promise<void> {
     }
     job.status = 'success';
   } catch (err) {
+    // A cancel aborts the socket, which surfaces here as a read error. That is
+    // the expected end of a cancelled pull, not a fault: leave the status and
+    // timestamp cancelPull already set, or the UI reports "failed" for an
+    // outcome the operator chose deliberately.
+    if (job.status === 'cancelled') return;
     job.status = 'error';
     job.error = err instanceof Error ? err.message : String(err);
   } finally {
-    job.finishedAt = Date.now();
+    pullAborts.delete(key);
+    if (job.status !== 'cancelled') job.finishedAt = Date.now();
   }
 }
 

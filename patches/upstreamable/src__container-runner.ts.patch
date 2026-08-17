@@ -1,10 +1,10 @@
 diff --git a/src/container-runner.ts b/src/container-runner.ts
-index eb67187e..543f9a2a 100644
+index 5e50c634..4a296e40 100644
 --- a/src/container-runner.ts
 +++ b/src/container-runner.ts
 @@ -25,10 +25,11 @@ import {
  } from './config.js';
- import { materializeContainerJson } from './container-config.js';
+ import { CONTAINER_PLUGINS_DIR, materializeContainerJson } from './container-config.js';
  import { getContainerConfig } from './db/container-configs.js';
 -import { updateContainerConfigScalars } from './db/container-configs.js';
 +import { updateContainerConfigScalars, updateContainerConfigJson } from './db/container-configs.js';
@@ -113,7 +113,7 @@ index eb67187e..543f9a2a 100644
    writeSessionRouting(agentGroup.id, session.id);
  
    // Materialize container.json from DB — writes fresh file and returns
-@@ -395,6 +454,12 @@ export function buildMounts(
+@@ -401,6 +460,12 @@ export function buildMounts(
    // Per-group .claude-shared at /home/node/.claude (Claude state, settings,
    // skill symlinks)
    if (defaultSurfaces) {
@@ -126,7 +126,7 @@ index eb67187e..543f9a2a 100644
      mounts.push({ hostPath: claudeDir, containerPath: '/home/node/.claude', readonly: false });
    }
  
-@@ -407,6 +472,19 @@ export function buildMounts(
+@@ -413,6 +478,19 @@ export function buildMounts(
    if (fs.existsSync(skillsSrc)) {
      mounts.push({ hostPath: skillsSrc, containerPath: '/app/skills', readonly: true });
    }
@@ -146,7 +146,7 @@ index eb67187e..543f9a2a 100644
  
    // Additional mounts from container config
    if (containerConfig.additionalMounts && containerConfig.additionalMounts.length > 0) {
-@@ -414,7 +492,7 @@ export function buildMounts(
+@@ -420,7 +498,7 @@ export function buildMounts(
      mounts.push(...validated);
    }
  
@@ -155,7 +155,7 @@ index eb67187e..543f9a2a 100644
    if (providerContribution.mounts) {
      mounts.push(...providerContribution.mounts);
    }
-@@ -445,54 +523,143 @@ function syncSkillSymlinks(claudeDir: string, containerConfig: import('./contain
+@@ -451,54 +529,143 @@ function syncSkillSymlinks(claudeDir: string, containerConfig: import('./contain
      } catch {
        continue;
      }
@@ -329,7 +329,7 @@ index eb67187e..543f9a2a 100644
  }
  
  async function buildContainerArgs(
-@@ -500,19 +667,21 @@ async function buildContainerArgs(
+@@ -506,19 +673,21 @@ async function buildContainerArgs(
    containerName: string,
    agentGroup: AgentGroup,
    containerConfig: import('./container-config.js').ContainerConfig,
@@ -357,7 +357,7 @@ index eb67187e..543f9a2a 100644
  
    // Docker defaults /dev/shm to 64m, which silently short-writes past that size.
    // agent-browser passes --disable-dev-shm-usage, but a third-party puppeteer or
-@@ -525,6 +694,22 @@ async function buildContainerArgs(
+@@ -531,6 +700,22 @@ async function buildContainerArgs(
    // Everything NanoClaw-specific is in container.json (read by runner at startup).
    args.push('-e', `TZ=${containerConfig.timezone ?? TIMEZONE}`);
  
@@ -380,7 +380,7 @@ index eb67187e..543f9a2a 100644
    // Provider-contributed env vars (e.g. XDG_DATA_HOME, OPENCODE_*, NO_PROXY).
    if (providerContribution.env) {
      for (const [key, value] of Object.entries(providerContribution.env)) {
-@@ -532,11 +717,23 @@ async function buildContainerArgs(
+@@ -538,11 +723,23 @@ async function buildContainerArgs(
      }
    }
  

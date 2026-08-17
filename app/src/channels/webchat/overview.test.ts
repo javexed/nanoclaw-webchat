@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { randomUUID } from 'crypto';
+import type Database from 'better-sqlite3';
 
 const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
 
@@ -169,6 +170,174 @@ describe('GET /api/overview — owner (loopback no-auth path)', () => {
 
       const { body } = await getOverview(wc);
       expect(body.sessions).toMatchObject({ active: 1, total: 2 });
+    } finally {
+      await server.stopWebchatServer(wc);
+    }
+  });
+});
+
+/**
+ * The RESTRICTED branch — previously untested entirely, which is how it came
+ * to serve install-wide session/message/channel counts to every non-owner
+ * while the drill-down panels beside them were properly scoped.
+ *
+ * Making the loopback caller non-owner is the whole trick: seed a DIFFERENT
+ * owner before the first request, so `ensureOwnerRoleOnFirstLogin` finds an
+ * owner already present and leaves `webchat:local-owner` unprivileged. That
+ * is the same shape as a real install where someone else claimed owner first.
+ */
+type TestDb = Database.Database;
+
+describe('GET /api/overview — restricted (non-owner caller)', () => {
+  const OTHER_OWNER = 'webchat:someone-else';
+  const CALLER = 'webchat:local-owner';
+
+  function seedOwnerElsewhere(db: TestDb): void {
+    const now = new Date().toISOString();
+    db.prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`).run(
+      OTHER_OWNER,
+      now,
+    );
+    db.prepare(
+      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, 'owner', NULL, NULL, ?)`,
+    ).run(OTHER_OWNER, now);
+  }
+
+  /** Two agents, two rooms, sessions and messages on both. Caller joins only A. */
+  function seedSplitWorld(db: TestDb, joinAgentA: boolean): void {
+    const now = new Date().toISOString();
+    const agentA = 'agent-a';
+    const agentB = 'agent-b';
+    for (const [id, name, folder] of [
+      [agentA, 'Alpha', 'alpha'],
+      [agentB, 'Beta', 'beta'],
+    ]) {
+      db.prepare(
+        `INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+      ).run(id, name, folder, now);
+    }
+    // Rooms: platform_id IS the webchat room id (see getAllWebchatRooms).
+    for (const [platformId, agent] of [
+      ['room-a', agentA],
+      ['room-b', agentB],
+    ]) {
+      const mg = randomUUID();
+      db.prepare(
+        `INSERT INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
+         VALUES (?, 'webchat', 'webchat', ?, ?, 1, 'public', ?)`,
+      ).run(mg, platformId, platformId, now);
+      db.prepare(
+        `INSERT INTO messaging_group_agents (id, messaging_group_id, agent_group_id, engage_mode, engage_pattern, sender_scope, ignored_message_policy, session_mode, priority, created_at)
+         VALUES (?, ?, ?, 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`,
+      ).run(randomUUID(), mg, agent, now);
+    }
+    // A non-webchat channel too, so a leaked `channels` map would be obvious.
+    db.prepare(
+      `INSERT INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
+       VALUES (?, 'whatsapp', 'whatsapp', '1234@g.us', 'G', 1, 'public', ?)`,
+    ).run(randomUUID(), now);
+
+    // Sessions: A has 1 active + 1 idle, B has 2 active.
+    const active = new Date(Date.now() - 60_000).toISOString();
+    const idle = new Date(Date.now() - 10 * 60_000).toISOString();
+    const insertSession = db.prepare(
+      `INSERT INTO sessions (id, agent_group_id, status, last_active, created_at) VALUES (?, ?, 'active', ?, ?)`,
+    );
+    insertSession.run('a-active', agentA, active, now);
+    insertSession.run('a-idle', agentA, idle, now);
+    insertSession.run('b-active-1', agentB, active, now);
+    insertSession.run('b-active-2', agentB, active, now);
+
+    // Messages: 2 in room-a, 5 in room-b, all inside the 24h window.
+    const recent = Date.now();
+    const insertMsg = db.prepare(
+      `INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, file_meta, created_at)
+       VALUES (?, ?, 'alice', 'user', 'hi', 'text', NULL, ?)`,
+    );
+    for (let i = 0; i < 2; i++) insertMsg.run(randomUUID(), 'room-a', recent);
+    for (let i = 0; i < 5; i++) insertMsg.run(randomUUID(), 'room-b', recent);
+
+    if (joinAgentA) {
+      db.prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`).run(
+        CALLER,
+        now,
+      );
+      db.prepare(
+        `INSERT INTO agent_group_members (user_id, agent_group_id, added_by, added_at) VALUES (?, ?, NULL, ?)`,
+      ).run(CALLER, agentA, now);
+    }
+  }
+
+  it('scopes sessions and messages to what the caller can access', async () => {
+    const { server, wc, conn } = await bootLocalhost();
+    try {
+      const db = conn.getDb();
+      seedOwnerElsewhere(db);
+      seedSplitWorld(db, true);
+
+      const { body } = await getOverview(wc);
+      expect(body.restricted).toBe(true);
+      // Only agent-a's sessions: 1 of its 2 is active. agent-b's 2 active
+      // sessions must not appear anywhere in these numbers.
+      expect(body.sessions).toMatchObject({ active: 1, total: 2 });
+      // Only room-a's 2 messages, not room-b's 5.
+      expect((body.messages as { webchat_24h: number }).webchat_24h).toBe(2);
+    } finally {
+      await server.stopWebchatServer(wc);
+    }
+  });
+
+  it('reports zero — not install-wide totals — for a caller with no access', async () => {
+    const { server, wc, conn } = await bootLocalhost();
+    try {
+      const db = conn.getDb();
+      seedOwnerElsewhere(db);
+      seedSplitWorld(db, false);
+
+      const { body } = await getOverview(wc);
+      expect(body.restricted).toBe(true);
+      // Empty scope short-circuits the IN () query; it must not fall back to
+      // an unfiltered count.
+      expect(body.sessions).toMatchObject({ active: 0, total: 0 });
+      expect((body.messages as { webchat_24h: number }).webchat_24h).toBe(0);
+    } finally {
+      await server.stopWebchatServer(wc);
+    }
+  });
+
+  it('withholds install-wide facts on the wire, not just in the GUI', async () => {
+    const { server, wc, conn } = await bootLocalhost();
+    try {
+      const db = conn.getDb();
+      seedOwnerElsewhere(db);
+      seedSplitWorld(db, true);
+
+      const { body } = await getOverview(wc);
+      expect(body.channels).toBeNull();
+      expect((body.agents as { total: number | null }).total).toBeNull();
+      expect((body.health as { uptime: number | null }).uptime).toBeNull();
+      // Already-withheld fields stay withheld.
+      expect(body.system).toBeNull();
+      expect(body.ollama).toBeNull();
+      expect(body.busiest_rooms).toBeNull();
+      expect(body.active_containers).toBeNull();
+    } finally {
+      await server.stopWebchatServer(wc);
+    }
+  });
+
+  it('still reports the caller-visible agent count', async () => {
+    const { server, wc, conn } = await bootLocalhost();
+    try {
+      const db = conn.getDb();
+      seedOwnerElsewhere(db);
+      seedSplitWorld(db, true);
+
+      const { body } = await getOverview(wc);
+      // Membership is not admin privilege, so the agents card — which mirrors
+      // /api/agents — legitimately shows 0 here even though the caller can
+      // access room-a. The two predicates differ on purpose.
+      expect((body.agents as { visible: number }).visible).toBe(0);
     } finally {
       await server.stopWebchatServer(wc);
     }

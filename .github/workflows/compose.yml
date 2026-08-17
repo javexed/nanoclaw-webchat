@@ -6,8 +6,17 @@ name: Compose
 # the same artifact a release attaches for the Proxmox / deploy flows.
 
 on:
+  # No `branches:` filter on pull_request — deliberately. With `branches: [main]`
+  # a PR whose BASE is another branch never triggers, so a stacked PR (one built
+  # on the branch of an earlier, still-open PR) silently gets NO CI at all: no
+  # leak gate, no compose, and a green-looking PR page because nothing ever ran.
+  # Found when a stacked extraction PR sat with zero runs and no explanation.
+  #
+  # Stacking is the normal shape for this work — each UI module comes out on top
+  # of the last — so the checks have to follow the PR, not the base branch.
+  # push stays pinned to main: that is the post-merge run, and running it for
+  # every branch push would double every job for no added signal.
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 
@@ -40,6 +49,40 @@ jobs:
         with:
           bun-version: 1.3.12
 
+      # ── Caches ────────────────────────────────────────────────────────────
+      # Every job ran in a fresh container with nothing persisted, so each one
+      # re-downloaded the pnpm store TWICE (ui + composed tree), the bun store,
+      # and a ~150MB Chromium. That repetition was the bulk of a ~12 minute run.
+      # The runner's own cache server is enabled, so actions/cache needs no
+      # volume plumbing.
+      #
+      # Keys are lockfile-derived: a dependency change misses and repopulates,
+      # everything else hits. restore-keys give a partial hit after a bump so a
+      # single changed dep does not re-download the world.
+      - name: Cache — pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ hashFiles('ui/pnpm-lock.yaml', 'versions.json') }}
+          restore-keys: pnpm-
+
+      - name: Cache — bun store
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ hashFiles('versions.json') }}
+          restore-keys: bun-
+
+      # The single biggest item: the browser binary. Keyed on the playwright
+      # version in the lockfile so a bump repopulates rather than silently
+      # running an old browser against new bindings.
+      - name: Cache — Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('ui/pnpm-lock.yaml') }}
+          restore-keys: playwright-
+
       # ── UI bundle ────────────────────────────────────────────────────────
       # app/public/webchat/app.js is BUILT from ui/ and committed. Rebuild it
       # here and fail if the result differs from what the PR carries: that
@@ -52,8 +95,87 @@ jobs:
       - name: UI — typecheck
         run: pnpm --dir ui run typecheck
 
+      - name: UI — reference integrity (extracted modules define what they use)
+        # Narrow on purpose: TS2304 only. The modules carved out of legacy.js are
+        # still plain JS with checkJs off, so the compiler is otherwise silent
+        # about them — including about the one failure mode extraction actually
+        # produces, a function moved out while the variable it reads stays behind.
+        # That bundles fine, builds fine, passes e2e, and throws ReferenceError on
+        # the first run of the path. It reached main once already (`lucide`,
+        # unimported in features/voice.js).
+        run: pnpm --dir ui run check:refs
+
+      - name: UI — injected dependencies are all supplied
+        # Complements the reference check. A `deps.X` that legacy never supplies
+        # is `undefined` at runtime and throws only when that path executes —
+        # typecheck, check:refs and the build are all silent about it, and e2e
+        # only catches it if a test happens to walk there. A cleanup pass that
+        # dropped a spread from one provide*Deps call emptied it completely and
+        # every static gate still passed.
+        run: pnpm --dir ui run check:deps
+
+      - name: UI — mounted components get their required props
+        # The same failure shape as check:deps, at the other seam. Vue types the
+        # createApp props argument as a bare index signature, so vue-tsc compares
+        # it against nothing: a required prop that is never passed is `undefined`
+        # and throws only when that path runs. RoomList shipped to production
+        # without `activityOf` — its sort comparator — so the sidebar rendered
+        # empty for every authenticated user while every gate here stayed green.
+        run: pnpm --dir ui run check:props
+
       - name: UI — build
         run: pnpm --dir ui run build
+
+      - name: UI — install Chromium (boot-order guard)
+        run: pnpm --dir ui exec playwright install --with-deps chromium
+
+      - name: UI — boot-order guard self-test (proves it still detects faults)
+        # Runs against perturbed COPIES of the baselines, never the committed
+        # ones. The guard's whole value is catching a reorder that leaves the
+        # event set and count identical — a guard only ever seen to pass cannot
+        # show it still does that. Same argument as check-manifest.selftest.sh.
+        #
+        # BOTH baselines: cold (no backend) and stubbed (first-run install). The
+        # stubbed one is what covers the wizard, and a fault-detector proven only
+        # against the cold path would say nothing about that half.
+        run: |
+          bash scripts/check-boot-order.selftest.sh cold
+          bash scripts/check-boot-order.selftest.sh stubbed
+
+      - name: UI — boot order (startup sequence unchanged)
+        # The listener-set diff proves WHICH listeners attach and is blind to
+        # ORDER, which is where bootstrap correctness actually lives. Moving one
+        # .vue import from one line of a feature module's import list to the next
+        # shifted eight bootstrap events past the wizard's wiring — same count,
+        # same listener set, nothing else saw it.
+        #
+        # This matters most while legacy.js is being retired: that file runs its
+        # blocks in source order, so every extraction can reorder side effects.
+        # If this reddens on a PR that did not mean to touch startup, the diff is
+        # the finding — re-record only when the change is intended.
+        run: bash scripts/check-boot-order.sh
+
+      - name: UI — role-matrix guard self-test (proves it still detects faults)
+        # Strips `hidden` off the gated controls on a timer, which is what a
+        # removed or skipped gate looks like from outside, and requires the guard
+        # to reject it — then requires it to accept the unperturbed build, so a
+        # guard that is simply always-red cannot pass this step.
+        run: bash scripts/check-role-matrix.sh --selftest
+
+      - name: UI — role matrix (no control offered to someone who can't use it)
+        # Three privilege-leak bugs shipped here in a row and NONE was visible
+        # from the source: twelve Settings sections that set `hidden` and
+        # rendered anyway (an author `display:flex` beats the UA `[hidden]`
+        # rule); three "+ New …" buttons with no gate at all; and a first fix
+        # that gated inside a render which is skipped on an install with zero
+        # rooms, hiding the button from the OWNER.
+        #
+        # So this asserts the RENDERED result in a browser, for three personas,
+        # in both directions — what must be hidden and what must be visible.
+        # Only checking the hidden half would pass a build where nothing renders.
+        # The scoped-admin persona is the load-bearing one: it is the only thing
+        # that distinguishes "gated on owner" from "gated on any admin".
+        run: bash scripts/check-role-matrix.sh
 
       - name: UI — bundle-drift guard (committed bundle == fresh build)
         run: |
@@ -123,7 +245,37 @@ jobs:
         # weakening a single assertion.
         run: pnpm exec vitest run --testTimeout=30000 --hookTimeout=30000
 
+      # Does this change reach the container tree at all? A CSS-only PR ran the
+      # full bun suite for nothing — real minutes on a serial runner.
+      #
+      # FAILS OPEN on purpose: push events, a missing base, an unresolvable
+      # merge-base, or any error all answer "yes, run it". The only way to skip
+      # is to positively prove the diff misses every path that can affect the
+      # container. Skipping on uncertainty would trade minutes for the chance of
+      # landing an untested runner change.
+      #
+      # patches/ and versions.json count: the container tree is upstream code at
+      # a pinned ref plus patches, so either can change what gets tested without
+      # container/ itself appearing in the diff.
+      - name: Does this touch the container tree?
+        id: touched
+        run: |
+          set -uo pipefail
+          decide() { echo "container=$1" >> "$GITHUB_OUTPUT"; echo "container tests: $1"; exit 0; }
+          [ "${{ github.event_name }}" = "pull_request" ] || decide true
+          BASE_REF="${{ github.base_ref }}"
+          [ -n "$BASE_REF" ] || decide true
+          git fetch -q --depth 50 origin "$BASE_REF" 2>/dev/null || decide true
+          MB=$(git merge-base FETCH_HEAD HEAD 2>/dev/null) || decide true
+          [ -n "$MB" ] || decide true
+          CHANGED=$(git diff --name-only "$MB"..HEAD 2>/dev/null) || decide true
+          if printf '%s\n' "$CHANGED" | grep -qE '^(container/|app/container/|patches/|versions\.json)'; then
+            decide true
+          fi
+          decide false
+
       - name: Container typecheck + tests (composed tree)
+        if: steps.touched.outputs.container == 'true'
         working-directory: ${{ runner.temp }}/composed/container/agent-runner
         run: |
           # Plain install (not --frozen-lockfile): the composed tree carries
@@ -156,15 +308,41 @@ jobs:
       # `uses:` cannot take an expression, so the choice has to be `if:` across
       # two steps. Keep their inputs in step with each other.
       # ONE upload step, v4. The previous split (v4 for GitHub, v3 for the
-      # self-hosted forge) auto-failed every GitHub run: GitHub resolves EVERY
+      # the other runner) auto-failed every GitHub run: GitHub resolves EVERY
       # action referenced in the workflow during "Set up job", BEFORE any `if:`
       # is evaluated, so the skipped v3 step still tripped the deprecation block
       # ("This request has been automatically failed because it uses a
       # deprecated version of actions/upload-artifact: v3"). A condition cannot
       # hide a deprecated action from that check — the reference has to go.
       - name: Upload composed tarball
+        # GitHub only. `actions/artifact` v2+ — which upload-artifact@v4 depends
+        # on — refuses to run against a GHES-style API, and a self-hosted
+        # runner commonly presents as exactly that. It does not degrade; it fails the job:
+        #   GHESNotSupportedError: @actions/artifact v2.0.0+, upload-artifact@v4+
+        #   and download-artifact@v4+ are not currently supported on GHES.
+        #
+        # v3 is not the escape hatch it looks like. GitHub resolves EVERY action
+        # referenced by the workflow during "Set up job", BEFORE any `if:` is
+        # evaluated, and hard-blocks deprecated ones — so merely NAMING v3
+        # auto-fails every GitHub run, even in a step that would be skipped. The
+        # earlier two-step v4/v3 split died on precisely that. The reference
+        # itself is the problem, so there can only be one upload step, at v4,
+        # and it has to be the runner that opts out rather than the version.
+        if: github.server_url == 'https://github.com'
         uses: actions/upload-artifact@v4
         with:
           name: nanoclaw-webchat-composed
           path: ${{ runner.temp }}/nanoclaw-webchat-composed.tar.gz
           retention-days: 14
+
+      - name: Artifact upload skipped (unsupported on this runner)
+        # Say it out loud. Everything above — compose, both suites, the guards —
+        # ran in full; only retention is skipped. A job that quietly produces no
+        # artifact while reporting green is the kind of silence that gets
+        # mistaken for coverage later.
+        if: github.server_url != 'https://github.com'
+        run: |
+          echo "::notice::Composed tarball was built, packed and verified, but NOT uploaded."
+          echo "::notice::upload-artifact@v4 needs actions/artifact v2+, which refuses GHES-style APIs."
+          echo "::notice::Every gate above ran; artifact retention is a GitHub-only convenience."
+

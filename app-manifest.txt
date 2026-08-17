@@ -42,6 +42,8 @@ container/agent-runner/src/learning-digest.test.ts
 container/agent-runner/src/learn-source.test.ts
 container/agent-runner/src/providers/rate-limit.test.ts
 src/modules/transfer
+src/modules/host-extras
+src/modules/self-mod/apply.respawn.test.ts
 src/modules/approvals/expiry.ts
 src/db/migrations/module-learning-room-settings.ts
 src/db/migrations/module-container-egress.ts
@@ -79,3 +81,6 @@ src/modules/tool-secrets
 src/modules/deploy-keys
 src/modules/agent-env
 scripts/repair-model-credential.ts
+src/audit.ts
+src/audit.test.ts
+vitest.setup.ts

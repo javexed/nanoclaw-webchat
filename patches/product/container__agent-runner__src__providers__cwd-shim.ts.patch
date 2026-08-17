@@ -1,0 +1,13 @@
+diff --git a/container/agent-runner/src/providers/cwd-shim.ts b/container/agent-runner/src/providers/cwd-shim.ts
+index 4af47a95..4e62cc80 100644
+--- a/container/agent-runner/src/providers/cwd-shim.ts
++++ b/container/agent-runner/src/providers/cwd-shim.ts
+@@ -24,7 +24,7 @@ export function cwdWrappedArgv(cwd: string, command: string, args: string[]): st
+ }
+ 
+ export function shimCwd(config: McpServerConfig): McpServerConfig {
+-  if (config.type === 'http' || !config.cwd) return config;
++  if ('url' in config || !config.cwd) return config;
+   const { cwd, ...server } = config;
+   const [command, ...args] = cwdWrappedArgv(cwd, config.command, config.args ?? []);
+   return { ...server, command, args };

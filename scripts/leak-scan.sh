@@ -6,6 +6,7 @@
 #
 #   scripts/leak-scan.sh --staged            # staged changes (pre-commit hook)
 #   scripts/leak-scan.sh --range <A>..<B>    # a commit range (pre-push, CI)
+#   scripts/leak-scan.sh --text <file|->     # prose bound for a PR/issue/comment
 #   scripts/leak-scan.sh --tree <dir>        # a working tree
 #   scripts/leak-scan.sh --selftest          # prove the gate still detects faults
 #
@@ -19,7 +20,7 @@
 #   forge host, personal emails, the internal org path, specific LAN subnets.
 #   Listing them here would leak the very things they guard, so they arrive at
 #   runtime as extra regexes via $LEAK_PATTERNS (newline-separated) or
-#   $LEAK_PATTERNS_FILE. Local hooks source them from nanoclaw-ops; CI injects
+#   $LEAK_PATTERNS_FILE. Local hooks read a private file OUTSIDE this repo; CI injects
 #   them from an Actions secret on trusted (non-fork) runs. Absent, the generic
 #   tier still runs — an outside contributor cannot leak identifiers they do
 #   not know, so the identifier tier's real job is guarding the operator's OWN
@@ -56,6 +57,18 @@ operator_lines() {
 }
 operator_regex_ci() { operator_lines | grep -v '^cs:' | paste -sd'|' - || true; }
 operator_regex_cs() { operator_lines | grep '^cs:' | sed 's/^cs://' | paste -sd'|' - || true; }
+
+# A silently-absent operator tier is its own failure mode: with no patterns
+# loaded, operator_regex_ci() is empty, and match() returns 0 on an empty
+# regex — so the identifier tier disappears without a word and the gate still
+# reports green. Forks legitimately have no list (see the header), so warn
+# rather than fail; but make it impossible to miss that half the gate is off.
+warn_if_no_operator_tier() {
+  [ -n "$(operator_lines)" ] && return 0
+  printf '\033[1;33m[leak-scan] WARNING: no operator identifier patterns loaded.\033[0m\n' >&2
+  printf '  Running the GENERIC tier only (secret shapes + address hygiene).\n' >&2
+  printf '  Set $LEAK_PATTERNS_FILE or $LEAK_PATTERNS to enable the identifier tier.\n' >&2
+}
 
 fail=0
 say() { printf '  %s\n' "$*"; }
@@ -187,10 +200,25 @@ selftest() {
   [ "$tf" -eq 0 ]
 }
 
+# Scan arbitrary prose — a PR body, an issue, a review comment, release notes —
+# BEFORE it is posted. Added 2026-08-10 after an internal reference reached a
+# public PR comment: every mode above scans FILES and COMMIT MESSAGES, and a
+# comment box is neither. Text posted to a public forge is exactly as public as
+# a committed line and had no gate on it at all. Reads a file, or stdin with `-`.
+mode_text() {
+  local src="${1:--}" text
+  if [ "$src" = - ]; then text=$(cat); else
+    [ -f "$src" ] || { echo "leak-scan: no such file: $src" >&2; exit 2; }
+    text=$(cat -- "$src")
+  fi
+  scan_content "$text" "${2:-text}" new
+}
+
 case "${1:-}" in
-  --staged)   mode_staged; finish ;;
-  --range)    mode_range "${2:?range required}"; finish ;;
+  --staged)   warn_if_no_operator_tier; mode_staged; finish ;;
+  --range)    warn_if_no_operator_tier; mode_range "${2:?range required}"; finish ;;
+  --text)     warn_if_no_operator_tier; mode_text "${2:--}"; finish ;;
   --tree)     mode_tree "${2:?dir required}"; finish ;;
   --selftest) selftest ;;
-  *) echo "usage: leak-scan.sh --staged | --range <A..B> | --tree <dir> | --selftest" >&2; exit 2 ;;
+  *) echo "usage: leak-scan.sh --staged | --range <A..B> | --text <file|-> | --tree <dir> | --selftest" >&2; exit 2 ;;
 esac

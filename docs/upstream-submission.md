@@ -199,7 +199,7 @@ nanoclaw" maintainable.
 
 1. Push `seam` → `javexed/nanoclaw` (GitHub fork of upstream) as branch
    `pub/module-hooks` (the fork's established upstream-submission prefix — precedent: #3077 `pub/rate-limit-classification`, merged) — **tree-snapshot commits, javexed identity, per the
-   publishing playbook** (nanoclaw-ops).
+   publishing playbook** (kept privately, outside this repo).
 2. Open the PR via `gh` against `nanocoai/nanoclaw` main with the body above
    (fill the repo link — decide whether nanoclaw-webchat gets a public GitHub
    mirror first, or link the private instance).

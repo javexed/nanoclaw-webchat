@@ -21,6 +21,7 @@
  *                                            hasAdminPrivilege treats it as
  *                                            scoped-admin-of-X for safety.
  */
+import { audit } from '../../audit.js';
 import { getDb, hasTable } from '../../db/connection.js';
 import { log } from '../../log.js';
 
@@ -112,9 +113,25 @@ export function ensureOwnerRoleOnFirstLogin(userId: string): void {
       .run(userId, new Date().toISOString());
     if (result.changes > 0) {
       log.info('Webchat: granted owner role to first authenticated user', { userId });
+      // THE event of a fresh install — exactly one identity ever gets this.
+      audit({
+        type: 'role.grant',
+        actor: `human:${userId}`,
+        effect: 'granted',
+        detail: { role: 'owner', via: 'first-login' },
+      });
     }
   } catch (err) {
     log.warn('Webchat: failed to grant initial owner role', { userId, err });
+  }
+}
+
+/** Does this id name a real row in `users`? False if the table is absent. */
+function userExists(db: ReturnType<typeof getDb>, id: string): boolean {
+  try {
+    return db.prepare(`SELECT 1 FROM users WHERE id = ?`).get(id) !== undefined;
+  } catch {
+    return false;
   }
 }
 
@@ -134,6 +151,18 @@ export function grantOwnerRole(userId: string, grantedBy: string | null = null):
       new Date().toISOString(),
     );
   }
+  // `granted_by` is `REFERENCES users(id)` and the connection runs with
+  // `foreign_keys = ON`, so a caller naming a REASON rather than a user (the
+  // one-shot promotion passes 'webchat:first-tailscale-owner') fails the
+  // constraint and takes the whole grant down with it. That is not
+  // hypothetical: it is why the wizard's Tailscale opt-in granted nothing on
+  // a real install while reporting success — the INSERT threw, the catch
+  // swallowed it, and the caller disarmed its flag anyway.
+  //
+  // Keep the audit value when it names a real user; otherwise record the
+  // grant with no grantor. Losing the attribution is strictly better than
+  // losing the role.
+  const grantor = grantedBy && userExists(db, grantedBy) ? grantedBy : null;
   try {
     const result = db
       .prepare(
@@ -143,11 +172,22 @@ export function grantOwnerRole(userId: string, grantedBy: string | null = null):
            SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'owner' AND agent_group_id IS NULL
          )`,
       )
-      .run(userId, grantedBy, new Date().toISOString(), userId);
-    if (result.changes > 0) log.info('Webchat: granted owner role', { userId, grantedBy });
+      .run(userId, grantor, new Date().toISOString(), userId);
+    if (result.changes > 0) {
+      log.info('Webchat: granted owner role', { userId, grantedBy: grantor, reason: grantedBy });
+      audit({
+        type: 'role.grant',
+        actor: `human:${userId}`,
+        effect: 'granted',
+        detail: { role: 'owner', via: 'promotion', grantedBy },
+      });
+    }
     return result.changes > 0;
   } catch (err) {
     log.warn('Webchat: failed to grant owner role', { userId, err });
+    // A FAILED grant is the line that would have caught the FK bug the day it
+    // shipped — success-only auditing hides exactly the failures that matter.
+    audit({ type: 'role.grant', actor: `human:${userId}`, effect: 'failed', detail: { role: 'owner', grantedBy } });
     return false;
   }
 }

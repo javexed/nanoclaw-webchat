@@ -19,7 +19,7 @@ import {
   setPrimeAgentForWebchatRoom,
   setRoomEngageDefault,
 } from './db.js';
-import { recomputeEngagePatterns } from './server.js';
+import { recomputeEngagePatterns } from './server/agent-wiring.js';
 
 const now = () => new Date().toISOString();
 

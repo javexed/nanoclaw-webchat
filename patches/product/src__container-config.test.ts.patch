@@ -1,8 +1,8 @@
 diff --git a/src/container-config.test.ts b/src/container-config.test.ts
-index b6c2963..60844b9 100644
+index cb10ab8e..a5842b6f 100644
 --- a/src/container-config.test.ts
 +++ b/src/container-config.test.ts
-@@ -54,4 +54,23 @@ describe('resolveGroupTimezone', () => {
+@@ -63,6 +63,25 @@ describe('resolveGroupTimezone', () => {
      updateContainerConfigScalars(GROUP.id, { timezone: 'Not/AZone' });
      expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).timezone).toBeUndefined();
    });
@@ -26,3 +26,27 @@ index b6c2963..60844b9 100644
 +    expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).egress).toBeUndefined();
 +  });
  });
+ 
+ describe('parseMcpServerConfig', () => {
+@@ -131,7 +150,6 @@ describe('parseMcpServerConfig', () => {
+   });
+ 
+   it.each([
+-    [{ type: 'sse', url: 'https://mcp.example.com/mcp' }, /unsupported transport "sse"/],
+     [{ type: 'websocket', url: 'https://mcp.example.com/mcp' }, /type must be/],
+     [{ type: 'stdio', url: 'https://mcp.example.com/mcp' }, /requires command/],
+     [{ type: 'http', command: 'server' }, /requires url/],
+@@ -139,6 +157,13 @@ describe('parseMcpServerConfig', () => {
+     expect(() => parseMcpServerConfig(input)).toThrow(message);
+   });
+ 
++  it('accepts a declared sse transport (fork: webchat still wires legacy SSE servers)', () => {
++    expect(parseMcpServerConfig({ type: 'sse', url: 'https://mcp.example.com/mcp' })).toEqual({
++      type: 'sse',
++      url: 'https://mcp.example.com/mcp',
++    });
++  });
++
+   it('accepts headers on http entries and rejects them on stdio entries', () => {
+     expect(parseMcpServerConfig({ url: 'https://mcp.example.com/mcp', headers: { 'X-Client': 'nanoclaw' } })).toEqual({
+       type: 'http',

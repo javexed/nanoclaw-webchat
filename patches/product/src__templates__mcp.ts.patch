@@ -1,0 +1,22 @@
+diff --git a/src/templates/mcp.ts b/src/templates/mcp.ts
+index e4964abb..e73e3d78 100644
+--- a/src/templates/mcp.ts
++++ b/src/templates/mcp.ts
+@@ -41,7 +41,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
+ export function pluginDataCwdSubpaths(servers: Record<string, McpServerConfig>): string[] {
+   const prefix = '${PLUGIN_DATA}/';
+   return Object.values(servers).flatMap((s) =>
+-    s.type !== 'http' && s.cwd?.startsWith(prefix) ? [s.cwd.slice(prefix.length)] : [],
++    !('url' in s) && s.cwd?.startsWith(prefix) ? [s.cwd.slice(prefix.length)] : [],
+   );
+ }
+ 
+@@ -130,7 +130,7 @@ function readServerEntry(name: string, entry: unknown, report: string[]): McpSer
+     return err instanceof Error ? err.message : String(err);
+   }
+ 
+-  if (server.type === 'http') {
++  if ('url' in server) {
+     const hostname = new URL(server.url).hostname;
+     if (HOST_GATEWAY_HOSTS.has(hostname)) return `URL host "${hostname}" reaches the container host; not allowed`;
+     lintSecrets(name, 'header', server.headers ?? {}, report);

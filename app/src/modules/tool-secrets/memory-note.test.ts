@@ -12,7 +12,7 @@
  *     COPYFILE_EXCL, so a host-created index would permanently suppress the
  *     real template
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -36,6 +36,9 @@ beforeEach(() => {
   fs.mkdirSync(groupDir, { recursive: true });
 });
 afterEach(() => fs.rmSync(groupDir, { recursive: true, force: true }));
+// The afterEach above removes the GROUP dir; GROUPS is its parent and outlived
+// every run, leaking one dir per test file execution.
+afterAll(() => fs.rmSync(GROUPS, { recursive: true, force: true }));
 
 /** Stand in for what the container's scaffold would have laid down. */
 function scaffoldIndex(extra = ''): void {

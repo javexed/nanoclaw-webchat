@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/poll-loop.ts b/container/agent-runner/src/poll-loop.ts
-index a6f12f19..b1ba0ec2 100644
+index ad68612a..e1a5b5ad 100644
 --- a/container/agent-runner/src/poll-loop.ts
 +++ b/container/agent-runner/src/poll-loop.ts
 @@ -1,4 +1,4 @@
@@ -100,10 +100,21 @@ index a6f12f19..b1ba0ec2 100644
  
      // Process the query while concurrently polling for new messages
      const skippedSet = new Set(skipped.map((s) => s.id));
-@@ -321,44 +336,28 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -321,55 +336,28 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
      // Publish the batch's in_reply_to so MCP tools (send_message, send_file)
      // can stamp it on outbound rows — needed for a2a return-path routing.
      setCurrentInReplyTo(routing.inReplyTo);
+-    // Forward a loop stop to the ACTIVE query. The stream deliberately stays
+-    // open between turns, so the loop can be parked inside processQuery when
+-    // config.signal fires; without this, the "stopped" loop's query — and its
+-    // 500ms follow-up poller — outlives the stop and keeps polling (and
+-    // claiming) messages from whatever inbound DB the process points at. In
+-    // tests that leaked one immortal poller per loop-driven test, which could
+-    // steal a later test's follow-up message into a dead query.
+-    const abortActiveQuery = () => query.abort();
+-    if (config.signal?.aborted) abortActiveQuery();
+-    else config.signal?.addEventListener('abort', abortActiveQuery, { once: true });
+-
 -    // A real query runs from here — observers see the turn start (and the
 -    // matching turn_done after completion below).
 -    notifyProviderMessage({ kind: 'turn_start' });
@@ -167,7 +178,7 @@ index a6f12f19..b1ba0ec2 100644
          prompt,
          routing,
          config,
-@@ -394,6 +393,9 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -405,6 +393,9 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
                prompt,
                undefined,
                turnContext,
@@ -177,7 +188,7 @@ index a6f12f19..b1ba0ec2 100644
              );
            } catch (retryErr) {
              log(
-@@ -403,6 +405,125 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -414,6 +405,134 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
            }
          },
        })) as QueryResult | null;
@@ -188,6 +199,15 @@ index a6f12f19..b1ba0ec2 100644
 +      cwd: config.cwd,
 +      systemContext: config.systemContext,
 +    });
++    // Forward a loop stop to the ACTIVE query (upstream d9b0d024). The stream
++    // deliberately stays open between turns, so the loop can be parked inside
++    // processQuery when config.signal fires; without this, the "stopped" loop's
++    // query — and its 500ms follow-up poller — outlives the stop and keeps
++    // polling (and claiming) messages from whatever inbound DB the process
++    // points at.
++    const abortActiveQuery = () => query.abort();
++    if (config.signal?.aborted) abortActiveQuery();
++    else config.signal?.addEventListener('abort', abortActiveQuery, { once: true });
 +    try {
 +      let result = await processQuery(
 +        query,
@@ -303,7 +323,7 @@ index a6f12f19..b1ba0ec2 100644
        if (retried) {
          if (retried.continuation && retried.continuation !== continuation) {
            continuation = retried.continuation;
-@@ -415,14 +536,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -426,14 +545,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
        }
  
        // Write error response so the user knows something went wrong
@@ -319,7 +339,7 @@ index a6f12f19..b1ba0ec2 100644
  
        // The batch is still acked completed below (no redelivery). Without
        // this line the only log trace of the errored turn is "Query error"
-@@ -442,6 +556,37 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -454,6 +566,37 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
    }
  }
  
@@ -357,7 +377,7 @@ index a6f12f19..b1ba0ec2 100644
  /**
   * Format messages, handling passthrough commands differently.
   * When the provider handles slash commands natively (Claude Code),
-@@ -476,8 +621,26 @@ function formatMessagesWithCommands(messages: MessageInRow[], nativeSlashCommand
+@@ -488,8 +631,26 @@ function formatMessagesWithCommands(messages: MessageInRow[], nativeSlashCommand
    return parts.join('\n\n');
  }
  
@@ -384,7 +404,7 @@ index a6f12f19..b1ba0ec2 100644
  }
  
  export async function processQuery(
-@@ -495,6 +658,9 @@ export async function processQuery(
+@@ -507,6 +668,9 @@ export async function processQuery(
     * here rather than after processQuery returns.
     */
    turnContext?: RunnerTurnContext,
@@ -394,7 +414,7 @@ index a6f12f19..b1ba0ec2 100644
  ): Promise<QueryResult> {
    let queryContinuation: string | undefined;
    let done = false;
-@@ -508,6 +674,15 @@ export async function processQuery(
+@@ -520,6 +684,15 @@ export async function processQuery(
    // doesn't implement `onExchangeComplete`.
    const archivePrompts: string[] = [initialPrompt];
  
@@ -410,7 +430,7 @@ index a6f12f19..b1ba0ec2 100644
    // Concurrent polling: push follow-ups into the active query as they arrive.
    // We do NOT force-end the stream on silence — keeping the query open avoids
    // re-spawning the SDK subprocess (~few seconds) and re-loading the .jsonl
-@@ -521,6 +696,16 @@ export async function processQuery(
+@@ -533,6 +706,16 @@ export async function processQuery(
    let endedForCommand = false;
    let corruptionStreak = 0;
    const pollHandle = setInterval(() => {
@@ -427,7 +447,7 @@ index a6f12f19..b1ba0ec2 100644
      if (done || pollInFlight || endedForCommand) return;
      pollInFlight = true;
  
-@@ -528,6 +713,24 @@ export async function processQuery(
+@@ -540,6 +723,24 @@ export async function processQuery(
        try {
          const pending = getPendingMessages();
  
@@ -452,7 +472,7 @@ index a6f12f19..b1ba0ec2 100644
          // Slash commands need a fresh query: /clear resets the SDK's
          // resume id (fixed at sdkQuery() time); admin/passthrough commands
          // (/compact, /cost, …) only dispatch when they're the first input
-@@ -585,10 +788,10 @@ export async function processQuery(
+@@ -600,10 +801,10 @@ export async function processQuery(
          const prompt = formatMessages(keep);
          log(`Pushing ${keep.length} follow-up message(s) into active query`);
          unwrappedNudged = false;
@@ -464,7 +484,7 @@ index a6f12f19..b1ba0ec2 100644
          query.push(prompt);
          archivePrompts.push(prompt);
          markCompleted(keptIds);
-@@ -644,6 +847,32 @@ export async function processQuery(
+@@ -659,6 +860,32 @@ export async function processQuery(
          // effectively orphaned and the next message started a blank
          // Claude session with no prior context.
          setContinuation(providerName, event.continuation);
@@ -497,7 +517,7 @@ index a6f12f19..b1ba0ec2 100644
        } else if (event.type === 'result') {
          // A result — with or without text — means the turn is done. Mark
          // the initial batch completed now so the host sweep doesn't see
-@@ -658,13 +887,11 @@ export async function processQuery(
+@@ -673,13 +900,11 @@ export async function processQuery(
          // turn_start above.
          notifyProviderMessage({ kind: 'turn_done' });
          if (event.text) {
@@ -512,7 +532,7 @@ index a6f12f19..b1ba0ec2 100644
            if (routing.taskRun && !taskBlockNudged) autoAppendTaskLog(event.text);
            if (sent === 0 && event.isError === true && !routing.taskRun) {
              // Non-retryable error turn (e.g. a 403 billing_error) with no
-@@ -731,7 +958,13 @@ export async function processQuery(
+@@ -746,7 +971,13 @@ export async function processQuery(
      clearInterval(pollHandle);
    }
  
@@ -527,7 +547,7 @@ index a6f12f19..b1ba0ec2 100644
  }
  
  function notifyExchangeComplete(
-@@ -784,6 +1017,7 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
+@@ -799,6 +1030,7 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
   */
  function deliverErrorResult(text: string, routing: RoutingContext): void {
    log('Error result with no <message> envelope — delivering to channel');
@@ -535,7 +555,7 @@ index a6f12f19..b1ba0ec2 100644
    writeMessageOut({
      id: generateId(),
      in_reply_to: routing.inReplyTo,
-@@ -803,17 +1037,54 @@ function deliverErrorResult(text: string, routing: RoutingContext): void {
+@@ -818,17 +1050,54 @@ function deliverErrorResult(text: string, routing: RoutingContext): void {
   * The agent must always wrap output in <message to="name">...</message>
   * blocks, even with a single destination. Bare text is scratchpad only.
   */
@@ -590,7 +610,7 @@ index a6f12f19..b1ba0ec2 100644
    let match: RegExpExecArray | null;
    let sent = 0;
    // <message to> blocks left inert in a task run — drives the same-turn
-@@ -821,15 +1092,32 @@ export function dispatchResultText(
+@@ -836,15 +1105,32 @@ export function dispatchResultText(
    const taskBlocks: TaskMessageBlock[] = [];
    let lastIndex = 0;
    const scratchpadParts: string[] = [];
@@ -626,7 +646,7 @@ index a6f12f19..b1ba0ec2 100644
      // One-door delivery in task sessions: only the send_message tool delivers.
      // A final-text <message to> block here is either an echo of a tool send the
      // agent already made (the double-delivery class) or a send down the wrong
-@@ -842,18 +1130,36 @@ export function dispatchResultText(
+@@ -857,18 +1143,36 @@ export function dispatchResultText(
        taskBlocks.push({ to: toName, body });
        continue;
      }
@@ -667,7 +687,7 @@ index a6f12f19..b1ba0ec2 100644
  
    const scratchpad = stripInternalTags(scratchpadParts.join(''));
  
-@@ -861,9 +1167,27 @@ export function dispatchResultText(
+@@ -876,9 +1180,27 @@ export function dispatchResultText(
      log(`[scratchpad] ${scratchpad.slice(0, 500)}${scratchpad.length > 500 ? '…' : ''}`);
    }
  

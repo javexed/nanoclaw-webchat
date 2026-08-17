@@ -7,7 +7,7 @@
 #      rebase-before-PR check, delegated unchanged.
 set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
-DENY="${LEAK_PATTERNS_FILE:-$HOME/nanoclaw-ops/webchat-leak-patterns.txt}"
+DENY="${LEAK_PATTERNS_FILE:-$HOME/.config/nanoclaw-webchat/leak-patterns.txt}"
 [ -f "$DENY" ] && export LEAK_PATTERNS_FILE="$DENY"
 
 REMOTE="${1:-origin}"

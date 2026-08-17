@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Leak gate — staged changes, before the commit exists. Fast, local, bypassable
 # with --no-verify (pre-push + CI are the real backstops). Sources the operator
-# identifier denylist from nanoclaw-ops when present, so YOUR own identifiers are
+# identifier denylist from a private file when present, so YOUR own identifiers are
 # caught before they ever enter history.
 set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
-DENY="${LEAK_PATTERNS_FILE:-$HOME/nanoclaw-ops/webchat-leak-patterns.txt}"
+DENY="${LEAK_PATTERNS_FILE:-$HOME/.config/nanoclaw-webchat/leak-patterns.txt}"
 [ -f "$DENY" ] && export LEAK_PATTERNS_FILE="$DENY"
 exec bash "$ROOT/scripts/leak-scan.sh" --staged

@@ -1109,3 +1109,22 @@ export const moduleWebchatDisabledBuiltins: Migration = {
     db.exec('CREATE TABLE IF NOT EXISTS webchat_disabled_sources (id TEXT PRIMARY KEY)');
   },
 };
+
+/**
+ * Audit syslog forwarder target — one TEXT column, empty/NULL = forwarding
+ * off. A URL (udp://host:514, tcp://host:601, tls://host:6514), validated at
+ * the route; the DB stores whatever the owner last applied so a restart
+ * re-establishes the forwarder without re-configuration.
+ */
+export const moduleWebchatAuditSyslog: Migration = {
+  version: 208,
+  name: 'webchat-audit-syslog',
+  up(db: Database.Database) {
+    const hasCol = (db.prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>).some(
+      (c) => c.name === 'audit_syslog_target',
+    );
+    if (!hasCol) {
+      db.exec(`ALTER TABLE webchat_settings ADD COLUMN audit_syslog_target TEXT`);
+    }
+  },
+};

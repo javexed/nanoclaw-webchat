@@ -129,3 +129,51 @@ describe('with OpenCode installed', () => {
     expect(getContainerConfig('ag-1')?.provider).toBe('codex');
   });
 });
+
+// Runs LAST, and must stay last: registering a stub 'pi' makes piInstalled()
+// true for the rest of the process, so every suite that needs to observe pi
+// ABSENT — including the OpenCode ones above, which assert ollama → 'opencode' —
+// has to have run already. Same singleton constraint as the opencode block.
+describe('with BOTH pi and OpenCode installed', () => {
+  beforeAll(() => {
+    registerProviderContainerConfig('pi', () => ({ env: {} }));
+  });
+
+  it('prefers pi over opencode for ollama', () => {
+    // The preference is the whole point: both are valid local harnesses, and pi
+    // wins on prompt budget (587 vs 6,443 tokens head-to-head). If this ever
+    // flips back to 'opencode' the auto-selection silently regresses to the
+    // heavier harness on exactly the models that can least afford it.
+    expect(providerForModelKind('ollama')).toBe('pi');
+  });
+
+  it('still routes non-ollama kinds to the default provider', () => {
+    expect(providerForModelKind('openai-compatible')).toBeNull();
+    expect(providerForModelKind('anthropic')).toBeNull();
+    expect(providerForModelKind(null)).toBeNull();
+    expect(providerForModelKind(undefined)).toBeNull();
+  });
+
+  it('auto-assigns pi when the effective model is ollama', () => {
+    makeModel('ollama', 'm-pi');
+    assignModelToAgent('ag-1', 'm-pi');
+    syncAgentProviderForAssignedModel('ag-1');
+    expect(getContainerConfig('ag-1')?.provider).toBe('pi');
+  });
+
+  it('keeps an explicit pi choice sticky across re-sync', () => {
+    makeModel('ollama', 'm-pi');
+    assignModelToAgent('ag-1', 'm-pi');
+    syncAgentProviderForAssignedModel('ag-1');
+    expect(getContainerConfig('ag-1')?.provider).toBe('pi');
+    syncAgentProviderForAssignedModel('ag-1');
+    expect(getContainerConfig('ag-1')?.provider).toBe('pi');
+  });
+
+  it('un-wedges a group left on an ollama-less kind back to the default', () => {
+    makeModel('anthropic', 'm-an');
+    assignModelToAgent('ag-1', 'm-an');
+    syncAgentProviderForAssignedModel('ag-1');
+    expect(getContainerConfig('ag-1')?.provider).toBeNull();
+  });
+});

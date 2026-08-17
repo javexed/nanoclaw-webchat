@@ -17,7 +17,7 @@
 #   scripts/regen-patches.sh <composed-tree> <file> ...
 
 
-## UPSTREAMABLE — candidate upstream PRs (53)
+## UPSTREAMABLE — candidate upstream PRs (59)
 
 CLAUDE.md
     operator docs for the above
@@ -31,6 +31,12 @@ container/agent-runner/src/formatter.ts
     redact credential-shaped substrings before text reaches users
 container/agent-runner/src/integration.test.ts
     origin-guard + lenient-output integration coverage
+container/agent-runner/src/scheduling/task-script.test.ts
+    concurrency regression coverage for the taskId path-collision fix
+container/agent-runner/src/scheduling/task-script.ts
+    fixed taskId script-path collision (2 concurrent callers sharing an id
+    could clobber each other's script content or unlink each other's temp
+    file); path now carries a random UUID
 container/agent-runner/src/mcp-tools/index.ts
     per-module tool isolation
 container/agent-runner/src/mcp-tools/server.ts
@@ -47,17 +53,29 @@ container/cli-tools.json
 pnpm-workspace.yaml
     dependency policy tweaks
 scripts/skill-apply.test.ts
-    tests for masking + gitless fallback
+    tests for masking + gitless fallback; scratch dirs removed in afterAll
+    (leaked ~200 tmpdirs per run)
 scripts/skill-apply.ts
     secret masking in logged commands + gitless (tarball) deploy fallback
+src/guard/guard.ts
+    guard decisions emitted to the audit log (pairs with the overlay's
+    src/audit.ts — an upstream PR carries both)
+vitest.config.ts
+    setupFiles: audit-log redirection for tests (pairs with vitest.setup.ts)
 setup/auto.ts
     headless no-TTY setup (cloud-init/CI) instead of aborting on stdin EOF
 setup/index.ts
     provider-install step registration
+setup/lib/skill-driver.test.ts
+    scratch dirs removed in afterAll (leaked ~20 tmpdirs per run, cleaned none)
 setup/lib/skill-driver.ts
     logCmd seam: prompted secrets never land in the raw setup log
+setup/channels/run-channel-skill.test.ts
+    scratch dirs removed in afterAll
+setup/channels/whatsapp.test.ts
+    engage-config scratch dir removed in afterAll
 setup/onecli.test.ts
-    tests for the bind-host persistence
+    tests for the bind-host persistence; its scratch dir removed in afterAll
 setup/onecli.ts
     persist ONECLI_BIND_HOST so `docker compose up` cannot drop the gateway to loopback
 setup/service.test.ts
@@ -96,9 +114,6 @@ src/host-sweep.test.ts
     tests for the sweep fixes
 src/host-sweep.ts
     bloated-continuation self-heal + sweep hygiene
-src/index.ts
-    prime the agent-image page cache so the first cold spawn is fast
-src/modules/agent-to-agent/agent-route.test.ts
     reproduction test for the a2a self-loop
 src/modules/agent-to-agent/agent-route.ts
     a2a self-loop guard (the production message-flood fix)
@@ -116,9 +131,6 @@ src/modules/approvals/response-handler.test.ts
     tests for the double-fire guard
 src/modules/approvals/response-handler.ts
     double-fire guard on the approve path (slow handler tempts a second click)
-src/modules/self-mod/apply.test.ts
-    tests for the multi-session self-mod fix
-src/modules/self-mod/apply.ts
     respawn ALL of a group's sessions after install/mcp change, not just one
 src/router.ts
     agent lifecycle gate (active/paused/archived) + prime negative-lookahead
@@ -129,7 +141,7 @@ src/templates/create-agent.test.ts
 src/types.ts
     agent-group lifecycle status type
 
-## PRODUCT — shrink via seam registries (17)
+## PRODUCT — shrink via seam registries (23)
 
 container/agent-runner/src/config.ts
     lenientOutput + learning config surface read by the runner
@@ -143,10 +155,16 @@ container/agent-runner/src/poll-loop.test.ts
     coverage for the poll-loop product behaviour
 container/agent-runner/src/poll-loop.ts
     interrupt handling, lenient output, origin guard, terminal-error surfacing, empty-turn net
+container/agent-runner/src/plugin-mcp.ts
+    structural narrowing so the sse remote variant fits upstream's plugin resolve
+container/agent-runner/src/providers/cwd-shim.ts
+    structural narrowing for the sse remote variant
 container/agent-runner/src/providers/claude.ts
     thinking/reasoning stream taps, restricted-review support, rate-limit classification
 container/agent-runner/src/providers/types.ts
     provider capability flags (supportsRestrictedReview, memory scaffold, settings scopes)
+container/skills/onecli-gateway/SKILL.md
+    secret intake points at the webchat Agents → Secrets UI, not the OneCLI dashboard
 eslint.config.js
     lint rules for the webchat PWA frontend
 src/channels/adapter.ts
@@ -163,12 +181,16 @@ src/modules/approvals/index.ts
     approval-TTL expiry on the sweep seam
 src/modules/index.ts
     module barrel registrations
+src/modules/self-mod/request.ts
+    structural narrowing for the sse remote variant in the approval card path
+src/templates/mcp.ts
+    structural narrowing for the sse remote variant in plugin lint
 src/modules/typing/index.test.ts
     tests for the typing attribution
 src/modules/typing/index.ts
     agentName on the typing indicator (multi-agent rooms)
 
-## LOCAL — install-local, expected to persist (6)
+## LOCAL — install-local, expected to persist (0)
 
 .claude/skills/add-codex/SKILL.md
     points the codex payload at this fork's providers-codex branch

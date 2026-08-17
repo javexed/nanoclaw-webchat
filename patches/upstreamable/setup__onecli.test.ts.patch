@@ -1,30 +1,42 @@
-diff --git a/setup/onecli.test.ts b/setup/onecli.test.ts
-index 126219ec..2067a851 100644
---- a/setup/onecli.test.ts
-+++ b/setup/onecli.test.ts
-@@ -5,9 +5,13 @@
+diff --git c/setup/onecli.test.ts w/setup/onecli.test.ts
+index 126219ec..9778c16e 100644
+--- c/setup/onecli.test.ts
++++ w/setup/onecli.test.ts
+@@ -5,9 +5,20 @@
   * incompatible (pre-/v1 server: warn) from unreachable (transient: nothing to
   * say) so the warning only fires on a real pre-/v1 server.
   */
+-import { describe, expect, it } from 'vitest';
 +import fs from 'fs';
 +import os from 'os';
 +import path from 'path';
-+
- import { describe, expect, it } from 'vitest';
  
 -import { verifyGatewayV1 } from './onecli.js';
++import { afterAll, describe, expect, it } from 'vitest';
++
++/** Scratch dirs made by this file, removed when it finishes. */
++const SCRATCH: string[] = [];
++afterAll(() => {
++  for (const d of SCRATCH) fs.rmSync(d, { recursive: true, force: true });
++  SCRATCH.length = 0;
++});
++
 +import { persistOnecliBindHost, verifyGatewayV1 } from './onecli.js';
  
  function fakeFetch(behavior: 'ok' | '404' | 'down'): typeof fetch {
    return (async () => {
-@@ -27,3 +31,38 @@ describe('verifyGatewayV1', () => {
+@@ -27,3 +38,42 @@ describe('verifyGatewayV1', () => {
      expect(await verifyGatewayV1('http://x', fakeFetch('down'))).toBe('unreachable');
    });
  });
 +
 +describe('persistOnecliBindHost', () => {
 +  function tmpEnv(initial?: string): string {
-+    const p = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'onecli-env-')), '.env');
++    // Recorded so the afterAll below removes it — this test used to leak one
++    // dir per run into os.tmpdir(), forever.
++    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'onecli-env-'));
++    SCRATCH.push(dir);
++    const p = path.join(dir, '.env');
 +    if (initial !== undefined) fs.writeFileSync(p, initial);
 +    return p;
 +  }

@@ -1,10 +1,10 @@
-diff --git a/src/modules/approvals/onecli-approvals.ts b/src/modules/approvals/onecli-approvals.ts
-index 6d7183b8..72a0b439 100644
---- a/src/modules/approvals/onecli-approvals.ts
-+++ b/src/modules/approvals/onecli-approvals.ts
-@@ -36,6 +36,25 @@ export const ONECLI_ACTION = 'onecli_credential';
- 
+diff --git c/src/modules/approvals/onecli-approvals.ts w/src/modules/approvals/onecli-approvals.ts
+index c2038667..8f43bcca 100644
+--- c/src/modules/approvals/onecli-approvals.ts
++++ w/src/modules/approvals/onecli-approvals.ts
+@@ -38,6 +38,25 @@ export const ONECLI_ACTION = 'onecli_credential';
  type Decision = 'approve' | 'deny';
+ type ExpiryReason = 'no response' | 'host restarted';
  
 +/**
 + * Fallback to recover an agent group id from a OneCLI external identifier that
@@ -28,7 +28,7 @@ index 6d7183b8..72a0b439 100644
  const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
  
  interface PendingState {
-@@ -116,8 +135,15 @@ async function handleRequest(request: ApprovalRequest): Promise<Decision> {
+@@ -118,8 +137,15 @@ async function handleRequest(request: ApprovalRequest): Promise<Decision> {
    // Originating agent group is carried on the request via OneCLI's agent
    // identifier (set by container-runner.ts to agentGroup.id). Use it as
    // the scope for approver selection: admin @ group → global admin → owner.
