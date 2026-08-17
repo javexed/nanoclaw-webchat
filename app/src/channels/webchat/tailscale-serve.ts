@@ -16,12 +16,17 @@
  *     admin console (DNS page). We detect that failure and hand back the link.
  *   - `tailscale serve` needs root or operator access to tailscaled. The
  *     community-scripts deploy runs as root; a self-hosted service user needs
- *     `tailscale set --operator=<user>`. We detect the permission error too.
+ *     `sudo tailscale set --operator=<user>` once. We detect the permission
+ *     error and answer with that command, the running user's name already
+ *     filled in. Note that READING (`serve status`) is permitted for any
+ *     user and only writing the config is gated — so a host reports
+ *     "available, not active" right up until it refuses to enable.
  *
  * The tailscale invocations go through an injectable runner so the parsing and
  * error-classification logic is unit-tested without a real daemon.
  */
 import { execFile } from 'child_process';
+import os from 'os';
 
 export interface TailscaleServeState {
   /** tailscaled is up and logged into a tailnet. */
@@ -133,10 +138,19 @@ export async function enableTailscaleServe(
     };
   }
   if (/access denied|permission|operator|must be run|not permitted|are not allowed/.test(err)) {
+    // Name the actual user and include sudo. The old hint read
+    // `tailscale set --operator=<user>` and left both the placeholder and the
+    // missing sudo as an exercise — the dead end an operator hits at the
+    // moment they are least equipped to guess.
+    //
+    // Echoing the daemon's own suggestion looks like the better idea and is
+    // not: tailscale prints `sudo tailscale set --operator=$USER`, so relaying
+    // it just swaps our placeholder for a shell variable that is equally
+    // unexpanded on a web page. Resolving the name here is the whole point.
     return {
       ok: false,
       error: 'This process is not allowed to configure `tailscale serve`.',
-      hint: 'Run the host as root, or grant the service user access with `tailscale set --operator=<user>`.',
+      hint: `Grant this user access once with \`sudo tailscale set --operator=${os.userInfo().username}\`, then try again.`,
     };
   }
   return { ok: false, error: (run.stderr || run.stdout || 'tailscale serve failed').trim().slice(0, 400) };

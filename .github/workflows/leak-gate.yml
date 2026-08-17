@@ -6,12 +6,21 @@
 # identifier scan runs only when the LEAK_PATTERNS secret is present — which,
 # by GitHub design, excludes fork PRs (a fork can't read secrets, and an outside
 # contributor can't leak identifiers they don't know). Set the secret in the
-# repo's Actions secrets, sourced from nanoclaw-ops/webchat-leak-patterns.txt.
+# repo's Actions secrets, sourced from the operator's private patterns file.
 name: Leak gate
 
 on:
+  # No `branches:` filter on pull_request — deliberately. With `branches: [main]`
+  # a PR whose BASE is another branch never triggers, so a stacked PR (one built
+  # on the branch of an earlier, still-open PR) silently gets NO CI at all: no
+  # leak gate, no compose, and a green-looking PR page because nothing ever ran.
+  # Found when a stacked extraction PR sat with zero runs and no explanation.
+  #
+  # Stacking is the normal shape for this work — each UI module comes out on top
+  # of the last — so the checks have to follow the PR, not the base branch.
+  # push stays pinned to main: that is the post-merge run, and running it for
+  # every branch push would double every job for no added signal.
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 

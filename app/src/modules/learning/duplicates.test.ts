@@ -7,16 +7,24 @@
  *   - promotion ARCHIVES each agent's copy (never deletes) and refuses to
  *     clobber an existing pool entry.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, afterAll } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
 import { ARCHIVE_DIR, findDuplicateScopedSkills, promoteScopedSkill } from './curator.js';
 
+/** Scratch dirs from makeInstall(), removed when this file finishes. */
+const SCRATCH: string[] = [];
+afterAll(() => {
+  for (const d of SCRATCH) fs.rmSync(d, { recursive: true, force: true });
+  SCRATCH.length = 0;
+});
+
 function makeInstall(): { root: string; pool: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dups-data-'));
   const pool = fs.mkdtempSync(path.join(os.tmpdir(), 'dups-pool-'));
+  SCRATCH.push(root, pool);
   return { root, pool };
 }
 

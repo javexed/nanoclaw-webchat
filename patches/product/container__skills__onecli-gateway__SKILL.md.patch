@@ -1,0 +1,20 @@
+diff --git a/container/skills/onecli-gateway/SKILL.md b/container/skills/onecli-gateway/SKILL.md
+index 2e77d450..3a47bcdc 100644
+--- a/container/skills/onecli-gateway/SKILL.md
++++ b/container/skills/onecli-gateway/SKILL.md
+@@ -76,8 +76,13 @@ request. If the retry still fails, ask if they need help with the setup.
+   request through the proxy.
+ - **Never** use browser extensions, gcloud, or manual auth flows. The
+   gateway handles credentials for you.
+-- **Never** ask the user for API keys or tokens directly. Direct them to
+-  connect the service in the OneCLI dashboard.
++- **Never** ask the user for API keys or tokens directly, and never accept one
++  pasted into chat — refuse it, and tell them it is now in that room's history
++  and should be rotated. Direct them to **Agents → (this agent) → Secrets**
++  (fields: `Host`, e.g. `api.stripe.com`, and `Token or key`). That writes to
++  the vault the gateway reads from, so the key never passes through a message.
++  The OneCLI dashboard is the operator-level equivalent — do not send a room
++  participant there.
+ - **Never** suggest the user open Gmail/Calendar/GitHub in their browser
+   when they ask you to read or interact with those services. You have API
+   access. Use it.

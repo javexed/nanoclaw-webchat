@@ -1,0 +1,13 @@
+diff --git a/container/agent-runner/src/plugin-mcp.ts b/container/agent-runner/src/plugin-mcp.ts
+index da047b4f..173baa2d 100644
+--- a/container/agent-runner/src/plugin-mcp.ts
++++ b/container/agent-runner/src/plugin-mcp.ts
+@@ -25,7 +25,7 @@ function pluginDataDir(pluginRoot: string): string {
+ }
+ 
+ export function resolvePluginServer(config: McpServerConfig): McpServerConfig {
+-  if (config.type === 'http') return config;
++  if ('url' in config) return config;
+   const { pluginRoot, ...server } = config;
+   if (!pluginRoot) return config;
+ 

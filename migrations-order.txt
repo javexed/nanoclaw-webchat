@@ -33,3 +33,4 @@ moduleWebchatSkillSources
 moduleWebchatSkillSourcesOfficial
 moduleWebchatDisabledBuiltins
 moduleWebchatCredentialIsolation
+moduleWebchatAuditSyslog

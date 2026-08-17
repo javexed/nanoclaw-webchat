@@ -407,14 +407,31 @@ function piInstalled(): boolean {
 
 /**
  * Which provider a model kind should run on. A small local model (Ollama) follows
- * tools/format far better on the OpenCode harness than the Claude SDK — so once
- * OpenCode is installed, an Ollama-backed agent DEFAULTS to it (no manual Agent →
- * Harness switch; that's the "install it and it just works" behavior). Every other
- * kind — and Ollama when OpenCode isn't installed — stays on the default Claude
+ * tools/format far better on a local harness than on the Claude SDK — so once one
+ * is installed, an Ollama-backed agent DEFAULTS to it (no manual Agent → Harness
+ * switch; that's the "install it and it just works" behavior). Every other kind —
+ * and Ollama when no local harness is installed — stays on the default Claude
  * provider (openai-compatible/LiteLLM is consumed via its Anthropic-spec surface).
+ *
+ * WHY pi OUTRANKS OpenCode when both are installed. This is the only place that
+ * preference is expressed, and it is a property of the harnesses rather than a
+ * toss-up: pi replaces the system prompt outright, so the model sees NanoClaw's
+ * instructions and nothing else, while OpenCode-lean still carries a coding
+ * preamble that has to be stripped. Measured head-to-head 2026-07-31: 587 tokens
+ * vs 6,443 — an order of magnitude of a small model's context spent before it
+ * reaches the actual task, which is why the lean path fit a stock 4k window and
+ * the other needed a 16k variant.
+ *
+ * Harness selection is deliberately NOT a user-facing choice: it is derived from
+ * the model, because "which model" is a question an operator can answer and
+ * "which agent harness" is not. An explicit pick still wins — see
+ * syncAgentProviderForAssignedModel, where a sticky choice survives reassignment.
  */
-export function providerForModelKind(kind: string | null | undefined): 'opencode' | null {
-  return kind === 'ollama' && opencodeInstalled() ? 'opencode' : null;
+export function providerForModelKind(kind: string | null | undefined): 'opencode' | 'pi' | null {
+  if (kind !== 'ollama') return null;
+  if (piInstalled()) return 'pi';
+  if (opencodeInstalled()) return 'opencode';
+  return null;
 }
 
 /**

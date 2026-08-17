@@ -2,7 +2,7 @@
 # Git pre-push hook: keep PRs clean across parallel dev machines by refusing to
 # push a branch that's behind the base tip. Every PR then lands as a linear delta
 # off the current tip instead of a stale base that has to be rebased after the
-# fact (see nanoclaw-ops/multi-machine.md).
+# fact (see the private ops playbook).
 #
 # Delegates to pr-preflight.sh (same dir). Offline → that script warns and
 # passes, so this never wedges work you can't verify.
@@ -23,7 +23,12 @@ script="$root/app/scripts/pr-preflight.sh"
 # "cannot fetch (offline?)" path — which PASSES. The hook then looks like it is
 # protecting the branch while checking nothing at all. Let pr-preflight.sh
 # discover the remote the same way everything else does.
-remote="${PR_PREFLIGHT_REMOTE:-$(git remote | grep -vx github | head -1)}"
+# Pick the private remote by its URL, NOT by its name. `git remote | grep -vx
+# github | head -1` looked like it excluded the public mirror, but it only
+# excludes a remote literally NAMED "github" — and in a checkout where the
+# GitHub remote is called `origin` (the common case) it selects exactly the
+# remote it meant to skip, silently.
+remote="${PR_PREFLIGHT_REMOTE:-$(git remote -v | awk '$3 == "(fetch)" && $2 !~ /github\.com/ { print $1; exit }')}"
 if [ -z "$remote" ]; then
   echo "pre-push: no non-public remote to check against — skipping freshness check" >&2
   exit 0

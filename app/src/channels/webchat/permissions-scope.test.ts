@@ -11,7 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
-import { listUsersWithPermissions } from './server.js';
+import { listUsersWithPermissions } from './server/routes-users.js';
 
 beforeEach(() => {
   initTestDb();

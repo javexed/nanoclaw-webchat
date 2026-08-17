@@ -165,7 +165,8 @@ describe('GET /api/learning/timeline', () => {
     seed(db);
 
     // A webchat room wired to agent A, so card events carry a room name.
-    server.wireAgentToWebchatRoom('Ops room', ROOM, AG_A);
+    const wiring = await import('./server/agent-wiring.js');
+    wiring.wireAgentToWebchatRoom('Ops room', ROOM, AG_A);
 
     const wdb = await import('./db.js');
     const card = (draftId: string, agentGroupId: string, agentName: string, skillName: string) =>

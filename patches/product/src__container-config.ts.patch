@@ -1,8 +1,8 @@
 diff --git a/src/container-config.ts b/src/container-config.ts
-index 61e5394..bb80943 100644
+index dd4c7521..027c8529 100644
 --- a/src/container-config.ts
 +++ b/src/container-config.ts
-@@ -13,16 +13,41 @@ import path from 'path';
+@@ -13,7 +13,9 @@ import path from 'path';
  
  import { GROUPS_DIR, TIMEZONE } from './config.js';
  import { getContainerConfig } from './db/container-configs.js';
@@ -12,25 +12,18 @@ index 61e5394..bb80943 100644
 +import { resolveContainerConfigAugmentation, resolveLearningClassifier } from './container-runtime.js';
  import { getAgentGroup } from './db/agent-groups.js';
  import { isValidTimezone } from './timezone.js';
- import type { AgentGroup, ContainerConfigRow } from './types.js';
+ import { log } from './log.js';
+@@ -63,12 +65,24 @@ export interface McpStdioServerConfig {
+ }
  
--export interface McpServerConfig {
-+/**
-+ * An MCP server wired into an agent group. Two transports:
-+ *  - stdio (default): a subprocess spawned inside the container (`command`).
-+ *  - remote (sse | http): a server reached over the network by `url` — e.g. a
-+ *    tool server running on another machine. Both pass through container.json
-+ *    verbatim into the Agent SDK's `mcpServers`, which accepts the same union.
-+ * `instructions` (either transport) is materialized as an inline CLAUDE.md
-+ * fragment for the server (see claude-md-compose.ts).
-+ */
-+export type McpServerConfig = McpStdioServerConfig | McpRemoteServerConfig;
-+
-+export interface McpStdioServerConfig {
-+  type?: 'stdio';
-   command: string;
-   args?: string[];
-   env?: Record<string, string>;
+ export interface McpHttpServerConfig {
+-  type: 'http';
++  /** 'sse' kept by the fork: the webchat probe/UI still wires legacy SSE servers. */
++  type: 'http' | 'sse';
+   url: string;
+   headers?: Record<string, string>;
+   /** See McpStdioServerConfig.plugin — same ownership marker. */
+   plugin?: string;
    instructions?: string;
 +  /** Tool allowlist — absent means every tool the server exposes. */
 +  enabledTools?: string[];
@@ -45,8 +38,51 @@ index 61e5394..bb80943 100644
 +  enabledTools?: string[];
  }
  
- export interface AdditionalMountConfig {
-@@ -46,6 +71,42 @@ export interface ContainerConfig {
+ export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
+@@ -132,9 +146,8 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
+   // (url → http, command → stdio). "streamable-http" is the Agent Plugins
+   // spelling of the internal "http".
+   const type = input.type === 'streamable-http' ? 'http' : input.type;
+-  if (type === 'sse') throw new Error('unsupported transport "sse"');
+-  if (type !== undefined && type !== 'stdio' && type !== 'http') {
+-    throw new Error('type must be "stdio", "http", or "streamable-http"');
++  if (type !== undefined && type !== 'stdio' && type !== 'http' && type !== 'sse') {
++    throw new Error('type must be "stdio", "http", "sse", or "streamable-http"');
+   }
+   if (type === 'stdio' && !command) throw new Error('type "stdio" requires command');
+   if (type === 'http' && !url) throw new Error('type "http" requires url');
+@@ -156,8 +169,19 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
+       throw new Error('url must be a valid HTTP(S) URL', { cause: err });
+     }
+     const loopback = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'].includes(parsed.hostname);
+-    if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback)) {
+-      throw new Error('url must use HTTPS (plain HTTP is allowed only for localhost and host.docker.internal)');
++    // Fork widening: plain HTTP is also allowed for private-LAN and CGNAT
++    // (Tailscale) hosts. Self-hosted tool servers on the LAN or tailnet are the
++    // NORMAL remote-MCP shape here (the live install's only remote server is
++    // http://100.x via Tailscale), and sanitizeStoredMcpServers re-parses stored
++    // entries — an HTTPS-only rule would silently drop a working server at
++    // materialization, not just refuse new ones.
++    const privateLan = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(
++      parsed.hostname,
++    );
++    if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && (loopback || privateLan))) {
++      throw new Error(
++        'url must use HTTPS (plain HTTP is allowed only for localhost, host.docker.internal, and private-LAN/tailnet hosts)',
++      );
+     }
+     if (parsed.username || parsed.password || parsed.hash) {
+       throw new Error('url must not contain credentials or fragments; use OneCLI for authentication');
+@@ -169,7 +193,7 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
+     }
+     const headers = parseStringRecord(input.headers, 'headers');
+     return {
+-      type: 'http',
++      type: type === 'sse' ? 'sse' : 'http',
+       url,
+       ...(headers === undefined ? {} : { headers }),
+       ...(instructions === undefined ? {} : { instructions }),
+@@ -251,6 +275,42 @@ export interface ContainerConfig {
    model?: string;
    effort?: string;
    timezone?: string;
@@ -89,7 +125,24 @@ index 61e5394..bb80943 100644
  }
  
  /**
-@@ -78,6 +139,10 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
+@@ -284,14 +344,10 @@ export function sanitizeStoredMcpServers(raw: unknown, groupName: string): Recor
+       validateMcpServerName(name);
+       const server = parseMcpServerConfig(entry as Record<string, unknown>);
+       const pluginRoot = (entry as Record<string, unknown>).pluginRoot;
+-      if (
+-        server.type !== 'http' &&
+-        typeof pluginRoot === 'string' &&
+-        pluginRoot.startsWith(`${CONTAINER_PLUGINS_DIR}/`)
+-      ) {
++      if (!('url' in server) && typeof pluginRoot === 'string' && pluginRoot.startsWith(`${CONTAINER_PLUGINS_DIR}/`)) {
+         server.pluginRoot = pluginRoot;
+       }
+-      if (server.type !== 'http' && server.cwd && !server.pluginRoot) {
++      if (!('url' in server) && server.cwd && !server.pluginRoot) {
+         // cwd resolves against a plugin root; without provenance nothing can
+         // resolve it. This strip is the ONLY layer (the runtime passes
+         // provenance-less servers through untouched), and the breadcrumb
+@@ -331,6 +387,10 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
      model: row.model ?? undefined,
      effort: row.effort ?? undefined,
      timezone: row.timezone && isValidTimezone(row.timezone) ? row.timezone : undefined,
@@ -100,7 +153,7 @@ index 61e5394..bb80943 100644
    };
  }
  
-@@ -93,10 +158,39 @@ export function materializeContainerJson(agentGroupId: string): ContainerConfig
+@@ -346,10 +406,39 @@ export function materializeContainerJson(agentGroupId: string): ContainerConfig
    const row = getContainerConfig(agentGroupId);
    if (!row) throw new Error(`Container config not found for agent group: ${agentGroupId}`);
  

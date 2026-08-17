@@ -772,6 +772,11 @@ export const setApprovalPrejudgeActions = settingsSetter('approval_prejudge_acti
 // One-shot "first Tailscale login becomes owner" arm flag (wizard opt-in).
 // true = the next tailscale identity to authenticate is granted owner, then the
 // flag clears. See moduleWebchatTailscaleOwner + auth.ts finalize().
+// Audit syslog forwarder target URL ('' = off). See audit-syslog.ts.
+const decodeStr = (v: unknown): string => (typeof v === 'string' ? v : '');
+export const getAuditSyslogTarget = settingsGetter('audit_syslog_target', decodeStr);
+export const setAuditSyslogTarget = settingsSetter('audit_syslog_target', (v: string) => v || null);
+
 export const getPromoteFirstTailscaleOwner = settingsGetter('promote_first_tailscale_owner', decodeBool);
 export const setPromoteFirstTailscaleOwner = settingsSetter('promote_first_tailscale_owner', encodeBool);
 

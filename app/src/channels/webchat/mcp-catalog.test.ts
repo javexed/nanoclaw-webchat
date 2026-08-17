@@ -11,7 +11,7 @@
  * publish servers *called* things like `anthropic-admin-mcp`.
  */
 import { describe, expect, it } from 'vitest';
-import { normalizeMcpRegistry, safeHttpUrl } from './server.js';
+import { normalizeMcpRegistry, safeHttpUrl } from './server/routes-mcp.js';
 
 const payload = (servers: unknown[]) => ({ servers: servers.map((server) => ({ server })) });
 
