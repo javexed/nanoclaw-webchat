@@ -53,6 +53,7 @@ import {
   deleteTemplateSource,
   deleteWebchatRoom,
   getAssignedModelForAgent,
+  getEffectiveModelForAgent,
   getTemplateSource,
   getWebchatModel,
   getWebchatRoomsForAgent,
@@ -74,7 +75,7 @@ import {
   isPlausibleAnthropicModelId,
   syncAgentProviderForAssignedModel,
   writeAgentSettingsForAssignedModel,
-  writeOpencodeModelForAgent,
+  writeLocalModelForAgent,
 } from '../models.js';
 import { probeContainerReachability } from '../reachability.js';
 import { hasAdminPrivilege, isAnyAdmin, isGlobalAdmin, isOwner } from '../roles.js';
@@ -184,13 +185,15 @@ export async function rAgentsFromTemplatePost(ctx: RouteCtx, _m: RegExpMatchArra
   // of the 400 it is (caught by the containment tests).
   try {
     // Stamping a plugin a group already carries would silently create a second
-    // agent from it. The CLI resolves that as an in-place update behind a
-    // dry-run plan; there is no UI for that plan yet, so refuse and say where
-    // the update lives rather than quietly duplicating the agent.
+    // agent from it. Updating in place is the right move instead — and it now
+    // HAS a UI (agent detail → Template → "Check for updates", which shows the
+    // dry-run plan before applying). This message used to say the update was
+    // CLI-only, which shipped in the same change as that button and sent people
+    // to a terminal for something already on screen.
     const carriers = groupsCarryingPlugin(ref);
     if (carriers.length > 0) {
       return json(res, 409, {
-        error: `Already stamped as "${carriers[0].name}". Updating a stamped agent is CLI-only for now: ncl groups create --template ${ref}`,
+        error: `Already stamped as "${carriers[0].name}". To update it, open that agent and use Template → "Check for updates".`,
       });
     }
 
@@ -512,7 +515,7 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
   // opencode/pi read it at spawn; without this the switch only takes effect
   // after the next boot convergence or model change.
   try {
-    writeOpencodeModelForAgent(group.id);
+    writeLocalModelForAgent(group.id);
   } catch (err) {
     log.warn('Webchat: wiring write after harness switch failed', { agentGroupId: group.id, err });
   }
@@ -533,10 +536,21 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
  *
  * Empty body value clears the pin (back to the SDK's own default).
  *
- * Refuses when an `anthropic`-kind webchat model is assigned to the group. That
- * assignment sets ANTHROPIC_MODEL in the group's settings.json env, and the SDK's
- * explicit `model` option overrides the env var — so having both would silently
- * ignore the assignment. Better to make the operator pick one lever.
+ * Refuses when an `anthropic`-kind webchat model is EFFECTIVE for the group —
+ * assigned to it, or inherited from the workspace default. Either way that model
+ * sets ANTHROPIC_MODEL in the group's settings.json env, and the SDK's explicit
+ * `model` option overrides the env var, so accepting a pin would silently ignore
+ * the model the operator can see in the UI. Better to make them pick one lever.
+ *
+ * The inherited case was the gap (#112 follow-up): the check read the ASSIGNED
+ * model only, so an UNASSIGNED agent running on an anthropic-kind workspace
+ * default accepted a pin and then quietly ignored it. Same precedence bug, one
+ * layer up — and the harder one to notice, because nothing on the agent names
+ * the model it inherited.
+ *
+ * The two cases get different messages because the fix differs: an assignment is
+ * unassigned on the agent, a default is changed for the whole workspace (or
+ * overridden by assigning this agent its own model).
  */
 export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
@@ -561,6 +575,17 @@ export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): 
     return json(res, 409, {
       error: `This agent is assigned the webchat model "${assigned.name}", which already sets its Anthropic model. Unassign it first, or change the model there instead.`,
     });
+  }
+  // Unassigned agents inherit the workspace default, which sets the same env
+  // var and wins the same way. Only reachable when there is no assignment —
+  // the branch above already covers that case with its own wording.
+  if (model && !assigned) {
+    const inherited = getEffectiveModelForAgent(group.id);
+    if (inherited && inherited.kind === 'anthropic') {
+      return json(res, 409, {
+        error: `This agent inherits the workspace default model "${inherited.name}", which already sets its Anthropic model. Assign this agent its own model, or change the workspace default instead.`,
+      });
+    }
   }
   ensureContainerConfig(group.id);
   updateContainerConfigScalars(group.id, { model: model || null });
