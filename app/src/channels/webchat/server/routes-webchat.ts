@@ -9,7 +9,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 
 import { json, readJsonBody } from './http.js';
-import { audit } from '../../../audit.js';
+import { audit, readAuditEvents, readAuditFacets } from '../../../audit.js';
 import { configureSyslog, getSyslogStatus, parseSyslogTarget } from '../audit-syslog.js';
 import { fleetIsolationEnabled } from '../../../modules/fleet-isolation/index.js';
 import {
@@ -196,6 +196,30 @@ export async function rWebchatTailscaleOwner(ctx: RouteCtx, _m: RegExpMatchArray
 // and once after (delivered to the new sink, so the new collector's record
 // starts with its own provenance). Without this, the first move of a
 // compromised owner session is to silently repoint the forwarder.
+/**
+ * Read the audit log back. Same reader-side posture as the syslog config next
+ * door — owner or global admin — because these lines name who did what, and a
+ * scoped admin has no business reading the whole workspace's history.
+ *
+ * Read-only by construction: there is no write path here, and no route that
+ * edits or truncates the log. An audit trail an operator can rewrite from the
+ * UI is not an audit trail.
+ */
+export async function rWebchatAuditLog(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res, url, userId } = ctx;
+  if (!(isOwner(userId) || isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
+  const q = url.searchParams;
+  const num = Number(q.get('limit'));
+  const page = readAuditEvents({
+    limit: Number.isFinite(num) && num > 0 ? num : 50,
+    type: q.get('type') || undefined,
+    effect: q.get('effect') || undefined,
+    actor: q.get('actor') || undefined,
+    beforeTs: q.get('beforeTs') || undefined,
+  });
+  return json(res, 200, { ...page, facets: readAuditFacets() });
+}
+
 export async function rWebchatAuditSyslog(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
   const canEdit = isOwner(userId) || isGlobalAdmin(userId);

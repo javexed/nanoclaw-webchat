@@ -70,6 +70,18 @@ import {
   rAgentsGet,
   rAgentsDraftPost,
   rAgentsPost,
+  rAgentsFromTemplatePost,
+  rAgentExportTemplatePost,
+  rAgentTemplateApplyPost,
+  rAgentTemplatePlanGet,
+  rTemplateDelete,
+  rTemplateDetailGet,
+  rTemplateFetchPost,
+  rTemplateSourceBrowseGet,
+  rTemplateSourceDelete,
+  rTemplateSourcePost,
+  rTemplateSourcesGet,
+  rTemplatesGet,
   rAgentPut,
   rAgentDelete,
   rAgentRoomsGet,
@@ -287,6 +299,7 @@ import {
   rWebchatCredentialsConfig,
   rWebchatOnboarding,
   rWebchatFeatures,
+  rWebchatAuditLog,
   rWebchatAuditSyslog,
   rWebchatTailscaleOwner,
   rWebchatTailscaleHttps,
@@ -638,6 +651,7 @@ import {
 } from './stt.js';
 import { canAccessRoom, canArchiveRoom, filterRoomsForUser } from './access.js';
 import { canAccessAgentGroup } from '../../modules/permissions/access.js';
+import { audit, auditActor } from '../../audit.js';
 import { configureSyslog } from './audit-syslog.js';
 import {
   getRoomOauthAllowed,
@@ -1170,7 +1184,27 @@ async function handleHttp(
       if (g === 'owner' && !isOwner(userId)) return json(res, 403, { error: 'Owner only' });
       if (g === 'anyAdmin' && !isAnyAdmin(userId)) return json(res, 403, { error: 'Admin privilege required' });
     }
-    return r.h({ req, res, url, method, userId, senderIdentity, hooks }, m);
+    if (!r.audit) return r.h({ req, res, url, method, userId, senderIdentity, hooks }, m);
+    // Audited routes are awaited so the recorded outcome is the real one.
+    // try/finally, not a happy path: a handler that throws still performed an
+    // attempt, and "the request that blew up" is precisely the line someone
+    // will be looking for later.
+    try {
+      await r.h({ req, res, url, method, userId, senderIdentity, hooks }, m);
+    } finally {
+      audit({
+        type: r.audit,
+        actor: auditActor({ kind: 'human', userId }),
+        action: `${method} ${url.pathname}`,
+        effect: res.statusCode >= 400 ? 'failed' : 'ok',
+        // Identifiers only — the captured path segment (room id, model id,
+        // user id) and the status. Never the body: request payloads carry
+        // message text, tokens and env values, and audit.ts is explicit that
+        // a log which hoards secrets becomes the thing you leak.
+        detail: { status: res.statusCode, ...(m[1] ? { id: m[1] } : {}) },
+      });
+    }
+    return;
   }
 
   // The engaged-agents routes stay inline (not in API_ROUTES): while the
@@ -1263,9 +1297,32 @@ interface ApiRoute {
   path: string | RegExp; // string = exact url.pathname match
   guards?: RouteGuard[]; // applied IN ORDER before the handler
   h: (ctx: RouteCtx, m: RegExpMatchArray) => void | Promise<void>;
+  /**
+   * Record this route in the audit log under this dotted kind.
+   *
+   * Declared on the ROUTE rather than called from inside each handler. Twelve
+   * scattered audit() calls would be twelve chances to forget one, to record a
+   * different shape, or to emit before knowing whether the thing succeeded —
+   * and a handler that quietly stops emitting is exactly the failure an audit
+   * trail cannot afford. Here it is one line per route, and the dispatcher
+   * below reports the real outcome because it emits after the handler has run.
+   *
+   * Not every privileged route is listed. The bar is audit.ts's own: would
+   * this line answer a "who did what" question during an incident? Probes,
+   * discovery and progress polls are privileged but say nothing after the
+   * fact, and burying the twelve that matter under them helps nobody.
+   */
+  audit?: string;
 }
 
 const RE_ROOM_ID = /^\/api\/rooms\/([^/]+)$/;
+// Parameterised paths must be RegExp: a STRING path is compared with `===`,
+// so a pattern written as a string silently never matches (404).
+const RE_AGENT_EXPORT_TEMPLATE = /^\/api\/agents\/([^/]+)\/export-template$/;
+const RE_AGENT_TEMPLATE = /^\/api\/agents\/([^/]+)\/template$/;
+const RE_AGENT_TEMPLATE_APPLY = /^\/api\/agents\/([^/]+)\/template\/apply$/;
+const RE_TEMPLATE_SOURCE_BROWSE = /^\/api\/template-sources\/([^/]+)\/browse$/;
+const RE_TEMPLATE_SOURCE = /^\/api\/template-sources\/([^/]+)$/;
 const RE_ROOM_AGENTS = /^\/api\/rooms\/([^/]+)\/agents$/;
 const RE_ROOM_MENTIONABLE = /^\/api\/rooms\/([^/]+)\/mentionable$/;
 const RE_ROOM_CRED_MODE = /^\/api\/rooms\/([^/]+)\/credential-mode$/;
@@ -2051,8 +2108,53 @@ async function rScopedSkillContent(ctx: RouteCtx, m: RegExpMatchArray): Promise<
  * install composed before the provenance stamp existed has no stamp, and a
  * partial answer is far more useful than a 500.
  */
+/**
+ * Compare the payload on disk against the fingerprint install.sh stamped.
+ *
+ * Answers the question the old `dirty` flag only appeared to: has anything in
+ * this install changed since it was composed? Hand-copying a single file into
+ * a running tree is a real and easy thing to do — it is how you ship a fix
+ * ahead of a merge — and the failure mode is that the install quietly stops
+ * being any released version, with nothing on screen saying so.
+ *
+ * Reports the count checked alongside the drift so "nothing changed" and
+ * "nothing was checked" cannot be confused: a missing stamp returns null and
+ * About says the install predates the check, rather than claiming it is clean.
+ *
+ * Cost is bounded by the payload (the overlay plus patch targets, a few
+ * hundred small files), not the tree, and it runs only when About is opened.
+ */
+export function checkComposition(root: string): { checked: number; drifted: string[]; matches: boolean } | null {
+  let stamp: { files?: Record<string, string> };
+  try {
+    stamp = JSON.parse(fs.readFileSync(path.join(root, '.webchat-payload.json'), 'utf8')) as typeof stamp;
+  } catch {
+    return null; // composed before this existed, or a tarball install
+  }
+  const files = stamp.files;
+  if (!files || typeof files !== 'object') return null;
+
+  const drifted: string[] = [];
+  let checked = 0;
+  for (const [rel, want] of Object.entries(files)) {
+    checked++;
+    try {
+      const got = createHash('sha256')
+        .update(fs.readFileSync(path.join(root, rel)))
+        .digest('hex');
+      if (got !== want) drifted.push(rel);
+    } catch {
+      drifted.push(rel); // gone is a form of changed, and the more alarming one
+    }
+  }
+  drifted.sort();
+  return { checked, drifted, matches: drifted.length === 0 };
+}
+
 export function collectVersions(root = process.cwd()): {
-  nanoclaw: { version: string | null; commit: string | null; dirty: boolean | null };
+  nanoclaw: { version: string | null; commit: string | null };
+  /** Does the payload on disk still match what the composition wrote? */
+  composition: { checked: number; drifted: string[]; matches: boolean } | null;
   webchat: {
     ref: string | null;
     dirty: boolean | null;
@@ -2077,20 +2179,24 @@ export function collectVersions(root = process.cwd()): {
   const comps = readJson('versions.json') ?? {};
 
   let commit: string | null = null;
-  let dirty: boolean | null = null;
   try {
     commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, timeout: 3000 }).toString().trim() || null;
-    dirty = execFileSync('git', ['status', '--porcelain'], { cwd: root, timeout: 3000 }).toString().trim().length > 0;
   } catch {
     /* not a git checkout, or git is absent — both fine */
   }
+  // `git status` used to ride along here as `dirty`. It was true on every
+  // install that ever worked — the composed tree carries the overlay and every
+  // patch, so it is modified by construction — which made it a constant
+  // wearing a warning's clothes. What an operator actually wants to know is
+  // whether the payload still matches the release, and that is below.
 
   const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
   const components: Record<string, string> = {};
   for (const [k, v] of Object.entries(comps)) if (typeof v === 'string') components[k] = v;
 
   return {
-    nanoclaw: { version: str(pkg?.version), commit, dirty },
+    nanoclaw: { version: str(pkg?.version), commit },
+    composition: checkComposition(root),
     webchat: prov
       ? {
           ref: str(prov.webchatRef),
@@ -2918,7 +3024,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/overview', h: rOverviewGet },
   { method: 'GET', path: '/api/rooms', h: rRoomsGet },
   { method: 'POST', path: '/api/rooms', guards: ['csrf', 'owner'], h: rRoomsPost },
-  { method: 'DELETE', path: RE_ROOM_ID, guards: ['owner', 'csrf'], h: rRoomIdDelete },
+  { method: 'DELETE', path: RE_ROOM_ID, guards: ['owner', 'csrf'], h: rRoomIdDelete, audit: 'room.delete' },
   { method: 'GET', path: RE_ROOM_AGENTS, h: rRoomAgentsGet },
   { method: 'GET', path: RE_ROOM_MENTIONABLE, h: rRoomMentionableGet },
   { method: 'POST', path: RE_ROOM_AGENTS, guards: ['csrf'], h: rRoomAgentsPost },
@@ -2945,6 +3051,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: '/api/models/context-variant', guards: ['csrf', 'owner'], h: rModelsContextVariantPost },
   { method: ['GET', 'PUT'], path: '/api/webchat/tailscale-owner', h: rWebchatTailscaleOwner },
   { method: ['GET', 'PUT'], path: '/api/webchat/audit-syslog', h: rWebchatAuditSyslog },
+  { method: 'GET', path: '/api/webchat/audit-log', h: rWebchatAuditLog },
   { method: ['GET', 'POST'], path: '/api/webchat/tailscale-https', h: rWebchatTailscaleHttps },
   { method: 'GET', path: '/api/webchat/cloudflared', h: rWebchatCloudflaredGet },
   { method: 'POST', path: '/api/webchat/cloudflared/install', guards: ['csrf'], h: rWebchatCloudflaredInstallPost },
@@ -2976,6 +3083,22 @@ const API_ROUTES: ApiRoute[] = [
   // (which would otherwise match 'draft' as an id) AND before the bare
   // /api/agents POST so the literal-path handlers stay distinct.
   { method: 'POST', path: '/api/agents/draft', h: rAgentsDraftPost },
+  { method: 'POST', path: RE_AGENT_EXPORT_TEMPLATE, guards: ['csrf'], h: rAgentExportTemplatePost },
+  { method: 'GET', path: RE_AGENT_TEMPLATE, h: rAgentTemplatePlanGet },
+  { method: 'POST', path: RE_AGENT_TEMPLATE_APPLY, guards: ['csrf'], h: rAgentTemplateApplyPost },
+  { method: 'GET', path: '/api/templates', h: rTemplatesGet },
+  // `detail` and `fetch` are literal segments and must precede nothing here —
+  // /api/templates takes no :id pattern — but they stay adjacent for clarity.
+  { method: 'GET', path: '/api/templates/detail', h: rTemplateDetailGet },
+  { method: 'DELETE', path: '/api/templates', guards: ['csrf'], h: rTemplateDelete },
+  { method: 'POST', path: '/api/templates/fetch', guards: ['csrf'], h: rTemplateFetchPost },
+  { method: 'GET', path: '/api/template-sources', h: rTemplateSourcesGet },
+  { method: 'POST', path: '/api/template-sources', guards: ['csrf'], h: rTemplateSourcePost },
+  { method: 'GET', path: RE_TEMPLATE_SOURCE_BROWSE, h: rTemplateSourceBrowseGet },
+  { method: 'DELETE', path: RE_TEMPLATE_SOURCE, guards: ['csrf'], h: rTemplateSourceDelete },
+  // Literal path — must precede the /api/agents/:id patterns, which would
+  // otherwise match 'from-template' as an agent id.
+  { method: 'POST', path: '/api/agents/from-template', guards: ['csrf'], h: rAgentsFromTemplatePost },
   { method: 'POST', path: '/api/agents', guards: ['csrf'], h: rAgentsPost },
   { method: 'PUT', path: RE_AGENT, h: rAgentPut },
   { method: 'DELETE', path: RE_AGENT, h: rAgentDelete },
@@ -2988,7 +3111,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'PUT', path: RE_AGENT_EGRESS, h: rAgentEgressPut },
   { method: ['GET', 'PUT', 'DELETE'], path: RE_AGENT_ENV, h: rAgentEnv },
   { method: 'GET', path: '/api/mcp-servers', guards: ['anyAdmin'], h: rMcpServersGet },
-  { method: 'POST', path: '/api/mcp-servers', guards: ['csrf', 'anyAdmin'], h: rMcpServersPost },
+  { method: 'POST', path: '/api/mcp-servers', guards: ['csrf', 'anyAdmin'], h: rMcpServersPost, audit: 'mcp.create' },
   { method: 'GET', path: '/api/mcp-sources', guards: ['anyAdmin'], h: rMcpSourcesGet },
   { method: 'PUT', path: RE_MCP_SOURCE, h: rMcpSourcePut },
   { method: 'DELETE', path: RE_MCP_SOURCE, h: rMcpSourceDelete },
@@ -3000,8 +3123,8 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: RE_MCP_REPIN, guards: ['anyAdmin', 'csrf'], h: rMcpRepinPost },
   { method: 'PUT', path: RE_MCP_TOOLS, guards: ['anyAdmin', 'csrf'], h: rMcpToolsPut },
   { method: 'PUT', path: RE_MCP_AUTH, h: rMcpAuthPut },
-  { method: 'PUT', path: RE_MCP_SERVER_ID, guards: ['owner', 'csrf'], h: rMcpServerIdPut },
-  { method: 'DELETE', path: RE_MCP_SERVER_ID, guards: ['owner', 'csrf'], h: rMcpServerIdDelete },
+  { method: 'PUT', path: RE_MCP_SERVER_ID, guards: ['owner', 'csrf'], h: rMcpServerIdPut, audit: 'mcp.update' },
+  { method: 'DELETE', path: RE_MCP_SERVER_ID, guards: ['owner', 'csrf'], h: rMcpServerIdDelete, audit: 'mcp.delete' },
   { method: ['GET', 'PUT'], path: RE_AGENT_MCP, h: rAgentMcp },
   { method: 'GET', path: '/api/skills', guards: ['anyAdmin'], h: rSkillsGet },
   { method: 'POST', path: '/api/skills/import', h: rSkillsImportPost },
@@ -3025,9 +3148,21 @@ const API_ROUTES: ApiRoute[] = [
   // reconnaissance, and this install now hides every other owner-only surface
   // from non-owners. Consistency beats a marginal convenience here.
   { method: 'GET', path: '/api/system/versions', guards: ['anyAdmin'], h: rSystemVersionsGet },
-  { method: 'GET', path: '/api/system/export', guards: ['owner'], h: rSystemExportGet },
-  { method: 'POST', path: '/api/system/import', guards: ['owner', 'csrf'], h: rSystemImportPost },
-  { method: 'POST', path: '/api/system/import/apply', guards: ['owner', 'csrf'], h: rSystemImportApplyPost },
+  { method: 'GET', path: '/api/system/export', guards: ['owner'], h: rSystemExportGet, audit: 'system.export' },
+  {
+    method: 'POST',
+    path: '/api/system/import',
+    guards: ['owner', 'csrf'],
+    h: rSystemImportPost,
+    audit: 'system.import',
+  },
+  {
+    method: 'POST',
+    path: '/api/system/import/apply',
+    guards: ['owner', 'csrf'],
+    h: rSystemImportApplyPost,
+    audit: 'system.restore',
+  },
   { method: 'GET', path: RE_ROOM_EXPORT, h: rRoomExportGet },
   { method: 'POST', path: '/api/rooms/import', h: rRoomsImportPost },
   { method: 'POST', path: '/api/rooms/import/apply', h: rRoomsImportApplyPost },
@@ -3072,7 +3207,13 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/ollama/prepull', guards: ['owner'], h: rOllamaPrepullGet },
   { method: 'POST', path: '/api/ollama/pull', guards: ['csrf', 'owner'], h: rOllamaPullPost },
   { method: 'POST', path: '/api/ollama/pull/cancel', guards: ['csrf', 'owner'], h: rOllamaPullCancelPost },
-  { method: 'POST', path: '/api/ollama/delete', guards: ['csrf', 'owner'], h: rOllamaDeletePost },
+  {
+    method: 'POST',
+    path: '/api/ollama/delete',
+    guards: ['csrf', 'owner'],
+    h: rOllamaDeletePost,
+    audit: 'model.files.delete',
+  },
   { method: 'GET', path: '/api/router/roster-refresh', guards: ['owner'], h: rRouterRosterRefreshGet },
   { method: 'POST', path: '/api/router/roster-refresh', guards: ['csrf', 'owner'], h: rRouterRosterRefreshPost },
   { method: 'GET', path: '/api/webchat/tts/install', guards: ['owner'], h: rWebchatTtsInstallGet },
@@ -3097,20 +3238,26 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: '/api/router/install', guards: ['csrf', 'owner'], h: rRouterInstallPost },
   { method: 'GET', path: '/api/router/litellm-install', guards: ['owner'], h: rRouterLitellmInstallGet },
   { method: 'POST', path: '/api/router/litellm-install', guards: ['csrf', 'owner'], h: rRouterLitellmInstallPost },
-  { method: 'POST', path: '/api/models', guards: ['csrf', 'owner'], h: rModelsPost },
+  { method: 'POST', path: '/api/models', guards: ['csrf', 'owner'], h: rModelsPost, audit: 'model.create' },
   { method: 'GET', path: '/api/models/known', h: rModelsKnownGet },
   { method: 'POST', path: '/api/models/discover', guards: ['csrf', 'owner'], h: rModelsDiscoverPost },
   { method: 'POST', path: '/api/models/probe', guards: ['csrf', 'owner'], h: rModelsProbePost },
   { method: 'POST', path: '/api/models/reachability', guards: ['csrf', 'owner'], h: rModelsReachabilityPost },
   { method: 'POST', path: '/api/models/bulk', guards: ['csrf', 'owner'], h: rModelsBulkPost },
   { method: 'PUT', path: RE_MODEL_ID, guards: ['owner', 'csrf'], h: rModelIdPut },
-  { method: 'DELETE', path: RE_MODEL_ID, guards: ['owner', 'csrf'], h: rModelIdDelete },
+  { method: 'DELETE', path: RE_MODEL_ID, guards: ['owner', 'csrf'], h: rModelIdDelete, audit: 'model.delete' },
   { method: 'GET', path: '/api/approvals/pending', h: rApprovalsPendingGet },
   { method: 'GET', path: '/api/approvals/prejudge', guards: ['owner'], h: rApprovalPrejudgeGet },
-  { method: 'PUT', path: '/api/approvals/prejudge', guards: ['csrf', 'owner'], h: rApprovalPrejudgePut },
+  {
+    method: 'PUT',
+    path: '/api/approvals/prejudge',
+    guards: ['csrf', 'owner'],
+    h: rApprovalPrejudgePut,
+    audit: 'policy.prejudge',
+  },
   { method: 'POST', path: RE_APPROVE, guards: ['csrf'], h: rApprovePost },
   { method: 'GET', path: '/api/users', h: rUsersGet },
-  { method: 'DELETE', path: RE_USER_ID, guards: ['csrf', 'owner'], h: rUserIdDelete },
+  { method: 'DELETE', path: RE_USER_ID, guards: ['csrf', 'owner'], h: rUserIdDelete, audit: 'user.delete' },
   { method: 'POST', path: '/api/permissions/grant', guards: ['csrf'], h: rPermissionsGrantPost },
   { method: 'POST', path: '/api/permissions/revoke', guards: ['csrf'], h: rPermissionsRevokePost },
   { method: 'GET', path: '/api/push/vapid-public', h: rPushVapidPublicGet },

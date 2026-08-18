@@ -1,8 +1,8 @@
-diff --git a/container/agent-runner/src/mcp-tools/server.ts b/container/agent-runner/src/mcp-tools/server.ts
-index 3df45ed2..293b1955 100644
---- a/container/agent-runner/src/mcp-tools/server.ts
-+++ b/container/agent-runner/src/mcp-tools/server.ts
-@@ -23,6 +23,15 @@ const toolMap = new Map<string, McpToolDefinition>();
+diff --git c/container/agent-runner/src/mcp-tools/server.ts w/container/agent-runner/src/mcp-tools/server.ts
+index 78e677a5..2d3017a9 100644
+--- c/container/agent-runner/src/mcp-tools/server.ts
++++ w/container/agent-runner/src/mcp-tools/server.ts
+@@ -30,6 +30,15 @@ const toolMap = new Map<string, McpToolDefinition>();
  
  export function registerTools(tools: McpToolDefinition[]): void {
    for (const t of tools) {
@@ -18,7 +18,7 @@ index 3df45ed2..293b1955 100644
      if (toolMap.has(t.tool.name)) {
        log(`Warning: tool "${t.tool.name}" already registered, skipping duplicate`);
        continue;
-@@ -32,6 +41,11 @@ export function registerTools(tools: McpToolDefinition[]): void {
+@@ -122,6 +131,11 @@ export function extendTool(name: string, extension: ToolExtension): void {
    }
  }
  

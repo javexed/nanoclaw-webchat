@@ -1,5 +1,5 @@
 diff --git a/.claude/skills/customize/SKILL.md b/.claude/skills/customize/SKILL.md
-index 28e8f609..15c0da5a 100644
+index 9897adf1..c4b55489 100644
 --- a/.claude/skills/customize/SKILL.md
 +++ b/.claude/skills/customize/SKILL.md
 @@ -14,7 +14,7 @@ This skill helps users add capabilities or modify behavior. Use AskUserQuestion
@@ -8,6 +8,6 @@ index 28e8f609..15c0da5a 100644
     - Container directory access: `/manage-mounts`.
 -   - Agent providers (non-default): `/add-opencode`, `/add-codex`, `/add-ollama-provider`.
 +   - Agent providers (non-default): `/add-codex`, `/add-ollama-provider`.
-    - Integrations as MCP tools: `/add-gmail-tool`, `/add-gcal-tool`, `/add-ollama-tool`, etc.
+    - MCP tools: `/add-ollama-tool`, `/add-atomic-chat-tool`.
  3. **Plan the changes** — Identify the v2 surface the change belongs to (entity model in the central DB, per-agent-group container config, per-group `CLAUDE.md`, or core code).
  4. **Implement** — Make the change on the right surface.

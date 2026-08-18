@@ -1128,3 +1128,67 @@ export const moduleWebchatAuditSyslog: Migration = {
     }
   },
 };
+
+/**
+ * Approval triage record (fork): what the pre-judge concluded about ONE
+ * approval, so the card can explain why it is asking.
+ *
+ * A separate table rather than columns on the approval row, because
+ * `pending_approvals` is upstream's and this is fork-owned description. Keyed
+ * by approval_id, written once when the hold is created and read when the card
+ * is built — including on a later re-render, which is why this is a row and not
+ * an in-memory map.
+ *
+ * `tier` distinguishes unscreened / heuristic / model / unavailable: once the
+ * card shows flag chips, an ABSENCE of chips must never be read as "screened,
+ * nothing found". `flags` are the model's claims, `heuristic_flags` the
+ * deterministic never-list ones — kept apart so the card can show a
+ * disagreement between them.
+ */
+export const moduleWebchatApprovalTriage: Migration = {
+  version: 209,
+  name: 'webchat-approval-triage',
+  up(db: Database.Database) {
+    db.exec(`CREATE TABLE IF NOT EXISTS webchat_approval_triage (
+      approval_id     TEXT PRIMARY KEY,
+      tier            TEXT NOT NULL,
+      reason          TEXT NOT NULL DEFAULT '',
+      flags           TEXT NOT NULL DEFAULT '[]',
+      heuristic_flags TEXT NOT NULL DEFAULT '[]',
+      reversible      TEXT NOT NULL DEFAULT 'unknown',
+      created_at      INTEGER NOT NULL
+    )`);
+  },
+};
+
+/**
+ * Template sources (fork): browsable GitHub repos the operator can fetch agent
+ * templates from, mirroring webchat_skill_sources.
+ *
+ * Upstream's registry URL is a fixed constant in setup/templates.ts, reachable
+ * only from the wizard. A LIST makes the useful case possible — your own
+ * template repo, public or private — which is what closes the loop with
+ * exporting an agent as a template.
+ *
+ * Seeded with the public registry as official=1. Operator-added rows are
+ * always community (official=0), same contract as skill sources.
+ */
+export const moduleWebchatTemplateSources: Migration = {
+  version: 210,
+  name: 'webchat-template-sources',
+  up(db: Database.Database) {
+    db.exec(`CREATE TABLE IF NOT EXISTS webchat_template_sources (
+      id         TEXT PRIMARY KEY,
+      label      TEXT NOT NULL,
+      owner      TEXT NOT NULL,
+      repo       TEXT NOT NULL,
+      branch     TEXT NOT NULL DEFAULT 'main',
+      official   INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    )`);
+    db.prepare(
+      `INSERT OR IGNORE INTO webchat_template_sources (id, label, owner, repo, branch, official, created_at)
+       VALUES ('nanoclaw-templates', 'NanoClaw templates', 'nanocoai', 'nanoclaw-templates', 'main', 1, ?)`,
+    ).run(Date.now());
+  },
+};

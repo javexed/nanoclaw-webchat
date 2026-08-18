@@ -48,6 +48,7 @@ import { ensureTurn, removeTurn } from './thinking.js';
 import { thinkingTurns, turnFor } from './transcript-state.js';
 import { closeMcpDetail, fetchMcpServers, renderAgentMcp, renderMcpServers, setAgentMcp, syncMcpCreateTransportFields } from './mcp.js';
 import { renderAgentSkills, renderRoomSkills } from './skills.js';
+import { renderAgentTemplateRow } from './agent-templates.js';
 import { closeAttachPicker, openAttachPicker } from './files.js';
 import { closeRoomDetail } from './rooms.js';
 
@@ -358,6 +359,10 @@ export async function openAgentDetail(id?: any) {
 
   setAgentStatusControl(agent.status);
   setAgentHarnessControl(agent.provider);
+
+  // Template origin + update check. Fire-and-forget: it hides its own row when
+  // the agent was not stamped, so it never blocks the rest of the detail view.
+  void renderAgentTemplateRow(agent.id);
   setAgentEgressControl(agent.egress);
   void renderAgentEnv(id);
 

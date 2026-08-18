@@ -15,11 +15,12 @@
  * exists to keep out.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { createHash } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { collectVersions } from './server.js';
+import { checkComposition, collectVersions } from './server.js';
 
 let root: string;
 
@@ -99,5 +100,37 @@ describe('collectVersions', () => {
     write('versions.json', { 'onecli-cli': '2.2.5', nested: { secret: 'x' }, n: 3 });
     const v = collectVersions(root);
     expect(v.components).toEqual({ 'onecli-cli': '2.2.5' });
+  });
+});
+
+describe('checkComposition', () => {
+  const stamp = (root: string, files: Record<string, string>) =>
+    fs.writeFileSync(path.join(root, '.webchat-payload.json'), JSON.stringify({ algorithm: 'sha256', files }));
+  const sha = (text: string) => createHash('sha256').update(Buffer.from(text)).digest('hex');
+
+  it('reports a match when every payload file is untouched', () => {
+    fs.writeFileSync(path.join(root, 'a.txt'), 'one');
+    fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'sub/b.txt'), 'two');
+    stamp(root, { 'a.txt': sha('one'), 'sub/b.txt': sha('two') });
+    expect(checkComposition(root)).toEqual({ checked: 2, drifted: [], matches: true });
+  });
+
+  it('names an edited file, and counts a deleted one as drift', () => {
+    // The two ways a live tree actually stops matching its release: someone
+    // hand-copies a fixed file in, or something removes one.
+    fs.writeFileSync(path.join(root, 'a.txt'), 'one');
+    fs.writeFileSync(path.join(root, 'b.txt'), 'two');
+    stamp(root, { 'a.txt': sha('one'), 'b.txt': sha('two'), 'gone.txt': sha('three') });
+    fs.writeFileSync(path.join(root, 'b.txt'), 'two-modified');
+    const r = checkComposition(root)!;
+    expect(r.matches).toBe(false);
+    expect(r.checked).toBe(3);
+    expect(r.drifted).toEqual(['b.txt', 'gone.txt']);
+  });
+
+  it('is null without a stamp, so "not checked" cannot read as "clean"', () => {
+    // An install composed before this existed must not claim to be verified.
+    expect(checkComposition(root)).toBeNull();
   });
 });

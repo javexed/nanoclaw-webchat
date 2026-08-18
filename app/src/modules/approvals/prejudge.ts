@@ -30,7 +30,9 @@
 import {
   getApprovalPrejudgeActions,
   getApprovalPrejudgeModelId,
+  getApprovalTriage,
   getWebchatModel,
+  storeApprovalTriage,
   type WebchatModel,
 } from '../../channels/webchat/db.js';
 import { anthropicMessagesViaOneCLI, type AnthropicMessagesCall } from '../../channels/webchat/drafter.js';
@@ -83,6 +85,86 @@ export function isNeverAutoApprovable(action: string, payloadJson: string): bool
   return NEVER_AUTO_APPROVE_PATTERNS.some((re) => re.test(payloadJson));
 }
 
+// ── Triage flags ──
+//
+// A CLOSED vocabulary of checkable claims ABOUT the request — deliberately not
+// a self-assessment. This design already refuses to let the model withhold a
+// human review (there is no auto-deny, see the header); a "risk: low /
+// confidence: 0.92" chip would ask the approver to trust that same model to
+// REASSURE them instead, with no fail-safe behind it. Self-reported confidence
+// is also poorly calibrated — especially in the small local models this feature
+// targets — and a precise-looking number invites clicking through the one card
+// whose entire purpose is to make a human look.
+//
+// A claim like "touches credentials" is different in kind: the payload renders
+// directly beneath it, so a wrong claim is visibly wrong. Wrong claims are
+// self-correcting; a wrong confidence score is not.
+//
+// CLOSED because these land in stored rows and are compared across requests.
+// Values outside the vocabulary are DROPPED, never rendered — a model inventing
+// a confident-sounding category is precisely what must not reach the card.
+export const TRIAGE_FLAGS = [
+  'credentials', // reads, writes, or rotates a secret
+  'permissions', // changes a role, scope, or access grant
+  'install', // adds or changes software / dependencies
+  'capability', // grants the agent a new tool or endpoint
+  'destructive', // deletes or overwrites data
+  'irreversible', // cannot be undone by a later action
+  'outbound', // sends data off-box
+  'bulk', // affects many objects or users at once
+] as const;
+export type TriageFlag = (typeof TRIAGE_FLAGS)[number];
+const TRIAGE_FLAG_SET: ReadonlySet<string> = new Set(TRIAGE_FLAGS);
+
+/**
+ * Which tier produced this result. Meaningful here precisely because the
+ * judgment completes BEFORE the card exists, so a card cannot stream a verdict
+ * in the way a live-grading UI would.
+ *
+ *   unscreened  — no judgment was made (feature off, action not opted in, or
+ *                 the approval targets a named approver). Rendered EXPLICITLY:
+ *                 once chips exist, an absence of chips must never be read as
+ *                 "screened, nothing found".
+ *   heuristic   — the deterministic never-list decided; no model was consulted.
+ *   model       — the triage model was consulted.
+ *   unavailable — screening was wanted but could not run (model missing or
+ *                 erroring). Also distinct from "screened and clean".
+ */
+export type TriageTier = 'unscreened' | 'heuristic' | 'model' | 'unavailable';
+
+/**
+ * Flags derivable WITHOUT a model, straight from the never-list that already
+ * governs this request. Always trustworthy and always computed — so even an
+ * unscreened card still shows what the never-list knows about it.
+ *
+ * Kept in step with NEVER_AUTO_APPROVE_* above: every entry there maps to a
+ * flag here, and a test asserts the two never drift apart.
+ */
+export function heuristicFlags(action: string, payloadJson: string): TriageFlag[] {
+  const out = new Set<TriageFlag>();
+  if (action === 'onecli_credential') out.add('credentials');
+  if (action === 'install_packages') out.add('install');
+  if (action === 'add_mcp_server') out.add('capability');
+  if (/\bcli_scope\b/i.test(payloadJson)) out.add('permissions');
+  if (/\broles\s+(grant|revoke)\b/i.test(payloadJson)) out.add('permissions');
+  if (/\bconfig\s+(add|remove)-package\b/i.test(payloadJson)) out.add('install');
+  if (/\bconfig\s+(add|remove)-mcp-server\b/i.test(payloadJson)) out.add('capability');
+  if (/\bconfig\s+update\b/i.test(payloadJson)) out.add('capability');
+  return [...out];
+}
+
+/** Validate model-proposed flags against the closed vocabulary. */
+export function parseFlags(raw: unknown): TriageFlag[] {
+  if (!Array.isArray(raw)) return [];
+  const out = new Set<TriageFlag>();
+  for (const item of raw) {
+    if (typeof item !== 'string') continue;
+    const key = item.trim().toLowerCase();
+    if (TRIAGE_FLAG_SET.has(key)) out.add(key as TriageFlag);
+  }
+  return [...out];
+}
+
 // ── Prompt redaction ──
 // Reuse the webchat redaction layer (redact.ts) and supplement the few
 // agent-runner redactSecrets patterns it lacks (container/agent-runner/src/
@@ -118,8 +200,22 @@ export const PREJUDGE_RUBRIC = [
   '- Respond approve ONLY when the request is clearly routine and easily reversible.',
   '- You cannot reject a request. A human reviews everything you do not approve, so escalate is always safe.',
   '',
+  // Flags describe the REQUEST, they do not grade your own certainty. Do not
+  // ask this model for a risk level or a confidence score — see TRIAGE_FLAGS.
+  'Also label what the request touches, using ONLY these words:',
+  '  credentials  — reads, writes, or rotates a secret',
+  '  permissions  — changes a role, scope, or access grant',
+  '  install      — adds or changes software or dependencies',
+  '  capability   — grants the agent a new tool or endpoint',
+  '  destructive  — deletes or overwrites data',
+  '  irreversible — cannot be undone by a later action',
+  '  outbound     — sends data off this machine',
+  '  bulk         — affects many objects or users at once',
+  'Use only words from that list, only when they clearly apply, and [] when none do.',
+  'These describe the request itself — a human checks them against the payload, so do not guess.',
+  '',
   'Respond with ONLY a JSON object — no prose, no code fences:',
-  '{"verdict":"approve","reason":"<one short sentence>"} or {"verdict":"escalate","reason":"<one short sentence>"}',
+  '{"verdict":"approve"|"escalate","reason":"<one short sentence>","flags":["<word>",…],"reversible":"yes"|"no"|"unknown"}',
 ].join('\n');
 
 // ── Core ──
@@ -127,6 +223,18 @@ export const PREJUDGE_RUBRIC = [
 export interface PrejudgeResult {
   verdict: 'approve' | 'escalate';
   reason: string;
+  /** Which tier decided — drives how the card explains why it is asking. */
+  tier: TriageTier;
+  /** Model-proposed claims, validated against the closed vocabulary. */
+  flags: TriageFlag[];
+  /**
+   * Deterministic claims from the never-list. Kept SEPARATE from `flags` on
+   * purpose: the card shows both, and a disagreement (the never-list flagged
+   * `credentials`, the model did not mention it) is itself information the
+   * approver can act on.
+   */
+  heuristic: TriageFlag[];
+  reversible: 'yes' | 'no' | 'unknown';
 }
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -155,13 +263,26 @@ export interface PrejudgeDeps {
   getModel?: (id: string) => WebchatModel | undefined;
 }
 
-const escalate = (reason: string): PrejudgeResult => ({ verdict: 'escalate', reason });
+const escalate = (reason: string, tier: TriageTier = 'model', extra: Partial<PrejudgeResult> = {}): PrejudgeResult => ({
+  verdict: 'escalate',
+  reason,
+  tier,
+  flags: [],
+  heuristic: [],
+  reversible: 'unknown',
+  ...extra,
+});
 
 /**
  * Parse the model's output into a verdict. Strict: after stripping an
  * optional single code fence, the content must be a JSON object whose
  * `verdict` is exactly `"approve"` — anything else (including `"deny"`,
  * `"reject"`, prose, truncation) escalates.
+ *
+ * Flags and reversibility are parsed SEPARATELY and defensively, after the
+ * verdict is already decided. That ordering is deliberate: describing a request
+ * must never be able to change the decision about it, so a garbage `flags`
+ * value costs the card some chips and nothing else.
  */
 export function parseVerdict(content: string): PrejudgeResult {
   const stripped = content
@@ -181,10 +302,20 @@ export function parseVerdict(content: string): PrejudgeResult {
     typeof record.reason === 'string' && record.reason.trim()
       ? redactForPrompt(record.reason.trim().slice(0, MAX_REASON_CHARS))
       : '';
+  const flags = parseFlags(record.flags);
+  const reversible =
+    record.reversible === 'yes' || record.reversible === 'no' ? record.reversible : ('unknown' as const);
   if (record.verdict === 'approve') {
-    return { verdict: 'approve', reason: reason || 'model judged the request routine and reversible' };
+    return {
+      verdict: 'approve',
+      reason: reason || 'model judged the request routine and reversible',
+      tier: 'model',
+      flags,
+      heuristic: [],
+      reversible,
+    };
   }
-  return escalate(reason || 'model did not approve');
+  return escalate(reason || 'model did not approve', 'model', { flags, reversible });
 }
 
 /**
@@ -197,18 +328,23 @@ export async function prejudgeApproval(
   question?: string,
   deps: PrejudgeDeps = {},
 ): Promise<PrejudgeResult> {
+  // Deterministic and model-free, so it rides along on EVERY outcome below —
+  // an unscreened card still shows what the never-list knows about the request.
+  const heuristic = heuristicFlags(approval.action, approval.payload);
+  const withHeuristic = (reason: string, tier: TriageTier) => escalate(reason, tier, { heuristic });
+
   const modelId = (deps.getModelId ?? getApprovalPrejudgeModelId)();
-  if (!modelId) return escalate('pre-judge is not configured (no model)');
+  if (!modelId) return withHeuristic('pre-judge is not configured (no model)', 'unscreened');
   const actions = (deps.getActions ?? getApprovalPrejudgeActions)();
-  if (!actions.includes(approval.action)) return escalate('action is not opted in to pre-judge');
+  if (!actions.includes(approval.action)) return withHeuristic('action is not opted in to pre-judge', 'unscreened');
   // A targeted approval names its approver deliberately — never intercept.
-  if (approval.approver_user_id) return escalate('approval targets a specific approver');
+  if (approval.approver_user_id) return withHeuristic('approval targets a specific approver', 'unscreened');
   if (isNeverAutoApprovable(approval.action, approval.payload)) {
-    return escalate('action matches the never-auto-approve list');
+    return withHeuristic('action matches the never-auto-approve list', 'heuristic');
   }
   const model = (deps.getModel ?? getWebchatModel)(modelId);
   if (!isUsableJudgeModel(model)) {
-    return escalate('configured pre-judge model is unavailable');
+    return withHeuristic('configured pre-judge model is unavailable', 'unavailable');
   }
 
   const lines = [
@@ -236,8 +372,8 @@ export async function prejudgeApproval(
           timeoutMs: PREJUDGE_TIMEOUT_MS,
         })
       ).trim();
-      if (!content) return escalate('empty model response');
-      return parseVerdict(content);
+      if (!content) return withHeuristic('empty model response', 'unavailable');
+      return { ...parseVerdict(content), heuristic };
     }
 
     const fetchFn = deps.fetchFn ?? safeFetch;
@@ -256,19 +392,21 @@ export async function prejudgeApproval(
       }),
       signal: AbortSignal.timeout(PREJUDGE_TIMEOUT_MS),
     });
-    if (!res.ok) return escalate(`model returned ${res.status}`);
+    if (!res.ok) return withHeuristic(`model returned ${res.status}`, 'unavailable');
     const body = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const content = body.choices?.[0]?.message?.content?.trim();
-    if (!content) return escalate('empty model response');
-    return parseVerdict(content);
+    if (!content) return withHeuristic('empty model response', 'unavailable');
+    return { ...parseVerdict(content), heuristic };
     // eslint-disable-next-line no-catch-all/no-catch-all -- fail-safe contract: any error (timeout, network, JSON body) must escalate to a human, never propagate
   } catch (err) {
-    return escalate(`model call failed: ${err instanceof Error ? err.message : String(err)}`);
+    return withHeuristic(`model call failed: ${err instanceof Error ? err.message : String(err)}`, 'unavailable');
   }
 }
 
 /** Extra injectable seams for the short-circuit wiring (tests). */
 export interface MaybePrejudgeDeps extends PrejudgeDeps {
+  /** Persist the triage record the card reads. Injectable for tests. */
+  storeTriage?: (approvalId: string, triage: Parameters<typeof storeApprovalTriage>[1]) => void;
   getApproval?: (approvalId: string) => PendingApproval | undefined;
   resolve?: (approval: PendingApproval, userId: string) => Promise<void>;
   notify?: (session: Session, text: string) => void;
@@ -295,11 +433,29 @@ export async function maybePrejudgeApproval(
 
     const result = await prejudgeApproval(approval, question, deps);
     if (result.verdict !== 'approve') {
+      // The reason used to live only in this log line. It is the single most
+      // useful thing the approver could know — why this is in front of them —
+      // so it is recorded for the card as well. Best-effort: a triage write
+      // must never be able to block the approval itself.
+      try {
+        (deps.storeTriage ?? storeApprovalTriage)(approvalId, {
+          tier: result.tier,
+          reason: result.reason,
+          flags: result.flags,
+          heuristicFlags: result.heuristic,
+          reversible: result.reversible,
+        });
+        // eslint-disable-next-line no-catch-all/no-catch-all -- description must never break delivery
+      } catch (err) {
+        log.error('Approval triage record failed (card will omit it)', { approvalId, err });
+      }
       log.info('Approval pre-judge escalated to human', {
         action: approval.action,
         approvalId,
         model: modelId,
         reason: result.reason,
+        tier: result.tier,
+        flags: result.flags,
       });
       return false;
     }
@@ -320,4 +476,48 @@ export async function maybePrejudgeApproval(
     log.error('Approval pre-judge failed — falling back to human approval', { approvalId, err });
     return false;
   }
+}
+
+// ── Card view ──
+
+/** What an approval card renders about how the request was triaged. */
+export interface ApprovalTriageView {
+  tier: TriageTier;
+  reason: string;
+  flags: TriageFlag[];
+  heuristic: TriageFlag[];
+  reversible: 'yes' | 'no' | 'unknown';
+}
+
+/**
+ * Assemble the triage a card should show.
+ *
+ * The heuristic flags are recomputed here rather than read back from the row.
+ * They are a pure function of (action, payload), so this is always available —
+ * including for an approval raised while the feature was off, or before the
+ * feature existed at all. The stored `heuristic_flags` column is kept as an
+ * audit record of what the never-list said AT DECISION TIME, which is a
+ * different question and can legitimately diverge if the never-list changes.
+ *
+ * No stored row means no judgment was made: that renders as `unscreened`, which
+ * is the honest reading for both a feature-off approval and a legacy one. This
+ * is why absence is a valid state rather than a gap to paper over — with chips
+ * on the card, "nothing shown" must never be mistaken for "screened, clean".
+ */
+export function buildApprovalTriageView(
+  approvalId: string,
+  action: string,
+  payloadJson: string,
+  deps: { getTriage?: typeof getApprovalTriage } = {},
+): ApprovalTriageView {
+  const heuristic = heuristicFlags(action, payloadJson);
+  const row = (deps.getTriage ?? getApprovalTriage)(approvalId);
+  if (!row) return { tier: 'unscreened', reason: '', flags: [], heuristic, reversible: 'unknown' };
+  return {
+    tier: row.tier,
+    reason: row.reason,
+    flags: parseFlags(row.flags),
+    heuristic,
+    reversible: row.reversible,
+  };
 }

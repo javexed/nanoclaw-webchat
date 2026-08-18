@@ -862,6 +862,8 @@ export function storeWebchatApprovalCard(
     options: unknown;
     action: string;
     approvers: string[];
+    /** How the pre-judge triaged this request; omitted on legacy callers. */
+    triage?: unknown;
   },
   threadId = 'main',
 ): WebchatMessage {
@@ -883,6 +885,69 @@ export function storeWebchatApprovalCard(
     )
     .run({ ...msg, file_meta: null });
   return msg;
+}
+
+// ── Approval triage (pre-judge description shown on the card) ────────────────
+
+/** One approval's triage record. Mirrors PrejudgeResult, minus the verdict. */
+export interface ApprovalTriage {
+  tier: 'unscreened' | 'heuristic' | 'model' | 'unavailable';
+  reason: string;
+  flags: string[];
+  heuristicFlags: string[];
+  reversible: 'yes' | 'no' | 'unknown';
+}
+
+/**
+ * Record what the pre-judge concluded, keyed by approval id. Written once as
+ * the hold is created; INSERT OR REPLACE so a retried hold is idempotent.
+ */
+export function storeApprovalTriage(approvalId: string, triage: ApprovalTriage): void {
+  getDb()
+    .prepare(
+      `INSERT OR REPLACE INTO webchat_approval_triage
+         (approval_id, tier, reason, flags, heuristic_flags, reversible, created_at)
+       VALUES (@approval_id, @tier, @reason, @flags, @heuristic_flags, @reversible, @created_at)`,
+    )
+    .run({
+      approval_id: approvalId,
+      tier: triage.tier,
+      reason: triage.reason,
+      flags: JSON.stringify(triage.flags),
+      heuristic_flags: JSON.stringify(triage.heuristicFlags),
+      reversible: triage.reversible,
+      created_at: Date.now(),
+    });
+}
+
+/**
+ * Read a triage record. Returns undefined for approvals raised before this
+ * existed — the card then renders nothing rather than implying it was screened.
+ */
+export function getApprovalTriage(approvalId: string): ApprovalTriage | undefined {
+  const row = getDb()
+    .prepare(
+      `SELECT tier, reason, flags, heuristic_flags, reversible FROM webchat_approval_triage WHERE approval_id = ?`,
+    )
+    .get(approvalId) as
+    | { tier: string; reason: string; flags: string; heuristic_flags: string; reversible: string }
+    | undefined;
+  if (!row) return undefined;
+  const parseList = (raw: string): string[] => {
+    try {
+      const v: unknown = JSON.parse(raw);
+      return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+    } catch {
+      return [];
+    }
+  };
+  return {
+    tier: row.tier as ApprovalTriage['tier'],
+    reason: row.reason,
+    flags: parseList(row.flags),
+    heuristicFlags: parseList(row.heuristic_flags),
+    reversible: row.reversible as ApprovalTriage['reversible'],
+  };
 }
 
 /**
@@ -2180,6 +2245,51 @@ export function getMentionedRoomIdsForUser(userId: string, handle: string): Set<
     )
     .all(userId, h) as { room_id: string }[];
   return new Set(rows.map((r) => r.room_id));
+}
+
+// ── Template sources (webchat_template_sources) ─────────────────────────────
+// Where agent templates can be fetched from. Same shape and same contract as
+// skill sources below: the seeded first-party row is official, everything an
+// operator adds is community and stays that way across edits.
+export interface WebchatTemplateSource {
+  id: string;
+  label: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  official: boolean;
+}
+
+type TemplateSourceRow = Omit<WebchatTemplateSource, 'official'> & { official: number };
+
+export function listTemplateSources(): WebchatTemplateSource[] {
+  return (
+    getDb()
+      .prepare('SELECT id, label, owner, repo, branch, official FROM webchat_template_sources ORDER BY created_at')
+      .all() as TemplateSourceRow[]
+  ).map((r) => ({ ...r, official: !!r.official }));
+}
+
+export function getTemplateSource(id: string): WebchatTemplateSource | undefined {
+  const r = getDb()
+    .prepare('SELECT id, label, owner, repo, branch, official FROM webchat_template_sources WHERE id = ?')
+    .get(id) as TemplateSourceRow | undefined;
+  return r ? { ...r, official: !!r.official } : undefined;
+}
+
+export function upsertTemplateSource(s: Omit<WebchatTemplateSource, 'official'>): void {
+  getDb()
+    .prepare(
+      `INSERT INTO webchat_template_sources (id, label, owner, repo, branch, official, created_at)
+       VALUES (@id, @label, @owner, @repo, @branch, 0, @created_at)
+       ON CONFLICT(id) DO UPDATE SET label=@label, owner=@owner, repo=@repo, branch=@branch`,
+    )
+    .run({ ...s, created_at: Date.now() });
+}
+
+/** Official rows are code-seeded and not deletable — removing one would come back on the next migrate. */
+export function deleteTemplateSource(id: string): boolean {
+  return getDb().prepare('DELETE FROM webchat_template_sources WHERE id = ? AND official = 0').run(id).changes > 0;
 }
 
 // ── Skill catalog sources (webchat_skill_sources) ───────────────────────────

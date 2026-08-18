@@ -1,7 +1,7 @@
-diff --git a/container/agent-runner/src/poll-loop.test.ts b/container/agent-runner/src/poll-loop.test.ts
-index fa1c6279..2e364b7d 100644
---- a/container/agent-runner/src/poll-loop.test.ts
-+++ b/container/agent-runner/src/poll-loop.test.ts
+diff --git c/container/agent-runner/src/poll-loop.test.ts w/container/agent-runner/src/poll-loop.test.ts
+index 3e0f2bea..a5df8f0e 100644
+--- c/container/agent-runner/src/poll-loop.test.ts
++++ w/container/agent-runner/src/poll-loop.test.ts
 @@ -1,12 +1,20 @@
  import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
  
@@ -24,7 +24,7 @@ index fa1c6279..2e364b7d 100644
  
  beforeEach(() => {
    initTestSessionDb();
-@@ -455,6 +463,231 @@ describe('isCorruptionError', () => {
+@@ -486,6 +494,231 @@ describe('isCorruptionError', () => {
    });
  });
  
@@ -68,7 +68,7 @@ index fa1c6279..2e364b7d 100644
 +    const originDests = [findByRouting('webchat', 'room-a')!];
 +    const { query } = makeResultQuery({ type: 'result', text: '<message to="room-b">answer for the user</message>' });
 +
-+    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, undefined, originDests);
++    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false, undefined, originDests);
 +
 +    const out = getUndeliveredMessages();
 +    expect(out).toHaveLength(1);
@@ -81,7 +81,7 @@ index fa1c6279..2e364b7d 100644
 +    const originDests = [findByRouting('webchat', 'room-a')!];
 +    const { query } = makeResultQuery({ type: 'result', text: '<message to="room-a">hello</message>' });
 +
-+    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, undefined, originDests);
++    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false, undefined, originDests);
 +
 +    const out = getUndeliveredMessages();
 +    expect(out).toHaveLength(1);
@@ -97,7 +97,7 @@ index fa1c6279..2e364b7d 100644
 +      text: '<message to="room-a">ack</message><message to="room-b">heads up</message>',
 +    });
 +
-+    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, undefined, originDests);
++    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false, undefined, originDests);
 +
 +    const targets = getUndeliveredMessages()
 +      .map((o) => o.platform_id)
@@ -112,7 +112,7 @@ index fa1c6279..2e364b7d 100644
 +    const originDests = [findByRouting('webchat', 'room-a')!, findByRouting('webchat', 'room-b')!];
 +    const { query } = makeResultQuery({ type: 'result', text: '<message to="room-b">reply to B</message>' });
 +
-+    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, undefined, originDests);
++    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false, undefined, originDests);
 +
 +    const out = getUndeliveredMessages();
 +    expect(out).toHaveLength(1);
@@ -136,7 +136,7 @@ index fa1c6279..2e364b7d 100644
 +    const originDests = [findByRouting('webchat', 'room-a')!];
 +    const { query } = makeResultQuery({ type: 'result', text: 'The answer is 42.' });
 +
-+    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, undefined, originDests, true);
++    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false, undefined, originDests, true);
 +
 +    const out = getUndeliveredMessages();
 +    expect(out).toHaveLength(1);
@@ -149,7 +149,7 @@ index fa1c6279..2e364b7d 100644
 +    const originDests = [findByRouting('webchat', 'room-a')!];
 +    const { query } = makeResultQuery({ type: 'result', text: 'just thinking out loud' });
 +
-+    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, undefined, originDests, false);
++    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false, undefined, originDests, false);
 +
 +    expect(getUndeliveredMessages()).toHaveLength(0); // dropped as scratchpad
 +  });
@@ -159,7 +159,7 @@ index fa1c6279..2e364b7d 100644
 +    const originDests = [findByRouting('webchat', 'room-a')!];
 +    const { query } = makeResultQuery({ type: 'result', text: '<message to="room-a">wrapped reply</message>' });
 +
-+    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, undefined, originDests, true);
++    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false, undefined, originDests, true);
 +
 +    const out = getUndeliveredMessages();
 +    expect(out).toHaveLength(1);
@@ -171,7 +171,7 @@ index fa1c6279..2e364b7d 100644
 +    const originDests = [findByRouting('webchat', 'room-a')!];
 +    const { query } = makeResultQuery({ type: 'result', text: '<internal>scratch only</internal>' });
 +
-+    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, undefined, originDests, true);
++    await processQuery(query, ORIGIN_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false, undefined, originDests, true);
 +
 +    expect(getUndeliveredMessages()).toHaveLength(0);
 +  });
@@ -204,7 +204,7 @@ index fa1c6279..2e364b7d 100644
 +    const originDests = [findByRouting('agent', 'ag-caller')!]; // a2a turn → agent origin only
 +    const { query } = makeResultQuery({ type: 'result', text: 'Here is the script you asked for.' });
 +
-+    await processQuery(query, A2A_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, undefined, originDests, true);
++    await processQuery(query, A2A_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false, undefined, originDests, true);
 +
 +    const out = getUndeliveredMessages();
 +    expect(out).toHaveLength(1);
@@ -218,7 +218,7 @@ index fa1c6279..2e364b7d 100644
 +    const originDests = [findByRouting('agent', 'ag-caller')!];
 +    const { query } = makeResultQuery({ type: 'result', text: '<message to="the-room">answer</message>' });
 +
-+    await processQuery(query, A2A_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, undefined, originDests, true);
++    await processQuery(query, A2A_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false, undefined, originDests, true);
 +
 +    const out = getUndeliveredMessages();
 +    expect(out).toHaveLength(1);
@@ -231,7 +231,7 @@ index fa1c6279..2e364b7d 100644
 +    const originDests = [findByRouting('agent', 'ag-caller')!];
 +    const { query } = makeResultQuery({ type: 'result', text: '<message to="caller">on it</message>' });
 +
-+    await processQuery(query, A2A_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, undefined, originDests, true);
++    await processQuery(query, A2A_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false, undefined, originDests, true);
 +
 +    const out = getUndeliveredMessages();
 +    expect(out).toHaveLength(1);
@@ -244,7 +244,7 @@ index fa1c6279..2e364b7d 100644
 +    const originDests = [findByRouting('agent', 'ag-caller')!];
 +    const { query } = makeResultQuery({ type: 'result', text: '<message to="the-room">posting for you</message>' });
 +
-+    await processQuery(query, A2A_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, undefined, originDests, false);
++    await processQuery(query, A2A_ROUTING, ['m1'], 'claude', undefined, 'prompt', undefined, false, undefined, originDests, false);
 +
 +    const out = getUndeliveredMessages();
 +    expect(out).toHaveLength(1);
@@ -256,9 +256,9 @@ index fa1c6279..2e364b7d 100644
  // --- Task-run turn wiring: the REAL processQuery path (one-door) ---
  // These drive the actual call sites (autoAppendTaskLog at result-handling,
  // shouldNudgeTaskBlocks gating, and follow-up turn reset). Deleting the wiring
-@@ -540,3 +773,52 @@ describe('task-run turn wiring (real processQuery)', () => {
-     expect(logs).not.toContain('second delivery decision handled');
-   });
+@@ -585,3 +818,52 @@ describe('task-run turn wiring (real processQuery)', () => {
+     // diagnostic throw above (observed consistently on CI-hosted runners).
+   }, 20_000);
  });
 +
 +// The turn-retry seam (R5) is consulted from TWO sites, and the split matters:

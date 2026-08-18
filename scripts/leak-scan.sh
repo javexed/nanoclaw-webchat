@@ -50,24 +50,66 @@ PRIVATE_ADDR_RE='(10[.][0-9]+[.][0-9]+[.][0-9]+|172[.](1[6-9]|2[0-9]|3[01])[.][0
 # org path (mixed-case), which folded to lowercase matches the PUBLIC repo path
 # `javexed/nanoclaw/` and would flag every legitimate GitHub URL. Everything
 # else is case-insensitive (tailnet name, personal emails, the token).
+# WHERE THE LIST COMES FROM, in order. `git config leakscan.patternsFile` is how
+# a clone DECLARES it has a list: it is per-clone, never committed, and forks
+# have it unset. The old hard-coded default stays last so existing setups keep
+# working — but a path that is *declared* and then missing is an error, not a
+# shrug (see require_or_warn_operator_tier).
+PATTERNS_DEFAULT="$HOME/.config/nanoclaw-webchat/leak-patterns.txt"
+patterns_file() {
+  if [ -n "${LEAK_PATTERNS_FILE:-}" ]; then printf '%s' "$LEAK_PATTERNS_FILE"; return; fi
+  local cfg; cfg=$(git config --get leakscan.patternsFile 2>/dev/null || true)
+  [ -n "$cfg" ] && { printf '%s' "$cfg"; return; }
+  printf '%s' "$PATTERNS_DEFAULT"
+}
+# Did someone explicitly say this clone has a list? Declaring it is what turns a
+# missing list from "probably a fork" into "your gate is broken".
+tier_declared() {
+  [ "${LEAK_REQUIRE_OPERATOR_TIER:-0}" = 1 ] && return 0
+  [ -n "${LEAK_PATTERNS_FILE:-}" ] && return 0
+  [ -n "$(git config --get leakscan.patternsFile 2>/dev/null || true)" ] && return 0
+  return 1
+}
 operator_lines() {
-  { [ -n "${LEAK_PATTERNS_FILE:-}" ] && [ -f "$LEAK_PATTERNS_FILE" ] && cat "$LEAK_PATTERNS_FILE"
+  local f; f=$(patterns_file)
+  { [ -f "$f" ] && cat "$f"
     [ -n "${LEAK_PATTERNS:-}" ] && printf '%s\n' "$LEAK_PATTERNS"; } 2>/dev/null \
     | grep -vE '^[[:space:]]*(#|$)'
 }
 operator_regex_ci() { operator_lines | grep -v '^cs:' | paste -sd'|' - || true; }
 operator_regex_cs() { operator_lines | grep '^cs:' | sed 's/^cs://' | paste -sd'|' - || true; }
 
+OPERATOR_TIER=off   # reported by finish(), so "clean" always says what ran
+
 # A silently-absent operator tier is its own failure mode: with no patterns
 # loaded, operator_regex_ci() is empty, and match() returns 0 on an empty
 # regex — so the identifier tier disappears without a word and the gate still
-# reports green. Forks legitimately have no list (see the header), so warn
-# rather than fail; but make it impossible to miss that half the gate is off.
-warn_if_no_operator_tier() {
-  [ -n "$(operator_lines)" ] && return 0
+# reports green.
+#
+# Forks legitimately have no list (see the header), so an UNDECLARED absence
+# stays a warning. But when a clone has declared one — via `git config
+# leakscan.patternsFile`, $LEAK_PATTERNS_FILE, or $LEAK_REQUIRE_OPERATOR_TIER=1
+# on a trusted CI run — an empty list means the file moved, the secret was
+# renamed, or the path was wrong, and the run must FAIL rather than report a
+# green that covers half the gate.
+#
+# This is not hypothetical (2026-08-17): the hooks looked for the list under
+# ~/.config while the operator's real file lived elsewhere, so the identifier
+# tier would have been off on the operator's own machine — the one place it is
+# mandatory — with nothing but a stderr warning to say so.
+require_or_warn_operator_tier() {
+  if [ -n "$(operator_lines)" ]; then OPERATOR_TIER=on; return 0; fi
+  if tier_declared; then
+    say "❌ operator identifier tier is DECLARED but no patterns loaded — failing closed."
+    say "   looked for: $(patterns_file)"
+    say "   a declared list that does not load means the gate is half off; fix the path"
+    say "   (git config leakscan.patternsFile <path>) or unset the declaration deliberately."
+    fail=1; return 1
+  fi
   printf '\033[1;33m[leak-scan] WARNING: no operator identifier patterns loaded.\033[0m\n' >&2
   printf '  Running the GENERIC tier only (secret shapes + address hygiene).\n' >&2
-  printf '  Set $LEAK_PATTERNS_FILE or $LEAK_PATTERNS to enable the identifier tier.\n' >&2
+  printf '  Set $LEAK_PATTERNS_FILE, $LEAK_PATTERNS, or git config leakscan.patternsFile\n' >&2
+  printf '  to enable the identifier tier.\n' >&2
 }
 
 fail=0
@@ -146,9 +188,13 @@ mode_tree() {
   scan_content "$(grep -rhI "" --exclude-dir=.git --exclude-dir=node_modules --exclude-dir=dist "$dir" 2>/dev/null)" "tree $dir" tree
 }
 
+# Always name the tiers that ran. A bare "clean" is what let a generic-only run
+# read as a full pass while the identifier tier was silently off.
 finish() {
+  local tiers="generic"
+  [ "$OPERATOR_TIER" = on ] && tiers="generic + operator-identifiers"
   if [ "$fail" -ne 0 ]; then say "leak gate BLOCKED — fix the above, do not commit/push."; exit 1; fi
-  say "✅ leak gate clean"
+  say "✅ leak gate clean ($tiers)"
 }
 
 # ── self-test: exercises staged + range + tree, since the fail-open was in a ──
@@ -196,6 +242,28 @@ selftest() {
     printf 'ghp_0123456789abcdef0123456789abcdefABCD\n' > r.ts; git add r.ts; git commit -qm leak --no-verify  # leak-scan-allow
     fail=0; mode_range HEAD~1..HEAD >/dev/null 2>&1; [ "$fail" -ne 0 ] ) \
     && { echo "  ok   range secret blocks"; pass=$((pass+1)); } || { echo "  FAIL range secret blocks"; tf=$((tf+1)); }
+
+  # DECLARED-BUT-ABSENT tier. The whole point of the 2026-08-17 change: a clone
+  # that says it has an identifier list must fail when the list does not load,
+  # while a fork that says nothing keeps passing on the generic tier alone.
+  tier_case() { # <name> <want-fail 0|1> <env-setup...>
+    local name="$1" want="$2"; shift 2
+    ( cd "$gt"; unset LEAK_PATTERNS LEAK_PATTERNS_FILE LEAK_REQUIRE_OPERATOR_TIER
+      "$@"
+      fail=0; OPERATOR_TIER=off
+      require_or_warn_operator_tier >/dev/null 2>&1
+      [ "$fail" -eq "$want" ] )
+    if [ $? -eq 0 ]; then echo "  ok   $name"; pass=$((pass+1)); else echo "  FAIL $name"; tf=$((tf+1)); fi
+  }
+  d_none() { :; }                                            # fork: nothing declared
+  d_env_missing()  { export LEAK_PATTERNS_FILE="$tmp/nope.txt"; }
+  d_flag_missing() { export LEAK_REQUIRE_OPERATOR_TIER=1; }
+  d_env_present()  { printf 'acme-tailnet\n' > "$tmp/p.txt"; export LEAK_PATTERNS_FILE="$tmp/p.txt"; }
+  tier_case "undeclared + absent warns, does not block" 0 d_none
+  tier_case "declared file MISSING fails closed"        1 d_env_missing
+  tier_case "required flag + no list fails closed"      1 d_flag_missing
+  tier_case "declared file present passes"              0 d_env_present
+
   echo "  $pass passed, $tf failed"
   [ "$tf" -eq 0 ]
 }
@@ -215,9 +283,12 @@ mode_text() {
 }
 
 case "${1:-}" in
-  --staged)   warn_if_no_operator_tier; mode_staged; finish ;;
-  --range)    warn_if_no_operator_tier; mode_range "${2:?range required}"; finish ;;
-  --text)     warn_if_no_operator_tier; mode_text "${2:--}"; finish ;;
+  --staged)   require_or_warn_operator_tier; mode_staged; finish ;;
+  --range)    require_or_warn_operator_tier; mode_range "${2:?range required}"; finish ;;
+  --text)     require_or_warn_operator_tier; mode_text "${2:--}"; finish ;;
+  # --tree does NOT consult the operator tier at all (identifiers are
+  # grandfathered tree-wide, see scan_content), so requiring a list here would
+  # fail runs for a check that would not have used it.
   --tree)     mode_tree "${2:?dir required}"; finish ;;
   --selftest) selftest ;;
   *) echo "usage: leak-scan.sh --staged | --range <A..B> | --text <file|-> | --tree <dir> | --selftest" >&2; exit 2 ;;

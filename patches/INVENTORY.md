@@ -17,12 +17,20 @@
 #   scripts/regen-patches.sh <composed-tree> <file> ...
 
 
-## UPSTREAMABLE — candidate upstream PRs (59)
+## UPSTREAMABLE — candidate upstream PRs (61)
 
 CLAUDE.md
     operator docs for the above
 container/Dockerfile
     rtk (bash-output compression) baked in, arch-aware
+container/agent-runner/package.json
+    pin @anthropic-ai/claude-agent-sdk exactly instead of ^. This tree has no
+    minimumReleaseAge policy (that is a pnpm-workspace setting and the
+    agent-runner is a bun tree), so the caret was held only by bun.lock — one
+    non-frozen install floats the SDK the runner is built against. Upstream's
+    own CLAUDE.md already says to bump it deliberately and never `bun update`
+    blindly; this makes the manifest say what the docs say. No lockfile change:
+    bun.lock already resolved 0.3.197, so the caret was latitude nothing used.
 container/agent-runner/src/db/messages-out.ts
     getMaxOutboundSeq — empty-turn detection primitive
 container/agent-runner/src/formatter.test.ts
@@ -138,6 +146,11 @@ src/session-manager.ts
     chown session dirs AFTER DB creation (root-host EACCES)
 src/templates/create-agent.test.ts
     test timeout for slow CI runners
+src/templates/local-dir.ts
+    listLocalTemplates() — enumerate a local template library (plugin.json is
+    the discovery marker, manifest read best-effort). Upstream has this logic
+    in setup/templates.ts, which is OUTSIDE the compiled tree, so no shipped
+    consumer can list templates; anything offering a template picker needs it.
 src/types.ts
     agent-group lifecycle status type
 
@@ -203,4 +216,9 @@ src/modules/typing/index.ts
 .claude/skills/update-skills/SKILL.md
     OpenCode-removal reference sweep
 .gitignore
-    ignore entries for composed-install artifacts
+    ignore entries for composed-install artifacts, PLUS an upstreamable hunk:
+    `data/` anchored to `/data/`. Unanchored, it matches any directory named
+    data at any depth — including templates/data/, one of four first-party
+    template categories, which is therefore invisible to git in every install
+    that keeps its template library in-tree. Filed here, not in upstreamable/,
+    only because a file gets ONE patch and the rest of this one is local.

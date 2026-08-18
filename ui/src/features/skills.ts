@@ -13,6 +13,7 @@
 // down an accessor pair.
 import { createApp } from 'vue';
 import { loadingRow } from './mcp.js';
+import { resetTemplatePick, selectedTemplateRef, stampTemplate } from './agent-templates.js';
 import { showConfirmModal } from './modals.js';
 import { viewStack } from './views-state.js';
 import { selectedRoomId } from './room-list-state.js';
@@ -1607,6 +1608,32 @@ export function wireSkillsRegistry(): void {
     const name = ($<HTMLInputElement>('#agent-create-name')?.value ?? '').trim();
     if (!name) return;
     const instructions = ($<HTMLTextAreaElement>('#agent-create-instructions')?.value ?? '');
+
+    // A template stamps the whole agent — persona, skills, MCP servers, paused
+    // tasks — so it takes a different endpoint and ignores Instructions (whose
+    // field is hidden while a template is picked). Suggested-skill imports
+    // below are skipped too: the template owns the agent's skill set.
+    const templateRef = selectedTemplateRef();
+    if (templateRef) {
+      try {
+        const { error, report } = await stampTemplate(templateRef, name);
+        if (error) {
+          showToast('Failed to stamp template: ' + error, { kind: 'error' });
+          return;
+        }
+        // Nothing is silently stripped: a skipped skill or unsupported
+        // transport is named, and the agent still exists without it.
+        for (const line of report) showToast(line, { kind: 'info' });
+        showToast(`Created ${name} from ${templateRef}`, { kind: 'success' });
+        resetTemplatePick();
+        await fetchAgents();
+        closeAgentDetail();
+      } catch (err: any) {
+        showToast('Failed to stamp template: ' + (err?.message || err), { kind: 'error' });
+      }
+      return;
+    }
+
     try {
       const res = await authFetch('/api/agents', {
         method: 'POST',
