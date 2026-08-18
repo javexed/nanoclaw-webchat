@@ -673,6 +673,9 @@ function openMatrix() {
 
 function teardownMatrix() {
   matrixActive = false;
+  // Unmount on the way out, so reopening rebuilds rather than showing a
+  // placeholder over a corpse.
+  unmountMatrix();
   $('#chat')!.hidden = false;
   $('#matrix')!.hidden = true;
   $('#app')!.classList.remove('in-dashboard');
@@ -686,16 +689,24 @@ export function toggleMatrix() {
 export async function refreshMatrix() {
   const canvas = $('#matrix-canvas');
   if (!canvas) return;
-  canvas.textContent = 'Loading…';
+  // `#matrix-canvas` is BOTH the placeholder target and the island's mount
+  // host, so writing textContent into it destroys the mounted app's DOM — and
+  // mountMatrix() refuses to rebuild while matrixApp is set. Painting the
+  // placeholder unconditionally therefore left "Loading…" on screen forever
+  // from the second render on (reopen the view, or press Refresh). Only paint
+  // it when nothing is mounted; tear the island down first on the paths that
+  // must replace it with text.
+  if (!matrixApp) canvas.textContent = 'Loading…';
+  const fail = () => {
+    unmountMatrix();
+    canvas.textContent = 'Could not load wiring.';
+  };
   try {
     const r = await authFetch('/api/topology');
-    if (!r.ok) {
-      canvas.textContent = 'Could not load wiring.';
-      return;
-    }
+    if (!r.ok) return fail();
     renderMatrix(await r.json());
   } catch {
-    canvas.textContent = 'Could not load wiring.';
+    fail();
   }
 }
 
@@ -707,6 +718,19 @@ function mountMatrix(): void {
   if (!host) return;
   matrixApp = createApp(WiringMatrix);
   matrixApp.mount(host);
+}
+
+/**
+ * Drop the island so the next open mounts a fresh one.
+ *
+ * Load-bearing: without it, `matrixApp` stayed set for the life of the page
+ * while the host's DOM got wiped by the placeholder, and the mount guard then
+ * refused to rebuild — the view never recovered short of a reload.
+ */
+function unmountMatrix(): void {
+  if (!matrixApp) return;
+  matrixApp.unmount();
+  matrixApp = null;
 }
 
 function renderMatrix(data?: any) {
