@@ -2,11 +2,11 @@
 #
 # configure-webchat.sh — interactive .env config + VAPID key generation.
 #
-# Run after install-webchat.sh. Idempotent — re-running just verifies and
+# Run after install.sh. Idempotent — re-running just verifies and
 # skips lines that already exist. Does not rotate VAPID keys.
 #
 # For TLS, multi-method auth, or advanced configs, edit .env by hand;
-# see .claude/skills/add-webchat/SKILL.md under "Configure".
+# see docs/webchat/readme.md.
 
 set -euo pipefail
 

@@ -1,7 +1,7 @@
 /**
  * Send-file prompt hint — fork-owned consumer of the destinations prompt seam
- * (R4). Installed by /add-webchat (channels-webchat branch); removed by
- * /remove-webchat. Appends an inline-attachment hint to the destinations
+ * (R4). Part of the webchat app tree composed onto a NanoClaw checkout by
+ * install.sh. Appends an inline-attachment hint to the destinations
  * prompt when at least one destination is a chat channel (webchat, slack,
  * telegram, ...). Loaded for side effects from the runner entry (index.ts).
  */
