@@ -8,7 +8,7 @@
  *
  * Model resolution (first hit wins):
  *   1. The per-agent local-model wiring file the webchat model bridge writes
- *      (<agent>/.claude-shared/local-model.json — shared by the local
+ *      (<agent>/.claude-shared/opencode-model.json — shared by the local
  *      harnesses; provider/model/baseURL for the assigned Ollama model).
  *   2. .env / process.env: PI_PROVIDER, PI_MODEL, ANTHROPIC_BASE_URL.
  */
@@ -39,26 +39,14 @@ interface LocalModelWiring {
   baseURL?: string;
 }
 
-/**
- * The per-agent local-model wiring (sessionDir is <…>/<agentGroupId>/<sessionId>).
- *
- * Reads BOTH names, new first. The file was `opencode-model.json` when OpenCode
- * was its only reader; pi inherited the name, and it is `local-model.json` now
- * that it wires any local harness. An install whose file predates the rename
- * still resolves here — the host writes only the new name and removes the old
- * one, so the fallback can never shadow current wiring.
- */
+/** The per-agent local-model wiring (sessionDir is <…>/<agentGroupId>/<sessionId>). */
 function readAgentWiring(sessionDir: string): LocalModelWiring {
-  const shared = path.join(sessionDir, '..', '.claude-shared');
-  for (const name of ['local-model.json', 'opencode-model.json']) {
-    try {
-      return JSON.parse(fs.readFileSync(path.join(shared, name), 'utf-8')) as LocalModelWiring;
-    } catch {
-      // absent or unreadable — try the next name, then give up silently: no
-      // wiring is a valid state (the agent falls back to env/.env defaults).
-    }
+  try {
+    const file = path.join(sessionDir, '..', '.claude-shared', 'opencode-model.json');
+    return JSON.parse(fs.readFileSync(file, 'utf-8')) as LocalModelWiring;
+  } catch {
+    return {};
   }
-  return {};
 }
 
 registerProviderContainerConfig('pi', (ctx) => {

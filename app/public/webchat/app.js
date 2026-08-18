@@ -11020,6 +11020,50 @@ async function loadAgentTemplates() {
 	sel.addEventListener("change", applyTemplatePickVisibility);
 	applyTemplatePickVisibility();
 }
+/** One MCP server, rendered as the line an operator can actually judge. */
+function mcpLine(s) {
+	const env = s.envKeys?.length ? `  [env: ${s.envKeys.join(", ")}]` : "";
+	if (s.transport === "http") return `• ${s.name} — HTTP ${s.url ?? "(no url)"}${env}`;
+	const cmd = [s.command ?? "(no command)", ...s.args ?? []].join(" ");
+	return `• ${s.name} — runs: ${cmd}${env}`;
+}
+/**
+* Show what a template will do, and require an explicit yes.
+*
+* WHY THIS EXISTS. Stamping imports a stranger's blueprint: persona, skills,
+* MCP servers and scheduled tasks, in one click. Until this existed you found
+* out what was in it AFTERWARDS, from a report — while UPDATING a stamped
+* agent already showed a dry-run plan first. The riskier operation was the
+* less gated one.
+*
+* The MCP lines are the point. `command` is constrained by the reader, but
+* `args` is not, so the only honest review is the actual argv in front of the
+* person deciding. Returns false when the operator declines or the template
+* cannot be read — a plan that fails to load is a reason to stop, not to
+* proceed blind.
+*/
+async function confirmTemplatePlan(ref) {
+	let plan;
+	try {
+		const res = await authFetch(`/api/templates/detail?ref=${encodeURIComponent(ref)}`);
+		plan = await res.json().catch(() => ({}));
+		if (!res.ok) {
+			showToast(`Could not read ${ref}: ${plan.error || res.statusText}`, { kind: "error" });
+			return false;
+		}
+	} catch (err) {
+		showToast(`Could not read ${ref}: ${err?.message || err}`, { kind: "error" });
+		return false;
+	}
+	const section = (heading, lines) => lines.length ? `${heading}\n${lines.join("\n")}\n\n` : "";
+	const body = `${plan.version ? `${plan.ref} ${plan.version}` : plan.ref}\n` + (plan.description ? `${plan.description}\n` : "") + "\n" + section("MCP servers — these run inside the agent container:", plan.mcpServers.map(mcpLine)) + section("Skills:", plan.skills.map((s) => `• ${s}`)) + section("Scheduled tasks (created paused — you resume them):", plan.tasks.map((t) => `• ${t.name} — ${t.schedule}`)) + section("Extra context files:", plan.contextFiles.map((c) => `• ${c}`)) + `Persona: ${plan.persona ? "included" : "none — you can write your own after"}\n` + (plan.report.length ? `\nThe reader skipped:\n${plan.report.map((r) => `• ${r}`).join("\n")}` : "");
+	return await showConfirmModal({
+		title: `Create an agent from ${plan.name}?`,
+		body,
+		confirmLabel: "Create agent",
+		cancelLabel: "Cancel"
+	}) === true;
+}
 /**
 * Stamp the chosen template. Returns the server's error string, or null on
 * success. The caller owns the toast, so this stays usable from any form.
@@ -14172,6 +14216,7 @@ function wireSkillsRegistry() {
 		const instructions = $("#agent-create-instructions")?.value ?? "";
 		const templateRef = selectedTemplateRef();
 		if (templateRef) {
+			if (!await confirmTemplatePlan(templateRef)) return;
 			try {
 				const { error, report } = await stampTemplate(templateRef, name);
 				if (error) {

@@ -170,6 +170,47 @@ describe('agent-template endpoints', () => {
       expect(body.templates[0]).toMatchObject({ ref: 'demo/helper', name: 'helper', description: 'A test plugin' });
     });
 
+    // The pre-stamp plan is only worth having if it shows the thing that
+    // actually needs judging. `command` is constrained by the reader, but
+    // `args` is not — `command: "bash"` with `args: ["-c", …]` is a legal
+    // template — so the argv has to reach the operator verbatim. env VALUES
+    // must not: keys name what a server wants, values stay on the host.
+    it('reports each MCP server as the argv it will run, with env KEYS only', async () => {
+      const tpl = path.join(libDir, 'demo', 'helper');
+      fs.writeFileSync(
+        path.join(tpl, 'mcp.json'),
+        JSON.stringify({
+          $schema: 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
+          mcpServers: {
+            files: {
+              type: 'stdio',
+              command: 'npx',
+              args: ['-y', '@modelcontextprotocol/server-filesystem', '/workspace'],
+              env: { DATA_DIR: '/tmp/should-not-be-reported' },
+            },
+          },
+        }),
+      );
+
+      const r = await httpRequest(port, 'GET', '/api/templates/detail?ref=demo%2Fhelper', as('owner'));
+      expect(r.status).toBe(200);
+      const body = JSON.parse(r.body) as {
+        mcpServers: Array<{ name: string; transport: string; command?: string; args?: string[]; envKeys?: string[] }>;
+      };
+
+      expect(body.mcpServers).toHaveLength(1);
+      expect(body.mcpServers[0]).toMatchObject({
+        name: 'files',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-filesystem', '/workspace'],
+        envKeys: ['DATA_DIR'],
+      });
+      // The whole response, not just that field: a value leaking anywhere in
+      // the payload is the failure this guards against.
+      expect(r.body).not.toContain('should-not-be-reported');
+    });
+
     it('refuses a scoped admin and a non-admin', async () => {
       expect((await httpRequest(port, 'GET', '/api/templates', as('admina'))).status).toBe(403);
       expect((await httpRequest(port, 'GET', '/api/templates', as('nobody'))).status).toBe(403);
