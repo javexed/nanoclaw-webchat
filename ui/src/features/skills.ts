@@ -13,7 +13,7 @@
 // down an accessor pair.
 import { createApp } from 'vue';
 import { loadingRow } from './mcp.js';
-import { resetTemplatePick, selectedTemplateRef, stampTemplate } from './agent-templates.js';
+import { confirmTemplatePlan, resetTemplatePick, selectedTemplateRef, stampTemplate } from './agent-templates.js';
 import { showConfirmModal } from './modals.js';
 import { viewStack } from './views-state.js';
 import { selectedRoomId } from './room-list-state.js';
@@ -1615,6 +1615,10 @@ export function wireSkillsRegistry(): void {
     // below are skipped too: the template owns the agent's skill set.
     const templateRef = selectedTemplateRef();
     if (templateRef) {
+      // Consent BEFORE the import, not a report after it. A template brings MCP
+      // servers that run inside the container, skills, and scheduled tasks; the
+      // operator sees the actual argv and agrees, or nothing is created.
+      if (!(await confirmTemplatePlan(templateRef))) return;
       try {
         const { error, report } = await stampTemplate(templateRef, name);
         if (error) {

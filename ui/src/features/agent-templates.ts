@@ -92,6 +92,98 @@ export async function loadAgentTemplates(): Promise<void> {
   applyTemplatePickVisibility();
 }
 
+interface TemplateMcpSummary {
+  name: string;
+  transport: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  url?: string;
+  envKeys?: string[];
+}
+
+interface TemplatePlan {
+  ref: string;
+  name: string;
+  description?: string;
+  version?: string;
+  persona: string | null;
+  skills: string[];
+  tasks: { name: string; schedule: string }[];
+  mcpServers: TemplateMcpSummary[];
+  contextFiles: string[];
+  report: string[];
+  error?: string;
+}
+
+/** One MCP server, rendered as the line an operator can actually judge. */
+function mcpLine(s: TemplateMcpSummary): string {
+  const env = s.envKeys?.length ? `  [env: ${s.envKeys.join(', ')}]` : '';
+  if (s.transport === 'http') return `• ${s.name} — HTTP ${s.url ?? '(no url)'}${env}`;
+  const cmd = [s.command ?? '(no command)', ...(s.args ?? [])].join(' ');
+  return `• ${s.name} — runs: ${cmd}${env}`;
+}
+
+/**
+ * Show what a template will do, and require an explicit yes.
+ *
+ * WHY THIS EXISTS. Stamping imports a stranger's blueprint: persona, skills,
+ * MCP servers and scheduled tasks, in one click. Until this existed you found
+ * out what was in it AFTERWARDS, from a report — while UPDATING a stamped
+ * agent already showed a dry-run plan first. The riskier operation was the
+ * less gated one.
+ *
+ * The MCP lines are the point. `command` is constrained by the reader, but
+ * `args` is not, so the only honest review is the actual argv in front of the
+ * person deciding. Returns false when the operator declines or the template
+ * cannot be read — a plan that fails to load is a reason to stop, not to
+ * proceed blind.
+ */
+export async function confirmTemplatePlan(ref: string): Promise<boolean> {
+  let plan: TemplatePlan;
+  try {
+    const res = await authFetch(`/api/templates/detail?ref=${encodeURIComponent(ref)}`);
+    plan = (await res.json().catch(() => ({}))) as TemplatePlan;
+    if (!res.ok) {
+      showToast(`Could not read ${ref}: ${plan.error || res.statusText}`, { kind: 'error' });
+      return false;
+    }
+  } catch (err: any) {
+    showToast(`Could not read ${ref}: ${err?.message || err}`, { kind: 'error' });
+    return false;
+  }
+
+  const section = (heading: string, lines: string[]): string =>
+    lines.length ? `${heading}\n${lines.join('\n')}\n\n` : '';
+
+  const body =
+    `${plan.version ? `${plan.ref} ${plan.version}` : plan.ref}\n` +
+    (plan.description ? `${plan.description}\n` : '') +
+    '\n' +
+    section(
+      'MCP servers — these run inside the agent container:',
+      plan.mcpServers.map(mcpLine),
+    ) +
+    section('Skills:', plan.skills.map((s) => `• ${s}`)) +
+    section(
+      'Scheduled tasks (created paused — you resume them):',
+      plan.tasks.map((t) => `• ${t.name} — ${t.schedule}`),
+    ) +
+    section('Extra context files:', plan.contextFiles.map((c) => `• ${c}`)) +
+    `Persona: ${plan.persona ? 'included' : 'none — you can write your own after'}\n` +
+    (plan.report.length ? `\nThe reader skipped:\n${plan.report.map((r) => `• ${r}`).join('\n')}` : '');
+
+  // showConfirmModal is untyped, so its result arrives as unknown. Compare
+  // explicitly rather than casting: anything that is not a definite yes must
+  // read as "do not create the agent".
+  const ok = await showConfirmModal({
+    title: `Create an agent from ${plan.name}?`,
+    body,
+    confirmLabel: 'Create agent',
+    cancelLabel: 'Cancel',
+  });
+  return ok === true;
+}
+
 /**
  * Stamp the chosen template. Returns the server's error string, or null on
  * success. The caller owns the toast, so this stays usable from any form.
