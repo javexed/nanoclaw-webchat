@@ -45,6 +45,25 @@ TRAILER_RE='^(Reviewed-on|Reviewed-by|Co-authored-by):.*(10[.]|172[.](1[6-9]|2[0
 ALLOWED_ADDR_RE='^(127[.]0[.]0[.]1|0[.]0[.]0[.]0|172[.]17[.]0[.]1|172[.]17[.]0[.]0|172[.]16[.]0[.]0|10[.]0[.]0[.]0|192[.]168[.]0[.]0|100[.]64[.]0[.]0|10[.]0[.][0-9]+[.][0-9]+|10[.]4[.]0[.][0-9]+|192[.]168[.]0[.][0-9]+|100[.]96[.][0-9]+[.][0-9]+|100[.]1[.]2[.]3|100[.]100[.]100[.]200)$'
 PRIVATE_ADDR_RE='(10[.][0-9]+[.][0-9]+[.][0-9]+|172[.](1[6-9]|2[0-9]|3[01])[.][0-9]+[.][0-9]+|192[.]168[.][0-9]+[.][0-9]+|100[.](6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])[.][0-9]+[.][0-9]+)'
 
+# ── GENERIC: secret-shaped fixtures that are provably synthetic ──────────────
+# A redaction module needs tests, and those tests must contain secret-SHAPED
+# strings to prove redaction works — so a tree-wide shape scan will always hit
+# them. Enumerated exactly, never by path: exempting "*.test.ts" wholesale would
+# wave through a REAL key pasted into a test, which is a realistic way secrets
+# leak. Every entry below is sequential filler or a dictionary word; a genuine
+# key is not on this list and still blocks. Adding one is a reviewable diff line.
+#
+# The self-test's own fixtures are deliberately ABSENT: they exist to prove the
+# gate CATCHES secrets, so allowlisting them would silently disable the test.
+# They are exempted per-line by the leak-scan-allow marker instead. Note RSA is
+# listed but OPENSSH is not: RSA is a redact.test.ts fixture, OPENSSH is a
+# self-test fixture.
+ALLOWED_SECRET_RE='^(-----BEGIN RSA PRIVATE KEY-----|ghp_ABCDEFGHIJKLMNOPQRSTuvwx|sk-abc123DEF456ghi789|sk-ant-api03-REGRESSION-SECRET-DO-NOT-LEAK-000|sk-ant-oat-WORKSPACE|xoxb-12345-67890-abcdef|xoxb-REAL-SECRET)$'  # leak-scan-allow — this line IS the list;
+# the `new` tier matches secret shapes strictly (an allowlisted token in a NEW
+# commit should still be questioned), so the definition needs the same per-line
+# marker the self-test fixtures use. The marker is visible in review, which is
+# the whole contract.
+
 # ── OPERATOR identifiers: injected at runtime, never stored here ──────────────
 # A pattern prefixed `cs:` is matched CASE-SENSITIVELY — needed for the internal
 # org path (mixed-case), which folded to lowercase matches the PUBLIC repo path
@@ -140,16 +159,18 @@ drop_allowed() { grep -vF -- 'leak-scan-allow' || true; }
 #        private addresses. This is the gate that matters, because it sees what
 #        a commit ADDS. Nothing new gets through it.
 #
-#   tree (whole checkout) — private addresses only. Secret shapes AND operator
-#        identifiers are deliberately GRANDFATHERED tree-wide, because both
-#        appear legitimately in long-standing test fixtures: fake tokens
-#        (sk-ant-…-DO-NOT-LEAK) and real project names used as seed data. A
-#        tree-wide grep for those is false positives on content that predates
-#        the gate and that refusing today's commit cannot fix — and a gate that
-#        cries wolf on untouchable content is a gate people learn to bypass.
-#        Addresses stay tree-wide: the tree is verifiably clean of them, so the
-#        check costs nothing and catches anything that arrives out-of-band
-#        (a force-push, an imported root commit).
+#   tree (whole checkout) — private addresses, plus secret shapes checked
+#        against an ENUMERATED fixture allowlist. Operator identifiers stay
+#        GRANDFATHERED tree-wide: real project names are used as seed data
+#        throughout, a tree-wide grep for them is false positives on content
+#        that refusing today's commit cannot fix, and a gate that cries wolf on
+#        untouchable content is a gate people learn to bypass.
+#        Secret shapes no longer need that amnesty. The tree contains exactly
+#        seven secret-shaped tokens and all seven are enumerated fixtures, so
+#        the scan is silent today and any EIGHTH — however it arrives — blocks.
+#        Addresses stay tree-wide for the same reason: the tree is verifiably
+#        clean, so the check costs nothing and catches anything arriving
+#        out-of-band (a force-push, an imported root commit).
 #
 # Coverage is therefore: everything NEW is fully gated; the historical tree is
 # gated for addresses. GitHub's native secret scanning covers tree-wide tokens.
@@ -159,6 +180,22 @@ scan_content() {  # <text> <label> <mode:new|tree>
     match "$SECRET_RE" "$text" I "secret-shaped strings in $label"
     match "$(operator_regex_ci)" "$text" i "operator identifiers in $label"
     match "$(operator_regex_cs)" "$text" I "operator org path (case-sensitive) in $label"
+  fi
+  # Secret hygiene (tree only — `new` is covered by the strict match above, and
+  # running both would report the same token twice). Mirrors the address check
+  # below: every secret-shaped string present must be a known synthetic fixture.
+  # Reported as bare tokens rather than whole lines so a genuine hit is not
+  # echoed with its surrounding context.
+  if [ "$mode" = tree ]; then
+    local tok badtok=""
+    while IFS= read -r tok; do
+      [ -z "$tok" ] && continue
+      printf '%s' "$tok" | grep -qE -- "$ALLOWED_SECRET_RE" || badtok="$badtok$tok"$'\n'
+    done < <(printf '%s\n' "$text" | grep -oiE -- "$SECRET_RE" 2>/dev/null | sort -u)
+    if [ -n "$badtok" ]; then
+      say "❌ secret-shaped strings not on the fixture allowlist ($label) — add a line to leak-scan.sh, or use a synthetic value:"
+      printf '     %s\n' $badtok; fail=1
+    fi
   fi
   # Address hygiene: every private address present must be on the allowlist.
   local addr bad=""
@@ -211,9 +248,10 @@ selftest() {
     "$3" "$tmp/t"; run_tree "$tmp/t"; local rc=$?
     if [ "$rc" -eq "$2" ]; then echo "  ok   $1"; pass=$((pass+1)); else echo "  FAIL $1 (rc=$rc want $2)"; tf=$((tf+1)); fi
   }
-  # TREE checks — operator identifiers + private addresses (what must NEVER be
-  # present). Secret shapes are NOT tree-scanned (grandfathered fixtures), so
-  # they're asserted on the staged path below.
+  # TREE checks — operator identifiers, private addresses, and secret shapes
+  # against the fixture allowlist. The allowlist needs a case in BOTH directions
+  # or it is just an untested hole: an enumerated fixture must pass, and a token
+  # one character off it must still block.
   s_clean(){ :; }
   s_lan(){ echo 'http://192.168.5.90:11434'>"$1/c.ts"; }  # leak-scan-allow
   s_op(){ echo 'host acme-forge.acme-tailnet.internal'>"$1/d.md"; }
@@ -223,6 +261,10 @@ selftest() {
   check "unlisted private LAN caught"          1 s_lan
   check "operator id NOT tree-flagged (grandfathered)" 0 s_op
   check "allowlisted addresses pass"           0 s_allowed
+  s_allowed_secret(){ echo "k='sk-ant-oat-WORKSPACE'">"$1/w.ts"; }  # leak-scan-allow
+  s_nearmiss(){ echo "k='sk-ant-oat-WORKSPACF'">"$1/n.ts"; }  # leak-scan-allow
+  check "allowlisted secret fixture passes"    0 s_allowed_secret
+  check "near-miss of an allowlisted token blocks" 1 s_nearmiss
 
   # STAGED/RANGE checks in a throwaway git repo — the paths that fail-opened
   # before, and where secret shapes ARE scanned (new additions).
