@@ -6,7 +6,7 @@ one config (`playwright.config.ts` at repo root):
 - **`e2e` project** — the original specs (happy path, connection banner, font
   scaling). Loopback-trusted boot, no token.
 - **`smoke` project** — `e2e/webchat.smoke.spec.ts`, six independent flows run
-  by the pre-publish gate (`verify-webchat-publish.sh` §4b):
+  by the maintainer-side pre-publish gate, deliberately not in CI:
   1. bearer login → lobby renders the room list
   2. create a thread through the UI → land in it, thread state updates
   3. send a message inside a topic thread → renders + stored under that `thread_id`

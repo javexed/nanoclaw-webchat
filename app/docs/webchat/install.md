@@ -34,14 +34,16 @@ builds the agent image — allow several minutes.
 
 ## 3. Add webchat to an existing NanoClaw fork
 
-Already running NanoClaw (Node + pnpm) and just want the chat UI? Webchat is a
-channel you add to your fork, not a separate install. From Claude Code:
+Already running NanoClaw (Node + pnpm) and just want the chat UI? Point the
+installer at the checkout you already have — it composes the webchat app tree
+onto it in place rather than creating a second install:
 
-```
-/add-webchat
+```bash
+bash install.sh --dir /path/to/your/nanoclaw
 ```
 
-Or run `install-webchat.sh` from inside your fork. Full walkthrough:
+Add `--seam preinstalled` if that checkout already carries the hook seam. Full
+walkthrough:
 **[readme.md](readme.md)** and **[guide.md](guide.md)**.
 
 ## What it needs

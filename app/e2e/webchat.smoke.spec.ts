@@ -3,8 +3,8 @@ import type { AddressInfo } from 'net';
 
 /**
  * Webchat smoke suite — six independent flows over the REAL server, run as the
- * pre-publish gate's browser tier (see verify-webchat-publish.sh §4b and
- * docs/webchat/e2e.md). Same in-process boot as the other e2e specs (dist/ +
+ * maintainer-side pre-publish gate's browser tier — deliberately not in CI
+ * (see docs/webchat/e2e.md). Same in-process boot as the other e2e specs (dist/ +
  * in-memory DB + no-op hooks — no router/Docker/LLM), but with BEARER auth
  * configured, so flow (a) exercises the real login form instead of the
  * loopback auto-pass.
