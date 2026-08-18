@@ -1,0 +1,30 @@
+# Toolchain pin for this repo — match the tree we COMPOSE, not the machine.
+#
+# WHY THIS EXISTS. This repo produces a composed nanoclaw tree, and that tree
+# runs on Node 22 (base .nvmrc), pnpm 10.34.5 (base packageManager + the
+# Dockerfile's PNPM_VERSION) and bun 1.3.12 (Dockerfile BUN_VERSION + the CI
+# setup-bun step). Without a pin here the repo inherited the machine defaults —
+# global mise carries bun/pnpm as "latest" — and resolved Node 26.5.0 with pnpm
+# 11.17.0. A major pnpm ahead and four Node majors ahead of what the output
+# actually runs on.
+#
+# That is latent rather than loud: the Vite build and vue-tsc do not touch
+# native bindings, so it looks fine. The trap is the composed tree's HOST test
+# suite, which does — running it from a shell that resolved the wrong Node
+# breaks the better-sqlite3 native binding and reports 1559 passing tests as
+# 507 failures. The failure names neither Node nor the binding, so it costs an
+# afternoon before anyone suspects the toolchain.
+#
+# The base install (~/nanoclaw) is protected by its own .nvmrc, which is
+# upstream's file. This repo had nothing. Keep these three in step with the
+# base whenever the pin bump moves them.
+#
+# NOT pinned here: the CI runner's Node. compose.yml deliberately runs the
+# composed tree on the runner's Node 24 against a 22 .nvmrc with
+# NANOCLAW_ALLOW_NODE_MISMATCH=1, because install.sh's own better-sqlite3
+# binding verification is the real gate there. That is reasoned and documented;
+# this pin governs local shells, not that.
+[tools]
+node = "22"
+pnpm = "10.34.5"
+bun = "1.3.12"

@@ -372,13 +372,28 @@ export async function renderAboutSettings(): Promise<void> {
   }
   const short = (sha: unknown) => (typeof sha === 'string' && sha ? sha.slice(0, 12) : null);
   // A dirty tree is NOT the commit it names, so say so rather than printing a
-  // SHA the operator cannot reconcile with what is running.
+  // SHA the operator cannot reconcile with what is running. This still applies
+  // to WEBCHAT's ref, which records whether the source repo was clean when the
+  // release was composed. It no longer applies to nanoclaw's: that tree is
+  // modified by construction, so the flag was true on every working install.
+  // What replaces it is the composition row below, which compares the payload
+  // on disk against what the composition actually wrote.
   const withDirty = (sha: string | null, dirty: boolean | null) =>
     sha ? sha + (dirty ? ' (modified)' : '') : null;
 
+  const c = v.composition;
+  const composition = !c
+    ? 'not recorded — reinstall to enable'
+    : c.matches
+      ? `matches composed release (${c.checked} files)`
+      : `${c.drifted.length} of ${c.checked} files changed since install: ` +
+        c.drifted.slice(0, 6).join(', ') +
+        (c.drifted.length > 6 ? `, +${c.drifted.length - 6} more` : '');
+
   const rows: Array<[string, string | null]> = [
     ['nanoclaw', v.nanoclaw?.version ?? null],
-    ['nanoclaw commit', withDirty(short(v.nanoclaw?.commit), v.nanoclaw?.dirty)],
+    ['nanoclaw commit', short(v.nanoclaw?.commit)],
+    ['composition', composition],
     ['webchat', v.webchat ? withDirty(short(v.webchat.ref), v.webchat.dirty) : 'unknown — reinstall to stamp'],
     ['webchat composed', v.webchat?.composedAt ? String(v.webchat.composedAt).replace('T', ' ').replace('+00:00', ' UTC') : null],
     ['upstream pin', short(v.webchat?.upstreamRef)],

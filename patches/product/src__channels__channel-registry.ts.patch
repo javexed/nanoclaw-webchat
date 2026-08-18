@@ -1,7 +1,7 @@
-diff --git a/src/channels/channel-registry.ts b/src/channels/channel-registry.ts
-index 7d8848f0..ac44f937 100644
---- a/src/channels/channel-registry.ts
-+++ b/src/channels/channel-registry.ts
+diff --git c/src/channels/channel-registry.ts w/src/channels/channel-registry.ts
+index f6c4835a..4035a09f 100644
+--- c/src/channels/channel-registry.ts
++++ w/src/channels/channel-registry.ts
 @@ -4,7 +4,14 @@
   * Channels self-register on import. The host calls initChannelAdapters() at startup
   * to instantiate and set up all registered adapters.
@@ -18,7 +18,7 @@ index 7d8848f0..ac44f937 100644
  import type { ChannelDeliveryAdapter } from '../delivery.js';
  import { log } from '../log.js';
  
-@@ -103,21 +110,41 @@ export function createChannelDeliveryAdapter(): ChannelDeliveryAdapter {
+@@ -103,12 +110,21 @@ export function createChannelDeliveryAdapter(): ChannelDeliveryAdapter {
        content: string,
        files?: OutboundFile[],
        instance?: string,
@@ -41,13 +41,15 @@ index 7d8848f0..ac44f937 100644
      },
      async setTyping(
        channelType: string,
-       platformId: string,
-       threadId: string | null,
+@@ -117,9 +133,20 @@ export function createChannelDeliveryAdapter(): ChannelDeliveryAdapter {
        instance?: string,
+       status?: string,
+       statusKind?: 'auto' | 'agent',
 +      agentName?: string,
-+    ): Promise<void> {
-+      const adapter = getChannelAdapterExact(instance ?? channelType);
-+      await adapter?.setTyping?.(platformId, threadId, agentName);
+     ): Promise<void> {
+       const adapter = getChannelAdapterExact(instance ?? channelType);
+-      await adapter?.setTyping?.(platformId, threadId, status, statusKind);
++      await adapter?.setTyping?.(platformId, threadId, status, statusKind, agentName);
 +    },
 +    async sendStatus(
 +      channelType: string,
@@ -55,9 +57,8 @@ index 7d8848f0..ac44f937 100644
 +      threadId: string | null,
 +      status: AgentActivityStatus,
 +      instance?: string,
-     ): Promise<void> {
-       const adapter = getChannelAdapterExact(instance ?? channelType);
--      await adapter?.setTyping?.(platformId, threadId);
++    ): Promise<void> {
++      const adapter = getChannelAdapterExact(instance ?? channelType);
 +      await adapter?.sendStatus?.(platformId, threadId, status);
      },
    };

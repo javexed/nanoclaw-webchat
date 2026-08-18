@@ -604,7 +604,10 @@ export async function runLearningReview(
             query.end();
             continue;
           }
-          const { sent } = dispatchResultText(event.text, routing, originDests, config.lenientOutput ?? false);
+          const { sent } = dispatchResultText(event.text, routing, {
+            originDests,
+            lenient: config.lenientOutput ?? false,
+          });
           if (sent === 0) {
             // A review's outcome is ALWAYS for the room that pressed /learn — an
             // unwrapped one-liner here is the normal shape, not scratchpad. (The

@@ -125,3 +125,121 @@ export function auditActor(actor: { kind: string; userId?: string; agentGroupId?
   if (actor.kind === 'agent') return `agent:${actor.agentGroupId ?? '(unknown)'}`;
   return actor.kind; // host | system
 }
+
+// ── Reading it back ─────────────────────────────────────────────────────────
+// The write path above is the contract; this is the read path the Admin viewer
+// uses. It lives here because the file format is this module's business and
+// nothing else should be teaching itself to parse these lines. Still a leaf:
+// fs and path, nothing more.
+
+/** One stored event, as parsed back off disk. */
+export interface StoredAuditEvent extends AuditEvent {
+  ts: string;
+  pid: number;
+  seq: number;
+}
+
+export interface AuditQuery {
+  limit?: number;
+  /** Exact match on the dotted kind, e.g. 'guard.decision'. */
+  type?: string;
+  /** Exact match on the outcome, e.g. 'deny'. */
+  effect?: string;
+  /** Substring match, so 'alice' finds 'human:webchat:alice'. */
+  actor?: string;
+  /** Cursor: return only events strictly older than this ISO timestamp. */
+  beforeTs?: string;
+}
+
+export interface AuditPage {
+  events: StoredAuditEvent[];
+  /** More matches exist older than the last one returned. */
+  hasMore: boolean;
+  /**
+   * The scan hit its byte budget before reaching the start of the file, so
+   * "no more matches" means "none in the window", not "none ever". Surfaced so
+   * the UI can say so rather than implying it has shown everything.
+   */
+  truncated: boolean;
+}
+
+/**
+ * How much of the tail to scan per request.
+ *
+ * The file is append-only and the viewer wants the NEWEST entries, so reading
+ * the tail is both the cheap answer and the right one. A budget rather than
+ * the whole file because this is a log that only grows, and an operator with a
+ * year of history should not hand the event loop a 200MB parse to render fifty
+ * rows.
+ */
+const READ_WINDOW_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Read events newest-first. Never throws: a missing or unreadable file is an
+ * empty page, because the viewer asking "what happened" must not itself become
+ * the thing that breaks.
+ */
+export function readAuditEvents(query: AuditQuery = {}): AuditPage {
+  const limit = Math.min(Math.max(query.limit ?? 50, 1), 500);
+  let buf: string;
+  let truncated = false;
+  try {
+    const file = auditFilePath();
+    const size = fs.statSync(file).size;
+    const start = Math.max(0, size - READ_WINDOW_BYTES);
+    truncated = start > 0;
+    const fd = fs.openSync(file, 'r');
+    try {
+      const bytes = Buffer.alloc(size - start);
+      fs.readSync(fd, bytes, 0, bytes.length, start);
+      buf = bytes.toString('utf8');
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return { events: [], hasMore: false, truncated: false };
+  }
+
+  const lines = buf.split('\n');
+  // Starting mid-file almost always lands mid-line; that first fragment is not
+  // a record and must not be parsed as one.
+  if (truncated) lines.shift();
+
+  const out: StoredAuditEvent[] = [];
+  let hasMore = false;
+  // Backwards: newest first, and it lets the scan stop at the limit instead of
+  // parsing the whole window to then throw most of it away.
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    let ev: StoredAuditEvent;
+    try {
+      ev = JSON.parse(line) as StoredAuditEvent;
+    } catch {
+      continue; // a torn write, or the fragment above — skip, never fail the page
+    }
+    if (!ev || typeof ev.type !== 'string') continue;
+    if (query.beforeTs && !(ev.ts < query.beforeTs)) continue;
+    if (query.type && ev.type !== query.type) continue;
+    if (query.effect && ev.effect !== query.effect) continue;
+    if (query.actor && !(ev.actor ?? '').includes(query.actor)) continue;
+    if (out.length === limit) {
+      hasMore = true; // one match beyond the page — stop, don't count them all
+      break;
+    }
+    out.push(ev);
+  }
+  return { events: out, hasMore, truncated };
+}
+
+/** The distinct types and effects present in the window, for the filter menus. */
+export function readAuditFacets(): { types: string[]; effects: string[] } {
+  const page = readAuditEvents({ limit: 500 });
+  const types = new Set<string>();
+  const effects = new Set<string>();
+  for (const e of page.events) {
+    if (e.type) types.add(e.type);
+    if (e.effect) effects.add(e.effect);
+  }
+  return { types: [...types].sort(), effects: [...effects].sort() };
+}

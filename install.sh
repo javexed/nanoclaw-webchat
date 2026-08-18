@@ -159,8 +159,15 @@ cp -a "$HERE/app/." ./
 CONFLICTS=()
 # Patches live in destiny sub-folders (upstreamable/ product/ local/ — see
 # patches/INVENTORY.md); the folder is documentation, application is uniform.
-say "Applying $(ls "$HERE/patches"/*/*.patch | wc -l) residue patches"
-for p in "$HERE/patches/"*/*.patch; do
+# The list must include DOTFILES. `*/*.patch` is a bash glob, and a glob does
+# not match a leading "." — so .gitignore.patch was silently omitted from every
+# compose since it was written: 82 of 83 applied, no error, and regenerating it
+# from a composed tree then wiped the hunks that had never been in effect.
+# `find` has no such blind spot. (bash 3.2-safe: no mapfile.)
+PATCH_FILES=()
+while IFS= read -r _p; do PATCH_FILES+=("$_p"); done < <(find "$HERE/patches" -mindepth 2 -maxdepth 2 -name '*.patch' | sort)
+say "Applying ${#PATCH_FILES[@]} residue patches"
+for p in "${PATCH_FILES[@]}"; do
   name="${p##*/}"
   if git apply --reverse --check "$p" 2>/dev/null; then
     echo "  = $name: already applied (skip)"
@@ -403,6 +410,73 @@ json.dump({
     "composedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
 }, open(out, "w"), indent=2)
 PY
+
+# ── Payload fingerprint ───────────────────────────────────────────
+# What the composition actually wrote, hashed, so the install can later answer
+# "am I still the release I was composed from?".
+#
+# This replaces a `git status` check that could only ever say "dirty": the
+# composed tree carries the overlay plus every patch, so a working install is
+# modified BY CONSTRUCTION and the flag was true 100% of the time. A constant
+# dressed as a warning teaches operators to ignore warnings.
+#
+# Scope is the payload — the files this repo owns (app-manifest entries) plus
+# every file a patch rewrites. Upstream files nobody touched are already pinned
+# by commit, so hashing them would add runtime and no signal.
+say "Fingerprinting the composed payload"
+python3 - "$DIR" "$HERE" <<'FINGERPRINT' || echo "  !! could not write the payload fingerprint (non-fatal)"
+import hashlib, json, os, sys, datetime
+
+dest, here = sys.argv[1], sys.argv[2]
+paths = set()
+
+# app-manifest entries are paths relative to app/ — files or whole directories.
+man = os.path.join(here, "app-manifest.txt")
+if os.path.exists(man):
+    for raw in open(man):
+        rel = raw.strip()
+        if not rel or rel.startswith("#"):
+            continue
+        full = os.path.join(dest, rel)
+        if os.path.isdir(full):
+            for root, _dirs, files in os.walk(full):
+                for f in files:
+                    paths.add(os.path.relpath(os.path.join(root, f), dest))
+        elif os.path.exists(full):
+            paths.add(rel)
+
+# Patch filenames encode their target: src__channels__x.ts.patch -> src/channels/x.ts
+for sub in ("upstreamable", "product", "local"):
+    d = os.path.join(here, "patches", sub)
+    if not os.path.isdir(d):
+        continue
+    for name in os.listdir(d):
+        if not name.endswith(".patch"):
+            continue
+        rel = name[: -len(".patch")].replace("__", "/")
+        if os.path.exists(os.path.join(dest, rel)):
+            paths.add(rel)
+
+files = {}
+for rel in sorted(paths):
+    try:
+        with open(os.path.join(dest, rel), "rb") as fh:
+            files[rel] = hashlib.sha256(fh.read()).hexdigest()
+    except OSError:
+        continue
+
+json.dump(
+    {
+        "algorithm": "sha256",
+        "composedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "files": files,
+    },
+    open(os.path.join(dest, ".webchat-payload.json"), "w"),
+    indent=0,
+    sort_keys=True,
+)
+print("  fingerprinted %d payload file(s)" % len(files))
+FINGERPRINT
 
 # ── 8b. Local turnkey hand-off ───────────────────────────────────────────────
 # --local: the compose is done and deps are in the lockfile; hand off to the

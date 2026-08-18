@@ -8,7 +8,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { audit, auditActor, auditFilePath } from './audit.js';
+import { audit, auditActor, auditFilePath, readAuditEvents } from './audit.js';
 
 /** Scratch dirs this file makes, removed when it finishes. */
 const SCRATCH: string[] = [];
@@ -83,5 +83,61 @@ describe('auditActor', () => {
     expect(auditActor({ kind: 'system' })).toBe('system');
     expect(auditActor(null)).toBe('(none)');
     expect(auditActor({ kind: 'human' })).toBe('human:(unknown)');
+  });
+});
+
+describe('readAuditEvents', () => {
+  const write = (rows: Array<Record<string, unknown>>) =>
+    fs.writeFileSync(file, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
+
+  const ev = (n: number, over: Record<string, unknown> = {}) => ({
+    ts: `2026-08-1${n}T00:00:00.000Z`,
+    pid: 1,
+    seq: n,
+    type: 'auth.session',
+    actor: 'human:webchat:alice',
+    effect: 'allow',
+    ...over,
+  });
+
+  it('returns newest first and respects the limit', () => {
+    write([ev(1), ev(2), ev(3)]);
+    const page = readAuditEvents({ limit: 2 });
+    expect(page.events.map((e) => e.seq)).toEqual([3, 2]);
+    // A third match exists, so the page says so rather than counting the rest.
+    expect(page.hasMore).toBe(true);
+    expect(page.truncated).toBe(false);
+  });
+
+  it('filters by type, effect and actor substring', () => {
+    write([
+      ev(1, { type: 'guard.decision', effect: 'deny', actor: 'agent:g1' }),
+      ev(2, { type: 'auth.session', effect: 'allow', actor: 'human:webchat:bob' }),
+      ev(3, { type: 'guard.decision', effect: 'allow', actor: 'agent:g2' }),
+    ]);
+    expect(readAuditEvents({ type: 'guard.decision' }).events.map((e) => e.seq)).toEqual([3, 1]);
+    expect(readAuditEvents({ effect: 'deny' }).events.map((e) => e.seq)).toEqual([1]);
+    // Substring, so a bare name finds the namespaced identity.
+    expect(readAuditEvents({ actor: 'bob' }).events.map((e) => e.seq)).toEqual([2]);
+  });
+
+  it('pages older with the beforeTs cursor', () => {
+    write([ev(1), ev(2), ev(3)]);
+    const first = readAuditEvents({ limit: 2 });
+    const older = readAuditEvents({ limit: 2, beforeTs: first.events[first.events.length - 1].ts });
+    expect(older.events.map((e) => e.seq)).toEqual([1]);
+    expect(older.hasMore).toBe(false);
+  });
+
+  it('skips a torn line instead of failing the page', () => {
+    // A half-written record is what a crash mid-append leaves behind. The
+    // viewer must still render everything around it.
+    fs.writeFileSync(file, `${JSON.stringify(ev(1))}\n{"ts":"2026-08-12T00:00:00.0\n${JSON.stringify(ev(3))}\n`);
+    expect(readAuditEvents().events.map((e) => e.seq)).toEqual([3, 1]);
+  });
+
+  it('is an empty page when the file does not exist', () => {
+    vi.stubEnv('NANOCLAW_AUDIT_FILE', path.join(scratchDir(), 'nope', 'audit.jsonl'));
+    expect(readAuditEvents()).toEqual({ events: [], hasMore: false, truncated: false });
   });
 });

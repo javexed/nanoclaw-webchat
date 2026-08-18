@@ -62,10 +62,17 @@ jobs:
           fi
           echo "computed range: $(grep '^range=' "$GITHUB_OUTPUT" | tail -1)"
 
+      # LEAK_REQUIRE_OPERATOR_TIER makes a TRUSTED run fail when the identifier
+      # secret does not load. Without it, renaming or clearing the secret turns
+      # the identifier tier off silently and every run still goes green — the
+      # gate would be half off with nothing but a log warning to say so.
+      # Fork PRs cannot read secrets by GitHub design, so they stay on the
+      # generic tier and must NOT be required (see the header).
       - name: Scan the introduced commits (added lines + messages)
         if: steps.r.outputs.range != ''
         env:
           LEAK_PATTERNS: ${{ secrets.LEAK_PATTERNS }}
+          LEAK_REQUIRE_OPERATOR_TIER: ${{ github.event.pull_request.head.repo.fork && '0' || '1' }}
         run: bash scripts/leak-scan.sh --range "${{ steps.r.outputs.range }}"
 
       - name: Scan the working tree (belt-and-suspenders)

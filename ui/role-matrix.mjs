@@ -47,6 +47,9 @@ const MATRIX = {
     'settings-secrets': false, // state.isOwnerView
     'settings-about': false, // GET /api/system/versions  anyAdmin
     'overflow-admin': false, // revealed on /api/users success — 403s for them
+    // Marketplace off and not an owner → no route to either registry.
+    'mtab-skills-btn': false,
+    'mtab-mcp-btn': false
   },
   owner: {
     'create-room-btn': true,
@@ -59,6 +62,10 @@ const MATRIX = {
     'settings-secrets': true,
     'settings-about': true,
     'overflow-admin': true,
+    // The regression this pins: with marketplace OFF an owner still reaches
+    // the tabs, because that is where the registry sources are configured.
+    'mtab-skills-btn': true,
+    'mtab-mcp-btn': true,
   },
   'scoped-admin': {
     // Admin of one group, owner of nothing. May create agents; may not create
@@ -75,6 +82,10 @@ const MATRIX = {
     'settings-about': true,
     // The page opens for them; what is IN it is decided block by block above.
     'overflow-admin': true,
+    // Marketplace off and not an owner: the catalogs are off for them and the
+    // source registries are not theirs to configure.
+    'mtab-skills-btn': false,
+    'mtab-mcp-btn': false,
   },
 };
 
@@ -167,6 +178,14 @@ async function runPersona(browser, persona) {
         }),
   );
   // Owner|globalAdmin only — the probe behind the wizard and self-test.
+  // Marketplace OFF, deliberately. These personas are checked in the state
+  // where the Skills/MCP tabs used to become unreachable: the registry SOURCES
+  // live on those tabs, so an owner must still get in to configure them (and
+  // to switch the marketplace back on). Left unstubbed this defaulted to off
+  // by accident; pinning it makes the scenario the point of the test.
+  await page.route('**/api/webchat/features*', (r) =>
+    r.fulfill({ status: 200, contentType: 'application/json', body: '{"marketplaceEnabled":false}' }),
+  );
   await page.route('**/api/workspace-credential*', (r) =>
     persona === 'owner'
       ? r.fulfill({ status: 200, contentType: 'application/json', body: '{"configured":true}' })
@@ -243,6 +262,9 @@ async function runPersona(browser, persona) {
   await page.waitForTimeout(1200);
   await assertOpen('#manage', 'the Manage pane');
   if ('create-agent-btn' in want) seen['create-agent-btn'] = await vis('create-agent-btn');
+  // Marketplace is off for every persona here, so these assert the owner-only
+  // escape hatch rather than the catalog feature.
+  for (const id of ['mtab-skills-btn', 'mtab-mcp-btn']) if (id in want) seen[id] = await vis(id);
   await click('[data-mtab="models"]');
   await page.waitForTimeout(900);
   if ('create-model-btn' in want) seen['create-model-btn'] = await vis('create-model-btn');

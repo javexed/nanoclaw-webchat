@@ -1,0 +1,95 @@
+diff --git a/src/templates/local-dir.ts b/src/templates/local-dir.ts
+index 6a8a0ea2..b0500b29 100644
+--- a/src/templates/local-dir.ts
++++ b/src/templates/local-dir.ts
+@@ -31,3 +31,90 @@ export function resolveLocalTemplate(ref: string, base: string = TEMPLATES_DIR):
+   }
+   return candidate;
+ }
++
++/** One discovered template in a local library directory. */
++export interface LocalTemplateEntry {
++  /** Ref relative to the library root, e.g. "sales/sdr"; "." for a library that IS one plugin. */
++  ref: string;
++  /** Manifest name when readable, else the folder leaf. */
++  name: string;
++  description?: string;
++  version?: string;
++}
++
++/** The Agent Plugins discovery marker, and the pre-plugin layout it replaced. */
++const PLUGIN_MARKER = 'plugin.json';
++const LEGACY_MARKER = 'context/instructions.md';
++
++/** True when `ref` equals or sits anywhere below a discovered template ref. */
++function isWithinTemplate(ref: string, templateRefs: Set<string>): boolean {
++  if (templateRefs.has('.')) return true;
++  for (let current = ref; ; ) {
++    if (templateRefs.has(current)) return true;
++    const cut = current.lastIndexOf('/');
++    if (cut === -1) return false;
++    current = current.slice(0, cut);
++  }
++}
++
++/**
++ * Enumerate the templates in a local library directory.
++ *
++ * A directory is a template iff it carries `plugin.json` — the manifest is the
++ * discovery marker, per the spec. Refs are returned relative to `base` and are
++ * exactly what `--template` / `resolveLocalTemplate` accept.
++ *
++ * This lives here rather than in the setup wizard because listing is not a
++ * setup-only concern: anything that offers a template picker needs it, and the
++ * wizard's copy is not reachable from the built product (`setup/` is outside
++ * the compiled tree). Reading a manifest is best-effort — a template with an
++ * unreadable manifest still lists, under its folder name, because refusing to
++ * show it would hide the very thing the operator needs to fix.
++ *
++ * Throws only for the pre-plugin layout, so an operator with an old library
++ * gets a pointer instead of a silently empty list.
++ */
++export function listLocalTemplates(base: string = TEMPLATES_DIR): LocalTemplateEntry[] {
++  if (!fs.existsSync(base)) return [];
++  const rootName = path.basename(path.resolve(base));
++  const rels = (fs.readdirSync(base, { recursive: true }) as string[]).map((entry) => entry.split(path.sep).join('/'));
++
++  const refs = new Set<string>();
++  for (const rel of rels) {
++    if (rel === PLUGIN_MARKER) refs.add('.');
++    else if (rel.endsWith(`/${PLUGIN_MARKER}`)) refs.add(rel.slice(0, -(PLUGIN_MARKER.length + 1)));
++  }
++
++  const legacy = rels
++    .filter((rel) => rel === LEGACY_MARKER || rel.endsWith(`/${LEGACY_MARKER}`))
++    .map((rel) => (rel === LEGACY_MARKER ? '.' : rel.slice(0, -(LEGACY_MARKER.length + 1))))
++    .filter((ref) => !isWithinTemplate(ref, refs));
++  if (legacy.length > 0) {
++    throw new Error(
++      `Templates predate the plugin format (no ${PLUGIN_MARKER}): ${legacy.join(', ')}. ` +
++        'Re-fetch the template library (and update NanoClaw if fetching does not help).',
++    );
++  }
++
++  return [...refs]
++    .map((ref) => {
++      const leaf = ref === '.' ? rootName : (ref.split('/').pop() ?? ref);
++      let name = leaf;
++      let description: string | undefined;
++      let version: string | undefined;
++      try {
++        const manifest: unknown = JSON.parse(fs.readFileSync(path.resolve(base, ref, PLUGIN_MARKER), 'utf8'));
++        if (manifest && typeof manifest === 'object') {
++          const m = manifest as Record<string, unknown>;
++          if (typeof m.name === 'string' && m.name.trim()) name = m.name.trim();
++          if (typeof m.description === 'string' && m.description.trim()) description = m.description.trim();
++          if (typeof m.version === 'string' && m.version.trim()) version = m.version.trim();
++        }
++      } catch {
++        // Unreadable or invalid manifest: fall back to the folder leaf. Stamping
++        // it will fail loudly with the real reason; hiding it here would not.
++      }
++      return { ref, name, ...(description ? { description } : {}), ...(version ? { version } : {}) };
++    })
++    .sort((a, b) => a.ref.localeCompare(b.ref));
++}

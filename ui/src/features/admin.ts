@@ -24,6 +24,7 @@ import { closeView, hideOtherFullViews, openFullView, openView } from './views.j
 import { renderSettingsWizardButton } from './wizard.js';
 import { renderAutoLearnSetting } from './learn.js';
 import { renderToolSecrets } from './agents.js';
+import { loadAuditLog } from './audit-log.js';
 import {
   renderAboutSettings,
   renderAccessSettings,
@@ -78,6 +79,7 @@ function openAdmin(): void {
       renderToolSecrets(),
       renderAutoLearnSetting(),
       renderAuditSettings(),
+      loadAuditLog(),
       renderAboutSettings(),
     ]).then(syncAdminGroups);
     openView('admin', teardownAdmin);

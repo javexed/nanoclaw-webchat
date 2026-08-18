@@ -12,12 +12,17 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WebchatModel } from '../../channels/webchat/db.js';
 import type { PendingApproval, Session } from '../../types.js';
 import {
+  buildApprovalTriageView,
+  heuristicFlags,
   isNeverAutoApprovable,
   isUsableJudgeModel,
   maybePrejudgeApproval,
+  NEVER_AUTO_APPROVE_ACTIONS,
+  parseFlags,
   parseVerdict,
   prejudgeApproval,
   redactForPrompt,
+  TRIAGE_FLAGS,
 } from './prejudge.js';
 
 const MODEL: WebchatModel = {
@@ -72,7 +77,7 @@ function baseDeps(fetchFn: (url: string, init?: RequestInit) => Promise<Response
 
 describe('parseVerdict', () => {
   it('approves only an exact approve verdict', () => {
-    expect(parseVerdict('{"verdict":"approve","reason":"routine"}')).toEqual({
+    expect(parseVerdict('{"verdict":"approve","reason":"routine"}')).toMatchObject({
       verdict: 'approve',
       reason: 'routine',
     });
@@ -182,7 +187,7 @@ describe('prejudgeApproval fail-safe', () => {
   it('approves on a clean approve verdict', async () => {
     const fetchFn = vi.fn().mockResolvedValue(okResponse('{"verdict":"approve","reason":"routine task"}'));
     const result = await prejudgeApproval(makeApproval(), 'Agent wants to run: ncl tasks create', baseDeps(fetchFn));
-    expect(result).toEqual({ verdict: 'approve', reason: 'routine task' });
+    expect(result).toMatchObject({ verdict: 'approve', reason: 'routine task' });
     expect(fetchFn).toHaveBeenCalledWith(
       'http://10.0.0.10:11434/v1/chat/completions',
       expect.objectContaining({ method: 'POST' }),
@@ -233,7 +238,7 @@ describe('anthropic-kind judge', () => {
     const anthropicFn = vi.fn().mockResolvedValue('{"verdict":"approve","reason":"routine task"}');
     const deps = anthropicDeps(anthropicFn);
     const result = await prejudgeApproval(makeApproval(), 'Agent wants to run: ncl tasks create', deps);
-    expect(result).toEqual({ verdict: 'approve', reason: 'routine task' });
+    expect(result).toMatchObject({ verdict: 'approve', reason: 'routine task' });
     expect(deps.fetchFn).not.toHaveBeenCalled();
     expect(anthropicFn).toHaveBeenCalledTimes(1);
     const call = anthropicFn.mock.calls[0][0] as {
@@ -387,5 +392,168 @@ describe('maybePrejudgeApproval wiring', () => {
       notify: vi.fn(),
     });
     expect(handled).toBe(false);
+  });
+});
+
+// ── Triage description (what the card shows) ────────────────────────────────
+//
+// The rule these all serve: describing a request must never change the decision
+// about it, and an ABSENCE of description must never look like a clean bill.
+
+describe('triage flags', () => {
+  it('maps every never-list ACTION to a flag, so the two cannot drift', () => {
+    for (const action of NEVER_AUTO_APPROVE_ACTIONS) {
+      expect(heuristicFlags(action, '{}'), `${action} has no flag`).not.toHaveLength(0);
+    }
+  });
+
+  it('maps every never-list PAYLOAD shape to a flag', () => {
+    const shapes = [
+      'cli_scope',
+      'roles grant',
+      'roles revoke',
+      'config add-package',
+      'config remove-mcp-server',
+      'config update',
+    ];
+    for (const shape of shapes) {
+      expect(heuristicFlags('cli_command', JSON.stringify({ frame: shape })), shape).not.toHaveLength(0);
+    }
+  });
+
+  it('says nothing about an ordinary request', () => {
+    expect(heuristicFlags('cli_command', JSON.stringify({ frame: 'tasks create' }))).toEqual([]);
+  });
+
+  it('drops values outside the closed vocabulary', () => {
+    expect(parseFlags(['credentials', 'catastrophic', 'HIGH RISK', 7, null])).toEqual(['credentials']);
+    expect(parseFlags('credentials')).toEqual([]);
+    expect(parseFlags(undefined)).toEqual([]);
+  });
+
+  it('accepts every documented flag, case-insensitively', () => {
+    expect(parseFlags(TRIAGE_FLAGS.map((f) => f.toUpperCase()))).toEqual([...TRIAGE_FLAGS]);
+  });
+});
+
+describe('parseVerdict — flags never affect the verdict', () => {
+  it('reads flags and reversibility alongside an approve', () => {
+    const r = parseVerdict('{"verdict":"approve","reason":"routine","flags":["outbound"],"reversible":"yes"}');
+    expect(r.verdict).toBe('approve');
+    expect(r.flags).toEqual(['outbound']);
+    expect(r.reversible).toBe('yes');
+  });
+
+  it('keeps the approve when flags are garbage', () => {
+    const r = parseVerdict('{"verdict":"approve","reason":"routine","flags":"not-an-array","reversible":42}');
+    expect(r.verdict).toBe('approve');
+    expect(r.flags).toEqual([]);
+    expect(r.reversible).toBe('unknown');
+  });
+
+  it('keeps the escalate when flags look reassuring', () => {
+    const r = parseVerdict('{"verdict":"escalate","reason":"unsure","flags":[],"reversible":"yes"}');
+    expect(r.verdict).toBe('escalate');
+  });
+});
+
+describe('triage tiers', () => {
+  const tierFor = async (deps: Parameters<typeof prejudgeApproval>[2], approval = makeApproval()) =>
+    (await prejudgeApproval(approval, undefined, deps)).tier;
+
+  it('is unscreened when the feature is off or the action is not opted in', async () => {
+    expect(await tierFor({ getModelId: () => null })).toBe('unscreened');
+    expect(await tierFor({ getModelId: () => 'm1', getActions: () => [] })).toBe('unscreened');
+  });
+
+  it('is heuristic when the never-list decided, with the flag attached', async () => {
+    const r = await prejudgeApproval(makeApproval({ action: 'install_packages' }), undefined, {
+      getModelId: () => 'm1',
+      getActions: () => ['install_packages'],
+      getModel: () => MODEL,
+    });
+    expect(r.tier).toBe('heuristic');
+    expect(r.heuristic).toContain('install');
+  });
+
+  it('is unavailable — not "clean" — when the model cannot be reached', async () => {
+    const r = await prejudgeApproval(makeApproval(), undefined, {
+      ...baseDeps(() => Promise.reject(new Error('down'))),
+    });
+    expect(r.tier).toBe('unavailable');
+    expect(r.verdict).toBe('escalate');
+  });
+
+  it('carries the never-list flags even on an unscreened result', async () => {
+    const r = await prejudgeApproval(makeApproval({ action: 'onecli_credential' }), undefined, {
+      getModelId: () => null,
+    });
+    expect(r.tier).toBe('unscreened');
+    expect(r.heuristic).toEqual(['credentials']);
+  });
+});
+
+describe('buildApprovalTriageView', () => {
+  const payload = JSON.stringify({ frame: 'roles grant' });
+
+  it('reports unscreened when nothing was recorded, and still derives the never-list flags', () => {
+    const v = buildApprovalTriageView('appr-x', 'cli_command', payload, { getTriage: () => undefined });
+    expect(v.tier).toBe('unscreened');
+    expect(v.heuristic).toEqual(['permissions']);
+    expect(v.flags).toEqual([]);
+  });
+
+  it('recomputes heuristics live rather than trusting the stored copy', () => {
+    const v = buildApprovalTriageView('appr-x', 'cli_command', payload, {
+      getTriage: () => ({
+        tier: 'model',
+        reason: 'grants a role',
+        flags: ['permissions'],
+        heuristicFlags: [], // stale record from before the never-list covered this
+        reversible: 'no',
+      }),
+    });
+    expect(v.heuristic).toEqual(['permissions']);
+    expect(v.reason).toBe('grants a role');
+    expect(v.reversible).toBe('no');
+  });
+
+  it('drops stored flags outside the vocabulary', () => {
+    const v = buildApprovalTriageView('appr-x', 'cli_command', '{}', {
+      getTriage: () => ({
+        tier: 'model',
+        reason: '',
+        flags: ['credentials', 'apocalyptic'],
+        heuristicFlags: [],
+        reversible: 'unknown',
+      }),
+    });
+    expect(v.flags).toEqual(['credentials']);
+  });
+});
+
+describe('maybePrejudgeApproval records the triage', () => {
+  it('stores the escalation reason the card needs', async () => {
+    const stored: Array<{ id: string; tier: string; reason: string }> = [];
+    const ok = await maybePrejudgeApproval('appr-1', SESSION, undefined, {
+      ...baseDeps(() =>
+        Promise.resolve(okResponse('{"verdict":"escalate","reason":"touches a secret","flags":["credentials"]}')),
+      ),
+      getApproval: () => makeApproval(),
+      storeTriage: (id, t) => stored.push({ id, tier: t.tier, reason: t.reason }),
+    });
+    expect(ok).toBe(false);
+    expect(stored).toEqual([{ id: 'appr-1', tier: 'model', reason: 'touches a secret' }]);
+  });
+
+  it('still delivers to a human when the triage write throws', async () => {
+    const ok = await maybePrejudgeApproval('appr-1', SESSION, undefined, {
+      ...baseDeps(() => Promise.resolve(okResponse('{"verdict":"escalate","reason":"nope"}'))),
+      getApproval: () => makeApproval(),
+      storeTriage: () => {
+        throw new Error('disk full');
+      },
+    });
+    expect(ok).toBe(false);
   });
 });

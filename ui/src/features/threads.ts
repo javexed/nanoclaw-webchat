@@ -114,7 +114,13 @@ function openThread(threadId?: any) {
   state.threadUnread.delete(threadId);
   beginTranscriptSwitch();
   // Re-join the room scoped to this thread; the server returns thread history.
-  state.ws?.send(JSON.stringify({ type: 'join', room_id: state.currentRoom, thread_id: threadId }));
+  // Guarded on OPEN for the same reason as joinRoom: send() on a connecting
+  // socket throws, which would skip updateThreadSyncControls() below and leave
+  // the breadcrumb/sync controls stale. state.currentThread is already set, so
+  // ws.ts's rejoin carries this thread when the socket comes up.
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: 'join', room_id: state.currentRoom, thread_id: threadId }));
+  }
   updateThreadSyncControls();
 }
 

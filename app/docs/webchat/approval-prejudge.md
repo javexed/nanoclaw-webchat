@@ -135,3 +135,81 @@ An auto-approve emits:
 
 Escalations after a consult are logged too (`Approval pre-judge escalated to
 human`); feature-off and not-opted-in cases are silent no-ops.
+
+## What the card shows (triage)
+
+Every card a human sees is one the pre-judge **escalated** — an approve resolves
+the hold and no card is ever rendered. So the verdict itself carries no
+information at the card. What the approver actually needs is *why this is in
+front of me*, which used to exist only in a log line.
+
+The card therefore shows, above the payload:
+
+- **Flag chips** — a closed vocabulary of claims about the request:
+  `credentials`, `permissions`, `install`, `capability`, `destructive`,
+  `irreversible`, `outbound`, `bulk`.
+- **A note** — the model's one-line reason, or why there is no reason.
+
+### Claims, not scores
+
+The chips are deliberately **not** a risk level or a confidence number.
+
+This design already refuses to let the triage model withhold a human review —
+there is no auto-deny, because a wrong auto-deny is worse than a wait. A
+`risk: low / confidence: 0.92` chip would ask the approver to trust that same
+model to *reassure* them, which is the same trust with no fail-safe behind it.
+Self-reported confidence is also poorly calibrated, especially in the small
+local models this feature targets, and a precise-looking number invites clicking
+through the one card whose entire purpose is to make a human look.
+
+A claim like "touches credentials" is different in kind: the payload renders
+directly beneath it, so a wrong claim is visibly wrong. Wrong claims are
+self-correcting; a wrong confidence score is not.
+
+Values outside the vocabulary are dropped rather than rendered — a model
+inventing a confident-sounding category must not reach the card.
+
+### Two tiers, and their disagreement
+
+Chips come from two places, and are shown side by side rather than merged:
+
+| Source | Trust | Rendering |
+|---|---|---|
+| the never-list (deterministic, no model) | authoritative | tinted chip |
+| the triage model | a claim to check | plain chip |
+
+Showing both means a **disagreement is visible**: if the never-list flagged
+`credentials` and the model never mentioned it, the model missed something, and
+the approver can see that.
+
+Never-list flags are recomputed at render from `(action, payload)` — a pure
+function — so they appear even on an approval raised while the feature was off,
+or one that predates it. The stored `heuristic_flags` column is kept as a record
+of what the never-list said *at decision time*, which is a different question
+and may legitimately diverge if the never-list later changes.
+
+### Absence is a state, not a gap
+
+Once chips exist, "no chips" must never be read as "screened, nothing found".
+The tier is rendered explicitly:
+
+| Tier | Card says | Means |
+|---|---|---|
+| `unscreened` | Not screened | feature off, action not opted in, or a targeted approver |
+| `heuristic` | Always requires a human | the never-list decided; no model was consulted |
+| `model` | *the model's reason* | the model was consulted |
+| `unavailable` | Screening unavailable | screening was wanted but could not run |
+
+No stored record reads as `unscreened`, which is the honest answer for both a
+feature-off approval and one raised before this existed.
+
+### Storage
+
+`webchat_approval_triage` (migration `webchat-approval-triage`), keyed by
+`approval_id` — fork-owned, because `pending_approvals` is upstream's and this
+is description rather than decision. Written best-effort as the hold is created:
+a triage write that fails logs and is skipped, never blocking delivery.
+
+Flags and reversibility are parsed **after** the verdict is already decided, so
+a garbage `flags` value costs the card some chips and nothing else. Describing a
+request can never change the decision about it.
