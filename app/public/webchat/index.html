@@ -803,6 +803,14 @@
                   <span class="form-label">Instructions</span>
                   <textarea id="agent-instructions" rows="18" placeholder="Standing instructions…"></textarea>
                 </label>
+                <!-- Why this can be empty on a freshly stamped agent: a
+                     template's persona is OPTIONAL, and only a template that
+                     ships context/instructions.md seeds this. Without the
+                     hint an empty box after stamping reads as a bug. -->
+                <p class="form-hint">
+                  Optional, and editable here. A template only fills this in if it ships a persona — an empty box
+                  after stamping means that template didn't include one.
+                </p>
                 <p id="agent-instructions-legacy" class="form-hint" hidden></p>
                 </div>
                 <div class="agent-detail-actions">
@@ -817,9 +825,14 @@
                 <!-- Shown only for an agent stamped from a template still in
                      the library. The plan is the point: it names what resets
                      and flags local edits that applying would discard. -->
+                <!-- Labelled, because an unheaded hint + ghost button between
+                     Save and Export read as decoration and got missed: the
+                     first operator to use this could not find how to update a
+                     stamped agent at all. -->
                 <div id="agent-template-row" class="agent-export-row" hidden>
+                  <span class="form-label">Template</span>
                   <span id="agent-template-name" class="form-hint"></span>
-                  <button type="button" id="agent-template-update" class="btn btn-ghost">Check for updates</button>
+                  <button type="button" id="agent-template-update" class="btn btn-secondary">Check for updates</button>
                 </div>
                 <div class="agent-export-row">
                   <button type="button" id="agent-export-btn" class="btn btn-ghost">Export agent…</button>
@@ -1435,15 +1448,26 @@
                  something in it OR a source can be browsed. -->
             <div id="agent-templates" class="skill-sources" hidden>
               <div class="ollama-hosts-title">Templates</div>
-              <ul id="agent-templates-list" class="skill-sources-list"></ul>
-              <button id="template-browse-btn" class="btn btn-ghost btn-list-footer" type="button">Get templates…</button>
+              <!-- ollama-model-list, not skill-sources-list: this is a row of
+                   name + a right-hand +/− control, which is the Models-tab row
+                   shape. The class is already general (the router roster uses
+                   it too). skill-sources-list is only a flex COLUMN — it gives
+                   rows no layout, so the toggle sat inline against the name
+                   instead of hard right. -->
+              <ul id="agent-templates-list" class="ollama-model-list"></ul>
+              <button id="template-browse-btn" class="btn btn-secondary btn-list-footer" type="button">+ Add templates…</button>
               <div id="template-browse" hidden>
                 <select id="template-source-select" aria-label="Template source"></select>
-                <ul id="template-browse-list" class="skill-sources-list"></ul>
+                <ul id="template-browse-list" class="ollama-model-list"></ul>
                 <div class="skill-source-form">
                   <input id="template-source-repo" type="text" placeholder="owner/repo" autocomplete="off" spellcheck="false" />
                   <button id="template-source-add" class="btn btn-secondary" type="button">Add source</button>
                 </div>
+                <!-- The fetcher talks to api.github.com and a source row is
+                     (owner, repo, branch) rather than a URL, so "any https
+                     source" is not a thing here. Say it beside the field
+                     instead of only in the error you get for guessing. -->
+                <p class="form-hint">GitHub repositories only — <code>owner/repo</code>, or paste a GitHub repo URL.</p>
               </div>
             </div>
           </div>
