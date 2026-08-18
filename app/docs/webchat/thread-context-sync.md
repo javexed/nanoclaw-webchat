@@ -168,4 +168,4 @@ Webchat-owned files (`src/channels/webchat/*`, `public/webchat/*`) are skill
 column is a webchat-owned migration (in `channels/webchat/migration.ts`), not a
 central-DB one. No new core/trunk files are drawn into the hook surface; keep the
 copy logic in the webchat module so the hook footprint stays unchanged. Publish
-gate: `verify-webchat-publish.sh --full` green before publishing.
+gate: the maintainer-side pre-publish gate green before publishing.
