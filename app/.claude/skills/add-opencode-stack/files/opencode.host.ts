@@ -15,8 +15,8 @@ import { readEnvFile } from '../env.js';
 import { registerProviderContainerConfig } from './provider-container-registry.js';
 
 // Per-agent OpenCode model, written by the webchat model bridge
-// (writeLocalModelForAgent) at
-// <DATA_DIR>/v2-sessions/<agentGroupId>/.claude-shared/local-model.json.
+// (writeOpencodeModelForAgent) at
+// <DATA_DIR>/v2-sessions/<agentGroupId>/.claude-shared/opencode-model.json.
 // This is the source of truth when present: it wires the harness to the exact
 // local model the agent is assigned in the webchat UI, so installing OpenCode
 // "just works" for local models — no global .env editing, no manual switch.
@@ -25,33 +25,24 @@ import { registerProviderContainerConfig } from './provider-container-registry.j
 // ctx.sessionDir is <…>/v2-sessions/<agentGroupId>/<sessionId>, and .claude-shared
 // is a sibling of the session dir — one level up — so it's `../.claude-shared`
 // (the agentGroupId is already in the path; don't append it again).
-//
-// Reads BOTH names, new first: this file was `opencode-model.json` when OpenCode
-// was its only reader, and is `local-model.json` now that pi reads it too. An
-// install whose file predates the rename still resolves; the host writes only
-// the new name and removes the old one, so the fallback cannot shadow current
-// wiring.
 function readAgentModel(ctx: { sessionDir: string }): Record<string, string> {
-  const shared = path.join(ctx.sessionDir, '..', '.claude-shared');
-  for (const name of ['local-model.json', 'opencode-model.json']) {
-    try {
-      const cfg = JSON.parse(fs.readFileSync(path.join(shared, name), 'utf-8')) as {
-        provider?: string;
-        model?: string;
-        smallModel?: string;
-        baseURL?: string;
-      };
-      const out: Record<string, string> = {};
-      if (cfg.provider) out.OPENCODE_PROVIDER = cfg.provider;
-      if (cfg.model) out.OPENCODE_MODEL = cfg.model;
-      if (cfg.smallModel) out.OPENCODE_SMALL_MODEL = cfg.smallModel;
-      if (cfg.baseURL) out.ANTHROPIC_BASE_URL = cfg.baseURL;
-      return out;
-    } catch {
-      // absent or unreadable — try the next name, then give up silently.
-    }
+  try {
+    const file = path.join(ctx.sessionDir, '..', '.claude-shared', 'opencode-model.json');
+    const cfg = JSON.parse(fs.readFileSync(file, 'utf-8')) as {
+      provider?: string;
+      model?: string;
+      smallModel?: string;
+      baseURL?: string;
+    };
+    const out: Record<string, string> = {};
+    if (cfg.provider) out.OPENCODE_PROVIDER = cfg.provider;
+    if (cfg.model) out.OPENCODE_MODEL = cfg.model;
+    if (cfg.smallModel) out.OPENCODE_SMALL_MODEL = cfg.smallModel;
+    if (cfg.baseURL) out.ANTHROPIC_BASE_URL = cfg.baseURL;
+    return out;
+  } catch {
+    return {};
   }
-  return {};
 }
 
 function mergeNoProxy(current: string | undefined, additions: string): string {

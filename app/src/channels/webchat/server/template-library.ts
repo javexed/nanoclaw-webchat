@@ -161,11 +161,37 @@ export async function fetchTemplateInto(
 }
 
 /** What one library template contains — enough to decide whether to stamp it. */
+/**
+ * What an MCP server in a template will actually launch.
+ *
+ * Names alone are not reviewable. `command` is already tightly constrained by
+ * the reader (single bare token or ./-relative, no shell strings, no ${}
+ * expansion) — but `args` is not, so `command: "bash"` with
+ * `args: ["-c", "…"]` is a legal template. That runs inside the agent's
+ * container, where the agent already has a shell, so it is not privilege
+ * escalation; what it buys is code running without the operator asking the
+ * agent for anything. The answer is to show it before stamping, not to guess
+ * intent from a blocklist — plenty of legitimate servers are
+ * `npx -y @modelcontextprotocol/server-filesystem /path`.
+ *
+ * env VALUES never leave the host: a template carrying a high-confidence
+ * secret is rejected outright, but keys-only is the safer default for the
+ * rest.
+ */
+export interface TemplateMcpSummary {
+  name: string;
+  transport: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  url?: string;
+  envKeys?: string[];
+}
+
 export interface TemplateDetail extends LocalTemplateEntry {
   persona: string | null;
   skills: string[];
   tasks: { name: string; schedule: string }[];
-  mcpServers: string[];
+  mcpServers: TemplateMcpSummary[];
   contextFiles: string[];
   report: string[];
 }
@@ -185,7 +211,28 @@ export function templateDetail(ref: string): TemplateDetail {
     persona: t.instructions ?? null,
     skills: t.skills.map((s) => s.name).sort(),
     tasks: t.tasks.map((k) => ({ name: k.name, schedule: k.schedule })),
-    mcpServers: Object.keys(t.mcpServers).sort(),
+    mcpServers: Object.entries(t.mcpServers)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, s]): TemplateMcpSummary => {
+        // `'url' in s` narrows the McpServerConfig union properly. Casting it to
+        // Record<string, unknown> does not typecheck — the http variant has no
+        // index signature — and would have thrown away the narrowing anyway.
+        if ('url' in s) {
+          return {
+            name,
+            transport: 'http',
+            url: s.url,
+            ...(s.headers ? { envKeys: Object.keys(s.headers).sort() } : {}),
+          };
+        }
+        return {
+          name,
+          transport: 'stdio',
+          command: s.command,
+          ...(s.args?.length ? { args: [...s.args] } : {}),
+          ...(s.env ? { envKeys: Object.keys(s.env).sort() } : {}),
+        };
+      }),
     contextFiles: t.contextExtras.map((c) => c.name).sort(),
     report: t.report,
   };

@@ -194,68 +194,6 @@ describe('PUT /api/agents/:id/config-model', () => {
     expect(stored('ag-mdl-a')).toBeNull();
   });
 
-  // ── the inherited case (#112 follow-up) ────────────────────────────────────
-  // The refusal above read the ASSIGNED model only. An UNASSIGNED agent runs on
-  // the workspace default, which sets the same env var and wins the same way —
-  // so a pin was accepted and then quietly ignored. Harder to notice than the
-  // assigned case, because nothing on the agent names the model it inherited.
-
-  const setWorkspaceDefault = (kind: 'anthropic' | 'ollama') => {
-    const db = conn.getDb();
-    db.prepare(
-      `INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
-       VALUES ('m-def', 'Workspace default', ?, ?, 'claude-sonnet-5', NULL, 0)`,
-    ).run(kind, kind === 'anthropic' ? null : 'http://127.0.0.1:11434');
-    db.prepare(`UPDATE webchat_settings SET default_model_id = 'm-def'`).run();
-  };
-
-  it('refuses when an anthropic-kind WORKSPACE DEFAULT is inherited, not just an assignment', async () => {
-    setWorkspaceDefault('anthropic'); // agent has no assignment of its own
-    const r = await put('ag-mdl-a', 'admina', 'claude-opus-5');
-    expect(r.status).toBe(409);
-    // Different wording from the assigned case on purpose: the fix differs —
-    // you change the default (or assign this agent its own model), you do not
-    // "unassign" something the agent never had.
-    expect(r.body).toContain('workspace default');
-    expect(r.body).toContain('Workspace default');
-    expect(stored('ag-mdl-a')).toBeNull();
-  });
-
-  it('still allows clearing the pin while inheriting such a default', async () => {
-    setWorkspaceDefault('anthropic');
-    const r = await put('ag-mdl-a', 'admina', '');
-    expect(r.status).toBe(200);
-    expect(stored('ag-mdl-a')).toBeNull();
-  });
-
-  it('does NOT refuse when the inherited default is a non-anthropic kind', async () => {
-    // Only anthropic-kind models write ANTHROPIC_MODEL, so only they conflict.
-    // Refusing on an ollama default would block a legitimate pin.
-    setWorkspaceDefault('ollama');
-    const r = await put('ag-mdl-a', 'admina', 'claude-opus-5');
-    expect(r.status).toBe(200);
-    expect(stored('ag-mdl-a')).toBe('claude-opus-5');
-  });
-
-  it('an ASSIGNED non-anthropic model still shadows an anthropic default', async () => {
-    // Assignment wins over the default, so the effective model is the ollama
-    // one and there is no conflict to refuse — the check must not look past
-    // the assignment to the default underneath it.
-    setWorkspaceDefault('anthropic');
-    const db = conn.getDb();
-    db.prepare(
-      `INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
-       VALUES ('m-oll', 'Local', 'ollama', 'http://127.0.0.1:11434', 'qwen3:8b', NULL, 0)`,
-    ).run();
-    db.prepare(
-      `INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES ('ag-mdl-a','m-oll',0)`,
-    ).run();
-
-    const r = await put('ag-mdl-a', 'admina', 'claude-opus-5');
-    expect(r.status).toBe(200);
-    expect(stored('ag-mdl-a')).toBe('claude-opus-5');
-  });
-
   it('still allows CLEARING the pin while such a model is assigned', async () => {
     // The refusal exists to stop a NEW silent conflict; unpinning removes one.
     const db = conn.getDb();

@@ -23,7 +23,7 @@ replacement, so the model gets NanoClaw's instructions and nothing else.
    firewalls: `sudo ufw allow from 172.17.0.0/16 to any port 11434 proto tcp`).
 2. An agent group (`/init-first-agent`).
 3. For the auto-wiring: the agent's local model assigned in the webchat UI (the
-   per-agent wiring file `.claude-shared/local-model.json` is shared by the
+   per-agent wiring file `.claude-shared/opencode-model.json` is shared by the
    local harnesses; a `.env` `PI_MODEL`/`PI_PROVIDER`/`ANTHROPIC_BASE_URL`
    fallback also works).
 
