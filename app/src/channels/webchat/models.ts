@@ -456,26 +456,41 @@ export function syncAgentProviderForAssignedModel(agentGroupId: string): void {
     ensureContainerConfig(agentGroupId);
     updateContainerConfigScalars(agentGroupId, { provider: providerForModelKind(model?.kind) });
   }
-  writeOpencodeModelForAgent(agentGroupId);
+  writeLocalModelForAgent(agentGroupId);
 }
 
 /**
- * Bridge the webchat model registry → the OpenCode harness. The OpenCode provider
- * has no notion of webchat's per-agent model, so it reads this file to learn which
- * local backend to talk to. Written when the group is on the OpenCode provider with
- * an Ollama-kind effective model; removed otherwise, so switching away (or a
- * cloud reassignment) fully clears it. Same placement + "only if the folder exists"
+ * Bridge the webchat model registry → a LOCAL harness. Neither local provider has
+ * a notion of webchat's per-agent model, so both read this file to learn which
+ * backend to talk to. Written when the group is on a local harness with an
+ * Ollama-kind effective model; removed otherwise, so switching away (or a cloud
+ * reassignment) fully clears it. Same placement + "only if the folder exists"
  * contract as writeAgentSettingsForAssignedModel.
+ *
+ * The file is `local-model.json`. It was `opencode-model.json` when OpenCode was
+ * the only reader; pi then inherited the name and a third harness would have
+ * inherited the misnomer too. The readers accept either name (new first), so a
+ * file written before this rename still resolves; this writer emits only the new
+ * name and REMOVES the legacy one, so the two can never disagree.
  */
-export function writeOpencodeModelForAgent(agentGroupId: string): void {
+export const LOCAL_MODEL_FILE = 'local-model.json';
+/** Pre-rename name. Written by no one; still read as a fallback. */
+export const LEGACY_LOCAL_MODEL_FILE = 'opencode-model.json';
+
+export function writeLocalModelForAgent(agentGroupId: string): void {
   const dir = path.join(DATA_DIR, 'v2-sessions', agentGroupId, '.claude-shared');
-  const file = path.join(dir, 'opencode-model.json');
+  const file = path.join(dir, LOCAL_MODEL_FILE);
+  const legacy = path.join(dir, LEGACY_LOCAL_MODEL_FILE);
   // Shared local-model wiring: both local harnesses (opencode + pi) read this file.
   const provider = getContainerConfig(agentGroupId)?.provider;
   const onLocalHarness = (provider === 'opencode' && opencodeInstalled()) || (provider === 'pi' && piInstalled());
   const model = onLocalHarness ? getEffectiveModelForAgent(agentGroupId) : null;
   if (!model || model.kind !== 'ollama' || !model.endpoint) {
-    fs.rmSync(file, { force: true }); // clear any stale wiring
+    // Clear BOTH names: an install that predates the rename can still be
+    // carrying the legacy file, and leaving it would keep stale wiring alive
+    // through the readers' fallback.
+    fs.rmSync(file, { force: true });
+    fs.rmSync(legacy, { force: true });
     return;
   }
   if (!fs.existsSync(dir)) return; // folder not initialized yet; a later sync rewrites
@@ -492,6 +507,9 @@ export function writeOpencodeModelForAgent(agentGroupId: string): void {
     baseURL,
   };
   fs.writeFileSync(file, JSON.stringify(payload, null, 2) + '\n');
+  // One source of truth: drop the pre-rename file so a reader's fallback can
+  // never serve wiring this function has since changed.
+  fs.rmSync(legacy, { force: true });
 }
 
 /**

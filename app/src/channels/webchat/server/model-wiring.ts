@@ -64,7 +64,7 @@ export function refreshUnassignedGroupsForDefaultModel(reason: string): void {
     const provider = getContainerConfig(g.id)?.provider;
     // Codex ignores the ANTHROPIC_* env and has no local-model wiring — skip it.
     // OpenCode DOES follow the default local model, so it's processed: the sync
-    // below re-derives its provider and rewrites its per-agent opencode-model.json
+    // below re-derives its provider and rewrites its per-agent local-model.json
     // to the new default (and flips an unassigned Claude group to OpenCode when the
     // default is a local model + OpenCode is installed).
     if (provider && provider !== 'claude' && provider !== 'opencode') continue;
