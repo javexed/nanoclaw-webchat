@@ -15172,6 +15172,7 @@ function openMatrix() {
 }
 function teardownMatrix() {
 	matrixActive = false;
+	unmountMatrix();
 	$("#chat").hidden = false;
 	$("#matrix").hidden = true;
 	$("#app").classList.remove("in-dashboard");
@@ -15183,16 +15184,17 @@ function toggleMatrix() {
 async function refreshMatrix() {
 	const canvas = $("#matrix-canvas");
 	if (!canvas) return;
-	canvas.textContent = "Loading…";
+	if (!matrixApp$1) canvas.textContent = "Loading…";
+	const fail = () => {
+		unmountMatrix();
+		canvas.textContent = "Could not load wiring.";
+	};
 	try {
 		const r = await authFetch("/api/topology");
-		if (!r.ok) {
-			canvas.textContent = "Could not load wiring.";
-			return;
-		}
+		if (!r.ok) return fail();
 		renderMatrix(await r.json());
 	} catch {
-		canvas.textContent = "Could not load wiring.";
+		fail();
 	}
 }
 var matrixApp$1 = null;
@@ -15202,6 +15204,18 @@ function mountMatrix() {
 	if (!host) return;
 	matrixApp$1 = createApp(WiringMatrix_default);
 	matrixApp$1.mount(host);
+}
+/**
+* Drop the island so the next open mounts a fresh one.
+*
+* Load-bearing: without it, `matrixApp` stayed set for the life of the page
+* while the host's DOM got wiped by the placeholder, and the mount guard then
+* refused to rebuild — the view never recovered short of a reload.
+*/
+function unmountMatrix() {
+	if (!matrixApp$1) return;
+	matrixApp$1.unmount();
+	matrixApp$1 = null;
 }
 function renderMatrix(data) {
 	if (!$("#matrix-canvas")) return;
