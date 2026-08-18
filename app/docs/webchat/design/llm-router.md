@@ -308,8 +308,8 @@ dependency; webchat is just where it's *managed* (§14), so a sensible place to
   stands up **Postgres** (for the v2 keys/budgets tier), and writes the webchat
   wiring (LiteLLM endpoint + admin-key secret id) so the v1 link and v2 passthrough
   work. Independently runnable anytime.
-- **Webchat-surfaced prompt** — the webchat install (`add-webchat` /
-  `install-webchat.sh`) offers `/add-litellm` when it isn't already installed, so
+- **Webchat-surfaced prompt** — the webchat install (`install.sh`) offers
+  `/add-litellm` when it isn't already installed, so
   an operator can stand up the router as part of getting a model fleet behind the
   default harness.
 
