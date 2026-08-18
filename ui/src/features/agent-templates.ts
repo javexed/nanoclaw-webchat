@@ -16,7 +16,7 @@
 import { $ } from '../core/dom.js';
 import { authFetch } from '../core/api.js';
 import { showToast } from '../core/toast.js';
-import { showConfirmModal } from './modals.js';
+import { showConfirmModal, showInputModal } from './modals.js';
 import { selectedAgentId } from './agent-list-state.js';
 
 export interface AgentTemplate {
@@ -152,12 +152,17 @@ export async function renderTemplateLibrary(): Promise<number> {
   for (const t of held) {
     const li = document.createElement('li');
     const label = document.createElement('span');
+    // ollama-model-name carries `flex: 1; min-width: 0` plus ellipsis — that is
+    // what pushes the +/− hard right and keeps a long template name from
+    // shoving it off the card. Same span the Models rows use.
+    label.className = 'ollama-model-name';
     label.textContent = t.version ? `${t.name} ${t.version}` : t.name;
     label.title = t.description ? `${t.ref} — ${t.description}` : t.ref;
-    const del = document.createElement('button');
-    del.className = 'btn btn-ghost';
-    del.type = 'button';
-    del.textContent = 'Remove';
+    // Same control as the browse list and as the Models tab: everything in the
+    // library is by definition held, so it is always the `−` (on) state. A text
+    // "Remove" button here and a +/− toggle one list away was two vocabularies
+    // for one action.
+    const del = templateToggle(true);
     del.addEventListener('click', () => void removeTemplate(t));
     li.append(label, del);
     list.appendChild(li);
@@ -214,6 +219,40 @@ async function renderSources(): Promise<void> {
   }
 }
 
+/**
+ * The +/− control, matching the selectable-model toggle on the Models tab.
+ *
+ * Same classes, same glyphs, same colour language as select-toggle.ts: `+` in
+ * the success colour to add, `−` in the danger colour (via `.on`) to remove.
+ * Deliberately NOT buildSelectToggle() — that one is bound to the selectable-
+ * model registry and would toggle a model registration. This borrows the look
+ * and the meaning, not the behaviour.
+ */
+function templateToggle(held: boolean): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn btn-ghost select-toggle' + (held ? ' on' : '');
+  btn.textContent = held ? '−' : '+';
+  btn.title = held ? 'Remove from the template library' : 'Add to the template library';
+  btn.setAttribute('aria-label', btn.title);
+  return btn;
+}
+
+/**
+ * Refs currently in the library. Best-effort: a failure here must not stop the
+ * browse list rendering, it just means nothing gets marked as held.
+ */
+async function heldRefs(): Promise<string[]> {
+  try {
+    const res = await authFetch('/api/templates');
+    if (!res.ok) return [];
+    const body = (await res.json()) as { templates?: AgentTemplate[] };
+    return (body.templates ?? []).map((t) => t.ref);
+  } catch {
+    return [];
+  }
+}
+
 /** Browse the selected source and offer each template for fetching. */
 async function browseSelectedSource(): Promise<void> {
   const sel = $<HTMLSelectElement>('#template-source-select');
@@ -243,17 +282,23 @@ async function browseSelectedSource(): Promise<void> {
       list.appendChild(empty);
       return;
     }
+    // Which of these are already in the library. Without this the browse list
+    // offered the same affordance whether or not you already held a template,
+    // so fetching one repeatedly looked like it did something new.
+    const held = new Set(await heldRefs());
     for (const t of rows) {
       const li = document.createElement('li');
       const label = document.createElement('span');
+      label.className = 'ollama-model-name';
       label.textContent = t.name;
       label.title = t.description ? `${t.ref} — ${t.description}` : t.ref;
-      const get = document.createElement('button');
-      get.className = 'btn btn-secondary';
-      get.type = 'button';
-      get.textContent = 'Get';
-      get.addEventListener('click', () => void fetchTemplate(sel.value, t, get));
-      li.append(label, get);
+      const already = held.has(t.ref);
+      const btn = templateToggle(already);
+      btn.addEventListener('click', () => {
+        if (already) void removeTemplate({ ref: t.ref, name: t.name } as AgentTemplate);
+        else void fetchTemplate(sel.value, t, btn);
+      });
+      li.append(label, btn);
       list.appendChild(li);
     }
   } catch (err: any) {
@@ -442,7 +487,17 @@ async function saveAsTemplate(): Promise<void> {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  const name = window.prompt('Template name (lowercase letters, digits and dashes)', suggested || 'my-agent');
+  // showInputModal, not window.prompt: DESIGN.md §5 rules out native
+  // prompt/confirm/alert outright, and a browser prompt is the one dialog that
+  // cannot be made to match the rest of the site.
+  const name = await showInputModal({
+    title: 'Save as template',
+    placeholder: 'lowercase letters, digits and dashes',
+    value: suggested || 'my-agent',
+    confirmLabel: 'Save',
+    validate: (v: string) =>
+      /^[a-z0-9]+(-[a-z0-9]+)*$/.test(v.trim()) ? null : 'Use lowercase letters, digits and dashes.',
+  });
   if (!name) return;
 
   const res = await authFetch(`/api/agents/${encodeURIComponent(String(id))}/export-template`, {
@@ -470,16 +525,29 @@ async function saveAsTemplate(): Promise<void> {
         inc.contextFiles.length ? `${inc.contextFiles.length} context file(s)` : null,
       ].filter(Boolean)
     : [];
-  // A modal rather than a toast: the omissions are the part worth reading, and
-  // a toast is exactly where that would be missed.
-  await showConfirmModal({
-    title: `Saved as ${body.ref}`,
-    body:
-      (carried.length ? `Carried: ${carried.join(', ')}.\n\n` : '') +
-      (body.omitted?.length ? `Not carried:\n${body.omitted.map((o) => `• ${o}`).join('\n')}` : ''),
-    confirmLabel: 'Done',
-    cancelLabel: '',
-  });
+  // DESIGN.md §5 puts operation outcomes in a toast; a confirm modal is for
+  // consent BEFORE an action, not for reporting one after. The original modal
+  // here was defended on the grounds that omissions are worth reading, which
+  // is true — but only when something was actually omitted. With nothing
+  // omitted it was a dialog whose entire content was "it worked", dismissed
+  // by reflex.
+  //
+  // So: toast the success, and escalate to the modal only for the case the
+  // modal exists for.
+  if (body.omitted?.length) {
+    await showConfirmModal({
+      title: `Saved as ${body.ref}`,
+      body:
+        (carried.length ? `Carried: ${carried.join(', ')}.\n\n` : '') +
+        `Not carried:\n${body.omitted.map((o) => `• ${o}`).join('\n')}`,
+      confirmLabel: 'Done',
+      cancelLabel: '',
+    });
+  } else {
+    showToast(carried.length ? `Saved as ${body.ref} — carried ${carried.join(', ')}` : `Saved as ${body.ref}`, {
+      kind: 'success',
+    });
+  }
   await renderTemplateLibrary();
   await loadAgentTemplates();
 }

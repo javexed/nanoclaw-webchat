@@ -11070,12 +11070,10 @@ async function renderTemplateLibrary() {
 	for (const t of held) {
 		const li = document.createElement("li");
 		const label = document.createElement("span");
+		label.className = "ollama-model-name";
 		label.textContent = t.version ? `${t.name} ${t.version}` : t.name;
 		label.title = t.description ? `${t.ref} — ${t.description}` : t.ref;
-		const del = document.createElement("button");
-		del.className = "btn btn-ghost";
-		del.type = "button";
-		del.textContent = "Remove";
+		const del = templateToggle(true);
 		del.addEventListener("click", () => void removeTemplate(t));
 		li.append(label, del);
 		list.appendChild(li);
@@ -11127,6 +11125,37 @@ async function renderSources() {
 		sel.appendChild(o);
 	}
 }
+/**
+* The +/− control, matching the selectable-model toggle on the Models tab.
+*
+* Same classes, same glyphs, same colour language as select-toggle.ts: `+` in
+* the success colour to add, `−` in the danger colour (via `.on`) to remove.
+* Deliberately NOT buildSelectToggle() — that one is bound to the selectable-
+* model registry and would toggle a model registration. This borrows the look
+* and the meaning, not the behaviour.
+*/
+function templateToggle(held) {
+	const btn = document.createElement("button");
+	btn.type = "button";
+	btn.className = "btn btn-ghost select-toggle" + (held ? " on" : "");
+	btn.textContent = held ? "−" : "+";
+	btn.title = held ? "Remove from the template library" : "Add to the template library";
+	btn.setAttribute("aria-label", btn.title);
+	return btn;
+}
+/**
+* Refs currently in the library. Best-effort: a failure here must not stop the
+* browse list rendering, it just means nothing gets marked as held.
+*/
+async function heldRefs() {
+	try {
+		const res = await authFetch("/api/templates");
+		if (!res.ok) return [];
+		return ((await res.json()).templates ?? []).map((t) => t.ref);
+	} catch {
+		return [];
+	}
+}
 /** Browse the selected source and offer each template for fetching. */
 async function browseSelectedSource() {
 	const sel = $("#template-source-select");
@@ -11154,17 +11183,23 @@ async function browseSelectedSource() {
 			list.appendChild(empty);
 			return;
 		}
+		const held = new Set(await heldRefs());
 		for (const t of rows) {
 			const li = document.createElement("li");
 			const label = document.createElement("span");
+			label.className = "ollama-model-name";
 			label.textContent = t.name;
 			label.title = t.description ? `${t.ref} — ${t.description}` : t.ref;
-			const get = document.createElement("button");
-			get.className = "btn btn-secondary";
-			get.type = "button";
-			get.textContent = "Get";
-			get.addEventListener("click", () => void fetchTemplate(sel.value, t, get));
-			li.append(label, get);
+			const already = held.has(t.ref);
+			const btn = templateToggle(already);
+			btn.addEventListener("click", () => {
+				if (already) removeTemplate({
+					ref: t.ref,
+					name: t.name
+				});
+				else fetchTemplate(sel.value, t, btn);
+			});
+			li.append(label, btn);
 			list.appendChild(li);
 		}
 	} catch (err) {
@@ -11306,8 +11341,13 @@ function wireAgentTemplateExport() {
 async function saveAsTemplate() {
 	const id = selectedAgentId.value;
 	if (!id) return;
-	const suggested = ($("#agent-name")?.value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-	const name = window.prompt("Template name (lowercase letters, digits and dashes)", suggested || "my-agent");
+	const name = await showInputModal({
+		title: "Save as template",
+		placeholder: "lowercase letters, digits and dashes",
+		value: ($("#agent-name")?.value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "my-agent",
+		confirmLabel: "Save",
+		validate: (v) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(v.trim()) ? null : "Use lowercase letters, digits and dashes."
+	});
 	if (!name) return;
 	const res = await authFetch(`/api/agents/${encodeURIComponent(String(id))}/export-template`, {
 		method: "POST",
@@ -11330,12 +11370,13 @@ async function saveAsTemplate() {
 		inc.tasks.length ? `${inc.tasks.length} task(s)` : null,
 		inc.contextFiles.length ? `${inc.contextFiles.length} context file(s)` : null
 	].filter(Boolean) : [];
-	await showConfirmModal({
+	if (body.omitted?.length) await showConfirmModal({
 		title: `Saved as ${body.ref}`,
-		body: (carried.length ? `Carried: ${carried.join(", ")}.\n\n` : "") + (body.omitted?.length ? `Not carried:\n${body.omitted.map((o) => `• ${o}`).join("\n")}` : ""),
+		body: (carried.length ? `Carried: ${carried.join(", ")}.\n\n` : "") + `Not carried:\n${body.omitted.map((o) => `• ${o}`).join("\n")}`,
 		confirmLabel: "Done",
 		cancelLabel: ""
 	});
+	else showToast(carried.length ? `Saved as ${body.ref} — carried ${carried.join(", ")}` : `Saved as ${body.ref}`, { kind: "success" });
 	await renderTemplateLibrary();
 	await loadAgentTemplates();
 }
