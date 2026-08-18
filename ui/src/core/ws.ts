@@ -182,8 +182,16 @@ export function connect() {
         refreshWiredAgentsForCurrentRoom();
         fetchMentionablePeople();
         if (state.currentRoom) {
-          // Rejoin after reconnect — catch up on missed messages
-          state.ws?.send(JSON.stringify({ type: 'join', room_id: state.currentRoom }));
+          // Rejoin after reconnect — catch up on missed messages.
+          //
+          // Carries thread_id because this is now also the DEFERRED join: when a
+          // room is opened against a still-connecting socket, joinRoom skips its
+          // own send and leaves the join to this handler. Without the thread the
+          // catch-up would silently land in 'main', dropping a user who opened a
+          // topic thread back into the trunk.
+          state.ws?.send(
+            JSON.stringify({ type: 'join', room_id: state.currentRoom, thread_id: state.currentThread || 'main' }),
+          );
           if (state.lastSeenMessageId) {
             authFetch(`/api/rooms/${state.currentRoom}/messages?after_id=${state.lastSeenMessageId}`)
               .then((r) => r.json())
@@ -541,9 +549,12 @@ export async function probeIsOwner() {
       $('#overflow-journey')?.removeAttribute('hidden');
       // /api/users success = admin+ → gates the admin-only slash menu.
       isAdminView.value = true;
-      // MCP + skills registries are admin-only AND can be turned off workspace-
-      // wide (the marketplace toggle). Reveal their menu items + tabs only when
-      // both hold; the server 403s the endpoints when off, so this is just UX.
+      // Resolved HERE, before the reveal below, because that reveal now depends
+      // on it. It used to be computed after, which is why the owner clause
+      // could not simply be added to the condition.
+      const list = await users.json().catch(() => []);
+      const me = Array.isArray(list) ? list.find((u) => u.id === permsMyUserId.value) : null;
+      state.isOwnerView = !!(me && userIsOwner(me));
       try {
         const fr = await authFetch('/api/webchat/features');
         const feats = fr.ok ? await fr.json() : {};
@@ -552,15 +563,27 @@ export async function probeIsOwner() {
       } catch {
         state.marketplaceEnabled = false;
       }
-      if (state.marketplaceEnabled) {
+      // MCP + skills: admin-only, and the catalogs can be turned off
+      // workspace-wide by the marketplace toggle.
+      //
+      // The owner clause is not optional. Gating purely on the toggle was
+      // correct while these tabs held nothing but catalog browsing, and stopped
+      // being correct the moment the registry SOURCES moved onto them: with
+      // marketplace off, an owner had no route to the two screens that
+      // configure where catalogs come from — including the switch that would
+      // turn the marketplace back on. Verified on a live install with the
+      // toggle off: both blocks present in the DOM, all four entry points
+      // hidden, nothing to click.
+      //
+      // Same shape as the Routing tab, which reveals on `installed ||
+      // isOwnerView` for the same reason: a surface an owner configures must
+      // not be gated behind the state it configures.
+      if (state.marketplaceEnabled || state.isOwnerView) {
         $('#overflow-mcp')?.removeAttribute('hidden');
         $('#mtab-mcp-btn')?.removeAttribute('hidden');
         $('#mtab-skills-btn')?.removeAttribute('hidden');
         $('#overflow-skills')?.removeAttribute('hidden');
       }
-      const list = await users.json().catch(() => []);
-      const me = Array.isArray(list) ? list.find((u) => u.id === permsMyUserId.value) : null;
-      state.isOwnerView = !!(me && userIsOwner(me));
       return true;
     }
   } catch {}

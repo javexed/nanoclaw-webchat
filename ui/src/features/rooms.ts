@@ -333,7 +333,23 @@ export function joinRoom(roomId?: any, roomName?: any, jumpMessageId?: any, init
   state.threadUnread.clear();
   state.threadCache.delete(roomId); // clear this room's cached threads; loadThreadList refills
   updateThreadSyncControls();
-  state.ws?.send(JSON.stringify({ type: 'join', room_id: roomId, thread_id: state.currentThread }));
+  // `?.` guards a NULL socket, not a CONNECTING one — and send() on a socket
+  // that is still negotiating THROWS. That throw used to land here, in the
+  // middle of the function, so everything below (room name, enabled composer,
+  // thread list, lastRoom) silently never ran: the room half-opened. It was
+  // reachable on resume, not on a cold load — rooms are painted from the WS
+  // `rooms` message, so a cold load has nothing to click until the socket is
+  // already open, whereas returning to a backgrounded tab calls connect() while
+  // the previous session's rows are still on screen. Tapping a room in that
+  // window did nothing; tapping a different room once the socket had opened,
+  // then tapping back, "fixed" it — which is exactly how it was reported.
+  //
+  // Skipping the join is safe: the auth-success handler in ws.ts re-joins
+  // state.currentRoom (which is set above) the moment the socket authenticates,
+  // so the room still lands — it just lands a beat later.
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    state.ws.send(JSON.stringify({ type: 'join', room_id: roomId, thread_id: state.currentThread }));
+  }
   loadThreadList(roomId);
   localStorage.setItem('lastRoom', roomId);
   $('#room-name')!.textContent = `#${roomId}`;

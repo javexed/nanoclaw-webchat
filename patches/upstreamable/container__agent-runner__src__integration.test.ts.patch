@@ -1,8 +1,8 @@
-diff --git a/container/agent-runner/src/integration.test.ts b/container/agent-runner/src/integration.test.ts
-index e4a7850b..0bb64839 100644
---- a/container/agent-runner/src/integration.test.ts
-+++ b/container/agent-runner/src/integration.test.ts
-@@ -198,7 +198,39 @@ describe('poll loop integration', () => {
+diff --git c/container/agent-runner/src/integration.test.ts w/container/agent-runner/src/integration.test.ts
+index e4a7850b..a298892f 100644
+--- c/container/agent-runner/src/integration.test.ts
++++ w/container/agent-runner/src/integration.test.ts
+@@ -198,7 +198,48 @@ describe('poll loop integration', () => {
      // Only insert a message from discord — slack-new has never sent anything
      insertMessage('m1', { sender: 'Alice', text: 'tell slack' }, { platformId: 'chan-1', channelType: 'discord', threadId: 'discord-thread' });
  
@@ -39,11 +39,20 @@ index e4a7850b..0bb64839 100644
 +    // names the wrong room (slack-test). A lone reply must be pinned to origin.
 +    insertMessage('m1', { sender: 'Alice', text: 'hi' }, { platformId: 'chan-1', channelType: 'discord', threadId: 't1' });
 +
-+    const provider = new MockProvider({}, () => '<message to="slack-test">answer for the user</message>');
++    // A RESULT-DOOR mock: MockProvider streams (emitsMidTurnText = true), and
++    // on the streaming door the block would deliver before the misfire guard
++    // could see the turn's block count — the exact incompatibility that keeps
++    // this fork's claude.ts on the result door (see nanoclaw-webchat
++    // docs/pin-bump-mid-turn-delivery.md). The guard is a result-door feature,
++    // so it is tested through a provider shaped like the one that carries it.
++    class ResultDoorMock extends MockProvider {
++      override readonly emitsMidTurnText = false;
++    }
++    const provider = new ResultDoorMock({}, () => '<message to="slack-test">answer for the user</message>');
      const controller = new AbortController();
      const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
  
-@@ -207,8 +239,8 @@ describe('poll loop integration', () => {
+@@ -207,8 +248,8 @@ describe('poll loop integration', () => {
  
      const out = getUndeliveredMessages();
      expect(out).toHaveLength(1);

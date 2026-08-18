@@ -187,3 +187,57 @@ describe('audit syslog config route', () => {
     }
   });
 });
+
+describe('audited routes', () => {
+  it('records a privileged route with its real outcome, and only identifiers', async () => {
+    const { server, wc, port } = await bootLocalhost();
+    try {
+      // Export is the highest-value one to cover: it reads the entire
+      // workspace out of the box, and nothing else would record that it
+      // happened. Loopback boot makes this caller the owner.
+      const ok = await fetch(`http://127.0.0.1:${port}/api/system/export`);
+      expect(ok.status).toBe(200);
+
+      const exp = events().filter((e) => e.type === 'system.export');
+      expect(exp).toHaveLength(1);
+      expect(exp[0]).toMatchObject({ effect: 'ok', action: 'GET /api/system/export' });
+      expect(exp[0].actor).toMatch(/^human:/);
+      expect(exp[0].detail).toMatchObject({ status: 200 });
+
+      // A failure is recorded AS a failure, not skipped and not as a success:
+      // deleting a room that does not exist is the shape of "someone tried
+      // something that did not take", which is exactly what an incident asks.
+      const bad = await fetch(`http://127.0.0.1:${port}/api/rooms/no-such-room`, {
+        method: 'DELETE',
+        headers: { 'X-Webchat-CSRF': '1' },
+      });
+      expect(bad.status).toBeGreaterThanOrEqual(400);
+      const del = events().filter((e) => e.type === 'room.delete');
+      expect(del).toHaveLength(1);
+      expect(del[0]).toMatchObject({ effect: 'failed', detail: { id: 'no-such-room' } });
+
+      // The payload-exclusion contract holds on this path too.
+      const raw = fs.readFileSync(auditFile, 'utf8');
+      expect(raw).not.toContain('"body"');
+    } finally {
+      await server.stopWebchatServer(wc);
+    }
+  });
+
+  it('leaves unaudited privileged routes alone', async () => {
+    const { server, wc, port } = await bootLocalhost();
+    try {
+      // A probe is privileged but says nothing after the fact. If everything
+      // privileged were recorded, the twelve lines that matter would be buried.
+      await fetch(`http://127.0.0.1:${port}/api/models/discover`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+        body: JSON.stringify({}),
+      });
+      const kinds = new Set(events().map((e) => e.type));
+      expect(kinds.has('model.discover')).toBe(false);
+    } finally {
+      await server.stopWebchatServer(wc);
+    }
+  });
+});

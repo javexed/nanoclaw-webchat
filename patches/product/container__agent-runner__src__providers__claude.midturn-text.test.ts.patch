@@ -1,0 +1,20 @@
+diff --git c/container/agent-runner/src/providers/claude.midturn-text.test.ts w/container/agent-runner/src/providers/claude.midturn-text.test.ts
+index ccd5f926..f0954eac 100644
+--- c/container/agent-runner/src/providers/claude.midturn-text.test.ts
++++ w/container/agent-runner/src/providers/claude.midturn-text.test.ts
+@@ -38,8 +38,13 @@ afterEach(() => {
+ });
+ 
+ describe('assistant text block surfacing', () => {
+-  it('declares the emitsMidTurnText capability the poll-loop keys one-door delivery on', () => {
+-    expect(new ClaudeProvider({}).emitsMidTurnText).toBe(true);
++  it('declares emitsMidTurnText FALSE — this fork keeps the result door', () => {
++    // Upstream asserts true here. This fork deliberately sets false: the
++    // single-reply misfire guard keys on the turn's total block count, which
++    // is unknowable at streaming-delivery time. See
++    // docs/pin-bump-mid-turn-delivery.md in nanoclaw-webchat. The streaming
++    // machinery itself stays tested via MockProvider, which still declares it.
++    expect(new ClaudeProvider({}).emitsMidTurnText).toBe(false);
+   });
+ 
+   it('yields one text event per assistant message with text, before the result', async () => {

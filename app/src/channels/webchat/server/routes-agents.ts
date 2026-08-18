@@ -50,12 +50,16 @@ import { deleteSessionDbState, findSessionsByAgentGroup, teardownSessionResource
 import type { AgentGroup } from '../../../types.js';
 import {
   assignModelToAgent,
+  deleteTemplateSource,
   deleteWebchatRoom,
   getAssignedModelForAgent,
+  getTemplateSource,
   getWebchatModel,
   getWebchatRoomsForAgent,
+  listTemplateSources,
   setPrimeAgentForWebchatRoom,
   unassignModelFromAgent,
+  upsertTemplateSource,
 } from '../db.js';
 import { DraftError, draftAgent } from '../drafter.js';
 import {
@@ -74,6 +78,12 @@ import {
 } from '../models.js';
 import { probeContainerReachability } from '../reachability.js';
 import { hasAdminPrivilege, isAnyAdmin, isGlobalAdmin, isOwner } from '../roles.js';
+import { resolveGroupFolderPath } from '../../../group-folder.js';
+import { createAgentFromTemplate } from '../../../templates/create-agent.js';
+import { listLocalTemplates, resolveLocalTemplate } from '../../../templates/local-dir.js';
+import { browseTemplateSource, deleteLocalTemplate, fetchTemplateInto, templateDetail } from './template-library.js';
+import { exportAgentAsTemplate } from './template-export.js';
+import { groupsCarryingPlugin, restampAgentFromTemplate } from '../../../templates/restamp.js';
 import { listAgentsForUser, resolveAgent, toAgentForUI } from './agent-lookup.js';
 import {
   createBareAgentGroup,
@@ -125,6 +135,308 @@ export async function rAgentsPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
   const { req, res, userId } = ctx;
   if (!isAnyAdmin(userId)) return json(res, 403, { error: 'Admin only' });
   return createAgentHandler(req, res, userId);
+}
+
+// ── Agent templates ─────────────────────────────────────────────────────────
+//
+// A template is an Agent Plugins 1.0.0 directory in the LOCAL library
+// (TEMPLATES_DIR). Stamping copies its skills, MCP servers, persona, extra
+// context and recurring tasks into a new agent group. There is no remote
+// fetch here, deliberately: the ref is resolved against the local directory
+// with containment checks, exactly as `ncl groups create --template` does.
+//
+// Gated on owner / global admin rather than isAnyAdmin, because stamping
+// creates scheduled tasks and MCP servers — surfaces a scoped admin cannot
+// otherwise touch. Same gate as agent import, which is the closest analogue.
+
+export async function rTemplatesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res, userId } = ctx;
+  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  try {
+    return json(res, 200, { templates: listLocalTemplates() });
+  } catch (err) {
+    // The pre-plugin layout throws with a re-fetch pointer. That is an
+    // operator-fixable library problem, not a server fault, so it comes back
+    // as an empty list WITH the reason — a bare 500 would render as "no
+    // templates" and hide the one sentence that says how to fix it.
+    log.warn('Webchat: listing templates failed', { err });
+    return json(res, 200, { templates: [], error: err instanceof Error ? err.message : 'Could not read templates' });
+  }
+}
+
+export async function rAgentsFromTemplatePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { req, res, userId } = ctx;
+  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  const raw = await readJsonBody(req, res);
+  if (raw === null) return;
+  let body: { ref?: unknown; name?: unknown; timezone?: unknown };
+  try {
+    body = JSON.parse(raw) as typeof body;
+  } catch {
+    return json(res, 400, { error: 'Invalid JSON' });
+  }
+  if (typeof body.ref !== 'string' || !body.ref.trim()) return json(res, 400, { error: 'ref required' });
+  const ref = body.ref.trim();
+
+  // Both calls below RESOLVE the ref, so both can throw on a bad one — the
+  // carrier lookup included. It lives inside the try for that reason: outside
+  // it, an escaping ref threw past the handler and surfaced as a 500 instead
+  // of the 400 it is (caught by the containment tests).
+  try {
+    // Stamping a plugin a group already carries would silently create a second
+    // agent from it. The CLI resolves that as an in-place update behind a
+    // dry-run plan; there is no UI for that plan yet, so refuse and say where
+    // the update lives rather than quietly duplicating the agent.
+    const carriers = groupsCarryingPlugin(ref);
+    if (carriers.length > 0) {
+      return json(res, 409, {
+        error: `Already stamped as "${carriers[0].name}". Updating a stamped agent is CLI-only for now: ncl groups create --template ${ref}`,
+      });
+    }
+
+    const { group, report } = createAgentFromTemplate(ref, {
+      ...(typeof body.name === 'string' && body.name.trim() ? { name: body.name.trim() } : {}),
+      ...(typeof body.timezone === 'string' && body.timezone.trim() ? { timezone: body.timezone.trim() } : {}),
+    });
+    grantCreatorAdmin(userId, group.id);
+    // `report` names anything the reader skipped (a non-conforming skill, an
+    // unsupported transport). Components are never silently stripped, so it
+    // travels to the client even on success.
+    return json(res, 200, { ok: true, agentGroup: group, report });
+  } catch (err) {
+    // Template failures are operator-facing and actionable (bad ref, invalid
+    // manifest, symlink, size cap), and the caller is the owner, so the real
+    // message is more useful than a generic one.
+    log.warn('Webchat: stamping template failed', { ref, err });
+    return json(res, 400, { error: err instanceof Error ? err.message : 'Could not stamp template' });
+  }
+}
+
+// ── Template library management ─────────────────────────────────────────────
+// Same owner/global-admin gate as stamping: everything here decides what CAN
+// be stamped, so it is the same authority.
+
+const ownerOnly = (userId: string): boolean => isOwner(userId) || isGlobalAdmin(userId);
+
+export async function rTemplateSourcesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res, userId } = ctx;
+  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  return json(res, 200, { sources: listTemplateSources() });
+}
+
+export async function rTemplateSourcePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { req, res, userId } = ctx;
+  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  const raw = await readJsonBody(req, res);
+  if (raw === null) return;
+  let body: { id?: unknown; label?: unknown; owner?: unknown; repo?: unknown; branch?: unknown };
+  try {
+    body = JSON.parse(raw) as typeof body;
+  } catch {
+    return json(res, 400, { error: 'Invalid JSON' });
+  }
+  const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
+  const owner = str(body.owner);
+  const repo = str(body.repo);
+  if (!owner || !repo) return json(res, 400, { error: 'owner and repo required' });
+  // A GitHub owner/repo is a constrained token; anything else is a mistake or
+  // an injection attempt into the API path we build from it.
+  if (!/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) {
+    return json(res, 400, { error: 'owner and repo must be plain GitHub names' });
+  }
+  const branch = str(body.branch) || 'main';
+  const id = str(body.id) || `${owner}-${repo}`.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+  upsertTemplateSource({ id, label: str(body.label) || `${owner}/${repo}`, owner, repo, branch });
+  return json(res, 200, { ok: true, sources: listTemplateSources() });
+}
+
+export async function rTemplateSourceDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { res, userId } = ctx;
+  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  const id = decodeURIComponent(m[1]);
+  // Official rows are code-seeded: deleting one would reappear on the next
+  // migrate, so refusing is the honest answer rather than a no-op success.
+  if (!deleteTemplateSource(id)) {
+    return json(res, 400, { error: 'No such source, or it is a built-in that cannot be removed' });
+  }
+  return json(res, 200, { ok: true, sources: listTemplateSources() });
+}
+
+export async function rTemplateSourceBrowseGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { res, userId } = ctx;
+  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  const src = getTemplateSource(decodeURIComponent(m[1]));
+  if (!src) return json(res, 404, { error: 'Source not found' });
+  try {
+    return json(res, 200, { templates: await browseTemplateSource(src) });
+  } catch (err) {
+    // A rate limit or an unreachable repo is worth saying out loud — this is
+    // the one call in the flow that depends on somebody else's server.
+    log.warn('Webchat: browsing template source failed', { source: src.id, err });
+    return json(res, 502, { error: err instanceof Error ? err.message : 'Could not reach the source' });
+  }
+}
+
+export async function rTemplateFetchPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { req, res, userId } = ctx;
+  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  const raw = await readJsonBody(req, res);
+  if (raw === null) return;
+  let body: { source?: unknown; ref?: unknown };
+  try {
+    body = JSON.parse(raw) as typeof body;
+  } catch {
+    return json(res, 400, { error: 'Invalid JSON' });
+  }
+  if (typeof body.source !== 'string' || typeof body.ref !== 'string' || !body.ref.trim()) {
+    return json(res, 400, { error: 'source and ref required' });
+  }
+  const src = getTemplateSource(body.source);
+  if (!src) return json(res, 404, { error: 'Source not found' });
+  try {
+    const result = await fetchTemplateInto(src, body.ref.trim());
+    return json(res, 200, { ok: true, ...result });
+  } catch (err) {
+    log.warn('Webchat: fetching template failed', { source: src.id, ref: body.ref, err });
+    return json(res, 400, { error: err instanceof Error ? err.message : 'Could not fetch the template' });
+  }
+}
+
+// ref carries slashes ("sales/sdr"), so it travels as a query parameter rather
+// than a path segment — no double-encoding, no route pattern guessing.
+export async function rTemplateDetailGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res, url, userId } = ctx;
+  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  const ref = url.searchParams.get('ref');
+  if (!ref) return json(res, 400, { error: 'ref required' });
+  try {
+    return json(res, 200, templateDetail(ref));
+  } catch (err) {
+    return json(res, 400, { error: err instanceof Error ? err.message : 'Could not read the template' });
+  }
+}
+
+export async function rTemplateDelete(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res, url, userId } = ctx;
+  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  const ref = url.searchParams.get('ref');
+  if (!ref) return json(res, 400, { error: 'ref required' });
+  try {
+    if (!deleteLocalTemplate(ref)) return json(res, 404, { error: 'Template not found' });
+    return json(res, 200, { ok: true, templates: listLocalTemplates() });
+  } catch (err) {
+    return json(res, 400, { error: err instanceof Error ? err.message : 'Could not remove the template' });
+  }
+}
+
+// ── Updating a stamped agent (restamp) ──────────────────────────────────────
+//
+// The plugin is the source of truth for what it stamped, so an update RESETS
+// those surfaces and leaves everything else alone. The dry-run plan is the
+// whole point of doing this in a UI: it names every surface that changes and
+// flags the ones whose live copy was edited locally, which apply would discard.
+// Upstream's own docs note that an agent-requested restamp shows the approver
+// only a command line and tells them to run the dry run themselves — this is
+// that dry run, rendered.
+
+/** Which library template, if any, this agent was stamped from. */
+function stampedRefFor(group: { folder: string }): string | null {
+  for (const t of listLocalTemplates()) {
+    try {
+      const dir = resolveLocalTemplate(t.ref);
+      const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'plugin.json'), 'utf-8')) as { name?: unknown };
+      if (typeof manifest.name !== 'string') continue;
+      const stamped = path.join(resolveGroupFolderPath(group.folder), 'plugins', manifest.name, 'plugin.json');
+      if (fs.existsSync(stamped)) return t.ref;
+    } catch {
+      continue; // an unreadable library entry cannot be this agent's origin
+    }
+  }
+  return null;
+}
+
+export async function rAgentTemplatePlanGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { res, userId } = ctx;
+  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  const group = resolveAgent(decodeURIComponent(m[1]));
+  if (!group) return json(res, 404, { error: 'Agent not found' });
+  const ref = stampedRefFor(group);
+  // Not stamped, or stamped from a template no longer in the library: both are
+  // "nothing to update", and the second is worth saying rather than implying
+  // the agent has no plugin at all.
+  if (!ref) return json(res, 200, { stamped: false });
+  try {
+    const plan = restampAgentFromTemplate(ref, group.id, { apply: false });
+    return json(res, 200, {
+      stamped: true,
+      ref,
+      plugin: plan.plugin,
+      changes: plan.changes,
+      report: plan.report,
+      note: plan.note,
+    });
+  } catch (err) {
+    log.warn('Webchat: template update plan failed', { agent: group.id, ref, err });
+    return json(res, 400, { error: err instanceof Error ? err.message : 'Could not plan the update' });
+  }
+}
+
+export async function rAgentTemplateApplyPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { res, userId } = ctx;
+  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  const group = resolveAgent(decodeURIComponent(m[1]));
+  if (!group) return json(res, 404, { error: 'Agent not found' });
+  const ref = stampedRefFor(group);
+  if (!ref) return json(res, 400, { error: 'This agent was not stamped from a template in the library' });
+  try {
+    const applied = restampAgentFromTemplate(ref, group.id, { apply: true });
+    // Skill and MCP changes only take effect in a fresh container, which is
+    // what the CLI tells the operator to do by hand after an apply.
+    restartAgentGroupContainers(group.id, 'Template update applied');
+    return json(res, 200, { ok: true, ref, changes: applied.changes, report: applied.report });
+  } catch (err) {
+    log.warn('Webchat: template update failed', { agent: group.id, ref, err });
+    return json(res, 400, { error: err instanceof Error ? err.message : 'Could not apply the update' });
+  }
+}
+
+/**
+ * Export an agent as a template — the inverse of stamping.
+ *
+ * Distinct from `GET /api/agents/:id/export`, which produces a migration
+ * tarball (memory, chats, config) for moving ONE agent between installs. This
+ * produces a shareable blueprint with none of that. Both exist because they
+ * answer different questions.
+ */
+export async function rAgentExportTemplatePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { req, res, userId } = ctx;
+  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  const group = resolveAgent(decodeURIComponent(m[1]));
+  if (!group) return json(res, 404, { error: 'Agent not found' });
+  const raw = await readJsonBody(req, res);
+  if (raw === null) return;
+  let body: { name?: unknown; ref?: unknown; version?: unknown; description?: unknown; agentName?: unknown };
+  try {
+    body = JSON.parse(raw) as typeof body;
+  } catch {
+    return json(res, 400, { error: 'Invalid JSON' });
+  }
+  const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+  const name = str(body.name);
+  if (!name) return json(res, 400, { error: 'name required' });
+  try {
+    const result = exportAgentAsTemplate(group, {
+      name,
+      ...(str(body.ref) ? { ref: str(body.ref)! } : {}),
+      ...(str(body.version) ? { version: str(body.version)! } : {}),
+      ...(str(body.description) ? { description: str(body.description)! } : {}),
+      ...(str(body.agentName) ? { agentName: str(body.agentName)! } : {}),
+    });
+    return json(res, 200, { ok: true, ...result });
+  } catch (err) {
+    log.warn('Webchat: exporting agent as template failed', { agent: group.id, err });
+    return json(res, 400, { error: err instanceof Error ? err.message : 'Could not export the template' });
+  }
 }
 
 export async function rAgentPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {

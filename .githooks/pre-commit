@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Leak gate — staged changes, before the commit exists. Fast, local, bypassable
-# with --no-verify (pre-push + CI are the real backstops). Sources the operator
-# identifier denylist from a private file when present, so YOUR own identifiers are
-# caught before they ever enter history.
+# with --no-verify (pre-push + CI are the real backstops).
+#
+# The operator identifier denylist is resolved by leak-scan.sh itself, from
+# $LEAK_PATTERNS_FILE or `git config leakscan.patternsFile`. This hook used to
+# duplicate that lookup against a hard-coded ~/.config path — which silently
+# disagreed with where the list actually lived, so the identifier tier was off
+# on the operator's own machine and only a stderr warning said so. One resolver,
+# in one place, and a declared-but-missing list now fails the gate.
 set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
-DENY="${LEAK_PATTERNS_FILE:-$HOME/.config/nanoclaw-webchat/leak-patterns.txt}"
-[ -f "$DENY" ] && export LEAK_PATTERNS_FILE="$DENY"
 exec bash "$ROOT/scripts/leak-scan.sh" --staged

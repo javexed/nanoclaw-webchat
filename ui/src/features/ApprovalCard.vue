@@ -36,6 +36,56 @@
  */
 import { approvalBusy, approvalErrors } from './approvals-state.js';
 
+/**
+ * Triage — why this request is in front of a human.
+ *
+ * Chips are checkable CLAIMS about the request, not a self-assessment: no risk
+ * level, no confidence score. The design already refuses to let the triage
+ * model withhold a review (there is no auto-deny), so asking the reader to
+ * trust the same model to reassure them would be the same trust with no
+ * fail-safe behind it — and the payload is right there to check a claim
+ * against.
+ *
+ * Never-list chips are marked authoritative because they are deterministic.
+ * Model chips render alongside them rather than merged, so a disagreement
+ * (never-list says credentials, the model never mentioned it) stays visible.
+ *
+ * The note exists to make ABSENCE legible: with chips on the card, "no chips"
+ * must never be mistaken for "screened, nothing found".
+ */
+const TIER_NOTE: Record<string, string> = {
+  unscreened: 'Not screened',
+  heuristic: 'Always requires a human',
+  unavailable: 'Screening unavailable',
+};
+
+const triage = () => props.approval.triage as
+  | { tier: string; reason: string; flags: string[]; heuristic: string[]; reversible: string }
+  | undefined;
+
+/** Never-list flags first — they are the ones that need no trust. */
+const triageChips = (): Array<{ flag: string; authoritative: boolean }> => {
+  const t = triage();
+  if (!t) return [];
+  const heuristic = Array.isArray(t.heuristic) ? t.heuristic : [];
+  const model = Array.isArray(t.flags) ? t.flags : [];
+  return [
+    ...heuristic.map((flag) => ({ flag, authoritative: true })),
+    ...model.filter((f) => !heuristic.includes(f)).map((flag) => ({ flag, authoritative: false })),
+  ];
+};
+
+/** The model's one-line reason when it has one, else why no reason exists. */
+const triageNote = (): string => {
+  const t = triage();
+  if (!t) return TIER_NOTE.unscreened;
+  if (t.tier === 'model') return t.reason || '';
+  return TIER_NOTE[t.tier] || '';
+};
+
+const chipTitle = (authoritative: boolean) =>
+  authoritative ? 'Always requires a human' : 'Proposed by the triage model — check it against the payload';
+
 const props = defineProps<{ approval: any; onRespond: (questionId: string, value: string) => void }>();
 
 const FALLBACK = [
@@ -53,6 +103,16 @@ const btnClass = (v: string) => (v === 'approve' ? 'approve' : v === 'reject' ? 
 <template>
   <li class="approval-card" :data-question-id="approval.questionId">
     <div class="approval-title">{{ approval.title || approval.action || 'Approval requested' }}</div>
+    <div v-if="triageChips().length || triageNote()" class="approval-triage">
+      <span
+        v-for="c in triageChips()"
+        :key="c.flag"
+        class="triage-flag"
+        :class="{ authoritative: c.authoritative }"
+        :title="chipTitle(c.authoritative)"
+      >{{ c.flag }}</span>
+      <span v-if="triageNote()" class="triage-note">{{ triageNote() }}</span>
+    </div>
     <pre v-if="approval.payload" class="approval-payload">{{ payloadText(approval.payload) }}</pre>
     <div class="approval-actions">
       <button

@@ -814,8 +814,16 @@
                        and instructions/name/model edits unsavable for everyone. -->
                   <button type="submit" id="agent-save-btn" class="btn btn-primary" disabled>Save</button>
                 </div>
+                <!-- Shown only for an agent stamped from a template still in
+                     the library. The plan is the point: it names what resets
+                     and flags local edits that applying would discard. -->
+                <div id="agent-template-row" class="agent-export-row" hidden>
+                  <span id="agent-template-name" class="form-hint"></span>
+                  <button type="button" id="agent-template-update" class="btn btn-ghost">Check for updates</button>
+                </div>
                 <div class="agent-export-row">
                   <button type="button" id="agent-export-btn" class="btn btn-ghost">Export agent…</button>
+                  <button type="button" id="agent-export-template-btn" class="btn btn-ghost">Save as template…</button>
                 </div>
                 <div class="agent-detail-danger">
                   <button type="button" id="agent-delete" class="btn btn-danger">Delete this agent</button>
@@ -845,6 +853,10 @@
                     <svg class="icon" aria-hidden="true"><use href="#i-sparkles"></use></svg> Suggest from prompt
                   </button>
                 </div>
+                <label id="agent-create-template-wrap" hidden>
+                  <span class="form-label">Template</span>
+                  <select id="agent-create-template"></select>
+                </label>
                 <label>
                   <span class="form-label">Name</span>
                   <input id="agent-create-name" type="text" placeholder="My helper" required autocomplete="off" />
@@ -1416,6 +1428,24 @@
             <button id="create-agent-btn" class="btn btn-secondary btn-list-footer" hidden>+ New agent</button>
             <button id="import-agent-btn" class="btn btn-ghost btn-list-footer" type="button">Import agent…</button>
             <input id="import-agent-file" type="file" accept=".tgz,.gz,application/gzip" hidden />
+            <!-- Template library — the blueprints an agent can be stamped from,
+                 managed on the same tab where agents are created. Owner/global
+                 admin only; the render hides it for everyone else and the
+                 server enforces. Hidden entirely until the library has
+                 something in it OR a source can be browsed. -->
+            <div id="agent-templates" class="skill-sources" hidden>
+              <div class="ollama-hosts-title">Templates</div>
+              <ul id="agent-templates-list" class="skill-sources-list"></ul>
+              <button id="template-browse-btn" class="btn btn-ghost btn-list-footer" type="button">Get templates…</button>
+              <div id="template-browse" hidden>
+                <select id="template-source-select" aria-label="Template source"></select>
+                <ul id="template-browse-list" class="skill-sources-list"></ul>
+                <div class="skill-source-form">
+                  <input id="template-source-repo" type="text" placeholder="owner/repo" autocomplete="off" spellcheck="false" />
+                  <button id="template-source-add" class="btn btn-secondary" type="button">Add source</button>
+                </div>
+              </div>
+            </div>
           </div>
           <div id="mtab-models" class="manage-pane" role="tabpanel" hidden>
             <ul id="model-list"></ul>
@@ -1931,6 +1961,10 @@
                   <button id="audit-syslog-apply" class="btn btn-secondary" type="button">Apply</button>
                 </div>
                 <p class="cred-hint" id="audit-syslog-status" hidden></p>
+                <!-- Read-only viewer. There is no clear/delete control here and
+                     no endpoint behind one: a log an operator can rewrite from
+                     the UI is not an audit trail. -->
+                <div id="audit-log-view"></div>
                 <p class="cred-hint feature-info" id="audit-feature-info" hidden>
                   Security events (sign-ins, privileged actions, role grants) always append to logs/audit.jsonl
                   on this machine. Forwarding sends a copy to a syslog collector as RFC 5424 — udp://host:514,
