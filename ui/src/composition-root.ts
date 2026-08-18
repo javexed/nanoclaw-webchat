@@ -86,6 +86,7 @@ import { AGENT_STATUS_HINTS, addExistingAgentToRoom, addNewAgentToRoom, agentCol
 import { closeMcpDetail, createMcpServer, fetchMcpServers, loadMcpCatalog, maybeAttachAfterMcpAdd, openMcpDetail, provideMcpDeps, renderAgentMcp, renderMcpServers, renderMcpSources, runMcpProbe, setAgentMcp, syncMcpCreateTransportFields, wireMcpCatalog, wireMcpPanel } from './features/mcp.js';
 
 // The skills surface now lives in features/skills.js.
+import { loadAgentTemplates, renderTemplateLibrary, wireAgentTemplateExport, wireTemplateLibrary } from './features/agent-templates.js';
 import { applySkillsSections, discardSkillDraft, draftFor, draftKeepButton, getSkillEditorDraft, handleSkillDraftReview, importSkill, keepSkillDraft, openScopedSkillEditor, openSkillEditor, openSkillsAdd, provideSkillsDeps, refreshDraftBadge, renderAgentSkills, renderDraftEditor, renderRoomSkills, renderSkillPool, renderSkillSources, renderSkillsRegistry, saveSkillEditor, scheduleSkillSuggest, setSkillTrust, showSkillEditor, skillDraftRow, wireSkillsPanel, wireSkillsRegistry } from './features/skills.js';
 
 // The socket and its dispatcher now live in core/ws.js.
@@ -1360,6 +1361,15 @@ for (const sel of ['#agent-create-draft-prompt', '#agent-create-name', '#agent-c
 }
 
 wireSkillsRegistry();
+// Populate the create form's template picker. Fire-and-forget: the picker
+// stays hidden if the library is empty or the caller cannot stamp, and a
+// failure here must never block creating a blank agent.
+void loadAgentTemplates();
+wireTemplateLibrary();
+wireAgentTemplateExport();
+// The library block hides itself for a non-owner or an empty library, so
+// this is safe to run unconditionally at boot.
+void renderTemplateLibrary();
 
 // ── Drafter: ✨ Suggest from prompt ───────────────────────────────────────
 //

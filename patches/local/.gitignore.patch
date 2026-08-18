@@ -1,5 +1,5 @@
 diff --git a/.gitignore b/.gitignore
-index d337db47..38e5f61e 100644
+index d337db47..dec15763 100644
 --- a/.gitignore
 +++ b/.gitignore
 @@ -1,5 +1,5 @@
@@ -9,6 +9,15 @@ index d337db47..38e5f61e 100644
  .npm-cache/
  # pnpm content-addressable store (created when running in sandbox mode)
  .pnpm-store/
+@@ -8,7 +8,7 @@ dist/
+ 
+ # Local data & auth
+ store/
+-data/
++/data/
+ logs/
+ 
+ # Groups - per-installation state, not tracked
 @@ -46,3 +46,4 @@ AGENTS.md
  docs/maintainer-guide.md
  docs/drafts/

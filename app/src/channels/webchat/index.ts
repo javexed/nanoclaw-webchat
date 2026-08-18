@@ -43,6 +43,7 @@ import { log } from '../../log.js';
 import { readEnvFile } from '../../env.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { createMessagingGroup, getMessagingGroup, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
+import { getPendingApproval } from '../../db/sessions.js';
 import { registerContainerConfigAugmentor, registerLearningClassifierResolver } from '../../container-runtime.js';
 import { registerA2aRouteObserver } from '../../modules/agent-to-agent/agent-route.js';
 import { classifierParamsForModel } from './models.js';
@@ -87,7 +88,7 @@ import {
   registerApprovalRequestedListener,
   registerApprovalResolvedHandler,
 } from '../../modules/approvals/primitive.js';
-import { maybePrejudgeApproval } from '../../modules/approvals/prejudge.js';
+import { buildApprovalTriageView, maybePrejudgeApproval } from '../../modules/approvals/prejudge.js';
 import { startReconcileLoop, stopReconcileLoop } from './reconcile.js';
 import {
   registerSkillDraftProposedListener,
@@ -534,6 +535,11 @@ registerApprovalRequestedListener((e) => {
   const mg = e.session.messaging_group_id ? getMessagingGroup(e.session.messaging_group_id) : null;
   if (!mg || mg.channel_type !== 'webchat') return;
   const roomId = mg.platform_id;
+  // Why is this in front of a human? The pre-judge already knows, and used to
+  // write it only to the log. An `unscreened` view (no stored row) is a real
+  // answer too, and is rendered as such — with chips on the card, showing
+  // nothing must never read as "screened, nothing found".
+  const approvalRow = getPendingApproval(e.approvalId);
   const card = storeWebchatApprovalCard(roomId, e.agentName ?? 'agent', {
     questionId: e.approvalId,
     title: e.title,
@@ -541,6 +547,7 @@ registerApprovalRequestedListener((e) => {
     options: e.options,
     action: e.action,
     approvers: e.approvers,
+    triage: buildApprovalTriageView(e.approvalId, e.action, approvalRow?.payload ?? ''),
   });
   recordWebchatApproval(e.approvalId, roomId);
   broadcast(roomId, { type: 'message', ...card });

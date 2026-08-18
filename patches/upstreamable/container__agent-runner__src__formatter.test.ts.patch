@@ -1,7 +1,7 @@
-diff --git a/container/agent-runner/src/formatter.test.ts b/container/agent-runner/src/formatter.test.ts
-index 9a65fb31..015bb76b 100644
---- a/container/agent-runner/src/formatter.test.ts
-+++ b/container/agent-runner/src/formatter.test.ts
+diff --git c/container/agent-runner/src/formatter.test.ts w/container/agent-runner/src/formatter.test.ts
+index f6d0ca56..3bd93cf3 100644
+--- c/container/agent-runner/src/formatter.test.ts
++++ w/container/agent-runner/src/formatter.test.ts
 @@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
  
  import { initTestSessionDb, closeSessionDb, getInboundDb } from './db/connection.js';
@@ -11,8 +11,8 @@ index 9a65fb31..015bb76b 100644
  import { TIMEZONE, formatLocalTime } from './timezone.js';
  
  beforeEach(() => {
-@@ -234,3 +234,15 @@ describe('stripInternalTags', () => {
-     );
+@@ -322,3 +322,15 @@ describe('app_context rendering (Slack agent mode, contract C4)', () => {
+     expect(result).toContain('(viewing: channel C1&lt;&amp;&gt;)');
    });
  });
 +

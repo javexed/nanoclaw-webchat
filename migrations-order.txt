@@ -34,3 +34,5 @@ moduleWebchatSkillSourcesOfficial
 moduleWebchatDisabledBuiltins
 moduleWebchatCredentialIsolation
 moduleWebchatAuditSyslog
+moduleWebchatApprovalTriage
+moduleWebchatTemplateSources

@@ -1,11 +1,11 @@
-diff --git a/container/agent-runner/src/providers/mock.ts b/container/agent-runner/src/providers/mock.ts
-index db694d59..07381373 100644
---- a/container/agent-runner/src/providers/mock.ts
-+++ b/container/agent-runner/src/providers/mock.ts
-@@ -2,6 +2,25 @@ import { registerProvider } from './provider-registry.js';
- import type { MemorySessionHookRegistration } from '../memory/session-hook.js';
- import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
- 
+diff --git c/container/agent-runner/src/providers/mock.ts w/container/agent-runner/src/providers/mock.ts
+index f0dab2eb..0eff7966 100644
+--- c/container/agent-runner/src/providers/mock.ts
++++ w/container/agent-runner/src/providers/mock.ts
+@@ -6,6 +6,25 @@ import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryIn
+  * Mock provider for testing. Returns canned responses.
+  * Supports push() — queued messages produce additional results.
+  */
 +/**
 + * A factory may return either a plain string (treated as result text, the
 + * common case) or a richer descriptor so tests can simulate the graceful-
@@ -25,23 +25,25 @@ index db694d59..07381373 100644
 +  | { throw: string }
 +  | { silent: true };
 +
- /**
-  * Mock provider for testing. Returns canned responses.
-  * Supports push() — queued messages produce additional results.
-@@ -9,16 +28,22 @@ import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryIn
  export class MockProvider implements AgentProvider {
    readonly supportsNativeSlashCommands = false;
+   /**
+@@ -15,12 +34,12 @@ export class MockProvider implements AgentProvider {
+    */
+   readonly emitsMidTurnText = true;
  
 -  private responseFactory: (prompt: string) => string;
 +  private responseFactory: (prompt: string, input: QueryInput) => MockResponse;
+   private textFactory: ((prompt: string) => string[]) | undefined;
  
--  constructor(_options: ProviderOptions = {}, responseFactory?: (prompt: string) => string) {
-+  constructor(
-+    _options: ProviderOptions = {},
+   constructor(
+     _options: ProviderOptions = {},
+-    responseFactory?: (prompt: string) => string,
 +    responseFactory?: (prompt: string, input: QueryInput) => MockResponse,
-+  ) {
-     this.responseFactory = responseFactory ?? ((prompt) => `Mock response to: ${prompt.slice(0, 100)}`);
-   }
+     /**
+      * Optional mid-turn text segments: returns the `text` events to emit
+      * before the result for a given prompt (mirrors SDK assistant messages
+@@ -34,8 +53,11 @@ export class MockProvider implements AgentProvider {
  
    registerMemorySessionHook(_hook: MemorySessionHookRegistration): void {}
  
@@ -55,19 +57,24 @@ index db694d59..07381373 100644
    }
  
    query(input: QueryInput): AgentQuery {
-@@ -28,6 +53,41 @@ export class MockProvider implements AgentProvider {
-     let aborted = false;
-     const responseFactory = this.responseFactory;
- 
-+    // Translate a factory response into the event(s) it represents and a flag:
-+    // `terminal` means the turn is over and the stream should END (mirroring
-+    // the real SDK, which closes after an error or a no-text result). Plain
-+    // result text keeps the stream open for follow-up pushes (legacy behavior
-+    // the existing integration tests rely on). May throw to simulate a
-+    // mid-stream SDK failure.
-+    function* eventsFor(prompt: string): Generator<ProviderEvent, boolean> {
+@@ -50,13 +72,41 @@ export class MockProvider implements AgentProvider {
+     // itself streams as the LAST text event first: the real SDK's result only
+     // repeats the final assistant text, which already streamed — that is the
+     // emitsMidTurnText contract this mock declares.
+-    function* turnEvents(prompt: string): Generator<ProviderEvent> {
++    function* turnEvents(prompt: string): Generator<ProviderEvent, boolean> {
+       for (const text of textFactory?.(prompt) ?? []) {
+         yield { type: 'text', text };
+       }
+-      const result = responseFactory(prompt);
+-      if (result) yield { type: 'text', text: result };
+-      yield { type: 'result', text: result };
 +      const resp = responseFactory(prompt, input);
 +      if (typeof resp === 'string') {
++        // Legacy bare-string form: streams as text (upstream's one-door
++        // contract) then results, and keeps the stream OPEN for follow-up
++        // pushes — the behaviour the existing integration tests rely on.
++        if (resp) yield { type: 'text', text: resp };
 +        yield { type: 'result', text: resp };
 +        return false;
 +      }
@@ -88,37 +95,36 @@ index db694d59..07381373 100644
 +        return true;
 +      }
 +      // The object `{ result }` form always ends the turn (mirrors the real SDK
-+      // closing after its result). The bare-string form keeps the stream open
-+      // for follow-up pushes — the legacy behavior the integration tests use.
++      // closing after its result). Streamed as text first only when non-empty:
++      // a null/empty result is exactly the empty-turn case under test.
++      if (resp.result) yield { type: 'text', text: resp.result };
 +      yield { type: 'result', text: resp.result };
 +      return true;
-+    }
-+
+     }
+ 
      const events: AsyncIterable<ProviderEvent> = {
-       async *[Symbol.asyncIterator]() {
-         yield { type: 'activity' };
-@@ -35,13 +95,13 @@ export class MockProvider implements AgentProvider {
+@@ -66,13 +116,13 @@ export class MockProvider implements AgentProvider {
  
          // Process initial prompt
          yield { type: 'activity' };
--        yield { type: 'result', text: responseFactory(input.prompt) };
-+        if (yield* eventsFor(input.prompt)) return;
+-        yield* turnEvents(input.prompt);
++        if (yield* turnEvents(input.prompt)) return;
  
          // Process any pushed follow-ups
          while (!ended && !aborted) {
            if (pending.length > 0) {
              const msg = pending.shift()!;
--            yield { type: 'result', text: responseFactory(msg) };
-+            if (yield* eventsFor(msg)) return;
+-            yield* turnEvents(msg);
++            if (yield* turnEvents(msg)) return;
              continue;
            }
            // Wait for push() or end()
-@@ -54,7 +114,7 @@ export class MockProvider implements AgentProvider {
+@@ -85,7 +135,7 @@ export class MockProvider implements AgentProvider {
          // Drain remaining
          while (pending.length > 0) {
            const msg = pending.shift()!;
--          yield { type: 'result', text: responseFactory(msg) };
-+          if (yield* eventsFor(msg)) return;
+-          yield* turnEvents(msg);
++          if (yield* turnEvents(msg)) return;
          }
        },
      };

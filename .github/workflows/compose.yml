@@ -43,8 +43,12 @@ jobs:
         with:
           # This repo has no package.json for the action to infer from — the
           # composed TREE is what pnpm operates on. Keep in step with the
-          # base's packageManager field.
-          version: 10.33.0
+          # base's packageManager field, which is pnpm@10.34.5. It had drifted
+          # to 10.33.0 against that very instruction, which is the argument for
+          # check-version-drift.sh in the ops repo: an instruction in a comment
+          # is not a check. .mise.toml now pins the same version for local
+          # shells, so CI, the composed tree and a developer shell all agree.
+          version: 10.34.5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.12
@@ -176,6 +180,24 @@ jobs:
         # The scoped-admin persona is the load-bearing one: it is the only thing
         # that distinguishes "gated on owner" from "gated on any admin".
         run: bash scripts/check-role-matrix.sh
+
+      - name: UI — first-open self-test (proves the probe still detects faults)
+        # Puts the unguarded join send back into the built bundle and requires
+        # the probe to go red. Without this the probe could quietly stop
+        # exercising the resume window and still report green forever.
+        run: bash scripts/check-first-open.sh --selftest
+
+      - name: UI — first open (a room tapped on a connecting socket still opens)
+        # Field report: the first room tapped after opening the app did not
+        # open, and tapping another room then tapping back "fixed" it. Cause was
+        # `state.ws?.send(...)` in joinRoom — `?.` guards a null socket, not a
+        # CONNECTING one, and send() on a connecting socket throws, which killed
+        # the rest of the function (room name, composer, thread list, lastRoom).
+        #
+        # Only reachable on RESUME: rooms are painted from the WS `rooms`
+        # message, so a cold load has nothing to click until the socket is open.
+        # A plain load-and-click test would never catch this.
+        run: bash scripts/check-first-open.sh
 
       - name: UI — bundle-drift guard (committed bundle == fresh build)
         run: |

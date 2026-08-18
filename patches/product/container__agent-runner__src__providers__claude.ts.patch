@@ -1,8 +1,8 @@
 diff --git c/container/agent-runner/src/providers/claude.ts w/container/agent-runner/src/providers/claude.ts
-index 5fee2eb9..5d8a3b12 100644
+index 23b6a3fb..f753b94b 100644
 --- c/container/agent-runner/src/providers/claude.ts
 +++ w/container/agent-runner/src/providers/claude.ts
-@@ -127,6 +127,16 @@ function mcpAllowPattern(serverName: string): string {
+@@ -134,6 +134,16 @@ function mcpAllowPattern(serverName: string): string {
    return `mcp__${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}__*`;
  }
  
@@ -19,7 +19,7 @@ index 5fee2eb9..5d8a3b12 100644
  interface SDKUserMessage {
    type: 'user';
    message: { role: 'user'; content: string };
-@@ -222,6 +232,27 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
+@@ -229,6 +239,27 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
    return lines.join('\n');
  }
  
@@ -47,7 +47,7 @@ index 5fee2eb9..5d8a3b12 100644
  /**
   * PreToolUse hook: record the current tool + its declared timeout so the host
   * sweep can widen its stuck tolerance while Bash is running a long-declared
-@@ -458,15 +489,66 @@ const CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WIN
+@@ -465,8 +496,59 @@ const CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WIN
   */
  const STALE_SESSION_RE = /no conversation found|ENOENT.*\.jsonl|session.*not found/i;
  
@@ -102,19 +102,41 @@ index 5fee2eb9..5d8a3b12 100644
 +  // Both halves are real here: allowedTools drops to draft_skill alone, and the
 +  // SDK's forkSession keeps the review off the main session's transcript.
 +  readonly supportsRestrictedReview = true;
++  private settingSources: Array<'project' | 'user' | 'local'>;
++  private lenientPrompt?: boolean;
+   /**
+    * Static capability, not runtime state: this provider yields a `text`
+    * event for every assistant message that carries non-empty text (see the
+@@ -481,7 +563,27 @@ export class ClaudeProvider implements AgentProvider {
+    * streaming door missed everything (premise violation), the poll-loop
+    * fires the wrap-nudge so the model re-sends through the mid-turn door.
+    */
+-  readonly emitsMidTurnText = true;
++  /**
++   * Upstream declares this true, which makes mid-turn streaming the single
++   * content door: each <message> block delivers the moment it closes, segment
++   * by segment.
++   *
++   * This overlay keeps it FALSE, and the reason is a hard incompatibility
++   * rather than a preference. The single-reply misfire guard in
++   * dispatchResultText redirects a lone reply addressed away from the turn's
++   * origin — a real failure mode for the small local models this fork runs,
++   * which answer into a room they can see instead of back to their caller.
++   * "Lone" is load-bearing: a deliberate multi-destination reply must not be
++   * redirected. Under mid-turn delivery the block count for the turn is not
++   * knowable at delivery time — block one is already sent before the door
++   * learns whether a block two exists — so the guard cannot be expressed at
++   * all on that path.
++   *
++   * Every other upstream change on the delivery path is taken as-is. This is
++   * one flag on our own provider, not a fork of upstream's logic, and it can
++   * be flipped the day the guard is re-expressed in a streaming-safe form.
++   */
++  readonly emitsMidTurnText = false;
  
    private assistantName?: string;
    private mcpServers: Record<string, McpServerConfig>;
-   private env: Record<string, string | undefined>;
-+  private settingSources: Array<'project' | 'user' | 'local'>;
-   private additionalDirectories?: string[];
-   private model?: string;
-   private effort?: string;
-+  private lenientPrompt?: boolean;
-   private memorySessionHook?: MemorySessionHookRegistration;
- 
-   constructor(options: ProviderOptions = {}) {
-@@ -475,11 +557,13 @@ export class ClaudeProvider implements AgentProvider {
+@@ -499,11 +601,13 @@ export class ClaudeProvider implements AgentProvider {
      this.additionalDirectories = options.additionalDirectories;
      this.model = options.model;
      this.effort = options.effort;
@@ -128,7 +150,7 @@ index 5fee2eb9..5d8a3b12 100644
    }
  
    registerMemorySessionHook(hook: MemorySessionHookRegistration): void {
-@@ -547,10 +631,20 @@ export class ClaudeProvider implements AgentProvider {
+@@ -571,10 +675,20 @@ export class ClaudeProvider implements AgentProvider {
          resume: input.continuation,
          forkSession: contrib.forkSession,
          pathToClaudeCodeExecutable: '/pnpm/claude',
@@ -151,7 +173,7 @@ index 5fee2eb9..5d8a3b12 100644
          disallowedTools: SDK_DISALLOWED_TOOLS,
          env: this.env,
          model: contrib.model ?? this.model,
-@@ -558,7 +652,7 @@ export class ClaudeProvider implements AgentProvider {
+@@ -582,7 +696,7 @@ export class ClaudeProvider implements AgentProvider {
          effort: this.effort as any,
          permissionMode: 'bypassPermissions',
          allowDangerouslySkipPermissions: true,
@@ -160,162 +182,3 @@ index 5fee2eb9..5d8a3b12 100644
          mcpServers: this.mcpServers,
          hooks: {
            PreToolUse: [{ hooks: [preToolUseHook] }],
-@@ -573,66 +667,101 @@ export class ClaudeProvider implements AgentProvider {
- 
-     async function* translateEvents(): AsyncGenerator<ProviderEvent> {
-       let messageCount = 0;
--      for await (const message of sdkResult) {
--        if (aborted) return;
--        messageCount++;
-+      try {
-+        for await (const message of sdkResult) {
-+          if (aborted) return;
-+          messageCount++;
- 
--        // Yield activity for every SDK event so the poll loop knows the agent is working
--        yield { type: 'activity' };
--
--        if (message.type === 'system' && message.subtype === 'init') {
--          yield { type: 'init', continuation: message.session_id };
--        } else if (message.type === 'result') {
--          // `result` text exists only on subtype:"success"; error subtypes
--          // (e.g. a non-retryable 403 billing_error) carry their message in
--          // `errors[]` instead. Surface either so the poll-loop can deliver a
--          // billing/quota notice to the user rather than dropping the turn.
--          const m = message as { result?: string; is_error?: boolean; errors?: string[] };
--          const text = m.result ?? (m.errors && m.errors.length > 0 ? m.errors.join('\n') : null);
--          yield { type: 'result', text, isError: m.is_error === true };
--        } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'api_retry') {
--          yield { type: 'error', message: 'API retry', retryable: true };
--        } else if (message.type === 'rate_limit_event') {
--          // The SDK emits this "when rate limit info CHANGES" — it is telemetry,
--          // not necessarily an error. `rate_limit_info.status` is usually
--          // 'allowed' (here's your remaining headroom). Treating every one of
--          // these as a terminal quota error logged a spurious rate-limit line
--          // on healthy turns (#3016) — and aborted them outright wherever the
--          // classification is acted on. ONLY 'rejected' is an actual block.
--          //
--          // When it IS rejected the SDK tells us WHY, so we can finally
--          // distinguish the two cases properly instead of guessing:
--          //   errorCode 'credits_required' / overageDisabledReason
--          //   'out_of_credits'  → genuinely out of credits (billing)
--          //   otherwise         → a transient window limit that resets.
--          const info = (message as { rate_limit_info?: SdkRateLimitInfo }).rate_limit_info;
--          const blocked = classifyRateLimitEvent(info);
--          if (!blocked) {
--            // Informational ('allowed' / 'allowed_warning') — never kill the turn.
--            if (info?.status === 'allowed_warning') {
--              log(
--                `rate-limit warning: ${info.rateLimitType ?? 'window'} at ${
--                  info.utilization != null ? `${Math.round(info.utilization * 100)}%` : 'high'
--                } utilization`,
--              );
--            }
--          } else {
--            yield { type: 'error', message: blocked.message, retryable: false, classification: blocked.classification };
--          }
--        } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
--          const meta = (message as { compact_metadata?: { pre_tokens?: number } }).compact_metadata;
--          const detail = meta?.pre_tokens ? ` (${meta.pre_tokens.toLocaleString()} tokens compacted)` : '';
--          // Not a `result`: the poll loop treats result text as the agent's turn
--          // output — a synthetic "Context compacted." result has no <message>
--          // block, so it triggers the "response was not delivered — please
--          // re-send" nudge and the agent duplicates its previous message.
--          // Compaction is bookkeeping: log it, count it as activity only.
--          log(`Context compacted${detail}.`);
-+          // Yield activity for every SDK event so the poll loop knows the agent is working
-           yield { type: 'activity' };
--        } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
--          const tn = message as { summary?: string };
--          yield { type: 'progress', message: tn.summary || 'Task notification' };
-+
-+          if (message.type === 'system' && message.subtype === 'init') {
-+            yield { type: 'init', continuation: message.session_id };
-+          } else if (message.type === 'result') {
-+            // `result` text exists only on subtype:"success"; error subtypes
-+            // (e.g. a non-retryable 403 billing_error) carry their message in
-+            // `errors[]` instead. Surface either so the poll-loop can deliver a
-+            // billing/quota notice to the user rather than dropping the turn.
-+            const m = message as { result?: string; is_error?: boolean; errors?: string[] };
-+            const text = m.result ?? (m.errors && m.errors.length > 0 ? m.errors.join('\n') : null);
-+            yield { type: 'result', text, isError: m.is_error === true };
-+          } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'api_retry') {
-+            yield { type: 'error', message: 'API retry', retryable: true };
-+          } else if (message.type === 'rate_limit_event') {
-+            // The SDK emits this "when rate limit info CHANGES" — it is telemetry,
-+            // not necessarily an error. `rate_limit_info.status` is usually
-+            // 'allowed' (here's your remaining headroom). Treating every one of
-+            // these as a terminal quota error logged a spurious rate-limit line
-+            // on healthy turns (#3016) — and aborted them outright wherever the
-+            // classification is acted on. ONLY 'rejected' is an actual block.
-+            //
-+            // When it IS rejected the SDK tells us WHY, so we can finally
-+            // distinguish the two cases properly instead of guessing:
-+            //   errorCode 'credits_required' / overageDisabledReason
-+            //   'out_of_credits'  → genuinely out of credits (billing)
-+            //   otherwise         → a transient window limit that resets.
-+            const info = (message as { rate_limit_info?: SdkRateLimitInfo }).rate_limit_info;
-+            const blocked = classifyRateLimitEvent(info);
-+            if (!blocked) {
-+              // Informational ('allowed' / 'allowed_warning') — never kill the turn.
-+              if (info?.status === 'allowed_warning') {
-+                log(
-+                  `rate-limit warning: ${info.rateLimitType ?? 'window'} at ${
-+                    info.utilization != null ? `${Math.round(info.utilization * 100)}%` : 'high'
-+                  } utilization`,
-+                );
-+              }
-+            } else {
-+              yield { type: 'error', message: blocked.message, retryable: false, classification: blocked.classification };
-+            }
-+          } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
-+            const meta = (message as { compact_metadata?: { pre_tokens?: number } }).compact_metadata;
-+            const detail = meta?.pre_tokens ? ` (${meta.pre_tokens.toLocaleString()} tokens compacted)` : '';
-+            // Not a `result`: the poll loop treats result text as the agent's turn
-+            // output — a synthetic "Context compacted." result has no <message>
-+            // block, so it triggers the "response was not delivered — please
-+            // re-send" nudge and the agent duplicates its previous message.
-+            // Compaction is bookkeeping: log it, count it as activity only.
-+            log(`Context compacted${detail}.`);
-+            yield { type: 'activity' };
-+          } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
-+            const tn = message as { summary?: string };
-+            yield { type: 'progress', message: tn.summary || 'Task notification' };
-+          } else if (message.type === 'assistant') {
-+            // Surface the agent's reasoning (extended-thinking blocks) to rich
-+            // clients as a fading feed. Cosmetic; absent when the model emits no
-+            // thinking. Text blocks are handled separately as the final result.
-+            const content = (message as { message?: { content?: unknown } }).message?.content;
-+            if (Array.isArray(content)) {
-+              for (const block of content) {
-+                if (block && (block as { type?: string }).type === 'thinking') {
-+                  const thinking = (block as { thinking?: string }).thinking;
-+                  if (typeof thinking === 'string' && thinking.length > 0) {
-+                    for (const line of summarizeThinking(thinking)) {
-+                      yield { type: 'reasoning', message: line };
-+                    }
-+                  }
-+                }
-+              }
-+            }
-+          }
-         }
-+      } catch (err) {
-+        // A THROWN SDK failure — model not found, backend unreachable, the
-+        // subprocess dying mid-stream — would otherwise escape the generator
-+        // and surface as an opaque rejection (or, on the follow-up path,
-+        // silence). Re-emit it as a non-retryable terminal error so the
-+        // poll-loop can surface it / fall back, then end the stream.
-+        if (aborted) return;
-+        const detail = err instanceof Error ? err.message : String(err);
-+        log(`SDK stream threw: ${detail}`);
-+        yield {
-+          type: 'error',
-+          message: detail,
-+          retryable: false,
-+          classification: classifyTerminalError(detail),
-+        };
-+        return;
-       }
-       log(`Query completed after ${messageCount} SDK messages`);
-     }

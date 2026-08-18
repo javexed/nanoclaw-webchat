@@ -34,6 +34,7 @@ describe('moduleWebchat migration', () => {
     expect(tables.map((t) => t.name)).toEqual([
       'webchat_agent_mcp_servers',
       'webchat_agent_models',
+      'webchat_approval_triage',
       'webchat_approvals_index',
       'webchat_disabled_sources',
       'webchat_mcp_servers',
@@ -52,6 +53,7 @@ describe('moduleWebchat migration', () => {
       'webchat_room_settings',
       'webchat_settings',
       'webchat_skill_sources',
+      'webchat_template_sources',
       'webchat_thread_engaged',
       'webchat_thread_reads',
       'webchat_thread_sync',
@@ -90,6 +92,7 @@ describe('moduleWebchat migration', () => {
     }[];
     expect(rows.map((r) => r.name)).toEqual([
       'webchat-approval-prejudge',
+      'webchat-approval-triage',
       'webchat-approvals-index',
       'webchat-approvals-index-fanout',
       'webchat-archive-split',
@@ -120,6 +123,7 @@ describe('moduleWebchat migration', () => {
       'webchat-stt',
       'webchat-stt-prompt',
       'webchat-tailscale-owner',
+      'webchat-template-sources',
       'webchat-thread-context-sync',
       'webchat-thread-engaged',
       'webchat-threads',

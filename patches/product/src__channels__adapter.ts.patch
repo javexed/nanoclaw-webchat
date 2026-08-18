@@ -1,7 +1,7 @@
-diff --git a/src/channels/adapter.ts b/src/channels/adapter.ts
-index 5332b4ce..a5edf9ac 100644
---- a/src/channels/adapter.ts
-+++ b/src/channels/adapter.ts
+diff --git c/src/channels/adapter.ts w/src/channels/adapter.ts
+index 873c7265..d5d08648 100644
+--- c/src/channels/adapter.ts
++++ w/src/channels/adapter.ts
 @@ -62,8 +62,8 @@ export interface InboundEvent {
      /** True when the source is a group/channel thread, false for DMs. */
      isGroup?: boolean;
@@ -51,16 +51,23 @@ index 5332b4ce..a5edf9ac 100644
   * data.
   *   - start:     a turn began; show the bubble and keep it until done/stalled
   *   - tool:      `text` = tool name, `detail` = target (file/command/query)
-@@ -245,8 +246,20 @@ export interface ChannelAdapter {
+@@ -248,13 +249,28 @@ export interface ChannelAdapter {
    // Outbound delivery — returns the platform message ID if available
    deliver(platformId: string, threadId: string | null, message: OutboundMessage): Promise<string | undefined>;
  
 -  // Optional
--  setTyping?(platformId: string, threadId: string | null): Promise<void>;
-+  // Optional. `agentName` (when provided) is the display name of the agent that's
-+  // actually typing — so multi-agent rooms can label the indicator with the real
-+  // responder instead of the room's default agent.
-+  setTyping?(platformId: string, threadId: string | null, agentName?: string): Promise<void>;
++  // Optional. Upstream owns positions 3 and 4 (status/statusKind) — the
++  // channel-registry passthrough binds them positionally, so they must not
++  // move. `agentName` is ours and lands after them: the display name of the
++  // agent actually typing, so multi-agent rooms can label the indicator with
++  // the real responder instead of the room's default agent.
+   setTyping?(
+     platformId: string,
+     threadId: string | null,
+     status?: string,
+     statusKind?: 'auto' | 'agent',
++    agentName?: string,
+   ): Promise<void>;
 +
 +  /**
 +   * Push a fine-grained activity status for the agent's current turn (tool in

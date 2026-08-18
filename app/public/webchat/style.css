@@ -5563,6 +5563,42 @@ a.skill-badge-origin:hover {
   font-weight: 600;
   margin-bottom: 6px;
 }
+/* Triage — what the pre-judge concluded about this request.
+   Chips are CHECKABLE CLAIMS about the request ("touches credentials"), never
+   a risk score or a confidence number: the payload renders directly beneath
+   them, so a wrong claim is visibly wrong, and a precise-looking score would
+   invite clicking through the one card meant to make a human look.
+   Never-list chips are authoritative (deterministic) and carry the warning
+   tint; model chips are the lighter treatment. Both are shown, so a
+   disagreement between them is visible. */
+.approval-card .approval-triage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.approval-card .triage-flag {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 1;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  background: var(--surface2, var(--bg));
+}
+.approval-card .triage-flag.authoritative {
+  border-color: var(--warning);
+  color: var(--warning-strong);
+}
+/* The tier line. Its job is to make ABSENCE legible: a card with no chips
+   because nothing was screened must not read the same as one screened clean. */
+.approval-card .triage-note {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
 .approval-card .approval-payload {
   font-family: ui-monospace, Menlo, monospace;
   font-size: var(--fs-xs);
@@ -9013,4 +9049,85 @@ button[data-draft-id] {
        sits at the li's 10px padding-top and is ~1.2rem tall). */
     top: 6px;
   }
+}
+
+/* ── Audit log viewer (Admin → Maintenance) ── */
+.audit-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.audit-filters {
+  display: flex;
+  gap: 8px;
+}
+.audit-filters select {
+  padding: 5px 8px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-xs);
+}
+.audit-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  /* Capped so a busy log cannot turn the Maintenance card into the page. */
+  max-height: 340px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.audit-rows:empty {
+  display: none;
+}
+.audit-rows li {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-xs);
+}
+.audit-rows li:last-child {
+  border-bottom: 0;
+}
+.audit-row-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.audit-when {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.audit-type {
+  font-weight: 600;
+  color: var(--text);
+}
+.audit-action {
+  color: var(--text-dim);
+}
+.audit-effect {
+  margin-left: auto;
+  color: var(--success-strong);
+}
+/* Refusals and failures are what someone is scanning for in a wall of allows. */
+.audit-effect.warn {
+  color: var(--warning, #d29922);
+}
+.audit-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--text-dim);
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+.audit-actor {
+  font-family: var(--font-mono, monospace);
+}
+.audit-more {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
