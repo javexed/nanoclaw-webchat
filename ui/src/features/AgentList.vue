@@ -62,6 +62,9 @@ const botIcon = lucide('bot');
       <span v-if="agent.provider === 'opencode'" class="agent-harness-badge" title="Runs on the OpenCode harness"
         >OpenCode</span
       >
+      <span v-else-if="agent.provider === 'grok'" class="agent-harness-badge" title="Runs on the Grok harness"
+        >Grok</span
+      >
     </span>
   </li>
 </template>
