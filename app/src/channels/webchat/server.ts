@@ -77,6 +77,7 @@ import {
   rOllamaPullsGet,
   rOllamaRecommendGet,
 } from './server/routes-ollama.js';
+import { buildFloor } from './server/floor.js';
 import { buildOverview } from './server/overview.js';
 import {
   rAgentsGet,
@@ -1407,6 +1408,14 @@ const RE_USER_ID = /^\/api\/users\/([^/]+)$/;
 async function rOverviewGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   return json(res, 200, await buildOverview(userId));
+}
+
+// ── Floor ─────────────────────────────────────────────────────────────
+// Scope-aware inside buildFloor (a caller only sees desks for agent groups they
+// can access), so this needs no gate of its own — same contract as overview.
+function rFloorGet(ctx: RouteCtx, _m: RegExpMatchArray): void {
+  const { res, userId } = ctx;
+  return json(res, 200, buildFloor(userId));
 }
 
 // ── UserCreds Codex browser-mint: connect a ChatGPT subscription without a terminal
@@ -2908,6 +2917,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/me/handle', h: rMeHandleGet },
   { method: 'PUT', path: '/api/me/handle', guards: ['csrf'], h: rMeHandlePut },
   { method: 'GET', path: '/api/overview', h: rOverviewGet },
+  { method: 'GET', path: '/api/floor', h: rFloorGet },
   { method: 'GET', path: '/api/rooms', h: rRoomsGet },
   { method: 'POST', path: '/api/rooms', guards: ['csrf', 'owner'], h: rRoomsPost },
   { method: 'DELETE', path: RE_ROOM_ID, guards: ['owner', 'csrf'], h: rRoomIdDelete, audit: 'room.delete' },

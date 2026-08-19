@@ -267,6 +267,9 @@
                 <button id="overflow-journey" class="overflow-item" data-action="journey" role="menuitem" hidden>
                   <svg class="icon" aria-hidden="true"><use href="#i-graduation-cap"></use></svg>&nbsp;&nbsp;Skills journey
                 </button>
+                <button class="overflow-item" data-action="floor" role="menuitem">
+                  <svg class="icon" aria-hidden="true"><use href="#i-layout-dashboard"></use></svg>&nbsp;&nbsp;Floor
+                </button>
                 <button class="overflow-item" data-action="topology" role="menuitem">
                   <svg class="icon" aria-hidden="true"><use href="#i-workflow"></use></svg>&nbsp;&nbsp;Topology
                 </button>
@@ -2125,6 +2128,21 @@
             <button id="topo-focus-pill" class="topo-focus-pill" hidden aria-label="Clear focus"></button>
           </div>
           <div id="topology-canvas" class="topology-canvas"></div>
+        </div>
+      </section>
+      <section id="floor" hidden>
+        <div class="dash-header">
+          <button id="floor-back" class="mobile-back" aria-label="Back">
+            <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+          </button>
+          <span>Floor</span>
+          <button id="floor-refresh" class="btn btn-ghost">
+            <svg class="icon" aria-hidden="true"><use href="#i-rotate-cw"></use></svg> Refresh
+          </button>
+        </div>
+        <div class="floor-body">
+          <div id="floor-counts" class="floor-counts"></div>
+          <div id="floor-grid" class="floor-grid"></div>
         </div>
       </section>
       <section id="journey" hidden>

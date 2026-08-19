@@ -9139,3 +9139,83 @@ button[data-draft-id] {
   align-items: center;
   gap: 8px;
 }
+
+/* ── Floor ─────────────────────────────────────────────────────────────────
+   A desk per session, coloured by state. Grid rather than a drawn room: the
+   floor has to read at 6 desks and at 40, and auto-fill does that without a
+   layout engine or a breakpoint per size. Trouble is first in DOM order
+   (the server sorts it), so it lands top-left wherever the grid wraps. */
+.floor-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+  padding: var(--space-3, 12px);
+  overflow-y: auto;
+}
+.floor-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px);
+}
+.floor-count {
+  font-size: var(--fs-sm);
+  padding: 2px var(--space-2, 8px);
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.floor-count b {
+  color: var(--text);
+}
+.floor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: var(--space-2, 8px);
+}
+.floor-desk {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  text-align: left;
+  padding: var(--space-2, 8px);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: var(--transition);
+}
+.floor-desk:hover {
+  border-color: var(--accent);
+}
+.floor-desk-name {
+  font-weight: 600;
+}
+.floor-desk-room,
+.floor-desk-meta {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+/* State is carried by the left edge AND the meta text, never by colour alone —
+   a red border is invisible to a chunk of users and to a monochrome screen. */
+.floor-desk.floor-stuck {
+  border-left-color: var(--danger);
+}
+.floor-desk.floor-working {
+  border-left-color: var(--success);
+}
+.floor-desk.floor-idle {
+  border-left-color: var(--accent);
+}
+.floor-desk.floor-cold {
+  border-left-color: var(--border);
+  opacity: 0.72;
+}
+.floor-count.floor-stuck b {
+  color: var(--danger);
+}
+.floor-count.floor-working b {
+  color: var(--success);
+}
