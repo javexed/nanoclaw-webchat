@@ -2643,16 +2643,27 @@
                   <!-- Grok is subscription-only: a SuperGrok / X Premium+ device-code
                        login, with no API-key path at all. So this card has no key input,
                        unlike Claude and Codex — offering one would imply a route that
-                       does not exist. The login itself runs from the terminal for now
-                       (a device code is a multi-minute, human-paced flow); this card
-                       reports its result honestly and tells you the one command. -->
+                       does not exist. -->
                   <div id="wizard-grok-connect">
-                    <p class="cred-hint" id="wizard-grok-hint">
-                      Grok runs on a SuperGrok or X Premium+ subscription — no API key. Authenticate from a
-                      terminal in your install directory:
-                    </p>
-                    <pre class="wizard-code" id="wizard-grok-command">pnpm exec tsx setup/index.ts --step provider-auth grok</pre>
-                    <p class="cred-hint">A URL and a short code appear; confirm them on any device with a browser. Then reload this page.</p>
+                    <div class="setting-group install-row" id="wizard-grok-login-row">
+                      <button id="wizard-grok-login" class="btn btn-primary" type="button">Sign in with a device code…</button>
+                    </div>
+                    <!-- Shown while a login is in flight. The code is the point of the
+                         panel so it carries the emphasis, and the countdown exists
+                         because a device code expires — a silent stall is the worst
+                         outcome here. -->
+                    <div id="wizard-grok-device" hidden>
+                      <!-- The link lives inside .cred-hint deliberately: that is the only
+                           rule in the stylesheet that themes an anchor (--accent-strong +
+                           underline, the AA-contrast pairing per DESIGN.md §1). A bare <a>
+                           inherits nothing and falls back to the browser's default blue,
+                           which is a hardcoded colour in both themes. -->
+                      <p class="cred-hint"><a id="wizard-grok-url" target="_blank" rel="noopener noreferrer"></a></p>
+                      <pre class="wizard-code" id="wizard-grok-code"></pre>
+                      <div class="setting-group install-row">
+                        <button id="wizard-grok-cancel" class="btn btn-secondary" type="button">Cancel</button>
+                      </div>
+                    </div>
                     <p class="cred-hint" id="wizard-grok-status" hidden></p>
                   </div>
                   <div class="wizard-connected" id="wizard-grok-connected" hidden>
@@ -2890,9 +2901,6 @@
               <p class="cred-hint feature-info" id="wizard-ts-install-info" hidden>Installs tailscaled and starts sign-in — the auth link appears below.</p>
                   </div>
                   <pre id="wizard-ts-install-log" class="wizard-code" hidden></pre>
-                  <p class="cred-hint" id="wizard-ts-ready" hidden>
-                    Tailscale is up. The first person to sign in over your tailnet becomes an owner (one-shot) — so your real identity owns this, not just the setup token.
-                  </p>
                   <!-- Revealed only when tailscaled is up and serve isn't already on. -->
                   <div id="wizard-https-row" class="setting-group install-row" hidden>
                     <button id="wizard-https-btn" class="btn btn-secondary" type="button">Enable HTTPS</button>

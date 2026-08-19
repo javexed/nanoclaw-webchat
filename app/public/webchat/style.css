@@ -6711,6 +6711,14 @@ a.skill-badge-origin:hover {
 .cred-hint a:hover {
   color: var(--accent);
 }
+/* The device-login URL is the panel's primary action, so it should not inherit
+   the extra-small hint size — and a 55-character URL has to wrap rather than
+   overflow a narrow PWA card. Colour still comes from the `.cred-hint a` rule
+   above, which is the only anchor theming in the sheet. */
+#wizard-grok-url {
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
 /* Inline <code> in hint copy (e.g. the 127.0.0.1 in the Localhost-only note) —
    themed to match the app, not raw browser monospace. Mirrors chat-bubble code
    but on tokens. */

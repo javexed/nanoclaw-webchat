@@ -208,13 +208,11 @@ export async function refreshWizardCredState() {
   $('#wizard-grok-connected')!.hidden = !grok?.connected;
   const grokStatusLine = $('#wizard-grok-status');
   if (grokStatusLine) {
-    // Say which of the three not-connected reasons applies, so the terminal
-    // command above is either the right next step or visibly not it.
-    const why = !grok?.available
-      ? 'The Grok provider is not installed yet — run /add-grok, then rebuild the agent image.'
-      : grok?.expired
-        ? 'A Grok login exists but has expired. Re-run the command above to refresh it.'
-        : '';
+    // Only the EXPIRED case gets prose. "Not installed" is already said by the
+    // chip, and the other engines do not explain themselves proactively either —
+    // acting on an uninstalled harness is what surfaces the reason, from the
+    // server, at the moment it matters.
+    const why = grok?.available && grok?.expired ? 'That Grok sign-in has expired. Sign in again to refresh it.' : '';
     grokStatusLine.textContent = why;
     grokStatusLine.hidden = !why;
   }
@@ -625,7 +623,14 @@ async function wizardProbeHttps() {
   } else if (state && state.active) {
     row.hidden = false;
     $('#wizard-https-btn')!.hidden = true;
+    // Already-on is the state an operator lands in most often, and the URL is
+    // the one thing they actually want from it — the enable path linked it and
+    // this one did not, so the common case was the worse one.
     wizardSetStatus('#wizard-https-status', 'HTTPS is already on.', 'ok');
+    if (state.url) {
+      $('#wizard-https-status')!.innerHTML =
+        `HTTPS is on — reach this at <a href="${esc(state.url)}" target="_blank" rel="noopener">${esc(state.url)}</a>`;
+    }
   } else {
     row.hidden = true;
   }
@@ -642,6 +647,14 @@ async function wizardEnableHttps() {
     if (r.ok && data.ok) {
       btn.hidden = true;
       wizardSetStatus('#wizard-https-status', data.url ? `HTTPS on — reach this at ${data.url}` : 'HTTPS enabled.', 'ok');
+      // A URL the operator is meant to OPEN should be a link, not text to
+      // retype. Same escape-then-innerHTML shape as the hintUrl branch below;
+      // the host span is a .cred-hint, which is the only anchor theming in the
+      // stylesheet, so it picks up --accent-strong + underline for free.
+      if (data.url) {
+        $('#wizard-https-status')!.innerHTML =
+          `HTTPS on — reach this at <a href="${esc(data.url)}" target="_blank" rel="noopener">${esc(data.url)}</a>`;
+      }
       showToast('HTTPS enabled over Tailscale', { kind: 'success' });
     } else {
       const msg = [data.error, data.hint].filter(Boolean).join(' ') || 'Could not enable HTTPS';
@@ -1138,10 +1151,9 @@ async function renderWizardAccess() {
     }
   }
 
-  // Tailscale body: connected → ready/owner note; otherwise offer a one-click
-  // install when the host can bring it up (TUN + root), else the helper link.
-  const tsReady = $('#wizard-ts-ready');
-  if (tsReady) tsReady.hidden = !tsHealthy;
+  // Tailscale body: when it's up there is nothing to say — the chip already
+  // reports that. Otherwise offer a one-click install when the host can bring it
+  // up (TUN + root), else the helper link.
   const tsHelper = $('#wizard-ts-helper');
   const tsRow = $('#wizard-ts-install-row');
   const tsManual = $('#wizard-ts-manual');
@@ -1379,6 +1391,10 @@ async function wizardTriggerRestart() {
 function wireWizard() {
   if (wizardWired) return;
   wizardWired = true;
+  wireGrokLogin();
+  // A login started before this page loaded (another tab, or a reload mid-flow)
+  // is still running server-side — pick it back up rather than stranding it.
+  void resumeGrokLogin();
   $('#wizard-next')?.addEventListener('click', async () => {
     // The Access step won't advance until the chosen exposure method is actually
     // live — Tailscale signed in, or a reverse proxy configured. Bearer (the
@@ -1649,7 +1665,11 @@ async function wizardCreateAndFinish() {
   {
     try {
       const agentRef: Record<string, unknown> = { kind: 'new', name: agentName };
-      if (wizardEngine === 'codex') agentRef.provider = 'codex';
+      // Pin whichever non-default harness the operator chose. Ollama is not a
+      // provider — it is a workspace default MODEL, handled above — so only the
+      // real harnesses appear here. Codex-only was the bug: choosing Grok
+      // authenticated it and then created an agent on the default harness.
+      if (wizardEngine === 'codex' || wizardEngine === 'grok') agentRef.provider = wizardEngine;
       const r = await authFetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1695,5 +1715,108 @@ export async function maybeAutoOpenWizard() {
     if (s.canEdit && !s.complete) openWizard();
   } catch {
     /* non-fatal — the wizard is always reachable from Settings */
+  }
+}
+
+// ── Grok device login ────────────────────────────────────────────────────────
+// The only wizard flow that finishes somewhere else: the operator confirms a
+// code on another device, so this polls rather than awaits. Server-side state
+// means closing the tab does not strand the login — reopening the wizard picks
+// the same flow back up, and the container behind it is reaped on expiry.
+let grokPollTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopGrokPoll() {
+  if (grokPollTimer) clearInterval(grokPollTimer);
+  grokPollTimer = null;
+}
+
+function renderGrokLogin(p: any) {
+  const device = $('#wizard-grok-device');
+  const row = $('#wizard-grok-login-row');
+  const status = $('#wizard-grok-status');
+  if (!device || !row) return;
+
+  device.hidden = !p?.running;
+  row.hidden = !!p?.running;
+
+  if (p?.running) {
+    const url = $('#wizard-grok-url') as HTMLAnchorElement | null;
+    if (url && p.verificationUrl) {
+      url.textContent = p.verificationUrl;
+      url.href = p.verificationUrl;
+    }
+    // Until the CLI has printed them, say so rather than showing an empty box.
+    $('#wizard-grok-code')!.textContent = p.userCode ?? 'waiting for a code…';
+  }
+
+  // A finished flow reports its own outcome; anything but success is worth
+  // saying out loud, since the operator was watching another device for it.
+  if (status && p && !p.running && p.outcome && p.outcome !== 'complete') {
+    status.textContent = p.error ?? 'The login did not complete.';
+    status.hidden = false;
+  }
+}
+
+async function pollGrokLogin() {
+  const r = await authFetch('/api/workspace-credential/grok');
+  if (!r.ok) return stopGrokPoll();
+  const p = await r.json();
+  renderGrokLogin(p);
+  if (!p.running) {
+    stopGrokPoll();
+    // Success flips the card to connected via the shared status path, so the
+    // one source of truth for "is Grok connected" stays the credential probe.
+    if (p.outcome === 'complete') await refreshWizardCredState();
+  }
+}
+
+function startGrokPoll() {
+  stopGrokPoll();
+  void pollGrokLogin();
+  grokPollTimer = setInterval(() => void pollGrokLogin(), 2000);
+}
+
+function wireGrokLogin() {
+  $('#wizard-grok-login')?.addEventListener('click', async () => {
+    const btn = $('#wizard-grok-login') as HTMLButtonElement | null;
+    if (btn) btn.disabled = true;
+    const status = $('#wizard-grok-status');
+    if (status) status.hidden = true;
+    try {
+      const r = await authFetch('/api/workspace-credential/grok/start', { method: 'POST' });
+      const p = await r.json();
+      if (!r.ok) {
+        if (status) {
+          status.textContent = p?.error ?? 'Could not start the login.';
+          status.hidden = false;
+        }
+        return;
+      }
+      renderGrokLogin(p);
+      startGrokPoll();
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  $('#wizard-grok-cancel')?.addEventListener('click', async () => {
+    await authFetch('/api/workspace-credential/grok/cancel', { method: 'POST' });
+    stopGrokPoll();
+    void pollGrokLogin();
+  });
+}
+
+/** Resume a login that was started before this page loaded (or in another tab). */
+async function resumeGrokLogin() {
+  try {
+    const r = await authFetch('/api/workspace-credential/grok');
+    if (!r.ok) return;
+    const p = await r.json();
+    if (p.running) {
+      renderGrokLogin(p);
+      startGrokPoll();
+    }
+  } catch {
+    /* status is best-effort; the card still renders from the credential probe */
   }
 }

@@ -8,7 +8,8 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 
 import { json, readJsonBody } from './http.js';
-import { codexAvailable, opencodeAvailable, piAvailable } from './providers.js';
+import { cancelGrokLogin, getGrokLoginProgress, startGrokLogin } from './grok-auth-flow.js';
+import { codexAvailable, grokAvailable, opencodeAvailable, piAvailable } from './providers.js';
 import {
   getCodexInstallProgress,
   getOpencodeInstallProgress,
@@ -138,4 +139,32 @@ export async function rWebchatSttInstallPost(ctx: RouteCtx, _m: RegExpMatchArray
     return json(res, 409, { error: msg });
   }
   return json(res, 202, { ...getSttInstallState(), started: true });
+}
+
+/**
+ * Grok device login — the same GET-reports / POST-starts contract as the
+ * installs above, with one extra verb: a login can be abandoned, and the
+ * container behind it must not outlive the operator's interest in it.
+ */
+export async function rGrokLoginGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  return json(res, 200, { ...getGrokLoginProgress(), installed: grokAvailable() });
+}
+
+export async function rGrokLoginPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  const verb = m[1];
+  if (verb === 'cancel') return json(res, 200, { ...cancelGrokLogin(), ...getGrokLoginProgress() });
+
+  const r = startGrokLogin();
+  if (r.error === 'not-installed')
+    return json(res, 409, {
+      error: 'The Grok provider is not installed — run /add-grok, then rebuild the agent image.',
+      code: 'not-installed',
+    });
+  if (r.error === 'already-running')
+    // Not an error worth surfacing as one: another tab already started it, and
+    // the progress body tells this client everything it needs to render.
+    return json(res, 200, { ...getGrokLoginProgress(), started: false });
+  return json(res, 202, { ...getGrokLoginProgress(), started: true });
 }
