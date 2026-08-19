@@ -186,6 +186,43 @@ export async function refreshWizardCredState() {
   const codexDisconnect = $('#wizard-codex-disconnect');
   if (codexDisconnect) codexDisconnect.hidden = !!s.codex?.external;
 
+  // Grok's card is narrower than Claude's and Codex's by design: subscription
+  // only, so there is no key path and no credWord() choice to report. Three
+  // states like the others, plus a fourth the file-backed credential makes
+  // possible — a login that EXISTS but has expired, which is a different fix
+  // (re-run the login) from never having connected.
+  const grokChip = $('#wizard-chip-grok');
+  const grok = s.grok;
+  if (grokChip) {
+    grokChip.hidden = false;
+    grokChip.textContent = grok?.connected
+      ? '✓ connected'
+      : !grok?.available
+        ? 'not installed'
+        : grok?.expired
+          ? 'expired'
+          : 'not connected';
+    grokChip.classList.toggle('ok', !!grok?.connected);
+  }
+  $('#wizard-grok-connect')!.hidden = !!grok?.connected;
+  $('#wizard-grok-connected')!.hidden = !grok?.connected;
+  const grokStatusLine = $('#wizard-grok-status');
+  if (grokStatusLine) {
+    // Say which of the three not-connected reasons applies, so the terminal
+    // command above is either the right next step or visibly not it.
+    const why = !grok?.available
+      ? 'The Grok provider is not installed yet — run /add-grok, then rebuild the agent image.'
+      : grok?.expired
+        ? 'A Grok login exists but has expired. Re-run the command above to refresh it.'
+        : '';
+    grokStatusLine.textContent = why;
+    grokStatusLine.hidden = !why;
+  }
+  if (grok?.connected)
+    $('#wizard-grok-connected-text')!.textContent = grok.email
+      ? `Grok connected — ${grok.email}`
+      : 'Grok connected — subscription';
+
   // An Ollama model is the workspace default only when the default row's kind is
   // 'ollama' — authoritative, so the chip/card never claims "set" for a Claude/Codex
   // default. Same three-state idiom as Claude: no model → ✓ <model>, with a
@@ -475,6 +512,7 @@ function syncWizardEngineBodies() {
 function wizardEngineConnected() {
   const s: any = wizardCred || {};
   if (wizardEngine === 'codex') return !!s.codex?.connected;
+  if (wizardEngine === 'grok') return !!s.grok?.connected;
   if (wizardEngine === 'ollama') return !!s.defaultModelId;
   return !!s.connected; // claude (default)
 }
@@ -1370,7 +1408,9 @@ function wireWizard() {
       const how =
         wizardEngine === 'ollama'
           ? 'set a default Ollama model'
-          : wizardEngine === 'codex' && !wizardCodexAvailable
+          : wizardEngine === 'grok'
+            ? 'authenticate Grok from a terminal (the command is on the card), then reload'
+            : wizardEngine === 'codex' && !wizardCodexAvailable
             ? 'install then connect Codex'
             : `connect ${wizardEngine === 'codex' ? 'Codex' : 'Claude'}`;
       showToast(`Finish this engine first — ${how} above.`, { kind: 'info', timeout: 6000 });
