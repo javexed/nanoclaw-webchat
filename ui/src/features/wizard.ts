@@ -623,7 +623,14 @@ async function wizardProbeHttps() {
   } else if (state && state.active) {
     row.hidden = false;
     $('#wizard-https-btn')!.hidden = true;
+    // Already-on is the state an operator lands in most often, and the URL is
+    // the one thing they actually want from it — the enable path linked it and
+    // this one did not, so the common case was the worse one.
     wizardSetStatus('#wizard-https-status', 'HTTPS is already on.', 'ok');
+    if (state.url) {
+      $('#wizard-https-status')!.innerHTML =
+        `HTTPS is on — reach this at <a href="${esc(state.url)}" target="_blank" rel="noopener">${esc(state.url)}</a>`;
+    }
   } else {
     row.hidden = true;
   }
@@ -640,6 +647,14 @@ async function wizardEnableHttps() {
     if (r.ok && data.ok) {
       btn.hidden = true;
       wizardSetStatus('#wizard-https-status', data.url ? `HTTPS on — reach this at ${data.url}` : 'HTTPS enabled.', 'ok');
+      // A URL the operator is meant to OPEN should be a link, not text to
+      // retype. Same escape-then-innerHTML shape as the hintUrl branch below;
+      // the host span is a .cred-hint, which is the only anchor theming in the
+      // stylesheet, so it picks up --accent-strong + underline for free.
+      if (data.url) {
+        $('#wizard-https-status')!.innerHTML =
+          `HTTPS on — reach this at <a href="${esc(data.url)}" target="_blank" rel="noopener">${esc(data.url)}</a>`;
+      }
       showToast('HTTPS enabled over Tailscale', { kind: 'success' });
     } else {
       const msg = [data.error, data.hint].filter(Boolean).join(' ') || 'Could not enable HTTPS';
@@ -1136,10 +1151,9 @@ async function renderWizardAccess() {
     }
   }
 
-  // Tailscale body: connected → ready/owner note; otherwise offer a one-click
-  // install when the host can bring it up (TUN + root), else the helper link.
-  const tsReady = $('#wizard-ts-ready');
-  if (tsReady) tsReady.hidden = !tsHealthy;
+  // Tailscale body: when it's up there is nothing to say — the chip already
+  // reports that. Otherwise offer a one-click install when the host can bring it
+  // up (TUN + root), else the helper link.
   const tsHelper = $('#wizard-ts-helper');
   const tsRow = $('#wizard-ts-install-row');
   const tsManual = $('#wizard-ts-manual');
@@ -1651,7 +1665,11 @@ async function wizardCreateAndFinish() {
   {
     try {
       const agentRef: Record<string, unknown> = { kind: 'new', name: agentName };
-      if (wizardEngine === 'codex') agentRef.provider = 'codex';
+      // Pin whichever non-default harness the operator chose. Ollama is not a
+      // provider — it is a workspace default MODEL, handled above — so only the
+      // real harnesses appear here. Codex-only was the bug: choosing Grok
+      // authenticated it and then created an agent on the default harness.
+      if (wizardEngine === 'codex' || wizardEngine === 'grok') agentRef.provider = wizardEngine;
       const r = await authFetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1729,9 +1747,6 @@ function renderGrokLogin(p: any) {
     }
     // Until the CLI has printed them, say so rather than showing an empty box.
     $('#wizard-grok-code')!.textContent = p.userCode ?? 'waiting for a code…';
-    const secs = Math.max(0, Math.round((p.expiresInMs ?? 0) / 1000));
-    $('#wizard-grok-countdown')!.textContent =
-      secs > 0 ? `expires in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')} · ` : '';
   }
 
   // A finished flow reports its own outcome; anything but success is worth

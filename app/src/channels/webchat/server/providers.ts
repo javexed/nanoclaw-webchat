@@ -23,3 +23,20 @@ export function piAvailable(): boolean {
 export function grokAvailable(): boolean {
   return listProviderContainerConfigNames().includes('grok');
 }
+
+/**
+ * Every non-default harness this install can actually run.
+ *
+ * Exists because the same list was being re-derived per call site — the harness
+ * picker knew about a provider that room creation did not, so choosing it in the
+ * wizard silently produced an agent on the default harness. One list, consulted
+ * everywhere, so adding a provider cannot half-land again.
+ */
+export function availableProviders(): string[] {
+  return [
+    ...(opencodeAvailable() ? ['opencode'] : []),
+    ...(piAvailable() ? ['pi'] : []),
+    ...(codexAvailable() ? ['codex'] : []),
+    ...(grokAvailable() ? ['grok'] : []),
+  ];
+}
