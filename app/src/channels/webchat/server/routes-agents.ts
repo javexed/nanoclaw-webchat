@@ -96,7 +96,7 @@ import {
 import { pendingAgentImports, spawnTar, spoolUploadToTmp, sweepPendingImports } from './archive.js';
 import { mcpServerForUI, reloadAgentMcpServers } from './mcp-registry.js';
 import { reloadAgentModelEnv } from './model-wiring.js';
-import { codexAvailable, opencodeAvailable, piAvailable } from './providers.js';
+import { codexAvailable, grokAvailable, opencodeAvailable, piAvailable } from './providers.js';
 import { fetchGithubDir, latestCommitSha, resolveDiscoveredSkillUrl, resolveSourceUrl } from './skill-sources.js';
 import {
   SkillOrigin,
@@ -501,12 +501,15 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
   if (opencodeAvailable()) allowed.add('opencode');
   if (piAvailable()) allowed.add('pi');
   if (codexAvailable()) allowed.add('codex');
+  if (grokAvailable()) allowed.add('grok');
   if (!allowed.has(provider)) {
     return json(res, 400, {
       error:
         provider === 'opencode'
           ? 'OpenCode harness is not installed — install the OpenCode stack first.'
-          : `Unknown harness: ${provider}`,
+          : provider === 'grok'
+            ? 'Grok harness is not installed — run /add-grok, rebuild the image, then authenticate.'
+            : `Unknown harness: ${provider}`,
     });
   }
   ensureContainerConfig(group.id);

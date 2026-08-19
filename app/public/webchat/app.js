@@ -482,7 +482,7 @@ var _hoisted_5$35 = {
 	key: 0,
 	class: "triage-note"
 };
-var _hoisted_6$28 = {
+var _hoisted_6$29 = {
 	key: 1,
 	class: "approval-payload"
 };
@@ -588,7 +588,7 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 						title: chipTitle(c.authoritative)
 					}, toDisplayString(c.flag), 11, _hoisted_4$46);
 				}), 128)), triageNote() ? (openBlock(), createElementBlock("span", _hoisted_5$35, toDisplayString(triageNote()), 1)) : createCommentVNode("", true)])) : createCommentVNode("", true),
-				__props.approval.payload ? (openBlock(), createElementBlock("pre", _hoisted_6$28, toDisplayString(payloadText(__props.approval.payload)), 1)) : createCommentVNode("", true),
+				__props.approval.payload ? (openBlock(), createElementBlock("pre", _hoisted_6$29, toDisplayString(payloadText(__props.approval.payload)), 1)) : createCommentVNode("", true),
 				createElementVNode("div", _hoisted_7$20, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 					return openBlock(), createElementBlock("button", {
 						key: i,
@@ -863,7 +863,7 @@ var _hoisted_2$59 = { class: "sender" };
 var _hoisted_3$54 = { class: "thinking-verb" };
 var _hoisted_4$45 = { class: "thinking-elapsed" };
 var _hoisted_5$34 = { class: "bubble" };
-var _hoisted_6$27 = ["hidden"];
+var _hoisted_6$28 = ["hidden"];
 var _hoisted_7$19 = ["hidden"];
 var _hoisted_8$14 = ["hidden"];
 var _hoisted_9$9 = {
@@ -958,7 +958,7 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 				createElementVNode("div", {
 					class: "thinking-milestone",
 					hidden: !__props.turn.milestone
-				}, toDisplayString(__props.turn.milestone), 9, _hoisted_6$27),
+				}, toDisplayString(__props.turn.milestone), 9, _hoisted_6$28),
 				createElementVNode("div", {
 					class: "thinking-target",
 					hidden: !__props.turn.detail
@@ -1430,7 +1430,7 @@ var _hoisted_2$58 = ["src", "alt"];
 var _hoisted_3$53 = { class: "file-info" };
 var _hoisted_4$44 = ["innerHTML"];
 var _hoisted_5$33 = { class: "file-name" };
-var _hoisted_6$26 = { class: "file-size" };
+var _hoisted_6$27 = { class: "file-size" };
 var _hoisted_7$18 = ["href", "download"];
 var _hoisted_8$13 = {
 	key: 0,
@@ -1504,7 +1504,7 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 					innerHTML: fileIcon(__props.row.file)
 				}, null, 8, _hoisted_4$44),
 				createElementVNode("span", _hoisted_5$33, toDisplayString(__props.row.file.filename), 1),
-				createElementVNode("span", _hoisted_6$26, toDisplayString(fileSize(__props.row.file.size)), 1),
+				createElementVNode("span", _hoisted_6$27, toDisplayString(fileSize(__props.row.file.size)), 1),
 				createElementVNode("a", {
 					href: __props.row.file.url,
 					download: __props.row.file.filename,
@@ -1604,7 +1604,7 @@ var _hoisted_5$32 = {
 	key: 0,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_6$25 = {
+var _hoisted_6$26 = {
 	key: 2,
 	class: "approval-inroom-note"
 };
@@ -1678,7 +1678,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 					key: 1,
 					approval: row.payload,
 					"on-respond": props.onApprovalRespond
-				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", _hoisted_6$25, toDisplayString(row.note), 1))], 8, _hoisted_4$43)) : (openBlock(), createElementBlock("div", mergeProps({
+				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", _hoisted_6$26, toDisplayString(row.note), 1))], 8, _hoisted_4$43)) : (openBlock(), createElementBlock("div", mergeProps({
 					key: 3,
 					class: row.cls
 				}, { ref_for: true }, row.id ? { "data-message-id": row.id } : {}, { style: row.isA2a ? { "--a2a-accent": row.a2aAccent } : void 0 }), [
@@ -2608,6 +2608,11 @@ var _hoisted_5$31 = {
 	class: "agent-harness-badge",
 	title: "Runs on the OpenCode harness"
 };
+var _hoisted_6$25 = {
+	key: 2,
+	class: "agent-harness-badge",
+	title: "Runs on the Grok harness"
+};
 //#endregion
 //#region src/features/AgentList.vue
 var AgentList_default = /* @__PURE__ */ defineComponent({
@@ -2659,7 +2664,7 @@ var AgentList_default = /* @__PURE__ */ defineComponent({
 						key: 0,
 						class: normalizeClass(["agent-status-badge", "status-" + (agent.status || "active")])
 					}, toDisplayString(agent.status), 3)) : createCommentVNode("", true),
-					agent.provider === "opencode" ? (openBlock(), createElementBlock("span", _hoisted_5$31, "OpenCode")) : createCommentVNode("", true)
+					agent.provider === "opencode" ? (openBlock(), createElementBlock("span", _hoisted_5$31, "OpenCode")) : agent.provider === "grok" ? (openBlock(), createElementBlock("span", _hoisted_6$25, "Grok")) : createCommentVNode("", true)
 				])], 16, _hoisted_1$61);
 			}), 128);
 		};
@@ -17561,7 +17566,8 @@ var HARNESS_OPTIONS = [
 	"claude",
 	"opencode",
 	"pi",
-	"codex"
+	"codex",
+	"grok"
 ];
 function setAgentHarnessControl(provider) {
 	const p = HARNESS_OPTIONS.includes(provider) ? provider : "claude";
