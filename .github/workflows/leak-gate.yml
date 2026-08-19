@@ -75,6 +75,17 @@ jobs:
           LEAK_REQUIRE_OPERATOR_TIER: ${{ github.event.pull_request.head.repo.fork && '0' || '1' }}
         run: bash scripts/leak-scan.sh --range "${{ steps.r.outputs.range }}"
 
+      # The merge commit is the ONE commit the range scan above cannot see: on a
+      # push to main the computed range is merge-base(main, HEAD)..HEAD, which is
+      # empty, and at PR time the merge commit does not exist yet. That blind spot
+      # let 35 forge trailers reach main. Scan what was actually pushed.
+      - name: Merge-trailer guard self-test (proves it still detects faults)
+        run: bash scripts/check-merge-trailers.sh --selftest
+
+      - name: No forge merge trailers in the pushed commits
+        if: github.event_name == 'push'
+        run: bash scripts/check-merge-trailers.sh "${{ github.event.before }}" "${{ github.sha }}"
+
       - name: Scan the working tree (belt-and-suspenders)
         env:
           LEAK_PATTERNS: ${{ secrets.LEAK_PATTERNS }}
