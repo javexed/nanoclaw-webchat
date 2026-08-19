@@ -384,6 +384,7 @@ import {
   rRouterLitellmInstallPost,
 } from './server/routes-router.js';
 import { codexAvailable, opencodeAvailable, piAvailable } from './server/providers.js';
+import { grokStatus } from './server/grok-status.js';
 import {
   rOllamaInstallPost,
   rCodexInstallGet,
@@ -1720,6 +1721,9 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       provider: 'claude',
       codex: await credState('codex'),
       codexAvailable: codexAvailable(),
+      // Grok resolves from a host credential file, not a user_credentials row
+      // or a vault secret — see server/grok-status.ts for why.
+      grok: grokStatus(),
       defaultModelId: defaultModel?.id ?? null,
       defaultModelName: defaultModel ? `${defaultModel.name} (${defaultModel.model_id})` : null,
       // Real fields so the wizard's Ollama card only claims "set" when an Ollama
