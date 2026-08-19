@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { deskState, sortDesks, STUCK_AFTER_MS, type Desk } from './server/floor.js';
+import { deskState, roomFor, sortDesks, STUCK_AFTER_MS, type Desk } from './server/floor.js';
 
 // The state machine is the whole point of this view: a desk's colour is the
 // answer a sysadmin came for. Everything else (DB reads, scoping) is covered by
@@ -85,5 +85,39 @@ describe('sortDesks', () => {
     const input = [desk('cold', 1, 'c'), desk('stuck', 1, 's')];
     sortDesks(input);
     expect(input.map((d) => d.session_id)).toEqual(['c', 's']);
+  });
+});
+
+describe('roomFor', () => {
+  // The shipped bug: sessions carry a messaging-group ROW id, but
+  // getWebchatRoom() keys on PLATFORM id. Both are strings, so nothing failed
+  // loudly — every desk just read "no room" on a live floor.
+  it('uses the platform id for webchat, which is what room click-through expects', () => {
+    expect(roomFor({ channel_type: 'webchat', platform_id: 'control', name: 'Control Room' })).toEqual({
+      roomId: 'control',
+      roomName: 'Control Room',
+    });
+  });
+
+  it('still names a non-webchat room, but offers no click-through', () => {
+    // A slack-wired session belongs on the floor; its platform id is not a
+    // webchat room, so linking there would 404.
+    expect(roomFor({ channel_type: 'slack', platform_id: 'C123', name: 'ops' })).toEqual({
+      roomId: null,
+      roomName: 'ops',
+    });
+  });
+
+  it('falls back to the platform id when a group has no name', () => {
+    expect(roomFor({ channel_type: 'webchat', platform_id: 'weight-sensor', name: null }).roomName).toBe(
+      'weight-sensor',
+    );
+  });
+
+  it('reports no room for an agent-shared session', () => {
+    // 11 of 53 sessions on the live install have no messaging group at all.
+    // "no room" is the correct answer there, and must stay distinguishable
+    // from the bug it looked identical to.
+    expect(roomFor(undefined)).toEqual({ roomId: null, roomName: null });
   });
 });
