@@ -8855,6 +8855,7 @@ async function wizardProbeHttps() {
 		row.hidden = false;
 		$("#wizard-https-btn").hidden = true;
 		wizardSetStatus("#wizard-https-status", "HTTPS is already on.", "ok");
+		if (state.url) $("#wizard-https-status").innerHTML = `HTTPS is on — reach this at <a href="${esc(state.url)}" target="_blank" rel="noopener">${esc(state.url)}</a>`;
 	} else row.hidden = true;
 }
 async function wizardEnableHttps() {
@@ -8871,6 +8872,7 @@ async function wizardEnableHttps() {
 		if (r.ok && data.ok) {
 			btn.hidden = true;
 			wizardSetStatus("#wizard-https-status", data.url ? `HTTPS on — reach this at ${data.url}` : "HTTPS enabled.", "ok");
+			if (data.url) $("#wizard-https-status").innerHTML = `HTTPS on — reach this at <a href="${esc(data.url)}" target="_blank" rel="noopener">${esc(data.url)}</a>`;
 			showToast("HTTPS enabled over Tailscale", { kind: "success" });
 		} else {
 			const msg = [data.error, data.hint].filter(Boolean).join(" ") || "Could not enable HTTPS";
@@ -9322,8 +9324,6 @@ async function renderWizardAccess() {
 			if (r) r.checked = true;
 		}
 	}
-	const tsReady = $("#wizard-ts-ready");
-	if (tsReady) tsReady.hidden = !tsHealthy;
 	const tsHelper = $("#wizard-ts-helper");
 	const tsRow = $("#wizard-ts-install-row");
 	const tsManual = $("#wizard-ts-manual");
@@ -9726,7 +9726,7 @@ async function wizardCreateAndFinish() {
 			kind: "new",
 			name: agentName
 		};
-		if (wizardEngine === "codex") agentRef.provider = "codex";
+		if (wizardEngine === "codex" || wizardEngine === "grok") agentRef.provider = wizardEngine;
 		const r = await authFetch("/api/rooms", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -9780,8 +9780,6 @@ function renderGrokLogin(p) {
 			url.href = p.verificationUrl;
 		}
 		$("#wizard-grok-code").textContent = p.userCode ?? "waiting for a code…";
-		const secs = Math.max(0, Math.round((p.expiresInMs ?? 0) / 1e3));
-		$("#wizard-grok-countdown").textContent = secs > 0 ? `expires in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")} · ` : "";
 	}
 	if (status && p && !p.running && p.outcome && p.outcome !== "complete") {
 		status.textContent = p.error ?? "The login did not complete.";
