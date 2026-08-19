@@ -8527,6 +8527,22 @@ async function refreshWizardCredState() {
 	if (s.codex?.connected) $("#wizard-codex-connected-text").textContent = s.codex.external ? "Codex connected" : `Codex connected — ${credWord(s.codex.credType)}`;
 	const codexDisconnect = $("#wizard-codex-disconnect");
 	if (codexDisconnect) codexDisconnect.hidden = !!s.codex?.external;
+	const grokChip = $("#wizard-chip-grok");
+	const grok = s.grok;
+	if (grokChip) {
+		grokChip.hidden = false;
+		grokChip.textContent = grok?.connected ? "✓ connected" : !grok?.available ? "not installed" : grok?.expired ? "expired" : "not connected";
+		grokChip.classList.toggle("ok", !!grok?.connected);
+	}
+	$("#wizard-grok-connect").hidden = !!grok?.connected;
+	$("#wizard-grok-connected").hidden = !grok?.connected;
+	const grokStatusLine = $("#wizard-grok-status");
+	if (grokStatusLine) {
+		const why = !grok?.available ? "The Grok provider is not installed yet — run /add-grok, then rebuild the agent image." : grok?.expired ? "A Grok login exists but has expired. Re-run the command above to refresh it." : "";
+		grokStatusLine.textContent = why;
+		grokStatusLine.hidden = !why;
+	}
+	if (grok?.connected) $("#wizard-grok-connected-text").textContent = grok.email ? `Grok connected — ${grok.email}` : "Grok connected — subscription";
 	const ollamaSet = s.defaultModelKind === "ollama" && !!s.defaultModelId;
 	const ollamaModel = s.defaultModelModelId || s.defaultModelName;
 	const ollamaChip = $("#wizard-chip-ollama");
@@ -8741,6 +8757,7 @@ function syncWizardEngineBodies() {
 function wizardEngineConnected() {
 	const s = wizardCred || {};
 	if (wizardEngine === "codex") return !!s.codex?.connected;
+	if (wizardEngine === "grok") return !!s.grok?.connected;
 	if (wizardEngine === "ollama") return !!s.defaultModelId;
 	return !!s.connected;
 }
@@ -9513,7 +9530,7 @@ function wireWizard() {
 			return;
 		}
 		if (wizardStep === 0 && !wizardEngineConnected()) {
-			showToast(`Finish this engine first — ${wizardEngine === "ollama" ? "set a default Ollama model" : wizardEngine === "codex" && !wizardCodexAvailable ? "install then connect Codex" : `connect ${wizardEngine === "codex" ? "Codex" : "Claude"}`} above.`, {
+			showToast(`Finish this engine first — ${wizardEngine === "ollama" ? "set a default Ollama model" : wizardEngine === "grok" ? "authenticate Grok from a terminal (the command is on the card), then reload" : wizardEngine === "codex" && !wizardCodexAvailable ? "install then connect Codex" : `connect ${wizardEngine === "codex" ? "Codex" : "Claude"}`} above.`, {
 				kind: "info",
 				timeout: 6e3
 			});

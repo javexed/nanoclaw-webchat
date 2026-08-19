@@ -2633,6 +2633,34 @@
                   </div>
                 </div>
               </div>
+              <div class="wizard-engine" id="wizard-engine-grok">
+                <label class="wizard-engine-head">
+                  <input type="radio" name="wizard-engine" value="grok" />
+                  <span>Grok</span>
+                  <span class="wizard-engine-chip" id="wizard-chip-grok" hidden></span>
+                </label>
+                <div class="wizard-engine-body" data-engine="grok" hidden>
+                  <!-- Grok is subscription-only: a SuperGrok / X Premium+ device-code
+                       login, with no API-key path at all. So this card has no key input,
+                       unlike Claude and Codex — offering one would imply a route that
+                       does not exist. The login itself runs from the terminal for now
+                       (a device code is a multi-minute, human-paced flow); this card
+                       reports its result honestly and tells you the one command. -->
+                  <div id="wizard-grok-connect">
+                    <p class="cred-hint" id="wizard-grok-hint">
+                      Grok runs on a SuperGrok or X Premium+ subscription — no API key. Authenticate from a
+                      terminal in your install directory:
+                    </p>
+                    <pre class="wizard-code" id="wizard-grok-command">pnpm exec tsx setup/index.ts --step provider-auth grok</pre>
+                    <p class="cred-hint">A URL and a short code appear; confirm them on any device with a browser. Then reload this page.</p>
+                    <p class="cred-hint" id="wizard-grok-status" hidden></p>
+                  </div>
+                  <div class="wizard-connected" id="wizard-grok-connected" hidden>
+                    <span class="wizard-connected-check" aria-hidden="true">✓</span>
+                    <span id="wizard-grok-connected-text">Connected</span>
+                  </div>
+                </div>
+              </div>
               <div class="wizard-engine">
                 <label class="wizard-engine-head">
                   <input type="radio" name="wizard-engine" value="ollama" />
