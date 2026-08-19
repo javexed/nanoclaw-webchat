@@ -1064,6 +1064,20 @@ wireMobileBack();
 
 wireViewChrome1();
 $('#journey-back')?.addEventListener('click', toggleJourney);
+
+// A floor desk is a link to its room. Delegated: the grid is re-rendered on
+// every poll, so per-desk listeners would be re-attached every few seconds.
+// Wired here rather than in views.ts because joinRoom lives in rooms.ts and
+// views.ts importing it would close an import cycle.
+$('#floor-grid')?.addEventListener('click', (e) => {
+  const desk = (e.target as HTMLElement | null)?.closest('.floor-desk') as HTMLElement | null;
+  const roomId = desk?.dataset.room;
+  // Agent-shared sessions and non-webchat rooms carry no room id; leave the
+  // desk inert rather than navigating somewhere that 404s.
+  if (!roomId) return;
+  toggleFloor(); // close the floor first, so the room lands on the chat view
+  joinRoom(roomId);
+});
 $('#journey-refresh')?.addEventListener('click', () => void refreshJourney(true));
 wireViewsPanel();
 
