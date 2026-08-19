@@ -2643,16 +2643,24 @@
                   <!-- Grok is subscription-only: a SuperGrok / X Premium+ device-code
                        login, with no API-key path at all. So this card has no key input,
                        unlike Claude and Codex — offering one would imply a route that
-                       does not exist. The login itself runs from the terminal for now
-                       (a device code is a multi-minute, human-paced flow); this card
-                       reports its result honestly and tells you the one command. -->
+                       does not exist. -->
                   <div id="wizard-grok-connect">
-                    <p class="cred-hint" id="wizard-grok-hint">
-                      Grok runs on a SuperGrok or X Premium+ subscription — no API key. Authenticate from a
-                      terminal in your install directory:
-                    </p>
-                    <pre class="wizard-code" id="wizard-grok-command">pnpm exec tsx setup/index.ts --step provider-auth grok</pre>
-                    <p class="cred-hint">A URL and a short code appear; confirm them on any device with a browser. Then reload this page.</p>
+                    <div class="setting-group install-row" id="wizard-grok-login-row">
+                      <button id="wizard-grok-login" class="btn btn-primary" type="button">Sign in with a device code…</button>
+                    </div>
+                    <!-- Shown while a login is in flight. The code is the point of the
+                         panel so it carries the emphasis, and the countdown exists
+                         because a device code expires — a silent stall is the worst
+                         outcome here. -->
+                    <div id="wizard-grok-device" hidden>
+                      <p class="cred-hint">Open this on any device with a browser, and confirm the code:</p>
+                      <p><a id="wizard-grok-url" target="_blank" rel="noopener noreferrer"></a></p>
+                      <pre class="wizard-code" id="wizard-grok-code"></pre>
+                      <p class="cred-hint">
+                        <span id="wizard-grok-countdown"></span>
+                        <button id="wizard-grok-cancel" class="btn btn-secondary" type="button">Cancel</button>
+                      </p>
+                    </div>
                     <p class="cred-hint" id="wizard-grok-status" hidden></p>
                   </div>
                   <div class="wizard-connected" id="wizard-grok-connected" hidden>

@@ -8538,7 +8538,7 @@ async function refreshWizardCredState() {
 	$("#wizard-grok-connected").hidden = !grok?.connected;
 	const grokStatusLine = $("#wizard-grok-status");
 	if (grokStatusLine) {
-		const why = !grok?.available ? "The Grok provider is not installed yet — run /add-grok, then rebuild the agent image." : grok?.expired ? "A Grok login exists but has expired. Re-run the command above to refresh it." : "";
+		const why = grok?.available && grok?.expired ? "That Grok sign-in has expired. Sign in again to refresh it." : "";
 		grokStatusLine.textContent = why;
 		grokStatusLine.hidden = !why;
 	}
@@ -9516,6 +9516,8 @@ async function wizardTriggerRestart() {
 function wireWizard() {
 	if (wizardWired) return;
 	wizardWired = true;
+	wireGrokLogin();
+	resumeGrokLogin();
 	$("#wizard-next")?.addEventListener("click", async () => {
 		if (!!document.querySelector(`.wizard-step[data-step="${wizardStep}"] input[name="wizard-access"]`) && !await wizardAccessReady()) {
 			const sel = document.querySelector("input[name=\"wizard-access\"]:checked")?.value;
@@ -9757,6 +9759,88 @@ async function maybeAutoOpenWizard() {
 		if (!r.ok) return;
 		const s = await r.json();
 		if (s.canEdit && !s.complete) openWizard();
+	} catch {}
+}
+var grokPollTimer = null;
+function stopGrokPoll() {
+	if (grokPollTimer) clearInterval(grokPollTimer);
+	grokPollTimer = null;
+}
+function renderGrokLogin(p) {
+	const device = $("#wizard-grok-device");
+	const row = $("#wizard-grok-login-row");
+	const status = $("#wizard-grok-status");
+	if (!device || !row) return;
+	device.hidden = !p?.running;
+	row.hidden = !!p?.running;
+	if (p?.running) {
+		const url = $("#wizard-grok-url");
+		if (url && p.verificationUrl) {
+			url.textContent = p.verificationUrl;
+			url.href = p.verificationUrl;
+		}
+		$("#wizard-grok-code").textContent = p.userCode ?? "waiting for a code…";
+		const secs = Math.max(0, Math.round((p.expiresInMs ?? 0) / 1e3));
+		$("#wizard-grok-countdown").textContent = secs > 0 ? `expires in ${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")} · ` : "";
+	}
+	if (status && p && !p.running && p.outcome && p.outcome !== "complete") {
+		status.textContent = p.error ?? "The login did not complete.";
+		status.hidden = false;
+	}
+}
+async function pollGrokLogin() {
+	const r = await authFetch("/api/workspace-credential/grok");
+	if (!r.ok) return stopGrokPoll();
+	const p = await r.json();
+	renderGrokLogin(p);
+	if (!p.running) {
+		stopGrokPoll();
+		if (p.outcome === "complete") await refreshWizardCredState();
+	}
+}
+function startGrokPoll() {
+	stopGrokPoll();
+	pollGrokLogin();
+	grokPollTimer = setInterval(() => void pollGrokLogin(), 2e3);
+}
+function wireGrokLogin() {
+	$("#wizard-grok-login")?.addEventListener("click", async () => {
+		const btn = $("#wizard-grok-login");
+		if (btn) btn.disabled = true;
+		const status = $("#wizard-grok-status");
+		if (status) status.hidden = true;
+		try {
+			const r = await authFetch("/api/workspace-credential/grok/start", { method: "POST" });
+			const p = await r.json();
+			if (!r.ok) {
+				if (status) {
+					status.textContent = p?.error ?? "Could not start the login.";
+					status.hidden = false;
+				}
+				return;
+			}
+			renderGrokLogin(p);
+			startGrokPoll();
+		} finally {
+			if (btn) btn.disabled = false;
+		}
+	});
+	$("#wizard-grok-cancel")?.addEventListener("click", async () => {
+		await authFetch("/api/workspace-credential/grok/cancel", { method: "POST" });
+		stopGrokPoll();
+		pollGrokLogin();
+	});
+}
+/** Resume a login that was started before this page loaded (or in another tab). */
+async function resumeGrokLogin() {
+	try {
+		const r = await authFetch("/api/workspace-credential/grok");
+		if (!r.ok) return;
+		const p = await r.json();
+		if (p.running) {
+			renderGrokLogin(p);
+			startGrokPoll();
+		}
 	} catch {}
 }
 //#endregion

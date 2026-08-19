@@ -386,17 +386,19 @@ import {
 import { codexAvailable, opencodeAvailable, piAvailable } from './server/providers.js';
 import { grokStatus } from './server/grok-status.js';
 import {
-  rOllamaInstallPost,
   rCodexInstallGet,
   rCodexInstallPost,
+  rGrokLoginGet,
+  rGrokLoginPost,
+  rOllamaInstallPost,
   rOpencodeInstallGet,
   rOpencodeInstallPost,
   rPiInstallGet,
   rPiInstallPost,
-  rWebchatTtsInstallGet,
-  rWebchatTtsInstallPost,
   rWebchatSttInstallGet,
   rWebchatSttInstallPost,
+  rWebchatTtsInstallGet,
+  rWebchatTtsInstallPost,
 } from './server/routes-install.js';
 import { createServer as createHttpsServer } from 'https';
 import { createHash, randomUUID, randomBytes } from 'crypto';
@@ -1344,6 +1346,9 @@ const RE_USER_CREDS_MINT = /^\/api\/user-credentials\/oauth\/(start|code|cancel)
 const RE_CODEX_MINT = /^\/api\/user-credentials\/codex\/(start|finish|cancel)$/;
 const RE_WS_CRED_MINT = /^\/api\/workspace-credential\/oauth\/(start|code|cancel)$/;
 const RE_WS_CODEX_MINT = /^\/api\/workspace-credential\/codex\/(start|finish|cancel)$/;
+// Grok's device login: POST start|cancel drives it, GET reports it. Polling is a
+// GET so it stays cache-neutral and needs no CSRF header on every tick.
+const RE_WS_GROK_LOGIN = /^\/api\/workspace-credential\/grok\/(start|cancel)$/;
 const RE_ROOM_AGENT = /^\/api\/rooms\/([^/]+)\/agents\/([^/]+)$/;
 const RE_ROOM_PRIME = /^\/api\/rooms\/([^/]+)\/prime$/;
 const RE_ROOM_ARCHIVE = /^\/api\/rooms\/([^/]+)\/(archive|unarchive)$/;
@@ -2924,6 +2929,8 @@ const API_ROUTES: ApiRoute[] = [
   { method: ['GET', 'POST', 'DELETE'], path: '/api/deploy-keys', h: rDeployKeys },
   { method: 'POST', path: RE_WS_CRED_MINT, h: rWsCredMintPost },
   { method: 'POST', path: RE_WS_CODEX_MINT, h: rWsCodexMintPost },
+  { method: 'POST', path: RE_WS_GROK_LOGIN, guards: ['csrf', 'owner'], h: rGrokLoginPost },
+  { method: 'GET', path: '/api/workspace-credential/grok', guards: ['owner'], h: rGrokLoginGet },
   { method: 'PUT', path: '/api/workspace-model', h: rWorkspaceModelPut },
   { method: ['GET', 'PUT'], path: '/api/webchat/onboarding', h: rWebchatOnboarding },
   { method: ['GET', 'PUT'], path: '/api/webchat/features', h: rWebchatFeatures },
