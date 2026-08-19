@@ -106,7 +106,10 @@ export function parseDevicePrompt(text: string): { verificationUrl?: string; use
   // Codes render as XXXX-XXXX; take it from the URL when present so the two agree.
   const fromUrl = url?.match(/user_code=([A-Z0-9-]+)/i)?.[1];
   const standalone = clean.match(/\b([A-Z0-9]{4}-[A-Z0-9]{4})\b/)?.[1];
-  return { ...(url ? { verificationUrl: url } : {}), ...(fromUrl || standalone ? { userCode: fromUrl ?? standalone } : {}) };
+  return {
+    ...(url ? { verificationUrl: url } : {}),
+    ...(fromUrl || standalone ? { userCode: fromUrl ?? standalone } : {}),
+  };
 }
 
 /**
