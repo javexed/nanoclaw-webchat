@@ -1,5 +1,5 @@
 // ── Provider availability probes ─────────────────────────────────────────────
-// "Is this harness installed?" for each optional coding-agent stack. All three
+// "Is this harness installed?" for each optional coding-agent stack. All of them
 // answer the same way — the provider registers a container config when its
 // install skill has run — so they live together.
 //
@@ -18,4 +18,8 @@ export function opencodeAvailable(): boolean {
 /** The pi harness (add-pi-stack) — same registration test. */
 export function piAvailable(): boolean {
   return listProviderContainerConfigNames().includes('pi');
+}
+/** The Grok harness (add-grok) — same registration test. */
+export function grokAvailable(): boolean {
+  return listProviderContainerConfigNames().includes('grok');
 }

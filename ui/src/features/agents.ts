@@ -304,7 +304,7 @@ export function setAgentStatusControl(status?: any) {
 // uninstalled or retired provider) falls back to the built-in default rather
 // than lighting nothing up, so the group of buttons always has exactly one
 // pressed — an unpressed group reads as "no harness", which is never true.
-const HARNESS_OPTIONS = ['claude', 'opencode', 'pi', 'codex'] as const;
+const HARNESS_OPTIONS = ['claude', 'opencode', 'pi', 'codex', 'grok'] as const;
 
 export function setAgentHarnessControl(provider?: any) {
   // Was `provider === 'opencode' ? 'opencode' : 'claude'`, which collapsed every
