@@ -239,6 +239,121 @@ export function toggleTopology() {
   else openTopology();
 }
 
+// ── Floor ───────────────────────────────────────────────────────────────────
+// A desk per session, coloured by what it is doing. The dashboard answers "how
+// much is happening"; this answers "WHICH agent is wedged", which otherwise
+// costs an `ncl sessions list` and a log read.
+//
+// Polled while open and only while open: an admin watching the floor wants it
+// live, and a background timer on a view nobody is looking at is just load. The
+// interval is cleared in teardown, so closing the view stops the traffic.
+let floorActive = false;
+let floorTimer: ReturnType<typeof setInterval> | null = null;
+
+const FLOOR_POLL_MS = 5_000;
+
+const FLOOR_LABEL: Record<string, string> = {
+  stuck: 'Stuck',
+  working: 'Working',
+  idle: 'Idle',
+  cold: 'Cold',
+};
+
+/** "4m", "2h" — a desk's age only needs to be readable, not precise. */
+function floorAge(ms: number | null): string {
+  if (ms == null) return '';
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+export async function refreshFloor() {
+  const grid = $('#floor-grid');
+  const counts = $('#floor-counts');
+  if (!grid || !counts) return;
+  try {
+    const r = await authFetch('/api/floor');
+    if (!r.ok) {
+      grid.innerHTML = `<div class="dash-empty">Could not load the floor (${r.status})</div>`;
+      counts.innerHTML = '';
+      return;
+    }
+    renderFloor(await r.json());
+  } catch {
+    // Leave the last good render in place on a transient failure — a floor that
+    // blanks itself every time the network hiccups is worse than a stale one,
+    // and the poll will repaint in a few seconds anyway.
+    if (!grid.childElementCount) grid.innerHTML = '<div class="dash-empty">Could not load the floor.</div>';
+  }
+}
+
+function renderFloor(data: any) {
+  const grid = $('#floor-grid')!;
+  const countsEl = $('#floor-counts')!;
+  const desks: any[] = Array.isArray(data?.desks) ? data.desks : [];
+  const counts = data?.counts || {};
+
+  countsEl.innerHTML = ['stuck', 'working', 'idle', 'cold']
+    .map(
+      (k) =>
+        `<span class="floor-count floor-${k}"><b>${counts[k] ?? 0}</b> ${esc(FLOOR_LABEL[k])}</span>`,
+    )
+    .join('');
+
+  if (!desks.length) {
+    grid.innerHTML = '<div class="dash-empty">No sessions yet.</div>';
+    return;
+  }
+
+  // Server sorts trouble-first; preserve that order rather than re-sorting here,
+  // so the two never disagree about what matters most.
+  grid.innerHTML = desks
+    .map((d) => {
+      const room = d.room_name ? esc(d.room_name) : 'no room';
+      const age = floorAge(d.idle_ms);
+      return `<button class="floor-desk floor-${esc(d.state)}" data-room="${esc(d.room_id || '')}" title="${esc(d.state)} · ${esc(d.session_id)}">
+        <span class="floor-desk-name">${esc(d.agent_name)}</span>
+        <span class="floor-desk-room">${room}</span>
+        <span class="floor-desk-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${age ? ` · ${age}` : ''}</span>
+      </button>`;
+    })
+    .join('');
+}
+
+function openFloor() {
+  openFullView(() => {
+    hideOtherFullViews('floor');
+    floorActive = true;
+    $('#chat')!.hidden = true;
+    $('#floor')!.hidden = false;
+    $('#app')!.classList.add('in-dashboard'); // reuse the full-view mobile layout
+    $('#app')!.classList.remove('in-room');
+    refreshFloor();
+    if (floorTimer) clearInterval(floorTimer);
+    floorTimer = setInterval(refreshFloor, FLOOR_POLL_MS);
+    openView('floor', teardownFloor);
+  });
+}
+
+function teardownFloor() {
+  floorActive = false;
+  if (floorTimer) {
+    clearInterval(floorTimer);
+    floorTimer = null;
+  }
+  $('#chat')!.hidden = false;
+  $('#floor')!.hidden = true;
+  $('#app')!.classList.remove('in-dashboard');
+}
+
+export function toggleFloor() {
+  if (floorActive) closeView('floor');
+  else openFloor();
+}
+
 let journeyActive = false;
 
 const journeyAgents = new Map(); // agentGroupId → agentName, from loaded events

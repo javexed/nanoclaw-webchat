@@ -68,7 +68,8 @@ import { applyLearningMaster, closeLearnMenu, hideLearnNudge, isLearnUrlToken, l
 import { applyCreateAuthDefault, applyLoginHint, checkAuth, ensureServerAuthMethods, enterAuthedApp, provideAuthDeps, reprobeAuthWhenOnline, toggleBearerToken, wireAuthPanel } from './features/auth.js';
 
 // The full-view stack now lives in features/views.ts.
-import { applyJourneyFilters, applyTopoFocus, clearTopoFocus, closeOverflowMenu, closeTopDetailAside, closeView, hideDetail, hideOtherFullViews, openFullView, openJourney, openManage, openView, provideViewsDeps, refreshDashboard, refreshJourney, refreshMatrix, refreshTopology, renderHealthStrip, renderJourneyFilterControls, setTopoFocus, showContainersDetail, showMessagesDetail, svgEl, switchManageTab, syncManageSortIcon, toggleDashboard, toggleHelp, toggleJourney, toggleMatrix, toggleTopology, updateTopoFocusPill, wireViewChrome1, wireViewChrome2, wireViewsPanel } from './features/views.js';
+import { applyJourneyFilters, applyTopoFocus, clearTopoFocus, closeOverflowMenu, closeTopDetailAside, closeView, hideDetail, hideOtherFullViews, openFullView, openJourney, openManage, openView, provideViewsDeps, refreshDashboard, refreshJourney, refreshMatrix, refreshTopology, renderHealthStrip, renderJourneyFilterControls, setTopoFocus, showContainersDetail, showMessagesDetail, svgEl, switchManageTab, syncManageSortIcon, toggleDashboard, toggleHelp, toggleJourney, toggleMatrix, toggleTopology, updateTopoFocusPill, wireViewChrome1, wireViewChrome2, wireViewsPanel, toggleFloor,
+} from './features/views.js';
 
 // Modals, overlays and popovers now live in features/modals.ts.
 import { applyLightboxTransform, blockingOverlayOpen, closeHandlePopover, closeLightbox, confirmWithToggle, dismissMentionPopover, inspectAndConfirmImport, navigateLightbox, openHandlePopover, openLightbox, openOauthMintModal, provideModalsDeps, renderMentionPopover, resetLightboxTransform, showConfirmModal, showInputModal, wireLightbox, wireModalsPanel, wireUserCredsOauth } from './features/modals.js';
@@ -504,6 +505,7 @@ $('#overflow-menu')?.addEventListener('click', (e) => {
   else if (action === 'skills') openManage('skills');
   else if (action === 'routing') openManage('routing');
   else if (action === 'journey') toggleJourney();
+  else if (action === 'floor') toggleFloor();
   else if (action === 'topology') toggleTopology();
   else if (action === 'wiring') toggleMatrix();
   else if (action === 'dashboard') toggleDashboard();

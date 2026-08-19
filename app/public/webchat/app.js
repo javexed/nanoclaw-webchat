@@ -14915,6 +14915,94 @@ function toggleTopology() {
 	if (topologyActive) closeView("topology");
 	else openTopology();
 }
+var floorActive = false;
+var floorTimer = null;
+var FLOOR_POLL_MS = 5e3;
+var FLOOR_LABEL = {
+	stuck: "Stuck",
+	working: "Working",
+	idle: "Idle",
+	cold: "Cold"
+};
+/** "4m", "2h" — a desk's age only needs to be readable, not precise. */
+function floorAge(ms) {
+	if (ms == null) return "";
+	const m = Math.floor(ms / 6e4);
+	if (m < 1) return "just now";
+	if (m < 60) return `${m}m`;
+	const h = Math.floor(m / 60);
+	if (h < 24) return `${h}h`;
+	return `${Math.floor(h / 24)}d`;
+}
+async function refreshFloor() {
+	const grid = $("#floor-grid");
+	const counts = $("#floor-counts");
+	if (!grid || !counts) return;
+	try {
+		const r = await authFetch("/api/floor");
+		if (!r.ok) {
+			grid.innerHTML = `<div class="dash-empty">Could not load the floor (${r.status})</div>`;
+			counts.innerHTML = "";
+			return;
+		}
+		renderFloor(await r.json());
+	} catch {
+		if (!grid.childElementCount) grid.innerHTML = "<div class=\"dash-empty\">Could not load the floor.</div>";
+	}
+}
+function renderFloor(data) {
+	const grid = $("#floor-grid");
+	const countsEl = $("#floor-counts");
+	const desks = Array.isArray(data?.desks) ? data.desks : [];
+	const counts = data?.counts || {};
+	countsEl.innerHTML = [
+		"stuck",
+		"working",
+		"idle",
+		"cold"
+	].map((k) => `<span class="floor-count floor-${k}"><b>${counts[k] ?? 0}</b> ${esc(FLOOR_LABEL[k])}</span>`).join("");
+	if (!desks.length) {
+		grid.innerHTML = "<div class=\"dash-empty\">No sessions yet.</div>";
+		return;
+	}
+	grid.innerHTML = desks.map((d) => {
+		const room = d.room_name ? esc(d.room_name) : "no room";
+		const age = floorAge(d.idle_ms);
+		return `<button class="floor-desk floor-${esc(d.state)}" data-room="${esc(d.room_id || "")}" title="${esc(d.state)} · ${esc(d.session_id)}">
+        <span class="floor-desk-name">${esc(d.agent_name)}</span>
+        <span class="floor-desk-room">${room}</span>
+        <span class="floor-desk-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${age ? ` · ${age}` : ""}</span>
+      </button>`;
+	}).join("");
+}
+function openFloor() {
+	openFullView(() => {
+		hideOtherFullViews("floor");
+		floorActive = true;
+		$("#chat").hidden = true;
+		$("#floor").hidden = false;
+		$("#app").classList.add("in-dashboard");
+		$("#app").classList.remove("in-room");
+		refreshFloor();
+		if (floorTimer) clearInterval(floorTimer);
+		floorTimer = setInterval(refreshFloor, FLOOR_POLL_MS);
+		openView("floor", teardownFloor);
+	});
+}
+function teardownFloor() {
+	floorActive = false;
+	if (floorTimer) {
+		clearInterval(floorTimer);
+		floorTimer = null;
+	}
+	$("#chat").hidden = false;
+	$("#floor").hidden = true;
+	$("#app").classList.remove("in-dashboard");
+}
+function toggleFloor() {
+	if (floorActive) closeView("floor");
+	else openFloor();
+}
 var journeyActive = false;
 var journeyAgents = /* @__PURE__ */ new Map();
 function setJourneyPreset(preset) {
@@ -22182,6 +22270,7 @@ $("#overflow-menu")?.addEventListener("click", (e) => {
 	else if (action === "skills") openManage("skills");
 	else if (action === "routing") openManage("routing");
 	else if (action === "journey") toggleJourney();
+	else if (action === "floor") toggleFloor();
 	else if (action === "topology") toggleTopology();
 	else if (action === "wiring") toggleMatrix();
 	else if (action === "dashboard") toggleDashboard();

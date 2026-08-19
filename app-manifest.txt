@@ -85,3 +85,5 @@ src/audit.ts
 src/audit.test.ts
 vitest.setup.ts
 src/container-runner.max-output.test.ts
+src/channels/webchat/server/floor.ts
+src/channels/webchat/floor.test.ts
