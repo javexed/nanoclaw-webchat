@@ -131,7 +131,7 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
       // and allowed even in an OAuth-only 'disabled' room — see the spawn gate).
       // Credentials are user-level, so connecting via a disabled room would
       // otherwise silently enable UserCreds in the member's other rooms.
-      if (getEffectiveRoomMode(roomId) === 'disabled')
+      if ((await getEffectiveRoomMode(roomId)) === 'disabled')
         return json(res, 403, { error: 'This room does not accept member API keys.' });
       const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
       // Codex: an OpenAI key (sk-…). Claude: an Anthropic key (sk-ant-…).

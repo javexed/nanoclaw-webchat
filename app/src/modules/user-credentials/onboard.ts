@@ -143,7 +143,7 @@ export async function ensureGroupEnrollment(admin: OnecliAdmin, userId: string, 
   // The workspace-default credential is an unassigned `all`-mode workspace secret
   // by design — it must never become a per-member `selective` enrollment.
   if (isWorkspaceDefaultUser(userId)) return;
-  const provider = groupProvider(agentGroupId);
+  const provider = await groupProvider(agentGroupId);
   // Already enrolled — but only skip when the enrollment is for THIS group's
   // CURRENT provider. If the group's provider was switched after enrollment, the
   // stale row would otherwise pin the wrong secret; fall through to re-enroll.
@@ -236,7 +236,7 @@ async function fanOutWorkspaceCredential(
     assigned++;
   };
   for (const group of getAllAgentGroups()) {
-    if (groupProvider(group.id) !== provider) continue;
+    if ((await groupProvider(group.id)) !== provider) continue;
     try {
       await assign(group.id);
       for (const row of listGroupMemberEnrollments(group.id)) {

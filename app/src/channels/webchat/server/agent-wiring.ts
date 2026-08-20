@@ -183,7 +183,7 @@ export async function recomputeEngagePatterns(roomId: string): Promise<void> {
        JOIN agent_groups ag ON ag.id = mga.agent_group_id
        WHERE mga.messaging_group_id = ?`, mg.id)) as { id: string; agent_group_id: string; folder: string }[];
 
-  const primeAgentId = getPrimeAgentForWebchatRoom(roomId);
+  const primeAgentId = await getPrimeAgentForWebchatRoom(roomId);
   // If the configured prime isn't actually wired (stale row), treat as
   // un-configured. Caller is responsible for cleaning up the stale row.
   const validPrime = primeAgentId && wirings.some((w) => w.agent_group_id === primeAgentId);

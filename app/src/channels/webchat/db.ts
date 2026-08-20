@@ -394,14 +394,20 @@ export async function getWebchatRoomsForAgent(agentGroupId: string): Promise<Age
        ORDER BY mg.name`,
     agentGroupId,
   )) as { id: string; name: string | null }[];
-  return rows
-    .filter((r) => !isApprovalInbox(r.id))
-    .map((r) => ({
-      id: r.id,
-      name: r.name ?? r.id,
-      is_prime: getPrimeAgentForWebchatRoom(r.id) === agentGroupId,
-      agent_count: countAgentsForWebchatRoom(r.id),
-    }));
+  // Promise.all, not an awaited .map: each row needs two DB reads now, and a
+  // bare `await` inside the callback would make .map return promises rather
+  // than values — `is_prime` would be a Promise compared to a string, which is
+  // the always-false bug this is fixing, moved one level out.
+  return Promise.all(
+    rows
+      .filter((r) => !isApprovalInbox(r.id))
+      .map(async (r) => ({
+        id: r.id,
+        name: r.name ?? r.id,
+        is_prime: (await getPrimeAgentForWebchatRoom(r.id)) === agentGroupId,
+        agent_count: await countAgentsForWebchatRoom(r.id),
+      })),
+  );
 }
 
 /**
@@ -2252,7 +2258,7 @@ export async function setWebchatUserHandle(
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   const h = handle.toLowerCase();
   if (!/^[a-z0-9-]{1,32}$/.test(h)) return { ok: false, reason: 'invalid' };
-  const owner = userIdForHandle(h);
+  const owner = await userIdForHandle(h);
   if (owner && owner !== userId) return { ok: false, reason: 'taken' };
   await getDb().run(
     `INSERT INTO webchat_user_handles (user_id, handle, created_at) VALUES (?, ?, ?)
