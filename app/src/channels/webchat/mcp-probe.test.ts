@@ -5,26 +5,26 @@ import { join } from 'node:path';
 import { looksAuthGated } from './mcp-probe.js';
 
 describe('looksAuthGated — probe failures that mean "send a token"', () => {
-  it('matches the SSE transport 401 shape', () => {
+  it('matches the SSE transport 401 shape', async () => {
     expect(looksAuthGated('SSE error: Non-200 status code (401)')).toBe(true);
   });
-  it('matches the Streamable HTTP body-text shape', () => {
+  it('matches the Streamable HTTP body-text shape', async () => {
     expect(
       looksAuthGated(
         'Streamable HTTP error: Error POSTing to endpoint: {"error":"Missing or invalid Authorization header. Expected: Bearer <token>"}',
       ),
     ).toBe(true);
   });
-  it('matches Unauthorized / unauthorised wording', () => {
+  it('matches Unauthorized / unauthorised wording', async () => {
     expect(looksAuthGated('HTTP 403: Unauthorized')).toBe(true);
     expect(looksAuthGated('request unauthorised')).toBe(true);
   });
-  it('does not fire on ordinary connectivity failures', () => {
+  it('does not fire on ordinary connectivity failures', async () => {
     expect(looksAuthGated('Timed out after 8s')).toBe(false);
     expect(looksAuthGated('fetch failed: ECONNREFUSED 100.96.20.118:8000')).toBe(false);
     expect(looksAuthGated('Non-200 status code (404)')).toBe(false);
   });
-  it('does not fire on incidental digit runs containing 401', () => {
+  it('does not fire on incidental digit runs containing 401', async () => {
     expect(looksAuthGated('connect EHOSTUNREACH 10.4.0.14019')).toBe(false);
   });
 });
@@ -62,12 +62,12 @@ describe('MCP SDK import surface', () => {
 
   const files = sourceFiles(root);
 
-  it('scanned a plausible number of source files', () => {
+  it('scanned a plausible number of source files', async () => {
     // Without this, a broken walk would make the check below vacuously pass.
     expect(files.length).toBeGreaterThan(50);
   });
 
-  it('imports only client entry points, never server ones', () => {
+  it('imports only client entry points, never server ones', async () => {
     const specifier = new RegExp(`['"]${SDK.replace(/\//g, '\\/')}\\/([^'"]+)['"]`, 'g');
     const offenders: string[] = [];
 

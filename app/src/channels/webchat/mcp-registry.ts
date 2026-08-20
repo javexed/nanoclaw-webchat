@@ -59,11 +59,13 @@ export function hashToolSurface(tools: McpToolPin[]): string {
 }
 
 /** Pin a server's tool surface — the operator-approved baseline for drift checks. */
-export function pinMcpToolSurface(id: string, tools: McpToolPin[]): void {
+export async function pinMcpToolSurface(id: string, tools: McpToolPin[]): Promise<void> {
   const pin = { hash: hashToolSurface(tools), at: Date.now(), tools };
-  getDb()
-    .prepare(`UPDATE webchat_mcp_servers SET pinned_tools = ?, drift = NULL WHERE id = ?`)
-    .run(JSON.stringify(pin), id);
+  await getDb().run(
+    `UPDATE webchat_mcp_servers SET pinned_tools = ?, drift = NULL WHERE id = ?`,
+    JSON.stringify(pin),
+    id,
+  );
 }
 
 /** Diff a freshly probed surface against the pin. Null = no drift. */
@@ -77,26 +79,24 @@ export function diffToolSurface(pinned: McpToolPin[], current: McpToolPin[]): Mc
   return { at: Date.now(), added, removed, changed };
 }
 
-export function setMcpServerHealth(id: string, health: Record<string, unknown>): void {
-  getDb().prepare(`UPDATE webchat_mcp_servers SET health = ? WHERE id = ?`).run(JSON.stringify(health), id);
+export async function setMcpServerHealth(id: string, health: Record<string, unknown>): Promise<void> {
+  await getDb().run(`UPDATE webchat_mcp_servers SET health = ? WHERE id = ?`, JSON.stringify(health), id);
 }
 
-export function setMcpServerDrift(id: string, drift: McpDrift | null): void {
-  getDb()
-    .prepare(`UPDATE webchat_mcp_servers SET drift = ? WHERE id = ?`)
-    .run(drift ? JSON.stringify(drift) : null, id);
+export async function setMcpServerDrift(id: string, drift: McpDrift | null): Promise<void> {
+  await getDb().run(`UPDATE webchat_mcp_servers SET drift = ? WHERE id = ?`, drift ? JSON.stringify(drift) : null, id);
 }
 
-export function setMcpServerEnabledTools(id: string, tools: string[] | null): void {
-  getDb()
-    .prepare(`UPDATE webchat_mcp_servers SET enabled_tools = ? WHERE id = ?`)
-    .run(tools ? JSON.stringify(tools) : null, id);
+export async function setMcpServerEnabledTools(id: string, tools: string[] | null): Promise<void> {
+  await getDb().run(
+    `UPDATE webchat_mcp_servers SET enabled_tools = ? WHERE id = ?`,
+    tools ? JSON.stringify(tools) : null,
+    id,
+  );
 }
 
-export function setMcpServerAuth(id: string, auth: Record<string, unknown> | null): void {
-  getDb()
-    .prepare(`UPDATE webchat_mcp_servers SET auth = ? WHERE id = ?`)
-    .run(auth ? JSON.stringify(auth) : null, id);
+export async function setMcpServerAuth(id: string, auth: Record<string, unknown> | null): Promise<void> {
+  await getDb().run(`UPDATE webchat_mcp_servers SET auth = ? WHERE id = ?`, auth ? JSON.stringify(auth) : null, id);
 }
 
 export interface WebchatMcpServerInput {
@@ -110,19 +110,19 @@ export interface WebchatMcpServerInput {
   instructions?: string | null;
 }
 
-export function listWebchatMcpServers(): WebchatMcpServer[] {
-  return getDb().prepare(`SELECT * FROM webchat_mcp_servers ORDER BY name COLLATE NOCASE`).all() as WebchatMcpServer[];
+export async function listWebchatMcpServers(): Promise<WebchatMcpServer[]> {
+  return (await getDb().all(`SELECT * FROM webchat_mcp_servers ORDER BY name COLLATE NOCASE`)) as WebchatMcpServer[];
 }
 
-export function getWebchatMcpServer(id: string): WebchatMcpServer | undefined {
-  return getDb().prepare(`SELECT * FROM webchat_mcp_servers WHERE id = ?`).get(id) as WebchatMcpServer | undefined;
+export async function getWebchatMcpServer(id: string): Promise<WebchatMcpServer | undefined> {
+  return (await getDb().get(`SELECT * FROM webchat_mcp_servers WHERE id = ?`, id)) as WebchatMcpServer | undefined;
 }
 
-export function getWebchatMcpServerByName(name: string): WebchatMcpServer | undefined {
-  return getDb().prepare(`SELECT * FROM webchat_mcp_servers WHERE name = ?`).get(name) as WebchatMcpServer | undefined;
+export async function getWebchatMcpServerByName(name: string): Promise<WebchatMcpServer | undefined> {
+  return (await getDb().get(`SELECT * FROM webchat_mcp_servers WHERE name = ?`, name)) as WebchatMcpServer | undefined;
 }
 
-export function createWebchatMcpServer(input: WebchatMcpServerInput): WebchatMcpServer {
+export async function createWebchatMcpServer(input: WebchatMcpServerInput): Promise<WebchatMcpServer> {
   const row: WebchatMcpServer = {
     id: randomUUID(),
     name: input.name,
@@ -140,20 +140,19 @@ export function createWebchatMcpServer(input: WebchatMcpServerInput): WebchatMcp
     enabled_tools: null,
     auth: null,
   };
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_mcp_servers (id, name, transport, command, args, env, url, headers, instructions, created_at)
+  await getDb().run(
+    `INSERT INTO webchat_mcp_servers (id, name, transport, command, args, env, url, headers, instructions, created_at)
        VALUES (@id, @name, @transport, @command, @args, @env, @url, @headers, @instructions, @created_at)`,
-    )
-    .run(row);
+    row,
+  );
   return row;
 }
 
-export function updateWebchatMcpServer(
+export async function updateWebchatMcpServer(
   id: string,
   patch: Partial<Omit<WebchatMcpServerInput, 'name'>> & { name?: string },
-): void {
-  const existing = getWebchatMcpServer(id);
+): Promise<void> {
+  const existing = await getWebchatMcpServer(id);
   if (!existing) return;
   const next = {
     name: patch.name ?? existing.name,
@@ -165,55 +164,64 @@ export function updateWebchatMcpServer(
     headers: patch.headers !== undefined ? JSON.stringify(patch.headers) : existing.headers,
     instructions: patch.instructions !== undefined ? patch.instructions : existing.instructions,
   };
-  getDb()
-    .prepare(
-      `UPDATE webchat_mcp_servers
+  await getDb().run(
+    `UPDATE webchat_mcp_servers
        SET name = ?, transport = ?, command = ?, args = ?, env = ?, url = ?, headers = ?, instructions = ?
        WHERE id = ?`,
-    )
-    .run(next.name, next.transport, next.command, next.args, next.env, next.url, next.headers, next.instructions, id);
+    next.name,
+    next.transport,
+    next.command,
+    next.args,
+    next.env,
+    next.url,
+    next.headers,
+    next.instructions,
+    id,
+  );
 }
 
-export function deleteWebchatMcpServer(id: string): void {
+export async function deleteWebchatMcpServer(id: string): Promise<void> {
   const db = getDb();
   // Cascade in JS — caller surfaces the impact list first (mirrors models).
-  db.prepare(`DELETE FROM webchat_agent_mcp_servers WHERE mcp_server_id = ?`).run(id);
-  db.prepare(`DELETE FROM webchat_mcp_servers WHERE id = ?`).run(id);
+  await db.run(`DELETE FROM webchat_agent_mcp_servers WHERE mcp_server_id = ?`, id);
+  await db.run(`DELETE FROM webchat_mcp_servers WHERE id = ?`, id);
 }
 
-export function getAgentsAssignedToMcpServer(serverId: string): string[] {
+export async function getAgentsAssignedToMcpServer(serverId: string): Promise<string[]> {
   return (
-    getDb().prepare(`SELECT agent_group_id FROM webchat_agent_mcp_servers WHERE mcp_server_id = ?`).all(serverId) as {
+    (await getDb().all(`SELECT agent_group_id FROM webchat_agent_mcp_servers WHERE mcp_server_id = ?`, serverId)) as {
       agent_group_id: string;
     }[]
   ).map((r) => r.agent_group_id);
 }
 
-export function getMcpServersForAgent(agentGroupId: string): WebchatMcpServer[] {
-  return getDb()
-    .prepare(
-      `SELECT s.* FROM webchat_mcp_servers s
+export async function getMcpServersForAgent(agentGroupId: string): Promise<WebchatMcpServer[]> {
+  return (await getDb().all(
+    `SELECT s.* FROM webchat_mcp_servers s
        JOIN webchat_agent_mcp_servers a ON a.mcp_server_id = s.id
        WHERE a.agent_group_id = ?
        ORDER BY s.name COLLATE NOCASE`,
-    )
-    .all(agentGroupId) as WebchatMcpServer[];
+    agentGroupId,
+  )) as WebchatMcpServer[];
 }
 
-export function assignMcpServerToAgent(agentGroupId: string, serverId: string): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_agent_mcp_servers (agent_group_id, mcp_server_id, assigned_at)
+export async function assignMcpServerToAgent(agentGroupId: string, serverId: string): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_agent_mcp_servers (agent_group_id, mcp_server_id, assigned_at)
        VALUES (?, ?, ?)
        ON CONFLICT(agent_group_id, mcp_server_id) DO NOTHING`,
-    )
-    .run(agentGroupId, serverId, Date.now());
+    agentGroupId,
+    serverId,
+    Date.now(),
+  );
 }
 
-export function unassignMcpServerFromAgent(agentGroupId: string, serverId: string): void {
-  getDb()
-    .prepare(`DELETE FROM webchat_agent_mcp_servers WHERE agent_group_id = ? AND mcp_server_id = ?`)
-    .run(agentGroupId, serverId);
+export async function unassignMcpServerFromAgent(agentGroupId: string, serverId: string): Promise<void> {
+  await getDb().run(
+    `DELETE FROM webchat_agent_mcp_servers WHERE agent_group_id = ? AND mcp_server_id = ?`,
+    agentGroupId,
+    serverId,
+  );
 }
 
 // The relay listens here (mcp-relay.ts imports this — keeping the constant on
@@ -266,16 +274,21 @@ export function mcpServerToConfig(s: WebchatMcpServer, relayToken?: string): Mcp
 }
 
 /** Get-or-mint the relay token for one (agent group, server) assignment. */
-export function ensureRelayToken(agentGroupId: string, serverId: string): string | null {
-  const row = getDb()
-    .prepare(`SELECT relay_token FROM webchat_agent_mcp_servers WHERE agent_group_id = ? AND mcp_server_id = ?`)
-    .get(agentGroupId, serverId) as { relay_token: string | null } | undefined;
+export async function ensureRelayToken(agentGroupId: string, serverId: string): Promise<string | null> {
+  const row = (await getDb().get(
+    `SELECT relay_token FROM webchat_agent_mcp_servers WHERE agent_group_id = ? AND mcp_server_id = ?`,
+    agentGroupId,
+    serverId,
+  )) as { relay_token: string | null } | undefined;
   if (!row) return null;
   if (row.relay_token) return row.relay_token;
   const token = `mcr_${randomUUID().replace(/-/g, '')}`;
-  getDb()
-    .prepare(`UPDATE webchat_agent_mcp_servers SET relay_token = ? WHERE agent_group_id = ? AND mcp_server_id = ?`)
-    .run(token, agentGroupId, serverId);
+  await getDb().run(
+    `UPDATE webchat_agent_mcp_servers SET relay_token = ? WHERE agent_group_id = ? AND mcp_server_id = ?`,
+    token,
+    agentGroupId,
+    serverId,
+  );
   return token;
 }
 
@@ -284,16 +297,20 @@ export function ensureRelayToken(agentGroupId: string, serverId: string): string
  * .mcp_servers JSON. Incremental on purpose — see the header comment.
  * Returns false when the group has no container config row.
  */
-export function syncAgentMcpConfig(agentGroupId: string, server: WebchatMcpServer, present: boolean): boolean {
-  const row = getContainerConfig(agentGroupId);
+export async function syncAgentMcpConfig(
+  agentGroupId: string,
+  server: WebchatMcpServer,
+  present: boolean,
+): Promise<boolean> {
+  const row = await getContainerConfig(agentGroupId);
   if (!row) return false;
   const servers = JSON.parse(row.mcp_servers) as Record<string, McpServerConfig>;
   if (present) {
-    const relayToken = server.auth ? ensureRelayToken(agentGroupId, server.id) : null;
+    const relayToken = server.auth ? await ensureRelayToken(agentGroupId, server.id) : null;
     servers[server.name] = mcpServerToConfig(server, relayToken ?? undefined);
   } else {
     delete servers[server.name];
   }
-  updateContainerConfigJson(agentGroupId, 'mcp_servers', servers);
+  await updateContainerConfigJson(agentGroupId, 'mcp_servers', servers);
   return true;
 }

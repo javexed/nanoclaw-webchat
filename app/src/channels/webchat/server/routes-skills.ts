@@ -56,7 +56,9 @@ import type { RouteCtx } from '../server.js';
 export async function rSkillsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const pool = listAvailableSkills();
-  const skills = [...pool, ...listScopedSkillsForUser(userId, pool)].sort((a, b) => a.name.localeCompare(b.name));
+  const skills = [...pool, ...(await listScopedSkillsForUser(userId, pool))].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
   return json(res, 200, { skills });
 }
 
@@ -67,7 +69,8 @@ export async function rSkillsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<v
 // scoped admin of one group must not be able to inject code into others'.
 export async function rSkillsImportPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return importSkillHandler(req, res);
 }
@@ -95,13 +98,13 @@ export async function rSkillsSourcesGet(ctx: RouteCtx, _m: RegExpMatchArray): Pr
   // `sources` = editable GitHub collections; `builtins` = code-wired sources
   // that also feed the pool but have nothing to edit (the marketplace).
   return json(res, 200, {
-    sources: listSkillSources(),
+    sources: await listSkillSources(),
     builtins: [
       {
         id: MARKETPLACE_ID,
         label: SKILL_DISCOVERY_SOURCE.name,
         url: SKILL_DISCOVERY_SOURCE.url,
-        disabled: isSourceDisabled(MARKETPLACE_ID),
+        disabled: await isSourceDisabled(MARKETPLACE_ID),
       },
     ],
   });
@@ -109,18 +112,21 @@ export async function rSkillsSourcesGet(ctx: RouteCtx, _m: RegExpMatchArray): Pr
 
 export async function rSkillSource(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const sourceId = decodeURIComponent(m[1]);
   // Built-in marketplace: there's nothing in the DB to edit/delete — DELETE
   // switches it off (removed from the pool), PUT switches it back on.
   if (sourceId === MARKETPLACE_ID) {
-    setSourceDisabled(MARKETPLACE_ID, method === 'DELETE');
+    await setSourceDisabled(MARKETPLACE_ID, method === 'DELETE');
     return json(res, 200, { ok: true });
   }
   if (method === 'PUT') return putSkillSourceHandler(req, res, sourceId);
   catalogCache.delete(sourceId);
-  return deleteSkillSource(sourceId) ? json(res, 200, { ok: true }) : json(res, 404, { error: 'Source not found' });
+  return (await deleteSkillSource(sourceId))
+    ? json(res, 200, { ok: true })
+    : json(res, 404, { error: 'Source not found' });
 }
 
 // Delete a user skill (imported/uploaded). Shipped skills can't be removed.
@@ -150,23 +156,27 @@ export async function rSkillsUpdatesGet(ctx: RouteCtx, _m: RegExpMatchArray): Pr
 export async function rSkillUpdatePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   // Same gate as pool import — an update IS a pool import.
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return applySkillUpdateHandler(res, decodeURIComponent(m[1]));
 }
 
 export async function rSkillsDuplicatesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res } = ctx;
-  const dups = findDuplicateScopedSkills().map((d) => ({
-    ...d,
-    agents: d.agents.map((id) => getAgentGroup(id)?.name || id),
-  }));
+  const dups = await Promise.all(
+    findDuplicateScopedSkills().map(async (d) => ({
+      ...d,
+      agents: await Promise.all(d.agents.map(async (id) => (await getAgentGroup(id))?.name || id)),
+    })),
+  );
   return json(res, 200, { duplicates: dups });
 }
 
 export async function rSkillsPromotePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -182,8 +192,9 @@ export async function rSkillsPromotePost(ctx: RouteCtx, _m: RegExpMatchArray): P
   if (!r.ok) return json(res, 409, { error: r.error });
   // Every holder's containers must respawn to see the pooled copy.
   let restarted = 0;
-  for (const g of listAgentsForUser(userId)) {
-    if (dup?.agents.includes(g.id)) restarted += restartAgentGroupContainers(g.id, 'Skill promoted to shared pool');
+  for (const g of await listAgentsForUser(userId)) {
+    if (dup?.agents.includes(g.id))
+      restarted += await restartAgentGroupContainers(g.id, 'Skill promoted to shared pool');
   }
   return json(res, 200, { ok: true, restarted });
 }
@@ -194,7 +205,8 @@ export async function rSkillItem(ctx: RouteCtx, m: RegExpMatchArray): Promise<vo
   if (method === 'GET') return getSkillContentHandler(res, skillName); // viewing is fine for any admin
   // Writing a skill (create/edit/delete) introduces code that fans out to every
   // 'all' agent install-wide → owner/global-admin only, like import.
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (method === 'PUT') return putUserSkillHandler(req, res, skillName);
   return deleteUserSkillHandler(res, skillName);
@@ -202,29 +214,29 @@ export async function rSkillItem(ctx: RouteCtx, m: RegExpMatchArray): Promise<vo
 
 export async function rSkillRevertPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const name = sanitizeSkillName(decodeURIComponent(m[2]));
   if (!name) return json(res, 400, { error: 'Invalid skill name' });
   const r = revertLastRevision(scopedSkillsDir(group.id), name);
   if (!r.ok) return json(res, 409, { error: r.error });
-  const restarted = restartAgentGroupContainers(group.id, 'Skill revision reverted');
+  const restarted = await restartAgentGroupContainers(group.id, 'Skill revision reverted');
   return json(res, 200, { ok: true, restarted });
 }
 
 export async function rSkillRestorePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const name = sanitizeSkillName(decodeURIComponent(m[2]));
   if (!name) return json(res, 400, { error: 'Invalid skill name' });
   const r = restoreArchivedSkill(group.id, name);
   if (!r.ok) return json(res, 409, { error: r.error });
-  const restarted = restartAgentGroupContainers(group.id, 'Webchat archived skill restored');
+  const restarted = await restartAgentGroupContainers(group.id, 'Webchat archived skill restored');
   return json(res, 200, { ok: true, restarted });
 }
 
@@ -233,21 +245,29 @@ export async function rSkillDraftsGet(ctx: RouteCtx, _m: RegExpMatchArray): Prom
   const { res, userId } = ctx;
   // Scoped admins see only their own groups' drafts (owners/global admins
   // pass hasAdminPrivilege for every group) — same tier as the per-draft routes.
-  const drafts = listSkillDrafts()
-    .filter((d) => hasAdminPrivilege(userId, d.agent_group_id))
-    .map((d) => ({
+  // Array.filter cannot await, and an async predicate returns a PROMISE — which
+  // is truthy, so every draft passed the admin check regardless of privilege.
+  // tsc does not flag this: a Promise<boolean> is a perfectly good truthy value
+  // as far as filter's signature is concerned. It has to be a loop.
+  const visible = [];
+  for (const d of await listSkillDrafts()) {
+    if (await hasAdminPrivilege(userId, d.agent_group_id)) visible.push(d);
+  }
+  const drafts = await Promise.all(
+    visible.map(async (d) => ({
       id: d.id,
       skillName: d.skill_name,
       description: d.description,
       kind: d.kind,
       targetSkill: d.target_skill,
       agentGroupId: d.agent_group_id,
-      agentName: getAgentGroup(d.agent_group_id)?.name || d.agent_group_id,
+      agentName: (await getAgentGroup(d.agent_group_id))?.name || d.agent_group_id,
       createdAt: d.created_at,
       // The conversation this draft was distilled FROM — reviewing a skill
       // without the session that produced it is guessing.
-      roomId: draftSourceRoom(d.session_id),
-    }));
+      roomId: await draftSourceRoom(d.session_id),
+    })),
+  );
   return json(res, 200, { drafts });
 }
 
@@ -400,7 +420,7 @@ export async function catalogPoolHandler(res: ServerResponse, tier: string, q: s
   const query = q.trim();
   const ql = query.toLowerCase();
   const installed = new Set(listAvailableSkills().map((s) => s.name));
-  const tierSources = listSkillSources().filter((s) => !!s.official === wantOfficial);
+  const tierSources = (await listSkillSources()).filter((s) => !!s.official === wantOfficial);
   const out: PoolSkill[] = [];
   const seen = new Set<string>();
   for (const src of tierSources) {
@@ -430,7 +450,7 @@ export async function catalogPoolHandler(res: ServerResponse, tier: string, q: s
       });
     }
   }
-  if (!wantOfficial && !isSourceDisabled(MARKETPLACE_ID)) {
+  if (!wantOfficial && !(await isSourceDisabled(MARKETPLACE_ID))) {
     const origin: SkillOrigin = {
       label: SKILL_DISCOVERY_SOURCE.name,
       url: SKILL_DISCOVERY_SOURCE.url,
@@ -488,7 +508,7 @@ export async function putSkillSourceHandler(req: IncomingMessage, res: ServerRes
       error: 'Could not list that folder: ' + (err instanceof Error ? err.message : String(err)),
     });
   }
-  upsertSkillSource(probe);
+  await upsertSkillSource(probe);
   return json(res, 200, { ok: true, source: { id: clean, label } });
 }
 
@@ -560,7 +580,7 @@ export async function suggestSkillsHandler(res: ServerResponse, text: string): P
     description: s.description,
     source: 'installed',
   }));
-  for (const src of listSkillSources()) {
+  for (const src of await listSkillSources()) {
     try {
       for (const s of await loadCatalog(src)) {
         if (!installedNames.has(sanitizeSkillName(s.name))) candidates.push({ ...s, source: src.label });

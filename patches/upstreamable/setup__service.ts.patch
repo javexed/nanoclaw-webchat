@@ -1,8 +1,8 @@
 diff --git a/setup/service.ts b/setup/service.ts
-index 77ec9d3a..00e5f528 100644
+index 800edfe3..c6ee59f5 100644
 --- a/setup/service.ts
 +++ b/setup/service.ts
-@@ -319,6 +319,12 @@ function setupSystemd(
+@@ -302,6 +302,12 @@ function setupSystemd(projectRoot: string, nodePath: string, homeDir: string): v
      systemctlPrefix = 'systemctl --user';
    }
  
@@ -15,7 +15,7 @@ index 77ec9d3a..00e5f528 100644
    const unit = `[Unit]
  Description=NanoClaw Personal Assistant
  After=network.target
-@@ -331,7 +337,7 @@ Restart=always
+@@ -314,7 +320,7 @@ Restart=always
  RestartSec=5
  KillMode=process
  Environment=HOME=${homeDir}

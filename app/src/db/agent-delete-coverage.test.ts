@@ -27,26 +27,25 @@ import { getDb } from './connection.js';
 
 let tmp: string;
 
-beforeAll(() => {
+beforeAll(async () => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-cov-'));
-  initDb(path.join(tmp, 'test.db'));
-  runMigrations(getDb());
+  await initDb(path.join(tmp, 'test.db'));
+  await runMigrations(getDb());
 });
 
-afterAll(() => {
-  closeDb();
+afterAll(async () => {
+  await closeDb();
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
-function referencingTables(): string[] {
+async function referencingTables(): Promise<string[]> {
   return (
-    getDb()
-      .prepare(
-        `SELECT name, sql FROM sqlite_master
+    (await getDb().all(`SELECT name, sql FROM sqlite_master
          WHERE type = 'table' AND name != 'agent_groups'
-           AND (sql LIKE '%REFERENCES agent_groups%' OR sql LIKE '%REFERENCES "agent_groups"%')`,
-      )
-      .all() as { name: string; sql: string }[]
+           AND (sql LIKE '%REFERENCES agent_groups%' OR sql LIKE '%REFERENCES "agent_groups"%')`)) as {
+      name: string;
+      sql: string;
+    }[]
   ).map((r) => r.name);
 }
 
@@ -57,17 +56,17 @@ const IMPLEMENTATIONS = [
 ];
 
 describe('agent-delete cascade coverage', () => {
-  it('the schema actually has FK-referencing tables (sanity)', () => {
-    const tables = referencingTables();
+  it('the schema actually has FK-referencing tables (sanity)', async () => {
+    const tables = await referencingTables();
     expect(tables).toContain('container_configs');
     expect(tables).toContain('skill_drafts');
     expect(tables.length).toBeGreaterThanOrEqual(8);
   });
 
   for (const impl of IMPLEMENTATIONS) {
-    it(`${impl.label} names every table that FK-references agent_groups`, () => {
+    it(`${impl.label} names every table that FK-references agent_groups`, async () => {
       const src = fs.readFileSync(path.join(process.cwd(), impl.file), 'utf8');
-      const missing = referencingTables().filter((t) => !src.includes(t));
+      const missing = (await referencingTables()).filter((t) => !src.includes(t));
       expect(
         missing,
         `Tables FK-referencing agent_groups but never mentioned in ${impl.file} — ` +

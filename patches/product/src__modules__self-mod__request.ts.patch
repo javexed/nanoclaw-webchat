@@ -1,14 +1,17 @@
 diff --git a/src/modules/self-mod/request.ts b/src/modules/self-mod/request.ts
-index 5ec42cd7..8b56842f 100644
+index fee5be59..c3e5e209 100644
 --- a/src/modules/self-mod/request.ts
 +++ b/src/modules/self-mod/request.ts
-@@ -159,13 +159,13 @@ export function validateAddMcpServer(content: Record<string, unknown>, session:
+@@ -159,13 +159,16 @@ export async function validateAddMcpServer(content: Record<string, unknown>, ses
    // it against the plugin root, which approval-added servers never have — it
    // would be silently dropped). Rejecting keeps the card honest: an approver
    // must never sign a working directory that won't take effect.
 -  if (serverConfig.type !== 'http' && serverConfig.cwd !== undefined) {
-+  if (!('url' in serverConfig) && serverConfig.cwd !== undefined) {
-     notifyAgent(session, 'add_mcp_server failed: cwd is only supported for plugin-shipped servers.');
++  // `type !== 'http'` does not narrow the union — the http config's type is
++  // 'http' | 'sse', so excluding 'http' still leaves it in play and `cwd` stays
++  // unknown to tsc. `'command' in` is the stdio discriminant.
++  if ('command' in serverConfig && serverConfig.cwd !== undefined) {
+     await notifyAgent(session, 'add_mcp_server failed: cwd is only supported for plugin-shipped servers.');
      return false;
    }
  
@@ -18,8 +21,8 @@ index 5ec42cd7..8b56842f 100644
 +  const env = 'url' in serverConfig ? {} : (serverConfig.env ?? {});
  
    if (args.length > MAX_MCP_ARGS) {
-     notifyAgent(session, `add_mcp_server failed: max ${MAX_MCP_ARGS} args per server.`);
-@@ -189,7 +189,7 @@ export async function requestAddMcpServerHold(content: Record<string, unknown>,
+     await notifyAgent(session, `add_mcp_server failed: max ${MAX_MCP_ARGS} args per server.`);
+@@ -189,7 +192,7 @@ export async function requestAddMcpServerHold(content: Record<string, unknown>,
    const serverConfig = parseMcpServerConfig(content);
  
    let fields: string[];

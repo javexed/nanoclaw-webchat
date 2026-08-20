@@ -209,8 +209,8 @@ export async function gatherModelInventory(endpoint: string): Promise<ModelInven
   const base = endpoint.replace(/\/+$/, '');
   const gpu = await readGpu();
 
-  const registry = listWebchatModels().filter((m: WebchatModel) => m.kind === 'ollama');
-  const defaultId = getDefaultModelId();
+  const registry = (await listWebchatModels()).filter((m: WebchatModel) => m.kind === 'ollama');
+  const defaultId = await getDefaultModelId();
 
   let tags: Array<{ name: string; size?: number }> = [];
   try {
@@ -253,7 +253,9 @@ export async function gatherModelInventory(endpoint: string): Promise<ModelInven
     }
     const pulled = tags.some((x) => x.name === tag);
     const configuredCtx = configuredCtxFrom(show.parameters);
-    const reg = registry.find((r) => r.model_id === tag || `${r.model_id}:latest` === tag || r.model_id === `${tag}`);
+    const reg = await registry.find(
+      (r) => r.model_id === tag || `${r.model_id}:latest` === tag || r.model_id === `${tag}`,
+    );
     const live = loaded.find((l) => l.name === tag);
     const sizeBytes = t.size ?? null;
     const paramSize = show.details?.parameter_size ?? null;
@@ -281,7 +283,7 @@ export async function gatherModelInventory(endpoint: string): Promise<ModelInven
       loadedTotalBytes: live?.size ?? null,
       registryId: reg?.id ?? null,
       registryName: reg?.name ?? null,
-      isDefault: reg != null && reg.id === defaultId,
+      isDefault: reg != null && reg.id === (await defaultId),
       fit: { context: contextFit, vram: vramFit, estFootprintBytes: est },
     });
   }

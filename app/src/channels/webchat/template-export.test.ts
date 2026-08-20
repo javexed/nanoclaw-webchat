@@ -25,7 +25,7 @@ let libDir = '';
 let groupDir = '';
 let overlayDir = '';
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
   libDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-exp-lib-'));
   vi.stubEnv('NANOCLAW_TEMPLATES_DIR', libDir);
@@ -35,7 +35,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     // ignore
   }
@@ -49,23 +49,31 @@ const GROUP = { id: 'ag-exp', name: 'Research Buddy', folder: 'research-buddy', 
 /** An agent with every surface a template can carry. */
 async function seedAgent(mcpServers: Record<string, unknown> = {}): Promise<void> {
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
-  conn
+  await migrations.runMigrations(conn.getDb());
+  await conn
     .getDb()
-    .prepare(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`)
-    .run(GROUP.id, GROUP.name, GROUP.folder, '2026-08-17T00:00:00.000Z');
+    .run(
+      `INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+      GROUP.id,
+      GROUP.name,
+      GROUP.folder,
+      '2026-08-17T00:00:00.000Z',
+    );
 
   const { ensureContainerConfig, updateContainerConfigScalars } = await import('../../db/container-configs.js');
-  ensureContainerConfig(GROUP.id);
+  await ensureContainerConfig(GROUP.id);
   if (Object.keys(mcpServers).length) {
-    conn
+    await conn
       .getDb()
-      .prepare('UPDATE container_configs SET mcp_servers = ? WHERE agent_group_id = ?')
-      .run(JSON.stringify(mcpServers), GROUP.id);
+      .run(
+        'UPDATE container_configs SET mcp_servers = ? WHERE agent_group_id = ?',
+        JSON.stringify(mcpServers),
+        GROUP.id,
+      );
   }
-  updateContainerConfigScalars(GROUP.id, { timezone: 'Europe/Amsterdam' });
+  await updateContainerConfigScalars(GROUP.id, { timezone: 'Europe/Amsterdam' });
 
   const { GROUPS_DIR } = await import('../../config.js');
   groupDir = path.join(GROUPS_DIR, GROUP.folder);
@@ -88,7 +96,7 @@ describe('exporting an agent as a template', () => {
   it('round-trips: what it writes, upstream can read back', async () => {
     await seedAgent();
     const { exportAgentAsTemplate } = await import('./server/template-export.js');
-    const result = exportAgentAsTemplate(GROUP, { name: 'research-buddy', description: 'Researches things' });
+    const result = await exportAgentAsTemplate(GROUP, { name: 'research-buddy', description: 'Researches things' });
 
     expect(result.ref).toBe('mine/research-buddy');
     expect(result.included).toMatchObject({ persona: true, skills: ['deep-read'], contextFiles: ['sources.md'] });
@@ -120,7 +128,7 @@ describe('exporting an agent as a template', () => {
       docs: { type: 'streamable-http', url: 'https://example.test/mcp', headers: { Authorization: 'Bearer abc123' } },
     });
     const { exportAgentAsTemplate } = await import('./server/template-export.js');
-    const result = exportAgentAsTemplate(GROUP, { name: 'research-buddy' });
+    const result = await exportAgentAsTemplate(GROUP, { name: 'research-buddy' });
 
     const raw = fs.readFileSync(path.join(libDir, 'mine', 'research-buddy', 'mcp.json'), 'utf8');
     expect(raw).not.toContain('sk-ant-secret');
@@ -138,13 +146,17 @@ describe('exporting an agent as a template', () => {
   it('names what a template cannot carry, packages loudest', async () => {
     await seedAgent();
     const conn = await import('../../db/connection.js');
-    conn
+    await conn
       .getDb()
-      .prepare('UPDATE container_configs SET packages_apt = ?, provider = ? WHERE agent_group_id = ?')
-      .run(JSON.stringify(['ripgrep']), 'codex', GROUP.id);
+      .run(
+        'UPDATE container_configs SET packages_apt = ?, provider = ? WHERE agent_group_id = ?',
+        JSON.stringify(['ripgrep']),
+        'codex',
+        GROUP.id,
+      );
 
     const { exportAgentAsTemplate } = await import('./server/template-export.js');
-    const { omitted } = exportAgentAsTemplate(GROUP, { name: 'research-buddy' });
+    const { omitted } = await exportAgentAsTemplate(GROUP, { name: 'research-buddy' });
     const text = omitted.join('\n');
     // Packages are the sharp edge: the spec has no slot, so a stamped agent
     // silently lacks them. Saying so is the whole mitigation.
@@ -159,7 +171,7 @@ describe('exporting an agent as a template', () => {
     await seedAgent();
     const { exportAgentAsTemplate } = await import('./server/template-export.js');
     for (const bad of ['Research Buddy', 'has_underscore', '-leading', '']) {
-      expect(() => exportAgentAsTemplate(GROUP, { name: bad })).toThrow();
+      await expect(exportAgentAsTemplate(GROUP, { name: bad })).rejects.toThrow();
     }
     expect(fs.existsSync(path.join(libDir, 'mine'))).toBe(false);
   });
@@ -167,6 +179,6 @@ describe('exporting an agent as a template', () => {
   it('refuses a ref that escapes the library', async () => {
     await seedAgent();
     const { exportAgentAsTemplate } = await import('./server/template-export.js');
-    expect(() => exportAgentAsTemplate(GROUP, { name: 'ok-name', ref: '../../escape' })).toThrow(/escapes/);
+    await expect(exportAgentAsTemplate(GROUP, { name: 'ok-name', ref: '../../escape' })).rejects.toThrow(/escapes/);
   });
 });

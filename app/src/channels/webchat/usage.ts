@@ -53,16 +53,15 @@ interface Row {
  * Compute the usage rollup over messages since `sinceMs`. Walks each room in
  * time order so an agent reply can be attributed to the user who triggered it.
  */
-export function computeUsageRollup(sinceMs: number): UsageRollup {
-  const rows = getDb()
-    .prepare(
-      `SELECT room_id, sender, sender_type, content, message_type, created_at
+export async function computeUsageRollup(sinceMs: number): Promise<UsageRollup> {
+  const rows = (await getDb().all(
+    `SELECT room_id, sender, sender_type, content, message_type, created_at
          FROM webchat_messages
         WHERE created_at >= ?
           AND message_type IN ('text', 'file')
         ORDER BY room_id, created_at`,
-    )
-    .all(sinceMs) as Row[];
+    sinceMs,
+  )) as Row[];
 
   const users = new Map<string, UserUsage>();
   const perDay = new Map<string, number>();
@@ -109,9 +108,9 @@ export function computeUsageRollup(sinceMs: number): UsageRollup {
   for (const [roomId, tokens] of roomTokens) {
     let model = 'unknown';
     try {
-      const agentId = getAgentsForWebchatRoom(roomId)[0]?.id;
+      const agentId = (await getAgentsForWebchatRoom(roomId))[0]?.id;
       if (agentId) {
-        const m = getEffectiveModelForAgent(agentId);
+        const m = await getEffectiveModelForAgent(agentId);
         model = m ? `${m.kind}:${m.model_id}` : 'claude (default)';
       }
     } catch {

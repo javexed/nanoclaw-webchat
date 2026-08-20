@@ -1,5 +1,5 @@
 diff --git a/src/modules/agent-to-agent/write-destinations.ts b/src/modules/agent-to-agent/write-destinations.ts
-index 9489f22b..63923390 100644
+index 98fa37ff..673c50ed 100644
 --- a/src/modules/agent-to-agent/write-destinations.ts
 +++ b/src/modules/agent-to-agent/write-destinations.ts
 @@ -12,6 +12,7 @@ import fs from 'fs';
@@ -10,7 +10,7 @@ index 9489f22b..63923390 100644
  import { log } from '../../log.js';
  import { inboundDbPath, openInboundDb } from '../../session-manager.js';
  import { getDestinations } from './db/agent-destinations.js';
-@@ -57,3 +58,31 @@ export function writeDestinations(agentGroupId: string, sessionId: string): void
+@@ -57,3 +58,31 @@ export async function writeDestinations(agentGroupId: string, sessionId: string)
    }
    log.debug('Destination map written', { sessionId, count: resolved.length });
  }
@@ -28,11 +28,11 @@ index 9489f22b..63923390 100644
 + * possibly mid-turn agent — e.g. adding an agent to a shared room, which must
 + * not kill the peers already working in it.
 + */
-+export function projectDestinationsToActiveSessions(agentGroupId: string): void {
-+  for (const s of getSessionsByAgentGroup(agentGroupId)) {
++export async function projectDestinationsToActiveSessions(agentGroupId: string): Promise<void> {
++  for (const s of await getSessionsByAgentGroup(agentGroupId)) {
 +    if (s.status !== 'active') continue;
 +    try {
-+      writeDestinations(agentGroupId, s.id);
++      await writeDestinations(agentGroupId, s.id);
 +    } catch (err) {
 +      log.warn('projectDestinationsToActiveSessions failed; agent picks it up on next spawn', {
 +        agentGroupId,

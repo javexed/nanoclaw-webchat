@@ -27,11 +27,11 @@ const TWIN_B = {
 };
 
 describe('overlapScore', () => {
-  it('flags the real-world twin pair this install produced', () => {
+  it('flags the real-world twin pair this install produced', async () => {
     expect(overlapScore(TWIN_A, TWIN_B)).toBeGreaterThanOrEqual(OVERLAP_FLAG);
   });
 
-  it('does not flag unrelated skills — no crying wolf', () => {
+  it('does not flag unrelated skills — no crying wolf', async () => {
     const other = {
       name: 'grafana-camera-over-tailscale',
       description: "Make a Grafana dashboard's LAN camera feed reachable over tailscale via a reverse proxy.",
@@ -39,7 +39,7 @@ describe('overlapScore', () => {
     expect(overlapScore(TWIN_A, other)).toBeLessThan(OVERLAP_SHORTLIST);
   });
 
-  it('same-domain-different-job stays below the flag threshold', () => {
+  it('same-domain-different-job stays below the flag threshold', async () => {
     const reader = {
       name: 'pdf-form-extraction',
       description: 'Extract form fields from uploaded PDFs into JSON using pdftk dump_data_fields.',
@@ -47,7 +47,7 @@ describe('overlapScore', () => {
     expect(overlapScore(TWIN_A, reader)).toBeLessThan(OVERLAP_FLAG);
   });
 
-  it('is symmetric and bounded', () => {
+  it('is symmetric and bounded', async () => {
     expect(overlapScore(TWIN_A, TWIN_B)).toBeCloseTo(overlapScore(TWIN_B, TWIN_A), 10);
     expect(overlapScore(TWIN_A, TWIN_A)).toBeLessThanOrEqual(1);
     expect(overlapScore(TWIN_A, { name: '', description: '' })).toBe(0);
@@ -55,12 +55,12 @@ describe('overlapScore', () => {
 });
 
 describe('gatherOverlapCandidates', () => {
-  it('collects scoped skills from a dataDir tree', () => {
+  it('collects scoped skills from a dataDir tree', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'overlap-'));
     const dir = path.join(root, 'v2-sessions', 'ag-x', '.claude-shared', 'skills', 'existing-skill');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'SKILL.md'), '---\nname: existing-skill\ndescription: does a thing\n---\n');
-    const got = gatherOverlapCandidates('ag-x', 'draft-none', root);
+    const got = await gatherOverlapCandidates('ag-x', 'draft-none', root);
     const scoped = got.filter((c) => c.source === 'scoped');
     expect(scoped).toEqual([{ name: 'existing-skill', description: 'does a thing', source: 'scoped' }]);
     fs.rmSync(root, { recursive: true, force: true });

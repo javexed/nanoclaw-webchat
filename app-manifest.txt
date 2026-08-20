@@ -2,6 +2,7 @@ src/channels/webchat
 public/webchat
 src/session-teardown.ts
 src/session-teardown.test.ts
+src/container-runtime.test.ts
 src/router.agent-loopback.test.ts
 src/router.agent-status.test.ts
 src/router.backtick-escape.test.ts
@@ -16,6 +17,7 @@ src/onecli-preflight.test.ts
 src/mcp-server-config.ts
 src/mcp-server-config.test.ts
 src/modules/user-credentials
+src/modules/container-egress
 src/db/migrations/module-user-credentials-members.ts
 src/db/migrations/module-user-credentials-oauth.ts
 src/db/migrations/module-user-credentials-provider.ts

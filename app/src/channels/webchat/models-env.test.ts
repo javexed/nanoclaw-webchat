@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { envForModel } from './models.js';
 
 describe('envForModel — ollama base URL', () => {
-  it('points ANTHROPIC_BASE_URL at the bare endpoint (no /v1 append)', () => {
+  it('points ANTHROPIC_BASE_URL at the bare endpoint (no /v1 append)', async () => {
     const env = envForModel({
       kind: 'ollama',
       endpoint: 'http://192.0.2.127:11434',
@@ -22,7 +22,7 @@ describe('envForModel — ollama base URL', () => {
     expect(env.no_proxy).toBe('192.0.2.127');
   });
 
-  it('strips a trailing slash but still does not append /v1', () => {
+  it('strips a trailing slash but still does not append /v1', async () => {
     const env = envForModel({ kind: 'ollama', endpoint: 'http://host:11434/', model_id: 'm' } as never);
     expect(env.ANTHROPIC_BASE_URL).toBe('http://host:11434');
   });
@@ -38,7 +38,7 @@ describe('envForModel — ollama base URL', () => {
 import { containerReachableUrl, hostReachableUrl } from './models.js';
 
 describe('envForModel — container-facing URL rewrite', () => {
-  it('rewrites loopback to host.docker.internal for openai-compatible models', () => {
+  it('rewrites loopback to host.docker.internal for openai-compatible models', async () => {
     const env = envForModel({
       kind: 'openai-compatible',
       endpoint: 'http://127.0.0.1:4000/v1',
@@ -51,7 +51,7 @@ describe('envForModel — container-facing URL rewrite', () => {
     expect(env.NO_PROXY).toBe('host.docker.internal');
   });
 
-  it('rewrites localhost for ollama models; LAN hosts pass through', () => {
+  it('rewrites localhost for ollama models; LAN hosts pass through', async () => {
     expect(
       envForModel({ kind: 'ollama', endpoint: 'http://localhost:11434', model_id: 'm' } as never).ANTHROPIC_BASE_URL,
     ).toBe('http://host.docker.internal:11434');
@@ -60,13 +60,13 @@ describe('envForModel — container-facing URL rewrite', () => {
     ).toBe('http://192.0.2.90:11434');
   });
 
-  it('is anchored — a hostname merely containing localhost is untouched', () => {
+  it('is anchored — a hostname merely containing localhost is untouched', async () => {
     expect(containerReachableUrl('http://localhost.evil.com:4000')).toBe('http://localhost.evil.com:4000');
   });
 });
 
 describe('hostReachableUrl', () => {
-  it('maps the container-only alias to loopback and leaves everything else', () => {
+  it('maps the container-only alias to loopback and leaves everything else', async () => {
     expect(hostReachableUrl('http://host.docker.internal:4000/v1')).toBe('http://127.0.0.1:4000/v1');
     expect(hostReachableUrl('http://host.docker.internal.evil.com')).toBe('http://host.docker.internal.evil.com');
     expect(hostReachableUrl('http://192.0.2.90:11434')).toBe('http://192.0.2.90:11434');

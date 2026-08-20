@@ -1,7 +1,7 @@
-diff --git c/container/agent-runner/src/providers/claude.midturn-text.test.ts w/container/agent-runner/src/providers/claude.midturn-text.test.ts
+diff --git a/container/agent-runner/src/providers/claude.midturn-text.test.ts b/container/agent-runner/src/providers/claude.midturn-text.test.ts
 index ccd5f926..f0954eac 100644
---- c/container/agent-runner/src/providers/claude.midturn-text.test.ts
-+++ w/container/agent-runner/src/providers/claude.midturn-text.test.ts
+--- a/container/agent-runner/src/providers/claude.midturn-text.test.ts
++++ b/container/agent-runner/src/providers/claude.midturn-text.test.ts
 @@ -38,8 +38,13 @@ afterEach(() => {
  });
  

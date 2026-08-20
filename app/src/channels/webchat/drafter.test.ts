@@ -46,7 +46,7 @@ function jsonString(name: string, instructions: string): string {
   return JSON.stringify({ name, instructions });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
   vi.unstubAllEnvs();
   mockOneCLIInstance = {

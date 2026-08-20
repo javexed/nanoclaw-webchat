@@ -1,7 +1,7 @@
-diff --git c/src/modules/approvals/onecli-approvals.ts w/src/modules/approvals/onecli-approvals.ts
-index c2038667..8f43bcca 100644
---- c/src/modules/approvals/onecli-approvals.ts
-+++ w/src/modules/approvals/onecli-approvals.ts
+diff --git a/src/modules/approvals/onecli-approvals.ts b/src/modules/approvals/onecli-approvals.ts
+index 9f5325fa..5758a2a3 100644
+--- a/src/modules/approvals/onecli-approvals.ts
++++ b/src/modules/approvals/onecli-approvals.ts
 @@ -38,6 +38,25 @@ export const ONECLI_ACTION = 'onecli_credential';
  type Decision = 'approve' | 'deny';
  type ExpiryReason = 'no response' | 'host restarted';
@@ -12,12 +12,12 @@ index c2038667..8f43bcca 100644
 + * by the userCreds module; default returns null (normal identifiers resolve directly
 + * via getAgentGroup).
 + */
-+type ApprovalAgentGroupFallback = (externalId: string) => string | null;
++type ApprovalAgentGroupFallback = (externalId: string) => string | null | Promise<string | null>;
 +let approvalAgentGroupFallback: ApprovalAgentGroupFallback | null = null;
 +export function registerApprovalAgentGroupFallback(fn: ApprovalAgentGroupFallback): void {
 +  approvalAgentGroupFallback = fn;
 +}
-+function resolveApprovalAgentGroupFallback(externalId: string): string | null {
++async function resolveApprovalAgentGroupFallback(externalId: string): Promise<string | null> {
 +  try {
 +    return approvalAgentGroupFallback ? approvalAgentGroupFallback(externalId) : null;
 +  } catch {
@@ -28,21 +28,21 @@ index c2038667..8f43bcca 100644
  const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
  
  interface PendingState {
-@@ -118,8 +137,15 @@ async function handleRequest(request: ApprovalRequest): Promise<Decision> {
+@@ -123,8 +142,15 @@ async function handleRequest(request: ApprovalRequest): Promise<Decision> {
    // Originating agent group is carried on the request via OneCLI's agent
    // identifier (set by container-runner.ts to agentGroup.id). Use it as
    // the scope for approver selection: admin @ group → global admin → owner.
--  const originGroup = request.agent.externalId ? getAgentGroup(request.agent.externalId) : undefined;
+-  const originGroup = request.agent.externalId ? await getAgentGroup(request.agent.externalId) : undefined;
 -  const agentGroupId = originGroup?.id ?? null;
 +  // A per-member UserCreds container uses a derived identity (user-creds-…) that isn't an
 +  // agent group id; a registered fallback (userCreds module) reverses it to the
 +  // owning group so approvals still route correctly.
 +  const externalId = request.agent.externalId;
-+  let agentGroupId = externalId ? (getAgentGroup(externalId)?.id ?? null) : null;
++  let agentGroupId = externalId ? ((await getAgentGroup(externalId))?.id ?? null) : null;
 +  if (!agentGroupId && externalId) {
-+    agentGroupId = resolveApprovalAgentGroupFallback(externalId);
++    agentGroupId = await resolveApprovalAgentGroupFallback(externalId);
 +  }
-+  const originGroup = agentGroupId ? getAgentGroup(agentGroupId) : undefined;
-   const approvers = pickApprover(agentGroupId);
++  const originGroup = agentGroupId ? await getAgentGroup(agentGroupId) : undefined;
+   const approvers = await pickApprover(agentGroupId);
    if (approvers.length === 0) {
      log.warn('OneCLI approval auto-denied: no eligible approver', {

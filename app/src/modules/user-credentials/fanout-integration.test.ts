@@ -53,31 +53,35 @@ const USER = 'webchat:tailscale:mark@example.com';
 
 const now = () => new Date().toISOString();
 
-beforeEach(() => {
+beforeEach(async () => {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
-  const db = initTestDb();
-  runMigrations(db);
+  const db = await initTestDb();
+  await runMigrations(db);
 
-  createAgentGroup({ id: AG, name: 'Int', folder: 'int', agent_provider: null, created_at: now() });
-  db.prepare(
+  await createAgentGroup({ id: AG, name: 'Int', folder: 'int', agent_provider: null, created_at: now() });
+  await db.run(
     `INSERT INTO messaging_groups (id,channel_type,instance,platform_id,is_group,unknown_sender_policy,created_at)
      VALUES ('mg-int','webchat','webchat',?,1,'public',?)`,
-  ).run(ROOM, now());
-  db.prepare(
+    ROOM,
+    now(),
+  );
+  await db.run(
     `INSERT INTO messaging_group_agents
        (id,messaging_group_id,agent_group_id,engage_mode,engage_pattern,sender_scope,ignored_message_policy,session_mode,priority,created_at)
      VALUES ('mga-int','mg-int',?, 'pattern','.*','all','drop','shared',0,?)`,
-  ).run(AG, now());
+    AG,
+    now(),
+  );
 
   // Per-member routing only engages for a member who has CONNECTED a credential.
-  setCredentialsConfig({ allowAnthropicKey: true });
-  setRoomModeOverride(ROOM, 'required');
-  upsertUserCredential(USER, 'claude', 'sec-1', 'api_key');
+  await setCredentialsConfig({ allowAnthropicKey: true });
+  await setRoomModeOverride(ROOM, 'required');
+  await upsertUserCredential(USER, 'claude', 'sec-1', 'api_key');
 });
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeDb();
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 });
 
@@ -96,7 +100,7 @@ afterEach(() => {
 describe('router -> per-member sessions: threads stay separate', () => {
   async function routeText(text: string, threadId: string | null) {
     const { routeInbound } = await import('../../router.js');
-    const stored = storeWebchatMessage(ROOM, USER, 'user', text, threadId ?? 'main');
+    const stored = await storeWebchatMessage(ROOM, USER, 'user', text, threadId ?? 'main');
     await routeInbound({
       channelType: 'webchat',
       platformId: ROOM,
@@ -142,13 +146,13 @@ describe('router -> per-member sessions: threads stay separate', () => {
     });
     await initChannelAdapters(() => ({}) as never);
 
-    const topic = createWebchatThread(ROOM, 'Project Management');
+    const topic = await createWebchatThread(ROOM, 'Project Management');
 
     await routeText('room question', null);
     await routeText('thread question', topic.thread_id);
 
-    const mainSession = findSession('mg-int', memberSessionKey(USER, null));
-    const topicSession = findSession('mg-int', memberSessionKey(USER, topic.thread_id));
+    const mainSession = await findSession('mg-int', memberSessionKey(USER, null));
+    const topicSession = await findSession('mg-int', memberSessionKey(USER, topic.thread_id));
 
     expect(mainSession, 'the room turn needs its own per-member session').toBeDefined();
     expect(topicSession, 'the thread turn needs its own per-member session').toBeDefined();
@@ -180,7 +184,7 @@ describe('router -> per-member session: file delivery', () => {
     // made the original bug invisible.
     fs.mkdirSync(uploadsDir(ROOM), { recursive: true });
     fs.writeFileSync(path.join(uploadsDir(ROOM), 'u1.pdf'), 'PDF-BYTES');
-    const stored = storeWebchatFileMessage(ROOM, USER, 'user', '', meta);
+    const stored = await storeWebchatFileMessage(ROOM, USER, 'user', '', meta);
 
     await routeInbound({
       channelType: 'webchat',
@@ -209,7 +213,7 @@ describe('router -> per-member session: file delivery', () => {
     });
 
     // Per-member sessions are keyed by (user, thread) — main here.
-    const session = findSession('mg-int', memberSessionKey(USER, null));
+    const session = await findSession('mg-int', memberSessionKey(USER, null));
     expect(session, 'a per-member session should exist for a connected member').toBeDefined();
 
     const db = openInboundDb(AG, session!.id);

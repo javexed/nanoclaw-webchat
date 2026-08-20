@@ -29,28 +29,36 @@ export interface TeardownTarget {
   agentGroupId: string;
 }
 
-function findSessionsBy(column: 'messaging_group_id' | 'agent_group_id', value: string): TeardownTarget[] {
-  const rows = getDb().prepare(`SELECT id, agent_group_id FROM sessions WHERE ${column} = ?`).all(value) as {
+async function findSessionsBy(
+  column: 'messaging_group_id' | 'agent_group_id',
+  value: string,
+): Promise<TeardownTarget[]> {
+  const rows = (await getDb().all(`SELECT id, agent_group_id FROM sessions WHERE ${column} = ?`, value)) as {
     id: string;
     agent_group_id: string;
   }[];
   return rows.map((r) => ({ sessionId: r.id, agentGroupId: r.agent_group_id }));
 }
 
-export function findSessionsByMessagingGroup(messagingGroupId: string): TeardownTarget[] {
+export async function findSessionsByMessagingGroup(messagingGroupId: string): Promise<TeardownTarget[]> {
   return findSessionsBy('messaging_group_id', messagingGroupId);
 }
 
 /** Sessions for one (messaging group, thread) — used to tear down a webchat
  * thread's per-thread session when the thread is deleted. */
-export function findSessionsByMessagingGroupThread(messagingGroupId: string, threadId: string): TeardownTarget[] {
-  const rows = getDb()
-    .prepare(`SELECT id, agent_group_id FROM sessions WHERE messaging_group_id = ? AND thread_id = ?`)
-    .all(messagingGroupId, threadId) as { id: string; agent_group_id: string }[];
+export async function findSessionsByMessagingGroupThread(
+  messagingGroupId: string,
+  threadId: string,
+): Promise<TeardownTarget[]> {
+  const rows = (await getDb().all(
+    `SELECT id, agent_group_id FROM sessions WHERE messaging_group_id = ? AND thread_id = ?`,
+    messagingGroupId,
+    threadId,
+  )) as { id: string; agent_group_id: string }[];
   return rows.map((r) => ({ sessionId: r.id, agentGroupId: r.agent_group_id }));
 }
 
-export function findSessionsByAgentGroup(agentGroupId: string): TeardownTarget[] {
+export async function findSessionsByAgentGroup(agentGroupId: string): Promise<TeardownTarget[]> {
   return findSessionsBy('agent_group_id', agentGroupId);
 }
 
@@ -60,13 +68,13 @@ export function findSessionsByAgentGroup(agentGroupId: string): TeardownTarget[]
  * NOT touch the container or the session dir — those are side-effects and
  * belong to `teardownSessionResources` after commit.
  */
-export function deleteSessionDbState(sessionId: string): void {
+export async function deleteSessionDbState(sessionId: string): Promise<void> {
   const db = getDb();
-  db.prepare(`DELETE FROM pending_questions WHERE session_id = ?`).run(sessionId);
-  if (hasTable(db, 'pending_approvals')) {
-    db.prepare(`DELETE FROM pending_approvals WHERE session_id = ?`).run(sessionId);
+  await db.run(`DELETE FROM pending_questions WHERE session_id = ?`, sessionId);
+  if (await hasTable(db, 'pending_approvals')) {
+    await db.run(`DELETE FROM pending_approvals WHERE session_id = ?`, sessionId);
   }
-  db.prepare(`DELETE FROM sessions WHERE id = ?`).run(sessionId);
+  await db.run(`DELETE FROM sessions WHERE id = ?`, sessionId);
 }
 
 /**

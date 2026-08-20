@@ -1,18 +1,19 @@
 diff --git a/src/container-runtime.ts b/src/container-runtime.ts
-index 318357f0..9a3c2df9 100644
+index 4c413bb8..410d6f20 100644
 --- a/src/container-runtime.ts
 +++ b/src/container-runtime.ts
-@@ -3,7 +3,9 @@
-  * All runtime-specific logic lives here so swapping runtimes means changing one file.
+@@ -11,6 +11,10 @@
+  * Docker for something that is not a session: per-group image builds and the
+  * egress lockdown network.
   */
- import { execSync } from 'child_process';
++import { execSync } from 'child_process';
 +import fs from 'fs';
- import os from 'os';
++import os from 'os';
 +import path from 'path';
  
- import { CONTAINER_INSTALL_LABEL } from './config.js';
  import { log } from './log.js';
-@@ -80,6 +82,28 @@ export function resolveContainerConfigAugmentation(agentGroupId: string): Record
+ 
+@@ -130,6 +134,30 @@ export function resolveContainerConfigAugmentation(agentGroupId: string): Record
    return merged;
  }
  
@@ -25,14 +26,16 @@ index 318357f0..9a3c2df9 100644
 + * busy-turn heuristic. Used only as a FALLBACK — an explicit Settings override
 + * wins. Core ships with none.
 + */
-+type LearningClassifierResolver = (agentGroupId: string) => { url: string; model: string } | null;
++type LearningClassifierResolver = (
++  agentGroupId: string,
++) => { url: string; model: string } | null | Promise<{ url: string; model: string } | null>;
 +let learningClassifierResolver: LearningClassifierResolver | null = null;
 +export function registerLearningClassifierResolver(fn: LearningClassifierResolver): void {
 +  learningClassifierResolver = fn;
 +}
-+export function resolveLearningClassifier(agentGroupId: string): { url: string; model: string } | null {
++export async function resolveLearningClassifier(agentGroupId: string): Promise<{ url: string; model: string } | null> {
 +  try {
-+    return learningClassifierResolver?.(agentGroupId) ?? null;
++    return (await learningClassifierResolver?.(agentGroupId)) ?? null;
 +  } catch {
 +    return null; // a resolver bug must never break spawning
 +  }
@@ -41,10 +44,11 @@ index 318357f0..9a3c2df9 100644
  /**
   * Async pre-spawn hooks contributed by installed modules, run once just before
   * a session's container is spawned (e.g. lazy provisioning: create per-session
-@@ -102,6 +126,63 @@ export async function runSessionPrepareHooks(agentGroupId: string, threadId: str
+@@ -151,3 +179,106 @@ export async function runSessionPrepareHooks(agentGroupId: string, threadId: str
+     }
    }
  }
- 
++
 +/**
 + * The UID/GID the agent container runs its agent-runner as (Dockerfile: `USER
 + * node` → 1000). Overridable via env for a non-standard image.
@@ -102,6 +106,48 @@ index 318357f0..9a3c2df9 100644
 +  }
 +}
 +
- /** CLI args needed for the container to resolve the host gateway. */
- export function hostGatewayArgs(): string[] {
-   // On Linux, host.docker.internal isn't built-in — add it explicitly
++/** CLI args needed for the container to resolve the host gateway. */
++export function hostGatewayArgs(): string[] {
++  // On Linux, host.docker.internal isn't built-in — add it explicitly
++  if (os.platform() === 'linux') {
++    return ['--add-host=host.docker.internal:host-gateway'];
++  }
++  return [];
++}
++
++/** Returns CLI args for a readonly bind mount. */
++export function readonlyMountArgs(hostPath: string, containerPath: string): string[] {
++  return ['-v', `${hostPath}:${containerPath}:ro`];
++}
++
++/** Stop a container by name. Uses execFileSync to avoid shell injection. */
++export function stopContainer(name: string): void {
++  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(name)) {
++    throw new Error(`Invalid container name: ${name}`);
++  }
++  execSync(`${CONTAINER_RUNTIME_BIN} stop -t 1 ${name}`, { stdio: 'pipe' });
++}
++
++/** Ensure the container runtime is running, starting it if needed. */
++export function ensureContainerRuntimeRunning(): void {
++  try {
++    execSync(`${CONTAINER_RUNTIME_BIN} info`, {
++      stdio: 'pipe',
++      timeout: 10000,
++    });
++    log.debug('Container runtime already running');
++  } catch (err) {
++    log.error('Failed to reach container runtime', { err });
++    console.error('\n╔════════════════════════════════════════════════════════════════╗');
++    console.error('║  FATAL: Container runtime failed to start                      ║');
++    console.error('║                                                                ║');
++    console.error('║  Agents cannot run without a container runtime. To fix:        ║');
++    console.error('║  1. Ensure Docker is installed and running                     ║');
++    console.error('║  2. Run: docker info                                           ║');
++    console.error('║  3. Restart NanoClaw                                           ║');
++    console.error('╚════════════════════════════════════════════════════════════════╝\n');
++    throw new Error('Container runtime is required but failed to start', {
++      cause: err,
++    });
++  }
++}

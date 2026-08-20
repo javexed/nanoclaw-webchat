@@ -21,12 +21,12 @@ const tmpSettings = (content: object): string => {
   return f;
 };
 
-afterEach(() => {
+afterEach(async () => {
   for (const d of tmpFiles.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
 describe('default settings template', () => {
-  it('seeds new groups with the rtk PreToolUse hook alongside PreCompact', () => {
+  it('seeds new groups with the rtk PreToolUse hook alongside PreCompact', async () => {
     const settings = JSON.parse(DEFAULT_SETTINGS_JSON);
     expect(JSON.stringify(settings.hooks.PreToolUse)).toContain('rtk hook claude');
     expect(settings.hooks.PreToolUse[0].matcher).toBe('Bash');
@@ -35,7 +35,7 @@ describe('default settings template', () => {
 });
 
 describe('ensureRtkHook (backfill for pre-existing groups)', () => {
-  it('adds the hook while preserving existing hooks', () => {
+  it('adds the hook while preserving existing hooks', async () => {
     const f = tmpSettings({
       env: { KEEP: '1' },
       hooks: {
@@ -51,7 +51,7 @@ describe('ensureRtkHook (backfill for pre-existing groups)', () => {
     expect(initialized).toContain('settings.json (added rtk hook)');
   });
 
-  it('is idempotent — a second run changes nothing', () => {
+  it('is idempotent — a second run changes nothing', async () => {
     const f = tmpSettings({ hooks: {} });
     ensureRtkHook(f, []);
     const once = fs.readFileSync(f, 'utf-8');
@@ -61,7 +61,7 @@ describe('ensureRtkHook (backfill for pre-existing groups)', () => {
     expect(initialized).toHaveLength(0);
   });
 
-  it('never throws on malformed JSON', () => {
+  it('never throws on malformed JSON', async () => {
     const f = tmpSettings({});
     fs.writeFileSync(f, '{not json');
     expect(() => ensureRtkHook(f, [])).not.toThrow();

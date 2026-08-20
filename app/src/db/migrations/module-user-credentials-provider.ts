@@ -15,6 +15,8 @@ import type { Migration } from './index.js';
  * no env var). Existing rows predate Codex BYOK, so default to 'claude'.
  */
 export const moduleUserCredentialsProvider: Migration = {
+  // PRAGMA/table_info is sqlite's vocabulary, not the portable driver's.
+  sqliteOnly: true,
   version: 22,
   // Tracking key — FROZEN at the historical byok-* name; migrations key on
   // `name`, so renaming it would re-run this migration on live installs.

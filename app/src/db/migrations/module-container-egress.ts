@@ -9,6 +9,8 @@ import type { Migration } from './index.js';
  *   'none'        — no network at all.
  */
 export const moduleContainerEgress: Migration = {
+  // PRAGMA/table_info is sqlite's vocabulary, not the portable driver's.
+  sqliteOnly: true,
   version: 204,
   name: 'container-egress',
   up(db: Database.Database) {

@@ -1,8 +1,8 @@
 diff --git a/src/host-sweep.ts b/src/host-sweep.ts
-index 7b83f59e..e67ea3d9 100644
+index 1541dcd2..60c660f5 100644
 --- a/src/host-sweep.ts
 +++ b/src/host-sweep.ts
-@@ -69,6 +69,11 @@ export const ABSOLUTE_CEILING_MS = 30 * 60 * 1000;
+@@ -74,6 +74,11 @@ export const ABSOLUTE_CEILING_MS = 30 * 60 * 1000;
  export const CLAIM_STUCK_MS = 60 * 1000;
  const MAX_TRIES = 5;
  const BACKOFF_BASE_MS = 5000;
@@ -14,7 +14,7 @@ index 7b83f59e..e67ea3d9 100644
  
  export type StuckDecision =
    | { action: 'ok' }
-@@ -325,6 +330,7 @@ function enforceRunningContainerSla(
+@@ -361,6 +366,7 @@ function enforceRunningContainerSla(
      });
      killContainer(session.id, 'absolute-ceiling');
      resetStuckProcessingRows(inDb, outDb, session, 'absolute-ceiling');
@@ -22,7 +22,7 @@ index 7b83f59e..e67ea3d9 100644
      return;
    }
  
-@@ -393,9 +399,24 @@ function resetStuckProcessingRows(
+@@ -429,9 +435,24 @@ function resetStuckProcessingRows(
    let useDb: Database.Database | null = writableOutDb ?? null;
    try {
      if (!useDb) useDb = openOutboundDbRw(session.agent_group_id, session.id);
@@ -48,7 +48,7 @@ index 7b83f59e..e67ea3d9 100644
      }
    } catch (err) {
      log.warn('Failed to clear orphan processing claims', { sessionId: session.id, err });
-@@ -403,3 +424,66 @@ function resetStuckProcessingRows(
+@@ -439,3 +460,66 @@ function resetStuckProcessingRows(
      if (ownsDb) useDb?.close();
    }
  }

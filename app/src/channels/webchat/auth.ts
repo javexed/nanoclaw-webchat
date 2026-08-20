@@ -124,7 +124,7 @@ async function authenticate(req: IncomingMessage): Promise<AuthResult | AuthFail
   //    PWA passes via `Sec-WebSocket-Protocol: bearer.<token>` so the secret
   //    stays out of URLs (and therefore out of proxy access logs).
   const providedToken = extractBearer(req);
-  if (bearerActive() && providedToken && safeEqual(providedToken, WEBCHAT_TOKEN)) {
+  if ((await bearerActive()) && providedToken && safeEqual(providedToken, WEBCHAT_TOKEN)) {
     return finalize({ source: 'bearer', userId: 'webchat:owner', displayName: 'operator' });
   }
 
@@ -175,7 +175,7 @@ async function authenticate(req: IncomingMessage): Promise<AuthResult | AuthFail
   //    tailnet/internet traffic would otherwise bypass auth and be granted
   //    owner. With explicit auth configured, the proxy must surface the
   //    upstream identity via headers / token / tailscale whois.
-  if (isLocalhost(remoteIp) && !hasExplicitAuth()) {
+  if (isLocalhost(remoteIp) && !(await hasExplicitAuth())) {
     const localUser = process.env.USER || process.env.USERNAME || 'user';
     return finalize({ source: 'localhost', userId: 'webchat:local-owner', displayName: localUser });
   }
@@ -195,13 +195,16 @@ export function requiresExplicitAuth(host: string): boolean {
  * WEBCHAT_TOKEN even though its value still sits in .env (see the bearer_token_
  * disabled flag / moduleWebchatBearerAuth).
  */
-function bearerActive(): boolean {
-  return Boolean(WEBCHAT_TOKEN) && !getBearerTokenDisabled();
+async function bearerActive(): Promise<boolean> {
+  // The disabled flag lives in the DB now. `!getBearerTokenDisabled()` on the
+  // un-awaited promise was always false — the bearer token reported INACTIVE
+  // forever, and canDisableBearer with it.
+  return Boolean(WEBCHAT_TOKEN) && !(await getBearerTokenDisabled());
 }
 
 /** True when at least one non-localhost auth method is currently usable. */
-export function hasExplicitAuth(): boolean {
-  return bearerActive() || TAILSCALE_ENABLED || TRUSTED_PROXY_RAW.length > 0;
+export async function hasExplicitAuth(): Promise<boolean> {
+  return (await bearerActive()) || TAILSCALE_ENABLED || TRUSTED_PROXY_RAW.length > 0;
 }
 
 // ── Tailscale health probe ──
@@ -331,14 +334,14 @@ export function refreshTailscaleHealth(): void {
  * methods exist from the deployment shape (tailnet hostname, presence of a
  * fronting proxy, etc.).
  */
-export function getAuthInfo(): {
+export async function getAuthInfo(): Promise<{
   methods: { bearer: boolean; tailscale: boolean; proxy: boolean };
   tailscaleHealthy: boolean;
-} {
+}> {
   refreshTailscaleHealth(); // background re-probe if stale; returns cached value now
   return {
     methods: {
-      bearer: bearerActive(),
+      bearer: await bearerActive(),
       tailscale: TAILSCALE_ENABLED,
       proxy: TRUSTED_PROXY_RAW.length > 0,
     },
@@ -356,7 +359,7 @@ export function getAuthInfo(): {
  * usable (Tailscale up, or a trusted-proxy/SSO method configured) so turning it
  * off can never lock everyone out. Unlike getAuthInfo this is gated behind auth.
  */
-export function getAuthManagementInfo(): {
+export async function getAuthManagementInfo(): Promise<{
   bearerConfigured: boolean;
   bearerActive: boolean;
   tailscale: { enabled: boolean; healthy: boolean };
@@ -365,12 +368,12 @@ export function getAuthManagementInfo(): {
   hasAlternativeAuth: boolean;
   canDisableBearer: boolean;
   canEnableBearer: boolean;
-} {
+}> {
   refreshTailscaleHealth(); // background re-probe if stale; returns cached value now
   const proxy = TRUSTED_PROXY_RAW.length > 0;
   const tailscaleUsable = TAILSCALE_ENABLED && tailscaleHealthy === true;
   const hasAlternativeAuth = tailscaleUsable || proxy;
-  const active = bearerActive();
+  const active = await bearerActive();
   return {
     bearerConfigured: Boolean(WEBCHAT_TOKEN),
     bearerActive: active,
@@ -565,7 +568,11 @@ export function canonicalizeWebchatUserId(id: string): string {
   return handle ? `webchat:${normalizeId(handle)}` : id;
 }
 
-function finalize(args: { source: AuthResult['source']; userId: string; displayName: string }): AuthResult {
+async function finalize(args: {
+  source: AuthResult['source'];
+  userId: string;
+  displayName: string;
+}): Promise<AuthResult> {
   // Upsert the users row so every authenticated identity is visible in the
   // Permissions UI even before any role is granted. The display_name is
   // refreshed on each connect (upsert preserves null with COALESCE if the
@@ -573,9 +580,9 @@ function finalize(args: { source: AuthResult['source']; userId: string; displayN
   //
   // Guarded behind hasTable so a deployment without the permissions module
   // still authenticates instead of throwing on a missing FK.
-  if (hasTable(getDb(), 'users')) {
+  if (await hasTable(getDb(), 'users')) {
     try {
-      upsertUser({
+      await upsertUser({
         id: args.userId,
         kind: 'webchat',
         display_name: args.displayName || null,
@@ -585,12 +592,12 @@ function finalize(args: { source: AuthResult['source']; userId: string; displayN
       log.warn('Webchat: upsertUser failed during auth finalize', { userId: args.userId, err });
     }
   }
-  ensureOwnerRoleOnFirstLogin(args.userId);
+  await ensureOwnerRoleOnFirstLogin(args.userId);
   // One-shot: if the operator opted into Tailscale in the wizard, the FIRST
   // tailscale identity to authenticate is promoted to owner (co-owner with the
   // bearer bootstrap), then the flag disarms so later tailnet peers don't get it.
-  if (args.source === 'tailscale' && getPromoteFirstTailscaleOwner()) {
-    const granted = grantOwnerRole(args.userId, 'webchat:first-tailscale-owner');
+  if (args.source === 'tailscale' && (await getPromoteFirstTailscaleOwner())) {
+    const granted = await grantOwnerRole(args.userId, 'webchat:first-tailscale-owner');
     // Disarm on the END STATE, not on the return value. `granted` is false in
     // two very different cases — the grant failed, and this identity already
     // held owner — and clearing the flag unconditionally conflates them. That
@@ -598,7 +605,7 @@ function finalize(args: { source: AuthResult['source']; userId: string; displayN
     // is spent, no role exists, and the operator is left holding a tailnet
     // identity that can authenticate but not administer, with the only UI for
     // re-arming gated behind the owner they just failed to become.
-    if (granted || isOwner(args.userId)) setPromoteFirstTailscaleOwner(false);
+    if ((await granted) || (await isOwner(args.userId))) setPromoteFirstTailscaleOwner(false);
   }
   return { ok: true, userId: args.userId, displayName: args.displayName, source: args.source };
 }

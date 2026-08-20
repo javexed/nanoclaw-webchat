@@ -116,12 +116,12 @@ const VALID_KINDS = new Set<AgentActivityStatus['kind']>(['start', 'tool', 'prog
 export async function forwardSessionStatus(session: Session): Promise<void> {
   if (!adapter?.sendStatus) return;
 
-  const mg = session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined;
+  const mg = await (session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined);
   if (!mg || !mg.platform_id) return;
 
   // Attribute every frame to its agent so a multi-agent room renders one bubble
   // per agent (the webchat keys bubbles by name).
-  const agentName = getAgentGroup(session.agent_group_id)?.name ?? null;
+  const agentName = (await getAgentGroup(session.agent_group_id))?.name ?? null;
 
   let outDb;
   try {
@@ -194,7 +194,7 @@ export async function notifySessionStopped(session: Session): Promise<void> {
   turnActive.delete(session.id);
   if (!adapter?.sendStatus) return;
 
-  const mg = session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined;
+  const mg = await (session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined);
   if (!mg || !mg.platform_id) return;
 
   try {
@@ -206,7 +206,7 @@ export async function notifySessionStopped(session: Session): Promise<void> {
         kind: 'stalled',
         text: 'The agent stopped responding. You may want to resend your message.',
         detail: null,
-        agentName: getAgentGroup(session.agent_group_id)?.name ?? null,
+        agentName: (await getAgentGroup(session.agent_group_id))?.name ?? null,
       },
       mg.instance,
     );

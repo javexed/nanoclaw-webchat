@@ -27,9 +27,9 @@ import { log } from '../../../log.js';
 import { getAssignedModelForAgent } from '../db.js';
 import { syncAgentProviderForAssignedModel, writeAgentSettingsForAssignedModel } from '../models.js';
 
-export function reloadAgentModelEnv(agentGroupId: string, reason: string): void {
+export async function reloadAgentModelEnv(agentGroupId: string, reason: string): Promise<void> {
   try {
-    writeAgentSettingsForAssignedModel(agentGroupId);
+    await writeAgentSettingsForAssignedModel(agentGroupId);
   } catch (err) {
     log.warn('Webchat: settings.json write after model change failed', { agentGroupId, reason, err });
   }
@@ -38,12 +38,12 @@ export function reloadAgentModelEnv(agentGroupId: string, reason: string): void 
     // default harness, so this always syncs back to the default provider (it
     // still runs to un-wedge any group a legacy install left on a non-default
     // provider). Same next-spawn timing as the env write; the restart applies both.
-    syncAgentProviderForAssignedModel(agentGroupId);
+    await syncAgentProviderForAssignedModel(agentGroupId);
   } catch (err) {
     log.warn('Webchat: provider sync after model change failed', { agentGroupId, reason, err });
   }
   try {
-    const restarted = restartAgentGroupContainers(agentGroupId, reason);
+    const restarted = await restartAgentGroupContainers(agentGroupId, reason);
     if (restarted > 0) {
       log.info('Webchat: restarted containers after model change', { agentGroupId, reason, restarted });
     }
@@ -58,10 +58,10 @@ export function reloadAgentModelEnv(agentGroupId: string, reason: string): void 
  * Assigned groups are untouched (their assignment wins), as are non-Claude
  * (Codex) groups (their harness ignores the ANTHROPIC_* env this writes).
  */
-export function refreshUnassignedGroupsForDefaultModel(reason: string): void {
-  for (const g of getAllAgentGroups()) {
-    if (getAssignedModelForAgent(g.id)) continue;
-    const provider = getContainerConfig(g.id)?.provider;
+export async function refreshUnassignedGroupsForDefaultModel(reason: string): Promise<void> {
+  for (const g of await getAllAgentGroups()) {
+    if (await getAssignedModelForAgent(g.id)) continue;
+    const provider = (await getContainerConfig(g.id))?.provider;
     // Codex ignores the ANTHROPIC_* env and has no local-model wiring — skip it.
     // OpenCode DOES follow the default local model, so it's processed: the sync
     // below re-derives its provider and rewrites its per-agent local-model.json
@@ -69,13 +69,13 @@ export function refreshUnassignedGroupsForDefaultModel(reason: string): void {
     // default is a local model + OpenCode is installed).
     if (provider && provider !== 'claude' && provider !== 'opencode') continue;
     try {
-      writeAgentSettingsForAssignedModel(g.id);
-      syncAgentProviderForAssignedModel(g.id);
+      await writeAgentSettingsForAssignedModel(g.id);
+      await syncAgentProviderForAssignedModel(g.id);
     } catch (err) {
       log.warn('Webchat: settings.json write for default-model change failed', { agentGroupId: g.id, reason, err });
     }
     try {
-      restartAgentGroupContainers(g.id, reason);
+      await restartAgentGroupContainers(g.id, reason);
     } catch (err) {
       log.warn('Webchat: container restart for default-model change failed', { agentGroupId: g.id, reason, err });
     }

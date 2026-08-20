@@ -43,7 +43,7 @@ describe('status_events readers (webchat thinking bubble)', () => {
     );
   }
 
-  it('getStatusEventsSince returns only rows past the watermark, in order', () => {
+  it('getStatusEventsSince returns only rows past the watermark, in order', async () => {
     const db = freshOutbound();
     append(db, 'tool', 'Read', 'a.ts');
     append(db, 'progress', 'Building');
@@ -59,7 +59,7 @@ describe('status_events readers (webchat thinking bubble)', () => {
     db.close();
   });
 
-  it('getMaxStatusEventSeq tracks the latest seq across a clear', () => {
+  it('getMaxStatusEventSeq tracks the latest seq across a clear', async () => {
     const db = freshOutbound();
     expect(getMaxStatusEventSeq(db)).toBe(0);
     append(db, 'tool', 'Bash', 'ls');
@@ -77,7 +77,7 @@ describe('status_events readers (webchat thinking bubble)', () => {
     db.close();
   });
 
-  it('readers tolerate a missing status_events table (older session DB)', () => {
+  it('readers tolerate a missing status_events table (older session DB)', async () => {
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
     fs.mkdirSync(TEST_DIR, { recursive: true });
     const db = new Database(OUT_PATH);

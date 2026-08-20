@@ -39,7 +39,7 @@ describe('snapshotRevision / listRevisions', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('lists nothing for a never-revised skill', () => {
+  it('lists nothing for a never-revised skill', async () => {
     const { dir } = makeSkill('v1');
     expect(listRevisions(dir, 's')).toEqual([]);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -63,7 +63,7 @@ describe('revertLastRevision', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('refuses cleanly with no history or no live skill', () => {
+  it('refuses cleanly with no history or no live skill', async () => {
     const { dir, skill } = makeSkill('v1');
     expect(revertLastRevision(dir, 's').ok).toBe(false); // no history
     snapshotRevision(dir, 's');

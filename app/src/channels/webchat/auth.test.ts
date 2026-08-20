@@ -36,7 +36,7 @@ afterEach(async () => {
   // module cache so the next test starts clean.
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     // ignore
   }
@@ -52,7 +52,7 @@ async function loadAuthWithEnv(env: Record<string, string | undefined>) {
   // Init the FRESH connection module so getDb() works inside the freshly
   // loaded auth.ts/roles.ts.
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   // permissions module is optional — without `user_roles`, role helpers
   // degrade to "trust authenticated" and don't INSERT.
   return await import('./auth.js');
@@ -83,19 +83,19 @@ describe('assertBearerTokenStrength', () => {
 describe('getAuthManagementInfo — loopback (Localhost only)', () => {
   it('reports loopback when WEBCHAT_HOST is unset (defaults to 127.0.0.1)', async () => {
     const auth = await loadAuthWithEnv({ WEBCHAT_HOST: undefined });
-    expect(auth.getAuthManagementInfo().loopback).toBe(true);
+    expect((await auth.getAuthManagementInfo()).loopback).toBe(true);
   });
 
   it('reports loopback for loopback bind hosts', async () => {
     for (const host of ['127.0.0.1', '127.1.2.3', '::1', 'localhost']) {
       const auth = await loadAuthWithEnv({ WEBCHAT_HOST: host });
-      expect(auth.getAuthManagementInfo().loopback).toBe(true);
+      expect((await auth.getAuthManagementInfo()).loopback).toBe(true);
     }
   });
 
   it('reports NOT loopback when bound to all interfaces (0.0.0.0)', async () => {
     const auth = await loadAuthWithEnv({ WEBCHAT_HOST: '0.0.0.0' });
-    expect(auth.getAuthManagementInfo().loopback).toBe(false);
+    expect((await auth.getAuthManagementInfo()).loopback).toBe(false);
   });
 });
 
@@ -344,18 +344,18 @@ describe('probeTailscaleHealth — cached flag tracks the probe result', () => {
     const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
     // Boot probe: binary absent → healthy false (this is the bug's starting state).
     await auth.probeTailscaleHealth(async () => ({ ok: false, notInstalled: true }));
-    expect(auth.getAuthInfo().tailscaleHealthy).toBe(false);
+    expect((await auth.getAuthInfo()).tailscaleHealthy).toBe(false);
     // Operator installs tailscale; a later probe must flip the flag without a restart.
     await auth.probeTailscaleHealth(async () => ({ ok: true, notInstalled: false }));
-    expect(auth.getAuthInfo().tailscaleHealthy).toBe(true);
+    expect((await auth.getAuthInfo()).tailscaleHealthy).toBe(true);
   });
 
   it('flips true → false when a probe later fails (tailscaled down)', async () => {
     const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
     await auth.probeTailscaleHealth(async () => ({ ok: true, notInstalled: false }));
-    expect(auth.getAuthInfo().tailscaleHealthy).toBe(true);
+    expect((await auth.getAuthInfo()).tailscaleHealthy).toBe(true);
     await auth.probeTailscaleHealth(async () => ({ ok: false, notInstalled: false }));
-    expect(auth.getAuthInfo().tailscaleHealthy).toBe(false);
+    expect((await auth.getAuthInfo()).tailscaleHealthy).toBe(false);
   });
 
   it('detects host presence even when WEBCHAT_TAILSCALE is off, but keeps auth gated', async () => {
@@ -368,11 +368,11 @@ describe('probeTailscaleHealth — cached flag tracks the probe result', () => {
     // Detection runs regardless of the auth flag — that's the wizard fix.
     expect(ran).toBe(true);
     // Pre-auth login hint stays gated: tailscale isn't an enabled method here.
-    expect(auth.getAuthInfo().tailscaleHealthy).toBe(false);
+    expect((await auth.getAuthInfo()).tailscaleHealthy).toBe(false);
     // But the owner-facing management view sees the real running tailnet, so the
     // wizard's Tailscale step can offer to enable it.
-    expect(auth.getAuthManagementInfo().tailscale.healthy).toBe(true);
-    expect(auth.getAuthManagementInfo().tailscale.enabled).toBe(false);
+    expect((await auth.getAuthManagementInfo()).tailscale.healthy).toBe(true);
+    expect((await auth.getAuthManagementInfo()).tailscale.enabled).toBe(false);
   });
 
   it('collapses concurrent callers onto one in-flight probe', async () => {
@@ -385,6 +385,6 @@ describe('probeTailscaleHealth — cached flag tracks the probe result', () => {
     };
     await Promise.all([auth.probeTailscaleHealth(runner), auth.probeTailscaleHealth(runner)]);
     expect(calls).toBe(1);
-    expect(auth.getAuthInfo().tailscaleHealthy).toBe(true);
+    expect((await auth.getAuthInfo()).tailscaleHealthy).toBe(true);
   });
 });

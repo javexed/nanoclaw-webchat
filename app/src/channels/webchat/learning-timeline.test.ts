@@ -34,7 +34,7 @@ const T_DISCARDED = 2_500_000; // discarded card (B)
 const T_REVISED = 1_500_000; // .history snapshot (A) — kept fallback ties here
 const T_DRAFT_NOCARD = 1_000_000; // pending draft with no card (A)
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
 });
 
@@ -42,7 +42,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     // ignore
   }
@@ -66,9 +66,9 @@ async function loadServerWithEnv(env: Record<string, string | undefined>) {
   }
   vi.resetModules();
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
+  await migrations.runMigrations(conn.getDb());
   return { server: await import('./server.js'), conn };
 }
 
@@ -96,22 +96,30 @@ const portOf = (wc: { http: { address: () => unknown } }): number => {
 };
 
 const now = '2026-07-22T00:00:00.000Z';
-function seed(db: import('better-sqlite3').Database): void {
-  const user = (id: string) =>
-    db
-      .prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`)
-      .run(id, now);
-  const group = (id: string, name: string) =>
-    db
-      .prepare(
-        `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      )
-      .run(id, name, id, now);
-  const role = (uid: string, r: 'owner' | 'admin', g: string | null) => {
-    user(uid);
-    db.prepare(
+function seed(db: import('../../db/driver.js').DbDriver): void {
+  const user = async (id: string) =>
+    await db.run(
+      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+      id,
+      now,
+    );
+  const group = async (id: string, name: string) =>
+    await db.run(
+      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+      id,
+      name,
+      id,
+      now,
+    );
+  const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
+    await user(uid);
+    await db.run(
       `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
-    ).run(uid, r, g, now);
+      uid,
+      r,
+      g,
+      now,
+    );
   };
   group(AG_A, 'Alpha');
   group(AG_B, 'Beta');
@@ -166,7 +174,7 @@ describe('GET /api/learning/timeline', () => {
 
     // A webchat room wired to agent A, so card events carry a room name.
     const wiring = await import('./server/agent-wiring.js');
-    wiring.wireAgentToWebchatRoom('Ops room', ROOM, AG_A);
+    await wiring.wireAgentToWebchatRoom('Ops room', ROOM, AG_A);
 
     const wdb = await import('./db.js');
     const card = (draftId: string, agentGroupId: string, agentName: string, skillName: string) =>
@@ -179,21 +187,21 @@ describe('GET /api/learning/timeline', () => {
         agentGroupId,
         agentName,
       });
-    card('d-pending', AG_A, 'Alpha', 'pending-skill');
-    card('d-kept', AG_A, 'Alpha', 'kept-skill');
-    card('d-disc', AG_B, 'Beta', 'discarded-skill');
-    wdb.markRoomSkillDraftResolved('d-kept', 'kept', 'webchat:owner');
-    wdb.markRoomSkillDraftResolved('d-disc', 'discarded', 'expired');
+    await card('d-pending', AG_A, 'Alpha', 'pending-skill');
+    await card('d-kept', AG_A, 'Alpha', 'kept-skill');
+    await card('d-disc', AG_B, 'Beta', 'discarded-skill');
+    await wdb.markRoomSkillDraftResolved('d-kept', 'kept', 'webchat:owner');
+    await wdb.markRoomSkillDraftResolved('d-disc', 'discarded', 'expired');
     // Pin card timestamps so ordering/cursor assertions are deterministic.
-    const setTs = (draftId: string, ts: number) =>
-      db.prepare(`UPDATE webchat_messages SET created_at = ? WHERE id = ?`).run(ts, `skill-draft-card-${draftId}`);
-    setTs('d-pending', T_PROPOSED);
-    setTs('d-kept', T_KEPT_CARD);
-    setTs('d-disc', T_DISCARDED);
+    const setTs = async (draftId: string, ts: number) =>
+      await db.run(`UPDATE webchat_messages SET created_at = ? WHERE id = ?`, ts, `skill-draft-card-${draftId}`);
+    await setTs('d-pending', T_PROPOSED);
+    await setTs('d-kept', T_KEPT_CARD);
+    await setTs('d-disc', T_DISCARDED);
 
     // A pending draft that never got a card (non-webchat proposal), for A.
     const drafts = await import('../../db/skill-drafts.js');
-    drafts.createSkillDraft({
+    await drafts.createSkillDraft({
       id: 'd-nocard',
       agent_group_id: AG_A,
       session_id: null,
@@ -203,7 +211,7 @@ describe('GET /api/learning/timeline', () => {
       description: 'No card anywhere',
       body: '---\nname: cardless-skill\ndescription: x\n---\nBody.\n',
     });
-    db.prepare(`UPDATE skill_drafts SET created_at = ? WHERE id = 'd-nocard'`).run(T_DRAFT_NOCARD);
+    await db.run(`UPDATE skill_drafts SET created_at = ? WHERE id = 'd-nocard'`, T_DRAFT_NOCARD);
 
     // On disk for A: a learned skill with one revision snapshot (→ one
     // 'revised' event at T_REVISED, and a fallback 'kept' tied to the same ts

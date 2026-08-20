@@ -42,8 +42,8 @@ import type { OnecliAdmin } from './onecli-admin.js';
 import { getAllAgentGroups } from '../../db/agent-groups.js';
 
 /** The agent group's provider, mapped to the two UserCreds-supported families. */
-function groupProvider(agentGroupId: string): UserCredsProvider {
-  return getContainerConfig(agentGroupId)?.provider === 'codex' ? 'codex' : 'claude';
+async function groupProvider(agentGroupId: string): Promise<UserCredsProvider> {
+  return (await getContainerConfig(agentGroupId))?.provider === 'codex' ? 'codex' : 'claude';
 }
 
 /** The vault secret type that holds a member's credential for a provider. */
@@ -93,7 +93,7 @@ async function createCredentialSecret(
  * rebuild lazily on next use. Shared by disconnect and re-connect.
  */
 async function unenrollGroups(admin: OnecliAdmin, userId: string, provider: UserCredsProvider): Promise<void> {
-  for (const row of listEnrolledGroups(userId, provider)) {
+  for (const row of await listEnrolledGroups(userId, provider)) {
     const agentUuid = await admin.findAgentId(row.onecli_agent_id);
     if (agentUuid && row.secret_id) {
       const remaining = (await admin.listAgentSecretIds(agentUuid)).filter((id) => id !== row.secret_id);
@@ -101,7 +101,7 @@ async function unenrollGroups(admin: OnecliAdmin, userId: string, provider: User
       // per-member session resolving regardless of a lingering assignment.
       if (remaining.length > 0) await admin.setSecrets(agentUuid, remaining);
     }
-    setUserCredsStatus(userId, row.agent_group_id, 'revoked');
+    await setUserCredsStatus(userId, row.agent_group_id, 'revoked');
   }
 }
 
@@ -123,13 +123,13 @@ export async function storeUserCredential(
   credential: string,
   credType: UserCredsCredType,
 ): Promise<void> {
-  const prior = getUserCredential(userId, provider);
+  const prior = await getUserCredential(userId, provider);
   if (prior?.secret_id) {
     await unenrollGroups(admin, userId, provider);
     await admin.deleteSecret(prior.secret_id).catch(() => {}); // best-effort; orphan is harmless
   }
   const secretId = await createCredentialSecret(admin, userId, provider, credType, credential);
-  upsertUserCredential(userId, provider, secretId, credType);
+  await upsertUserCredential(userId, provider, secretId, credType);
   log.info('UserCreds credential stored', { userId, provider, credType });
 }
 
@@ -143,13 +143,13 @@ export async function ensureGroupEnrollment(admin: OnecliAdmin, userId: string, 
   // The workspace-default credential is an unassigned `all`-mode workspace secret
   // by design — it must never become a per-member `selective` enrollment.
   if (isWorkspaceDefaultUser(userId)) return;
-  const provider = groupProvider(agentGroupId);
+  const provider = await groupProvider(agentGroupId);
   // Already enrolled — but only skip when the enrollment is for THIS group's
   // CURRENT provider. If the group's provider was switched after enrollment, the
   // stale row would otherwise pin the wrong secret; fall through to re-enroll.
-  const existing = getUserCredsCredential(userId, agentGroupId);
+  const existing = await getUserCredsCredential(userId, agentGroupId);
   if (existing?.status === 'active' && existing.provider === provider) return;
-  const userCred = getUserCredential(userId, provider);
+  const userCred = await getUserCredential(userId, provider);
   if (userCred?.status !== 'active' || !userCred.secret_id) return; // not connected — nothing to enroll
   const secretId = userCred.secret_id;
 
@@ -159,7 +159,7 @@ export async function ensureGroupEnrollment(admin: OnecliAdmin, userId: string, 
   const toolSecretIds = await groupToolSecretIds(admin, agentGroupId, secretTypeFor(provider));
   const merged = Array.from(new Set([secretId, ...toolSecretIds]));
   await admin.setSecrets(agentUuid, merged);
-  upsertUserCredsCredential(userId, agentGroupId, identifier, secretId, userCred.cred_type, provider);
+  await upsertUserCredsCredential(userId, agentGroupId, identifier, secretId, userCred.cred_type, provider);
   log.info('UserCreds group enrolled (lazy)', { userId, agentGroupId, provider, toolSecrets: toolSecretIds.length });
 }
 
@@ -176,9 +176,9 @@ export async function revokeUserCredential(
   provider: UserCredsProvider,
 ): Promise<void> {
   await unenrollGroups(admin, userId, provider);
-  const secretId = getUserCredential(userId, provider)?.secret_id ?? null;
+  const secretId = (await getUserCredential(userId, provider))?.secret_id ?? null;
   if (secretId) await admin.deleteSecret(secretId).catch(() => {}); // best-effort; row revoke below is the gate
-  setUserCredentialStatus(userId, provider, 'revoked');
+  await setUserCredentialStatus(userId, provider, 'revoked');
   log.info('UserCreds credential revoked', { userId, provider });
 }
 
@@ -235,12 +235,12 @@ async function fanOutWorkspaceCredential(
     await admin.setSecrets(agentId, Array.from(new Set([...kept, secretId])));
     assigned++;
   };
-  for (const group of getAllAgentGroups()) {
-    if (groupProvider(group.id) !== provider) continue;
+  for (const group of await getAllAgentGroups()) {
+    if ((await groupProvider(group.id)) !== provider) continue;
     try {
       await assign(group.id);
-      for (const row of listGroupMemberEnrollments(group.id)) {
-        const own = getUserCredential(row.user_id, provider);
+      for (const row of await listGroupMemberEnrollments(group.id)) {
+        const own = await getUserCredential(row.user_id, provider);
         if (own?.status === 'active' && own.secret_id) continue; // brings their own
         await assign(userCredsAgentIdentifier(group.id, row.user_id));
       }
@@ -259,7 +259,7 @@ export async function setWorkspaceDefaultCredential(
 ): Promise<void> {
   await storeUserCredential(admin, WORKSPACE_DEFAULT_USER_ID, provider, value, credType);
   const secretType = secretTypeFor(provider);
-  const tracked = new Set(listAllTrackedSecretIds());
+  const tracked = new Set(await listAllTrackedSecretIds());
   const stale = (await admin.listAllSecrets()).filter((s) => s.type === secretType && !tracked.has(s.id));
 
   // Before deleting the legacy secrets, re-point any `selective` agent that was
@@ -270,7 +270,7 @@ export async function setWorkspaceDefaultCredential(
   // model". `all`-mode agents auto-inject the new secret and need no fixup; and
   // per-member UserCreds agents hold TRACKED secrets, so they never reference a
   // stale id and are naturally excluded from the re-point set.
-  const newSecretId = getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider)?.secret_id ?? null;
+  const newSecretId = (await getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider))?.secret_id ?? null;
   const staleIds = new Set(stale.map((s) => s.id));
   if (newSecretId && stale.length) {
     for (const agent of await admin.listAgents()) {

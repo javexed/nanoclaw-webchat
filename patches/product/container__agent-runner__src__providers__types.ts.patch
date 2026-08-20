@@ -1,7 +1,7 @@
-diff --git c/container/agent-runner/src/providers/types.ts w/container/agent-runner/src/providers/types.ts
+diff --git a/container/agent-runner/src/providers/types.ts b/container/agent-runner/src/providers/types.ts
 index 3356da67..ebc2f00e 100644
---- c/container/agent-runner/src/providers/types.ts
-+++ w/container/agent-runner/src/providers/types.ts
+--- a/container/agent-runner/src/providers/types.ts
++++ b/container/agent-runner/src/providers/types.ts
 @@ -25,6 +25,21 @@ export interface AgentProvider {
     */
    readonly emitsMidTurnText?: boolean;

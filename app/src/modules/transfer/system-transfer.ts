@@ -43,11 +43,11 @@ export interface SystemExportManifest {
   schemaVersion: number;
 }
 
-export function buildSystemManifest(lean: boolean): SystemExportManifest {
+export async function buildSystemManifest(lean: boolean): Promise<SystemExportManifest> {
   const db = getDb();
-  const count = (sql: string): number => {
+  const count = async (sql: string): Promise<number> => {
     try {
-      return (db.prepare(sql).get() as { n: number }).n;
+      return ((await db.get(sql)) as { n: number }).n;
     } catch {
       return 0;
     }
@@ -58,13 +58,13 @@ export function buildSystemManifest(lean: boolean): SystemExportManifest {
     createdAt: new Date().toISOString(),
     lean,
     counts: {
-      agents: count('SELECT COUNT(*) AS n FROM agent_groups'),
-      rooms: count(`SELECT COUNT(*) AS n FROM messaging_groups WHERE channel_type = 'webchat'`),
-      models: count('SELECT COUNT(*) AS n FROM webchat_models'),
-      mcpServers: count('SELECT COUNT(*) AS n FROM webchat_mcp_servers'),
-      skillDrafts: count('SELECT COUNT(*) AS n FROM skill_drafts'),
+      agents: await count('SELECT COUNT(*) AS n FROM agent_groups'),
+      rooms: await count(`SELECT COUNT(*) AS n FROM messaging_groups WHERE channel_type = 'webchat'`),
+      models: await count('SELECT COUNT(*) AS n FROM webchat_models'),
+      mcpServers: await count('SELECT COUNT(*) AS n FROM webchat_mcp_servers'),
+      skillDrafts: await count('SELECT COUNT(*) AS n FROM skill_drafts'),
     },
-    schemaVersion: count('SELECT COALESCE(MAX(version), 0) AS n FROM schema_version'),
+    schemaVersion: await count('SELECT COALESCE(MAX(version), 0) AS n FROM schema_version'),
   };
 }
 
@@ -73,7 +73,15 @@ export async function stageSystemExport(lean: boolean): Promise<string> {
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-sysexport-'));
   fs.mkdirSync(path.join(stage, 'db'), { recursive: true });
   fs.writeFileSync(path.join(stage, 'manifest.json'), JSON.stringify(buildSystemManifest(lean), null, 2));
-  await getDb().backup(path.join(stage, 'db', 'v2.db'));
+  // backup() is better-sqlite3's API, not the portable driver's — a system
+  // export IS a sqlite file, so reaching for the raw handle here is honest
+  // (the sqliteOnly migrations make the same call). Fail loudly on any other
+  // driver rather than writing an empty file.
+  const raw = (
+    getDb() as unknown as { rawDatabase?: () => { backup(dest: string): Promise<unknown> } }
+  ).rawDatabase?.();
+  if (!raw) throw new Error('system export requires the sqlite driver');
+  await raw.backup(path.join(stage, 'db', 'v2.db'));
   return stage;
 }
 
@@ -128,7 +136,7 @@ export interface SystemPreview {
   schemaOk: boolean;
 }
 
-export function previewSystemImport(bundleDir: string): SystemPreview {
+export async function previewSystemImport(bundleDir: string): Promise<SystemPreview> {
   const manifest = JSON.parse(fs.readFileSync(path.join(bundleDir, 'manifest.json'), 'utf8')) as SystemExportManifest;
   if (manifest.format !== SYSTEM_FORMAT) throw new Error('Not a NanoClaw system export');
   if (manifest.version > SYSTEM_VERSION)
@@ -142,8 +150,7 @@ export function previewSystemImport(bundleDir: string): SystemPreview {
   } finally {
     bundleDb.close();
   }
-  const current = (getDb().prepare('SELECT COALESCE(MAX(version), 0) AS n FROM schema_version').get() as { n: number })
-    .n;
+  const current = ((await getDb().get('SELECT COALESCE(MAX(version), 0) AS n FROM schema_version')) as { n: number }).n;
   return {
     manifest: { ...manifest, schemaVersion: bundleSchema },
     currentSchemaVersion: current,

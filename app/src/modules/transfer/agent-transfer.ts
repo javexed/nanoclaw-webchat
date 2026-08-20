@@ -80,13 +80,14 @@ export function isSafeTarEntry(entry: string): boolean {
 }
 
 /** Insert a row keeping only columns the TARGET schema actually has. */
-export function insertWithSchemaIntersection(table: string, row: Record<string, unknown>): void {
+export async function insertWithSchemaIntersection(table: string, row: Record<string, unknown>): Promise<void> {
   const db = getDb();
   const cols = new Set(
-    (db.prepare(`SELECT name FROM pragma_table_info('${table}')`).all() as { name: string }[]).map((c) => c.name),
+    ((await db.all(`SELECT name FROM pragma_table_info('${table}')`)) as { name: string }[]).map((c) => c.name),
   );
   const keys = Object.keys(row).filter((k) => cols.has(k));
-  db.prepare(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map((k) => '@' + k).join(', ')})`).run(
+  await db.run(
+    `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map((k) => '@' + k).join(', ')})`,
     Object.fromEntries(keys.map((k) => [k, row[k]])) as Record<string, unknown>,
   );
 }
@@ -94,11 +95,11 @@ export function insertWithSchemaIntersection(table: string, row: Record<string, 
 // ── Export ───────────────────────────────────────────────────────────────────
 
 /** Stage the small parts (manifest + DB slices) into a temp dir; return it. */
-export function stageAgentExport(agentGroupId: string, includeConversations: boolean): string {
+export async function stageAgentExport(agentGroupId: string, includeConversations: boolean): Promise<string> {
   const db = getDb();
-  const group = getAgentGroup(agentGroupId);
+  const group = await getAgentGroup(agentGroupId);
   if (!group) throw new Error('Agent not found');
-  const cfg = getContainerConfig(agentGroupId);
+  const cfg = await getContainerConfig(agentGroupId);
 
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-export-'));
   fs.mkdirSync(path.join(stage, 'db'), { recursive: true });
@@ -114,36 +115,32 @@ export function stageAgentExport(agentGroupId: string, includeConversations: boo
     cfgOut.mcp_servers = '{}';
   }
 
-  const wirings = db
-    .prepare(
-      `SELECT mga.*, mg.channel_type, mg.platform_id, mg.instance
+  const wirings = (await db.all(
+    `SELECT mga.*, mg.channel_type, mg.platform_id, mg.instance
        FROM messaging_group_agents mga JOIN messaging_groups mg ON mg.id = mga.messaging_group_id
        WHERE mga.agent_group_id = ?`,
-    )
-    .all(agentGroupId) as Record<string, unknown>[];
+    agentGroupId,
+  )) as Record<string, unknown>[];
 
   const mcpNames = (
-    db
-      .prepare(
-        `SELECT s.name FROM webchat_mcp_servers s
+    (await db.all(
+      `SELECT s.name FROM webchat_mcp_servers s
          JOIN webchat_agent_mcp_servers a ON a.mcp_server_id = s.id WHERE a.agent_group_id = ?`,
-      )
-      .all(agentGroupId) as { name: string }[]
+      agentGroupId,
+    )) as { name: string }[]
   ).map((r) => r.name);
 
-  const model = db
-    .prepare(
-      `SELECT m.kind, m.endpoint, m.model_id, m.credential_ref FROM webchat_models m
+  const model = (await db.get(
+    `SELECT m.kind, m.endpoint, m.model_id, m.credential_ref FROM webchat_models m
        JOIN webchat_agent_models am ON am.model_id = m.id WHERE am.agent_group_id = ?`,
-    )
-    .get(agentGroupId) as
-    | { kind: string; endpoint: string | null; model_id: string; credential_ref: string | null }
-    | undefined;
+    agentGroupId,
+  )) as { kind: string; endpoint: string | null; model_id: string; credential_ref: string | null } | undefined;
   if (model?.credential_ref) required.push(`model credential: ${model.credential_ref}`);
 
-  const destinations = db
-    .prepare(`SELECT * FROM agent_destinations WHERE agent_group_id = ?`)
-    .all(agentGroupId) as Record<string, unknown>[];
+  const destinations = (await db.all(
+    `SELECT * FROM agent_destinations WHERE agent_group_id = ?`,
+    agentGroupId,
+  )) as Record<string, unknown>[];
 
   const manifest: AgentExportManifest = {
     format: EXPORT_FORMAT,
@@ -220,7 +217,7 @@ const uniqueFolder = (base: string): string => {
   return f;
 };
 
-export function previewImport(bundleDir: string): ImportPreview {
+export async function previewImport(bundleDir: string): Promise<ImportPreview> {
   const manifest = JSON.parse(fs.readFileSync(path.join(bundleDir, 'manifest.json'), 'utf8')) as AgentExportManifest;
   if (manifest.format !== EXPORT_FORMAT) throw new Error('Not a NanoClaw agent export');
   if (manifest.version > EXPORT_VERSION)
@@ -230,17 +227,23 @@ export function previewImport(bundleDir: string): ImportPreview {
     platform_id: r.platform_id,
     found: !!getMessagingGroupByPlatform(r.channel_type, r.platform_id),
   }));
-  const mcpServers = manifest.references.mcpServers.map((name) => ({
-    name,
-    found: !!db.prepare(`SELECT 1 FROM webchat_mcp_servers WHERE name = ?`).get(name),
-  }));
+  const mcpServers = await Promise.all(
+    manifest.references.mcpServers.map(async (name) => ({
+      name,
+      found: !!(await db.get(`SELECT 1 FROM webchat_mcp_servers WHERE name = ?`, name)),
+    })),
+  );
   const m = manifest.references.model;
   const modelFound = !m
     ? true
-    : !!db
-        .prepare(`SELECT 1 FROM webchat_models WHERE kind = ? AND model_id = ? AND (endpoint IS ? OR endpoint = ?)`)
-        .get(m.kind, m.model_id, m.endpoint, m.endpoint);
-  const nameTaken = !!db.prepare(`SELECT 1 FROM agent_groups WHERE name = ?`).get(manifest.entity.name);
+    : !!(await db.get(
+        `SELECT 1 FROM webchat_models WHERE kind = ? AND model_id = ? AND (endpoint IS ? OR endpoint = ?)`,
+        m.kind,
+        m.model_id,
+        m.endpoint,
+        m.endpoint,
+      ));
+  const nameTaken = !!(await db.get(`SELECT 1 FROM agent_groups WHERE name = ?`, manifest.entity.name));
   return {
     manifest,
     suggestedName: nameTaken ? `${manifest.entity.name} (imported)` : manifest.entity.name,
@@ -263,9 +266,9 @@ export interface ApplyResult {
   destinationsSkipped: number;
 }
 
-export function applyImport(bundleDir: string, opts: { name?: string } = {}): ApplyResult {
+export async function applyImport(bundleDir: string, opts: { name?: string } = {}): Promise<ApplyResult> {
   const db = getDb();
-  const preview = previewImport(bundleDir);
+  const preview = await previewImport(bundleDir);
   const manifest = preview.manifest;
   const name = (opts.name || preview.suggestedName).trim().slice(0, 80);
   const folder = preview.suggestedFolder;
@@ -286,8 +289,8 @@ export function applyImport(bundleDir: string, opts: { name?: string } = {}): Ap
   let modelAssigned = false;
   let destinationsImported = 0;
   let destinationsTotal = 0;
-  db.transaction(() => {
-    createAgentGroup({
+  await db.transaction(async () => {
+    await createAgentGroup({
       id,
       name,
       folder,
@@ -298,16 +301,16 @@ export function applyImport(bundleDir: string, opts: { name?: string } = {}): Ap
     // 2. Container config: schema-intersection insert under the new id;
     //    mcp_servers stays empty (attachments re-derive it below).
     const cfgRow = readJson<Record<string, unknown>>('db/container_config.json');
-    ensureContainerConfig(id);
+    await ensureContainerConfig(id);
     if (cfgRow) {
-      db.prepare(`DELETE FROM container_configs WHERE agent_group_id = ?`).run(id);
-      insertWithSchemaIntersection('container_configs', { ...cfgRow, agent_group_id: id });
+      await db.run(`DELETE FROM container_configs WHERE agent_group_id = ?`, id);
+      await insertWithSchemaIntersection('container_configs', { ...cfgRow, agent_group_id: id });
     }
 
     // 4. Re-link rooms by platform reference.
     const wirings = readJson<Record<string, unknown>[]>('db/wirings.json') ?? [];
     for (const w of wirings) {
-      const mg = getMessagingGroupByPlatform(String(w.channel_type), String(w.platform_id));
+      const mg = await getMessagingGroupByPlatform(String(w.channel_type), String(w.platform_id));
       if (!mg) {
         skippedRooms.push(String(w.platform_id));
         continue;
@@ -315,7 +318,7 @@ export function applyImport(bundleDir: string, opts: { name?: string } = {}): Ap
       const { channel_type: _c, platform_id: _p, instance: _i, ...row } = w;
       // Fresh PK: the exported row's id belongs to the SOURCE wiring, which may
       // still exist on this install (clone next to the original).
-      insertWithSchemaIntersection('messaging_group_agents', {
+      await insertWithSchemaIntersection('messaging_group_agents', {
         ...row,
         id: randomUUID(),
         agent_group_id: id,
@@ -328,9 +331,9 @@ export function applyImport(bundleDir: string, opts: { name?: string } = {}): Ap
     const destinations = readJson<Record<string, unknown>[]>('db/destinations.json') ?? [];
     destinationsTotal = destinations.length;
     for (const d of destinations) {
-      if (d.target_type === 'agent' && !getAgentGroup(String(d.target_id))) continue;
+      if (d.target_type === 'agent' && !(await getAgentGroup(String(d.target_id)))) continue;
       try {
-        insertWithSchemaIntersection('agent_destinations', { ...d, id: randomUUID(), agent_group_id: id });
+        await insertWithSchemaIntersection('agent_destinations', { ...d, id: randomUUID(), agent_group_id: id });
         destinationsImported++;
       } catch (err) {
         log.warn('Import: destination row skipped', { err: String(err) });
@@ -340,33 +343,43 @@ export function applyImport(bundleDir: string, opts: { name?: string } = {}): Ap
     // 6. MCP attachments by name (config re-derived by the caller's sync).
     for (const { name: mcpName, found } of preview.mcpServers) {
       if (!found) continue;
-      const s = db.prepare(`SELECT id FROM webchat_mcp_servers WHERE name = ?`).get(mcpName) as
+      const s = (await db.get(`SELECT id FROM webchat_mcp_servers WHERE name = ?`, mcpName)) as
         | { id: string }
         | undefined;
       if (!s) continue;
-      db.prepare(
+      await db.run(
         `INSERT INTO webchat_agent_mcp_servers (agent_group_id, mcp_server_id, assigned_at)
        VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
-      ).run(id, s.id, Date.now());
+        id,
+        s.id,
+        Date.now(),
+      );
       attachedMcp.push(mcpName);
     }
-    updateContainerConfigJson(id, 'mcp_servers', {}); // clean base; caller syncs
+    await updateContainerConfigJson(id, 'mcp_servers', {}); // clean base; caller syncs
 
     // 7. Model by reference.
     const m = manifest.references.model;
     if (m) {
-      const row = db
-        .prepare(`SELECT id FROM webchat_models WHERE kind = ? AND model_id = ? AND (endpoint IS ? OR endpoint = ?)`)
-        .get(m.kind, m.model_id, m.endpoint, m.endpoint) as { id: string } | undefined;
+      const row = (await db.get(
+        `SELECT id FROM webchat_models WHERE kind = ? AND model_id = ? AND (endpoint IS ? OR endpoint = ?)`,
+        m.kind,
+        m.model_id,
+        m.endpoint,
+        m.endpoint,
+      )) as { id: string } | undefined;
       if (row) {
-        db.prepare(
+        await db.run(
           `INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES (?, ?, ?)
          ON CONFLICT(agent_group_id) DO UPDATE SET model_id = excluded.model_id`,
-        ).run(id, row.id, Date.now());
+          id,
+          row.id,
+          Date.now(),
+        );
         modelAssigned = true;
       }
     }
-  })(); // ── end atomic DB phase
+  }); // ── end atomic DB phase
 
   // 3. Files.
   const sessRoot = path.join(DATA_DIR, 'v2-sessions', id);

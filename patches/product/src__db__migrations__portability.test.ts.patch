@@ -1,0 +1,89 @@
+diff --git a/src/db/migrations/portability.test.ts b/src/db/migrations/portability.test.ts
+index 4a447695..edcb1455 100644
+--- a/src/db/migrations/portability.test.ts
++++ b/src/db/migrations/portability.test.ts
+@@ -23,6 +23,60 @@ const FROZEN_SQLITE_ONLY = new Set([
+   'wiring-threads-override',
+   'container-config-timezone',
+   'approval-question-render-metadata',
++  // ── Webchat module (repo B): grandfathered for the same reason as the set
++  // above — written against better-sqlite3 BEFORE the async-driver boundary,
++  // and already applied on live installs. The policy still binds: any NEW
++  // migration must be portable, and adding to this list needs the same
++  // justification upstream's entries carry.
++  'webchat-initial',
++  'webchat-drop-rooms',
++  'webchat-room-primes',
++  'webchat-models',
++  'webchat-room-settings',
++  'webchat-approvals-index',
++  'webchat-user-archives',
++  'webchat-archive-split',
++  'webchat-approvals-index-fanout',
++  'webchat-message-fts',
++  'agent-status',
++  'webchat-room-reads',
++  'webchat-room-credential-mode',
++  'webchat-room-oauth-allowed',
++  'webchat-user-handles',
++  'webchat-room-pins',
++  'webchat-credentials-config',
++  'webchat-threads',
++  'webchat-thread-engaged',
++  'webchat-room-pin-order',
++  'webchat-thread-context-sync',
++  'webchat-mcp-servers',
++  'webchat-onboarding',
++  'webchat-stt',
++  'webchat-bearer-auth',
++  'webchat-marketplace-toggle',
++  'webchat-credential-isolation',
++  'webchat-tailscale-owner',
++  'webchat-read-aloud',
++  'webchat-stt-prompt',
++  'webchat-approval-prejudge',
++  'webchat-default-model',
++  'webchat-skill-sources',
++  'webchat-skill-sources-official',
++  'webchat-disabled-builtins',
++  'webchat-audit-syslog',
++  'webchat-approval-triage',
++  'webchat-template-sources',
++  'container-egress',
++  'learning-classifier',
++  'learning-config',
++  'learning-master',
++  'learning-room-settings',
++  'webchat-mcp-hardening',
++  'byok-credentials',
++  'byok-oauth-credentials',
++  'byok-provider',
++  'byok-user-credentials',
++  'rename-user-credentials',
+ ]);
+ 
+ const BANNED_PORTABLE_SQL = [
+@@ -36,12 +90,12 @@ const BANNED_PORTABLE_SQL = [
+ ];
+ 
+ describe('central migration portability policy', () => {
+-  it('freezes SQLite-only status to the pre-boundary migration set', () => {
++  it('freezes SQLite-only status to the pre-boundary migration set', async () => {
+     const actual = migrations.filter((migration) => migration.sqliteOnly).map((migration) => migration.name);
+     expect(new Set(actual)).toEqual(FROZEN_SQLITE_ONLY);
+   });
+ 
+-  it('requires every post-boundary migration to be async and portable', () => {
++  it('requires every post-boundary migration to be async and portable', async () => {
+     for (const migration of migrations.filter((candidate) => !candidate.sqliteOnly)) {
+       expect(migration.up.constructor.name, migration.name).toBe('AsyncFunction');
+       const source = String(migration.up);
+@@ -49,7 +103,7 @@ describe('central migration portability policy', () => {
+     }
+   });
+ 
+-  it('preserves the skill-edit migration anchors byte-for-byte', () => {
++  it('preserves the skill-edit migration anchors byte-for-byte', async () => {
+     const source = fs.readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+     expect(source).toContain("import { migration019 } from './019-wiring-threads.js';");
+     expect(source).toContain('\n  migration019,\n');

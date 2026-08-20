@@ -350,7 +350,7 @@ export function parseConfiguredHosts(configText: string): string | null {
  * Returns null when nothing is known; the caller then keeps install-litellm's
  * localhost default (which yields its clear "no model server reachable" hint).
  */
-export function deriveModelServerHosts(root = process.cwd()): string | null {
+export async function deriveModelServerHosts(root = process.cwd()): Promise<string | null> {
   const configPath = path.join(root, 'data/litellm/config.yaml');
   if (fs.existsSync(configPath)) {
     const fromConfig = parseConfiguredHosts(fs.readFileSync(configPath, 'utf8'));
@@ -358,7 +358,7 @@ export function deriveModelServerHosts(root = process.cwd()): string | null {
   }
   try {
     const seen = new Set<string>();
-    for (const m of listWebchatModels()) {
+    for (const m of await listWebchatModels()) {
       if (m.kind !== 'ollama' || !m.endpoint) continue;
       const host = m.endpoint.replace(/\/+$/, '');
       if (host) seen.add(host);

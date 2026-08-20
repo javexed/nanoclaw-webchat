@@ -26,7 +26,7 @@ const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
 const AG_A = 'ag-slist-a';
 const AG_B = 'ag-slist-b';
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
 });
 
@@ -34,7 +34,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     // ignore
   }
@@ -53,9 +53,9 @@ async function loadServerWithEnv(env: Record<string, string | undefined>) {
   }
   vi.resetModules();
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
+  await migrations.runMigrations(conn.getDb());
   return { server: await import('./server.js'), conn };
 }
 
@@ -83,40 +83,51 @@ const portOf = (wc: { http: { address: () => unknown } }): number => {
 };
 
 const now = '2026-07-21T00:00:00.000Z';
-function seed(db: import('better-sqlite3').Database): void {
-  const user = (id: string) =>
-    db
-      .prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`)
-      .run(id, now);
-  const group = (id: string, name: string) =>
-    db
-      .prepare(
-        `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      )
-      .run(id, name, id, now);
-  const role = (uid: string, r: 'owner' | 'admin', g: string | null) => {
-    user(uid);
-    db.prepare(
+async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
+  const user = async (id: string) =>
+    await db.run(
+      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+      id,
+      now,
+    );
+  const group = async (id: string, name: string) =>
+    await db.run(
+      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+      id,
+      name,
+      id,
+      now,
+    );
+  const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
+    await user(uid);
+    await db.run(
       `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
-    ).run(uid, r, g, now);
+      uid,
+      r,
+      g,
+      now,
+    );
   };
   // Fresh DBs ship with the MCP/skills marketplace disabled (migration 131);
   // the /api/skills prefix gate would 403 everything otherwise.
-  db.exec(`UPDATE webchat_settings SET marketplace_disabled = 0`);
-  group(AG_A, 'Alpha');
-  group(AG_B, 'Beta');
+  await db.exec(`UPDATE webchat_settings SET marketplace_disabled = 0`);
+  await group(AG_A, 'Alpha');
+  await group(AG_B, 'Beta');
   // Pre-seed an owner so the first authenticated request doesn't auto-claim it.
-  role('webchat:owner', 'owner', null);
-  role('webchat:admina', 'admin', AG_A); // scoped admin of A only
+  await role('webchat:owner', 'owner', null);
+  await role('webchat:admina', 'admin', AG_A); // scoped admin of A only
   // Wire agent A to one webchat room, so its scoped skills carry the room.
-  db.prepare(
+  await db.run(
     `INSERT INTO messaging_groups (id, channel_type, platform_id, instance, name, is_group, unknown_sender_policy, created_at)
      VALUES ('mg-slist', 'webchat', 'room-slist', 'webchat', 'Ops room', 1, 'strict', ?)`,
-  ).run(now);
-  db.prepare(
+    now,
+  );
+  await db.run(
     `INSERT INTO messaging_group_agents (id, messaging_group_id, agent_group_id, session_mode, priority, created_at)
      VALUES ('mga-slist', 'mg-slist', ?, 'shared', 0, ?)`,
-  ).run(AG_A, now);
+    AG_A,
+    now,
+  );
 }
 
 function writeScopedSkill(agentGroupId: string, name: string, description: string): void {
@@ -148,7 +159,7 @@ describe('GET /api/skills — scoped-skill aggregation', () => {
       WEBCHAT_TRUSTED_PROXY_HEADER: 'x-forwarded-user',
     });
     server = loaded.server;
-    seed(loaded.conn.getDb());
+    await seed(loaded.conn.getDb());
     writeScopedSkill(AG_A, 'slist-scoped-a', 'Scoped to Alpha');
     writeScopedSkill(AG_B, 'slist-scoped-b', 'Scoped to Beta');
     wc = await server.startWebchatServer(noopHooks);
