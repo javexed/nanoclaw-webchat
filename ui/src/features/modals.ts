@@ -186,11 +186,115 @@ export function blockingOverlayOpen() {
   });
 }
 
+/**
+ * Member Grok device login.
+ *
+ * Two polls, not one: the first waits for the CLI to print a URL and code, the
+ * second waits for the member to approve on whatever device they opened it on.
+ * `grokMintToken` is the cancellation signal — reopening or closing the modal
+ * bumps it, and any in-flight loop notices and stops rather than writing into
+ * a dialog that has moved on.
+ */
+let grokMintToken = 0;
+
+export function cancelGrokMint(): void {
+  grokMintToken++;
+}
+
+async function openGrokMintModal(modal: HTMLElement): Promise<void> {
+  const token = ++grokMintToken;
+  const alive = () => token === grokMintToken && !modal.hidden;
+  const status = (msg: string, kind = '') => userCredsOauthStatus(msg, kind);
+
+  const title = $('#user-creds-oauth-title');
+  if (title) title.textContent = 'Connect to Grok';
+  $('#user-creds-oauth-step2')!.hidden = true;
+  $('#user-creds-oauth-submit')!.hidden = true; // nothing to submit — approval is detected
+  $('#user-creds-oauth-spinner')!.hidden = false;
+  const code = $('#user-creds-oauth-code') as HTMLInputElement | null;
+  if (code) code.hidden = true;
+  const codeLabel = $('#user-creds-oauth-code-label');
+  if (codeLabel) codeLabel.hidden = true;
+  userCredsOauthReturnFocus.value = document.activeElement as HTMLElement | null;
+  modal.hidden = false;
+  $('#user-creds-oauth-close')?.focus();
+  status('Starting sign-in…');
+
+  const poll = async () => {
+    const r = await authFetch('/api/user-credentials/grok/status');
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.statusText);
+    return d;
+  };
+  const wait = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
+  try {
+    const r = await authFetch('/api/user-credentials/grok/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ roomId: state.currentRoom }),
+    });
+    const started = await r.json();
+    if (!r.ok) throw new Error(started.error || r.statusText);
+
+    // Phase 1 — wait for the URL and code.
+    let d = started;
+    for (let i = 0; alive() && !d.verificationUrl && d.outcome !== 'error' && i < 40; i++) {
+      await wait(750);
+      if (!alive()) return;
+      d = await poll();
+    }
+    if (!alive()) return;
+    if (d.outcome === 'error') throw new Error(d.error || 'Sign-in failed.');
+    if (!d.verificationUrl) throw new Error('Timed out waiting for the sign-in link.');
+
+    const link = $('#user-creds-oauth-link') as HTMLAnchorElement | null;
+    if (link) {
+      link.href = d.verificationUrl;
+      link.textContent = 'Open Grok sign-in ↗';
+    }
+    // Reuse the Codex pairing-code island — same job, same shape.
+    codexActive.value = true;
+    codexUserCode.value = d.userCode || '';
+    const codexCode = $('#user-creds-oauth-codex-code');
+    if (codexCode) codexCode.hidden = false;
+    mountCodexCode();
+    $('#user-creds-oauth-spinner')!.hidden = true;
+    $('#user-creds-oauth-step2')!.hidden = false;
+    status('Open the link and approve — this page finishes on its own.');
+    link?.focus();
+
+    // Phase 2 — wait for approval. The status route stores the credential the
+    // moment it sees a completed login, so arriving here means it is saved.
+    while (alive() && d.outcome === 'pending') {
+      await wait(2000);
+      if (!alive()) return;
+      d = await poll();
+    }
+    if (!alive()) return;
+    if (d.outcome !== 'complete') throw new Error(d.error || 'Sign-in was not completed.');
+
+    grokMintToken++; // this flow is done; nothing else should still be polling
+    codexActive.value = false;
+    showToast('Connected your Grok subscription.', { kind: 'success' });
+    modal.hidden = true;
+    await updateUserCredsBanner(state.currentRoom);
+  } catch (err) {
+    if (!alive()) return;
+    $('#user-creds-oauth-spinner')!.hidden = true;
+    status((err as any)?.message || 'Could not start sign-in.', 'error');
+  }
+}
+
 export async function openOauthMintModal(target?: any) {
   userCredsOauthTarget.value = target;
   const modal = $('#user-creds-oauth-modal');
   if (!modal) return;
   const isWorkspace = target.startsWith('workspace');
+  // Grok is a device flow with no code to paste back and no "finish" call: the
+  // server polls the CLI and the browser polls the server. It gets its own path
+  // rather than a third arm on every isCodex ternary below.
+  if (!isWorkspace && userCredsProvider.value === 'grok') return openGrokMintModal(modal);
   const isCodex = target === 'workspace-codex' || (!isWorkspace && userCredsProvider.value === 'codex');
   const title = $('#user-creds-oauth-title');
   if (title)

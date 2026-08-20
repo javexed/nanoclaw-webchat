@@ -41,6 +41,12 @@ import {
 import { revokeUserCredential, storeUserCredential } from '../../../modules/user-credentials/onboard.js';
 import { getUserSecretId } from '../../../modules/user-credentials/db.js';
 import { deleteUserCredential, writeUserCredential } from './grok-user-creds.js';
+import {
+  cancelMemberLogin,
+  claimMemberCredential,
+  getMemberLoginProgress,
+  startMemberLogin,
+} from './grok-member-login.js';
 import { realOnecliAdmin } from '../../../modules/user-credentials/onecli-admin.js';
 import { canAccessRoom } from '../access.js';
 import { canonicalizeWebchatUserId } from '../auth.js';
@@ -568,4 +574,64 @@ export async function revokePermissionHandler(res: ServerResponse, body: GrantBo
     log.info('Webchat: revoked role', { targetUserId, role: kind, agentGroupId });
   }
   return json(res, 200, { ok: true });
+}
+
+/**
+ * Member Grok device login — the same start / report / cancel contract the
+ * wizard uses, scoped to the caller instead of the workspace.
+ *
+ * On completion the credential is claimed ONCE and split exactly as a pasted
+ * one would be: the access token into the member's vault secret, the refresh
+ * token onto the host. Doing it here rather than in the flow keeps the state
+ * machine ignorant of the vault, and means a member who abandons a completed
+ * login stores nothing.
+ */
+export async function rGrokMemberLoginRoute(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { req, res, userId } = ctx;
+  const verb = m[1];
+
+  if (req.method === 'GET') {
+    const progress = getMemberLoginProgress(userId);
+    // A completed login is stored on the poll that observes it, so the client
+    // needs no extra round trip and cannot forget to finish the job.
+    if (progress.outcome === 'complete') {
+      const cred = claimMemberCredential(userId);
+      if (cred) {
+        try {
+          await storeUserCredential(realOnecliAdmin, userId, 'grok', String(cred.accessToken), 'oauth_token');
+          const secretId = getUserSecretId(userId, 'grok');
+          if (secretId) {
+            writeUserCredential({
+              userId,
+              secretId,
+              refreshToken: String(cred.refreshToken),
+              expiresAt: String(cred.expiresAt ?? new Date(Date.now() + 6 * 3600_000).toISOString()),
+              clientId: String(cred.clientId ?? ''),
+              issuer: String(cred.issuer ?? 'https://auth.x.ai'),
+            });
+          }
+        } catch (err) {
+          return json(res, 500, {
+            ...progress,
+            error: `Signed in, but storing the credential failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+      }
+    }
+    return json(res, 200, progress);
+  }
+
+  if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
+  if (verb === 'cancel') return json(res, 200, { ...cancelMemberLogin(userId), ...getMemberLoginProgress(userId) });
+
+  // Same gate as pasting one: a workspace that does not accept member Grok
+  // subscriptions must not mint them either.
+  if (!oauthAllowedFor('grok', getCredentialsConfig()))
+    return json(res, 403, { error: 'This workspace does not accept Grok subscription connections.' });
+
+  const r = startMemberLogin(userId);
+  if (r.error === 'not-installed')
+    return json(res, 409, { error: 'Grok is not installed on this workspace.', code: 'not-installed' });
+  // already-running is not an error: the caller renders from the progress body.
+  return json(res, r.started ? 202 : 200, { ...getMemberLoginProgress(userId), started: r.started });
 }
