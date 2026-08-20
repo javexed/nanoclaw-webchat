@@ -39,6 +39,7 @@ export interface WizardDeps {
   applyLearningMaster: () => any;
   closeSettings: () => any;
   fetchAgents: () => any;
+  joinRoom: (roomId?: any, roomName?: any) => any;
   openOauthMintModal: (a0?: any) => any;
 }
 
@@ -410,6 +411,14 @@ export async function wizardSelectOllamaModel(modelId?: any) {
         }),
       });
       const out = await r.json().catch(() => ({}));
+      // JOIN WHAT WE CREATED. The WS echo only reaches clients whose tracked
+      // room matches the broadcast's (`c.room_id === roomId` in state.ts), so a
+      // client that never joined gets the unread signal instead of the message.
+      // The symptom is precise and was reported as such: the first message AND
+      // its reply are invisible until you switch rooms and back, because that
+      // finally issues a join and loads history. The room-create modal has
+      // always joined here; this path did not.
+      if (r.ok && out?.room?.id) deps.joinRoom(out.room.id, out.room.name);
       const created = out.created?.[0];
       if (!r.ok || !created) {
         wizardSetStatus('#wizard-ollama-status', out.error || out.failed?.[0]?.error || 'Add failed.', 'err');
