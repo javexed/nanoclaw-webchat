@@ -29,12 +29,12 @@ let tmp: string;
 
 beforeAll(async () => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-cov-'));
-  initDb(path.join(tmp, 'test.db'));
+  await initDb(path.join(tmp, 'test.db'));
   await runMigrations(getDb());
 });
 
 afterAll(async () => {
-  closeDb();
+  await closeDb();
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 

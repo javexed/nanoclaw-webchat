@@ -68,13 +68,13 @@ export function newAgentGroupId(): string {
  */
 export async function wireAgentToWebchatRoom(roomName: string, platformId: string, agentGroupId: string): Promise<void> {
   // db.createWebchatRoom is itself idempotent on (channel_type='webchat', platform_id).
-  createWebchatRoom(roomName, platformId);
+  await createWebchatRoom(roomName, platformId);
   const mg = await getMessagingGroupByPlatform('webchat', platformId);
   if (!mg) throw new Error(`Webchat room provisioning failed: ${platformId}`);
   const existing = await getDb().get(`SELECT 1 FROM messaging_group_agents
        WHERE messaging_group_id = ? AND agent_group_id = ? LIMIT 1`, mg.id, agentGroupId);
   if (existing) return;
-  createMessagingGroupAgent({
+  await createMessagingGroupAgent({
     id: randomUUID(),
     messaging_group_id: mg.id,
     agent_group_id: agentGroupId,
@@ -102,7 +102,7 @@ export async function wireAgentToWebchatRoom(roomName: string, platformId: strin
   if ((await hasTable(getDb(), 'agent_destinations'))) {
     const existing = getDestinationByTarget(agentGroupId, 'channel', mg.id);
     if (!existing) {
-      createDestination({
+      await createDestination({
         agent_group_id: agentGroupId,
         local_name: normalizeName(platformId),
         target_type: 'channel',
@@ -128,19 +128,19 @@ export async function wireAgentToWebchatRoom(roomName: string, platformId: strin
       | undefined;
     const touched = new Set<string>([agentGroupId]);
     for (const peer of peers) {
-      ensureA2aDestination(agentGroupId, peer.id, peer.folder);
-      if (newAgent) ensureA2aDestination(peer.id, agentGroupId, newAgent.folder);
+      await ensureA2aDestination(agentGroupId, peer.id, peer.folder);
+      if (newAgent) await ensureA2aDestination(peer.id, agentGroupId, newAgent.folder);
       touched.add(peer.id);
     }
     // Project the new destinations into every touched agent's RUNNING sessions
     // so co-resident agents can address each other immediately — without this
     // a peer whose container is already up sees the newcomer as "unknown:agent"
     // and gets "Unknown destination" trying to reply, until its next respawn.
-    for (const id of touched) projectDestinationsToActiveSessions(id);
+    for (const id of touched) await projectDestinationsToActiveSessions(id);
   }
   // Wirings changed — recompute engage patterns in case this room has a
   // prime configured. No-op when no prime is set (leaves the default '.').
-  recomputeEngagePatterns(platformId);
+  await recomputeEngagePatterns(platformId);
 }
 
 /**
@@ -158,7 +158,7 @@ export async function ensureA2aDestination(ownerAgentId: string, targetAgentId: 
   const candidates = [base, `${base}-agent`];
   for (const name of candidates) {
     if (!(await getDestinationByName(ownerAgentId, name))) {
-      createDestination({
+      await createDestination({
         agent_group_id: ownerAgentId,
         local_name: name,
         target_type: 'agent',

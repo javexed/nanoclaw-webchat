@@ -42,8 +42,8 @@ beforeEach(async () => {
   const db = await initTestDb();
   await runMigrations(await db);
 
-  createAgentGroup({ id: 'ag-bot', name: 'Bot', folder: 'bot', agent_provider: null, created_at: now() });
-  createMessagingGroup({
+  await createAgentGroup({ id: 'ag-bot', name: 'Bot', folder: 'bot', agent_provider: null, created_at: now() });
+  await createMessagingGroup({
     id: 'mg-room',
     channel_type: 'webchat',
     platform_id: 'room',
@@ -52,7 +52,7 @@ beforeEach(async () => {
     unknown_sender_policy: 'public',
     created_at: now(),
   });
-  createMessagingGroupAgent({
+  await createMessagingGroupAgent({
     id: 'mga-bot',
     messaging_group_id: 'mg-room',
     agent_group_id: 'ag-bot',
@@ -66,8 +66,8 @@ beforeEach(async () => {
   });
 });
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeDb();
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 });
 
@@ -94,24 +94,24 @@ describe('agent status gate', () => {
   });
 
   it('paused agent does NOT engage', async () => {
-    setAgentStatus('ag-bot', 'paused');
+    await setAgentStatus('ag-bot', 'paused');
     const { routeInbound } = await import('./router.js');
     await routeInbound(event('hello'));
-    expect(getActiveSessions()).toHaveLength(0);
+    expect(await getActiveSessions()).toHaveLength(0);
   });
 
   it('archived agent does NOT engage', async () => {
-    setAgentStatus('ag-bot', 'archived');
+    await setAgentStatus('ag-bot', 'archived');
     const { routeInbound } = await import('./router.js');
     await routeInbound(event('hello'));
-    expect(getActiveSessions()).toHaveLength(0);
+    expect(await getActiveSessions()).toHaveLength(0);
   });
 
   it('re-activating a paused agent restores engagement', async () => {
-    setAgentStatus('ag-bot', 'paused');
-    setAgentStatus('ag-bot', 'active');
+    await setAgentStatus('ag-bot', 'paused');
+    await setAgentStatus('ag-bot', 'active');
     const { routeInbound } = await import('./router.js');
     await routeInbound(event('hello'));
-    expect(getActiveSessions()).toHaveLength(1);
+    expect(await getActiveSessions()).toHaveLength(1);
   });
 });

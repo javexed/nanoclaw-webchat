@@ -17,7 +17,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  closeDb();
+  await closeDb();
 });
 
 async function insertRole(userId: string, role: 'owner' | 'admin' | 'member', agentGroupId: string | null): Promise<void> {
@@ -42,14 +42,14 @@ describe('isOwner', () => {
 
   it('returns true only for global-owner rows (agent_group_id IS NULL)', async () => {
     await runMigrations(getDb());
-    insertRole('webchat:alice', 'owner', null);
+    await insertRole('webchat:alice', 'owner', null);
     expect(await isOwner('webchat:alice')).toBe(true);
     expect(await isOwner('webchat:bob')).toBe(false);
   });
 
   it("does not treat 'admin' rows as owner", async () => {
     await runMigrations(getDb());
-    insertRole('webchat:alice', 'admin', null); // global admin
+    await insertRole('webchat:alice', 'admin', null); // global admin
     expect(await isOwner('webchat:alice')).toBe(false);
   });
 
@@ -58,13 +58,13 @@ describe('isOwner', () => {
     // Anomalous row — not created by webchat itself, but if some other
     // module inserts (alice, owner, ag-1), isOwner shouldn't grant
     // global owner privileges.
-    insertRole('webchat:alice', 'owner', 'ag-1');
+    await insertRole('webchat:alice', 'owner', 'ag-1');
     expect(await isOwner('webchat:alice')).toBe(false);
   });
 
   it("ignores 'member' rows", async () => {
     await runMigrations(getDb());
-    insertRole('webchat:alice', 'member', null);
+    await insertRole('webchat:alice', 'member', null);
     expect(await isOwner('webchat:alice')).toBe(false);
   });
 });
@@ -76,29 +76,29 @@ describe('hasAdminPrivilege', () => {
 
   it('global owner has admin privilege over every agent group', async () => {
     await runMigrations(getDb());
-    insertRole('webchat:alice', 'owner', null);
+    await insertRole('webchat:alice', 'owner', null);
     expect(await hasAdminPrivilege('webchat:alice', 'ag-1')).toBe(true);
     expect(await hasAdminPrivilege('webchat:alice', 'ag-2')).toBe(true);
   });
 
   it('global admin (agent_group_id NULL) has admin privilege over every agent group', async () => {
     await runMigrations(getDb());
-    insertRole('webchat:alice', 'admin', null);
+    await insertRole('webchat:alice', 'admin', null);
     expect(await hasAdminPrivilege('webchat:alice', 'ag-1')).toBe(true);
     expect(await hasAdminPrivilege('webchat:alice', 'ag-99')).toBe(true);
   });
 
   it('scoped admin matches only the scoped agent_group_id', async () => {
     await runMigrations(getDb());
-    insertRole('webchat:alice', 'admin', 'ag-1');
+    await insertRole('webchat:alice', 'admin', 'ag-1');
     expect(await hasAdminPrivilege('webchat:alice', 'ag-1')).toBe(true);
     expect(await hasAdminPrivilege('webchat:alice', 'ag-2')).toBe(false);
   });
 
   it("'member' rows do not grant admin privilege", async () => {
     await runMigrations(getDb());
-    insertRole('webchat:alice', 'member', null);
-    insertRole('webchat:alice', 'member', 'ag-1');
+    await insertRole('webchat:alice', 'member', null);
+    await insertRole('webchat:alice', 'member', 'ag-1');
     expect(await hasAdminPrivilege('webchat:alice', 'ag-1')).toBe(false);
   });
 
@@ -116,14 +116,14 @@ describe('ensureOwnerRoleOnFirstLogin', () => {
 
   it('creates an owner row on first call', async () => {
     await runMigrations(getDb());
-    ensureOwnerRoleOnFirstLogin('webchat:alice');
+    await ensureOwnerRoleOnFirstLogin('webchat:alice');
     expect(await isOwner('webchat:alice')).toBe(true);
   });
 
   it('is idempotent — second call does not change ownership', async () => {
     await runMigrations(getDb());
-    ensureOwnerRoleOnFirstLogin('webchat:alice');
-    ensureOwnerRoleOnFirstLogin('webchat:alice');
+    await ensureOwnerRoleOnFirstLogin('webchat:alice');
+    await ensureOwnerRoleOnFirstLogin('webchat:alice');
     const ownerCount = (
       (await getDb().get(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`)) as { c: number }
     ).c;
@@ -132,8 +132,8 @@ describe('ensureOwnerRoleOnFirstLogin', () => {
 
   it('does not promote a second user when an owner already exists', async () => {
     await runMigrations(getDb());
-    ensureOwnerRoleOnFirstLogin('webchat:alice');
-    ensureOwnerRoleOnFirstLogin('webchat:bob');
+    await ensureOwnerRoleOnFirstLogin('webchat:alice');
+    await ensureOwnerRoleOnFirstLogin('webchat:bob');
     expect(await isOwner('webchat:alice')).toBe(true);
     expect(await isOwner('webchat:bob')).toBe(false);
     const ownerCount = (
@@ -150,7 +150,7 @@ describe('ensureOwnerRoleOnFirstLogin', () => {
     // the WHERE-NOT-EXISTS check).
     await runMigrations(getDb());
     for (const u of ['webchat:alice', 'webchat:bob', 'webchat:carol', 'webchat:dave']) {
-      ensureOwnerRoleOnFirstLogin(u);
+      await ensureOwnerRoleOnFirstLogin(u);
     }
     const ownerCount = (
       (await getDb().get(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`)) as { c: number }
@@ -162,7 +162,7 @@ describe('ensureOwnerRoleOnFirstLogin', () => {
 
   it('creates a users row with kind=webchat when users table exists', async () => {
     await runMigrations(getDb());
-    ensureOwnerRoleOnFirstLogin('webchat:alice');
+    await ensureOwnerRoleOnFirstLogin('webchat:alice');
     const row = (await getDb().get(`SELECT kind FROM users WHERE id = ?`, 'webchat:alice')) as
       | { kind: string }
       | undefined;
@@ -173,16 +173,16 @@ describe('ensureOwnerRoleOnFirstLogin', () => {
 describe('grantOwnerRole', () => {
   it('grants global owner to a specific identity (co-owner-safe, idempotent)', async () => {
     await runMigrations(getDb());
-    insertRole('webchat:owner', 'owner', null); // bearer bootstrap already owns
+    await insertRole('webchat:owner', 'owner', null); // bearer bootstrap already owns
     // Promote a second (Tailscale) identity alongside it.
-    expect(grantOwnerRole('webchat:tailscale:me@example.com')).toBe(true);
+    expect(await grantOwnerRole('webchat:tailscale:me@example.com')).toBe(true);
     expect(await isOwner('webchat:tailscale:me@example.com')).toBe(true);
     expect(await isOwner('webchat:owner')).toBe(true); // original owner preserved
     // Idempotent — a second grant for the same id inserts nothing.
-    expect(grantOwnerRole('webchat:tailscale:me@example.com')).toBe(false);
+    expect(await grantOwnerRole('webchat:tailscale:me@example.com')).toBe(false);
   });
 
   it('is a no-op (false) when the permissions module is absent', async () => {
-    expect(grantOwnerRole('webchat:x')).toBe(false); // no migrations → no user_roles
+    expect(await grantOwnerRole('webchat:x')).toBe(false); // no migrations → no user_roles
   });
 });

@@ -57,8 +57,8 @@ beforeEach(async () => {
   await runMigrations(await db);
 });
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeDb();
 });
 
 describe('findSessionsByMessagingGroup / findSessionsByAgentGroup', () => {
@@ -70,9 +70,9 @@ describe('findSessionsByMessagingGroup / findSessionsByAgentGroup', () => {
     expect(new Set(targets.map((t) => t.sessionId))).toEqual(new Set(['sess-1', 'sess-2', 'sess-3']));
   });
 
-  it('returns every session linked to the agent group across rooms', () => {
+  it('returns every session linked to the agent group across rooms', async () => {
     seed({ sessionsPerRoom: 1 });
-    createMessagingGroup({
+    await createMessagingGroup({
       id: 'mg-2',
       channel_type: 'webchat',
       platform_id: 'room-2',
@@ -81,7 +81,7 @@ describe('findSessionsByMessagingGroup / findSessionsByAgentGroup', () => {
       unknown_sender_policy: 'public',
       created_at: now(),
     });
-    createSession({
+    await createSession({
       id: 'sess-other-room',
       agent_group_id: 'ag-1',
       messaging_group_id: 'mg-2',
@@ -92,26 +92,26 @@ describe('findSessionsByMessagingGroup / findSessionsByAgentGroup', () => {
       last_active: now(),
       created_at: now(),
     });
-    expect(findSessionsByAgentGroup('ag-1')).toHaveLength(2);
-    expect(findSessionsByMessagingGroup('mg-2')).toHaveLength(1);
+    expect(await findSessionsByAgentGroup('ag-1')).toHaveLength(2);
+    expect(await findSessionsByMessagingGroup('mg-2')).toHaveLength(1);
   });
 
-  it('returns empty for unknown ids', () => {
-    expect(findSessionsByMessagingGroup('nope')).toEqual([]);
-    expect(findSessionsByAgentGroup('nope')).toEqual([]);
+  it('returns empty for unknown ids', async () => {
+    expect(await findSessionsByMessagingGroup('nope')).toEqual([]);
+    expect(await findSessionsByAgentGroup('nope')).toEqual([]);
   });
 });
 
 describe('deleteSessionDbState', () => {
-  it('drops the session row', () => {
+  it('drops the session row', async () => {
     seed();
-    deleteSessionDbState('sess-1');
-    expect(getSession('sess-1')).toBeUndefined();
+    await deleteSessionDbState('sess-1');
+    expect(await getSession('sess-1')).toBeUndefined();
   });
 
   it('drops pending_questions and pending_approvals that FK to the session', async () => {
     seed();
-    createPendingQuestion({
+    await createPendingQuestion({
       question_id: 'q-1',
       session_id: 'sess-1',
       message_out_id: 'msg-out-1',
@@ -122,7 +122,7 @@ describe('deleteSessionDbState', () => {
       options: [],
       created_at: now(),
     });
-    createPendingApproval({
+    await createPendingApproval({
       approval_id: 'a-1',
       session_id: 'sess-1',
       request_id: 'req-1',
@@ -132,7 +132,7 @@ describe('deleteSessionDbState', () => {
       title: 'Install?',
       options_json: '[]',
     });
-    deleteSessionDbState('sess-1');
+    await deleteSessionDbState('sess-1');
     const db = getDb();
     expect(await db.get('SELECT COUNT(*) as n FROM pending_questions WHERE session_id = ?', 'sess-1')).toEqual({
       n: 0,
@@ -144,7 +144,7 @@ describe('deleteSessionDbState', () => {
 });
 
 describe('FK behavior — the bug this primitive prevents', () => {
-  it('deleting a messaging_group with an active session throws FOREIGN KEY', () => {
+  it('deleting a messaging_group with an active session throws FOREIGN KEY', async () => {
     seed();
     // Without teardown, SQLite rejects the parent delete. This is the
     // exact scenario that surfaced as "Failed to delete room: Internal
@@ -152,7 +152,7 @@ describe('FK behavior — the bug this primitive prevents', () => {
     expect(() => deleteMessagingGroup('mg-1')).toThrow(/FOREIGN KEY/);
   });
 
-  it('deleting an agent_group with an active session throws FOREIGN KEY', () => {
+  it('deleting an agent_group with an active session throws FOREIGN KEY', async () => {
     seed();
     expect(() => deleteAgentGroup('ag-1')).toThrow(/FOREIGN KEY/);
   });

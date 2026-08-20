@@ -37,7 +37,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  closeDb();
+  await closeDb();
 });
 
 // ── Seed helpers (mirrors reads.test.ts) ──
@@ -79,22 +79,22 @@ async function insertMessage(roomId: string, createdAt: number): Promise<void> {
 describe('pin/unpin', () => {
   it('pins and unpins a room for one user', async () => {
     expect((await getPinnedRoomIdsForUser('webchat:alice')).has('room-1')).toBe(false);
-    pinRoomForUser('webchat:alice', 'room-1');
+    await pinRoomForUser('webchat:alice', 'room-1');
     expect((await getPinnedRoomIdsForUser('webchat:alice')).has('room-1')).toBe(true);
-    unpinRoomForUser('webchat:alice', 'room-1');
+    await unpinRoomForUser('webchat:alice', 'room-1');
     expect((await getPinnedRoomIdsForUser('webchat:alice')).has('room-1')).toBe(false);
   });
 
   it('is idempotent — re-pinning keeps a single row', async () => {
-    pinRoomForUser('webchat:alice', 'room-1', 1000);
-    pinRoomForUser('webchat:alice', 'room-1', 2000);
+    await pinRoomForUser('webchat:alice', 'room-1', 1000);
+    await pinRoomForUser('webchat:alice', 'room-1', 2000);
     expect((await getPinnedRoomIdsForUser('webchat:alice')).has('room-1')).toBe(true);
     const count = (await getDb().get(`SELECT COUNT(*) AS n FROM webchat_room_pins WHERE user_id = ? AND room_id = ?`, 'webchat:alice', 'room-1')) as { n: number };
     expect(count.n).toBe(1);
   });
 
   it('is per-user — one user pinning does not pin for another', async () => {
-    pinRoomForUser('webchat:alice', 'room-1');
+    await pinRoomForUser('webchat:alice', 'room-1');
     expect((await getPinnedRoomIdsForUser('webchat:alice')).has('room-1')).toBe(true);
     expect((await getPinnedRoomIdsForUser('webchat:bob')).has('room-1')).toBe(false);
   });
@@ -102,9 +102,9 @@ describe('pin/unpin', () => {
 
 describe('pin ordering (manual drag order)', () => {
   it('assigns each new pin the next position (appends to the bottom)', async () => {
-    pinRoomForUser('webchat:alice', 'room-1');
-    pinRoomForUser('webchat:alice', 'room-2');
-    pinRoomForUser('webchat:alice', 'room-3');
+    await pinRoomForUser('webchat:alice', 'room-1');
+    await pinRoomForUser('webchat:alice', 'room-2');
+    await pinRoomForUser('webchat:alice', 'room-3');
     const pos = await getPinnedPositionsForUser('webchat:alice');
     expect(pos.get('room-1')).toBe(0);
     expect(pos.get('room-2')).toBe(1);
@@ -112,17 +112,17 @@ describe('pin ordering (manual drag order)', () => {
   });
 
   it('positions are per-user (each user starts at 0)', async () => {
-    pinRoomForUser('webchat:alice', 'room-1');
-    pinRoomForUser('webchat:bob', 'room-9');
+    await pinRoomForUser('webchat:alice', 'room-1');
+    await pinRoomForUser('webchat:bob', 'room-9');
     expect((await getPinnedPositionsForUser('webchat:alice')).get('room-1')).toBe(0);
     expect((await getPinnedPositionsForUser('webchat:bob')).get('room-9')).toBe(0);
   });
 
   it('setPinnedOrderForUser rewrites positions to the given order', async () => {
-    pinRoomForUser('webchat:alice', 'room-1'); // 0
-    pinRoomForUser('webchat:alice', 'room-2'); // 1
-    pinRoomForUser('webchat:alice', 'room-3'); // 2
-    setPinnedOrderForUser('webchat:alice', ['room-3', 'room-1', 'room-2']);
+    await pinRoomForUser('webchat:alice', 'room-1'); // 0
+    await pinRoomForUser('webchat:alice', 'room-2'); // 1
+    await pinRoomForUser('webchat:alice', 'room-3'); // 2
+    await setPinnedOrderForUser('webchat:alice', ['room-3', 'room-1', 'room-2']);
     const pos = await getPinnedPositionsForUser('webchat:alice');
     expect(pos.get('room-3')).toBe(0);
     expect(pos.get('room-1')).toBe(1);
@@ -130,10 +130,10 @@ describe('pin ordering (manual drag order)', () => {
   });
 
   it('reordering ignores ids the user has not pinned (no cross-user write)', async () => {
-    pinRoomForUser('webchat:alice', 'room-1');
-    pinRoomForUser('webchat:bob', 'room-2');
+    await pinRoomForUser('webchat:alice', 'room-1');
+    await pinRoomForUser('webchat:bob', 'room-2');
     // alice tries to order a room she hasn't pinned (bob's) — it's a no-op for it.
-    setPinnedOrderForUser('webchat:alice', ['room-2', 'room-1']);
+    await setPinnedOrderForUser('webchat:alice', ['room-2', 'room-1']);
     expect((await getPinnedPositionsForUser('webchat:alice')).has('room-2')).toBe(false);
     expect((await getPinnedPositionsForUser('webchat:alice')).get('room-1')).toBe(1);
     // bob's pin is untouched.
@@ -143,10 +143,10 @@ describe('pin ordering (manual drag order)', () => {
   it('surfaces pin_position via annotateRoomsForUser, sortable client-side', async () => {
     accessibleRoom('room-1');
     accessibleRoom('room-2');
-    grantOwner('webchat:owner');
-    pinRoomForUser('webchat:owner', 'room-1');
-    pinRoomForUser('webchat:owner', 'room-2');
-    setPinnedOrderForUser('webchat:owner', ['room-2', 'room-1']);
+    await grantOwner('webchat:owner');
+    await pinRoomForUser('webchat:owner', 'room-1');
+    await pinRoomForUser('webchat:owner', 'room-2');
+    await setPinnedOrderForUser('webchat:owner', ['room-2', 'room-1']);
     const rooms = await annotateRoomsForUser('webchat:owner');
     expect(rooms.find((r) => r.id === 'room-2')?.pin_position).toBe(0);
     expect(rooms.find((r) => r.id === 'room-1')?.pin_position).toBe(1);
@@ -158,9 +158,9 @@ describe('pin ordering (manual drag order)', () => {
 
 describe('getRoomLastActivity', () => {
   it('returns the newest message time per room and omits empty rooms', async () => {
-    insertMessage('room-1', 1000);
-    insertMessage('room-1', 3000); // newer wins
-    insertMessage('room-2', 2000);
+    await insertMessage('room-1', 1000);
+    await insertMessage('room-1', 3000); // newer wins
+    await insertMessage('room-2', 2000);
     const map = await getRoomLastActivity();
     expect(map.get('room-1')).toBe(3000);
     expect(map.get('room-2')).toBe(2000);
@@ -171,21 +171,21 @@ describe('getRoomLastActivity', () => {
 describe('annotateRoomsForUser — pinned + last_activity', () => {
   it('surfaces the per-user pinned flag', async () => {
     accessibleRoom('room-1');
-    grantOwner('webchat:owner');
-    pinRoomForUser('webchat:owner', 'room-1');
+    await grantOwner('webchat:owner');
+    await pinRoomForUser('webchat:owner', 'room-1');
 
     const room = (await annotateRoomsForUser('webchat:owner')).find((r) => r.id === 'room-1');
     expect(room?.pinned).toBe(true);
 
     // Not pinned for a different user.
-    grantOwner('webchat:owner2');
+    await grantOwner('webchat:owner2');
     expect((await annotateRoomsForUser('webchat:owner2')).find((r) => r.id === 'room-1')?.pinned).toBe(false);
   });
 
   it('reports last_activity as the newest message time', async () => {
     accessibleRoom('room-1');
-    grantOwner('webchat:owner');
-    insertMessage('room-1', 5000);
+    await grantOwner('webchat:owner');
+    await insertMessage('room-1', 5000);
 
     const room = (await annotateRoomsForUser('webchat:owner')).find((r) => r.id === 'room-1');
     expect(room?.last_activity).toBe(5000);
@@ -193,7 +193,7 @@ describe('annotateRoomsForUser — pinned + last_activity', () => {
 
   it('falls back to the room created_at when the room has no messages', async () => {
     accessibleRoom('room-1');
-    grantOwner('webchat:owner');
+    await grantOwner('webchat:owner');
 
     const room = (await annotateRoomsForUser('webchat:owner')).find((r) => r.id === 'room-1');
     expect(typeof room?.last_activity).toBe('number');
@@ -203,17 +203,17 @@ describe('annotateRoomsForUser — pinned + last_activity', () => {
 
 describe('cascade', () => {
   it('clearPinsForRoom drops a room’s pins', async () => {
-    pinRoomForUser('webchat:alice', 'room-1');
-    pinRoomForUser('webchat:bob', 'room-1');
-    clearPinsForRoom('room-1');
+    await pinRoomForUser('webchat:alice', 'room-1');
+    await pinRoomForUser('webchat:bob', 'room-1');
+    await clearPinsForRoom('room-1');
     expect((await getPinnedRoomIdsForUser('webchat:alice')).has('room-1')).toBe(false);
     expect((await getPinnedRoomIdsForUser('webchat:bob')).has('room-1')).toBe(false);
   });
 
   it('deleteWebchatRoom clears pins for that room', async () => {
-    insertRoom('room-1');
-    pinRoomForUser('webchat:alice', 'room-1');
-    deleteWebchatRoom('room-1');
+    await insertRoom('room-1');
+    await pinRoomForUser('webchat:alice', 'room-1');
+    await deleteWebchatRoom('room-1');
     expect((await getPinnedRoomIdsForUser('webchat:alice')).has('room-1')).toBe(false);
   });
 });

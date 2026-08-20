@@ -59,7 +59,7 @@ beforeEach(async () => {
   const db = await initTestDb();
   await runMigrations(db);
 
-  createAgentGroup({ id: AG, name: 'Int', folder: 'int', agent_provider: null, created_at: now() });
+  await createAgentGroup({ id: AG, name: 'Int', folder: 'int', agent_provider: null, created_at: now() });
   await db.run(`INSERT INTO messaging_groups (id,channel_type,instance,platform_id,is_group,unknown_sender_policy,created_at)
      VALUES ('mg-int','webchat','webchat',?,1,'public',?)`, ROOM, now());
   await db.run(`INSERT INTO messaging_group_agents
@@ -67,13 +67,13 @@ beforeEach(async () => {
      VALUES ('mga-int','mg-int',?, 'pattern','.*','all','drop','shared',0,?)`, AG, now());
 
   // Per-member routing only engages for a member who has CONNECTED a credential.
-  setCredentialsConfig({ allowAnthropicKey: true });
-  setRoomModeOverride(ROOM, 'required');
-  upsertUserCredential(USER, 'claude', 'sec-1', 'api_key');
+  await setCredentialsConfig({ allowAnthropicKey: true });
+  await setRoomModeOverride(ROOM, 'required');
+  await upsertUserCredential(USER, 'claude', 'sec-1', 'api_key');
 });
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeDb();
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 });
 

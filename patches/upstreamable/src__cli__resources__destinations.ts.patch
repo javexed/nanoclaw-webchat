@@ -1,5 +1,5 @@
 diff --git a/src/cli/resources/destinations.ts b/src/cli/resources/destinations.ts
-index 00e7b86e..5eb2dc51 100644
+index 00e7b86e..14ca1fd4 100644
 --- a/src/cli/resources/destinations.ts
 +++ b/src/cli/resources/destinations.ts
 @@ -1,21 +1,44 @@
@@ -76,7 +76,7 @@ index 00e7b86e..5eb2dc51 100644
 +  const sessions = (await getSessionsByAgentGroup(agentGroupId)).filter((s) => s.status === 'active');
 +  for (const s of sessions) {
 +    try {
-+      writeDestinations(agentGroupId, s.id);
++      await writeDestinations(agentGroupId, s.id);
 +    } catch (err) {
 +      log.warn('writeDestinations failed; agent will pick up changes on next spawn', {
 +        agentGroupId,
@@ -123,7 +123,7 @@ index 00e7b86e..5eb2dc51 100644
 +    }
 +  }
 +
-+  restartAgentGroupContainers(agentGroupId, reason);
++  await restartAgentGroupContainers(agentGroupId, reason);
  }
  
  registerResource({
@@ -131,7 +131,7 @@ index 00e7b86e..5eb2dc51 100644
            new Date().toISOString(),
          );
          await projectDestinationsToSessions(agentGroupId);
-+          refreshAgentSessions(agentGroupId, `destination added: ${localName}`);
++          await refreshAgentSessions(agentGroupId, `destination added: ${localName}`);
          return { agent_group_id: agentGroupId, local_name: localName, target_type: targetType, target_id: targetId };
        },
      },
@@ -140,7 +140,7 @@ index 00e7b86e..5eb2dc51 100644
          );
          if (result.changes === 0) throw new Error('destination not found');
 -        await projectDestinationsToSessions(agentGroupId);
-+        refreshAgentSessions(agentGroupId, `destination removed: ${localName}`);
++        await refreshAgentSessions(agentGroupId, `destination removed: ${localName}`);
          return { removed: { agent_group_id: agentGroupId, local_name: localName } };
        },
      },

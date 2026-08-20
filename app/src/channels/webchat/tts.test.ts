@@ -59,7 +59,7 @@ function makeReq(body?: string, headers: Record<string, string> = { 'x-webchat-c
 }
 
 const OLD_ENV = { ...process.env };
-afterEach(() => {
+afterEach(async () => {
   process.env = { ...OLD_ENV };
   vi.restoreAllMocks();
 });

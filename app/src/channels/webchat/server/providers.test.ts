@@ -17,17 +17,17 @@ vi.mock('../../../providers/provider-container-registry.js', () => ({
 const { codexAvailable, grokAvailable, opencodeAvailable, piAvailable } = await import('./providers.js');
 
 describe('availability probes', () => {
-  it('report true for a provider that registered a container config', () => {
+  it('report true for a provider that registered a container config', async () => {
     expect(codexAvailable()).toBe(true);
     expect(grokAvailable()).toBe(true);
   });
 
-  it('report false for one that has not', () => {
+  it('report false for one that has not', async () => {
     expect(opencodeAvailable()).toBe(false);
     expect(piAvailable()).toBe(false);
   });
 
-  it('every optional harness the picker offers has a probe', () => {
+  it('every optional harness the picker offers has a probe', async () => {
     // The picker's buttons and this set must not drift: a button with no probe
     // is a switch the server will always reject.
     const probes: Record<string, () => boolean> = {

@@ -64,7 +64,7 @@ export async function syncAutoRouterSelectable(live: boolean): Promise<void> {
   const existing = (await listWebchatModels()).find((m) => m.model_id === 'auto');
   if (live) {
     if (!existing) {
-      createWebchatModel({
+      await createWebchatModel({
         id: randomUUID(),
         name: 'auto',
         kind: 'openai-compatible',
@@ -75,7 +75,7 @@ export async function syncAutoRouterSelectable(live: boolean): Promise<void> {
       });
     }
   } else if (existing) {
-    deleteWebchatModel(existing.id);
+    await deleteWebchatModel(existing.id);
   }
 }
 
@@ -96,7 +96,7 @@ export async function rRouterRoutesPut(ctx: RouteCtx, _m: RegExpMatchArray): Pro
     const merged = mergeRoutesUpdate(cfg, update, target);
     writeRoutesConfig(merged);
     // Register/deregister the 'auto' selectable to match the new live state.
-    syncAutoRouterSelectable(Boolean((merged.live as { enabled?: boolean } | undefined)?.enabled));
+    await syncAutoRouterSelectable(Boolean((merged.live as { enabled?: boolean } | undefined)?.enabled));
     const view = routerView(merged, target);
     return json(res, 200, {
       ok: true,
@@ -131,7 +131,7 @@ export async function rRouterRoutersPost(ctx: RouteCtx, _m: RegExpMatchArray): P
     // it (the virtual model name = the router name, at the router endpoint).
     const endpoint = (await getRouterInfo()).endpoint;
     if (!(await listWebchatModels()).some((m) => m.model_id === name && m.endpoint === endpoint)) {
-      createWebchatModel({
+      await createWebchatModel({
         id: randomUUID(),
         name,
         kind: 'openai-compatible',
@@ -165,7 +165,7 @@ export async function rRouterDelDelete(ctx: RouteCtx, m: RegExpMatchArray): Prom
   try {
     const next = deleteRouter(cfg, name);
     writeRoutesConfig(next);
-    if (model) deleteWebchatModel(model.id);
+    if (model) await deleteWebchatModel(model.id);
     return json(res, 200, { ok: true, routers: listRouters(next) });
   } catch (err) {
     return json(res, 400, { error: err instanceof Error ? err.message : String(err) });

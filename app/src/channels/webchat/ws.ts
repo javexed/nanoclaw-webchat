@@ -68,7 +68,7 @@ async function interruptRoomSessions(roomId: string, agentName?: string | null):
     sessions = await filterAsync(sessions, async (s) => (await getAgentGroup(s.agent_group_id))?.name === agentName);
   }
   for (const s of sessions) {
-    writeSessionMessage(s.agent_group_id, s.id, {
+    await writeSessionMessage(s.agent_group_id, s.id, {
       id: `interrupt-${randomUUID()}`,
       kind: 'interrupt',
       timestamp: new Date().toISOString(),
@@ -230,7 +230,7 @@ export function setupWebSocket(
         send({ type: 'system', message: `Connected as ${client.identity}` });
         // Annotated payload (incl. per-user `unread`) so the sidebar reconstructs
         // unread badges on reconnect — not just for messages seen live.
-        send({ type: 'rooms', rooms: annotateRoomsForUser(client.userId) });
+        send({ type: 'rooms', rooms: await annotateRoomsForUser(client.userId) });
         return;
       }
 
@@ -259,7 +259,7 @@ export function setupWebSocket(
         // Opening reads it: advance the room marker (clears the room dot + syncs
         // devices) and the per-thread marker.
         markRoomReadForUser(client.userId, room.id, Date.now(), clientId);
-        markThreadRead(client.userId, room.id, joinThread);
+        await markThreadRead(client.userId, room.id, joinThread);
         send({
           type: 'history',
           room_id: room.id,
@@ -269,11 +269,11 @@ export function setupWebSocket(
             content: redactSensitiveData(m.content),
           })),
         });
-        broadcast(room.id, { type: 'system', room_id: room.id, message: `${client.identity} joined` }, clientId);
-        broadcast(room.id, {
+        await broadcast(room.id, { type: 'system', room_id: room.id, message: `${client.identity} joined` }, clientId);
+        await broadcast(room.id, {
           type: 'members',
           room_id: room.id,
-          members: getMemberList(room.id),
+          members: await getMemberList(room.id),
         });
         // Replay any in-progress agent turn so a re-join mid-turn re-shows the
         // thinking bubble (status frames are live-only + room-scoped, so leaving
@@ -288,7 +288,7 @@ export function setupWebSocket(
       // ── TYPING ───────────────────────────────────────────────────────────
       if (msg.type === 'typing') {
         if (!client.room_id) return;
-        broadcast(
+        await broadcast(
           client.room_id,
           {
             type: 'typing',
@@ -314,7 +314,7 @@ export function setupWebSocket(
         markRoomReadForUser(client.userId, room.id, Date.now(), clientId);
         // Per-thread marker (default 'main') so thread badges clear too.
         const readThread = typeof msg.thread_id === 'string' && msg.thread_id ? msg.thread_id : MAIN_THREAD;
-        markThreadRead(client.userId, room.id, readThread);
+        await markThreadRead(client.userId, room.id, readThread);
         return;
       }
 
@@ -352,7 +352,7 @@ export function setupWebSocket(
         markRoomReadForUser(client.userId, client.room_id, stored.created_at, clientId);
         const outgoing: Record<string, unknown> = { type: 'message', ...stored };
         if (typeof msg.client_id === 'string') outgoing.client_id = msg.client_id;
-        broadcast(client.room_id, outgoing, clientId);
+        await broadcast(client.room_id, outgoing, clientId);
 
         // Pipe the inbound to the router so the agent sees it. content carries
         // senderId (namespaced for the v2 permissions module's senderResolver).
@@ -383,7 +383,7 @@ export function setupWebSocket(
       if (msg.type === 'interrupt') {
         if (!client.room_id) return;
         const agentName = typeof msg.agent_name === 'string' ? msg.agent_name : undefined;
-        interruptRoomSessions(client.room_id, agentName);
+        await interruptRoomSessions(client.room_id, agentName);
         return;
       }
 
@@ -397,7 +397,7 @@ export function setupWebSocket(
         }
         const deleted = deleteWebchatMessage(messageId, client.identity, client.room_id);
         if ((await deleted)) {
-          broadcast(client.room_id, {
+          await broadcast(client.room_id, {
             type: 'delete_message',
             room_id: client.room_id,
             message_id: messageId,
@@ -410,16 +410,17 @@ export function setupWebSocket(
     ws.on('close', () => {
       const c = removeClient(clientId);
       if (c?.room_id) {
-        broadcast(c.room_id, {
+        const roomId = c.room_id; // capture: the narrowing doesn't survive into the .then closure
+        broadcast(roomId, {
           type: 'system',
-          room_id: c.room_id,
+          room_id: roomId,
           message: `${c.identity} left`,
         });
-        broadcast(c.room_id, {
-          type: 'members',
-          room_id: c.room_id,
-          members: getMemberList(c.room_id),
-        });
+        // The close handler is a sync event callback; resolve the member list
+        // first, THEN broadcast — embedding the promise serialized as {}.
+        void getMemberList(roomId).then((members) =>
+          broadcast(roomId, { type: 'members', room_id: roomId, members }),
+        );
       }
     });
   });

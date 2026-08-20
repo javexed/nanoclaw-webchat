@@ -14,12 +14,12 @@ async function envFor(agentGroupId = AG): Promise<Record<string, string>> {
   return resolveContainerEnv(agentGroupId, null);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
   delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
 });
 
-afterEach(() => {
+afterEach(async () => {
   delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
   vi.resetModules();
 });

@@ -23,12 +23,12 @@ import { PERSONA_PREPEND_FILE, readGroupPersona } from '../../group-persona.js';
 let dir: string;
 let outside: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'instr-'));
   outside = fs.mkdtempSync(path.join(os.tmpdir(), 'outside-'));
 });
 
-afterEach(() => {
+afterEach(async () => {
   fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(outside, { recursive: true, force: true });
 });
@@ -55,7 +55,7 @@ function writePersona(groupDir: string, text: string): { ok: boolean; symlinkRef
 }
 
 describe('instructions editor writes the provider-neutral surface', () => {
-  it('round-trips through the same file claude-md-compose reads', () => {
+  it('round-trips through the same file claude-md-compose reads', async () => {
     writePersona(dir, 'Always answer in metric units.');
     // readGroupPersona is what composes the persona fragment — if the editor
     // and the composer disagree on the path, this is where it shows.
@@ -63,12 +63,12 @@ describe('instructions editor writes the provider-neutral surface', () => {
     expect(fs.existsSync(path.join(dir, PERSONA_PREPEND_FILE))).toBe(true);
   });
 
-  it('does NOT write CLAUDE.local.md — the pre-cutover, Claude-only surface', () => {
+  it('does NOT write CLAUDE.local.md — the pre-cutover, Claude-only surface', async () => {
     writePersona(dir, 'some instructions');
     expect(fs.existsSync(path.join(dir, 'CLAUDE.local.md'))).toBe(false);
   });
 
-  it('leaves an existing legacy file untouched (migration is /migrate-memory’s job)', () => {
+  it('leaves an existing legacy file untouched (migration is /migrate-memory’s job)', async () => {
     const legacy = path.join(dir, 'CLAUDE.local.md');
     fs.writeFileSync(legacy, 'pre-cutover content');
     writePersona(dir, 'new standing instructions');
@@ -76,7 +76,7 @@ describe('instructions editor writes the provider-neutral surface', () => {
     expect(readGroupPersona(dir)).toBe('new standing instructions');
   });
 
-  it('refuses to follow a symlink instead of writing through it', () => {
+  it('refuses to follow a symlink instead of writing through it', async () => {
     const target = path.join(outside, 'victim.md');
     fs.writeFileSync(target, 'do not clobber me');
     fs.symlinkSync(target, path.join(dir, PERSONA_PREPEND_FILE));
@@ -86,7 +86,7 @@ describe('instructions editor writes the provider-neutral surface', () => {
     expect(fs.readFileSync(target, 'utf-8')).toBe('do not clobber me');
   });
 
-  it('an empty save clears the instructions rather than writing a stray newline', () => {
+  it('an empty save clears the instructions rather than writing a stray newline', async () => {
     writePersona(dir, 'something');
     writePersona(dir, '   \n  ');
     expect(readGroupPersona(dir)).toBeNull();

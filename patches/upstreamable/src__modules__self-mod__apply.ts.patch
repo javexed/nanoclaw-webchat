@@ -1,5 +1,5 @@
 diff --git a/src/modules/self-mod/apply.ts b/src/modules/self-mod/apply.ts
-index 18cf1b60..a8abaa27 100644
+index 18cf1b60..364a8e79 100644
 --- a/src/modules/self-mod/apply.ts
 +++ b/src/modules/self-mod/apply.ts
 @@ -20,15 +20,59 @@ import {
@@ -47,7 +47,7 @@ index 18cf1b60..a8abaa27 100644
 + * agent reads after respawn.
 + */
 +async function notifyAndRespawn(session: Session, onWakeText: string, reason: string): Promise<void> {
-+  writeSessionMessage(session.agent_group_id, session.id, {
++  await writeSessionMessage(session.agent_group_id, session.id, {
 +    id: newApprNoteId(),
 +    kind: 'chat',
 +    timestamp: new Date().toISOString(),
@@ -62,7 +62,7 @@ index 18cf1b60..a8abaa27 100644
 +    const s = await getSession(session.id);
 +    if (s) await wakeContainer(s);
 +  });
-+  respawnSiblingSessions(session.agent_group_id, session.id, `sibling session stale after ${reason}`);
++  await respawnSiblingSessions(session.agent_group_id, session.id, `sibling session stale after ${reason}`);
  }
  
  export async function applyInstallPackages(payload: Record<string, unknown>, session: Session): Promise<void> {
@@ -116,7 +116,7 @@ index 18cf1b60..a8abaa27 100644
 -  killContainer(session.id, 'mcp server added', () => {
 -    void wakeSessionById(session.id);
 -  });
-+  notifyAndRespawn(
++  await notifyAndRespawn(
 +    session,
 +    `MCP server "${payload.name}" added. Verify it's available (e.g. list your tools) and report the result to the user.`,
 +    'mcp server added',

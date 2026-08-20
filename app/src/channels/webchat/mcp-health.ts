@@ -56,7 +56,7 @@ export async function checkMcpServer(server: WebchatMcpServer): Promise<McpHealt
       at: Date.now(),
       reason: probe.reason,
     };
-    setMcpServerHealth(server.id, health as unknown as Record<string, unknown>);
+    await setMcpServerHealth(server.id, health as unknown as Record<string, unknown>);
     return health;
   }
   const tools: McpToolPin[] = probe.tools.map((t) => ({ name: t.name, description: t.description }));
@@ -69,16 +69,16 @@ export async function checkMcpServer(server: WebchatMcpServer): Promise<McpHealt
   if (!pin) {
     // First sight of this server's surface (pre-hardening row, or created
     // without a probe): this baseline is the approval.
-    pinMcpToolSurface(server.id, tools);
+    await pinMcpToolSurface(server.id, tools);
     const health: McpHealth = { status: 'ok', at: Date.now(), toolCount: tools.length };
-    setMcpServerHealth(server.id, health as unknown as Record<string, unknown>);
+    await setMcpServerHealth(server.id, health as unknown as Record<string, unknown>);
     return health;
   }
   if (hashToolSurface(tools) !== pin.hash) {
     const drift = diffToolSurface(pin.tools, tools);
-    setMcpServerDrift(server.id, drift);
+    await setMcpServerDrift(server.id, drift);
     const health: McpHealth = { status: 'drift', at: Date.now(), toolCount: tools.length };
-    setMcpServerHealth(server.id, health as unknown as Record<string, unknown>);
+    await setMcpServerHealth(server.id, health as unknown as Record<string, unknown>);
     log.warn('MCP tool surface drifted from its pin', {
       server: server.name,
       added: drift?.added,
@@ -87,9 +87,9 @@ export async function checkMcpServer(server: WebchatMcpServer): Promise<McpHealt
     });
     return health;
   }
-  setMcpServerDrift(server.id, null);
+  await setMcpServerDrift(server.id, null);
   const health: McpHealth = { status: 'ok', at: Date.now(), toolCount: tools.length };
-  setMcpServerHealth(server.id, health as unknown as Record<string, unknown>);
+  await setMcpServerHealth(server.id, health as unknown as Record<string, unknown>);
   return health;
 }
 

@@ -28,8 +28,8 @@ function fakeFetch(handler: (url: string, init?: RequestInit) => { status?: numb
   return { fn, calls };
 }
 
-function addModel(id: string, kind: string, endpoint: string | null = 'http://127.0.0.1:11434'): void {
-  createWebchatModel({
+async function addModel(id: string, kind: string, endpoint: string | null = 'http://127.0.0.1:11434'): Promise<void> {
+  await createWebchatModel({
     id,
     name: id,
     kind: kind as never,
@@ -57,7 +57,7 @@ beforeEach(async () => {
   }
 });
 afterEach(async () => {
-  closeDb();
+  await closeDb();
   for (const [k, v] of Object.entries(savedEnv)) {
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
@@ -177,23 +177,23 @@ describe('cleanupTranscript', () => {
   });
 
   it('returns raw when the configured model was deleted', async () => {
-    setSttCleanupModelId('gone-model');
+    await setSttCleanupModelId('gone-model');
     const { fn, calls } = fakeFetch(() => ({ body: '{}' }));
     expect(await cleanupTranscript(RAW, fn)).toEqual({ text: RAW, cleaned: false });
     expect(calls).toHaveLength(0);
   });
 
   it('returns raw for a model kind that cannot serve chat completions', async () => {
-    addModel('m-anthropic', 'anthropic', null);
-    setSttCleanupModelId('m-anthropic');
+    await addModel('m-anthropic', 'anthropic', null);
+    await setSttCleanupModelId('m-anthropic');
     const { fn, calls } = fakeFetch(() => ({ body: '{}' }));
     expect(await cleanupTranscript(RAW, fn)).toEqual({ text: RAW, cleaned: false });
     expect(calls).toHaveLength(0);
   });
 
   it('cleans via the roster model: right URL, model id, temperature 0, strict prompt', async () => {
-    addModel('m-ollama', 'ollama');
-    setSttCleanupModelId('m-ollama');
+    await addModel('m-ollama', 'ollama');
+    await setSttCleanupModelId('m-ollama');
     const cleaned = 'I think we should ship the thing tomorrow.';
     const { fn, calls } = fakeFetch(() => ({
       body: JSON.stringify({ choices: [{ message: { content: cleaned } }] }),
@@ -209,8 +209,8 @@ describe('cleanupTranscript', () => {
   });
 
   it('rejects a wild rewrite via the length guard (model answered instead of cleaning)', async () => {
-    addModel('m-ollama', 'ollama');
-    setSttCleanupModelId('m-ollama');
+    await addModel('m-ollama', 'ollama');
+    await setSttCleanupModelId('m-ollama');
     const essay = 'Shipping tomorrow is a great idea because '.repeat(10);
     const { fn } = fakeFetch(() => ({
       body: JSON.stringify({ choices: [{ message: { content: essay } }] }),
@@ -219,8 +219,8 @@ describe('cleanupTranscript', () => {
   });
 
   it('falls back to raw on endpoint failure and on empty content', async () => {
-    addModel('m-ollama', 'ollama');
-    setSttCleanupModelId('m-ollama');
+    await addModel('m-ollama', 'ollama');
+    await setSttCleanupModelId('m-ollama');
     const { fn: err } = fakeFetch(() => ({ status: 502, body: 'down' }));
     expect(await cleanupTranscript(RAW, err)).toEqual({ text: RAW, cleaned: false });
     const { fn: empty } = fakeFetch(() => ({ body: JSON.stringify({ choices: [{ message: { content: '' } }] }) }));
@@ -232,9 +232,9 @@ describe('cleanup prompt override', () => {
   const RAW = 'nano clot dictation test';
 
   it('uses the stored custom prompt as the system message', async () => {
-    addModel('m-ollama', 'ollama');
-    setSttCleanupModelId('m-ollama');
-    setSttCleanupPrompt('Custom prompt: fix NanoClaw names.');
+    await addModel('m-ollama', 'ollama');
+    await setSttCleanupModelId('m-ollama');
+    await setSttCleanupPrompt('Custom prompt: fix NanoClaw names.');
     const { fn, calls } = fakeFetch(() => ({
       body: JSON.stringify({ choices: [{ message: { content: 'NanoClaw dictation test' } }] }),
     }));
@@ -244,12 +244,12 @@ describe('cleanup prompt override', () => {
   });
 
   it('falls back to the built-in default when unset/blank', async () => {
-    addModel('m-ollama', 'ollama');
-    setSttCleanupModelId('m-ollama');
-    setSttCleanupPrompt(null);
-    expect(getSttCleanupPrompt()).toBeNull();
-    setSttCleanupPrompt('   ');
-    expect(getSttCleanupPrompt()).toBeNull(); // blank reads as unset
+    await addModel('m-ollama', 'ollama');
+    await setSttCleanupModelId('m-ollama');
+    await setSttCleanupPrompt(null);
+    expect(await getSttCleanupPrompt()).toBeNull();
+    await setSttCleanupPrompt('   ');
+    expect(await getSttCleanupPrompt()).toBeNull(); // blank reads as unset
     const { fn, calls } = fakeFetch(() => ({
       body: JSON.stringify({ choices: [{ message: { content: 'Nano clot dictation test.' } }] }),
     }));
@@ -265,10 +265,10 @@ describe('stt_cleanup_model_id (migration + accessors)', () => {
       (c) => c.name,
     );
     expect(cols).toContain('stt_cleanup_model_id');
-    expect(getSttCleanupModelId()).toBeNull();
-    setSttCleanupModelId('m-1');
-    expect(getSttCleanupModelId()).toBe('m-1');
-    setSttCleanupModelId(null);
-    expect(getSttCleanupModelId()).toBeNull();
+    expect(await getSttCleanupModelId()).toBeNull();
+    await setSttCleanupModelId('m-1');
+    expect(await getSttCleanupModelId()).toBe('m-1');
+    await setSttCleanupModelId(null);
+    expect(await getSttCleanupModelId()).toBeNull();
   });
 });

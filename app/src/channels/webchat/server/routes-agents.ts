@@ -201,7 +201,7 @@ export async function rAgentsFromTemplatePost(ctx: RouteCtx, _m: RegExpMatchArra
       ...(typeof body.name === 'string' && body.name.trim() ? { name: body.name.trim() } : {}),
       ...(typeof body.timezone === 'string' && body.timezone.trim() ? { timezone: body.timezone.trim() } : {}),
     });
-    grantCreatorAdmin(userId, group.id);
+    await grantCreatorAdmin(userId, group.id);
     // `report` names anything the reader skipped (a non-conforming skill, an
     // unsupported transport). Components are never silently stripped, so it
     // travels to the client even on success.
@@ -224,7 +224,7 @@ const ownerOnly = async (userId: string): Promise<boolean> => (await isOwner(use
 export async function rTemplateSourcesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
-  return json(res, 200, { sources: listTemplateSources() });
+  return json(res, 200, { sources: await listTemplateSources() });
 }
 
 export async function rTemplateSourcePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
@@ -249,8 +249,8 @@ export async function rTemplateSourcePost(ctx: RouteCtx, _m: RegExpMatchArray): 
   }
   const branch = str(body.branch) || 'main';
   const id = str(body.id) || `${owner}-${repo}`.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
-  upsertTemplateSource({ id, label: str(body.label) || `${owner}/${repo}`, owner, repo, branch });
-  return json(res, 200, { ok: true, sources: listTemplateSources() });
+  await upsertTemplateSource({ id, label: str(body.label) || `${owner}/${repo}`, owner, repo, branch });
+  return json(res, 200, { ok: true, sources: await listTemplateSources() });
 }
 
 export async function rTemplateSourceDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
@@ -262,7 +262,7 @@ export async function rTemplateSourceDelete(ctx: RouteCtx, m: RegExpMatchArray):
   if (!(await deleteTemplateSource(id))) {
     return json(res, 400, { error: 'No such source, or it is a built-in that cannot be removed' });
   }
-  return json(res, 200, { ok: true, sources: listTemplateSources() });
+  return json(res, 200, { ok: true, sources: await listTemplateSources() });
 }
 
 export async function rTemplateSourceBrowseGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
@@ -395,7 +395,7 @@ export async function rAgentTemplateApplyPost(ctx: RouteCtx, m: RegExpMatchArray
     const applied = await restampAgentFromTemplate(ref, group.id, { apply: true });
     // Skill and MCP changes only take effect in a fresh container, which is
     // what the CLI tells the operator to do by hand after an apply.
-    restartAgentGroupContainers(group.id, 'Template update applied');
+    await restartAgentGroupContainers(group.id, 'Template update applied');
     return json(res, 200, { ok: true, ref, changes: applied.changes, report: applied.report });
   } catch (err) {
     log.warn('Webchat: template update failed', { agent: group.id, ref, err });
@@ -435,7 +435,7 @@ export async function rAgentExportTemplatePost(ctx: RouteCtx, m: RegExpMatchArra
       ...(str(body.description) ? { description: str(body.description)! } : {}),
       ...(str(body.agentName) ? { agentName: str(body.agentName)! } : {}),
     });
-    return json(res, 200, { ok: true, ...result });
+    return json(res, 200, { ok: true, ...(await result) });
   } catch (err) {
     log.warn('Webchat: exporting agent as template failed', { agent: group.id, err });
     return json(res, 400, { error: err instanceof Error ? err.message : 'Could not export the template' });
@@ -512,13 +512,13 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
             : `Unknown harness: ${provider}`,
     });
   }
-  ensureContainerConfig(group.id);
-  updateContainerConfigScalars(group.id, { provider: provider === 'claude' ? null : provider });
+  await ensureContainerConfig(group.id);
+  await updateContainerConfigScalars(group.id, { provider: provider === 'claude' ? null : provider });
   // (Re)write the local-model wiring for the NEW harness before the respawn —
   // opencode/pi read it at spawn; without this the switch only takes effect
   // after the next boot convergence or model change.
   try {
-    writeLocalModelForAgent(group.id);
+    await writeLocalModelForAgent(group.id);
   } catch (err) {
     log.warn('Webchat: wiring write after harness switch failed', { agentGroupId: group.id, err });
   }
@@ -590,8 +590,8 @@ export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): 
       });
     }
   }
-  ensureContainerConfig(group.id);
-  updateContainerConfigScalars(group.id, { model: model || null });
+  await ensureContainerConfig(group.id);
+  await updateContainerConfigScalars(group.id, { model: model || null });
   const restarted = restartAgentGroupContainers(group.id, 'Model changed');
   return json(res, 200, { ok: true, model: model || null, restarted });
 }
@@ -629,11 +629,11 @@ export async function rAgentEgressPut(ctx: RouteCtx, m: RegExpMatchArray): Promi
     return json(res, 400, { error: "egress must be 'open' or 'host-only'" });
   // A group that has never spawned has no container_configs row, and the scalar
   // update is an UPDATE — it would match nothing and still report success.
-  ensureContainerConfig(group.id);
+  await ensureContainerConfig(group.id);
   // 'open' is stored as NULL — the column's absent state IS open, and writing
   // the string would make "never set" and "explicitly open" look different to
   // every reader of the row for no gain.
-  updateContainerConfigScalars(group.id, { egress: body.egress === 'open' ? null : 'host-only' });
+  await updateContainerConfigScalars(group.id, { egress: body.egress === 'open' ? null : 'host-only' });
   log.info('Agent egress changed', { agentGroupId: group.id, egress: body.egress, by: userId });
   return json(res, 200, { ok: true, egress: body.egress });
 }
@@ -858,7 +858,7 @@ export async function rAgentLearning(ctx: RouteCtx, m: RegExpMatchArray): Promis
     if (body.replayReview) next.replayReview = true;
     else delete next.replayReview; // absent = digest, the default
   }
-  updateContainerConfigJson(group.id, 'learning', next);
+  await updateContainerConfigJson(group.id, 'learning', next);
   // Config materializes at spawn — restart so the container sees it now.
   const restarted = restartAgentGroupContainers(group.id, 'Learning settings changed');
   return json(res, 200, {
@@ -1009,7 +1009,7 @@ export async function createAgentHandler(
       instructions: typeof body.instructions === 'string' ? body.instructions : undefined,
     });
     if ('error' in result) return json(res, result.status, { error: result.error });
-    grantCreatorAdmin(creatorUserId, result.group.id);
+    await grantCreatorAdmin(creatorUserId, result.group.id);
     return json(res, 200, { ok: true, agentGroup: result.group, roomId: null });
   }
 
@@ -1019,8 +1019,8 @@ export async function createAgentHandler(
     instructions: typeof body.instructions === 'string' ? body.instructions : undefined,
   });
   if ('error' in provisioned) return json(res, provisioned.status, { error: provisioned.error });
-  grantCreatorAdmin(creatorUserId, provisioned.group.id);
-  broadcastRooms();
+  await grantCreatorAdmin(creatorUserId, provisioned.group.id);
+  await broadcastRooms();
   return json(res, 200, {
     ok: true,
     agentGroup: provisioned.group,
@@ -1045,7 +1045,7 @@ export async function createAgentHandler(
 export async function grantCreatorAdmin(creatorUserId: string, agentGroupId: string): Promise<void> {
   if ((await isOwner(creatorUserId)) || (await isGlobalAdmin(creatorUserId))) return;
   try {
-    permsGrantRole({
+    await permsGrantRole({
       user_id: creatorUserId,
       role: 'admin',
       agent_group_id: agentGroupId,
@@ -1076,7 +1076,7 @@ export async function updateAgentHandler(req: IncomingMessage, res: ServerRespon
   if (typeof body.name === 'string' && body.name.trim()) updates.name = body.name.trim();
   if (typeof body.agent_provider === 'string') updates.agent_provider = body.agent_provider;
   if (body.agent_provider === null) updates.agent_provider = null;
-  updateAgentGroup(id, updates);
+  await updateAgentGroup(id, updates);
   return json(res, 200, { ok: true });
 }
 
@@ -1139,12 +1139,12 @@ export async function importAgentApplyHandler(req: IncomingMessage, res: ServerR
       if (server) await syncAgentMcpConfig(result.id, server, true);
     }
     if (result.modelAssigned) {
-      writeAgentSettingsForAssignedModel(result.id);
-      syncAgentProviderForAssignedModel(result.id);
+      await writeAgentSettingsForAssignedModel(result.id);
+      await syncAgentProviderForAssignedModel(result.id);
     }
     pendingAgentImports.delete(String(body.token));
     fs.rmSync(staged.dir, { recursive: true, force: true });
-    broadcastRooms();
+    await broadcastRooms();
     return json(res, 200, { ok: true, ...result });
   } catch (err) {
     log.error('Agent import apply failed', { err });
@@ -1228,7 +1228,7 @@ export async function deleteAgentHandler(res: ServerResponse, id: string): Promi
     log.warn('Webchat: failed to remove group folder', { folder: group.folder, err });
   }
 
-  broadcastRooms();
+  await broadcastRooms();
   return json(res, 200, { ok: true });
 }
 
@@ -1269,16 +1269,16 @@ export async function assignAgentModelHandler(
   }
   // null = unassign (back to default Anthropic credential + default model)
   if (body.modelId === null) {
-    unassignModelFromAgent(agentGroupId);
+    await unassignModelFromAgent(agentGroupId);
   } else {
     if (typeof body.modelId !== 'string' || !body.modelId.trim()) {
       return json(res, 400, { error: 'modelId must be a string or null' });
     }
     const model = getWebchatModel(body.modelId.trim());
     if (!model) return json(res, 404, { error: 'Model not found' });
-    assignModelToAgent(agentGroupId, body.modelId.trim());
+    await assignModelToAgent(agentGroupId, body.modelId.trim());
   }
-  reloadAgentModelEnv(agentGroupId, 'Webchat model reassigned');
+  await reloadAgentModelEnv(agentGroupId, 'Webchat model reassigned');
   const current = await getAssignedModelForAgent(agentGroupId);
   // Preflight the newly-assigned model from a container's vantage point so the
   // operator learns NOW (not via silent "API retry") if the agent can't reach it.
@@ -1304,7 +1304,7 @@ export async function setAgentSkillsHandler(
   const skills = [...new Set(body.skills.map(String).filter((s) => available.has(s)))];
   // Persist the explicit selection (switches the agent off the 'all' default) and
   // respawn so syncSkillSymlinks re-points .claude/skills before the next turn.
-  updateContainerConfigJson(agentGroupId, 'skills', skills);
+  await updateContainerConfigJson(agentGroupId, 'skills', skills);
   const restarted = restartAgentGroupContainers(agentGroupId, 'Webchat skills changed');
   return json(res, 200, { ok: true, skills, restarted });
 }
@@ -1450,6 +1450,6 @@ export async function setAgentMcpHandler(
     await syncAgentMcpConfig(agentGroupId, server, false);
     changed++;
   }
-  if (changed > 0) reloadAgentMcpServers(agentGroupId);
+  if (changed > 0) await reloadAgentMcpServers(agentGroupId);
   return json(res, 200, { ok: true, servers: (await getMcpServersForAgent(agentGroupId)).map(mcpServerForUI) });
 }

@@ -1,8 +1,8 @@
 diff --git a/src/container-config.test.ts b/src/container-config.test.ts
-index 1a979f61..c2fb2d5d 100644
+index 1a979f61..aad06db9 100644
 --- a/src/container-config.test.ts
 +++ b/src/container-config.test.ts
-@@ -63,6 +63,25 @@ describe('resolveGroupTimezone', () => {
+@@ -63,10 +63,29 @@ describe('resolveGroupTimezone', () => {
      await updateContainerConfigScalars(GROUP.id, { timezone: 'Not/AZone' });
      expect(configFromDb((await getContainerConfig(GROUP.id))!, GROUP).timezone).toBeUndefined();
    });
@@ -15,19 +15,33 @@ index 1a979f61..c2fb2d5d 100644
 +   * which is how it shipped unmapped.
 +   */
 +  it('configFromDb carries egress through to the container', async () => {
-+    updateContainerConfigScalars(GROUP.id, { egress: 'host-only' });
++    await updateContainerConfigScalars(GROUP.id, { egress: 'host-only' });
 +    expect(configFromDb((await getContainerConfig(GROUP.id))!, GROUP).egress).toBe('host-only');
 +
-+    updateContainerConfigScalars(GROUP.id, { egress: 'none' });
++    await updateContainerConfigScalars(GROUP.id, { egress: 'none' });
 +    expect(configFromDb((await getContainerConfig(GROUP.id))!, GROUP).egress).toBe('none');
 +
 +    // Unset means OneCLI's default (open) — undefined, not the string 'open'.
-+    updateContainerConfigScalars(GROUP.id, { egress: null });
++    await updateContainerConfigScalars(GROUP.id, { egress: null });
 +    expect(configFromDb((await getContainerConfig(GROUP.id))!, GROUP).egress).toBeUndefined();
 +  });
  });
  
  describe('parseMcpServerConfig', () => {
+-  it('preserves stdio config and accepts HTTPS Streamable HTTP config', () => {
++  it('preserves stdio config and accepts HTTPS Streamable HTTP config', async () => {
+     expect(parseMcpServerConfig({ command: 'pnpm', args: ['dlx', 'server'], env: { TOKEN: 'stub' } })).toEqual({
+       command: 'pnpm',
+       args: ['dlx', 'server'],
+@@ -118,7 +137,7 @@ describe('parseMcpServerConfig', () => {
+     expect(() => parseMcpServerConfig(input)).toThrow(message);
+   });
+ 
+-  it('honors a declared type and maps streamable-http onto the internal http', () => {
++  it('honors a declared type and maps streamable-http onto the internal http', async () => {
+     expect(parseMcpServerConfig({ type: 'stdio', command: 'server' })).toEqual({
+       command: 'server',
+       args: [],
 @@ -131,7 +150,6 @@ describe('parseMcpServerConfig', () => {
    });
  
@@ -36,17 +50,62 @@ index 1a979f61..c2fb2d5d 100644
      [{ type: 'websocket', url: 'https://mcp.example.com/mcp' }, /type must be/],
      [{ type: 'stdio', url: 'https://mcp.example.com/mcp' }, /requires command/],
      [{ type: 'http', command: 'server' }, /requires url/],
-@@ -139,6 +157,13 @@ describe('parseMcpServerConfig', () => {
+@@ -139,7 +157,14 @@ describe('parseMcpServerConfig', () => {
      expect(() => parseMcpServerConfig(input)).toThrow(message);
    });
  
-+  it('accepts a declared sse transport (fork: webchat still wires legacy SSE servers)', () => {
+-  it('accepts headers on http entries and rejects them on stdio entries', () => {
++  it('accepts a declared sse transport (fork: webchat still wires legacy SSE servers)', async () => {
 +    expect(parseMcpServerConfig({ type: 'sse', url: 'https://mcp.example.com/mcp' })).toEqual({
 +      type: 'sse',
 +      url: 'https://mcp.example.com/mcp',
 +    });
 +  });
 +
-   it('accepts headers on http entries and rejects them on stdio entries', () => {
++  it('accepts headers on http entries and rejects them on stdio entries', async () => {
      expect(parseMcpServerConfig({ url: 'https://mcp.example.com/mcp', headers: { 'X-Client': 'nanoclaw' } })).toEqual({
        type: 'http',
+       url: 'https://mcp.example.com/mcp',
+@@ -174,7 +199,7 @@ describe('parseMcpServerConfig', () => {
+ });
+ 
+ describe('sanitizeStoredMcpServers', () => {
+-  it('keeps valid entries, preserves a well-formed pluginRoot, and drops the rest', () => {
++  it('keeps valid entries, preserves a well-formed pluginRoot, and drops the rest', async () => {
+     const sanitized = sanitizeStoredMcpServers(
+       {
+         good: { command: 'server', args: [], env: {}, pluginRoot: `${CONTAINER_PLUGINS_DIR}/sdr` },
+@@ -191,7 +216,7 @@ describe('sanitizeStoredMcpServers', () => {
+     expect(sanitized.badRoot).not.toHaveProperty('pluginRoot');
+   });
+ 
+-  it('strips cwd from entries without plugin provenance, keeps it with', () => {
++  it('strips cwd from entries without plugin provenance, keeps it with', async () => {
+     const sanitized = sanitizeStoredMcpServers(
+       {
+         planted: { command: 'server', cwd: '${PLUGIN_DATA}/x' },
+@@ -203,13 +228,13 @@ describe('sanitizeStoredMcpServers', () => {
+     expect(sanitized.plugin).toMatchObject({ cwd: '${PLUGIN_DATA}/x' });
+   });
+ 
+-  it('returns empty on a non-object blob', () => {
++  it('returns empty on a non-object blob', async () => {
+     expect(sanitizeStoredMcpServers('garbage', 'test-group')).toEqual({});
+   });
+ });
+ 
+ describe('validateMcpServerName', () => {
+-  it('accepts bare-key-safe names and rejects structural or oversized ones', () => {
++  it('accepts bare-key-safe names and rejects structural or oversized ones', async () => {
+     expect(() => validateMcpServerName('brave-search_2')).not.toThrow();
+     // __proto__ matches the regex but would set the record's prototype
+     // instead of an own key on assignment — rejected by name.
+@@ -225,7 +250,7 @@ describe('validateMcpServerName', () => {
+  * the copies byte-identical so drift fails a test instead of shipping.
+  */
+ describe('host/container validation parity', () => {
+-  it('keeps the duplicated regex literals identical', () => {
++  it('keeps the duplicated regex literals identical', async () => {
+     const read = (p: string): string => fs.readFileSync(path.join(process.cwd(), p), 'utf-8');
+     const host = read('src/container-config.ts');
+     const container = read('container/agent-runner/src/mcp-tools/self-mod.ts');

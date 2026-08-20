@@ -29,7 +29,7 @@ const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
 
 let libDir = '';
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
 });
 
@@ -37,7 +37,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     // ignore
   }
@@ -108,8 +108,8 @@ function seed(db: import('../../db/driver.js').DbDriver): void {
   const group = async (id: string) =>
     await db.run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, id, id, id, now);
   const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
-    user(uid);
-    if (g) group(g);
+    await user(uid);
+    if (g) await group(g);
     await db.run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`, uid, r, g, now);
   };
   group('ag-test-a');

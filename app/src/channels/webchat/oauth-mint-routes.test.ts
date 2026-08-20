@@ -17,7 +17,7 @@ import { fileURLToPath } from 'url';
 const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
 const LOCAL_OWNER = 'webchat:local-owner';
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
 });
 
@@ -25,7 +25,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     // ignore
   }
@@ -97,7 +97,7 @@ const claudeStartUrl = clientCalls('/api/user-credentials/oauth/start');
 const codexCancelUrl = clientCalls('/api/user-credentials/codex/cancel');
 
 describe('user-credentials OAuth-mint routes — client/server path parity', () => {
-  it('app.js still points at /api/user-credentials/oauth/* and /api/user-credentials/codex/*', () => {
+  it('app.js still points at /api/user-credentials/oauth/* and /api/user-credentials/codex/*', async () => {
     // Sanity on the extraction itself: both known branches must resolve, and to
     // the expected prefixes — guards against the regex silently matching nothing.
     expect(claudeStartUrl).toBe('/api/user-credentials/oauth/start');

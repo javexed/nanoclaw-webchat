@@ -17,13 +17,13 @@ afterEach(() => closeDb());
 
 describe('learning master switch', () => {
   it('defaults to enabled', async () => {
-    expect(getLearningMasterEnabled()).toBe(true);
+    expect(await getLearningMasterEnabled()).toBe(true);
   });
 
   it('set/get roundtrips both ways', async () => {
-    setLearningMasterEnabled(false);
-    expect(getLearningMasterEnabled()).toBe(false);
-    setLearningMasterEnabled(true);
-    expect(getLearningMasterEnabled()).toBe(true);
+    await setLearningMasterEnabled(false);
+    expect(await getLearningMasterEnabled()).toBe(false);
+    await setLearningMasterEnabled(true);
+    expect(await getLearningMasterEnabled()).toBe(true);
   });
 });

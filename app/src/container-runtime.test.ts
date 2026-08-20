@@ -15,18 +15,18 @@ import {
 // against something that no longer exists.
 
 describe('container config augmentors', () => {
-  it('returns {} when no augmentor is registered (core default)', () => {
+  it('returns {} when no augmentor is registered (core default)', async () => {
     // Note: other suites may register augmentors; assert our key specifically.
     expect(resolveContainerConfigAugmentation('g-none').lenientOutput).toBeUndefined();
   });
 
-  it('merges a registered augmentor keyed by agent group', () => {
+  it('merges a registered augmentor keyed by agent group', async () => {
     registerContainerConfigAugmentor((id) => (id === 'g-ollama' ? { lenientOutput: true } : {}));
     expect(resolveContainerConfigAugmentation('g-ollama')).toMatchObject({ lenientOutput: true });
     expect(resolveContainerConfigAugmentation('g-other').lenientOutput).toBeUndefined();
   });
 
-  it('isolates a throwing augmentor — never breaks spawning', () => {
+  it('isolates a throwing augmentor — never breaks spawning', async () => {
     registerContainerConfigAugmentor(() => {
       throw new Error('augmentor bug');
     });
@@ -44,14 +44,14 @@ describe('makeContainerWritable', () => {
   const dirent = (name: string, kind: 'dir' | 'file' | 'link') =>
     ({ name, isDirectory: () => kind === 'dir', isSymbolicLink: () => kind === 'link' }) as fs.Dirent;
 
-  it('no-ops when the host is not root (UIDs already match the container)', () => {
+  it('no-ops when the host is not root (UIDs already match the container)', async () => {
     vi.spyOn(process, 'getuid').mockReturnValue(1000);
     const chown = vi.spyOn(fs, 'lchownSync').mockImplementation(() => {});
     makeContainerWritable('/opt/nanoclaw/groups/x', true);
     expect(chown).not.toHaveBeenCalled();
   });
 
-  it('chowns just the top dir to UID 1000 when root and not recursive', () => {
+  it('chowns just the top dir to UID 1000 when root and not recursive', async () => {
     vi.spyOn(process, 'getuid').mockReturnValue(0);
     const chown = vi.spyOn(fs, 'lchownSync').mockImplementation(() => {});
     const readdir = vi.spyOn(fs, 'readdirSync').mockImplementation(() => [] as never);
@@ -61,7 +61,7 @@ describe('makeContainerWritable', () => {
     expect(readdir).not.toHaveBeenCalled(); // non-recursive: no descent
   });
 
-  it('recursively lchowns the whole tree when root + recursive (covers outbound.db)', () => {
+  it('recursively lchowns the whole tree when root + recursive (covers outbound.db)', async () => {
     vi.spyOn(process, 'getuid').mockReturnValue(0);
     const chown = vi.spyOn(fs, 'lchownSync').mockImplementation(() => {});
     vi.spyOn(fs, 'lstatSync').mockReturnValue({ isDirectory: () => true } as fs.Stats); // top target
@@ -76,7 +76,7 @@ describe('makeContainerWritable', () => {
     expect(chown).toHaveBeenCalledWith('/s/outbound.db', 1000, 1000);
   });
 
-  it('SECURITY: lchowns a planted symlink but never follows or recurses through it', () => {
+  it('SECURITY: lchowns a planted symlink but never follows or recurses through it', async () => {
     // The agent controls .claude-shared/session contents and could `ln -s / evil`.
     // The walk must lchown the link itself (harmless) and NEVER descend into its
     // target — otherwise a root host would chown the whole filesystem.

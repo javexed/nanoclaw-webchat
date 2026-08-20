@@ -99,7 +99,7 @@ export async function createWebchatRoom(name: string, id?: string): Promise<Webc
     };
   }
   const createdAt = new Date().toISOString();
-  createMessagingGroup({
+  await createMessagingGroup({
     id: randomUUID(),
     channel_type: 'webchat',
     platform_id: platformId,
@@ -314,7 +314,7 @@ export async function deleteWebchatRoom(id: string): Promise<void> {
   // reaped by the host sweep on its next stale-heartbeat tick once the
   // session row is gone.
   await db.run(`DELETE FROM sessions WHERE messaging_group_id = ?`, mg.id);
-  deleteMessagingGroup(mg.id);
+  await deleteMessagingGroup(mg.id);
 }
 
 // ── Room ↔ Agent wirings ──
@@ -627,7 +627,9 @@ export async function getCredentialsConfig(): Promise<CredentialsConfig> {
 }
 
 export async function setCredentialsConfig(patch: Partial<CredentialsConfig>): Promise<void> {
-  const next = { ...getCredentialsConfig(), ...patch };
+  // Await before spreading: spreading a PROMISE contributes zero keys, so
+  // `next` silently became just the patch and every other column went NULL.
+  const next = { ...(await getCredentialsConfig()), ...patch };
   await getDb().run(
     `INSERT INTO webchat_settings
          (id, default_credential_mode, allow_anthropic_key, allow_claude_oauth, allow_openai_key, allow_codex_oauth, updated_at)
@@ -1533,7 +1535,7 @@ export async function resolveBoundedThread(roomId: string, requested: unknown): 
     const folder = want.slice('agent:'.length);
     const agent = (await getAgentsForWebchatRoom(roomId)).find((a) => a.folder === folder);
     if (agent) {
-      ensureAgentThread(roomId, folder, agent.name ?? folder);
+      await ensureAgentThread(roomId, folder, agent.name ?? folder);
       return want;
     }
     return MAIN_THREAD; // unknown agent folder → main (don't spawn)
@@ -1856,7 +1858,7 @@ export async function updateWebchatModel(
 ): Promise<void> {
   const existing = getWebchatModel(id);
   if (!existing) return;
-  const next = { ...existing, ...patch };
+  const next = { ...(await existing), ...patch };
   await getDb().run(
     `UPDATE webchat_models
        SET name = ?, endpoint = ?, model_id = ?, credential_ref = ?

@@ -13,7 +13,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  closeDb();
+  await closeDb();
 });
 
 describe('moduleWebchat migration', () => {
@@ -142,7 +142,7 @@ describe('moduleWebchat migration', () => {
     const db = getDb();
     // Manually apply just the legacy schema + schema_version (normally
     // created by runMigrations on first call).
-    db.exec(`
+    await db.exec(`
       CREATE TABLE schema_version (
         version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied TEXT NOT NULL
       );
@@ -178,7 +178,7 @@ describe('moduleWebchat migration', () => {
   it('webchat_messages survives the FK drop (data migrates intact)', async () => {
     const db = getDb();
     // Same legacy seed as the test above.
-    db.exec(`
+    await db.exec(`
       CREATE TABLE schema_version (
         version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied TEXT NOT NULL
       );

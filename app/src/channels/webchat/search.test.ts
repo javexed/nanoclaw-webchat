@@ -14,10 +14,10 @@ import { storeWebchatMessage, searchWebchatMessages } from './db.js';
 beforeEach(async () => {
   await initTestDb();
   await runMigrations(getDb());
-  storeWebchatMessage('room-1', 'agent', 'agent', 'The ACR auth issue was a stale token from last month');
-  storeWebchatMessage('room-1', 'mark', 'user', 'thanks, the authentication works now');
-  storeWebchatMessage('room-2', 'agent', 'agent', 'ACR auth notes for a different project');
-  storeWebchatMessage('room-1', 'mark', 'user', 'unrelated chatter about lunch');
+  await storeWebchatMessage('room-1', 'agent', 'agent', 'The ACR auth issue was a stale token from last month');
+  await storeWebchatMessage('room-1', 'mark', 'user', 'thanks, the authentication works now');
+  await storeWebchatMessage('room-2', 'agent', 'agent', 'ACR auth notes for a different project');
+  await storeWebchatMessage('room-1', 'mark', 'user', 'unrelated chatter about lunch');
 });
 afterEach(() => closeDb());
 
@@ -41,9 +41,9 @@ describe('searchWebchatMessages', () => {
   });
 
   it('returns [] for empty/whitespace/no-room queries (no FTS syntax error)', async () => {
-    expect(searchWebchatMessages(['room-1'], '')).toEqual([]);
-    expect(searchWebchatMessages(['room-1'], '   ')).toEqual([]);
-    expect(searchWebchatMessages([], 'auth')).toEqual([]);
+    expect(await searchWebchatMessages(['room-1'], '')).toEqual([]);
+    expect(await searchWebchatMessages(['room-1'], '   ')).toEqual([]);
+    expect(await searchWebchatMessages([], 'auth')).toEqual([]);
   });
 
   it('sanitizes FTS operators/quotes in user input (no throw)', async () => {

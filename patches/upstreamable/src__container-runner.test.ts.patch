@@ -1,22 +1,256 @@
 diff --git a/src/container-runner.test.ts b/src/container-runner.test.ts
-index ea71a59f..c2b00a22 100644
+index ea71a59f..844685fb 100644
 --- a/src/container-runner.test.ts
 +++ b/src/container-runner.test.ts
-@@ -38,7 +38,7 @@ describe('resolveProviderName', () => {
+@@ -33,25 +33,25 @@ vi.mock('./log.js', () => ({
+ }));
+ 
+ describe('resolveProviderName', () => {
+-  it('prefers session over container config', () => {
++  it('prefers session over container config', async () => {
+     expect(resolveProviderName('codex', 'claude')).toBe('codex');
    });
  
-   it('falls back to container config when session is null', () => {
+-  it('falls back to container config when session is null', () => {
 -    expect(resolveProviderName(null, 'opencode')).toBe('opencode');
++  it('falls back to container config when session is null', async () => {
 +    expect(resolveProviderName(null, 'codex')).toBe('codex');
    });
  
-   it('defaults to claude when nothing is set', () => {
-@@ -51,7 +51,7 @@ describe('resolveProviderName', () => {
+-  it('defaults to claude when nothing is set', () => {
++  it('defaults to claude when nothing is set', async () => {
+     expect(resolveProviderName(null, undefined)).toBe('claude');
    });
  
-   it('treats empty string as unset (falls through)', () => {
+-  it('lowercases the resolved name', () => {
++  it('lowercases the resolved name', async () => {
+     expect(resolveProviderName('CODEX', null)).toBe('codex');
+     expect(resolveProviderName(null, 'Claude')).toBe('claude');
+   });
+ 
+-  it('treats empty string as unset (falls through)', () => {
 -    expect(resolveProviderName('', 'opencode')).toBe('opencode');
++  it('treats empty string as unset (falls through)', async () => {
 +    expect(resolveProviderName('', 'codex')).toBe('codex');
      expect(resolveProviderName(null, '')).toBe('claude');
    });
  });
+@@ -125,11 +125,11 @@ function composeWithFolder(folder: string) {
+ }
+ 
+ describe('composeSessionSpec', () => {
+-  it('keys the session by install, group and session id', () => {
++  it('keys the session by install, group and session id', async () => {
+     expect(compose().key).toMatchObject({ agentGroupId: 'agent-1', sessionId: 'session-1' });
+   });
+ 
+-  it('routes the model provider contribution onto the contributed lane', () => {
++  it('routes the model provider contribution onto the contributed lane', async () => {
+     // Registry-sourced env is provenance-exempt from the credential-NAME check
+     // — the custom-endpoint provider registers ANTHROPIC_AUTH_TOKEN=placeholder
+     // for the gateway to overwrite on the wire, and composed-lane rules would
+@@ -144,7 +144,7 @@ describe('composeSessionSpec', () => {
+     expect(spec.containers[0].env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+   });
+ 
+-  it('the gateway contribution fills the contributed lane last and wins a collision', () => {
++  it('the gateway contribution fills the contributed lane last and wins a collision', async () => {
+     const spec = compose({
+       contribution: { env: { HTTPS_PROXY: 'http://provider:1' } },
+       gateway: { env: { HTTPS_PROXY: 'http://gateway-must-win:15001' } },
+@@ -152,7 +152,7 @@ describe('composeSessionSpec', () => {
+     expect(spec.containers[0].contributedEnv?.HTTPS_PROXY).toBe('http://gateway-must-win:15001');
+   });
+ 
+-  it('gateway mounts merge collision-free, shadowing a composed mount on the same target', () => {
++  it('gateway mounts merge collision-free, shadowing a composed mount on the same target', async () => {
+     const spec = compose({
+       gateway: {
+         mounts: [
+@@ -179,7 +179,7 @@ describe('composeSessionSpec', () => {
+     expect(targets).toContain('/tmp/onecli-ca.pem');
+   });
+ 
+-  it('gateway containers ride beside the agent', () => {
++  it('gateway containers ride beside the agent', async () => {
+     const spec = compose({
+       gateway: {
+         containers: [{ role: 'egress-proxy', image: 'proxy:1', env: {}, mounts: [] }],
+@@ -188,7 +188,7 @@ describe('composeSessionSpec', () => {
+     expect(spec.containers.map((c) => c.role)).toEqual(['agent', 'egress-proxy']);
+   });
+ 
+-  it('carries the lineage label and stamps the group folder VERBATIM (D9)', () => {
++  it('carries the lineage label and stamps the group folder VERBATIM (D9)', async () => {
+     // The id→folder mapping lives only in the central DB; carrying the folder
+     // on the session is what lets an admission-side check pin `groups/<folder>`
+     // mounts to the session. Byte-identical to `agentGroup.folder` — drivers
+@@ -197,7 +197,7 @@ describe('composeSessionSpec', () => {
+     expect(compose().labels['nanoclaw-group-folder']).toBe(agentGroup.folder);
+   });
+ 
+-  it('REFUSES a folder that exceeds the 63-byte label cap instead of letting a driver project it', () => {
++  it('REFUSES a folder that exceeds the 63-byte label cap instead of letting a driver project it', async () => {
+     // Admission joins `groups/<folder>` hostPaths to this label by string
+     // concatenation; no admission-side check can invert a hash-suffix
+     // projection, so an unlabelable folder must refuse at composition —
+@@ -214,7 +214,7 @@ describe('composeSessionSpec', () => {
+     expect(String((thrown as Error).message)).toContain('rename the group folder');
+   });
+ 
+-  it('REFUSES a folder outside the label-value charset, even a short one', () => {
++  it('REFUSES a folder outside the label-value charset, even a short one', async () => {
+     for (const folder of ['spike agent', 'café', 'agent-']) {
+       let thrown: unknown;
+       try {
+@@ -226,7 +226,7 @@ describe('composeSessionSpec', () => {
+     }
+   });
+ 
+-  it('accepts a folder at exactly 63 bytes, and the uuid-minted shape a governance flow creates', () => {
++  it('accepts a folder at exactly 63 bytes, and the uuid-minted shape a governance flow creates', async () => {
+     // The bound is the cap itself, not a timid margin below it — and the
+     // ~42-byte `agent-<uuid>` shape minted group folders get must stay legal,
+     // so refusals are rare and loud rather than routine.
+@@ -237,13 +237,13 @@ describe('composeSessionSpec', () => {
+     expect(composeWithFolder(minted).labels['nanoclaw-group-folder']).toBe(minted);
+   });
+ 
+-  it('splits PID 1 so a driver can preserve the image init', () => {
++  it('splits PID 1 so a driver can preserve the image init', async () => {
+     const agent = compose().containers[0];
+     expect(agent.command).toEqual(['bash', '-c']);
+     expect(agent.args).toEqual(['exec bun run /app/src/index.ts']);
+   });
+ 
+-  it('asks for a shared-private network and the standard posture', () => {
++  it('asks for a shared-private network and the standard posture', async () => {
+     const spec = compose();
+     expect(spec.network).toBe('shared-private');
+     expect(spec.hardening).toBe('standard');
+@@ -251,7 +251,7 @@ describe('composeSessionSpec', () => {
+     expect(spec.stopGraceSeconds).toBe(1);
+   });
+ 
+-  it('composes an explicit runAs posture on a uid-1000 host', () => {
++  it('composes an explicit runAs posture on a uid-1000 host', async () => {
+     // uid 1000 matches the agent image's node user, so Docker's realization of
+     // this posture is a no-op — but the spec contract (drivers/types.ts) says
+     // the identity that must read 0600 host-owned material is explicit for
+@@ -270,7 +270,7 @@ describe('composeSessionSpec', () => {
+     }
+   });
+ 
+-  it('maps identity and HOME together for any non-root uid', () => {
++  it('maps identity and HOME together for any non-root uid', async () => {
+     // Under a uid the image has no passwd entry for, HOME resolves to '/' and
+     // the provider SDK's `mkdir ~/.claude` dies EACCES — so the mapping and
+     // the explicit HOME travel together, exactly as they did in the old argv.
+@@ -286,7 +286,7 @@ describe('composeSessionSpec', () => {
+     }
+   });
+ 
+-  it('never asks a runtime to run the session as root', () => {
++  it('never asks a runtime to run the session as root', async () => {
+     // The hardened posture pins non-root, so a composed uid-0 runAs could never
+     // be realized; Docker's root behavior (image USER wins) stays unchanged.
+     const getuid = vi.spyOn(process, 'getuid').mockReturnValue(0);
+@@ -299,7 +299,7 @@ describe('composeSessionSpec', () => {
+     }
+   });
+ 
+-  it('leaves cpu and memory unset by default (unbounded, as today)', () => {
++  it('leaves cpu and memory unset by default (unbounded, as today)', async () => {
+     // Guards the knobs' own defaults: an accidental default cap would OOM-kill
+     // workloads that run fine now.
+     expect(CONTAINER_CPU_LIMIT).toBe('');
+@@ -312,25 +312,25 @@ describe('composeSessionSpec', () => {
+ });
+ 
+ describe('parseMemoryMb', () => {
+-  it('reads the operator-facing docker size strings', () => {
++  it('reads the operator-facing docker size strings', async () => {
+     expect(parseMemoryMb('8g')).toBe(8192);
+     expect(parseMemoryMb('512m')).toBe(512);
+     expect(parseMemoryMb('2G')).toBe(2048);
+   });
+ 
+-  it('treats a bare number as bytes, the way Docker does', () => {
++  it('treats a bare number as bytes, the way Docker does', async () => {
+     // Reinterpreting it as megabytes would multiply an existing operator value
+     // by a million.
+     expect(parseMemoryMb('536870912')).toBe(512);
+   });
+ 
+-  it('treats blank and zero as unbounded — the meanings Docker itself assigns', () => {
++  it('treats blank and zero as unbounded — the meanings Docker itself assigns', async () => {
+     for (const value of ['', '   ', '0']) {
+       expect(parseMemoryMb(value)).toBeUndefined();
+     }
+   });
+ 
+-  it('REFUSES garbage instead of silently removing the cap', () => {
++  it('REFUSES garbage instead of silently removing the cap', async () => {
+     // Fail-closed like the raw pass-through this replaced: Docker used to
+     // reject an invalid value at spawn. Returning undefined would fail in the
+     // one wrong direction a resource limit has — quietly uncapped.
+@@ -341,12 +341,12 @@ describe('parseMemoryMb', () => {
+ });
+ 
+ describe('parsePidsLimit', () => {
+-  it('accepts a positive integer and floors fractions', () => {
++  it('accepts a positive integer and floors fractions', async () => {
+     expect(parsePidsLimit('2048')).toBe(2048);
+     expect(parsePidsLimit('2048.7')).toBe(2048);
+   });
+ 
+-  it('rejects 0, negatives, blank and garbage', () => {
++  it('rejects 0, negatives, blank and garbage', async () => {
+     // cgroups v2 rejects `--pids-limit 0` with EINVAL, killing the spawn.
+     for (const value of ['0', '-1', '', '   ', 'lots']) {
+       expect(parsePidsLimit(value)).toBeUndefined();
+@@ -355,7 +355,7 @@ describe('parsePidsLimit', () => {
+ });
+ 
+ describe('toMountSpecs', () => {
+-  it('carries the class and scope through, and maps readonly to a mode', () => {
++  it('carries the class and scope through, and maps readonly to a mode', async () => {
+     expect(toMountSpecs(mounts, 'agent-1')).toEqual([
+       {
+         class: 'group-state',
+@@ -374,7 +374,7 @@ describe('toMountSpecs', () => {
+     ]);
+   });
+ 
+-  it('defaults an unclassed mount to the vetted-upstream class', () => {
++  it('defaults an unclassed mount to the vetted-upstream class', async () => {
+     const [spec] = toMountSpecs([{ hostPath: '/x', containerPath: '/y', readonly: false }], 'agent-1');
+     expect(spec.class).toBe('allowlisted-extra');
+     expect(spec.groupScope).toBe('agent-1');
+@@ -439,7 +439,7 @@ describe('syncSkillSymlinks', () => {
+     return fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-skills-'));
+   }
+ 
+-  it('links every selected skill to its container path', () => {
++  it('links every selected skill to its container path', async () => {
+     const dir = tmpClaudeDir();
+     syncSkillSymlinks(dir, { ...containerConfig, skills: ['welcome'] } as ContainerConfig);
+ 
+@@ -449,7 +449,7 @@ describe('syncSkillSymlinks', () => {
+     expect(fs.readlinkSync(link)).toBe('/app/skills/welcome');
+   });
+ 
+-  it('prunes symlinks that are no longer selected', () => {
++  it('prunes symlinks that are no longer selected', async () => {
+     const dir = tmpClaudeDir();
+     syncSkillSymlinks(dir, { ...containerConfig, skills: ['welcome', 'vercel-cli'] } as ContainerConfig);
+     syncSkillSymlinks(dir, { ...containerConfig, skills: ['welcome'] } as ContainerConfig);
+@@ -457,7 +457,7 @@ describe('syncSkillSymlinks', () => {
+     expect(fs.existsSync(path.join(dir, 'skills', 'vercel-cli'))).toBe(false);
+   });
+ 
+-  it('warns instead of silently skipping when a real entry blocks a desired skill', () => {
++  it('warns instead of silently skipping when a real entry blocks a desired skill', async () => {
+     // Template overlays depend on surviving the prune (see src/group-skills.ts);
+     // a stale pre-refactor skill copy (#3001) otherwise gets served forever with
+     // no trace.

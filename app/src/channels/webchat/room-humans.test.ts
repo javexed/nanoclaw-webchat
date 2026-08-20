@@ -29,7 +29,7 @@ const now = () => new Date().toISOString();
 
 async function seedUser(id: string, display: string, handle: string) {
   await getDb().run(`INSERT OR IGNORE INTO users (id,kind,display_name,created_at) VALUES (?,?,?,?)`, id, 'webchat', display, now());
-  setWebchatUserHandle(id, handle);
+  await setWebchatUserHandle(id, handle);
 }
 
 function readRoomHumans(): { handle: string; display_name: string | null }[] {
@@ -50,10 +50,10 @@ beforeEach(async () => {
   fs.rmSync(TEST_DIR, { recursive: true, force: true });
   const db = await initTestDb();
   await runMigrations(db);
-  createAgentGroup({ id: AG, name: 'RH', folder: 'rh', agent_provider: null, created_at: now() });
+  await createAgentGroup({ id: AG, name: 'RH', folder: 'rh', agent_provider: null, created_at: now() });
   await db.run(`INSERT INTO messaging_groups (id,channel_type,instance,platform_id,is_group,created_at)
      VALUES ('mg-rh','webchat','webchat','room-rh',1,?)`, now());
-  createSession({
+  await createSession({
     id: SESS,
     agent_group_id: AG,
     messaging_group_id: 'mg-rh',
@@ -67,53 +67,53 @@ beforeEach(async () => {
   initSessionFolder(AG, SESS);
 });
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeDb();
   fs.rmSync(TEST_DIR, { recursive: true, force: true });
 });
 
 describe('room humans -> session DB', () => {
-  it('publishes the handles of people who have spoken in the room', () => {
-    seedUser('webchat:mark', 'Mark', 'mark');
-    storeWebchatMessage('room-rh', 'webchat:mark', 'user', 'hello');
+  it('publishes the handles of people who have spoken in the room', async () => {
+    await seedUser('webchat:mark', 'Mark', 'mark');
+    await storeWebchatMessage('room-rh', 'webchat:mark', 'user', 'hello');
 
-    writeRoomHumans(AG, SESS);
+    await writeRoomHumans(AG, SESS);
 
     expect(readRoomHumans()).toEqual([{ handle: 'mark', display_name: 'Mark' }]);
   });
 
-  it('scopes to the room — someone who only speaks elsewhere is not listed', () => {
+  it('scopes to the room — someone who only speaks elsewhere is not listed', async () => {
     // Naming every registered handle to every agent would leak people who have
     // no presence in this room. Room members can already read it, so they cost
     // nothing to name.
-    seedUser('webchat:mark', 'Mark', 'mark');
-    seedUser('webchat:elsewhere', 'Elsewhere', 'elsewhere');
-    storeWebchatMessage('room-rh', 'webchat:mark', 'user', 'hello');
-    storeWebchatMessage('other-room', 'webchat:elsewhere', 'user', 'hi');
+    await seedUser('webchat:mark', 'Mark', 'mark');
+    await seedUser('webchat:elsewhere', 'Elsewhere', 'elsewhere');
+    await storeWebchatMessage('room-rh', 'webchat:mark', 'user', 'hello');
+    await storeWebchatMessage('other-room', 'webchat:elsewhere', 'user', 'hi');
 
-    writeRoomHumans(AG, SESS);
+    await writeRoomHumans(AG, SESS);
 
     expect(readRoomHumans().map((h) => h.handle)).toEqual(['mark']);
   });
 
   it('lists people only — agent authors are not mentionable', async () => {
-    seedUser('webchat:mark', 'Mark', 'mark');
-    seedUser('Example Assistant', 'Example Assistant', 'construction');
-    storeWebchatMessage('room-rh', 'webchat:mark', 'user', 'hello');
-    storeWebchatMessage('room-rh', 'Example Assistant', 'agent', 'hi back');
+    await seedUser('webchat:mark', 'Mark', 'mark');
+    await seedUser('Example Assistant', 'Example Assistant', 'construction');
+    await storeWebchatMessage('room-rh', 'webchat:mark', 'user', 'hello');
+    await storeWebchatMessage('room-rh', 'Example Assistant', 'agent', 'hi back');
 
     expect((await getRoomHumans('room-rh')).map((h) => h.handle)).toEqual(['mark']);
   });
 
-  it('refreshes on each spawn, so a newcomer becomes mentionable without a restart', () => {
-    seedUser('webchat:mark', 'Mark', 'mark');
-    storeWebchatMessage('room-rh', 'webchat:mark', 'user', 'hello');
-    writeRoomHumans(AG, SESS);
+  it('refreshes on each spawn, so a newcomer becomes mentionable without a restart', async () => {
+    await seedUser('webchat:mark', 'Mark', 'mark');
+    await storeWebchatMessage('room-rh', 'webchat:mark', 'user', 'hello');
+    await writeRoomHumans(AG, SESS);
     expect(readRoomHumans()).toHaveLength(1);
 
-    seedUser('webchat:owen', 'Owen', 'owen');
-    storeWebchatMessage('room-rh', 'webchat:owen', 'user', 'me too');
-    writeRoomHumans(AG, SESS);
+    await seedUser('webchat:owen', 'Owen', 'owen');
+    await storeWebchatMessage('room-rh', 'webchat:owen', 'user', 'me too');
+    await writeRoomHumans(AG, SESS);
 
     expect(readRoomHumans().map((h) => h.handle)).toEqual(['mark', 'owen']);
   });

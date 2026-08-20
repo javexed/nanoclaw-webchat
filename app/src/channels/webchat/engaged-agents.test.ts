@@ -15,48 +15,48 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  closeDb();
+  await closeDb();
 });
 
 describe('thread engaged agents', () => {
   it('engage / getEngaged / disengage round-trips', async () => {
-    engageAgent('room-1', 't1', 'ag-a');
-    engageAgent('room-1', 't1', 'ag-b');
+    await engageAgent('room-1', 't1', 'ag-a');
+    await engageAgent('room-1', 't1', 'ag-b');
     expect((await getEngagedAgents('room-1', 't1')).sort()).toEqual(['ag-a', 'ag-b']);
-    expect(isAgentEngaged('room-1', 't1', 'ag-a')).toBe(true);
-    disengageAgent('room-1', 't1', 'ag-a');
-    expect(getEngagedAgents('room-1', 't1')).toEqual(['ag-b']);
-    expect(isAgentEngaged('room-1', 't1', 'ag-a')).toBe(false);
+    expect(await isAgentEngaged('room-1', 't1', 'ag-a')).toBe(true);
+    await disengageAgent('room-1', 't1', 'ag-a');
+    expect(await getEngagedAgents('room-1', 't1')).toEqual(['ag-b']);
+    expect(await isAgentEngaged('room-1', 't1', 'ag-a')).toBe(false);
   });
 
   it('engage is idempotent', async () => {
-    engageAgent('room-1', 't1', 'ag-a', 100);
-    engageAgent('room-1', 't1', 'ag-a', 200);
-    expect(getEngagedAgents('room-1', 't1')).toEqual(['ag-a']);
+    await engageAgent('room-1', 't1', 'ag-a', 100);
+    await engageAgent('room-1', 't1', 'ag-a', 200);
+    expect(await getEngagedAgents('room-1', 't1')).toEqual(['ag-a']);
   });
 
   it('never engages the main thread (regular chat stays mention-only)', async () => {
-    engageAgent('room-1', 'main', 'ag-a');
-    expect(getEngagedAgents('room-1', 'main')).toEqual([]);
-    expect(isAgentEngaged('room-1', 'main', 'ag-a')).toBe(false);
+    await engageAgent('room-1', 'main', 'ag-a');
+    expect(await getEngagedAgents('room-1', 'main')).toEqual([]);
+    expect(await isAgentEngaged('room-1', 'main', 'ag-a')).toBe(false);
   });
 
   it('engaged set is scoped per thread', async () => {
-    engageAgent('room-1', 't1', 'ag-a');
-    engageAgent('room-1', 't2', 'ag-b');
-    expect(getEngagedAgents('room-1', 't1')).toEqual(['ag-a']);
-    expect(getEngagedAgents('room-1', 't2')).toEqual(['ag-b']);
+    await engageAgent('room-1', 't1', 'ag-a');
+    await engageAgent('room-1', 't2', 'ag-b');
+    expect(await getEngagedAgents('room-1', 't1')).toEqual(['ag-a']);
+    expect(await getEngagedAgents('room-1', 't2')).toEqual(['ag-b']);
   });
 
   it('returns agents in engage order (engaged_at)', async () => {
-    engageAgent('room-1', 't1', 'ag-b', 200);
-    engageAgent('room-1', 't1', 'ag-a', 100);
-    expect(getEngagedAgents('room-1', 't1')).toEqual(['ag-a', 'ag-b']);
+    await engageAgent('room-1', 't1', 'ag-b', 200);
+    await engageAgent('room-1', 't1', 'ag-a', 100);
+    expect(await getEngagedAgents('room-1', 't1')).toEqual(['ag-a', 'ag-b']);
   });
 
   it('deleteWebchatThread clears the thread engaged set', async () => {
-    engageAgent('room-1', 't1', 'ag-a');
-    deleteWebchatThread('room-1', 't1');
-    expect(getEngagedAgents('room-1', 't1')).toEqual([]);
+    await engageAgent('room-1', 't1', 'ag-a');
+    await deleteWebchatThread('room-1', 't1');
+    expect(await getEngagedAgents('room-1', 't1')).toEqual([]);
   });
 });

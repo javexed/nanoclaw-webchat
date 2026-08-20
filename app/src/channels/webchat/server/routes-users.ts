@@ -70,7 +70,7 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
       connected,
       credType,
       provider,
-      mode: getEffectiveRoomMode(roomId),
+      mode: await getEffectiveRoomMode(roomId),
       oauthAllowed: provider === 'codex' ? cfg.allowCodexOauth : cfg.allowClaudeOauth,
       apiKeyAllowed: provider === 'codex' ? cfg.allowOpenaiKey : cfg.allowAnthropicKey,
     });
@@ -483,7 +483,7 @@ export async function deleteUserHandler(
   // Clean up user_dms cache rows before deleting — user_dms.user_id has a
   // FK reference to users(id) that would otherwise block the delete.
   await getDb().run('DELETE FROM user_dms WHERE user_id = ?', targetUserId);
-  permsDeleteUser(targetUserId);
+  await permsDeleteUser(targetUserId);
   log.info('Webchat: deleted user', { targetUserId, by: callerUserId });
   return json(res, 200, { ok: true });
 }
@@ -504,10 +504,10 @@ export async function revokePermissionHandler(res: ServerResponse, body: GrantBo
   }
 
   if (kind === 'member') {
-    permsRemoveMember(targetUserId, agentGroupId as string);
+    await permsRemoveMember(targetUserId, agentGroupId as string);
     log.info('Webchat: revoked member', { targetUserId, agentGroupId });
   } else {
-    permsRevokeRole(targetUserId, kind, agentGroupId);
+    await permsRevokeRole(targetUserId, kind, agentGroupId);
     log.info('Webchat: revoked role', { targetUserId, role: kind, agentGroupId });
   }
   return json(res, 200, { ok: true });

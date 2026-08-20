@@ -54,8 +54,8 @@ export async function rMcpSourcesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promi
     sources: [
       {
         ...MCP_REGISTRY_SOURCE,
-        disabled: isSourceDisabled(MCP_REGISTRY_ID),
-        removed: isSourceDisabled(mcpRegistryRemovedKey()),
+        disabled: await isSourceDisabled(MCP_REGISTRY_ID),
+        removed: await isSourceDisabled(mcpRegistryRemovedKey()),
       },
     ],
   });
@@ -75,7 +75,7 @@ export async function rMcpSourcePut(ctx: RouteCtx, m: RegExpMatchArray): Promise
   } catch {
     return json(res, 400, { error: 'Invalid JSON' });
   }
-  setSourceDisabled(MCP_REGISTRY_ID, disabled);
+  await setSourceDisabled(MCP_REGISTRY_ID, disabled);
   return json(res, 200, { ok: true, disabled });
 }
 
@@ -87,7 +87,7 @@ export async function rMcpSourceDelete(ctx: RouteCtx, m: RegExpMatchArray): Prom
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (decodeURIComponent(m[1]) !== MCP_REGISTRY_ID) return json(res, 404, { error: 'Unknown source' });
-  setSourceDisabled(mcpRegistryRemovedKey(), true);
+  await setSourceDisabled(mcpRegistryRemovedKey(), true);
   return json(res, 200, { ok: true, removed: true });
 }
 
@@ -98,8 +98,8 @@ export async function rMcpSourcePost(ctx: RouteCtx, m: RegExpMatchArray): Promis
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (decodeURIComponent(m[1]) !== MCP_REGISTRY_ID) return json(res, 404, { error: 'Unknown source' });
-  setSourceDisabled(mcpRegistryRemovedKey(), false);
-  setSourceDisabled(MCP_REGISTRY_ID, false);
+  await setSourceDisabled(mcpRegistryRemovedKey(), false);
+  await setSourceDisabled(MCP_REGISTRY_ID, false);
   return json(res, 200, { ok: true, removed: false });
 }
 
@@ -127,7 +127,7 @@ export async function rMcpServersOauthCallbackGet(ctx: RouteCtx, _m: RegExpMatch
       // Re-sync every assigned agent onto the relay URL now that auth exists.
       for (const gid of await getAgentsAssignedToMcpServer(serverId)) {
         await syncAgentMcpConfig(gid, server, true);
-        reloadAgentMcpServers(gid);
+        await reloadAgentMcpServers(gid);
       }
       void checkMcpServer(server).catch(() => {});
     }
@@ -173,7 +173,7 @@ export async function rMcpRepinPost(ctx: RouteCtx, m: RegExpMatchArray): Promise
   const server = await getWebchatMcpServer(decodeURIComponent(m[1]));
   if (!server) return json(res, 404, { error: 'MCP server not found' });
   if (server.transport === 'stdio' || !server.url) return json(res, 400, { error: 'Only remote servers are pinned' });
-  setMcpServerDrift(server.id, null);
+  await setMcpServerDrift(server.id, null);
   await getDb().run(`UPDATE webchat_mcp_servers SET pinned_tools = NULL WHERE id = ?`, server.id);
   const health = await checkMcpServer((await getWebchatMcpServer(server.id))!); // re-probe pins the current surface
   return json(res, 200, { ok: true, health });
@@ -194,11 +194,11 @@ export async function rMcpToolsPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<
   } catch {
     return json(res, 400, { error: 'Invalid JSON' });
   }
-  setMcpServerEnabledTools(server.id, enabled && enabled.length ? enabled : null);
+  await setMcpServerEnabledTools(server.id, enabled && enabled.length ? enabled : null);
   const updated = (await getWebchatMcpServer(server.id))!;
   for (const gid of await getAgentsAssignedToMcpServer(server.id)) {
     await syncAgentMcpConfig(gid, updated, true);
-    reloadAgentMcpServers(gid);
+    await reloadAgentMcpServers(gid);
   }
   return json(res, 200, { ok: true });
 }
@@ -220,11 +220,11 @@ export async function rMcpAuthPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<v
   } catch {
     return json(res, 400, { error: 'Invalid JSON' });
   }
-  setMcpServerAuth(server.id, token ? { kind: 'bearer', token } : null);
+  await setMcpServerAuth(server.id, token ? { kind: 'bearer', token } : null);
   const updated = (await getWebchatMcpServer(server.id))!;
   for (const gid of await getAgentsAssignedToMcpServer(server.id)) {
     await syncAgentMcpConfig(gid, updated, true);
-    reloadAgentMcpServers(gid);
+    await reloadAgentMcpServers(gid);
   }
   return json(res, 200, { ok: true, hasAuth: !!token });
 }
@@ -290,7 +290,7 @@ export async function createMcpServerHandler(req: IncomingMessage, res: ServerRe
   // approval, so pin it as the drift baseline right here.
   if (Array.isArray(body.tools) && body.tools.length) {
     try {
-      pinMcpToolSurface(
+      await pinMcpToolSurface(
         server.id,
         (body.tools as { name?: unknown; description?: unknown }[])
           .filter((t) => typeof t?.name === 'string')
@@ -300,7 +300,7 @@ export async function createMcpServerHandler(req: IncomingMessage, res: ServerRe
       /* pin is protection, not a gate */
     }
   }
-  return json(res, 200, { ok: true, server: mcpServerForUI(server) });
+  return json(res, 200, { ok: true, server: await mcpServerForUI(server) });
 }
 
 export async function updateMcpServerHandler(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
@@ -335,14 +335,14 @@ export async function updateMcpServerHandler(req: IncomingMessage, res: ServerRe
     return json(res, 409, { error: `An MCP server named "${input.name}" already exists` });
   }
   const oldName = existing.name;
-  updateWebchatMcpServer(id, input);
+  await updateWebchatMcpServer(id, input);
   // Re-sync every assigned agent: drop the old key when renamed, upsert the
   // new config, and restart so live containers pick the change up.
   const updated = await getWebchatMcpServer(id);
   for (const agentGroupId of await getAgentsAssignedToMcpServer(id)) {
-    if (updated && oldName !== updated.name) syncAgentMcpConfig(agentGroupId, { ...updated, name: oldName }, false);
-    if (updated) syncAgentMcpConfig(agentGroupId, updated, true);
-    reloadAgentMcpServers(agentGroupId);
+    if (updated && oldName !== updated.name) await syncAgentMcpConfig(agentGroupId, { ...updated, name: oldName }, false);
+    if (updated) await syncAgentMcpConfig(agentGroupId, updated, true);
+    await reloadAgentMcpServers(agentGroupId);
   }
   return json(res, 200, { ok: true });
 }
@@ -362,9 +362,9 @@ export async function deleteMcpServerHandler(res: ServerResponse, id: string, fo
   for (const agentGroupId of assigned) {
     await syncAgentMcpConfig(agentGroupId, existing, false);
   }
-  deleteWebchatMcpServer(id);
+  await deleteWebchatMcpServer(id);
   for (const agentGroupId of assigned) {
-    reloadAgentMcpServers(agentGroupId);
+    await reloadAgentMcpServers(agentGroupId);
   }
   return json(res, 200, { ok: true, unassigned_count: assigned.length });
 }

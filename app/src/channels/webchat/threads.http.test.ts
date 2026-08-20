@@ -16,7 +16,7 @@ const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
 // The loopback no-auth path authenticates as this identity (auth.ts).
 const LOCAL_OWNER = 'webchat:local-owner';
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
 });
 
@@ -24,7 +24,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     // ignore
   }

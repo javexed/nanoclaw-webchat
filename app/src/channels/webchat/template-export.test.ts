@@ -25,7 +25,7 @@ let libDir = '';
 let groupDir = '';
 let overlayDir = '';
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
   libDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-exp-lib-'));
   vi.stubEnv('NANOCLAW_TEMPLATES_DIR', libDir);
@@ -35,7 +35,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     // ignore
   }
@@ -56,12 +56,12 @@ async function seedAgent(mcpServers: Record<string, unknown> = {}): Promise<void
     .getDb().run(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, GROUP.id, GROUP.name, GROUP.folder, '2026-08-17T00:00:00.000Z');
 
   const { ensureContainerConfig, updateContainerConfigScalars } = await import('../../db/container-configs.js');
-  ensureContainerConfig(GROUP.id);
+  await ensureContainerConfig(GROUP.id);
   if (Object.keys(mcpServers).length) {
     await conn
       .getDb().run('UPDATE container_configs SET mcp_servers = ? WHERE agent_group_id = ?', JSON.stringify(mcpServers), GROUP.id);
   }
-  updateContainerConfigScalars(GROUP.id, { timezone: 'Europe/Amsterdam' });
+  await updateContainerConfigScalars(GROUP.id, { timezone: 'Europe/Amsterdam' });
 
   const { GROUPS_DIR } = await import('../../config.js');
   groupDir = path.join(GROUPS_DIR, GROUP.folder);

@@ -17,13 +17,13 @@ function scratchDir(): string {
   SCRATCH.push(d);
   return d;
 }
-afterAll(() => {
+afterAll(async () => {
   for (const d of SCRATCH) fs.rmSync(d, { recursive: true, force: true });
   SCRATCH.length = 0;
 });
 
 let file: string;
-beforeEach(() => {
+beforeEach(async () => {
   file = path.join(scratchDir(), 'audit.jsonl');
   vi.stubEnv('NANOCLAW_AUDIT_FILE', file);
 });
@@ -37,7 +37,7 @@ const lines = () =>
     .map((l) => JSON.parse(l) as Record<string, unknown>);
 
 describe('audit', () => {
-  it('appends one parseable JSON line per event, with ts/pid/seq stamped', () => {
+  it('appends one parseable JSON line per event, with ts/pid/seq stamped', async () => {
     audit({ type: 'auth.session', actor: 'human:webchat:alice', detail: { source: 'tailscale' } });
     audit({ type: 'guard.decision', action: 'a2a.send', effect: 'deny', reason: 'no policy' });
 
@@ -54,21 +54,21 @@ describe('audit', () => {
     expect((rows[1].seq as number) > (rows[0].seq as number)).toBe(true);
   });
 
-  it('creates the destination directory if it is missing', () => {
+  it('creates the destination directory if it is missing', async () => {
     const nested = path.join(scratchDir(), 'a', 'b', 'audit.jsonl');
     vi.stubEnv('NANOCLAW_AUDIT_FILE', nested);
     audit({ type: 'auth.session' });
     expect(fs.existsSync(nested)).toBe(true);
   });
 
-  it('never throws when the destination is unwritable', () => {
+  it('never throws when the destination is unwritable', async () => {
     // A DIRECTORY at the file's path — appendFileSync will refuse.
     const dirAsFile = scratchDir();
     vi.stubEnv('NANOCLAW_AUDIT_FILE', dirAsFile);
     expect(() => audit({ type: 'auth.session' })).not.toThrow();
   });
 
-  it('honors the env override, resolved per call', () => {
+  it('honors the env override, resolved per call', async () => {
     expect(auditFilePath()).toBe(file);
     vi.stubEnv('NANOCLAW_AUDIT_FILE', '/elsewhere/audit.jsonl');
     expect(auditFilePath()).toBe('/elsewhere/audit.jsonl');
@@ -76,7 +76,7 @@ describe('audit', () => {
 });
 
 describe('auditActor', () => {
-  it('normalizes every actor kind', () => {
+  it('normalizes every actor kind', async () => {
     expect(auditActor({ kind: 'human', userId: 'webchat:alice' })).toBe('human:webchat:alice');
     expect(auditActor({ kind: 'agent', agentGroupId: 'g1' })).toBe('agent:g1');
     expect(auditActor({ kind: 'host' })).toBe('host');
@@ -100,7 +100,7 @@ describe('readAuditEvents', () => {
     ...over,
   });
 
-  it('returns newest first and respects the limit', () => {
+  it('returns newest first and respects the limit', async () => {
     write([ev(1), ev(2), ev(3)]);
     const page = readAuditEvents({ limit: 2 });
     expect(page.events.map((e) => e.seq)).toEqual([3, 2]);
@@ -109,7 +109,7 @@ describe('readAuditEvents', () => {
     expect(page.truncated).toBe(false);
   });
 
-  it('filters by type, effect and actor substring', () => {
+  it('filters by type, effect and actor substring', async () => {
     write([
       ev(1, { type: 'guard.decision', effect: 'deny', actor: 'agent:g1' }),
       ev(2, { type: 'auth.session', effect: 'allow', actor: 'human:webchat:bob' }),
@@ -121,7 +121,7 @@ describe('readAuditEvents', () => {
     expect(readAuditEvents({ actor: 'bob' }).events.map((e) => e.seq)).toEqual([2]);
   });
 
-  it('pages older with the beforeTs cursor', () => {
+  it('pages older with the beforeTs cursor', async () => {
     write([ev(1), ev(2), ev(3)]);
     const first = readAuditEvents({ limit: 2 });
     const older = readAuditEvents({ limit: 2, beforeTs: first.events[first.events.length - 1].ts });
@@ -129,14 +129,14 @@ describe('readAuditEvents', () => {
     expect(older.hasMore).toBe(false);
   });
 
-  it('skips a torn line instead of failing the page', () => {
+  it('skips a torn line instead of failing the page', async () => {
     // A half-written record is what a crash mid-append leaves behind. The
     // viewer must still render everything around it.
     fs.writeFileSync(file, `${JSON.stringify(ev(1))}\n{"ts":"2026-08-12T00:00:00.0\n${JSON.stringify(ev(3))}\n`);
     expect(readAuditEvents().events.map((e) => e.seq)).toEqual([3, 1]);
   });
 
-  it('is an empty page when the file does not exist', () => {
+  it('is an empty page when the file does not exist', async () => {
     vi.stubEnv('NANOCLAW_AUDIT_FILE', path.join(scratchDir(), 'nope', 'audit.jsonl'));
     expect(readAuditEvents()).toEqual({ events: [], hasMore: false, truncated: false });
   });

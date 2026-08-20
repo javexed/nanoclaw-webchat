@@ -14,7 +14,7 @@ const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
 let auditFile: string;
 const SCRATCH: string[] = [];
 
-beforeEach(() => {
+beforeEach(async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-e2e-'));
   SCRATCH.push(dir);
   auditFile = path.join(dir, 'audit.jsonl');
@@ -26,7 +26,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     /* ignore */
   }
@@ -117,8 +117,8 @@ describe('audit events at the seams', () => {
 
     const allowAction = defineGuardedAction({ action: 'audit-test.allow', decide: () => ALLOW('fine') });
     const denyAction = defineGuardedAction({ action: 'audit-test.deny', decide: () => DENY('nope') });
-    guard(allowAction, { actor: { kind: 'human', userId: 'webchat:probe' }, payload: { secret: 'MUST-NOT-APPEAR' } });
-    guard(denyAction, { actor: { kind: 'agent', agentGroupId: 'g1' }, payload: {} });
+    await guard(allowAction, { actor: { kind: 'human', userId: 'webchat:probe' }, payload: { secret: 'MUST-NOT-APPEAR' } });
+    await guard(denyAction, { actor: { kind: 'agent', agentGroupId: 'g1' }, payload: {} });
 
     const decisions = events().filter((e) => e.type === 'guard.decision');
     expect(decisions).toHaveLength(2);

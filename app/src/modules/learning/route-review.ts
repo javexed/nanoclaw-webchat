@@ -87,7 +87,7 @@ export async function handleRouteLearningReview(content: Record<string, unknown>
       origin: { channel_type: origin.channel_type ?? null, platform_id: origin.platform_id ?? null },
       requested_by: invoker,
     });
-    writeSessionMessage(agentGroupId, target.id, {
+    await writeSessionMessage(agentGroupId, target.id, {
       id: generateId('learn-route'),
       kind: 'chat',
       timestamp: new Date().toISOString(),

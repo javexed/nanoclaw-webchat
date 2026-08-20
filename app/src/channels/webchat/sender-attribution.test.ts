@@ -37,15 +37,15 @@ beforeEach(async () => {
   // Two agents wired to one room, both with running sessions. The setup
   // is what previously confused the heuristic: which agent gets credit
   // when both are 'running' and have recently-bumped `last_active`?
-  createAgentGroup({ id: 'ag-alpha', name: 'Alpha Agent', folder: 'alpha', agent_provider: null, created_at: now() });
-  createAgentGroup({
+  await createAgentGroup({ id: 'ag-alpha', name: 'Alpha Agent', folder: 'alpha', agent_provider: null, created_at: now() });
+  await createAgentGroup({
     id: 'ag-beta',
     name: 'Beta Agent',
     folder: 'beta',
     agent_provider: null,
     created_at: now(),
   });
-  createMessagingGroup({
+  await createMessagingGroup({
     id: 'mg-room-alpha',
     channel_type: 'webchat',
     platform_id: 'room-alpha',
@@ -55,7 +55,7 @@ beforeEach(async () => {
     created_at: now(),
   });
   for (const id of ['ag-alpha', 'ag-beta']) {
-    createMessagingGroupAgent({
+    await createMessagingGroupAgent({
       id: randomUUID(),
       messaging_group_id: 'mg-room-alpha',
       agent_group_id: id,
@@ -67,7 +67,7 @@ beforeEach(async () => {
       priority: 0,
       created_at: now(),
     });
-    createSession({
+    await createSession({
       id: `sess-${id}`,
       agent_group_id: id,
       messaging_group_id: 'mg-room-alpha',
@@ -82,11 +82,11 @@ beforeEach(async () => {
   // Make Beta's last_active strictly more recent so the heuristic
   // (last_active DESC) would pick Beta — but the real producer is
   // Alpha in our test scenario.
-  updateSession('sess-ag-beta', { last_active: new Date(Date.now() + 1000).toISOString() });
+  await updateSession('sess-ag-beta', { last_active: new Date(Date.now() + 1000).toISOString() });
 });
 
 afterEach(async () => {
-  closeDb();
+  await closeDb();
 });
 
 describe('sender attribution — without threading (heuristic)', () => {

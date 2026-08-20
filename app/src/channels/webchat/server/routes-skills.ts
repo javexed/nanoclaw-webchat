@@ -97,13 +97,13 @@ export async function rSkillsSourcesGet(ctx: RouteCtx, _m: RegExpMatchArray): Pr
   // `sources` = editable GitHub collections; `builtins` = code-wired sources
   // that also feed the pool but have nothing to edit (the marketplace).
   return json(res, 200, {
-    sources: listSkillSources(),
+    sources: await listSkillSources(),
     builtins: [
       {
         id: MARKETPLACE_ID,
         label: SKILL_DISCOVERY_SOURCE.name,
         url: SKILL_DISCOVERY_SOURCE.url,
-        disabled: isSourceDisabled(MARKETPLACE_ID),
+        disabled: await isSourceDisabled(MARKETPLACE_ID),
       },
     ],
   });
@@ -117,7 +117,7 @@ export async function rSkillSource(ctx: RouteCtx, m: RegExpMatchArray): Promise<
   // Built-in marketplace: there's nothing in the DB to edit/delete — DELETE
   // switches it off (removed from the pool), PUT switches it back on.
   if (sourceId === MARKETPLACE_ID) {
-    setSourceDisabled(MARKETPLACE_ID, method === 'DELETE');
+    await setSourceDisabled(MARKETPLACE_ID, method === 'DELETE');
     return json(res, 200, { ok: true });
   }
   if (method === 'PUT') return putSkillSourceHandler(req, res, sourceId);
@@ -259,7 +259,7 @@ export async function rSkillDraftsGet(ctx: RouteCtx, _m: RegExpMatchArray): Prom
       createdAt: d.created_at,
       // The conversation this draft was distilled FROM — reviewing a skill
       // without the session that produced it is guessing.
-      roomId: draftSourceRoom(d.session_id),
+      roomId: await draftSourceRoom(d.session_id),
     })),
   );
   return json(res, 200, { drafts });
@@ -502,7 +502,7 @@ export async function putSkillSourceHandler(req: IncomingMessage, res: ServerRes
       error: 'Could not list that folder: ' + (err instanceof Error ? err.message : String(err)),
     });
   }
-  upsertSkillSource(probe);
+  await upsertSkillSource(probe);
   return json(res, 200, { ok: true, source: { id: clean, label } });
 }
 

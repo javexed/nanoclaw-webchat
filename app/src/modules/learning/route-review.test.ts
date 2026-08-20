@@ -27,7 +27,7 @@ const AG = 'ag-learn-route';
 const MG = 'mg-room-1';
 
 async function seed(learning: Record<string, unknown> | null): Promise<Session> {
-  createAgentGroup({ id: AG, name: 'Learn Route', folder: 'learn-route', agent_provider: null, created_at: now() });
+  await createAgentGroup({ id: AG, name: 'Learn Route', folder: 'learn-route', agent_provider: null, created_at: now() });
   await getDb().run(`INSERT INTO container_configs (agent_group_id, skills, mcp_servers, packages_apt, packages_npm, additional_mounts, cli_scope, learning, updated_at)
        VALUES (?, '["all"]', '{}', '[]', '[]', '[]', 'group', ?, ?)`, AG, learning ? JSON.stringify(learning) : null, now());
   await getDb().run(`INSERT INTO messaging_groups (id, channel_type, platform_id, name, instance, created_at)
@@ -43,7 +43,7 @@ async function seed(learning: Record<string, unknown> | null): Promise<Session> 
     created_at: now(),
     last_active: now(),
   } as unknown as Session;
-  createSession(session);
+  await createSession(session);
   // Materialize the origin session's dir + DB files — in production the
   // room's container created them long before anyone typed /learn; the
   // decline notice writes into the existing outbound.db.
@@ -57,7 +57,7 @@ async function addUser(id: string): Promise<void> {
 
 /** Membership is the floor gate in every mode — a non-member never spends. */
 async function addMember(id: string): Promise<void> {
-  addUser(id);
+  await addUser(id);
   await getDb().run(`INSERT INTO agent_group_members (user_id, agent_group_id, added_by, added_at) VALUES (?, ?, ?, ?)`, id, AG, id, now());
 }
 
@@ -109,15 +109,15 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  closeDb();
+  await closeDb();
   fs.rmSync('/tmp/nanoclaw-test-learn-route', { recursive: true, force: true });
 });
 
 describe('handleRouteLearningReview — enrollment and policy', () => {
   it('routes to the invoker’s member session when they have a connected credential', async () => {
     const origin = seed({ chargeInvoker: 'auto' });
-    addMember('webchat:alice');
-    upsertUserCredential('webchat:alice', 'claude', 'secret-1', 'api_key');
+    await addMember('webchat:alice');
+    await upsertUserCredential('webchat:alice', 'claude', 'secret-1', 'api_key');
 
     await handleRouteLearningReview(payload(), await origin);
 
@@ -136,7 +136,7 @@ describe('handleRouteLearningReview — enrollment and policy', () => {
 
   it('declines with a notice when unenrolled and chargeInvoker is require', async () => {
     const origin = await seed({ chargeInvoker: 'require' });
-    addMember('webchat:alice');
+    await addMember('webchat:alice');
 
     await handleRouteLearningReview(payload(), origin);
 
@@ -149,7 +149,7 @@ describe('handleRouteLearningReview — enrollment and policy', () => {
 
   it('falls back to the origin session (workspace credential) for a privileged invoker', async () => {
     const origin = await seed({ chargeInvoker: 'auto' });
-    addUser('webchat:boss');
+    await addUser('webchat:boss');
     await getDb().run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_at) VALUES ('webchat:boss', 'owner', NULL, ?)`, now());
 
     await handleRouteLearningReview(payload({ requested_by: 'webchat:boss' }), origin);
@@ -162,7 +162,7 @@ describe('handleRouteLearningReview — enrollment and policy', () => {
 
   it('DECLINES a non-member in every mode — the membership gate is the floor', async () => {
     const origin = await seed({ chargeInvoker: 'off' }); // even the most permissive mode
-    addUser('webchat:stranger'); // a user, but NOT a member of this agent group
+    await addUser('webchat:stranger'); // a user, but NOT a member of this agent group
 
     await handleRouteLearningReview(payload({ requested_by: 'webchat:stranger' }), origin);
 
@@ -173,7 +173,7 @@ describe('handleRouteLearningReview — enrollment and policy', () => {
 
   it("'off' lets a plain member spend the workspace credential in the origin session", async () => {
     const origin = await seed({ chargeInvoker: 'off' });
-    addMember('webchat:dave');
+    await addMember('webchat:dave');
 
     await handleRouteLearningReview(payload({ requested_by: 'webchat:dave', charge_mode: 'off' }), origin);
 
@@ -185,7 +185,7 @@ describe('handleRouteLearningReview — enrollment and policy', () => {
 
   it('defaults to auto when no mode is configured (a review is real spend)', async () => {
     const origin = await seed({}); // learning configured, but no chargeInvoker key
-    addMember('webchat:erin'); // member, not enrolled, not privileged
+    await addMember('webchat:erin'); // member, not enrolled, not privileged
 
     await handleRouteLearningReview(payload({ requested_by: 'webchat:erin', charge_mode: undefined }), origin);
 
@@ -196,7 +196,7 @@ describe('handleRouteLearningReview — enrollment and policy', () => {
 
   it('declines an unenrolled, unprivileged invoker in auto mode', async () => {
     const origin = await seed({ chargeInvoker: 'auto' });
-    addMember('webchat:carol');
+    await addMember('webchat:carol');
 
     await handleRouteLearningReview(payload({ requested_by: 'webchat:carol' }), origin);
 

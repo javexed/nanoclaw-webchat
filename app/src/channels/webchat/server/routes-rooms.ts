@@ -116,12 +116,14 @@ export async function rRoomsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<vo
   return json(
     res,
     200,
-    visible.map((r) => ({
-      ...r,
-      archived: archivedSet.has(r.id),
-      hidden: hiddenSet.has(r.id),
-      canArchive: canArchiveRoom(userId, r.id),
-    })),
+    await Promise.all(
+      visible.map(async (r) => ({
+        ...r,
+        archived: archivedSet.has(r.id),
+        hidden: hiddenSet.has(r.id),
+        canArchive: await canArchiveRoom(userId, r.id),
+      })),
+    ),
   );
 }
 
@@ -197,7 +199,7 @@ export async function rRoomCredModeGet(ctx: RouteCtx, m: RegExpMatchArray): Prom
   // room actually runs (override, else the global default).
   return json(res, 200, {
     mode: getRoomModeOverride(roomId) ?? 'inherit',
-    effectiveMode: getEffectiveRoomMode(roomId),
+    effectiveMode: await getEffectiveRoomMode(roomId),
     defaultMode: (await getCredentialsConfig()).defaultMode,
   });
 }
@@ -223,7 +225,7 @@ export async function rRoomCredModePut(ctx: RouteCtx, m: RegExpMatchArray): Prom
     return json(res, 400, { error: "mode must be 'inherit', 'disabled', 'optional', or 'required'" });
   }
   // 'inherit' clears the override so the room follows the global default.
-  setRoomModeOverride(roomId, body.mode === 'inherit' ? null : body.mode);
+  await setRoomModeOverride(roomId, body.mode === 'inherit' ? null : body.mode);
   return json(res, 200, { ok: true, mode: body.mode });
 }
 
@@ -233,7 +235,7 @@ export async function rRoomOauthGet(ctx: RouteCtx, m: RegExpMatchArray): Promise
   const roomId = decodeURIComponent(m[1]);
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-  return json(res, 200, { allowed: getRoomOauthAllowed(roomId) });
+  return json(res, 200, { allowed: await getRoomOauthAllowed(roomId) });
 }
 
 export async function rRoomOauthPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
@@ -253,7 +255,7 @@ export async function rRoomOauthPut(ctx: RouteCtx, m: RegExpMatchArray): Promise
     return json(res, 400, { error: 'Invalid JSON' });
   }
   if (typeof body.allowed !== 'boolean') return json(res, 400, { error: 'allowed must be a boolean' });
-  setRoomOauthAllowed(roomId, body.allowed);
+  await setRoomOauthAllowed(roomId, body.allowed);
   return json(res, 200, { ok: true, allowed: body.allowed });
 }
 
@@ -304,11 +306,11 @@ export async function rRoomArchivePost(ctx: RouteCtx, m: RegExpMatchArray): Prom
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canArchiveRoom(userId, roomId))) return json(res, 403, { error: 'Admin only' });
   if (m[2] === 'archive') {
-    archiveRoom(roomId, userId);
+    await archiveRoom(roomId, userId);
   } else {
-    unarchiveRoom(roomId);
+    await unarchiveRoom(roomId);
   }
-  broadcastRooms();
+  await broadcastRooms();
   return json(res, 200, { ok: true });
 }
 
@@ -322,11 +324,11 @@ export async function rRoomHidePost(ctx: RouteCtx, m: RegExpMatchArray): Promise
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   if (m[2] === 'hide') {
-    hideRoomForUser(userId, roomId);
+    await hideRoomForUser(userId, roomId);
   } else {
-    unhideRoomForUser(userId, roomId);
+    await unhideRoomForUser(userId, roomId);
   }
-  broadcastRooms();
+  await broadcastRooms();
   return json(res, 200, { ok: true });
 }
 
@@ -340,11 +342,11 @@ export async function rRoomPinPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   if (m[2] === 'pin') {
-    pinRoomForUser(userId, roomId);
+    await pinRoomForUser(userId, roomId);
   } else {
-    unpinRoomForUser(userId, roomId);
+    await unpinRoomForUser(userId, roomId);
   }
-  broadcastRooms();
+  await broadcastRooms();
   return json(res, 200, { ok: true });
 }
 
@@ -366,8 +368,8 @@ export async function rRoomsPinsOrderPost(ctx: RouteCtx, _m: RegExpMatchArray): 
   if (!Array.isArray(body.order) || body.order.some((x) => typeof x !== 'string')) {
     return json(res, 400, { error: 'order must be an array of room id strings' });
   }
-  setPinnedOrderForUser(userId, body.order as string[]);
-  broadcastRooms();
+  await setPinnedOrderForUser(userId, body.order as string[]);
+  await broadcastRooms();
   return json(res, 200, { ok: true });
 }
 
@@ -399,11 +401,11 @@ export async function rRoomEngagePut(ctx: RouteCtx, m: RegExpMatchArray): Promis
   if (body.mode !== 'mention-only') {
     return json(res, 400, { error: "mode must be 'mention-only'" });
   }
-  setRoomEngageDefault(roomId, body.mode);
+  await setRoomEngageDefault(roomId, body.mode);
   // Re-run pattern computation so the new mode is reflected in every wiring.
   // No-op when a prime is set (prime branch takes over). Cheap one-UPDATE-per-wiring.
-  recomputeEngagePatterns(roomId);
-  broadcastRooms();
+  await recomputeEngagePatterns(roomId);
+  await broadcastRooms();
   return json(res, 200, { ok: true, mode: body.mode });
 }
 
@@ -423,8 +425,8 @@ export async function rRoomNamePut(ctx: RouteCtx, m: RegExpMatchArray): Promise<
   }
   const name = sanitizeRoomName(body.name);
   if (name === null) return json(res, 400, { error: 'name must be 1–80 characters' });
-  updateWebchatRoomName(roomId, name);
-  broadcastRooms();
+  await updateWebchatRoomName(roomId, name);
+  await broadcastRooms();
   return json(res, 200, { ok: true, name });
 }
 
@@ -438,7 +440,7 @@ export async function rRoomThreadReadPut(ctx: RouteCtx, m: RegExpMatchArray): Pr
   const threadId = decodeURIComponent(m[2]);
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-  markThreadRead(userId, roomId, threadId);
+  await markThreadRead(userId, roomId, threadId);
   return json(res, 200, { ok: true });
 }
 
@@ -447,7 +449,7 @@ export async function rRoomThreadsGet(ctx: RouteCtx, m: RegExpMatchArray): Promi
   const roomId = decodeURIComponent(m[1]);
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-  ensureMainThread(roomId); // every room has a main thread once listed
+  await ensureMainThread(roomId); // every room has a main thread once listed
   const unread = await getUnreadThreadIdsForRoom(userId, roomId);
   return json(
     res,
@@ -472,7 +474,7 @@ export async function rRoomThreadsPost(ctx: RouteCtx, m: RegExpMatchArray): Prom
   const title = sanitizeThreadTitle(body.title);
   if (title === null) return json(res, 400, { error: 'title must be 1–80 characters' });
   const thread = createWebchatThread(roomId, title);
-  broadcastRooms(); // refresh each client's sidebar thread-count chevron
+  await broadcastRooms(); // refresh each client's sidebar thread-count chevron
   return json(res, 200, thread);
 }
 
@@ -493,7 +495,7 @@ export async function rRoomThreadPatch(ctx: RouteCtx, m: RegExpMatchArray): Prom
   }
   const title = sanitizeThreadTitle(body.title);
   if (title === null) return json(res, 400, { error: 'title must be 1–80 characters' });
-  renameWebchatThread(roomId, threadId, title);
+  await renameWebchatThread(roomId, threadId, title);
   return json(res, 200, { ok: true, title });
 }
 
@@ -742,11 +744,11 @@ export async function syncThreadContext(opts: {
   // sync only picks up messages added after this batch (setThreadSyncMark is
   // monotonic, so a concurrent larger mark never moves backwards).
   const maxSrcTs = delta.reduce((mx, m) => Math.max(mx, m.created_at), sinceTs);
-  setThreadSyncMark(roomId, markThreadId, direction, maxSrcTs);
+  await setThreadSyncMark(roomId, markThreadId, direction, maxSrcTs);
 
   // Broadcast the copies (divider + messages) so the destination thread updates live.
   for (const row of inserted) {
-    broadcast(roomId, { type: 'message', ...row });
+    await broadcast(roomId, { type: 'message', ...row });
   }
 
   // Seed the destination thread's agent session(s) with the copied transcript as
@@ -828,8 +830,8 @@ export async function importRoomApplyHandler(req: IncomingMessage, res: ServerRe
     const result = applyRoomImport(staged.dir);
     pendingAgentImports.delete(String(body.token));
     fs.rmSync(staged.dir, { recursive: true, force: true });
-    broadcastRooms();
-    return json(res, 200, { ok: true, ...result });
+    await broadcastRooms();
+    return json(res, 200, { ok: true, ...(await result) });
   } catch (err) {
     log.error('Room import apply failed', { err });
     return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
@@ -918,7 +920,7 @@ export async function createRoomHandler(req: IncomingMessage, res: ServerRespons
     }
     const result = createBareAgentGroup(ref.name, { instructions: ref.instructions });
     if ('error' in result) {
-      rollbackBareAgents(createdAgentIds);
+      await rollbackBareAgents(createdAgentIds);
       return json(res, result.status, { error: result.error });
     }
     createdAgentIds.push(result.group.id);
@@ -926,8 +928,8 @@ export async function createRoomHandler(req: IncomingMessage, res: ServerRespons
     // Non-default provider (validated in parseAgentRef): pin it on the group's
     // container config so the first spawn already runs the right harness.
     if (ref.provider) {
-      ensureContainerConfig(result.group.id);
-      updateContainerConfigScalars(result.group.id, { provider: ref.provider });
+      await ensureContainerConfig(result.group.id);
+      await updateContainerConfigScalars(result.group.id, { provider: ref.provider });
     }
   }
 
@@ -949,18 +951,18 @@ export async function createRoomHandler(req: IncomingMessage, res: ServerRespons
     // so it runs AFTER the transaction commits: a single-agent room now has a
     // prime (→ that agent answers everything); a multi-agent room has none
     // (→ every wiring gets `\B@<folder>\b`).
-    recomputeEngagePatterns(roomId);
+    await recomputeEngagePatterns(roomId);
   } catch (err) {
-    rollbackBareAgents(createdAgentIds);
+    await rollbackBareAgents(createdAgentIds);
     log.warn('Webchat: createRoom failed', { roomName, err });
     return json(res, 500, { error: 'Could not create room' });
   }
 
-  broadcastRooms();
+  await broadcastRooms();
   return json(res, 200, {
     ok: true,
-    room: getWebchatRoom(roomId),
-    agents: getAgentsForWebchatRoom(roomId),
+    room: await getWebchatRoom(roomId),
+    agents: await getAgentsForWebchatRoom(roomId),
   });
 }
 
@@ -968,7 +970,7 @@ export async function rollbackBareAgents(ids: string[]): Promise<void> {
   for (const id of ids) {
     try {
       const g = await getAgentGroup(id);
-      deleteAgentGroup(id);
+      await deleteAgentGroup(id);
       if (g) {
         const dir = path.resolve(GROUPS_DIR, g.folder);
         try {
@@ -1020,7 +1022,7 @@ export async function deleteRoomHandler(res: ServerResponse, roomId: string): Pr
     log.warn('Webchat: failed to remove room uploads dir', { roomId, err });
   }
 
-  broadcastRooms();
+  await broadcastRooms();
   return json(res, 200, { ok: true });
 }
 
@@ -1042,7 +1044,7 @@ export async function deleteThreadHandler(res: ServerResponse, roomId: string, t
   }
   // Side-effects after commit (can't roll back): kill containers + remove dirs.
   void teardownSessionResources(sessions, 'webchat thread deleted');
-  broadcastRooms(); // refresh each client's sidebar thread-count chevron
+  await broadcastRooms(); // refresh each client's sidebar thread-count chevron
   return json(res, 200, { ok: true });
 }
 
@@ -1098,18 +1100,18 @@ export async function addAgentToRoomHandler(
   const wasEmpty = (await countAgentsForWebchatRoom(roomId)) === 0;
 
   try {
-    wireAgentToWebchatRoom(room.name, roomId, agentId);
+    await wireAgentToWebchatRoom(room.name, roomId, agentId);
     if (wasEmpty) {
-      setPrimeAgentForWebchatRoom(roomId, agentId);
-      recomputeEngagePatterns(roomId);
+      await setPrimeAgentForWebchatRoom(roomId, agentId);
+      await recomputeEngagePatterns(roomId);
     }
   } catch (err) {
-    if (createdAgentId) rollbackBareAgents([createdAgentId]);
+    if (createdAgentId) await rollbackBareAgents([createdAgentId]);
     log.warn('Webchat: addAgentToRoom failed', { roomId, agentId, err });
     return json(res, 500, { error: 'Could not wire agent to room' });
   }
 
-  broadcastRooms();
+  await broadcastRooms();
   const wired: WebchatRoomAgent | undefined = (await getAgentsForWebchatRoom(roomId)).find((a) => a.id === agentId);
   return json(res, 200, { ok: true, agent: wired });
 }
@@ -1129,10 +1131,10 @@ export async function removeAgentFromRoomHandler(res: ServerResponse, roomId: st
   // negative-lookahead may need to lose this agent's folder, or the
   // patterns may need to revert to '.').
   if ((await getPrimeAgentForWebchatRoom(roomId)) === agentId) {
-    clearPrimeAgentForWebchatRoom(roomId);
+    await clearPrimeAgentForWebchatRoom(roomId);
   }
-  recomputeEngagePatterns(roomId);
-  broadcastRooms();
+  await recomputeEngagePatterns(roomId);
+  await broadcastRooms();
   return json(res, 200, { ok: true });
 }
 
@@ -1143,9 +1145,9 @@ export async function setRoomPrimeHandler(res: ServerResponse, roomId: string, a
   // recompute would treat the prime as stale and silently fall back.
   const wired = (await getAgentsForWebchatRoom(roomId)).some((a) => a.id === agentId);
   if (!wired) return json(res, 400, { error: 'Agent is not wired to this room' });
-  setPrimeAgentForWebchatRoom(roomId, agentId);
-  recomputeEngagePatterns(roomId);
-  broadcastRooms();
+  await setPrimeAgentForWebchatRoom(roomId, agentId);
+  await recomputeEngagePatterns(roomId);
+  await broadcastRooms();
   return json(res, 200, { ok: true, primeAgentId: agentId });
 }
 

@@ -29,7 +29,7 @@ import { syncAgentProviderForAssignedModel, writeAgentSettingsForAssignedModel }
 
 export async function reloadAgentModelEnv(agentGroupId: string, reason: string): Promise<void> {
   try {
-    writeAgentSettingsForAssignedModel(agentGroupId);
+    await writeAgentSettingsForAssignedModel(agentGroupId);
   } catch (err) {
     log.warn('Webchat: settings.json write after model change failed', { agentGroupId, reason, err });
   }
@@ -38,7 +38,7 @@ export async function reloadAgentModelEnv(agentGroupId: string, reason: string):
     // default harness, so this always syncs back to the default provider (it
     // still runs to un-wedge any group a legacy install left on a non-default
     // provider). Same next-spawn timing as the env write; the restart applies both.
-    syncAgentProviderForAssignedModel(agentGroupId);
+    await syncAgentProviderForAssignedModel(agentGroupId);
   } catch (err) {
     log.warn('Webchat: provider sync after model change failed', { agentGroupId, reason, err });
   }
@@ -69,13 +69,13 @@ export async function refreshUnassignedGroupsForDefaultModel(reason: string): Pr
     // default is a local model + OpenCode is installed).
     if (provider && provider !== 'claude' && provider !== 'opencode') continue;
     try {
-      writeAgentSettingsForAssignedModel(g.id);
-      syncAgentProviderForAssignedModel(g.id);
+      await writeAgentSettingsForAssignedModel(g.id);
+      await syncAgentProviderForAssignedModel(g.id);
     } catch (err) {
       log.warn('Webchat: settings.json write for default-model change failed', { agentGroupId: g.id, reason, err });
     }
     try {
-      restartAgentGroupContainers(g.id, reason);
+      await restartAgentGroupContainers(g.id, reason);
     } catch (err) {
       log.warn('Webchat: container restart for default-model change failed', { agentGroupId: g.id, reason, err });
     }

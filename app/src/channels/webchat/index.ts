@@ -199,7 +199,7 @@ function createAdapter(): ChannelAdapter {
       // route to a per-user WS push instead of storing as a chat message.
       const platformId = `${APPROVAL_INBOX_PREFIX}${handle}`;
       if (!(await getMessagingGroupByPlatform('webchat', platformId))) {
-        createMessagingGroup({
+        await createMessagingGroup({
           id: randomUUID(),
           channel_type: 'webchat',
           platform_id: platformId,
@@ -231,7 +231,7 @@ function createAdapter(): ChannelAdapter {
           // pending_approvals.approval_id.)
           const approvalId = (content as { questionId?: unknown }).questionId;
           if (typeof approvalId === 'string' && approvalId.length > 0) {
-            recordWebchatApproval(approvalId, platformId);
+            await recordWebchatApproval(approvalId, platformId);
           } else {
             log.warn('Webchat: ask_question card missing questionId — approval not indexed', {
               platformId,
@@ -285,7 +285,7 @@ function createAdapter(): ChannelAdapter {
             size: file.data.length,
           };
           const stored = storeWebchatFileMessage(roomId, senderName, 'agent', file.filename, meta, storeThread);
-          server.broadcast(roomId, { type: 'message', ...stored });
+          server.broadcast(roomId, { type: 'message', ...(await stored) });
         }
       }
       // Loop-back fan-out: re-enter the router so other wired agents in this
@@ -531,11 +531,11 @@ registerApprovalResolvedHandler(async (event) => {
       pushApprovalResolvedToUser(userId, approvalId, resolvedByUserId);
     } else {
       // The agent's room — flip the in-room card to resolved + clear live.
-      markRoomApprovalResolved(approvalId, resolvedByUserId);
-      broadcast(platformId, { type: 'approval_resolved', approvalId, resolvedBy: resolvedByUserId });
+      await markRoomApprovalResolved(approvalId, resolvedByUserId);
+      await broadcast(platformId, { type: 'approval_resolved', approvalId, resolvedBy: resolvedByUserId });
     }
   }
-  if (indexed.length > 0) deleteWebchatApprovalIndex(approvalId);
+  if (indexed.length > 0) await deleteWebchatApprovalIndex(approvalId);
 });
 
 // Surface an ACTIONABLE approval card into the requesting agent's own room (in
@@ -558,10 +558,10 @@ registerApprovalRequestedListener(async (e) => {
     options: e.options,
     action: e.action,
     approvers: e.approvers,
-    triage: buildApprovalTriageView(e.approvalId, e.action, approvalRow?.payload ?? ''),
+    triage: await buildApprovalTriageView(e.approvalId, e.action, approvalRow?.payload ?? ''),
   });
-  recordWebchatApproval(e.approvalId, roomId);
-  broadcast(roomId, { type: 'message', ...card });
+  await recordWebchatApproval(e.approvalId, roomId);
+  await broadcast(roomId, { type: 'message', ...(await card) });
 });
 
 // Learning loop: when an agent proposes a skill, drop an actionable card into
@@ -590,7 +590,7 @@ registerSkillDraftProposedListener(async (e) => {
     // the normal reply path already did.
     sessionKeyToThread(e.session.thread_id, roomId),
   );
-  broadcast(roomId, { type: 'message', ...card });
+  await broadcast(roomId, { type: 'message', ...(await card) });
 });
 
 // Auto-keep (or any non-webchat resolution) still flips the in-room card, so
@@ -598,7 +598,7 @@ registerSkillDraftProposedListener(async (e) => {
 // draft that no longer exists.
 registerSkillDraftResolvedListener(async (e) => {
   const flipped = await markRoomSkillDraftResolved(e.draftId, e.outcome, e.by);
-  if (flipped) broadcast(flipped.roomId, { type: 'message', ...flipped.message });
+  if (flipped) await broadcast(flipped.roomId, { type: 'message', ...flipped.message });
 });
 
 /**
@@ -627,7 +627,7 @@ export async function sweepExpiredSkillDrafts(): Promise<number> {
     if (!(await resolveSkillDraft(d.id, 'discarded'))) continue;
     expired++;
     const flipped = await markRoomSkillDraftResolved(d.id, 'discarded', 'expired');
-    if (flipped) broadcast(flipped.roomId, { type: 'message', ...flipped.message });
+    if (flipped) await broadcast(flipped.roomId, { type: 'message', ...flipped.message });
     log.info('Skill draft expired', { id: d.id, skill: d.skill_name, ageHours: Math.round(age / 3_600_000) });
   }
   return expired;

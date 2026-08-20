@@ -46,7 +46,7 @@ beforeEach(async () => {
   fs.rmSync('/tmp/nanoclaw-test-gate-notice', { recursive: true, force: true });
   await initTestDb();
   await runMigrations(getDb());
-  createAgentGroup({
+  await createAgentGroup({
     id: AG,
     name: 'Gate',
     folder: 'gate',
@@ -56,14 +56,14 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  closeDb();
+  await closeDb();
   fs.rmSync('/tmp/nanoclaw-test-gate-notice', { recursive: true, force: true });
 });
 
 describe('turn-gate veto notice — must land in a delivery-polled session', () => {
   it('writes the notice into the room’s REAL shared session (exists in the sessions table)', async () => {
-    seedRoom('room-1');
-    setRoomModeOverride('room-1', 'required');
+    await seedRoom('room-1');
+    await setRoomModeOverride('room-1', 'required');
 
     const veto = await consultTurnGates(webchatMg('room-1'), AG, 'webchat:bob');
     expect(veto?.reason).toBe('user-creds-required-no-key');
@@ -79,8 +79,8 @@ describe('turn-gate veto notice — must land in a delivery-polled session', () 
   });
 
   it('de-dupes the notice per (room, user) within the window', async () => {
-    seedRoom('room-2');
-    setRoomModeOverride('room-2', 'required');
+    await seedRoom('room-2');
+    await setRoomModeOverride('room-2', 'required');
     await consultTurnGates(webchatMg('room-2'), AG, 'webchat:carol');
     await consultTurnGates(webchatMg('room-2'), AG, 'webchat:carol');
     const sessions = await getSessionsByAgentGroup(AG);
@@ -90,17 +90,17 @@ describe('turn-gate veto notice — must land in a delivery-polled session', () 
 
 describe('turn-gate failure posture', () => {
   it('fails CLOSED in a required-mode room when evaluation throws', async () => {
-    seedRoom('room-3');
-    setRoomModeOverride('room-3', 'required');
-    getDb().exec('DROP TABLE user_credentials'); // force the evaluation to throw
+    await seedRoom('room-3');
+    await setRoomModeOverride('room-3', 'required');
+    await getDb().exec('DROP TABLE user_credentials'); // force the evaluation to throw
     const veto = await consultTurnGates(webchatMg('room-3'), AG, 'webchat:bob');
     expect(veto?.reason).toBe('user-creds-evaluation-failed');
   });
 
   it('stays available in a known-optional room even when evaluation throws', async () => {
-    seedRoom('room-4');
-    setRoomModeOverride('room-4', 'optional');
-    getDb().exec('DROP TABLE user_credentials');
+    await seedRoom('room-4');
+    await setRoomModeOverride('room-4', 'optional');
+    await getDb().exec('DROP TABLE user_credentials');
     expect(await consultTurnGates(webchatMg('room-4'), AG, 'webchat:bob')).toBeNull();
   });
 });

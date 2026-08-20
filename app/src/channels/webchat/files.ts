@@ -371,7 +371,7 @@ export async function handleMultipartUpload(
           size: finishedFileInfo.size,
         };
         const stored = await storeWebchatFileMessage(roomId, senderIdentity, 'user', caption, fileMeta, threadId);
-        broadcast(roomId, { type: 'message', ...stored });
+        await broadcast(roomId, { type: 'message', ...stored });
         hooks.onInbound(
           roomId,
           inboundForFile(
@@ -599,7 +599,7 @@ export async function handleChunkedUpload(
   // keys a session — applied at finalize so it runs once, not per chunk.
   threadId = await resolveBoundedThread(roomId, threadId);
   const stored = await storeWebchatFileMessage(roomId, upload.sender, 'user', caption, fileMeta, threadId);
-  broadcast(roomId, { type: 'message', ...stored });
+  await broadcast(roomId, { type: 'message', ...stored });
   hooks.onInbound(
     roomId,
     inboundForFile(roomId, stored.id, fileMeta, caption, upload.sender, upload.senderUserId, finalPath),
