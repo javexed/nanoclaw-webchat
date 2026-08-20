@@ -58,7 +58,6 @@ export async function userCredsProviderForGroup(agentGroupId: string): Promise<U
   return provider === 'codex' || provider === 'grok' ? provider : 'claude';
 }
 
-
 /** The vault secret type that holds a member's credential for a provider. */
 function secretTypeFor(provider: UserCredsProvider): 'anthropic' | 'openai' | 'generic' {
   if (provider === 'codex') return 'openai';

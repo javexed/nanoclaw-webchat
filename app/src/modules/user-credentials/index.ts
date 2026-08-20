@@ -45,7 +45,6 @@ import {
 
 /** The agent group's provider, mapped to the two UserCreds-supported families. */
 
-
 // Sentinel bearer for a per-member OAuth container. Its value is irrelevant
 // beyond being non-empty: it flips Claude Code into OAuth mode (so it sends
 // `Authorization: Bearer <sentinel>` + the oauth beta header), and OneCLI

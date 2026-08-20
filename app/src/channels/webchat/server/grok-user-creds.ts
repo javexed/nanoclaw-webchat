@@ -175,7 +175,9 @@ export async function refreshDueUserCredentials(deps: UserRefreshDeps = {}): Pro
       log.info(`Grok member credential renewed (${cred.userId})`);
     } catch (err) {
       // One member's dead refresh token must not stop the others being renewed.
-      log.warn(`Grok member credential refresh failed (${cred.userId}): ${err instanceof Error ? err.message : String(err)}`);
+      log.warn(
+        `Grok member credential refresh failed (${cred.userId}): ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
   return renewed;
