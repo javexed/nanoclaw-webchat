@@ -1,5 +1,5 @@
 diff --git a/src/cli/resources/groups.test.ts b/src/cli/resources/groups.test.ts
-index e5102c4e..e95b92bd 100644
+index e5102c4e..b7aa9c10 100644
 --- a/src/cli/resources/groups.test.ts
 +++ b/src/cli/resources/groups.test.ts
 @@ -267,6 +267,82 @@ describe('groups CLI delete cascades dependent rows (#2525)', () => {
@@ -13,16 +13,16 @@ index e5102c4e..e95b92bd 100644
 +    if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 +    fs.mkdirSync(TEST_DIR, { recursive: true });
 +    const db = await initTestDb();
-+    runMigrations(db);
-+    createAgentGroup({ id: GID, name: 'mcp', folder: 'mcp', agent_provider: null, created_at: now() });
++    await runMigrations(db);
++    await createAgentGroup({ id: GID, name: 'mcp', folder: 'mcp', agent_provider: null, created_at: now() });
 +    await db.run(`INSERT INTO container_configs
 +         (agent_group_id, provider, model, effort, image_tag, assistant_name, max_messages_per_prompt,
 +          skills, mcp_servers, packages_apt, packages_npm, additional_mounts, cli_scope, updated_at)
 +       VALUES (?, NULL, NULL, NULL, NULL, NULL, NULL, '"all"', '{}', '[]', '[]', '[]', 'group', ?)`, GID, now());
 +  });
 +
-+  afterEach(() => {
-+    closeDb();
++  afterEach(async () => {
++    await closeDb();
 +    if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 +  });
 +
