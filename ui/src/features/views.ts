@@ -1093,6 +1093,13 @@ export function wireViewChrome1(): void {
   $<HTMLButtonElement>('#topology-back')?.addEventListener('click', toggleTopology);
   $<HTMLButtonElement>('#topology-refresh')?.addEventListener('click', refreshTopology);
 
+  // ── Floor ───────────────────────────────────────────────────────────────────
+  // Desk per session, state by colour. Refresh is manual as well as polled: an
+  // admin who just killed a container wants to confirm it now, not in 5s.
+  $<HTMLButtonElement>('#floor-back')?.addEventListener('click', toggleFloor);
+  $<HTMLButtonElement>('#floor-refresh')?.addEventListener('click', refreshFloor);
+
+
   // ── Journey (learning timeline) ─────────────────────────────────────────────
   // A day-grouped, newest-first feed of what each agent learned: proposed /
   // kept / discarded / revised / archived. Data: GET /api/learning/timeline

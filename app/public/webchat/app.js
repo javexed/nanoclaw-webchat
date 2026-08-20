@@ -15582,6 +15582,8 @@ function wireViewChrome1() {
 	$("#dash-refresh")?.addEventListener("click", refreshDashboard);
 	$("#topology-back")?.addEventListener("click", toggleTopology);
 	$("#topology-refresh")?.addEventListener("click", refreshTopology);
+	$("#floor-back")?.addEventListener("click", toggleFloor);
+	$("#floor-refresh")?.addEventListener("click", refreshFloor);
 }
 function wireViewChrome2() {
 	$("#agent-filter")?.addEventListener("input", (e) => {
@@ -22391,6 +22393,12 @@ wireApprovalsPanel();
 wireMobileBack();
 wireViewChrome1();
 $("#journey-back")?.addEventListener("click", toggleJourney);
+$("#floor-grid")?.addEventListener("click", (e) => {
+	const roomId = (e.target?.closest(".floor-desk"))?.dataset.room;
+	if (!roomId) return;
+	toggleFloor();
+	joinRoom(roomId);
+});
 $("#journey-refresh")?.addEventListener("click", () => void refreshJourney(true));
 wireViewsPanel();
 $("#topo-focus-pill")?.addEventListener("click", clearTopoFocus);

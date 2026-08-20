@@ -25,7 +25,7 @@ import { isContainerRunning } from '../../../container-runner.js';
 import { getLastStatusEvent } from '../../../modules/agent-status/index.js';
 import { canAccessAgentGroup } from '../../../modules/permissions/access.js';
 import { openOutboundDb } from '../../../session-manager.js';
-import { getWebchatRoom } from '../db.js';
+import { getMessagingGroup } from '../../../db/messaging-groups.js';
 import { isAnyAdmin, isOwner } from '../roles.js';
 
 /**
@@ -91,6 +91,25 @@ function lastKindFor(agentGroupId: string, sessionId: string): string | null {
   }
 }
 
+/**
+ * Resolve a session's room label and click-through id.
+ *
+ * Split out to be testable: the original bug was passing a messaging-group ROW
+ * id where a PLATFORM id was expected. Both are strings, so no type catches it
+ * and the only symptom was every desk reading "no room" — worth pinning.
+ */
+export function roomFor(mg: { channel_type?: string; platform_id?: string | null; name?: string | null } | undefined): {
+  roomId: string | null;
+  roomName: string | null;
+} {
+  if (!mg) return { roomId: null, roomName: null };
+  return {
+    // Only webchat platform ids mean anything to the room click-through.
+    roomId: mg.channel_type === 'webchat' ? (mg.platform_id ?? null) : null,
+    roomName: mg.name ?? mg.platform_id ?? null,
+  };
+}
+
 export function deskState(running: boolean, lastKind: string | null, idleMs: number | null): DeskState {
   if (!running) return 'cold';
   // 'stalled' is host-generated and means the container went away mid-turn; if
@@ -129,7 +148,13 @@ export function buildFloor(userId: string): FloorSnapshot {
     // Scope first: never do per-session work for a group the caller cannot see.
     if (!canAccessAgentGroup(userId, row.agent_group_id)) continue;
 
-    const room = row.messaging_group_id ? getWebchatRoom(row.messaging_group_id) : undefined;
+    // getWebchatRoom() keys on PLATFORM id, not the messaging-group row id that
+    // sessions carry — passing the latter missed every time and painted the
+    // whole floor "no room". Resolve the group itself, then expose its
+    // platform_id only for webchat (that is the id the room click-through
+    // understands); a session wired to slack or telegram still shows its name.
+    const mg = row.messaging_group_id ? getMessagingGroup(row.messaging_group_id) : undefined;
+    const { roomId, roomName } = roomFor(mg);
     const running = isContainerRunning(row.id);
     // Only pay the DB open for sessions that could be doing something. A cold
     // session's last kind is not interesting and there may be hundreds of them.
@@ -141,8 +166,8 @@ export function buildFloor(userId: string): FloorSnapshot {
       session_id: row.id,
       agent_group_id: row.agent_group_id,
       agent_name: agentNameFor(db, row.agent_group_id),
-      room_id: room?.id ?? null,
-      room_name: room?.name ?? null,
+      room_id: roomId,
+      room_name: roomName,
       state: deskState(running, lastKind, idleMs),
       last_kind: lastKind,
       idle_ms: idleMs,
