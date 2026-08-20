@@ -423,7 +423,6 @@ export function setupWebSocket(
       frameChain = frameChain.then(() => handleFrame(raw)).catch(() => {});
     });
 
-
     ws.on('close', () => {
       const c = removeClient(clientId);
       if (c?.room_id) {
