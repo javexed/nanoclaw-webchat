@@ -1,4 +1,3 @@
-import type Database from 'better-sqlite3';
 import type { Migration } from './index.js';
 
 /**
@@ -11,16 +10,16 @@ import type { Migration } from './index.js';
  *
  * Defaults to 0, so an existing install does not silently start accepting
  * member credentials for a provider its operator never enabled.
+ *
+ * Portable (no PRAGMA): the previous column-exists guard duplicated what the
+ * migration runner already guarantees — schema_version dedupes by name, so
+ * this runs exactly once — and webchat-credentials-config (which creates the
+ * table) is ordered before every module-file migration in the composed tree.
  */
 export const moduleUserCredentialsGrokFlag: Migration = {
   version: 207,
   name: 'user-credentials-grok-flag',
-  up(db: Database.Database) {
-    const cols = db.prepare(`PRAGMA table_info(webchat_settings)`).all() as { name: string }[];
-    // The settings table is created by its own migration; if it has not run yet
-    // there is no column set to extend, and this is a no-op rather than a crash.
-    if (!cols.length) return;
-    if (cols.some((c) => c.name === 'allow_grok_oauth')) return;
-    db.exec(`ALTER TABLE webchat_settings ADD COLUMN allow_grok_oauth INTEGER NOT NULL DEFAULT 0`);
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_settings ADD COLUMN allow_grok_oauth INTEGER NOT NULL DEFAULT 0;`);
   },
 };

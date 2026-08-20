@@ -193,7 +193,7 @@ const spawnCache = new Map<string, { identity: string | null; env: Record<string
 const spawnKey = (agentGroupId: string, threadId: string | null): string => `${agentGroupId}\u0000${threadId ?? ''}`;
 
 registerSessionPrepareHook(async (agentGroupId, threadId) => {
-  const provider = await groupProvider(agentGroupId);
+  const provider = await userCredsProviderForGroup(agentGroupId);
   const userId = memberUserFromKey(threadId) ?? threadId;
   // NOTE the await on userHasConnectedCredential: un-awaited, the promise was
   // truthy and this guard never fired — every session (including base ones)
