@@ -11,6 +11,8 @@
  */
 import { warmAgentImage } from '../../container-warm.js';
 import { onHostShutdown, onHostStart } from '../../host-lifecycle.js';
+import { GROK_USER_REFRESH_TICK_MS, refreshDueUserCredentials } from '../../channels/webchat/server/grok-user-creds.js';
+import { realOnecliAdmin } from '../user-credentials/onecli-admin.js';
 import { log } from '../../log.js';
 import { preflightOneCLI } from '../../onecli-preflight.js';
 import { resetCircuitBreaker } from '../../circuit-breaker.js';
@@ -47,4 +49,27 @@ onHostShutdown(() => {
     process.exit(0);
   }, 10_000);
   watchdog.unref();
+});
+
+/**
+ * Renew member Grok credentials on a timer.
+ *
+ * The install-wide credential has its own sweep in the provider payload; this
+ * is the per-member half, and it needs the vault because a member's ACCESS
+ * token lives there. Same reasoning, same cadence: expiry is a function of
+ * time, so renewal has to be too — a member whose token lapsed while they were
+ * away would otherwise find their agent unauthenticated with a perfectly good
+ * refresh token sitting on the host.
+ *
+ * Registered unconditionally: with no member credentials the sweep lists an
+ * empty directory and returns.
+ */
+onHostStart(() => {
+  const tick = () =>
+    void refreshDueUserCredentials({
+      updateSecretValue: (secretId, value) => realOnecliAdmin.updateSecretValue(secretId, value),
+    });
+  tick();
+  const timer = setInterval(tick, GROK_USER_REFRESH_TICK_MS);
+  timer.unref?.();
 });
