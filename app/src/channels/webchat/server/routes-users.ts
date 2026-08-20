@@ -410,7 +410,11 @@ export async function checkMemberGrantAuth(
   return null;
 }
 
-export function grantPermissionHandler(res: ServerResponse, body: GrantBody, callerUserId: string): void {
+export async function grantPermissionHandler(
+  res: ServerResponse,
+  body: GrantBody,
+  callerUserId: string,
+): Promise<void> {
   const parsed = validateGrantBody(body);
   if ('error' in parsed) return json(res, 400, { error: parsed.error });
   const { userId: targetUserId, kind, agentGroupId } = parsed;
@@ -418,8 +422,13 @@ export function grantPermissionHandler(res: ServerResponse, body: GrantBody, cal
   // Upsert the users row so grants on never-seen-before identities work.
   // The kind is derived from the namespace; the display_name is left null
   // and gets populated by the channel adapter on first auth.
-  if (!permsGetUser(targetUserId)) {
-    permsUpsertUser({
+  // Await BEFORE negating: `!promise` is always false, so this guard never
+  // fired after the async migration — the users-row upsert was skipped and a
+  // grant to a never-seen identity died on the user_roles FK. The same
+  // negated-guard class the migration cleared elsewhere; this one hid inside a
+  // sync handler every codemod skipped.
+  if (!(await permsGetUser(targetUserId))) {
+    await permsUpsertUser({
       id: targetUserId,
       kind: deriveUserKind(targetUserId),
       display_name: null,
@@ -429,7 +438,7 @@ export function grantPermissionHandler(res: ServerResponse, body: GrantBody, cal
 
   const now = new Date().toISOString();
   if (kind === 'member') {
-    permsAddMember({
+    await permsAddMember({
       user_id: targetUserId,
       agent_group_id: agentGroupId as string,
       added_by: callerUserId,
@@ -437,7 +446,7 @@ export function grantPermissionHandler(res: ServerResponse, body: GrantBody, cal
     });
     log.info('Webchat: granted member', { targetUserId, agentGroupId, by: callerUserId });
   } else {
-    permsGrantRole({
+    await permsGrantRole({
       user_id: targetUserId,
       role: kind,
       agent_group_id: agentGroupId,
