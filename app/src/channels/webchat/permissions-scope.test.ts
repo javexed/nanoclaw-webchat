@@ -38,8 +38,8 @@ async function member(userId: string, agentGroupId: string): Promise<void> {
   await getDb().run(`INSERT INTO agent_group_members (user_id, agent_group_id, added_by, added_at) VALUES (?, ?, NULL, ?)`, userId, agentGroupId, now);
 }
 
-async function find(rows: ReturnType<typeof listUsersWithPermissions>, id: string) {
-  return (await rows).find((u) => u.id === id)!;
+function find(rows: Awaited<ReturnType<typeof listUsersWithPermissions>>, id: string) {
+  return rows.find((u) => u.id === id)!;
 }
 
 describe('listUsersWithPermissions caller-scoping', () => {
@@ -53,23 +53,23 @@ describe('listUsersWithPermissions caller-scoping', () => {
   });
 
   it('owner sees the full cross-group matrix', async () => {
-    const rows = listUsersWithPermissions('webchat:owner');
-    const bob = await find(rows, 'webchat:bob');
+    const rows = await listUsersWithPermissions('webchat:owner');
+    const bob = find(rows, 'webchat:bob');
     expect(bob.memberships.map((m) => m.agent_group_id).sort()).toEqual(['ag-1', 'ag-2']);
     expect(bob.roles.map((r) => r.agent_group_id)).toContain('ag-2');
     // Owner is visible in the roster (global owner row present).
-    expect((await find(rows, 'webchat:owner')).roles.some((r) => r.kind === 'owner')).toBe(true);
+    expect((find(rows, 'webchat:owner')).roles.some((r) => r.kind === 'owner')).toBe(true);
   });
 
   it('scoped admin sees only assignments within their administered group', async () => {
-    const rows = listUsersWithPermissions('webchat:sadmin');
-    const bob = await find(rows, 'webchat:bob');
+    const rows = await listUsersWithPermissions('webchat:sadmin');
+    const bob = find(rows, 'webchat:bob');
     // ag-1 membership visible; ag-2 membership hidden.
     expect(bob.memberships.map((m) => m.agent_group_id)).toEqual(['ag-1']);
     // bob's admin/ag-2 role is outside ag-1 → filtered out.
     expect(bob.roles).toHaveLength(0);
     // The global owner roster is hidden from a scoped admin.
-    expect((await find(rows, 'webchat:owner')).roles).toHaveLength(0);
+    expect((find(rows, 'webchat:owner')).roles).toHaveLength(0);
   });
 
   it('user LIST stays unfiltered so a scoped admin can add any user', async () => {
@@ -80,7 +80,7 @@ describe('listUsersWithPermissions caller-scoping', () => {
   });
 
   it('no caller (legacy/internal call) gets the full matrix', async () => {
-    const bob = await find(listUsersWithPermissions(), 'webchat:bob');
+    const bob = find(await listUsersWithPermissions(), 'webchat:bob');
     expect(bob.memberships).toHaveLength(2);
   });
 });

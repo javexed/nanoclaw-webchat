@@ -104,8 +104,13 @@ export async function handleRouteLearningReview(content: Record<string, unknown>
     });
     await wakeContainer(target);
   };
-  const forward = (target: Session): void => {
-    void forwardAsync(target);
+  // Awaited now, not fire-and-forget: pre-async the body's writes completed
+  // synchronously before the void promise parked at wakeContainer, so callers
+  // observed the forward as done. With every DB write async, the floated chain
+  // may not even have WRITTEN the inbound row when the handler returns — the
+  // caller (an MCP tool responding to the agent) would report success first.
+  const forward = async (target: Session): Promise<void> => {
+    await forwardAsync(target);
   };
 
   const enrolled = invoker !== null && (await userHasConnectedCredential(invoker, await groupProvider(agentGroupId)));
@@ -131,7 +136,7 @@ export async function handleRouteLearningReview(content: Record<string, unknown>
   // 'off' — legacy shared-credential behaviour, now membership-gated: run in
   // the origin session on the workspace credential for any member.
   if (mode === 'off') {
-    forward(session);
+    await forward(session);
     return;
   }
 

@@ -107,8 +107,8 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
 
   // Sessions — `last_active` is an ISO timestamp string.
   const fiveMinAgo = new Date(Date.now() - ACTIVE_SESSION_WINDOW_MS).toISOString();
-  const sessionsTotal = countScoped(`SELECT COUNT(*) AS c FROM sessions WHERE 1=1`, 'agent_group_id', scopedGroupIds);
-  const sessionsActive = countScoped(
+  const sessionsTotal = await countScoped(`SELECT COUNT(*) AS c FROM sessions WHERE 1=1`, 'agent_group_id', scopedGroupIds);
+  const sessionsActive = await countScoped(
     `SELECT COUNT(*) AS c FROM sessions WHERE last_active > ?`,
     'agent_group_id',
     scopedGroupIds,
@@ -117,7 +117,7 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
 
   // Webchat messages in the last 24h — cheap, single table.
   const yesterdayMs = Date.now() - 86_400_000;
-  const messages24h = countScoped(
+  const messages24h = await countScoped(
     `SELECT COUNT(*) AS c FROM webchat_messages WHERE created_at > ?`,
     'room_id',
     scopedRoomIds,

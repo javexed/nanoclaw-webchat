@@ -20,15 +20,15 @@ describe('onboarding_complete (first-run wizard state)', () => {
   });
 
   it('persists the flag (finish / reset) even when the settings row does not exist yet', async () => {
-    setOnboardingComplete(true);
+    await setOnboardingComplete(true);
     expect(await getOnboardingComplete()).toBe(true);
-    setOnboardingComplete(false);
+    await setOnboardingComplete(false);
     expect(await getOnboardingComplete()).toBe(false);
   });
 
   it('does not clobber the credentials policy on the same singleton row', async () => {
     await setCredentialsConfig({ defaultMode: 'optional', allowClaudeOauth: true });
-    setOnboardingComplete(true);
+    await setOnboardingComplete(true);
     const cfg = await getCredentialsConfig();
     expect(cfg.defaultMode).toBe('optional');
     expect(cfg.allowClaudeOauth).toBe(true);

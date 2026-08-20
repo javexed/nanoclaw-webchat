@@ -1,0 +1,18 @@
+diff --git a/src/modules/cross-session-context/backfill.ts b/src/modules/cross-session-context/backfill.ts
+index d502d767..ee04fd06 100644
+--- a/src/modules/cross-session-context/backfill.ts
++++ b/src/modules/cross-session-context/backfill.ts
+@@ -122,6 +122,13 @@ function collectSiblingTopLevel(agentGroup: AgentGroup, sessionId: string, limit
+ export async function backfillNewSession(agentGroup: AgentGroup, session: Session, mg: MessagingGroup): Promise<void> {
+   try {
+     if (session.thread_id !== null && isTaskThread(session.thread_id)) return;
++    // Per-member (UserCreds) sessions get their context from the module's OWN
++    // transcript sync, scoped to the member's thread. Backfilling the room
++    // timeline here would put room messages into a THREAD session — the exact
++    // cross-contamination the per-member keying exists to prevent. The `::`
++    // composite is the member-key codec (identity.ts / sessionKeyToThread);
++    // parsed locally, as elsewhere, to keep core free of a module import.
++    if (session.thread_id !== null && session.thread_id.includes('::')) return;
+ 
+     const siblings = (await getSessionsByAgentGroup(agentGroup.id)).filter(
+       (s) => s.id !== session.id && s.status === 'active' && s.messaging_group_id === mg.id,

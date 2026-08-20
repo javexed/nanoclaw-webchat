@@ -70,7 +70,7 @@ describe('thread context sync — insertSyncedMessages', () => {
   it('appends a divider + verbatim copies, origin-marked, at the end', async () => {
     await seed('r', 'main', 'one', 100);
     await seed('r', 'main', 'two', 200);
-    const src = getSyncDelta('r', 'main', 0);
+    const src = await getSyncDelta('r', 'main', 0);
     const inserted = await insertSyncedMessages('r', 't1', await src, 'pulled', 'Pulled from main');
     expect(inserted[0].message_type).toBe('context-divider');
     expect(inserted.slice(1).map((m) => m.content)).toEqual(['one', 'two']);

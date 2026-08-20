@@ -115,7 +115,7 @@ afterEach(async () => {
 
 describe('handleRouteLearningReview — enrollment and policy', () => {
   it('routes to the invoker’s member session when they have a connected credential', async () => {
-    const origin = seed({ chargeInvoker: 'auto' });
+    const origin = await seed({ chargeInvoker: 'auto' });
     await addMember('webchat:alice');
     await upsertUserCredential('webchat:alice', 'claude', 'secret-1', 'api_key');
 

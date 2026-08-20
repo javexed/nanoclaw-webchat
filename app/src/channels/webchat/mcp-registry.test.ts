@@ -105,12 +105,12 @@ describe('many-to-many assignment', () => {
 
 describe('mcpServerToConfig', () => {
   it('stdio row → command/args/env config', async () => {
-    const s = createWebchatMcpServer({ name: 's', transport: 'stdio', command: 'c', args: ['--x'], env: { A: '1' } });
+    const s = await createWebchatMcpServer({ name: 's', transport: 'stdio', command: 'c', args: ['--x'], env: { A: '1' } });
     expect(mcpServerToConfig(await s)).toEqual({ command: 'c', args: ['--x'], env: { A: '1' } });
   });
 
   it('remote row → type/url/headers config, instructions carried', async () => {
-    const s = createWebchatMcpServer({
+    const s = await createWebchatMcpServer({
       name: 'r',
       transport: 'http',
       url: 'https://h/mcp',
@@ -130,7 +130,7 @@ describe('syncAgentMcpConfig — incremental single-key writes', () => {
   it('adds and removes only its own key, preserving ncl-added servers', async () => {
     // Simulate a server added out-of-band via `ncl groups config add-mcp-server`.
     await seedAgentWithConfig({ nclthing: { command: 'ncl-added', args: [], env: {} } });
-    const s = createWebchatMcpServer({ name: 'windows', transport: 'sse', url: 'http://box:8000/sse' });
+    const s = await createWebchatMcpServer({ name: 'windows', transport: 'sse', url: 'http://box:8000/sse' });
 
     expect(await syncAgentMcpConfig(GID, await s, true)).toBe(true);
     let servers = await configServers();
@@ -143,7 +143,7 @@ describe('syncAgentMcpConfig — incremental single-key writes', () => {
   });
 
   it('returns false when the group has no container config row', async () => {
-    const s = createWebchatMcpServer({ name: 'w', transport: 'sse', url: 'http://x' });
+    const s = await createWebchatMcpServer({ name: 'w', transport: 'sse', url: 'http://x' });
     expect(await syncAgentMcpConfig('no-such-group', await s, true)).toBe(false);
   });
 });
