@@ -419,6 +419,23 @@ export async function wizardSelectOllamaModel(modelId?: any) {
       // finally issues a join and loads history. The room-create modal has
       // always joined here; this path did not.
       if (r.ok && out?.room?.id) deps.joinRoom(out.room.id, out.room.name);
+      // Make the chosen engine the install's default for agents created LATER,
+      // by any path — the per-agent pin above only covers the one this step
+      // creates. Ollama is excluded: it is a workspace default MODEL, and the
+      // harness is derived from it elsewhere. Best-effort: a wizard that
+      // finished should not fail on this, and the server refuses a default
+      // nobody can authenticate anyway.
+      if (wizardEngine === 'claude' || wizardEngine === 'codex' || wizardEngine === 'grok') {
+        try {
+          await authFetch('/api/workspace-provider', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+            body: JSON.stringify({ provider: wizardEngine }),
+          });
+        } catch {
+          /* the agent just created is still pinned correctly */
+        }
+      }
       const created = out.created?.[0];
       if (!r.ok || !created) {
         wizardSetStatus('#wizard-ollama-status', out.error || out.failed?.[0]?.error || 'Add failed.', 'err');

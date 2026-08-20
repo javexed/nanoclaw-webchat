@@ -400,6 +400,8 @@ import {
   rWebchatSttInstallPost,
   rWebchatTtsInstallGet,
   rWebchatTtsInstallPost,
+  rWorkspaceProviderGet,
+  rWorkspaceProviderPut,
 } from './server/routes-install.js';
 import { createServer as createHttpsServer } from 'https';
 import { createHash, randomUUID, randomBytes } from 'crypto';
@@ -2948,6 +2950,8 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: RE_WS_GROK_LOGIN, guards: ['csrf', 'owner'], h: rGrokLoginPost },
   { method: 'GET', path: '/api/workspace-credential/grok', guards: ['owner'], h: rGrokLoginGet },
   { method: 'PUT', path: '/api/workspace-model', h: rWorkspaceModelPut },
+  { method: 'GET', path: '/api/workspace-provider', guards: ['owner'], h: rWorkspaceProviderGet },
+  { method: 'PUT', path: '/api/workspace-provider', guards: ['owner', 'csrf'], h: rWorkspaceProviderPut },
   { method: ['GET', 'PUT'], path: '/api/webchat/onboarding', h: rWebchatOnboarding },
   { method: ['GET', 'PUT'], path: '/api/webchat/features', h: rWebchatFeatures },
   { method: 'GET', path: '/api/webchat/usage', guards: ['owner'], h: rWebchatUsageGet },
