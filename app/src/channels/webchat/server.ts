@@ -1095,7 +1095,7 @@ async function handleHttp(
     // actually succeed from THIS session: the retire endpoint refuses a disable
     // requested over bearer (self-lockout guard), so the "retire it now" prompt
     // should only surface when the caller arrived via tailscale / proxy.
-    return json(res, 200, { ...getAuthManagementInfo(), sessionSource: auth.source });
+    return json(res, 200, { ...(await getAuthManagementInfo()), sessionSource: auth.source });
   }
   if (url.pathname === '/api/webchat/auth/bearer' && method === 'PUT') {
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
@@ -1126,11 +1126,11 @@ async function handleHttp(
             'Reconnect via Tailscale or SSO first, then disable the bearer token — otherwise this session would be locked out.',
         });
       }
-      setBearerTokenDisabled(true);
+      await setBearerTokenDisabled(true);
     } else {
-      setBearerTokenDisabled(false);
+      await setBearerTokenDisabled(false);
     }
-    return json(res, 200, getAuthManagementInfo());
+    return json(res, 200, await getAuthManagementInfo());
   }
 
   // ── Generate a bearer token + expose on the network ─────────────────────────
@@ -1661,7 +1661,7 @@ async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
     return json(res, 429, { error: 'Too many attempts — wait a moment and try again.' });
   try {
     if (method === 'DELETE') {
-      const removed = deleteDeployKey(agentGroupId, url.searchParams.get('name') ?? '');
+      const removed = await deleteDeployKey(agentGroupId, url.searchParams.get('name') ?? '');
       if ((await removed)) await refreshCredentialNote(realOnecliAdmin, agentGroupId);
       return (await removed) ? json(res, 200, { ok: true }) : json(res, 404, { error: 'No such key' });
     }
@@ -3445,7 +3445,7 @@ async function importSystemUploadHandler(req: IncomingMessage, res: ServerRespon
         code === 0 ? resolve() : reject(new Error(`tar -x failed: ${err.slice(0, 200)}`)),
       );
     });
-    const preview = previewSystemImport(dir);
+    const preview = await previewSystemImport(dir);
     const token = randomUUID();
     pendingAgentImports.set(token, { dir, at: Date.now() });
     return json(res, 200, { token, preview });
@@ -3467,15 +3467,15 @@ async function importSystemApplyHandler(req: IncomingMessage, res: ServerRespons
   }
   const staged = pendingAgentImports.get(String(body.token || ''));
   if (!staged) return json(res, 410, { error: 'Import expired — upload the bundle again' });
-  let preview: ReturnType<typeof previewSystemImport>;
+  let preview: Awaited<ReturnType<typeof previewSystemImport>>;
   try {
-    preview = previewSystemImport(staged.dir);
+    preview = await previewSystemImport(staged.dir);
   } catch (err) {
     return json(res, 422, { error: err instanceof Error ? err.message : String(err) });
   }
-  if (!(await preview).schemaOk) {
+  if (!preview.schemaOk) {
     return json(res, 409, {
-      error: `Backup schema (v${(await preview).manifest.schemaVersion}) is newer than this install (v${(await preview).currentSchemaVersion}) — update NanoClaw first.`,
+      error: `Backup schema (v${preview.manifest.schemaVersion}) is newer than this install (v${preview.currentSchemaVersion}) — update NanoClaw first.`,
     });
   }
   pendingAgentImports.delete(String(body.token));

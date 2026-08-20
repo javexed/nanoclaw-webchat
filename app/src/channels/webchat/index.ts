@@ -267,7 +267,7 @@ function createAdapter(): ChannelAdapter {
       // (null = main) maps back to the stored/UI thread id.
       // roomId lets this reject a per-member session key masquerading as a
       // thread id (see sessionKeyToThread) instead of minting a phantom thread.
-      const storeThread = sessionKeyToThread(threadId, roomId);
+      const storeThread = await sessionKeyToThread(threadId, roomId);
       let storedMessageId: string | null = null;
       if (text !== null && text.length > 0) {
         const stored = await storeWebchatMessage(roomId, senderName, 'agent', text, storeThread);
@@ -588,7 +588,7 @@ registerSkillDraftProposedListener(async (e) => {
     // wrote per-member composite keys straight into webchat_messages, creating
     // threads nothing could open — this listener bypassed the translation that
     // the normal reply path already did.
-    sessionKeyToThread(e.session.thread_id, roomId),
+    await sessionKeyToThread(e.session.thread_id, roomId),
   );
   await broadcast(roomId, { type: 'message', ...(await card) });
 });

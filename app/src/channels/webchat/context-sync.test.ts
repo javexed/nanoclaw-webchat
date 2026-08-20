@@ -93,7 +93,7 @@ describe('thread context sync — pull (main → thread)', () => {
   it('fresh pull copies main, advances the mark, then no-ops with nothing new', async () => {
     await seed('r', 'main', 'a', 100);
     await seed('r', 'main', 'b', 200);
-    const first = syncThreadContext({
+    const first = await syncThreadContext({
       roomId: 'r',
       srcThreadId: 'main',
       destThreadId: 't1',
@@ -118,7 +118,7 @@ describe('thread context sync — pull (main → thread)', () => {
     ).toBe(0);
     // A new main message → incremental pull brings only the delta.
     await seed('r', 'main', 'c', 300);
-    const second = syncThreadContext({
+    const second = await syncThreadContext({
       roomId: 'r',
       srcThreadId: 'main',
       destThreadId: 't1',
@@ -138,7 +138,7 @@ describe('thread context sync — pull (main → thread)', () => {
 
   it('fresh pull is bounded by freshLimit', async () => {
     for (let i = 1; i <= 5; i++) await seed('r', 'main', `m${i}`, i * 100);
-    const copied = syncThreadContext({
+    const copied = await syncThreadContext({
       roomId: 'r',
       srcThreadId: 'main',
       destThreadId: 't1',
@@ -168,7 +168,7 @@ describe('thread context sync — push (thread → main)', () => {
     await seed('r', 't1', 'threadX', 300);
     await seed('r', 't1', 'threadY', 400);
 
-    const pushed = syncThreadContext({
+    const pushed = await syncThreadContext({
       roomId: 'r',
       srcThreadId: 't1',
       destThreadId: 'main',

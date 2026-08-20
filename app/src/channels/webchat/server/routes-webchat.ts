@@ -182,7 +182,7 @@ export async function rWebchatTailscaleOwner(ctx: RouteCtx, _m: RegExpMatchArray
     return json(res, 400, { error: 'Invalid JSON' });
   }
   if (typeof body.armed !== 'boolean') return json(res, 400, { error: 'armed must be a boolean' });
-  setPromoteFirstTailscaleOwner(body.armed);
+  await setPromoteFirstTailscaleOwner(body.armed);
   return json(res, 200, { armed: await getPromoteFirstTailscaleOwner() });
 }
 

@@ -1392,7 +1392,7 @@ export function threadToSessionKey(threadId: string | null | undefined): string 
  * Per-member rooms therefore collapse threads for that member. That is a
  * property of the credential feature, not of this function.
  */
-export function sessionKeyToThread(threadId: string | null | undefined, roomId?: string): string {
+export async function sessionKeyToThread(threadId: string | null | undefined, roomId?: string): Promise<string> {
   if (!threadId) return MAIN_THREAD;
   // A per-member session key is `<userId>::<thread>` and therefore KNOWS its
   // thread — decode it rather than guessing. This supersedes the roomId
@@ -1407,7 +1407,9 @@ export function sessionKeyToThread(threadId: string | null | undefined, roomId?:
   if (sep > 0) return threadId.slice(sep + 2);
   // Legacy bare-user key (pre-composite) carries no thread at all, so main is
   // the only defensible answer.
-  if (roomId && !getWebchatThread(roomId, threadId)) return MAIN_THREAD;
+  // Await BEFORE negating: `!promise` is always false, which re-opened the
+  // phantom-thread reply loss this function exists to prevent.
+  if (roomId && !(await getWebchatThread(roomId, threadId))) return MAIN_THREAD;
   return threadId;
 }
 

@@ -1,5 +1,5 @@
 diff --git a/src/container-runner.test.ts b/src/container-runner.test.ts
-index ea71a59f..844685fb 100644
+index ea71a59f..618e554a 100644
 --- a/src/container-runner.test.ts
 +++ b/src/container-runner.test.ts
 @@ -33,25 +33,25 @@ vi.mock('./log.js', () => ({
@@ -155,16 +155,26 @@ index ea71a59f..844685fb 100644
      // The hardened posture pins non-root, so a composed uid-0 runAs could never
      // be realized; Docker's root behavior (image USER wins) stays unchanged.
      const getuid = vi.spyOn(process, 'getuid').mockReturnValue(0);
-@@ -299,7 +299,7 @@ describe('composeSessionSpec', () => {
+@@ -299,38 +299,40 @@ describe('composeSessionSpec', () => {
      }
    });
  
 -  it('leaves cpu and memory unset by default (unbounded, as today)', () => {
-+  it('leaves cpu and memory unset by default (unbounded, as today)', async () => {
-     // Guards the knobs' own defaults: an accidental default cap would OOM-kill
-     // workloads that run fine now.
+-    // Guards the knobs' own defaults: an accidental default cap would OOM-kill
+-    // workloads that run fine now.
++  it('leaves cpu unset by default; memory defaults to a hard 8g cap', async () => {
++    // THIS INSTALL'S POLICY, diverging from upstream's unbounded default on
++    // purpose (docs/webchat/security.md §Container hardening): unbounded
++    // privileged the failure case — runaway agents have OOM-killed real hosts.
++    // CONTAINER_MEMORY_LIMIT overrides; the literal 'none' restores unbounded.
      expect(CONTAINER_CPU_LIMIT).toBe('');
-@@ -312,25 +312,25 @@ describe('composeSessionSpec', () => {
+     expect(CONTAINER_MEMORY_LIMIT).toBe('');
+     const spec = compose();
+     expect(spec.resources.cpus).toBeUndefined();
+-    expect(spec.resources.memoryMb).toBeUndefined();
++    expect(spec.resources.memoryMb).toBe(8192);
+     expect(spec.resources.shmSizeMb).toBe(1024);
+   });
  });
  
  describe('parseMemoryMb', () => {
@@ -194,7 +204,7 @@ index ea71a59f..844685fb 100644
      // Fail-closed like the raw pass-through this replaced: Docker used to
      // reject an invalid value at spawn. Returning undefined would fail in the
      // one wrong direction a resource limit has — quietly uncapped.
-@@ -341,12 +341,12 @@ describe('parseMemoryMb', () => {
+@@ -341,12 +343,12 @@ describe('parseMemoryMb', () => {
  });
  
  describe('parsePidsLimit', () => {
@@ -209,7 +219,7 @@ index ea71a59f..844685fb 100644
      // cgroups v2 rejects `--pids-limit 0` with EINVAL, killing the spawn.
      for (const value of ['0', '-1', '', '   ', 'lots']) {
        expect(parsePidsLimit(value)).toBeUndefined();
-@@ -355,7 +355,7 @@ describe('parsePidsLimit', () => {
+@@ -355,7 +357,7 @@ describe('parsePidsLimit', () => {
  });
  
  describe('toMountSpecs', () => {
@@ -218,7 +228,7 @@ index ea71a59f..844685fb 100644
      expect(toMountSpecs(mounts, 'agent-1')).toEqual([
        {
          class: 'group-state',
-@@ -374,7 +374,7 @@ describe('toMountSpecs', () => {
+@@ -374,7 +376,7 @@ describe('toMountSpecs', () => {
      ]);
    });
  
@@ -227,7 +237,7 @@ index ea71a59f..844685fb 100644
      const [spec] = toMountSpecs([{ hostPath: '/x', containerPath: '/y', readonly: false }], 'agent-1');
      expect(spec.class).toBe('allowlisted-extra');
      expect(spec.groupScope).toBe('agent-1');
-@@ -439,7 +439,7 @@ describe('syncSkillSymlinks', () => {
+@@ -439,7 +441,7 @@ describe('syncSkillSymlinks', () => {
      return fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-skills-'));
    }
  
@@ -236,7 +246,7 @@ index ea71a59f..844685fb 100644
      const dir = tmpClaudeDir();
      syncSkillSymlinks(dir, { ...containerConfig, skills: ['welcome'] } as ContainerConfig);
  
-@@ -449,7 +449,7 @@ describe('syncSkillSymlinks', () => {
+@@ -449,7 +451,7 @@ describe('syncSkillSymlinks', () => {
      expect(fs.readlinkSync(link)).toBe('/app/skills/welcome');
    });
  
@@ -245,7 +255,7 @@ index ea71a59f..844685fb 100644
      const dir = tmpClaudeDir();
      syncSkillSymlinks(dir, { ...containerConfig, skills: ['welcome', 'vercel-cli'] } as ContainerConfig);
      syncSkillSymlinks(dir, { ...containerConfig, skills: ['welcome'] } as ContainerConfig);
-@@ -457,7 +457,7 @@ describe('syncSkillSymlinks', () => {
+@@ -457,7 +459,7 @@ describe('syncSkillSymlinks', () => {
      expect(fs.existsSync(path.join(dir, 'skills', 'vercel-cli'))).toBe(false);
    });
  
@@ -254,3 +264,12 @@ index ea71a59f..844685fb 100644
      // Template overlays depend on surviving the prune (see src/group-skills.ts);
      // a stale pre-refactor skill copy (#3001) otherwise gets served forever with
      // no trace.
+@@ -467,7 +469,7 @@ describe('syncSkillSymlinks', () => {
+     syncSkillSymlinks(dir, { ...containerConfig, skills: ['welcome'] } as ContainerConfig);
+ 
+     expect(log.warn).toHaveBeenCalledWith(
+-      expect.stringContaining('Shared skill not symlinked'),
++      expect.stringContaining('Skill not symlinked'),
+       expect.objectContaining({ skill: 'welcome' }),
+     );
+   });

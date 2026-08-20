@@ -147,11 +147,11 @@ async function reconcileOnce(server: WebchatServer): Promise<void> {
         const senderName = sess.agent_name || agentDisplayName();
         try {
           if (hasText) {
-            const stored = storeWebchatMessage(roomId, senderName, 'agent', text!);
+            const stored = await storeWebchatMessage(roomId, senderName, 'agent', text!);
             server.broadcast(roomId, { type: 'message', ...(await stored) });
           }
           for (const fileMeta of fileMetas) {
-            const stored = storeWebchatFileMessage(roomId, senderName, 'agent', fileMeta.filename, fileMeta);
+            const stored = await storeWebchatFileMessage(roomId, senderName, 'agent', fileMeta.filename, fileMeta);
             server.broadcast(roomId, { type: 'message', ...(await stored) });
           }
           markSeen(msg.id);

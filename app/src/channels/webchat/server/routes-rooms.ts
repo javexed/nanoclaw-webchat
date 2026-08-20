@@ -827,7 +827,7 @@ export async function importRoomApplyHandler(req: IncomingMessage, res: ServerRe
   const staged = pendingAgentImports.get(String(body.token || ''));
   if (!staged) return json(res, 410, { error: 'Import expired — upload the bundle again' });
   try {
-    const result = applyRoomImport(staged.dir);
+    const result = await applyRoomImport(staged.dir);
     pendingAgentImports.delete(String(body.token));
     fs.rmSync(staged.dir, { recursive: true, force: true });
     await broadcastRooms();
