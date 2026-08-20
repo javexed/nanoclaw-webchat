@@ -172,11 +172,50 @@ export interface StartResult {
   error?: 'already-running' | 'not-installed';
 }
 
+/**
+ * Remove login directories left by a flow that never finished.
+ *
+ * finish() shreds the temp dir on every exit path, but a host RESTART mid-login
+ * runs none of them — the process simply goes away, and the directory outlives
+ * it. Observed: a dozen of them accumulated during development restarts. They
+ * were empty (the token only lands once the login completes, and an abandoned
+ * login never gets that far), so this is hygiene rather than exposure — but the
+ * one that is NOT empty is exactly the one worth never leaving behind.
+ *
+ * Only sweeps directories older than the login timeout, so a concurrent flow in
+ * another process is never pulled out from under itself.
+ */
+export function sweepOrphanedLoginDirs(now = Date.now()): number {
+  let removed = 0;
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(os.tmpdir());
+  } catch {
+    return 0;
+  }
+  for (const name of entries) {
+    if (!name.startsWith('grok-wizard-login-')) continue;
+    const dir = path.join(os.tmpdir(), name);
+    try {
+      if (now - fs.statSync(dir).mtimeMs < LOGIN_TIMEOUT_MS) continue;
+      fs.rmSync(dir, { recursive: true, force: true });
+      removed += 1;
+    } catch {
+      /* another process may have removed it already */
+    }
+  }
+  return removed;
+}
+
 export function startGrokLogin(root = process.cwd()): StartResult {
   // Single-flight: two tabs, or a tab racing the CLI, must not drive two logins
   // into one credential file.
   if (state.running) return { started: false, error: 'already-running' };
   if (!grokAvailable()) return { started: false, error: 'not-installed' };
+
+  // A restart mid-login leaves its directory behind; clear stale ones before
+  // adding another.
+  sweepOrphanedLoginDirs();
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-wizard-login-'));
   fs.chmodSync(dir, 0o700);
