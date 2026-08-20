@@ -69,7 +69,7 @@ export async function rOllamaPullsGet(ctx: RouteCtx, _m: RegExpMatchArray): Prom
 // "tight fit" warning.
 export async function rOllamaRecommendGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res } = ctx;
-  const remote = listWebchatModels().find((m) => {
+  const remote = (await listWebchatModels()).find((m) => {
     if (m.kind !== 'ollama' || !m.endpoint) return false;
     const host = (() => {
       try {

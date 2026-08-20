@@ -40,7 +40,7 @@ export interface McpServerForUI {
   auth: { kind: string } | null;
 }
 
-export function mcpServerForUI(s: WebchatMcpServer): McpServerForUI {
+export async function mcpServerForUI(s: WebchatMcpServer): Promise<McpServerForUI> {
   const parse = (v: string | null) => {
     try {
       return v ? (JSON.parse(v) as Record<string, unknown>) : null;
@@ -54,7 +54,7 @@ export function mcpServerForUI(s: WebchatMcpServer): McpServerForUI {
     name: s.name,
     transport: s.transport,
     target: (s.transport === 'stdio' ? s.command : s.url) ?? '',
-    agents_assigned: getAgentsAssignedToMcpServer(s.id).length,
+    agents_assigned: (await getAgentsAssignedToMcpServer(s.id)).length,
     health: parse(s.health),
     drift: parse(s.drift),
     pinned_tools: pinned?.tools ?? null,

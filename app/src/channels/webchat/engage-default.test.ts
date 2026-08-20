@@ -60,16 +60,12 @@ afterEach(() => {
   closeDb();
 });
 
-function patternsForRoom(roomId: string): Record<string, string> {
-  const rows = getDb()
-    .prepare(
-      `SELECT ag.folder, mga.engage_pattern
+async function patternsForRoom(roomId: string): Promise<Record<string, string>> {
+  const rows = (await getDb().all(`SELECT ag.folder, mga.engage_pattern
        FROM messaging_group_agents mga
        JOIN agent_groups ag ON ag.id = mga.agent_group_id
        JOIN messaging_groups mg ON mg.id = mga.messaging_group_id
-       WHERE mg.platform_id = ?`,
-    )
-    .all(roomId) as { folder: string; engage_pattern: string }[];
+       WHERE mg.platform_id = ?`, roomId)) as { folder: string; engage_pattern: string }[];
   return Object.fromEntries(rows.map((r) => [r.folder, r.engage_pattern]));
 }
 
@@ -78,18 +74,18 @@ describe('engage_default setting', () => {
     expect(getRoomEngageDefault('room-1')).toBe('mention-only');
   });
 
-  it('no prime (default) → every wiring gets \\B@<folder>\\b (mention-only)', () => {
+  it('no prime (default) → every wiring gets \\B@<folder>\\b (mention-only)', async () => {
     recomputeEngagePatterns('room-1');
-    const p = patternsForRoom('room-1');
+    const p = await patternsForRoom('room-1');
     expect(p.alice).toBe('\\B@[aA][lL][iI][cC][eE]\\b');
     expect(p.bob).toBe('\\B@[bB][oO][bB]\\b');
     expect(p.carol).toBe('\\B@[cC][aA][rR][oO][lL]\\b');
   });
 
-  it('explicit mention-only + no prime → every wiring gets \\B@<folder>\\b', () => {
+  it('explicit mention-only + no prime → every wiring gets \\B@<folder>\\b', async () => {
     setRoomEngageDefault('room-1', 'mention-only');
     recomputeEngagePatterns('room-1');
-    const p = patternsForRoom('room-1');
+    const p = await patternsForRoom('room-1');
     expect(p.alice).toBe('\\B@[aA][lL][iI][cC][eE]\\b');
     expect(p.bob).toBe('\\B@[bB][oO][bB]\\b');
     expect(p.carol).toBe('\\B@[cC][aA][rR][oO][lL]\\b');
@@ -101,7 +97,7 @@ describe('engage_default setting', () => {
     expect(getRoomEngageDefault('room-1')).toBe('mention-only');
   });
 
-  it('mention-only is ignored when a prime is configured (prime branch wins)', () => {
+  it('mention-only is ignored when a prime is configured (prime branch wins)', async () => {
     // With a prime set, the existing prime logic produces:
     //   prime  → negative-lookahead pattern excluding other folders
     //   others → \B@<folder>\b
@@ -110,21 +106,21 @@ describe('engage_default setting', () => {
     setRoomEngageDefault('room-1', 'mention-only');
     setPrimeAgentForWebchatRoom('room-1', 'ag-a');
     recomputeEngagePatterns('room-1');
-    const p = patternsForRoom('room-1');
+    const p = await patternsForRoom('room-1');
     expect(p.alice).toMatch(/^\^\(\?!/); // negative-lookahead = prime
     expect(p.bob).toBe('\\B@[bB][oO][bB]\\b');
     expect(p.carol).toBe('\\B@[cC][aA][rR][oO][lL]\\b');
   });
 
-  it('toggling from prime → no prime + mention-only flips alice from catch-all to mention-only', () => {
+  it('toggling from prime → no prime + mention-only flips alice from catch-all to mention-only', async () => {
     setPrimeAgentForWebchatRoom('room-1', 'ag-a');
     setRoomEngageDefault('room-1', 'mention-only');
     recomputeEngagePatterns('room-1');
-    expect(patternsForRoom('room-1').alice).toMatch(/^\^\(\?!/);
+    expect((await patternsForRoom('room-1')).alice).toMatch(/^\^\(\?!/);
 
     clearPrimeAgentForWebchatRoom('room-1');
     recomputeEngagePatterns('room-1');
-    const p = patternsForRoom('room-1');
+    const p = await patternsForRoom('room-1');
     expect(p.alice).toBe('\\B@[aA][lL][iI][cC][eE]\\b');
     expect(p.bob).toBe('\\B@[bB][oO][bB]\\b');
     expect(p.carol).toBe('\\B@[cC][aA][rR][oO][lL]\\b');

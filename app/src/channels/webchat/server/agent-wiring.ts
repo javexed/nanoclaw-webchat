@@ -66,17 +66,13 @@ export function newAgentGroupId(): string {
  * Exported so the webchat lifecycle subscriber (in `index.ts`) can
  * provision rooms for agents created via the a2a `create_agent` tool.
  */
-export function wireAgentToWebchatRoom(roomName: string, platformId: string, agentGroupId: string): void {
+export async function wireAgentToWebchatRoom(roomName: string, platformId: string, agentGroupId: string): Promise<void> {
   // db.createWebchatRoom is itself idempotent on (channel_type='webchat', platform_id).
   createWebchatRoom(roomName, platformId);
-  const mg = getMessagingGroupByPlatform('webchat', platformId);
+  const mg = await getMessagingGroupByPlatform('webchat', platformId);
   if (!mg) throw new Error(`Webchat room provisioning failed: ${platformId}`);
-  const existing = getDb()
-    .prepare(
-      `SELECT 1 FROM messaging_group_agents
-       WHERE messaging_group_id = ? AND agent_group_id = ? LIMIT 1`,
-    )
-    .get(mg.id, agentGroupId);
+  const existing = await getDb().get(`SELECT 1 FROM messaging_group_agents
+       WHERE messaging_group_id = ? AND agent_group_id = ? LIMIT 1`, mg.id, agentGroupId);
   if (existing) return;
   createMessagingGroupAgent({
     id: randomUUID(),
@@ -124,14 +120,10 @@ export function wireAgentToWebchatRoom(roomName: string, platformId: string, age
     // (spawning its own via `create_agent`) results in a duplicate agent.
     // The `create_agent` MCP tool already creates bidirectional rows; this
     // brings the PWA "add agent to room" path to parity.
-    const peers = getDb()
-      .prepare(
-        `SELECT ag.id, ag.folder FROM messaging_group_agents mga
+    const peers = (await getDb().all(`SELECT ag.id, ag.folder FROM messaging_group_agents mga
          JOIN agent_groups ag ON ag.id = mga.agent_group_id
-         WHERE mga.messaging_group_id = ? AND mga.agent_group_id != ?`,
-      )
-      .all(mg.id, agentGroupId) as { id: string; folder: string }[];
-    const newAgent = getDb().prepare(`SELECT folder FROM agent_groups WHERE id = ?`).get(agentGroupId) as
+         WHERE mga.messaging_group_id = ? AND mga.agent_group_id != ?`, mg.id, agentGroupId)) as { id: string; folder: string }[];
+    const newAgent = (await getDb().get(`SELECT folder FROM agent_groups WHERE id = ?`, agentGroupId)) as
       | { folder: string }
       | undefined;
     const touched = new Set<string>([agentGroupId]);
@@ -183,17 +175,13 @@ export function ensureA2aDestination(ownerAgentId: string, targetAgentId: string
   });
 }
 
-export function recomputeEngagePatterns(roomId: string): void {
-  const mg = getMessagingGroupByPlatform('webchat', roomId);
+export async function recomputeEngagePatterns(roomId: string): Promise<void> {
+  const mg = await getMessagingGroupByPlatform('webchat', roomId);
   if (!mg) return;
-  const wirings = getDb()
-    .prepare(
-      `SELECT mga.id, mga.agent_group_id, ag.folder
+  const wirings = (await getDb().all(`SELECT mga.id, mga.agent_group_id, ag.folder
        FROM messaging_group_agents mga
        JOIN agent_groups ag ON ag.id = mga.agent_group_id
-       WHERE mga.messaging_group_id = ?`,
-    )
-    .all(mg.id) as { id: string; agent_group_id: string; folder: string }[];
+       WHERE mga.messaging_group_id = ?`, mg.id)) as { id: string; agent_group_id: string; folder: string }[];
 
   const primeAgentId = getPrimeAgentForWebchatRoom(roomId);
   // If the configured prime isn't actually wired (stale row), treat as
@@ -319,7 +307,7 @@ export function createBareAgentGroup(
   return { group };
 }
 
-export function parseAgentLearning(agentGroupId: string): {
+export async function parseAgentLearning(agentGroupId: string): Promise<{
   autoTrigger?: boolean;
   autoKeep?: boolean;
   cooldownMinutes?: number;
@@ -329,9 +317,9 @@ export function parseAgentLearning(agentGroupId: string): {
   replayReview?: boolean;
   /** Who pays for /learn: 'auto' (default) | 'require' | 'off'. */
   chargeInvoker?: 'off' | 'auto' | 'require';
-} {
+}> {
   try {
-    const raw = getContainerConfig(agentGroupId)?.learning;
+    const raw = (await getContainerConfig(agentGroupId))?.learning;
     return raw ? (JSON.parse(raw) as ReturnType<typeof parseAgentLearning>) : {};
   } catch {
     return {};

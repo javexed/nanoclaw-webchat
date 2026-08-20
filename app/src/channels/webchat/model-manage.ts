@@ -209,7 +209,7 @@ export async function gatherModelInventory(endpoint: string): Promise<ModelInven
   const base = endpoint.replace(/\/+$/, '');
   const gpu = await readGpu();
 
-  const registry = listWebchatModels().filter((m: WebchatModel) => m.kind === 'ollama');
+  const registry = (await listWebchatModels()).filter((m: WebchatModel) => m.kind === 'ollama');
   const defaultId = getDefaultModelId();
 
   let tags: Array<{ name: string; size?: number }> = [];

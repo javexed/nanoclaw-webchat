@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe('moduleWebchat migration', () => {
-  it('leaves the expected tables after all webchat migrations', () => {
+  it('leaves the expected tables after all webchat migrations', async () => {
     runMigrations(getDb());
     // After all webchat migrations:
     //   webchat-initial          → webchat_rooms, webchat_messages, webchat_push_subscriptions
@@ -28,9 +28,7 @@ describe('moduleWebchat migration', () => {
     //   webchat-approvals-index  → adds webchat_approvals_index
     //   webchat-user-archives    → adds webchat_user_room_archives
     //   webchat-archive-split    → adds webchat_room_archives, renames webchat_user_room_archives → webchat_user_room_hides
-    const tables = getDb()
-      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'webchat_%' ORDER BY name`)
-      .all() as { name: string }[];
+    const tables = (await getDb().all(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'webchat_%' ORDER BY name`)) as { name: string }[];
     expect(tables.map((t) => t.name)).toEqual([
       'webchat_agent_mcp_servers',
       'webchat_agent_models',
@@ -63,11 +61,9 @@ describe('moduleWebchat migration', () => {
     ]);
   });
 
-  it('creates the expected indexes', () => {
+  it('creates the expected indexes', async () => {
     runMigrations(getDb());
-    const indexes = getDb()
-      .prepare(`SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_webchat_%' ORDER BY name`)
-      .all() as { name: string }[];
+    const indexes = (await getDb().all(`SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_webchat_%' ORDER BY name`)) as { name: string }[];
     expect(indexes.map((i) => i.name).sort()).toEqual(
       [
         'idx_webchat_agent_mcp_servers_server',
@@ -85,9 +81,9 @@ describe('moduleWebchat migration', () => {
     );
   });
 
-  it('records all webchat migrations in schema_version', () => {
+  it('records all webchat migrations in schema_version', async () => {
     runMigrations(getDb());
-    const rows = getDb().prepare(`SELECT name FROM schema_version WHERE name LIKE 'webchat-%' ORDER BY name`).all() as {
+    const rows = (await getDb().all(`SELECT name FROM schema_version WHERE name LIKE 'webchat-%' ORDER BY name`)) as {
       name: string;
     }[];
     expect(rows.map((r) => r.name)).toEqual([
@@ -140,7 +136,7 @@ describe('moduleWebchat migration', () => {
     expect(() => runMigrations(getDb())).not.toThrow();
   });
 
-  it('legacy install upgrade: webchat-drop-rooms migrates webchat_rooms data into messaging_groups', () => {
+  it('legacy install upgrade: webchat-drop-rooms migrates webchat_rooms data into messaging_groups', async () => {
     // Simulate an older install that has webchat-initial applied but NOT
     // webchat-drop-rooms (the schema state of installs predating this migration).
     const db = getDb();
@@ -161,19 +157,17 @@ describe('moduleWebchat migration', () => {
         file_meta TEXT, created_at INTEGER NOT NULL
       );
     `);
-    db.prepare(`INSERT INTO webchat_rooms VALUES ('legacy-room', 'Legacy', ?)`).run(Date.now());
+    await db.run(`INSERT INTO webchat_rooms VALUES ('legacy-room', 'Legacy', ?)`, Date.now());
     // Mark webchat-initial as already applied so only the new migration runs.
-    db.prepare(`INSERT INTO schema_version (version, name, applied) VALUES (100, 'webchat-initial', ?)`).run(
-      new Date().toISOString(),
-    );
+    await db.run(`INSERT INTO schema_version (version, name, applied) VALUES (100, 'webchat-initial', ?)`, new Date().toISOString());
 
     runMigrations(db);
 
     // After: webchat_rooms is gone, but the legacy room got a corresponding
     // messaging_groups row.
-    const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='webchat_rooms'`).all();
+    const tables = await db.all(`SELECT name FROM sqlite_master WHERE type='table' AND name='webchat_rooms'`);
     expect(tables).toEqual([]);
-    const mg = db.prepare(`SELECT platform_id, name FROM messaging_groups WHERE channel_type='webchat'`).get() as {
+    const mg = (await db.get(`SELECT platform_id, name FROM messaging_groups WHERE channel_type='webchat'`)) as {
       platform_id: string;
       name: string;
     };
@@ -181,7 +175,7 @@ describe('moduleWebchat migration', () => {
     expect(mg.name).toBe('Legacy');
   });
 
-  it('webchat_messages survives the FK drop (data migrates intact)', () => {
+  it('webchat_messages survives the FK drop (data migrates intact)', async () => {
     const db = getDb();
     // Same legacy seed as the test above.
     db.exec(`
@@ -199,17 +193,13 @@ describe('moduleWebchat migration', () => {
         file_meta TEXT, created_at INTEGER NOT NULL
       );
     `);
-    db.prepare(`INSERT INTO webchat_rooms VALUES ('r1', 'R', ?)`).run(Date.now());
-    db.prepare(
-      `INSERT INTO webchat_messages (id, room_id, sender, content, created_at) VALUES ('m1', 'r1', 'alice', 'hi', ?)`,
-    ).run(Date.now());
-    db.prepare(`INSERT INTO schema_version (version, name, applied) VALUES (100, 'webchat-initial', ?)`).run(
-      new Date().toISOString(),
-    );
+    await db.run(`INSERT INTO webchat_rooms VALUES ('r1', 'R', ?)`, Date.now());
+    await db.run(`INSERT INTO webchat_messages (id, room_id, sender, content, created_at) VALUES ('m1', 'r1', 'alice', 'hi', ?)`, Date.now());
+    await db.run(`INSERT INTO schema_version (version, name, applied) VALUES (100, 'webchat-initial', ?)`, new Date().toISOString());
 
     runMigrations(db);
 
-    const msg = db.prepare(`SELECT id, room_id, sender, content FROM webchat_messages WHERE id='m1'`).get() as {
+    const msg = (await db.get(`SELECT id, room_id, sender, content FROM webchat_messages WHERE id='m1'`)) as {
       id: string;
       room_id: string;
       sender: string;

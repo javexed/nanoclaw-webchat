@@ -43,8 +43,8 @@ import {
 } from './identity.js';
 
 /** The agent group's provider, mapped to the two UserCreds-supported families. */
-function groupProvider(agentGroupId: string): UserCredsProvider {
-  return getContainerConfig(agentGroupId)?.provider === 'codex' ? 'codex' : 'claude';
+async function groupProvider(agentGroupId: string): Promise<UserCredsProvider> {
+  return (await getContainerConfig(agentGroupId))?.provider === 'codex' ? 'codex' : 'claude';
 }
 
 // Sentinel bearer for a per-member OAuth container. Its value is irrelevant
@@ -59,12 +59,12 @@ const OAUTH_SENTINEL = 'placeholder';
  * permitted member to their per-member session) and the turn gate (veto a
  * 'required' room for a member with no permitted credential).
  */
-function evaluateRoomCredState(
+async function evaluateRoomCredState(
   mg: { id: string; channel_type: string; platform_id: string },
   agentGroupId: string,
   userId: string | null,
   threadId?: string | null,
-): { override: { sessionMode: 'per-thread'; threadId: string } | null; requiredBlocked: boolean; credName: string } {
+): Promise<{ override: { sessionMode: 'per-thread'; threadId: string } | null; requiredBlocked: boolean; credName: string }> {
   const none = { override: null, requiredBlocked: false, credName: '' };
   // UserCreds is webchat-only and opt-in per room. Fail safe to no effect.
   if (mg.channel_type !== 'webchat' || !userId) return none;
@@ -73,7 +73,7 @@ function evaluateRoomCredState(
   // credential TYPES the workspace accepts (key / OAuth, per provider) is set on
   // the Credentials admin page; the room's mode is the master switch over both.
   const provider = groupProvider(agentGroupId);
-  const cfg = getCredentialsConfig();
+  const cfg = await getCredentialsConfig();
   const mode = getEffectiveRoomMode(mg.platform_id);
   // 'disabled' (User credentials: Off) means no UserCreds at all — neither key nor
   // OAuth — regardless of what the workspace accepts. Otherwise each method
@@ -86,7 +86,7 @@ function evaluateRoomCredState(
   // is still PERMITTED by current policy — so flipping an allowance off (or a
   // room to disabled) stops already-connected members routing, not just new ones.
   // The per-(user,group) OneCLI agent is created lazily at spawn (prepare hook).
-  const cred = getUserCredential(userId, provider);
+  const cred = await getUserCredential(userId, provider);
   if (cred?.status === 'active') {
     const permitted = cred.cred_type === 'oauth_token' ? oauthOffered : apiOffered;
     // Key by (user, thread), not user alone: a per-member session that ignores
@@ -101,8 +101,8 @@ function evaluateRoomCredState(
   return { ...none, requiredBlocked: mode === 'required', credName };
 }
 
-registerSessionKeyResolver((mg, agentGroupId, userId, threadId) => {
-  return evaluateRoomCredState(mg, agentGroupId, userId, threadId).override;
+registerSessionKeyResolver(async (mg, agentGroupId, userId, threadId) => {
+  return (await evaluateRoomCredState(mg, agentGroupId, userId, threadId)).override;
 });
 
 // The veto half (seam contract: core records the drop with our reason; the
@@ -110,7 +110,7 @@ registerSessionKeyResolver((mg, agentGroupId, userId, threadId) => {
 // window so context fan-out in multi-agent rooms doesn't repeat the notice.
 const noticeSentAt = new Map<string, number>();
 const NOTICE_DEDUPE_MS = 5 * 60 * 1000;
-registerTurnGate((mg, agentGroupId, userId) => {
+registerTurnGate(async (mg, agentGroupId, userId) => {
   // FAIL CLOSED where it matters (the seam skips a throwing gate): if we
   // cannot evaluate credential state, a required-mode room must veto rather
   // than silently bill the workspace key. Known-optional/disabled rooms keep
@@ -133,7 +133,7 @@ registerTurnGate((mg, agentGroupId, userId) => {
     });
     return { reason: 'user-creds-evaluation-failed' };
   }
-  if (!state.requiredBlocked) return null;
+  if (!(await state).requiredBlocked) return null;
   const dedupeKey = `${mg.id}:${userId}`;
   const last = noticeSentAt.get(dedupeKey) ?? 0;
   if (Date.now() - last > NOTICE_DEDUPE_MS) {
@@ -145,7 +145,7 @@ registerTurnGate((mg, agentGroupId, userId) => {
       // the sweep delivery poll actually delivers it — the previous target
       // (session id == agentGroupId) exists in no sessions row, so the notice
       // was written where nothing ever read it.
-      const noticeSession = resolveSession(agentGroupId, mg.id, null, 'shared').session;
+      const noticeSession = (await resolveSession(agentGroupId, mg.id, null, 'shared')).session;
       writeOutboundDirect(agentGroupId, noticeSession.id, {
         id: `user-creds-block-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         kind: 'chat',
@@ -153,7 +153,7 @@ registerTurnGate((mg, agentGroupId, userId) => {
         channelType: mg.channel_type,
         threadId: null,
         content: JSON.stringify({
-          text: `This room requires your own ${state.credName} — connect it in the banner above the chat.`,
+          text: `This room requires your own ${(await state).credName} — connect it in the banner above the chat.`,
         }),
       });
     } catch {
@@ -214,17 +214,17 @@ registerSessionPrepareHook(async (agentGroupId, threadId) => {
 // sentinel treatment — otherwise it stays in x-api-key mode, the OAuth secret
 // rewrites `Authorization` but not `x-api-key`, and Anthropic rejects the
 // lingering `x-api-key: placeholder`. An API-key default needs nothing.
-registerContainerEnvResolver((agentGroupId, threadId): Record<string, string> => {
+registerContainerEnvResolver(async (agentGroupId, threadId): Promise<Record<string, string>> => {
   if (groupProvider(agentGroupId) !== 'claude') return {};
   const oauthEnv = { CLAUDE_CODE_OAUTH_TOKEN: OAUTH_SENTINEL, ANTHROPIC_API_KEY: '' };
   // Per-member session: the member's own credential decides the container mode.
   const memberUserId = memberUserFromKey(threadId) ?? threadId;
   if (memberUserId) {
-    const cred = getUserCredential(memberUserId, 'claude');
+    const cred = await getUserCredential(memberUserId, 'claude');
     if (cred?.status === 'active') return cred.cred_type === 'oauth_token' ? oauthEnv : {};
   }
   // Base session: the workspace default serves it.
-  const ws = getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude');
+  const ws = await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude');
   if (ws?.status === 'active' && ws.cred_type === 'oauth_token') return oauthEnv;
   return {};
 });

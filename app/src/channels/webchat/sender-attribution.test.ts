@@ -92,7 +92,7 @@ afterEach(() => {
 describe('sender attribution — without threading (heuristic)', () => {
   it('the heuristic picks the most-recently-active session (the race we want to eliminate)', async () => {
     const { findActiveAgentForWebchatRoom } = await import('./db.js');
-    const result = findActiveAgentForWebchatRoom('room-alpha');
+    const result = await findActiveAgentForWebchatRoom('room-alpha');
     // Beta wins because its last_active is newer — even though in our
     // scenario Alpha is the real producer. This is exactly the failure mode
     // the threading change exists to fix.
@@ -105,21 +105,21 @@ describe('sender attribution — with threading (exact)', () => {
     // Mirrors what the deliver() path does internally: prefer the threaded
     // id over the heuristic. lookupAgentForMessage is module-internal, so
     // we recreate its query inline to validate the contract.
-    const ag = getDb().prepare('SELECT id, name, folder FROM agent_groups WHERE id = ?').get('ag-alpha') as
+    const ag = (await getDb().get('SELECT id, name, folder FROM agent_groups WHERE id = ?', 'ag-alpha')) as
       | { id: string; name: string; folder: string }
       | undefined;
     expect(ag?.id).toBe('ag-alpha');
     expect(ag?.name).toBe('Alpha Agent');
     // Critically, this is NOT the agent the heuristic would have picked.
     const { findActiveAgentForWebchatRoom } = await import('./db.js');
-    expect(findActiveAgentForWebchatRoom('room-alpha')?.id).toBe('ag-beta');
+    expect((await findActiveAgentForWebchatRoom('room-alpha'))?.id).toBe('ag-beta');
   });
 
-  it('storing a message with the correct sender name produces an attributable row', () => {
+  it('storing a message with the correct sender name produces an attributable row', async () => {
     // Round-trip: store with Alpha as the sender, verify the row reflects it.
     // In the buggy heuristic path this would have come out as "Beta Agent".
-    const stored = storeWebchatMessage('room-alpha', 'Alpha Agent', 'agent', 'morning briefing text');
-    const row = getDb().prepare('SELECT sender, sender_type FROM webchat_messages WHERE id = ?').get(stored.id) as {
+    const stored = await storeWebchatMessage('room-alpha', 'Alpha Agent', 'agent', 'morning briefing text');
+    const row = (await getDb().get('SELECT sender, sender_type FROM webchat_messages WHERE id = ?', stored.id)) as {
       sender: string;
       sender_type: string;
     };

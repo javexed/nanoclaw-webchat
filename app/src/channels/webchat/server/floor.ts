@@ -129,17 +129,13 @@ export function deskState(running: boolean, lastKind: string | null, idleMs: num
  * human at the top-left. A 6-desk floor reads the same way; the layout is the
  * client's problem, the ordering is not.
  */
-export function buildFloor(userId: string): FloorSnapshot {
+export async function buildFloor(userId: string): Promise<FloorSnapshot> {
   const db = getDb();
   const privileged = isOwner(userId) || isAnyAdmin(userId);
 
-  const rows = db
-    .prepare(
-      `SELECT id, agent_group_id, messaging_group_id, last_active
+  const rows = (await db.all(`SELECT id, agent_group_id, messaging_group_id, last_active
          FROM sessions
-        ORDER BY last_active DESC`,
-    )
-    .all() as SessionRow[];
+        ORDER BY last_active DESC`)) as SessionRow[];
 
   const now = Date.now();
   const desks: Desk[] = [];
@@ -183,9 +179,9 @@ export function buildFloor(userId: string): FloorSnapshot {
 }
 
 /** Agent group display name, falling back to the id so a desk is never blank. */
-function agentNameFor(db: ReturnType<typeof getDb>, agentGroupId: string): string {
+async function agentNameFor(db: ReturnType<typeof getDb>, agentGroupId: string): Promise<string> {
   try {
-    const row = db.prepare('SELECT name FROM agent_groups WHERE id = ?').get(agentGroupId) as
+    const row = (await db.get('SELECT name FROM agent_groups WHERE id = ?', agentGroupId)) as
       | { name?: string }
       | undefined;
     return row?.name || agentGroupId;

@@ -60,8 +60,8 @@ export async function rRouterRoutesGet(ctx: RouteCtx, _m: RegExpMatchArray): Pro
 // working default. Idempotent + keyed on model_id 'auto' (not a fixed row id),
 // so a hand-created 'auto' row is respected rather than duplicated. Router
 // endpoint mirrors getRouterInfo()'s (ollama-manage.ts) — keep them in step.
-export function syncAutoRouterSelectable(live: boolean): void {
-  const existing = listWebchatModels().find((m) => m.model_id === 'auto');
+export async function syncAutoRouterSelectable(live: boolean): Promise<void> {
+  const existing = (await listWebchatModels()).find((m) => m.model_id === 'auto');
   if (live) {
     if (!existing) {
       createWebchatModel({
@@ -130,7 +130,7 @@ export async function rRouterRoutersPost(ctx: RouteCtx, _m: RegExpMatchArray): P
     // Register the router as an openai-compatible model so agents can assign
     // it (the virtual model name = the router name, at the router endpoint).
     const endpoint = (await getRouterInfo()).endpoint;
-    if (!listWebchatModels().some((m) => m.model_id === name && m.endpoint === endpoint)) {
+    if (!(await listWebchatModels()).some((m) => m.model_id === name && m.endpoint === endpoint)) {
       createWebchatModel({
         id: randomUUID(),
         name,
@@ -153,9 +153,9 @@ export async function rRouterDelDelete(ctx: RouteCtx, m: RegExpMatchArray): Prom
   const cfg = readRoutesConfig();
   if (!cfg) return json(res, 404, { error: 'Routing not installed' });
   // Refuse while an agent is still assigned to this router's model.
-  const model = listWebchatModels().find((m) => m.model_id === name);
+  const model = (await listWebchatModels()).find((m) => m.model_id === name);
   if (model) {
-    const assigned = getAgentsAssignedToModel(model.id);
+    const assigned = await getAgentsAssignedToModel(model.id);
     if (assigned.length > 0) {
       return json(res, 409, {
         error: `router "${name}" is assigned to ${assigned.length} agent(s) — unassign first`,

@@ -61,10 +61,10 @@ describe('session-key mapping (slice 1)', () => {
   // its thread_id is a user id, not a thread. Passed through, agent replies were
   // stored under a thread_id with no webchat_threads row — a phantom thread the
   // UI cannot list or open. Twelve of one member's replies vanished into one.
-  it('sends a session key that names no thread in the room to main', () => {
+  it('sends a session key that names no thread in the room to main', async () => {
     const room = 'room-phantom';
     createWebchatRoom(room, 'Phantom');
-    const real = createWebchatThread(room, 'Project Management');
+    const real = await createWebchatThread(room, 'Project Management');
 
     // A real thread still maps to itself...
     expect(sessionKeyToThread(real.thread_id, room)).toBe(real.thread_id);
@@ -75,10 +75,10 @@ describe('session-key mapping (slice 1)', () => {
   // Step 5: a composite key KNOWS its thread, so decode rather than guess. The
   // roomId heuristic could only answer "not a real thread -> main", which put a
   // topic thread's replies in the room.
-  it('decodes a per-member composite key to its real thread', () => {
+  it('decodes a per-member composite key to its real thread', async () => {
     const room = 'room-decode';
     createWebchatRoom(room, 'Decode');
-    const real = createWebchatThread(room, 'Project Management');
+    const real = await createWebchatThread(room, 'Project Management');
     const key = `webchat:tailscale:mark@example.com::${real.thread_id}`;
 
     expect(sessionKeyToThread(key, room)).toBe(real.thread_id);
@@ -135,8 +135,8 @@ describe('per-thread session teardown lookup (slice 2)', () => {
     last_active: new Date().toISOString(),
     created_at: new Date().toISOString(),
   });
-  it('finds sessions for (room mg, thread); ignores other threads', () => {
-    const mg = getMessagingGroupByPlatform('webchat', 'room-1')!;
+  it('finds sessions for (room mg, thread); ignores other threads', async () => {
+    const mg = await getMessagingGroupByPlatform('webchat', 'room-1')!;
     createAgentGroup({
       id: 'ag1',
       name: 'A',
@@ -146,19 +146,19 @@ describe('per-thread session teardown lookup (slice 2)', () => {
     });
     createSession(sess('s-q3', 'u_q3', mg.id));
     createSession(sess('s-main', null, mg.id));
-    expect(findSessionsByMessagingGroupThread(mg.id, 'u_q3').map((f) => f.sessionId)).toEqual(['s-q3']);
+    expect((await findSessionsByMessagingGroupThread(mg.id, 'u_q3')).map((f) => f.sessionId)).toEqual(['s-q3']);
     expect(findSessionsByMessagingGroupThread(mg.id, 'nope')).toEqual([]);
   });
 });
 
 describe('migration', () => {
-  it('adds the thread tables + thread_id column (default main)', () => {
+  it('adds the thread tables + thread_id column (default main)', async () => {
     // tables exist (helper calls don't throw)
     expect(() => listWebchatThreads('room-1')).not.toThrow();
     // a message stored without a thread lands in 'main' via the column default
-    const m = storeWebchatMessage('room-1', 'Alice', 'user', 'hi');
+    const m = await storeWebchatMessage('room-1', 'Alice', 'user', 'hi');
     expect(m.thread_id).toBe('main');
-    const col = (getDb().prepare("PRAGMA table_info('webchat_messages')").all() as Array<{ name: string }>).map(
+    const col = ((await getDb().all("PRAGMA table_info('webchat_messages')")) as Array<{ name: string }>).map(
       (c) => c.name,
     );
     expect(col).toContain('thread_id');
@@ -166,61 +166,61 @@ describe('migration', () => {
 });
 
 describe('thread CRUD', () => {
-  it('ensureThread is idempotent and does not clobber the title', () => {
+  it('ensureThread is idempotent and does not clobber the title', async () => {
     ensureMainThread('room-1');
     ensureThread('room-1', MAIN_THREAD, 'IGNORED', 'main'); // second ensure
-    const main = getWebchatThread('room-1', MAIN_THREAD)!;
+    const main = await getWebchatThread('room-1', MAIN_THREAD)!;
     expect(main.title).toBe('Main');
     expect(main.kind).toBe('main');
   });
 
-  it('ensureAgentThread keys a deterministic per-agent lane', () => {
+  it('ensureAgentThread keys a deterministic per-agent lane', async () => {
     const id = ensureAgentThread('room-1', 'sarah', 'Sarah');
     expect(id).toBe('agent:sarah');
     expect(ensureAgentThread('room-1', 'sarah', 'Sarah (again)')).toBe('agent:sarah'); // reused
-    expect(getWebchatThread('room-1', 'agent:sarah')!.title).toBe('Sarah'); // not clobbered
+    expect((await getWebchatThread('room-1', 'agent:sarah')!).title).toBe('Sarah'); // not clobbered
   });
 
-  it('createWebchatThread makes a uuid topic thread', () => {
-    const t = createWebchatThread('room-1', 'Q3 planning');
+  it('createWebchatThread makes a uuid topic thread', async () => {
+    const t = await createWebchatThread('room-1', 'Q3 planning');
     expect(t.kind).toBe('topic');
     expect(t.thread_id).not.toBe('main');
-    expect(getWebchatThread('room-1', t.thread_id)!.title).toBe('Q3 planning');
+    expect((await getWebchatThread('room-1', t.thread_id)!).title).toBe('Q3 planning');
   });
 
-  it('lists threads with main first', () => {
+  it('lists threads with main first', async () => {
     createWebchatThread('room-1', 'Topic A');
     ensureMainThread('room-1');
     ensureAgentThread('room-1', 'max', 'Max');
-    const list = listWebchatThreads('room-1');
+    const list = await listWebchatThreads('room-1');
     expect(list[0].thread_id).toBe('main');
     expect(list.map((t) => t.kind)).toContain('agent');
     expect(list.map((t) => t.kind)).toContain('topic');
   });
 
-  it('renames a thread', () => {
-    const t = createWebchatThread('room-1', 'old');
+  it('renames a thread', async () => {
+    const t = await createWebchatThread('room-1', 'old');
     renameWebchatThread('room-1', t.thread_id, 'new');
-    expect(getWebchatThread('room-1', t.thread_id)!.title).toBe('new');
+    expect((await getWebchatThread('room-1', t.thread_id)!).title).toBe('new');
   });
 });
 
 describe('thread-partitioned messages', () => {
-  it('stores + reads history per thread', () => {
+  it('stores + reads history per thread', async () => {
     storeWebchatMessage('room-1', 'Alice', 'user', 'in main'); // → main
-    const t = createWebchatThread('room-1', 'Q3');
+    const t = await createWebchatThread('room-1', 'Q3');
     storeWebchatMessage('room-1', 'Alice', 'user', 'in q3', t.thread_id);
 
-    expect(getWebchatMessages('room-1', 200, MAIN_THREAD).map((m) => m.content)).toEqual(['in main']);
-    expect(getWebchatMessages('room-1', 200, t.thread_id).map((m) => m.content)).toEqual(['in q3']);
+    expect((await getWebchatMessages('room-1', 200, MAIN_THREAD)).map((m) => m.content)).toEqual(['in main']);
+    expect((await getWebchatMessages('room-1', 200, t.thread_id)).map((m) => m.content)).toEqual(['in q3']);
     // no thread filter → all of the room's messages
-    expect(getWebchatMessages('room-1').length).toBe(2);
+    expect((await getWebchatMessages('room-1')).length).toBe(2);
   });
 });
 
 describe('per-thread read markers', () => {
-  it('flags only threads with activity newer than the marker', () => {
-    const t = createWebchatThread('room-1', 'Q3');
+  it('flags only threads with activity newer than the marker', async () => {
+    const t = await createWebchatThread('room-1', 'Q3');
     storeWebchatMessage('room-1', 'Alice', 'user', 'a', MAIN_THREAD);
     storeWebchatMessage('room-1', 'Alice', 'user', 'b', t.thread_id);
 
@@ -231,20 +231,18 @@ describe('per-thread read markers', () => {
     expect(getUnreadThreadIdsForRoom('u1', 'room-1')).toEqual(new Set([t.thread_id]));
   });
 
-  it('marker is monotonic (never moves backward)', () => {
+  it('marker is monotonic (never moves backward)', async () => {
     storeWebchatMessage('room-1', 'Alice', 'user', 'a', MAIN_THREAD);
     markThreadRead('u1', 'room-1', MAIN_THREAD, 5000);
     markThreadRead('u1', 'room-1', MAIN_THREAD, 1000); // older — ignored
-    const row = getDb()
-      .prepare(`SELECT last_read_at FROM webchat_thread_reads WHERE user_id=? AND room_id=? AND thread_id=?`)
-      .get('u1', 'room-1', MAIN_THREAD) as { last_read_at: number };
+    const row = (await getDb().get(`SELECT last_read_at FROM webchat_thread_reads WHERE user_id=? AND room_id=? AND thread_id=?`, 'u1', 'room-1', MAIN_THREAD)) as { last_read_at: number };
     expect(row.last_read_at).toBe(5000);
   });
 });
 
 describe('deletion + cascade', () => {
-  it('deleteWebchatThread removes its messages + reads; main is not deletable', () => {
-    const t = createWebchatThread('room-1', 'Q3');
+  it('deleteWebchatThread removes its messages + reads; main is not deletable', async () => {
+    const t = await createWebchatThread('room-1', 'Q3');
     storeWebchatMessage('room-1', 'Alice', 'user', 'x', t.thread_id);
     markThreadRead('u1', 'room-1', t.thread_id, Date.now());
 
@@ -257,14 +255,14 @@ describe('deletion + cascade', () => {
     expect(getWebchatThread('room-1', MAIN_THREAD)).toBeDefined();
   });
 
-  it('deleteWebchatRoom drops the room threads + thread reads', () => {
+  it('deleteWebchatRoom drops the room threads + thread reads', async () => {
     ensureMainThread('room-1');
     createWebchatThread('room-1', 'Q3');
     markThreadRead('u1', 'room-1', MAIN_THREAD, Date.now());
 
     deleteWebchatRoom('room-1');
-    expect(getDb().prepare(`SELECT COUNT(*) c FROM webchat_threads WHERE room_id='room-1'`).get()).toEqual({ c: 0 });
-    expect(getDb().prepare(`SELECT COUNT(*) c FROM webchat_thread_reads WHERE room_id='room-1'`).get()).toEqual({
+    expect(await getDb().get(`SELECT COUNT(*) c FROM webchat_threads WHERE room_id='room-1'`)).toEqual({ c: 0 });
+    expect(await getDb().get(`SELECT COUNT(*) c FROM webchat_thread_reads WHERE room_id='room-1'`)).toEqual({
       c: 0,
     });
   });

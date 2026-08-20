@@ -185,8 +185,8 @@ describe('GET /api/learning/timeline', () => {
     wdb.markRoomSkillDraftResolved('d-kept', 'kept', 'webchat:owner');
     wdb.markRoomSkillDraftResolved('d-disc', 'discarded', 'expired');
     // Pin card timestamps so ordering/cursor assertions are deterministic.
-    const setTs = (draftId: string, ts: number) =>
-      db.prepare(`UPDATE webchat_messages SET created_at = ? WHERE id = ?`).run(ts, `skill-draft-card-${draftId}`);
+    const setTs = async (draftId: string, ts: number) =>
+      await db.run(`UPDATE webchat_messages SET created_at = ? WHERE id = ?`, ts, `skill-draft-card-${draftId}`);
     setTs('d-pending', T_PROPOSED);
     setTs('d-kept', T_KEPT_CARD);
     setTs('d-disc', T_DISCARDED);
@@ -203,7 +203,7 @@ describe('GET /api/learning/timeline', () => {
       description: 'No card anywhere',
       body: '---\nname: cardless-skill\ndescription: x\n---\nBody.\n',
     });
-    db.prepare(`UPDATE skill_drafts SET created_at = ? WHERE id = 'd-nocard'`).run(T_DRAFT_NOCARD);
+    await db.run(`UPDATE skill_drafts SET created_at = ? WHERE id = 'd-nocard'`, T_DRAFT_NOCARD);
 
     // On disk for A: a learned skill with one revision snapshot (→ one
     // 'revised' event at T_REVISED, and a fallback 'kept' tied to the same ts

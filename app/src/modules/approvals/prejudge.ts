@@ -426,7 +426,7 @@ export async function maybePrejudgeApproval(
   try {
     const modelId = (deps.getModelId ?? getApprovalPrejudgeModelId)();
     if (!modelId) return false; // feature off — zero overhead, no logging
-    const approval = (deps.getApproval ?? getPendingApproval)(approvalId);
+    const approval = await (deps.getApproval ?? getPendingApproval)(approvalId);
     if (!approval) return false;
     const actions = (deps.getActions ?? getApprovalPrejudgeActions)();
     if (!actions.includes(approval.action)) return false; // not opted in — silent
@@ -504,14 +504,14 @@ export interface ApprovalTriageView {
  * is why absence is a valid state rather than a gap to paper over — with chips
  * on the card, "nothing shown" must never be mistaken for "screened, clean".
  */
-export function buildApprovalTriageView(
+export async function buildApprovalTriageView(
   approvalId: string,
   action: string,
   payloadJson: string,
   deps: { getTriage?: typeof getApprovalTriage } = {},
-): ApprovalTriageView {
+): Promise<ApprovalTriageView> {
   const heuristic = heuristicFlags(action, payloadJson);
-  const row = (deps.getTriage ?? getApprovalTriage)(approvalId);
+  const row = await (deps.getTriage ?? getApprovalTriage)(approvalId);
   if (!row) return { tier: 'unscreened', reason: '', flags: [], heuristic, reversible: 'unknown' };
   return {
     tier: row.tier,

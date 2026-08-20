@@ -120,10 +120,10 @@ function createAdapter(): ChannelAdapter {
     async setup(config: ChannelSetup): Promise<void> {
       adapterConfig = config;
       server = await startWebchatServer({
-        onInbound: (roomId, message, threadId) => {
+        onInbound: async (roomId, message, threadId) => {
           // Surface the room's display name to the router so messaging_groups
           // gets a friendly label on first sight (mirrors discord/slack).
-          const room = getWebchatRoom(roomId);
+          const room = await getWebchatRoom(roomId);
           if (room) {
             config.onMetadata(roomId, room.name, true);
           }
@@ -259,7 +259,7 @@ function createAdapter(): ChannelAdapter {
       // because we polled its outbound.db). Fall back to the heuristic only
       // for legacy paths that don't set the field (defensive — should be
       // populated for all real deliveries after the threading change).
-      let producer = message.senderAgentGroupId ? lookupAgentForMessage(message.senderAgentGroupId) : null;
+      let producer = await (message.senderAgentGroupId ? lookupAgentForMessage(message.senderAgentGroupId) : null);
       if (!producer) producer = findActiveAgentForWebchatRoom(roomId);
       const senderName = producer?.name ?? agentDisplayName();
       const text = extractText(message);
@@ -270,7 +270,7 @@ function createAdapter(): ChannelAdapter {
       const storeThread = sessionKeyToThread(threadId, roomId);
       let storedMessageId: string | null = null;
       if (text !== null && text.length > 0) {
-        const stored = storeWebchatMessage(roomId, senderName, 'agent', text, storeThread);
+        const stored = await storeWebchatMessage(roomId, senderName, 'agent', text, storeThread);
         server.broadcast(roomId, { type: 'message', ...stored });
         storedMessageId = stored.id;
       }
@@ -396,8 +396,8 @@ function shouldLoopBack(roomId: string): boolean {
  * vanished between produce-time and deliver-time (shouldn't happen in
  * practice — agents don't disappear mid-flight).
  */
-function lookupAgentForMessage(agentGroupId: string): WebchatRoomAgent | null {
-  const ag = getAgentGroup(agentGroupId);
+async function lookupAgentForMessage(agentGroupId: string): Promise<WebchatRoomAgent | null> {
+  const ag = await getAgentGroup(agentGroupId);
   return ag ? { id: ag.id, name: ag.name, folder: ag.folder } : null;
 }
 
@@ -422,8 +422,8 @@ function agentDisplayName(): string {
  * the AGENT_DISPLAY_NAME env (or 'Agent') if no wired agents are found —
  * shouldn't happen in normal operation but keeps the deliver path safe.
  */
-function senderForRoom(roomId: string): string {
-  const agent = findActiveAgentForWebchatRoom(roomId);
+async function senderForRoom(roomId: string): Promise<string> {
+  const agent = await findActiveAgentForWebchatRoom(roomId);
   return agent?.name || agentDisplayName();
 }
 
@@ -509,10 +509,10 @@ registerApprovalIntercept((approvalId, session, question) => maybePrejudgeApprov
 // of the card so their PWA hides the stale card in real time, then drop the
 // index rows (dead pointers once the pending row is gone). Offline admins
 // refetch on reconnect, so this is purely the live clear.
-registerApprovalResolvedHandler((event) => {
+registerApprovalResolvedHandler(async (event) => {
   const approvalId = event.approval.approval_id;
   const resolvedByUserId = event.userId;
-  const indexed = getWebchatApprovalInboxes(approvalId);
+  const indexed = await getWebchatApprovalInboxes(approvalId);
   for (const platformId of indexed) {
     const userId = userForApprovalInbox(platformId);
     if (userId) {
@@ -531,15 +531,15 @@ registerApprovalResolvedHandler((event) => {
 // addition to the per-approver inboxes), so admins can act without hunting in
 // the Approvals inbox. The room is also indexed so the resolved-listener above
 // clears the card on first response. Best-effort; webchat rooms only.
-registerApprovalRequestedListener((e) => {
-  const mg = e.session.messaging_group_id ? getMessagingGroup(e.session.messaging_group_id) : null;
+registerApprovalRequestedListener(async (e) => {
+  const mg = await (e.session.messaging_group_id ? getMessagingGroup(e.session.messaging_group_id) : null);
   if (!mg || mg.channel_type !== 'webchat') return;
   const roomId = mg.platform_id;
   // Why is this in front of a human? The pre-judge already knows, and used to
   // write it only to the log. An `unscreened` view (no stored row) is a real
   // answer too, and is rendered as such — with chips on the card, showing
   // nothing must never read as "screened, nothing found".
-  const approvalRow = getPendingApproval(e.approvalId);
+  const approvalRow = await getPendingApproval(e.approvalId);
   const card = storeWebchatApprovalCard(roomId, e.agentName ?? 'agent', {
     questionId: e.approvalId,
     title: e.title,
@@ -557,8 +557,8 @@ registerApprovalRequestedListener((e) => {
 // ITS OWN room — that's where the work happened, so that's where the operator
 // should be able to Keep/Discard it (rather than hunting in the Skills tab).
 // Best-effort; webchat rooms only.
-registerSkillDraftProposedListener((e) => {
-  const mg = e.session.messaging_group_id ? getMessagingGroup(e.session.messaging_group_id) : null;
+registerSkillDraftProposedListener(async (e) => {
+  const mg = await (e.session.messaging_group_id ? getMessagingGroup(e.session.messaging_group_id) : null);
   if (!mg || mg.channel_type !== 'webchat') return;
   const roomId = mg.platform_id;
   const card = storeWebchatSkillDraftCard(
@@ -585,8 +585,8 @@ registerSkillDraftProposedListener((e) => {
 // Auto-keep (or any non-webchat resolution) still flips the in-room card, so
 // the room shows '✅ … kept' instead of dangling actionable buttons for a
 // draft that no longer exists.
-registerSkillDraftResolvedListener((e) => {
-  const flipped = markRoomSkillDraftResolved(e.draftId, e.outcome, e.by);
+registerSkillDraftResolvedListener(async (e) => {
+  const flipped = await markRoomSkillDraftResolved(e.draftId, e.outcome, e.by);
   if (flipped) broadcast(flipped.roomId, { type: 'message', ...flipped.message });
 });
 
@@ -608,14 +608,14 @@ export function draftHasExpired(ageMs: number, card: { newerMessages: number } |
   return card.newerMessages >= DRAFT_SCROLLED_AWAY_MESSAGES;
 }
 
-export function sweepExpiredSkillDrafts(): number {
+export async function sweepExpiredSkillDrafts(): Promise<number> {
   let expired = 0;
   for (const d of listSkillDrafts()) {
     const age = Date.now() - d.created_at;
     if (!draftHasExpired(age, skillDraftCardPosition(d.id))) continue;
     if (!resolveSkillDraft(d.id, 'discarded')) continue;
     expired++;
-    const flipped = markRoomSkillDraftResolved(d.id, 'discarded', 'expired');
+    const flipped = await markRoomSkillDraftResolved(d.id, 'discarded', 'expired');
     if (flipped) broadcast(flipped.roomId, { type: 'message', ...flipped.message });
     log.info('Skill draft expired', { id: d.id, skill: d.skill_name, ageHours: Math.round(age / 3_600_000) });
   }

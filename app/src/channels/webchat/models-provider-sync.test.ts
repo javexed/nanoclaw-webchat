@@ -25,15 +25,11 @@ import { providerForModelKind, syncAgentProviderForAssignedModel } from './model
 
 let tmpDir: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-provider-sync-'));
   initDb(path.join(tmpDir, 'test.db'));
   runMigrations(getDb());
-  getDb()
-    .prepare(
-      `INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES ('ag-1','AG','ag-1',NULL,'t')`,
-    )
-    .run();
+  await getDb().run(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES ('ag-1','AG','ag-1',NULL,'t')`);
 });
 
 afterEach(() => {
@@ -66,27 +62,27 @@ describe('providerForModelKind (OpenCode not installed)', () => {
 });
 
 describe('syncAgentProviderForAssignedModel', () => {
-  it('keeps the default provider on an openai-compatible assignment (direct path)', () => {
+  it('keeps the default provider on an openai-compatible assignment (direct path)', async () => {
     makeModel('openai-compatible', 'm-oc');
     assignModelToAgent('ag-1', 'm-oc');
     syncAgentProviderForAssignedModel('ag-1');
-    expect(getContainerConfig('ag-1')?.provider).toBeNull();
+    expect((await getContainerConfig('ag-1'))?.provider).toBeNull();
   });
 
-  it('reverts a group a pre-direct install left on opencode', () => {
+  it('reverts a group a pre-direct install left on opencode', async () => {
     makeModel('openai-compatible', 'm-oc');
     assignModelToAgent('ag-1', 'm-oc');
     syncAgentProviderForAssignedModel('ag-1'); // ensures the config row exists
     // Simulate the legacy state: an older install wrote provider='opencode'.
-    getDb().prepare(`UPDATE container_configs SET provider = 'opencode' WHERE agent_group_id = 'ag-1'`).run();
-    expect(getContainerConfig('ag-1')?.provider).toBe('opencode');
+    await getDb().run(`UPDATE container_configs SET provider = 'opencode' WHERE agent_group_id = 'ag-1'`);
+    expect((await getContainerConfig('ag-1'))?.provider).toBe('opencode');
 
     syncAgentProviderForAssignedModel('ag-1'); // any (re)assignment un-wedges it
-    expect(getContainerConfig('ag-1')?.provider).toBeNull();
+    expect((await getContainerConfig('ag-1'))?.provider).toBeNull();
 
     unassignModelFromAgent('ag-1');
     syncAgentProviderForAssignedModel('ag-1');
-    expect(getContainerConfig('ag-1')?.provider).toBeNull();
+    expect((await getContainerConfig('ag-1'))?.provider).toBeNull();
   });
 });
 
@@ -104,29 +100,29 @@ describe('with OpenCode installed', () => {
     expect(providerForModelKind('anthropic')).toBeNull();
   });
 
-  it('auto-assigns opencode when the effective model is ollama', () => {
+  it('auto-assigns opencode when the effective model is ollama', async () => {
     makeModel('ollama', 'm-ol');
     assignModelToAgent('ag-1', 'm-ol');
     syncAgentProviderForAssignedModel('ag-1');
-    expect(getContainerConfig('ag-1')?.provider).toBe('opencode');
+    expect((await getContainerConfig('ag-1'))?.provider).toBe('opencode');
   });
 
-  it('keeps an explicit opencode choice sticky across re-sync', () => {
+  it('keeps an explicit opencode choice sticky across re-sync', async () => {
     makeModel('ollama', 'm-ol');
     assignModelToAgent('ag-1', 'm-ol');
     syncAgentProviderForAssignedModel('ag-1');
-    expect(getContainerConfig('ag-1')?.provider).toBe('opencode');
+    expect((await getContainerConfig('ag-1'))?.provider).toBe('opencode');
     syncAgentProviderForAssignedModel('ag-1'); // boot convergence / re-sync must not flip it
-    expect(getContainerConfig('ag-1')?.provider).toBe('opencode');
+    expect((await getContainerConfig('ag-1'))?.provider).toBe('opencode');
   });
 
-  it('never clobbers an explicit codex group (unmanaged axis)', () => {
+  it('never clobbers an explicit codex group (unmanaged axis)', async () => {
     makeModel('ollama', 'm-ol');
     assignModelToAgent('ag-1', 'm-ol');
     syncAgentProviderForAssignedModel('ag-1'); // creates the config row
-    getDb().prepare(`UPDATE container_configs SET provider = 'codex' WHERE agent_group_id = 'ag-1'`).run();
+    await getDb().run(`UPDATE container_configs SET provider = 'codex' WHERE agent_group_id = 'ag-1'`);
     syncAgentProviderForAssignedModel('ag-1');
-    expect(getContainerConfig('ag-1')?.provider).toBe('codex');
+    expect((await getContainerConfig('ag-1'))?.provider).toBe('codex');
   });
 });
 
@@ -154,26 +150,26 @@ describe('with BOTH pi and OpenCode installed', () => {
     expect(providerForModelKind(undefined)).toBeNull();
   });
 
-  it('auto-assigns pi when the effective model is ollama', () => {
+  it('auto-assigns pi when the effective model is ollama', async () => {
     makeModel('ollama', 'm-pi');
     assignModelToAgent('ag-1', 'm-pi');
     syncAgentProviderForAssignedModel('ag-1');
-    expect(getContainerConfig('ag-1')?.provider).toBe('pi');
+    expect((await getContainerConfig('ag-1'))?.provider).toBe('pi');
   });
 
-  it('keeps an explicit pi choice sticky across re-sync', () => {
+  it('keeps an explicit pi choice sticky across re-sync', async () => {
     makeModel('ollama', 'm-pi');
     assignModelToAgent('ag-1', 'm-pi');
     syncAgentProviderForAssignedModel('ag-1');
-    expect(getContainerConfig('ag-1')?.provider).toBe('pi');
+    expect((await getContainerConfig('ag-1'))?.provider).toBe('pi');
     syncAgentProviderForAssignedModel('ag-1');
-    expect(getContainerConfig('ag-1')?.provider).toBe('pi');
+    expect((await getContainerConfig('ag-1'))?.provider).toBe('pi');
   });
 
-  it('un-wedges a group left on an ollama-less kind back to the default', () => {
+  it('un-wedges a group left on an ollama-less kind back to the default', async () => {
     makeModel('anthropic', 'm-an');
     assignModelToAgent('ag-1', 'm-an');
     syncAgentProviderForAssignedModel('ag-1');
-    expect(getContainerConfig('ag-1')?.provider).toBeNull();
+    expect((await getContainerConfig('ag-1'))?.provider).toBeNull();
   });
 });

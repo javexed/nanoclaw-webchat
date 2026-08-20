@@ -54,10 +54,8 @@ export interface BroadcastPushMsg {
   messageId?: string;
 }
 
-function getSubscriptionsExcludingIdentity(identity: string): WebchatPushSubscription[] {
-  return getDb()
-    .prepare(`SELECT * FROM webchat_push_subscriptions WHERE identity != ?`)
-    .all(identity) as WebchatPushSubscription[];
+async function getSubscriptionsExcludingIdentity(identity: string): Promise<WebchatPushSubscription[]> {
+  return (await getDb().all(`SELECT * FROM webchat_push_subscriptions WHERE identity != ?`, identity)) as WebchatPushSubscription[];
 }
 
 export async function sendPushForMessage(m: BroadcastPushMsg): Promise<void> {
@@ -65,7 +63,7 @@ export async function sendPushForMessage(m: BroadcastPushMsg): Promise<void> {
     log.debug('Webchat push: skipped (not ready)', { sender: m.sender });
     return;
   }
-  const subs = getSubscriptionsExcludingIdentity(m.sender);
+  const subs = await getSubscriptionsExcludingIdentity(m.sender);
   if (subs.length === 0) return;
 
   const payload = JSON.stringify({

@@ -40,12 +40,12 @@ describe('sanitizeRoomName', () => {
 });
 
 describe('updateWebchatRoomName', () => {
-  it('renames a room and the new name round-trips', () => {
+  it('renames a room and the new name round-trips', async () => {
     createWebchatRoom('Old name', 'room-1');
-    expect(getWebchatRoom('room-1')?.name).toBe('Old name');
+    expect((await getWebchatRoom('room-1'))?.name).toBe('Old name');
 
     updateWebchatRoomName('room-1', 'New name');
-    expect(getWebchatRoom('room-1')?.name).toBe('New name');
+    expect((await getWebchatRoom('room-1'))?.name).toBe('New name');
   });
 
   it('is a no-op for an unknown room id', () => {

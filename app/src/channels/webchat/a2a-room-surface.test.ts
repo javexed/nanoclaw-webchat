@@ -40,8 +40,8 @@ function wire(roomId: string, agentId: string) {
   });
 }
 
-function a2aRows(roomId: string) {
-  return getDb().prepare(`SELECT * FROM webchat_messages WHERE room_id = ? AND message_type = 'a2a'`).all(roomId) as {
+async function a2aRows(roomId: string) {
+  return (await getDb().all(`SELECT * FROM webchat_messages WHERE room_id = ? AND message_type = 'a2a'`, roomId)) as {
     sender: string;
     sender_type: string;
     content: string;
@@ -87,8 +87,8 @@ afterEach(() => {
 });
 
 describe('getSharedWebchatRooms', () => {
-  it('returns rooms both agents are wired to', () => {
-    const rooms = getSharedWebchatRooms('ag-gamma', 'ag-delta');
+  it('returns rooms both agents are wired to', async () => {
+    const rooms = await getSharedWebchatRooms('ag-gamma', 'ag-delta');
     expect(rooms.map((r) => r.id)).toEqual(['plant-vision']);
   });
 

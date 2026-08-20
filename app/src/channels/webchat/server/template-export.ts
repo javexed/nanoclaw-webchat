@@ -127,7 +127,7 @@ function collectTasks(agentGroupId: string): { name: string; schedule: string; p
  * The validator is upstream's own reader, so anything this produces is
  * something `--template` can consume.
  */
-export function exportAgentAsTemplate(group: AgentGroup, opts: ExportTemplateOptions): ExportTemplateResult {
+export async function exportAgentAsTemplate(group: AgentGroup, opts: ExportTemplateOptions): Promise<ExportTemplateResult> {
   const name = opts.name.trim().toLowerCase();
   if (!VALID_NAME.test(name)) {
     throw new Error('Template name must be lowercase letters, digits and dashes');
@@ -194,7 +194,7 @@ export function exportAgentAsTemplate(group: AgentGroup, opts: ExportTemplateOpt
     }
 
     // ── MCP servers, secrets replaced by the literal placeholder
-    const cfg = getContainerConfig(group.id);
+    const cfg = await getContainerConfig(group.id);
     const servers: Record<string, unknown> = {};
     const mcpNames: string[] = [];
     if (cfg?.mcp_servers) {

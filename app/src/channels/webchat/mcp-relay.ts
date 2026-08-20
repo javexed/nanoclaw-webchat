@@ -32,10 +32,8 @@ const RELAY_TOKEN_HEADER = 'x-nanoclaw-relay';
 const STRIP_REQUEST = new Set(['host', 'connection', 'content-length', RELAY_TOKEN_HEADER, 'authorization']);
 const STRIP_RESPONSE = new Set(['connection', 'transfer-encoding', 'content-length', 'keep-alive']);
 
-function lookupAssignment(token: string): { agent_group_id: string; mcp_server_id: string } | undefined {
-  return getDb()
-    .prepare(`SELECT agent_group_id, mcp_server_id FROM webchat_agent_mcp_servers WHERE relay_token = ?`)
-    .get(token) as { agent_group_id: string; mcp_server_id: string } | undefined;
+async function lookupAssignment(token: string): Promise<{ agent_group_id: string; mcp_server_id: string } | undefined> {
+  return (await getDb().get(`SELECT agent_group_id, mcp_server_id FROM webchat_agent_mcp_servers WHERE relay_token = ?`, token)) as { agent_group_id: string; mcp_server_id: string } | undefined;
 }
 
 async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -46,12 +44,12 @@ async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse):
   }
   const [, serverId, subPath = '', query = ''] = m;
   const token = String(req.headers[RELAY_TOKEN_HEADER] || '');
-  const assignment = token ? lookupAssignment(token) : undefined;
+  const assignment = await (token ? lookupAssignment(token) : undefined);
   if (!assignment || assignment.mcp_server_id !== serverId) {
     res.writeHead(403).end('relay token invalid for this server');
     return;
   }
-  const server = getWebchatMcpServer(serverId);
+  const server = await getWebchatMcpServer(serverId);
   if (!server?.url) {
     res.writeHead(502).end('server has no URL');
     return;

@@ -111,8 +111,8 @@ export async function rModelIdDelete(ctx: RouteCtx, m: RegExpMatchArray): Promis
 // ── Model management (Settings → Models) ──
 // The endpoint an inventory/variant call targets: the first registered ollama
 // model's endpoint, else the local default. Owner-configured endpoints only.
-export function manageEndpoint(): string {
-  const reg = listWebchatModels().find((m) => m.kind === 'ollama' && m.endpoint);
+export async function manageEndpoint(): Promise<string> {
+  const reg = (await listWebchatModels()).find((m) => m.kind === 'ollama' && m.endpoint);
   return reg?.endpoint ?? 'http://localhost:11434';
 }
 
@@ -137,7 +137,7 @@ export async function rModelsContextVariantPost(ctx: RouteCtx, _m: RegExpMatchAr
   const endpoint = manageEndpoint();
   try {
     const variantTag = await createContextVariant(endpoint, body.tag, ctxSize);
-    const existing = listWebchatModels().find((m) => m.model_id === variantTag);
+    const existing = (await listWebchatModels()).find((m) => m.model_id === variantTag);
     let id = existing?.id;
     if (!id) {
       id = randomUUID();
@@ -172,9 +172,9 @@ export interface ModelForUI extends WebchatModel {
   rooms: Array<{ id: string; name: string }>;
 }
 
-export function listModelsForUI(includeSensitive: boolean): ModelForUI[] {
-  return listWebchatModels().map((m) => {
-    const ids = getAgentsAssignedToModel(m.id);
+export async function listModelsForUI(includeSensitive: boolean): Promise<ModelForUI[]> {
+  return (await listWebchatModels()).map(async (m) => {
+    const ids = await getAgentsAssignedToModel(m.id);
     const roomMap = new Map<string, { id: string; name: string }>();
     for (const id of ids) {
       for (const r of getWebchatRoomsForAgent(id)) roomMap.set(r.id, { id: r.id, name: r.name });
@@ -186,7 +186,7 @@ export function listModelsForUI(includeSensitive: boolean): ModelForUI[] {
       // owner-gated flow: wizard Ollama select, STT cleanup, auto-learn).
       ...(includeSensitive ? {} : { endpoint: null, credential_ref: null }),
       agents_assigned: ids.length,
-      agents: ids.map((id) => ({ id, name: getAgentGroup(id)?.name ?? id })),
+      agents: ids.map(async (id) => ({ id, name: (await getAgentGroup(id))?.name ?? id })),
       rooms: [...roomMap.values()],
     };
   });
@@ -289,10 +289,10 @@ export function routesBoundToModel(
   return out;
 }
 
-export function deleteModelHandler(res: ServerResponse, id: string, force: boolean): void {
-  const existing = getWebchatModel(id);
+export async function deleteModelHandler(res: ServerResponse, id: string, force: boolean): Promise<void> {
+  const existing = await getWebchatModel(id);
   if (!existing) return json(res, 404, { error: 'Model not found' });
-  const assigned = getAgentsAssignedToModel(id);
+  const assigned = await getAgentsAssignedToModel(id);
   // Routing rules bound to this model (matched by model_id) join the same
   // cascade-with-confirmation: surfaced in the 409, REMOVED on force — the
   // operator expected the rule to go with the model, and a dangling binding

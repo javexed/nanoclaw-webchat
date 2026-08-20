@@ -77,7 +77,7 @@ registerSessionPrepareHook(async (agentGroupId): Promise<void> => {
     let { isolated, available } = await getGroupIsolation(realOnecliAdmin, agentGroupId);
     if (isolated) return; // already selective — nothing to do, and no vault writes
     if (!available) {
-      const group = getAgentGroup(agentGroupId);
+      const group = await getAgentGroup(agentGroupId);
       if (!group) return;
       await realOnecliAdmin.ensureAgent(group.name, agentGroupId);
     }

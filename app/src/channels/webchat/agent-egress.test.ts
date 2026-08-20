@@ -123,9 +123,9 @@ describe('PUT /api/agents/:id/egress', () => {
   const as = (n: string) => ({ 'x-forwarded-user': n, 'content-type': 'application/json', 'x-webchat-csrf': '1' });
   const put = (agent: string, who: string, egress: unknown) =>
     httpRequest(port, 'PUT', `/api/agents/${agent}/egress`, as(who), JSON.stringify({ egress }));
-  const stored = (id: string) =>
+  const stored = async (id: string) =>
     (
-      conn.getDb().prepare(`SELECT egress FROM container_configs WHERE agent_group_id = ?`).get(id) as
+      (await conn.getDb().get(`SELECT egress FROM container_configs WHERE agent_group_id = ?`, id)) as
         | { egress: string | null }
         | undefined
     )?.egress ?? null;

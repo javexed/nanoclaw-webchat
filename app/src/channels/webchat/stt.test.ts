@@ -260,8 +260,8 @@ describe('cleanup prompt override', () => {
 });
 
 describe('stt_cleanup_model_id (migration + accessors)', () => {
-  it('adds the column; defaults to null; set/clear roundtrips', () => {
-    const cols = (getDb().prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>).map(
+  it('adds the column; defaults to null; set/clear roundtrips', async () => {
+    const cols = ((await getDb().all("PRAGMA table_info('webchat_settings')")) as Array<{ name: string }>).map(
       (c) => c.name,
     );
     expect(cols).toContain('stt_cleanup_model_id');

@@ -16,8 +16,8 @@ function seedAgent(id: string, name: string) {
     typeof createAgentGroup
   >[0]);
 }
-function wire(roomPlatformId: string, agentId: string) {
-  const mg = getMessagingGroupByPlatform('webchat', roomPlatformId)!;
+async function wire(roomPlatformId: string, agentId: string) {
+  const mg = await getMessagingGroupByPlatform('webchat', roomPlatformId)!;
   createMessagingGroupAgent({
     id: `mga-${roomPlatformId}-${agentId}`,
     messaging_group_id: mg.id,
@@ -75,8 +75,8 @@ beforeEach(() => {
 afterEach(() => closeDb());
 
 describe('getWebchatTopology', () => {
-  it('includes ALL accessible agents (incl. unwired) + room↔agent edges among scope', () => {
-    const t = getWebchatTopology(ROOMS, AGENTS);
+  it('includes ALL accessible agents (incl. unwired) + room↔agent edges among scope', async () => {
+    const t = await getWebchatTopology(ROOMS, AGENTS);
     expect(t.rooms.map((r) => r.id).sort()).toEqual(['room-a', 'room-b', 'room-c']);
     // Every accessible agent is a node, even ag-unused (wired to nothing).
     expect(t.agents.map((a) => a.id).sort()).toEqual(['ag-code', 'ag-research', 'ag-unused']);
@@ -92,15 +92,15 @@ describe('getWebchatTopology', () => {
     expect(t.edges.some((e) => e.agent === 'ag-unused')).toBe(false);
   });
 
-  it('carries each agent’s model, dedupes the shared one, null for unassigned', () => {
-    const t = getWebchatTopology(ROOMS, AGENTS);
+  it('carries each agent’s model, dedupes the shared one, null for unassigned', async () => {
+    const t = await getWebchatTopology(ROOMS, AGENTS);
     expect(t.models).toEqual([{ id: 'm-sonnet', name: 'Sonnet' }]);
     expect(t.agents.find((a) => a.id === 'ag-research')).toMatchObject({ modelId: 'm-sonnet', modelName: 'Sonnet' });
     expect(t.agents.find((a) => a.id === 'ag-unused')).toMatchObject({ modelId: null, modelName: null });
   });
 
-  it('keeps orphan rooms and excludes agents not in the accessible list', () => {
-    const t = getWebchatTopology(ROOMS, AGENTS);
+  it('keeps orphan rooms and excludes agents not in the accessible list', async () => {
+    const t = await getWebchatTopology(ROOMS, AGENTS);
     // Room C present with no edges → orphan row in the matrix.
     expect(t.rooms.some((r) => r.id === 'room-c')).toBe(true);
     expect(t.edges.some((e) => e.room === 'room-c')).toBe(false);

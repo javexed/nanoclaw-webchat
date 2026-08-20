@@ -27,10 +27,8 @@ const AG = 'ag-rh';
 const SESS = 'sess-rh';
 const now = () => new Date().toISOString();
 
-function seedUser(id: string, display: string, handle: string) {
-  getDb()
-    .prepare(`INSERT OR IGNORE INTO users (id,kind,display_name,created_at) VALUES (?,?,?,?)`)
-    .run(id, 'webchat', display, now());
+async function seedUser(id: string, display: string, handle: string) {
+  await getDb().run(`INSERT OR IGNORE INTO users (id,kind,display_name,created_at) VALUES (?,?,?,?)`, id, 'webchat', display, now());
   setWebchatUserHandle(id, handle);
 }
 
@@ -48,15 +46,13 @@ function readRoomHumans(): { handle: string; display_name: string | null }[] {
   }
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   fs.rmSync(TEST_DIR, { recursive: true, force: true });
-  const db = initTestDb();
+  const db = await initTestDb();
   runMigrations(db);
   createAgentGroup({ id: AG, name: 'RH', folder: 'rh', agent_provider: null, created_at: now() });
-  db.prepare(
-    `INSERT INTO messaging_groups (id,channel_type,instance,platform_id,is_group,created_at)
-     VALUES ('mg-rh','webchat','webchat','room-rh',1,?)`,
-  ).run(now());
+  await db.run(`INSERT INTO messaging_groups (id,channel_type,instance,platform_id,is_group,created_at)
+     VALUES ('mg-rh','webchat','webchat','room-rh',1,?)`, now());
   createSession({
     id: SESS,
     agent_group_id: AG,
@@ -100,13 +96,13 @@ describe('room humans -> session DB', () => {
     expect(readRoomHumans().map((h) => h.handle)).toEqual(['mark']);
   });
 
-  it('lists people only — agent authors are not mentionable', () => {
+  it('lists people only — agent authors are not mentionable', async () => {
     seedUser('webchat:mark', 'Mark', 'mark');
     seedUser('Example Assistant', 'Example Assistant', 'construction');
     storeWebchatMessage('room-rh', 'webchat:mark', 'user', 'hello');
     storeWebchatMessage('room-rh', 'Example Assistant', 'agent', 'hi back');
 
-    expect(getRoomHumans('room-rh').map((h) => h.handle)).toEqual(['mark']);
+    expect((await getRoomHumans('room-rh')).map((h) => h.handle)).toEqual(['mark']);
   });
 
   it('refreshes on each spawn, so a newcomer becomes mentionable without a restart', () => {

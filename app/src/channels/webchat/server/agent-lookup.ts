@@ -51,8 +51,8 @@ export interface AgentForUI extends AgentGroup {
  * runtime provider. Returns null for the built-in Claude path (caller shows the
  * Anthropic default). Only a non-Claude harness (Codex, Grok) gets an explicit label.
  */
-export function deriveEffectiveModelLabel(agentGroupId: string): string | null {
-  const cfg = getContainerConfig(agentGroupId);
+export async function deriveEffectiveModelLabel(agentGroupId: string): Promise<string | null> {
+  const cfg = await getContainerConfig(agentGroupId);
   const provider = cfg?.provider ?? 'claude';
   if (provider === 'codex') return 'Codex';
   if (provider === 'grok') return 'Grok';
@@ -69,21 +69,21 @@ export function deriveEffectiveModelLabel(agentGroupId: string): string | null {
   return null;
 }
 
-export function toAgentForUI(g: AgentGroup): AgentForUI {
+export async function toAgentForUI(g: AgentGroup): Promise<AgentForUI> {
   // Convention: createAgentHandler uses `group.folder` as the webchat_room id when it
   // creates a room alongside the agent. Look that up directly so the PWA
   // doesn't have to guess.
-  const room = getWebchatRoom(g.folder);
-  const assigned = getAssignedModelForAgent(g.id);
+  const room = await getWebchatRoom(g.folder);
+  const assigned = await getAssignedModelForAgent(g.id);
   return {
     ...g,
     room_id: room ? room.id : null,
     assigned_model_id: assigned ? assigned.id : null,
-    egress: getContainerConfig(g.id)?.egress ?? 'open',
+    egress: (await getContainerConfig(g.id))?.egress ?? 'open',
     effective_model_label: assigned ? null : deriveEffectiveModelLabel(g.id),
-    config_model: getContainerConfig(g.id)?.model ?? null,
+    config_model: (await getContainerConfig(g.id))?.model ?? null,
     // Which agent harness the group runs: 'claude' (built-in) or 'opencode'.
-    provider: (getContainerConfig(g.id)?.provider as string | null) || 'claude',
+    provider: ((await getContainerConfig(g.id))?.provider as string | null) || 'claude',
   };
 }
 
@@ -91,8 +91,8 @@ export function resolveAgent(idOrJid: string): AgentGroup | null {
   return getAgentGroup(idOrJid) ?? null;
 }
 
-export function listAgentsForUser(userId: string, includeArchived = false): AgentForUI[] {
-  const all = getAllAgentGroups();
+export async function listAgentsForUser(userId: string, includeArchived = false): Promise<AgentForUI[]> {
+  const all = await getAllAgentGroups();
   const role = isOwner(userId) ? all : all.filter((g) => hasAdminPrivilege(userId, g.id));
   // Archived agents are hidden by default — this declutters every consumer
   // (agent list, pickers, topology/matrix) at once. The agent list opts in via

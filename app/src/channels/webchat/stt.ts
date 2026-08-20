@@ -156,7 +156,7 @@ export async function cleanupTranscript(
 
   const modelId = getSttCleanupModelId();
   if (!modelId) return fallback;
-  const model = getWebchatModel(modelId);
+  const model = await getWebchatModel(modelId);
   // Deleted since it was selected, or a kind that can't serve chat completions.
   if (!model || !model.endpoint || (model.kind !== 'ollama' && model.kind !== 'openai-compatible')) return fallback;
 

@@ -59,12 +59,12 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
     // Effective mode (room override → global default). Credential TYPES are
     // workspace-wide (Credentials admin page); which ones apply here depends on
     // the room's provider (Claude vs Codex).
-    const cfg = getCredentialsConfig();
-    const provider = groups[0] && getContainerConfig(groups[0].id)?.provider === 'codex' ? 'codex' : 'claude';
+    const cfg = await getCredentialsConfig();
+    const provider = groups[0] && (await getContainerConfig(groups[0].id))?.provider === 'codex' ? 'codex' : 'claude';
     // Connection is now user-level (connect once → all same-provider rooms).
     const connected = userHasConnectedCredential(userId, provider);
     // Report the connected credential type so the UI shows the right banner.
-    const credType = connected ? (getUserCredential(userId, provider)?.cred_type ?? null) : null;
+    const credType = connected ? ((await getUserCredential(userId, provider))?.cred_type ?? null) : null;
     return json(res, 200, {
       connected,
       credType,
@@ -86,11 +86,11 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
   const roomId = typeof body.roomId === 'string' ? body.roomId : '';
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
   if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
-  const groups = getAgentsForWebchatRoom(roomId);
+  const groups = await getAgentsForWebchatRoom(roomId);
   if (groups.length === 0) return json(res, 400, { error: 'Room has no wired agent' });
-  const provider = groups[0] && getContainerConfig(groups[0].id)?.provider === 'codex' ? 'codex' : 'claude';
+  const provider = groups[0] && (await getContainerConfig(groups[0].id))?.provider === 'codex' ? 'codex' : 'claude';
   const credType = body.type === 'oauth_token' ? 'oauth_token' : 'api_key';
-  const cfg = getCredentialsConfig();
+  const cfg = await getCredentialsConfig();
   // Rate-limit connects (each recreates a vault secret + spawns onecli procs).
   if (method === 'POST' && userCredsRateLimited(userId, 'connect'))
     return json(res, 429, { error: 'Too many attempts — wait a moment and try again.' });
@@ -146,7 +146,7 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
       // Capture the enrolled groups BEFORE revoke (it clears them) so we can
       // also stop any running per-member container immediately — otherwise it
       // lingers (with its copy of the session) to the idle ceiling.
-      const enrolledGroupIds = listEnrolledGroups(userId, provider).map((r) => r.agent_group_id);
+      const enrolledGroupIds = (await listEnrolledGroups(userId, provider)).map((r) => r.agent_group_id);
       await revokeUserCredential(realOnecliAdmin, userId, provider);
       for (const gid of enrolledGroupIds) {
         for (const s of getSessionsByAgentGroup(gid)) {
@@ -185,9 +185,9 @@ export async function rUserCredsMintPost(ctx: RouteCtx, m: RegExpMatchArray): Pr
   const roomId = typeof body.roomId === 'string' ? body.roomId : '';
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
   if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
-  if (!getCredentialsConfig().allowClaudeOauth)
+  if (!(await getCredentialsConfig()).allowClaudeOauth)
     return json(res, 403, { error: 'This workspace does not accept Claude subscription (OAuth) connections.' });
-  const groups = getAgentsForWebchatRoom(roomId);
+  const groups = await getAgentsForWebchatRoom(roomId);
   if (groups.length === 0) return json(res, 400, { error: 'Room has no wired agent' });
   try {
     if (step === 'start') {
@@ -282,9 +282,9 @@ export interface UserWithPermissions {
   memberships: MembershipEntry[];
 }
 
-export function listUsersWithPermissions(callerUserId?: string): UserWithPermissions[] {
-  const users = permsGetAllUsers();
-  const groups = getAllAgentGroups();
+export async function listUsersWithPermissions(callerUserId?: string): Promise<UserWithPermissions[]> {
+  const users = await permsGetAllUsers();
+  const groups = await getAllAgentGroups();
   // Scoping: owners and global admins get the full cross-group matrix. A
   // scoped admin only sees role/membership assignments within the groups they
   // administer — never the global owner/admin roster or other groups' members.
@@ -300,8 +300,8 @@ export function listUsersWithPermissions(callerUserId?: string): UserWithPermiss
   // can surface added_by / added_at to the UI.
   const membersByGroup = new Map(visibleGroups.map((g) => [g.id, permsGetMembers(g.id)]));
 
-  return users.map((u) => {
-    const roles: RoleEntry[] = permsGetUserRoles(u.id)
+  return users.map(async (u) => {
+    const roles: RoleEntry[] = (await permsGetUserRoles(u.id))
       .filter((r) => fullView || (r.agent_group_id !== null && scopedGroupIds!.has(r.agent_group_id)))
       .map((r) => ({
         kind: r.role,
@@ -311,7 +311,7 @@ export function listUsersWithPermissions(callerUserId?: string): UserWithPermiss
       }));
     const memberships: MembershipEntry[] = [];
     for (const [groupId, members] of membersByGroup) {
-      const m = members.find((x) => x.user_id === u.id);
+      const m = (await members).find((x) => x.user_id === u.id);
       if (m) {
         memberships.push({
           agent_group_id: groupId,
@@ -452,14 +452,14 @@ export function grantPermissionHandler(res: ServerResponse, body: GrantBody, cal
  * honest. Also refuses to delete the caller themselves (you can't sit on
  * the branch you're sawing).
  */
-export function deleteUserHandler(res: ServerResponse, targetUserId: string, callerUserId: string): void {
+export async function deleteUserHandler(res: ServerResponse, targetUserId: string, callerUserId: string): Promise<void> {
   if (!targetUserId) return json(res, 400, { error: 'userId required' });
   if (targetUserId === callerUserId) {
     return json(res, 409, { error: 'Cannot delete yourself' });
   }
   const target = permsGetUser(targetUserId);
   if (!target) return json(res, 404, { error: 'User not found' });
-  const roles = permsGetUserRoles(targetUserId);
+  const roles = await permsGetUserRoles(targetUserId);
   if (roles.length > 0) {
     return json(res, 409, {
       error: 'User still has roles — revoke them first',
@@ -469,19 +469,19 @@ export function deleteUserHandler(res: ServerResponse, targetUserId: string, cal
   // Iterate agent_groups to find lingering member rows — there's no
   // direct "memberships for user" helper today, so reuse the listing path.
   for (const g of getAllAgentGroups()) {
-    if (permsGetMembers(g.id).some((m) => m.user_id === targetUserId)) {
+    if ((await permsGetMembers(g.id)).some((m) => m.user_id === targetUserId)) {
       return json(res, 409, { error: 'User still has memberships — revoke them first' });
     }
   }
   // Clean up user_dms cache rows before deleting — user_dms.user_id has a
   // FK reference to users(id) that would otherwise block the delete.
-  getDb().prepare('DELETE FROM user_dms WHERE user_id = ?').run(targetUserId);
+  await getDb().run('DELETE FROM user_dms WHERE user_id = ?', targetUserId);
   permsDeleteUser(targetUserId);
   log.info('Webchat: deleted user', { targetUserId, by: callerUserId });
   return json(res, 200, { ok: true });
 }
 
-export function revokePermissionHandler(res: ServerResponse, body: GrantBody): void {
+export async function revokePermissionHandler(res: ServerResponse, body: GrantBody): Promise<void> {
   const parsed = validateGrantBody(body);
   if ('error' in parsed) return json(res, 400, { error: parsed.error });
   const { userId: targetUserId, kind, agentGroupId } = parsed;
@@ -489,7 +489,7 @@ export function revokePermissionHandler(res: ServerResponse, body: GrantBody): v
   // Last-owner protection: revoking the only owner would brick the system
   // (no one could grant roles back). Refuse.
   if (kind === 'owner') {
-    const owners = permsGetOwners();
+    const owners = await permsGetOwners();
     const stillOwner = owners.filter((o) => o.user_id !== targetUserId);
     if (stillOwner.length === 0) {
       return json(res, 409, { error: 'Cannot revoke the last owner' });

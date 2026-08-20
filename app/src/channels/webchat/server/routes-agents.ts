@@ -190,7 +190,7 @@ export async function rAgentsFromTemplatePost(ctx: RouteCtx, _m: RegExpMatchArra
     // dry-run plan before applying). This message used to say the update was
     // CLI-only, which shipped in the same change as that button and sent people
     // to a terminal for something already on screen.
-    const carriers = groupsCarryingPlugin(ref);
+    const carriers = await groupsCarryingPlugin(ref);
     if (carriers.length > 0) {
       return json(res, 409, {
         error: `Already stamped as "${carriers[0].name}". To update it, open that agent and use Template → "Check for updates".`,
@@ -268,7 +268,7 @@ export async function rTemplateSourceDelete(ctx: RouteCtx, m: RegExpMatchArray):
 export async function rTemplateSourceBrowseGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
-  const src = getTemplateSource(decodeURIComponent(m[1]));
+  const src = await getTemplateSource(decodeURIComponent(m[1]));
   if (!src) return json(res, 404, { error: 'Source not found' });
   try {
     return json(res, 200, { templates: await browseTemplateSource(src) });
@@ -294,7 +294,7 @@ export async function rTemplateFetchPost(ctx: RouteCtx, _m: RegExpMatchArray): P
   if (typeof body.source !== 'string' || typeof body.ref !== 'string' || !body.ref.trim()) {
     return json(res, 400, { error: 'source and ref required' });
   }
-  const src = getTemplateSource(body.source);
+  const src = await getTemplateSource(body.source);
   if (!src) return json(res, 404, { error: 'Source not found' });
   try {
     const result = await fetchTemplateInto(src, body.ref.trim());
@@ -369,7 +369,7 @@ export async function rAgentTemplatePlanGet(ctx: RouteCtx, m: RegExpMatchArray):
   // the agent has no plugin at all.
   if (!ref) return json(res, 200, { stamped: false });
   try {
-    const plan = restampAgentFromTemplate(ref, group.id, { apply: false });
+    const plan = await restampAgentFromTemplate(ref, group.id, { apply: false });
     return json(res, 200, {
       stamped: true,
       ref,
@@ -392,7 +392,7 @@ export async function rAgentTemplateApplyPost(ctx: RouteCtx, m: RegExpMatchArray
   const ref = stampedRefFor(group);
   if (!ref) return json(res, 400, { error: 'This agent was not stamped from a template in the library' });
   try {
-    const applied = restampAgentFromTemplate(ref, group.id, { apply: true });
+    const applied = await restampAgentFromTemplate(ref, group.id, { apply: true });
     // Skill and MCP changes only take effect in a fresh container, which is
     // what the CLI tells the operator to do by hand after an apply.
     restartAgentGroupContainers(group.id, 'Template update applied');
@@ -573,7 +573,7 @@ export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): 
   if (model && !isPlausibleAnthropicModelId(model)) {
     return json(res, 400, { error: 'That does not look like a model id (letters, digits, . _ - only).' });
   }
-  const assigned = getAssignedModelForAgent(group.id);
+  const assigned = await getAssignedModelForAgent(group.id);
   if (model && assigned && assigned.kind === 'anthropic') {
     return json(res, 409, {
       error: `This agent is assigned the webchat model "${assigned.name}", which already sets its Anthropic model. Unassign it first, or change the model there instead.`,
@@ -704,7 +704,7 @@ export async function rAgentSkills(ctx: RouteCtx, m: RegExpMatchArray): Promise<
     // or a name array), so parse it (configFromDb does the same).
     let sel: string[] | 'all' = 'all';
     try {
-      const rawSkills = getContainerConfig(group.id)?.skills;
+      const rawSkills = (await getContainerConfig(group.id))?.skills;
       if (rawSkills != null) sel = JSON.parse(rawSkills) as string[] | 'all';
     } catch {
       sel = 'all';
@@ -793,7 +793,7 @@ export async function rAgentLearning(ctx: RouteCtx, m: RegExpMatchArray): Promis
   const group = resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
   if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
-  const current = parseAgentLearning(group.id);
+  const current = await parseAgentLearning(group.id);
   // Auto-keep is admin-tier like the manual Keep it automates: a scoped admin
   // can already keep any draft for their agent with a tap, so gating the
   // toggle higher only added friction, not protection. The blast radius is
@@ -898,7 +898,7 @@ export async function rAgentSessionsGet(ctx: RouteCtx, m: RegExpMatchArray): Pro
   const group = resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
   if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
-  const sessions = getSessionsByAgentGroup(group.id)
+  const sessions = (await getSessionsByAgentGroup(group.id))
     .filter((s) => s.status === 'active')
     .map((s) => ({
       id: s.id,
@@ -1131,7 +1131,7 @@ export async function importAgentApplyHandler(req: IncomingMessage, res: ServerR
   const staged = pendingAgentImports.get(String(body.token || ''));
   if (!staged) return json(res, 410, { error: 'Import expired — upload the bundle again' });
   try {
-    const result = applyImport(staged.dir, { name: typeof body.name === 'string' ? body.name : undefined });
+    const result = await applyImport(staged.dir, { name: typeof body.name === 'string' ? body.name : undefined });
     // Post-link derived state: MCP config re-sync + model env materialization —
     // the same helpers the interactive flows use, so nothing drifts.
     for (const mcpName of result.attachedMcp) {
@@ -1152,8 +1152,8 @@ export async function importAgentApplyHandler(req: IncomingMessage, res: ServerR
   }
 }
 
-export function deleteAgentHandler(res: ServerResponse, id: string): void {
-  const group = getAgentGroup(id);
+export async function deleteAgentHandler(res: ServerResponse, id: string): Promise<void> {
+  const group = await getAgentGroup(id);
   if (!group) return json(res, 404, { error: 'Agent not found' });
 
   // Snapshot every session this agent owns — home-room and any other rooms
@@ -1168,10 +1168,10 @@ export function deleteAgentHandler(res: ServerResponse, id: string): void {
     .map((d) => d.id);
 
   try {
-    getDb().transaction(() => {
+    getDb().transaction(async () => {
       const db = getDb();
       for (const s of sessions) deleteSessionDbState(s.sessionId);
-      db.prepare(`DELETE FROM messaging_group_agents WHERE agent_group_id = ?`).run(id);
+      await db.run(`DELETE FROM messaging_group_agents WHERE agent_group_id = ?`, id);
       // Drop the model assignment too — the agent is going away, no point
       // keeping a row pointing at a dead agent_group_id.
       unassignModelFromAgent(id);
@@ -1193,16 +1193,13 @@ export function deleteAgentHandler(res: ServerResponse, id: string): void {
         'webchat_agent_mcp_servers',
       ]) {
         if (hasTable(db, table)) {
-          db.prepare(`DELETE FROM ${table} WHERE agent_group_id = ?`).run(id);
+          await db.run(`DELETE FROM ${table} WHERE agent_group_id = ?`, id);
         }
       }
       // a2a policies key by from/to, not agent_group_id — either side dying
       // kills the policy.
       if (hasTable(db, 'agent_message_policies')) {
-        db.prepare(`DELETE FROM agent_message_policies WHERE from_agent_group_id = ? OR to_agent_group_id = ?`).run(
-          id,
-          id,
-        );
+        await db.run(`DELETE FROM agent_message_policies WHERE from_agent_group_id = ? OR to_agent_group_id = ?`, id, id);
       }
       // Delete the home room (its own session rows are already gone above).
       deleteWebchatRoom(group.folder);
@@ -1282,7 +1279,7 @@ export async function assignAgentModelHandler(
     assignModelToAgent(agentGroupId, body.modelId.trim());
   }
   reloadAgentModelEnv(agentGroupId, 'Webchat model reassigned');
-  const current = getAssignedModelForAgent(agentGroupId);
+  const current = await getAssignedModelForAgent(agentGroupId);
   // Preflight the newly-assigned model from a container's vantage point so the
   // operator learns NOW (not via silent "API retry") if the agent can't reach it.
   const reachability = current ? await probeContainerReachability(current.endpoint) : undefined;
@@ -1414,8 +1411,8 @@ export function deleteScopedSkillHandler(res: ServerResponse, agentGroupId: stri
   return json(res, 200, { ok: true, restarted });
 }
 
-export function listAgentMcpHandler(res: ServerResponse, agentGroupId: string): void {
-  const attached = getMcpServersForAgent(agentGroupId).map(mcpServerForUI);
+export async function listAgentMcpHandler(res: ServerResponse, agentGroupId: string): Promise<void> {
+  const attached = (await getMcpServersForAgent(agentGroupId)).map(mcpServerForUI);
   return json(res, 200, { servers: attached });
 }
 
@@ -1452,5 +1449,5 @@ export async function setAgentMcpHandler(
     changed++;
   }
   if (changed > 0) reloadAgentMcpServers(agentGroupId);
-  return json(res, 200, { ok: true, servers: getMcpServersForAgent(agentGroupId).map(mcpServerForUI) });
+  return json(res, 200, { ok: true, servers: (await getMcpServersForAgent(agentGroupId)).map(mcpServerForUI) });
 }

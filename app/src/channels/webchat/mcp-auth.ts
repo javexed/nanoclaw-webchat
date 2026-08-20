@@ -213,7 +213,7 @@ export async function startOAuthFlow(
   redirectUri: string,
   staticClient?: { client_id: string; client_secret?: string },
 ): Promise<string> {
-  const server = getWebchatMcpServer(serverId);
+  const server = await getWebchatMcpServer(serverId);
   if (!server?.url) throw new Error('Not a remote MCP server');
   const meta = await discoverAuthServer(server.url);
   const client = staticClient?.client_id ? staticClient : await registerClient(meta, redirectUri);

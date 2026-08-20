@@ -32,14 +32,12 @@ beforeEach(() => {
 });
 afterEach(() => closeDb());
 
-function addUser(id: string): void {
-  getDb()
-    .prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`)
-    .run(id, now);
+async function addUser(id: string): Promise<void> {
+  await getDb().run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, id, now);
 }
 
-function grantorOf(userId: string): string | null {
-  const row = getDb().prepare(`SELECT granted_by FROM user_roles WHERE user_id = ? AND role = 'owner'`).get(userId) as
+async function grantorOf(userId: string): Promise<string | null> {
+  const row = (await getDb().get(`SELECT granted_by FROM user_roles WHERE user_id = ? AND role = 'owner'`, userId)) as
     | { granted_by: string | null }
     | undefined;
   return row?.granted_by ?? null;
@@ -73,21 +71,19 @@ describe('grantOwnerRole — grantedBy must never cost the grant', () => {
     expect(grantorOf(ts)).toBe('webchat:local-owner');
   });
 
-  it('is idempotent per identity — a second call inserts nothing', () => {
+  it('is idempotent per identity — a second call inserts nothing', async () => {
     const ts = 'webchat:tailscale:operator@example.com';
     expect(grantOwnerRole(ts, 'webchat:first-tailscale-owner')).toBe(true);
     expect(grantOwnerRole(ts, 'webchat:first-tailscale-owner')).toBe(false);
 
-    const count = getDb()
-      .prepare(`SELECT COUNT(*) AS n FROM user_roles WHERE user_id = ? AND role = 'owner'`)
-      .get(ts) as { n: number };
+    const count = (await getDb().get(`SELECT COUNT(*) AS n FROM user_roles WHERE user_id = ? AND role = 'owner'`, ts)) as { n: number };
     expect(count.n).toBe(1);
   });
 
-  it('creates the users row for the grantee so the role has somewhere to point', () => {
+  it('creates the users row for the grantee so the role has somewhere to point', async () => {
     const ts = 'webchat:tailscale:operator@example.com';
     grantOwnerRole(ts, 'webchat:first-tailscale-owner');
-    const row = getDb().prepare(`SELECT id FROM users WHERE id = ?`).get(ts);
+    const row = await getDb().get(`SELECT id FROM users WHERE id = ?`, ts);
     expect(row).toBeDefined();
   });
 });

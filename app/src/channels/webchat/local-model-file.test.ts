@@ -50,10 +50,8 @@ async function seed(kind: 'ollama' | 'anthropic', provider: string | null) {
   conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
   migrations.runMigrations(conn.getDb());
-  conn
-    .getDb()
-    .prepare(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?,?,?,NULL,'t')`)
-    .run(GROUP, GROUP, GROUP);
+  await conn
+    .getDb().run(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?,?,?,NULL,'t')`, GROUP, GROUP, GROUP);
 
   const db = await import('./db.js');
   db.createWebchatModel({

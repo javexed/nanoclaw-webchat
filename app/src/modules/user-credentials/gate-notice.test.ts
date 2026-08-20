@@ -37,13 +37,9 @@ function outboundTexts(sessionId: string): string[] {
   }
 }
 
-function seedRoom(platformId: string): void {
-  getDb()
-    .prepare(
-      `INSERT OR IGNORE INTO messaging_groups (id, channel_type, platform_id, name, instance, created_at)
-       VALUES (?, 'webchat', ?, ?, 'webchat', ?)`,
-    )
-    .run(`mg-${platformId}`, platformId, platformId, new Date().toISOString());
+async function seedRoom(platformId: string): Promise<void> {
+  await getDb().run(`INSERT OR IGNORE INTO messaging_groups (id, channel_type, platform_id, name, instance, created_at)
+       VALUES (?, 'webchat', ?, ?, 'webchat', ?)`, `mg-${platformId}`, platformId, platformId, new Date().toISOString());
 }
 
 beforeEach(() => {

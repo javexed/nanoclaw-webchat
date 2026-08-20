@@ -345,7 +345,7 @@ async function runDraft(prompt: string): Promise<DraftedAgent> {
   // the "generate draft didn't work" under a qwen3 default). Claude/Codex
   // defaults have no default MODEL set, so they fall through to the OneCLI path.
   const defaultId = getDefaultModelId();
-  const defaultModel = defaultId ? getWebchatModel(defaultId) : undefined;
+  const defaultModel = await (defaultId ? getWebchatModel(defaultId) : undefined);
   if (defaultModel?.endpoint && (defaultModel.kind === 'ollama' || defaultModel.kind === 'openai-compatible')) {
     return runDraftViaModel(prompt, defaultModel);
   }

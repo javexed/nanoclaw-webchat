@@ -170,11 +170,11 @@ export async function rMcpOauthStartPost(ctx: RouteCtx, m: RegExpMatchArray): Pr
 // Re-approve a drifted tool surface: pin what the server exposes NOW.
 export async function rMcpRepinPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res } = ctx;
-  const server = getWebchatMcpServer(decodeURIComponent(m[1]));
+  const server = await getWebchatMcpServer(decodeURIComponent(m[1]));
   if (!server) return json(res, 404, { error: 'MCP server not found' });
   if (server.transport === 'stdio' || !server.url) return json(res, 400, { error: 'Only remote servers are pinned' });
   setMcpServerDrift(server.id, null);
-  getDb().prepare(`UPDATE webchat_mcp_servers SET pinned_tools = NULL WHERE id = ?`).run(server.id);
+  await getDb().run(`UPDATE webchat_mcp_servers SET pinned_tools = NULL WHERE id = ?`, server.id);
   const health = await checkMcpServer(getWebchatMcpServer(server.id)!); // re-probe pins the current surface
   return json(res, 200, { ok: true, health });
 }
@@ -183,7 +183,7 @@ export async function rMcpRepinPost(ctx: RouteCtx, m: RegExpMatchArray): Promise
 // assigned agent's container config → the SDK's allowedTools filter.
 export async function rMcpToolsPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
-  const server = getWebchatMcpServer(decodeURIComponent(m[1]));
+  const server = await getWebchatMcpServer(decodeURIComponent(m[1]));
   if (!server) return json(res, 404, { error: 'MCP server not found' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -209,7 +209,7 @@ export async function rMcpAuthPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<v
   const { req, res, userId } = ctx;
   if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  const server = getWebchatMcpServer(decodeURIComponent(m[1]));
+  const server = await getWebchatMcpServer(decodeURIComponent(m[1]));
   if (!server) return json(res, 404, { error: 'MCP server not found' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -239,8 +239,8 @@ export async function rMcpServerIdDelete(ctx: RouteCtx, m: RegExpMatchArray): Pr
   return deleteMcpServerHandler(res, decodeURIComponent(m[1]), url.searchParams.get('force') === '1');
 }
 
-export function listMcpServersForUI(): McpServerForUI[] {
-  return listWebchatMcpServers().map(mcpServerForUI);
+export async function listMcpServersForUI(): Promise<McpServerForUI[]> {
+  return (await listWebchatMcpServers()).map(mcpServerForUI);
 }
 
 /** Parse + validate a registry create/update body into a WebchatMcpServerInput. */
@@ -285,7 +285,7 @@ export async function createMcpServerHandler(req: IncomingMessage, res: ServerRe
   if (getWebchatMcpServerByName(input.name)) {
     return json(res, 409, { error: `An MCP server named "${input.name}" already exists` });
   }
-  const server = createWebchatMcpServer(input);
+  const server = await createWebchatMcpServer(input);
   // The add form probes before saving — that probed surface is the operator's
   // approval, so pin it as the drift baseline right here.
   if (Array.isArray(body.tools) && body.tools.length) {
@@ -304,7 +304,7 @@ export async function createMcpServerHandler(req: IncomingMessage, res: ServerRe
 }
 
 export async function updateMcpServerHandler(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
-  const existing = getWebchatMcpServer(id);
+  const existing = await getWebchatMcpServer(id);
   if (!existing) return json(res, 404, { error: 'MCP server not found' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -330,7 +330,7 @@ export async function updateMcpServerHandler(req: IncomingMessage, res: ServerRe
   } catch (err) {
     return json(res, 400, { error: err instanceof Error ? err.message : 'Invalid MCP server' });
   }
-  const clash = getWebchatMcpServerByName(input.name);
+  const clash = await getWebchatMcpServerByName(input.name);
   if (clash && clash.id !== id) {
     return json(res, 409, { error: `An MCP server named "${input.name}" already exists` });
   }
@@ -338,7 +338,7 @@ export async function updateMcpServerHandler(req: IncomingMessage, res: ServerRe
   updateWebchatMcpServer(id, input);
   // Re-sync every assigned agent: drop the old key when renamed, upsert the
   // new config, and restart so live containers pick the change up.
-  const updated = getWebchatMcpServer(id);
+  const updated = await getWebchatMcpServer(id);
   for (const agentGroupId of getAgentsAssignedToMcpServer(id)) {
     if (updated && oldName !== updated.name) syncAgentMcpConfig(agentGroupId, { ...updated, name: oldName }, false);
     if (updated) syncAgentMcpConfig(agentGroupId, updated, true);
@@ -347,10 +347,10 @@ export async function updateMcpServerHandler(req: IncomingMessage, res: ServerRe
   return json(res, 200, { ok: true });
 }
 
-export function deleteMcpServerHandler(res: ServerResponse, id: string, force: boolean): void {
+export async function deleteMcpServerHandler(res: ServerResponse, id: string, force: boolean): Promise<void> {
   const existing = getWebchatMcpServer(id);
   if (!existing) return json(res, 404, { error: 'MCP server not found' });
-  const assigned = getAgentsAssignedToMcpServer(id);
+  const assigned = await getAgentsAssignedToMcpServer(id);
   if (assigned.length > 0 && !force) {
     // Cascade-with-confirmation (mirrors models): surface the impact list so
     // the PWA can prompt before detaching the server from live agents.

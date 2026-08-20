@@ -31,16 +31,16 @@ afterEach(() => {
 });
 
 describe('webchat_approvals_index — multi-inbox (fan-out)', () => {
-  it('indexes one approval against multiple inboxes', () => {
+  it('indexes one approval against multiple inboxes', async () => {
     recordWebchatApproval('appr-1', INBOX_A);
     recordWebchatApproval('appr-1', INBOX_B);
-    expect(getWebchatApprovalInboxes('appr-1').sort()).toEqual([INBOX_A, INBOX_B].sort());
+    expect((await getWebchatApprovalInboxes('appr-1')).sort()).toEqual([INBOX_A, INBOX_B].sort());
     expect(isWebchatApprovalIndexedFor('appr-1', INBOX_A)).toBe(true);
     expect(isWebchatApprovalIndexedFor('appr-1', INBOX_B)).toBe(true);
     expect(isWebchatApprovalIndexedFor('appr-1', 'approvals:tailscale:c@example.com')).toBe(false);
   });
 
-  it('surfaces a fanned-out approval to every indexed approver', () => {
+  it('surfaces a fanned-out approval to every indexed approver', async () => {
     createPendingApproval({
       approval_id: 'appr-2',
       session_id: null,
@@ -53,8 +53,8 @@ describe('webchat_approvals_index — multi-inbox (fan-out)', () => {
     });
     recordWebchatApproval('appr-2', INBOX_A);
     recordWebchatApproval('appr-2', INBOX_B);
-    const forA = getWebchatPendingApprovalsForUser('webchat:tailscale:a@example.com');
-    const forB = getWebchatPendingApprovalsForUser('webchat:tailscale:b@example.com');
+    const forA = await getWebchatPendingApprovalsForUser('webchat:tailscale:a@example.com');
+    const forB = await getWebchatPendingApprovalsForUser('webchat:tailscale:b@example.com');
     expect(forA.map((r) => r.approval_id)).toContain('appr-2');
     expect(forB.map((r) => r.approval_id)).toContain('appr-2');
   });

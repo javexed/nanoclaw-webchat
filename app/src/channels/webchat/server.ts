@@ -1264,7 +1264,7 @@ async function handleHttp(
     }
     const agentGroupId = typeof body.agentGroupId === 'string' ? body.agentGroupId : '';
     // Only agents actually wired to this room can be engaged.
-    if (!getAgentsForWebchatRoom(roomId).some((a) => a.id === agentGroupId)) {
+    if (!(await getAgentsForWebchatRoom(roomId)).some((a) => a.id === agentGroupId)) {
       return json(res, 400, { error: 'Agent is not wired to this room' });
     }
     engageAgent(roomId, threadId, agentGroupId);
@@ -1442,11 +1442,11 @@ async function rCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void>
   const roomId = typeof body.roomId === 'string' ? body.roomId : '';
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
   if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
-  if (!getCredentialsConfig().allowCodexOauth)
+  if (!(await getCredentialsConfig()).allowCodexOauth)
     return json(res, 403, {
       error: 'This workspace does not accept Codex (ChatGPT) subscription (OAuth) connections.',
     });
-  const groups = getAgentsForWebchatRoom(roomId);
+  const groups = await getAgentsForWebchatRoom(roomId);
   if (groups.length === 0) return json(res, 400, { error: 'Room has no wired agent' });
   try {
     if (step === 'start') {
@@ -1480,7 +1480,7 @@ async function rToolSecretsMine(ctx: RouteCtx, _m: RegExpMatchArray): Promise<vo
     for (const row of listEnrolledGroups(userId, provider)) {
       if (seen.has(row.agent_group_id)) continue;
       seen.add(row.agent_group_id);
-      const group = getAgentGroup(row.agent_group_id);
+      const group = await getAgentGroup(row.agent_group_id);
       if (!group) continue;
       groups.push({
         agentGroupId: group.id,
@@ -1543,7 +1543,7 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
       const members =
         agentGroupId && !rawUser
           ? await Promise.all(
-              listGroupMemberEnrollments(agentGroupId).map(async (row) => ({
+              (await listGroupMemberEnrollments(agentGroupId)).map(async (row) => ({
                 userId: row.user_id,
                 secrets: await listToolSecrets(realOnecliAdmin, {
                   kind: 'user' as const,
@@ -1719,7 +1719,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   // not nag the operator to "connect" an engine that already works. An external
   // credential is webchat-unmanaged: no cred_type to show, and not disconnectable.
   const credState = async (provider: 'claude' | 'codex') => {
-    const row = getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider);
+    const row = await getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider);
     if (row?.status === 'active') return { connected: true, credType: row.cred_type ?? null, external: false };
     const secType = provider === 'codex' ? 'openai' : 'anthropic';
     const external = (await loadVault()).some((s) => s.type === secType && !trackedSecretIds.has(s.id));
@@ -1729,7 +1729,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
     // Flat claude fields (the original shape) + a codex block + the workspace
     // default MODEL (the Ollama-engine analogue of the default credential).
     const defaultModelId = getDefaultModelId();
-    const defaultModel = defaultModelId ? getWebchatModel(defaultModelId) : undefined;
+    const defaultModel = await (defaultModelId ? getWebchatModel(defaultModelId) : undefined);
     return json(res, 200, {
       ...(await credState('claude')),
       provider: 'claude',
@@ -1753,7 +1753,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   try {
     if (method === 'DELETE') {
       const provider = url.searchParams.get('provider') === 'codex' ? 'codex' : 'claude';
-      const priorOauth = getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider)?.cred_type === 'oauth_token';
+      const priorOauth = (await getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider))?.cred_type === 'oauth_token';
       await revokeUserCredential(realOnecliAdmin, WORKSPACE_DEFAULT_USER_ID, provider);
       restartGroupsForWorkspaceCredChange(provider, priorOauth, false);
       return json(res, 200, { ok: true });
@@ -1769,7 +1769,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
     const provider = body.provider === 'codex' ? 'codex' : 'claude';
     if (provider === 'codex' && !codexAvailable())
       return json(res, 400, { error: 'Codex support isn’t installed yet — add it with /add-codex first.' });
-    const priorOauth = getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider)?.cred_type === 'oauth_token';
+    const priorOauth = (await getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider))?.cred_type === 'oauth_token';
     if (body.type === 'oauth_token') {
       const token = typeof body.token === 'string' ? body.token.trim() : '';
       if (provider === 'codex') {
@@ -1851,7 +1851,7 @@ async function rWsCredMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void
     // sentinel mode may have changed (none/key → oauth) — respawn containers.
     if (typeof body.sessionId !== 'string' || typeof body.code !== 'string')
       return json(res, 400, { error: 'sessionId and code required' });
-    const priorRow = getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude');
+    const priorRow = await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude');
     const priorOauth = priorRow?.status === 'active' && priorRow.cred_type === 'oauth_token';
     const token = await mintClaudeToken(userId, body.sessionId, body.code);
     await setWorkspaceDefaultCredential(realOnecliAdmin, 'claude', token, 'oauth_token');
@@ -1896,7 +1896,7 @@ async function rWsCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<voi
     }
     // step === 'finish': wait for auth.json, then store as the workspace default.
     if (typeof body.sessionId !== 'string') return json(res, 400, { error: 'sessionId required' });
-    const priorRow = getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'codex');
+    const priorRow = await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'codex');
     const priorOauth = priorRow?.status === 'active' && priorRow.cred_type === 'oauth_token';
     const authJson = await finishCodexMint(userId, body.sessionId);
     await setWorkspaceDefaultCredential(realOnecliAdmin, 'codex', authJson, 'oauth_token');
@@ -1927,7 +1927,7 @@ async function rWorkspaceModelPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
   if (body.modelId !== null) {
     if (typeof body.modelId !== 'string' || !body.modelId.trim())
       return json(res, 400, { error: 'modelId must be a string or null' });
-    const model = getWebchatModel(body.modelId.trim());
+    const model = await getWebchatModel(body.modelId.trim());
     if (!model) return json(res, 404, { error: 'Model not found' });
     if (model.kind !== 'ollama')
       return json(res, 400, { error: 'The workspace default model must be an ollama roster model' });
@@ -1947,7 +1947,7 @@ async function rTopologyGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
   const rooms = filterRoomsForUser(userId, getAllWebchatRooms());
   // ALL agents the caller manages become columns/nodes (not just wired ones),
   // so unused agents show as orphans and can be wired from the matrix.
-  const agents = listAgentsForUser(userId).map((a) => ({ id: a.id, name: a.name }));
+  const agents = (await listAgentsForUser(userId)).map((a) => ({ id: a.id, name: a.name }));
   const topo = getWebchatTopology(rooms, agents);
   // SCOPED skills only — the ones wired to a specific agent (including anything
   // the learning loop produced). The shared pool is on ~every agent, so drawing
@@ -1975,7 +1975,7 @@ async function rSearchGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   if (!q.trim()) return json(res, 200, { results: [] });
   const rooms = filterRoomsForUser(userId, getAllWebchatRooms());
   const nameById = new Map(rooms.map((r) => [r.id, r.name]));
-  const hits = searchWebchatMessages(
+  const hits = await searchWebchatMessages(
     rooms.map((r) => r.id),
     q,
     50,
@@ -1995,14 +1995,14 @@ async function rSearchGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
 
 async function rHistGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, url, userId } = ctx;
-  const room = getWebchatRoom(m[1]);
+  const room = await getWebchatRoom(m[1]);
   if (!room) return json(res, 404, { error: 'Room not found' });
   if (!canAccessRoom(userId, room.id)) return json(res, 403, { error: 'Access denied' });
   const afterId = url.searchParams.get('after_id');
   const beforeId = url.searchParams.get('before_id');
   // Optional thread filter — absent = the whole room (back-compat).
   const threadId = url.searchParams.get('thread_id') || undefined;
-  const msgs = afterId
+  const msgs = await afterId
     ? getWebchatMessagesAfterId(room.id, afterId, 200, threadId)
     : beforeId
       ? getWebchatMessagesBeforeId(room.id, beforeId, 50, threadId)
@@ -2293,7 +2293,7 @@ async function rDraftPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   // Edit a pending draft's body before keeping it. Same tier as Keep: admin
   // over the agent the draft belongs to — editing shapes what gets kept.
   const id = decodeURIComponent(m[1]);
-  const draft = getSkillDraft(id);
+  const draft = await getSkillDraft(id);
   if (!draft || draft.status !== 'pending') return json(res, 404, { error: 'Draft not found' });
   if (!hasAdminPrivilege(userId, draft.agent_group_id)) return json(res, 403, { error: 'Admin privilege required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
@@ -2315,7 +2315,7 @@ async function rDraftPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
 async function rDraft(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
   const id = decodeURIComponent(m[1]);
-  const draft = getSkillDraft(id);
+  const draft = await getSkillDraft(id);
   if (!draft || draft.status !== 'pending') return json(res, 404, { error: 'Draft not found' });
   // Same tier as PUT/Keep: admin over the agent the draft belongs to. A
   // scoped admin of group B must not read or discard group A's drafts —
@@ -2349,7 +2349,7 @@ async function rDraft(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
 async function rDraftKeepPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   const id = decodeURIComponent(m[1]);
-  const draft = getSkillDraft(id);
+  const draft = await getSkillDraft(id);
   if (!draft || draft.status !== 'pending') return json(res, 404, { error: 'Draft not found' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   // Admin over the draft's OWN group is required here; the handler separately
@@ -2419,7 +2419,7 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   }
 
   const events: LearningTimelineEvent[] = [];
-  const roomNameOf = (roomId: string | null): string | null => (roomId ? (getWebchatRoom(roomId)?.name ?? null) : null);
+  const roomNameOf = async (roomId: string | null): Promise<string | null> => (roomId ? ((await getWebchatRoom(roomId))?.name ?? null) : null);
   const skillLives = (gid: string, name: string): boolean =>
     !!name && fs.existsSync(path.join(scopedSkillsDir(gid), name, 'SKILL.md'));
 
@@ -2548,7 +2548,7 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 
 async function rSessionResetPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const session = getSession(decodeURIComponent(m[1]));
+  const session = await getSession(decodeURIComponent(m[1]));
   if (!session) return json(res, 404, { error: 'Session not found' });
   if (!hasAdminPrivilege(userId, session.agent_group_id)) {
     return json(res, 403, { error: 'Admin privilege required' });
@@ -2588,7 +2588,7 @@ async function rLearningConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<voi
       res,
       canEdit ? 200 : 200,
       canEdit
-        ? { ...base, canEdit: true, classifierModelId: getLearningClassifier().modelId }
+        ? { ...base, canEdit: true, classifierModelId: (await getLearningClassifier()).modelId }
         : { ...base, canEdit: false },
     );
   }
@@ -2611,7 +2611,7 @@ async function rLearningConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<voi
     }
     if (typeof body.classifierModelId !== 'string' || !body.classifierModelId.trim())
       return json(res, 400, { error: 'classifierModelId must be a string or null' });
-    const model = getWebchatModel(body.classifierModelId.trim());
+    const model = await getWebchatModel(body.classifierModelId.trim());
     if (!model) return json(res, 404, { error: 'Model not found' });
     const clf = classifierParamsForModel(model);
     if (!clf)
@@ -2709,7 +2709,7 @@ async function rSttConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   }
   if (typeof body.cleanupModelId !== 'string' || !body.cleanupModelId.trim())
     return json(res, 400, { error: 'cleanupModelId must be a string or null' });
-  const model = getWebchatModel(body.cleanupModelId.trim());
+  const model = await getWebchatModel(body.cleanupModelId.trim());
   if (!model) return json(res, 404, { error: 'Model not found' });
   if (model.kind !== 'ollama' && model.kind !== 'openai-compatible')
     return json(res, 400, { error: 'Cleanup model must be an ollama or openai-compatible roster model' });
@@ -2839,7 +2839,7 @@ async function rApprovalPrejudgePut(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 
 async function rApprovalsPendingGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const rows = getWebchatPendingApprovalsForUser(userId);
+  const rows = await getWebchatPendingApprovalsForUser(userId);
   return json(
     res,
     200,
@@ -2860,7 +2860,7 @@ async function rApprovalsPendingGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 async function rApprovePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId, hooks } = ctx;
   const approvalId = decodeURIComponent(m[1]);
-  const pending = getPendingApproval(approvalId);
+  const pending = await getPendingApproval(approvalId);
   if (!pending || pending.status !== 'pending') {
     return json(res, 404, { error: 'Approval not found or already resolved' });
   }
@@ -3328,10 +3328,10 @@ function persistOutboundFile(roomId: string, file: OutboundFile): string {
  */
 
 /** Engaged agents in a thread, resolved to {id, name, folder} for the UI. */
-function engagedAgentsForThread(roomId: string, threadId: string): Array<{ id: string; name: string; folder: string }> {
+async function engagedAgentsForThread(roomId: string, threadId: string): Promise<Array<{ id: string; name: string; folder: string }>> {
   const ids = new Set(getEngagedAgents(roomId, threadId));
   if (ids.size === 0) return [];
-  return getAgentsForWebchatRoom(roomId)
+  return (await getAgentsForWebchatRoom(roomId))
     .filter((a) => ids.has(a.id))
     .map((a) => ({ id: a.id, name: a.name, folder: a.folder }));
 }
@@ -3357,16 +3357,16 @@ const ENGAGE_FOLDER_ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
  * Returns null when engagement doesn't apply so the router falls back to normal
  * mention-only routing. See docs/webchat/thread-engaged-agents.md.
  */
-export function resolveInboundDeliveryPlan(
+export async function resolveInboundDeliveryPlan(
   mg: MessagingGroup,
   threadId: string | null,
   messageText: string,
   senderAgentGroupId: string | undefined,
-): InboundDeliveryPlan | null {
+): Promise<InboundDeliveryPlan | null> {
   if (mg.channel_type !== 'webchat') return null;
   if (threadId === null || threadId === 'main') return null;
   const roomId = mg.platform_id;
-  const wired = getAgentsForWebchatRoom(roomId);
+  const wired = await getAgentsForWebchatRoom(roomId);
   if (wired.length === 0) return null;
   const wiredIds = new Set(wired.map((a) => a.id));
 
@@ -3473,9 +3473,9 @@ async function importSystemApplyHandler(req: IncomingMessage, res: ServerRespons
   } catch (err) {
     return json(res, 422, { error: err instanceof Error ? err.message : String(err) });
   }
-  if (!preview.schemaOk) {
+  if (!(await preview).schemaOk) {
     return json(res, 409, {
-      error: `Backup schema (v${preview.manifest.schemaVersion}) is newer than this install (v${preview.currentSchemaVersion}) — update NanoClaw first.`,
+      error: `Backup schema (v${(await preview).manifest.schemaVersion}) is newer than this install (v${(await preview).currentSchemaVersion}) — update NanoClaw first.`,
     });
   }
   pendingAgentImports.delete(String(body.token));
@@ -3498,8 +3498,8 @@ async function importSystemApplyHandler(req: IncomingMessage, res: ServerRespons
  * the UI can say where that content went instead of showing an empty box for a
  * group that plainly has instructions.
  */
-function readInstructions(res: ServerResponse, id: string): void {
-  const group = getAgentGroup(id);
+async function readInstructions(res: ServerResponse, id: string): Promise<void> {
+  const group = await getAgentGroup(id);
   if (!group) return json(res, 404, { error: 'Agent not found' });
   const dir = path.resolve(GROUPS_DIR, group.folder);
   const content = readGroupPersona(dir) ?? '';
@@ -3514,7 +3514,7 @@ function readInstructions(res: ServerResponse, id: string): void {
 }
 
 async function writeInstructions(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
-  const group = getAgentGroup(id);
+  const group = await getAgentGroup(id);
   if (!group) return json(res, 404, { error: 'Agent not found' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -3568,14 +3568,14 @@ async function writeInstructions(req: IncomingMessage, res: ServerResponse, id: 
  * `codex` → Codex groups only. Value-only rotation (same mode) needs no restart —
  * OneCLI swaps the real credential on the wire per request.
  */
-function restartGroupsForWorkspaceCredChange(
+async function restartGroupsForWorkspaceCredChange(
   provider: 'claude' | 'codex',
   priorOauth: boolean,
   nowOauth: boolean,
-): void {
+): Promise<void> {
   if (priorOauth === nowOauth) return;
   for (const g of getAllAgentGroups()) {
-    const groupProvider = getContainerConfig(g.id)?.provider === 'codex' ? 'codex' : 'claude';
+    const groupProvider = (await getContainerConfig(g.id))?.provider === 'codex' ? 'codex' : 'claude';
     if (groupProvider !== provider) continue;
     try {
       restartAgentGroupContainers(g.id, 'Workspace default credential mode changed');
@@ -3718,8 +3718,8 @@ async function putScopedSkillContentHandler(
 
 // Flip the in-room "proposed skill" card (if the draft was surfaced in a webchat
 // room) so it stops being actionable, and push the update to connected clients.
-function resolveDraftCard(draftId: string, outcome: 'kept' | 'discarded', userId: string): void {
-  const flipped = markRoomSkillDraftResolved(draftId, outcome, userId);
+async function resolveDraftCard(draftId: string, outcome: 'kept' | 'discarded', userId: string): Promise<void> {
+  const flipped = await markRoomSkillDraftResolved(draftId, outcome, userId);
   if (flipped) broadcast(flipped.roomId, { type: 'message', ...flipped.message });
 }
 
@@ -3791,7 +3791,7 @@ async function runKeepReview(draft: KeepDraftMeta, group: { id: string; name: st
   try {
     // Re-fetch: the draft may have been discarded (or kept via a concurrent
     // force) between the 202 and the job actually running.
-    const fresh = getSkillDraft(draft.id);
+    const fresh = await getSkillDraft(draft.id);
     if (!fresh || fresh.status !== 'pending') {
       // Both bail-outs below log. They report 'error' to the pressing user's
       // tab, and until now did so with nothing server-side — so an operator
@@ -3902,7 +3902,7 @@ async function pushSubscribe(req: IncomingMessage, res: ServerResponse, userId: 
   if (p256dh.length > 256 || auth.length > 64) return json(res, 400, { error: 'Key material too long' });
 
   // Prevent identity-hijack on known endpoints.
-  const existing = db.prepare(`SELECT identity FROM webchat_push_subscriptions WHERE endpoint = ?`).get(endpoint) as
+  const existing = (await db.get(`SELECT identity FROM webchat_push_subscriptions WHERE endpoint = ?`, endpoint)) as
     | { identity: string }
     | undefined;
   if (existing && existing.identity !== userId) {
@@ -3913,11 +3913,9 @@ async function pushSubscribe(req: IncomingMessage, res: ServerResponse, userId: 
     });
     return json(res, 409, { error: 'Endpoint already registered to a different identity' });
   }
-  db.prepare(
-    `INSERT INTO webchat_push_subscriptions (endpoint, identity, keys_json, created_at)
+  await db.run(`INSERT INTO webchat_push_subscriptions (endpoint, identity, keys_json, created_at)
      VALUES (?, ?, ?, ?)
-     ON CONFLICT(endpoint) DO UPDATE SET identity = excluded.identity, keys_json = excluded.keys_json`,
-  ).run(endpoint, userId, JSON.stringify({ p256dh, auth }), Date.now());
+     ON CONFLICT(endpoint) DO UPDATE SET identity = excluded.identity, keys_json = excluded.keys_json`, endpoint, userId, JSON.stringify({ p256dh, auth }), Date.now());
   return json(res, 200, { ok: true });
 }
 
@@ -3932,9 +3930,7 @@ async function pushUnsubscribe(req: IncomingMessage, res: ServerResponse, userId
   }
   if (typeof body.endpoint !== 'string') return json(res, 400, { error: 'Missing endpoint' });
   // Only allow deleting your own subscription.
-  getDb()
-    .prepare(`DELETE FROM webchat_push_subscriptions WHERE endpoint = ? AND identity = ?`)
-    .run(body.endpoint, userId);
+  await getDb().run(`DELETE FROM webchat_push_subscriptions WHERE endpoint = ? AND identity = ?`, body.endpoint, userId);
   return json(res, 200, { ok: true });
 }
 

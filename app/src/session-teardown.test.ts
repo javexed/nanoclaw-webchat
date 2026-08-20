@@ -109,7 +109,7 @@ describe('deleteSessionDbState', () => {
     expect(getSession('sess-1')).toBeUndefined();
   });
 
-  it('drops pending_questions and pending_approvals that FK to the session', () => {
+  it('drops pending_questions and pending_approvals that FK to the session', async () => {
     seed();
     createPendingQuestion({
       question_id: 'q-1',
@@ -134,10 +134,10 @@ describe('deleteSessionDbState', () => {
     });
     deleteSessionDbState('sess-1');
     const db = getDb();
-    expect(db.prepare('SELECT COUNT(*) as n FROM pending_questions WHERE session_id = ?').get('sess-1')).toEqual({
+    expect(await db.get('SELECT COUNT(*) as n FROM pending_questions WHERE session_id = ?', 'sess-1')).toEqual({
       n: 0,
     });
-    expect(db.prepare('SELECT COUNT(*) as n FROM pending_approvals WHERE session_id = ?').get('sess-1')).toEqual({
+    expect(await db.get('SELECT COUNT(*) as n FROM pending_approvals WHERE session_id = ?', 'sess-1')).toEqual({
       n: 0,
     });
   });
@@ -157,7 +157,7 @@ describe('FK behavior — the bug this primitive prevents', () => {
     expect(() => deleteAgentGroup('ag-1')).toThrow(/FOREIGN KEY/);
   });
 
-  it('the teardown + parent-delete sequence inside a transaction succeeds', () => {
+  it('the teardown + parent-delete sequence inside a transaction succeeds', async () => {
     const { messagingGroupId } = seed({ sessionsPerRoom: 2 });
     const targets = findSessionsByMessagingGroup(messagingGroupId);
     expect(targets).toHaveLength(2);
@@ -168,10 +168,10 @@ describe('FK behavior — the bug this primitive prevents', () => {
     })();
 
     const db = getDb();
-    expect(db.prepare('SELECT COUNT(*) as n FROM messaging_groups WHERE id = ?').get(messagingGroupId)).toEqual({
+    expect(await db.get('SELECT COUNT(*) as n FROM messaging_groups WHERE id = ?', messagingGroupId)).toEqual({
       n: 0,
     });
-    expect(db.prepare('SELECT COUNT(*) as n FROM sessions WHERE messaging_group_id = ?').get(messagingGroupId)).toEqual(
+    expect(await db.get('SELECT COUNT(*) as n FROM sessions WHERE messaging_group_id = ?', messagingGroupId)).toEqual(
       { n: 0 },
     );
   });

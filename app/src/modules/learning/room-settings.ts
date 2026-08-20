@@ -18,26 +18,20 @@ export interface RoomLearning {
   autoKeep?: boolean;
 }
 
-export function getRoomLearning(messagingGroupId: string): RoomLearning {
+export async function getRoomLearning(messagingGroupId: string): Promise<RoomLearning> {
   try {
-    const row = getDb()
-      .prepare(`SELECT settings FROM learning_room_settings WHERE messaging_group_id = ?`)
-      .get(messagingGroupId) as { settings: string } | undefined;
+    const row = (await getDb().get(`SELECT settings FROM learning_room_settings WHERE messaging_group_id = ?`, messagingGroupId)) as { settings: string } | undefined;
     return row ? (JSON.parse(row.settings) as RoomLearning) : {};
   } catch {
     return {};
   }
 }
 
-export function setRoomLearning(messagingGroupId: string, patch: RoomLearning): RoomLearning {
+export async function setRoomLearning(messagingGroupId: string, patch: RoomLearning): Promise<RoomLearning> {
   const next = { ...getRoomLearning(messagingGroupId), ...patch };
-  getDb()
-    .prepare(
-      `INSERT INTO learning_room_settings (messaging_group_id, settings, updated_at)
+  await getDb().run(`INSERT INTO learning_room_settings (messaging_group_id, settings, updated_at)
        VALUES (?, ?, ?)
-       ON CONFLICT(messaging_group_id) DO UPDATE SET settings = excluded.settings, updated_at = excluded.updated_at`,
-    )
-    .run(messagingGroupId, JSON.stringify(next), Date.now());
+       ON CONFLICT(messaging_group_id) DO UPDATE SET settings = excluded.settings, updated_at = excluded.updated_at`, messagingGroupId, JSON.stringify(next), Date.now());
   return next;
 }
 
@@ -46,18 +40,14 @@ export function setRoomLearning(messagingGroupId: string, patch: RoomLearning): 
  * messaging group wired to it that HAS a room-level setting, keyed by
  * "<channel_type>:<platform_id>". Empty object when no room overrides exist.
  */
-export function roomLearningMapForAgent(agentGroupId: string): Record<string, RoomLearning> {
+export async function roomLearningMapForAgent(agentGroupId: string): Promise<Record<string, RoomLearning>> {
   const out: Record<string, RoomLearning> = {};
   try {
-    const rows = getDb()
-      .prepare(
-        `SELECT mg.channel_type AS ct, mg.platform_id AS pid, lrs.settings AS settings
+    const rows = (await getDb().all(`SELECT mg.channel_type AS ct, mg.platform_id AS pid, lrs.settings AS settings
          FROM messaging_group_agents mga
          JOIN messaging_groups mg ON mg.id = mga.messaging_group_id
          JOIN learning_room_settings lrs ON lrs.messaging_group_id = mg.id
-         WHERE mga.agent_group_id = ?`,
-      )
-      .all(agentGroupId) as { ct: string; pid: string; settings: string }[];
+         WHERE mga.agent_group_id = ?`, agentGroupId)) as { ct: string; pid: string; settings: string }[];
     for (const r of rows) {
       try {
         const s = JSON.parse(r.settings) as RoomLearning;
