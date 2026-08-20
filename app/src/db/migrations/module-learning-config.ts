@@ -12,6 +12,8 @@ import type { Migration } from './index.js';
  * owner-level opt-in).
  */
 export const moduleLearningConfig: Migration = {
+  // PRAGMA/table_info is sqlite's vocabulary, not the portable driver's.
+  sqliteOnly: true,
   version: 201,
   name: 'learning-config',
   up(db: Database.Database) {

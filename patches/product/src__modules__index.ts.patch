@@ -1,12 +1,15 @@
 diff --git a/src/modules/index.ts b/src/modules/index.ts
-index 2724a53e..3bc6c333 100644
+index 2724a53e..ff2d15d9 100644
 --- a/src/modules/index.ts
 +++ b/src/modules/index.ts
-@@ -21,3 +21,12 @@ import './interactive/index.js';
+@@ -21,3 +21,15 @@ import './interactive/index.js';
  import './permissions/index.js';
  import './agent-to-agent/index.js';
  import './self-mod/index.js';
 +import './user-credentials/index.js';
++// Per-group egress. Registers a prepare hook (reads the mode) and a network
++// policy resolver (applies it) — see the module header for why it needs both.
++import './container-egress/index.js';
 +import './learning/index.js';
 +import './agent-status/index.js';
 +import './compact-window/index.js';

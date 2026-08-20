@@ -17,6 +17,8 @@ import type { Migration } from './index.js';
  *                 materialized into container.json.
  */
 export const moduleMcpHardening: Migration = {
+  // PRAGMA/table_info is sqlite's vocabulary, not the portable driver's.
+  sqliteOnly: true,
   version: 202,
   name: 'webchat-mcp-hardening',
   up(db: Database.Database) {
