@@ -43,8 +43,7 @@ const cred = (over: Partial<Cred> = {}): Cred => ({
   ...over,
 });
 
-const ok = (body: unknown) =>
-  ({ ok: true, status: 200, json: async () => body, text: async () => '' }) as Response;
+const ok = (body: unknown) => ({ ok: true, status: 200, json: async () => body, text: async () => '' }) as Response;
 
 beforeEach(() => fs.rmSync(path.join(TMP, 'grok'), { recursive: true, force: true }));
 afterAll(() => fs.rmSync(TMP, { recursive: true, force: true }));
@@ -100,7 +99,9 @@ describe('expiry', () => {
   });
 
   it('one inside the skew is due', () => {
-    expect(userNeedsRefresh(cred({ expiresAt: new Date(Date.now() + USER_REFRESH_SKEW_MS - 1000).toISOString() }))).toBe(true);
+    expect(
+      userNeedsRefresh(cred({ expiresAt: new Date(Date.now() + USER_REFRESH_SKEW_MS - 1000).toISOString() })),
+    ).toBe(true);
   });
 
   it('an unparseable expiry is due, not trusted', () => {
@@ -141,7 +142,8 @@ describe('refresh', () => {
     // token, not a vault entry nothing holds the refresh token for.
     const order: string[] = [];
     await refreshUserCredential(cred(), {
-      fetchFn: (async () => ok({ access_token: 'a', refresh_token: 'r2', expires_in: 3600 })) as unknown as typeof fetch,
+      fetchFn: (async () =>
+        ok({ access_token: 'a', refresh_token: 'r2', expires_in: 3600 })) as unknown as typeof fetch,
       updateSecretValue: async () => void order.push('vault'),
     });
     order.push('local');
@@ -151,20 +153,25 @@ describe('refresh', () => {
   it('surfaces an HTTP failure with its status', async () => {
     await expect(
       refreshUserCredential(cred(), {
-        fetchFn: (async () => ({ ok: false, status: 400, text: async () => 'invalid_grant' }) as Response) as unknown as typeof fetch,
+        fetchFn: (async () =>
+          ({ ok: false, status: 400, text: async () => 'invalid_grant' }) as Response) as unknown as typeof fetch,
       }),
     ).rejects.toThrow(/HTTP 400.*invalid_grant/);
   });
 
   it('one dead member does not stop the sweep renewing the others', async () => {
-    writeUserCredential(cred({ userId: 'webchat:alice', refreshToken: 'good', expiresAt: new Date(Date.now() + 1000).toISOString() }));
-    writeUserCredential(cred({ userId: 'webchat:bob', refreshToken: 'dead', expiresAt: new Date(Date.now() + 1000).toISOString() }));
+    writeUserCredential(
+      cred({ userId: 'webchat:alice', refreshToken: 'good', expiresAt: new Date(Date.now() + 1000).toISOString() }),
+    );
+    writeUserCredential(
+      cred({ userId: 'webchat:bob', refreshToken: 'dead', expiresAt: new Date(Date.now() + 1000).toISOString() }),
+    );
 
     const renewed = await refreshDueUserCredentials({
       fetchFn: (async (_u: string, init: RequestInit) =>
         String(init.body).includes('good')
           ? ok({ access_token: 'a', expires_in: 3600 })
-          : ({ ok: false, status: 400, text: async () => 'invalid_grant' }) as Response) as unknown as typeof fetch,
+          : ({ ok: false, status: 400, text: async () => 'invalid_grant' } as Response)) as unknown as typeof fetch,
       updateSecretValue: async () => {},
     });
 
