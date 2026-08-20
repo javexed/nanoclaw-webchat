@@ -1,5 +1,5 @@
 diff --git a/src/session-manager.ts b/src/session-manager.ts
-index 9417f5ac..12807cf7 100644
+index 0a709164..41423d18 100644
 --- a/src/session-manager.ts
 +++ b/src/session-manager.ts
 @@ -21,6 +21,7 @@ import { DATA_DIR } from './config.js';
@@ -18,87 +18,7 @@ index 9417f5ac..12807cf7 100644
  } from './db/session-db.js';
  import { log } from './log.js';
  import type { Session } from './types.js';
-@@ -73,23 +75,25 @@ type SessionKeyResolver = (
-    * last, so existing resolvers are unaffected.
-    */
-   threadId?: string | null,
--) => SessionKeyOverride | null;
-+) => SessionKeyOverride | null | Promise<SessionKeyOverride | null>;
- const sessionKeyResolvers: SessionKeyResolver[] = [];
- export function registerSessionKeyResolver(fn: SessionKeyResolver): void {
-   sessionKeyResolvers.push(fn);
- }
--export function resolveSessionKeyOverride(
-+export async function resolveSessionKeyOverride(
-   mg: { id: string; channel_type: string; platform_id: string; is_group?: number },
-   agentGroupId: string,
-   userId: string | null,
-   threadId?: string | null,
--): SessionKeyOverride | null {
-+): Promise<SessionKeyOverride | null> {
-   // Decision chain: first non-null override wins; a throwing resolver is
--  // skipped (a resolver bug must never break routing).
-+  // skipped (a resolver bug must never break routing). Async since the DB went
-+  // async — a resolver that consults credential state has to await it, and the
-+  // one caller (the router) is already in an async context.
-   for (const fn of sessionKeyResolvers) {
-     let override: SessionKeyOverride | null;
-     try {
--      override = fn(mg, agentGroupId, userId, threadId ?? null);
-+      override = await fn(mg, agentGroupId, userId, threadId ?? null);
-     } catch {
-       continue;
-     }
-@@ -126,19 +130,19 @@ type TurnGate = (
-   mg: { id: string; channel_type: string; platform_id: string; is_group?: number },
-   agentGroupId: string,
-   userId: string | null,
--) => TurnVeto | null;
-+) => TurnVeto | null | Promise<TurnVeto | null>;
- const turnGates: TurnGate[] = [];
- export function registerTurnGate(fn: TurnGate): void {
-   turnGates.push(fn);
- }
--export function consultTurnGates(
-+export async function consultTurnGates(
-   mg: { id: string; channel_type: string; platform_id: string; is_group?: number },
-   agentGroupId: string,
-   userId: string | null,
--): TurnVeto | null {
-+): Promise<TurnVeto | null> {
-   for (const fn of turnGates) {
-     try {
--      const veto = fn(mg, agentGroupId, userId);
-+      const veto = await fn(mg, agentGroupId, userId);
-       if (veto) return veto;
-     } catch {
-       // a gate bug must never break routing — skip it
-@@ -162,18 +166,20 @@ export interface SessionInboundWriterArgs {
-   currentMessageId: string;
-   deliveryAddr: { platformId: string | null; channelType: string | null; threadId: string | null };
- }
--type SessionInboundWriter = (args: SessionInboundWriterArgs) => boolean;
-+type SessionInboundWriter = (args: SessionInboundWriterArgs) => boolean | Promise<boolean>;
- const sessionInboundWriters: SessionInboundWriter[] = [];
- export function registerSessionInboundWriter(fn: SessionInboundWriter): void {
-   sessionInboundWriters.push(fn);
- }
--export function runSessionInboundWriter(args: SessionInboundWriterArgs): boolean {
-+export async function runSessionInboundWriter(args: SessionInboundWriterArgs): Promise<boolean> {
-   // First writer to return true claims the write (writers decline sessions
-   // they don't own); a throwing writer falls through to the next, and to the
--  // router's normal single-message write if none claim it.
-+  // router's normal single-message write if none claim it. Async since the DB
-+  // went async — awaiting matters here: an un-awaited writer would look
-+  // unclaimed (promise ≠ true) and the router would write a SECOND copy.
-   for (const fn of sessionInboundWriters) {
-     try {
--      if (fn(args)) return true;
-+      if (await fn(args)) return true;
-     } catch {
-       /* fall through */
-     }
-@@ -352,6 +358,12 @@ export function initSessionFolder(agentGroupId: string, sessionId: string): void
+@@ -357,6 +359,12 @@ export function initSessionFolder(agentGroupId: string, sessionId: string): void
  
    ensureSchema(inboundDbPath(agentGroupId, sessionId), 'inbound');
    ensureSchema(outboundDbPath(agentGroupId, sessionId), 'outbound');
@@ -111,7 +31,7 @@ index 9417f5ac..12807cf7 100644
  }
  
  /**
-@@ -471,6 +483,47 @@ export async function writeSessionMessage(
+@@ -476,6 +484,47 @@ export async function writeSessionMessage(
    await updateSession(sessionId, { last_active: new Date().toISOString() });
  }
  
@@ -159,7 +79,7 @@ index 9417f5ac..12807cf7 100644
  /**
   * If message content has attachments with base64 `data`, save them to
   * the session's inbox directory and replace with `localPath`.
-@@ -520,7 +573,28 @@ function extractAttachmentFiles(
+@@ -525,7 +574,28 @@ function extractAttachmentFiles(
  
    let changed = false;
    for (const att of attachments) {
@@ -189,7 +109,7 @@ index 9417f5ac..12807cf7 100644
  
      const rawName = deriveAttachmentName(att);
      const filename = isSafeAttachmentName(rawName) ? rawName : `attachment-${Date.now()}`;
-@@ -544,7 +618,13 @@ function extractAttachmentFiles(
+@@ -549,7 +619,13 @@ function extractAttachmentFiles(
        // wx = exclusive create. Refuses to follow a pre existing symlink or
        // overwrite any existing file. The host expects to be the sole writer
        // of these attachments.
@@ -204,7 +124,7 @@ index 9417f5ac..12807cf7 100644
      } catch (err: unknown) {
        const e = err as NodeJS.ErrnoException;
        if (e.code === 'EEXIST') {
-@@ -560,6 +640,7 @@ function extractAttachmentFiles(
+@@ -565,6 +641,7 @@ function extractAttachmentFiles(
      att.name = filename;
      att.localPath = `inbox/${messageId}/${filename}`;
      delete att.data;
