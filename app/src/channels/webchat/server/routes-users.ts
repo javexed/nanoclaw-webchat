@@ -159,7 +159,7 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
         // and neither the vault nor the container can.
         const parsed = JSON.parse(token) as Record<string, string>;
         await storeUserCredential(realOnecliAdmin, userId, provider, parsed.accessToken, 'oauth_token');
-        const secretId = getUserSecretId(userId, 'grok');
+        const secretId = await getUserSecretId(userId, 'grok');
         if (secretId) {
           writeUserCredential({
             userId,
@@ -599,7 +599,7 @@ export async function rGrokMemberLoginRoute(ctx: RouteCtx, m: RegExpMatchArray):
       if (cred) {
         try {
           await storeUserCredential(realOnecliAdmin, userId, 'grok', String(cred.accessToken), 'oauth_token');
-          const secretId = getUserSecretId(userId, 'grok');
+          const secretId = await getUserSecretId(userId, 'grok');
           if (secretId) {
             writeUserCredential({
               userId,
@@ -626,7 +626,7 @@ export async function rGrokMemberLoginRoute(ctx: RouteCtx, m: RegExpMatchArray):
 
   // Same gate as pasting one: a workspace that does not accept member Grok
   // subscriptions must not mint them either.
-  if (!oauthAllowedFor('grok', getCredentialsConfig()))
+  if (!oauthAllowedFor('grok', await getCredentialsConfig()))
     return json(res, 403, { error: 'This workspace does not accept Grok subscription connections.' });
 
   const r = startMemberLogin(userId);
