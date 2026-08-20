@@ -33,7 +33,7 @@ import {
   agentGroupForUserCredsAgent,
   type UserCredsProvider,
 } from './db.js';
-import { ensureGroupEnrollment } from './onboard.js';
+import { ensureGroupEnrollment, userCredsProviderForGroup } from './onboard.js';
 import { realOnecliAdmin } from './onecli-admin.js';
 import {
   memberSessionKey,
@@ -43,9 +43,7 @@ import {
 } from './identity.js';
 
 /** The agent group's provider, mapped to the two UserCreds-supported families. */
-async function groupProvider(agentGroupId: string): Promise<UserCredsProvider> {
-  return (await getContainerConfig(agentGroupId))?.provider === 'codex' ? 'codex' : 'claude';
-}
+
 
 // Sentinel bearer for a per-member OAuth container. Its value is irrelevant
 // beyond being non-empty: it flips Claude Code into OAuth mode (so it sends
@@ -76,13 +74,15 @@ async function evaluateRoomCredState(
   // Effective mode = the room's override, else the global default. Which
   // credential TYPES the workspace accepts (key / OAuth, per provider) is set on
   // the Credentials admin page; the room's mode is the master switch over both.
-  const provider = await groupProvider(agentGroupId);
+  const provider = await userCredsProviderForGroup(agentGroupId);
   const cfg = await getCredentialsConfig();
   const mode = await getEffectiveRoomMode(mg.platform_id);
   // 'disabled' (User credentials: Off) means no UserCreds at all — neither key nor
   // OAuth — regardless of what the workspace accepts. Otherwise each method
   // applies if the workspace accepts it for this provider.
-  const apiOffered = mode !== 'disabled' && (provider === 'codex' ? cfg.allowOpenaiKey : cfg.allowAnthropicKey);
+  // Grok has no API-key path, so it is never offered one.
+  const apiOffered =
+    mode !== 'disabled' && (provider === 'codex' ? cfg.allowOpenaiKey : provider === 'grok' ? false : cfg.allowAnthropicKey);
   const oauthOffered = mode !== 'disabled' && (provider === 'codex' ? cfg.allowCodexOauth : cfg.allowClaudeOauth);
   if (!apiOffered && !oauthOffered) return none; // UserCreds entirely off here.
 

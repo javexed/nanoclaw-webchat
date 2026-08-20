@@ -9,6 +9,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 
 import { json, readJsonBody } from './http.js';
 import { killContainer } from '../../../container-runner.js';
+import { userCredsProviderForGroup } from '../../../modules/user-credentials/onboard.js';
 import { getAgentGroup, getAllAgentGroups } from '../../../db/agent-groups.js';
 import { getDb } from '../../../db/connection.js';
 import { getContainerConfig } from '../../../db/container-configs.js';
@@ -37,10 +38,12 @@ import {
   userHasConnectedCredential,
 } from '../../../modules/user-credentials/db.js';
 import { revokeUserCredential, storeUserCredential } from '../../../modules/user-credentials/onboard.js';
+import { getUserSecretId } from '../../../modules/user-credentials/db.js';
+import { deleteUserCredential, writeUserCredential } from './grok-user-creds.js';
 import { realOnecliAdmin } from '../../../modules/user-credentials/onecli-admin.js';
 import { canAccessRoom } from '../access.js';
 import { canonicalizeWebchatUserId } from '../auth.js';
-import { getAgentsForWebchatRoom, getCredentialsConfig, getEffectiveRoomMode, getWebchatRoom } from '../db.js';
+import { getAgentsForWebchatRoom, getCredentialsConfig, getEffectiveRoomMode, getWebchatRoom, type CredentialsConfig } from '../db.js';
 import { MAX_ACTIVE_MINTS, activeMintCount, cancelMint, mintClaudeToken, startClaudeMint } from '../oauth-mint.js';
 import { hasAdminPrivilege, isAnyAdmin, isGlobalAdmin, isOwner } from '../roles.js';
 import { userCredsRateLimited } from './rate-limit.js';
@@ -49,6 +52,26 @@ import { filterAsync } from '../async-array.js';
 
 // ── UserCreds: a member connects / disconnects THEIR own Anthropic key ──────────
 // userId is the server-resolved caller — a user can only manage their own key.
+/** Does this workspace accept member SUBSCRIPTIONS for a provider? */
+function oauthAllowedFor(provider: string, cfg: CredentialsConfig): boolean {
+  if (provider === 'codex') return cfg.allowCodexOauth;
+  if (provider === 'grok') return cfg.allowGrokOauth;
+  return cfg.allowClaudeOauth;
+}
+
+/** Does it accept member API KEYS? Grok has no key path at all, so never. */
+function apiKeyAllowedFor(provider: string, cfg: CredentialsConfig): boolean {
+  if (provider === 'codex') return cfg.allowOpenaiKey;
+  if (provider === 'grok') return false;
+  return cfg.allowAnthropicKey;
+}
+
+function providerLabel(provider: string): string {
+  if (provider === 'codex') return 'Codex (ChatGPT)';
+  if (provider === 'grok') return 'Grok';
+  return 'Claude';
+}
+
 export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, url, method, userId } = ctx;
   const reqRoomId = method === 'GET' ? (url.searchParams.get('roomId') ?? '') : undefined; // POST/DELETE read roomId from the body below
@@ -61,7 +84,7 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
     // workspace-wide (Credentials admin page); which ones apply here depends on
     // the room's provider (Claude vs Codex).
     const cfg = await getCredentialsConfig();
-    const provider = groups[0] && (await getContainerConfig(groups[0].id))?.provider === 'codex' ? 'codex' : 'claude';
+    const provider = groups[0] ? await userCredsProviderForGroup(groups[0].id) : 'claude';
     // Connection is now user-level (connect once → all same-provider rooms).
     const connected = await userHasConnectedCredential(userId, provider);
     // Report the connected credential type so the UI shows the right banner.
@@ -71,8 +94,10 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
       credType,
       provider,
       mode: await getEffectiveRoomMode(roomId),
-      oauthAllowed: provider === 'codex' ? cfg.allowCodexOauth : cfg.allowClaudeOauth,
-      apiKeyAllowed: provider === 'codex' ? cfg.allowOpenaiKey : cfg.allowAnthropicKey,
+      oauthAllowed: oauthAllowedFor(provider, cfg),
+      // Grok has no API-key path at all, so this is false for it by
+      // construction rather than by configuration.
+      apiKeyAllowed: apiKeyAllowedFor(provider, cfg),
     });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
@@ -89,7 +114,7 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   const groups = await getAgentsForWebchatRoom(roomId);
   if (groups.length === 0) return json(res, 400, { error: 'Room has no wired agent' });
-  const provider = groups[0] && (await getContainerConfig(groups[0].id))?.provider === 'codex' ? 'codex' : 'claude';
+  const provider = groups[0] ? await userCredsProviderForGroup(groups[0].id) : 'claude';
   const credType = body.type === 'oauth_token' ? 'oauth_token' : 'api_key';
   const cfg = await getCredentialsConfig();
   // Rate-limit connects (each recreates a vault secret + spawns onecli procs).
@@ -98,9 +123,9 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
   try {
     if (method === 'POST' && credType === 'oauth_token') {
       // Gate 1: the workspace must accept this provider's subscriptions (Credentials page).
-      if (!(provider === 'codex' ? cfg.allowCodexOauth : cfg.allowClaudeOauth))
+      if (!oauthAllowedFor(provider, cfg))
         return json(res, 403, {
-          error: `This workspace does not accept ${provider === 'codex' ? 'Codex (ChatGPT)' : 'Claude'} subscription (OAuth) connections.`,
+          error: `This workspace does not accept ${providerLabel(provider)} subscription connections.`,
         });
       const token = typeof body.token === 'string' ? body.token.trim() : '';
       if (provider === 'codex') {
@@ -117,14 +142,52 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
           return json(res, 400, {
             error: 'Expected a Codex auth.json — use “Connect with my ChatGPT subscription” instead of pasting.',
           });
+      } else if (provider === 'grok') {
+        // A Grok subscription credential is the CLI's own credentials JSON, the
+        // artefact of a device login. Require it to parse and to carry both
+        // halves: an access token alone cannot be refreshed, and a member whose
+        // credential silently stops working in six hours is worse than one who
+        // is told now.
+        let ok = false;
+        try {
+          const parsed = JSON.parse(token) as Record<string, unknown>;
+          ok = typeof parsed.accessToken === 'string' && typeof parsed.refreshToken === 'string';
+        } catch {
+          ok = false;
+        }
+        if (!ok)
+          return json(res, 400, {
+            error: 'Expected a Grok credential from the device login — use “Connect with my Grok subscription”.',
+          });
       } else if (!/^sk-ant-oat/.test(token)) {
         return json(res, 400, {
           error: 'Expected a Claude subscription token from `claude setup-token` (sk-ant-oat…)',
         });
       }
-      await storeUserCredential(realOnecliAdmin, userId, provider, token, 'oauth_token');
+      if (provider === 'grok') {
+        // SPLIT AT THE DOOR. The vault gets the ACCESS token only — that is what
+        // the gateway injects as a bearer header, and the vault is write-only so
+        // nothing can read it back. The REFRESH token stays on the host, because
+        // a 6h access token has to be renewed by something that still holds it,
+        // and neither the vault nor the container can.
+        const parsed = JSON.parse(token) as Record<string, string>;
+        await storeUserCredential(realOnecliAdmin, userId, provider, parsed.accessToken, 'oauth_token');
+        const secretId = getUserSecretId(userId, 'grok');
+        if (secretId) {
+          writeUserCredential({
+            userId,
+            secretId,
+            refreshToken: parsed.refreshToken,
+            expiresAt: parsed.expiresAt ?? new Date(Date.now() + 6 * 3600_000).toISOString(),
+            clientId: parsed.clientId ?? '',
+            issuer: parsed.issuer ?? 'https://auth.x.ai',
+          });
+        }
+      } else {
+        await storeUserCredential(realOnecliAdmin, userId, provider, token, 'oauth_token');
+      }
     } else if (method === 'POST') {
-      if (!(provider === 'codex' ? cfg.allowOpenaiKey : cfg.allowAnthropicKey))
+      if (!apiKeyAllowedFor(provider, cfg))
         return json(res, 403, {
           error: `This workspace does not accept ${provider === 'codex' ? 'OpenAI' : 'Anthropic'} API keys.`,
         });
@@ -149,6 +212,10 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
       // lingers (with its copy of the session) to the idle ceiling.
       const enrolledGroupIds = (await listEnrolledGroups(userId, provider)).map((r) => r.agent_group_id);
       await revokeUserCredential(realOnecliAdmin, userId, provider);
+      // Disconnecting must take the host-side half with it. Leaving the refresh
+      // token behind would keep renewing a vault secret the member has revoked —
+      // a credential that outlives its own disconnect.
+      if (provider === 'grok') deleteUserCredential(userId);
       for (const gid of enrolledGroupIds) {
         for (const s of await getSessionsByAgentGroup(gid)) {
           if (s.thread_id === userId) killContainer(s.id, 'UserCreds credential disconnected');
