@@ -51,7 +51,18 @@ const thoughtsPreview = (lines: string[]) => {
 </script>
 
 <template>
-  <div v-if="transcriptEmpty" class="empty-state">{{ transcriptEmpty }}</div>
+  <!--
+    The empty state and the transcript are mutually exclusive, so this guard
+    decides whether content renders AT ALL — it is not just a placeholder.
+    `transcriptEmpty` is set when you join a room whose history came back empty,
+    and nothing clears it when a live message arrives: every row after that was
+    pushed into `messages` and then rendered by the branch not taken. A brand
+    new room swallowed your first message and the agent's reply, silently and
+    without an error, until you left and came back and history refetched.
+    Deriving the guard from the rows themselves makes that unrepresentable — an
+    empty state can no longer hide content it is contradicted by.
+  -->
+  <div v-if="transcriptEmpty && !messages.length && !thinkingTurns.length" class="empty-state">{{ transcriptEmpty }}</div>
   <template v-else>
     <template v-for="row in messages" :key="row.key">
       <div v-if="row.kind === 'system'" class="msg system">{{ row.text }}</div>
