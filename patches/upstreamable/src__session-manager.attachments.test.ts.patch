@@ -1,5 +1,5 @@
 diff --git a/src/session-manager.attachments.test.ts b/src/session-manager.attachments.test.ts
-index ee79ede0..d38e13b2 100644
+index 2afd9d73..d2f1dbe8 100644
 --- a/src/session-manager.attachments.test.ts
 +++ b/src/session-manager.attachments.test.ts
 @@ -29,7 +29,7 @@ vi.mock('./config.js', async () => {
@@ -11,7 +11,7 @@ index ee79ede0..d38e13b2 100644
  import type { Session } from './types.js';
  
  const TEST_DIR = '/tmp/nanoclaw-test-saveatt-gap';
-@@ -68,6 +68,72 @@ afterEach(() => {
+@@ -68,6 +68,72 @@ afterEach(async () => {
    if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
  });
  
@@ -82,5 +82,5 @@ index ee79ede0..d38e13b2 100644
 +});
 +
  describe('extractAttachmentFiles — inbox-root symlink containment (#2828 sibling)', () => {
-   it('does not write an attachment outside the session root via a symlinked inbox root', () => {
+   it('does not write an attachment outside the session root via a symlinked inbox root', async () => {
      // Attacker-controlled location outside the session sandbox.

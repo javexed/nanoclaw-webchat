@@ -1,5 +1,5 @@
 diff --git a/src/modules/agent-to-agent/agent-route.test.ts b/src/modules/agent-to-agent/agent-route.test.ts
-index ce5f3c0d..623c25c7 100644
+index ed125e55..c38f8cf3 100644
 --- a/src/modules/agent-to-agent/agent-route.test.ts
 +++ b/src/modules/agent-to-agent/agent-route.test.ts
 @@ -222,6 +222,37 @@ describe('routeAgentMessage return-path', () => {

@@ -1,8 +1,8 @@
 diff --git a/src/cli/resources/destinations.ts b/src/cli/resources/destinations.ts
-index 6be522f3..ef3aab90 100644
+index 00e7b86e..9fa1ee28 100644
 --- a/src/cli/resources/destinations.ts
 +++ b/src/cli/resources/destinations.ts
-@@ -1,32 +1,112 @@
+@@ -1,21 +1,44 @@
 -import { getDb, hasTable } from '../../db/connection.js';
 +import fs from 'fs';
 +import path from 'path';
@@ -58,11 +58,10 @@ index 6be522f3..ef3aab90 100644
 + * prompt-cache problem, so projection alone is enough there.
   */
  export async function projectDestinationsToSessions(agentGroupId: string): Promise<void> {
--  if (!hasTable(getDb(), 'agent_destinations')) return;
-   const { writeDestinations } = await import('../../modules/agent-to-agent/write-destinations.js');
-   for (const session of getSessionsByAgentGroup(agentGroupId)) {
+   if (!(await hasTable(getDb(), 'agent_destinations'))) return;
+@@ -24,9 +47,67 @@ export async function projectDestinationsToSessions(agentGroupId: string): Promi
      try {
-       writeDestinations(agentGroupId, session.id);
+       await writeDestinations(agentGroupId, session.id);
      } catch (err) {
 -      log.warn('Failed to project destinations to session inbound.db', { agentGroupId, sessionId: session.id, err });
 +      log.warn('writeDestinations failed; agent will pick up changes on next spawn', {
@@ -129,18 +128,17 @@ index 6be522f3..ef3aab90 100644
  }
  
  registerResource({
-@@ -113,7 +193,7 @@ registerResource({
-              VALUES (?, ?, ?, ?, ?)`,
-           )
-           .run(agentGroupId, localName, targetType, targetId, new Date().toISOString());
--        await projectDestinationsToSessions(agentGroupId);
-+        refreshAgentSessions(agentGroupId, `destination added: ${localName}`);
+@@ -116,6 +197,7 @@ registerResource({
+           new Date().toISOString(),
+         );
+         await projectDestinationsToSessions(agentGroupId);
++          refreshAgentSessions(agentGroupId, `destination added: ${localName}`);
          return { agent_group_id: agentGroupId, local_name: localName, target_type: targetType, target_id: targetId };
        },
      },
-@@ -129,7 +209,7 @@ registerResource({
-           .prepare('DELETE FROM agent_destinations WHERE agent_group_id = ? AND local_name = ?')
-           .run(agentGroupId, localName);
+@@ -133,7 +215,7 @@ registerResource({
+           localName,
+         );
          if (result.changes === 0) throw new Error('destination not found');
 -        await projectDestinationsToSessions(agentGroupId);
 +        refreshAgentSessions(agentGroupId, `destination removed: ${localName}`);

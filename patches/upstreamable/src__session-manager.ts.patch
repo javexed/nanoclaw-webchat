@@ -1,16 +1,16 @@
 diff --git a/src/session-manager.ts b/src/session-manager.ts
-index 52ed75d9..92289b2f 100644
+index 9417f5ac..22052882 100644
 --- a/src/session-manager.ts
 +++ b/src/session-manager.ts
-@@ -20,6 +20,7 @@ import type { OutboundFile } from './channels/adapter.js';
- import { DATA_DIR } from './config.js';
+@@ -21,6 +21,7 @@ import { DATA_DIR } from './config.js';
  import { ensureContainedInboxDir, isPathInside } from './inbox-safety.js';
  import { getMessagingGroup } from './db/messaging-groups.js';
+ import { isUniqueViolation } from './db/errors.js';
 +import { makeContainerWritable } from './container-runtime.js';
  import {
    createSession,
    findSystemSession,
-@@ -37,6 +38,7 @@ import {
+@@ -38,6 +39,7 @@ import {
    upsertSessionRouting,
    insertMessage,
    migrateMessagesInTable,
@@ -18,7 +18,7 @@ index 52ed75d9..92289b2f 100644
  } from './db/session-db.js';
  import { log } from './log.js';
  import type { Session } from './types.js';
-@@ -295,6 +297,12 @@ export function initSessionFolder(agentGroupId: string, sessionId: string): void
+@@ -352,6 +354,12 @@ export function initSessionFolder(agentGroupId: string, sessionId: string): void
  
    ensureSchema(inboundDbPath(agentGroupId, sessionId), 'inbound');
    ensureSchema(outboundDbPath(agentGroupId, sessionId), 'outbound');
@@ -31,8 +31,8 @@ index 52ed75d9..92289b2f 100644
  }
  
  /**
-@@ -414,6 +422,47 @@ export function writeSessionMessage(
-   updateSession(sessionId, { last_active: new Date().toISOString() });
+@@ -471,6 +479,47 @@ export async function writeSessionMessage(
+   await updateSession(sessionId, { last_active: new Date().toISOString() });
  }
  
 +export interface ContextMessage {
@@ -79,7 +79,7 @@ index 52ed75d9..92289b2f 100644
  /**
   * If message content has attachments with base64 `data`, save them to
   * the session's inbox directory and replace with `localPath`.
-@@ -463,7 +512,28 @@ function extractAttachmentFiles(
+@@ -520,7 +569,28 @@ function extractAttachmentFiles(
  
    let changed = false;
    for (const att of attachments) {
@@ -109,7 +109,7 @@ index 52ed75d9..92289b2f 100644
  
      const rawName = deriveAttachmentName(att);
      const filename = isSafeAttachmentName(rawName) ? rawName : `attachment-${Date.now()}`;
-@@ -487,7 +557,13 @@ function extractAttachmentFiles(
+@@ -544,7 +614,13 @@ function extractAttachmentFiles(
        // wx = exclusive create. Refuses to follow a pre existing symlink or
        // overwrite any existing file. The host expects to be the sole writer
        // of these attachments.
@@ -124,7 +124,7 @@ index 52ed75d9..92289b2f 100644
      } catch (err: unknown) {
        const e = err as NodeJS.ErrnoException;
        if (e.code === 'EEXIST') {
-@@ -503,6 +579,7 @@ function extractAttachmentFiles(
+@@ -560,6 +636,7 @@ function extractAttachmentFiles(
      att.name = filename;
      att.localPath = `inbox/${messageId}/${filename}`;
      delete att.data;

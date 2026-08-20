@@ -1,7 +1,7 @@
-diff --git c/setup/channels/whatsapp.test.ts w/setup/channels/whatsapp.test.ts
-index 269391bd..78d430ee 100644
---- c/setup/channels/whatsapp.test.ts
-+++ w/setup/channels/whatsapp.test.ts
+diff --git a/setup/channels/whatsapp.test.ts b/setup/channels/whatsapp.test.ts
+index 539884e6..bb81e19d 100644
+--- a/setup/channels/whatsapp.test.ts
++++ b/setup/channels/whatsapp.test.ts
 @@ -10,10 +10,18 @@ import fs from 'fs';
  import os from 'os';
  import path from 'path';
@@ -22,7 +22,7 @@ index 269391bd..78d430ee 100644
  const SKILL_MD = path.join(process.cwd(), '.claude/skills/add-whatsapp/SKILL.md');
  const directives = parseDirectives(fs.readFileSync(SKILL_MD, 'utf-8'));
  
-@@ -38,6 +46,7 @@ function bash(body: string[], vars: Record<string, string>, cwd: string): string
+@@ -36,6 +44,7 @@ function bash(body: string[], vars: Record<string, string>, cwd: string): string
  describe('self-chat engage pattern fence', () => {
    const fence = runFence((d) => d.attrs.capture === 'engage_pattern');
    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-engage-'));

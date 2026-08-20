@@ -1,8 +1,8 @@
-diff --git c/src/backfill-container-configs.ts w/src/backfill-container-configs.ts
-index 12c6f38e..66ccc1a1 100644
---- c/src/backfill-container-configs.ts
-+++ w/src/backfill-container-configs.ts
-@@ -64,6 +64,7 @@ export function backfillContainerConfigs(): void {
+diff --git a/src/backfill-container-configs.ts b/src/backfill-container-configs.ts
+index 09c1d89a..e4e11666 100644
+--- a/src/backfill-container-configs.ts
++++ b/src/backfill-container-configs.ts
+@@ -64,6 +64,7 @@ export async function backfillContainerConfigs(): Promise<void> {
        packages_apt: JSON.stringify(legacy.packages?.apt ?? []),
        packages_npm: JSON.stringify(legacy.packages?.npm ?? []),
        additional_mounts: JSON.stringify(legacy.additionalMounts ?? []),

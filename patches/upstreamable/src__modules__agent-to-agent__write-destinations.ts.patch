@@ -1,5 +1,5 @@
 diff --git a/src/modules/agent-to-agent/write-destinations.ts b/src/modules/agent-to-agent/write-destinations.ts
-index 9489f22b..63923390 100644
+index 98fa37ff..3dc52ad1 100644
 --- a/src/modules/agent-to-agent/write-destinations.ts
 +++ b/src/modules/agent-to-agent/write-destinations.ts
 @@ -12,6 +12,7 @@ import fs from 'fs';
@@ -10,7 +10,7 @@ index 9489f22b..63923390 100644
  import { log } from '../../log.js';
  import { inboundDbPath, openInboundDb } from '../../session-manager.js';
  import { getDestinations } from './db/agent-destinations.js';
-@@ -57,3 +58,31 @@ export function writeDestinations(agentGroupId: string, sessionId: string): void
+@@ -57,3 +58,31 @@ export async function writeDestinations(agentGroupId: string, sessionId: string)
    }
    log.debug('Destination map written', { sessionId, count: resolved.length });
  }

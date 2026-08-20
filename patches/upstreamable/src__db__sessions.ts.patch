@@ -1,26 +1,33 @@
 diff --git a/src/db/sessions.ts b/src/db/sessions.ts
-index eb2afade..8c4900f1 100644
+index f8964ff0..390fdf30 100644
 --- a/src/db/sessions.ts
 +++ b/src/db/sessions.ts
-@@ -228,6 +228,16 @@ export function getPendingApproval(approvalId: string): PendingApproval | undefi
-     | undefined;
+@@ -232,6 +232,23 @@ export async function getPendingApproval(approvalId: string): Promise<PendingApp
+   return getDb().get<PendingApproval>('SELECT * FROM pending_approvals WHERE approval_id = ?', approvalId);
  }
  
 +/** Pending approvals created before `cutoffMs` (epoch) — the TTL sweep's feed. */
-+export function getExpiredPendingApprovals(cutoffMs: number): PendingApproval[] {
++export async function getExpiredPendingApprovals(cutoffMs: number): Promise<PendingApproval[]> {
 +  return (
-+    getDb().prepare(`SELECT * FROM pending_approvals WHERE status = 'pending'`).all() as PendingApproval[]
++    (await getDb().all<PendingApproval>(`SELECT * FROM pending_approvals WHERE status = 'pending'`))
 +  ).filter((a) => {
 +    const t = Date.parse(a.created_at);
 +    return Number.isFinite(t) && t <= cutoffMs;
 +  });
 +}
 +
- export function updatePendingApprovalStatus(approvalId: string, status: PendingApproval['status']): void {
-   getDb().prepare('UPDATE pending_approvals SET status = ? WHERE approval_id = ?').run(status, approvalId);
- }
-@@ -258,6 +268,13 @@ export function deletePendingApproval(approvalId: string): void {
-   getDb().prepare('DELETE FROM pending_approvals WHERE approval_id = ?').run(approvalId);
++export async function updatePendingApprovalStatus(
++  approvalId: string,
++  status: PendingApproval['status'],
++): Promise<void> {
++  await getDb().run('UPDATE pending_approvals SET status = ? WHERE approval_id = ?', status, approvalId);
++}
++
+ /** Atomically claim one approval state transition. */
+ export async function transitionPendingApprovalStatus(
+   approvalId: string,
+@@ -275,6 +292,13 @@ export async function deletePendingApproval(approvalId: string): Promise<void> {
+   await getDb().run('DELETE FROM pending_approvals WHERE approval_id = ?', approvalId);
  }
  
 +// NOTE: the old destructive `claimPendingApproval` (DELETE-then-report) was
@@ -30,6 +37,6 @@ index eb2afade..8c4900f1 100644
 +// an in-process claim, and the row is deleted AFTER the handler. Do not
 +// reintroduce a delete-before-replay claim here.
 +
- export function getPendingApprovalsByAction(action: string): PendingApproval[] {
-   return getDb().prepare('SELECT * FROM pending_approvals WHERE action = ?').all(action) as PendingApproval[];
+ export async function getPendingApprovalsByAction(action: string): Promise<PendingApproval[]> {
+   return getDb().all<PendingApproval>('SELECT * FROM pending_approvals WHERE action = ?', action);
  }
