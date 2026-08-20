@@ -10,6 +10,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { json, readJsonBody } from './http.js';
 import { killContainer } from '../../../container-runner.js';
 import { userCredsProviderForGroup } from '../../../modules/user-credentials/onboard.js';
+import { apiKeyAllowedFor, oauthAllowedFor, providerLabel } from '../../../modules/user-credentials/policy.js';
 import { getAgentGroup, getAllAgentGroups } from '../../../db/agent-groups.js';
 import { getDb } from '../../../db/connection.js';
 import { getContainerConfig } from '../../../db/container-configs.js';
@@ -52,26 +53,6 @@ import { filterAsync } from '../async-array.js';
 
 // ── UserCreds: a member connects / disconnects THEIR own Anthropic key ──────────
 // userId is the server-resolved caller — a user can only manage their own key.
-/** Does this workspace accept member SUBSCRIPTIONS for a provider? */
-function oauthAllowedFor(provider: string, cfg: CredentialsConfig): boolean {
-  if (provider === 'codex') return cfg.allowCodexOauth;
-  if (provider === 'grok') return cfg.allowGrokOauth;
-  return cfg.allowClaudeOauth;
-}
-
-/** Does it accept member API KEYS? Grok has no key path at all, so never. */
-function apiKeyAllowedFor(provider: string, cfg: CredentialsConfig): boolean {
-  if (provider === 'codex') return cfg.allowOpenaiKey;
-  if (provider === 'grok') return false;
-  return cfg.allowAnthropicKey;
-}
-
-function providerLabel(provider: string): string {
-  if (provider === 'codex') return 'Codex (ChatGPT)';
-  if (provider === 'grok') return 'Grok';
-  return 'Claude';
-}
-
 export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, url, method, userId } = ctx;
   const reqRoomId = method === 'GET' ? (url.searchParams.get('roomId') ?? '') : undefined; // POST/DELETE read roomId from the body below

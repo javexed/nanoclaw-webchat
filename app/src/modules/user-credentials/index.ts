@@ -34,6 +34,7 @@ import {
   type UserCredsProvider,
 } from './db.js';
 import { ensureGroupEnrollment, userCredsProviderForGroup } from './onboard.js';
+import { apiKeyAllowedFor, credentialName, oauthAllowedFor } from './policy.js';
 import { realOnecliAdmin } from './onecli-admin.js';
 import {
   memberSessionKey,
@@ -81,9 +82,8 @@ async function evaluateRoomCredState(
   // OAuth — regardless of what the workspace accepts. Otherwise each method
   // applies if the workspace accepts it for this provider.
   // Grok has no API-key path, so it is never offered one.
-  const apiOffered =
-    mode !== 'disabled' && (provider === 'codex' ? cfg.allowOpenaiKey : provider === 'grok' ? false : cfg.allowAnthropicKey);
-  const oauthOffered = mode !== 'disabled' && (provider === 'codex' ? cfg.allowCodexOauth : cfg.allowClaudeOauth);
+  const apiOffered = mode !== 'disabled' && apiKeyAllowedFor(provider, cfg);
+  const oauthOffered = mode !== 'disabled' && oauthAllowedFor(provider, cfg);
   if (!apiOffered && !oauthOffered) return none; // UserCreds entirely off here.
 
   // A member gets their own per-member session ONLY if their connected credential
@@ -101,7 +101,7 @@ async function evaluateRoomCredState(
   }
   // No permitted credential: API-key 'required' rooms decline with guidance;
   // otherwise (optional, or OAuth-only) fall back to the shared session.
-  const credName = provider === 'codex' ? 'Codex credential' : 'Anthropic key';
+  const credName = credentialName(provider);
   return { ...none, requiredBlocked: mode === 'required', credName };
 }
 
