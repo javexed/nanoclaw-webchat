@@ -60,7 +60,8 @@ export interface MemberLoginProgress {
 
 export function getMemberLoginProgress(userId: string): MemberLoginProgress {
   const l = logins.get(userId);
-  if (!l) return { running: false, outcome: null, verificationUrl: null, userCode: null, error: null, expiresInMs: null };
+  if (!l)
+    return { running: false, outcome: null, verificationUrl: null, userCode: null, error: null, expiresInMs: null };
   const running = l.outcome === 'pending';
   return {
     running,
@@ -145,7 +146,19 @@ export function startMemberLogin(userId: string, root = process.cwd()): StartMem
 
   const proc = spawn(
     'docker',
-    ['run', '--rm', '-i', '-v', `${dir}:${GROK_HOME}`, '--entrypoint', 'grok', getDefaultContainerImage(root), '--no-auto-update', 'login', '--device-auth'],
+    [
+      'run',
+      '--rm',
+      '-i',
+      '-v',
+      `${dir}:${GROK_HOME}`,
+      '--entrypoint',
+      'grok',
+      getDefaultContainerImage(root),
+      '--no-auto-update',
+      'login',
+      '--device-auth',
+    ],
     { stdio: ['ignore', 'pipe', 'pipe'] },
   );
   l.proc = proc;

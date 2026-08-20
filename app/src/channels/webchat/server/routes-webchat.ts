@@ -74,7 +74,13 @@ export async function rWebchatCredentialsConfig(ctx: RouteCtx, _m: RegExpMatchAr
       return json(res, 400, { error: "defaultMode must be 'disabled', 'optional', or 'required'" });
     patch.defaultMode = body.defaultMode as CredentialMode;
   }
-  for (const k of ['allowAnthropicKey', 'allowClaudeOauth', 'allowOpenaiKey', 'allowCodexOauth', 'allowGrokOauth'] as const) {
+  for (const k of [
+    'allowAnthropicKey',
+    'allowClaudeOauth',
+    'allowOpenaiKey',
+    'allowCodexOauth',
+    'allowGrokOauth',
+  ] as const) {
     if (body[k] === undefined) continue;
     if (typeof body[k] !== 'boolean') return json(res, 400, { error: `${k} must be a boolean` });
     patch[k] = body[k] as boolean;
@@ -90,7 +96,11 @@ export async function rWebchatCredentialsConfig(ctx: RouteCtx, _m: RegExpMatchAr
   if ((patch.allowCodexOauth || patch.allowOpenaiKey) && !codexAvailable())
     return json(res, 400, { error: 'Codex support isn’t installed yet — add it with /add-codex first.' });
   await setCredentialsConfig(patch);
-  return json(res, 200, { ...(await getCredentialsConfig()), codexAvailable: codexAvailable(), grokAvailable: grokAvailable() });
+  return json(res, 200, {
+    ...(await getCredentialsConfig()),
+    codexAvailable: codexAvailable(),
+    grokAvailable: grokAvailable(),
+  });
 }
 
 // ── First-run setup wizard state ────────────────────────────────────────────────

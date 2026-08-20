@@ -50,7 +50,13 @@ import {
 import { realOnecliAdmin } from '../../../modules/user-credentials/onecli-admin.js';
 import { canAccessRoom } from '../access.js';
 import { canonicalizeWebchatUserId } from '../auth.js';
-import { getAgentsForWebchatRoom, getCredentialsConfig, getEffectiveRoomMode, getWebchatRoom, type CredentialsConfig } from '../db.js';
+import {
+  getAgentsForWebchatRoom,
+  getCredentialsConfig,
+  getEffectiveRoomMode,
+  getWebchatRoom,
+  type CredentialsConfig,
+} from '../db.js';
 import { MAX_ACTIVE_MINTS, activeMintCount, cancelMint, mintClaudeToken, startClaudeMint } from '../oauth-mint.js';
 import { hasAdminPrivilege, isAnyAdmin, isGlobalAdmin, isOwner } from '../roles.js';
 import { userCredsRateLimited } from './rate-limit.js';
