@@ -29,7 +29,10 @@ export interface TeardownTarget {
   agentGroupId: string;
 }
 
-async function findSessionsBy(column: 'messaging_group_id' | 'agent_group_id', value: string): Promise<TeardownTarget[]> {
+async function findSessionsBy(
+  column: 'messaging_group_id' | 'agent_group_id',
+  value: string,
+): Promise<TeardownTarget[]> {
   const rows = (await getDb().all(`SELECT id, agent_group_id FROM sessions WHERE ${column} = ?`, value)) as {
     id: string;
     agent_group_id: string;
@@ -43,8 +46,15 @@ export async function findSessionsByMessagingGroup(messagingGroupId: string): Pr
 
 /** Sessions for one (messaging group, thread) — used to tear down a webchat
  * thread's per-thread session when the thread is deleted. */
-export async function findSessionsByMessagingGroupThread(messagingGroupId: string, threadId: string): Promise<TeardownTarget[]> {
-  const rows = (await getDb().all(`SELECT id, agent_group_id FROM sessions WHERE messaging_group_id = ? AND thread_id = ?`, messagingGroupId, threadId)) as { id: string; agent_group_id: string }[];
+export async function findSessionsByMessagingGroupThread(
+  messagingGroupId: string,
+  threadId: string,
+): Promise<TeardownTarget[]> {
+  const rows = (await getDb().all(
+    `SELECT id, agent_group_id FROM sessions WHERE messaging_group_id = ? AND thread_id = ?`,
+    messagingGroupId,
+    threadId,
+  )) as { id: string; agent_group_id: string }[];
   return rows.map((r) => ({ sessionId: r.id, agentGroupId: r.agent_group_id }));
 }
 
@@ -61,7 +71,7 @@ export async function findSessionsByAgentGroup(agentGroupId: string): Promise<Te
 export async function deleteSessionDbState(sessionId: string): Promise<void> {
   const db = getDb();
   await db.run(`DELETE FROM pending_questions WHERE session_id = ?`, sessionId);
-  if ((await hasTable(db, 'pending_approvals'))) {
+  if (await hasTable(db, 'pending_approvals')) {
     await db.run(`DELETE FROM pending_approvals WHERE session_id = ?`, sessionId);
   }
   await db.run(`DELETE FROM sessions WHERE id = ?`, sessionId);

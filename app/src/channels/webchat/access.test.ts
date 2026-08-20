@@ -22,34 +22,71 @@ afterEach(async () => {
 });
 
 async function insertUser(userId: string): Promise<void> {
-  await getDb().run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, userId, new Date().toISOString());
+  await getDb().run(
+    `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+    userId,
+    new Date().toISOString(),
+  );
 }
 
 async function insertAgentGroup(id: string): Promise<void> {
-  await getDb().run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, id, id, id, new Date().toISOString());
+  await getDb().run(
+    `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+    id,
+    id,
+    id,
+    new Date().toISOString(),
+  );
 }
 
 async function insertRoom(roomId: string, name = roomId): Promise<void> {
-  await getDb().run(`INSERT OR IGNORE INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
-       VALUES (?, 'webchat', 'webchat', ?, ?, 0, 'public', ?)`, roomId, roomId, name, new Date().toISOString());
+  await getDb().run(
+    `INSERT OR IGNORE INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
+       VALUES (?, 'webchat', 'webchat', ?, ?, 0, 'public', ?)`,
+    roomId,
+    roomId,
+    name,
+    new Date().toISOString(),
+  );
 }
 
 async function wire(roomId: string, agentGroupId: string): Promise<void> {
-  await getDb().run(`INSERT OR IGNORE INTO messaging_group_agents
+  await getDb().run(
+    `INSERT OR IGNORE INTO messaging_group_agents
          (id, messaging_group_id, agent_group_id, engage_mode, engage_pattern,
           sender_scope, ignored_message_policy, session_mode, priority, created_at)
-       VALUES (?, ?, ?, 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`, randomUUID(), roomId, agentGroupId, new Date().toISOString());
+       VALUES (?, ?, ?, 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`,
+    randomUUID(),
+    roomId,
+    agentGroupId,
+    new Date().toISOString(),
+  );
 }
 
-async function grantRole(userId: string, role: 'owner' | 'admin' | 'member', agentGroupId: string | null): Promise<void> {
+async function grantRole(
+  userId: string,
+  role: 'owner' | 'admin' | 'member',
+  agentGroupId: string | null,
+): Promise<void> {
   await insertUser(userId);
   if (role === 'member') {
     if (!agentGroupId) throw new Error('member role requires agentGroupId');
-    await getDb().run(`INSERT OR IGNORE INTO agent_group_members (user_id, agent_group_id, added_by, added_at) VALUES (?, ?, NULL, ?)`, userId, agentGroupId, new Date().toISOString());
+    await getDb().run(
+      `INSERT OR IGNORE INTO agent_group_members (user_id, agent_group_id, added_by, added_at) VALUES (?, ?, NULL, ?)`,
+      userId,
+      agentGroupId,
+      new Date().toISOString(),
+    );
     return;
   }
-  await getDb().run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
-       VALUES (?, ?, ?, NULL, ?)`, userId, role, agentGroupId, new Date().toISOString());
+  await getDb().run(
+    `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
+       VALUES (?, ?, ?, NULL, ?)`,
+    userId,
+    role,
+    agentGroupId,
+    new Date().toISOString(),
+  );
 }
 
 describe('canAccessRoom', () => {
@@ -120,6 +157,8 @@ describe('filterRoomsForUser', () => {
       { id: 'room-mine', name: 'Mine', created_at: now },
       { id: 'room-other', name: 'Other', created_at: now },
     ];
-    expect(await filterRoomsForUser('webchat:admin', all)).toEqual([{ id: 'room-mine', name: 'Mine', created_at: now }]);
+    expect(await filterRoomsForUser('webchat:admin', all)).toEqual([
+      { id: 'room-mine', name: 'Mine', created_at: now },
+    ]);
   });
 });

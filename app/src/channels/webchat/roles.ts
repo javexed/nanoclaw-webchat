@@ -28,17 +28,24 @@ import { log } from '../../log.js';
 export async function isOwner(userId: string): Promise<boolean> {
   const db = getDb();
   if (!(await hasTable(db, 'user_roles'))) return true; // no permissions module = trust authenticated
-  const row = await db.get(`SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'owner' AND agent_group_id IS NULL`, userId);
+  const row = await db.get(
+    `SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'owner' AND agent_group_id IS NULL`,
+    userId,
+  );
   return !!row;
 }
 
 export async function hasAdminPrivilege(userId: string, agentGroupId: string): Promise<boolean> {
   const db = getDb();
   if (!(await hasTable(db, 'user_roles'))) return true;
-  const row = await db.get(`SELECT 1 FROM user_roles
+  const row = await db.get(
+    `SELECT 1 FROM user_roles
        WHERE user_id = ?
          AND (role = 'owner' OR role = 'admin')
-         AND (agent_group_id IS NULL OR agent_group_id = ?)`, userId, agentGroupId);
+         AND (agent_group_id IS NULL OR agent_group_id = ?)`,
+    userId,
+    agentGroupId,
+  );
   return !!row;
 }
 
@@ -46,7 +53,10 @@ export async function hasAdminPrivilege(userId: string, agentGroupId: string): P
 export async function isGlobalAdmin(userId: string): Promise<boolean> {
   const db = getDb();
   if (!(await hasTable(db, 'user_roles'))) return true;
-  const row = await db.get(`SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'admin' AND agent_group_id IS NULL`, userId);
+  const row = await db.get(
+    `SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'admin' AND agent_group_id IS NULL`,
+    userId,
+  );
   return !!row;
 }
 
@@ -82,9 +92,13 @@ export async function ensureOwnerRoleOnFirstLogin(userId: string): Promise<void>
 
   // Make sure the user row exists so the role grant's audit trail has somewhere
   // to point. Use INSERT OR IGNORE in case the senderResolver beat us to it.
-  if ((await hasTable(db, 'users'))) {
-    await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at)
-       VALUES (?, 'webchat', NULL, ?)`, userId, new Date().toISOString());
+  if (await hasTable(db, 'users')) {
+    await db.run(
+      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at)
+       VALUES (?, 'webchat', NULL, ?)`,
+      userId,
+      new Date().toISOString(),
+    );
   }
   try {
     // Atomic guard: insert iff there's no owner yet. SQLite evaluates the
@@ -92,9 +106,13 @@ export async function ensureOwnerRoleOnFirstLogin(userId: string): Promise<void>
     // concurrent caller racing the same first-login window can't squeeze
     // a second INSERT through. Subsequent calls see an owner exists and
     // the INSERT inserts zero rows (no error).
-    const result = await db.run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
+    const result = await db.run(
+      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
          SELECT ?, 'owner', NULL, NULL, ?
-         WHERE NOT EXISTS (SELECT 1 FROM user_roles WHERE role = 'owner')`, userId, new Date().toISOString());
+         WHERE NOT EXISTS (SELECT 1 FROM user_roles WHERE role = 'owner')`,
+      userId,
+      new Date().toISOString(),
+    );
     if (result.changes > 0) {
       log.info('Webchat: granted owner role to first authenticated user', { userId });
       // THE event of a fresh install — exactly one identity ever gets this.
@@ -113,7 +131,7 @@ export async function ensureOwnerRoleOnFirstLogin(userId: string): Promise<void>
 /** Does this id name a real row in `users`? False if the table is absent. */
 async function userExists(db: ReturnType<typeof getDb>, id: string): Promise<boolean> {
   try {
-    return await db.get(`SELECT 1 FROM users WHERE id = ?`, id) !== undefined;
+    return (await db.get(`SELECT 1 FROM users WHERE id = ?`, id)) !== undefined;
   } catch {
     return false;
   }
@@ -129,8 +147,12 @@ async function userExists(db: ReturnType<typeof getDb>, id: string): Promise<boo
 export async function grantOwnerRole(userId: string, grantedBy: string | null = null): Promise<boolean> {
   const db = getDb();
   if (!(await hasTable(db, 'user_roles'))) return false;
-  if ((await hasTable(db, 'users'))) {
-    await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, userId, new Date().toISOString());
+  if (await hasTable(db, 'users')) {
+    await db.run(
+      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+      userId,
+      new Date().toISOString(),
+    );
   }
   // `granted_by` is `REFERENCES users(id)` and the connection runs with
   // `foreign_keys = ON`, so a caller naming a REASON rather than a user (the
@@ -145,11 +167,17 @@ export async function grantOwnerRole(userId: string, grantedBy: string | null = 
   // losing the role.
   const grantor = grantedBy && (await userExists(db, grantedBy)) ? grantedBy : null;
   try {
-    const result = await db.run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
+    const result = await db.run(
+      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
          SELECT ?, 'owner', NULL, ?, ?
          WHERE NOT EXISTS (
            SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'owner' AND agent_group_id IS NULL
-         )`, userId, grantor, new Date().toISOString(), userId);
+         )`,
+      userId,
+      grantor,
+      new Date().toISOString(),
+      userId,
+    );
     if (result.changes > 0) {
       log.info('Webchat: granted owner role', { userId, grantedBy: grantor, reason: grantedBy });
       audit({

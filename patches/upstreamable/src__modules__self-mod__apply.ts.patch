@@ -1,8 +1,8 @@
 diff --git a/src/modules/self-mod/apply.ts b/src/modules/self-mod/apply.ts
-index 18cf1b60..364a8e79 100644
+index 18cf1b60..5e534095 100644
 --- a/src/modules/self-mod/apply.ts
 +++ b/src/modules/self-mod/apply.ts
-@@ -20,15 +20,59 @@ import {
+@@ -20,15 +20,63 @@ import {
  import { buildAgentGroupImage, killContainer, wakeContainer } from '../../container-runner.js';
  import { getAgentGroup } from '../../db/agent-groups.js';
  import { getContainerConfig, updateContainerConfigJson } from '../../db/container-configs.js';
@@ -28,7 +28,11 @@ index 18cf1b60..364a8e79 100644
 + * request anything) and aren't force-woken — each respawns on the current
 + * image/config on its next message.
 + */
-+async function respawnSiblingSessions(agentGroupId: string, requestingSessionId: string, reason: string): Promise<void> {
++async function respawnSiblingSessions(
++  agentGroupId: string,
++  requestingSessionId: string,
++  reason: string,
++): Promise<void> {
 +  for (const s of await getSessionsByAgentGroup(agentGroupId)) {
 +    if (s.id === requestingSessionId || s.status !== 'active') continue;
 +    killContainer(s.id, reason);
@@ -66,7 +70,7 @@ index 18cf1b60..364a8e79 100644
  }
  
  export async function applyInstallPackages(payload: Record<string, unknown>, session: Session): Promise<void> {
-@@ -67,23 +111,11 @@ export async function applyInstallPackages(payload: Record<string, unknown>, ses
+@@ -67,23 +115,11 @@ export async function applyInstallPackages(payload: Record<string, unknown>, ses
    log.info('Package install approved', { agentGroupId: session.agent_group_id });
    try {
      await buildAgentGroupImage(session.agent_group_id);
@@ -95,7 +99,7 @@ index 18cf1b60..364a8e79 100644
      log.info('Container rebuild completed (bundled with install)', { agentGroupId: session.agent_group_id });
    } catch (e) {
      await notifyAgent(
-@@ -140,22 +172,10 @@ export async function applyAddMcpServer(payload: Record<string, unknown>, sessio
+@@ -140,22 +176,10 @@ export async function applyAddMcpServer(payload: Record<string, unknown>, sessio
    servers[name] = serverConfig;
    await updateContainerConfigJson(agentGroup.id, 'mcp_servers', servers);
  

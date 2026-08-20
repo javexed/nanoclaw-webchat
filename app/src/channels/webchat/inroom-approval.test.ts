@@ -19,9 +19,10 @@ beforeEach(async () => {
 afterEach(() => closeDb());
 
 async function cardRow(approvalId: string) {
-  return (await getDb().get(`SELECT room_id, sender, message_type, content FROM webchat_messages WHERE id = ?`, `appr-card-${approvalId}`)) as
-    | { room_id: string; sender: string; message_type: string; content: string }
-    | undefined;
+  return (await getDb().get(
+    `SELECT room_id, sender, message_type, content FROM webchat_messages WHERE id = ?`,
+    `appr-card-${approvalId}`,
+  )) as { room_id: string; sender: string; message_type: string; content: string } | undefined;
 }
 
 describe('in-room approval card', () => {

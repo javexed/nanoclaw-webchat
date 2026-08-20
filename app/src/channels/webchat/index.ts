@@ -44,7 +44,11 @@ import { readEnvFile } from '../../env.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { createMessagingGroup, getMessagingGroup, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { getPendingApproval } from '../../db/sessions.js';
-import { registerContainerConfigAugmentor, registerLearningClassifierResolver, registerSessionPrepareHook } from '../../container-runtime.js';
+import {
+  registerContainerConfigAugmentor,
+  registerLearningClassifierResolver,
+  registerSessionPrepareHook,
+} from '../../container-runtime.js';
 import { registerA2aRouteObserver } from '../../modules/agent-to-agent/agent-route.js';
 import { classifierParamsForModel } from './models.js';
 import { registerChannelAdapter } from '../channel-registry.js';
@@ -499,7 +503,9 @@ registerContainerConfigAugmentor((agentGroupId) =>
 // a local endpoint (ollama/openai-compatible) — zero setup. Claude agents have
 // no local endpoint, so this returns null and the runner keeps the busy-turn
 // heuristic. An explicit Settings override still wins (see container-config.ts).
-registerLearningClassifierResolver(async (agentGroupId) => classifierParamsForModel(await getEffectiveModelForAgent(agentGroupId)));
+registerLearningClassifierResolver(async (agentGroupId) =>
+  classifierParamsForModel(await getEffectiveModelForAgent(agentGroupId)),
+);
 
 // Side-channel a2a visibility: if both agents are wired to the same webchat
 // room, surface a read-only copy of each routed message there so humans can

@@ -38,8 +38,14 @@ function outboundTexts(sessionId: string): string[] {
 }
 
 async function seedRoom(platformId: string): Promise<void> {
-  await getDb().run(`INSERT OR IGNORE INTO messaging_groups (id, channel_type, platform_id, name, instance, created_at)
-       VALUES (?, 'webchat', ?, ?, 'webchat', ?)`, `mg-${platformId}`, platformId, platformId, new Date().toISOString());
+  await getDb().run(
+    `INSERT OR IGNORE INTO messaging_groups (id, channel_type, platform_id, name, instance, created_at)
+       VALUES (?, 'webchat', ?, ?, 'webchat', ?)`,
+    `mg-${platformId}`,
+    platformId,
+    platformId,
+    new Date().toISOString(),
+  );
 }
 
 beforeEach(async () => {

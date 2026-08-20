@@ -1,5 +1,5 @@
 diff --git a/src/db/sessions.ts b/src/db/sessions.ts
-index f8964ff0..390fdf30 100644
+index f8964ff0..817515d5 100644
 --- a/src/db/sessions.ts
 +++ b/src/db/sessions.ts
 @@ -232,6 +232,23 @@ export async function getPendingApproval(approvalId: string): Promise<PendingApp
@@ -8,12 +8,12 @@ index f8964ff0..390fdf30 100644
  
 +/** Pending approvals created before `cutoffMs` (epoch) — the TTL sweep's feed. */
 +export async function getExpiredPendingApprovals(cutoffMs: number): Promise<PendingApproval[]> {
-+  return (
-+    (await getDb().all<PendingApproval>(`SELECT * FROM pending_approvals WHERE status = 'pending'`))
-+  ).filter((a) => {
-+    const t = Date.parse(a.created_at);
-+    return Number.isFinite(t) && t <= cutoffMs;
-+  });
++  return (await getDb().all<PendingApproval>(`SELECT * FROM pending_approvals WHERE status = 'pending'`)).filter(
++    (a) => {
++      const t = Date.parse(a.created_at);
++      return Number.isFinite(t) && t <= cutoffMs;
++    },
++  );
 +}
 +
 +export async function updatePendingApprovalStatus(

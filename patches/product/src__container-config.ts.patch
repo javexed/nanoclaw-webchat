@@ -1,5 +1,5 @@
 diff --git a/src/container-config.ts b/src/container-config.ts
-index 61902f5f..d30552ec 100644
+index 61902f5f..3f4c07ed 100644
 --- a/src/container-config.ts
 +++ b/src/container-config.ts
 @@ -13,7 +13,9 @@ import path from 'path';
@@ -169,7 +169,7 @@ index 61902f5f..d30552ec 100644
 +  // turn ever auto-reviews and no draft auto-keeps. On → per-room overrides
 +  // ride the same learning blob (rooms win over the agent level; see
 +  // src/modules/learning/room-settings.ts for the precedence contract).
-+  if ((await getLearningMasterEnabled())) {
++  if (await getLearningMasterEnabled()) {
 +    const roomLearning = await roomLearningMapForAgent(agentGroupId);
 +    if (Object.keys(roomLearning).length > 0) {
 +      config.learning = { ...(config.learning ?? {}), rooms: await roomLearning };

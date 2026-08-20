@@ -28,7 +28,9 @@ describe('moduleWebchat migration', () => {
     //   webchat-approvals-index  → adds webchat_approvals_index
     //   webchat-user-archives    → adds webchat_user_room_archives
     //   webchat-archive-split    → adds webchat_room_archives, renames webchat_user_room_archives → webchat_user_room_hides
-    const tables = (await getDb().all(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'webchat_%' ORDER BY name`)) as { name: string }[];
+    const tables = (await getDb().all(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'webchat_%' ORDER BY name`,
+    )) as { name: string }[];
     expect(tables.map((t) => t.name)).toEqual([
       'webchat_agent_mcp_servers',
       'webchat_agent_models',
@@ -63,7 +65,9 @@ describe('moduleWebchat migration', () => {
 
   it('creates the expected indexes', async () => {
     await runMigrations(getDb());
-    const indexes = (await getDb().all(`SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_webchat_%' ORDER BY name`)) as { name: string }[];
+    const indexes = (await getDb().all(
+      `SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_webchat_%' ORDER BY name`,
+    )) as { name: string }[];
     expect(indexes.map((i) => i.name).sort()).toEqual(
       [
         'idx_webchat_agent_mcp_servers_server',
@@ -159,7 +163,10 @@ describe('moduleWebchat migration', () => {
     `);
     await db.run(`INSERT INTO webchat_rooms VALUES ('legacy-room', 'Legacy', ?)`, Date.now());
     // Mark webchat-initial as already applied so only the new migration runs.
-    await db.run(`INSERT INTO schema_version (version, name, applied) VALUES (100, 'webchat-initial', ?)`, new Date().toISOString());
+    await db.run(
+      `INSERT INTO schema_version (version, name, applied) VALUES (100, 'webchat-initial', ?)`,
+      new Date().toISOString(),
+    );
 
     await runMigrations(db);
 
@@ -194,8 +201,14 @@ describe('moduleWebchat migration', () => {
       );
     `);
     await db.run(`INSERT INTO webchat_rooms VALUES ('r1', 'R', ?)`, Date.now());
-    await db.run(`INSERT INTO webchat_messages (id, room_id, sender, content, created_at) VALUES ('m1', 'r1', 'alice', 'hi', ?)`, Date.now());
-    await db.run(`INSERT INTO schema_version (version, name, applied) VALUES (100, 'webchat-initial', ?)`, new Date().toISOString());
+    await db.run(
+      `INSERT INTO webchat_messages (id, room_id, sender, content, created_at) VALUES ('m1', 'r1', 'alice', 'hi', ?)`,
+      Date.now(),
+    );
+    await db.run(
+      `INSERT INTO schema_version (version, name, applied) VALUES (100, 'webchat-initial', ?)`,
+      new Date().toISOString(),
+    );
 
     await runMigrations(db);
 

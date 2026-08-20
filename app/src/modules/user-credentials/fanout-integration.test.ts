@@ -60,11 +60,19 @@ beforeEach(async () => {
   await runMigrations(db);
 
   await createAgentGroup({ id: AG, name: 'Int', folder: 'int', agent_provider: null, created_at: now() });
-  await db.run(`INSERT INTO messaging_groups (id,channel_type,instance,platform_id,is_group,unknown_sender_policy,created_at)
-     VALUES ('mg-int','webchat','webchat',?,1,'public',?)`, ROOM, now());
-  await db.run(`INSERT INTO messaging_group_agents
+  await db.run(
+    `INSERT INTO messaging_groups (id,channel_type,instance,platform_id,is_group,unknown_sender_policy,created_at)
+     VALUES ('mg-int','webchat','webchat',?,1,'public',?)`,
+    ROOM,
+    now(),
+  );
+  await db.run(
+    `INSERT INTO messaging_group_agents
        (id,messaging_group_id,agent_group_id,engage_mode,engage_pattern,sender_scope,ignored_message_policy,session_mode,priority,created_at)
-     VALUES ('mga-int','mg-int',?, 'pattern','.*','all','drop','shared',0,?)`, AG, now());
+     VALUES ('mga-int','mg-int',?, 'pattern','.*','all','drop','shared',0,?)`,
+    AG,
+    now(),
+  );
 
   // Per-member routing only engages for a member who has CONNECTED a credential.
   await setCredentialsConfig({ allowAnthropicKey: true });

@@ -28,11 +28,22 @@ import {
 const GID = 'ag-mcp-test';
 
 async function seedAgentWithConfig(mcpServers: Record<string, McpServerConfig> = {}): Promise<void> {
-  await createAgentGroup({ id: GID, name: 'mcp', folder: 'mcp', agent_provider: null, created_at: new Date().toISOString() });
-  await getDb().run(`INSERT INTO container_configs
+  await createAgentGroup({
+    id: GID,
+    name: 'mcp',
+    folder: 'mcp',
+    agent_provider: null,
+    created_at: new Date().toISOString(),
+  });
+  await getDb().run(
+    `INSERT INTO container_configs
          (agent_group_id, provider, model, effort, image_tag, assistant_name, max_messages_per_prompt,
           skills, mcp_servers, packages_apt, packages_npm, additional_mounts, cli_scope, updated_at)
-       VALUES (?, NULL, NULL, NULL, NULL, NULL, NULL, '"all"', ?, '[]', '[]', '[]', 'group', ?)`, GID, JSON.stringify(mcpServers), new Date().toISOString());
+       VALUES (?, NULL, NULL, NULL, NULL, NULL, NULL, '"all"', ?, '[]', '[]', '[]', 'group', ?)`,
+    GID,
+    JSON.stringify(mcpServers),
+    new Date().toISOString(),
+  );
 }
 
 async function configServers(): Promise<Record<string, McpServerConfig>> {
@@ -105,7 +116,13 @@ describe('many-to-many assignment', () => {
 
 describe('mcpServerToConfig', () => {
   it('stdio row → command/args/env config', async () => {
-    const s = await createWebchatMcpServer({ name: 's', transport: 'stdio', command: 'c', args: ['--x'], env: { A: '1' } });
+    const s = await createWebchatMcpServer({
+      name: 's',
+      transport: 'stdio',
+      command: 'c',
+      args: ['--x'],
+      env: { A: '1' },
+    });
     expect(mcpServerToConfig(await s)).toEqual({ command: 'c', args: ['--x'], env: { A: '1' } });
   });
 

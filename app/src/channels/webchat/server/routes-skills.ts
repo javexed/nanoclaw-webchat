@@ -69,7 +69,8 @@ export async function rSkillsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<v
 // scoped admin of one group must not be able to inject code into others'.
 export async function rSkillsImportPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return importSkillHandler(req, res);
 }
@@ -111,7 +112,8 @@ export async function rSkillsSourcesGet(ctx: RouteCtx, _m: RegExpMatchArray): Pr
 
 export async function rSkillSource(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const sourceId = decodeURIComponent(m[1]);
   // Built-in marketplace: there's nothing in the DB to edit/delete — DELETE
@@ -154,7 +156,8 @@ export async function rSkillsUpdatesGet(ctx: RouteCtx, _m: RegExpMatchArray): Pr
 export async function rSkillUpdatePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   // Same gate as pool import — an update IS a pool import.
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return applySkillUpdateHandler(res, decodeURIComponent(m[1]));
 }
@@ -172,7 +175,8 @@ export async function rSkillsDuplicatesGet(ctx: RouteCtx, _m: RegExpMatchArray):
 
 export async function rSkillsPromotePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -189,7 +193,8 @@ export async function rSkillsPromotePost(ctx: RouteCtx, _m: RegExpMatchArray): P
   // Every holder's containers must respawn to see the pooled copy.
   let restarted = 0;
   for (const g of await listAgentsForUser(userId)) {
-    if (dup?.agents.includes(g.id)) restarted += await restartAgentGroupContainers(g.id, 'Skill promoted to shared pool');
+    if (dup?.agents.includes(g.id))
+      restarted += await restartAgentGroupContainers(g.id, 'Skill promoted to shared pool');
   }
   return json(res, 200, { ok: true, restarted });
 }
@@ -200,7 +205,8 @@ export async function rSkillItem(ctx: RouteCtx, m: RegExpMatchArray): Promise<vo
   if (method === 'GET') return getSkillContentHandler(res, skillName); // viewing is fine for any admin
   // Writing a skill (create/edit/delete) introduces code that fans out to every
   // 'all' agent install-wide → owner/global-admin only, like import.
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (method === 'PUT') return putUserSkillHandler(req, res, skillName);
   return deleteUserSkillHandler(res, skillName);

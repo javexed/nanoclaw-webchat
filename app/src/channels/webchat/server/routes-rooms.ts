@@ -266,7 +266,10 @@ export async function rRoomAgentDelete(ctx: RouteCtx, m: RegExpMatchArray): Prom
   // Owner can unwire any agent. A scoped admin may unwire an agent THEY
   // administer from a room they can access — they can never touch agents
   // they don't administer.
-  if (!(await isOwner(userId)) && !((await canAccessRoom(userId, roomId)) && (await hasAdminPrivilege(userId, agentId)))) {
+  if (
+    !(await isOwner(userId)) &&
+    !((await canAccessRoom(userId, roomId)) && (await hasAdminPrivilege(userId, agentId)))
+  ) {
     return json(res, 403, { error: 'Admin privilege required' });
   }
   return removeAgentFromRoomHandler(res, roomId, agentId);
@@ -613,7 +616,8 @@ export async function rRoomLearning(ctx: RouteCtx, m: RegExpMatchArray): Promise
 // ── Room export/import (backup Phase 3) ───────────────────────────────
 export async function rRoomExportGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   const roomId = decodeURIComponent(m[1]);
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   let staged: { stage: string };
@@ -639,14 +643,16 @@ export async function rRoomExportGet(ctx: RouteCtx, m: RegExpMatchArray): Promis
 
 export async function rRoomsImportPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return importRoomUploadHandler(req, res);
 }
 
 export async function rRoomsImportApplyPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return importRoomApplyHandler(req, res);
 }
@@ -1073,7 +1079,10 @@ export async function addAgentToRoomHandler(
     // Owner can wire any agent. A scoped admin may wire an agent THEY
     // administer to a room they can access (the same access set the picker
     // is filtered to).
-    if (!(await isOwner(userId)) && !((await canAccessRoom(userId, roomId)) && (await hasAdminPrivilege(userId, parsed.id)))) {
+    if (
+      !(await isOwner(userId)) &&
+      !((await canAccessRoom(userId, roomId)) && (await hasAdminPrivilege(userId, parsed.id)))
+    ) {
       return json(res, 403, { error: 'Admin privilege required' });
     }
     agentId = parsed.id;

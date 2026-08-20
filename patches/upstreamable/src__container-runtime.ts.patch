@@ -1,5 +1,5 @@
 diff --git a/src/container-runtime.ts b/src/container-runtime.ts
-index 4c413bb8..b16db406 100644
+index 4c413bb8..410d6f20 100644
 --- a/src/container-runtime.ts
 +++ b/src/container-runtime.ts
 @@ -11,6 +11,10 @@
@@ -13,7 +13,7 @@ index 4c413bb8..b16db406 100644
  
  import { log } from './log.js';
  
-@@ -130,6 +134,32 @@ export function resolveContainerConfigAugmentation(agentGroupId: string): Record
+@@ -130,6 +134,30 @@ export function resolveContainerConfigAugmentation(agentGroupId: string): Record
    return merged;
  }
  
@@ -33,9 +33,7 @@ index 4c413bb8..b16db406 100644
 +export function registerLearningClassifierResolver(fn: LearningClassifierResolver): void {
 +  learningClassifierResolver = fn;
 +}
-+export async function resolveLearningClassifier(
-+  agentGroupId: string,
-+): Promise<{ url: string; model: string } | null> {
++export async function resolveLearningClassifier(agentGroupId: string): Promise<{ url: string; model: string } | null> {
 +  try {
 +    return (await learningClassifierResolver?.(agentGroupId)) ?? null;
 +  } catch {
@@ -46,7 +44,7 @@ index 4c413bb8..b16db406 100644
  /**
   * Async pre-spawn hooks contributed by installed modules, run once just before
   * a session's container is spawned (e.g. lazy provisioning: create per-session
-@@ -151,3 +181,107 @@ export async function runSessionPrepareHooks(agentGroupId: string, threadId: str
+@@ -151,3 +179,106 @@ export async function runSessionPrepareHooks(agentGroupId: string, threadId: str
      }
    }
  }
@@ -153,4 +151,3 @@ index 4c413bb8..b16db406 100644
 +    });
 +  }
 +}
-+

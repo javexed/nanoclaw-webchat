@@ -170,7 +170,8 @@ async function reconcileOnce(server: WebchatServer): Promise<void> {
 
 /** All webchat-channel sessions known to the central DB. */
 async function listWebchatSessions(): Promise<WebchatSessionRow[]> {
-  return (await getDb().all(`SELECT s.id AS session_id, s.agent_group_id, ag.name AS agent_name, mg.platform_id AS room_id
+  return (await getDb()
+    .all(`SELECT s.id AS session_id, s.agent_group_id, ag.name AS agent_name, mg.platform_id AS room_id
        FROM sessions s
        JOIN agent_groups ag ON ag.id = s.agent_group_id
        JOIN messaging_groups mg ON mg.id = s.messaging_group_id
@@ -190,21 +191,37 @@ async function findStoredAgentMessage(
 ): Promise<WebchatMessageProbe | undefined> {
   const lo = outboundTsMs - 30_000;
   const hi = outboundTsMs + 30_000;
-  return (await getDb().get(`SELECT id FROM webchat_messages
+  return (await getDb().get(
+    `SELECT id FROM webchat_messages
        WHERE room_id = ? AND sender_type = 'agent' AND message_type = 'text'
          AND content = ?
          AND created_at BETWEEN ? AND ?
-       LIMIT 1`, roomId, content, lo, hi)) as WebchatMessageProbe | undefined;
+       LIMIT 1`,
+    roomId,
+    content,
+    lo,
+    hi,
+  )) as WebchatMessageProbe | undefined;
 }
 
-async function findStoredAgentFile(roomId: string, filename: string, outboundTsMs: number): Promise<WebchatMessageProbe | undefined> {
+async function findStoredAgentFile(
+  roomId: string,
+  filename: string,
+  outboundTsMs: number,
+): Promise<WebchatMessageProbe | undefined> {
   const lo = outboundTsMs - 30_000;
   const hi = outboundTsMs + 30_000;
-  return (await getDb().get(`SELECT id FROM webchat_messages
+  return (await getDb().get(
+    `SELECT id FROM webchat_messages
        WHERE room_id = ? AND sender_type = 'agent' AND message_type = 'file'
          AND file_meta LIKE ?
          AND created_at BETWEEN ? AND ?
-       LIMIT 1`, roomId, `%"filename":"${filename.replace(/"/g, '\\"')}"%`, lo, hi)) as WebchatMessageProbe | undefined;
+       LIMIT 1`,
+    roomId,
+    `%"filename":"${filename.replace(/"/g, '\\"')}"%`,
+    lo,
+    hi,
+  )) as WebchatMessageProbe | undefined;
 }
 
 function parseTextFromContent(raw: string): string | null {

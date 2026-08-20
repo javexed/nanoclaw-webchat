@@ -293,19 +293,19 @@ export async function deleteWebchatRoom(id: string): Promise<void> {
   await db.run(`DELETE FROM webchat_room_pins WHERE room_id = ?`, id);
   // Thread registry + per-thread read markers (guarded — the threads migration
   // may predate this room's data, but the tables exist once migrated).
-  if ((await hasTable(db, 'webchat_threads'))) {
+  if (await hasTable(db, 'webchat_threads')) {
     await db.run(`DELETE FROM webchat_thread_reads WHERE room_id = ?`, id);
     await db.run(`DELETE FROM webchat_threads WHERE room_id = ?`, id);
   }
-  if ((await hasTable(db, 'webchat_thread_engaged'))) {
+  if (await hasTable(db, 'webchat_thread_engaged')) {
     await db.run(`DELETE FROM webchat_thread_engaged WHERE room_id = ?`, id);
   }
-  if ((await hasTable(db, 'webchat_thread_sync'))) {
+  if (await hasTable(db, 'webchat_thread_sync')) {
     await db.run(`DELETE FROM webchat_thread_sync WHERE room_id = ?`, id);
   }
   // Drop any agent_destinations rows pointing at this room. target_id has no
   // FK so they wouldn't block, just rot. Guarded — a2a module may not be installed.
-  if ((await hasTable(db, 'agent_destinations'))) {
+  if (await hasTable(db, 'agent_destinations')) {
     await db.run(`DELETE FROM agent_destinations WHERE target_type = 'channel' AND target_id = ?`, mg.id);
   }
   // sessions.messaging_group_id has an FK to messaging_groups(id) and is NOT
@@ -359,7 +359,7 @@ export async function unwireAgentFromWebchatRoom(roomId: string, agentGroupId: s
     mg.id,
     agentGroupId,
   );
-  if ((await hasTable(db, 'agent_destinations'))) {
+  if (await hasTable(db, 'agent_destinations')) {
     await db.run(
       `DELETE FROM agent_destinations
        WHERE agent_group_id = ? AND target_type = 'channel' AND target_id = ?`,
@@ -1934,8 +1934,7 @@ export async function getWebchatTopology(
     }
   }
   const modelMap = new Map<string, { id: string; name: string }>();
-  for (const a of agentNodes)
-    if (a.modelId) modelMap.set(a.modelId, { id: a.modelId, name: a.modelName ?? a.modelId });
+  for (const a of agentNodes) if (a.modelId) modelMap.set(a.modelId, { id: a.modelId, name: a.modelName ?? a.modelId });
 
   // MCP servers reachable from each agent. Only servers actually attached to an
   // agent in view appear — an unattached server has no reach, so it isn't a node.

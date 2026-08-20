@@ -1,5 +1,5 @@
 diff --git a/src/modules/approvals/response-handler.ts b/src/modules/approvals/response-handler.ts
-index c29374ae..11d409c9 100644
+index c29374ae..b2f2558c 100644
 --- a/src/modules/approvals/response-handler.ts
 +++ b/src/modules/approvals/response-handler.ts
 @@ -32,6 +32,35 @@ import { ONECLI_ACTION, resolveOneCLIApproval } from './onecli-approvals.js';
@@ -38,31 +38,25 @@ index c29374ae..11d409c9 100644
  export async function handleApprovalsResponse(payload: ResponsePayload): Promise<boolean> {
    const approval = await getPendingApproval(payload.questionId);
    if (!approval) return false;
-@@ -92,8 +121,14 @@ async function handleRegisteredApproval(
+@@ -92,6 +121,12 @@ async function handleRegisteredApproval(
    if (!(await transitionPendingApprovalStatus(approval.approval_id, 'pending', 'approved'))) return;
  
    // Approved — dispatch to the module that registered for this action.
--  const notify = async (text: string): Promise<void> => {
--    await writeSessionMessage(session.agent_group_id, session.id, {
-+    //
-+    // Claim in-process first (double-click / concurrent-delivery guard). The row
-+    // itself is deleted AFTER the handler (releaseApproval) so the approved
-+    // replay's guard liveness check still sees it — see the claimApproval note.
-+    if (!claimApproval(approval.approval_id)) return;
++  //
++  // Claim in-process first (double-click / concurrent-delivery guard). The row
++  // itself is deleted AFTER the handler (releaseApproval) so the approved
++  // replay's guard liveness check still sees it — see the claimApproval note.
++  if (!claimApproval(approval.approval_id)) return;
 +
-+    const notify = async (text: string): Promise<void> => {
-+      await writeSessionMessage(session.agent_group_id, session.id, {
+   const notify = async (text: string): Promise<void> => {
+     await writeSessionMessage(session.agent_group_id, session.id, {
        id: `appr-note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-       kind: 'chat',
-       timestamp: new Date().toISOString(),
-@@ -110,8 +145,8 @@ async function handleRegisteredApproval(
-       approvalId: approval.approval_id,
+@@ -111,7 +146,7 @@ async function handleRegisteredApproval(
        action: approval.action,
      });
--    await notify(`Your ${approval.action} was approved, but no handler is installed to apply it.`);
+     await notify(`Your ${approval.action} was approved, but no handler is installed to apply it.`);
 -    await deletePendingApproval(approval.approval_id);
-+      await notify(`Your ${approval.action} was approved, but no handler is installed to apply it.`);
-+      await releaseApproval(approval.approval_id);
++    await releaseApproval(approval.approval_id);
      await notifyApprovalResolved({ approval, session, outcome: 'approve', userId });
      await wakeContainer(session);
      return;

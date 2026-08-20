@@ -38,7 +38,7 @@ export async function canArchiveRoom(userId: string, roomId: string): Promise<bo
   if ((await isOwner(userId)) || (await isGlobalAdmin(userId))) return true;
   const agents = await getAgentsForWebchatRoom(roomId);
   for (const a of await agents) {
-    if ((await hasAdminPrivilege(userId, a.id))) return true;
+    if (await hasAdminPrivilege(userId, a.id)) return true;
   }
   return false;
 }

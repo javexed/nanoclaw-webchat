@@ -44,11 +44,14 @@ export interface RoomHuman {
  * 'user' is the only one that denotes a person.
  */
 export async function getRoomHumans(roomId: string): Promise<RoomHuman[]> {
-  return (await getDb().all(`SELECT DISTINCT h.user_id AS user_id, h.handle AS handle, u.display_name AS display_name
+  return (await getDb().all(
+    `SELECT DISTINCT h.user_id AS user_id, h.handle AS handle, u.display_name AS display_name
          FROM webchat_user_handles h
          JOIN webchat_messages m ON m.sender = h.user_id AND m.room_id = ? AND m.sender_type = 'user'
          LEFT JOIN users u ON u.id = h.user_id
-        ORDER BY h.handle`, roomId)) as RoomHuman[];
+        ORDER BY h.handle`,
+    roomId,
+  )) as RoomHuman[];
 }
 
 /**

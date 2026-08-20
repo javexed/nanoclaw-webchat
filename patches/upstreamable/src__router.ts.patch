@@ -1,5 +1,5 @@
 diff --git a/src/router.ts b/src/router.ts
-index 06400657..fcb9eaaa 100644
+index 6a374739..2a1796fa 100644
 --- a/src/router.ts
 +++ b/src/router.ts
 @@ -449,6 +449,11 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
@@ -14,6 +14,25 @@ index 06400657..fcb9eaaa 100644
      // Effective thread id for THIS wiring: the event-derived address is
      // policy-stripped when the wiring (or its channel declaration) opts out
      // of threads. event.replyTo is operator intent from the CLI admin
+@@ -475,12 +480,12 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
+       if (!expectation) continue;
+       const planWake = expectation === 'expected';
+       if (planWake) {
+-          // Both gates became async upstream (the central DB is async now), and
+-          // the seam's plan branch is the one caller that still read them
+-          // synchronously — an un-awaited promise is truthy, so `.allowed` on it
+-          // read undefined and every gate silently PASSED.
+-          const pAccessOk = !accessGate || (await accessGate(event, userId, mg, agent.agent_group_id)).allowed;
+-          const pScopeOk = !senderScopeGate || (await senderScopeGate(event, userId, mg, agent)).allowed;
++        // Both gates became async upstream (the central DB is async now), and
++        // the seam's plan branch is the one caller that still read them
++        // synchronously — an un-awaited promise is truthy, so `.allowed` on it
++        // read undefined and every gate silently PASSED.
++        const pAccessOk = !accessGate || (await accessGate(event, userId, mg, agent.agent_group_id)).allowed;
++        const pScopeOk = !senderScopeGate || (await senderScopeGate(event, userId, mg, agent)).allowed;
+         if (!pAccessOk || !pScopeOk) continue;
+       }
+       await deliverToAgent(agent, agentGroup, mg, event, userId, threadsEnabled, effectiveThreadId, planWake, {
 @@ -493,6 +498,13 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
        continue;
      }
@@ -69,37 +88,30 @@ index 06400657..fcb9eaaa 100644
        } catch {
          // Bad regex: fail open so admin sees the agent responding + can fix.
          return true;
-@@ -638,9 +675,9 @@ async function deliverToAgent(
-   // Module turn gate: a registered gate may veto this delivery before any
-   // session exists (e.g. per-user setup required). Core records the drop with
+@@ -640,7 +677,7 @@ async function deliverToAgent(
    // the module's reason; the user-facing notice is the module's own job.
--  const veto = consultTurnGates(mg, agent.agent_group_id, userId);
-+  const veto = await consultTurnGates(mg, agent.agent_group_id, userId);
+   const veto = await consultTurnGates(mg, agent.agent_group_id, userId);
    if (veto) {
 -    recordDroppedMessage({
 +    await recordDroppedMessage({
        channel_type: event.channelType,
        platform_id: event.platformId,
        user_id: userId,
-@@ -659,7 +696,7 @@ async function deliverToAgent(
-   // Pass the PRE-override thread: a resolver that re-keys by user needs it to
-   // key by (user, thread) rather than collapsing a room's threads into one
-   // session.
--  const keyOverride = resolveSessionKeyOverride(mg, agent.agent_group_id, userId, sessionThreadId);
-+  const keyOverride = await resolveSessionKeyOverride(mg, agent.agent_group_id, userId, sessionThreadId);
-   if (keyOverride) {
-     effectiveSessionMode = keyOverride.sessionMode;
+@@ -665,12 +702,7 @@ async function deliverToAgent(
      sessionThreadId = keyOverride.threadId;
-@@ -719,7 +756,7 @@ async function deliverToAgent(
-   // (e.g. full room-transcript sync into the per-member session).
-   const handledByWriter =
-     keyOverride && wake
--      ? runSessionInboundWriter({
-+      ? await runSessionInboundWriter({
-           agentGroupId: agent.agent_group_id,
-           session,
-           roomId: mg.platform_id,
-@@ -743,7 +780,7 @@ async function deliverToAgent(
+   }
+ 
+-  const { session, created } = await resolveSession(
+-        agent.agent_group_id,
+-        mg.id,
+-        sessionThreadId,
+-        effectiveSessionMode,
+-      );
++  const { session, created } = await resolveSession(agent.agent_group_id, mg.id, sessionThreadId, effectiveSessionMode);
+ 
+   // The inbound row's (channel_type, platform_id, thread_id) is the address
+   // the agent's reply will be delivered to. Normally it mirrors the source
+@@ -743,7 +775,7 @@ async function deliverToAgent(
          /* non-JSON content — deliver without hints */
        }
      }
@@ -108,7 +120,7 @@ index 06400657..fcb9eaaa 100644
        id: messageId,
        kind: event.message.kind,
        timestamp: event.message.timestamp,
-@@ -813,6 +850,7 @@ async function deliverToAgent(
+@@ -813,6 +845,7 @@ async function deliverToAgent(
      startTypingRefresh(
        session.id,
        session.agent_group_id,

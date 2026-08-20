@@ -568,7 +568,11 @@ export function canonicalizeWebchatUserId(id: string): string {
   return handle ? `webchat:${normalizeId(handle)}` : id;
 }
 
-async function finalize(args: { source: AuthResult['source']; userId: string; displayName: string }): Promise<AuthResult> {
+async function finalize(args: {
+  source: AuthResult['source'];
+  userId: string;
+  displayName: string;
+}): Promise<AuthResult> {
   // Upsert the users row so every authenticated identity is visible in the
   // Permissions UI even before any role is granted. The display_name is
   // refreshed on each connect (upsert preserves null with COALESCE if the
@@ -576,7 +580,7 @@ async function finalize(args: { source: AuthResult['source']; userId: string; di
   //
   // Guarded behind hasTable so a deployment without the permissions module
   // still authenticates instead of throwing on a missing FK.
-  if ((await hasTable(getDb(), 'users'))) {
+  if (await hasTable(getDb(), 'users')) {
     try {
       await upsertUser({
         id: args.userId,

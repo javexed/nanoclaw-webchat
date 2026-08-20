@@ -372,7 +372,11 @@ async function accessibleHosts(admin: OnecliAdmin, agentGroupId: string): Promis
 
 /** Refresh one group's note — exported so deploy-key changes can trigger it too. */
 export async function refreshCredentialNote(admin: OnecliAdmin, agentGroupId: string): Promise<void> {
-  await syncCredentialNote(agentGroupId, await accessibleHosts(admin, agentGroupId), await listDeployKeys(agentGroupId));
+  await syncCredentialNote(
+    agentGroupId,
+    await accessibleHosts(admin, agentGroupId),
+    await listDeployKeys(agentGroupId),
+  );
 }
 
 /** Refresh the credential note for one group, or for every group (shared secret). */

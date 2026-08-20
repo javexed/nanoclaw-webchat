@@ -20,18 +20,38 @@ afterEach(async () => {
   await closeDb();
 });
 
-async function insertRole(userId: string, role: 'owner' | 'admin' | 'member', agentGroupId: string | null): Promise<void> {
+async function insertRole(
+  userId: string,
+  role: 'owner' | 'admin' | 'member',
+  agentGroupId: string | null,
+): Promise<void> {
   const db = getDb();
   // user_roles has an FK to users; satisfy it idempotently.
-  await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, userId, new Date().toISOString());
+  await db.run(
+    `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+    userId,
+    new Date().toISOString(),
+  );
   // Scoped roles need a real agent_groups row to satisfy the FK on
   // agent_group_id. Create a stub if the test asks for one.
   if (agentGroupId) {
-    await db.run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at)
-       VALUES (?, ?, ?, NULL, ?)`, agentGroupId, agentGroupId, agentGroupId, new Date().toISOString());
+    await db.run(
+      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at)
+       VALUES (?, ?, ?, NULL, ?)`,
+      agentGroupId,
+      agentGroupId,
+      agentGroupId,
+      new Date().toISOString(),
+    );
   }
-  await db.run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
-     VALUES (?, ?, ?, NULL, ?)`, userId, role, agentGroupId, new Date().toISOString());
+  await db.run(
+    `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
+     VALUES (?, ?, ?, NULL, ?)`,
+    userId,
+    role,
+    agentGroupId,
+    new Date().toISOString(),
+  );
 }
 
 describe('isOwner', () => {
@@ -124,9 +144,8 @@ describe('ensureOwnerRoleOnFirstLogin', () => {
     await runMigrations(getDb());
     await ensureOwnerRoleOnFirstLogin('webchat:alice');
     await ensureOwnerRoleOnFirstLogin('webchat:alice');
-    const ownerCount = (
-      (await getDb().get(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`)) as { c: number }
-    ).c;
+    const ownerCount = ((await getDb().get(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`)) as { c: number })
+      .c;
     expect(ownerCount).toBe(1);
   });
 
@@ -136,9 +155,8 @@ describe('ensureOwnerRoleOnFirstLogin', () => {
     await ensureOwnerRoleOnFirstLogin('webchat:bob');
     expect(await isOwner('webchat:alice')).toBe(true);
     expect(await isOwner('webchat:bob')).toBe(false);
-    const ownerCount = (
-      (await getDb().get(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`)) as { c: number }
-    ).c;
+    const ownerCount = ((await getDb().get(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`)) as { c: number })
+      .c;
     expect(ownerCount).toBe(1);
   });
 
@@ -152,9 +170,8 @@ describe('ensureOwnerRoleOnFirstLogin', () => {
     for (const u of ['webchat:alice', 'webchat:bob', 'webchat:carol', 'webchat:dave']) {
       await ensureOwnerRoleOnFirstLogin(u);
     }
-    const ownerCount = (
-      (await getDb().get(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`)) as { c: number }
-    ).c;
+    const ownerCount = ((await getDb().get(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`)) as { c: number })
+      .c;
     expect(ownerCount).toBe(1);
     // First caller wins.
     expect(await isOwner('webchat:alice')).toBe(true);

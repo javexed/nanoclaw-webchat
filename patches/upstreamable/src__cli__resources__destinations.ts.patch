@@ -1,5 +1,5 @@
 diff --git a/src/cli/resources/destinations.ts b/src/cli/resources/destinations.ts
-index 00e7b86e..14ca1fd4 100644
+index 00e7b86e..b82245d1 100644
 --- a/src/cli/resources/destinations.ts
 +++ b/src/cli/resources/destinations.ts
 @@ -1,21 +1,44 @@
@@ -131,7 +131,7 @@ index 00e7b86e..14ca1fd4 100644
            new Date().toISOString(),
          );
          await projectDestinationsToSessions(agentGroupId);
-+          await refreshAgentSessions(agentGroupId, `destination added: ${localName}`);
++        await refreshAgentSessions(agentGroupId, `destination added: ${localName}`);
          return { agent_group_id: agentGroupId, local_name: localName, target_type: targetType, target_id: targetId };
        },
      },

@@ -37,7 +37,13 @@ beforeEach(async () => {
   // Two agents wired to one room, both with running sessions. The setup
   // is what previously confused the heuristic: which agent gets credit
   // when both are 'running' and have recently-bumped `last_active`?
-  await createAgentGroup({ id: 'ag-alpha', name: 'Alpha Agent', folder: 'alpha', agent_provider: null, created_at: now() });
+  await createAgentGroup({
+    id: 'ag-alpha',
+    name: 'Alpha Agent',
+    folder: 'alpha',
+    agent_provider: null,
+    created_at: now(),
+  });
   await createAgentGroup({
     id: 'ag-beta',
     name: 'Beta Agent',

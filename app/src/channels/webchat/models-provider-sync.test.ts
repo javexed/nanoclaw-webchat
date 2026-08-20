@@ -29,7 +29,9 @@ beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-provider-sync-'));
   await initDb(path.join(tmpDir, 'test.db'));
   await runMigrations(getDb());
-  await getDb().run(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES ('ag-1','AG','ag-1',NULL,'t')`);
+  await getDb().run(
+    `INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES ('ag-1','AG','ag-1',NULL,'t')`,
+  );
 });
 
 afterEach(async () => {

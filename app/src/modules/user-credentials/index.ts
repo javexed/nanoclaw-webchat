@@ -64,7 +64,11 @@ async function evaluateRoomCredState(
   agentGroupId: string,
   userId: string | null,
   threadId?: string | null,
-): Promise<{ override: { sessionMode: 'per-thread'; threadId: string } | null; requiredBlocked: boolean; credName: string }> {
+): Promise<{
+  override: { sessionMode: 'per-thread'; threadId: string } | null;
+  requiredBlocked: boolean;
+  credName: string;
+}> {
   const none = { override: null, requiredBlocked: false, credName: '' };
   // UserCreds is webchat-only and opt-in per room. Fail safe to no effect.
   if (mg.channel_type !== 'webchat' || !userId) return none;

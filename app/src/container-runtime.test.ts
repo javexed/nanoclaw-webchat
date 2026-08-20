@@ -36,7 +36,6 @@ describe('container config augmentors', () => {
   });
 });
 
-
 describe('makeContainerWritable', () => {
   beforeEach(() => vi.restoreAllMocks());
 

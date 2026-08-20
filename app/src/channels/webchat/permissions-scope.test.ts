@@ -22,20 +22,41 @@ afterEach(() => closeDb());
 const now = '2026-06-10T00:00:00.000Z';
 
 async function user(id: string): Promise<void> {
-  await getDb().run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, id, now);
+  await getDb().run(
+    `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+    id,
+    now,
+  );
 }
 async function group(id: string): Promise<void> {
-  await getDb().run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, id, id, id, now);
+  await getDb().run(
+    `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+    id,
+    id,
+    id,
+    now,
+  );
 }
 async function role(userId: string, r: 'owner' | 'admin', agentGroupId: string | null): Promise<void> {
   await user(userId);
   if (agentGroupId) await group(agentGroupId);
-  await getDb().run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`, userId, r, agentGroupId, now);
+  await getDb().run(
+    `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
+    userId,
+    r,
+    agentGroupId,
+    now,
+  );
 }
 async function member(userId: string, agentGroupId: string): Promise<void> {
   await user(userId);
   await group(agentGroupId);
-  await getDb().run(`INSERT INTO agent_group_members (user_id, agent_group_id, added_by, added_at) VALUES (?, ?, NULL, ?)`, userId, agentGroupId, now);
+  await getDb().run(
+    `INSERT INTO agent_group_members (user_id, agent_group_id, added_by, added_at) VALUES (?, ?, NULL, ?)`,
+    userId,
+    agentGroupId,
+    now,
+  );
 }
 
 function find(rows: Awaited<ReturnType<typeof listUsersWithPermissions>>, id: string) {
@@ -58,7 +79,7 @@ describe('listUsersWithPermissions caller-scoping', () => {
     expect(bob.memberships.map((m) => m.agent_group_id).sort()).toEqual(['ag-1', 'ag-2']);
     expect(bob.roles.map((r) => r.agent_group_id)).toContain('ag-2');
     // Owner is visible in the roster (global owner row present).
-    expect((find(rows, 'webchat:owner')).roles.some((r) => r.kind === 'owner')).toBe(true);
+    expect(find(rows, 'webchat:owner').roles.some((r) => r.kind === 'owner')).toBe(true);
   });
 
   it('scoped admin sees only assignments within their administered group', async () => {
@@ -69,7 +90,7 @@ describe('listUsersWithPermissions caller-scoping', () => {
     // bob's admin/ag-2 role is outside ag-1 → filtered out.
     expect(bob.roles).toHaveLength(0);
     // The global owner roster is hidden from a scoped admin.
-    expect((find(rows, 'webchat:owner')).roles).toHaveLength(0);
+    expect(find(rows, 'webchat:owner').roles).toHaveLength(0);
   });
 
   it('user LIST stays unfiltered so a scoped admin can add any user', async () => {

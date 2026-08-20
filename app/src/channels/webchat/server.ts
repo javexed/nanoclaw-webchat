@@ -1662,7 +1662,7 @@ async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   try {
     if (method === 'DELETE') {
       const removed = await deleteDeployKey(agentGroupId, url.searchParams.get('name') ?? '');
-      if ((await removed)) await refreshCredentialNote(realOnecliAdmin, agentGroupId);
+      if (await removed) await refreshCredentialNote(realOnecliAdmin, agentGroupId);
       return (await removed) ? json(res, 200, { ok: true }) : json(res, 404, { error: 'No such key' });
     }
     const raw = await readJsonBody(req, res);
@@ -2297,7 +2297,8 @@ async function rDraftPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const id = decodeURIComponent(m[1]);
   const draft = await getSkillDraft(id);
   if (!draft || draft.status !== 'pending') return json(res, 404, { error: 'Draft not found' });
-  if (!(await hasAdminPrivilege(userId, draft.agent_group_id))) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, draft.agent_group_id)))
+    return json(res, 403, { error: 'Admin privilege required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -2322,7 +2323,8 @@ async function rDraft(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   // Same tier as PUT/Keep: admin over the agent the draft belongs to. A
   // scoped admin of group B must not read or discard group A's drafts —
   // isAnyAdmin above only hides existence from non-admins.
-  if (!(await hasAdminPrivilege(userId, draft.agent_group_id))) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, draft.agent_group_id)))
+    return json(res, 403, { error: 'Admin privilege required' });
   if (method === 'GET') {
     // For a patch, hand back the version it would REPLACE too, so the reviewer
     // sees what actually changes rather than a wall of unchanged text.
@@ -2357,7 +2359,8 @@ async function rDraftKeepPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void>
   // Admin over the draft's OWN group is required here; the handler separately
   // checks admin over the body-supplied TARGET group. Without this, a scoped
   // admin of group B could wire group A's draft content into group B.
-  if (!(await hasAdminPrivilege(userId, draft.agent_group_id))) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, draft.agent_group_id)))
+    return json(res, 403, { error: 'Admin privilege required' });
   return keepSkillDraftHandler(req, res, userId, draft);
 }
 
@@ -2421,7 +2424,8 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   }
 
   const events: LearningTimelineEvent[] = [];
-  const roomNameOf = async (roomId: string | null): Promise<string | null> => (roomId ? ((await getWebchatRoom(roomId))?.name ?? null) : null);
+  const roomNameOf = async (roomId: string | null): Promise<string | null> =>
+    roomId ? ((await getWebchatRoom(roomId))?.name ?? null) : null;
   const skillLives = (gid: string, name: string): boolean =>
     !!name && fs.existsSync(path.join(scopedSkillsDir(gid), name, 'SKILL.md'));
 
@@ -2454,7 +2458,7 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   // 2. Pending drafts that never got a card (proposed from a non-webchat session).
   for (const d of await listSkillDrafts()) {
     if (!allowed.has(d.agent_group_id) || d.created_at >= cutoff) continue;
-    if ((await skillDraftCardPosition(d.id))) continue; // its card is the event
+    if (await skillDraftCardPosition(d.id)) continue; // its card is the event
     events.push({
       id: `draft-${d.id}`,
       kind: 'proposed',
@@ -2836,7 +2840,7 @@ async function rApprovalPrejudgePut(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 
   if ('modelId' in body) setApprovalPrejudgeModelId((body.modelId as string | null) ?? null);
   if (actions !== undefined) setApprovalPrejudgeActions(actions);
-  return json(res, 200, { ok: true, ...await prejudgeConfigView() });
+  return json(res, 200, { ok: true, ...(await prejudgeConfigView()) });
 }
 
 async function rApprovalsPendingGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
@@ -3330,7 +3334,10 @@ function persistOutboundFile(roomId: string, file: OutboundFile): string {
  */
 
 /** Engaged agents in a thread, resolved to {id, name, folder} for the UI. */
-async function engagedAgentsForThread(roomId: string, threadId: string): Promise<Array<{ id: string; name: string; folder: string }>> {
+async function engagedAgentsForThread(
+  roomId: string,
+  threadId: string,
+): Promise<Array<{ id: string; name: string; folder: string }>> {
   const ids = new Set(await getEngagedAgents(roomId, threadId));
   if (ids.size === 0) return [];
   return (await getAgentsForWebchatRoom(roomId))
@@ -3374,7 +3381,7 @@ export async function resolveInboundDeliveryPlan(
   // agents as silent context (isPeerReply, trigger=0) so they stay in sync but
   // never reply to a peer (no cascades). The producer is excluded.
   if (senderAgentGroupId) {
-    const allEngaged = [...await getEngagedAgents(roomId, threadId)].filter((id) => wiredIds.has(id));
+    const allEngaged = [...(await getEngagedAgents(roomId, threadId))].filter((id) => wiredIds.has(id));
     const recipients = allEngaged.filter((id) => id !== senderAgentGroupId);
     if (recipients.length === 0) return null;
     const perAgent = new Map<string, 'expected' | 'defer'>();
@@ -3390,7 +3397,7 @@ export async function resolveInboundDeliveryPlan(
   }
 
   // Auto-engage any newly-mentioned wired agent (broadcast the chip change once).
-  const engaged = new Set([...await getEngagedAgents(roomId, threadId)].filter((id) => wiredIds.has(id)));
+  const engaged = new Set([...(await getEngagedAgents(roomId, threadId))].filter((id) => wiredIds.has(id)));
   let changed = false;
   for (const id of mentioned) {
     if (!engaged.has(id)) {
@@ -3913,9 +3920,15 @@ async function pushSubscribe(req: IncomingMessage, res: ServerResponse, userId: 
     });
     return json(res, 409, { error: 'Endpoint already registered to a different identity' });
   }
-  await db.run(`INSERT INTO webchat_push_subscriptions (endpoint, identity, keys_json, created_at)
+  await db.run(
+    `INSERT INTO webchat_push_subscriptions (endpoint, identity, keys_json, created_at)
      VALUES (?, ?, ?, ?)
-     ON CONFLICT(endpoint) DO UPDATE SET identity = excluded.identity, keys_json = excluded.keys_json`, endpoint, userId, JSON.stringify({ p256dh, auth }), Date.now());
+     ON CONFLICT(endpoint) DO UPDATE SET identity = excluded.identity, keys_json = excluded.keys_json`,
+    endpoint,
+    userId,
+    JSON.stringify({ p256dh, auth }),
+    Date.now(),
+  );
   return json(res, 200, { ok: true });
 }
 
@@ -3930,7 +3943,11 @@ async function pushUnsubscribe(req: IncomingMessage, res: ServerResponse, userId
   }
   if (typeof body.endpoint !== 'string') return json(res, 400, { error: 'Missing endpoint' });
   // Only allow deleting your own subscription.
-  await getDb().run(`DELETE FROM webchat_push_subscriptions WHERE endpoint = ? AND identity = ?`, body.endpoint, userId);
+  await getDb().run(
+    `DELETE FROM webchat_push_subscriptions WHERE endpoint = ? AND identity = ?`,
+    body.endpoint,
+    userId,
+  );
   return json(res, 200, { ok: true });
 }
 

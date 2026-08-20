@@ -124,10 +124,14 @@ describe('room oauth_allowed', () => {
 describe('room credential_mode', () => {
   it('defaults to disabled, round-trips, preserves engage_default', async () => {
     expect(await getRoomCredentialMode('room-x')).toBe('disabled');
-    await getDb().run(`INSERT INTO webchat_room_settings (room_id, engage_default, updated_at) VALUES ('room-y','mention-only',1)`);
+    await getDb().run(
+      `INSERT INTO webchat_room_settings (room_id, engage_default, updated_at) VALUES ('room-y','mention-only',1)`,
+    );
     await setRoomCredentialMode('room-y', 'required');
     expect(await getRoomCredentialMode('room-y')).toBe('required');
-    const row = (await getDb().get(`SELECT engage_default, credential_mode FROM webchat_room_settings WHERE room_id='room-y'`)) as { engage_default: string; credential_mode: string };
+    const row = (await getDb().get(
+      `SELECT engage_default, credential_mode FROM webchat_room_settings WHERE room_id='room-y'`,
+    )) as { engage_default: string; credential_mode: string };
     expect(row).toEqual({ engage_default: 'mention-only', credential_mode: 'required' });
   });
 });

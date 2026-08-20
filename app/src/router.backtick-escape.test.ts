@@ -49,7 +49,13 @@ beforeEach(async () => {
   const db = await initTestDb();
   await runMigrations(await db);
 
-  await createAgentGroup({ id: 'ag-advisor', name: 'Advisor', folder: 'advisor', agent_provider: null, created_at: now() });
+  await createAgentGroup({
+    id: 'ag-advisor',
+    name: 'Advisor',
+    folder: 'advisor',
+    agent_provider: null,
+    created_at: now(),
+  });
   await createAgentGroup({ id: 'ag-news', name: 'News', folder: 'news', agent_provider: null, created_at: now() });
   await createMessagingGroup({
     id: 'mg-floor',

@@ -53,13 +53,25 @@ async function seedAgent(mcpServers: Record<string, unknown> = {}): Promise<void
   const migrations = await import('../../db/migrations/index.js');
   await migrations.runMigrations(conn.getDb());
   await conn
-    .getDb().run(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, GROUP.id, GROUP.name, GROUP.folder, '2026-08-17T00:00:00.000Z');
+    .getDb()
+    .run(
+      `INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+      GROUP.id,
+      GROUP.name,
+      GROUP.folder,
+      '2026-08-17T00:00:00.000Z',
+    );
 
   const { ensureContainerConfig, updateContainerConfigScalars } = await import('../../db/container-configs.js');
   await ensureContainerConfig(GROUP.id);
   if (Object.keys(mcpServers).length) {
     await conn
-      .getDb().run('UPDATE container_configs SET mcp_servers = ? WHERE agent_group_id = ?', JSON.stringify(mcpServers), GROUP.id);
+      .getDb()
+      .run(
+        'UPDATE container_configs SET mcp_servers = ? WHERE agent_group_id = ?',
+        JSON.stringify(mcpServers),
+        GROUP.id,
+      );
   }
   await updateContainerConfigScalars(GROUP.id, { timezone: 'Europe/Amsterdam' });
 
@@ -135,7 +147,13 @@ describe('exporting an agent as a template', () => {
     await seedAgent();
     const conn = await import('../../db/connection.js');
     await conn
-      .getDb().run('UPDATE container_configs SET packages_apt = ?, provider = ? WHERE agent_group_id = ?', JSON.stringify(['ripgrep']), 'codex', GROUP.id);
+      .getDb()
+      .run(
+        'UPDATE container_configs SET packages_apt = ?, provider = ? WHERE agent_group_id = ?',
+        JSON.stringify(['ripgrep']),
+        'codex',
+        GROUP.id,
+      );
 
     const { exportAgentAsTemplate } = await import('./server/template-export.js');
     const { omitted } = await exportAgentAsTemplate(GROUP, { name: 'research-buddy' });

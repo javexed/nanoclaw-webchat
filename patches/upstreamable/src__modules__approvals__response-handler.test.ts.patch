@@ -1,5 +1,5 @@
 diff --git a/src/modules/approvals/response-handler.test.ts b/src/modules/approvals/response-handler.test.ts
-index 07622d3d..283a608c 100644
+index 07622d3d..fd2ed67f 100644
 --- a/src/modules/approvals/response-handler.test.ts
 +++ b/src/modules/approvals/response-handler.test.ts
 @@ -164,6 +164,7 @@ describe('approval response authorization', () => {
@@ -68,14 +68,20 @@ index 07622d3d..283a608c 100644
    it('allows global admins to resolve approvals without a session-scoped agent group', async () => {
      await upsertUser({
        id: 'telegram:global-admin',
-@@ -262,4 +314,53 @@ describe('approval response authorization', () => {
+@@ -262,4 +314,59 @@ describe('approval response authorization', () => {
      expect(handler).toHaveBeenCalledTimes(1);
      expect(await getPendingApproval('appr-4')).toBeUndefined();
    });
 +
 +  it('runs the handler exactly once when the same Approve is delivered twice mid-handler', async () => {
 +    await upsertUser({ id: 'telegram:owner2', kind: 'telegram', display_name: 'Owner', created_at: now() });
-+    await grantRole({ user_id: 'telegram:owner2', role: 'owner', agent_group_id: null, granted_by: null, granted_at: now() });
++    await grantRole({
++      user_id: 'telegram:owner2',
++      role: 'owner',
++      agent_group_id: null,
++      granted_by: null,
++      granted_at: now(),
++    });
 +
 +    const { registerApprovalHandler } = await import('./primitive.js');
 +    const { handleApprovalsResponse } = await import('./response-handler.js');

@@ -77,7 +77,9 @@ export async function stageSystemExport(lean: boolean): Promise<string> {
   // export IS a sqlite file, so reaching for the raw handle here is honest
   // (the sqliteOnly migrations make the same call). Fail loudly on any other
   // driver rather than writing an empty file.
-  const raw = (getDb() as unknown as { rawDatabase?: () => { backup(dest: string): Promise<unknown> } }).rawDatabase?.();
+  const raw = (
+    getDb() as unknown as { rawDatabase?: () => { backup(dest: string): Promise<unknown> } }
+  ).rawDatabase?.();
   if (!raw) throw new Error('system export requires the sqlite driver');
   await raw.backup(path.join(stage, 'db', 'v2.db'));
   return stage;

@@ -178,14 +178,14 @@ describe('thread CRUD', () => {
     const id = await ensureAgentThread('room-1', 'sarah', 'Sarah');
     expect(id).toBe('agent:sarah');
     expect(await ensureAgentThread('room-1', 'sarah', 'Sarah (again)')).toBe('agent:sarah'); // reused
-    expect(((await getWebchatThread('room-1', 'agent:sarah'))!).title).toBe('Sarah'); // not clobbered
+    expect((await getWebchatThread('room-1', 'agent:sarah'))!.title).toBe('Sarah'); // not clobbered
   });
 
   it('createWebchatThread makes a uuid topic thread', async () => {
     const t = await createWebchatThread('room-1', 'Q3 planning');
     expect(t.kind).toBe('topic');
     expect(t.thread_id).not.toBe('main');
-    expect(((await getWebchatThread('room-1', t.thread_id))!).title).toBe('Q3 planning');
+    expect((await getWebchatThread('room-1', t.thread_id))!.title).toBe('Q3 planning');
   });
 
   it('lists threads with main first', async () => {
@@ -201,7 +201,7 @@ describe('thread CRUD', () => {
   it('renames a thread', async () => {
     const t = await createWebchatThread('room-1', 'old');
     await renameWebchatThread('room-1', t.thread_id, 'new');
-    expect(((await getWebchatThread('room-1', t.thread_id))!).title).toBe('new');
+    expect((await getWebchatThread('room-1', t.thread_id))!.title).toBe('new');
   });
 });
 
@@ -235,7 +235,12 @@ describe('per-thread read markers', () => {
     await storeWebchatMessage('room-1', 'Alice', 'user', 'a', MAIN_THREAD);
     await markThreadRead('u1', 'room-1', MAIN_THREAD, 5000);
     await markThreadRead('u1', 'room-1', MAIN_THREAD, 1000); // older — ignored
-    const row = (await getDb().get(`SELECT last_read_at FROM webchat_thread_reads WHERE user_id=? AND room_id=? AND thread_id=?`, 'u1', 'room-1', MAIN_THREAD)) as { last_read_at: number };
+    const row = (await getDb().get(
+      `SELECT last_read_at FROM webchat_thread_reads WHERE user_id=? AND room_id=? AND thread_id=?`,
+      'u1',
+      'room-1',
+      MAIN_THREAD,
+    )) as { last_read_at: number };
     expect(row.last_read_at).toBe(5000);
   });
 });

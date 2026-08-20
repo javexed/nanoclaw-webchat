@@ -28,7 +28,13 @@ const SESS = 'sess-rh';
 const now = () => new Date().toISOString();
 
 async function seedUser(id: string, display: string, handle: string) {
-  await getDb().run(`INSERT OR IGNORE INTO users (id,kind,display_name,created_at) VALUES (?,?,?,?)`, id, 'webchat', display, now());
+  await getDb().run(
+    `INSERT OR IGNORE INTO users (id,kind,display_name,created_at) VALUES (?,?,?,?)`,
+    id,
+    'webchat',
+    display,
+    now(),
+  );
   await setWebchatUserHandle(id, handle);
 }
 
@@ -51,8 +57,11 @@ beforeEach(async () => {
   const db = await initTestDb();
   await runMigrations(db);
   await createAgentGroup({ id: AG, name: 'RH', folder: 'rh', agent_provider: null, created_at: now() });
-  await db.run(`INSERT INTO messaging_groups (id,channel_type,instance,platform_id,is_group,created_at)
-     VALUES ('mg-rh','webchat','webchat','room-rh',1,?)`, now());
+  await db.run(
+    `INSERT INTO messaging_groups (id,channel_type,instance,platform_id,is_group,created_at)
+     VALUES ('mg-rh','webchat','webchat','room-rh',1,?)`,
+    now(),
+  );
   await createSession({
     id: SESS,
     agent_group_id: AG,

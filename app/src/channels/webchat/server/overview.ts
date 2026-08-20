@@ -64,9 +64,7 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   // Visible agent count — owners see everything; admins see ones they
   // explicitly admin (matches how /api/agents filters).
   const allAgents = (await db.all(`SELECT id FROM agent_groups`)) as { id: string }[];
-  const visibleAgents = ownerCaller
-    ? allAgents
-    : await filterAsync(allAgents, (a) => hasAdminPrivilege(userId, a.id));
+  const visibleAgents = ownerCaller ? allAgents : await filterAsync(allAgents, (a) => hasAdminPrivilege(userId, a.id));
 
   // SCOPING RULE for the activity counts below. A restricted caller counts
   // only sessions on agent groups they can ACCESS and messages in rooms they
@@ -82,9 +80,7 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   // party to, which includes plain membership.
   const scopedGroupIds = ownerCaller
     ? null
-    : (await filterAsync(allAgents, async (a) => (await canAccessAgentGroup(userId, a.id)).allowed)).map(
-        (a) => a.id,
-      );
+    : (await filterAsync(allAgents, async (a) => (await canAccessAgentGroup(userId, a.id)).allowed)).map((a) => a.id);
   const scopedRoomIds = ownerCaller
     ? null
     : (await filterRoomsForUser(userId, await getAllWebchatRooms())).map((r) => r.id);
@@ -107,7 +103,11 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
 
   // Sessions — `last_active` is an ISO timestamp string.
   const fiveMinAgo = new Date(Date.now() - ACTIVE_SESSION_WINDOW_MS).toISOString();
-  const sessionsTotal = await countScoped(`SELECT COUNT(*) AS c FROM sessions WHERE 1=1`, 'agent_group_id', scopedGroupIds);
+  const sessionsTotal = await countScoped(
+    `SELECT COUNT(*) AS c FROM sessions WHERE 1=1`,
+    'agent_group_id',
+    scopedGroupIds,
+  );
   const sessionsActive = await countScoped(
     `SELECT COUNT(*) AS c FROM sessions WHERE last_active > ?`,
     'agent_group_id',
@@ -142,9 +142,7 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
     ? `SELECT id, name, folder, created_at FROM agent_groups ORDER BY created_at DESC LIMIT ${recentLimit}`
     : `SELECT id, name, folder, created_at FROM agent_groups ORDER BY created_at DESC`;
   const recentRaw = (await db.all(recentSql)) as { id: string; name: string; folder: string; created_at: string }[];
-  const recentFiltered = ownerCaller
-    ? recentRaw
-    : recentRaw.filter((r) => visibleIds.has(r.id)).slice(0, recentLimit);
+  const recentFiltered = ownerCaller ? recentRaw : recentRaw.filter((r) => visibleIds.has(r.id)).slice(0, recentLimit);
   const recentAgents = await Promise.all(
     recentFiltered.map(async (r) => {
       const room = await getWebchatRoom(r.folder);
