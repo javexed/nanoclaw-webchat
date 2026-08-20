@@ -153,14 +153,29 @@ export function broadcast(roomId: string, msg: object, excludeId?: string): void
     : new Set<string>();
   const mentionPayload = JSON.stringify({ type: 'mention', room_id: roomId });
 
+  let inRoom = 0;
+  let elsewhere = 0;
   for (const c of clients.values()) {
     if (c.id === excludeId || c.ws.readyState !== WebSocket.OPEN) continue;
     try {
-      if (c.room_id === roomId) c.ws.send(payload);
-      else if (isMessage) c.ws.send(mentionedUserIds.has(c.userId) ? mentionPayload : notifyPayload);
+      if (c.room_id === roomId) {
+        inRoom += 1;
+        c.ws.send(payload);
+      } else if (isMessage) {
+        elsewhere += 1;
+        c.ws.send(mentionedUserIds.has(c.userId) ? mentionPayload : notifyPayload);
+      }
     } catch {
       // Socket may have closed between readyState check and send — ignore.
     }
+  }
+  // A message nobody is in the room for, while clients ARE connected, is the
+  // signature of "I sent it and saw nothing until I switched rooms and back":
+  // the sender's own socket is tracking a different room, so it takes the
+  // unread branch instead of receiving the message. Worth a line, because the
+  // alternative is diagnosing it from the absence of evidence.
+  if (isMessage && inRoom === 0 && elsewhere > 0) {
+    log.warn('Webchat: message broadcast with no client in the room', { roomId, clientsElsewhere: elsewhere });
   }
 
   // Side-channel a2a copies and in-room approval cards fan out to open tabs
