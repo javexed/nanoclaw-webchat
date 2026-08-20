@@ -250,11 +250,20 @@ export function setupWebSocket(
       if (msg.type === 'join') {
         const roomId = typeof msg.room_id === 'string' ? msg.room_id : '';
         const room = await getWebchatRoom(roomId);
+        // A REFUSED JOIN WAS SILENT HERE. The client is told, but nothing is
+        // logged — and the symptom it produces is deeply confusing: messages
+        // are stored correctly and simply never render, because live delivery
+        // is gated on the client's tracked room, and a refused join leaves that
+        // pointing at the previous one. Reported twice as "I don't see my
+        // message until I switch rooms and come back". Log it so the next
+        // occurrence names its own cause.
         if (!room) {
+          log.warn('Webchat: join refused — room not found', { roomId, userId: client.userId });
           send({ type: 'error', error: `Room not found: ${roomId}` });
           return;
         }
         if (!(await canAccessRoom(client.userId, room.id))) {
+          log.warn('Webchat: join refused — access denied', { roomId: room.id, userId: client.userId });
           send({ type: 'error', error: 'Access denied' });
           return;
         }
