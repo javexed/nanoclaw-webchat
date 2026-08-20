@@ -4,12 +4,12 @@
     "upstreamRef": "882305ebafee70759c4c391a41eb74be30972412",
     "seamRepo": "https://github.com/javexed/nanoclaw.git",
     "seamBranch": "pub/module-hooks",
-    "seamRef": "712f1f4dc269db27741f8263434fe3251a698923",
-    "seamH5Ref": "712f1f4dc269db27741f8263434fe3251a698923",
+    "seamRef": "669950229cff4b1094065cc22d46fa9e11c343fa",
+    "seamH5Ref": "669950229cff4b1094065cc22d46fa9e11c343fa",
     "forkRef": "3e55bebd6ff2a11a56d53923a38b3bda8ba30e11",
     "forkArchiveTag": "archive/channels-webchat-2026-07-28",
     "forkRefNote": "final channels-webchat tip (fork decommissioned 2026-07-28, preserved at forkArchiveTag). NOT a build input and no longer a guard reference — the only consumer is scripts/migrate-from-fork.sh, which resolves this SHA inside a user's own fork install to refuse migrating an install that is NEWER than the split. Keep it pinned for as long as fork installs may still migrate.",
-    "seamNote": "pub/module-hooks: SessionKeyResolver carries the pre-override thread (seam PR: SessionKeyResolver thread), so per-member sessions key by (user, thread)"
+    "seamNote": "pub/module-hooks: adds registerNetworkPolicyResolver (15th registry) so per-group egress survives the driver seam, and honours spec.network which upstream declared but never read"
   },
   "seamApiVersion": 4,
   "status": "working — all adaptation passes complete (H5, H12, R3)"

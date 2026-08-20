@@ -16,6 +16,7 @@ src/onecli-preflight.test.ts
 src/mcp-server-config.ts
 src/mcp-server-config.test.ts
 src/modules/user-credentials
+src/modules/container-egress
 src/db/migrations/module-user-credentials-members.ts
 src/db/migrations/module-user-credentials-oauth.ts
 src/db/migrations/module-user-credentials-provider.ts
