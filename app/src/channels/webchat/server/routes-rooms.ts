@@ -93,7 +93,7 @@ import {
   wireAgentToWebchatRoom,
 } from './agent-wiring.js';
 import { pendingAgentImports, spawnTar, spoolUploadToTmp, sweepPendingImports } from './archive.js';
-import { availableProviders, codexAvailable } from './providers.js';
+import { availableProviders } from './providers.js';
 import { broadcast, broadcastRooms } from '../state.js';
 import { randomUUID } from 'crypto';
 import fs from 'fs';
@@ -844,7 +844,6 @@ export function parseAgentRef(raw: unknown): AgentRef | { error: string } {
             ? `agent.provider must be one of: ${allowed.join(', ')}`
             : 'agent.provider is not settable — no non-default harness is installed',
         };
-      if (!codexAvailable()) return { error: 'Codex support isn’t installed yet — add it with /add-codex first.' };
     }
     return {
       kind: 'new',
