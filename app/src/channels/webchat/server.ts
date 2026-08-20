@@ -2415,7 +2415,7 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   const owner = isOwner(userId);
   const allowed = new Map<string, string>();
   for (const g of getAllAgentGroups()) {
-    if (owner || hasAdminPrivilege(userId, g.id)) allowed.set(g.id, g.name || g.id);
+    if ((await owner) || (await hasAdminPrivilege(userId, g.id))) allowed.set(g.id, g.name || g.id);
   }
 
   const events: LearningTimelineEvent[] = [];
@@ -2452,7 +2452,7 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   // 2. Pending drafts that never got a card (proposed from a non-webchat session).
   for (const d of listSkillDrafts()) {
     if (!allowed.has(d.agent_group_id) || d.created_at >= cutoff) continue;
-    if (skillDraftCardPosition(d.id)) continue; // its card is the event
+    if ((await skillDraftCardPosition(d.id))) continue; // its card is the event
     events.push({
       id: `draft-${d.id}`,
       kind: 'proposed',
@@ -2586,8 +2586,8 @@ async function rLearningConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<voi
     const base = { enabled: getLearningMasterEnabled() };
     return json(
       res,
-      canEdit ? 200 : 200,
-      canEdit
+      (await canEdit) ? 200 : 200,
+      (await canEdit)
         ? { ...base, canEdit: true, classifierModelId: (await getLearningClassifier()).modelId }
         : { ...base, canEdit: false },
     );
@@ -2662,7 +2662,7 @@ async function rSttConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
     return json(
       res,
       200,
-      canEdit
+      (await canEdit)
         ? {
             ...base,
             provider: sttProvider(),

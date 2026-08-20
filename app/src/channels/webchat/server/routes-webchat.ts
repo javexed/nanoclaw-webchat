@@ -93,7 +93,7 @@ export async function rWebchatOnboarding(ctx: RouteCtx, _m: RegExpMatchArray): P
   const { req, res, method, userId } = ctx;
   const canEdit = isOwner(userId) || isGlobalAdmin(userId);
   if (method === 'GET') {
-    return json(res, 200, { complete: canEdit ? getOnboardingComplete() : true, canEdit });
+    return json(res, 200, { complete: (await canEdit) ? getOnboardingComplete() : true, canEdit });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (!canEdit) return json(res, 403, { error: 'Forbidden' });

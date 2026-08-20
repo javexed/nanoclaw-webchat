@@ -93,7 +93,7 @@ export function resolveAgent(idOrJid: string): AgentGroup | null {
 
 export async function listAgentsForUser(userId: string, includeArchived = false): Promise<AgentForUI[]> {
   const all = await getAllAgentGroups();
-  const role = isOwner(userId) ? all : all.filter((g) => hasAdminPrivilege(userId, g.id));
+  const role = (await isOwner(userId)) ? all : all.filter((g) => hasAdminPrivilege(userId, g.id));
   // Archived agents are hidden by default — this declutters every consumer
   // (agent list, pickers, topology/matrix) at once. The agent list opts in via
   // ?includeArchived=1 so they can still be managed (unarchived).

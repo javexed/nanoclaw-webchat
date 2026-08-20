@@ -395,7 +395,7 @@ export function setupWebSocket(
           return;
         }
         const deleted = deleteWebchatMessage(messageId, client.identity, client.room_id);
-        if (deleted) {
+        if ((await deleted)) {
           broadcast(client.room_id, {
             type: 'delete_message',
             room_id: client.room_id,

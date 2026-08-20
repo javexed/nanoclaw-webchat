@@ -282,7 +282,7 @@ export async function createMcpServerHandler(req: IncomingMessage, res: ServerRe
   }
   // Names key container_configs.mcp_servers (and the SDK's mcp__<name>__* tool
   // prefixes), so they must be unique across the registry.
-  if (getWebchatMcpServerByName(input.name)) {
+  if ((await getWebchatMcpServerByName(input.name))) {
     return json(res, 409, { error: `An MCP server named "${input.name}" already exists` });
   }
   const server = await createWebchatMcpServer(input);
@@ -517,7 +517,7 @@ export function normalizeMcpRegistry(payload: unknown): McpCatalogRow[] {
 export async function mcpCatalogHandler(res: ServerResponse, q: string): Promise<void> {
   // Switched off in Settings → the catalog is gone, server-side too. Not just
   // hidden in the UI: no request is made to the registry at all.
-  if (isSourceDisabled(MCP_REGISTRY_ID) || isSourceDisabled(mcpRegistryRemovedKey()))
+  if ((await isSourceDisabled(MCP_REGISTRY_ID)) || (await isSourceDisabled(mcpRegistryRemovedKey())))
     return json(res, 200, { servers: [], disabled: true });
   const key = q.trim().toLowerCase();
   const hit = mcpCatalogCache.get(key);

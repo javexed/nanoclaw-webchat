@@ -120,7 +120,7 @@ export async function rSkillSource(ctx: RouteCtx, m: RegExpMatchArray): Promise<
   }
   if (method === 'PUT') return putSkillSourceHandler(req, res, sourceId);
   catalogCache.delete(sourceId);
-  return deleteSkillSource(sourceId) ? json(res, 200, { ok: true }) : json(res, 404, { error: 'Source not found' });
+  return (await deleteSkillSource(sourceId)) ? json(res, 200, { ok: true }) : json(res, 404, { error: 'Source not found' });
 }
 
 // Delete a user skill (imported/uploaded). Shipped skills can't be removed.

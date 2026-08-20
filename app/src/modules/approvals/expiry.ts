@@ -27,7 +27,7 @@ export function approvalTtlMs(): number {
 export async function sweepExpiredApprovals(now = Date.now()): Promise<number> {
   const ttl = approvalTtlMs();
   if (ttl === 0) return 0;
-  const expired = getExpiredPendingApprovals(now - ttl);
+  const expired = await getExpiredPendingApprovals(now - ttl);
   for (const approval of expired) {
     try {
       const session = approval.session_id ? getSession(approval.session_id) : undefined;

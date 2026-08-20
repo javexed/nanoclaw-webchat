@@ -82,7 +82,7 @@ export async function ensureOwnerRoleOnFirstLogin(userId: string): Promise<void>
 
   // Make sure the user row exists so the role grant's audit trail has somewhere
   // to point. Use INSERT OR IGNORE in case the senderResolver beat us to it.
-  if (hasTable(db, 'users')) {
+  if ((await hasTable(db, 'users'))) {
     await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at)
        VALUES (?, 'webchat', NULL, ?)`, userId, new Date().toISOString());
   }
@@ -129,7 +129,7 @@ async function userExists(db: ReturnType<typeof getDb>, id: string): Promise<boo
 export async function grantOwnerRole(userId: string, grantedBy: string | null = null): Promise<boolean> {
   const db = getDb();
   if (!hasTable(db, 'user_roles')) return false;
-  if (hasTable(db, 'users')) {
+  if ((await hasTable(db, 'users'))) {
     await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, userId, new Date().toISOString());
   }
   // `granted_by` is `REFERENCES users(id)` and the connection runs with
@@ -143,7 +143,7 @@ export async function grantOwnerRole(userId: string, grantedBy: string | null = 
   // Keep the audit value when it names a real user; otherwise record the
   // grant with no grantor. Losing the attribution is strictly better than
   // losing the role.
-  const grantor = grantedBy && userExists(db, grantedBy) ? grantedBy : null;
+  const grantor = grantedBy && (await userExists(db, grantedBy)) ? grantedBy : null;
   try {
     const result = await db.run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
          SELECT ?, 'owner', NULL, ?, ?

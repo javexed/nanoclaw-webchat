@@ -99,7 +99,7 @@ export async function wireAgentToWebchatRoom(roomName: string, platformId: strin
   // Using the room's display name would be friendlier but collides if two
   // rooms share a name; backfill (`module-agent-to-agent-destinations.ts`)
   // handles that case with -2/-3 suffixes — worth aligning in a follow-up.
-  if (hasTable(getDb(), 'agent_destinations')) {
+  if ((await hasTable(getDb(), 'agent_destinations'))) {
     const existing = getDestinationByTarget(agentGroupId, 'channel', mg.id);
     if (!existing) {
       createDestination({
@@ -152,8 +152,8 @@ export async function wireAgentToWebchatRoom(roomName: string, platformId: strin
  * add` if they want one. Always skips if an a2a destination to this target
  * already exists (irrespective of name).
  */
-export function ensureA2aDestination(ownerAgentId: string, targetAgentId: string, targetFolder: string): void {
-  if (getDestinationByTarget(ownerAgentId, 'agent', targetAgentId)) return;
+export async function ensureA2aDestination(ownerAgentId: string, targetAgentId: string, targetFolder: string): Promise<void> {
+  if ((await getDestinationByTarget(ownerAgentId, 'agent', targetAgentId))) return;
   const base = normalizeName(targetFolder);
   const candidates = [base, `${base}-agent`];
   for (const name of candidates) {

@@ -64,7 +64,7 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
     // Connection is now user-level (connect once → all same-provider rooms).
     const connected = userHasConnectedCredential(userId, provider);
     // Report the connected credential type so the UI shows the right banner.
-    const credType = connected ? ((await getUserCredential(userId, provider))?.cred_type ?? null) : null;
+    const credType = (await connected) ? ((await getUserCredential(userId, provider))?.cred_type ?? null) : null;
     return json(res, 200, {
       connected,
       credType,
@@ -393,12 +393,12 @@ export function validateGrantBody(
  * send. This is the privilege boundary for delegated member management;
  * keep it pure and unit-tested (member-grant-auth.test.ts).
  */
-export function checkMemberGrantAuth(
+export async function checkMemberGrantAuth(
   callerUserId: string,
   kind: unknown,
   agentGroupId: unknown,
-): { error: string } | null {
-  if (isOwner(callerUserId)) return null;
+): Promise<{ error: string } | null> {
+  if ((await isOwner(callerUserId))) return null;
   if (kind !== 'member') return { error: 'Owner only' };
   const groupId = typeof agentGroupId === 'string' ? agentGroupId : null;
   if (!groupId || !hasAdminPrivilege(callerUserId, groupId)) {
