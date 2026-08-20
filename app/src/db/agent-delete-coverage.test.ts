@@ -27,13 +27,13 @@ import { getDb } from './connection.js';
 
 let tmp: string;
 
-beforeAll(() => {
+beforeAll(async () => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-cov-'));
   initDb(path.join(tmp, 'test.db'));
-  runMigrations(getDb());
+  await runMigrations(getDb());
 });
 
-afterAll(() => {
+afterAll(async () => {
   closeDb();
   fs.rmSync(tmp, { recursive: true, force: true });
 });

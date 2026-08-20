@@ -47,9 +47,9 @@ const GROUP = 'ag-local';
 /** A group on a local harness with an ollama-kind model assigned. */
 async function seed(kind: 'ollama' | 'anthropic', provider: string | null) {
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
+  await migrations.runMigrations(conn.getDb());
   await conn
     .getDb().run(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?,?,?,NULL,'t')`, GROUP, GROUP, GROUP);
 

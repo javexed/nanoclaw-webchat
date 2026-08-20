@@ -56,6 +56,7 @@ function makeApproval(overrides: Partial<PendingApproval> = {}): PendingApproval
     question: '*Agent:* ag-1\n*Action:* tasks create',
     options_json: '[]',
     approver_user_id: null,
+    instance: null,
     ...overrides,
   };
 }

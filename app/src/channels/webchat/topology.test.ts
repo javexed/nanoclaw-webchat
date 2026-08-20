@@ -17,7 +17,7 @@ function seedAgent(id: string, name: string) {
   >[0]);
 }
 async function wire(roomPlatformId: string, agentId: string) {
-  const mg = await getMessagingGroupByPlatform('webchat', roomPlatformId)!;
+  const mg = (await getMessagingGroupByPlatform('webchat', roomPlatformId))!;
   createMessagingGroupAgent({
     id: `mga-${roomPlatformId}-${agentId}`,
     messaging_group_id: mg.id,
@@ -45,9 +45,9 @@ const AGENTS = [
   { id: 'ag-unused', name: 'Unused' },
 ];
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
   seedAgent('ag-research', 'Researcher');
   seedAgent('ag-code', 'Coder');
   seedAgent('ag-unused', 'Unused'); // accessible but wired to no room → orphan column

@@ -23,12 +23,12 @@ import {
   recordWebchatApproval,
 } from './db.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 
@@ -71,18 +71,18 @@ async function insertPendingApproval(opts: {
 }
 
 describe('approvalInboxForUser', () => {
-  it('maps webchat user_ids to the approvals: platform_id', () => {
+  it('maps webchat user_ids to the approvals: platform_id', async () => {
     expect(approvalInboxForUser('webchat:tailscale:foo@example.com')).toBe('approvals:tailscale:foo@example.com');
   });
 
-  it('returns null for non-webchat user_ids', () => {
+  it('returns null for non-webchat user_ids', async () => {
     expect(approvalInboxForUser('slack:U123')).toBeNull();
     expect(approvalInboxForUser('cli:local')).toBeNull();
   });
 });
 
 describe('isApprovalInbox', () => {
-  it('matches the approvals: prefix', () => {
+  it('matches the approvals: prefix', async () => {
     expect(isApprovalInbox(`${APPROVAL_INBOX_PREFIX}foo@example.com`)).toBe(true);
     expect(isApprovalInbox('cli-local')).toBe(false);
     expect(isApprovalInbox('approvals')).toBe(false); // no colon → not the prefix
@@ -121,7 +121,7 @@ describe('getWebchatPendingApprovalsForUser', () => {
     expect(rows.map((r) => r.approval_id)).toEqual(['a-pending']);
   });
 
-  it('returns nothing for non-webchat users', () => {
+  it('returns nothing for non-webchat users', async () => {
     insertPendingApproval({ approvalId: 'a-1', platformId: 'approvals:U123' });
     expect(getWebchatPendingApprovalsForUser('slack:U123')).toEqual([]);
   });

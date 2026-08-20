@@ -17,9 +17,9 @@ import {
 } from './db.js';
 import { syncThreadContext } from './server/routes-rooms.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 afterEach(() => closeDb());
 
@@ -71,7 +71,7 @@ describe('thread context sync — insertSyncedMessages', () => {
     seed('r', 'main', 'one', 100);
     seed('r', 'main', 'two', 200);
     const src = getSyncDelta('r', 'main', 0);
-    const inserted = await insertSyncedMessages('r', 't1', src, 'pulled', 'Pulled from main');
+    const inserted = await insertSyncedMessages('r', 't1', await src, 'pulled', 'Pulled from main');
     expect(inserted[0].message_type).toBe('context-divider');
     expect(inserted.slice(1).map((m) => m.content)).toEqual(['one', 'two']);
     // Copies live in the destination thread, origin-marked; originals untouched.
@@ -136,7 +136,7 @@ describe('thread context sync — pull (main → thread)', () => {
     ]);
   });
 
-  it('fresh pull is bounded by freshLimit', () => {
+  it('fresh pull is bounded by freshLimit', async () => {
     for (let i = 1; i <= 5; i++) seed('r', 'main', `m${i}`, i * 100);
     const copied = syncThreadContext({
       roomId: 'r',
@@ -182,7 +182,7 @@ describe('thread context sync — push (thread → main)', () => {
     expect((await getThreadSyncMarks('r', 't1')).pushed).toBe(400);
   });
 
-  it('multi-push carries only the new delta, never duplicating', () => {
+  it('multi-push carries only the new delta, never duplicating', async () => {
     seed('r', 't1', 'one', 100);
     expect(
       syncThreadContext({
@@ -223,7 +223,7 @@ describe('thread context sync — push (thread → main)', () => {
 });
 
 describe('thread context sync — cascade', () => {
-  it('deleteWebchatThread clears the thread sync marks', () => {
+  it('deleteWebchatThread clears the thread sync marks', async () => {
     setThreadSyncMark('r', 't1', 'pushed', 500);
     deleteWebchatThread('r', 't1');
     expect(getThreadSyncMarks('r', 't1')).toEqual({ pulled: 0, pushed: 0 });

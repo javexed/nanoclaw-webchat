@@ -138,7 +138,7 @@ export async function rRoomIdDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise
 export async function rRoomAgentsGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   const agents = await getAgentsForWebchatRoom(roomId);
   const primeAgentId = await getPrimeAgentForWebchatRoom(roomId);
@@ -167,7 +167,7 @@ export async function rRoomAgentsGet(ctx: RouteCtx, m: RegExpMatchArray): Promis
 export async function rRoomMentionableGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   const people = (
     await filterAsync(
@@ -191,7 +191,7 @@ export async function rRoomAgentsPost(ctx: RouteCtx, m: RegExpMatchArray): Promi
 export async function rRoomCredModeGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   // The per-room OVERRIDE ('inherit' when unset); the effective mode is what the
   // room actually runs (override, else the global default).
@@ -205,7 +205,7 @@ export async function rRoomCredModeGet(ctx: RouteCtx, m: RegExpMatchArray): Prom
 export async function rRoomCredModePut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   // Owner, or an admin over ANY agent wired to this room.
   const allowed =
     (await isOwner(userId)) ||
@@ -231,7 +231,7 @@ export async function rRoomCredModePut(ctx: RouteCtx, m: RegExpMatchArray): Prom
 export async function rRoomOauthGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   return json(res, 200, { allowed: getRoomOauthAllowed(roomId) });
 }
@@ -239,7 +239,7 @@ export async function rRoomOauthGet(ctx: RouteCtx, m: RegExpMatchArray): Promise
 export async function rRoomOauthPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   const allowed =
     (await isOwner(userId)) ||
     (await someAsync(await getAgentsForWebchatRoom(roomId), (a) => hasAdminPrivilege(userId, a.id)));
@@ -264,7 +264,7 @@ export async function rRoomAgentDelete(ctx: RouteCtx, m: RegExpMatchArray): Prom
   // Owner can unwire any agent. A scoped admin may unwire an agent THEY
   // administer from a room they can access — they can never touch agents
   // they don't administer.
-  if (!isOwner(userId) && !((await canAccessRoom(userId, roomId)) && hasAdminPrivilege(userId, agentId))) {
+  if (!(await isOwner(userId)) && !((await canAccessRoom(userId, roomId)) && (await hasAdminPrivilege(userId, agentId)))) {
     return json(res, 403, { error: 'Admin privilege required' });
   }
   return removeAgentFromRoomHandler(res, roomId, agentId);
@@ -301,8 +301,8 @@ export async function rRoomPrimeDelete(ctx: RouteCtx, m: RegExpMatchArray): Prom
 export async function rRoomArchivePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canArchiveRoom(userId, roomId)) return json(res, 403, { error: 'Admin only' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
+  if (!(await canArchiveRoom(userId, roomId))) return json(res, 403, { error: 'Admin only' });
   if (m[2] === 'archive') {
     archiveRoom(roomId, userId);
   } else {
@@ -319,7 +319,7 @@ export async function rRoomArchivePost(ctx: RouteCtx, m: RegExpMatchArray): Prom
 export async function rRoomHidePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   if (m[2] === 'hide') {
     hideRoomForUser(userId, roomId);
@@ -337,7 +337,7 @@ export async function rRoomHidePost(ctx: RouteCtx, m: RegExpMatchArray): Promise
 export async function rRoomPinPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   if (m[2] === 'pin') {
     pinRoomForUser(userId, roomId);
@@ -379,7 +379,7 @@ export async function rRoomsPinsOrderPost(ctx: RouteCtx, _m: RegExpMatchArray): 
 export async function rRoomEngageGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   return json(res, 200, { mode: getRoomEngageDefault(roomId) });
 }
@@ -387,7 +387,7 @@ export async function rRoomEngageGet(ctx: RouteCtx, m: RegExpMatchArray): Promis
 export async function rRoomEngagePut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let body: { mode?: unknown };
@@ -412,7 +412,7 @@ export async function rRoomEngagePut(ctx: RouteCtx, m: RegExpMatchArray): Promis
 export async function rRoomNamePut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let body: { name?: unknown };
@@ -436,7 +436,7 @@ export async function rRoomThreadReadPut(ctx: RouteCtx, m: RegExpMatchArray): Pr
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   const threadId = decodeURIComponent(m[2]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   markThreadRead(userId, roomId, threadId);
   return json(res, 200, { ok: true });
@@ -445,7 +445,7 @@ export async function rRoomThreadReadPut(ctx: RouteCtx, m: RegExpMatchArray): Pr
 export async function rRoomThreadsGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   ensureMainThread(roomId); // every room has a main thread once listed
   const unread = await getUnreadThreadIdsForRoom(userId, roomId);
@@ -459,7 +459,7 @@ export async function rRoomThreadsGet(ctx: RouteCtx, m: RegExpMatchArray): Promi
 export async function rRoomThreadsPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -480,9 +480,9 @@ export async function rRoomThreadPatch(ctx: RouteCtx, m: RegExpMatchArray): Prom
   const { req, res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   const threadId = decodeURIComponent(m[2]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-  if (!getWebchatThread(roomId, threadId)) return json(res, 404, { error: 'Thread not found' });
+  if (!(await getWebchatThread(roomId, threadId))) return json(res, 404, { error: 'Thread not found' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let body: { title?: unknown };
@@ -501,9 +501,9 @@ export async function rRoomThreadDelete(ctx: RouteCtx, m: RegExpMatchArray): Pro
   const { res } = ctx;
   const roomId = decodeURIComponent(m[1]);
   const threadId = decodeURIComponent(m[2]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (threadId === 'main') return json(res, 400, { error: 'The main thread cannot be deleted' });
-  if (!getWebchatThread(roomId, threadId)) return json(res, 404, { error: 'Thread not found' });
+  if (!(await getWebchatThread(roomId, threadId))) return json(res, 404, { error: 'Thread not found' });
   return deleteThreadHandler(res, roomId, threadId);
 }
 
@@ -519,10 +519,10 @@ export async function rRoomThreadPullPost(ctx: RouteCtx, m: RegExpMatchArray): P
   const roomId = decodeURIComponent(m[1]);
   const threadId = decodeURIComponent(m[2]);
   const dir = m[3] as 'pull' | 'push';
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   if (threadId === MAIN_THREAD) return json(res, 400, { error: 'The regular chat has no main to sync with' });
-  if (!getWebchatThread(roomId, threadId)) return json(res, 404, { error: 'Thread not found' });
+  if (!(await getWebchatThread(roomId, threadId))) return json(res, 404, { error: 'Thread not found' });
   const copied =
     dir === 'pull'
       ? syncThreadContext({
@@ -557,7 +557,7 @@ export async function rRoomThreadPullPost(ctx: RouteCtx, m: RegExpMatchArray): P
 export async function rRoomLearning(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   const mg = await getMessagingGroupByPlatform('webchat', roomId);
   if (!mg) return json(res, 404, { error: 'Room has no messaging group' });
   const wired = (await getMessagingGroupAgents(mg.id)).map((w) => ({ id: w.agent_group_id }));
@@ -566,7 +566,7 @@ export async function rRoomLearning(ctx: RouteCtx, m: RegExpMatchArray): Promise
   // agent).
   const canManage = wired.length > 0 && (await everyAsync(wired, (a) => hasAdminPrivilege(userId, a.id)));
   const room = await getRoomLearning(mg.id);
-  const agentFallback = wired.length > 0 ? parseAgentLearning(wired[0].id) : {};
+  const agentFallback = wired.length > 0 ? await parseAgentLearning(wired[0].id) : {};
   const effective = {
     autoTrigger: room.autoTrigger ?? agentFallback.autoTrigger !== false,
     autoKeep: room.autoKeep ?? agentFallback.autoKeep === true,
@@ -598,7 +598,7 @@ export async function rRoomLearning(ctx: RouteCtx, m: RegExpMatchArray): Promise
   // wired agents so their next turn sees it. Auto-keep is host-side and
   // needs no restart, but the map rides along anyway.
   let restarted = 0;
-  for (const a of wired) restarted += restartAgentGroupContainers(a.id, 'Room learning settings changed');
+  for (const a of wired) restarted += await restartAgentGroupContainers(a.id, 'Room learning settings changed');
   return json(res, 200, {
     autoTrigger: next.autoTrigger ?? agentFallback.autoTrigger !== false,
     autoKeep: next.autoKeep ?? agentFallback.autoKeep === true,
@@ -611,12 +611,12 @@ export async function rRoomLearning(ctx: RouteCtx, m: RegExpMatchArray): Promise
 // ── Room export/import (backup Phase 3) ───────────────────────────────
 export async function rRoomExportGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
   const roomId = decodeURIComponent(m[1]);
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   let staged: { stage: string };
   try {
-    staged = stageRoomExport(roomId);
+    staged = await stageRoomExport(roomId);
   } catch (err) {
     return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
   }
@@ -637,14 +637,14 @@ export async function rRoomExportGet(ctx: RouteCtx, m: RegExpMatchArray): Promis
 
 export async function rRoomsImportPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return importRoomUploadHandler(req, res);
 }
 
 export async function rRoomsImportApplyPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return importRoomApplyHandler(req, res);
 }
@@ -802,7 +802,7 @@ export async function importRoomUploadHandler(req: IncomingMessage, res: ServerR
         code === 0 ? resolve() : reject(new Error(`tar -x failed: ${err.slice(0, 200)}`)),
       );
     });
-    const preview = previewRoomImport(dir);
+    const preview = await previewRoomImport(dir);
     const token = randomUUID();
     pendingAgentImports.set(token, { dir, at: Date.now() });
     return json(res, 200, { token, preview });
@@ -894,7 +894,7 @@ export async function createRoomHandler(req: IncomingMessage, res: ServerRespons
   for (const ref of body.agents) {
     const p = parseAgentRef(ref);
     if ('error' in p) return json(res, 400, { error: p.error });
-    if (p.kind === 'existing' && !getAgentGroup(p.id)) {
+    if (p.kind === 'existing' && !(await getAgentGroup(p.id))) {
       return json(res, 404, { error: `Agent ${p.id} not found` });
     }
     refs.push(p);
@@ -932,9 +932,9 @@ export async function createRoomHandler(req: IncomingMessage, res: ServerRespons
   }
 
   try {
-    getDb().transaction(() => {
-      createWebchatRoom(roomName, roomId);
-      for (const id of wireIds) wireAgentToWebchatRoom(roomName, roomId, id);
+    await getDb().transaction(async () => {
+      await createWebchatRoom(roomName, roomId);
+      for (const id of wireIds) await wireAgentToWebchatRoom(roomName, roomId, id);
       // Default engage mode is mention-only: agents fire on explicit @-mention.
       // EXCEPTION: a room created with exactly one agent auto-primes that agent
       // (it then replies to everything) — consistent with the empty-room →
@@ -942,9 +942,9 @@ export async function createRoomHandler(req: IncomingMessage, res: ServerRespons
       // agent to get a reply" surprise. Multi-agent rooms stay mention-only
       // until the operator picks a default. Inside the transaction so a partial
       // failure can't leave a settings/prime row referencing a half-created room.
-      setRoomEngageDefault(roomId, 'mention-only');
-      if (wireIds.length === 1) setPrimeAgentForWebchatRoom(roomId, wireIds[0]);
-    })();
+      await setRoomEngageDefault(roomId, 'mention-only');
+      if (wireIds.length === 1) await setPrimeAgentForWebchatRoom(roomId, wireIds[0]);
+    });
     // recomputeEngagePatterns reads the current wirings + prime + engage_default,
     // so it runs AFTER the transaction commits: a single-agent room now has a
     // prime (→ that agent answers everything); a multi-agent room has none
@@ -990,16 +990,16 @@ export async function deleteRoomHandler(res: ServerResponse, roomId: string): Pr
   const mg = await getMessagingGroupByPlatform('webchat', roomId);
   // Snapshot sessions before the transaction so we can clean up containers
   // and dirs after it commits (side-effects can't roll back).
-  const sessions: TeardownTarget[] = mg ? findSessionsByMessagingGroup(mg.id) : [];
+  const sessions: TeardownTarget[] = mg ? await findSessionsByMessagingGroup(mg.id) : [];
 
   try {
-    getDb().transaction(() => {
-      for (const s of sessions) deleteSessionDbState(s.sessionId);
+    await getDb().transaction(async () => {
+      for (const s of sessions) await deleteSessionDbState(s.sessionId);
       // deleteWebchatRoom drops messages, wirings, and the messaging_group row.
       // Agents are deliberately preserved — they may be wired to other rooms,
       // and DELETE /api/agents/:id is the cascade-to-agent path.
-      deleteWebchatRoom(roomId);
-    })();
+      await deleteWebchatRoom(roomId);
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error('Webchat: deleteRoomHandler failed', { roomId, err });
@@ -1030,12 +1030,12 @@ export async function deleteRoomHandler(res: ServerResponse, roomId: string): Pr
 export async function deleteThreadHandler(res: ServerResponse, roomId: string, threadId: string): Promise<void> {
   const mg = await getMessagingGroupByPlatform('webchat', roomId);
   // The session for a named thread is keyed by thread_id = threadId.
-  const sessions: TeardownTarget[] = mg ? findSessionsByMessagingGroupThread(mg.id, threadId) : [];
+  const sessions: TeardownTarget[] = mg ? await findSessionsByMessagingGroupThread(mg.id, threadId) : [];
   try {
-    getDb().transaction(() => {
-      for (const s of sessions) deleteSessionDbState(s.sessionId);
-      deleteWebchatThread(roomId, threadId);
-    })();
+    await getDb().transaction(async () => {
+      for (const s of sessions) await deleteSessionDbState(s.sessionId);
+      await deleteWebchatThread(roomId, threadId);
+    });
   } catch (err) {
     log.error('Webchat: deleteThreadHandler failed', { roomId, threadId, err });
     return json(res, 500, { error: 'Failed to delete thread' });
@@ -1067,11 +1067,11 @@ export async function addAgentToRoomHandler(
   let agentId: string;
   let createdAgentId: string | null = null;
   if (parsed.kind === 'existing') {
-    if (!getAgentGroup(parsed.id)) return json(res, 404, { error: `Agent ${parsed.id} not found` });
+    if (!(await getAgentGroup(parsed.id))) return json(res, 404, { error: `Agent ${parsed.id} not found` });
     // Owner can wire any agent. A scoped admin may wire an agent THEY
     // administer to a room they can access (the same access set the picker
     // is filtered to).
-    if (!isOwner(userId) && !((await canAccessRoom(userId, roomId)) && hasAdminPrivilege(userId, parsed.id))) {
+    if (!(await isOwner(userId)) && !((await canAccessRoom(userId, roomId)) && (await hasAdminPrivilege(userId, parsed.id)))) {
       return json(res, 403, { error: 'Admin privilege required' });
     }
     agentId = parsed.id;
@@ -1080,7 +1080,7 @@ export async function addAgentToRoomHandler(
     // createAgentHandler, this branch does not grant the creator admin on the
     // new group, so a scoped admin would end up unable to manage what they
     // just made. Scoped admins assign EXISTING agents (the branch above).
-    if (!isOwner(userId)) {
+    if (!(await isOwner(userId))) {
       return json(res, 403, { error: 'Owner only' });
     }
     const result = createBareAgentGroup(parsed.name, { instructions: parsed.instructions });
@@ -1114,10 +1114,10 @@ export async function addAgentToRoomHandler(
   return json(res, 200, { ok: true, agent: wired });
 }
 
-export function removeAgentFromRoomHandler(res: ServerResponse, roomId: string, agentId: string): void {
-  const room = getWebchatRoom(roomId);
+export async function removeAgentFromRoomHandler(res: ServerResponse, roomId: string, agentId: string): Promise<void> {
+  const room = await getWebchatRoom(roomId);
   if (!room) return json(res, 404, { error: 'Room not found' });
-  if (countAgentsForWebchatRoom(roomId) <= 1) {
+  if ((await countAgentsForWebchatRoom(roomId)) <= 1) {
     return json(res, 400, {
       error: 'Cannot remove the last agent from a room. Delete the room with DELETE /api/rooms/:id instead.',
     });

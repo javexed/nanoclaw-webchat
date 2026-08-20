@@ -59,12 +59,12 @@ const ACTIVE_SESSION_WINDOW_MS = 5 * 60 * 1000;
 
 export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   const db = getDb();
-  const ownerCaller = isOwner(userId);
+  const ownerCaller = await isOwner(userId);
 
   // Visible agent count — owners see everything; admins see ones they
   // explicitly admin (matches how /api/agents filters).
   const allAgents = (await db.all(`SELECT id FROM agent_groups`)) as { id: string }[];
-  const visibleAgents = (await ownerCaller)
+  const visibleAgents = ownerCaller
     ? allAgents
     : await filterAsync(allAgents, (a) => hasAdminPrivilege(userId, a.id));
 
@@ -80,12 +80,12 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   // The agents card counts what you can ADMINISTER (hasAdminPrivilege, so it
   // agrees with /api/agents and the Agents view); these count what you are a
   // party to, which includes plain membership.
-  const scopedGroupIds = (await ownerCaller)
+  const scopedGroupIds = ownerCaller
     ? null
     : (await filterAsync(allAgents, async (a) => (await canAccessAgentGroup(userId, a.id)).allowed)).map(
         (a) => a.id,
       );
-  const scopedRoomIds = (await ownerCaller)
+  const scopedRoomIds = ownerCaller
     ? null
     : (await filterRoomsForUser(userId, await getAllWebchatRooms())).map((r) => r.id);
 
@@ -127,7 +127,7 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   // Channel breakdown — count of messaging_groups per channel_type. Owner-only
   // (see the interface note); a restricted caller gets null.
   let channels: Record<string, number> | null = null;
-  if (await ownerCaller) {
+  if (ownerCaller) {
     const channelRows = (await db.all(
       `SELECT channel_type, COUNT(*) AS c FROM messaging_groups GROUP BY channel_type`,
     )) as { channel_type: string; c: number }[];
@@ -138,11 +138,11 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   // Recent agents — last 5 created. Restricted set when not owner.
   const recentLimit = 5;
   const visibleIds = new Set(visibleAgents.map((a) => a.id));
-  const recentSql = (await ownerCaller)
+  const recentSql = ownerCaller
     ? `SELECT id, name, folder, created_at FROM agent_groups ORDER BY created_at DESC LIMIT ${recentLimit}`
     : `SELECT id, name, folder, created_at FROM agent_groups ORDER BY created_at DESC`;
   const recentRaw = (await db.all(recentSql)) as { id: string; name: string; folder: string; created_at: string }[];
-  const recentFiltered = (await ownerCaller)
+  const recentFiltered = ownerCaller
     ? recentRaw
     : recentRaw.filter((r) => visibleIds.has(r.id)).slice(0, recentLimit);
   const recentAgents = await Promise.all(
@@ -164,8 +164,8 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
       restricted: true,
       health: { uptime: null, container_runtime_ok: false },
       agents: { total: null, visible: visibleAgents.length },
-      sessions: { active: sessionsActive, total: sessionsTotal },
-      messages: { webchat_24h: messages24h },
+      sessions: { active: await sessionsActive, total: await sessionsTotal },
+      messages: { webchat_24h: await messages24h },
       channels,
       system: null,
       ollama: null,
@@ -211,8 +211,8 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
     restricted: false,
     health: { uptime: process.uptime(), container_runtime_ok: activeContainers !== null },
     agents: { total: allAgents.length, visible: visibleAgents.length },
-    sessions: { active: sessionsActive, total: sessionsTotal },
-    messages: { webchat_24h: messages24h },
+    sessions: { active: await sessionsActive, total: await sessionsTotal },
+    messages: { webchat_24h: await messages24h },
     channels,
     system,
     ollama,

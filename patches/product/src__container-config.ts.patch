@@ -1,5 +1,5 @@
 diff --git a/src/container-config.ts b/src/container-config.ts
-index 61902f5f..bae3413f 100644
+index 61902f5f..9fdd012d 100644
 --- a/src/container-config.ts
 +++ b/src/container-config.ts
 @@ -13,7 +13,9 @@ import path from 'path';
@@ -172,7 +172,7 @@ index 61902f5f..bae3413f 100644
 +  if ((await getLearningMasterEnabled())) {
 +    const roomLearning = roomLearningMapForAgent(agentGroupId);
 +    if (Object.keys(roomLearning).length > 0) {
-+      config.learning = { ...(config.learning ?? {}), rooms: roomLearning };
++      config.learning = { ...(config.learning ?? {}), rooms: await roomLearning };
 +    }
 +    // Classifier gate (docs/webchat/learning-loop.md): a small local model the runner
 +    // consults before an expensive review. Precedence:
@@ -184,7 +184,7 @@ index 61902f5f..bae3413f 100644
 +    //      which have no local endpoint to call, land here).
 +    const clf = await getLearningClassifier();
 +    const classifier =
-+      clf.url && clf.model ? { url: clf.url, model: clf.model } : resolveLearningClassifier(agentGroupId);
++      clf.url && clf.model ? { url: clf.url, model: clf.model } : await resolveLearningClassifier(agentGroupId);
 +    if (classifier) {
 +      config.learning = { ...(config.learning ?? {}), classifier };
 +    }

@@ -105,9 +105,9 @@ export async function computeUsageRollup(sinceMs: number): Promise<UsageRollup> 
   for (const [roomId, tokens] of roomTokens) {
     let model = 'unknown';
     try {
-      const agentId = getAgentsForWebchatRoom(roomId)[0]?.id;
+      const agentId = (await getAgentsForWebchatRoom(roomId))[0]?.id;
       if (agentId) {
-        const m = getEffectiveModelForAgent(agentId);
+        const m = await getEffectiveModelForAgent(agentId);
         model = m ? `${m.kind}:${m.model_id}` : 'claude (default)';
       }
     } catch {

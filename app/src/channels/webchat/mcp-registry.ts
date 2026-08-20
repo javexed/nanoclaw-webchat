@@ -259,7 +259,7 @@ export async function syncAgentMcpConfig(agentGroupId: string, server: WebchatMc
   if (!row) return false;
   const servers = JSON.parse(row.mcp_servers) as Record<string, McpServerConfig>;
   if (present) {
-    const relayToken = server.auth ? ensureRelayToken(agentGroupId, server.id) : null;
+    const relayToken = server.auth ? await ensureRelayToken(agentGroupId, server.id) : null;
     servers[server.name] = mcpServerToConfig(server, relayToken ?? undefined);
   } else {
     delete servers[server.name];

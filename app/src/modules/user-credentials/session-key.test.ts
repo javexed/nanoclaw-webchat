@@ -23,7 +23,7 @@ const AG = 'ag-key';
 
 beforeEach(async () => {
   const db = await initTestDb();
-  runMigrations(db);
+  await runMigrations(db);
   await db.run(`INSERT OR IGNORE INTO agent_groups (id,name,folder,agent_provider,created_at) VALUES (?,?,?,NULL,'t')`, AG, AG, AG);
   upsertUserCredential(USER, 'claude', 'sec-1', 'api_key');
 });

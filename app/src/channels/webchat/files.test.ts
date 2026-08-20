@@ -15,9 +15,9 @@ import { handleChunkedUpload, handleFileServe } from './files.js';
 
 const ROOM_ID = 'test-room';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
   // Seed a room so handleChunkedUpload doesn't 404 before reaching its
   // validation checks. createWebchatRoom is the post-migration helper —
   // it writes to messaging_groups (channel_type='webchat'), not the
@@ -25,7 +25,7 @@ beforeEach(() => {
   createWebchatRoom('Test', ROOM_ID);
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 
@@ -182,19 +182,19 @@ describe('handleChunkedUpload — JSON body size cap', () => {
 // ── handleFileServe — path traversal ──────────────────────────────────────
 
 describe('handleFileServe — path-traversal guard', () => {
-  it('rejects `..` in roomId', () => {
+  it('rejects `..` in roomId', async () => {
     const { res, captured } = fakeRes();
     handleFileServe(res, '..', 'anything.txt');
     expect([403, 404]).toContain(captured.status);
   });
 
-  it('rejects `..` in filename', () => {
+  it('rejects `..` in filename', async () => {
     const { res, captured } = fakeRes();
     handleFileServe(res, ROOM_ID, '../../../etc/passwd');
     expect([403, 404]).toContain(captured.status);
   });
 
-  it('rejects an absolute filename', () => {
+  it('rejects an absolute filename', async () => {
     const { res, captured } = fakeRes();
     handleFileServe(res, ROOM_ID, '/etc/passwd');
     expect([403, 404]).toContain(captured.status);

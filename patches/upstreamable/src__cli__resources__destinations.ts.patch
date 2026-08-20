@@ -1,15 +1,14 @@
 diff --git a/src/cli/resources/destinations.ts b/src/cli/resources/destinations.ts
-index 00e7b86e..c7b5a418 100644
+index 00e7b86e..5eb2dc51 100644
 --- a/src/cli/resources/destinations.ts
 +++ b/src/cli/resources/destinations.ts
 @@ -1,21 +1,44 @@
--import { getDb, hasTable } from '../../db/connection.js';
 +import fs from 'fs';
 +import path from 'path';
 +
 +import { DATA_DIR } from '../../config.js';
 +import { restartAgentGroupContainers } from '../../container-restart.js';
-+import { getDb } from '../../db/connection.js';
+ import { getDb, hasTable } from '../../db/connection.js';
  import { getSessionsByAgentGroup } from '../../db/sessions.js';
  import { log } from '../../log.js';
 +import { writeDestinations } from '../../modules/agent-to-agent/write-destinations.js';

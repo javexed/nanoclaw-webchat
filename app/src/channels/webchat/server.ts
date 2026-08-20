@@ -883,7 +883,7 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
   // Re-establish the audit forwarder from the persisted target, so a restart
   // does not silently turn forwarding off. Invalid persisted value → off, and
   // the health status says so; it cannot brick boot.
-  configureSyslog(getAuditSyslogTarget());
+  configureSyslog(await getAuditSyslogTarget());
   convergeAgentProviders();
   // Background probe — finishes before any client can hit /api/auth/info in
   // practice (boot completes synchronously to listen()), and the endpoint
@@ -1090,7 +1090,7 @@ async function handleHttp(
   // non-bearer method — so the admin proves the alternative works for their own
   // device and can't lock themselves (or everyone) out.
   if (url.pathname === '/api/webchat/auth' && method === 'GET') {
-    if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+    if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
     // sessionSource lets the client tell whether disabling the bearer token will
     // actually succeed from THIS session: the retire endpoint refuses a disable
     // requested over bearer (self-lockout guard), so the "retire it now" prompt
@@ -1099,7 +1099,7 @@ async function handleHttp(
   }
   if (url.pathname === '/api/webchat/auth/bearer' && method === 'PUT') {
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-    if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+    if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
     const raw = await readJsonBody(req, res);
     if (raw === null) return;
     let body: { active?: unknown };
@@ -1141,7 +1141,7 @@ async function handleHttp(
   // Refuses if one already exists (retire it first).
   if (url.pathname === '/api/webchat/auth/bearer/generate' && method === 'POST') {
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-    if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+    if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
     if (getAuthManagementInfo().bearerConfigured) {
       return json(res, 400, { error: 'A bearer token is already set. Retire it first to replace it.' });
     }
@@ -1162,7 +1162,7 @@ async function handleHttp(
   // before the process goes down. The client reconnects on its own.
   if (url.pathname === '/api/webchat/restart' && method === 'POST') {
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-    if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+    if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
     scheduleHostRestart();
     return json(res, 202, { restarting: true });
   }
@@ -1179,7 +1179,7 @@ async function handleHttp(
       url.pathname.startsWith('/api/mcp-servers/') ||
       url.pathname === '/api/skills' ||
       url.pathname.startsWith('/api/skills/')) &&
-    getMarketplaceDisabled()
+    (await getMarketplaceDisabled())
   ) {
     return json(res, 403, { error: 'MCP and the skills marketplace are disabled by the workspace owner.' });
   }
@@ -1197,8 +1197,8 @@ async function handleHttp(
     for (const g of r.guards ?? []) {
       if (g === 'csrf' && req.headers['x-webchat-csrf'] !== '1')
         return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-      if (g === 'owner' && !isOwner(userId)) return json(res, 403, { error: 'Owner only' });
-      if (g === 'anyAdmin' && !isAnyAdmin(userId)) return json(res, 403, { error: 'Admin privilege required' });
+      if (g === 'owner' && !(await isOwner(userId))) return json(res, 403, { error: 'Owner only' });
+      if (g === 'anyAdmin' && !(await isAnyAdmin(userId))) return json(res, 403, { error: 'Admin privilege required' });
     }
     if (!r.audit) return r.h({ req, res, url, method, userId, senderIdentity, hooks }, m);
     // Audited routes are awaited so the recorded outcome is the real one.
@@ -1242,18 +1242,18 @@ async function handleHttp(
   if (ENGAGED_AGENTS_ENABLED && roomThreadEngagedMatch && method === 'GET') {
     const roomId = decodeURIComponent(roomThreadEngagedMatch[1]);
     const threadId = decodeURIComponent(roomThreadEngagedMatch[2]);
-    if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-    if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+    if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
+    if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
     return json(res, 200, engagedAgentsForThread(roomId, threadId));
   }
   if (ENGAGED_AGENTS_ENABLED && roomThreadEngagedMatch && method === 'POST') {
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
     const roomId = decodeURIComponent(roomThreadEngagedMatch[1]);
     const threadId = decodeURIComponent(roomThreadEngagedMatch[2]);
-    if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-    if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+    if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
+    if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
     if (threadId === 'main') return json(res, 400, { error: 'The regular chat cannot engage agents' });
-    if (!getWebchatThread(roomId, threadId)) return json(res, 404, { error: 'Thread not found' });
+    if (!(await getWebchatThread(roomId, threadId))) return json(res, 404, { error: 'Thread not found' });
     const raw = await readJsonBody(req, res);
     if (raw === null) return;
     let body: { agentGroupId?: unknown };
@@ -1277,8 +1277,8 @@ async function handleHttp(
     const roomId = decodeURIComponent(roomThreadDisengageMatch[1]);
     const threadId = decodeURIComponent(roomThreadDisengageMatch[2]);
     const agentGroupId = decodeURIComponent(roomThreadDisengageMatch[3]);
-    if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-    if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+    if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
+    if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
     disengageAgent(roomId, threadId, agentGroupId);
     broadcastEngagedSet(roomId, threadId);
     return json(res, 200, { ok: true, engaged: engagedAgentsForThread(roomId, threadId) });
@@ -1440,8 +1440,8 @@ async function rCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void>
     return json(res, 200, { ok: true });
   }
   const roomId = typeof body.roomId === 'string' ? body.roomId : '';
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   if (!(await getCredentialsConfig()).allowCodexOauth)
     return json(res, 403, {
       error: 'This workspace does not accept Codex (ChatGPT) subscription (OAuth) connections.',
@@ -1509,7 +1509,7 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
   const rawGroup = url.searchParams.get('agentGroupId');
   const rawUser = url.searchParams.get('userId');
   const agentGroupId = rawGroup && rawGroup !== '*' ? rawGroup : null;
-  if (agentGroupId && !getAgentGroup(agentGroupId)) return json(res, 400, { error: 'Unknown agent group' });
+  if (agentGroupId && !(await getAgentGroup(agentGroupId))) return json(res, 400, { error: 'Unknown agent group' });
   if (rawUser && !agentGroupId) return json(res, 400, { error: 'userId needs an agentGroupId' });
   const scope: Scope = !agentGroupId
     ? WORKSPACE
@@ -1527,8 +1527,8 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
   //    token, which is what per-user credentials exist to prevent.
   //  - user (someone else): nobody, at any privilege level.
   const isSelfScope = scope.kind === 'user' && scope.userId === userId;
-  const isElevated = isOwner(userId) || isGlobalAdmin(userId);
-  const canAdminGroup = agentGroupId ? isElevated || hasAdminPrivilege(userId, agentGroupId) : isElevated;
+  const isElevated = (await isOwner(userId)) || (await isGlobalAdmin(userId));
+  const canAdminGroup = agentGroupId ? isElevated || (await hasAdminPrivilege(userId, agentGroupId)) : isElevated;
   const permitted = scope.kind === 'workspace' ? isElevated : scope.kind === 'agent' ? canAdminGroup : isSelfScope;
   if (!permitted)
     return json(res, 403, {
@@ -1625,8 +1625,8 @@ async function rToolSecretsIsolation(ctx: RouteCtx, _m: RegExpMatchArray): Promi
   // but unable to turn on the isolation that makes them mean anything.
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const agentGroupId = url.searchParams.get('agentGroupId') ?? '';
-  if (!getAgentGroup(agentGroupId)) return json(res, 400, { error: 'Unknown agent group' });
-  if (!isOwner(userId) && !isGlobalAdmin(userId) && !hasAdminPrivilege(userId, agentGroupId))
+  if (!(await getAgentGroup(agentGroupId))) return json(res, 400, { error: 'Unknown agent group' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)) && !(await hasAdminPrivilege(userId, agentGroupId)))
     return json(res, 403, { error: 'Forbidden' });
   try {
     const raw = await readJsonBody(req, res);
@@ -1651,9 +1651,9 @@ async function rToolSecretsIsolation(ctx: RouteCtx, _m: RegExpMatchArray): Promi
 async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, url, method, userId } = ctx;
   const agentGroupId = url.searchParams.get('agentGroupId') ?? '';
-  if (!getAgentGroup(agentGroupId)) return json(res, 400, { error: 'Unknown agent group' });
+  if (!(await getAgentGroup(agentGroupId))) return json(res, 400, { error: 'Unknown agent group' });
   // Per-agent resource → whoever administers that agent, scoped admins included.
-  if (!isOwner(userId) && !isGlobalAdmin(userId) && !hasAdminPrivilege(userId, agentGroupId))
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)) && !(await hasAdminPrivilege(userId, agentGroupId)))
     return json(res, 403, { error: 'Forbidden' });
   if (method === 'GET') return json(res, 200, { keys: listDeployKeys(agentGroupId) });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
@@ -1662,8 +1662,8 @@ async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   try {
     if (method === 'DELETE') {
       const removed = deleteDeployKey(agentGroupId, url.searchParams.get('name') ?? '');
-      if (removed) await refreshCredentialNote(realOnecliAdmin, agentGroupId);
-      return removed ? json(res, 200, { ok: true }) : json(res, 404, { error: 'No such key' });
+      if ((await removed)) await refreshCredentialNote(realOnecliAdmin, agentGroupId);
+      return (await removed) ? json(res, 200, { ok: true }) : json(res, 404, { error: 'No such key' });
     }
     const raw = await readJsonBody(req, res);
     if (raw === null) return;
@@ -1672,7 +1672,7 @@ async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
     const target = (body.target ?? '').trim() || undefined;
     // Re-stamping an existing key's target must not regenerate it — anything
     // already trusting the public half would break.
-    const key = listDeployKeys(agentGroupId).some((k) => k.name === name)
+    const key = (await listDeployKeys(agentGroupId)).some((k) => k.name === name)
       ? setDeployKeyTarget(agentGroupId, name, target ?? '')
       : createDeployKey(agentGroupId, name, target);
     await refreshCredentialNote(realOnecliAdmin, agentGroupId);
@@ -1696,7 +1696,7 @@ async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
 // UIs can see accepted types).
 async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, url, method, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   // The OneCLI vault, loaded lazily + once per request: only the GET path needs
   // it (to detect a pre-existing credential), and only when there's no webchat
   // row to short-circuit on.
@@ -1711,7 +1711,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
     }
     return vaultSecrets;
   };
-  const trackedSecretIds = new Set(listAllTrackedSecretIds());
+  const trackedSecretIds = new Set(await listAllTrackedSecretIds());
   // `connected` is true when the webchat manages a workspace-default credential
   // (`external:false`) OR when a usable provider credential already lives in the
   // OneCLI vault from `/setup` or a legacy path (`external:true`) — the latter is
@@ -1728,8 +1728,8 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   if (method === 'GET') {
     // Flat claude fields (the original shape) + a codex block + the workspace
     // default MODEL (the Ollama-engine analogue of the default credential).
-    const defaultModelId = getDefaultModelId();
-    const defaultModel = await (defaultModelId ? getWebchatModel(defaultModelId) : undefined);
+    const defaultModelId = await getDefaultModelId();
+    const defaultModel = defaultModelId ? await getWebchatModel(defaultModelId) : undefined;
     return json(res, 200, {
       ...(await credState('claude')),
       provider: 'claude',
@@ -1823,7 +1823,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 // policy governs members; the operator setting the workspace fallback is above it).
 async function rWsCredMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -1868,7 +1868,7 @@ async function rWsCredMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void
 // (synthetic id) `openai` secret that `all`-mode Codex base agents auto-inject.
 async function rWsCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -1914,7 +1914,7 @@ async function rWsCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<voi
 // admin gating as the workspace credential.
 async function rWorkspaceModelPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -1944,11 +1944,11 @@ async function rWorkspaceModelPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
 // accessible rooms (and only the agents/models reachable from them).
 async function rTopologyGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const rooms = filterRoomsForUser(userId, getAllWebchatRooms());
+  const rooms = filterRoomsForUser(userId, await getAllWebchatRooms());
   // ALL agents the caller manages become columns/nodes (not just wired ones),
   // so unused agents show as orphans and can be wired from the matrix.
   const agents = (await listAgentsForUser(userId)).map((a) => ({ id: a.id, name: a.name }));
-  const topo = getWebchatTopology(rooms, agents);
+  const topo = getWebchatTopology(await rooms, agents);
   // SCOPED skills only — the ones wired to a specific agent (including anything
   // the learning loop produced). The shared pool is on ~every agent, so drawing
   // it would add hundreds of identical edges that say nothing about any one
@@ -1973,7 +1973,7 @@ async function rSearchGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, url, userId } = ctx;
   const q = url.searchParams.get('q') ?? '';
   if (!q.trim()) return json(res, 200, { results: [] });
-  const rooms = filterRoomsForUser(userId, getAllWebchatRooms());
+  const rooms = await filterRoomsForUser(userId, await getAllWebchatRooms());
   const nameById = new Map(rooms.map((r) => [r.id, r.name]));
   const hits = await searchWebchatMessages(
     rooms.map((r) => r.id),
@@ -1997,16 +1997,18 @@ async function rHistGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, url, userId } = ctx;
   const room = await getWebchatRoom(m[1]);
   if (!room) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, room.id)) return json(res, 403, { error: 'Access denied' });
+  if (!(await canAccessRoom(userId, room.id))) return json(res, 403, { error: 'Access denied' });
   const afterId = url.searchParams.get('after_id');
   const beforeId = url.searchParams.get('before_id');
   // Optional thread filter — absent = the whole room (back-compat).
   const threadId = url.searchParams.get('thread_id') || undefined;
-  const msgs = await afterId
+  // `await afterId ? …` awaited the CONDITION (a string), so the whole chain
+  // stayed un-awaited. Parenthesise the ternary and await its result.
+  const msgs = await (afterId
     ? getWebchatMessagesAfterId(room.id, afterId, 200, threadId)
     : beforeId
       ? getWebchatMessagesBeforeId(room.id, beforeId, 50, threadId)
-      : getWebchatMessages(room.id, 100, threadId);
+      : getWebchatMessages(room.id, 100, threadId));
   return json(
     res,
     200,
@@ -2074,23 +2076,23 @@ async function rChunkPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
 async function rFileGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   return handleFileServe(res, roomId, decodeURIComponent(m[2]));
 }
 
 async function rInstrGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   return readInstructions(res, group.id);
 }
 
 async function rInstrPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   return writeInstructions(req, res, group.id);
 }
 
@@ -2111,9 +2113,9 @@ async function rInstrPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
 // The /content suffix keeps this distinct from the scoped wire/unwire routes.
 async function rScopedSkillContent(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   const name = sanitizeSkillName(decodeURIComponent(m[2]));
   if (!name) return json(res, 400, { error: 'Invalid skill name' });
   if (method === 'GET') return getScopedSkillContentHandler(res, group.id, name);
@@ -2295,7 +2297,7 @@ async function rDraftPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const id = decodeURIComponent(m[1]);
   const draft = await getSkillDraft(id);
   if (!draft || draft.status !== 'pending') return json(res, 404, { error: 'Draft not found' });
-  if (!hasAdminPrivilege(userId, draft.agent_group_id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, draft.agent_group_id))) return json(res, 403, { error: 'Admin privilege required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -2308,7 +2310,7 @@ async function rDraftPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   if (!/^---\s*\n[\s\S]*?description:\s*\S[\s\S]*?\n---/.test(body)) {
     return json(res, 400, { error: 'Body must be a SKILL.md with YAML front-matter including a description' });
   }
-  if (!updateSkillDraftBody(id, body)) return json(res, 404, { error: 'Draft not found' });
+  if (!(await updateSkillDraftBody(id, body))) return json(res, 404, { error: 'Draft not found' });
   return json(res, 200, { ok: true });
 }
 
@@ -2320,7 +2322,7 @@ async function rDraft(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   // Same tier as PUT/Keep: admin over the agent the draft belongs to. A
   // scoped admin of group B must not read or discard group A's drafts —
   // isAnyAdmin above only hides existence from non-admins.
-  if (!hasAdminPrivilege(userId, draft.agent_group_id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, draft.agent_group_id))) return json(res, 403, { error: 'Admin privilege required' });
   if (method === 'GET') {
     // For a patch, hand back the version it would REPLACE too, so the reviewer
     // sees what actually changes rather than a wall of unchanged text.
@@ -2340,7 +2342,7 @@ async function rDraft(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
     });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  if (!resolveSkillDraft(id, 'discarded')) return json(res, 404, { error: 'Draft not found' });
+  if (!(await resolveSkillDraft(id, 'discarded'))) return json(res, 404, { error: 'Draft not found' });
   resolveDraftCard(id, 'discarded', userId);
   return json(res, 200, { ok: true });
 }
@@ -2355,7 +2357,7 @@ async function rDraftKeepPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void>
   // Admin over the draft's OWN group is required here; the handler separately
   // checks admin over the body-supplied TARGET group. Without this, a scoped
   // admin of group B could wire group A's draft content into group B.
-  if (!hasAdminPrivilege(userId, draft.agent_group_id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, draft.agent_group_id))) return json(res, 403, { error: 'Admin privilege required' });
   return keepSkillDraftHandler(req, res, userId, draft);
 }
 
@@ -2442,7 +2444,7 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       skillName: landed || c.skillName,
       description: c.description || undefined,
       roomId: c.roomId,
-      roomName: roomNameOf(c.roomId),
+      roomName: await roomNameOf(c.roomId),
       by: c.resolvedBy,
       draftId: c.draftId,
       skillExists: kind === 'kept' ? skillLives(c.agentGroupId, landed) : undefined,
@@ -2450,7 +2452,7 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   }
 
   // 2. Pending drafts that never got a card (proposed from a non-webchat session).
-  for (const d of listSkillDrafts()) {
+  for (const d of await listSkillDrafts()) {
     if (!allowed.has(d.agent_group_id) || d.created_at >= cutoff) continue;
     if ((await skillDraftCardPosition(d.id))) continue; // its card is the event
     events.push({
@@ -2461,8 +2463,8 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       agentName: allowed.get(d.agent_group_id) as string,
       skillName: d.kind === 'patch' && d.target_skill ? d.target_skill : d.skill_name,
       description: d.description || undefined,
-      roomId: draftSourceRoom(d.session_id),
-      roomName: roomNameOf(draftSourceRoom(d.session_id)),
+      roomId: await draftSourceRoom(d.session_id),
+      roomName: await roomNameOf(await draftSourceRoom(d.session_id)),
       draftId: d.id,
     });
   }
@@ -2550,7 +2552,7 @@ async function rSessionResetPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<vo
   const { res, userId } = ctx;
   const session = await getSession(decodeURIComponent(m[1]));
   if (!session) return json(res, 404, { error: 'Session not found' });
-  if (!hasAdminPrivilege(userId, session.agent_group_id)) {
+  if (!(await hasAdminPrivilege(userId, session.agent_group_id))) {
     return json(res, 403, { error: 'Admin privilege required' });
   }
   try {
@@ -2581,7 +2583,7 @@ async function rTtsVoicesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void>
 // PUT is owner-only. Enforced at spawn in materializeContainerJson.
 async function rLearningConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const canEdit = isOwner(userId) || isGlobalAdmin(userId);
+  const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
   if (method === 'GET') {
     const base = { enabled: getLearningMasterEnabled() };
     return json(
@@ -2656,7 +2658,7 @@ async function rTtsConfigPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void>
 // `enabled`); provider/cleanup details only for owners/global admins.
 async function rSttConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const canEdit = isOwner(userId) || isGlobalAdmin(userId);
+  const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
   if (method === 'GET') {
     const base = { enabled: sttEnabled(), cleanup: getSttCleanupModelId() !== null };
     return json(
@@ -2812,7 +2814,7 @@ async function rApprovalPrejudgePut(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       // models qualify with a NULL endpoint — they route through the
       // OneCLI gateway rather than a local /v1/chat/completions server.
       const model = getWebchatModel(body.modelId);
-      if (!isUsableJudgeModel(model)) {
+      if (!isUsableJudgeModel(await model)) {
         return json(res, 400, {
           error:
             'modelId must name an anthropic roster model, or an ollama/openai-compatible roster model with an endpoint',
@@ -2869,7 +2871,7 @@ async function rApprovePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   // platform_id, so those are NULL on every webchat-routed approval. Same
   // constraint that drove the read path's JOIN against webchat_approvals_index.
   const expectedPlatformId = approvalInboxForUser(userId);
-  if (!expectedPlatformId || !isWebchatApprovalIndexedFor(approvalId, expectedPlatformId)) {
+  if (!expectedPlatformId || !(await isWebchatApprovalIndexedFor(approvalId, expectedPlatformId))) {
     return json(res, 403, { error: 'Not the intended approver for this request' });
   }
   const raw = await readJsonBody(req, res);
@@ -3329,7 +3331,7 @@ function persistOutboundFile(roomId: string, file: OutboundFile): string {
 
 /** Engaged agents in a thread, resolved to {id, name, folder} for the UI. */
 async function engagedAgentsForThread(roomId: string, threadId: string): Promise<Array<{ id: string; name: string; folder: string }>> {
-  const ids = new Set(getEngagedAgents(roomId, threadId));
+  const ids = new Set(await getEngagedAgents(roomId, threadId));
   if (ids.size === 0) return [];
   return (await getAgentsForWebchatRoom(roomId))
     .filter((a) => ids.has(a.id))
@@ -3745,16 +3747,16 @@ export function keepReviewJobFor(draftId: string): Promise<void> | undefined {
  * drift. An "update existing" choice re-types the draft as a patch of the
  * chosen skill. sanitizeSkillName in apply.ts guards the path.
  */
-function applyKeepDecision(
+async function applyKeepDecision(
   draft: KeepDraftMeta,
   groupId: string,
   updateTarget: string,
   userId: string,
-): { status: number; body: Record<string, unknown> } {
+): Promise<{ status: number; body: Record<string, unknown> }> {
   const toApply = updateTarget
     ? { ...draft, agent_group_id: groupId, kind: 'patch' as const, target_skill: updateTarget }
     : { ...draft, agent_group_id: groupId };
-  const r = applySkillDraft(
+  const r = await applySkillDraft(
     toApply as Parameters<typeof applySkillDraft>[0],
     updateTarget || draft.kind === 'patch' ? 'Webchat skill revision applied' : 'Webchat learned skill kept',
   );
@@ -3823,7 +3825,7 @@ async function runKeepReview(draft: KeepDraftMeta, group: { id: string; name: st
       });
       return;
     }
-    const r = applyKeepDecision(draft, group.id, '', userId);
+    const r = await applyKeepDecision(draft, group.id, '', userId);
     if (r.status !== 200) {
       log.warn('Keep review: apply refused the draft', {
         draftId: draft.id,
@@ -3860,9 +3862,9 @@ async function keepSkillDraftHandler(
   } catch {
     return json(res, 400, { error: 'Invalid JSON' });
   }
-  const group = resolveAgent(agentGroupId);
+  const group = await resolveAgent(agentGroupId);
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   const params = new URL(req.url || '', 'http://x').searchParams;
   const force = params.get('force') === '1';
   // `updateTarget` = the operator chose "Update <existing skill>" in the overlap
@@ -3870,7 +3872,7 @@ async function keepSkillDraftHandler(
   // version) instead of creating a duplicate.
   const updateTarget = (params.get('updateTarget') || '').trim();
   if (force || updateTarget) {
-    const r = applyKeepDecision(draft, group.id, updateTarget, userId);
+    const r = await applyKeepDecision(draft, group.id, updateTarget, userId);
     return json(res, r.status, r.body);
   }
   if (keepReviewJobs.has(draft.id)) return json(res, 409, { error: 'Review already in progress' });

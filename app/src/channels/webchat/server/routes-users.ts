@@ -54,9 +54,9 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
   const reqRoomId = method === 'GET' ? (url.searchParams.get('roomId') ?? '') : undefined; // POST/DELETE read roomId from the body below
   if (method === 'GET') {
     const roomId = decodeURIComponent(reqRoomId ?? '');
-    if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-    if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
-    const groups = getAgentsForWebchatRoom(roomId);
+    if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
+    if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+    const groups = await getAgentsForWebchatRoom(roomId);
     // Effective mode (room override → global default). Credential TYPES are
     // workspace-wide (Credentials admin page); which ones apply here depends on
     // the room's provider (Claude vs Codex).
@@ -85,8 +85,8 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
     return json(res, 400, { error: 'Invalid JSON' });
   }
   const roomId = typeof body.roomId === 'string' ? body.roomId : '';
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   const groups = await getAgentsForWebchatRoom(roomId);
   if (groups.length === 0) return json(res, 400, { error: 'Room has no wired agent' });
   const provider = groups[0] && (await getContainerConfig(groups[0].id))?.provider === 'codex' ? 'codex' : 'claude';
@@ -184,8 +184,8 @@ export async function rUserCredsMintPost(ctx: RouteCtx, m: RegExpMatchArray): Pr
     return json(res, 200, { ok: true });
   }
   const roomId = typeof body.roomId === 'string' ? body.roomId : '';
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   if (!(await getCredentialsConfig()).allowClaudeOauth)
     return json(res, 403, { error: 'This workspace does not accept Claude subscription (OAuth) connections.' });
   const groups = await getAgentsForWebchatRoom(roomId);
@@ -217,7 +217,7 @@ export async function rUserCredsMintPost(ctx: RouteCtx, m: RegExpMatchArray): Pr
 // escalate privilege. The /api/users view is scoped per-caller below.
 export async function rUsersGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!isAnyAdmin(userId)) return json(res, 403, { error: 'Admin only' });
+  if (!(await isAnyAdmin(userId))) return json(res, 403, { error: 'Admin only' });
   return json(res, 200, listUsersWithPermissions(userId));
 }
 
@@ -292,7 +292,7 @@ export async function listUsersWithPermissions(callerUserId?: string): Promise<U
   // The user *list* itself is unfiltered (an admin must be able to add any
   // user as a member of their group), but the per-user roles/memberships are
   // restricted to the caller's administered groups.
-  const fullView = !callerUserId || isOwner(callerUserId) || isGlobalAdmin(callerUserId);
+  const fullView = !callerUserId || (await isOwner(callerUserId)) || (await isGlobalAdmin(callerUserId));
   const scopedGroupIds = fullView
     ? null
     : new Set((await filterAsync(groups, (g) => hasAdminPrivilege(callerUserId, g.id))).map((g) => g.id));
@@ -404,7 +404,7 @@ export async function checkMemberGrantAuth(
   if (await isOwner(callerUserId)) return null;
   if (kind !== 'member') return { error: 'Owner only' };
   const groupId = typeof agentGroupId === 'string' ? agentGroupId : null;
-  if (!groupId || !hasAdminPrivilege(callerUserId, groupId)) {
+  if (!groupId || !(await hasAdminPrivilege(callerUserId, groupId))) {
     return { error: 'Admin privilege required for this group' };
   }
   return null;

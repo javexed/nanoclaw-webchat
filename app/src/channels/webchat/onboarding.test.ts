@@ -4,9 +4,9 @@ import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { getOnboardingComplete, setOnboardingComplete, getCredentialsConfig, setCredentialsConfig } from './db.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 afterEach(() => closeDb());
 
@@ -19,7 +19,7 @@ describe('onboarding_complete (first-run wizard state)', () => {
     expect(getOnboardingComplete()).toBe(false);
   });
 
-  it('persists the flag (finish / reset) even when the settings row does not exist yet', () => {
+  it('persists the flag (finish / reset) even when the settings row does not exist yet', async () => {
     setOnboardingComplete(true);
     expect(getOnboardingComplete()).toBe(true);
     setOnboardingComplete(false);

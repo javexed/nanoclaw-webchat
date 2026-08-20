@@ -13,9 +13,9 @@ import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { listUsersWithPermissions } from './server/routes-users.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 afterEach(() => closeDb());
 
@@ -43,7 +43,7 @@ async function find(rows: ReturnType<typeof listUsersWithPermissions>, id: strin
 }
 
 describe('listUsersWithPermissions caller-scoping', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     role('webchat:owner', 'owner', null);
     role('webchat:sadmin', 'admin', 'ag-1'); // scoped admin of ag-1 only
     // Target user: member of ag-1 AND ag-2, plus a scoped-admin role on ag-2.

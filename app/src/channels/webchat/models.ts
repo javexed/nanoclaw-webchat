@@ -357,7 +357,7 @@ export async function writeAgentSettingsForAssignedModel(agentGroupId: string): 
     const provider = (await getContainerConfig(agentGroupId))?.provider;
     if (!provider || provider === 'claude') model = getEffectiveModelForAgent(agentGroupId);
   }
-  const overrides = envForModel(model);
+  const overrides = envForModel(await model);
 
   const settingsPath = path.join(DATA_DIR, 'v2-sessions', agentGroupId, '.claude-shared', 'settings.json');
   if (!fs.existsSync(path.dirname(settingsPath))) {
@@ -452,7 +452,7 @@ export async function syncAgentProviderForAssignedModel(agentGroupId: string): P
   if (managed && !sticky) {
     // Decide on the EFFECTIVE model so a workspace-default local model (wizard
     // "default engine = Ollama") auto-uses OpenCode too, not only per-agent picks.
-    const model = getEffectiveModelForAgent(agentGroupId);
+    const model = await getEffectiveModelForAgent(agentGroupId);
     ensureContainerConfig(agentGroupId);
     updateContainerConfigScalars(agentGroupId, { provider: providerForModelKind(model?.kind) });
   }
@@ -484,7 +484,7 @@ export async function writeLocalModelForAgent(agentGroupId: string): Promise<voi
   // Shared local-model wiring: both local harnesses (opencode + pi) read this file.
   const provider = (await getContainerConfig(agentGroupId))?.provider;
   const onLocalHarness = (provider === 'opencode' && opencodeInstalled()) || (provider === 'pi' && piInstalled());
-  const model = onLocalHarness ? getEffectiveModelForAgent(agentGroupId) : null;
+  const model = await (onLocalHarness ? getEffectiveModelForAgent(agentGroupId) : null);
   if (!model || model.kind !== 'ollama' || !model.endpoint) {
     // Clear BOTH names: an install that predates the rename can still be
     // carrying the legacy file, and leaving it would keep stale wiring alive

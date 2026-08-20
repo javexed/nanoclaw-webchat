@@ -131,7 +131,7 @@ export function deskState(running: boolean, lastKind: string | null, idleMs: num
  */
 export async function buildFloor(userId: string): Promise<FloorSnapshot> {
   const db = getDb();
-  const privileged = isOwner(userId) || isAnyAdmin(userId);
+  const privileged = (await isOwner(userId)) || (await isAnyAdmin(userId));
 
   const rows = (await db.all(`SELECT id, agent_group_id, messaging_group_id, last_active
          FROM sessions
@@ -142,14 +142,14 @@ export async function buildFloor(userId: string): Promise<FloorSnapshot> {
 
   for (const row of rows) {
     // Scope first: never do per-session work for a group the caller cannot see.
-    if (!canAccessAgentGroup(userId, row.agent_group_id)) continue;
+    if (!(await canAccessAgentGroup(userId, row.agent_group_id))) continue;
 
     // getWebchatRoom() keys on PLATFORM id, not the messaging-group row id that
     // sessions carry — passing the latter missed every time and painted the
     // whole floor "no room". Resolve the group itself, then expose its
     // platform_id only for webchat (that is the id the room click-through
     // understands); a session wired to slack or telegram still shows its name.
-    const mg = row.messaging_group_id ? getMessagingGroup(row.messaging_group_id) : undefined;
+    const mg = row.messaging_group_id ? await getMessagingGroup(row.messaging_group_id) : undefined;
     const { roomId, roomName } = roomFor(mg);
     const running = isContainerRunning(row.id);
     // Only pay the DB open for sessions that could be doing something. A cold
@@ -161,7 +161,7 @@ export async function buildFloor(userId: string): Promise<FloorSnapshot> {
     desks.push({
       session_id: row.id,
       agent_group_id: row.agent_group_id,
-      agent_name: agentNameFor(db, row.agent_group_id),
+      agent_name: await agentNameFor(db, row.agent_group_id),
       room_id: roomId,
       room_name: roomName,
       state: deskState(running, lastKind, idleMs),

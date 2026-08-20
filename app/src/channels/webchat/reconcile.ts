@@ -123,9 +123,9 @@ async function reconcileOnce(server: WebchatServer): Promise<void> {
           continue;
         }
 
-        const probe: WebchatMessageProbe | undefined = hasText
+        const probe: WebchatMessageProbe | undefined = await (hasText
           ? findStoredAgentMessage(roomId, text!, tsMs)
-          : findStoredAgentFile(roomId, fileMetas[0].filename, tsMs);
+          : findStoredAgentFile(roomId, fileMetas[0].filename, tsMs));
 
         if (probe) {
           // Regular delivery covered it — just remember we've seen it.

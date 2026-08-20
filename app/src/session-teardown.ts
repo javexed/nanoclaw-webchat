@@ -37,7 +37,7 @@ async function findSessionsBy(column: 'messaging_group_id' | 'agent_group_id', v
   return rows.map((r) => ({ sessionId: r.id, agentGroupId: r.agent_group_id }));
 }
 
-export function findSessionsByMessagingGroup(messagingGroupId: string): TeardownTarget[] {
+export async function findSessionsByMessagingGroup(messagingGroupId: string): Promise<TeardownTarget[]> {
   return findSessionsBy('messaging_group_id', messagingGroupId);
 }
 
@@ -48,7 +48,7 @@ export async function findSessionsByMessagingGroupThread(messagingGroupId: strin
   return rows.map((r) => ({ sessionId: r.id, agentGroupId: r.agent_group_id }));
 }
 
-export function findSessionsByAgentGroup(agentGroupId: string): TeardownTarget[] {
+export async function findSessionsByAgentGroup(agentGroupId: string): Promise<TeardownTarget[]> {
   return findSessionsBy('agent_group_id', agentGroupId);
 }
 

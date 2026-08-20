@@ -78,7 +78,7 @@ interface MemberInfo {
 // the channel adapter's setTyping() flips its presence flag.
 const activeAgents = new Map<string, string>(); // roomId -> agent identity
 
-export function getMemberList(roomId: string): MemberInfo[] {
+export async function getMemberList(roomId: string): Promise<MemberInfo[]> {
   const seen = new Set<string>();
   const members: MemberInfo[] = [];
   for (const c of clients.values()) {
@@ -87,7 +87,7 @@ export function getMemberList(roomId: string): MemberInfo[] {
       members.push({
         identity: c.identity,
         identity_type: c.identity_type,
-        handle: getWebchatUserHandle(c.userId) ?? undefined,
+        handle: (await getWebchatUserHandle(c.userId)) ?? undefined,
       });
     }
   }
@@ -149,7 +149,7 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string)
   // (Web-push stays generic for now — subscriptions are keyed by display name,
   // not user id, so per-recipient mention tailoring is a follow-up.)
   const mentionedUserIds = isMessage
-    ? new Set(resolveHandlesToUserIds(extractHandles((msg as { content?: string }).content || '')))
+    ? new Set(await resolveHandlesToUserIds(extractHandles((msg as { content?: string }).content || '')))
     : new Set<string>();
   const mentionPayload = JSON.stringify({ type: 'mention', room_id: roomId });
 
@@ -194,7 +194,11 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string)
  * text is surfaced (file attachments are not). Self-messages (from === to,
  * used for system notes) and empty text are skipped.
  */
-export async function surfaceA2aMessage(fromAgentGroupId: string, toAgentGroupId: string, contentJson: string): Promise<void> {
+export async function surfaceA2aMessage(
+  fromAgentGroupId: string,
+  toAgentGroupId: string,
+  contentJson: string,
+): Promise<void> {
   if (fromAgentGroupId === toAgentGroupId) return;
 
   let text = '';
@@ -289,47 +293,58 @@ export function pushApprovalResolvedToUser(userId: string, approvalId: string, r
  */
 export async function annotateRoomsForUser(
   userId: string,
-  allRooms: WebchatRoom[] = getAllWebchatRooms(),
-  archivedSet: Set<string> = getArchivedRoomIds(),
-  activityMap: Map<string, number> = getRoomLastActivity(),
-  threadCounts: Map<string, number> = getTopicThreadCounts(),
-): Promise<Array<
-  WebchatRoom & {
-    archived: boolean;
-    hidden: boolean;
-    canArchive: boolean;
-    unread: boolean;
-    mention: boolean;
-    pinned: boolean;
-    pin_position: number | null;
-    last_activity: number;
-    thread_count: number;
-  }
->> {
-  const visible = filterRoomsForUser(userId, allRooms);
+  // Optional, resolved below when omitted: a parameter DEFAULT cannot await,
+  // and these four became async with the DB. A fan-out (broadcastRooms) still
+  // passes them in to compute once across all clients.
+  allRoomsIn?: WebchatRoom[],
+  archivedSetIn?: Set<string>,
+  activityMapIn?: Map<string, number>,
+  threadCountsIn?: Map<string, number>,
+): Promise<
+  Array<
+    WebchatRoom & {
+      archived: boolean;
+      hidden: boolean;
+      canArchive: boolean;
+      unread: boolean;
+      mention: boolean;
+      pinned: boolean;
+      pin_position: number | null;
+      last_activity: number;
+      thread_count: number;
+    }
+  >
+> {
+  const allRooms = allRoomsIn ?? (await getAllWebchatRooms());
+  const archivedSet = archivedSetIn ?? (await getArchivedRoomIds());
+  const activityMap = activityMapIn ?? (await getRoomLastActivity());
+  const threadCounts = threadCountsIn ?? (await getTopicThreadCounts());
+  const visible = await filterRoomsForUser(userId, allRooms);
   const hiddenSet = await getHiddenRoomIdsForUser(userId); // per-user
   const unreadSet = await getUnreadRoomIdsForUser(userId); // per-user
-  const mentionSet = await getMentionedRoomIdsForUser(userId, getWebchatUserHandle(userId) ?? ''); // per-user
+  const mentionSet = await getMentionedRoomIdsForUser(userId, (await getWebchatUserHandle(userId)) ?? ''); // per-user
   const pinnedPos = await getPinnedPositionsForUser(userId); // per-user: room → manual order
-  return visible.map((r) => ({
-    ...r,
-    archived: archivedSet.has(r.id),
-    hidden: hiddenSet.has(r.id),
-    canArchive: canArchiveRoom(userId, r.id),
-    unread: unreadSet.has(r.id),
-    mention: mentionSet.has(r.id),
-    pinned: pinnedPos.has(r.id),
-    // Manual pin order (lower = higher); null when unpinned. The client sorts the
-    // pinned group by this instead of recent activity.
-    pin_position: pinnedPos.get(r.id) ?? null,
-    // Newest-message time drives the "Recent" sort; fall back to created_at.
-    last_activity: activityMap.get(r.id) ?? r.created_at,
-    // Topic-thread count — drives the sidebar expand chevron.
-    thread_count: threadCounts.get(r.id) ?? 0,
-  }));
+  return Promise.all(
+    visible.map(async (r) => ({
+      ...r,
+      archived: archivedSet.has(r.id),
+      hidden: hiddenSet.has(r.id),
+      canArchive: await canArchiveRoom(userId, r.id),
+      unread: unreadSet.has(r.id),
+      mention: mentionSet.has(r.id),
+      pinned: pinnedPos.has(r.id),
+      // Manual pin order (lower = higher); null when unpinned. The client sorts the
+      // pinned group by this instead of recent activity.
+      pin_position: pinnedPos.get(r.id) ?? null,
+      // Newest-message time drives the "Recent" sort; fall back to created_at.
+      last_activity: activityMap.get(r.id) ?? r.created_at,
+      // Topic-thread count — drives the sidebar expand chevron.
+      thread_count: threadCounts.get(r.id) ?? 0,
+    })),
+  );
 }
 
-export function broadcastRooms(): void {
+export async function broadcastRooms(): Promise<void> {
   const allRooms = getAllWebchatRooms();
   const archivedSet = getArchivedRoomIds(); // global, computed once per broadcast
   const activityMap = getRoomLastActivity(); // global, computed once per broadcast
@@ -339,7 +354,7 @@ export function broadcastRooms(): void {
     c.ws.send(
       JSON.stringify({
         type: 'rooms',
-        rooms: annotateRoomsForUser(c.userId, allRooms, archivedSet, activityMap, threadCounts),
+        rooms: annotateRoomsForUser(c.userId, await allRooms, await archivedSet, await activityMap, await threadCounts),
       }),
     );
   }

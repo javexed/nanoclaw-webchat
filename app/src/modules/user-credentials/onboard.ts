@@ -259,7 +259,7 @@ export async function setWorkspaceDefaultCredential(
 ): Promise<void> {
   await storeUserCredential(admin, WORKSPACE_DEFAULT_USER_ID, provider, value, credType);
   const secretType = secretTypeFor(provider);
-  const tracked = new Set(listAllTrackedSecretIds());
+  const tracked = new Set(await listAllTrackedSecretIds());
   const stale = (await admin.listAllSecrets()).filter((s) => s.type === secretType && !tracked.has(s.id));
 
   // Before deleting the legacy secrets, re-point any `selective` agent that was

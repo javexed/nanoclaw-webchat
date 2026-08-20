@@ -30,9 +30,9 @@ vi.mock('../../container-runner.js', () => ({
 
 const now = () => new Date().toISOString();
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 
   // Two agents wired to one room, both with running sessions. The setup
   // is what previously confused the heuristic: which agent gets credit
@@ -85,7 +85,7 @@ beforeEach(() => {
   updateSession('sess-ag-beta', { last_active: new Date(Date.now() + 1000).toISOString() });
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 

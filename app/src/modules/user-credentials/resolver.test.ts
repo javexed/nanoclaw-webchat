@@ -22,9 +22,9 @@ const webchatMg = (platformId: string) => ({
   is_group: 0,
 });
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 afterEach(() => closeDb());
 
@@ -32,17 +32,17 @@ describe('userCreds session-key resolver', () => {
   // THE POINT OF THE CHANGE: two threads must not share one session. Keyed by
   // user alone they did, so one member's queue held 89 main-thread rows and 60
   // topic-thread rows and the agent answered a room message into the thread.
-  it('gives each thread its own per-member session key', () => {
+  it('gives each thread its own per-member session key', async () => {
     setRoomModeOverride('room-1', 'required');
     upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
-    const main = resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', 'webchat:alice', null);
-    const topic = resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', 'webchat:alice', 'topic-9');
+    const main = await resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', 'webchat:alice', null);
+    const topic = await resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', 'webchat:alice', 'topic-9');
     expect(main?.threadId).toBe('webchat:alice::main');
     expect(topic?.threadId).toBe('webchat:alice::topic-9');
     expect(main?.threadId).not.toBe(topic?.threadId);
   });
 
-  it('connected member in a UserCreds room → per-member session keyed by (user, thread)', () => {
+  it('connected member in a UserCreds room → per-member session keyed by (user, thread)', async () => {
     setRoomModeOverride('room-1', 'required');
     upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
     expect(resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', 'webchat:alice')).toEqual({
@@ -51,12 +51,12 @@ describe('userCreds session-key resolver', () => {
     });
   });
 
-  it('optional + not connected → no override (falls back to the shared session)', () => {
+  it('optional + not connected → no override (falls back to the shared session)', async () => {
     setRoomModeOverride('room-1', 'optional');
     expect(resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', 'webchat:bob')).toBeNull();
   });
 
-  it('required + not connected → turn-gate VETO (never bills the shared key)', () => {
+  it('required + not connected → turn-gate VETO (never bills the shared key)', async () => {
     setRoomModeOverride('room-1', 'required');
     // The key resolver itself stays silent (no override) …
     expect(resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', 'webchat:bob')).toBeNull();
@@ -66,12 +66,12 @@ describe('userCreds session-key resolver', () => {
     expect(veto).toEqual({ reason: 'user-creds-required-no-key' });
   });
 
-  it('disabled room (no API-key mode, no OAuth) → no override', () => {
+  it('disabled room (no API-key mode, no OAuth) → no override', async () => {
     upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
     expect(resolveSessionKeyOverride(webchatMg('room-x'), 'ag-1', 'webchat:alice')).toBeNull(); // room-x has no row → disabled
   });
 
-  it('disabled room does NOT route OAuth either — mode is the master gate over both methods', () => {
+  it('disabled room does NOT route OAuth either — mode is the master gate over both methods', async () => {
     // User credentials Off = no UserCreds at all, even with workspace OAuth accepted
     // AND a connected subscription. (The mode gates OAuth, not just API keys.)
     setCredentialsConfig({ allowClaudeOauth: true });
@@ -86,14 +86,14 @@ describe('userCreds session-key resolver', () => {
     });
   });
 
-  it('revoked credential → no override', () => {
+  it('revoked credential → no override', async () => {
     setRoomModeOverride('room-1', 'optional');
     upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
     setUserCredentialStatus('webchat:alice', 'claude', 'revoked');
     expect(resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', 'webchat:alice')).toBeNull();
   });
 
-  it('connected OAuth member stops routing when the workspace disables OAuth', () => {
+  it('connected OAuth member stops routing when the workspace disables OAuth', async () => {
     setRoomModeOverride('room-1', 'optional');
     upsertUserCredential('webchat:alice', 'claude', 'sec-oat', 'oauth_token');
     setCredentialsConfig({ allowClaudeOauth: true });
@@ -106,14 +106,14 @@ describe('userCreds session-key resolver', () => {
     expect(resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', 'webchat:alice')).toBeNull();
   });
 
-  it('non-webchat channel → no override', () => {
+  it('non-webchat channel → no override', async () => {
     setRoomModeOverride('room-1', 'required');
     upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
     const telegramMg = { id: 'mg-2', channel_type: 'telegram', platform_id: 'room-1', is_group: 1 };
     expect(resolveSessionKeyOverride(telegramMg, 'ag-1', 'webchat:alice')).toBeNull();
   });
 
-  it('null userId → no override', () => {
+  it('null userId → no override', async () => {
     setRoomModeOverride('room-1', 'required');
     expect(resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', null)).toBeNull();
   });
@@ -122,43 +122,43 @@ describe('userCreds session-key resolver', () => {
 describe('container-env resolver (OAuth sentinel at spawn)', () => {
   const OAUTH_ENV = { CLAUDE_CODE_OAUTH_TOKEN: 'placeholder', ANTHROPIC_API_KEY: '' };
 
-  it('per-member OAuth session → sentinel env', () => {
+  it('per-member OAuth session → sentinel env', async () => {
     upsertUserCredential('webchat:alice', 'claude', 'sec-oat', 'oauth_token');
     expect(resolveContainerEnv('ag-1', 'webchat:alice')).toEqual(OAUTH_ENV);
   });
 
-  it('per-member API-key session → no env (rides x-api-key)', () => {
+  it('per-member API-key session → no env (rides x-api-key)', async () => {
     upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
     expect(resolveContainerEnv('ag-1', 'webchat:alice')).toEqual({});
   });
 
-  it('base session + OAuth workspace default → sentinel env', () => {
+  it('base session + OAuth workspace default → sentinel env', async () => {
     upsertUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude', 'sec-ws-oat', 'oauth_token');
     expect(resolveContainerEnv('ag-1', null)).toEqual(OAUTH_ENV);
   });
 
-  it('base session + API-key workspace default → no env', () => {
+  it('base session + API-key workspace default → no env', async () => {
     upsertUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude', 'sec-ws-key', 'api_key');
     expect(resolveContainerEnv('ag-1', null)).toEqual({});
   });
 
-  it('base session + no workspace default → no env', () => {
+  it('base session + no workspace default → no env', async () => {
     expect(resolveContainerEnv('ag-1', null)).toEqual({});
   });
 
-  it('member API key wins over an OAuth workspace default for that member session', () => {
+  it('member API key wins over an OAuth workspace default for that member session', async () => {
     upsertUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude', 'sec-ws-oat', 'oauth_token');
     upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
     expect(resolveContainerEnv('ag-1', 'webchat:alice')).toEqual({}); // member key mode
     expect(resolveContainerEnv('ag-1', null)).toEqual(OAUTH_ENV); // base still OAuth
   });
 
-  it('topic-thread ids (not a credentialed member) fall through to the workspace default', () => {
+  it('topic-thread ids (not a credentialed member) fall through to the workspace default', async () => {
     upsertUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude', 'sec-ws-oat', 'oauth_token');
     expect(resolveContainerEnv('ag-1', 'main')).toEqual(OAUTH_ENV); // webchat topic thread
   });
 
-  it('revoked workspace default → no sentinel (fail back to key mode)', () => {
+  it('revoked workspace default → no sentinel (fail back to key mode)', async () => {
     upsertUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude', 'sec-ws-oat', 'oauth_token');
     setUserCredentialStatus(WORKSPACE_DEFAULT_USER_ID, 'claude', 'revoked');
     expect(resolveContainerEnv('ag-1', null)).toEqual({});
@@ -166,15 +166,15 @@ describe('container-env resolver (OAuth sentinel at spawn)', () => {
 });
 
 describe('userCreds agent-identity resolver (spawn)', () => {
-  it('per-member session of a connected member → the member UserCreds identity', () => {
+  it('per-member session of a connected member → the member UserCreds identity', async () => {
     upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
     expect(resolveAgentIdentity('ag-1', 'webchat:alice')).toBe(userCredsAgentIdentifier('ag-1', 'webchat:alice'));
   });
-  it('not connected / no thread → null (default agent-group identity)', () => {
+  it('not connected / no thread → null (default agent-group identity)', async () => {
     expect(resolveAgentIdentity('ag-1', 'webchat:bob')).toBeNull();
     expect(resolveAgentIdentity('ag-1', null)).toBeNull();
   });
-  it('revoked credential → null', () => {
+  it('revoked credential → null', async () => {
     upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
     setUserCredentialStatus('webchat:alice', 'claude', 'revoked');
     expect(resolveAgentIdentity('ag-1', 'webchat:alice')).toBeNull();

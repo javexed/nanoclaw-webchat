@@ -27,7 +27,7 @@ import { log } from '../../../log.js';
 import { getAssignedModelForAgent } from '../db.js';
 import { syncAgentProviderForAssignedModel, writeAgentSettingsForAssignedModel } from '../models.js';
 
-export function reloadAgentModelEnv(agentGroupId: string, reason: string): void {
+export async function reloadAgentModelEnv(agentGroupId: string, reason: string): Promise<void> {
   try {
     writeAgentSettingsForAssignedModel(agentGroupId);
   } catch (err) {
@@ -43,7 +43,7 @@ export function reloadAgentModelEnv(agentGroupId: string, reason: string): void 
     log.warn('Webchat: provider sync after model change failed', { agentGroupId, reason, err });
   }
   try {
-    const restarted = restartAgentGroupContainers(agentGroupId, reason);
+    const restarted = await restartAgentGroupContainers(agentGroupId, reason);
     if (restarted > 0) {
       log.info('Webchat: restarted containers after model change', { agentGroupId, reason, restarted });
     }

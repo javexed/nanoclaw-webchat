@@ -54,13 +54,13 @@ const addr = { platformId: 'room-1', channelType: 'webchat', threadId: null };
 
 const testSessionTree = path.join(DATA_DIR, 'v2-sessions', 'ag-1');
 
-beforeEach(() => {
+beforeEach(async () => {
   fs.rmSync(testSessionTree, { recursive: true, force: true }); // fresh session dir each test
-  initTestDb();
-  runMigrations(getDb());
+  await initTestDb();
+  await runMigrations(getDb());
   seedSession();
 });
-afterEach(() => {
+afterEach(async () => {
   closeDb();
   fs.rmSync(testSessionTree, { recursive: true, force: true });
 });
@@ -174,7 +174,7 @@ describe('writeMemberTranscript', () => {
     expect(rows.find((r) => r.id === `user-creds-sess-alice-${m2.id}`)!.trigger).toBe(1); // current wakes
   });
 
-  it('falls back (returns false) when the current message is not in the transcript', () => {
+  it('falls back (returns false) when the current message is not in the transcript', async () => {
     storeWebchatMessage('room-1', 'Alice', 'user', 'old');
     const handled = writeMemberTranscript({
       agentGroupId: 'ag-1',

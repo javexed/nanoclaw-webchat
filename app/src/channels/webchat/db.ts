@@ -655,7 +655,7 @@ export async function setCredentialsConfig(patch: Partial<CredentialsConfig>): P
 // NOT NULL credential columns from current config so the row can be created if
 // it doesn't exist yet, then flips only its own column on conflict.
 
-function settingsGetter<T>(column: string, decode: (value: unknown) => T): () => T {
+function settingsGetter<T>(column: string, decode: (value: unknown) => T): () => Promise<T> {
   return async () => {
     try {
       const row = (await getDb().get(`SELECT ${column} FROM webchat_settings WHERE id = 1`)) as
@@ -811,7 +811,7 @@ export async function setRoomModeOverride(roomId: string, mode: RoomModeOverride
 
 /** The room's effective credential mode: its own override, else the global default. */
 export async function getEffectiveRoomMode(roomId: string): Promise<CredentialMode> {
-  return getRoomModeOverride(roomId) ?? (await getCredentialsConfig()).defaultMode;
+  return (await getRoomModeOverride(roomId)) ?? (await getCredentialsConfig()).defaultMode;
 }
 
 // ── Messages ──
@@ -1442,13 +1442,13 @@ export async function ensureThread(
 }
 
 /** Ensure the room's 'main' thread exists. */
-export function ensureMainThread(roomId: string): string {
-  return ensureThread(roomId, MAIN_THREAD, 'Main', 'main');
+export async function ensureMainThread(roomId: string): Promise<string> {
+  return await ensureThread(roomId, MAIN_THREAD, 'Main', 'main');
 }
 
 /** Ensure a per-agent lane ('agent:<folder>'); returns its thread_id. */
-export function ensureAgentThread(roomId: string, folder: string, displayName: string): string {
-  return ensureThread(roomId, `agent:${folder}`, displayName, 'agent');
+export async function ensureAgentThread(roomId: string, folder: string, displayName: string): Promise<string> {
+  return await ensureThread(roomId, `agent:${folder}`, displayName, 'agent');
 }
 
 /** Clean a user-supplied thread title: strip control chars, collapse
@@ -1499,7 +1499,7 @@ export async function listWebchatThreads(roomId: string): Promise<WebchatThread[
  */
 export async function getTopicThreadCounts(): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
-  if (!hasTable(getDb(), 'webchat_threads')) return counts;
+  if (!(await hasTable(getDb(), 'webchat_threads'))) return counts;
   const rows = (await getDb().all(
     `SELECT room_id, COUNT(*) AS n FROM webchat_threads WHERE kind = 'topic' GROUP BY room_id`,
   )) as Array<{ room_id: string; n: number }>;
@@ -1971,7 +1971,7 @@ export async function getAssignedModelForAgent(agentGroupId: string): Promise<We
     agentGroupId,
   )) as { model_id: string } | undefined;
   if (!row) return null;
-  return getWebchatModel(row.model_id) ?? null;
+  return (await getWebchatModel(row.model_id)) ?? null;
 }
 
 /**
@@ -1988,11 +1988,11 @@ export const setDefaultModelId = settingsSetter('default_model_id', encodeNullab
  * lenientOutput augmentor consume — per-agent assignment always wins,
  * mirroring member-credential > workspace-credential layering.
  */
-export function getEffectiveModelForAgent(agentGroupId: string): WebchatModel | null {
-  const assigned = getAssignedModelForAgent(agentGroupId);
+export async function getEffectiveModelForAgent(agentGroupId: string): Promise<WebchatModel | null> {
+  const assigned = await getAssignedModelForAgent(agentGroupId);
   if (assigned) return assigned;
-  const defaultId = getDefaultModelId();
-  return defaultId ? (getWebchatModel(defaultId) ?? null) : null;
+  const defaultId = await getDefaultModelId();
+  return defaultId ? ((await getWebchatModel(defaultId)) ?? null) : null;
 }
 
 export async function assignModelToAgent(agentGroupId: string, modelId: string): Promise<void> {
@@ -2283,7 +2283,7 @@ export async function setWebchatUserHandle(
  * @-mentionable by default. Returns the effective handle.
  */
 export async function ensureWebchatUserHandle(userId: string, displayName: string): Promise<string> {
-  const existing = getWebchatUserHandle(userId);
+  const existing = await getWebchatUserHandle(userId);
   if (existing) return existing;
   const base = slugifyHandle(displayName);
   let candidate = base;
@@ -2295,7 +2295,7 @@ export async function ensureWebchatUserHandle(userId: string, displayName: strin
     Date.now(),
   );
   // Re-read in case a concurrent connect won the INSERT for this user_id.
-  return getWebchatUserHandle(userId) ?? candidate;
+  return (await getWebchatUserHandle(userId)) ?? candidate;
 }
 
 /**

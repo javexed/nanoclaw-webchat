@@ -25,12 +25,12 @@ import {
   unhideRoomForUser,
 } from './db.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 
@@ -41,7 +41,7 @@ describe('archive (global)', () => {
     expect((await getArchivedRoomIds()).has('room-1')).toBe(true);
   });
 
-  it('unarchive removes the row', () => {
+  it('unarchive removes the row', async () => {
     archiveRoom('room-1', 'webchat:alice');
     unarchiveRoom('room-1');
     expect(isRoomArchived('room-1')).toBe(false);
@@ -53,11 +53,11 @@ describe('archive (global)', () => {
     expect((await getArchivedRoomIds()).size).toBe(1);
   });
 
-  it('unarchive is idempotent (no error if not archived)', () => {
+  it('unarchive is idempotent (no error if not archived)', async () => {
     expect(() => unarchiveRoom('room-1')).not.toThrow();
   });
 
-  it('clearArchiveForRoom drops the global archive (called on room delete)', () => {
+  it('clearArchiveForRoom drops the global archive (called on room delete)', async () => {
     archiveRoom('room-1', 'webchat:alice');
     archiveRoom('room-2', 'webchat:alice');
     clearArchiveForRoom('room-1');
@@ -84,7 +84,7 @@ describe('hide (per-user)', () => {
     expect((await getHiddenRoomIdsForUser('webchat:alice')).size).toBe(1);
   });
 
-  it('unhide is idempotent (no error if not hidden)', () => {
+  it('unhide is idempotent (no error if not hidden)', async () => {
     expect(() => unhideRoomForUser('webchat:alice', 'room-1')).not.toThrow();
   });
 

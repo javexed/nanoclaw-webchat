@@ -174,7 +174,7 @@ export async function readFloorEvents(userId: string, sinceIso?: string): Promis
 
   for (const row of rows) {
     if (!isContainerRunning(row.id)) continue;
-    if (!canAccessAgentGroup(userId, row.agent_group_id)) continue;
+    if (!(await canAccessAgentGroup(userId, row.agent_group_id))) continue;
 
     const mg = await (row.messaging_group_id ? getMessagingGroup(row.messaging_group_id) : undefined);
     const roomId = mg?.channel_type === 'webchat' ? (mg.platform_id ?? null) : null;
@@ -187,7 +187,7 @@ export async function readFloorEvents(userId: string, sinceIso?: string): Promis
       out.push({
         at: e.at,
         session_id: row.id,
-        agent_name: name,
+        agent_name: await name,
         room_id: roomId,
         kind: e.kind === 'tool' ? 'tool' : 'thinking',
         text: clip(e.text),
@@ -198,7 +198,7 @@ export async function readFloorEvents(userId: string, sinceIso?: string): Promis
       out.push({
         at: m.at,
         session_id: row.id,
-        agent_name: name,
+        agent_name: await name,
         room_id: roomId,
         kind: m.source_session_id ? 'a2a' : 'message',
         text: clip(messageText(m.content)),

@@ -9,12 +9,12 @@ import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { engageAgent, disengageAgent, getEngagedAgents, isAgentEngaged, deleteWebchatThread } from './db.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 
@@ -29,32 +29,32 @@ describe('thread engaged agents', () => {
     expect(isAgentEngaged('room-1', 't1', 'ag-a')).toBe(false);
   });
 
-  it('engage is idempotent', () => {
+  it('engage is idempotent', async () => {
     engageAgent('room-1', 't1', 'ag-a', 100);
     engageAgent('room-1', 't1', 'ag-a', 200);
     expect(getEngagedAgents('room-1', 't1')).toEqual(['ag-a']);
   });
 
-  it('never engages the main thread (regular chat stays mention-only)', () => {
+  it('never engages the main thread (regular chat stays mention-only)', async () => {
     engageAgent('room-1', 'main', 'ag-a');
     expect(getEngagedAgents('room-1', 'main')).toEqual([]);
     expect(isAgentEngaged('room-1', 'main', 'ag-a')).toBe(false);
   });
 
-  it('engaged set is scoped per thread', () => {
+  it('engaged set is scoped per thread', async () => {
     engageAgent('room-1', 't1', 'ag-a');
     engageAgent('room-1', 't2', 'ag-b');
     expect(getEngagedAgents('room-1', 't1')).toEqual(['ag-a']);
     expect(getEngagedAgents('room-1', 't2')).toEqual(['ag-b']);
   });
 
-  it('returns agents in engage order (engaged_at)', () => {
+  it('returns agents in engage order (engaged_at)', async () => {
     engageAgent('room-1', 't1', 'ag-b', 200);
     engageAgent('room-1', 't1', 'ag-a', 100);
     expect(getEngagedAgents('room-1', 't1')).toEqual(['ag-a', 'ag-b']);
   });
 
-  it('deleteWebchatThread clears the thread engaged set', () => {
+  it('deleteWebchatThread clears the thread engaged set', async () => {
     engageAgent('room-1', 't1', 'ag-a');
     deleteWebchatThread('room-1', 't1');
     expect(getEngagedAgents('room-1', 't1')).toEqual([]);

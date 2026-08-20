@@ -42,12 +42,12 @@ async function configServers(): Promise<Record<string, McpServerConfig>> {
   return JSON.parse(row.mcp_servers) as Record<string, McpServerConfig>;
 }
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 
@@ -104,12 +104,12 @@ describe('many-to-many assignment', () => {
 });
 
 describe('mcpServerToConfig', () => {
-  it('stdio row → command/args/env config', () => {
+  it('stdio row → command/args/env config', async () => {
     const s = createWebchatMcpServer({ name: 's', transport: 'stdio', command: 'c', args: ['--x'], env: { A: '1' } });
-    expect(mcpServerToConfig(s)).toEqual({ command: 'c', args: ['--x'], env: { A: '1' } });
+    expect(mcpServerToConfig(await s)).toEqual({ command: 'c', args: ['--x'], env: { A: '1' } });
   });
 
-  it('remote row → type/url/headers config, instructions carried', () => {
+  it('remote row → type/url/headers config, instructions carried', async () => {
     const s = createWebchatMcpServer({
       name: 'r',
       transport: 'http',
@@ -117,7 +117,7 @@ describe('mcpServerToConfig', () => {
       headers: { Authorization: 'Bearer t' },
       instructions: 'use sparingly',
     });
-    expect(mcpServerToConfig(s)).toEqual({
+    expect(mcpServerToConfig(await s)).toEqual({
       type: 'http',
       url: 'https://h/mcp',
       headers: { Authorization: 'Bearer t' },
@@ -132,18 +132,18 @@ describe('syncAgentMcpConfig — incremental single-key writes', () => {
     seedAgentWithConfig({ nclthing: { command: 'ncl-added', args: [], env: {} } });
     const s = createWebchatMcpServer({ name: 'windows', transport: 'sse', url: 'http://box:8000/sse' });
 
-    expect(syncAgentMcpConfig(GID, s, true)).toBe(true);
+    expect(syncAgentMcpConfig(GID, await s, true)).toBe(true);
     let servers = await configServers();
     expect(Object.keys(servers).sort()).toEqual(['nclthing', 'windows']);
     expect(servers.windows).toEqual({ type: 'sse', url: 'http://box:8000/sse', headers: {} });
 
-    expect(syncAgentMcpConfig(GID, s, false)).toBe(true);
-    servers = configServers();
+    expect(syncAgentMcpConfig(GID, await s, false)).toBe(true);
+    servers = await configServers();
     expect(Object.keys(servers)).toEqual(['nclthing']); // the ncl-added key survived
   });
 
-  it('returns false when the group has no container config row', () => {
+  it('returns false when the group has no container config row', async () => {
     const s = createWebchatMcpServer({ name: 'w', transport: 'sse', url: 'http://x' });
-    expect(syncAgentMcpConfig('no-such-group', s, true)).toBe(false);
+    expect(syncAgentMcpConfig('no-such-group', await s, true)).toBe(false);
   });
 });

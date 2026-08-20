@@ -52,7 +52,7 @@ async function loadAuthWithEnv(env: Record<string, string | undefined>) {
   // Init the FRESH connection module so getDb() works inside the freshly
   // loaded auth.ts/roles.ts.
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   // permissions module is optional — without `user_roles`, role helpers
   // degrade to "trust authenticated" and don't INSERT.
   return await import('./auth.js');

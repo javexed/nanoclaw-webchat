@@ -1,8 +1,8 @@
 diff --git a/src/modules/self-mod/apply.ts b/src/modules/self-mod/apply.ts
-index 18cf1b60..8b374e04 100644
+index 18cf1b60..a8abaa27 100644
 --- a/src/modules/self-mod/apply.ts
 +++ b/src/modules/self-mod/apply.ts
-@@ -20,15 +20,58 @@ import {
+@@ -20,15 +20,59 @@ import {
  import { buildAgentGroupImage, killContainer, wakeContainer } from '../../container-runner.js';
  import { getAgentGroup } from '../../db/agent-groups.js';
  import { getContainerConfig, updateContainerConfigJson } from '../../db/container-configs.js';
@@ -57,15 +57,16 @@ index 18cf1b60..8b374e04 100644
 +    content: JSON.stringify({ text: onWakeText, sender: 'system', senderId: 'system' }),
 +    onWake: 1,
 +  });
-+  killContainer(session.id, reason, () => {
-+    const s = getSession(session.id);
-+    if (s) wakeContainer(s);
++  killContainer(session.id, reason, async () => {
++    // Await BEFORE the guard — a truthy promise here would wake `undefined`.
++    const s = await getSession(session.id);
++    if (s) await wakeContainer(s);
 +  });
 +  respawnSiblingSessions(session.agent_group_id, session.id, `sibling session stale after ${reason}`);
  }
  
  export async function applyInstallPackages(payload: Record<string, unknown>, session: Session): Promise<void> {
-@@ -67,23 +110,11 @@ export async function applyInstallPackages(payload: Record<string, unknown>, ses
+@@ -67,23 +111,11 @@ export async function applyInstallPackages(payload: Record<string, unknown>, ses
    log.info('Package install approved', { agentGroupId: session.agent_group_id });
    try {
      await buildAgentGroupImage(session.agent_group_id);
@@ -94,7 +95,7 @@ index 18cf1b60..8b374e04 100644
      log.info('Container rebuild completed (bundled with install)', { agentGroupId: session.agent_group_id });
    } catch (e) {
      await notifyAgent(
-@@ -140,22 +171,10 @@ export async function applyAddMcpServer(payload: Record<string, unknown>, sessio
+@@ -140,22 +172,10 @@ export async function applyAddMcpServer(payload: Record<string, unknown>, sessio
    servers[name] = serverConfig;
    await updateContainerConfigJson(agentGroup.id, 'mcp_servers', servers);
  

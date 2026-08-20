@@ -68,7 +68,7 @@ async function evaluateRoomCredState(
   const none = { override: null, requiredBlocked: false, credName: '' };
   // UserCreds is webchat-only and opt-in per room. Fail safe to no effect.
   if (mg.channel_type !== 'webchat' || !userId) return none;
-  if (!hasTable(getDb(), 'webchat_room_settings')) return none;
+  if (!(await hasTable(getDb(), 'webchat_room_settings'))) return none;
   // Effective mode = the room's override, else the global default. Which
   // credential TYPES the workspace accepts (key / OAuth, per provider) is set on
   // the Credentials admin page; the room's mode is the master switch over both.
@@ -167,27 +167,50 @@ registerTurnGate(async (mg, agentGroupId, userId) => {
 // credential for this room's provider spawns under the member's own OneCLI
 // identity → gateway injects THEIR credential. The agent itself is created by
 // the prepare hook below (which runs first), so this just names it.
-registerAgentIdentityResolver(async (agentGroupId, threadId) => {
-  // A per-member session key is (user, thread); older ones are a bare user id.
-  // Decode, falling back to the raw value so both shapes resolve to the same
-  // credential identity — an undecoded key would find no credential and drop
-  // the container to the workspace default WITHOUT failing, i.e. running on
-  // the wrong identity.
-  const userId = memberUserFromKey(threadId) ?? threadId;
-  if (userId && (await userHasConnectedCredential(userId, groupProvider(agentGroupId)))) {
-    return userCredsAgentIdentifier(agentGroupId, userId);
-  }
-  return null;
+registerAgentIdentityResolver((agentGroupId, threadId) => {
+  // Sync by contract — reads what the prepare hook above staged. The key-decode
+  // subtlety (member key vs bare user id) lives in the hook now, once.
+  return spawnCache.get(spawnKey(agentGroupId, threadId))?.identity ?? null;
 });
 
 // Lazy / just-in-time enrollment: the first time a connected member's session is
 // spawned in a room, create their per-(user,group) OneCLI agent and assign their
 // secret + the group's tool secrets. Runs before identity resolution. Idempotent
 // + a fast no-op once enrolled, so it costs nothing on subsequent spawns.
+// Cache for the SYNC resolvers below. The seam's identity/env resolvers cannot
+// await (the driver calls them synchronously mid-spawn); this hook runs first —
+// that ordering is the hook's documented contract — and stages every async
+// answer they will need. Keyed by (group, thread) so per-member and base
+// sessions of one group never read each other's entry.
+const spawnCache = new Map<string, { identity: string | null; env: Record<string, string> }>();
+const spawnKey = (agentGroupId: string, threadId: string | null): string => `${agentGroupId}\u0000${threadId ?? ''}`;
+
 registerSessionPrepareHook(async (agentGroupId, threadId) => {
+  const provider = await groupProvider(agentGroupId);
   const userId = memberUserFromKey(threadId) ?? threadId;
-  if (!userId || !userHasConnectedCredential(userId, groupProvider(agentGroupId))) return;
-  await ensureGroupEnrollment(realOnecliAdmin, userId, agentGroupId);
+  // NOTE the await on userHasConnectedCredential: un-awaited, the promise was
+  // truthy and this guard never fired — every session (including base ones)
+  // was being enrolled as if its user had connected a credential.
+  const connected = !!userId && (await userHasConnectedCredential(userId, provider));
+  if (connected) await ensureGroupEnrollment(realOnecliAdmin, userId!, agentGroupId);
+
+  // Identity: a connected member's session runs under THEIR OneCLI identity.
+  const identity = connected ? userCredsAgentIdentifier(agentGroupId, userId!) : null;
+
+  // Env: Claude OAuth sessions need the sentinel treatment (see the comment on
+  // the resolver below); API-key and non-Claude sessions need nothing.
+  let env: Record<string, string> = {};
+  if (provider === 'claude') {
+    const oauthEnv = { CLAUDE_CODE_OAUTH_TOKEN: OAUTH_SENTINEL, ANTHROPIC_API_KEY: '' };
+    const cred = userId ? await getUserCredential(userId, 'claude') : null;
+    if (cred?.status === 'active') {
+      env = cred.cred_type === 'oauth_token' ? oauthEnv : {};
+    } else {
+      const ws = await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude');
+      env = ws?.status === 'active' && ws.cred_type === 'oauth_token' ? oauthEnv : {};
+    }
+  }
+  spawnCache.set(spawnKey(agentGroupId, threadId), { identity, env });
 });
 
 // Claude OAuth members: put their per-member container in subscription/OAuth mode
@@ -214,25 +237,14 @@ registerSessionPrepareHook(async (agentGroupId, threadId) => {
 // sentinel treatment — otherwise it stays in x-api-key mode, the OAuth secret
 // rewrites `Authorization` but not `x-api-key`, and Anthropic rejects the
 // lingering `x-api-key: placeholder`. An API-key default needs nothing.
-registerContainerEnvResolver(async (agentGroupId, threadId): Promise<Record<string, string>> => {
-  if ((await groupProvider(agentGroupId)) !== 'claude') return {};
-  const oauthEnv = { CLAUDE_CODE_OAUTH_TOKEN: OAUTH_SENTINEL, ANTHROPIC_API_KEY: '' };
-  // Per-member session: the member's own credential decides the container mode.
-  const memberUserId = memberUserFromKey(threadId) ?? threadId;
-  if (memberUserId) {
-    const cred = await getUserCredential(memberUserId, 'claude');
-    if (cred?.status === 'active') return cred.cred_type === 'oauth_token' ? oauthEnv : {};
-  }
-  // Base session: the workspace default serves it.
-  const ws = await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude');
-  if (ws?.status === 'active' && ws.cred_type === 'oauth_token') return oauthEnv;
-  return {};
+registerContainerEnvResolver((agentGroupId, threadId): Record<string, string> => {
+  return spawnCache.get(spawnKey(agentGroupId, threadId))?.env ?? {};
 });
 
 // Approval routing: reverse a UserCreds per-member identity back to its agent group
 // so credentialed-action approvals from a member's container reach the group's
 // approvers.
-registerApprovalAgentGroupFallback((externalId) => agentGroupForUserCredsAgent(externalId));
+registerApprovalAgentGroupFallback(async (externalId) => await agentGroupForUserCredsAgent(externalId));
 
 // Shared context: on a per-member wake, write the full room transcript into the
 // member's session (current → trigger=1, rest → trigger=0).

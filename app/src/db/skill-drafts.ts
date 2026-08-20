@@ -44,12 +44,11 @@ export async function createSkillDraft(d: Omit<SkillDraft, 'status' | 'created_a
     });
 }
 
-export function listSkillDrafts(agentGroupId?: string): SkillDraft[] {
+export async function listSkillDrafts(agentGroupId?: string): Promise<SkillDraft[]> {
   const sql = agentGroupId
     ? "SELECT * FROM skill_drafts WHERE status = 'pending' AND agent_group_id = ? ORDER BY created_at DESC"
     : "SELECT * FROM skill_drafts WHERE status = 'pending' ORDER BY created_at DESC";
-  const stmt = getDb().prepare(sql);
-  return (agentGroupId ? stmt.all(agentGroupId) : stmt.all()) as SkillDraft[];
+  return (await (agentGroupId ? getDb().all(sql, agentGroupId) : getDb().all(sql))) as SkillDraft[];
 }
 
 export async function getSkillDraft(id: string): Promise<SkillDraft | undefined> {

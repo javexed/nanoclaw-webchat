@@ -589,7 +589,7 @@ async function finalize(args: { source: AuthResult['source']; userId: string; di
   // One-shot: if the operator opted into Tailscale in the wizard, the FIRST
   // tailscale identity to authenticate is promoted to owner (co-owner with the
   // bearer bootstrap), then the flag disarms so later tailnet peers don't get it.
-  if (args.source === 'tailscale' && getPromoteFirstTailscaleOwner()) {
+  if (args.source === 'tailscale' && (await getPromoteFirstTailscaleOwner())) {
     const granted = grantOwnerRole(args.userId, 'webchat:first-tailscale-owner');
     // Disarm on the END STATE, not on the return value. `granted` is false in
     // two very different cases — the grant failed, and this identity already

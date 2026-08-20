@@ -59,9 +59,9 @@ async function bootLocalhost(env: Record<string, string> = {}) {
   };
   for (const [k, v] of Object.entries(merged)) vi.stubEnv(k, v);
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
+  await migrations.runMigrations(conn.getDb());
   const server = await import('./server.js');
   const wc = await server.startWebchatServer(noopHooks);
   const addr = wc.http.address() as { port: number };

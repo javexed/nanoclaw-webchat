@@ -49,9 +49,9 @@ const GROUP = { id: 'ag-exp', name: 'Research Buddy', folder: 'research-buddy', 
 /** An agent with every surface a template can carry. */
 async function seedAgent(mcpServers: Record<string, unknown> = {}): Promise<void> {
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
+  await migrations.runMigrations(conn.getDb());
   await conn
     .getDb().run(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, GROUP.id, GROUP.name, GROUP.folder, '2026-08-17T00:00:00.000Z');
 
@@ -138,7 +138,7 @@ describe('exporting an agent as a template', () => {
       .getDb().run('UPDATE container_configs SET packages_apt = ?, provider = ? WHERE agent_group_id = ?', JSON.stringify(['ripgrep']), 'codex', GROUP.id);
 
     const { exportAgentAsTemplate } = await import('./server/template-export.js');
-    const { omitted } = exportAgentAsTemplate(GROUP, { name: 'research-buddy' });
+    const { omitted } = await exportAgentAsTemplate(GROUP, { name: 'research-buddy' });
     const text = omitted.join('\n');
     // Packages are the sharp edge: the spec has no slot, so a stamped agent
     // silently lacks them. Saying so is the whole mitigation.

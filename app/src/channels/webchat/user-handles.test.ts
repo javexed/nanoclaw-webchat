@@ -31,12 +31,12 @@ import {
   markRoomRead,
 } from './db.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 
@@ -74,40 +74,40 @@ async function insertMessage(roomId: string, content: string, createdAt: number)
 }
 
 describe('slugifyHandle', () => {
-  it('lowercases and replaces non-alphanumerics with hyphens', () => {
+  it('lowercases and replaces non-alphanumerics with hyphens', async () => {
     expect(slugifyHandle('Jane Doe')).toBe('jane-doe');
     expect(slugifyHandle('jane.doe@example.com')).toBe('jane-doe-example-com');
   });
 
-  it('trims leading/trailing hyphens and collapses runs', () => {
+  it('trims leading/trailing hyphens and collapses runs', async () => {
     expect(slugifyHandle('  !!Bob!!  ')).toBe('bob');
     expect(slugifyHandle('a___b')).toBe('a-b');
   });
 
-  it('caps at 32 chars', () => {
+  it('caps at 32 chars', async () => {
     expect(slugifyHandle('x'.repeat(50)).length).toBe(32);
   });
 
-  it('falls back to "user" when nothing usable remains', () => {
+  it('falls back to "user" when nothing usable remains', async () => {
     expect(slugifyHandle('')).toBe('user');
     expect(slugifyHandle('???')).toBe('user');
   });
 });
 
 describe('ensureWebchatUserHandle', () => {
-  it('defaults to a slug of the display name', () => {
+  it('defaults to a slug of the display name', async () => {
     expect(ensureWebchatUserHandle('webchat:u1', 'Jane Doe')).toBe('jane-doe');
     expect(getWebchatUserHandle('webchat:u1')).toBe('jane-doe');
   });
 
-  it('is idempotent — a second call keeps the first handle', () => {
+  it('is idempotent — a second call keeps the first handle', async () => {
     ensureWebchatUserHandle('webchat:u1', 'Jane Doe');
     setWebchatUserHandle('webchat:u1', 'jd'); // user later renames
     // ensure must NOT clobber the chosen handle back to the slug
     expect(ensureWebchatUserHandle('webchat:u1', 'Jane Doe')).toBe('jd');
   });
 
-  it('suffixes on collision so each handle resolves to one user', () => {
+  it('suffixes on collision so each handle resolves to one user', async () => {
     expect(ensureWebchatUserHandle('webchat:a', 'Sam')).toBe('sam');
     expect(ensureWebchatUserHandle('webchat:b', 'Sam')).toBe('sam-2');
     expect(ensureWebchatUserHandle('webchat:c', 'Sam')).toBe('sam-3');
@@ -115,25 +115,25 @@ describe('ensureWebchatUserHandle', () => {
 });
 
 describe('setWebchatUserHandle', () => {
-  it('sets a valid handle and normalizes case', () => {
+  it('sets a valid handle and normalizes case', async () => {
     expect(setWebchatUserHandle('webchat:u1', 'Alice')).toEqual({ ok: true });
     expect(getWebchatUserHandle('webchat:u1')).toBe('alice');
   });
 
-  it('rejects an invalid shape', () => {
+  it('rejects an invalid shape', async () => {
     expect(setWebchatUserHandle('webchat:u1', 'has spaces')).toEqual({ ok: false, reason: 'invalid' });
     expect(setWebchatUserHandle('webchat:u1', 'no_underscores')).toEqual({ ok: false, reason: 'invalid' });
     expect(setWebchatUserHandle('webchat:u1', '')).toEqual({ ok: false, reason: 'invalid' });
     expect(setWebchatUserHandle('webchat:u1', 'x'.repeat(33))).toEqual({ ok: false, reason: 'invalid' });
   });
 
-  it('rejects a handle already taken by another user', () => {
+  it('rejects a handle already taken by another user', async () => {
     setWebchatUserHandle('webchat:u1', 'taken');
     expect(setWebchatUserHandle('webchat:u2', 'taken')).toEqual({ ok: false, reason: 'taken' });
     expect(setWebchatUserHandle('webchat:u2', 'TAKEN')).toEqual({ ok: false, reason: 'taken' });
   });
 
-  it('lets the same user re-set their own handle (no false "taken")', () => {
+  it('lets the same user re-set their own handle (no false "taken")', async () => {
     setWebchatUserHandle('webchat:u1', 'alice');
     expect(setWebchatUserHandle('webchat:u1', 'alice')).toEqual({ ok: true });
     expect(setWebchatUserHandle('webchat:u1', 'alice2')).toEqual({ ok: true });
@@ -142,7 +142,7 @@ describe('setWebchatUserHandle', () => {
 });
 
 describe('userIdForHandle / resolveHandlesToUserIds', () => {
-  it('resolves a handle to its owning user id', () => {
+  it('resolves a handle to its owning user id', async () => {
     setWebchatUserHandle('webchat:u1', 'alice');
     expect(userIdForHandle('alice')).toBe('webchat:u1');
     expect(userIdForHandle('ALICE')).toBe('webchat:u1'); // case-insensitive
@@ -156,7 +156,7 @@ describe('userIdForHandle / resolveHandlesToUserIds', () => {
     expect(ids.sort()).toEqual(['webchat:u1', 'webchat:u2']);
   });
 
-  it('returns nothing for an empty list', () => {
+  it('returns nothing for an empty list', async () => {
     expect(resolveHandlesToUserIds([])).toEqual([]);
   });
 });
@@ -174,25 +174,25 @@ describe('getWebchatHandleUsers', () => {
     ]);
   });
 
-  it('is empty when no one has a handle', () => {
+  it('is empty when no one has a handle', async () => {
     expect(getWebchatHandleUsers()).toEqual([]);
   });
 });
 
 describe('extractHandles', () => {
-  it('pulls @tokens, lowercased', () => {
+  it('pulls @tokens, lowercased', async () => {
     expect(extractHandles('hey @Alice and @bob-2')).toEqual(['alice', 'bob-2']);
   });
 
-  it('matches at start of string', () => {
+  it('matches at start of string', async () => {
     expect(extractHandles('@alice hi')).toEqual(['alice']);
   });
 
-  it('does NOT treat an email as a mention (no word boundary before @)', () => {
+  it('does NOT treat an email as a mention (no word boundary before @)', async () => {
     expect(extractHandles('mail me at foo@example.com')).toEqual([]);
   });
 
-  it('returns nothing when there is no mention', () => {
+  it('returns nothing when there is no mention', async () => {
     expect(extractHandles('just a normal message')).toEqual([]);
   });
 });

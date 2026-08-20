@@ -58,7 +58,7 @@ export async function rWebchatCredentialsConfig(ctx: RouteCtx, _m: RegExpMatchAr
     });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  if (!isOwner(userId)) return json(res, 403, { error: 'Owner only' });
+  if (!(await isOwner(userId))) return json(res, 403, { error: 'Owner only' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let body: Record<string, unknown>;
@@ -91,7 +91,7 @@ export async function rWebchatCredentialsConfig(ctx: RouteCtx, _m: RegExpMatchAr
 // blocks or shows for them. PUT (finish/dismiss/reset) is owner/global-admin only.
 export async function rWebchatOnboarding(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const canEdit = isOwner(userId) || isGlobalAdmin(userId);
+  const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
   if (method === 'GET') {
     return json(res, 200, { complete: (await canEdit) ? getOnboardingComplete() : true, canEdit });
   }
@@ -116,12 +116,12 @@ export async function rWebchatOnboarding(ctx: RouteCtx, _m: RegExpMatchArray): P
 // (default on/recommended). Disabling also 403s the endpoints (gate above).
 export async function rWebchatFeatures(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const canEdit = isOwner(userId) || isGlobalAdmin(userId);
+  const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
   if (method === 'GET') {
     // credentialIsolation is nullable: null = following .env, so the UI can say
     // "not set here" rather than implying the operator chose the env's value.
     return json(res, 200, {
-      marketplaceEnabled: !getMarketplaceDisabled(),
+      marketplaceEnabled: !(await getMarketplaceDisabled()),
       credentialIsolation: getCredentialIsolation(),
       credentialIsolationEffective: fleetIsolationEnabled(),
       canEdit,
@@ -158,7 +158,7 @@ export async function rWebchatFeatures(ctx: RouteCtx, _m: RegExpMatchArray): Pro
   setSourceDisabled(MARKETPLACE_ID, !body.marketplaceEnabled);
   setSourceDisabled(mcpRegistryRemovedKey(), !body.marketplaceEnabled);
   if (body.marketplaceEnabled) setSourceDisabled(MCP_REGISTRY_ID, false);
-  return json(res, 200, { marketplaceEnabled: !getMarketplaceDisabled() });
+  return json(res, 200, { marketplaceEnabled: !(await getMarketplaceDisabled()) });
 }
 
 // ── Wizard opt-in: first Tailscale login becomes owner ──────────────────────
@@ -167,7 +167,7 @@ export async function rWebchatFeatures(ctx: RouteCtx, _m: RegExpMatchArray): Pro
 // then the flag disarms itself.
 export async function rWebchatTailscaleOwner(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const canEdit = isOwner(userId) || isGlobalAdmin(userId);
+  const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
   if (method === 'GET') {
     return json(res, 200, { armed: getPromoteFirstTailscaleOwner(), canEdit });
   }
@@ -207,7 +207,7 @@ export async function rWebchatTailscaleOwner(ctx: RouteCtx, _m: RegExpMatchArray
  */
 export async function rWebchatAuditLog(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, url, userId } = ctx;
-  if (!(isOwner(userId) || isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
+  if (!((await isOwner(userId)) || (await isGlobalAdmin(userId)))) return json(res, 403, { error: 'Forbidden' });
   const q = url.searchParams;
   const num = Number(q.get('limit'));
   const page = readAuditEvents({
@@ -222,7 +222,7 @@ export async function rWebchatAuditLog(ctx: RouteCtx, _m: RegExpMatchArray): Pro
 
 export async function rWebchatAuditSyslog(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const canEdit = isOwner(userId) || isGlobalAdmin(userId);
+  const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
   if (!canEdit) return json(res, 403, { error: 'Forbidden' });
   if (method === 'GET') {
     return json(res, 200, { target: getAuditSyslogTarget(), status: getSyslogStatus() });
@@ -243,7 +243,7 @@ export async function rWebchatAuditSyslog(ctx: RouteCtx, _m: RegExpMatchArray): 
       error: 'target must be udp://host:port, tcp://host:port or tls://host:port (explicit port required)',
     });
   }
-  const from = getAuditSyslogTarget() || null;
+  const from = (await getAuditSyslogTarget()) || null;
   // 1st emission → old sink + file: the outgoing collector records the change.
   audit({
     type: 'audit.config',
@@ -271,7 +271,7 @@ export async function rWebchatAuditSyslog(ctx: RouteCtx, _m: RegExpMatchArray): 
 // (tailscaleServeIdentity maps Serve's header back to the whois id).
 export async function rWebchatTailscaleHttps(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   // This endpoint reports HTTPS status in BOTH flavors: `tailscale serve`
   // (what the enable button sets up) and native TLS (WEBCHAT_TLS_CERT/KEY —
   // an install like the tailscale-https setup script produces). Without the
@@ -311,13 +311,13 @@ export async function rWebchatTailscaleHttps(ctx: RouteCtx, _m: RegExpMatchArray
 // enforced by the Cloudflare Access policy on the tunnel, dashboard-side.
 export async function rWebchatCloudflaredGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   return json(res, 200, getCloudflaredInstallState());
 }
 
 export async function rWebchatCloudflaredInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   const r = startCloudflaredInstall();
   if (r.error === 'prereq-missing')
     return json(res, 409, { error: 'Needs root + systemd — install cloudflared manually instead.' });
@@ -326,7 +326,7 @@ export async function rWebchatCloudflaredInstallPost(ctx: RouteCtx, _m: RegExpMa
 
 export async function rWebchatCloudflaredConnectPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let body: { token?: unknown };

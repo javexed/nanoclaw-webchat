@@ -60,7 +60,7 @@ export async function handleProposeSkill(
   // One pending draft per (agent, name): auto-trigger plus a manual /learn can
   // both stage the same lesson, and twins in the review queue are pure noise.
   // The newer draft supersedes — its body reflects the later look at the session.
-  for (const prior of listSkillDrafts()) {
+  for (const prior of await listSkillDrafts()) {
     if (prior.agent_group_id !== session.agent_group_id) continue;
     if (prior.skill_name !== skillName) continue;
     resolveSkillDraft(prior.id, 'discarded');
@@ -97,13 +97,13 @@ export async function handleProposeSkill(
   // switched it on for this agent. It reuses the exact same apply path as the
   // human Keep, so the only thing autonomy removes is the wait, never a rule.
   if ((await isAutoKeepEnabled(session))) {
-    const draft = getSkillDraft(id);
+    const draft = await getSkillDraft(id);
     if (draft) {
       // Keep-time overlap review, autonomous flavor: a human can click
       // "Keep anyway" — autonomy can't. Any detected overlap degrades
       // auto-keep to the normal staged flow so a person decides.
       try {
-        const overlaps = await findKeepOverlaps(draft);
+        const overlaps = await findKeepOverlaps(await draft);
         if (overlaps.length > 0) {
           log.info('Auto-keep held — possible overlap; draft stays pending', {
             id,
@@ -114,7 +114,7 @@ export async function handleProposeSkill(
       } catch {
         /* review failure never blocks the staged flow */
       }
-      const r = applySkillDraft(draft, 'Learning auto-keep applied a skill draft');
+      const r = await applySkillDraft(await draft, 'Learning auto-keep applied a skill draft');
       if (r.ok) {
         log.info('Skill draft auto-kept', { id, agentGroup: session.agent_group_id, name: r.name, patched: r.patched });
         notifySkillDraftResolved({ draftId: id, outcome: 'kept', by: 'auto-keep' });

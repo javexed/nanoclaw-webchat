@@ -11,9 +11,9 @@ import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { storeWebchatMessage, searchWebchatMessages } from './db.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
   storeWebchatMessage('room-1', 'agent', 'agent', 'The ACR auth issue was a stale token from last month');
   storeWebchatMessage('room-1', 'mark', 'user', 'thanks, the authentication works now');
   storeWebchatMessage('room-2', 'agent', 'agent', 'ACR auth notes for a different project');
@@ -40,7 +40,7 @@ describe('searchWebchatMessages', () => {
     expect(hits.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('returns [] for empty/whitespace/no-room queries (no FTS syntax error)', () => {
+  it('returns [] for empty/whitespace/no-room queries (no FTS syntax error)', async () => {
     expect(searchWebchatMessages(['room-1'], '')).toEqual([]);
     expect(searchWebchatMessages(['room-1'], '   ')).toEqual([]);
     expect(searchWebchatMessages([], 'auth')).toEqual([]);

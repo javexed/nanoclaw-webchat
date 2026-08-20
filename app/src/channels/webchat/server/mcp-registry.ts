@@ -16,9 +16,9 @@ import { getAgentsAssignedToMcpServer } from '../mcp-registry.js';
 import type { WebchatMcpServer, WebchatMcpTransport } from '../mcp-registry.js';
 
 /** Restart a group's containers so an mcp_servers change is picked up at spawn. */
-export function reloadAgentMcpServers(agentGroupId: string): void {
+export async function reloadAgentMcpServers(agentGroupId: string): Promise<void> {
   try {
-    const restarted = restartAgentGroupContainers(agentGroupId, 'Webchat MCP servers changed');
+    const restarted = await restartAgentGroupContainers(agentGroupId, 'Webchat MCP servers changed');
     if (restarted > 0) log.info('Webchat: restarted containers after MCP change', { agentGroupId, restarted });
   } catch (err) {
     log.warn('Webchat: container restart after MCP change failed', { agentGroupId, err });

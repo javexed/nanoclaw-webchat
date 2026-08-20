@@ -36,9 +36,9 @@ async function bootLocalhost() {
   vi.stubEnv('WEBCHAT_TRUSTED_PROXY_IPS', '');
   vi.resetModules();
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
+  await migrations.runMigrations(conn.getDb());
   const server = await import('./server.js');
   const wc = await server.startWebchatServer(noopHooks);
   return { server, wc, conn };
@@ -118,14 +118,12 @@ describe('GET /api/overview — owner (loopback no-auth path)', () => {
       // 3 messages in the last hour, 1 from 25 hours ago.
       const recent = Date.now();
       const old = Date.now() - 25 * 3600 * 1000;
-      const insertMsg = db.prepare(
-        `INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, file_meta, created_at)
-         VALUES (?, 'r1', 'alice', 'user', ?, 'text', NULL, ?)`,
-      );
-      insertMsg.run(randomUUID(), 'hi', recent);
-      insertMsg.run(randomUUID(), 'hello', recent);
-      insertMsg.run(randomUUID(), 'yo', recent);
-      insertMsg.run(randomUUID(), 'old', old);
+      const INSERT_MSG = `INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, file_meta, created_at)
+         VALUES (?, 'r1', 'alice', 'user', ?, 'text', NULL, ?)`;
+      await db.run(INSERT_MSG, randomUUID(), 'hi', recent);
+      await db.run(INSERT_MSG, randomUUID(), 'hello', recent);
+      await db.run(INSERT_MSG, randomUUID(), 'yo', recent);
+      await db.run(INSERT_MSG, randomUUID(), 'old', old);
 
       const { body } = await getOverview(wc);
       expect((body.messages as { webchat_24h: number }).webchat_24h).toBe(3);
@@ -168,25 +166,20 @@ describe('GET /api/overview — owner (loopback no-auth path)', () => {
  * owner already present and leaves `webchat:local-owner` unprivileged. That
  * is the same shape as a real install where someone else claimed owner first.
  */
-type TestDb = Database.Database;
+type TestDb = import('../../db/driver.js').DbDriver;
 
 describe('GET /api/overview — restricted (non-owner caller)', () => {
   const OTHER_OWNER = 'webchat:someone-else';
   const CALLER = 'webchat:local-owner';
 
-  function seedOwnerElsewhere(db: TestDb): void {
+  async function seedOwnerElsewhere(db: TestDb): Promise<void> {
     const now = new Date().toISOString();
-    db.prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`).run(
-      OTHER_OWNER,
-      now,
-    );
-    db.prepare(
-      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, 'owner', NULL, NULL, ?)`,
-    ).run(OTHER_OWNER, now);
+    await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, OTHER_OWNER, now);
+    await db.run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, 'owner', NULL, NULL, ?)`, OTHER_OWNER, now);
   }
 
   /** Two agents, two rooms, sessions and messages on both. Caller joins only A. */
-  function seedSplitWorld(db: TestDb, joinAgentA: boolean): void {
+  async function seedSplitWorld(db: TestDb, joinAgentA: boolean): Promise<void> {
     const now = new Date().toISOString();
     const agentA = 'agent-a';
     const agentB = 'agent-b';
@@ -194,9 +187,7 @@ describe('GET /api/overview — restricted (non-owner caller)', () => {
       [agentA, 'Alpha', 'alpha'],
       [agentB, 'Beta', 'beta'],
     ]) {
-      db.prepare(
-        `INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      ).run(id, name, folder, now);
+      await db.run(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, id, name, folder, now);
     }
     // Rooms: platform_id IS the webchat room id (see getAllWebchatRooms).
     for (const [platformId, agent] of [
@@ -204,49 +195,34 @@ describe('GET /api/overview — restricted (non-owner caller)', () => {
       ['room-b', agentB],
     ]) {
       const mg = randomUUID();
-      db.prepare(
-        `INSERT INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
-         VALUES (?, 'webchat', 'webchat', ?, ?, 1, 'public', ?)`,
-      ).run(mg, platformId, platformId, now);
-      db.prepare(
-        `INSERT INTO messaging_group_agents (id, messaging_group_id, agent_group_id, engage_mode, engage_pattern, sender_scope, ignored_message_policy, session_mode, priority, created_at)
-         VALUES (?, ?, ?, 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`,
-      ).run(randomUUID(), mg, agent, now);
+      await db.run(`INSERT INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
+         VALUES (?, 'webchat', 'webchat', ?, ?, 1, 'public', ?)`, mg, platformId, platformId, now);
+      await db.run(`INSERT INTO messaging_group_agents (id, messaging_group_id, agent_group_id, engage_mode, engage_pattern, sender_scope, ignored_message_policy, session_mode, priority, created_at)
+         VALUES (?, ?, ?, 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`, randomUUID(), mg, agent, now);
     }
     // A non-webchat channel too, so a leaked `channels` map would be obvious.
-    db.prepare(
-      `INSERT INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
-       VALUES (?, 'whatsapp', 'whatsapp', '1234@g.us', 'G', 1, 'public', ?)`,
-    ).run(randomUUID(), now);
+    await db.run(`INSERT INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
+       VALUES (?, 'whatsapp', 'whatsapp', '1234@g.us', 'G', 1, 'public', ?)`, randomUUID(), now);
 
     // Sessions: A has 1 active + 1 idle, B has 2 active.
     const active = new Date(Date.now() - 60_000).toISOString();
     const idle = new Date(Date.now() - 10 * 60_000).toISOString();
-    const insertSession = db.prepare(
-      `INSERT INTO sessions (id, agent_group_id, status, last_active, created_at) VALUES (?, ?, 'active', ?, ?)`,
-    );
-    insertSession.run('a-active', agentA, active, now);
-    insertSession.run('a-idle', agentA, idle, now);
-    insertSession.run('b-active-1', agentB, active, now);
-    insertSession.run('b-active-2', agentB, active, now);
+    const INSERT_SESSION = `INSERT INTO sessions (id, agent_group_id, status, last_active, created_at) VALUES (?, ?, 'active', ?, ?)`;
+    await db.run(INSERT_SESSION, 'a-active', agentA, active, now);
+    await db.run(INSERT_SESSION, 'a-idle', agentA, idle, now);
+    await db.run(INSERT_SESSION, 'b-active-1', agentB, active, now);
+    await db.run(INSERT_SESSION, 'b-active-2', agentB, active, now);
 
     // Messages: 2 in room-a, 5 in room-b, all inside the 24h window.
     const recent = Date.now();
-    const insertMsg = db.prepare(
-      `INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, file_meta, created_at)
-       VALUES (?, ?, 'alice', 'user', 'hi', 'text', NULL, ?)`,
-    );
-    for (let i = 0; i < 2; i++) insertMsg.run(randomUUID(), 'room-a', recent);
-    for (let i = 0; i < 5; i++) insertMsg.run(randomUUID(), 'room-b', recent);
+    const INSERT_MSG = `INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, file_meta, created_at)
+       VALUES (?, ?, 'alice', 'user', 'hi', 'text', NULL, ?)`;
+    for (let i = 0; i < 2; i++) await db.run(INSERT_MSG, randomUUID(), 'room-a', recent);
+    for (let i = 0; i < 5; i++) await db.run(INSERT_MSG, randomUUID(), 'room-b', recent);
 
     if (joinAgentA) {
-      db.prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`).run(
-        CALLER,
-        now,
-      );
-      db.prepare(
-        `INSERT INTO agent_group_members (user_id, agent_group_id, added_by, added_at) VALUES (?, ?, NULL, ?)`,
-      ).run(CALLER, agentA, now);
+      await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, CALLER, now);
+      await db.run(`INSERT INTO agent_group_members (user_id, agent_group_id, added_by, added_at) VALUES (?, ?, NULL, ?)`, CALLER, agentA, now);
     }
   }
 
@@ -254,8 +230,8 @@ describe('GET /api/overview — restricted (non-owner caller)', () => {
     const { server, wc, conn } = await bootLocalhost();
     try {
       const db = conn.getDb();
-      seedOwnerElsewhere(db);
-      seedSplitWorld(db, true);
+      await seedOwnerElsewhere(db);
+      await seedSplitWorld(db, true);
 
       const { body } = await getOverview(wc);
       expect(body.restricted).toBe(true);
@@ -273,8 +249,8 @@ describe('GET /api/overview — restricted (non-owner caller)', () => {
     const { server, wc, conn } = await bootLocalhost();
     try {
       const db = conn.getDb();
-      seedOwnerElsewhere(db);
-      seedSplitWorld(db, false);
+      await seedOwnerElsewhere(db);
+      await seedSplitWorld(db, false);
 
       const { body } = await getOverview(wc);
       expect(body.restricted).toBe(true);
@@ -291,8 +267,8 @@ describe('GET /api/overview — restricted (non-owner caller)', () => {
     const { server, wc, conn } = await bootLocalhost();
     try {
       const db = conn.getDb();
-      seedOwnerElsewhere(db);
-      seedSplitWorld(db, true);
+      await seedOwnerElsewhere(db);
+      await seedSplitWorld(db, true);
 
       const { body } = await getOverview(wc);
       expect(body.channels).toBeNull();
@@ -312,8 +288,8 @@ describe('GET /api/overview — restricted (non-owner caller)', () => {
     const { server, wc, conn } = await bootLocalhost();
     try {
       const db = conn.getDb();
-      seedOwnerElsewhere(db);
-      seedSplitWorld(db, true);
+      await seedOwnerElsewhere(db);
+      await seedSplitWorld(db, true);
 
       const { body } = await getOverview(wc);
       // Membership is not admin privilege, so the agents card — which mirrors

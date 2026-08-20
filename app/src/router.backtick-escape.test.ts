@@ -43,11 +43,11 @@ vi.mock('./config.js', async () => {
 const TEST_DIR = '/tmp/nanoclaw-test-backtick';
 const now = () => new Date().toISOString();
 
-beforeEach(() => {
+beforeEach(async () => {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
-  const db = initTestDb();
-  runMigrations(db);
+  const db = await initTestDb();
+  await runMigrations(await db);
 
   createAgentGroup({ id: 'ag-advisor', name: 'Advisor', folder: 'advisor', agent_provider: null, created_at: now() });
   createAgentGroup({ id: 'ag-news', name: 'News', folder: 'news', agent_provider: null, created_at: now() });
@@ -137,7 +137,7 @@ describe('engage-pattern matching honors backtick escape', () => {
     const { routeInbound } = await import('./router.js');
     const { getActiveSessions } = await import('./db/sessions.js');
     await routeInbound(event('@advisor please check AAPL'));
-    const active = getActiveSessions();
+    const active = await getActiveSessions();
     expect(active).toHaveLength(1);
     expect(active[0].agent_group_id).toBe('ag-advisor');
   });
@@ -167,7 +167,7 @@ describe('engage-pattern matching honors backtick escape', () => {
     const { routeInbound } = await import('./router.js');
     const { getActiveSessions } = await import('./db/sessions.js');
     await routeInbound(event('previously `@advisor` was used. @news please weigh in.'));
-    const active = getActiveSessions();
+    const active = await getActiveSessions();
     expect(active).toHaveLength(1);
     expect(active[0].agent_group_id).toBe('ag-news');
   });
@@ -179,7 +179,7 @@ describe('engage-pattern matching honors backtick escape', () => {
     const { routeInbound } = await import('./router.js');
     const { getActiveSessions } = await import('./db/sessions.js');
     await routeInbound(event('@advisor schedule a task with prompt: "review `@news` briefing, then..."'));
-    const active = getActiveSessions();
+    const active = await getActiveSessions();
     expect(active).toHaveLength(1);
     expect(active[0].agent_group_id).toBe('ag-advisor');
   });

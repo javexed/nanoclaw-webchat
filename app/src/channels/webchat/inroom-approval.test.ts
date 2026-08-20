@@ -12,9 +12,9 @@ import { storeWebchatApprovalCard, markRoomApprovalResolved } from './db.js';
 import { registerApprovalRequestedListener, notifyApprovalRequested } from '../../modules/approvals/primitive.js';
 import type { Session } from '../../types.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 afterEach(() => closeDb());
 
@@ -34,7 +34,7 @@ describe('in-room approval card', () => {
       action: 'install_packages',
       approvers: ['webchat:tailscale:a@x.com', 'webchat:tailscale:b@x.com'],
     });
-    const row = await cardRow('appr-1')!;
+    const row = (await cardRow('appr-1'))!;
     expect(row.room_id).toBe('room-approvals');
     expect(row.sender).toBe('Gamma Agent');
     expect(row.message_type).toBe('approval');
@@ -53,7 +53,7 @@ describe('in-room approval card', () => {
       approvers: [],
     });
     markRoomApprovalResolved('appr-2', 'webchat:tailscale:a@x.com');
-    const row = await cardRow('appr-2')!;
+    const row = (await cardRow('appr-2'))!;
     expect(row.message_type).toBe('approval_resolved');
     expect(JSON.parse(row.content).resolvedBy).toBe('webchat:tailscale:a@x.com');
   });
@@ -75,13 +75,13 @@ describe('in-room approval card', () => {
     expect(n.n).toBe(1);
   });
 
-  it('markRoomApprovalResolved is a no-op for an unknown approval', () => {
+  it('markRoomApprovalResolved is a no-op for an unknown approval', async () => {
     expect(() => markRoomApprovalResolved('nope', 'x')).not.toThrow();
   });
 });
 
 describe('approval-requested listener', () => {
-  it('fires registered listeners with the event', () => {
+  it('fires registered listeners with the event', async () => {
     const seen: string[] = [];
     registerApprovalRequestedListener((e) => seen.push(e.approvalId));
     notifyApprovalRequested({

@@ -157,7 +157,7 @@ export async function ensureA2aDestination(ownerAgentId: string, targetAgentId: 
   const base = normalizeName(targetFolder);
   const candidates = [base, `${base}-agent`];
   for (const name of candidates) {
-    if (!getDestinationByName(ownerAgentId, name)) {
+    if (!(await getDestinationByName(ownerAgentId, name))) {
       createDestination({
         agent_group_id: ownerAgentId,
         local_name: name,
@@ -188,13 +188,13 @@ export async function recomputeEngagePatterns(roomId: string): Promise<void> {
   // un-configured. Caller is responsible for cleaning up the stale row.
   const validPrime = primeAgentId && wirings.some((w) => w.agent_group_id === primeAgentId);
 
-  const update = getDb().prepare(`UPDATE messaging_group_agents SET engage_pattern = ? WHERE id = ?`);
+  const UPDATE_PATTERN = `UPDATE messaging_group_agents SET engage_pattern = ? WHERE id = ?`;
 
   if (!validPrime) {
     // No prime — un-primed agents reply only when explicitly @-mentioned. The
     // legacy 'broadcast' fallback (every agent answers every message) has been
     // retired; a shared room stays quiet until an agent is addressed.
-    for (const w of wirings) update.run(`\\B@${ciFolderToken(w.folder)}\\b`, w.id);
+    for (const w of wirings) await getDb().run(UPDATE_PATTERN, `\\B@${ciFolderToken(w.folder)}\\b`, w.id);
     return;
   }
 
@@ -208,7 +208,7 @@ export async function recomputeEngagePatterns(roomId: string): Promise<void> {
     } else {
       pattern = `\\B@${ciFolderToken(w.folder)}\\b`;
     }
-    update.run(pattern, w.id);
+    await getDb().run(UPDATE_PATTERN, pattern, w.id);
   }
 }
 

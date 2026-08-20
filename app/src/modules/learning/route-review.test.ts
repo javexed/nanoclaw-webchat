@@ -101,14 +101,14 @@ function outboundTexts(sessionId: string): string[] {
   }
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   fs.rmSync('/tmp/nanoclaw-test-learn-route', { recursive: true, force: true });
-  initTestDb();
-  runMigrations(getDb());
+  await initTestDb();
+  await runMigrations(getDb());
   wakes.length = 0;
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
   fs.rmSync('/tmp/nanoclaw-test-learn-route', { recursive: true, force: true });
 });
@@ -119,7 +119,7 @@ describe('handleRouteLearningReview — enrollment and policy', () => {
     addMember('webchat:alice');
     upsertUserCredential('webchat:alice', 'claude', 'secret-1', 'api_key');
 
-    await handleRouteLearningReview(payload(), origin);
+    await handleRouteLearningReview(payload(), await origin);
 
     // A per-member session (thread_id = user id) now exists and got the row.
     const member = (await getSessionsByAgentGroup(AG)).find((s) => s.thread_id === 'webchat:alice');

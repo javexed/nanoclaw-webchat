@@ -57,7 +57,7 @@ beforeEach(async () => {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
   const db = await initTestDb();
-  runMigrations(db);
+  await runMigrations(db);
 
   createAgentGroup({ id: AG, name: 'Int', folder: 'int', agent_provider: null, created_at: now() });
   await db.run(`INSERT INTO messaging_groups (id,channel_type,instance,platform_id,is_group,unknown_sender_policy,created_at)
@@ -143,15 +143,15 @@ describe('router -> per-member sessions: threads stay separate', () => {
     await routeText('room question', null);
     await routeText('thread question', topic.thread_id);
 
-    const mainSession = findSession('mg-int', memberSessionKey(USER, null));
-    const topicSession = findSession('mg-int', memberSessionKey(USER, topic.thread_id));
+    const mainSession = await findSession('mg-int', memberSessionKey(USER, null));
+    const topicSession = await findSession('mg-int', memberSessionKey(USER, topic.thread_id));
 
     expect(mainSession, 'the room turn needs its own per-member session').toBeDefined();
     expect(topicSession, 'the thread turn needs its own per-member session').toBeDefined();
-    expect((await topicSession!).id).not.toBe((await mainSession!).id);
+    expect(topicSession!.id).not.toBe(mainSession!.id);
 
-    const mainQ = queueTexts((await mainSession!).id);
-    const topicQ = queueTexts((await topicSession!).id);
+    const mainQ = queueTexts(mainSession!.id);
+    const topicQ = queueTexts(topicSession!.id);
 
     // Each got its own turn...
     expect(mainQ).toContain('room question');
@@ -205,10 +205,10 @@ describe('router -> per-member session: file delivery', () => {
     });
 
     // Per-member sessions are keyed by (user, thread) — main here.
-    const session = findSession('mg-int', memberSessionKey(USER, null));
+    const session = await findSession('mg-int', memberSessionKey(USER, null));
     expect(session, 'a per-member session should exist for a connected member').toBeDefined();
 
-    const db = openInboundDb(AG, (await session!).id);
+    const db = openInboundDb(AG, session!.id);
     const rows = db.prepare('SELECT content, trigger FROM messages_in').all() as {
       content: string;
       trigger: number;
@@ -222,7 +222,7 @@ describe('router -> per-member session: file delivery', () => {
     // The bug's signature: a wake row with empty text and no attachment.
     expect(parsed.attachments, 'the upload must reach the agent as an attachment').toBeTruthy();
 
-    const staged = path.join(sessionDir(AG, (await session!).id), parsed.attachments![0].localPath!);
+    const staged = path.join(sessionDir(AG, session!.id), parsed.attachments![0].localPath!);
     expect(fs.existsSync(staged), 'the file must be staged where the container can read it').toBe(true);
     expect(fs.readFileSync(staged, 'utf8')).toBe('PDF-BYTES');
   });

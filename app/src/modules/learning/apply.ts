@@ -65,7 +65,7 @@ export interface ApplyResult {
  * agent. `restartReason` names who kept it — a human or auto-keep — so the
  * container-restart log stays attributable.
  */
-export function applySkillDraft(draft: SkillDraft, restartReason: string): ApplyResult {
+export async function applySkillDraft(draft: SkillDraft, restartReason: string): Promise<ApplyResult> {
   const body = readSkillDraftBody(draft.id);
   if (!body) return { ok: false, status: 410, error: 'Draft body missing' };
 
@@ -113,7 +113,7 @@ export function applySkillDraft(draft: SkillDraft, restartReason: string): Apply
   }
   resolveSkillDraft(draft.id, 'kept');
   const restarted = restartAgentGroupContainers(draft.agent_group_id, restartReason);
-  return { ok: true, status: 200, name, patched: isPatch, forkedFromPool, restarted };
+  return { ok: true, status: 200, name, patched: isPatch, forkedFromPool, restarted: await restarted };
 }
 
 /** Copy the CURRENT version of a skill into its revision history. */
