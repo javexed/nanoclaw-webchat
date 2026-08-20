@@ -23,9 +23,9 @@ import { recomputeEngagePatterns } from './server/agent-wiring.js';
 
 const now = () => new Date().toISOString();
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 
   // Three agents wired to one room — minimal viable multi-agent setup.
   createAgentGroup({ id: 'ag-a', name: 'Alice', folder: 'alice', agent_provider: null, created_at: now() });
@@ -56,7 +56,7 @@ beforeEach(() => {
   }
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 
@@ -70,7 +70,7 @@ async function patternsForRoom(roomId: string): Promise<Record<string, string>> 
 }
 
 describe('engage_default setting', () => {
-  it('defaults to mention-only for rooms without a settings row (broadcast retired)', () => {
+  it('defaults to mention-only for rooms without a settings row (broadcast retired)', async () => {
     expect(getRoomEngageDefault('room-1')).toBe('mention-only');
   });
 
@@ -91,7 +91,7 @@ describe('engage_default setting', () => {
     expect(p.carol).toBe('\\B@[cC][aA][rR][oO][lL]\\b');
   });
 
-  it('always reads mention-only — legacy broadcast is coerced away', () => {
+  it('always reads mention-only — legacy broadcast is coerced away', async () => {
     expect(getRoomEngageDefault('room-1')).toBe('mention-only');
     setRoomEngageDefault('room-1', 'mention-only');
     expect(getRoomEngageDefault('room-1')).toBe('mention-only');

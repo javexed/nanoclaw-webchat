@@ -22,14 +22,14 @@ import {
   setRoomOauthAllowed,
 } from '../../channels/webchat/db.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 afterEach(() => closeDb());
 
 describe('user_credential_members', () => {
-  it('upsert + get round-trips and marks active', () => {
+  it('upsert + get round-trips and marks active', async () => {
     upsertUserCredsCredential('webchat:alice', 'ag-1', 'user-creds-alice-aaa', 'sec-1');
     expect(getUserCredsCredential('webchat:alice', 'ag-1')).toMatchObject({
       onecli_agent_id: 'user-creds-alice-aaa',
@@ -40,7 +40,7 @@ describe('user_credential_members', () => {
     expect(userHasActiveKey('webchat:bob', 'ag-1')).toBe(false);
   });
 
-  it('getUserSecretId is sourced from the user-level credential (one secret, all rooms)', () => {
+  it('getUserSecretId is sourced from the user-level credential (one secret, all rooms)', async () => {
     expect(getUserSecretId('webchat:alice')).toBeNull(); // not connected yet
     upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
     expect(userHasConnectedCredential('webchat:alice', 'claude')).toBe(true);
@@ -54,7 +54,7 @@ describe('user_credential_members', () => {
     expect(getUserSecretId('webchat:alice')).toBeNull();
   });
 
-  it('recovers the agent group from a UserCreds agent id (approval routing)', () => {
+  it('recovers the agent group from a UserCreds agent id (approval routing)', async () => {
     upsertUserCredsCredential('webchat:alice', 'ag-1', 'user-creds-alice-aaa', 'sec-1');
     expect(agentGroupForUserCredsAgent('user-creds-alice-aaa')).toBe('ag-1');
     expect(agentGroupForUserCredsAgent('unknown')).toBeNull();
@@ -68,7 +68,7 @@ describe('user_credential_members', () => {
     expect((await activeMembersForGroup('ag-1')).sort()).toEqual(['webchat:alice']);
   });
 
-  it('revoke clears active status', () => {
+  it('revoke clears active status', async () => {
     upsertUserCredsCredential('webchat:alice', 'ag-1', 'user-creds-alice', 'sec-1');
     setUserCredsStatus('webchat:alice', 'ag-1', 'revoked');
     expect(userHasActiveKey('webchat:alice', 'ag-1')).toBe(false);
@@ -81,14 +81,14 @@ describe('user_credential_members', () => {
 describe('userCreds oauth credentials (vault-only)', () => {
   it('stores an oauth credential with a vault secret_id + oauth cred_type', async () => {
     upsertUserCredsCredential('webchat:alice', 'ag-1', 'user-creds-alice-aaa', 'sec-oat', 'oauth_token');
-    const row = await getUserCredsCredential('webchat:alice', 'ag-1')!;
+    const row = (await getUserCredsCredential('webchat:alice', 'ag-1'))!;
     expect(row.cred_type).toBe('oauth_token');
     expect(row.secret_id).toBe('sec-oat'); // lives in the OneCLI vault, like api keys
     expect(userHasActiveKey('webchat:alice', 'ag-1')).toBe(true);
     expect(userHasActiveOauth('webchat:alice', 'ag-1')).toBe(true);
   });
 
-  it('userHasActiveOauth is false for api_key rows and after revoke', () => {
+  it('userHasActiveOauth is false for api_key rows and after revoke', async () => {
     upsertUserCredsCredential('webchat:bob', 'ag-1', 'user-creds-bob', 'sec-1'); // default api_key
     expect(userHasActiveOauth('webchat:bob', 'ag-1')).toBe(false);
 
@@ -102,7 +102,7 @@ describe('userCreds oauth credentials (vault-only)', () => {
     expect(userHasActiveOauth('webchat:alice', 'ag-1')).toBe(true);
 
     upsertUserCredsCredential('webchat:alice', 'ag-1', 'user-creds-alice', 'sec-key', 'api_key');
-    const row = await getUserCredsCredential('webchat:alice', 'ag-1')!;
+    const row = (await getUserCredsCredential('webchat:alice', 'ag-1'))!;
     expect(row.cred_type).toBe('api_key');
     expect(row.secret_id).toBe('sec-key');
     expect(userHasActiveOauth('webchat:alice', 'ag-1')).toBe(false);
@@ -110,7 +110,7 @@ describe('userCreds oauth credentials (vault-only)', () => {
 });
 
 describe('room oauth_allowed', () => {
-  it('defaults to false and round-trips, orthogonal to credential_mode', () => {
+  it('defaults to false and round-trips, orthogonal to credential_mode', async () => {
     expect(getRoomOauthAllowed('room-z')).toBe(false);
     setRoomCredentialMode('room-z', 'optional');
     setRoomOauthAllowed('room-z', true);

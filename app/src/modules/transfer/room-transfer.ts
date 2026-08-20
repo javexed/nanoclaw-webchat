@@ -153,7 +153,7 @@ const uniqueRoomId = (base: string): string => {
   return id;
 };
 
-export function previewRoomImport(bundleDir: string): RoomImportPreview {
+export async function previewRoomImport(bundleDir: string): Promise<RoomImportPreview> {
   const manifest = JSON.parse(fs.readFileSync(path.join(bundleDir, 'manifest.json'), 'utf8')) as RoomExportManifest;
   if (manifest.format !== ROOM_FORMAT) throw new Error('Not a NanoClaw room export');
   if (manifest.version > ROOM_VERSION)
@@ -178,9 +178,9 @@ export interface RoomApplyResult {
   filesCopied: boolean;
 }
 
-export function applyRoomImport(bundleDir: string): RoomApplyResult {
+export async function applyRoomImport(bundleDir: string): Promise<RoomApplyResult> {
   const db = getDb();
-  const preview = previewRoomImport(bundleDir);
+  const preview = await previewRoomImport(bundleDir);
   const roomId = preview.suggestedRoomId;
   const readJson = <T>(rel: string): T => JSON.parse(fs.readFileSync(path.join(bundleDir, 'db', rel), 'utf8')) as T;
 
@@ -193,7 +193,7 @@ export function applyRoomImport(bundleDir: string): RoomApplyResult {
   let messages = 0;
   let threads = 0;
 
-  db.transaction(() => {
+  await db.transaction(async () => {
     const mgId = `mg-${Date.now()}-${randomUUID().slice(0, 6)}`;
     insertWithSchemaIntersection('messaging_groups', {
       ...mgRow,
@@ -254,7 +254,7 @@ export function applyRoomImport(bundleDir: string): RoomApplyResult {
         /* module table absent here */
       }
     }
-  })();
+  });
 
   // Files after commit.
   let filesCopied = false;

@@ -69,7 +69,7 @@ export async function writeRoomHumans(agentGroupId: string, sessionId: string): 
 
   let humans: RoomHuman[];
   try {
-    humans = getRoomHumans(mg.platform_id);
+    humans = await getRoomHumans(mg.platform_id);
   } catch (err) {
     // Handles table absent (older install) — nothing to publish, never fatal.
     log.debug('room humans lookup skipped', { err: err instanceof Error ? err.message : err });

@@ -247,7 +247,7 @@ export function setupWebSocket(
           send({ type: 'error', error: `Room not found: ${roomId}` });
           return;
         }
-        if (!canAccessRoom(client.userId, room.id)) {
+        if (!(await canAccessRoom(client.userId, room.id))) {
           send({ type: 'error', error: 'Access denied' });
           return;
         }
@@ -310,7 +310,7 @@ export function setupWebSocket(
         const roomId = typeof msg.room_id === 'string' ? msg.room_id : '';
         if (!roomId) return;
         const room = await getWebchatRoom(roomId);
-        if (!room || !canAccessRoom(client.userId, room.id)) return;
+        if (!room || !(await canAccessRoom(client.userId, room.id))) return;
         markRoomReadForUser(client.userId, room.id, Date.now(), clientId);
         // Per-thread marker (default 'main') so thread badges clear too.
         const readThread = typeof msg.thread_id === 'string' && msg.thread_id ? msg.thread_id : MAIN_THREAD;
@@ -346,7 +346,7 @@ export function setupWebSocket(
         // shared with the file-upload handlers so both enforce the same bound.
         const storeThread = resolveBoundedThread(client.room_id, msg.thread_id);
 
-        const stored = await storeWebchatMessage(client.room_id, client.identity, client.identity_type, text, storeThread);
+        const stored = await storeWebchatMessage(client.room_id, client.identity, client.identity_type, text, await storeThread);
         // The sender has by definition read their own message — advance their
         // marker (and sync their other devices) so it never self-unreads.
         markRoomReadForUser(client.userId, client.room_id, stored.created_at, clientId);
@@ -372,7 +372,7 @@ export function setupWebSocket(
               senderName: client.identity,
             },
           },
-          threadToSessionKey(storeThread),
+          threadToSessionKey(await storeThread),
         );
 
         send({ ...outgoing, content: redactSensitiveData(stored.content) });

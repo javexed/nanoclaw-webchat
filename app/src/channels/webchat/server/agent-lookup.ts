@@ -60,7 +60,7 @@ export async function deriveEffectiveModelLabel(agentGroupId: string): Promise<s
   // Claude family with no assignment: the group may still run on the WORKSPACE
   // DEFAULT model (the wizard's Ollama engine). Label it honestly — showing
   // "anthropic" for an agent that answers via Ollama misleads the operator.
-  const effective = getEffectiveModelForAgent(agentGroupId);
+  const effective = await getEffectiveModelForAgent(agentGroupId);
   if (effective) return `${effective.model_id} (workspace default)`;
   // A model pinned in container_configs (webchat's own field, or `ncl groups
   // config update --model`) is what the SDK is actually handed. Showing the
@@ -81,15 +81,15 @@ export async function toAgentForUI(g: AgentGroup): Promise<AgentForUI> {
     room_id: room ? room.id : null,
     assigned_model_id: assigned ? assigned.id : null,
     egress: (await getContainerConfig(g.id))?.egress ?? 'open',
-    effective_model_label: assigned ? null : deriveEffectiveModelLabel(g.id),
+    effective_model_label: assigned ? null : await deriveEffectiveModelLabel(g.id),
     config_model: (await getContainerConfig(g.id))?.model ?? null,
     // Which agent harness the group runs: 'claude' (built-in) or 'opencode'.
     provider: ((await getContainerConfig(g.id))?.provider as string | null) || 'claude',
   };
 }
 
-export function resolveAgent(idOrJid: string): AgentGroup | null {
-  return getAgentGroup(idOrJid) ?? null;
+export async function resolveAgent(idOrJid: string): Promise<AgentGroup | null> {
+  return (await getAgentGroup(idOrJid)) ?? null;
 }
 
 export async function listAgentsForUser(userId: string, includeArchived = false): Promise<AgentForUI[]> {
@@ -99,5 +99,5 @@ export async function listAgentsForUser(userId: string, includeArchived = false)
   // (agent list, pickers, topology/matrix) at once. The agent list opts in via
   // ?includeArchived=1 so they can still be managed (unarchived).
   const visible = includeArchived ? role : role.filter((g) => g.status !== 'archived');
-  return visible.map(toAgentForUI);
+  return Promise.all(visible.map(toAgentForUI));
 }

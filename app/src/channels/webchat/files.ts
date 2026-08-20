@@ -260,7 +260,7 @@ function inboundForFile(
   };
 }
 
-export function handleMultipartUpload(
+export async function handleMultipartUpload(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   roomId: string,
@@ -268,14 +268,14 @@ export function handleMultipartUpload(
   senderUserId: string,
   hooks: FileHooks,
   threadId: string = MAIN_THREAD,
-): void {
-  if (!getWebchatRoom(roomId)) {
+): Promise<void> {
+  if (!(await getWebchatRoom(roomId))) {
     log.warn('Webchat upload rejected: room not found', { roomId });
     return json(res, 404, { error: 'Room not found' });
   }
   // Bound the client-supplied thread_id exactly like the WS send path, so an
   // arbitrary ?thread_id= can't lazily spawn unbounded per-thread sessions.
-  threadId = resolveBoundedThread(roomId, threadId);
+  threadId = await resolveBoundedThread(roomId, threadId);
 
   const dir = uploadsDir(roomId);
   fs.mkdirSync(dir, { recursive: true });
@@ -456,7 +456,7 @@ export async function handleChunkedUpload(
     return json(res, 400, { error: 'Invalid uploadId format' });
   }
 
-  if (!getWebchatRoom(roomId)) {
+  if (!(await getWebchatRoom(roomId))) {
     return json(res, 404, { error: 'Room not found' });
   }
 
@@ -597,7 +597,7 @@ export async function handleChunkedUpload(
   const caption = parsed.caption || '';
   // Bound the client-supplied thread_id (same rule as the WS path) before it
   // keys a session — applied at finalize so it runs once, not per chunk.
-  threadId = resolveBoundedThread(roomId, threadId);
+  threadId = await resolveBoundedThread(roomId, threadId);
   const stored = await storeWebchatFileMessage(roomId, upload.sender, 'user', caption, fileMeta, threadId);
   broadcast(roomId, { type: 'message', ...stored });
   hooks.onInbound(

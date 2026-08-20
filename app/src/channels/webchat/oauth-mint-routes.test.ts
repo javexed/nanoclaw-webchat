@@ -40,9 +40,9 @@ async function boot() {
   vi.stubEnv('WEBCHAT_TRUSTED_PROXY_IPS', '');
   vi.resetModules();
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
+  await migrations.runMigrations(conn.getDb());
 
   const dbh = conn.getDb();
   const now = new Date().toISOString();

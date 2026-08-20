@@ -257,7 +257,7 @@ export async function rRouterLitellmInstallPost(ctx: RouteCtx, _m: RegExpMatchAr
   // the roster, or the hosts an existing config already declares) — not a
   // localhost Ollama that may not exist. Falls back to the localhost default
   // only when the roster is empty.
-  const r = startLitellmInstall(process.cwd(), deriveModelServerHosts() ?? undefined);
+  const r = startLitellmInstall(process.cwd(), (await deriveModelServerHosts()) ?? undefined);
   if (r.error === 'installer-missing') {
     return json(res, 409, {
       error: 'The add-litellm skill is not present in this checkout.',

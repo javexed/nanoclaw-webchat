@@ -49,7 +49,7 @@ export async function rModelsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<v
   // Members get the roster (pickers need id/name/kind/model_id) but not the
   // infrastructure fields — endpoint (internal model-server URLs) and
   // credential_ref stay owner-only, matching the rest of the model surface.
-  return json(res, 200, listModelsForUI(isOwner(userId)));
+  return json(res, 200, listModelsForUI(await isOwner(userId)));
 }
 
 export async function rModelsPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
@@ -118,7 +118,7 @@ export async function manageEndpoint(): Promise<string> {
 
 export async function rModelsManageGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res } = ctx;
-  return json(res, 200, await gatherModelInventory(manageEndpoint()));
+  return json(res, 200, await gatherModelInventory(await manageEndpoint()));
 }
 
 // Create a num_ctx variant of a pulled model (the 4k-default-trap fix), register
@@ -136,7 +136,7 @@ export async function rModelsContextVariantPost(ctx: RouteCtx, _m: RegExpMatchAr
   const ctxSize = Math.floor(Number(body.ctx));
   const endpoint = manageEndpoint();
   try {
-    const variantTag = await createContextVariant(endpoint, body.tag, ctxSize);
+    const variantTag = await createContextVariant(await endpoint, body.tag, ctxSize);
     const existing = (await listWebchatModels()).find((m) => m.model_id === variantTag);
     let id = existing?.id;
     if (!id) {
@@ -145,7 +145,7 @@ export async function rModelsContextVariantPost(ctx: RouteCtx, _m: RegExpMatchAr
         id,
         name: `${body.tag.trim()} @${Math.round(ctxSize / 1024)}k ctx`,
         kind: 'ollama',
-        endpoint,
+        endpoint: await endpoint,
         model_id: variantTag,
         credential_ref: null,
         created_at: Date.now(),
@@ -235,7 +235,7 @@ export async function createModelHandler(req: IncomingMessage, res: ServerRespon
 }
 
 export async function updateModelHandler(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
-  const existing = getWebchatModel(id);
+  const existing = await getWebchatModel(id);
   if (!existing) return json(res, 404, { error: 'Model not found' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -335,9 +335,9 @@ export async function deleteModelHandler(res: ServerResponse, id: string, force:
   deleteWebchatModel(id);
   // If this model was the workspace default, clear it and refresh the groups
   // that were inheriting it (they fall back to the workspace credential).
-  if (getDefaultModelId() === id) {
-    setDefaultModelId(null);
-    refreshUnassignedGroupsForDefaultModel('Workspace default model deleted');
+  if ((await getDefaultModelId()) === id) {
+    await setDefaultModelId(null);
+    await refreshUnassignedGroupsForDefaultModel('Workspace default model deleted');
   }
   // Refresh settings.json for any newly-orphaned agents and respawn them so a
   // live container doesn't keep using the now-dead ollama env block (it would

@@ -154,7 +154,7 @@ export async function cleanupTranscript(
   const trimmed = raw.trim();
   if (!trimmed) return fallback;
 
-  const modelId = getSttCleanupModelId();
+  const modelId = await getSttCleanupModelId();
   if (!modelId) return fallback;
   const model = await getWebchatModel(modelId);
   // Deleted since it was selected, or a kind that can't serve chat completions.

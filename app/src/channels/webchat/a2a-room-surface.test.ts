@@ -48,9 +48,9 @@ async function a2aRows(roomId: string) {
   }[];
 }
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 
   createAgentGroup({ id: 'ag-gamma', name: 'Gamma Agent', folder: 'green', agent_provider: null, created_at: now() });
   createAgentGroup({ id: 'ag-delta', name: 'Delta Agent', folder: 'rev', agent_provider: null, created_at: now() });
@@ -92,16 +92,16 @@ describe('getSharedWebchatRooms', () => {
     expect(rooms.map((r) => r.id)).toEqual(['plant-vision']);
   });
 
-  it('returns nothing when the agents share no room', () => {
+  it('returns nothing when the agents share no room', async () => {
     expect(getSharedWebchatRooms('ag-gamma', 'ag-lonely')).toEqual([]);
   });
 });
 
 describe('surfaceA2aMessage', () => {
-  it('writes an a2a-typed copy into the shared room with from/to attribution', () => {
+  it('writes an a2a-typed copy into the shared room with from/to attribution', async () => {
     surfaceA2aMessage('ag-gamma', 'ag-delta', JSON.stringify({ text: 'can you check your status?' }));
 
-    const rows = a2aRows('plant-vision');
+    const rows = await a2aRows('plant-vision');
     expect(rows).toHaveLength(1);
     expect(rows[0].sender).toBe('Gamma Agent');
     expect(rows[0].sender_type).toBe('a2a');
@@ -109,18 +109,18 @@ describe('surfaceA2aMessage', () => {
     expect(parsed).toEqual({ to: 'Delta Agent', text: 'can you check your status?' });
   });
 
-  it('does not surface when the agents share no room', () => {
+  it('does not surface when the agents share no room', async () => {
     surfaceA2aMessage('ag-gamma', 'ag-lonely', JSON.stringify({ text: 'hi' }));
     expect(a2aRows('solo')).toHaveLength(0);
   });
 
-  it('skips self-messages (from === to)', () => {
+  it('skips self-messages (from === to)', async () => {
     surfaceA2aMessage('ag-gamma', 'ag-gamma', JSON.stringify({ text: 'note to self' }));
     expect(a2aRows('plant-vision')).toHaveLength(0);
     expect(a2aRows('solo')).toHaveLength(0);
   });
 
-  it('skips empty text', () => {
+  it('skips empty text', async () => {
     surfaceA2aMessage('ag-gamma', 'ag-delta', JSON.stringify({ text: '   ' }));
     expect(a2aRows('plant-vision')).toHaveLength(0);
   });

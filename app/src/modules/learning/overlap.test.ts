@@ -55,12 +55,12 @@ describe('overlapScore', () => {
 });
 
 describe('gatherOverlapCandidates', () => {
-  it('collects scoped skills from a dataDir tree', () => {
+  it('collects scoped skills from a dataDir tree', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'overlap-'));
     const dir = path.join(root, 'v2-sessions', 'ag-x', '.claude-shared', 'skills', 'existing-skill');
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'SKILL.md'), '---\nname: existing-skill\ndescription: does a thing\n---\n');
-    const got = gatherOverlapCandidates('ag-x', 'draft-none', root);
+    const got = await gatherOverlapCandidates('ag-x', 'draft-none', root);
     const scoped = got.filter((c) => c.source === 'scoped');
     expect(scoped).toEqual([{ name: 'existing-skill', description: 'does a thing', source: 'scoped' }]);
     fs.rmSync(root, { recursive: true, force: true });

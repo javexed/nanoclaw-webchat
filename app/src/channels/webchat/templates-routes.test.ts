@@ -70,9 +70,9 @@ async function loadServerWithEnv(env: Record<string, string | undefined>) {
   }
   vi.resetModules();
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
+  await migrations.runMigrations(conn.getDb());
   return { server: await import('./server.js'), conn };
 }
 
@@ -102,23 +102,15 @@ const portOf = (wc: { http: { address: () => unknown } }): number => {
 };
 
 const now = '2026-08-17T00:00:00.000Z';
-function seed(db: import('better-sqlite3').Database): void {
-  const user = (id: string) =>
-    db
-      .prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`)
-      .run(id, now);
-  const group = (id: string) =>
-    db
-      .prepare(
-        `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      )
-      .run(id, id, id, now);
-  const role = (uid: string, r: 'owner' | 'admin', g: string | null) => {
+function seed(db: import('../../db/driver.js').DbDriver): void {
+  const user = async (id: string) =>
+    await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, id, now);
+  const group = async (id: string) =>
+    await db.run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, id, id, id, now);
+  const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
     user(uid);
     if (g) group(g);
-    db.prepare(
-      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
-    ).run(uid, r, g, now);
+    await db.run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`, uid, r, g, now);
   };
   group('ag-test-a');
   role('webchat:owner', 'owner', null);

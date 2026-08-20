@@ -41,9 +41,9 @@ function addModel(id: string, kind: string, endpoint: string | null = 'http://12
 }
 
 const savedEnv: Record<string, string | undefined> = {};
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
   for (const k of [
     'WEBCHAT_STT_ENABLED',
     'WEBCHAT_STT_PROVIDER',
@@ -56,7 +56,7 @@ beforeEach(() => {
     delete process.env[k];
   }
 });
-afterEach(() => {
+afterEach(async () => {
   closeDb();
   for (const [k, v] of Object.entries(savedEnv)) {
     if (v === undefined) delete process.env[k];
@@ -65,7 +65,7 @@ afterEach(() => {
 });
 
 describe('sttEnabled / sttProvider', () => {
-  it('requires the enable flag AND a provider-appropriate config', () => {
+  it('requires the enable flag AND a provider-appropriate config', async () => {
     expect(sttEnabled()).toBe(false);
     process.env.WEBCHAT_STT_ENABLED = 'true';
     expect(sttEnabled()).toBe(false); // no URL yet
@@ -73,7 +73,7 @@ describe('sttEnabled / sttProvider', () => {
     expect(sttEnabled()).toBe(true);
   });
 
-  it('elevenlabs needs the API key, not a URL', () => {
+  it('elevenlabs needs the API key, not a URL', async () => {
     process.env.WEBCHAT_STT_ENABLED = 'true';
     process.env.WEBCHAT_STT_PROVIDER = 'elevenlabs';
     expect(sttEnabled()).toBe(false);
@@ -81,7 +81,7 @@ describe('sttEnabled / sttProvider', () => {
     expect(sttEnabled()).toBe(true);
   });
 
-  it('unknown provider values fall back to local', () => {
+  it('unknown provider values fall back to local', async () => {
     process.env.WEBCHAT_STT_PROVIDER = 'whisper'; // legacy/typo
     expect(sttProvider()).toBe('local');
   });
@@ -131,7 +131,7 @@ describe('transcribeSegment', () => {
 });
 
 describe('transcribeSegment — elevenlabs', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.WEBCHAT_STT_PROVIDER = 'elevenlabs';
     process.env.WEBCHAT_STT_API_KEY = 'xi-test-key';
   });

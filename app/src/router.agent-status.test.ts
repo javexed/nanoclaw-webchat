@@ -36,11 +36,11 @@ vi.mock('./config.js', async () => {
 const TEST_DIR = '/tmp/nanoclaw-test-agent-status';
 const now = () => new Date().toISOString();
 
-beforeEach(() => {
+beforeEach(async () => {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
-  const db = initTestDb();
-  runMigrations(db);
+  const db = await initTestDb();
+  await runMigrations(await db);
 
   createAgentGroup({ id: 'ag-bot', name: 'Bot', folder: 'bot', agent_provider: null, created_at: now() });
   createMessagingGroup({
@@ -88,7 +88,7 @@ describe('agent status gate', () => {
   it('active agent engages (baseline)', async () => {
     const { routeInbound } = await import('./router.js');
     await routeInbound(event('hello'));
-    const active = getActiveSessions();
+    const active = await getActiveSessions();
     expect(active).toHaveLength(1);
     expect(active[0].agent_group_id).toBe('ag-bot');
   });

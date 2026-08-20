@@ -1,5 +1,5 @@
 diff --git a/src/container-config.test.ts b/src/container-config.test.ts
-index 1a979f61..15c1bc5a 100644
+index 1a979f61..c2fb2d5d 100644
 --- a/src/container-config.test.ts
 +++ b/src/container-config.test.ts
 @@ -63,6 +63,25 @@ describe('resolveGroupTimezone', () => {
@@ -14,16 +14,16 @@ index 1a979f61..15c1bc5a 100644
 +   * every group runs with open egress regardless. Nothing else catches that,
 +   * which is how it shipped unmapped.
 +   */
-+  it('configFromDb carries egress through to the container', () => {
++  it('configFromDb carries egress through to the container', async () => {
 +    updateContainerConfigScalars(GROUP.id, { egress: 'host-only' });
-+    expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).egress).toBe('host-only');
++    expect(configFromDb((await getContainerConfig(GROUP.id))!, GROUP).egress).toBe('host-only');
 +
 +    updateContainerConfigScalars(GROUP.id, { egress: 'none' });
-+    expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).egress).toBe('none');
++    expect(configFromDb((await getContainerConfig(GROUP.id))!, GROUP).egress).toBe('none');
 +
 +    // Unset means OneCLI's default (open) — undefined, not the string 'open'.
 +    updateContainerConfigScalars(GROUP.id, { egress: null });
-+    expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).egress).toBeUndefined();
++    expect(configFromDb((await getContainerConfig(GROUP.id))!, GROUP).egress).toBeUndefined();
 +  });
  });
  

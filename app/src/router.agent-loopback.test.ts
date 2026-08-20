@@ -39,11 +39,11 @@ vi.mock('./config.js', async () => {
 const TEST_DIR = '/tmp/nanoclaw-test-loopback';
 const now = () => new Date().toISOString();
 
-beforeEach(() => {
+beforeEach(async () => {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
-  const db = initTestDb();
-  runMigrations(db);
+  const db = await initTestDb();
+  await runMigrations(await db);
 
   // Three-agent room mirroring the user's `floor` setup:
   //   News    — prime (negative-lookahead pattern, ignores @-mentions to others)
@@ -107,7 +107,7 @@ describe('agent-authored loop-back', () => {
     // News should NOT have a session — its negative-lookahead excludes messages mentioning @fomc.
     // Quick check via session table: only one session exists, and it's FOMC's.
     const { getActiveSessions } = await import('./db/sessions.js');
-    const active = getActiveSessions();
+    const active = await getActiveSessions();
     expect(active).toHaveLength(1);
     expect(active[0].agent_group_id).toBe('ag-fomc');
   });
@@ -116,7 +116,7 @@ describe('agent-authored loop-back', () => {
     const { routeInbound } = await import('./router.js');
     await routeInbound(baseEvent({ text: 'general market chatter' }));
     const { getActiveSessions } = await import('./db/sessions.js');
-    const active = getActiveSessions();
+    const active = await getActiveSessions();
     expect(active).toHaveLength(1);
     expect(active[0].agent_group_id).toBe('ag-news');
   });
@@ -144,7 +144,7 @@ describe('agent-authored loop-back', () => {
     // FOMC explicitly addresses Advisor — that's the entire point of Pattern C.
     await routeInbound(baseEvent({ text: '@advisor your view on the FOMC decision?', senderAgentGroupId: 'ag-fomc' }));
     const { getActiveSessions } = await import('./db/sessions.js');
-    const active = getActiveSessions();
+    const active = await getActiveSessions();
     expect(active).toHaveLength(1);
     expect(active[0].agent_group_id).toBe('ag-advisor');
   });
@@ -154,7 +154,7 @@ describe('agent-authored loop-back', () => {
     // FOMC writes "@fomc to @advisor". Self skipped; Advisor engages.
     await routeInbound(baseEvent({ text: '@fomc to @advisor — your read on this?', senderAgentGroupId: 'ag-fomc' }));
     const { getActiveSessions } = await import('./db/sessions.js');
-    const active = getActiveSessions();
+    const active = await getActiveSessions();
     expect(active).toHaveLength(1);
     expect(active[0].agent_group_id).toBe('ag-advisor');
   });

@@ -21,12 +21,12 @@ import {
 const INBOX_A = 'approvals:tailscale:a@example.com';
 const INBOX_B = 'approvals:tailscale:b@example.com';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 
@@ -59,14 +59,14 @@ describe('webchat_approvals_index — multi-inbox (fan-out)', () => {
     expect(forB.map((r) => r.approval_id)).toContain('appr-2');
   });
 
-  it('deleteWebchatApprovalIndex clears all rows for an approval', () => {
+  it('deleteWebchatApprovalIndex clears all rows for an approval', async () => {
     recordWebchatApproval('appr-3', INBOX_A);
     recordWebchatApproval('appr-3', INBOX_B);
     deleteWebchatApprovalIndex('appr-3');
     expect(getWebchatApprovalInboxes('appr-3')).toEqual([]);
   });
 
-  it('userForApprovalInbox inverts approvalInboxForUser', () => {
+  it('userForApprovalInbox inverts approvalInboxForUser', async () => {
     expect(userForApprovalInbox(INBOX_A)).toBe('webchat:tailscale:a@example.com');
     expect(userForApprovalInbox('not-an-inbox')).toBeNull();
   });

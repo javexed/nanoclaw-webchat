@@ -8,17 +8,17 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 
-beforeEach(() => {
-  initTestDb();
+beforeEach(async () => {
+  await initTestDb();
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 
 describe('moduleWebchat migration', () => {
   it('leaves the expected tables after all webchat migrations', async () => {
-    runMigrations(getDb());
+    await runMigrations(getDb());
     // After all webchat migrations:
     //   webchat-initial          → webchat_rooms, webchat_messages, webchat_push_subscriptions
     //   webchat-drop-rooms       → drops webchat_rooms (data moved to messaging_groups)
@@ -62,7 +62,7 @@ describe('moduleWebchat migration', () => {
   });
 
   it('creates the expected indexes', async () => {
-    runMigrations(getDb());
+    await runMigrations(getDb());
     const indexes = (await getDb().all(`SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_webchat_%' ORDER BY name`)) as { name: string }[];
     expect(indexes.map((i) => i.name).sort()).toEqual(
       [
@@ -82,7 +82,7 @@ describe('moduleWebchat migration', () => {
   });
 
   it('records all webchat migrations in schema_version', async () => {
-    runMigrations(getDb());
+    await runMigrations(getDb());
     const rows = (await getDb().all(`SELECT name FROM schema_version WHERE name LIKE 'webchat-%' ORDER BY name`)) as {
       name: string;
     }[];
@@ -128,12 +128,12 @@ describe('moduleWebchat migration', () => {
     ]);
   });
 
-  it('is a no-op on re-run (name-based dedupe)', () => {
-    runMigrations(getDb());
+  it('is a no-op on re-run (name-based dedupe)', async () => {
+    await runMigrations(getDb());
     // Second invocation must not throw — runMigrations dedupes by name,
     // and webchat-initial's IF NOT EXISTS guards plus webchat-drop-rooms'
     // table-existence check make the whole pass idempotent.
-    expect(() => runMigrations(getDb())).not.toThrow();
+    await expect(runMigrations(getDb())).resolves.not.toThrow();
   });
 
   it('legacy install upgrade: webchat-drop-rooms migrates webchat_rooms data into messaging_groups', async () => {
@@ -161,7 +161,7 @@ describe('moduleWebchat migration', () => {
     // Mark webchat-initial as already applied so only the new migration runs.
     await db.run(`INSERT INTO schema_version (version, name, applied) VALUES (100, 'webchat-initial', ?)`, new Date().toISOString());
 
-    runMigrations(db);
+    await runMigrations(db);
 
     // After: webchat_rooms is gone, but the legacy room got a corresponding
     // messaging_groups row.
@@ -197,7 +197,7 @@ describe('moduleWebchat migration', () => {
     await db.run(`INSERT INTO webchat_messages (id, room_id, sender, content, created_at) VALUES ('m1', 'r1', 'alice', 'hi', ?)`, Date.now());
     await db.run(`INSERT INTO schema_version (version, name, applied) VALUES (100, 'webchat-initial', ?)`, new Date().toISOString());
 
-    runMigrations(db);
+    await runMigrations(db);
 
     const msg = (await db.get(`SELECT id, room_id, sender, content FROM webchat_messages WHERE id='m1'`)) as {
       id: string;

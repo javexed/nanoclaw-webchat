@@ -108,7 +108,7 @@ export async function handleRouteLearningReview(content: Record<string, unknown>
     void forwardAsync(target);
   };
 
-  const enrolled = invoker !== null && userHasConnectedCredential(invoker, groupProvider(agentGroupId));
+  const enrolled = invoker !== null && (await userHasConnectedCredential(invoker, await groupProvider(agentGroupId)));
   // Access decides who may spend at all. Owner / global admin / scoped admin
   // are "privileged"; a plain member may spend only in 'off' mode (where the
   // operator has explicitly accepted shared-credential spend); a non-member

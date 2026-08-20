@@ -1,5 +1,5 @@
 diff --git a/src/modules/approvals/onecli-approvals.ts b/src/modules/approvals/onecli-approvals.ts
-index 9f5325fa..f5d31f58 100644
+index 9f5325fa..5758a2a3 100644
 --- a/src/modules/approvals/onecli-approvals.ts
 +++ b/src/modules/approvals/onecli-approvals.ts
 @@ -38,6 +38,25 @@ export const ONECLI_ACTION = 'onecli_credential';
@@ -12,12 +12,12 @@ index 9f5325fa..f5d31f58 100644
 + * by the userCreds module; default returns null (normal identifiers resolve directly
 + * via getAgentGroup).
 + */
-+type ApprovalAgentGroupFallback = (externalId: string) => string | null;
++type ApprovalAgentGroupFallback = (externalId: string) => string | null | Promise<string | null>;
 +let approvalAgentGroupFallback: ApprovalAgentGroupFallback | null = null;
 +export function registerApprovalAgentGroupFallback(fn: ApprovalAgentGroupFallback): void {
 +  approvalAgentGroupFallback = fn;
 +}
-+function resolveApprovalAgentGroupFallback(externalId: string): string | null {
++async function resolveApprovalAgentGroupFallback(externalId: string): Promise<string | null> {
 +  try {
 +    return approvalAgentGroupFallback ? approvalAgentGroupFallback(externalId) : null;
 +  } catch {
@@ -40,7 +40,7 @@ index 9f5325fa..f5d31f58 100644
 +  const externalId = request.agent.externalId;
 +  let agentGroupId = externalId ? ((await getAgentGroup(externalId))?.id ?? null) : null;
 +  if (!agentGroupId && externalId) {
-+    agentGroupId = resolveApprovalAgentGroupFallback(externalId);
++    agentGroupId = await resolveApprovalAgentGroupFallback(externalId);
 +  }
 +  const originGroup = agentGroupId ? await getAgentGroup(agentGroupId) : undefined;
    const approvers = await pickApprover(agentGroupId);

@@ -49,7 +49,7 @@ function readRoomHumans(): { handle: string; display_name: string | null }[] {
 beforeEach(async () => {
   fs.rmSync(TEST_DIR, { recursive: true, force: true });
   const db = await initTestDb();
-  runMigrations(db);
+  await runMigrations(db);
   createAgentGroup({ id: AG, name: 'RH', folder: 'rh', agent_provider: null, created_at: now() });
   await db.run(`INSERT INTO messaging_groups (id,channel_type,instance,platform_id,is_group,created_at)
      VALUES ('mg-rh','webchat','webchat','room-rh',1,?)`, now());

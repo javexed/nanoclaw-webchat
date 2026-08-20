@@ -32,9 +32,9 @@ async function loadServerWithEnv(env: Record<string, string | undefined>) {
   }
   vi.resetModules();
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
+  await migrations.runMigrations(conn.getDb());
   return await import('./server.js');
 }
 

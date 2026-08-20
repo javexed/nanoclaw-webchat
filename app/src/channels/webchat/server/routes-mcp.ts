@@ -63,7 +63,7 @@ export async function rMcpSourcesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promi
 
 export async function rMcpSourcePut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const id = decodeURIComponent(m[1]);
   if (id !== MCP_REGISTRY_ID) return json(res, 404, { error: 'Unknown source' });
@@ -84,7 +84,7 @@ export async function rMcpSourcePut(ctx: RouteCtx, m: RegExpMatchArray): Promise
 // gone server-side. Restore = POST on the same path.
 export async function rMcpSourceDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (decodeURIComponent(m[1]) !== MCP_REGISTRY_ID) return json(res, 404, { error: 'Unknown source' });
   setSourceDisabled(mcpRegistryRemovedKey(), true);
@@ -95,7 +95,7 @@ export async function rMcpSourcePost(ctx: RouteCtx, m: RegExpMatchArray): Promis
   const { req, res, userId } = ctx;
   // Restore a removed source (clears the disabled flag too — a restore
   // should come back usable, not resurrect half-off).
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (decodeURIComponent(m[1]) !== MCP_REGISTRY_ID) return json(res, 404, { error: 'Unknown source' });
   setSourceDisabled(mcpRegistryRemovedKey(), false);
@@ -122,11 +122,11 @@ export async function rMcpServersOauthCallbackGet(ctx: RouteCtx, _m: RegExpMatch
   if (!code || !state) return json(res, 400, { error: 'Missing code/state' });
   try {
     const { serverId } = await finishOAuthFlow(state, code);
-    const server = getWebchatMcpServer(serverId);
+    const server = await getWebchatMcpServer(serverId);
     if (server) {
       // Re-sync every assigned agent onto the relay URL now that auth exists.
       for (const gid of await getAgentsAssignedToMcpServer(serverId)) {
-        syncAgentMcpConfig(gid, server, true);
+        await syncAgentMcpConfig(gid, server, true);
         reloadAgentMcpServers(gid);
       }
       void checkMcpServer(server).catch(() => {});
@@ -175,7 +175,7 @@ export async function rMcpRepinPost(ctx: RouteCtx, m: RegExpMatchArray): Promise
   if (server.transport === 'stdio' || !server.url) return json(res, 400, { error: 'Only remote servers are pinned' });
   setMcpServerDrift(server.id, null);
   await getDb().run(`UPDATE webchat_mcp_servers SET pinned_tools = NULL WHERE id = ?`, server.id);
-  const health = await checkMcpServer(getWebchatMcpServer(server.id)!); // re-probe pins the current surface
+  const health = await checkMcpServer((await getWebchatMcpServer(server.id))!); // re-probe pins the current surface
   return json(res, 200, { ok: true, health });
 }
 
@@ -195,9 +195,9 @@ export async function rMcpToolsPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<
     return json(res, 400, { error: 'Invalid JSON' });
   }
   setMcpServerEnabledTools(server.id, enabled && enabled.length ? enabled : null);
-  const updated = getWebchatMcpServer(server.id)!;
+  const updated = (await getWebchatMcpServer(server.id))!;
   for (const gid of await getAgentsAssignedToMcpServer(server.id)) {
-    syncAgentMcpConfig(gid, updated, true);
+    await syncAgentMcpConfig(gid, updated, true);
     reloadAgentMcpServers(gid);
   }
   return json(res, 200, { ok: true });
@@ -207,7 +207,7 @@ export async function rMcpToolsPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<
 // clears. Never echoed back; containers switch to the relay on next sync.
 export async function rMcpAuthPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const server = await getWebchatMcpServer(decodeURIComponent(m[1]));
   if (!server) return json(res, 404, { error: 'MCP server not found' });
@@ -221,9 +221,9 @@ export async function rMcpAuthPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<v
     return json(res, 400, { error: 'Invalid JSON' });
   }
   setMcpServerAuth(server.id, token ? { kind: 'bearer', token } : null);
-  const updated = getWebchatMcpServer(server.id)!;
+  const updated = (await getWebchatMcpServer(server.id))!;
   for (const gid of await getAgentsAssignedToMcpServer(server.id)) {
-    syncAgentMcpConfig(gid, updated, true);
+    await syncAgentMcpConfig(gid, updated, true);
     reloadAgentMcpServers(gid);
   }
   return json(res, 200, { ok: true, hasAuth: !!token });
@@ -240,7 +240,7 @@ export async function rMcpServerIdDelete(ctx: RouteCtx, m: RegExpMatchArray): Pr
 }
 
 export async function listMcpServersForUI(): Promise<McpServerForUI[]> {
-  return (await listWebchatMcpServers()).map(mcpServerForUI);
+  return Promise.all((await listWebchatMcpServers()).map(mcpServerForUI));
 }
 
 /** Parse + validate a registry create/update body into a WebchatMcpServerInput. */
@@ -348,7 +348,7 @@ export async function updateMcpServerHandler(req: IncomingMessage, res: ServerRe
 }
 
 export async function deleteMcpServerHandler(res: ServerResponse, id: string, force: boolean): Promise<void> {
-  const existing = getWebchatMcpServer(id);
+  const existing = await getWebchatMcpServer(id);
   if (!existing) return json(res, 404, { error: 'MCP server not found' });
   const assigned = await getAgentsAssignedToMcpServer(id);
   if (assigned.length > 0 && !force) {
@@ -360,7 +360,7 @@ export async function deleteMcpServerHandler(res: ServerResponse, id: string, fo
     });
   }
   for (const agentGroupId of assigned) {
-    syncAgentMcpConfig(agentGroupId, existing, false);
+    await syncAgentMcpConfig(agentGroupId, existing, false);
   }
   deleteWebchatMcpServer(id);
   for (const agentGroupId of assigned) {

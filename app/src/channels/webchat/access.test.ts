@@ -12,12 +12,12 @@ import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { canAccessRoom, filterRoomsForUser } from './access.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 
@@ -53,20 +53,20 @@ async function grantRole(userId: string, role: 'owner' | 'admin' | 'member', age
 }
 
 describe('canAccessRoom', () => {
-  it('returns false for an unknown user', () => {
+  it('returns false for an unknown user', async () => {
     insertAgentGroup('ag-1');
     insertRoom('room-1');
     wire('room-1', 'ag-1');
     expect(canAccessRoom('webchat:tailscale:nobody@example.com', 'room-1')).toBe(false);
   });
 
-  it('returns false for a room with no wired agents', () => {
+  it('returns false for a room with no wired agents', async () => {
     grantRole('webchat:owner', 'owner', null);
     insertRoom('orphan-room');
     expect(canAccessRoom('webchat:owner', 'orphan-room')).toBe(false);
   });
 
-  it('grants the global owner access to every room', () => {
+  it('grants the global owner access to every room', async () => {
     grantRole('webchat:owner', 'owner', null);
     insertAgentGroup('ag-1');
     insertRoom('room-1');
@@ -74,7 +74,7 @@ describe('canAccessRoom', () => {
     expect(canAccessRoom('webchat:owner', 'room-1')).toBe(true);
   });
 
-  it('grants a scoped admin access to rooms wired to their agent', () => {
+  it('grants a scoped admin access to rooms wired to their agent', async () => {
     insertAgentGroup('ag-mine');
     insertAgentGroup('ag-other');
     insertRoom('room-mine');
@@ -86,7 +86,7 @@ describe('canAccessRoom', () => {
     expect(canAccessRoom('webchat:admin', 'room-other')).toBe(false);
   });
 
-  it('grants a member access via agent_group_members', () => {
+  it('grants a member access via agent_group_members', async () => {
     insertAgentGroup('ag-1');
     insertRoom('room-1');
     wire('room-1', 'ag-1');
@@ -94,7 +94,7 @@ describe('canAccessRoom', () => {
     expect(canAccessRoom('webchat:member', 'room-1')).toBe(true);
   });
 
-  it('grants access to a multi-agent room if the user can reach any one agent', () => {
+  it('grants access to a multi-agent room if the user can reach any one agent', async () => {
     insertAgentGroup('ag-mine');
     insertAgentGroup('ag-other');
     insertRoom('shared-room');
@@ -106,7 +106,7 @@ describe('canAccessRoom', () => {
 });
 
 describe('filterRoomsForUser', () => {
-  it('only returns rooms the user can access', () => {
+  it('only returns rooms the user can access', async () => {
     insertAgentGroup('ag-mine');
     insertAgentGroup('ag-other');
     insertRoom('room-mine', 'Mine');

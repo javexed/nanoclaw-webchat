@@ -35,7 +35,7 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(DATA, { recursive: true, force: true }));
 
 describe('applySkillDraft — update existing skill (patch)', () => {
-  it('replaces the target skill and snapshots the old version to .history', () => {
+  it('replaces the target skill and snapshots the old version to .history', async () => {
     // A create-draft re-typed as a patch of an existing skill — exactly what the
     // keep handler does for an "Update <skill>" overlap choice.
     const draft = {
@@ -45,7 +45,7 @@ describe('applySkillDraft — update existing skill (patch)', () => {
       target_skill: 'existing-skill',
       skill_name: 'newly-learned',
     };
-    const r = applySkillDraft(draft as Parameters<typeof applySkillDraft>[0], 'test update');
+    const r = await applySkillDraft(draft as Parameters<typeof applySkillDraft>[0], 'test update');
 
     expect(r.ok).toBe(true);
     expect(r.name).toBe('existing-skill'); // wrote to the TARGET, not the draft's own name

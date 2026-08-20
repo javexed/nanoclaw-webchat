@@ -10,30 +10,30 @@ import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { createWebchatRoom, getWebchatRoom, sanitizeRoomName, updateWebchatRoomName } from './db.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 
 describe('sanitizeRoomName', () => {
-  it('trims and collapses internal whitespace, keeps single spaces', () => {
+  it('trims and collapses internal whitespace, keeps single spaces', async () => {
     expect(sanitizeRoomName('  Team   standup  ')).toBe('Team standup');
     expect(sanitizeRoomName('keep the spaces')).toBe('keep the spaces');
   });
-  it('strips control characters (incl. tabs/newlines)', () => {
+  it('strips control characters (incl. tabs/newlines)', async () => {
     expect(sanitizeRoomName('two\tword\nname')).toBe('twowordname');
     expect(sanitizeRoomName('null\u0000and\u007fdel')).toBe('nullanddel');
   });
-  it('rejects empty / whitespace-only / non-string', () => {
+  it('rejects empty / whitespace-only / non-string', async () => {
     expect(sanitizeRoomName('')).toBeNull();
     expect(sanitizeRoomName('   ')).toBeNull();
     expect(sanitizeRoomName(undefined)).toBeNull();
     expect(sanitizeRoomName(42)).toBeNull();
   });
-  it('rejects names longer than 80 chars (after cleaning)', () => {
+  it('rejects names longer than 80 chars (after cleaning)', async () => {
     expect(sanitizeRoomName('a'.repeat(80))).toBe('a'.repeat(80));
     expect(sanitizeRoomName('a'.repeat(81))).toBeNull();
   });
@@ -48,7 +48,7 @@ describe('updateWebchatRoomName', () => {
     expect((await getWebchatRoom('room-1'))?.name).toBe('New name');
   });
 
-  it('is a no-op for an unknown room id', () => {
+  it('is a no-op for an unknown room id', async () => {
     expect(() => updateWebchatRoomName('does-not-exist', 'whatever')).not.toThrow();
     expect(getWebchatRoom('does-not-exist')).toBeUndefined();
   });

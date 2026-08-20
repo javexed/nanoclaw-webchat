@@ -99,7 +99,7 @@ export async function stageAgentExport(agentGroupId: string, includeConversation
   const db = getDb();
   const group = await getAgentGroup(agentGroupId);
   if (!group) throw new Error('Agent not found');
-  const cfg = getContainerConfig(agentGroupId);
+  const cfg = await getContainerConfig(agentGroupId);
 
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-export-'));
   fs.mkdirSync(path.join(stage, 'db'), { recursive: true });
@@ -289,7 +289,7 @@ export async function applyImport(bundleDir: string, opts: { name?: string } = {
   let modelAssigned = false;
   let destinationsImported = 0;
   let destinationsTotal = 0;
-  db.transaction(async () => {
+  await db.transaction(async () => {
     createAgentGroup({
       id,
       name,
@@ -331,7 +331,7 @@ export async function applyImport(bundleDir: string, opts: { name?: string } = {
     const destinations = readJson<Record<string, unknown>[]>('db/destinations.json') ?? [];
     destinationsTotal = destinations.length;
     for (const d of destinations) {
-      if (d.target_type === 'agent' && !getAgentGroup(String(d.target_id))) continue;
+      if (d.target_type === 'agent' && !(await getAgentGroup(String(d.target_id)))) continue;
       try {
         insertWithSchemaIntersection('agent_destinations', { ...d, id: randomUUID(), agent_group_id: id });
         destinationsImported++;
@@ -379,7 +379,7 @@ export async function applyImport(bundleDir: string, opts: { name?: string } = {
         modelAssigned = true;
       }
     }
-  })(); // ── end atomic DB phase
+  }); // ── end atomic DB phase
 
   // 3. Files.
   const sessRoot = path.join(DATA_DIR, 'v2-sessions', id);

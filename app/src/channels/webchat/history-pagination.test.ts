@@ -16,9 +16,9 @@ async function seed(roomId: string, id: string, createdAt: number) {
        VALUES (?, ?, 'u', 'user', ?, 'text', NULL, ?)`, id, roomId, `msg-${id}`, createdAt);
 }
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
   // 10 messages, created_at 1..10, ids m1..m10.
   for (let i = 1; i <= 10; i++) seed('room-1', `m${i}`, i);
   // Noise in another room — must never leak in.
@@ -38,11 +38,11 @@ describe('getWebchatMessagesBeforeId', () => {
     expect(page.some((m) => m.id === 'x1')).toBe(false);
   });
 
-  it('returns empty at the start of history (anchor is the oldest)', () => {
+  it('returns empty at the start of history (anchor is the oldest)', async () => {
     expect(getWebchatMessagesBeforeId('room-1', 'm1', 50)).toEqual([]);
   });
 
-  it('returns empty for an unknown anchor id', () => {
+  it('returns empty for an unknown anchor id', async () => {
     expect(getWebchatMessagesBeforeId('room-1', 'nope', 50)).toEqual([]);
   });
 

@@ -44,7 +44,7 @@ import { readEnvFile } from '../../env.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { createMessagingGroup, getMessagingGroup, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { getPendingApproval } from '../../db/sessions.js';
-import { registerContainerConfigAugmentor, registerLearningClassifierResolver } from '../../container-runtime.js';
+import { registerContainerConfigAugmentor, registerLearningClassifierResolver, registerSessionPrepareHook } from '../../container-runtime.js';
 import { registerA2aRouteObserver } from '../../modules/agent-to-agent/agent-route.js';
 import { classifierParamsForModel } from './models.js';
 import { registerChannelAdapter } from '../channel-registry.js';
@@ -198,7 +198,7 @@ function createAdapter(): ChannelAdapter {
       // adapter.deliver(channel_type='webchat', platform_id=this) which we
       // route to a per-user WS push instead of storing as a chat message.
       const platformId = `${APPROVAL_INBOX_PREFIX}${handle}`;
-      if (!getMessagingGroupByPlatform('webchat', platformId)) {
+      if (!(await getMessagingGroupByPlatform('webchat', platformId))) {
         createMessagingGroup({
           id: randomUUID(),
           channel_type: 'webchat',
@@ -260,7 +260,7 @@ function createAdapter(): ChannelAdapter {
       // for legacy paths that don't set the field (defensive — should be
       // populated for all real deliveries after the threading change).
       let producer = await (message.senderAgentGroupId ? lookupAgentForMessage(message.senderAgentGroupId) : null);
-      if (!producer) producer = findActiveAgentForWebchatRoom(roomId);
+      if (!producer) producer = await findActiveAgentForWebchatRoom(roomId);
       const senderName = producer?.name ?? agentDisplayName();
       const text = extractText(message);
       // The reply belongs to the producing session's thread. The session key
@@ -331,7 +331,7 @@ function createAdapter(): ChannelAdapter {
         room_id: platformId,
         // Prefer the actual typing agent's name (multi-agent rooms); fall back to
         // the room's default agent for older callers that don't pass it.
-        identity: agentName || senderForRoom(platformId),
+        identity: agentName || (await senderForRoom(platformId)),
         identity_type: 'agent',
         is_typing: true,
       });
@@ -468,8 +468,8 @@ function isGlobalOllamaBaseUrl(): boolean {
   const base = readEnvFile(['ANTHROPIC_BASE_URL']).ANTHROPIC_BASE_URL ?? '';
   return /:11434(\b|\/)/.test(base);
 }
-function isOllamaBackedAgent(agentGroupId: string): boolean {
-  const model = getEffectiveModelForAgent(agentGroupId);
+async function isOllamaBackedAgent(agentGroupId: string): Promise<boolean> {
+  const model = await getEffectiveModelForAgent(agentGroupId);
   return model ? model.kind === 'ollama' : isGlobalOllamaBaseUrl();
 }
 
@@ -480,15 +480,26 @@ function isOllamaBackedAgent(agentGroupId: string): boolean {
 // prompt, hallucinating tool calls and identities — so lenientPrompt swaps that
 // preset for the plain persona/destinations instructions. Claude/anthropic groups
 // are unaffected (strict protocol + full preset preserved).
+// The augmentor contract is SYNC (the spawn path calls it mid-composition).
+// Same split as the other spawn seams: an async prepare hook stages the
+// answer, the augmentor reads the cache.
+const ollamaLenient = new Map<string, boolean>();
+registerSessionPrepareHook(async (agentGroupId) => {
+  try {
+    ollamaLenient.set(agentGroupId, await isOllamaBackedAgent(agentGroupId));
+  } catch {
+    /* keep the previous answer — a read failure must not flip harness mode */
+  }
+});
 registerContainerConfigAugmentor((agentGroupId) =>
-  isOllamaBackedAgent(agentGroupId) ? { lenientOutput: true, lenientPrompt: true } : {},
+  ollamaLenient.get(agentGroupId) ? { lenientOutput: true, lenientPrompt: true } : {},
 );
 
 // Auto-default the learning classifier to the agent's OWN model when it runs on
 // a local endpoint (ollama/openai-compatible) — zero setup. Claude agents have
 // no local endpoint, so this returns null and the runner keeps the busy-turn
 // heuristic. An explicit Settings override still wins (see container-config.ts).
-registerLearningClassifierResolver((agentGroupId) => classifierParamsForModel(getEffectiveModelForAgent(agentGroupId)));
+registerLearningClassifierResolver(async (agentGroupId) => classifierParamsForModel(await getEffectiveModelForAgent(agentGroupId)));
 
 // Side-channel a2a visibility: if both agents are wired to the same webchat
 // room, surface a read-only copy of each routed message there so humans can
@@ -610,10 +621,10 @@ export function draftHasExpired(ageMs: number, card: { newerMessages: number } |
 
 export async function sweepExpiredSkillDrafts(): Promise<number> {
   let expired = 0;
-  for (const d of listSkillDrafts()) {
+  for (const d of await listSkillDrafts()) {
     const age = Date.now() - d.created_at;
-    if (!draftHasExpired(age, skillDraftCardPosition(d.id))) continue;
-    if (!resolveSkillDraft(d.id, 'discarded')) continue;
+    if (!draftHasExpired(age, await skillDraftCardPosition(d.id))) continue;
+    if (!(await resolveSkillDraft(d.id, 'discarded'))) continue;
     expired++;
     const flipped = await markRoomSkillDraftResolved(d.id, 'discarded', 'expired');
     if (flipped) broadcast(flipped.roomId, { type: 'message', ...flipped.message });

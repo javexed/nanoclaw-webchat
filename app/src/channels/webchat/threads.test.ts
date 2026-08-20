@@ -32,12 +32,12 @@ import { createAgentGroup } from '../../db/agent-groups.js';
 import { findSessionsByMessagingGroupThread } from '../../session-teardown.js';
 import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
   createWebchatRoom('Room', 'room-1');
 });
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 
@@ -52,7 +52,7 @@ describe('session-key mapping (slice 1)', () => {
     expect(threadToSessionKey('agent:sarah')).toBe('agent:sarah');
     expect(threadToSessionKey('u_abc')).toBe('u_abc');
   });
-  it('inverse maps a session key back to the stored/UI thread', () => {
+  it('inverse maps a session key back to the stored/UI thread', async () => {
     expect(sessionKeyToThread(null)).toBe(MAIN_THREAD);
     expect(sessionKeyToThread(undefined)).toBe(MAIN_THREAD);
     expect(sessionKeyToThread('agent:sarah')).toBe('agent:sarah');
@@ -100,12 +100,12 @@ describe('session-key mapping (slice 1)', () => {
     }
   });
 
-  it('keeps the old pass-through when no room is supplied', () => {
+  it('keeps the old pass-through when no room is supplied', async () => {
     // Callers that never see per-member sessions must be unaffected.
     expect(sessionKeyToThread('agent:sarah')).toBe('agent:sarah');
   });
 
-  it('round-trips named threads', () => {
+  it('round-trips named threads', async () => {
     for (const t of ['agent:max', 'u_xyz']) {
       expect(sessionKeyToThread(threadToSessionKey(t))).toBe(t);
     }
@@ -113,7 +113,7 @@ describe('session-key mapping (slice 1)', () => {
 });
 
 describe('thread title sanitizer (slice 2)', () => {
-  it('trims/collapses/bounds; rejects empty, too-long, non-string', () => {
+  it('trims/collapses/bounds; rejects empty, too-long, non-string', async () => {
     expect(sanitizeThreadTitle('  Q3   plan ')).toBe('Q3 plan');
     expect(sanitizeThreadTitle('')).toBeNull();
     expect(sanitizeThreadTitle('   ')).toBeNull();
@@ -136,7 +136,7 @@ describe('per-thread session teardown lookup (slice 2)', () => {
     created_at: new Date().toISOString(),
   });
   it('finds sessions for (room mg, thread); ignores other threads', async () => {
-    const mg = await getMessagingGroupByPlatform('webchat', 'room-1')!;
+    const mg = (await getMessagingGroupByPlatform('webchat', 'room-1'))!;
     createAgentGroup({
       id: 'ag1',
       name: 'A',
@@ -169,7 +169,7 @@ describe('thread CRUD', () => {
   it('ensureThread is idempotent and does not clobber the title', async () => {
     ensureMainThread('room-1');
     ensureThread('room-1', MAIN_THREAD, 'IGNORED', 'main'); // second ensure
-    const main = await getWebchatThread('room-1', MAIN_THREAD)!;
+    const main = (await getWebchatThread('room-1', MAIN_THREAD))!;
     expect(main.title).toBe('Main');
     expect(main.kind).toBe('main');
   });
@@ -178,14 +178,14 @@ describe('thread CRUD', () => {
     const id = ensureAgentThread('room-1', 'sarah', 'Sarah');
     expect(id).toBe('agent:sarah');
     expect(ensureAgentThread('room-1', 'sarah', 'Sarah (again)')).toBe('agent:sarah'); // reused
-    expect((await getWebchatThread('room-1', 'agent:sarah')!).title).toBe('Sarah'); // not clobbered
+    expect(((await getWebchatThread('room-1', 'agent:sarah'))!).title).toBe('Sarah'); // not clobbered
   });
 
   it('createWebchatThread makes a uuid topic thread', async () => {
     const t = await createWebchatThread('room-1', 'Q3 planning');
     expect(t.kind).toBe('topic');
     expect(t.thread_id).not.toBe('main');
-    expect((await getWebchatThread('room-1', t.thread_id)!).title).toBe('Q3 planning');
+    expect(((await getWebchatThread('room-1', t.thread_id))!).title).toBe('Q3 planning');
   });
 
   it('lists threads with main first', async () => {
@@ -201,7 +201,7 @@ describe('thread CRUD', () => {
   it('renames a thread', async () => {
     const t = await createWebchatThread('room-1', 'old');
     renameWebchatThread('room-1', t.thread_id, 'new');
-    expect((await getWebchatThread('room-1', t.thread_id)!).title).toBe('new');
+    expect(((await getWebchatThread('room-1', t.thread_id))!).title).toBe('new');
   });
 });
 

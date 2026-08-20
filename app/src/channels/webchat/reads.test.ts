@@ -21,12 +21,12 @@ import { runMigrations } from '../../db/migrations/index.js';
 import { annotateRoomsForUser } from './state.js';
 import { clearReadsForRoom, deleteWebchatRoom, getUnreadRoomIdsForUser, markRoomRead } from './db.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 

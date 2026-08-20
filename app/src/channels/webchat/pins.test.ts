@@ -31,12 +31,12 @@ import {
   unpinRoomForUser,
 } from './db.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 
-afterEach(() => {
+afterEach(async () => {
   closeDb();
 });
 

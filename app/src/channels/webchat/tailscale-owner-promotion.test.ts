@@ -3,7 +3,7 @@
  * one-shot (auth.ts finalize → roles.ts grantOwnerRole).
  *
  * WHY THIS FILE EXISTS SEPARATELY FROM auth.test.ts. That suite calls
- * `initTestDb()` without `runMigrations`, so `user_roles` does not exist and
+ * `await initTestDb()` without `runMigrations`, so `user_roles` does not exist and
  * every role helper degrades to a no-op by design — it is testing the
  * "permissions module not installed" posture. The consequence is that the
  * grant itself has never been exercised against a real schema, and the real
@@ -26,9 +26,9 @@ import { grantOwnerRole, isOwner } from './roles.js';
 
 const now = '2026-08-14T00:00:00.000Z';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 afterEach(() => closeDb());
 
@@ -44,7 +44,7 @@ async function grantorOf(userId: string): Promise<string | null> {
 }
 
 describe('grantOwnerRole — grantedBy must never cost the grant', () => {
-  it('grants when grantedBy is a sentinel that is not a user (the live failure)', () => {
+  it('grants when grantedBy is a sentinel that is not a user (the live failure)', async () => {
     const ts = 'webchat:tailscale:operator@example.com';
     expect(grantOwnerRole(ts, 'webchat:first-tailscale-owner')).toBe(true);
     expect(isOwner(ts)).toBe(true);
@@ -53,7 +53,7 @@ describe('grantOwnerRole — grantedBy must never cost the grant', () => {
     expect(grantorOf(ts)).toBeNull();
   });
 
-  it('grants alongside an existing owner (co-owner, the real install shape)', () => {
+  it('grants alongside an existing owner (co-owner, the real install shape)', async () => {
     addUser('webchat:local-owner');
     grantOwnerRole('webchat:local-owner');
     const ts = 'webchat:tailscale:operator@example.com';
@@ -63,7 +63,7 @@ describe('grantOwnerRole — grantedBy must never cost the grant', () => {
     expect(isOwner(ts)).toBe(true);
   });
 
-  it('preserves grantedBy when it names a real user', () => {
+  it('preserves grantedBy when it names a real user', async () => {
     addUser('webchat:local-owner');
     const ts = 'webchat:tailscale:operator@example.com';
 

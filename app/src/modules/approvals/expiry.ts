@@ -30,7 +30,9 @@ export async function sweepExpiredApprovals(now = Date.now()): Promise<number> {
   const expired = await getExpiredPendingApprovals(now - ttl);
   for (const approval of expired) {
     try {
-      const session = approval.session_id ? getSession(approval.session_id) : undefined;
+      // Await BEFORE the guard: un-awaited, `session` was a truthy promise, so
+      // the missing-session skip never fired and expiry rejected against undefined.
+      const session = approval.session_id ? await getSession(approval.session_id) : undefined;
       if (!session) continue;
       await finalizeReject(
         approval,

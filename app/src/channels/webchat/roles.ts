@@ -27,14 +27,14 @@ import { log } from '../../log.js';
 
 export async function isOwner(userId: string): Promise<boolean> {
   const db = getDb();
-  if (!hasTable(db, 'user_roles')) return true; // no permissions module = trust authenticated
+  if (!(await hasTable(db, 'user_roles'))) return true; // no permissions module = trust authenticated
   const row = await db.get(`SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'owner' AND agent_group_id IS NULL`, userId);
   return !!row;
 }
 
 export async function hasAdminPrivilege(userId: string, agentGroupId: string): Promise<boolean> {
   const db = getDb();
-  if (!hasTable(db, 'user_roles')) return true;
+  if (!(await hasTable(db, 'user_roles'))) return true;
   const row = await db.get(`SELECT 1 FROM user_roles
        WHERE user_id = ?
          AND (role = 'owner' OR role = 'admin')
@@ -45,7 +45,7 @@ export async function hasAdminPrivilege(userId: string, agentGroupId: string): P
 /** Global admin: role='admin' with no group scope (admin of every group). */
 export async function isGlobalAdmin(userId: string): Promise<boolean> {
   const db = getDb();
-  if (!hasTable(db, 'user_roles')) return true;
+  if (!(await hasTable(db, 'user_roles'))) return true;
   const row = await db.get(`SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'admin' AND agent_group_id IS NULL`, userId);
   return !!row;
 }
@@ -60,7 +60,7 @@ export async function isGlobalAdmin(userId: string): Promise<boolean> {
  */
 export async function isAnyAdmin(userId: string): Promise<boolean> {
   const db = getDb();
-  if (!hasTable(db, 'user_roles')) return true;
+  if (!(await hasTable(db, 'user_roles'))) return true;
   const row = await db.get(`SELECT 1 FROM user_roles WHERE user_id = ? AND role IN ('owner', 'admin') LIMIT 1`, userId);
   return !!row;
 }
@@ -78,7 +78,7 @@ export async function isAnyAdmin(userId: string): Promise<boolean> {
  */
 export async function ensureOwnerRoleOnFirstLogin(userId: string): Promise<void> {
   const db = getDb();
-  if (!hasTable(db, 'user_roles')) return; // permissions module not installed
+  if (!(await hasTable(db, 'user_roles'))) return; // permissions module not installed
 
   // Make sure the user row exists so the role grant's audit trail has somewhere
   // to point. Use INSERT OR IGNORE in case the senderResolver beat us to it.
@@ -128,7 +128,7 @@ async function userExists(db: ReturnType<typeof getDb>, id: string): Promise<boo
  */
 export async function grantOwnerRole(userId: string, grantedBy: string | null = null): Promise<boolean> {
   const db = getDb();
-  if (!hasTable(db, 'user_roles')) return false;
+  if (!(await hasTable(db, 'user_roles'))) return false;
   if ((await hasTable(db, 'users'))) {
     await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, userId, new Date().toISOString());
   }

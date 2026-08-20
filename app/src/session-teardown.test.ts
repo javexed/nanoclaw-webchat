@@ -52,9 +52,9 @@ function seed(opts: { sessionsPerRoom?: number } = {}): { agentGroupId: string; 
   return { agentGroupId: 'ag-1', messagingGroupId: 'mg-1' };
 }
 
-beforeEach(() => {
-  const db = initTestDb();
-  runMigrations(db);
+beforeEach(async () => {
+  const db = await initTestDb();
+  await runMigrations(await db);
 });
 
 afterEach(() => {
@@ -62,9 +62,9 @@ afterEach(() => {
 });
 
 describe('findSessionsByMessagingGroup / findSessionsByAgentGroup', () => {
-  it('returns every session linked to the messaging group', () => {
+  it('returns every session linked to the messaging group', async () => {
     seed({ sessionsPerRoom: 3 });
-    const targets = findSessionsByMessagingGroup('mg-1');
+    const targets = await findSessionsByMessagingGroup('mg-1');
     expect(targets).toHaveLength(3);
     expect(targets.every((t) => t.agentGroupId === 'ag-1')).toBe(true);
     expect(new Set(targets.map((t) => t.sessionId))).toEqual(new Set(['sess-1', 'sess-2', 'sess-3']));
@@ -159,13 +159,13 @@ describe('FK behavior — the bug this primitive prevents', () => {
 
   it('the teardown + parent-delete sequence inside a transaction succeeds', async () => {
     const { messagingGroupId } = seed({ sessionsPerRoom: 2 });
-    const targets = findSessionsByMessagingGroup(messagingGroupId);
+    const targets = await findSessionsByMessagingGroup(messagingGroupId);
     expect(targets).toHaveLength(2);
 
-    getDb().transaction(() => {
-      for (const t of targets) deleteSessionDbState(t.sessionId);
-      deleteMessagingGroup(messagingGroupId);
-    })();
+    await getDb().transaction(async () => {
+      for (const t of targets) await deleteSessionDbState(t.sessionId);
+      await deleteMessagingGroup(messagingGroupId);
+    });
 
     const db = getDb();
     expect(await db.get('SELECT COUNT(*) as n FROM messaging_groups WHERE id = ?', messagingGroupId)).toEqual({
@@ -176,18 +176,18 @@ describe('FK behavior — the bug this primitive prevents', () => {
     );
   });
 
-  it('a failing parent-delete inside a transaction rolls back the session teardown', () => {
+  it('a failing parent-delete inside a transaction rolls back the session teardown', async () => {
     seed();
     // Simulate a multi-step delete where the final step fails AFTER the
     // session was torn down. The transaction must roll back both, leaving
     // the session intact for a retry — no half-gutted state.
-    expect(() => {
-      getDb().transaction(() => {
-        deleteSessionDbState('sess-1');
+    await expect(
+      getDb().transaction(async () => {
+        await deleteSessionDbState('sess-1');
         // Force a failure inside the transaction.
         throw new Error('simulated handler failure');
-      })();
-    }).toThrow(/simulated/);
-    expect(getSession('sess-1')).toBeDefined();
+      }),
+    ).rejects.toThrow(/simulated/);
+    expect(await getSession('sess-1')).toBeDefined();
   });
 });
