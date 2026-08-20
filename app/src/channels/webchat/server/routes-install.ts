@@ -195,8 +195,7 @@ export async function rWorkspaceProviderPut(ctx: RouteCtx, _m: RegExpMatchArray)
   const provider = String(body.provider ?? '').toLowerCase();
   // 'claude' is always valid — it is the built-in default and the way back.
   const allowed = new Set(['claude', ...availableProviders()]);
-  if (!allowed.has(provider))
-    return json(res, 400, { error: `provider must be one of: ${[...allowed].join(', ')}` });
+  if (!allowed.has(provider)) return json(res, 400, { error: `provider must be one of: ${[...allowed].join(', ')}` });
 
   // A default nobody can authenticate is worse than no default: every new agent
   // would fail at its first message. Selecting an engine is not enough — the

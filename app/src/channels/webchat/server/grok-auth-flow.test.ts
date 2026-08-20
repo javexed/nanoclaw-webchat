@@ -21,8 +21,14 @@ vi.mock('../../../config.js', async (importOriginal) => ({
 }));
 vi.mock('./providers.js', () => ({ grokAvailable: () => available }));
 
-const { __resetGrokLoginState, credentialsFromCliAuth, getGrokLoginProgress, parseDevicePrompt, startGrokLogin, sweepOrphanedLoginDirs } =
-  await import('./grok-auth-flow.js');
+const {
+  __resetGrokLoginState,
+  credentialsFromCliAuth,
+  getGrokLoginProgress,
+  parseDevicePrompt,
+  startGrokLogin,
+  sweepOrphanedLoginDirs,
+} = await import('./grok-auth-flow.js');
 
 beforeEach(() => {
   available = true;
@@ -142,9 +148,7 @@ describe('starting a login', () => {
   it('cleans up ITS OWN temp directory on reset, since it holds a refresh token', () => {
     const before = new Set(fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('grok-wizard-login-')));
     startGrokLogin();
-    const mine = fs
-      .readdirSync(os.tmpdir())
-      .filter((d) => d.startsWith('grok-wizard-login-') && !before.has(d));
+    const mine = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('grok-wizard-login-') && !before.has(d));
     // Assert on the directory THIS flow created, never on a glob of the whole
     // tmpdir: a stray directory from another process (or an earlier crash) would
     // otherwise fail a test about this flow's own cleanup.
