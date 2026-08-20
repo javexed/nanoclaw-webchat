@@ -111,7 +111,7 @@ export async function applySkillDraft(draft: SkillDraft, restartReason: string):
     fs.rmSync(staging, { recursive: true, force: true });
     return { ok: false, status: 500, error: 'Write failed: ' + (err instanceof Error ? err.message : String(err)) };
   }
-  resolveSkillDraft(draft.id, 'kept');
+  await resolveSkillDraft(draft.id, 'kept');
   const restarted = restartAgentGroupContainers(draft.agent_group_id, restartReason);
   return { ok: true, status: 200, name, patched: isPatch, forkedFromPool, restarted: await restarted };
 }

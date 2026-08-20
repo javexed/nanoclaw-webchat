@@ -125,7 +125,7 @@ async function seedMember(admin: OnecliAdmin, agentGroupId: string, userId: stri
   const ident = userCredsAgentIdentifier(agentGroupId, userId);
   await admin.ensureAgent(`${userId} (UserCreds)`, ident);
   await admin.setSecretMode(`uuid-${ident}`, 'selective');
-  upsertUserCredsCredential(userId, agentGroupId, ident, 'user-secret', 'api_key', 'claude');
+  await upsertUserCredsCredential(userId, agentGroupId, ident, 'user-secret', 'api_key', 'claude');
   return ident;
 }
 

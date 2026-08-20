@@ -141,7 +141,7 @@ export async function rModelsContextVariantPost(ctx: RouteCtx, _m: RegExpMatchAr
     let id = existing?.id;
     if (!id) {
       id = randomUUID();
-      createWebchatModel({
+      await createWebchatModel({
         id,
         name: `${body.tag.trim()} @${Math.round(ctxSize / 1024)}k ctx`,
         kind: 'ollama',
@@ -153,7 +153,7 @@ export async function rModelsContextVariantPost(ctx: RouteCtx, _m: RegExpMatchAr
     }
     if (body.makeDefault === true) {
       setDefaultModelId(id);
-      refreshUnassignedGroupsForDefaultModel('Workspace default model changed (context variant)');
+      await refreshUnassignedGroupsForDefaultModel('Workspace default model changed (context variant)');
     }
     return json(res, 200, { ok: true, tag: variantTag, modelId: id, madeDefault: body.makeDefault === true });
   } catch (err) {
@@ -227,7 +227,7 @@ export async function createModelHandler(req: IncomingMessage, res: ServerRespon
     credential_ref,
     created_at: Date.now(),
   };
-  createWebchatModel(m);
+  await createWebchatModel(m);
   // Preflight: does an agent CONTAINER reach this endpoint? (self-skips fast
   // for hosted/LAN endpoints; only spins a probe container for loopback ones.)
   const reachability = await probeContainerReachability(endpoint);
@@ -262,11 +262,11 @@ export async function updateModelHandler(req: IncomingMessage, res: ServerRespon
   });
   if (validationError) return json(res, 400, { error: validationError });
 
-  updateWebchatModel(id, patch);
+  await updateWebchatModel(id, patch);
   // Endpoint or model_id change → re-emit env and respawn for every agent that
   // uses it, so live containers pick up the edited endpoint/model immediately.
   for (const agentGroupId of await getAgentsAssignedToModel(id)) {
-    reloadAgentModelEnv(agentGroupId, 'Webchat model updated');
+    await reloadAgentModelEnv(agentGroupId, 'Webchat model updated');
   }
   return json(res, 200, { ok: true });
 }
@@ -332,7 +332,7 @@ export async function deleteModelHandler(res: ServerResponse, id: string, force:
       writeRoutesConfig(cfg);
     }
   }
-  deleteWebchatModel(id);
+  await deleteWebchatModel(id);
   // If this model was the workspace default, clear it and refresh the groups
   // that were inheriting it (they fall back to the workspace credential).
   if ((await getDefaultModelId()) === id) {
@@ -343,7 +343,7 @@ export async function deleteModelHandler(res: ServerResponse, id: string, force:
   // live container doesn't keep using the now-dead ollama env block (it would
   // otherwise fail against a deleted endpoint until it idled out).
   for (const agentGroupId of assigned) {
-    reloadAgentModelEnv(agentGroupId, 'Webchat model deleted');
+    await reloadAgentModelEnv(agentGroupId, 'Webchat model deleted');
   }
   return json(res, 200, { ok: true, unassigned_count: assigned.length });
 }
@@ -435,7 +435,7 @@ export async function bulkCreateModelsHandler(req: IncomingMessage, res: ServerR
       created_at: Date.now(),
     };
     try {
-      createWebchatModel(m);
+      await createWebchatModel(m);
       created.push(m);
     } catch (err) {
       failed.push({ index: i, error: err instanceof Error ? err.message : 'create failed' });

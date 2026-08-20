@@ -28,13 +28,13 @@ async function group(id: string): Promise<void> {
   await getDb().run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, id, id, id, now);
 }
 async function role(userId: string, r: 'owner' | 'admin', agentGroupId: string | null): Promise<void> {
-  user(userId);
-  if (agentGroupId) group(agentGroupId);
+  await user(userId);
+  if (agentGroupId) await group(agentGroupId);
   await getDb().run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`, userId, r, agentGroupId, now);
 }
 async function member(userId: string, agentGroupId: string): Promise<void> {
-  user(userId);
-  group(agentGroupId);
+  await user(userId);
+  await group(agentGroupId);
   await getDb().run(`INSERT INTO agent_group_members (user_id, agent_group_id, added_by, added_at) VALUES (?, ?, NULL, ?)`, userId, agentGroupId, now);
 }
 
@@ -44,12 +44,12 @@ async function find(rows: ReturnType<typeof listUsersWithPermissions>, id: strin
 
 describe('listUsersWithPermissions caller-scoping', () => {
   beforeEach(async () => {
-    role('webchat:owner', 'owner', null);
-    role('webchat:sadmin', 'admin', 'ag-1'); // scoped admin of ag-1 only
+    await role('webchat:owner', 'owner', null);
+    await role('webchat:sadmin', 'admin', 'ag-1'); // scoped admin of ag-1 only
     // Target user: member of ag-1 AND ag-2, plus a scoped-admin role on ag-2.
-    role('webchat:bob', 'admin', 'ag-2');
-    member('webchat:bob', 'ag-1');
-    member('webchat:bob', 'ag-2');
+    await role('webchat:bob', 'admin', 'ag-2');
+    await member('webchat:bob', 'ag-1');
+    await member('webchat:bob', 'ag-2');
   });
 
   it('owner sees the full cross-group matrix', async () => {

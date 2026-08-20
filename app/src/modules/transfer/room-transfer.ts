@@ -195,7 +195,7 @@ export async function applyRoomImport(bundleDir: string): Promise<RoomApplyResul
 
   await db.transaction(async () => {
     const mgId = `mg-${Date.now()}-${randomUUID().slice(0, 6)}`;
-    insertWithSchemaIntersection('messaging_groups', {
+    await insertWithSchemaIntersection('messaging_groups', {
       ...mgRow,
       id: mgId,
       platform_id: roomId,
@@ -217,7 +217,7 @@ export async function applyRoomImport(bundleDir: string): Promise<RoomApplyResul
           // them within the bundle.
           const remapped =
             t === 'webchat_messages' ? { ...row, id: randomUUID(), room_id: roomId } : { ...row, room_id: roomId };
-          insertWithSchemaIntersection(t, remapped);
+          await insertWithSchemaIntersection(t, remapped);
           if (t === 'webchat_messages') messages++;
           if (t === 'webchat_threads') threads++;
         } catch {
@@ -238,7 +238,7 @@ export async function applyRoomImport(bundleDir: string): Promise<RoomApplyResul
         if (folder) skippedAgents.push(folder);
         return;
       }
-      insertWithSchemaIntersection('messaging_group_agents', {
+      await insertWithSchemaIntersection('messaging_group_agents', {
         ...w,
         id: randomUUID(),
         messaging_group_id: mgId,
@@ -249,7 +249,7 @@ export async function applyRoomImport(bundleDir: string): Promise<RoomApplyResul
 
     if (learning) {
       try {
-        insertWithSchemaIntersection('learning_room_settings', { ...learning, messaging_group_id: mgId });
+        await insertWithSchemaIntersection('learning_room_settings', { ...learning, messaging_group_id: mgId });
       } catch {
         /* module table absent here */
       }

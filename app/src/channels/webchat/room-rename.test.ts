@@ -15,7 +15,7 @@ beforeEach(async () => {
   await runMigrations(getDb());
 });
 afterEach(async () => {
-  closeDb();
+  await closeDb();
 });
 
 describe('sanitizeRoomName', () => {
@@ -41,15 +41,15 @@ describe('sanitizeRoomName', () => {
 
 describe('updateWebchatRoomName', () => {
   it('renames a room and the new name round-trips', async () => {
-    createWebchatRoom('Old name', 'room-1');
+    await createWebchatRoom('Old name', 'room-1');
     expect((await getWebchatRoom('room-1'))?.name).toBe('Old name');
 
-    updateWebchatRoomName('room-1', 'New name');
+    await updateWebchatRoomName('room-1', 'New name');
     expect((await getWebchatRoom('room-1'))?.name).toBe('New name');
   });
 
   it('is a no-op for an unknown room id', async () => {
     expect(() => updateWebchatRoomName('does-not-exist', 'whatever')).not.toThrow();
-    expect(getWebchatRoom('does-not-exist')).toBeUndefined();
+    expect(await getWebchatRoom('does-not-exist')).toBeUndefined();
   });
 });

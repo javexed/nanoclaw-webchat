@@ -27,13 +27,13 @@ function stripNoise(src: string): string {
 describe('webchat style.css integrity', () => {
   const css = stripNoise(fs.readFileSync(CSS, 'utf8'));
 
-  it('has balanced braces — an unclosed block silently voids every rule after it', () => {
+  it('has balanced braces — an unclosed block silently voids every rule after it', async () => {
     const opens = (css.match(/\{/g) || []).length;
     const closes = (css.match(/\}/g) || []).length;
     expect(closes - opens).toBe(0);
   });
 
-  it('never goes brace-negative (a stray } would end a block early)', () => {
+  it('never goes brace-negative (a stray } would end a block early)', async () => {
     let depth = 0;
     for (const ch of css) {
       if (ch === '{') depth++;
@@ -42,7 +42,7 @@ describe('webchat style.css integrity', () => {
     }
   });
 
-  it('has no declaration-less selector immediately followed by another selector', () => {
+  it('has no declaration-less selector immediately followed by another selector', async () => {
     // The exact shape of the bug: `.foo {` with nothing but a selector after it.
     const offenders: string[] = [];
     const lines = css.split('\n');

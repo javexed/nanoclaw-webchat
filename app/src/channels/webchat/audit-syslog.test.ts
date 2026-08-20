@@ -22,19 +22,19 @@ import {
 } from './audit-syslog.js';
 
 const SCRATCH: string[] = [];
-beforeEach(() => {
+beforeEach(async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-syslog-'));
   SCRATCH.push(dir);
   vi.stubEnv('NANOCLAW_AUDIT_FILE', path.join(dir, 'audit.jsonl'));
 });
-afterEach(() => {
+afterEach(async () => {
   configureSyslog(''); // tear down sockets between tests
   vi.unstubAllEnvs();
   for (const d of SCRATCH.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
 describe('parseSyslogTarget', () => {
-  it('accepts the three schemes with explicit ports', () => {
+  it('accepts the three schemes with explicit ports', async () => {
     expect(parseSyslogTarget('udp://collector:514')).toEqual({ scheme: 'udp', host: 'collector', port: 514 });
     expect(parseSyslogTarget('tcp://10.0.0.5:601')).toEqual({ scheme: 'tcp', host: '10.0.0.5', port: 601 });
     expect(parseSyslogTarget('tls://siem.example.com:6514')).toEqual({
@@ -44,7 +44,7 @@ describe('parseSyslogTarget', () => {
     });
   });
 
-  it('rejects everything else', () => {
+  it('rejects everything else', async () => {
     for (const bad of [
       '',
       'collector:514', // no scheme
@@ -63,14 +63,14 @@ describe('parseSyslogTarget', () => {
 });
 
 describe('RFC 5424 formatting', () => {
-  it('maps refusals and failures to warning, the rest to informational', () => {
+  it('maps refusals and failures to warning, the rest to informational', async () => {
     expect(severityFor({ type: 't', effect: 'deny' })).toBe(4);
     expect(severityFor({ type: 't', effect: 'failed' })).toBe(4);
     expect(severityFor({ type: 't', effect: 'allow' })).toBe(6);
     expect(severityFor({ type: 't' })).toBe(6);
   });
 
-  it('emits facility 13 (log audit) with the event type as MSGID', () => {
+  it('emits facility 13 (log audit) with the event type as MSGID', async () => {
     const now = new Date('2026-08-15T12:00:00.000Z');
     const msg = formatRfc5424('{"a":1}', { type: 'role.grant', effect: 'granted' }, now);
     // 13*8+6 = 110
@@ -79,7 +79,7 @@ describe('RFC 5424 formatting', () => {
     expect(msg).toContain(' role.grant - {"a":1}');
   });
 
-  it('octet-counts by BYTES, not characters', () => {
+  it('octet-counts by BYTES, not characters', async () => {
     const msg = 'héllo'; // 6 bytes, 5 chars
     expect(frameOctetCounted(msg)).toBe('6 héllo');
   });
@@ -172,7 +172,7 @@ describe('configureSyslog', () => {
     sock.close();
   });
 
-  it("'' disables forwarding and clears the target", () => {
+  it("'' disables forwarding and clears the target", async () => {
     expect(configureSyslog('')).toBe(true);
     expect(getSyslogStatus().target).toBeNull();
     // No sink: audited events only reach the file.

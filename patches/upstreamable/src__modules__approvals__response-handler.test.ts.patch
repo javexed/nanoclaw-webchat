@@ -1,5 +1,5 @@
 diff --git a/src/modules/approvals/response-handler.test.ts b/src/modules/approvals/response-handler.test.ts
-index 07622d3d..b8f01f41 100644
+index 07622d3d..3a771b12 100644
 --- a/src/modules/approvals/response-handler.test.ts
 +++ b/src/modules/approvals/response-handler.test.ts
 @@ -174,6 +174,57 @@ describe('approval response authorization', () => {
@@ -13,8 +13,8 @@ index 07622d3d..b8f01f41 100644
 +    // the row already gone every approval-gated command failed with "replay
 +    // carried an invalid or mismatched grant". The row must stay live for the
 +    // duration of the handler, then be deleted.
-+    upsertUser({ id: 'telegram:owner-live', kind: 'telegram', display_name: 'Owner', created_at: now() });
-+    grantRole({
++    await upsertUser({ id: 'telegram:owner-live', kind: 'telegram', display_name: 'Owner', created_at: now() });
++    await grantRole({
 +      user_id: 'telegram:owner-live',
 +      role: 'owner',
 +      agent_group_id: null,
@@ -32,7 +32,7 @@ index 07622d3d..b8f01f41 100644
 +    });
 +    registerApprovalHandler('grant_recheck_action', handler);
 +
-+    createPendingApproval({
++    await createPendingApproval({
 +      approval_id: 'appr-live',
 +      session_id: 'sess-1',
 +      request_id: 'appr-live',
@@ -54,7 +54,7 @@ index 07622d3d..b8f01f41 100644
 +
 +    expect(handler).toHaveBeenCalledTimes(1);
 +    expect(rowLiveDuringHandler).toBe(true); // was false when the row was deleted up-front
-+    expect(getPendingApproval('appr-live')).toBeUndefined(); // released after the handler
++    expect(await getPendingApproval('appr-live')).toBeUndefined(); // released after the handler
 +  });
 +
    it('allows global admins to resolve approvals without a session-scoped agent group', async () => {
@@ -66,8 +66,8 @@ index 07622d3d..b8f01f41 100644
    });
 +
 +  it('runs the handler exactly once when the same Approve is delivered twice mid-handler', async () => {
-+    upsertUser({ id: 'telegram:owner2', kind: 'telegram', display_name: 'Owner', created_at: now() });
-+    grantRole({ user_id: 'telegram:owner2', role: 'owner', agent_group_id: null, granted_by: null, granted_at: now() });
++    await upsertUser({ id: 'telegram:owner2', kind: 'telegram', display_name: 'Owner', created_at: now() });
++    await grantRole({ user_id: 'telegram:owner2', role: 'owner', agent_group_id: null, granted_by: null, granted_at: now() });
 +
 +    const { registerApprovalHandler } = await import('./primitive.js');
 +    const { handleApprovalsResponse } = await import('./response-handler.js');
@@ -79,7 +79,7 @@ index 07622d3d..b8f01f41 100644
 +    const handler = vi.fn().mockImplementation(() => new Promise<void>((r) => (release = r)));
 +    registerApprovalHandler('slow_action', handler);
 +
-+    createPendingApproval({
++    await createPendingApproval({
 +      approval_id: 'appr-dup',
 +      session_id: 'sess-1',
 +      request_id: 'appr-dup',
@@ -107,6 +107,6 @@ index 07622d3d..b8f01f41 100644
 +    await Promise.all([p1, p2]);
 +
 +    expect(handler).toHaveBeenCalledTimes(1);
-+    expect(getPendingApproval('appr-dup')).toBeUndefined();
++    expect(await getPendingApproval('appr-dup')).toBeUndefined();
 +  });
  });

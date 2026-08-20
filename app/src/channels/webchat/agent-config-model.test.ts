@@ -30,7 +30,7 @@ import type { WebchatServer } from './server.js';
 
 const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
 });
 
@@ -38,7 +38,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     // ignore
   }
@@ -87,8 +87,8 @@ function seed(db: import('../../db/driver.js').DbDriver): void {
   const group = async (id: string) =>
     await db.run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, id, id, id, now);
   const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
-    user(uid);
-    if (g) group(g);
+    await user(uid);
+    if (g) await group(g);
     await db.run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`, uid, r, g, now);
   };
   group('ag-mdl-a');
@@ -136,27 +136,27 @@ describe('PUT /api/agents/:id/config-model', () => {
   it('a scoped admin may pin a model on an agent they administer', async () => {
     const r = await put('ag-mdl-a', 'admina', 'claude-opus-5');
     expect(r.status).toBe(200);
-    expect(stored('ag-mdl-a')).toBe('claude-opus-5');
+    expect(await stored('ag-mdl-a')).toBe('claude-opus-5');
   });
 
   it('accepts a model id newer than the curated suggestion list', async () => {
     // The whole point of the free-text field: the list is suggestions, not a gate.
     const r = await put('ag-mdl-a', 'admina', 'claude-something-not-shipped-yet-9');
     expect(r.status).toBe(200);
-    expect(stored('ag-mdl-a')).toBe('claude-something-not-shipped-yet-9');
+    expect(await stored('ag-mdl-a')).toBe('claude-something-not-shipped-yet-9');
   });
 
   it('accepts the bracketed long-context variant form', async () => {
     const r = await put('ag-mdl-a', 'admina', 'claude-opus-4-7[1m]');
     expect(r.status).toBe(200);
-    expect(stored('ag-mdl-a')).toBe('claude-opus-4-7[1m]');
+    expect(await stored('ag-mdl-a')).toBe('claude-opus-4-7[1m]');
   });
 
   it('blank clears the pin back to the SDK default', async () => {
     await put('ag-mdl-a', 'admina', 'claude-opus-5');
     const r = await put('ag-mdl-a', 'admina', '');
     expect(r.status).toBe(200);
-    expect(stored('ag-mdl-a')).toBeNull();
+    expect(await stored('ag-mdl-a')).toBeNull();
   });
 
   it('rejects a value that is not model-id shaped, leaving the pin untouched', async () => {
@@ -165,7 +165,7 @@ describe('PUT /api/agents/:id/config-model', () => {
       const r = await put('ag-mdl-a', 'admina', bad);
       expect(r.status, `${bad} must be refused`).toBe(400);
     }
-    expect(stored('ag-mdl-a')).toBe('claude-opus-5');
+    expect(await stored('ag-mdl-a')).toBe('claude-opus-5');
   });
 
   it('refuses while an anthropic-kind webchat model is assigned, rather than silently losing to it', async () => {
@@ -179,7 +179,7 @@ describe('PUT /api/agents/:id/config-model', () => {
     const r = await put('ag-mdl-a', 'admina', 'claude-opus-5');
     expect(r.status).toBe(409);
     expect(r.body).toContain('Anthropic pin');
-    expect(stored('ag-mdl-a')).toBeNull();
+    expect(await stored('ag-mdl-a')).toBeNull();
   });
 
   // ── the inherited case (#112 follow-up) ────────────────────────────────────
@@ -196,7 +196,7 @@ describe('PUT /api/agents/:id/config-model', () => {
   };
 
   it('refuses when an anthropic-kind WORKSPACE DEFAULT is inherited, not just an assignment', async () => {
-    setWorkspaceDefault('anthropic'); // agent has no assignment of its own
+    await setWorkspaceDefault('anthropic'); // agent has no assignment of its own
     const r = await put('ag-mdl-a', 'admina', 'claude-opus-5');
     expect(r.status).toBe(409);
     // Different wording from the assigned case on purpose: the fix differs —
@@ -204,30 +204,30 @@ describe('PUT /api/agents/:id/config-model', () => {
     // "unassign" something the agent never had.
     expect(r.body).toContain('workspace default');
     expect(r.body).toContain('Workspace default');
-    expect(stored('ag-mdl-a')).toBeNull();
+    expect(await stored('ag-mdl-a')).toBeNull();
   });
 
   it('still allows clearing the pin while inheriting such a default', async () => {
-    setWorkspaceDefault('anthropic');
+    await setWorkspaceDefault('anthropic');
     const r = await put('ag-mdl-a', 'admina', '');
     expect(r.status).toBe(200);
-    expect(stored('ag-mdl-a')).toBeNull();
+    expect(await stored('ag-mdl-a')).toBeNull();
   });
 
   it('does NOT refuse when the inherited default is a non-anthropic kind', async () => {
     // Only anthropic-kind models write ANTHROPIC_MODEL, so only they conflict.
     // Refusing on an ollama default would block a legitimate pin.
-    setWorkspaceDefault('ollama');
+    await setWorkspaceDefault('ollama');
     const r = await put('ag-mdl-a', 'admina', 'claude-opus-5');
     expect(r.status).toBe(200);
-    expect(stored('ag-mdl-a')).toBe('claude-opus-5');
+    expect(await stored('ag-mdl-a')).toBe('claude-opus-5');
   });
 
   it('an ASSIGNED non-anthropic model still shadows an anthropic default', async () => {
     // Assignment wins over the default, so the effective model is the ollama
     // one and there is no conflict to refuse — the check must not look past
     // the assignment to the default underneath it.
-    setWorkspaceDefault('anthropic');
+    await setWorkspaceDefault('anthropic');
     const db = conn.getDb();
     await db.run(`INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
        VALUES ('m-oll', 'Local', 'ollama', 'http://127.0.0.1:11434', 'qwen3:8b', NULL, 0)`);
@@ -235,7 +235,7 @@ describe('PUT /api/agents/:id/config-model', () => {
 
     const r = await put('ag-mdl-a', 'admina', 'claude-opus-5');
     expect(r.status).toBe(200);
-    expect(stored('ag-mdl-a')).toBe('claude-opus-5');
+    expect(await stored('ag-mdl-a')).toBe('claude-opus-5');
   });
 
   it('still allows CLEARING the pin while such a model is assigned', async () => {
@@ -247,19 +247,19 @@ describe('PUT /api/agents/:id/config-model', () => {
 
     const r = await put('ag-mdl-a', 'admina', '');
     expect(r.status).toBe(200);
-    expect(stored('ag-mdl-a')).toBeNull();
+    expect(await stored('ag-mdl-a')).toBeNull();
   });
 
   it('a scoped admin is refused on an agent they do NOT administer', async () => {
     const r = await put('ag-mdl-b', 'admina', 'claude-opus-5');
     expect(r.status).toBe(403);
-    expect(stored('ag-mdl-b')).toBeNull();
+    expect(await stored('ag-mdl-b')).toBeNull();
   });
 
   it('a user with no role anywhere is refused', async () => {
     const r = await put('ag-mdl-a', 'nobody', 'claude-opus-5');
     expect(r.status).toBe(403);
-    expect(stored('ag-mdl-a')).toBeNull();
+    expect(await stored('ag-mdl-a')).toBeNull();
   });
 
   it('requires the CSRF header', async () => {
@@ -271,13 +271,13 @@ describe('PUT /api/agents/:id/config-model', () => {
       JSON.stringify({ model: 'claude-opus-5' }),
     );
     expect(r.status).toBe(403);
-    expect(stored('ag-mdl-a')).toBeNull();
+    expect(await stored('ag-mdl-a')).toBeNull();
   });
 
   it('owner reaches any agent', async () => {
     const r = await put('ag-mdl-b', 'owner', 'claude-opus-5');
     expect(r.status).toBe(200);
-    expect(stored('ag-mdl-b')).toBe('claude-opus-5');
+    expect(await stored('ag-mdl-b')).toBe('claude-opus-5');
   });
 });
 

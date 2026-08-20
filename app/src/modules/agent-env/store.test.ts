@@ -14,13 +14,13 @@ import path from 'path';
 
 let tmp: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-env-'));
   vi.resetModules();
   vi.doMock('../../config.js', () => ({ DATA_DIR: tmp }));
 });
 
-afterEach(() => {
+afterEach(async () => {
   vi.doUnmock('../../config.js');
   vi.resetModules();
   fs.rmSync(tmp, { recursive: true, force: true });

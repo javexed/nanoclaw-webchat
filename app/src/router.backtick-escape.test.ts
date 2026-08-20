@@ -49,9 +49,9 @@ beforeEach(async () => {
   const db = await initTestDb();
   await runMigrations(await db);
 
-  createAgentGroup({ id: 'ag-advisor', name: 'Advisor', folder: 'advisor', agent_provider: null, created_at: now() });
-  createAgentGroup({ id: 'ag-news', name: 'News', folder: 'news', agent_provider: null, created_at: now() });
-  createMessagingGroup({
+  await createAgentGroup({ id: 'ag-advisor', name: 'Advisor', folder: 'advisor', agent_provider: null, created_at: now() });
+  await createAgentGroup({ id: 'ag-news', name: 'News', folder: 'news', agent_provider: null, created_at: now() });
+  await createMessagingGroup({
     id: 'mg-floor',
     channel_type: 'webchat',
     platform_id: 'floor',
@@ -61,7 +61,7 @@ beforeEach(async () => {
     created_at: now(),
   });
   // Mention-only patterns (case-insensitive char-class form, the canonical output of ciFolderToken)
-  createMessagingGroupAgent({
+  await createMessagingGroupAgent({
     id: 'mga-advisor',
     messaging_group_id: 'mg-floor',
     agent_group_id: 'ag-advisor',
@@ -73,7 +73,7 @@ beforeEach(async () => {
     priority: 0,
     created_at: now(),
   });
-  createMessagingGroupAgent({
+  await createMessagingGroupAgent({
     id: 'mga-news',
     messaging_group_id: 'mg-floor',
     agent_group_id: 'ag-news',
@@ -87,8 +87,8 @@ beforeEach(async () => {
   });
 });
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeDb();
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 });
 
@@ -106,28 +106,28 @@ const event = (text: string): InboundEvent => ({
 });
 
 describe('stripCodeRegions helper', () => {
-  it('strips single-backtick inline code', () => {
+  it('strips single-backtick inline code', async () => {
     expect(stripCodeRegions('hello `@advisor` world')).toBe('hello  world');
   });
 
-  it('strips triple-backtick fenced blocks (single line)', () => {
+  it('strips triple-backtick fenced blocks (single line)', async () => {
     expect(stripCodeRegions('hello ```@advisor``` world')).toBe('hello  world');
   });
 
-  it('strips triple-backtick fenced blocks (multi-line)', () => {
+  it('strips triple-backtick fenced blocks (multi-line)', async () => {
     const input = 'before\n```\n@advisor inside fence\n```\nafter';
     expect(stripCodeRegions(input)).toBe('before\n\nafter');
   });
 
-  it('strips multiple inline spans on one line', () => {
+  it('strips multiple inline spans on one line', async () => {
     expect(stripCodeRegions('`a` and `@b` and `@c`')).toBe(' and  and ');
   });
 
-  it('leaves unbalanced backticks untouched (fail-open)', () => {
+  it('leaves unbalanced backticks untouched (fail-open)', async () => {
     expect(stripCodeRegions('opening ` then @advisor unclosed')).toBe('opening ` then @advisor unclosed');
   });
 
-  it('leaves bare text unchanged', () => {
+  it('leaves bare text unchanged', async () => {
     expect(stripCodeRegions('plain @advisor message')).toBe('plain @advisor message');
   });
 });
@@ -146,21 +146,21 @@ describe('engage-pattern matching honors backtick escape', () => {
     const { routeInbound } = await import('./router.js');
     const { getActiveSessions } = await import('./db/sessions.js');
     await routeInbound(event('to address the advisor, write `@advisor` in your message'));
-    expect(getActiveSessions()).toHaveLength(0);
+    expect(await getActiveSessions()).toHaveLength(0);
   });
 
   it('fenced ```@advisor``` does NOT wake Advisor', async () => {
     const { routeInbound } = await import('./router.js');
     const { getActiveSessions } = await import('./db/sessions.js');
     await routeInbound(event('the syntax is ```@advisor``` exactly'));
-    expect(getActiveSessions()).toHaveLength(0);
+    expect(await getActiveSessions()).toHaveLength(0);
   });
 
   it('multi-line fenced block does NOT wake', async () => {
     const { routeInbound } = await import('./router.js');
     const { getActiveSessions } = await import('./db/sessions.js');
     await routeInbound(event('example:\n```\n@advisor please reply\n```\nnote the syntax'));
-    expect(getActiveSessions()).toHaveLength(0);
+    expect(await getActiveSessions()).toHaveLength(0);
   });
 
   it('mixed quoted + bare: only the bare one wakes', async () => {

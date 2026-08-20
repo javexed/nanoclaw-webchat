@@ -1,7 +1,50 @@
 diff --git a/src/modules/agent-to-agent/agent-route.test.ts b/src/modules/agent-to-agent/agent-route.test.ts
-index ed125e55..c38f8cf3 100644
+index ed125e55..ab500f05 100644
 --- a/src/modules/agent-to-agent/agent-route.test.ts
 +++ b/src/modules/agent-to-agent/agent-route.test.ts
+@@ -45,36 +45,36 @@ function readInbound(agentGroupId: string, sessionId: string) {
+ }
+ 
+ describe('isSafeAttachmentName', () => {
+-  it('accepts plain filenames', () => {
++  it('accepts plain filenames', async () => {
+     expect(isSafeAttachmentName('baby-duck.png')).toBe(true);
+     expect(isSafeAttachmentName('file with spaces.pdf')).toBe(true);
+     expect(isSafeAttachmentName('report.v2.docx')).toBe(true);
+     expect(isSafeAttachmentName('.hidden')).toBe(true);
+   });
+ 
+-  it('rejects empty / sentinel values', () => {
++  it('rejects empty / sentinel values', async () => {
+     expect(isSafeAttachmentName('')).toBe(false);
+     expect(isSafeAttachmentName('.')).toBe(false);
+     expect(isSafeAttachmentName('..')).toBe(false);
+   });
+ 
+-  it('rejects path separators', () => {
++  it('rejects path separators', async () => {
+     expect(isSafeAttachmentName('../evil.png')).toBe(false);
+     expect(isSafeAttachmentName('/etc/passwd')).toBe(false);
+     expect(isSafeAttachmentName('nested/file.txt')).toBe(false);
+     expect(isSafeAttachmentName('windows\\path.exe')).toBe(false);
+   });
+ 
+-  it('rejects NUL bytes', () => {
++  it('rejects NUL bytes', async () => {
+     expect(isSafeAttachmentName('clean\0.png')).toBe(false);
+   });
+ 
+-  it('rejects anything path.basename would strip', () => {
++  it('rejects anything path.basename would strip', async () => {
+     expect(isSafeAttachmentName('a/b')).toBe(false);
+     expect(isSafeAttachmentName('./thing')).toBe(false);
+   });
+ 
+-  it('rejects non-string input', () => {
++  it('rejects non-string input', async () => {
+     expect(isSafeAttachmentName(null as unknown as string)).toBe(false);
+     expect(isSafeAttachmentName(undefined as unknown as string)).toBe(false);
+   });
 @@ -222,6 +222,37 @@ describe('routeAgentMessage return-path', () => {
      expect(s2Rows).toHaveLength(0);
    });
@@ -11,7 +54,7 @@ index ed125e55..c38f8cf3 100644
 +    // with source_session_id = S1, so S1's reply to it resolves back to S1.
 +    // Without the guard this re-wakes S1 forever (a terminal error re-emits as
 +    // a reply each turn). The guard drops the self-route.
-+    writeSessionMessage(A, S1.id, {
++    await writeSessionMessage(A, S1.id, {
 +      id: 'self-seed',
 +      kind: 'chat',
 +      timestamp: now(),

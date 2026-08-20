@@ -453,10 +453,10 @@ export async function syncAgentProviderForAssignedModel(agentGroupId: string): P
     // Decide on the EFFECTIVE model so a workspace-default local model (wizard
     // "default engine = Ollama") auto-uses OpenCode too, not only per-agent picks.
     const model = await getEffectiveModelForAgent(agentGroupId);
-    ensureContainerConfig(agentGroupId);
-    updateContainerConfigScalars(agentGroupId, { provider: providerForModelKind(model?.kind) });
+    await ensureContainerConfig(agentGroupId);
+    await updateContainerConfigScalars(agentGroupId, { provider: providerForModelKind(model?.kind) });
   }
-  writeLocalModelForAgent(agentGroupId);
+  await writeLocalModelForAgent(agentGroupId);
 }
 
 /**

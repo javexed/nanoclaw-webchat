@@ -26,7 +26,7 @@ async function cardRow(approvalId: string) {
 
 describe('in-room approval card', () => {
   it('stores an actionable approval row with the eligible approvers', async () => {
-    storeWebchatApprovalCard('room-approvals', 'Gamma Agent', {
+    await storeWebchatApprovalCard('room-approvals', 'Gamma Agent', {
       questionId: 'appr-1',
       title: 'Install Packages Request',
       question: 'install jq?',
@@ -44,7 +44,7 @@ describe('in-room approval card', () => {
   });
 
   it('markRoomApprovalResolved flips the card to resolved + records who', async () => {
-    storeWebchatApprovalCard('room-approvals', 'Gamma Agent', {
+    await storeWebchatApprovalCard('room-approvals', 'Gamma Agent', {
       questionId: 'appr-2',
       title: 'T',
       question: 'q',
@@ -52,7 +52,7 @@ describe('in-room approval card', () => {
       action: 'install_packages',
       approvers: [],
     });
-    markRoomApprovalResolved('appr-2', 'webchat:tailscale:a@x.com');
+    await markRoomApprovalResolved('appr-2', 'webchat:tailscale:a@x.com');
     const row = (await cardRow('appr-2'))!;
     expect(row.message_type).toBe('approval_resolved');
     expect(JSON.parse(row.content).resolvedBy).toBe('webchat:tailscale:a@x.com');
@@ -67,8 +67,8 @@ describe('in-room approval card', () => {
       action: 'x',
       approvers: [],
     };
-    storeWebchatApprovalCard('room', 'a', p);
-    storeWebchatApprovalCard('room', 'a', p);
+    await storeWebchatApprovalCard('room', 'a', p);
+    await storeWebchatApprovalCard('room', 'a', p);
     const n = (await getDb().get(`SELECT COUNT(*) AS n FROM webchat_messages WHERE id='appr-card-appr-3'`)) as {
       n: number;
     };

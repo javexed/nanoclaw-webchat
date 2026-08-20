@@ -372,13 +372,13 @@ async function accessibleHosts(admin: OnecliAdmin, agentGroupId: string): Promis
 
 /** Refresh one group's note — exported so deploy-key changes can trigger it too. */
 export async function refreshCredentialNote(admin: OnecliAdmin, agentGroupId: string): Promise<void> {
-  syncCredentialNote(agentGroupId, await accessibleHosts(admin, agentGroupId), await listDeployKeys(agentGroupId));
+  await syncCredentialNote(agentGroupId, await accessibleHosts(admin, agentGroupId), await listDeployKeys(agentGroupId));
 }
 
 /** Refresh the credential note for one group, or for every group (shared secret). */
 async function refreshNotes(admin: OnecliAdmin, scope: Scope): Promise<void> {
   const groups = scope.kind === 'workspace' ? (await getAllAgentGroups()).map((g) => g.id) : [scope.agentGroupId];
-  for (const id of groups) syncCredentialNote(id, await accessibleHosts(admin, id), await listDeployKeys(id));
+  for (const id of groups) await syncCredentialNote(id, await accessibleHosts(admin, id), await listDeployKeys(id));
 }
 
 /** Wired tool secrets for a scope — metadata only, never values. */

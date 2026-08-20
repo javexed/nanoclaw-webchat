@@ -63,12 +63,12 @@ export async function handleProposeSkill(
   for (const prior of await listSkillDrafts()) {
     if (prior.agent_group_id !== session.agent_group_id) continue;
     if (prior.skill_name !== skillName) continue;
-    resolveSkillDraft(prior.id, 'discarded');
+    await resolveSkillDraft(prior.id, 'discarded');
     notifySkillDraftResolved({ draftId: prior.id, outcome: 'discarded', by: 'superseded' });
     log.info('Pending draft superseded by a newer one', { old: prior.id, skillName });
   }
 
-  createSkillDraft({
+  await createSkillDraft({
     id,
     agent_group_id: session.agent_group_id,
     session_id: session.id,

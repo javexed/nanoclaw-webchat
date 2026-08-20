@@ -41,7 +41,7 @@ function run(cmd: string, args: string[], timeout: number): Promise<{ ok: boolea
 
 async function checkTailscale(): Promise<PreflightCheck> {
   await probeTailscaleHealth(); // force a fresh probe (unconditional)
-  const ts = getAuthManagementInfo().tailscale;
+  const ts = (await getAuthManagementInfo()).tailscale;
   if (ts.healthy) {
     return {
       id: 'tailscale',

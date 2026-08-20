@@ -37,7 +37,7 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('per-group egress', () => {
-  it('abstains for an open group, so the install-wide lockdown still decides', () => {
+  it('abstains for an open group, so the install-wide lockdown still decides', async () => {
     // null is not "open egress" — it hands the decision back to the driver's
     // own rules, which are the ones that arm the install-wide lockdown.
     getContainerConfig.mockResolvedValue({ egress: 'open' });
@@ -58,7 +58,7 @@ describe('per-group egress', () => {
     expect(ensureEgressNetwork).toHaveBeenCalledWith(true);
   });
 
-  it('abstains for a group it never prepared, rather than guessing', () => {
+  it('abstains for a group it never prepared, rather than guessing', async () => {
     expect(resolve(specFor('never-seen'))).toBeNull();
   });
 

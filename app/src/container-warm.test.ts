@@ -11,7 +11,7 @@ import { buildWarmArgs } from './container-warm.js';
 describe('buildWarmArgs', () => {
   const args = buildWarmArgs('nanoclaw-agent:latest', '/repo/container/agent-runner/src');
 
-  it('is inert: no network, memory-capped, auto-removed, install-labeled', () => {
+  it('is inert: no network, memory-capped, auto-removed, install-labeled', async () => {
     const joined = args.join(' ');
     expect(joined).toContain('--network none');
     expect(joined).toContain('--memory 1g');
@@ -19,11 +19,11 @@ describe('buildWarmArgs', () => {
     expect(joined).toMatch(/--label nanoclaw-install=/);
   });
 
-  it('mounts the agent-runner source read-only at the real spawn path', () => {
+  it('mounts the agent-runner source read-only at the real spawn path', async () => {
     expect(args).toContain('/repo/container/agent-runner/src:/app/src:ro');
   });
 
-  it('runs against the given image and touches the hot paths a spawn reads', () => {
+  it('runs against the given image and touches the hot paths a spawn reads', async () => {
     expect(args).toContain('nanoclaw-agent:latest');
     const script = args[args.length - 1];
     expect(script).toContain('/app/src/poll-loop.ts');

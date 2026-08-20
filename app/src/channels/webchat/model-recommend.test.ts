@@ -20,7 +20,7 @@ function profile(over: Partial<HardwareProfile>): HardwareProfile {
 }
 
 describe('recommendModel', () => {
-  it('sizes by AVAILABLE ram, not total (the thrash lesson)', () => {
+  it('sizes by AVAILABLE ram, not total (the thrash lesson)', async () => {
     // 14 GB box with only 2.3 GB free (stack running) → tiny, not mid.
     const r = recommendModel(profile({ ramTotalGB: 14, ramAvailGB: 2.3 }));
     expect(r.model.id).toBe('qwen3:0.6b');
@@ -28,27 +28,27 @@ describe('recommendModel', () => {
     expect(r.detected).toContain('2.3 GB free');
   });
 
-  it('picks the largest model that fits a roomy CPU box', () => {
+  it('picks the largest model that fits a roomy CPU box', async () => {
     const r = recommendModel(profile({ ramTotalGB: 32, ramAvailGB: 24 }));
     expect(r.model.id).toBe('qwen3:8b'); // 7 + 2.5 cpu margin <= 24
     expect(r.tight).toBe(false);
   });
 
-  it('steps down as headroom shrinks (fat CPU margin)', () => {
+  it('steps down as headroom shrinks (fat CPU margin)', async () => {
     expect(recommendModel(profile({ ramAvailGB: 9.5 })).model.id).toBe('qwen3:8b'); // 7+2.5<=9.5
     expect(recommendModel(profile({ ramAvailGB: 6.5 })).model.id).toBe('qwen3:4b'); // 4+2.5<=6.5
     expect(recommendModel(profile({ ramAvailGB: 5.0 })).model.id).toBe('qwen3:1.7b'); // 2.5+2.5<=5
     expect(recommendModel(profile({ ramAvailGB: 4.0 })).model.id).toBe('qwen3:0.6b'); // 1.5+2.5<=4
   });
 
-  it('flags tight when even the smallest model does not fit', () => {
+  it('flags tight when even the smallest model does not fit', async () => {
     const r = recommendModel(profile({ ramTotalGB: 4, ramAvailGB: 1.2 }));
     expect(r.model.id).toBe('qwen3:0.6b'); // always a pick
     expect(r.tight).toBe(true);
     expect(r.reason).toMatch(/low free memory/i);
   });
 
-  it('budgets on GPU VRAM when a usable accelerator is present', () => {
+  it('budgets on GPU VRAM when a usable accelerator is present', async () => {
     const r = recommendModel(
       profile({
         ramAvailGB: 3, // small RAM…
@@ -60,7 +60,7 @@ describe('recommendModel', () => {
     expect(r.reason).toContain('GPU memory');
   });
 
-  it('IGNORES a present-but-unusable iGPU and falls back to CPU/RAM', () => {
+  it('IGNORES a present-but-unusable iGPU and falls back to CPU/RAM', async () => {
     const r = recommendModel(
       profile({
         ramTotalGB: 14,
@@ -73,7 +73,7 @@ describe('recommendModel', () => {
     expect(r.detected).toContain('not usable');
   });
 
-  it('always returns thinking + tool-capable picks with alternatives', () => {
+  it('always returns thinking + tool-capable picks with alternatives', async () => {
     const r = recommendModel(profile({ ramAvailGB: 6 }));
     expect(r.model.thinking && r.model.tools).toBe(true);
     expect(r.alternatives.length).toBe(3);

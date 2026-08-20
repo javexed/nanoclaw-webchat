@@ -290,7 +290,7 @@ export async function applyImport(bundleDir: string, opts: { name?: string } = {
   let destinationsImported = 0;
   let destinationsTotal = 0;
   await db.transaction(async () => {
-    createAgentGroup({
+    await createAgentGroup({
       id,
       name,
       folder,
@@ -301,10 +301,10 @@ export async function applyImport(bundleDir: string, opts: { name?: string } = {
     // 2. Container config: schema-intersection insert under the new id;
     //    mcp_servers stays empty (attachments re-derive it below).
     const cfgRow = readJson<Record<string, unknown>>('db/container_config.json');
-    ensureContainerConfig(id);
+    await ensureContainerConfig(id);
     if (cfgRow) {
       await db.run(`DELETE FROM container_configs WHERE agent_group_id = ?`, id);
-      insertWithSchemaIntersection('container_configs', { ...cfgRow, agent_group_id: id });
+      await insertWithSchemaIntersection('container_configs', { ...cfgRow, agent_group_id: id });
     }
 
     // 4. Re-link rooms by platform reference.
@@ -318,7 +318,7 @@ export async function applyImport(bundleDir: string, opts: { name?: string } = {
       const { channel_type: _c, platform_id: _p, instance: _i, ...row } = w;
       // Fresh PK: the exported row's id belongs to the SOURCE wiring, which may
       // still exist on this install (clone next to the original).
-      insertWithSchemaIntersection('messaging_group_agents', {
+      await insertWithSchemaIntersection('messaging_group_agents', {
         ...row,
         id: randomUUID(),
         agent_group_id: id,
@@ -333,7 +333,7 @@ export async function applyImport(bundleDir: string, opts: { name?: string } = {
     for (const d of destinations) {
       if (d.target_type === 'agent' && !(await getAgentGroup(String(d.target_id)))) continue;
       try {
-        insertWithSchemaIntersection('agent_destinations', { ...d, id: randomUUID(), agent_group_id: id });
+        await insertWithSchemaIntersection('agent_destinations', { ...d, id: randomUUID(), agent_group_id: id });
         destinationsImported++;
       } catch (err) {
         log.warn('Import: destination row skipped', { err: String(err) });
@@ -356,7 +356,7 @@ export async function applyImport(bundleDir: string, opts: { name?: string } = {
       );
       attachedMcp.push(mcpName);
     }
-    updateContainerConfigJson(id, 'mcp_servers', {}); // clean base; caller syncs
+    await updateContainerConfigJson(id, 'mcp_servers', {}); // clean base; caller syncs
 
     // 7. Model by reference.
     const m = manifest.references.model;

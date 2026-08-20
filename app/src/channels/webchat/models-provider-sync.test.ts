@@ -27,13 +27,13 @@ let tmpDir: string;
 
 beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-provider-sync-'));
-  initDb(path.join(tmpDir, 'test.db'));
+  await initDb(path.join(tmpDir, 'test.db'));
   await runMigrations(getDb());
   await getDb().run(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES ('ag-1','AG','ag-1',NULL,'t')`);
 });
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeDb();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -50,7 +50,7 @@ function makeModel(kind: WebchatModelKind, id: string): void {
 }
 
 describe('providerForModelKind (OpenCode not installed)', () => {
-  it('maps every kind to the default provider when OpenCode is absent', () => {
+  it('maps every kind to the default provider when OpenCode is absent', async () => {
     // No OpenCode harness registered → even ollama stays on the default Claude
     // provider; there's nothing to switch to.
     expect(providerForModelKind('openai-compatible')).toBeNull();
@@ -64,24 +64,24 @@ describe('providerForModelKind (OpenCode not installed)', () => {
 describe('syncAgentProviderForAssignedModel', () => {
   it('keeps the default provider on an openai-compatible assignment (direct path)', async () => {
     makeModel('openai-compatible', 'm-oc');
-    assignModelToAgent('ag-1', 'm-oc');
-    syncAgentProviderForAssignedModel('ag-1');
+    await assignModelToAgent('ag-1', 'm-oc');
+    await syncAgentProviderForAssignedModel('ag-1');
     expect((await getContainerConfig('ag-1'))?.provider).toBeNull();
   });
 
   it('reverts a group a pre-direct install left on opencode', async () => {
     makeModel('openai-compatible', 'm-oc');
-    assignModelToAgent('ag-1', 'm-oc');
-    syncAgentProviderForAssignedModel('ag-1'); // ensures the config row exists
+    await assignModelToAgent('ag-1', 'm-oc');
+    await syncAgentProviderForAssignedModel('ag-1'); // ensures the config row exists
     // Simulate the legacy state: an older install wrote provider='opencode'.
     await getDb().run(`UPDATE container_configs SET provider = 'opencode' WHERE agent_group_id = 'ag-1'`);
     expect((await getContainerConfig('ag-1'))?.provider).toBe('opencode');
 
-    syncAgentProviderForAssignedModel('ag-1'); // any (re)assignment un-wedges it
+    await syncAgentProviderForAssignedModel('ag-1'); // any (re)assignment un-wedges it
     expect((await getContainerConfig('ag-1'))?.provider).toBeNull();
 
-    unassignModelFromAgent('ag-1');
-    syncAgentProviderForAssignedModel('ag-1');
+    await unassignModelFromAgent('ag-1');
+    await syncAgentProviderForAssignedModel('ag-1');
     expect((await getContainerConfig('ag-1'))?.provider).toBeNull();
   });
 });
@@ -90,11 +90,11 @@ describe('syncAgentProviderForAssignedModel', () => {
 // register a stub 'opencode' here every later opencodeInstalled() check is true.
 // The not-installed suites above must observe the absent state first.
 describe('with OpenCode installed', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     registerProviderContainerConfig('opencode', () => ({ env: {} }));
   });
 
-  it('routes ollama to opencode, other kinds to the default', () => {
+  it('routes ollama to opencode, other kinds to the default', async () => {
     expect(providerForModelKind('ollama')).toBe('opencode');
     expect(providerForModelKind('openai-compatible')).toBeNull();
     expect(providerForModelKind('anthropic')).toBeNull();
@@ -102,26 +102,26 @@ describe('with OpenCode installed', () => {
 
   it('auto-assigns opencode when the effective model is ollama', async () => {
     makeModel('ollama', 'm-ol');
-    assignModelToAgent('ag-1', 'm-ol');
-    syncAgentProviderForAssignedModel('ag-1');
+    await assignModelToAgent('ag-1', 'm-ol');
+    await syncAgentProviderForAssignedModel('ag-1');
     expect((await getContainerConfig('ag-1'))?.provider).toBe('opencode');
   });
 
   it('keeps an explicit opencode choice sticky across re-sync', async () => {
     makeModel('ollama', 'm-ol');
-    assignModelToAgent('ag-1', 'm-ol');
-    syncAgentProviderForAssignedModel('ag-1');
+    await assignModelToAgent('ag-1', 'm-ol');
+    await syncAgentProviderForAssignedModel('ag-1');
     expect((await getContainerConfig('ag-1'))?.provider).toBe('opencode');
-    syncAgentProviderForAssignedModel('ag-1'); // boot convergence / re-sync must not flip it
+    await syncAgentProviderForAssignedModel('ag-1'); // boot convergence / re-sync must not flip it
     expect((await getContainerConfig('ag-1'))?.provider).toBe('opencode');
   });
 
   it('never clobbers an explicit codex group (unmanaged axis)', async () => {
     makeModel('ollama', 'm-ol');
-    assignModelToAgent('ag-1', 'm-ol');
-    syncAgentProviderForAssignedModel('ag-1'); // creates the config row
+    await assignModelToAgent('ag-1', 'm-ol');
+    await syncAgentProviderForAssignedModel('ag-1'); // creates the config row
     await getDb().run(`UPDATE container_configs SET provider = 'codex' WHERE agent_group_id = 'ag-1'`);
-    syncAgentProviderForAssignedModel('ag-1');
+    await syncAgentProviderForAssignedModel('ag-1');
     expect((await getContainerConfig('ag-1'))?.provider).toBe('codex');
   });
 });
@@ -131,11 +131,11 @@ describe('with OpenCode installed', () => {
 // ABSENT — including the OpenCode ones above, which assert ollama → 'opencode' —
 // has to have run already. Same singleton constraint as the opencode block.
 describe('with BOTH pi and OpenCode installed', () => {
-  beforeAll(() => {
+  beforeAll(async () => {
     registerProviderContainerConfig('pi', () => ({ env: {} }));
   });
 
-  it('prefers pi over opencode for ollama', () => {
+  it('prefers pi over opencode for ollama', async () => {
     // The preference is the whole point: both are valid local harnesses, and pi
     // wins on prompt budget (587 vs 6,443 tokens head-to-head). If this ever
     // flips back to 'opencode' the auto-selection silently regresses to the
@@ -143,7 +143,7 @@ describe('with BOTH pi and OpenCode installed', () => {
     expect(providerForModelKind('ollama')).toBe('pi');
   });
 
-  it('still routes non-ollama kinds to the default provider', () => {
+  it('still routes non-ollama kinds to the default provider', async () => {
     expect(providerForModelKind('openai-compatible')).toBeNull();
     expect(providerForModelKind('anthropic')).toBeNull();
     expect(providerForModelKind(null)).toBeNull();
@@ -152,24 +152,24 @@ describe('with BOTH pi and OpenCode installed', () => {
 
   it('auto-assigns pi when the effective model is ollama', async () => {
     makeModel('ollama', 'm-pi');
-    assignModelToAgent('ag-1', 'm-pi');
-    syncAgentProviderForAssignedModel('ag-1');
+    await assignModelToAgent('ag-1', 'm-pi');
+    await syncAgentProviderForAssignedModel('ag-1');
     expect((await getContainerConfig('ag-1'))?.provider).toBe('pi');
   });
 
   it('keeps an explicit pi choice sticky across re-sync', async () => {
     makeModel('ollama', 'm-pi');
-    assignModelToAgent('ag-1', 'm-pi');
-    syncAgentProviderForAssignedModel('ag-1');
+    await assignModelToAgent('ag-1', 'm-pi');
+    await syncAgentProviderForAssignedModel('ag-1');
     expect((await getContainerConfig('ag-1'))?.provider).toBe('pi');
-    syncAgentProviderForAssignedModel('ag-1');
+    await syncAgentProviderForAssignedModel('ag-1');
     expect((await getContainerConfig('ag-1'))?.provider).toBe('pi');
   });
 
   it('un-wedges a group left on an ollama-less kind back to the default', async () => {
     makeModel('anthropic', 'm-an');
-    assignModelToAgent('ag-1', 'm-an');
-    syncAgentProviderForAssignedModel('ag-1');
+    await assignModelToAgent('ag-1', 'm-an');
+    await syncAgentProviderForAssignedModel('ag-1');
     expect((await getContainerConfig('ag-1'))?.provider).toBeNull();
   });
 });

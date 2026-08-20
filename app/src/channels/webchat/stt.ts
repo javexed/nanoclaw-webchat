@@ -168,7 +168,7 @@ export async function cleanupTranscript(
         model: model.model_id,
         temperature: 0,
         messages: [
-          { role: 'system', content: getSttCleanupPrompt() ?? DEFAULT_CLEANUP_PROMPT },
+          { role: 'system', content: (await getSttCleanupPrompt()) ?? DEFAULT_CLEANUP_PROMPT },
           { role: 'user', content: trimmed },
         ],
       }),

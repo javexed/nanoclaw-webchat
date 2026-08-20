@@ -18,7 +18,7 @@ function seedAgent(id: string, name: string) {
 }
 async function wire(roomPlatformId: string, agentId: string) {
   const mg = (await getMessagingGroupByPlatform('webchat', roomPlatformId))!;
-  createMessagingGroupAgent({
+  await createMessagingGroupAgent({
     id: `mga-${roomPlatformId}-${agentId}`,
     messaging_group_id: mg.id,
     agent_group_id: agentId,
@@ -52,11 +52,11 @@ beforeEach(async () => {
   seedAgent('ag-code', 'Coder');
   seedAgent('ag-unused', 'Unused'); // accessible but wired to no room → orphan column
   seedAgent('ag-elsewhere', 'Elsewhere'); // wired to an out-of-scope room AND not accessible
-  createWebchatRoom('Room A', 'room-a');
-  createWebchatRoom('Room B', 'room-b');
-  createWebchatRoom('Room C', 'room-c');
-  createWebchatRoom('Other', 'room-other');
-  createWebchatModel({
+  await createWebchatRoom('Room A', 'room-a');
+  await createWebchatRoom('Room B', 'room-b');
+  await createWebchatRoom('Room C', 'room-c');
+  await createWebchatRoom('Other', 'room-other');
+  await createWebchatModel({
     id: 'm-sonnet',
     name: 'Sonnet',
     kind: 'anthropic',
@@ -65,12 +65,12 @@ beforeEach(async () => {
     credential_ref: null,
     created_at: 0,
   } as Parameters<typeof createWebchatModel>[0]);
-  assignModelToAgent('ag-research', 'm-sonnet');
-  assignModelToAgent('ag-code', 'm-sonnet'); // shared model → must dedupe
-  wire('room-a', 'ag-research');
-  wire('room-a', 'ag-code');
-  wire('room-b', 'ag-research'); // research is the overloaded one (2 rooms)
-  wire('room-other', 'ag-elsewhere');
+  await assignModelToAgent('ag-research', 'm-sonnet');
+  await assignModelToAgent('ag-code', 'm-sonnet'); // shared model → must dedupe
+  await wire('room-a', 'ag-research');
+  await wire('room-a', 'ag-code');
+  await wire('room-b', 'ag-research'); // research is the overloaded one (2 rooms)
+  await wire('room-other', 'ag-elsewhere');
 });
 afterEach(() => closeDb());
 

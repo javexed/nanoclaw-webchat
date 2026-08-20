@@ -9,7 +9,7 @@ import { everyAsync, filterAsync, someAsync } from './async-array.js';
 describe('async array predicates', () => {
   const even = async (n: number) => n % 2 === 0;
 
-  it('filters on the RESOLVED value, unlike a native filter', () => {
+  it('filters on the RESOLVED value, unlike a native filter', async () => {
     // Documented for contrast: this is what the codebase was doing.
     expect([1, 2, 3].filter((n) => even(n))).toEqual([1, 2, 3]);
   });

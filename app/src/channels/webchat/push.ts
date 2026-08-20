@@ -84,7 +84,7 @@ export async function sendPushForMessage(m: BroadcastPushMsg): Promise<void> {
         // 404/410 = subscription revoked on the device; prune it.
         const e = err as { statusCode?: number; message?: string; body?: string };
         if (e?.statusCode === 404 || e?.statusCode === 410) {
-          deleteWebchatPushSubscriptionByEndpoint(row.endpoint);
+          await deleteWebchatPushSubscriptionByEndpoint(row.endpoint);
           log.info('Webchat push: pruned dead subscription', { endpointTail: row.endpoint.slice(-24) });
         } else {
           log.warn('Webchat push: send failed', {

@@ -11,33 +11,33 @@ import { describe, it, expect } from 'vitest';
 import { awaitGateway, classifyGatewayProbe, isTransientProbe } from './onecli-preflight.js';
 
 describe('classifyGatewayProbe', () => {
-  it('ONECLI_URL unset → warn with set-it guidance', () => {
+  it('ONECLI_URL unset → warn with set-it guidance', async () => {
     const v = classifyGatewayProbe('unset');
     expect(v.level).toBe('warn');
     expect(v.message).toMatch(/ONECLI_URL is not set/);
   });
 
-  it('unreachable (null) → error mentioning binding / docker port', () => {
+  it('unreachable (null) → error mentioning binding / docker port', async () => {
     const v = classifyGatewayProbe(null, 'http://172.17.0.1:10254');
     expect(v.level).toBe('error');
     expect(v.message).toMatch(/UNREACHABLE/);
     expect(v.message).toMatch(/ONECLI_BIND_HOST|docker port/);
   });
 
-  it('404 → error: gateway too old (version-coupling), with upgrade command', () => {
+  it('404 → error: gateway too old (version-coupling), with upgrade command', async () => {
     const v = classifyGatewayProbe(404, 'http://172.17.0.1:10254');
     expect(v.level).toBe('error');
     expect(v.message).toMatch(/too OLD|no \/v1/i);
     expect(v.message).toMatch(/docker compose pull/);
   });
 
-  it('200 → info: credential path OK', () => {
+  it('200 → info: credential path OK', async () => {
     const v = classifyGatewayProbe(200, 'http://172.17.0.1:10254');
     expect(v.level).toBe('info');
     expect(v.message).toMatch(/reachable.*OK/);
   });
 
-  it('401/403/405 (endpoint exists, just auth/method) → treated as OK, not 404', () => {
+  it('401/403/405 (endpoint exists, just auth/method) → treated as OK, not 404', async () => {
     for (const s of [401, 403, 405]) {
       expect(classifyGatewayProbe(s, 'http://x').level).toBe('info');
     }
@@ -45,7 +45,7 @@ describe('classifyGatewayProbe', () => {
 });
 
 describe('isTransientProbe', () => {
-  it('only an unreachable gateway is worth waiting on', () => {
+  it('only an unreachable gateway is worth waiting on', async () => {
     expect(isTransientProbe(null)).toBe(true);
     // A too-old gateway and a missing URL both need a human; waiting hides them.
     expect(isTransientProbe(404)).toBe(false);

@@ -33,7 +33,7 @@ const SESSION: Session = {
 async function seedSession() {
   await getDb().run(`INSERT OR IGNORE INTO agent_groups (id,name,folder,agent_provider,created_at) VALUES ('ag-1','ag-1','ag-1',NULL,'t')`);
   await getDb().run(`INSERT INTO messaging_groups (id,channel_type,instance,platform_id,created_at) VALUES ('mg-1','webchat','webchat','room-1','t')`);
-  createSession(SESSION);
+  await createSession(SESSION);
   initSessionFolder('ag-1', 'sess-alice'); // scaffolds the session dir + inbound.db
 }
 
@@ -58,10 +58,10 @@ beforeEach(async () => {
   fs.rmSync(testSessionTree, { recursive: true, force: true }); // fresh session dir each test
   await initTestDb();
   await runMigrations(getDb());
-  seedSession();
+  await seedSession();
 });
 afterEach(async () => {
-  closeDb();
+  await closeDb();
   fs.rmSync(testSessionTree, { recursive: true, force: true });
 });
 
@@ -98,7 +98,7 @@ describe('writeMemberTranscript', () => {
     fs.writeFileSync(path.join(uploadsDir('room-1'), 'abc123.pdf'), 'HELLO');
     const cur = await storeWebchatFileMessage('room-1', 'Alice', 'user', '', meta);
 
-    writeMemberTranscript({
+    await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
@@ -125,7 +125,7 @@ describe('writeMemberTranscript', () => {
     const old = await storeWebchatFileMessage('room-1', 'Alice', 'user', '', meta);
     const cur = await storeWebchatMessage('room-1', 'Alice', 'user', 'what was in that PDF?');
 
-    writeMemberTranscript({
+    await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
@@ -142,7 +142,7 @@ describe('writeMemberTranscript', () => {
 
   it('is idempotent — re-running adds only genuinely new messages', async () => {
     const m1 = await storeWebchatMessage('room-1', 'Alice', 'user', 'one');
-    writeMemberTranscript({
+    await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
@@ -151,7 +151,7 @@ describe('writeMemberTranscript', () => {
     });
     expect(inboundRows()).toHaveLength(1);
     // Same turn re-run → no dup.
-    writeMemberTranscript({
+    await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
@@ -162,7 +162,7 @@ describe('writeMemberTranscript', () => {
     // A new message arrives → only it is added (idempotent: m1 not rewritten,
     // keeps its original trigger; the new current message is trigger=1).
     const m2 = await storeWebchatMessage('room-1', 'Alice', 'user', 'two');
-    writeMemberTranscript({
+    await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
@@ -175,7 +175,7 @@ describe('writeMemberTranscript', () => {
   });
 
   it('falls back (returns false) when the current message is not in the transcript', async () => {
-    storeWebchatMessage('room-1', 'Alice', 'user', 'old');
+    await storeWebchatMessage('room-1', 'Alice', 'user', 'old');
     const handled = writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
@@ -191,7 +191,7 @@ describe('writeMemberTranscript', () => {
     // an a2a side-channel row in the same room
     await getDb().run(`INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, created_at)
          VALUES ('a2a-1','room-1','x','a2a','{"to":"y","text":"z"}','a2a', ${Date.now() - 1000})`);
-    writeMemberTranscript({
+    await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',

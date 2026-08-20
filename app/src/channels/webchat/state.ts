@@ -172,7 +172,7 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string)
   ) {
     const m = msg as { sender?: string; content?: string; id?: string };
     const room = await getWebchatRoom(roomId);
-    sendPushForMessage({
+    await sendPushForMessage({
       roomId,
       roomName: room?.name || roomId,
       sender: m.sender || 'unknown',
@@ -220,7 +220,7 @@ export async function surfaceA2aMessage(
 
   for (const room of rooms) {
     const stored = storeWebchatA2aMessage(room.id, fromName, toName, text);
-    broadcast(room.id, { type: 'message', ...stored });
+    await broadcast(room.id, { type: 'message', ...(await stored) });
   }
 }
 
@@ -354,7 +354,7 @@ export async function broadcastRooms(): Promise<void> {
     c.ws.send(
       JSON.stringify({
         type: 'rooms',
-        rooms: annotateRoomsForUser(c.userId, await allRooms, await archivedSet, await activityMap, await threadCounts),
+        rooms: await annotateRoomsForUser(c.userId, await allRooms, await archivedSet, await activityMap, await threadCounts),
       }),
     );
   }

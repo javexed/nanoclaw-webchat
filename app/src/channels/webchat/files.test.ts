@@ -22,11 +22,11 @@ beforeEach(async () => {
   // validation checks. createWebchatRoom is the post-migration helper —
   // it writes to messaging_groups (channel_type='webchat'), not the
   // dropped webchat_rooms table.
-  createWebchatRoom('Test', ROOM_ID);
+  await createWebchatRoom('Test', ROOM_ID);
 });
 
 afterEach(async () => {
-  closeDb();
+  await closeDb();
 });
 
 // ── Test doubles ──────────────────────────────────────────────────────────

@@ -868,7 +868,7 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
 
   // Refuse to start if the server is reachable from the network without any
   // explicit auth method configured. Localhost-only installs are fine.
-  if (requiresExplicitAuth(host) && !hasExplicitAuth()) {
+  if (requiresExplicitAuth(host) && !(await hasExplicitAuth())) {
     throw new Error(
       `Webchat refusing to bind to ${host}:${port}: no auth method configured. ` +
         'Set WEBCHAT_TOKEN, WEBCHAT_TAILSCALE=true, or WEBCHAT_TRUSTED_PROXY_IPS, ' +
@@ -884,7 +884,7 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
   // does not silently turn forwarding off. Invalid persisted value → off, and
   // the health status says so; it cannot brick boot.
   configureSyslog(await getAuditSyslogTarget());
-  convergeAgentProviders();
+  await convergeAgentProviders();
   // Background probe — finishes before any client can hit /api/auth/info in
   // practice (boot completes synchronously to listen()), and the endpoint
   // tolerates the not-yet-probed state by treating it as unhealthy. No await:
@@ -1109,7 +1109,7 @@ async function handleHttp(
       return json(res, 400, { error: 'Invalid JSON' });
     }
     if (typeof body.active !== 'boolean') return json(res, 400, { error: 'active must be a boolean' });
-    const info = getAuthManagementInfo();
+    const info = await getAuthManagementInfo();
     if (!info.bearerConfigured) {
       return json(res, 400, { error: 'No bearer token is configured (WEBCHAT_TOKEN is unset).' });
     }
@@ -1142,7 +1142,7 @@ async function handleHttp(
   if (url.pathname === '/api/webchat/auth/bearer/generate' && method === 'POST') {
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
     if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
-    if (getAuthManagementInfo().bearerConfigured) {
+    if ((await getAuthManagementInfo()).bearerConfigured) {
       return json(res, 400, { error: 'A bearer token is already set. Retire it first to replace it.' });
     }
     // 24 random bytes → 32 base64url chars, comfortably over the 24-char floor.
@@ -1154,7 +1154,7 @@ async function handleHttp(
     // (auth.ts). On a --local install the owner role sits on `webchat:local-owner`,
     // so without this the operator's own token authenticates as a NON-owner →
     // 403 on every owner endpoint (a self-inflicted lockout on the next restart).
-    grantOwnerRole('webchat:owner', userId);
+    await grantOwnerRole('webchat:owner', userId);
     return json(res, 200, { token });
   }
   // ── Restart the host to load a freshly-written .env (bearer token / bind) ────
@@ -1267,9 +1267,9 @@ async function handleHttp(
     if (!(await getAgentsForWebchatRoom(roomId)).some((a) => a.id === agentGroupId)) {
       return json(res, 400, { error: 'Agent is not wired to this room' });
     }
-    engageAgent(roomId, threadId, agentGroupId);
+    await engageAgent(roomId, threadId, agentGroupId);
     broadcastEngagedSet(roomId, threadId);
-    return json(res, 200, { ok: true, engaged: engagedAgentsForThread(roomId, threadId) });
+    return json(res, 200, { ok: true, engaged: await engagedAgentsForThread(roomId, threadId) });
   }
   const roomThreadDisengageMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/threads\/([^/]+)\/engaged\/([^/]+)$/);
   if (ENGAGED_AGENTS_ENABLED && roomThreadDisengageMatch && method === 'DELETE') {
@@ -1279,9 +1279,9 @@ async function handleHttp(
     const agentGroupId = decodeURIComponent(roomThreadDisengageMatch[3]);
     if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
     if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-    disengageAgent(roomId, threadId, agentGroupId);
+    await disengageAgent(roomId, threadId, agentGroupId);
     broadcastEngagedSet(roomId, threadId);
-    return json(res, 200, { ok: true, engaged: engagedAgentsForThread(roomId, threadId) });
+    return json(res, 200, { ok: true, engaged: await engagedAgentsForThread(roomId, threadId) });
   }
 
   // Static PWA is served pre-auth (see the servePwa call above the auth gate).
@@ -1655,7 +1655,7 @@ async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   // Per-agent resource → whoever administers that agent, scoped admins included.
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)) && !(await hasAdminPrivilege(userId, agentGroupId)))
     return json(res, 403, { error: 'Forbidden' });
-  if (method === 'GET') return json(res, 200, { keys: listDeployKeys(agentGroupId) });
+  if (method === 'GET') return json(res, 200, { keys: await listDeployKeys(agentGroupId) });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (userCredsRateLimited(userId, 'deploy-key'))
     return json(res, 429, { error: 'Too many attempts — wait a moment and try again.' });
@@ -1755,7 +1755,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       const provider = url.searchParams.get('provider') === 'codex' ? 'codex' : 'claude';
       const priorOauth = (await getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider))?.cred_type === 'oauth_token';
       await revokeUserCredential(realOnecliAdmin, WORKSPACE_DEFAULT_USER_ID, provider);
-      restartGroupsForWorkspaceCredChange(provider, priorOauth, false);
+      await restartGroupsForWorkspaceCredChange(provider, priorOauth, false);
       return json(res, 200, { ok: true });
     }
     const raw = await readJsonBody(req, res);
@@ -1936,8 +1936,8 @@ async function rWorkspaceModelPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
   } else {
     setDefaultModelId(null);
   }
-  refreshUnassignedGroupsForDefaultModel('Workspace default model changed');
-  return json(res, 200, { ok: true, defaultModelId: getDefaultModelId() });
+  await refreshUnassignedGroupsForDefaultModel('Workspace default model changed');
+  return json(res, 200, { ok: true, defaultModelId: await getDefaultModelId() });
 }
 
 // Room → agent → model topology for the explore view, scoped to the caller's
@@ -1964,7 +1964,7 @@ async function rTopologyGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
       skillEdges.push({ agent: a.id, skill: sk.name });
     }
   }
-  return json(res, 200, { ...topo, skills: [...skillMap.values()], skillEdges });
+  return json(res, 200, { ...(await topo), skills: [...skillMap.values()], skillEdges });
 }
 
 // Full-text search across the caller's accessible rooms (FTS5). Scoped to
@@ -2343,7 +2343,7 @@ async function rDraft(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (!(await resolveSkillDraft(id, 'discarded'))) return json(res, 404, { error: 'Draft not found' });
-  resolveDraftCard(id, 'discarded', userId);
+  await resolveDraftCard(id, 'discarded', userId);
   return json(res, 200, { ok: true });
 }
 
@@ -2585,7 +2585,7 @@ async function rLearningConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<voi
   const { req, res, method, userId } = ctx;
   const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
   if (method === 'GET') {
-    const base = { enabled: getLearningMasterEnabled() };
+    const base = { enabled: await getLearningMasterEnabled() };
     return json(
       res,
       (await canEdit) ? 200 : 200,
@@ -2608,7 +2608,7 @@ async function rLearningConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<voi
   // call params so the agent-runner (a Docker container) can reach it.
   if ('classifierModelId' in body) {
     if (body.classifierModelId === null) {
-      setLearningClassifier(null, null, null);
+      await setLearningClassifier(null, null, null);
       return json(res, 200, { ok: true, classifierModelId: null });
     }
     if (typeof body.classifierModelId !== 'string' || !body.classifierModelId.trim())
@@ -2620,11 +2620,11 @@ async function rLearningConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<voi
       return json(res, 400, {
         error: 'Classifier must be an ollama or openai-compatible roster model with an endpoint',
       });
-    setLearningClassifier(model.id, clf.url, clf.model);
+    await setLearningClassifier(model.id, clf.url, clf.model);
     return json(res, 200, { ok: true, classifierModelId: model.id });
   }
   if (typeof body.enabled !== 'boolean') return json(res, 400, { error: 'enabled must be a boolean' });
-  setLearningMasterEnabled(body.enabled);
+  await setLearningMasterEnabled(body.enabled);
   return json(res, 200, { ok: true, enabled: body.enabled });
 }
 
@@ -2668,8 +2668,8 @@ async function rSttConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
         ? {
             ...base,
             provider: sttProvider(),
-            cleanupModelId: getSttCleanupModelId(),
-            cleanupPrompt: getSttCleanupPrompt(),
+            cleanupModelId: await getSttCleanupModelId(),
+            cleanupPrompt: await getSttCleanupPrompt(),
             defaultCleanupPrompt: DEFAULT_CLEANUP_PROMPT,
             canEdit: true,
           }
@@ -2776,10 +2776,10 @@ async function rSttCleanupPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<voi
 // ── Approval pre-judge config (owner-only; Settings → Approval pre-judge) ──
 // See src/modules/approvals/prejudge.ts and docs/webchat/approval-prejudge.md.
 
-function prejudgeConfigView(): Record<string, unknown> {
+async function prejudgeConfigView(): Promise<Record<string, unknown>> {
   return {
-    modelId: getApprovalPrejudgeModelId(),
-    actions: getApprovalPrejudgeActions(),
+    modelId: await getApprovalPrejudgeModelId(),
+    actions: await getApprovalPrejudgeActions(),
     // Every action registered with an approval handler — the opt-in
     // candidates the settings UI lists.
     knownActions: listRegisteredApprovalActions(),
@@ -2791,7 +2791,7 @@ function prejudgeConfigView(): Record<string, unknown> {
 }
 
 async function rApprovalPrejudgeGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  return json(ctx.res, 200, prejudgeConfigView());
+  return json(ctx.res, 200, await prejudgeConfigView());
 }
 
 async function rApprovalPrejudgePut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
@@ -2836,7 +2836,7 @@ async function rApprovalPrejudgePut(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 
   if ('modelId' in body) setApprovalPrejudgeModelId((body.modelId as string | null) ?? null);
   if (actions !== undefined) setApprovalPrejudgeActions(actions);
-  return json(res, 200, { ok: true, ...prejudgeConfigView() });
+  return json(res, 200, { ok: true, ...await prejudgeConfigView() });
 }
 
 async function rApprovalsPendingGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
@@ -3340,12 +3340,10 @@ async function engagedAgentsForThread(roomId: string, threadId: string): Promise
 
 /** Push the current engaged set for a thread to all room clients (live chips). */
 function broadcastEngagedSet(roomId: string, threadId: string): void {
-  broadcast(roomId, {
-    type: 'engaged_set_changed',
-    room_id: roomId,
-    thread_id: threadId,
-    engaged: engagedAgentsForThread(roomId, threadId),
-  });
+  // Resolve first, then broadcast — an embedded promise serializes as {}.
+  void engagedAgentsForThread(roomId, threadId).then((engaged) =>
+    broadcast(roomId, { type: 'engaged_set_changed', room_id: roomId, thread_id: threadId, engaged }),
+  );
 }
 
 const ENGAGE_FOLDER_ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
@@ -3396,7 +3394,7 @@ export async function resolveInboundDeliveryPlan(
   let changed = false;
   for (const id of mentioned) {
     if (!engaged.has(id)) {
-      engageAgent(roomId, threadId, id);
+      await engageAgent(roomId, threadId, id);
       engaged.add(id);
       changed = true;
     }
@@ -3580,7 +3578,7 @@ async function restartGroupsForWorkspaceCredChange(
     const groupProvider = (await getContainerConfig(g.id))?.provider === 'codex' ? 'codex' : 'claude';
     if (groupProvider !== provider) continue;
     try {
-      restartAgentGroupContainers(g.id, 'Workspace default credential mode changed');
+      await restartAgentGroupContainers(g.id, 'Workspace default credential mode changed');
     } catch (err) {
       log.warn('Webchat: container restart after workspace-cred change failed', { agentGroupId: g.id, err });
     }
@@ -3622,7 +3620,7 @@ function afterWorkspaceCredentialSet(provider: 'claude' | 'codex', priorOauth: b
 async function convergeAgentProviders(): Promise<void> {
   for (const g of await getAllAgentGroups()) {
     try {
-      syncAgentProviderForAssignedModel(g.id);
+      await syncAgentProviderForAssignedModel(g.id);
     } catch (err) {
       log.warn('Webchat: provider convergence at boot failed', { agentGroupId: g.id, err });
     }
@@ -3722,7 +3720,7 @@ async function putScopedSkillContentHandler(
 // room) so it stops being actionable, and push the update to connected clients.
 async function resolveDraftCard(draftId: string, outcome: 'kept' | 'discarded', userId: string): Promise<void> {
   const flipped = await markRoomSkillDraftResolved(draftId, outcome, userId);
-  if (flipped) broadcast(flipped.roomId, { type: 'message', ...flipped.message });
+  if (flipped) await broadcast(flipped.roomId, { type: 'message', ...flipped.message });
 }
 
 // A draft as the keep routes see it — the metadata the apply/review paths need.
@@ -3761,7 +3759,7 @@ async function applyKeepDecision(
     updateTarget || draft.kind === 'patch' ? 'Webchat skill revision applied' : 'Webchat learned skill kept',
   );
   if (!r.ok) return { status: r.status, body: { error: r.error } };
-  resolveDraftCard(draft.id, 'kept', userId);
+  await resolveDraftCard(draft.id, 'kept', userId);
   return {
     status: 200,
     body: {

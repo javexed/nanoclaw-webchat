@@ -35,7 +35,7 @@ const denied = (v: ReturnType<typeof checkMemberGrantAuth>) => v !== null;
 
 describe('checkMemberGrantAuth', () => {
   it('owner may grant/revoke anything (member, admin, owner; any/no group)', async () => {
-    role('webchat:owner', 'owner', null);
+    await role('webchat:owner', 'owner', null);
     expect(allowed(checkMemberGrantAuth('webchat:owner', 'member', 'ag-1'))).toBe(true);
     expect(allowed(checkMemberGrantAuth('webchat:owner', 'admin', 'ag-1'))).toBe(true);
     expect(allowed(checkMemberGrantAuth('webchat:owner', 'owner', null))).toBe(true);
@@ -43,26 +43,26 @@ describe('checkMemberGrantAuth', () => {
   });
 
   it('scoped admin may grant member on their own group', async () => {
-    role('webchat:sadmin', 'admin', 'ag-1');
+    await role('webchat:sadmin', 'admin', 'ag-1');
     expect(allowed(checkMemberGrantAuth('webchat:sadmin', 'member', 'ag-1'))).toBe(true);
   });
 
   it('scoped admin may NOT grant admin or owner (escalation blocked)', async () => {
-    role('webchat:sadmin', 'admin', 'ag-1');
-    expect(checkMemberGrantAuth('webchat:sadmin', 'admin', 'ag-1')).toEqual({ error: 'Owner only' });
-    expect(checkMemberGrantAuth('webchat:sadmin', 'owner', null)).toEqual({ error: 'Owner only' });
+    await role('webchat:sadmin', 'admin', 'ag-1');
+    expect(await checkMemberGrantAuth('webchat:sadmin', 'admin', 'ag-1')).toEqual({ error: 'Owner only' });
+    expect(await checkMemberGrantAuth('webchat:sadmin', 'owner', null)).toEqual({ error: 'Owner only' });
   });
 
   it('scoped admin may NOT grant member on a group they do not administer', async () => {
-    role('webchat:sadmin', 'admin', 'ag-1');
-    expect(checkMemberGrantAuth('webchat:sadmin', 'member', 'ag-2')).toEqual({
+    await role('webchat:sadmin', 'admin', 'ag-1');
+    expect(await checkMemberGrantAuth('webchat:sadmin', 'member', 'ag-2')).toEqual({
       error: 'Admin privilege required for this group',
     });
   });
 
   it('member grant with no group is rejected even for a scoped admin', async () => {
-    role('webchat:sadmin', 'admin', 'ag-1');
-    expect(checkMemberGrantAuth('webchat:sadmin', 'member', null)).toEqual({
+    await role('webchat:sadmin', 'admin', 'ag-1');
+    expect(await checkMemberGrantAuth('webchat:sadmin', 'member', null)).toEqual({
       error: 'Admin privilege required for this group',
     });
     // Non-string group ids are treated as null.
@@ -70,14 +70,14 @@ describe('checkMemberGrantAuth', () => {
   });
 
   it('global admin may grant member on any group but not roles', async () => {
-    role('webchat:gadmin', 'admin', null); // global admin (agent_group_id NULL)
+    await role('webchat:gadmin', 'admin', null); // global admin (agent_group_id NULL)
     expect(allowed(checkMemberGrantAuth('webchat:gadmin', 'member', 'ag-1'))).toBe(true);
     expect(allowed(checkMemberGrantAuth('webchat:gadmin', 'member', 'ag-99'))).toBe(true);
-    expect(checkMemberGrantAuth('webchat:gadmin', 'admin', 'ag-1')).toEqual({ error: 'Owner only' });
+    expect(await checkMemberGrantAuth('webchat:gadmin', 'admin', 'ag-1')).toEqual({ error: 'Owner only' });
   });
 
   it('a user with no roles is denied everything', async () => {
     expect(denied(checkMemberGrantAuth('webchat:nobody', 'member', 'ag-1'))).toBe(true);
-    expect(checkMemberGrantAuth('webchat:nobody', 'admin', 'ag-1')).toEqual({ error: 'Owner only' });
+    expect(await checkMemberGrantAuth('webchat:nobody', 'admin', 'ag-1')).toEqual({ error: 'Owner only' });
   });
 });

@@ -101,7 +101,7 @@ async function unenrollGroups(admin: OnecliAdmin, userId: string, provider: User
       // per-member session resolving regardless of a lingering assignment.
       if (remaining.length > 0) await admin.setSecrets(agentUuid, remaining);
     }
-    setUserCredsStatus(userId, row.agent_group_id, 'revoked');
+    await setUserCredsStatus(userId, row.agent_group_id, 'revoked');
   }
 }
 
@@ -129,7 +129,7 @@ export async function storeUserCredential(
     await admin.deleteSecret(prior.secret_id).catch(() => {}); // best-effort; orphan is harmless
   }
   const secretId = await createCredentialSecret(admin, userId, provider, credType, credential);
-  upsertUserCredential(userId, provider, secretId, credType);
+  await upsertUserCredential(userId, provider, secretId, credType);
   log.info('UserCreds credential stored', { userId, provider, credType });
 }
 
@@ -159,7 +159,7 @@ export async function ensureGroupEnrollment(admin: OnecliAdmin, userId: string, 
   const toolSecretIds = await groupToolSecretIds(admin, agentGroupId, secretTypeFor(provider));
   const merged = Array.from(new Set([secretId, ...toolSecretIds]));
   await admin.setSecrets(agentUuid, merged);
-  upsertUserCredsCredential(userId, agentGroupId, identifier, secretId, userCred.cred_type, provider);
+  await upsertUserCredsCredential(userId, agentGroupId, identifier, secretId, userCred.cred_type, provider);
   log.info('UserCreds group enrolled (lazy)', { userId, agentGroupId, provider, toolSecrets: toolSecretIds.length });
 }
 
@@ -178,7 +178,7 @@ export async function revokeUserCredential(
   await unenrollGroups(admin, userId, provider);
   const secretId = (await getUserCredential(userId, provider))?.secret_id ?? null;
   if (secretId) await admin.deleteSecret(secretId).catch(() => {}); // best-effort; row revoke below is the gate
-  setUserCredentialStatus(userId, provider, 'revoked');
+  await setUserCredentialStatus(userId, provider, 'revoked');
   log.info('UserCreds credential revoked', { userId, provider });
 }
 

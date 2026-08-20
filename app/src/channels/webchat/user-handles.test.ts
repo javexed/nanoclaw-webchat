@@ -37,7 +37,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  closeDb();
+  await closeDb();
 });
 
 // ── Seed helpers (mirror reads.test.ts) ──
@@ -63,7 +63,7 @@ async function wire(roomId: string, agentGroupId: string): Promise<void> {
 }
 
 async function grantOwner(userId: string): Promise<void> {
-  insertUser(userId);
+  await insertUser(userId);
   await getDb().run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
        VALUES (?, 'owner', NULL, NULL, ?)`, userId, new Date().toISOString());
 }
@@ -96,76 +96,76 @@ describe('slugifyHandle', () => {
 
 describe('ensureWebchatUserHandle', () => {
   it('defaults to a slug of the display name', async () => {
-    expect(ensureWebchatUserHandle('webchat:u1', 'Jane Doe')).toBe('jane-doe');
-    expect(getWebchatUserHandle('webchat:u1')).toBe('jane-doe');
+    expect(await ensureWebchatUserHandle('webchat:u1', 'Jane Doe')).toBe('jane-doe');
+    expect(await getWebchatUserHandle('webchat:u1')).toBe('jane-doe');
   });
 
   it('is idempotent — a second call keeps the first handle', async () => {
-    ensureWebchatUserHandle('webchat:u1', 'Jane Doe');
-    setWebchatUserHandle('webchat:u1', 'jd'); // user later renames
+    await ensureWebchatUserHandle('webchat:u1', 'Jane Doe');
+    await setWebchatUserHandle('webchat:u1', 'jd'); // user later renames
     // ensure must NOT clobber the chosen handle back to the slug
-    expect(ensureWebchatUserHandle('webchat:u1', 'Jane Doe')).toBe('jd');
+    expect(await ensureWebchatUserHandle('webchat:u1', 'Jane Doe')).toBe('jd');
   });
 
   it('suffixes on collision so each handle resolves to one user', async () => {
-    expect(ensureWebchatUserHandle('webchat:a', 'Sam')).toBe('sam');
-    expect(ensureWebchatUserHandle('webchat:b', 'Sam')).toBe('sam-2');
-    expect(ensureWebchatUserHandle('webchat:c', 'Sam')).toBe('sam-3');
+    expect(await ensureWebchatUserHandle('webchat:a', 'Sam')).toBe('sam');
+    expect(await ensureWebchatUserHandle('webchat:b', 'Sam')).toBe('sam-2');
+    expect(await ensureWebchatUserHandle('webchat:c', 'Sam')).toBe('sam-3');
   });
 });
 
 describe('setWebchatUserHandle', () => {
   it('sets a valid handle and normalizes case', async () => {
-    expect(setWebchatUserHandle('webchat:u1', 'Alice')).toEqual({ ok: true });
-    expect(getWebchatUserHandle('webchat:u1')).toBe('alice');
+    expect(await setWebchatUserHandle('webchat:u1', 'Alice')).toEqual({ ok: true });
+    expect(await getWebchatUserHandle('webchat:u1')).toBe('alice');
   });
 
   it('rejects an invalid shape', async () => {
-    expect(setWebchatUserHandle('webchat:u1', 'has spaces')).toEqual({ ok: false, reason: 'invalid' });
-    expect(setWebchatUserHandle('webchat:u1', 'no_underscores')).toEqual({ ok: false, reason: 'invalid' });
-    expect(setWebchatUserHandle('webchat:u1', '')).toEqual({ ok: false, reason: 'invalid' });
-    expect(setWebchatUserHandle('webchat:u1', 'x'.repeat(33))).toEqual({ ok: false, reason: 'invalid' });
+    expect(await setWebchatUserHandle('webchat:u1', 'has spaces')).toEqual({ ok: false, reason: 'invalid' });
+    expect(await setWebchatUserHandle('webchat:u1', 'no_underscores')).toEqual({ ok: false, reason: 'invalid' });
+    expect(await setWebchatUserHandle('webchat:u1', '')).toEqual({ ok: false, reason: 'invalid' });
+    expect(await setWebchatUserHandle('webchat:u1', 'x'.repeat(33))).toEqual({ ok: false, reason: 'invalid' });
   });
 
   it('rejects a handle already taken by another user', async () => {
-    setWebchatUserHandle('webchat:u1', 'taken');
-    expect(setWebchatUserHandle('webchat:u2', 'taken')).toEqual({ ok: false, reason: 'taken' });
-    expect(setWebchatUserHandle('webchat:u2', 'TAKEN')).toEqual({ ok: false, reason: 'taken' });
+    await setWebchatUserHandle('webchat:u1', 'taken');
+    expect(await setWebchatUserHandle('webchat:u2', 'taken')).toEqual({ ok: false, reason: 'taken' });
+    expect(await setWebchatUserHandle('webchat:u2', 'TAKEN')).toEqual({ ok: false, reason: 'taken' });
   });
 
   it('lets the same user re-set their own handle (no false "taken")', async () => {
-    setWebchatUserHandle('webchat:u1', 'alice');
-    expect(setWebchatUserHandle('webchat:u1', 'alice')).toEqual({ ok: true });
-    expect(setWebchatUserHandle('webchat:u1', 'alice2')).toEqual({ ok: true });
-    expect(getWebchatUserHandle('webchat:u1')).toBe('alice2');
+    await setWebchatUserHandle('webchat:u1', 'alice');
+    expect(await setWebchatUserHandle('webchat:u1', 'alice')).toEqual({ ok: true });
+    expect(await setWebchatUserHandle('webchat:u1', 'alice2')).toEqual({ ok: true });
+    expect(await getWebchatUserHandle('webchat:u1')).toBe('alice2');
   });
 });
 
 describe('userIdForHandle / resolveHandlesToUserIds', () => {
   it('resolves a handle to its owning user id', async () => {
-    setWebchatUserHandle('webchat:u1', 'alice');
-    expect(userIdForHandle('alice')).toBe('webchat:u1');
-    expect(userIdForHandle('ALICE')).toBe('webchat:u1'); // case-insensitive
-    expect(userIdForHandle('nobody')).toBeNull();
+    await setWebchatUserHandle('webchat:u1', 'alice');
+    expect(await userIdForHandle('alice')).toBe('webchat:u1');
+    expect(await userIdForHandle('ALICE')).toBe('webchat:u1'); // case-insensitive
+    expect(await userIdForHandle('nobody')).toBeNull();
   });
 
   it('maps a set of handles to user ids, dedups, and drops unknowns', async () => {
-    setWebchatUserHandle('webchat:u1', 'alice');
-    setWebchatUserHandle('webchat:u2', 'bob');
+    await setWebchatUserHandle('webchat:u1', 'alice');
+    await setWebchatUserHandle('webchat:u2', 'bob');
     const ids = await resolveHandlesToUserIds(['alice', 'BOB', 'alice', 'ghost']);
     expect(ids.sort()).toEqual(['webchat:u1', 'webchat:u2']);
   });
 
   it('returns nothing for an empty list', async () => {
-    expect(resolveHandlesToUserIds([])).toEqual([]);
+    expect(await resolveHandlesToUserIds([])).toEqual([]);
   });
 });
 
 describe('getWebchatHandleUsers', () => {
   it('returns every handle with its display name (null when unknown)', async () => {
     await getDb().run(`INSERT INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', ?, ?)`, 'webchat:u1', 'Jane Doe', new Date().toISOString());
-    setWebchatUserHandle('webchat:u1', 'jane');
-    setWebchatUserHandle('webchat:u2', 'bob'); // no users row → null display name
+    await setWebchatUserHandle('webchat:u1', 'jane');
+    await setWebchatUserHandle('webchat:u2', 'bob'); // no users row → null display name
 
     const rows = (await getWebchatHandleUsers()).sort((a, b) => a.handle.localeCompare(b.handle));
     expect(rows).toEqual([
@@ -175,7 +175,7 @@ describe('getWebchatHandleUsers', () => {
   });
 
   it('is empty when no one has a handle', async () => {
-    expect(getWebchatHandleUsers()).toEqual([]);
+    expect(await getWebchatHandleUsers()).toEqual([]);
   });
 });
 
@@ -199,45 +199,45 @@ describe('extractHandles', () => {
 
 describe('getMentionedRoomIdsForUser', () => {
   it('flags a room whose unread message @-mentions the handle', async () => {
-    setWebchatUserHandle('webchat:alice', 'alice');
-    insertMessage('room-1', 'hey @alice look at this', 1000);
+    await setWebchatUserHandle('webchat:alice', 'alice');
+    await insertMessage('room-1', 'hey @alice look at this', 1000);
     expect((await getMentionedRoomIdsForUser('webchat:alice', 'alice')).has('room-1')).toBe(true);
   });
 
   it('clears once the room is read past the mention', async () => {
-    setWebchatUserHandle('webchat:alice', 'alice');
-    insertMessage('room-1', 'hey @alice', 1000);
-    markRoomRead('webchat:alice', 'room-1', 1000);
+    await setWebchatUserHandle('webchat:alice', 'alice');
+    await insertMessage('room-1', 'hey @alice', 1000);
+    await markRoomRead('webchat:alice', 'room-1', 1000);
     expect((await getMentionedRoomIdsForUser('webchat:alice', 'alice')).has('room-1')).toBe(false);
   });
 
   it('re-flags when a newer mention arrives after reading', async () => {
-    setWebchatUserHandle('webchat:alice', 'alice');
-    insertMessage('room-1', 'hey @alice', 1000);
-    markRoomRead('webchat:alice', 'room-1', 1000);
-    insertMessage('room-1', '@alice again', 2000);
+    await setWebchatUserHandle('webchat:alice', 'alice');
+    await insertMessage('room-1', 'hey @alice', 1000);
+    await markRoomRead('webchat:alice', 'room-1', 1000);
+    await insertMessage('room-1', '@alice again', 2000);
     expect((await getMentionedRoomIdsForUser('webchat:alice', 'alice')).has('room-1')).toBe(true);
   });
 
   it('ignores rooms that mention someone else', async () => {
-    insertMessage('room-1', 'hey @bob', 1000);
+    await insertMessage('room-1', 'hey @bob', 1000);
     expect((await getMentionedRoomIdsForUser('webchat:alice', 'alice')).has('room-1')).toBe(false);
   });
 
   it('is empty for a blank handle', async () => {
-    insertMessage('room-1', 'hey @alice', 1000);
+    await insertMessage('room-1', 'hey @alice', 1000);
     expect((await getMentionedRoomIdsForUser('webchat:alice', '')).size).toBe(0);
   });
 });
 
 describe('annotateRoomsForUser — mention flag', () => {
   it('sets mention:true for an accessible room with an unread @-mention', async () => {
-    grantOwner('webchat:owner');
-    setWebchatUserHandle('webchat:owner', 'owner');
-    insertAgentGroup('ag-1');
-    insertRoom('room-1');
-    wire('room-1', 'ag-1');
-    insertMessage('room-1', 'ping @owner', 1000);
+    await grantOwner('webchat:owner');
+    await setWebchatUserHandle('webchat:owner', 'owner');
+    await insertAgentGroup('ag-1');
+    await insertRoom('room-1');
+    await wire('room-1', 'ag-1');
+    await insertMessage('room-1', 'ping @owner', 1000);
 
     const room = (await annotateRoomsForUser('webchat:owner')).find((r) => r.id === 'room-1');
     expect(room?.mention).toBe(true);
@@ -245,25 +245,25 @@ describe('annotateRoomsForUser — mention flag', () => {
   });
 
   it('clears the mention flag once the room is read', async () => {
-    grantOwner('webchat:owner');
-    setWebchatUserHandle('webchat:owner', 'owner');
-    insertAgentGroup('ag-1');
-    insertRoom('room-1');
-    wire('room-1', 'ag-1');
-    insertMessage('room-1', 'ping @owner', 1000);
-    markRoomRead('webchat:owner', 'room-1', 1000);
+    await grantOwner('webchat:owner');
+    await setWebchatUserHandle('webchat:owner', 'owner');
+    await insertAgentGroup('ag-1');
+    await insertRoom('room-1');
+    await wire('room-1', 'ag-1');
+    await insertMessage('room-1', 'ping @owner', 1000);
+    await markRoomRead('webchat:owner', 'room-1', 1000);
 
     const room = (await annotateRoomsForUser('webchat:owner')).find((r) => r.id === 'room-1');
     expect(room?.mention).toBe(false);
   });
 
   it('does not flag a plain unread room (no mention) as mention', async () => {
-    grantOwner('webchat:owner');
-    setWebchatUserHandle('webchat:owner', 'owner');
-    insertAgentGroup('ag-1');
-    insertRoom('room-1');
-    wire('room-1', 'ag-1');
-    insertMessage('room-1', 'just a normal message', 1000);
+    await grantOwner('webchat:owner');
+    await setWebchatUserHandle('webchat:owner', 'owner');
+    await insertAgentGroup('ag-1');
+    await insertRoom('room-1');
+    await wire('room-1', 'ag-1');
+    await insertMessage('room-1', 'just a normal message', 1000);
 
     const room = (await annotateRoomsForUser('webchat:owner')).find((r) => r.id === 'room-1');
     expect(room?.unread).toBe(true);

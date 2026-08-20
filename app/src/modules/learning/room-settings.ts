@@ -28,7 +28,7 @@ export async function getRoomLearning(messagingGroupId: string): Promise<RoomLea
 }
 
 export async function setRoomLearning(messagingGroupId: string, patch: RoomLearning): Promise<RoomLearning> {
-  const next = { ...getRoomLearning(messagingGroupId), ...patch };
+  const next = { ...(await getRoomLearning(messagingGroupId)), ...patch };
   await getDb().run(`INSERT INTO learning_room_settings (messaging_group_id, settings, updated_at)
        VALUES (?, ?, ?)
        ON CONFLICT(messaging_group_id) DO UPDATE SET settings = excluded.settings, updated_at = excluded.updated_at`, messagingGroupId, JSON.stringify(next), Date.now());

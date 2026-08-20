@@ -20,9 +20,9 @@ beforeEach(async () => {
   await initTestDb();
   await runMigrations(getDb());
   // 10 messages, created_at 1..10, ids m1..m10.
-  for (let i = 1; i <= 10; i++) seed('room-1', `m${i}`, i);
+  for (let i = 1; i <= 10; i++) await seed('room-1', `m${i}`, i);
   // Noise in another room — must never leak in.
-  seed('room-2', 'x1', 5);
+  await seed('room-2', 'x1', 5);
 });
 afterEach(() => closeDb());
 
@@ -39,11 +39,11 @@ describe('getWebchatMessagesBeforeId', () => {
   });
 
   it('returns empty at the start of history (anchor is the oldest)', async () => {
-    expect(getWebchatMessagesBeforeId('room-1', 'm1', 50)).toEqual([]);
+    expect(await getWebchatMessagesBeforeId('room-1', 'm1', 50)).toEqual([]);
   });
 
   it('returns empty for an unknown anchor id', async () => {
-    expect(getWebchatMessagesBeforeId('room-1', 'nope', 50)).toEqual([]);
+    expect(await getWebchatMessagesBeforeId('room-1', 'nope', 50)).toEqual([]);
   });
 
   it('paginates: chaining before_id walks backwards to the start', async () => {

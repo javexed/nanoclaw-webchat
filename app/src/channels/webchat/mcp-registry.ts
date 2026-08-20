@@ -264,6 +264,6 @@ export async function syncAgentMcpConfig(agentGroupId: string, server: WebchatMc
   } else {
     delete servers[server.name];
   }
-  updateContainerConfigJson(agentGroupId, 'mcp_servers', servers);
+  await updateContainerConfigJson(agentGroupId, 'mcp_servers', servers);
   return true;
 }
