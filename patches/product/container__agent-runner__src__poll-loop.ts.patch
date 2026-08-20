@@ -1,7 +1,7 @@
-diff --git c/container/agent-runner/src/poll-loop.ts w/container/agent-runner/src/poll-loop.ts
+diff --git a/container/agent-runner/src/poll-loop.ts b/container/agent-runner/src/poll-loop.ts
 index 2044cd3b..0925634b 100644
---- c/container/agent-runner/src/poll-loop.ts
-+++ w/container/agent-runner/src/poll-loop.ts
+--- a/container/agent-runner/src/poll-loop.ts
++++ b/container/agent-runner/src/poll-loop.ts
 @@ -1,4 +1,4 @@
 -import { findByName, getAllDestinations, type DestinationEntry } from './destinations.js';
 +import { findByName, findByRouting, getAllDestinations, type DestinationEntry } from './destinations.js';
@@ -114,10 +114,7 @@ index 2044cd3b..0925634b 100644
 -    const abortActiveQuery = () => query.abort();
 -    if (config.signal?.aborted) abortActiveQuery();
 -    else config.signal?.addEventListener('abort', abortActiveQuery, { once: true });
-+    // Rooms this batch came from — a reply defaults back here (origin guard in
-+    // dispatchResultText pins a misaddressed lone reply to the originating room).
-+    const originDests = resolveOriginDestinations(messages);
- 
+-
 -    // A real query runs from here — observers see the turn start (and the
 -    // matching turn_done after completion below).
 -    notifyProviderMessage({ kind: 'turn_start' });
@@ -157,6 +154,10 @@ index 2044cd3b..0925634b 100644
 -      // cap). A claimed retry that produced output replaces the error path.
 -      const retried = (await runTurnRetryHandlers({
 -        failure: { message: errMsg },
++    // Rooms this batch came from — a reply defaults back here (origin guard in
++    // dispatchResultText pins a misaddressed lone reply to the originating room).
++    const originDests = resolveOriginDestinations(messages);
++
 +    /**
 +     * Consult the turn-retry seam (runner-hooks.ts R5). A module may re-run
 +     * this turn on a different provider — e.g. a routing module escalating a

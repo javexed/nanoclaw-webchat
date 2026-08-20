@@ -1,7 +1,7 @@
-diff --git c/setup/onecli.test.ts w/setup/onecli.test.ts
+diff --git a/setup/onecli.test.ts b/setup/onecli.test.ts
 index 126219ec..9778c16e 100644
---- c/setup/onecli.test.ts
-+++ w/setup/onecli.test.ts
+--- a/setup/onecli.test.ts
++++ b/setup/onecli.test.ts
 @@ -5,9 +5,20 @@
   * incompatible (pre-/v1 server: warn) from unreachable (transient: nothing to
   * say) so the warning only fires on a real pre-/v1 server.

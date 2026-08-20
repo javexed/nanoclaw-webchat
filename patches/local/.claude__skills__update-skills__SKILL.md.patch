@@ -1,13 +1,18 @@
 diff --git a/.claude/skills/update-skills/SKILL.md b/.claude/skills/update-skills/SKILL.md
-index 1a929797..98767063 100644
+index cd2746e8..86048109 100644
 --- a/.claude/skills/update-skills/SKILL.md
 +++ b/.claude/skills/update-skills/SKILL.md
-@@ -64,7 +64,7 @@ If no channel or provider skills are installed:
- - Stop here.
+@@ -47,6 +47,13 @@ fully refreshed.
+ - Never record a failed skill and continue toward an upgrade completion stamp.
+ - Preserve the full report in the update summary.
  
- If installed channel/provider skills are found:
--- Show the list (e.g. `slack`, `discord`, `opencode`).
++If installed channel/provider skills are found:
 +- Show the list (e.g. `slack`, `discord`, `codex`).
- - Use AskUserQuestion with `multiSelect: true` to let the user pick which skills to re-apply.
-   - One option per installed channel/provider (e.g. "Re-apply Slack (/add-slack)").
-   - Add an option: "Skip — don't update any skills now".
++- Use AskUserQuestion with `multiSelect: true` to let the user pick which skills to re-apply.
++  - One option per installed channel/provider (e.g. "Re-apply Slack (/add-slack)").
++  - Add an option: "Skip — don't update any skills now".
++- If the user selects Skip, stop here.
++
+ The refresh engine overwrites skill-owned registry files and advances exact
+ dependency/CLI-manifest pins. It skips prompts, operator walkthroughs, `.env`
+ writes, wiring, restarts, and ordinary build/test directives.

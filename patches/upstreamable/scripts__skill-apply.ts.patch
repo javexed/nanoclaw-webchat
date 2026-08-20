@@ -1,5 +1,5 @@
 diff --git a/scripts/skill-apply.ts b/scripts/skill-apply.ts
-index 3fa3d528..c8935369 100644
+index 9bcbb10a..fdf4e168 100644
 --- a/scripts/skill-apply.ts
 +++ b/scripts/skill-apply.ts
 @@ -23,8 +23,9 @@
@@ -13,7 +13,7 @@ index 3fa3d528..c8935369 100644
  import { parseDirectives, promptVar, type Directive } from './skill-directives.js';
  
  // What an `nc:prompt` DECLARES about the value it needs — the core seam's input
-@@ -482,6 +483,20 @@ function substitute(value: string, vars: Map<string, { value: string; secret: bo
+@@ -570,6 +571,20 @@ function substitute(value: string, vars: Map<string, { value: string; secret: bo
    });
  }
  
@@ -34,15 +34,16 @@ index 3fa3d528..c8935369 100644
  // A `when:<var>=<value>` guard: the directive applies only when an earlier
  // prompt/capture bound <var> to exactly <value>. Unmet — including the var still
  // unresolved (a deferred prompt) — skips the directive, so a guarded prompt is
-@@ -544,21 +559,52 @@ function bindCapture(
- // is derivable. Throws on failure → caught and bounced to an agent.
- async function applyOne(
-   d: Directive,
--  ctx: { root: string; skillDir: string; exec: (c: string) => string | void | Promise<string | void>; execStream?: (c: string) => Promise<StepOutcome>; resolveRemote: (b: string) => string; vars: Map<string, { value: string; secret: boolean }>; journal: JournalEntry[] },
-+  ctx: { root: string; skillDir: string; exec: (c: string, logCmd?: string) => string | void | Promise<string | void>; execStream?: (c: string) => Promise<StepOutcome>; resolveRemote: (b: string) => string; vars: Map<string, { value: string; secret: boolean }>; journal: JournalEntry[] },
- ): Promise<void> {
-   const { root, skillDir, exec, vars, journal } = ctx;
-   switch (d.kind) {
+@@ -635,7 +650,7 @@ async function applyOne(
+   ctx: {
+     root: string;
+     skillDir: string;
+-    exec: (c: string) => string | void | Promise<string | void>;
++    exec: (c: string, logCmd?: string) => string | void | Promise<string | void>;
+     execStream?: (c: string) => Promise<StepOutcome>;
+     resolveRemote: (b: string) => string;
+     resolveDependencyCommand?: (request: DependencyCommandRequest) => string;
+@@ -649,14 +664,45 @@ async function applyOne(
      case 'copy':
        if (d.attrs['from-branch']) {
          const b = String(d.attrs['from-branch']);
@@ -96,7 +97,7 @@ index 3fa3d528..c8935369 100644
          }
        } else {
          for (const l of d.body) {
-@@ -646,7 +692,7 @@ async function applyOne(
+@@ -761,7 +807,7 @@ async function applyOne(
          // call `ncl ... {{owner_email}}` to wire from collected input. A command
          // with no {{...}} (build/test) is returned unchanged; an unresolved var
          // throws → caught → deferred (the prompt hasn't been answered yet).

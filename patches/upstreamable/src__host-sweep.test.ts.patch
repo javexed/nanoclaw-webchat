@@ -1,5 +1,5 @@
 diff --git a/src/host-sweep.test.ts b/src/host-sweep.test.ts
-index c385dc39..05631a87 100644
+index 5c99c548..b7478e66 100644
 --- a/src/host-sweep.test.ts
 +++ b/src/host-sweep.test.ts
 @@ -13,6 +13,7 @@ import {
@@ -10,7 +10,7 @@ index c385dc39..05631a87 100644
    shouldCloseTaskSession,
  } from './host-sweep.js';
  import type { Session } from './types.js';
-@@ -237,6 +238,51 @@ describe('deleteOrphanProcessingClaims', () => {
+@@ -279,6 +280,51 @@ describe('deleteOrphanProcessingClaims', () => {
    });
  });
  

@@ -1,10 +1,10 @@
 diff --git a/src/container-config.test.ts b/src/container-config.test.ts
-index cb10ab8e..a5842b6f 100644
+index 1a979f61..15c1bc5a 100644
 --- a/src/container-config.test.ts
 +++ b/src/container-config.test.ts
 @@ -63,6 +63,25 @@ describe('resolveGroupTimezone', () => {
-     updateContainerConfigScalars(GROUP.id, { timezone: 'Not/AZone' });
-     expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).timezone).toBeUndefined();
+     await updateContainerConfigScalars(GROUP.id, { timezone: 'Not/AZone' });
+     expect(configFromDb((await getContainerConfig(GROUP.id))!, GROUP).timezone).toBeUndefined();
    });
 +
 +  /**

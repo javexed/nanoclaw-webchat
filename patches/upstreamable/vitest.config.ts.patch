@@ -1,7 +1,7 @@
-diff --git c/vitest.config.ts w/vitest.config.ts
+diff --git a/vitest.config.ts b/vitest.config.ts
 index 24b4b5cf..9d8ad3d1 100644
---- c/vitest.config.ts
-+++ w/vitest.config.ts
+--- a/vitest.config.ts
++++ b/vitest.config.ts
 @@ -2,6 +2,8 @@ import { defineConfig } from 'vitest/config';
  
  export default defineConfig({

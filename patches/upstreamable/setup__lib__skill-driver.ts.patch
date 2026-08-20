@@ -1,8 +1,8 @@
 diff --git a/setup/lib/skill-driver.ts b/setup/lib/skill-driver.ts
-index 439dc367..56f400d7 100644
+index 71febf82..e9552b88 100644
 --- a/setup/lib/skill-driver.ts
 +++ b/setup/lib/skill-driver.ts
-@@ -259,13 +259,17 @@ async function reuseFromEnv(
+@@ -266,13 +266,17 @@ async function reuseFromEnv(
   * appended there (level 3, like runner.ts's per-step raw logs) so the silenced
   * noise stays inspectable.
   */
@@ -24,12 +24,12 @@ index 439dc367..56f400d7 100644
      new Promise((resolve, reject) => {
        const child = spawn('bash', ['-c', cmd], {
          cwd: projectRoot,
-@@ -278,7 +282,7 @@ export function hostExec(projectRoot: string, rawLog?: string): (cmd: string) =>
-       child.stderr.on('data', (c: Buffer) => { err += c.toString('utf8'); });
+@@ -289,7 +293,7 @@ export function hostExec(projectRoot: string, rawLog?: string): (cmd: string) =>
+       });
        child.on('error', reject);
        child.on('close', (code) => {
 -        tee(cmd, out, err);
 +        tee(logCmd ?? cmd, out, err);
          if (code === 0) return resolve(out);
          const stderr = err.trim();
-         const head = stderr.split('\n').map((l) => l.trim()).find(Boolean) ?? 'command failed';
+         const head =

@@ -1,7 +1,7 @@
-diff --git c/container/agent-runner/src/poll-loop.test.ts w/container/agent-runner/src/poll-loop.test.ts
+diff --git a/container/agent-runner/src/poll-loop.test.ts b/container/agent-runner/src/poll-loop.test.ts
 index 3e0f2bea..a5df8f0e 100644
---- c/container/agent-runner/src/poll-loop.test.ts
-+++ w/container/agent-runner/src/poll-loop.test.ts
+--- a/container/agent-runner/src/poll-loop.test.ts
++++ b/container/agent-runner/src/poll-loop.test.ts
 @@ -1,12 +1,20 @@
  import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
  

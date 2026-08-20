@@ -1,5 +1,5 @@
 diff --git a/src/group-init.ts b/src/group-init.ts
-index 08a0c1df..5da997dc 100644
+index 2353fe3b..f311ab4e 100644
 --- a/src/group-init.ts
 +++ b/src/group-init.ts
 @@ -7,9 +7,10 @@ import { stageGroupPersona } from './group-persona.js';
@@ -35,7 +35,7 @@ index 08a0c1df..5da997dc 100644
        },
      },
      null,
-@@ -97,8 +112,14 @@ export function initGroupFilesystem(
+@@ -105,8 +120,14 @@ export async function initGroupFilesystem(
      if (!fs.existsSync(settingsFile)) {
        fs.writeFileSync(settingsFile, DEFAULT_SETTINGS_JSON);
        initialized.push('settings.json');
@@ -52,7 +52,7 @@ index 08a0c1df..5da997dc 100644
      }
  
      // Skills directory — created empty here; symlinks are synced at spawn
-@@ -110,6 +131,11 @@ export function initGroupFilesystem(
+@@ -118,6 +139,11 @@ export async function initGroupFilesystem(
      }
    }
  
@@ -64,7 +64,7 @@ index 08a0c1df..5da997dc 100644
    if (initialized.length > 0) {
      log.info('Initialized group filesystem', {
        group: group.name,
-@@ -119,3 +145,62 @@ export function initGroupFilesystem(
+@@ -127,3 +153,62 @@ export async function initGroupFilesystem(
      });
    }
  }
