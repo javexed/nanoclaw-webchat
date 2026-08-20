@@ -591,6 +591,12 @@ export interface CredentialsConfig {
   allowClaudeOauth: boolean;
   allowOpenaiKey: boolean;
   allowCodexOauth: boolean;
+  /**
+   * Grok has NO key variant, deliberately: xAI's CLI authenticates with a
+   * subscription and there is no API-key path through it. A second flag would
+   * be a control that can never be true.
+   */
+  allowGrokOauth: boolean;
 }
 
 const DEFAULT_CREDENTIALS_CONFIG: CredentialsConfig = {
@@ -599,6 +605,7 @@ const DEFAULT_CREDENTIALS_CONFIG: CredentialsConfig = {
   allowClaudeOauth: false,
   allowOpenaiKey: false,
   allowCodexOauth: false,
+  allowGrokOauth: false,
 };
 
 /** Secure defaults if the singleton row is somehow missing or the table is absent. */
@@ -611,6 +618,7 @@ export async function getCredentialsConfig(): Promise<CredentialsConfig> {
           allow_claude_oauth: number;
           allow_openai_key: number;
           allow_codex_oauth: number;
+          allow_grok_oauth: number;
         }
       | undefined;
     if (!row) return { ...DEFAULT_CREDENTIALS_CONFIG };
@@ -620,6 +628,10 @@ export async function getCredentialsConfig(): Promise<CredentialsConfig> {
       allowClaudeOauth: row.allow_claude_oauth === 1,
       allowOpenaiKey: row.allow_openai_key === 1,
       allowCodexOauth: row.allow_codex_oauth === 1,
+      // `?? 0` rather than a bare compare: a row written before this column
+      // existed reads back undefined, and undefined === 1 is false anyway — but
+      // saying so keeps the intent legible next to its siblings.
+      allowGrokOauth: (row.allow_grok_oauth ?? 0) === 1,
     };
   } catch {
     return { ...DEFAULT_CREDENTIALS_CONFIG };
@@ -632,20 +644,22 @@ export async function setCredentialsConfig(patch: Partial<CredentialsConfig>): P
   const next = { ...(await getCredentialsConfig()), ...patch };
   await getDb().run(
     `INSERT INTO webchat_settings
-         (id, default_credential_mode, allow_anthropic_key, allow_claude_oauth, allow_openai_key, allow_codex_oauth, updated_at)
-       VALUES (1, ?, ?, ?, ?, ?, ?)
+         (id, default_credential_mode, allow_anthropic_key, allow_claude_oauth, allow_openai_key, allow_codex_oauth, allow_grok_oauth, updated_at)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          default_credential_mode = excluded.default_credential_mode,
          allow_anthropic_key     = excluded.allow_anthropic_key,
          allow_claude_oauth      = excluded.allow_claude_oauth,
          allow_openai_key        = excluded.allow_openai_key,
          allow_codex_oauth       = excluded.allow_codex_oauth,
+         allow_grok_oauth        = excluded.allow_grok_oauth,
          updated_at              = excluded.updated_at`,
     next.defaultMode,
     next.allowAnthropicKey ? 1 : 0,
     next.allowClaudeOauth ? 1 : 0,
     next.allowOpenaiKey ? 1 : 0,
     next.allowCodexOauth ? 1 : 0,
+    next.allowGrokOauth ? 1 : 0,
     Date.now(),
   );
 }

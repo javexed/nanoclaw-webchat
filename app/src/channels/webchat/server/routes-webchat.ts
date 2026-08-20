@@ -39,7 +39,7 @@ import { runPreflight } from '../preflight.js';
 import { isGlobalAdmin, isOwner } from '../roles.js';
 import { DEFAULT_PORT, MARKETPLACE_ID } from './constants.js';
 import { MCP_REGISTRY_ID, mcpRegistryRemovedKey } from './mcp-registry.js';
-import { codexAvailable, opencodeAvailable, piAvailable } from './providers.js';
+import { codexAvailable, grokAvailable, opencodeAvailable, piAvailable } from './providers.js';
 import { enableTailscaleServe, getTailscaleServeState } from '../tailscale-serve.js';
 import { computeUsageRollup } from '../usage.js';
 import type { RouteCtx } from '../server.js';
@@ -52,6 +52,7 @@ export async function rWebchatCredentialsConfig(ctx: RouteCtx, _m: RegExpMatchAr
     return json(res, 200, {
       ...(await getCredentialsConfig()),
       codexAvailable: codexAvailable(),
+      grokAvailable: grokAvailable(),
       opencodeAvailable: opencodeAvailable(),
       piAvailable: piAvailable(),
       canEdit: await isOwner(userId),
@@ -73,16 +74,23 @@ export async function rWebchatCredentialsConfig(ctx: RouteCtx, _m: RegExpMatchAr
       return json(res, 400, { error: "defaultMode must be 'disabled', 'optional', or 'required'" });
     patch.defaultMode = body.defaultMode as CredentialMode;
   }
-  for (const k of ['allowAnthropicKey', 'allowClaudeOauth', 'allowOpenaiKey', 'allowCodexOauth'] as const) {
+  for (const k of ['allowAnthropicKey', 'allowClaudeOauth', 'allowOpenaiKey', 'allowCodexOauth', 'allowGrokOauth'] as const) {
     if (body[k] === undefined) continue;
     if (typeof body[k] !== 'boolean') return json(res, 400, { error: `${k} must be a boolean` });
     patch[k] = body[k] as boolean;
   }
   // Codex types are inert until the provider is installed — refuse to enable them.
+  // Enabling a provider nobody can run just hides the reason behind a later
+  // failure, so refuse at the toggle where the message can still be useful.
+  if (patch.allowGrokOauth && !grokAvailable())
+    return json(res, 409, {
+      error: 'Grok is not installed — run /add-grok and rebuild the agent image first.',
+      code: 'not-installed',
+    });
   if ((patch.allowCodexOauth || patch.allowOpenaiKey) && !codexAvailable())
     return json(res, 400, { error: 'Codex support isn’t installed yet — add it with /add-codex first.' });
   await setCredentialsConfig(patch);
-  return json(res, 200, { ...(await getCredentialsConfig()), codexAvailable: codexAvailable() });
+  return json(res, 200, { ...(await getCredentialsConfig()), codexAvailable: codexAvailable(), grokAvailable: grokAvailable() });
 }
 
 // ── First-run setup wizard state ────────────────────────────────────────────────

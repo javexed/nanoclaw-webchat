@@ -19491,11 +19491,13 @@ async function renderCredentialsSettings() {
 	});
 	const providerOn = {
 		claude: !!(cfg.allowAnthropicKey && cfg.allowClaudeOauth),
-		codex: !!(cfg.allowOpenaiKey && cfg.allowCodexOauth)
+		codex: !!(cfg.allowOpenaiKey && cfg.allowCodexOauth),
+		grok: !!cfg.allowGrokOauth
 	};
 	const providerAvailable = {
 		claude: true,
-		codex: !!cfg.codexAvailable
+		codex: !!cfg.codexAvailable,
+		grok: !!cfg.grokAvailable
 	};
 	document.querySelectorAll("#cred-providers .setting-option").forEach((btn) => {
 		const p = btn.dataset.provider ?? "";

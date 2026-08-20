@@ -124,11 +124,18 @@ export async function renderCredentialsSettings() {
   const providerOn = {
     claude: !!(cfg.allowAnthropicKey && cfg.allowClaudeOauth),
     codex: !!(cfg.allowOpenaiKey && cfg.allowCodexOauth),
+    // One flag, not an AND: Grok has no API-key path, so there is no second
+    // half that could be off while the pill reads on.
+    grok: !!cfg.allowGrokOauth,
   } as Record<string, any>;
   // Greyed-but-clickable when unavailable, so a click can explain why (rather
   // than a native `disabled` button that swallows the click). Claude is always
   // available; Codex needs its provider installed.
-  const providerAvailable = { claude: true, codex: !!cfg.codexAvailable } as Record<string, any>;
+  const providerAvailable = {
+    claude: true,
+    codex: !!cfg.codexAvailable,
+    grok: !!cfg.grokAvailable,
+  } as Record<string, any>;
   document.querySelectorAll('#cred-providers .setting-option').forEach((btn) => {
     const p = (btn as HTMLElement).dataset.provider ?? '';
     btn!.classList.toggle('active', !!providerOn[p]);
