@@ -508,7 +508,11 @@ export async function buildApprovalTriageView(
   approvalId: string,
   action: string,
   payloadJson: string,
-  deps: { getTriage?: (approvalId: string) => ReturnType<typeof getApprovalTriage> | Awaited<ReturnType<typeof getApprovalTriage>> } = {},
+  deps: {
+    getTriage?: (
+      approvalId: string,
+    ) => ReturnType<typeof getApprovalTriage> | Awaited<ReturnType<typeof getApprovalTriage>>;
+  } = {},
 ): Promise<ApprovalTriageView> {
   const heuristic = heuristicFlags(action, payloadJson);
   const row = await (deps.getTriage ?? getApprovalTriage)(approvalId);

@@ -28,9 +28,16 @@ export interface UserCredsCredentialRow {
   updated_at: string;
 }
 
-export async function getUserCredsCredential(userId: string, agentGroupId: string): Promise<UserCredsCredentialRow | null> {
+export async function getUserCredsCredential(
+  userId: string,
+  agentGroupId: string,
+): Promise<UserCredsCredentialRow | null> {
   return (
-    ((await getDb().get(`SELECT * FROM user_credential_members WHERE user_id = ? AND agent_group_id = ?`, userId, agentGroupId)) as UserCredsCredentialRow | undefined) ?? null
+    ((await getDb().get(
+      `SELECT * FROM user_credential_members WHERE user_id = ? AND agent_group_id = ?`,
+      userId,
+      agentGroupId,
+    )) as UserCredsCredentialRow | undefined) ?? null
   );
 }
 
@@ -64,7 +71,10 @@ export interface UserCredsUserCredentialRow {
   updated_at: string;
 }
 
-export async function getUserCredential(userId: string, provider: UserCredsProvider): Promise<UserCredsUserCredentialRow | null> {
+export async function getUserCredential(
+  userId: string,
+  provider: UserCredsProvider,
+): Promise<UserCredsUserCredentialRow | null> {
   return (
     ((await getDb().get(`SELECT * FROM user_credentials WHERE user_id = ? AND provider = ?`, userId, provider)) as
       | UserCredsUserCredentialRow
@@ -90,13 +100,21 @@ export async function upsertUserCredential(
   credType: UserCredsCredType,
 ): Promise<void> {
   const now = new Date().toISOString();
-  await getDb().run(`INSERT INTO user_credentials (user_id, provider, secret_id, cred_type, status, created_at, updated_at)
+  await getDb().run(
+    `INSERT INTO user_credentials (user_id, provider, secret_id, cred_type, status, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'active', ?, ?)
        ON CONFLICT (user_id, provider) DO UPDATE SET
          secret_id  = excluded.secret_id,
          cred_type  = excluded.cred_type,
          status     = 'active',
-         updated_at = excluded.updated_at`, userId, provider, secretId, credType, now, now);
+         updated_at = excluded.updated_at`,
+    userId,
+    provider,
+    secretId,
+    credType,
+    now,
+    now,
+  );
 }
 
 /**
@@ -114,18 +132,38 @@ export async function listAllTrackedSecretIds(): Promise<string[]> {
   ).map((r) => r.secret_id);
 }
 
-export async function setUserCredentialStatus(userId: string, provider: UserCredsProvider, status: UserCredsStatus): Promise<void> {
-  await getDb().run(`UPDATE user_credentials SET status = ?, updated_at = ? WHERE user_id = ? AND provider = ?`, status, new Date().toISOString(), userId, provider);
+export async function setUserCredentialStatus(
+  userId: string,
+  provider: UserCredsProvider,
+  status: UserCredsStatus,
+): Promise<void> {
+  await getDb().run(
+    `UPDATE user_credentials SET status = ?, updated_at = ? WHERE user_id = ? AND provider = ?`,
+    status,
+    new Date().toISOString(),
+    userId,
+    provider,
+  );
 }
 
 /** Per-group enrollment rows for a user+provider — used to revoke everywhere on disconnect. */
-export async function listEnrolledGroups(userId: string, provider: UserCredsProvider): Promise<UserCredsCredentialRow[]> {
-  return (await getDb().all(`SELECT * FROM user_credential_members WHERE user_id = ? AND provider = ? AND status = 'active'`, userId, provider)) as UserCredsCredentialRow[];
+export async function listEnrolledGroups(
+  userId: string,
+  provider: UserCredsProvider,
+): Promise<UserCredsCredentialRow[]> {
+  return (await getDb().all(
+    `SELECT * FROM user_credential_members WHERE user_id = ? AND provider = ? AND status = 'active'`,
+    userId,
+    provider,
+  )) as UserCredsCredentialRow[];
 }
 
 /** Recover the owning agent group from a UserCreds container's OneCLI identity (approval routing). */
 export async function agentGroupForUserCredsAgent(onecliAgentId: string): Promise<string | null> {
-  const row = (await getDb().get(`SELECT agent_group_id FROM user_credential_members WHERE onecli_agent_id = ? LIMIT 1`, onecliAgentId)) as { agent_group_id: string } | undefined;
+  const row = (await getDb().get(
+    `SELECT agent_group_id FROM user_credential_members WHERE onecli_agent_id = ? LIMIT 1`,
+    onecliAgentId,
+  )) as { agent_group_id: string } | undefined;
   return row?.agent_group_id ?? null;
 }
 
@@ -135,13 +173,19 @@ export async function agentGroupForUserCredsAgent(onecliAgentId: string): Promis
  * credential wired for the group works for every member (modules/tool-secrets).
  */
 export async function listGroupMemberEnrollments(agentGroupId: string): Promise<UserCredsCredentialRow[]> {
-  return (await getDb().all(`SELECT * FROM user_credential_members WHERE agent_group_id = ? AND status = 'active'`, agentGroupId)) as UserCredsCredentialRow[];
+  return (await getDb().all(
+    `SELECT * FROM user_credential_members WHERE agent_group_id = ? AND status = 'active'`,
+    agentGroupId,
+  )) as UserCredsCredentialRow[];
 }
 
 /** Active member user ids for an agent group (drives shared-context fan-out). */
 export async function activeMembersForGroup(agentGroupId: string): Promise<string[]> {
   return (
-    (await getDb().all(`SELECT user_id FROM user_credential_members WHERE agent_group_id = ? AND status = 'active'`, agentGroupId)) as { user_id: string }[]
+    (await getDb().all(
+      `SELECT user_id FROM user_credential_members WHERE agent_group_id = ? AND status = 'active'`,
+      agentGroupId,
+    )) as { user_id: string }[]
   ).map((r) => r.user_id);
 }
 
@@ -159,7 +203,8 @@ export async function upsertUserCredsCredential(
   provider: UserCredsProvider = 'claude',
 ): Promise<void> {
   const now = new Date().toISOString();
-  await getDb().run(`INSERT INTO user_credential_members
+  await getDb().run(
+    `INSERT INTO user_credential_members
          (user_id, agent_group_id, onecli_agent_id, secret_id, status, cred_type, provider, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)
        ON CONFLICT (user_id, agent_group_id) DO UPDATE SET
@@ -168,9 +213,24 @@ export async function upsertUserCredsCredential(
          status          = 'active',
          cred_type       = excluded.cred_type,
          provider        = excluded.provider,
-         updated_at      = excluded.updated_at`, userId, agentGroupId, onecliAgentId, secretId, credType, provider, now, now);
+         updated_at      = excluded.updated_at`,
+    userId,
+    agentGroupId,
+    onecliAgentId,
+    secretId,
+    credType,
+    provider,
+    now,
+    now,
+  );
 }
 
 export async function setUserCredsStatus(userId: string, agentGroupId: string, status: UserCredsStatus): Promise<void> {
-  await getDb().run(`UPDATE user_credential_members SET status = ?, updated_at = ? WHERE user_id = ? AND agent_group_id = ?`, status, new Date().toISOString(), userId, agentGroupId);
+  await getDb().run(
+    `UPDATE user_credential_members SET status = ?, updated_at = ? WHERE user_id = ? AND agent_group_id = ?`,
+    status,
+    new Date().toISOString(),
+    userId,
+    agentGroupId,
+  );
 }

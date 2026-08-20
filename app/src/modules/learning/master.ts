@@ -18,8 +18,11 @@ export async function getLearningMasterEnabled(): Promise<boolean> {
 }
 
 export async function setLearningMasterEnabled(enabled: boolean): Promise<void> {
-  await getDb().run(`INSERT INTO learning_master (id, enabled) VALUES (1, ?)
-       ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled`, enabled ? 1 : 0);
+  await getDb().run(
+    `INSERT INTO learning_master (id, enabled) VALUES (1, ?)
+       ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled`,
+    enabled ? 1 : 0,
+  );
 }
 
 export interface LearningClassifier {
@@ -32,7 +35,9 @@ export interface LearningClassifier {
 
 export async function getLearningClassifier(): Promise<LearningClassifier> {
   try {
-    const row = (await getDb().get(`SELECT classifier_model_id, classifier_url, classifier_model FROM learning_master WHERE id = 1`)) as
+    const row = (await getDb().get(
+      `SELECT classifier_model_id, classifier_url, classifier_model FROM learning_master WHERE id = 1`,
+    )) as
       | { classifier_model_id: string | null; classifier_url: string | null; classifier_model: string | null }
       | undefined;
     return {
@@ -47,11 +52,20 @@ export async function getLearningClassifier(): Promise<LearningClassifier> {
 
 /** Store the picked model id + its resolved container-reachable call params.
  *  Pass all-null to clear (heuristic only). */
-export async function setLearningClassifier(modelId: string | null, url: string | null, model: string | null): Promise<void> {
-  await getDb().run(`INSERT INTO learning_master (id, enabled, classifier_model_id, classifier_url, classifier_model)
+export async function setLearningClassifier(
+  modelId: string | null,
+  url: string | null,
+  model: string | null,
+): Promise<void> {
+  await getDb().run(
+    `INSERT INTO learning_master (id, enabled, classifier_model_id, classifier_url, classifier_model)
        VALUES (1, 1, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          classifier_model_id = excluded.classifier_model_id,
          classifier_url = excluded.classifier_url,
-         classifier_model = excluded.classifier_model`, modelId, url, model);
+         classifier_model = excluded.classifier_model`,
+    modelId,
+    url,
+    model,
+  );
 }

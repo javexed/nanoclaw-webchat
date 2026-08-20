@@ -33,7 +33,10 @@ const STRIP_REQUEST = new Set(['host', 'connection', 'content-length', RELAY_TOK
 const STRIP_RESPONSE = new Set(['connection', 'transfer-encoding', 'content-length', 'keep-alive']);
 
 async function lookupAssignment(token: string): Promise<{ agent_group_id: string; mcp_server_id: string } | undefined> {
-  return (await getDb().get(`SELECT agent_group_id, mcp_server_id FROM webchat_agent_mcp_servers WHERE relay_token = ?`, token)) as { agent_group_id: string; mcp_server_id: string } | undefined;
+  return (await getDb().get(
+    `SELECT agent_group_id, mcp_server_id FROM webchat_agent_mcp_servers WHERE relay_token = ?`,
+    token,
+  )) as { agent_group_id: string; mcp_server_id: string } | undefined;
 }
 
 async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

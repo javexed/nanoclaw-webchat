@@ -117,7 +117,10 @@ describe('audit events at the seams', () => {
 
     const allowAction = defineGuardedAction({ action: 'audit-test.allow', decide: () => ALLOW('fine') });
     const denyAction = defineGuardedAction({ action: 'audit-test.deny', decide: () => DENY('nope') });
-    await guard(allowAction, { actor: { kind: 'human', userId: 'webchat:probe' }, payload: { secret: 'MUST-NOT-APPEAR' } });
+    await guard(allowAction, {
+      actor: { kind: 'human', userId: 'webchat:probe' },
+      payload: { secret: 'MUST-NOT-APPEAR' },
+    });
     await guard(denyAction, { actor: { kind: 'agent', agentGroupId: 'g1' }, payload: {} });
 
     const decisions = events().filter((e) => e.type === 'guard.decision');

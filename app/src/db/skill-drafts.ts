@@ -31,8 +31,10 @@ export async function createSkillDraft(d: Omit<SkillDraft, 'status' | 'created_a
   const dir = skillDraftDir(d.id);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'SKILL.md'), d.body);
-  await getDb().run(`INSERT INTO skill_drafts (id, agent_group_id, session_id, kind, skill_name, target_skill, description, status, created_at)
-       VALUES (@id, @agent_group_id, @session_id, @kind, @skill_name, @target_skill, @description, 'pending', @created_at)`, {
+  await getDb().run(
+    `INSERT INTO skill_drafts (id, agent_group_id, session_id, kind, skill_name, target_skill, description, status, created_at)
+       VALUES (@id, @agent_group_id, @session_id, @kind, @skill_name, @target_skill, @description, 'pending', @created_at)`,
+    {
       id: d.id,
       agent_group_id: d.agent_group_id,
       session_id: d.session_id,
@@ -41,7 +43,8 @@ export async function createSkillDraft(d: Omit<SkillDraft, 'status' | 'created_a
       target_skill: d.target_skill,
       description: d.description,
       created_at: Date.now(),
-    });
+    },
+  );
 }
 
 export async function listSkillDrafts(agentGroupId?: string): Promise<SkillDraft[]> {

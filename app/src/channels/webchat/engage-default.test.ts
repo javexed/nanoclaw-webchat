@@ -61,11 +61,14 @@ afterEach(async () => {
 });
 
 async function patternsForRoom(roomId: string): Promise<Record<string, string>> {
-  const rows = (await getDb().all(`SELECT ag.folder, mga.engage_pattern
+  const rows = (await getDb().all(
+    `SELECT ag.folder, mga.engage_pattern
        FROM messaging_group_agents mga
        JOIN agent_groups ag ON ag.id = mga.agent_group_id
        JOIN messaging_groups mg ON mg.id = mga.messaging_group_id
-       WHERE mg.platform_id = ?`, roomId)) as { folder: string; engage_pattern: string }[];
+       WHERE mg.platform_id = ?`,
+    roomId,
+  )) as { folder: string; engage_pattern: string }[];
   return Object.fromEntries(rows.map((r) => [r.folder, r.engage_pattern]));
 }
 

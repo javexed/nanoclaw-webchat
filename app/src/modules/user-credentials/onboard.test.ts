@@ -24,7 +24,13 @@ import { ensureContainerConfig, updateContainerConfigScalars } from '../../db/co
 
 /** Make `id` a Codex-provider agent group (parent row required by the FK). */
 async function makeCodexGroup(id: string): Promise<void> {
-  await getDb().run(`INSERT INTO agent_groups (id, name, folder, created_at) VALUES (?, ?, ?, ?)`, id, id, id, new Date().toISOString());
+  await getDb().run(
+    `INSERT INTO agent_groups (id, name, folder, created_at) VALUES (?, ?, ?, ?)`,
+    id,
+    id,
+    id,
+    new Date().toISOString(),
+  );
   await ensureContainerConfig(id);
   await updateContainerConfigScalars(id, { provider: 'codex' });
 }
@@ -122,7 +128,7 @@ describe('storeUserCredential (connect once → user-level secret, no per-room w
     expect(fresh).not.toBe(old); // old secret deleted, new one created
     expect(secrets.has(old)).toBe(false); // torn down
     expect(secrets.get(fresh)!.value).toBe('sk-ant-oat-2'); // new value (OneCLI auto-detects oauth)
-    expect(((await getUserCredential('webchat:alice', 'claude'))!).cred_type).toBe('oauth_token');
+    expect((await getUserCredential('webchat:alice', 'claude'))!.cred_type).toBe('oauth_token');
   });
 
   it('keeps Claude and Codex credentials as two distinct secrets', async () => {
@@ -170,8 +176,8 @@ describe('ensureGroupEnrollment (lazy, at first spawn)', () => {
     await ensureGroupEnrollment(admin, 'webchat:alice', 'ag-1');
     await ensureGroupEnrollment(admin, 'webchat:alice', 'ag-2');
     const sec = (await getUserSecretId('webchat:alice'))!;
-    expect(((await getUserCredsCredential('webchat:alice', 'ag-1'))!).secret_id).toBe(sec);
-    expect(((await getUserCredsCredential('webchat:alice', 'ag-2'))!).secret_id).toBe(sec);
+    expect((await getUserCredsCredential('webchat:alice', 'ag-1'))!.secret_id).toBe(sec);
+    expect((await getUserCredsCredential('webchat:alice', 'ag-2'))!.secret_id).toBe(sec);
     expect(await userHasActiveKey('webchat:alice', 'ag-2')).toBe(true);
   });
 
@@ -198,11 +204,17 @@ describe('ensureGroupEnrollment (lazy, at first spawn)', () => {
   it('re-enrolls with the new provider when the group provider is switched after enrollment', async () => {
     const { admin, secrets } = fakeAdmin();
     // ag-sw starts as a default (claude) group; member enrolls as claude.
-    await getDb().run(`INSERT INTO agent_groups (id, name, folder, created_at) VALUES (?, ?, ?, ?)`, 'ag-sw', 'ag-sw', 'ag-sw', new Date().toISOString());
+    await getDb().run(
+      `INSERT INTO agent_groups (id, name, folder, created_at) VALUES (?, ?, ?, ?)`,
+      'ag-sw',
+      'ag-sw',
+      'ag-sw',
+      new Date().toISOString(),
+    );
     await ensureContainerConfig('ag-sw');
     await storeUserCredential(admin, 'webchat:frank', 'claude', 'sk-ant-frank', 'api_key');
     await ensureGroupEnrollment(admin, 'webchat:frank', 'ag-sw');
-    expect(((await getUserCredsCredential('webchat:frank', 'ag-sw'))!).provider).toBe('claude');
+    expect((await getUserCredsCredential('webchat:frank', 'ag-sw'))!.provider).toBe('claude');
     // Group switched to codex; member connects a codex cred. The stale active
     // claude row must NOT short-circuit enrollment — re-enroll with the codex secret.
     await updateContainerConfigScalars('ag-sw', { provider: 'codex' });
@@ -284,7 +296,7 @@ describe('setWorkspaceDefaultAnthropic (owner default → single unassigned all-
 
     await setWorkspaceDefaultAnthropic(admin, 'sk-ant-default', 'api_key');
 
-    const wsSecret = ((await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude'))!).secret_id!;
+    const wsSecret = (await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude'))!.secret_id!;
     expect(secrets.has('legacy-1')).toBe(false); // legacy removed
     expect(secrets.has(await memberSecret)).toBe(true); // member's tracked secret protected
     expect(secrets.has('grp-gmail')).toBe(true); // non-anthropic untouched
@@ -311,7 +323,7 @@ describe('setWorkspaceDefaultAnthropic (owner default → single unassigned all-
 
     await setWorkspaceDefaultAnthropic(admin, 'sk-ant-default', 'api_key');
 
-    const wsSecret = ((await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude'))!).secret_id!;
+    const wsSecret = (await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude'))!.secret_id!;
     expect(secrets.has('legacy-anthropic')).toBe(false); // legacy still reconciled away
     // The stranded agent was re-pointed: legacy id swapped for the new default,
     // tool secret preserved.
@@ -342,9 +354,9 @@ describe('setWorkspaceDefaultAnthropic (owner default → single unassigned all-
   it('rotates in place on re-set (old default secret deleted, new one created)', async () => {
     const { admin, secrets } = fakeAdmin();
     await setWorkspaceDefaultAnthropic(admin, 'sk-ant-one', 'api_key');
-    const first = ((await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude'))!).secret_id!;
+    const first = (await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude'))!.secret_id!;
     await setWorkspaceDefaultAnthropic(admin, 'sk-ant-two', 'api_key');
-    const second = ((await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude'))!).secret_id!;
+    const second = (await getUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude'))!.secret_id!;
     expect(second).not.toBe(first);
     expect(secrets.has(first)).toBe(false);
     expect(secrets.get(second)!.value).toBe('sk-ant-two');

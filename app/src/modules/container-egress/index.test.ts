@@ -14,8 +14,7 @@ vi.mock('../../egress-lockdown.js', () => ({
   egressNetworkArgs: () => ['--network', 'nanoclaw-egress'],
 }));
 
-const specFor = (agentGroupId: string) =>
-  ({ key: { installSlug: 'test', agentGroupId, sessionId: 's1' } }) as never;
+const specFor = (agentGroupId: string) => ({ key: { installSlug: 'test', agentGroupId, sessionId: 's1' } }) as never;
 
 let prepare: (agentGroupId: string, threadId: string | null) => Promise<void>;
 let resolve: (spec: never) => string[] | null;
@@ -25,8 +24,8 @@ beforeEach(async () => {
   const runtime = await import('../../container-runtime.js');
   const drivers = await import('../../drivers/index.js');
   drivers.__resetNetworkPolicyResolversForTest();
-  const prepares: typeof prepare[] = [];
-  const resolvers: typeof resolve[] = [];
+  const prepares: (typeof prepare)[] = [];
+  const resolvers: (typeof resolve)[] = [];
   vi.spyOn(runtime, 'registerSessionPrepareHook').mockImplementation((fn) => void prepares.push(fn as never));
   vi.spyOn(drivers, 'registerNetworkPolicyResolver').mockImplementation((fn) => void resolvers.push(fn as never));
   await import('./index.js');

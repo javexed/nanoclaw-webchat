@@ -55,7 +55,10 @@ export interface BroadcastPushMsg {
 }
 
 async function getSubscriptionsExcludingIdentity(identity: string): Promise<WebchatPushSubscription[]> {
-  return (await getDb().all(`SELECT * FROM webchat_push_subscriptions WHERE identity != ?`, identity)) as WebchatPushSubscription[];
+  return (await getDb().all(
+    `SELECT * FROM webchat_push_subscriptions WHERE identity != ?`,
+    identity,
+  )) as WebchatPushSubscription[];
 }
 
 export async function sendPushForMessage(m: BroadcastPushMsg): Promise<void> {

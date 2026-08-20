@@ -85,12 +85,28 @@ const portOf = (wc: { http: { address: () => unknown } }): number => {
 const now = '2026-07-21T00:00:00.000Z';
 async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
   const user = async (id: string) =>
-    await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, id, now);
+    await db.run(
+      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+      id,
+      now,
+    );
   const group = async (id: string, name: string) =>
-    await db.run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, id, name, id, now);
+    await db.run(
+      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+      id,
+      name,
+      id,
+      now,
+    );
   const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
     await user(uid);
-    await db.run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`, uid, r, g, now);
+    await db.run(
+      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
+      uid,
+      r,
+      g,
+      now,
+    );
   };
   // Fresh DBs ship with the MCP/skills marketplace disabled (migration 131);
   // the /api/skills prefix gate would 403 everything otherwise.
@@ -101,10 +117,17 @@ async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
   await role('webchat:owner', 'owner', null);
   await role('webchat:admina', 'admin', AG_A); // scoped admin of A only
   // Wire agent A to one webchat room, so its scoped skills carry the room.
-  await db.run(`INSERT INTO messaging_groups (id, channel_type, platform_id, instance, name, is_group, unknown_sender_policy, created_at)
-     VALUES ('mg-slist', 'webchat', 'room-slist', 'webchat', 'Ops room', 1, 'strict', ?)`, now);
-  await db.run(`INSERT INTO messaging_group_agents (id, messaging_group_id, agent_group_id, session_mode, priority, created_at)
-     VALUES ('mga-slist', 'mg-slist', ?, 'shared', 0, ?)`, AG_A, now);
+  await db.run(
+    `INSERT INTO messaging_groups (id, channel_type, platform_id, instance, name, is_group, unknown_sender_policy, created_at)
+     VALUES ('mg-slist', 'webchat', 'room-slist', 'webchat', 'Ops room', 1, 'strict', ?)`,
+    now,
+  );
+  await db.run(
+    `INSERT INTO messaging_group_agents (id, messaging_group_id, agent_group_id, session_mode, priority, created_at)
+     VALUES ('mga-slist', 'mg-slist', ?, 'shared', 0, ?)`,
+    AG_A,
+    now,
+  );
 }
 
 function writeScopedSkill(agentGroupId: string, name: string, description: string): void {

@@ -346,7 +346,13 @@ export function setupWebSocket(
         // shared with the file-upload handlers so both enforce the same bound.
         const storeThread = await resolveBoundedThread(client.room_id, msg.thread_id);
 
-        const stored = await storeWebchatMessage(client.room_id, client.identity, client.identity_type, text, await storeThread);
+        const stored = await storeWebchatMessage(
+          client.room_id,
+          client.identity,
+          client.identity_type,
+          text,
+          await storeThread,
+        );
         // The sender has by definition read their own message — advance their
         // marker (and sync their other devices) so it never self-unreads.
         markRoomReadForUser(client.userId, client.room_id, stored.created_at, clientId);
@@ -396,7 +402,7 @@ export function setupWebSocket(
           return;
         }
         const deleted = await deleteWebchatMessage(messageId, client.identity, client.room_id);
-        if ((await deleted)) {
+        if (await deleted) {
           await broadcast(client.room_id, {
             type: 'delete_message',
             room_id: client.room_id,
@@ -418,9 +424,7 @@ export function setupWebSocket(
         });
         // The close handler is a sync event callback; resolve the member list
         // first, THEN broadcast — embedding the promise serialized as {}.
-        void getMemberList(roomId).then((members) =>
-          broadcast(roomId, { type: 'members', room_id: roomId, members }),
-        );
+        void getMemberList(roomId).then((members) => broadcast(roomId, { type: 'members', room_id: roomId, members }));
       }
     });
   });

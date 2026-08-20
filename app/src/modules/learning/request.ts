@@ -96,7 +96,7 @@ export async function handleProposeSkill(
   // Auto-keep (docs/webchat/learning-loop.md §4) — OFF unless an owner/global admin
   // switched it on for this agent. It reuses the exact same apply path as the
   // human Keep, so the only thing autonomy removes is the wait, never a rule.
-  if ((await isAutoKeepEnabled(session))) {
+  if (await isAutoKeepEnabled(session)) {
     const draft = await getSkillDraft(id);
     if (draft) {
       // Keep-time overlap review, autonomous flavor: a human can click

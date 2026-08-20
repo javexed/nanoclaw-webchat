@@ -51,7 +51,13 @@ beforeEach(async () => {
   //   Advisor — \B@advisor\b
   await createAgentGroup({ id: 'ag-news', name: 'News', folder: 'news', agent_provider: null, created_at: now() });
   await createAgentGroup({ id: 'ag-fomc', name: 'FOMC', folder: 'fomc', agent_provider: null, created_at: now() });
-  await createAgentGroup({ id: 'ag-advisor', name: 'Advisor', folder: 'advisor', agent_provider: null, created_at: now() });
+  await createAgentGroup({
+    id: 'ag-advisor',
+    name: 'Advisor',
+    folder: 'advisor',
+    agent_provider: null,
+    created_at: now(),
+  });
   await createMessagingGroup({
     id: 'mg-floor',
     channel_type: 'webchat',

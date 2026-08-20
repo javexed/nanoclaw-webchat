@@ -84,7 +84,9 @@ interface SessionRow {
 
 async function agentName(db: ReturnType<typeof getDb>, agentGroupId: string): Promise<string> {
   try {
-    const r = (await db.get('SELECT name FROM agent_groups WHERE id = ?', agentGroupId)) as { name?: string } | undefined;
+    const r = (await db.get('SELECT name FROM agent_groups WHERE id = ?', agentGroupId)) as
+      | { name?: string }
+      | undefined;
     return r?.name || agentGroupId;
   } catch {
     return agentGroupId;
@@ -92,7 +94,11 @@ async function agentName(db: ReturnType<typeof getDb>, agentGroupId: string): Pr
 }
 
 /** status_events → thinking/tool. Read-only, and silent when absent. */
-function readStatus(agentGroupId: string, sessionId: string, sinceIso: string): Array<{ at: string; kind: string; text: string | null }> {
+function readStatus(
+  agentGroupId: string,
+  sessionId: string,
+  sinceIso: string,
+): Array<{ at: string; kind: string; text: string | null }> {
   try {
     const db = openOutboundDb(agentGroupId, sessionId);
     return db
@@ -165,9 +171,13 @@ export function messageText(content: string | null): string | null {
  * proportional to what is actually happening rather than to how many sessions
  * have ever existed.
  */
-export async function readFloorEvents(userId: string, sinceIso?: string): Promise<{ events: FloorEvent[]; cursor: string }> {
+export async function readFloorEvents(
+  userId: string,
+  sinceIso?: string,
+): Promise<{ events: FloorEvent[]; cursor: string }> {
   const db = getDb();
-  const since = sinceIso && !Number.isNaN(Date.parse(sinceIso)) ? sinceIso : new Date(Date.now() - COLD_START_MS).toISOString();
+  const since =
+    sinceIso && !Number.isNaN(Date.parse(sinceIso)) ? sinceIso : new Date(Date.now() - COLD_START_MS).toISOString();
 
   const rows = (await db.all('SELECT id, agent_group_id, messaging_group_id FROM sessions')) as SessionRow[];
   const out: FloorEvent[] = [];

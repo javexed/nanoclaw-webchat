@@ -52,9 +52,27 @@ beforeEach(async () => {
   await initTestDb();
   await runMigrations(getDb());
 
-  await createAgentGroup({ id: 'ag-gamma', name: 'Gamma Agent', folder: 'green', agent_provider: null, created_at: now() });
-  await createAgentGroup({ id: 'ag-delta', name: 'Delta Agent', folder: 'rev', agent_provider: null, created_at: now() });
-  await createAgentGroup({ id: 'ag-lonely', name: 'Lonely', folder: 'lonely', agent_provider: null, created_at: now() });
+  await createAgentGroup({
+    id: 'ag-gamma',
+    name: 'Gamma Agent',
+    folder: 'green',
+    agent_provider: null,
+    created_at: now(),
+  });
+  await createAgentGroup({
+    id: 'ag-delta',
+    name: 'Delta Agent',
+    folder: 'rev',
+    agent_provider: null,
+    created_at: now(),
+  });
+  await createAgentGroup({
+    id: 'ag-lonely',
+    name: 'Lonely',
+    folder: 'lonely',
+    agent_provider: null,
+    created_at: now(),
+  });
 
   // Shared room: Gamma Agent + Delta Agent both wired.
   await createMessagingGroup({

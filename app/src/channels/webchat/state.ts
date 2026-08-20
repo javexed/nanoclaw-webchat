@@ -354,7 +354,13 @@ export async function broadcastRooms(): Promise<void> {
     c.ws.send(
       JSON.stringify({
         type: 'rooms',
-        rooms: await annotateRoomsForUser(c.userId, await allRooms, await archivedSet, await activityMap, await threadCounts),
+        rooms: await annotateRoomsForUser(
+          c.userId,
+          await allRooms,
+          await archivedSet,
+          await activityMap,
+          await threadCounts,
+        ),
       }),
     );
   }

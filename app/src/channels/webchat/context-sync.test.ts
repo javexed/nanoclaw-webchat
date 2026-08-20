@@ -23,9 +23,23 @@ beforeEach(async () => {
 });
 afterEach(() => closeDb());
 
-async function seed(room: string, thread: string, content: string, createdAt: number, origin: string | null = null): Promise<void> {
-  await getDb().run(`INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at, origin)
-       VALUES (?, ?, ?, 'u', 'user', ?, 'text', NULL, ?, ?)`, randomUUID(), room, thread, content, createdAt, origin);
+async function seed(
+  room: string,
+  thread: string,
+  content: string,
+  createdAt: number,
+  origin: string | null = null,
+): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at, origin)
+       VALUES (?, ?, ?, 'u', 'user', ?, 'text', NULL, ?, ?)`,
+    randomUUID(),
+    room,
+    thread,
+    content,
+    createdAt,
+    origin,
+  );
 }
 
 describe('thread context sync — marks', () => {
@@ -55,8 +69,11 @@ describe('thread context sync — getSyncDelta', () => {
   it('excludes copied (origin) rows and dividers', async () => {
     await seed('r', 't1', 'native', 100);
     await seed('r', 't1', 'pulled-in', 200, 'pulled');
-    await getDb().run(`INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at, origin)
-         VALUES (?, 'r', 't1', 's', 'system', 'div', 'context-divider', NULL, 150, NULL)`, randomUUID());
+    await getDb().run(
+      `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at, origin)
+         VALUES (?, 'r', 't1', 's', 'system', 'div', 'context-divider', NULL, 150, NULL)`,
+      randomUUID(),
+    );
     expect((await getSyncDelta('r', 't1', 0)).map((m) => m.content)).toEqual(['native']);
   });
 
@@ -75,7 +92,9 @@ describe('thread context sync — insertSyncedMessages', () => {
     expect(inserted[0].message_type).toBe('context-divider');
     expect(inserted.slice(1).map((m) => m.content)).toEqual(['one', 'two']);
     // Copies live in the destination thread, origin-marked; originals untouched.
-    const inThread = (await getDb().all(`SELECT content, origin, message_type FROM webchat_messages WHERE room_id='r' AND thread_id='t1' ORDER BY created_at`)) as { content: string; origin: string | null; message_type: string }[];
+    const inThread = (await getDb().all(
+      `SELECT content, origin, message_type FROM webchat_messages WHERE room_id='r' AND thread_id='t1' ORDER BY created_at`,
+    )) as { content: string; origin: string | null; message_type: string }[];
     expect(inThread.map((m) => m.content)).toEqual(['Pulled from main', 'one', 'two']);
     expect(inThread.every((m) => m.origin === 'pulled')).toBe(true);
     // Pulled copies are excluded from the thread's own delta (so push won't echo).
@@ -85,7 +104,11 @@ describe('thread context sync — insertSyncedMessages', () => {
 
 async function contentsInThread(room: string, thread: string): Promise<string[]> {
   return (
-    (await getDb().all(`SELECT content FROM webchat_messages WHERE room_id=? AND thread_id=? ORDER BY created_at`, room, thread)) as { content: string }[]
+    (await getDb().all(
+      `SELECT content FROM webchat_messages WHERE room_id=? AND thread_id=? ORDER BY created_at`,
+      room,
+      thread,
+    )) as { content: string }[]
   ).map((r) => r.content);
 }
 

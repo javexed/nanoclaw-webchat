@@ -12,8 +12,14 @@ import { getWebchatMessagesBeforeId, getWebchatMessages } from './db.js';
 // Insert with an explicit created_at so ordering is deterministic (storeWebchatMessage
 // stamps Date.now(), which collides for rows created in the same millisecond).
 async function seed(roomId: string, id: string, createdAt: number) {
-  await getDb().run(`INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, file_meta, created_at)
-       VALUES (?, ?, 'u', 'user', ?, 'text', NULL, ?)`, id, roomId, `msg-${id}`, createdAt);
+  await getDb().run(
+    `INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, file_meta, created_at)
+       VALUES (?, ?, 'u', 'user', ?, 'text', NULL, ?)`,
+    id,
+    roomId,
+    `msg-${id}`,
+    createdAt,
+  );
 }
 
 beforeEach(async () => {

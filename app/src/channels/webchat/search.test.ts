@@ -54,8 +54,11 @@ describe('searchWebchatMessages', () => {
   });
 
   it('excludes approval cards from results', async () => {
-    await getDb().run(`INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, file_meta, created_at)
-         VALUES ('appr1', 'room-1', 'sys', 'system', 'auth approval please', 'approval', NULL, ?)`, Date.now());
+    await getDb().run(
+      `INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, file_meta, created_at)
+         VALUES ('appr1', 'room-1', 'sys', 'system', 'auth approval please', 'approval', NULL, ?)`,
+      Date.now(),
+    );
     const hits = await searchWebchatMessages(['room-1'], 'auth');
     expect(hits.some((h) => h.id === 'appr1')).toBe(false);
   });

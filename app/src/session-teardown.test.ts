@@ -171,9 +171,9 @@ describe('FK behavior — the bug this primitive prevents', () => {
     expect(await db.get('SELECT COUNT(*) as n FROM messaging_groups WHERE id = ?', messagingGroupId)).toEqual({
       n: 0,
     });
-    expect(await db.get('SELECT COUNT(*) as n FROM sessions WHERE messaging_group_id = ?', messagingGroupId)).toEqual(
-      { n: 0 },
-    );
+    expect(await db.get('SELECT COUNT(*) as n FROM sessions WHERE messaging_group_id = ?', messagingGroupId)).toEqual({
+      n: 0,
+    });
   });
 
   it('a failing parent-delete inside a transaction rolls back the session teardown', async () => {

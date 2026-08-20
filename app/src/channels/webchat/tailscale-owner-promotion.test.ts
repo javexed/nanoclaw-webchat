@@ -33,7 +33,11 @@ beforeEach(async () => {
 afterEach(() => closeDb());
 
 async function addUser(id: string): Promise<void> {
-  await getDb().run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, id, now);
+  await getDb().run(
+    `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+    id,
+    now,
+  );
 }
 
 async function grantorOf(userId: string): Promise<string | null> {
@@ -76,7 +80,10 @@ describe('grantOwnerRole — grantedBy must never cost the grant', () => {
     expect(await grantOwnerRole(ts, 'webchat:first-tailscale-owner')).toBe(true);
     expect(await grantOwnerRole(ts, 'webchat:first-tailscale-owner')).toBe(false);
 
-    const count = (await getDb().get(`SELECT COUNT(*) AS n FROM user_roles WHERE user_id = ? AND role = 'owner'`, ts)) as { n: number };
+    const count = (await getDb().get(
+      `SELECT COUNT(*) AS n FROM user_roles WHERE user_id = ? AND role = 'owner'`,
+      ts,
+    )) as { n: number };
     expect(count.n).toBe(1);
   });
 

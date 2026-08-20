@@ -152,7 +152,8 @@ export async function rAgentsPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
 
 export async function rTemplatesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   try {
     return json(res, 200, { templates: listLocalTemplates() });
   } catch (err) {
@@ -167,7 +168,8 @@ export async function rTemplatesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 
 export async function rAgentsFromTemplatePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let body: { ref?: unknown; name?: unknown; timezone?: unknown };
@@ -739,7 +741,8 @@ export async function rAgentSkillImportPost(ctx: RouteCtx, m: RegExpMatchArray):
 // ── Agent export/import (backup Phase 1) ──────────────────────────────
 export async function rAgentExportGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, url, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
   const withConvos = url.searchParams.get('conversations') === '1';
@@ -776,14 +779,16 @@ export async function rAgentExportGet(ctx: RouteCtx, m: RegExpMatchArray): Promi
 
 export async function rAgentsImportPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return importAgentUploadHandler(req, res);
 }
 
 export async function rAgentsImportApplyPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return importAgentApplyHandler(req, res);
 }
@@ -1163,9 +1168,7 @@ export async function deleteAgentHandler(res: ServerResponse, id: string): Promi
   const sessions = await findSessionsByAgentGroup(id);
   // Draft BODY dirs live on disk keyed by draft id — capture before the tx
   // deletes the rows, remove after commit.
-  const draftIds = (await listSkillDrafts())
-    .filter((d) => d.agent_group_id === id)
-    .map((d) => d.id);
+  const draftIds = (await listSkillDrafts()).filter((d) => d.agent_group_id === id).map((d) => d.id);
 
   try {
     await getDb().transaction(async () => {
@@ -1192,14 +1195,18 @@ export async function deleteAgentHandler(res: ServerResponse, id: string): Promi
         'skill_drafts',
         'webchat_agent_mcp_servers',
       ]) {
-        if ((await hasTable(db, table))) {
+        if (await hasTable(db, table)) {
           await db.run(`DELETE FROM ${table} WHERE agent_group_id = ?`, id);
         }
       }
       // a2a policies key by from/to, not agent_group_id — either side dying
       // kills the policy.
-      if ((await hasTable(db, 'agent_message_policies'))) {
-        await db.run(`DELETE FROM agent_message_policies WHERE from_agent_group_id = ? OR to_agent_group_id = ?`, id, id);
+      if (await hasTable(db, 'agent_message_policies')) {
+        await db.run(
+          `DELETE FROM agent_message_policies WHERE from_agent_group_id = ? OR to_agent_group_id = ?`,
+          id,
+          id,
+        );
       }
       // Delete the home room (its own session rows are already gone above).
       await deleteWebchatRoom(group.folder);

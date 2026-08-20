@@ -83,13 +83,29 @@ const portOf = (wc: { http: { address: () => unknown } }): number => {
 const now = '2026-07-31T00:00:00.000Z';
 function seed(db: import('../../db/driver.js').DbDriver): void {
   const user = async (id: string) =>
-    await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, id, now);
+    await db.run(
+      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+      id,
+      now,
+    );
   const group = async (id: string) =>
-    await db.run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, id, id, id, now);
+    await db.run(
+      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+      id,
+      id,
+      id,
+      now,
+    );
   const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
     await user(uid);
     if (g) await group(g);
-    await db.run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`, uid, r, g, now);
+    await db.run(
+      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
+      uid,
+      r,
+      g,
+      now,
+    );
   };
   group('ag-mdl-a');
   group('ag-mdl-b');
@@ -174,7 +190,9 @@ describe('PUT /api/agents/:id/config-model', () => {
     const db = conn.getDb();
     await db.run(`INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
        VALUES ('m-anth', 'Anthropic pin', 'anthropic', NULL, 'claude-sonnet-5', NULL, 0)`);
-    await db.run(`INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES ('ag-mdl-a','m-anth',0)`);
+    await db.run(
+      `INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES ('ag-mdl-a','m-anth',0)`,
+    );
 
     const r = await put('ag-mdl-a', 'admina', 'claude-opus-5');
     expect(r.status).toBe(409);
@@ -190,8 +208,12 @@ describe('PUT /api/agents/:id/config-model', () => {
 
   const setWorkspaceDefault = async (kind: 'anthropic' | 'ollama') => {
     const db = conn.getDb();
-    await db.run(`INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
-       VALUES ('m-def', 'Workspace default', ?, ?, 'claude-sonnet-5', NULL, 0)`, kind, kind === 'anthropic' ? null : 'http://127.0.0.1:11434');
+    await db.run(
+      `INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
+       VALUES ('m-def', 'Workspace default', ?, ?, 'claude-sonnet-5', NULL, 0)`,
+      kind,
+      kind === 'anthropic' ? null : 'http://127.0.0.1:11434',
+    );
     await db.run(`UPDATE webchat_settings SET default_model_id = 'm-def'`);
   };
 
@@ -231,7 +253,9 @@ describe('PUT /api/agents/:id/config-model', () => {
     const db = conn.getDb();
     await db.run(`INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
        VALUES ('m-oll', 'Local', 'ollama', 'http://127.0.0.1:11434', 'qwen3:8b', NULL, 0)`);
-    await db.run(`INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES ('ag-mdl-a','m-oll',0)`);
+    await db.run(
+      `INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES ('ag-mdl-a','m-oll',0)`,
+    );
 
     const r = await put('ag-mdl-a', 'admina', 'claude-opus-5');
     expect(r.status).toBe(200);
@@ -243,7 +267,9 @@ describe('PUT /api/agents/:id/config-model', () => {
     const db = conn.getDb();
     await db.run(`INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
        VALUES ('m-anth', 'Anthropic pin', 'anthropic', NULL, 'claude-sonnet-5', NULL, 0)`);
-    await db.run(`INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES ('ag-mdl-a','m-anth',0)`);
+    await db.run(
+      `INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES ('ag-mdl-a','m-anth',0)`,
+    );
 
     const r = await put('ag-mdl-a', 'admina', '');
     expect(r.status).toBe(200);

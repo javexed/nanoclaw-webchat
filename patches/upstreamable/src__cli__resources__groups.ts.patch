@@ -1,5 +1,5 @@
 diff --git a/src/cli/resources/groups.ts b/src/cli/resources/groups.ts
-index 960e3fa2..db14121e 100644
+index 960e3fa2..58ef2d86 100644
 --- a/src/cli/resources/groups.ts
 +++ b/src/cli/resources/groups.ts
 @@ -240,6 +240,8 @@ registerResource({
@@ -15,21 +15,21 @@ index 960e3fa2..db14121e 100644
              await db.run('DELETE FROM agent_group_members WHERE agent_group_id = ?', id)
            ).changes;
            counts.user_roles = (await db.run('DELETE FROM user_roles WHERE agent_group_id = ?', id)).changes;
-+            // Newer FK-bearing tables (guarded — module-installed): learning-loop
-+            // drafts, and a2a policies which key by from/to rather than
-+            // agent_group_id. Either would abort the whole transaction.
-+            if (await hasTable(db, 'skill_drafts')) {
-+              counts.skill_drafts = (await db.run('DELETE FROM skill_drafts WHERE agent_group_id = ?', id)).changes;
-+            }
-+            if (await hasTable(db, 'agent_message_policies')) {
-+              counts.agent_message_policies = (
-+                await db.run(
-+                  'DELETE FROM agent_message_policies WHERE from_agent_group_id = ? OR to_agent_group_id = ?',
-+                  id,
-+                  id,
-+                )
-+              ).changes;
-+            }
++          // Newer FK-bearing tables (guarded — module-installed): learning-loop
++          // drafts, and a2a policies which key by from/to rather than
++          // agent_group_id. Either would abort the whole transaction.
++          if (await hasTable(db, 'skill_drafts')) {
++            counts.skill_drafts = (await db.run('DELETE FROM skill_drafts WHERE agent_group_id = ?', id)).changes;
++          }
++          if (await hasTable(db, 'agent_message_policies')) {
++            counts.agent_message_policies = (
++              await db.run(
++                'DELETE FROM agent_message_policies WHERE from_agent_group_id = ? OR to_agent_group_id = ?',
++                id,
++                id,
++              )
++            ).changes;
++          }
            // migration-014 has ON DELETE CASCADE on container_configs.agent_group_id;
            // the explicit delete here mirrors the other tables and surfaces the count.
            counts.container_configs = (

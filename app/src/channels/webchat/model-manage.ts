@@ -253,7 +253,9 @@ export async function gatherModelInventory(endpoint: string): Promise<ModelInven
     }
     const pulled = tags.some((x) => x.name === tag);
     const configuredCtx = configuredCtxFrom(show.parameters);
-    const reg = await registry.find((r) => r.model_id === tag || `${r.model_id}:latest` === tag || r.model_id === `${tag}`);
+    const reg = await registry.find(
+      (r) => r.model_id === tag || `${r.model_id}:latest` === tag || r.model_id === `${tag}`,
+    );
     const live = loaded.find((l) => l.name === tag);
     const sizeBytes = t.size ?? null;
     const paramSize = show.details?.parameter_size ?? null;

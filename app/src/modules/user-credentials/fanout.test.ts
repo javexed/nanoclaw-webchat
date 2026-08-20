@@ -31,8 +31,12 @@ const SESSION: Session = {
 } as Session;
 
 async function seedSession() {
-  await getDb().run(`INSERT OR IGNORE INTO agent_groups (id,name,folder,agent_provider,created_at) VALUES ('ag-1','ag-1','ag-1',NULL,'t')`);
-  await getDb().run(`INSERT INTO messaging_groups (id,channel_type,instance,platform_id,created_at) VALUES ('mg-1','webchat','webchat','room-1','t')`);
+  await getDb().run(
+    `INSERT OR IGNORE INTO agent_groups (id,name,folder,agent_provider,created_at) VALUES ('ag-1','ag-1','ag-1',NULL,'t')`,
+  );
+  await getDb().run(
+    `INSERT INTO messaging_groups (id,channel_type,instance,platform_id,created_at) VALUES ('mg-1','webchat','webchat','room-1','t')`,
+  );
   await createSession(SESSION);
   initSessionFolder('ag-1', 'sess-alice'); // scaffolds the session dir + inbound.db
 }
@@ -189,7 +193,8 @@ describe('writeMemberTranscript', () => {
   it('skips a2a / approval side-channel rows', async () => {
     const cur = await storeWebchatMessage('room-1', 'Alice', 'user', 'hello');
     // an a2a side-channel row in the same room
-    await getDb().run(`INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, created_at)
+    await getDb()
+      .run(`INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, created_at)
          VALUES ('a2a-1','room-1','x','a2a','{"to":"y","text":"z"}','a2a', ${Date.now() - 1000})`);
     await writeMemberTranscript({
       agentGroupId: 'ag-1',

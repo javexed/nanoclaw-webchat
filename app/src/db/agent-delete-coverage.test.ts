@@ -42,7 +42,10 @@ async function referencingTables(): Promise<string[]> {
   return (
     (await getDb().all(`SELECT name, sql FROM sqlite_master
          WHERE type = 'table' AND name != 'agent_groups'
-           AND (sql LIKE '%REFERENCES agent_groups%' OR sql LIKE '%REFERENCES "agent_groups"%')`)) as { name: string; sql: string }[]
+           AND (sql LIKE '%REFERENCES agent_groups%' OR sql LIKE '%REFERENCES "agent_groups"%')`)) as {
+      name: string;
+      sql: string;
+    }[]
   ).map((r) => r.name);
 }
 

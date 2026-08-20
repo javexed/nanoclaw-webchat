@@ -98,12 +98,28 @@ const portOf = (wc: { http: { address: () => unknown } }): number => {
 const now = '2026-07-22T00:00:00.000Z';
 function seed(db: import('../../db/driver.js').DbDriver): void {
   const user = async (id: string) =>
-    await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, id, now);
+    await db.run(
+      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+      id,
+      now,
+    );
   const group = async (id: string, name: string) =>
-    await db.run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, id, name, id, now);
+    await db.run(
+      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+      id,
+      name,
+      id,
+      now,
+    );
   const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
     await user(uid);
-    await db.run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`, uid, r, g, now);
+    await db.run(
+      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
+      uid,
+      r,
+      g,
+      now,
+    );
   };
   group(AG_A, 'Alpha');
   group(AG_B, 'Beta');

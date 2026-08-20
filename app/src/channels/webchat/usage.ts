@@ -54,11 +54,14 @@ interface Row {
  * time order so an agent reply can be attributed to the user who triggered it.
  */
 export async function computeUsageRollup(sinceMs: number): Promise<UsageRollup> {
-  const rows = (await getDb().all(`SELECT room_id, sender, sender_type, content, message_type, created_at
+  const rows = (await getDb().all(
+    `SELECT room_id, sender, sender_type, content, message_type, created_at
          FROM webchat_messages
         WHERE created_at >= ?
           AND message_type IN ('text', 'file')
-        ORDER BY room_id, created_at`, sinceMs)) as Row[];
+        ORDER BY room_id, created_at`,
+    sinceMs,
+  )) as Row[];
 
   const users = new Map<string, UserUsage>();
   const perDay = new Map<string, number>();

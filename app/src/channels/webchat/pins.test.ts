@@ -43,19 +43,37 @@ afterEach(async () => {
 // ── Seed helpers (mirrors reads.test.ts) ──
 
 async function insertRoom(roomId: string, name = roomId): Promise<void> {
-  await getDb().run(`INSERT OR IGNORE INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
-       VALUES (?, 'webchat', 'webchat', ?, ?, 0, 'public', ?)`, roomId, roomId, name, new Date().toISOString());
+  await getDb().run(
+    `INSERT OR IGNORE INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
+       VALUES (?, 'webchat', 'webchat', ?, ?, 0, 'public', ?)`,
+    roomId,
+    roomId,
+    name,
+    new Date().toISOString(),
+  );
 }
 
 async function insertAgentGroup(id: string): Promise<void> {
-  await getDb().run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, id, id, id, new Date().toISOString());
+  await getDb().run(
+    `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+    id,
+    id,
+    id,
+    new Date().toISOString(),
+  );
 }
 
 async function wire(roomId: string, agentGroupId: string): Promise<void> {
-  await getDb().run(`INSERT OR IGNORE INTO messaging_group_agents
+  await getDb().run(
+    `INSERT OR IGNORE INTO messaging_group_agents
          (id, messaging_group_id, agent_group_id, engage_mode, engage_pattern,
           sender_scope, ignored_message_policy, session_mode, priority, created_at)
-       VALUES (?, ?, ?, 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`, randomUUID(), roomId, agentGroupId, new Date().toISOString());
+       VALUES (?, ?, ?, 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`,
+    randomUUID(),
+    roomId,
+    agentGroupId,
+    new Date().toISOString(),
+  );
 }
 
 /** A room wired to an agent group so the owner can access it (mirrors reads.test). */
@@ -66,14 +84,27 @@ function accessibleRoom(roomId: string): void {
 }
 
 async function grantOwner(userId: string): Promise<void> {
-  await getDb().run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, userId, new Date().toISOString());
-  await getDb().run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
-       VALUES (?, 'owner', NULL, NULL, ?)`, userId, new Date().toISOString());
+  await getDb().run(
+    `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+    userId,
+    new Date().toISOString(),
+  );
+  await getDb().run(
+    `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
+       VALUES (?, 'owner', NULL, NULL, ?)`,
+    userId,
+    new Date().toISOString(),
+  );
 }
 
 async function insertMessage(roomId: string, createdAt: number): Promise<void> {
-  await getDb().run(`INSERT INTO webchat_messages (id, room_id, sender, content, created_at)
-       VALUES (?, ?, 'someone', 'hi', ?)`, randomUUID(), roomId, createdAt);
+  await getDb().run(
+    `INSERT INTO webchat_messages (id, room_id, sender, content, created_at)
+       VALUES (?, ?, 'someone', 'hi', ?)`,
+    randomUUID(),
+    roomId,
+    createdAt,
+  );
 }
 
 describe('pin/unpin', () => {
@@ -89,7 +120,11 @@ describe('pin/unpin', () => {
     await pinRoomForUser('webchat:alice', 'room-1', 1000);
     await pinRoomForUser('webchat:alice', 'room-1', 2000);
     expect((await getPinnedRoomIdsForUser('webchat:alice')).has('room-1')).toBe(true);
-    const count = (await getDb().get(`SELECT COUNT(*) AS n FROM webchat_room_pins WHERE user_id = ? AND room_id = ?`, 'webchat:alice', 'room-1')) as { n: number };
+    const count = (await getDb().get(
+      `SELECT COUNT(*) AS n FROM webchat_room_pins WHERE user_id = ? AND room_id = ?`,
+      'webchat:alice',
+      'room-1',
+    )) as { n: number };
     expect(count.n).toBe(1);
   });
 

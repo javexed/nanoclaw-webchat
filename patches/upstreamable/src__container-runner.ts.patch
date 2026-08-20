@@ -1,5 +1,5 @@
 diff --git a/src/container-runner.ts b/src/container-runner.ts
-index edda6a4a..712cb415 100644
+index edda6a4a..5fc28c9a 100644
 --- a/src/container-runner.ts
 +++ b/src/container-runner.ts
 @@ -25,13 +25,18 @@ import {
@@ -112,33 +112,19 @@ index edda6a4a..712cb415 100644
    await writeSessionRouting(agentGroup.id, session.id);
  
    // Materialize container.json from DB — writes fresh file and returns
-@@ -612,13 +674,19 @@ export async function buildMounts(
+@@ -612,6 +674,12 @@ export async function buildMounts(
    // Per-group .claude-shared at /home/node/.claude (provider state, settings,
    // skill symlinks). Per agent group, not per session.
    if (defaultSurfaces) {
--    mounts.push({
--      hostPath: claudeDir,
--      containerPath: '/home/node/.claude',
--      readonly: false,
--      mountClass: 'group-state',
--      scope,
--    });
-+      // On a root host this dir is created root:root, but it's mounted RW into a
-+      // UID-1000 container which must write /home/node/.claude/settings.json —
-+      // otherwise the agent-runner dies with EACCES. Chown it to the container UID
-+      // (no-op off-root), closing the gap left by the group/session-dir chowns.
-+      fs.mkdirSync(claudeDir, { recursive: true });
-+      makeContainerWritable(claudeDir, true);
-+      mounts.push({
-+        hostPath: claudeDir,
-+        containerPath: '/home/node/.claude',
-+        readonly: false,
-+        mountClass: 'group-state',
-+        scope,
-+      });
-   }
- 
-   // Shared agent-runner source — read-only, same code for all groups.
++    // On a root host this dir is created root:root, but it's mounted RW into a
++    // UID-1000 container which must write /home/node/.claude/settings.json —
++    // otherwise the agent-runner dies with EACCES. Chown it to the container UID
++    // (no-op off-root), closing the gap left by the group/session-dir chowns.
++    fs.mkdirSync(claudeDir, { recursive: true });
++    makeContainerWritable(claudeDir, true);
+     mounts.push({
+       hostPath: claudeDir,
+       containerPath: '/home/node/.claude',
 @@ -642,6 +710,19 @@ export async function buildMounts(
        scope,
      });
@@ -249,12 +235,12 @@ index edda6a4a..712cb415 100644
 +        path: linkPath,
 +      });
 +      continue;
-     }
++    }
 +    try {
 +      if (current !== null) fs.unlinkSync(linkPath);
 +    } catch {
 +      /* ignore */
-+    }
+     }
 +    fs.symlinkSync(target, linkPath);
    }
  }
