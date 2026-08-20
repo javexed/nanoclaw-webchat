@@ -117,7 +117,7 @@ import type { RouteCtx } from '../server.js';
 export async function rAgentsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, url, userId } = ctx;
   const includeArchived = url.searchParams.get('includeArchived') === '1';
-  return json(res, 200, listAgentsForUser(userId, includeArchived));
+  return json(res, 200, await listAgentsForUser(userId, includeArchived));
 }
 
 // POST /api/agents/draft must come BEFORE the /api/agents/:id pattern
@@ -468,7 +468,7 @@ export async function rAgentRoomsGet(ctx: RouteCtx, m: RegExpMatchArray): Promis
   const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
   if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
-  return json(res, 200, getWebchatRoomsForAgent(group.id));
+  return json(res, 200, await getWebchatRoomsForAgent(group.id));
 }
 
 // ── Per-agent model assignment ─────────────────────────────────────────

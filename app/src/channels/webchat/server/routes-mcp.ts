@@ -37,7 +37,7 @@ import type { RouteCtx } from '../server.js';
 // MCP registry is admin-only (scoped admin or higher) — end to end.
 export async function rMcpServersGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res } = ctx;
-  return json(res, 200, listMcpServersForUI());
+  return json(res, 200, await listMcpServersForUI());
 }
 
 export async function rMcpServersPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
