@@ -240,7 +240,15 @@ $inside" "staged changes" new
 
 mode_range() {
   local range="$1"
-  scan_content "$(git diff --no-color "$range" | added_lines)" "range $range" new
+  # Same patches/ narrowing as mode_staged, for the same reason: a .patch file's
+  # context/removal lines are upstream's own text and cannot carry the per-line
+  # marker (a removal line must match upstream byte-for-byte). What a patch
+  # CONTRIBUTES — its added lines — stays fully gated.
+  local outside inside
+  outside=$(git diff --no-color "$range" -- . ':(exclude)patches' | added_lines)
+  inside=$(git diff --no-color "$range" -- patches | added_lines | patch_contributions)
+  scan_content "$outside
+$inside" "range $range" new
   local msgs; msgs=$(git log --format='%H %B' "$range" 2>/dev/null | drop_allowed)
   match "$TRAILER_RE" "$msgs" i "forge merge trailers with an internal instance URL"
   match "$(operator_regex_ci)" "$msgs" i "operator identifiers in commit messages"
