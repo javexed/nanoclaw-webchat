@@ -8683,6 +8683,7 @@ async function wizardSelectOllamaModel(modelId) {
 				}] })
 			});
 			const out = await r.json().catch(() => ({}));
+			if (r.ok && out?.room?.id) deps$12.joinRoom(out.room.id, out.room.name);
 			const created = out.created?.[0];
 			if (!r.ok || !created) {
 				wizardSetStatus("#wizard-ollama-status", out.error || out.failed?.[0]?.error || "Add failed.", "err");
@@ -22742,7 +22743,8 @@ provideWizardDeps({
 	openOauthMintModal,
 	fetchAgents,
 	closeSettings,
-	applyLearningMaster
+	applyLearningMaster,
+	joinRoom
 });
 provideInstallerDeps({
 	wizardBusy,

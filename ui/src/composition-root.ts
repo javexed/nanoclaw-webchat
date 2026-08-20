@@ -1904,7 +1904,7 @@ provideThinkingDeps({ interruptAgent });
   // some module-level flags. Read-only views are getters; anything the wizard,
   // ASSIGNS gets a setter too — a getter alone would silently drop the write.,
 provideWizardDeps({
-  openOauthMintModal, fetchAgents, closeSettings, applyLearningMaster,
+  openOauthMintModal, fetchAgents, closeSettings, applyLearningMaster, joinRoom,
 });
 
 // Installers run from both the wizard and settings, and reach back into legacy
