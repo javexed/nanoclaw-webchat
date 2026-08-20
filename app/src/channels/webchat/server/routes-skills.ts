@@ -216,7 +216,7 @@ export async function rSkillRevertPost(ctx: RouteCtx, m: RegExpMatchArray): Prom
   if (!name) return json(res, 400, { error: 'Invalid skill name' });
   const r = revertLastRevision(scopedSkillsDir(group.id), name);
   if (!r.ok) return json(res, 409, { error: r.error });
-  const restarted = restartAgentGroupContainers(group.id, 'Skill revision reverted');
+  const restarted = await restartAgentGroupContainers(group.id, 'Skill revision reverted');
   return json(res, 200, { ok: true, restarted });
 }
 
@@ -230,7 +230,7 @@ export async function rSkillRestorePost(ctx: RouteCtx, m: RegExpMatchArray): Pro
   if (!name) return json(res, 400, { error: 'Invalid skill name' });
   const r = restoreArchivedSkill(group.id, name);
   if (!r.ok) return json(res, 409, { error: r.error });
-  const restarted = restartAgentGroupContainers(group.id, 'Webchat archived skill restored');
+  const restarted = await restartAgentGroupContainers(group.id, 'Webchat archived skill restored');
   return json(res, 200, { ok: true, restarted });
 }
 

@@ -106,7 +106,7 @@ export async function rWebchatOnboarding(ctx: RouteCtx, _m: RegExpMatchArray): P
     return json(res, 400, { error: 'Invalid JSON' });
   }
   if (typeof body.complete !== 'boolean') return json(res, 400, { error: 'complete must be a boolean' });
-  setOnboardingComplete(body.complete);
+  await setOnboardingComplete(body.complete);
   return json(res, 200, { complete: body.complete });
 }
 
@@ -252,7 +252,7 @@ export async function rWebchatAuditSyslog(ctx: RouteCtx, _m: RegExpMatchArray): 
     detail: { from, to: target || null, phase: 'before-switch' },
   });
   configureSyslog(target); // validated above; '' tears down
-  setAuditSyslogTarget(target);
+  await setAuditSyslogTarget(target);
   // 2nd emission → new sink + file: the incoming collector starts with provenance.
   audit({
     type: 'audit.config',

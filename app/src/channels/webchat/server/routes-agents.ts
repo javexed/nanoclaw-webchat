@@ -522,7 +522,7 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
   } catch (err) {
     log.warn('Webchat: wiring write after harness switch failed', { agentGroupId: group.id, err });
   }
-  const restarted = restartAgentGroupContainers(group.id, 'Harness changed');
+  const restarted = await restartAgentGroupContainers(group.id, 'Harness changed');
   return json(res, 200, { ok: true, provider, restarted });
 }
 
@@ -592,7 +592,7 @@ export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): 
   }
   await ensureContainerConfig(group.id);
   await updateContainerConfigScalars(group.id, { model: model || null });
-  const restarted = restartAgentGroupContainers(group.id, 'Model changed');
+  const restarted = await restartAgentGroupContainers(group.id, 'Model changed');
   return json(res, 200, { ok: true, model: model || null, restarted });
 }
 
@@ -798,7 +798,7 @@ export async function rAgentLearning(ctx: RouteCtx, m: RegExpMatchArray): Promis
   // can already keep any draft for their agent with a tap, so gating the
   // toggle higher only added friction, not protection. The blast radius is
   // unchanged — a kept skill is scoped to the one agent they administer.
-  const canAutoKeep = hasAdminPrivilege(userId, group.id);
+  const canAutoKeep = await hasAdminPrivilege(userId, group.id);
   if (method === 'GET') {
     return json(res, 200, {
       autoTrigger: current.autoTrigger !== false, // absent = on
@@ -860,7 +860,7 @@ export async function rAgentLearning(ctx: RouteCtx, m: RegExpMatchArray): Promis
   }
   await updateContainerConfigJson(group.id, 'learning', next);
   // Config materializes at spawn — restart so the container sees it now.
-  const restarted = restartAgentGroupContainers(group.id, 'Learning settings changed');
+  const restarted = await restartAgentGroupContainers(group.id, 'Learning settings changed');
   return json(res, 200, {
     ok: true,
     autoTrigger: next.autoTrigger !== false,
@@ -1062,7 +1062,7 @@ export async function grantCreatorAdmin(creatorUserId: string, agentGroupId: str
 }
 
 export async function updateAgentHandler(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
-  const existing = getAgentGroup(id);
+  const existing = await getAgentGroup(id);
   if (!existing) return json(res, 404, { error: 'Agent not found' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -1160,7 +1160,7 @@ export async function deleteAgentHandler(res: ServerResponse, id: string): Promi
   // it's wired to. All of them FK to `agent_groups.id`, so all must be torn
   // down before deleteAgentGroup. Captured before the tx so post-commit
   // resource cleanup can find them.
-  const sessions = findSessionsByAgentGroup(id);
+  const sessions = await findSessionsByAgentGroup(id);
   // Draft BODY dirs live on disk keyed by draft id — capture before the tx
   // deletes the rows, remove after commit.
   const draftIds = (await listSkillDrafts())
@@ -1274,7 +1274,7 @@ export async function assignAgentModelHandler(
     if (typeof body.modelId !== 'string' || !body.modelId.trim()) {
       return json(res, 400, { error: 'modelId must be a string or null' });
     }
-    const model = getWebchatModel(body.modelId.trim());
+    const model = await getWebchatModel(body.modelId.trim());
     if (!model) return json(res, 404, { error: 'Model not found' });
     await assignModelToAgent(agentGroupId, body.modelId.trim());
   }
@@ -1305,7 +1305,7 @@ export async function setAgentSkillsHandler(
   // Persist the explicit selection (switches the agent off the 'all' default) and
   // respawn so syncSkillSymlinks re-points .claude/skills before the next turn.
   await updateContainerConfigJson(agentGroupId, 'skills', skills);
-  const restarted = restartAgentGroupContainers(agentGroupId, 'Webchat skills changed');
+  const restarted = await restartAgentGroupContainers(agentGroupId, 'Webchat skills changed');
   return json(res, 200, { ok: true, skills, restarted });
 }
 
@@ -1384,7 +1384,7 @@ export async function importScopedSkillHandler(
     fs.rmSync(staging, { recursive: true, force: true });
     return json(res, 500, { error: 'Write failed: ' + (err instanceof Error ? err.message : String(err)) });
   }
-  const restarted = restartAgentGroupContainers(agentGroupId, 'Webchat scoped skill added');
+  const restarted = await restartAgentGroupContainers(agentGroupId, 'Webchat scoped skill added');
   const inspection = inspectSkillFiles(skillName, files, { official: origin.official });
   return json(res, 200, { ok: true, name: skillName, files: files.length, restarted, warnings: inspection.warnings });
 }

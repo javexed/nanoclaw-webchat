@@ -344,7 +344,7 @@ export function setupWebSocket(
         // client-supplied thread_id can't lazily spawn unbounded threads/sessions
         // (the spawn-amplification vector). See resolveBoundedThread in db.ts —
         // shared with the file-upload handlers so both enforce the same bound.
-        const storeThread = resolveBoundedThread(client.room_id, msg.thread_id);
+        const storeThread = await resolveBoundedThread(client.room_id, msg.thread_id);
 
         const stored = await storeWebchatMessage(client.room_id, client.identity, client.identity_type, text, await storeThread);
         // The sender has by definition read their own message — advance their
@@ -395,7 +395,7 @@ export function setupWebSocket(
           send({ type: 'error', error: 'message_id required' });
           return;
         }
-        const deleted = deleteWebchatMessage(messageId, client.identity, client.room_id);
+        const deleted = await deleteWebchatMessage(messageId, client.identity, client.room_id);
         if ((await deleted)) {
           await broadcast(client.room_id, {
             type: 'delete_message',

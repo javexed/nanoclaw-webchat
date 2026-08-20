@@ -100,7 +100,7 @@ export async function wireAgentToWebchatRoom(roomName: string, platformId: strin
   // rooms share a name; backfill (`module-agent-to-agent-destinations.ts`)
   // handles that case with -2/-3 suffixes — worth aligning in a follow-up.
   if ((await hasTable(getDb(), 'agent_destinations'))) {
-    const existing = getDestinationByTarget(agentGroupId, 'channel', mg.id);
+    const existing = await getDestinationByTarget(agentGroupId, 'channel', mg.id);
     if (!existing) {
       await createDestination({
         agent_group_id: agentGroupId,

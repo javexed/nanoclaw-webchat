@@ -178,7 +178,7 @@ export async function readFloorEvents(userId: string, sinceIso?: string): Promis
 
     const mg = await (row.messaging_group_id ? getMessagingGroup(row.messaging_group_id) : undefined);
     const roomId = mg?.channel_type === 'webchat' ? (mg.platform_id ?? null) : null;
-    const name = agentName(db, row.agent_group_id);
+    const name = await agentName(db, row.agent_group_id);
 
     for (const e of readStatus(row.agent_group_id, row.id, since)) {
       // 'done' and 'start' are state transitions the desk colour already shows;

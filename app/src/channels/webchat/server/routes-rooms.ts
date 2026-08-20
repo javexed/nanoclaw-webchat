@@ -473,7 +473,7 @@ export async function rRoomThreadsPost(ctx: RouteCtx, m: RegExpMatchArray): Prom
   }
   const title = sanitizeThreadTitle(body.title);
   if (title === null) return json(res, 400, { error: 'title must be 1–80 characters' });
-  const thread = createWebchatThread(roomId, title);
+  const thread = await createWebchatThread(roomId, title);
   await broadcastRooms(); // refresh each client's sidebar thread-count chevron
   return json(res, 200, thread);
 }
@@ -986,7 +986,7 @@ export async function rollbackBareAgents(ids: string[]): Promise<void> {
 }
 
 export async function deleteRoomHandler(res: ServerResponse, roomId: string): Promise<void> {
-  const room = getWebchatRoom(roomId);
+  const room = await getWebchatRoom(roomId);
   if (!room) return json(res, 404, { error: 'Room not found' });
 
   const mg = await getMessagingGroupByPlatform('webchat', roomId);
@@ -1124,7 +1124,7 @@ export async function removeAgentFromRoomHandler(res: ServerResponse, roomId: st
       error: 'Cannot remove the last agent from a room. Delete the room with DELETE /api/rooms/:id instead.',
     });
   }
-  const removed = unwireAgentFromWebchatRoom(roomId, agentId);
+  const removed = await unwireAgentFromWebchatRoom(roomId, agentId);
   if (!removed) return json(res, 404, { error: 'Agent is not wired to this room' });
   // If we just unwired the prime, clear the designation. Recompute either
   // way so remaining wirings get a fresh pattern set (the prime's
@@ -1139,7 +1139,7 @@ export async function removeAgentFromRoomHandler(res: ServerResponse, roomId: st
 }
 
 export async function setRoomPrimeHandler(res: ServerResponse, roomId: string, agentId: string): Promise<void> {
-  const room = getWebchatRoom(roomId);
+  const room = await getWebchatRoom(roomId);
   if (!room) return json(res, 404, { error: 'Room not found' });
   // Verify the candidate is actually wired to this room — otherwise the
   // recompute would treat the prime as stale and silently fall back.

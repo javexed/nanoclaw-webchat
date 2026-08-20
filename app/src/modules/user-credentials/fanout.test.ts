@@ -67,8 +67,8 @@ afterEach(async () => {
 
 describe('writeMemberTranscript', () => {
   it('writes the transcript with exactly one trigger=1 (the current message)', async () => {
-    const a = storeWebchatMessage('room-1', 'Alice', 'user', 'hi from alice');
-    const b = storeWebchatMessage('room-1', 'Bob', 'user', 'hi from bob');
+    const a = await storeWebchatMessage('room-1', 'Alice', 'user', 'hi from alice');
+    const b = await storeWebchatMessage('room-1', 'Bob', 'user', 'hi from bob');
     const cur = await storeWebchatMessage('room-1', 'Alice', 'user', 'what did bob say?');
     const handled = await writeMemberTranscript({
       agentGroupId: 'ag-1',

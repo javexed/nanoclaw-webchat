@@ -219,7 +219,7 @@ export async function surfaceA2aMessage(
   const toName = (await getAgentGroup(toAgentGroupId))?.name ?? toAgentGroupId;
 
   for (const room of rooms) {
-    const stored = storeWebchatA2aMessage(room.id, fromName, toName, text);
+    const stored = await storeWebchatA2aMessage(room.id, fromName, toName, text);
     await broadcast(room.id, { type: 'message', ...(await stored) });
   }
 }
@@ -345,10 +345,10 @@ export async function annotateRoomsForUser(
 }
 
 export async function broadcastRooms(): Promise<void> {
-  const allRooms = getAllWebchatRooms();
-  const archivedSet = getArchivedRoomIds(); // global, computed once per broadcast
-  const activityMap = getRoomLastActivity(); // global, computed once per broadcast
-  const threadCounts = getTopicThreadCounts(); // global, computed once per broadcast
+  const allRooms = await getAllWebchatRooms();
+  const archivedSet = await getArchivedRoomIds(); // global, computed once per broadcast
+  const activityMap = await getRoomLastActivity(); // global, computed once per broadcast
+  const threadCounts = await getTopicThreadCounts(); // global, computed once per broadcast
   for (const c of clients.values()) {
     if (c.ws.readyState !== WebSocket.OPEN) continue;
     c.ws.send(

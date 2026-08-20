@@ -1944,11 +1944,11 @@ async function rWorkspaceModelPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
 // accessible rooms (and only the agents/models reachable from them).
 async function rTopologyGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const rooms = filterRoomsForUser(userId, await getAllWebchatRooms());
+  const rooms = await filterRoomsForUser(userId, await getAllWebchatRooms());
   // ALL agents the caller manages become columns/nodes (not just wired ones),
   // so unused agents show as orphans and can be wired from the matrix.
   const agents = (await listAgentsForUser(userId)).map((a) => ({ id: a.id, name: a.name }));
-  const topo = getWebchatTopology(await rooms, agents);
+  const topo = await getWebchatTopology(await rooms, agents);
   // SCOPED skills only — the ones wired to a specific agent (including anything
   // the learning loop produced). The shared pool is on ~every agent, so drawing
   // it would add hundreds of identical edges that say nothing about any one
@@ -2025,7 +2025,7 @@ async function rUploadPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, url, userId, senderIdentity, hooks } = ctx;
   const roomId = decodeURIComponent(m[1]);
   const csrfOk = req.headers['x-webchat-csrf'] === '1';
-  const accessOk = canAccessRoom(userId, roomId);
+  const accessOk = await canAccessRoom(userId, roomId);
   log.info('Webchat upload (multipart) request', {
     roomId,
     userId,
@@ -2051,7 +2051,7 @@ async function rChunkPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, url, userId, senderIdentity, hooks } = ctx;
   const roomId = decodeURIComponent(m[1]);
   const csrfOk = req.headers['x-webchat-csrf'] === '1';
-  const accessOk = canAccessRoom(userId, roomId);
+  const accessOk = await canAccessRoom(userId, roomId);
   log.info('Webchat upload (chunked) request', {
     roomId,
     userId,
@@ -2414,7 +2414,7 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   const beforeRaw = Number(url.searchParams.get('before'));
   const cutoff = Number.isFinite(beforeRaw) && beforeRaw > 0 ? beforeRaw : Number.MAX_SAFE_INTEGER;
 
-  const owner = isOwner(userId);
+  const owner = await isOwner(userId);
   const allowed = new Map<string, string>();
   for (const g of await getAllAgentGroups()) {
     if ((await owner) || (await hasAdminPrivilege(userId, g.id))) allowed.set(g.id, g.name || g.id);
@@ -2427,7 +2427,7 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 
   // 1. Draft cards — fetched unwindowed (bounded) so the kept-card dedupe set
   // is complete regardless of the page cursor; the sort+slice below pages.
-  const cards = listSkillDraftCards(undefined, 1000);
+  const cards = await listSkillDraftCards(undefined, 1000);
   const keptCardSkills = new Set<string>();
   for (const c of await cards) {
     if (!allowed.has(c.agentGroupId)) continue;
@@ -2813,7 +2813,7 @@ async function rApprovalPrejudgePut(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       // Same gate as the runtime consult (prejudge.ts): anthropic-kind
       // models qualify with a NULL endpoint — they route through the
       // OneCLI gateway rather than a local /v1/chat/completions server.
-      const model = getWebchatModel(body.modelId);
+      const model = await getWebchatModel(body.modelId);
       if (!isUsableJudgeModel(await model)) {
         return json(res, 400, {
           error:
@@ -3712,7 +3712,7 @@ async function putScopedSkillContentHandler(
     /* best-effort history; never block the save */
   }
   fs.writeFileSync(path.join(skillDir, 'SKILL.md'), content, 'utf8');
-  const restarted = restartAgentGroupContainers(agentGroupId, `Scoped skill ${name} edited`);
+  const restarted = await restartAgentGroupContainers(agentGroupId, `Scoped skill ${name} edited`);
   return json(res, 200, { ok: true, name, restarted });
 }
 

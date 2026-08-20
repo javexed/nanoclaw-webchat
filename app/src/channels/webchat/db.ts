@@ -1858,7 +1858,7 @@ export async function updateWebchatModel(
   id: string,
   patch: { name?: string; endpoint?: string | null; model_id?: string; credential_ref?: string | null },
 ): Promise<void> {
-  const existing = getWebchatModel(id);
+  const existing = await getWebchatModel(id);
   if (!existing) return;
   const next = { ...(await existing), ...patch };
   await getDb().run(
@@ -2291,7 +2291,9 @@ export async function ensureWebchatUserHandle(userId: string, displayName: strin
   if (existing) return existing;
   const base = slugifyHandle(displayName);
   let candidate = base;
-  for (let n = 2; userIdForHandle(candidate) !== null; n++) candidate = `${base}-${n}`;
+  // Await in the CONDITION: the un-awaited promise was always !== null, so
+  // this looped forever appending suffixes until the heap died.
+  for (let n = 2; (await userIdForHandle(candidate)) !== null; n++) candidate = `${base}-${n}`;
   await getDb().run(
     `INSERT OR IGNORE INTO webchat_user_handles (user_id, handle, created_at) VALUES (?, ?, ?)`,
     userId,

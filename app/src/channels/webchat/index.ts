@@ -248,7 +248,7 @@ function createAdapter(): ChannelAdapter {
       }
 
       const roomId = platformId;
-      const room = getWebchatRoom(roomId);
+      const room = await getWebchatRoom(roomId);
       if (!room) {
         log.warn('Webchat deliver: unknown room', { roomId });
         return undefined;
@@ -284,7 +284,7 @@ function createAdapter(): ChannelAdapter {
             mime: guessMime(file.filename),
             size: file.data.length,
           };
-          const stored = storeWebchatFileMessage(roomId, senderName, 'agent', file.filename, meta, storeThread);
+          const stored = await storeWebchatFileMessage(roomId, senderName, 'agent', file.filename, meta, storeThread);
           server.broadcast(roomId, { type: 'message', ...(await stored) });
         }
       }
@@ -551,7 +551,7 @@ registerApprovalRequestedListener(async (e) => {
   // answer too, and is rendered as such — with chips on the card, showing
   // nothing must never read as "screened, nothing found".
   const approvalRow = await getPendingApproval(e.approvalId);
-  const card = storeWebchatApprovalCard(roomId, e.agentName ?? 'agent', {
+  const card = await storeWebchatApprovalCard(roomId, e.agentName ?? 'agent', {
     questionId: e.approvalId,
     title: e.title,
     question: e.question,
@@ -572,7 +572,7 @@ registerSkillDraftProposedListener(async (e) => {
   const mg = await (e.session.messaging_group_id ? getMessagingGroup(e.session.messaging_group_id) : null);
   if (!mg || mg.channel_type !== 'webchat') return;
   const roomId = mg.platform_id;
-  const card = storeWebchatSkillDraftCard(
+  const card = await storeWebchatSkillDraftCard(
     roomId,
     e.agentName,
     {

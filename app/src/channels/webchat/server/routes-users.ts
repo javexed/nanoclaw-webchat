@@ -63,7 +63,7 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
     const cfg = await getCredentialsConfig();
     const provider = groups[0] && (await getContainerConfig(groups[0].id))?.provider === 'codex' ? 'codex' : 'claude';
     // Connection is now user-level (connect once → all same-provider rooms).
-    const connected = userHasConnectedCredential(userId, provider);
+    const connected = await userHasConnectedCredential(userId, provider);
     // Report the connected credential type so the UI shows the right banner.
     const credType = (await connected) ? ((await getUserCredential(userId, provider))?.cred_type ?? null) : null;
     return json(res, 200, {
@@ -236,7 +236,7 @@ export async function rPermissionsGrantPost(ctx: RouteCtx, _m: RegExpMatchArray)
   } catch {
     return json(res, 400, { error: 'Invalid JSON' });
   }
-  const granted = checkMemberGrantAuth(userId, body.kind, body.agentGroupId);
+  const granted = await checkMemberGrantAuth(userId, body.kind, body.agentGroupId);
   if (granted) return json(res, 403, granted);
   return grantPermissionHandler(res, body, userId);
 }
@@ -251,7 +251,7 @@ export async function rPermissionsRevokePost(ctx: RouteCtx, _m: RegExpMatchArray
   } catch {
     return json(res, 400, { error: 'Invalid JSON' });
   }
-  const revoked = checkMemberGrantAuth(userId, body.kind, body.agentGroupId);
+  const revoked = await checkMemberGrantAuth(userId, body.kind, body.agentGroupId);
   if (revoked) return json(res, 403, revoked);
   return revokePermissionHandler(res, body);
 }
@@ -464,7 +464,7 @@ export async function deleteUserHandler(
   if (targetUserId === callerUserId) {
     return json(res, 409, { error: 'Cannot delete yourself' });
   }
-  const target = permsGetUser(targetUserId);
+  const target = await permsGetUser(targetUserId);
   if (!target) return json(res, 404, { error: 'User not found' });
   const roles = await permsGetUserRoles(targetUserId);
   if (roles.length > 0) {

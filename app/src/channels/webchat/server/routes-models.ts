@@ -134,7 +134,7 @@ export async function rModelsContextVariantPost(ctx: RouteCtx, _m: RegExpMatchAr
   }
   if (typeof body.tag !== 'string' || !body.tag.trim()) return json(res, 400, { error: 'tag required' });
   const ctxSize = Math.floor(Number(body.ctx));
-  const endpoint = manageEndpoint();
+  const endpoint = await manageEndpoint();
   try {
     const variantTag = await createContextVariant(await endpoint, body.tag, ctxSize);
     const existing = (await listWebchatModels()).find((m) => m.model_id === variantTag);

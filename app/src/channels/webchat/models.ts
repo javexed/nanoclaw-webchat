@@ -352,12 +352,12 @@ export async function writeAgentSettingsForAssignedModel(agentGroupId: string): 
   // the workspace default model (wizard "default engine = Ollama"). Groups on
   // a non-default provider (e.g. codex) never inherit the fallback — their
   // harness doesn't read the ANTHROPIC_* env this writes.
-  let model = getAssignedModelForAgent(agentGroupId);
+  let model = await getAssignedModelForAgent(agentGroupId);
   if (!model) {
     const provider = (await getContainerConfig(agentGroupId))?.provider;
-    if (!provider || provider === 'claude') model = getEffectiveModelForAgent(agentGroupId);
+    if (!provider || provider === 'claude') model = await getEffectiveModelForAgent(agentGroupId);
   }
-  const overrides = envForModel(await model);
+  const overrides = envForModel(model);
 
   const settingsPath = path.join(DATA_DIR, 'v2-sessions', agentGroupId, '.claude-shared', 'settings.json');
   if (!fs.existsSync(path.dirname(settingsPath))) {

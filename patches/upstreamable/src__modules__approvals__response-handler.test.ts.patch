@@ -1,8 +1,16 @@
 diff --git a/src/modules/approvals/response-handler.test.ts b/src/modules/approvals/response-handler.test.ts
-index 07622d3d..3a771b12 100644
+index 07622d3d..283a608c 100644
 --- a/src/modules/approvals/response-handler.test.ts
 +++ b/src/modules/approvals/response-handler.test.ts
-@@ -174,6 +174,57 @@ describe('approval response authorization', () => {
+@@ -164,6 +164,7 @@ describe('approval response authorization', () => {
+       threadId: null,
+     };
+ 
++    // BOTH in flight at once — the point of the test is the in-process claim.
+     const first = handleApprovalsResponse(response);
+     const second = handleApprovalsResponse(response);
+     await vi.waitFor(() => expect(handler).toHaveBeenCalledTimes(1));
+@@ -174,6 +175,57 @@ describe('approval response authorization', () => {
      expect(await getPendingApproval('appr-race')).toBeUndefined();
    });
  
@@ -60,7 +68,7 @@ index 07622d3d..3a771b12 100644
    it('allows global admins to resolve approvals without a session-scoped agent group', async () => {
      await upsertUser({
        id: 'telegram:global-admin',
-@@ -262,4 +313,49 @@ describe('approval response authorization', () => {
+@@ -262,4 +314,53 @@ describe('approval response authorization', () => {
      expect(handler).toHaveBeenCalledTimes(1);
      expect(await getPendingApproval('appr-4')).toBeUndefined();
    });
@@ -100,9 +108,13 @@ index 07622d3d..3a771b12 100644
 +    };
 +    // Two deliveries of the same click, concurrently — first claims and enters
 +    // the (pending) handler; second must find no row and bail.
++    // Deliberately NOT awaited here: both must be in flight before release().
 +    const p1 = handleApprovalsResponse(click);
 +    const p2 = handleApprovalsResponse(click);
-+    await Promise.resolve(); // let both settle up to their awaits
++    // One microtask used to be enough to reach the handler; with the async DB
++    // the path crosses several awaits first. Wait for the handler to actually
++    // be entered — releasing before that resolves a no-op and hangs p1 forever.
++    await vi.waitFor(() => expect(handler).toHaveBeenCalled());
 +    release();
 +    await Promise.all([p1, p2]);
 +

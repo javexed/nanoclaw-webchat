@@ -112,7 +112,7 @@ export async function applySkillDraft(draft: SkillDraft, restartReason: string):
     return { ok: false, status: 500, error: 'Write failed: ' + (err instanceof Error ? err.message : String(err)) };
   }
   await resolveSkillDraft(draft.id, 'kept');
-  const restarted = restartAgentGroupContainers(draft.agent_group_id, restartReason);
+  const restarted = await restartAgentGroupContainers(draft.agent_group_id, restartReason);
   return { ok: true, status: 200, name, patched: isPatch, forkedFromPool, restarted: await restarted };
 }
 
