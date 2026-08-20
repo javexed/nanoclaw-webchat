@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
-import { resolveAgentIdentity, resolveContainerEnv } from '../../container-runtime.js';
+import { resolveAgentIdentity, runSessionPrepareHooks, resolveContainerEnv } from '../../container-runtime.js';
 import { upsertUserCredential } from './db.js';
 import { memberSessionKey, memberUserFromKey, memberThreadFromKey, userCredsAgentIdentifier } from './identity.js';
 import './index.js'; // registers the resolvers under test
@@ -28,6 +28,16 @@ beforeEach(async () => {
   await upsertUserCredential(USER, 'claude', 'sec-1', 'api_key');
 });
 afterEach(() => closeDb());
+
+async function preparedIdentity(agentGroupId: string, threadId: string | null): Promise<string | null> {
+  await runSessionPrepareHooks(agentGroupId, threadId);
+  return resolveAgentIdentity(agentGroupId, threadId);
+}
+
+async function preparedEnv(agentGroupId: string, threadId: string | null): Promise<Record<string, string>> {
+  await runSessionPrepareHooks(agentGroupId, threadId);
+  return resolveContainerEnv(agentGroupId, threadId);
+}
 
 describe('member session key codec', () => {
   it('round-trips a user id that itself contains colons', async () => {
@@ -57,28 +67,28 @@ describe('member session key codec', () => {
 describe('seam consumers resolve the same identity for both key shapes', () => {
   it('agent identity is identical for a composite and a bare key', async () => {
     const expected = userCredsAgentIdentifier(AG, USER);
-    expect(resolveAgentIdentity(AG, USER)).toBe(expected); // legacy shape
-    expect(resolveAgentIdentity(AG, memberSessionKey(USER, 'topic-1'))).toBe(expected);
-    expect(resolveAgentIdentity(AG, memberSessionKey(USER, null))).toBe(expected);
+    expect(await preparedIdentity(AG, USER)).toBe(expected); // legacy shape
+    expect(await preparedIdentity(AG, memberSessionKey(USER, 'topic-1'))).toBe(expected);
+    expect(await preparedIdentity(AG, memberSessionKey(USER, null))).toBe(expected);
   });
 
   it('an unknown member still resolves to no per-member identity', async () => {
-    expect(resolveAgentIdentity(AG, memberSessionKey('webchat:nobody', 'topic-1'))).toBeNull();
+    expect(await preparedIdentity(AG, memberSessionKey('webchat:nobody', 'topic-1'))).toBeNull();
   });
 
   it('container env is identical for a composite and a bare key', async () => {
     // api_key member → no OAuth env either way. The failure this guards is a
     // composite key falling through to the workspace-default branch.
-    const legacy = resolveContainerEnv(AG, USER);
-    const composite = resolveContainerEnv(AG, memberSessionKey(USER, 'topic-1'));
+    const legacy = await preparedEnv(AG, USER);
+    const composite = await preparedEnv(AG, memberSessionKey(USER, 'topic-1'));
     expect(composite).toEqual(legacy);
   });
 
   it('an OAuth member gets OAuth env under a composite key too', async () => {
     await upsertUserCredential(USER, 'claude', 'sec-oauth', 'oauth_token');
-    const env = resolveContainerEnv(AG, memberSessionKey(USER, 'topic-1'));
+    const env = await preparedEnv(AG, memberSessionKey(USER, 'topic-1'));
     expect(env.CLAUDE_CODE_OAUTH_TOKEN, 'composite key must not drop to workspace default').toBeTruthy();
-    expect(env).toEqual(resolveContainerEnv(AG, USER));
+    expect(env).toEqual(await preparedEnv(AG, USER));
   });
 
   void getDb;

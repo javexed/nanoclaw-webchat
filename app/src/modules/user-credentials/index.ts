@@ -115,9 +115,12 @@ registerTurnGate(async (mg, agentGroupId, userId) => {
   // cannot evaluate credential state, a required-mode room must veto rather
   // than silently bill the workspace key. Known-optional/disabled rooms keep
   // availability on an evaluation bug.
-  let state: ReturnType<typeof evaluateRoomCredState>;
+  let state: Awaited<ReturnType<typeof evaluateRoomCredState>>;
   try {
-    state = evaluateRoomCredState(mg, agentGroupId, userId);
+    // Await INSIDE the try: un-awaited, a rejection escaped past this catch to
+    // the later use site, so the fail-CLOSED posture silently became fail-open
+    // (the gate runner skips a throwing gate).
+    state = await evaluateRoomCredState(mg, agentGroupId, userId);
   } catch (err) {
     let required = true; // unknown mode → treat as required
     try {
@@ -133,7 +136,7 @@ registerTurnGate(async (mg, agentGroupId, userId) => {
     });
     return { reason: 'user-creds-evaluation-failed' };
   }
-  if (!(await state).requiredBlocked) return null;
+  if (!state.requiredBlocked) return null;
   const dedupeKey = `${mg.id}:${userId}`;
   const last = noticeSentAt.get(dedupeKey) ?? 0;
   if (Date.now() - last > NOTICE_DEDUPE_MS) {
@@ -192,7 +195,6 @@ registerSessionPrepareHook(async (agentGroupId, threadId) => {
   // truthy and this guard never fired — every session (including base ones)
   // was being enrolled as if its user had connected a credential.
   const connected = !!userId && (await userHasConnectedCredential(userId, provider));
-  if (connected) await ensureGroupEnrollment(realOnecliAdmin, userId!, agentGroupId);
 
   // Identity: a connected member's session runs under THEIR OneCLI identity.
   const identity = connected ? userCredsAgentIdentifier(agentGroupId, userId!) : null;
@@ -211,6 +213,12 @@ registerSessionPrepareHook(async (agentGroupId, threadId) => {
     }
   }
   spawnCache.set(spawnKey(agentGroupId, threadId), { identity, env });
+
+  // Enrollment LAST, after the cache is staged: it talks to OneCLI and may
+  // throw (the hook runner isolates that), and a provisioning failure must not
+  // wipe the identity/env staging — the gateway will surface its own error at
+  // spawn if the agent truly doesn't exist.
+  if (connected) await ensureGroupEnrollment(realOnecliAdmin, userId!, agentGroupId);
 });
 
 // Claude OAuth members: put their per-member container in subscription/OAuth mode

@@ -145,16 +145,16 @@ describe('deleteSessionDbState', () => {
 
 describe('FK behavior — the bug this primitive prevents', () => {
   it('deleting a messaging_group with an active session throws FOREIGN KEY', async () => {
-    seed();
+    await seed();
     // Without teardown, SQLite rejects the parent delete. This is the
     // exact scenario that surfaced as "Failed to delete room: Internal
     // error" in the webchat UI.
-    expect(() => deleteMessagingGroup('mg-1')).toThrow(/FOREIGN KEY/);
+    await expect(deleteMessagingGroup('mg-1')).rejects.toThrow(/FOREIGN KEY/);
   });
 
   it('deleting an agent_group with an active session throws FOREIGN KEY', async () => {
     seed();
-    expect(() => deleteAgentGroup('ag-1')).toThrow(/FOREIGN KEY/);
+    await expect(deleteAgentGroup('ag-1')).rejects.toThrow(/FOREIGN KEY/);
   });
 
   it('the teardown + parent-delete sequence inside a transaction succeeds', async () => {

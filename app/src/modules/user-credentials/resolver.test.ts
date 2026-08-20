@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { consultTurnGates, resolveSessionKeyOverride } from '../../session-manager.js';
-import { resolveAgentIdentity, resolveContainerEnv } from '../../container-runtime.js';
+import { resolveAgentIdentity, resolveContainerEnv, runSessionPrepareHooks } from '../../container-runtime.js';
 import { setRoomModeOverride, setCredentialsConfig } from '../../channels/webchat/db.js';
 import { upsertUserCredential, setUserCredentialStatus } from './db.js';
 import { userCredsAgentIdentifier, WORKSPACE_DEFAULT_USER_ID } from './identity.js';
@@ -119,64 +119,76 @@ describe('userCreds session-key resolver', () => {
   });
 });
 
+// The resolver is SYNC by contract and reads what the prepare hook staged —
+// the spawn path runs the hook first, so the test does too.
+async function prepared(agentGroupId: string, threadId: string | null): Promise<Record<string, string>> {
+  await runSessionPrepareHooks(agentGroupId, threadId);
+  return resolveContainerEnv(agentGroupId, threadId);
+}
+
 describe('container-env resolver (OAuth sentinel at spawn)', () => {
   const OAUTH_ENV = { CLAUDE_CODE_OAUTH_TOKEN: 'placeholder', ANTHROPIC_API_KEY: '' };
 
   it('per-member OAuth session → sentinel env', async () => {
     await upsertUserCredential('webchat:alice', 'claude', 'sec-oat', 'oauth_token');
-    expect(resolveContainerEnv('ag-1', 'webchat:alice')).toEqual(OAUTH_ENV);
+    expect(await prepared('ag-1', 'webchat:alice')).toEqual(OAUTH_ENV);
   });
 
   it('per-member API-key session → no env (rides x-api-key)', async () => {
     await upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
-    expect(resolveContainerEnv('ag-1', 'webchat:alice')).toEqual({});
+    expect(await prepared('ag-1', 'webchat:alice')).toEqual({});
   });
 
   it('base session + OAuth workspace default → sentinel env', async () => {
     await upsertUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude', 'sec-ws-oat', 'oauth_token');
-    expect(resolveContainerEnv('ag-1', null)).toEqual(OAUTH_ENV);
+    expect(await prepared('ag-1', null)).toEqual(OAUTH_ENV);
   });
 
   it('base session + API-key workspace default → no env', async () => {
     await upsertUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude', 'sec-ws-key', 'api_key');
-    expect(resolveContainerEnv('ag-1', null)).toEqual({});
+    expect(await prepared('ag-1', null)).toEqual({});
   });
 
   it('base session + no workspace default → no env', async () => {
-    expect(resolveContainerEnv('ag-1', null)).toEqual({});
+    expect(await prepared('ag-1', null)).toEqual({});
   });
 
   it('member API key wins over an OAuth workspace default for that member session', async () => {
     await upsertUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude', 'sec-ws-oat', 'oauth_token');
     await upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
-    expect(resolveContainerEnv('ag-1', 'webchat:alice')).toEqual({}); // member key mode
-    expect(resolveContainerEnv('ag-1', null)).toEqual(OAUTH_ENV); // base still OAuth
+    expect(await prepared('ag-1', 'webchat:alice')).toEqual({}); // member key mode
+    expect(await prepared('ag-1', null)).toEqual(OAUTH_ENV); // base still OAuth
   });
 
   it('topic-thread ids (not a credentialed member) fall through to the workspace default', async () => {
     await upsertUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude', 'sec-ws-oat', 'oauth_token');
-    expect(resolveContainerEnv('ag-1', 'main')).toEqual(OAUTH_ENV); // webchat topic thread
+    expect(await prepared('ag-1', 'main')).toEqual(OAUTH_ENV); // webchat topic thread
   });
 
   it('revoked workspace default → no sentinel (fail back to key mode)', async () => {
     await upsertUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude', 'sec-ws-oat', 'oauth_token');
     await setUserCredentialStatus(WORKSPACE_DEFAULT_USER_ID, 'claude', 'revoked');
-    expect(resolveContainerEnv('ag-1', null)).toEqual({});
+    expect(await prepared('ag-1', null)).toEqual({});
   });
 });
+
+async function preparedIdentity(agentGroupId: string, threadId: string | null): Promise<string | null> {
+  await runSessionPrepareHooks(agentGroupId, threadId);
+  return resolveAgentIdentity(agentGroupId, threadId);
+}
 
 describe('userCreds agent-identity resolver (spawn)', () => {
   it('per-member session of a connected member → the member UserCreds identity', async () => {
     await upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
-    expect(resolveAgentIdentity('ag-1', 'webchat:alice')).toBe(userCredsAgentIdentifier('ag-1', 'webchat:alice'));
+    expect(await preparedIdentity('ag-1', 'webchat:alice')).toBe(userCredsAgentIdentifier('ag-1', 'webchat:alice'));
   });
   it('not connected / no thread → null (default agent-group identity)', async () => {
-    expect(resolveAgentIdentity('ag-1', 'webchat:bob')).toBeNull();
-    expect(resolveAgentIdentity('ag-1', null)).toBeNull();
+    expect(await preparedIdentity('ag-1', 'webchat:bob')).toBeNull();
+    expect(await preparedIdentity('ag-1', null)).toBeNull();
   });
   it('revoked credential → null', async () => {
     await upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
     await setUserCredentialStatus('webchat:alice', 'claude', 'revoked');
-    expect(resolveAgentIdentity('ag-1', 'webchat:alice')).toBeNull();
+    expect(await preparedIdentity('ag-1', 'webchat:alice')).toBeNull();
   });
 });

@@ -53,9 +53,9 @@ describe('session-key mapping (slice 1)', () => {
     expect(threadToSessionKey('u_abc')).toBe('u_abc');
   });
   it('inverse maps a session key back to the stored/UI thread', async () => {
-    expect(sessionKeyToThread(null)).toBe(MAIN_THREAD);
-    expect(sessionKeyToThread(undefined)).toBe(MAIN_THREAD);
-    expect(sessionKeyToThread('agent:sarah')).toBe('agent:sarah');
+    expect(await sessionKeyToThread(null)).toBe(MAIN_THREAD);
+    expect(await sessionKeyToThread(undefined)).toBe(MAIN_THREAD);
+    expect(await sessionKeyToThread('agent:sarah')).toBe('agent:sarah');
   });
   // REGRESSION: the per-member credential override re-keys a session by USER, so
   // its thread_id is a user id, not a thread. Passed through, agent replies were
@@ -67,9 +67,9 @@ describe('session-key mapping (slice 1)', () => {
     const real = await createWebchatThread(room, 'Project Management');
 
     // A real thread still maps to itself...
-    expect(sessionKeyToThread(real.thread_id, room)).toBe(real.thread_id);
+    expect(await sessionKeyToThread(real.thread_id, room)).toBe(real.thread_id);
     // ...while a per-member session key does not become a thread of its own.
-    expect(sessionKeyToThread('webchat:tailscale:mark@example.com', room)).toBe(MAIN_THREAD);
+    expect(await sessionKeyToThread('webchat:tailscale:mark@example.com', room)).toBe(MAIN_THREAD);
   });
 
   // Step 5: a composite key KNOWS its thread, so decode rather than guess. The
@@ -81,12 +81,12 @@ describe('session-key mapping (slice 1)', () => {
     const real = await createWebchatThread(room, 'Project Management');
     const key = `webchat:tailscale:mark@example.com::${real.thread_id}`;
 
-    expect(sessionKeyToThread(key, room)).toBe(real.thread_id);
+    expect(await sessionKeyToThread(key, room)).toBe(real.thread_id);
     // ...and without a roomId too — the paths that leaked composite keys into
     // webchat_messages never passed one.
-    expect(sessionKeyToThread(key)).toBe(real.thread_id);
+    expect(await sessionKeyToThread(key)).toBe(real.thread_id);
     // main encodes explicitly and must come back as main, not as the raw key.
-    expect(sessionKeyToThread('webchat:tailscale:mark@example.com::main')).toBe(MAIN_THREAD);
+    expect(await sessionKeyToThread('webchat:tailscale:mark@example.com::main')).toBe(MAIN_THREAD);
   });
 
   // The composite shape is parsed in db.ts but DEFINED in user-credentials.
@@ -96,18 +96,18 @@ describe('session-key mapping (slice 1)', () => {
     const { memberSessionKey } = await import('../../modules/user-credentials/identity.js');
     for (const thread of [null, 'topic-abc', '10a2ab64-8fd3-435d-a94b-a08cb73cfc54']) {
       const key = memberSessionKey('webchat:tailscale:mark@example.com', thread);
-      expect(sessionKeyToThread(key)).toBe(thread ?? MAIN_THREAD);
+      expect(await sessionKeyToThread(key)).toBe(thread ?? MAIN_THREAD);
     }
   });
 
   it('keeps the old pass-through when no room is supplied', async () => {
     // Callers that never see per-member sessions must be unaffected.
-    expect(sessionKeyToThread('agent:sarah')).toBe('agent:sarah');
+    expect(await sessionKeyToThread('agent:sarah')).toBe('agent:sarah');
   });
 
   it('round-trips named threads', async () => {
     for (const t of ['agent:max', 'u_xyz']) {
-      expect(sessionKeyToThread(threadToSessionKey(t))).toBe(t);
+      expect(await sessionKeyToThread(threadToSessionKey(t))).toBe(t);
     }
   });
 });
@@ -175,7 +175,7 @@ describe('thread CRUD', () => {
   });
 
   it('ensureAgentThread keys a deterministic per-agent lane', async () => {
-    const id = ensureAgentThread('room-1', 'sarah', 'Sarah');
+    const id = await ensureAgentThread('room-1', 'sarah', 'Sarah');
     expect(id).toBe('agent:sarah');
     expect(await ensureAgentThread('room-1', 'sarah', 'Sarah (again)')).toBe('agent:sarah'); // reused
     expect(((await getWebchatThread('room-1', 'agent:sarah'))!).title).toBe('Sarah'); // not clobbered

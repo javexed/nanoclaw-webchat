@@ -153,7 +153,7 @@ describe('exporting an agent as a template', () => {
     await seedAgent();
     const { exportAgentAsTemplate } = await import('./server/template-export.js');
     for (const bad of ['Research Buddy', 'has_underscore', '-leading', '']) {
-      expect(() => exportAgentAsTemplate(GROUP, { name: bad })).toThrow();
+      await expect(exportAgentAsTemplate(GROUP, { name: bad })).rejects.toThrow();
     }
     expect(fs.existsSync(path.join(libDir, 'mine'))).toBe(false);
   });
@@ -161,6 +161,6 @@ describe('exporting an agent as a template', () => {
   it('refuses a ref that escapes the library', async () => {
     await seedAgent();
     const { exportAgentAsTemplate } = await import('./server/template-export.js');
-    expect(() => exportAgentAsTemplate(GROUP, { name: 'ok-name', ref: '../../escape' })).toThrow(/escapes/);
+    await expect(exportAgentAsTemplate(GROUP, { name: 'ok-name', ref: '../../escape' })).rejects.toThrow(/escapes/);
   });
 });

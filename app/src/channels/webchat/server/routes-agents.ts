@@ -428,7 +428,7 @@ export async function rAgentExportTemplatePost(ctx: RouteCtx, m: RegExpMatchArra
   const name = str(body.name);
   if (!name) return json(res, 400, { error: 'name required' });
   try {
-    const result = exportAgentAsTemplate(await group, {
+    const result = await exportAgentAsTemplate(await group, {
       name,
       ...(str(body.ref) ? { ref: str(body.ref)! } : {}),
       ...(str(body.version) ? { version: str(body.version)! } : {}),
@@ -1108,7 +1108,7 @@ export async function importAgentUploadHandler(req: IncomingMessage, res: Server
   try {
     tmpFile = await spoolUploadToTmp(req);
     const dir = await extractBundle(tmpFile);
-    const preview = previewImport(dir);
+    const preview = await previewImport(dir);
     const token = randomUUID();
     pendingAgentImports.set(token, { dir, at: Date.now() });
     return json(res, 200, { token, preview });

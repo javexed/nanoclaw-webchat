@@ -147,7 +147,7 @@ describe('ensureGroupEnrollment (lazy, at first spawn)', () => {
     expect((await getUserCredsCredential('webchat:alice', 'ag-1'))?.onecli_agent_id).toBe(ident);
     const agent = agents.get(ident)!;
     expect(agent.mode).toBe('selective');
-    expect(agent.secretIds).toEqual([getUserSecretId('webchat:alice')]); // just the user's key
+    expect(agent.secretIds).toEqual([await getUserSecretId('webchat:alice')]); // just the user's key
   });
 
   it('mirrors the group non-anthropic tool secrets + the user key', async () => {

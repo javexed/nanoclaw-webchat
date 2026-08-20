@@ -70,7 +70,7 @@ describe('writeMemberTranscript', () => {
     const a = storeWebchatMessage('room-1', 'Alice', 'user', 'hi from alice');
     const b = storeWebchatMessage('room-1', 'Bob', 'user', 'hi from bob');
     const cur = await storeWebchatMessage('room-1', 'Alice', 'user', 'what did bob say?');
-    const handled = writeMemberTranscript({
+    const handled = await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
@@ -176,7 +176,7 @@ describe('writeMemberTranscript', () => {
 
   it('falls back (returns false) when the current message is not in the transcript', async () => {
     await storeWebchatMessage('room-1', 'Alice', 'user', 'old');
-    const handled = writeMemberTranscript({
+    const handled = await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
