@@ -94,16 +94,18 @@ export async function stageRoomExport(roomId: string): Promise<{ stage: string; 
     string,
     unknown
   >[];
-  const agents = wirings
-    .map((w) => getAgentGroup(String(w.agent_group_id)))
+  // Resolve first, THEN filter. The old chain filtered on the promise (always
+  // truthy, so a missing agent group survived as undefined) and awaited each
+  // element downstream.
+  const agents = (await Promise.all(wirings.map((w) => getAgentGroup(String(w.agent_group_id)))))
     .filter((a): a is NonNullable<typeof a> => !!a)
-    .map(async (a) => ({ name: (await a).name, folder: (await a).folder }));
+    .map((a) => ({ name: a.name, folder: a.folder }));
   write('messaging_group.json', mg);
   write('wirings.json', wirings);
 
   let learning: Record<string, unknown> | null = null;
   try {
-    learning = (await db.get(`SELECT * FROM learning_room_settings WHERE messaging_group_id = ?`, mg.id) ??
+    learning = ((await db.get(`SELECT * FROM learning_room_settings WHERE messaging_group_id = ?`, mg.id)) ??
       null) as Record<string, unknown> | null;
   } catch {
     /* module table absent */
@@ -157,10 +159,12 @@ export function previewRoomImport(bundleDir: string): RoomImportPreview {
   if (manifest.version > ROOM_VERSION)
     throw new Error(`Export version ${manifest.version} is newer than this install understands`);
   const db = getDb();
-  const agents = manifest.references.agents.map(async (a) => ({
-    ...a,
-    found: !!await db.get(`SELECT 1 FROM agent_groups WHERE folder = ?`, a.folder),
-  }));
+  const agents = await Promise.all(
+    manifest.references.agents.map(async (a) => ({
+      ...a,
+      found: !!(await db.get(`SELECT 1 FROM agent_groups WHERE folder = ?`, a.folder)),
+    })),
+  );
   return { manifest, suggestedRoomId: uniqueRoomId(manifest.entity.roomId), agents };
 }
 

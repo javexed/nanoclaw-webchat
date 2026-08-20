@@ -11,6 +11,7 @@ import { canAccessAgentGroup } from '../../modules/permissions/access.js';
 import { getAgentsForWebchatRoom } from './db.js';
 import type { WebchatRoom } from './db.js';
 import { hasAdminPrivilege, isGlobalAdmin, isOwner } from './roles.js';
+import { filterAsync } from './async-array.js';
 
 export async function canAccessRoom(userId: string, roomId: string): Promise<boolean> {
   const agents = await getAgentsForWebchatRoom(roomId);
@@ -21,8 +22,10 @@ export async function canAccessRoom(userId: string, roomId: string): Promise<boo
   return false;
 }
 
-export function filterRoomsForUser<T extends WebchatRoom>(userId: string, rooms: T[]): T[] {
-  return rooms.filter((r) => canAccessRoom(userId, r.id));
+export async function filterRoomsForUser<T extends WebchatRoom>(userId: string, rooms: T[]): Promise<T[]> {
+  // filterAsync, not filter: canAccessRoom is async now, and a native filter
+  // would test the PROMISE — keeping every room for every user.
+  return filterAsync(rooms, (r) => canAccessRoom(userId, r.id));
 }
 
 /**
@@ -34,7 +37,7 @@ export function filterRoomsForUser<T extends WebchatRoom>(userId: string, rooms:
 export async function canArchiveRoom(userId: string, roomId: string): Promise<boolean> {
   if ((await isOwner(userId)) || (await isGlobalAdmin(userId))) return true;
   const agents = getAgentsForWebchatRoom(roomId);
-  for (const a of agents) {
+  for (const a of await agents) {
     if ((await hasAdminPrivilege(userId, a.id))) return true;
   }
   return false;

@@ -93,7 +93,7 @@ async function createCredentialSecret(
  * rebuild lazily on next use. Shared by disconnect and re-connect.
  */
 async function unenrollGroups(admin: OnecliAdmin, userId: string, provider: UserCredsProvider): Promise<void> {
-  for (const row of listEnrolledGroups(userId, provider)) {
+  for (const row of await listEnrolledGroups(userId, provider)) {
     const agentUuid = await admin.findAgentId(row.onecli_agent_id);
     if (agentUuid && row.secret_id) {
       const remaining = (await admin.listAgentSecretIds(agentUuid)).filter((id) => id !== row.secret_id);
@@ -235,11 +235,11 @@ async function fanOutWorkspaceCredential(
     await admin.setSecrets(agentId, Array.from(new Set([...kept, secretId])));
     assigned++;
   };
-  for (const group of getAllAgentGroups()) {
+  for (const group of await getAllAgentGroups()) {
     if ((await groupProvider(group.id)) !== provider) continue;
     try {
       await assign(group.id);
-      for (const row of listGroupMemberEnrollments(group.id)) {
+      for (const row of await listGroupMemberEnrollments(group.id)) {
         const own = await getUserCredential(row.user_id, provider);
         if (own?.status === 'active' && own.secret_id) continue; // brings their own
         await assign(userCredsAgentIdentifier(group.id, row.user_id));

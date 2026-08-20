@@ -33,7 +33,7 @@ import { json, readJsonBody } from './http.js';
 export async function rOllamaHostsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res } = ctx;
   const hosts = new Set<string>();
-  for (const m of listWebchatModels()) {
+  for (const m of await listWebchatModels()) {
     if (m.kind === 'ollama' && m.endpoint) hosts.add(m.endpoint.replace(/\/+$/, ''));
   }
   try {

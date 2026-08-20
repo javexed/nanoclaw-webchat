@@ -45,6 +45,7 @@ import { MAX_ACTIVE_MINTS, activeMintCount, cancelMint, mintClaudeToken, startCl
 import { hasAdminPrivilege, isAnyAdmin, isGlobalAdmin, isOwner } from '../roles.js';
 import { userCredsRateLimited } from './rate-limit.js';
 import type { RouteCtx } from '../server.js';
+import { filterAsync } from '../async-array.js';
 
 // ── UserCreds: a member connects / disconnects THEIR own Anthropic key ──────────
 // userId is the server-resolved caller — a user can only manage their own key.
@@ -149,7 +150,7 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
       const enrolledGroupIds = (await listEnrolledGroups(userId, provider)).map((r) => r.agent_group_id);
       await revokeUserCredential(realOnecliAdmin, userId, provider);
       for (const gid of enrolledGroupIds) {
-        for (const s of getSessionsByAgentGroup(gid)) {
+        for (const s of await getSessionsByAgentGroup(gid)) {
           if (s.thread_id === userId) killContainer(s.id, 'UserCreds credential disconnected');
         }
       }
@@ -294,40 +295,42 @@ export async function listUsersWithPermissions(callerUserId?: string): Promise<U
   const fullView = !callerUserId || isOwner(callerUserId) || isGlobalAdmin(callerUserId);
   const scopedGroupIds = fullView
     ? null
-    : new Set(groups.filter((g) => hasAdminPrivilege(callerUserId, g.id)).map((g) => g.id));
+    : new Set((await filterAsync(groups, (g) => hasAdminPrivilege(callerUserId, g.id))).map((g) => g.id));
   const visibleGroups = scopedGroupIds ? groups.filter((g) => scopedGroupIds.has(g.id)) : groups;
   // Pre-fetch members once per group, keep the full audit-rich rows so we
   // can surface added_by / added_at to the UI.
   const membersByGroup = new Map(visibleGroups.map((g) => [g.id, permsGetMembers(g.id)]));
 
-  return users.map(async (u) => {
-    const roles: RoleEntry[] = (await permsGetUserRoles(u.id))
-      .filter((r) => fullView || (r.agent_group_id !== null && scopedGroupIds!.has(r.agent_group_id)))
-      .map((r) => ({
-        kind: r.role,
-        agent_group_id: r.agent_group_id,
-        granted_by: r.granted_by,
-        granted_at: r.granted_at,
-      }));
-    const memberships: MembershipEntry[] = [];
-    for (const [groupId, members] of membersByGroup) {
-      const m = (await members).find((x) => x.user_id === u.id);
-      if (m) {
-        memberships.push({
-          agent_group_id: groupId,
-          added_by: m.added_by,
-          added_at: m.added_at,
-        });
+  return Promise.all(
+    users.map(async (u) => {
+      const roles: RoleEntry[] = (await permsGetUserRoles(u.id))
+        .filter((r) => fullView || (r.agent_group_id !== null && scopedGroupIds!.has(r.agent_group_id)))
+        .map((r) => ({
+          kind: r.role,
+          agent_group_id: r.agent_group_id,
+          granted_by: r.granted_by,
+          granted_at: r.granted_at,
+        }));
+      const memberships: MembershipEntry[] = [];
+      for (const [groupId, members] of membersByGroup) {
+        const m = (await members).find((x) => x.user_id === u.id);
+        if (m) {
+          memberships.push({
+            agent_group_id: groupId,
+            added_by: m.added_by,
+            added_at: m.added_at,
+          });
+        }
       }
-    }
-    return {
-      id: u.id,
-      kind: u.kind,
-      display_name: u.display_name ?? null,
-      roles,
-      memberships,
-    };
-  });
+      return {
+        id: u.id,
+        kind: u.kind,
+        display_name: u.display_name ?? null,
+        roles,
+        memberships,
+      };
+    }),
+  );
 }
 
 /**
@@ -398,7 +401,7 @@ export async function checkMemberGrantAuth(
   kind: unknown,
   agentGroupId: unknown,
 ): Promise<{ error: string } | null> {
-  if ((await isOwner(callerUserId))) return null;
+  if (await isOwner(callerUserId)) return null;
   if (kind !== 'member') return { error: 'Owner only' };
   const groupId = typeof agentGroupId === 'string' ? agentGroupId : null;
   if (!groupId || !hasAdminPrivilege(callerUserId, groupId)) {
@@ -452,7 +455,11 @@ export function grantPermissionHandler(res: ServerResponse, body: GrantBody, cal
  * honest. Also refuses to delete the caller themselves (you can't sit on
  * the branch you're sawing).
  */
-export async function deleteUserHandler(res: ServerResponse, targetUserId: string, callerUserId: string): Promise<void> {
+export async function deleteUserHandler(
+  res: ServerResponse,
+  targetUserId: string,
+  callerUserId: string,
+): Promise<void> {
   if (!targetUserId) return json(res, 400, { error: 'userId required' });
   if (targetUserId === callerUserId) {
     return json(res, 409, { error: 'Cannot delete yourself' });
@@ -468,7 +475,7 @@ export async function deleteUserHandler(res: ServerResponse, targetUserId: strin
   }
   // Iterate agent_groups to find lingering member rows — there's no
   // direct "memberships for user" helper today, so reuse the listing path.
-  for (const g of getAllAgentGroups()) {
+  for (const g of await getAllAgentGroups()) {
     if ((await permsGetMembers(g.id)).some((m) => m.user_id === targetUserId)) {
       return json(res, 409, { error: 'User still has memberships — revoke them first' });
     }

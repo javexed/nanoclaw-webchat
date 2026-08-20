@@ -77,7 +77,7 @@ export function stopReconcileLoop(): void {
 async function reconcileOnce(server: WebchatServer): Promise<void> {
   const sessions = listWebchatSessions();
   const cutoff = Date.now() - RECENT_WINDOW_MS;
-  for (const sess of sessions) {
+  for (const sess of await sessions) {
     const outDbPath = path.join(DATA_DIR, 'v2-sessions', sess.agent_group_id, sess.session_id, 'outbound.db');
     if (!fs.existsSync(outDbPath)) continue;
 

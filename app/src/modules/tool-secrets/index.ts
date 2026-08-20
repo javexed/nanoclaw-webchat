@@ -189,7 +189,7 @@ async function reconcile(admin: OnecliAdmin, scope: Scope): Promise<void> {
   const groups = scope.kind === 'workspace' ? (await getAllAgentGroups()).map((g) => g.id) : [scope.agentGroupId];
   for (const gid of groups) {
     await reconcileGroupAgent(admin, gid);
-    for (const row of listGroupMemberEnrollments(gid)) await reconcileMember(admin, gid, row.user_id);
+    for (const row of await listGroupMemberEnrollments(gid)) await reconcileMember(admin, gid, row.user_id);
   }
 }
 
@@ -254,7 +254,7 @@ export async function isolateAllGroups(
 ): Promise<{ isolated: string[]; skipped: { id: string; reason: string }[] }> {
   const isolated: string[] = [];
   const skipped: { id: string; reason: string }[] = [];
-  for (const group of getAllAgentGroups()) {
+  for (const group of await getAllAgentGroups()) {
     try {
       const { available } = await getGroupIsolation(admin, group.id);
       if (!available) {
@@ -365,7 +365,7 @@ async function accessibleHosts(admin: OnecliAdmin, agentGroupId: string): Promis
   const own = await listToolSecrets(admin, { kind: 'agent', agentGroupId });
   const shared = await listToolSecrets(admin, WORKSPACE);
   const perUser: ToolSecretInfo[] = [];
-  for (const row of listGroupMemberEnrollments(agentGroupId))
+  for (const row of await listGroupMemberEnrollments(agentGroupId))
     perUser.push(...(await listToolSecrets(admin, { kind: 'user', agentGroupId, userId: row.user_id })));
   return [...own, ...shared, ...perUser].map((s) => s.hostPattern).filter(Boolean);
 }

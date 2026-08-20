@@ -142,8 +142,7 @@ export async function previewSystemImport(bundleDir: string): Promise<SystemPrev
   } finally {
     bundleDb.close();
   }
-  const current = ((await getDb().get('SELECT COALESCE(MAX(version), 0) AS n FROM schema_version')) as { n: number })
-    .n;
+  const current = ((await getDb().get('SELECT COALESCE(MAX(version), 0) AS n FROM schema_version')) as { n: number }).n;
   return {
     manifest: { ...manifest, schemaVersion: bundleSchema },
     currentSchemaVersion: current,

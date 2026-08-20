@@ -48,6 +48,7 @@ import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { getRunningSessions } from '../../db/sessions.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { writeSessionMessage } from '../../session-manager.js';
+import { filterAsync } from './async-array.js';
 
 /**
  * Deliver a "stop" signal to live session(s) behind a webchat room (the GUI Stop
@@ -64,7 +65,7 @@ async function interruptRoomSessions(roomId: string, agentName?: string | null):
   if (!mg) return;
   let sessions = (await getRunningSessions()).filter((s) => s.messaging_group_id === mg.id);
   if (agentName) {
-    sessions = sessions.filter(async (s) => (await getAgentGroup(s.agent_group_id))?.name === agentName);
+    sessions = await filterAsync(sessions, async (s) => (await getAgentGroup(s.agent_group_id))?.name === agentName);
   }
   for (const s of sessions) {
     writeSessionMessage(s.agent_group_id, s.id, {

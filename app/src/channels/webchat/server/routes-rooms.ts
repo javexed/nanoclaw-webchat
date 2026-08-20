@@ -100,6 +100,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { RouteCtx } from '../server.js';
+import { everyAsync, filterAsync, someAsync } from '../async-array.js';
 
 // ── Rooms ─────────────────────────────────────────────────────────────
 // Two creation paths exist for historical reasons and they are NOT
@@ -109,7 +110,7 @@ import type { RouteCtx } from '../server.js';
 // converge on the same messaging_groups + messaging_group_agents shape.
 export async function rRoomsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const visible = filterRoomsForUser(userId, getAllWebchatRooms());
+  const visible = await filterRoomsForUser(userId, await getAllWebchatRooms());
   const archivedSet = await getArchivedRoomIds(); // global
   const hiddenSet = await getHiddenRoomIdsForUser(userId); // per-user
   return json(
@@ -138,7 +139,7 @@ export async function rRoomAgentsGet(ctx: RouteCtx, m: RegExpMatchArray): Promis
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   const agents = await getAgentsForWebchatRoom(roomId);
   const primeAgentId = await getPrimeAgentForWebchatRoom(roomId);
   // Promise.all around the map: the callback is async (learning_auto reads
@@ -167,10 +168,13 @@ export async function rRoomMentionableGet(ctx: RouteCtx, m: RegExpMatchArray): P
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
-  const people = (await getWebchatHandleUsers())
-    .filter((u) => u.userId !== userId && canAccessRoom(u.userId, roomId))
-    .map((u) => ({ handle: u.handle, name: u.displayName || u.handle }));
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const people = (
+    await filterAsync(
+      await getWebchatHandleUsers(),
+      async (u) => u.userId !== userId && (await canAccessRoom(u.userId, roomId)),
+    )
+  ).map((u) => ({ handle: u.handle, name: u.displayName || u.handle }));
   return json(res, 200, people);
 }
 
@@ -188,7 +192,7 @@ export async function rRoomCredModeGet(ctx: RouteCtx, m: RegExpMatchArray): Prom
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   // The per-room OVERRIDE ('inherit' when unset); the effective mode is what the
   // room actually runs (override, else the global default).
   return json(res, 200, {
@@ -204,7 +208,8 @@ export async function rRoomCredModePut(ctx: RouteCtx, m: RegExpMatchArray): Prom
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
   // Owner, or an admin over ANY agent wired to this room.
   const allowed =
-    isOwner(userId) || (await getAgentsForWebchatRoom(roomId)).some((a) => hasAdminPrivilege(userId, a.id));
+    (await isOwner(userId)) ||
+    (await someAsync(await getAgentsForWebchatRoom(roomId), (a) => hasAdminPrivilege(userId, a.id)));
   if (!allowed) return json(res, 403, { error: 'Admin privilege required' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -227,7 +232,7 @@ export async function rRoomOauthGet(ctx: RouteCtx, m: RegExpMatchArray): Promise
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   return json(res, 200, { allowed: getRoomOauthAllowed(roomId) });
 }
 
@@ -236,7 +241,8 @@ export async function rRoomOauthPut(ctx: RouteCtx, m: RegExpMatchArray): Promise
   const roomId = decodeURIComponent(m[1]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
   const allowed =
-    isOwner(userId) || (await getAgentsForWebchatRoom(roomId)).some((a) => hasAdminPrivilege(userId, a.id));
+    (await isOwner(userId)) ||
+    (await someAsync(await getAgentsForWebchatRoom(roomId), (a) => hasAdminPrivilege(userId, a.id)));
   if (!allowed) return json(res, 403, { error: 'Admin privilege required' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -314,7 +320,7 @@ export async function rRoomHidePost(ctx: RouteCtx, m: RegExpMatchArray): Promise
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   if (m[2] === 'hide') {
     hideRoomForUser(userId, roomId);
   } else {
@@ -332,7 +338,7 @@ export async function rRoomPinPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   if (m[2] === 'pin') {
     pinRoomForUser(userId, roomId);
   } else {
@@ -374,7 +380,7 @@ export async function rRoomEngageGet(ctx: RouteCtx, m: RegExpMatchArray): Promis
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   return json(res, 200, { mode: getRoomEngageDefault(roomId) });
 }
 
@@ -431,7 +437,7 @@ export async function rRoomThreadReadPut(ctx: RouteCtx, m: RegExpMatchArray): Pr
   const roomId = decodeURIComponent(m[1]);
   const threadId = decodeURIComponent(m[2]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   markThreadRead(userId, roomId, threadId);
   return json(res, 200, { ok: true });
 }
@@ -440,7 +446,7 @@ export async function rRoomThreadsGet(ctx: RouteCtx, m: RegExpMatchArray): Promi
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   ensureMainThread(roomId); // every room has a main thread once listed
   const unread = await getUnreadThreadIdsForRoom(userId, roomId);
   return json(
@@ -454,7 +460,7 @@ export async function rRoomThreadsPost(ctx: RouteCtx, m: RegExpMatchArray): Prom
   const { req, res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let body: { title?: unknown };
@@ -475,7 +481,7 @@ export async function rRoomThreadPatch(ctx: RouteCtx, m: RegExpMatchArray): Prom
   const roomId = decodeURIComponent(m[1]);
   const threadId = decodeURIComponent(m[2]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   if (!getWebchatThread(roomId, threadId)) return json(res, 404, { error: 'Thread not found' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -514,7 +520,7 @@ export async function rRoomThreadPullPost(ctx: RouteCtx, m: RegExpMatchArray): P
   const threadId = decodeURIComponent(m[2]);
   const dir = m[3] as 'pull' | 'push';
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
   if (threadId === MAIN_THREAD) return json(res, 400, { error: 'The regular chat has no main to sync with' });
   if (!getWebchatThread(roomId, threadId)) return json(res, 404, { error: 'Thread not found' });
   const copied =
@@ -558,7 +564,7 @@ export async function rRoomLearning(ctx: RouteCtx, m: RegExpMatchArray): Promise
   // Both toggles spend or commit on the wired agents' behalf — admin over
   // every one of them (a room is only as governable as its least-governed
   // agent).
-  const canManage = wired.length > 0 && wired.every((a) => hasAdminPrivilege(userId, a.id));
+  const canManage = wired.length > 0 && (await everyAsync(wired, (a) => hasAdminPrivilege(userId, a.id)));
   const room = await getRoomLearning(mg.id);
   const agentFallback = wired.length > 0 ? parseAgentLearning(wired[0].id) : {};
   const effective = {
@@ -659,7 +665,7 @@ export async function rRoomBroadcastPost(ctx: RouteCtx, m: RegExpMatchArray): Pr
     return json(res, 400, { error: 'Invalid JSON' });
   }
   if (!SESSION_COMMANDS.has(command)) return json(res, 400, { error: 'command must be /clear or /compact' });
-  const agents = (await getAgentsForWebchatRoom(roomId)).filter((a) => hasAdminPrivilege(userId, a.id));
+  const agents = await filterAsync(await getAgentsForWebchatRoom(roomId), (a) => hasAdminPrivilege(userId, a.id));
   if (agents.length === 0) return json(res, 403, { error: 'Admin privilege required' });
   let count = 0;
   for (const a of agents) {
@@ -750,7 +756,7 @@ export async function syncThreadContext(opts: {
   const mg = await getMessagingGroupByPlatform('webchat', roomId);
   if (mg) {
     const destKey = threadToSessionKey(destThreadId);
-    for (const s of sessionsForThreadKey(mg.id, destKey)) {
+    for (const s of await sessionsForThreadKey(mg.id, destKey)) {
       const ctx: ContextMessage[] = copies.map((m) => ({
         id: `ctx-${direction}-${s.sessionId}-${m.id}`,
         kind: 'chat',

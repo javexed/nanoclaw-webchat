@@ -1912,26 +1912,33 @@ export async function getWebchatTopology(
   rooms: { id: string; name: string }[],
   agents: { id: string; name: string }[],
 ): Promise<WebchatTopology> {
-  const agentNodes = agents.map(async (a) => {
-    const m = await getAssignedModelForAgent(a.id);
-    return { id: a.id, name: a.name, modelId: m?.id ?? null, modelName: m?.name ?? null };
-  });
-  const ids = new Set(agentNodes.map(async (a) => (await a).id));
+  // Resolved HERE, once. Leaving this as an array of promises made
+  // `new Set(agentNodes.map(async …))` a Set of PROMISES, so `ids.has(a.id)`
+  // never matched and the topology rendered with no edges at all — a graph of
+  // disconnected nodes, with nothing failing to say so.
+  const agentNodes = await Promise.all(
+    agents.map(async (a) => {
+      const m = await getAssignedModelForAgent(a.id);
+      return { id: a.id, name: a.name, modelId: m?.id ?? null, modelName: m?.name ?? null };
+    }),
+  );
+  const ids = new Set(agentNodes.map((a) => a.id));
   const edges: { room: string; agent: string }[] = [];
   for (const room of rooms) {
-    for (const a of getAgentsForWebchatRoom(room.id)) {
+    for (const a of await getAgentsForWebchatRoom(room.id)) {
       if (ids.has(a.id)) edges.push({ room: room.id, agent: a.id });
     }
   }
   const modelMap = new Map<string, { id: string; name: string }>();
-  for (const a of agentNodes) if ((await a).modelId) modelMap.set((await a).modelId, { id: (await a).modelId, name: (await a).modelName ?? (await a).modelId });
+  for (const a of agentNodes)
+    if (a.modelId) modelMap.set(a.modelId, { id: a.modelId, name: a.modelName ?? a.modelId });
 
   // MCP servers reachable from each agent. Only servers actually attached to an
   // agent in view appear — an unattached server has no reach, so it isn't a node.
   const mcpMap = new Map<string, { id: string; name: string; remote: boolean; host: string | null }>();
   const mcpEdges: { agent: string; mcp: string }[] = [];
   for (const a of agentNodes) {
-    for (const srv of getMcpServersForAgent((await a).id)) {
+    for (const srv of await getMcpServersForAgent(a.id)) {
       if (!mcpMap.has(srv.id)) {
         const remote = srv.transport !== 'stdio';
         let host: string | null = null;
@@ -1944,7 +1951,7 @@ export async function getWebchatTopology(
         }
         mcpMap.set(srv.id, { id: srv.id, name: srv.name, remote, host });
       }
-      mcpEdges.push({ agent: (await a).id, mcp: srv.id });
+      mcpEdges.push({ agent: a.id, mcp: srv.id });
     }
   }
 

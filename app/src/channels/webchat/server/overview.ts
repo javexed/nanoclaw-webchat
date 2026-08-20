@@ -21,6 +21,7 @@ import { canAccessRoom, filterRoomsForUser } from '../access.js';
 import { getAllWebchatRooms, getWebchatRoom } from '../db.js';
 import { hasAdminPrivilege, isOwner } from '../roles.js';
 import { json } from './http.js';
+import { filterAsync } from '../async-array.js';
 
 export interface OverviewSnapshot {
   restricted: boolean;
@@ -63,7 +64,9 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   // Visible agent count — owners see everything; admins see ones they
   // explicitly admin (matches how /api/agents filters).
   const allAgents = (await db.all(`SELECT id FROM agent_groups`)) as { id: string }[];
-  const visibleAgents = (await ownerCaller) ? allAgents : allAgents.filter((a) => hasAdminPrivilege(userId, a.id));
+  const visibleAgents = (await ownerCaller)
+    ? allAgents
+    : await filterAsync(allAgents, (a) => hasAdminPrivilege(userId, a.id));
 
   // SCOPING RULE for the activity counts below. A restricted caller counts
   // only sessions on agent groups they can ACCESS and messages in rooms they
@@ -79,14 +82,23 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   // party to, which includes plain membership.
   const scopedGroupIds = (await ownerCaller)
     ? null
-    : allAgents.filter(async (a) => (await canAccessAgentGroup(userId, a.id)).allowed).map((a) => a.id);
-  const scopedRoomIds = (await ownerCaller) ? null : filterRoomsForUser(userId, getAllWebchatRooms()).map((r) => r.id);
+    : (await filterAsync(allAgents, async (a) => (await canAccessAgentGroup(userId, a.id)).allowed)).map(
+        (a) => a.id,
+      );
+  const scopedRoomIds = (await ownerCaller)
+    ? null
+    : (await filterRoomsForUser(userId, await getAllWebchatRooms())).map((r) => r.id);
 
   // `ids === null` means "owner, no scoping"; an EMPTY array means "scoped to
   // nothing", which must count zero rather than fall through to unfiltered —
   // and cannot be expressed as SQL, since `IN ()` is a syntax error. Every
   // base query carries its own WHERE so the scope clause is a pure suffix.
-  const countScoped = async (base: string, column: string, ids: string[] | null, ...leading: unknown[]): Promise<number> => {
+  const countScoped = async (
+    base: string,
+    column: string,
+    ids: string[] | null,
+    ...leading: unknown[]
+  ): Promise<number> => {
     if (ids !== null && ids.length === 0) return 0;
     const where = ids === null ? '' : ` AND ${column} IN (${ids.map(() => '?').join(',')})`;
     const params = ids === null ? leading : [...leading, ...ids];
@@ -115,8 +127,10 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   // Channel breakdown — count of messaging_groups per channel_type. Owner-only
   // (see the interface note); a restricted caller gets null.
   let channels: Record<string, number> | null = null;
-  if ((await ownerCaller)) {
-    const channelRows = (await db.all(`SELECT channel_type, COUNT(*) AS c FROM messaging_groups GROUP BY channel_type`)) as { channel_type: string; c: number }[];
+  if (await ownerCaller) {
+    const channelRows = (await db.all(
+      `SELECT channel_type, COUNT(*) AS c FROM messaging_groups GROUP BY channel_type`,
+    )) as { channel_type: string; c: number }[];
     channels = {};
     for (const row of channelRows) channels[row.channel_type] = row.c;
   }
@@ -128,16 +142,20 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
     ? `SELECT id, name, folder, created_at FROM agent_groups ORDER BY created_at DESC LIMIT ${recentLimit}`
     : `SELECT id, name, folder, created_at FROM agent_groups ORDER BY created_at DESC`;
   const recentRaw = (await db.all(recentSql)) as { id: string; name: string; folder: string; created_at: string }[];
-  const recentFiltered = (await ownerCaller) ? recentRaw : recentRaw.filter((r) => visibleIds.has(r.id)).slice(0, recentLimit);
-  const recentAgents = recentFiltered.map(async (r) => {
-    const room = await getWebchatRoom(r.folder);
-    return {
-      id: r.id,
-      name: r.name,
-      folder: r.folder,
-      room_id: room ? room.id : null,
-    };
-  });
+  const recentFiltered = (await ownerCaller)
+    ? recentRaw
+    : recentRaw.filter((r) => visibleIds.has(r.id)).slice(0, recentLimit);
+  const recentAgents = await Promise.all(
+    recentFiltered.map(async (r) => {
+      const room = await getWebchatRoom(r.folder);
+      return {
+        id: r.id,
+        name: r.name,
+        folder: r.folder,
+        room_id: room ? room.id : null,
+      };
+    }),
+  );
 
   // Owner-only: system metrics, busiest webchat rooms, container runtime probe,
   // ollama probe.
@@ -158,14 +176,17 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   }
 
   // Busiest webchat rooms (24h) — top 5 by message count.
-  const busiestRows = (await db.all(`SELECT m.room_id AS id, mg.name AS name, COUNT(*) AS count
+  const busiestRows = (await db.all(
+    `SELECT m.room_id AS id, mg.name AS name, COUNT(*) AS count
        FROM webchat_messages m
        LEFT JOIN messaging_groups mg
          ON mg.channel_type = 'webchat' AND mg.platform_id = m.room_id
        WHERE m.created_at > ?
        GROUP BY m.room_id
        ORDER BY count DESC
-       LIMIT 5`, yesterdayMs)) as { id: string; name: string | null; count: number }[];
+       LIMIT 5`,
+    yesterdayMs,
+  )) as { id: string; name: string | null; count: number }[];
   const busiestRooms = busiestRows.map((r) => ({ id: r.id, name: r.name ?? r.id, count: r.count }));
 
   // System.

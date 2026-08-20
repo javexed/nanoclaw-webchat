@@ -173,23 +173,25 @@ export interface ModelForUI extends WebchatModel {
 }
 
 export async function listModelsForUI(includeSensitive: boolean): Promise<ModelForUI[]> {
-  return (await listWebchatModels()).map(async (m) => {
-    const ids = await getAgentsAssignedToModel(m.id);
-    const roomMap = new Map<string, { id: string; name: string }>();
-    for (const id of ids) {
-      for (const r of getWebchatRoomsForAgent(id)) roomMap.set(r.id, { id: r.id, name: r.name });
-    }
-    return {
-      ...m,
-      // Owner-only infrastructure fields — nulled for members (the endpoint is
-      // an internal model-server URL; every consumer that reads it is an
-      // owner-gated flow: wizard Ollama select, STT cleanup, auto-learn).
-      ...(includeSensitive ? {} : { endpoint: null, credential_ref: null }),
-      agents_assigned: ids.length,
-      agents: ids.map(async (id) => ({ id, name: (await getAgentGroup(id))?.name ?? id })),
-      rooms: [...roomMap.values()],
-    };
-  });
+  return Promise.all(
+    (await listWebchatModels()).map(async (m) => {
+      const ids = await getAgentsAssignedToModel(m.id);
+      const roomMap = new Map<string, { id: string; name: string }>();
+      for (const id of ids) {
+        for (const r of await getWebchatRoomsForAgent(id)) roomMap.set(r.id, { id: r.id, name: r.name });
+      }
+      return {
+        ...m,
+        // Owner-only infrastructure fields — nulled for members (the endpoint is
+        // an internal model-server URL; every consumer that reads it is an
+        // owner-gated flow: wizard Ollama select, STT cleanup, auto-learn).
+        ...(includeSensitive ? {} : { endpoint: null, credential_ref: null }),
+        agents_assigned: ids.length,
+        agents: await Promise.all(ids.map(async (id) => ({ id, name: (await getAgentGroup(id))?.name ?? id }))),
+        rooms: [...roomMap.values()],
+      };
+    }),
+  );
 }
 
 export async function createModelHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -263,7 +265,7 @@ export async function updateModelHandler(req: IncomingMessage, res: ServerRespon
   updateWebchatModel(id, patch);
   // Endpoint or model_id change → re-emit env and respawn for every agent that
   // uses it, so live containers pick up the edited endpoint/model immediately.
-  for (const agentGroupId of getAgentsAssignedToModel(id)) {
+  for (const agentGroupId of await getAgentsAssignedToModel(id)) {
     reloadAgentModelEnv(agentGroupId, 'Webchat model updated');
   }
   return json(res, 200, { ok: true });

@@ -56,7 +56,9 @@ import type { RouteCtx } from '../server.js';
 export async function rSkillsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const pool = listAvailableSkills();
-  const skills = [...pool, ...listScopedSkillsForUser(userId, pool)].sort((a, b) => a.name.localeCompare(b.name));
+  const skills = [...pool, ...(await listScopedSkillsForUser(userId, pool))].sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
   return json(res, 200, { skills });
 }
 
@@ -120,7 +122,9 @@ export async function rSkillSource(ctx: RouteCtx, m: RegExpMatchArray): Promise<
   }
   if (method === 'PUT') return putSkillSourceHandler(req, res, sourceId);
   catalogCache.delete(sourceId);
-  return (await deleteSkillSource(sourceId)) ? json(res, 200, { ok: true }) : json(res, 404, { error: 'Source not found' });
+  return (await deleteSkillSource(sourceId))
+    ? json(res, 200, { ok: true })
+    : json(res, 404, { error: 'Source not found' });
 }
 
 // Delete a user skill (imported/uploaded). Shipped skills can't be removed.
@@ -157,10 +161,12 @@ export async function rSkillUpdatePost(ctx: RouteCtx, m: RegExpMatchArray): Prom
 
 export async function rSkillsDuplicatesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res } = ctx;
-  const dups = findDuplicateScopedSkills().map((d) => ({
-    ...d,
-    agents: d.agents.map(async (id) => (await getAgentGroup(id))?.name || id),
-  }));
+  const dups = await Promise.all(
+    findDuplicateScopedSkills().map(async (d) => ({
+      ...d,
+      agents: await Promise.all(d.agents.map(async (id) => (await getAgentGroup(id))?.name || id)),
+    })),
+  );
   return json(res, 200, { duplicates: dups });
 }
 
@@ -182,7 +188,7 @@ export async function rSkillsPromotePost(ctx: RouteCtx, _m: RegExpMatchArray): P
   if (!r.ok) return json(res, 409, { error: r.error });
   // Every holder's containers must respawn to see the pooled copy.
   let restarted = 0;
-  for (const g of listAgentsForUser(userId)) {
+  for (const g of await listAgentsForUser(userId)) {
     if (dup?.agents.includes(g.id)) restarted += restartAgentGroupContainers(g.id, 'Skill promoted to shared pool');
   }
   return json(res, 200, { ok: true, restarted });
@@ -233,9 +239,16 @@ export async function rSkillDraftsGet(ctx: RouteCtx, _m: RegExpMatchArray): Prom
   const { res, userId } = ctx;
   // Scoped admins see only their own groups' drafts (owners/global admins
   // pass hasAdminPrivilege for every group) — same tier as the per-draft routes.
-  const drafts = listSkillDrafts()
-    .filter((d) => hasAdminPrivilege(userId, d.agent_group_id))
-    .map(async (d) => ({
+  // Array.filter cannot await, and an async predicate returns a PROMISE — which
+  // is truthy, so every draft passed the admin check regardless of privilege.
+  // tsc does not flag this: a Promise<boolean> is a perfectly good truthy value
+  // as far as filter's signature is concerned. It has to be a loop.
+  const visible = [];
+  for (const d of listSkillDrafts()) {
+    if (await hasAdminPrivilege(userId, d.agent_group_id)) visible.push(d);
+  }
+  const drafts = await Promise.all(
+    visible.map(async (d) => ({
       id: d.id,
       skillName: d.skill_name,
       description: d.description,
@@ -247,7 +260,8 @@ export async function rSkillDraftsGet(ctx: RouteCtx, _m: RegExpMatchArray): Prom
       // The conversation this draft was distilled FROM — reviewing a skill
       // without the session that produced it is guessing.
       roomId: draftSourceRoom(d.session_id),
-    }));
+    })),
+  );
   return json(res, 200, { drafts });
 }
 
@@ -560,7 +574,7 @@ export async function suggestSkillsHandler(res: ServerResponse, text: string): P
     description: s.description,
     source: 'installed',
   }));
-  for (const src of listSkillSources()) {
+  for (const src of await listSkillSources()) {
     try {
       for (const s of await loadCatalog(src)) {
         if (!installedNames.has(sanitizeSkillName(s.name))) candidates.push({ ...s, source: src.label });
