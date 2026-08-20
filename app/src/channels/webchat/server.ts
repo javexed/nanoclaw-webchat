@@ -1477,7 +1477,7 @@ async function rToolSecretsMine(ctx: RouteCtx, _m: RegExpMatchArray): Promise<vo
   const seen = new Set<string>();
   const groups: { agentGroupId: string; name: string; secrets: unknown[] }[] = [];
   for (const provider of ['claude', 'codex'] as const) {
-    for (const row of listEnrolledGroups(userId, provider)) {
+    for (const row of await listEnrolledGroups(userId, provider)) {
       if (seen.has(row.agent_group_id)) continue;
       seen.add(row.agent_group_id);
       const group = await getAgentGroup(row.agent_group_id);
@@ -2414,7 +2414,7 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 
   const owner = isOwner(userId);
   const allowed = new Map<string, string>();
-  for (const g of getAllAgentGroups()) {
+  for (const g of await getAllAgentGroups()) {
     if ((await owner) || (await hasAdminPrivilege(userId, g.id))) allowed.set(g.id, g.name || g.id);
   }
 
@@ -2427,7 +2427,7 @@ async function rLearningTimelineGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   // is complete regardless of the page cursor; the sort+slice below pages.
   const cards = listSkillDraftCards(undefined, 1000);
   const keptCardSkills = new Set<string>();
-  for (const c of cards) {
+  for (const c of await cards) {
     if (!allowed.has(c.agentGroupId)) continue;
     const landed = sanitizeSkillName(c.kind === 'patch' && c.targetSkill ? c.targetSkill : c.skillName);
     if (c.status === 'kept' && landed) keptCardSkills.add(`${c.agentGroupId}/${landed}`);
@@ -3374,7 +3374,7 @@ export async function resolveInboundDeliveryPlan(
   // agents as silent context (isPeerReply, trigger=0) so they stay in sync but
   // never reply to a peer (no cascades). The producer is excluded.
   if (senderAgentGroupId) {
-    const allEngaged = [...getEngagedAgents(roomId, threadId)].filter((id) => wiredIds.has(id));
+    const allEngaged = [...await getEngagedAgents(roomId, threadId)].filter((id) => wiredIds.has(id));
     const recipients = allEngaged.filter((id) => id !== senderAgentGroupId);
     if (recipients.length === 0) return null;
     const perAgent = new Map<string, 'expected' | 'defer'>();
@@ -3390,7 +3390,7 @@ export async function resolveInboundDeliveryPlan(
   }
 
   // Auto-engage any newly-mentioned wired agent (broadcast the chip change once).
-  const engaged = new Set([...getEngagedAgents(roomId, threadId)].filter((id) => wiredIds.has(id)));
+  const engaged = new Set([...await getEngagedAgents(roomId, threadId)].filter((id) => wiredIds.has(id)));
   let changed = false;
   for (const id of mentioned) {
     if (!engaged.has(id)) {
@@ -3574,7 +3574,7 @@ async function restartGroupsForWorkspaceCredChange(
   nowOauth: boolean,
 ): Promise<void> {
   if (priorOauth === nowOauth) return;
-  for (const g of getAllAgentGroups()) {
+  for (const g of await getAllAgentGroups()) {
     const groupProvider = (await getContainerConfig(g.id))?.provider === 'codex' ? 'codex' : 'claude';
     if (groupProvider !== provider) continue;
     try {
@@ -3617,8 +3617,8 @@ function afterWorkspaceCredentialSet(provider: 'claude' | 'codex', priorOauth: b
  * non-restarting: containers pick up the change on their next spawn. Per-group
  * failures are logged, never fatal to boot.
  */
-function convergeAgentProviders(): void {
-  for (const g of getAllAgentGroups()) {
+async function convergeAgentProviders(): Promise<void> {
+  for (const g of await getAllAgentGroups()) {
     try {
       syncAgentProviderForAssignedModel(g.id);
     } catch (err) {

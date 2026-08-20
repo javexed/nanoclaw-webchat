@@ -81,9 +81,9 @@ function scrubSecrets(server: Record<string, unknown>): { server: Record<string,
 }
 
 /** Recurring tasks only — a one-shot is an errand, not part of a blueprint. */
-function collectTasks(agentGroupId: string): { name: string; schedule: string; prompt: string; script?: string }[] {
+async function collectTasks(agentGroupId: string): Promise<{ name: string; schedule: string; prompt: string; script?: string }[]> {
   const out: { name: string; schedule: string; prompt: string; script?: string }[] = [];
-  for (const session of findTaskSessions(agentGroupId)) {
+  for (const session of await findTaskSessions(agentGroupId)) {
     if (!fs.existsSync(inboundDbPath(agentGroupId, session.id))) continue;
     try {
       const rows = withInboundDb(
@@ -222,11 +222,11 @@ export async function exportAgentAsTemplate(group: AgentGroup, opts: ExportTempl
     }
 
     // ── recurring tasks
-    const tasks = collectTasks(group.id);
+    const tasks = await collectTasks(group.id);
     if (tasks.length) {
       const tasksDir = path.join(staging, EXT, 'tasks');
       fs.mkdirSync(tasksDir, { recursive: true });
-      for (const task of tasks) {
+      for (const task of await tasks) {
         const body = `---\nschedule: "${task.schedule.replace(/"/g, '\\"')}"\n---\n${task.prompt.trim()}\n`;
         fs.writeFileSync(path.join(tasksDir, `${task.name}.md`), body);
       }

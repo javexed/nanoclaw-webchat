@@ -125,7 +125,7 @@ export async function rMcpServersOauthCallbackGet(ctx: RouteCtx, _m: RegExpMatch
     const server = getWebchatMcpServer(serverId);
     if (server) {
       // Re-sync every assigned agent onto the relay URL now that auth exists.
-      for (const gid of getAgentsAssignedToMcpServer(serverId)) {
+      for (const gid of await getAgentsAssignedToMcpServer(serverId)) {
         syncAgentMcpConfig(gid, server, true);
         reloadAgentMcpServers(gid);
       }
@@ -196,7 +196,7 @@ export async function rMcpToolsPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<
   }
   setMcpServerEnabledTools(server.id, enabled && enabled.length ? enabled : null);
   const updated = getWebchatMcpServer(server.id)!;
-  for (const gid of getAgentsAssignedToMcpServer(server.id)) {
+  for (const gid of await getAgentsAssignedToMcpServer(server.id)) {
     syncAgentMcpConfig(gid, updated, true);
     reloadAgentMcpServers(gid);
   }
@@ -222,7 +222,7 @@ export async function rMcpAuthPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<v
   }
   setMcpServerAuth(server.id, token ? { kind: 'bearer', token } : null);
   const updated = getWebchatMcpServer(server.id)!;
-  for (const gid of getAgentsAssignedToMcpServer(server.id)) {
+  for (const gid of await getAgentsAssignedToMcpServer(server.id)) {
     syncAgentMcpConfig(gid, updated, true);
     reloadAgentMcpServers(gid);
   }
@@ -339,7 +339,7 @@ export async function updateMcpServerHandler(req: IncomingMessage, res: ServerRe
   // Re-sync every assigned agent: drop the old key when renamed, upsert the
   // new config, and restart so live containers pick the change up.
   const updated = await getWebchatMcpServer(id);
-  for (const agentGroupId of getAgentsAssignedToMcpServer(id)) {
+  for (const agentGroupId of await getAgentsAssignedToMcpServer(id)) {
     if (updated && oldName !== updated.name) syncAgentMcpConfig(agentGroupId, { ...updated, name: oldName }, false);
     if (updated) syncAgentMcpConfig(agentGroupId, updated, true);
     reloadAgentMcpServers(agentGroupId);

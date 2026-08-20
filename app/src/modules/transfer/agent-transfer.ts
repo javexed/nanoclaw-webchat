@@ -86,7 +86,10 @@ export async function insertWithSchemaIntersection(table: string, row: Record<st
     ((await db.all(`SELECT name FROM pragma_table_info('${table}')`)) as { name: string }[]).map((c) => c.name),
   );
   const keys = Object.keys(row).filter((k) => cols.has(k));
-  await db.run(`INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map((k) => '@' + k).join(', ')})`, Object.fromEntries(keys.map((k) => [k, row[k]])) as Record<string, unknown>);
+  await db.run(
+    `INSERT INTO ${table} (${keys.join(', ')}) VALUES (${keys.map((k) => '@' + k).join(', ')})`,
+    Object.fromEntries(keys.map((k) => [k, row[k]])) as Record<string, unknown>,
+  );
 }
 
 // ── Export ───────────────────────────────────────────────────────────────────
@@ -112,22 +115,32 @@ export async function stageAgentExport(agentGroupId: string, includeConversation
     cfgOut.mcp_servers = '{}';
   }
 
-  const wirings = (await db.all(`SELECT mga.*, mg.channel_type, mg.platform_id, mg.instance
+  const wirings = (await db.all(
+    `SELECT mga.*, mg.channel_type, mg.platform_id, mg.instance
        FROM messaging_group_agents mga JOIN messaging_groups mg ON mg.id = mga.messaging_group_id
-       WHERE mga.agent_group_id = ?`, agentGroupId)) as Record<string, unknown>[];
+       WHERE mga.agent_group_id = ?`,
+    agentGroupId,
+  )) as Record<string, unknown>[];
 
   const mcpNames = (
-    (await db.all(`SELECT s.name FROM webchat_mcp_servers s
-         JOIN webchat_agent_mcp_servers a ON a.mcp_server_id = s.id WHERE a.agent_group_id = ?`, agentGroupId)) as { name: string }[]
+    (await db.all(
+      `SELECT s.name FROM webchat_mcp_servers s
+         JOIN webchat_agent_mcp_servers a ON a.mcp_server_id = s.id WHERE a.agent_group_id = ?`,
+      agentGroupId,
+    )) as { name: string }[]
   ).map((r) => r.name);
 
-  const model = (await db.get(`SELECT m.kind, m.endpoint, m.model_id, m.credential_ref FROM webchat_models m
-       JOIN webchat_agent_models am ON am.model_id = m.id WHERE am.agent_group_id = ?`, agentGroupId)) as
-    | { kind: string; endpoint: string | null; model_id: string; credential_ref: string | null }
-    | undefined;
+  const model = (await db.get(
+    `SELECT m.kind, m.endpoint, m.model_id, m.credential_ref FROM webchat_models m
+       JOIN webchat_agent_models am ON am.model_id = m.id WHERE am.agent_group_id = ?`,
+    agentGroupId,
+  )) as { kind: string; endpoint: string | null; model_id: string; credential_ref: string | null } | undefined;
   if (model?.credential_ref) required.push(`model credential: ${model.credential_ref}`);
 
-  const destinations = (await db.all(`SELECT * FROM agent_destinations WHERE agent_group_id = ?`, agentGroupId)) as Record<string, unknown>[];
+  const destinations = (await db.all(
+    `SELECT * FROM agent_destinations WHERE agent_group_id = ?`,
+    agentGroupId,
+  )) as Record<string, unknown>[];
 
   const manifest: AgentExportManifest = {
     format: EXPORT_FORMAT,
@@ -214,15 +227,23 @@ export async function previewImport(bundleDir: string): Promise<ImportPreview> {
     platform_id: r.platform_id,
     found: !!getMessagingGroupByPlatform(r.channel_type, r.platform_id),
   }));
-  const mcpServers = manifest.references.mcpServers.map(async (name) => ({
-    name,
-    found: !!await db.get(`SELECT 1 FROM webchat_mcp_servers WHERE name = ?`, name),
-  }));
+  const mcpServers = await Promise.all(
+    manifest.references.mcpServers.map(async (name) => ({
+      name,
+      found: !!(await db.get(`SELECT 1 FROM webchat_mcp_servers WHERE name = ?`, name)),
+    })),
+  );
   const m = manifest.references.model;
   const modelFound = !m
     ? true
-    : !!await db.get(`SELECT 1 FROM webchat_models WHERE kind = ? AND model_id = ? AND (endpoint IS ? OR endpoint = ?)`, m.kind, m.model_id, m.endpoint, m.endpoint);
-  const nameTaken = !!await db.get(`SELECT 1 FROM agent_groups WHERE name = ?`, manifest.entity.name);
+    : !!(await db.get(
+        `SELECT 1 FROM webchat_models WHERE kind = ? AND model_id = ? AND (endpoint IS ? OR endpoint = ?)`,
+        m.kind,
+        m.model_id,
+        m.endpoint,
+        m.endpoint,
+      ));
+  const nameTaken = !!(await db.get(`SELECT 1 FROM agent_groups WHERE name = ?`, manifest.entity.name));
   return {
     manifest,
     suggestedName: nameTaken ? `${manifest.entity.name} (imported)` : manifest.entity.name,
@@ -326,8 +347,13 @@ export async function applyImport(bundleDir: string, opts: { name?: string } = {
         | { id: string }
         | undefined;
       if (!s) continue;
-      await db.run(`INSERT INTO webchat_agent_mcp_servers (agent_group_id, mcp_server_id, assigned_at)
-       VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, id, s.id, Date.now());
+      await db.run(
+        `INSERT INTO webchat_agent_mcp_servers (agent_group_id, mcp_server_id, assigned_at)
+       VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+        id,
+        s.id,
+        Date.now(),
+      );
       attachedMcp.push(mcpName);
     }
     updateContainerConfigJson(id, 'mcp_servers', {}); // clean base; caller syncs
@@ -335,10 +361,21 @@ export async function applyImport(bundleDir: string, opts: { name?: string } = {
     // 7. Model by reference.
     const m = manifest.references.model;
     if (m) {
-      const row = (await db.get(`SELECT id FROM webchat_models WHERE kind = ? AND model_id = ? AND (endpoint IS ? OR endpoint = ?)`, m.kind, m.model_id, m.endpoint, m.endpoint)) as { id: string } | undefined;
+      const row = (await db.get(
+        `SELECT id FROM webchat_models WHERE kind = ? AND model_id = ? AND (endpoint IS ? OR endpoint = ?)`,
+        m.kind,
+        m.model_id,
+        m.endpoint,
+        m.endpoint,
+      )) as { id: string } | undefined;
       if (row) {
-        await db.run(`INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES (?, ?, ?)
-         ON CONFLICT(agent_group_id) DO UPDATE SET model_id = excluded.model_id`, id, row.id, Date.now());
+        await db.run(
+          `INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES (?, ?, ?)
+         ON CONFLICT(agent_group_id) DO UPDATE SET model_id = excluded.model_id`,
+          id,
+          row.id,
+          Date.now(),
+        );
         modelAssigned = true;
       }
     }

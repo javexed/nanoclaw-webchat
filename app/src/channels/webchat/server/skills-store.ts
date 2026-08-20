@@ -204,7 +204,7 @@ export type ScopedSkillForList = {
 export async function listScopedSkillsForUser(userId: string, pool: AvailableSkill[]): Promise<ScopedSkillForList[]> {
   const poolNames = new Set(pool.map((s) => s.name));
   const out: ScopedSkillForList[] = [];
-  for (const a of listAgentsForUser(userId)) {
+  for (const a of await listAgentsForUser(userId)) {
     const scoped = listScopedSkills(a.id).filter((sk) => !poolNames.has(sk.name));
     if (!scoped.length) continue;
     const rooms = (await getWebchatRoomsForAgent(a.id)).map((r) => ({ id: r.id, name: r.name }));

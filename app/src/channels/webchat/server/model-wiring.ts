@@ -59,7 +59,7 @@ export function reloadAgentModelEnv(agentGroupId: string, reason: string): void 
  * (Codex) groups (their harness ignores the ANTHROPIC_* env this writes).
  */
 export async function refreshUnassignedGroupsForDefaultModel(reason: string): Promise<void> {
-  for (const g of getAllAgentGroups()) {
+  for (const g of await getAllAgentGroups()) {
     if ((await getAssignedModelForAgent(g.id))) continue;
     const provider = (await getContainerConfig(g.id))?.provider;
     // Codex ignores the ANTHROPIC_* env and has no local-model wiring — skip it.

@@ -16,6 +16,7 @@ import { getContainerConfig } from '../../../db/container-configs.js';
 import type { AgentGroup } from '../../../types.js';
 import { getAssignedModelForAgent, getEffectiveModelForAgent, getWebchatRoom } from '../db.js';
 import { hasAdminPrivilege, isOwner } from '../roles.js';
+import { filterAsync } from '../async-array.js';
 
 export interface AgentForUI extends AgentGroup {
   room_id: string | null;
@@ -93,7 +94,7 @@ export function resolveAgent(idOrJid: string): AgentGroup | null {
 
 export async function listAgentsForUser(userId: string, includeArchived = false): Promise<AgentForUI[]> {
   const all = await getAllAgentGroups();
-  const role = (await isOwner(userId)) ? all : all.filter((g) => hasAdminPrivilege(userId, g.id));
+  const role = (await isOwner(userId)) ? all : await filterAsync(all, (g) => hasAdminPrivilege(userId, g.id));
   // Archived agents are hidden by default — this declutters every consumer
   // (agent list, pickers, topology/matrix) at once. The agent list opts in via
   // ?includeArchived=1 so they can still be managed (unarchived).
