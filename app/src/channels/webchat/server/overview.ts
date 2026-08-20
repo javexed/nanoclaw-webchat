@@ -63,7 +63,7 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   // Visible agent count — owners see everything; admins see ones they
   // explicitly admin (matches how /api/agents filters).
   const allAgents = (await db.all(`SELECT id FROM agent_groups`)) as { id: string }[];
-  const visibleAgents = ownerCaller ? allAgents : allAgents.filter((a) => hasAdminPrivilege(userId, a.id));
+  const visibleAgents = (await ownerCaller) ? allAgents : allAgents.filter((a) => hasAdminPrivilege(userId, a.id));
 
   // SCOPING RULE for the activity counts below. A restricted caller counts
   // only sessions on agent groups they can ACCESS and messages in rooms they
@@ -77,10 +77,10 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   // The agents card counts what you can ADMINISTER (hasAdminPrivilege, so it
   // agrees with /api/agents and the Agents view); these count what you are a
   // party to, which includes plain membership.
-  const scopedGroupIds = ownerCaller
+  const scopedGroupIds = (await ownerCaller)
     ? null
     : allAgents.filter(async (a) => (await canAccessAgentGroup(userId, a.id)).allowed).map((a) => a.id);
-  const scopedRoomIds = ownerCaller ? null : filterRoomsForUser(userId, getAllWebchatRooms()).map((r) => r.id);
+  const scopedRoomIds = (await ownerCaller) ? null : filterRoomsForUser(userId, getAllWebchatRooms()).map((r) => r.id);
 
   // `ids === null` means "owner, no scoping"; an EMPTY array means "scoped to
   // nothing", which must count zero rather than fall through to unfiltered —
@@ -115,7 +115,7 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   // Channel breakdown — count of messaging_groups per channel_type. Owner-only
   // (see the interface note); a restricted caller gets null.
   let channels: Record<string, number> | null = null;
-  if (ownerCaller) {
+  if ((await ownerCaller)) {
     const channelRows = (await db.all(`SELECT channel_type, COUNT(*) AS c FROM messaging_groups GROUP BY channel_type`)) as { channel_type: string; c: number }[];
     channels = {};
     for (const row of channelRows) channels[row.channel_type] = row.c;
@@ -124,11 +124,11 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   // Recent agents — last 5 created. Restricted set when not owner.
   const recentLimit = 5;
   const visibleIds = new Set(visibleAgents.map((a) => a.id));
-  const recentSql = ownerCaller
+  const recentSql = (await ownerCaller)
     ? `SELECT id, name, folder, created_at FROM agent_groups ORDER BY created_at DESC LIMIT ${recentLimit}`
     : `SELECT id, name, folder, created_at FROM agent_groups ORDER BY created_at DESC`;
   const recentRaw = (await db.all(recentSql)) as { id: string; name: string; folder: string; created_at: string }[];
-  const recentFiltered = ownerCaller ? recentRaw : recentRaw.filter((r) => visibleIds.has(r.id)).slice(0, recentLimit);
+  const recentFiltered = (await ownerCaller) ? recentRaw : recentRaw.filter((r) => visibleIds.has(r.id)).slice(0, recentLimit);
   const recentAgents = recentFiltered.map(async (r) => {
     const room = await getWebchatRoom(r.folder);
     return {

@@ -61,7 +61,7 @@ export function findSessionsByAgentGroup(agentGroupId: string): TeardownTarget[]
 export async function deleteSessionDbState(sessionId: string): Promise<void> {
   const db = getDb();
   await db.run(`DELETE FROM pending_questions WHERE session_id = ?`, sessionId);
-  if (hasTable(db, 'pending_approvals')) {
+  if ((await hasTable(db, 'pending_approvals'))) {
     await db.run(`DELETE FROM pending_approvals WHERE session_id = ?`, sessionId);
   }
   await db.run(`DELETE FROM sessions WHERE id = ?`, sessionId);

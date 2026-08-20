@@ -31,11 +31,11 @@ export function filterRoomsForUser<T extends WebchatRoom>(userId: string, rooms:
  * — scoped admins of any agent wired to the room can archive too. Owner +
  * global admin always pass.
  */
-export function canArchiveRoom(userId: string, roomId: string): boolean {
-  if (isOwner(userId) || isGlobalAdmin(userId)) return true;
+export async function canArchiveRoom(userId: string, roomId: string): Promise<boolean> {
+  if ((await isOwner(userId)) || (await isGlobalAdmin(userId))) return true;
   const agents = getAgentsForWebchatRoom(roomId);
   for (const a of agents) {
-    if (hasAdminPrivilege(userId, a.id)) return true;
+    if ((await hasAdminPrivilege(userId, a.id))) return true;
   }
   return false;
 }

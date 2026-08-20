@@ -1042,8 +1042,8 @@ export async function createAgentHandler(
  * every group, so a scoped row would be redundant noise in `user_roles`.
  * No-op if the permissions module isn't installed.
  */
-export function grantCreatorAdmin(creatorUserId: string, agentGroupId: string): void {
-  if (isOwner(creatorUserId) || isGlobalAdmin(creatorUserId)) return;
+export async function grantCreatorAdmin(creatorUserId: string, agentGroupId: string): Promise<void> {
+  if ((await isOwner(creatorUserId)) || (await isGlobalAdmin(creatorUserId))) return;
   try {
     permsGrantRole({
       user_id: creatorUserId,
@@ -1192,13 +1192,13 @@ export async function deleteAgentHandler(res: ServerResponse, id: string): Promi
         'skill_drafts',
         'webchat_agent_mcp_servers',
       ]) {
-        if (hasTable(db, table)) {
+        if ((await hasTable(db, table))) {
           await db.run(`DELETE FROM ${table} WHERE agent_group_id = ?`, id);
         }
       }
       // a2a policies key by from/to, not agent_group_id — either side dying
       // kills the policy.
-      if (hasTable(db, 'agent_message_policies')) {
+      if ((await hasTable(db, 'agent_message_policies'))) {
         await db.run(`DELETE FROM agent_message_policies WHERE from_agent_group_id = ? OR to_agent_group_id = ?`, id, id);
       }
       // Delete the home room (its own session rows are already gone above).

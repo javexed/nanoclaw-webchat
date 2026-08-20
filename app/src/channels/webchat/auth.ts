@@ -565,7 +565,7 @@ export function canonicalizeWebchatUserId(id: string): string {
   return handle ? `webchat:${normalizeId(handle)}` : id;
 }
 
-function finalize(args: { source: AuthResult['source']; userId: string; displayName: string }): AuthResult {
+async function finalize(args: { source: AuthResult['source']; userId: string; displayName: string }): Promise<AuthResult> {
   // Upsert the users row so every authenticated identity is visible in the
   // Permissions UI even before any role is granted. The display_name is
   // refreshed on each connect (upsert preserves null with COALESCE if the
@@ -573,7 +573,7 @@ function finalize(args: { source: AuthResult['source']; userId: string; displayN
   //
   // Guarded behind hasTable so a deployment without the permissions module
   // still authenticates instead of throwing on a missing FK.
-  if (hasTable(getDb(), 'users')) {
+  if ((await hasTable(getDb(), 'users'))) {
     try {
       upsertUser({
         id: args.userId,
@@ -598,7 +598,7 @@ function finalize(args: { source: AuthResult['source']; userId: string; displayN
     // is spent, no role exists, and the operator is left holding a tailnet
     // identity that can authenticate but not administer, with the only UI for
     // re-arming gated behind the owner they just failed to become.
-    if (granted || isOwner(args.userId)) setPromoteFirstTailscaleOwner(false);
+    if ((await granted) || (await isOwner(args.userId))) setPromoteFirstTailscaleOwner(false);
   }
   return { ok: true, userId: args.userId, displayName: args.displayName, source: args.source };
 }

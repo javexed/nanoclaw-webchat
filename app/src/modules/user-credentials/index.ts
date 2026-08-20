@@ -167,14 +167,14 @@ registerTurnGate(async (mg, agentGroupId, userId) => {
 // credential for this room's provider spawns under the member's own OneCLI
 // identity → gateway injects THEIR credential. The agent itself is created by
 // the prepare hook below (which runs first), so this just names it.
-registerAgentIdentityResolver((agentGroupId, threadId) => {
+registerAgentIdentityResolver(async (agentGroupId, threadId) => {
   // A per-member session key is (user, thread); older ones are a bare user id.
   // Decode, falling back to the raw value so both shapes resolve to the same
   // credential identity — an undecoded key would find no credential and drop
   // the container to the workspace default WITHOUT failing, i.e. running on
   // the wrong identity.
   const userId = memberUserFromKey(threadId) ?? threadId;
-  if (userId && userHasConnectedCredential(userId, groupProvider(agentGroupId))) {
+  if (userId && (await userHasConnectedCredential(userId, groupProvider(agentGroupId)))) {
     return userCredsAgentIdentifier(agentGroupId, userId);
   }
   return null;

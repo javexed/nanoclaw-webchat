@@ -251,7 +251,7 @@ export async function rRoomAgentDelete(ctx: RouteCtx, m: RegExpMatchArray): Prom
   // Owner can unwire any agent. A scoped admin may unwire an agent THEY
   // administer from a room they can access — they can never touch agents
   // they don't administer.
-  if (!isOwner(userId) && !(canAccessRoom(userId, roomId) && hasAdminPrivilege(userId, agentId))) {
+  if (!isOwner(userId) && !((await canAccessRoom(userId, roomId)) && hasAdminPrivilege(userId, agentId))) {
     return json(res, 403, { error: 'Admin privilege required' });
   }
   return removeAgentFromRoomHandler(res, roomId, agentId);
@@ -879,7 +879,7 @@ export async function createRoomHandler(req: IncomingMessage, res: ServerRespons
 
   const roomId = nameToFolder(roomName);
   if (!roomId) return json(res, 400, { error: 'Could not derive room id from name' });
-  if (getMessagingGroupByPlatform('webchat', roomId)) {
+  if ((await getMessagingGroupByPlatform('webchat', roomId))) {
     return json(res, 409, { error: 'Room with this name already exists' });
   }
 
@@ -1048,7 +1048,7 @@ export async function addAgentToRoomHandler(
     // Owner can wire any agent. A scoped admin may wire an agent THEY
     // administer to a room they can access (the same access set the picker
     // is filtered to).
-    if (!isOwner(userId) && !(canAccessRoom(userId, roomId) && hasAdminPrivilege(userId, parsed.id))) {
+    if (!isOwner(userId) && !((await canAccessRoom(userId, roomId)) && hasAdminPrivilege(userId, parsed.id))) {
       return json(res, 403, { error: 'Admin privilege required' });
     }
     agentId = parsed.id;
