@@ -72,9 +72,9 @@ async function evaluateRoomCredState(
   // Effective mode = the room's override, else the global default. Which
   // credential TYPES the workspace accepts (key / OAuth, per provider) is set on
   // the Credentials admin page; the room's mode is the master switch over both.
-  const provider = groupProvider(agentGroupId);
+  const provider = await groupProvider(agentGroupId);
   const cfg = await getCredentialsConfig();
-  const mode = getEffectiveRoomMode(mg.platform_id);
+  const mode = await getEffectiveRoomMode(mg.platform_id);
   // 'disabled' (User credentials: Off) means no UserCreds at all — neither key nor
   // OAuth — regardless of what the workspace accepts. Otherwise each method
   // applies if the workspace accepts it for this provider.
@@ -121,7 +121,7 @@ registerTurnGate(async (mg, agentGroupId, userId) => {
   } catch (err) {
     let required = true; // unknown mode → treat as required
     try {
-      required = getEffectiveRoomMode(mg.platform_id) === 'required';
+      required = (await getEffectiveRoomMode(mg.platform_id)) === 'required';
     } catch {
       /* mode unreadable too — stay closed */
     }
@@ -215,7 +215,7 @@ registerSessionPrepareHook(async (agentGroupId, threadId) => {
 // rewrites `Authorization` but not `x-api-key`, and Anthropic rejects the
 // lingering `x-api-key: placeholder`. An API-key default needs nothing.
 registerContainerEnvResolver(async (agentGroupId, threadId): Promise<Record<string, string>> => {
-  if (groupProvider(agentGroupId) !== 'claude') return {};
+  if ((await groupProvider(agentGroupId)) !== 'claude') return {};
   const oauthEnv = { CLAUDE_CODE_OAUTH_TOKEN: OAUTH_SENTINEL, ANTHROPIC_API_KEY: '' };
   // Per-member session: the member's own credential decides the container mode.
   const memberUserId = memberUserFromKey(threadId) ?? threadId;

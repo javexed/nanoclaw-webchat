@@ -215,9 +215,9 @@ export async function isolateGroup(admin: OnecliAdmin, agentGroupId: string): Pr
   if ((await admin.getSecretMode(agentId)) === 'selective') return;
 
   const assigned = await admin.listAgentSecretIds(agentId);
-  const wantType = providerSecretType(agentGroupId);
+  const wantType = await providerSecretType(agentGroupId);
   const all = await admin.listAllSecrets();
-  const typeById = new Map(all.map((s) => [s.id, s.type]));
+  const typeById = await new Map(all.map((s) => [s.id, s.type]));
   // Prefer a provider secret already assigned; otherwise the workspace default,
   // which is what an `all`-mode agent has been implicitly using all along.
   let modelCred = assigned.find((id) => typeById.get(id) === wantType) ?? null;

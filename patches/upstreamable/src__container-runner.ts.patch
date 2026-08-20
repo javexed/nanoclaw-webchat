@@ -1,5 +1,5 @@
 diff --git a/src/container-runner.ts b/src/container-runner.ts
-index edda6a4a..1e82bb4a 100644
+index edda6a4a..712cb415 100644
 --- a/src/container-runner.ts
 +++ b/src/container-runner.ts
 @@ -25,13 +25,18 @@ import {
@@ -67,12 +67,12 @@ index edda6a4a..1e82bb4a 100644
 + * knows to look. Reset on the next successful spawn (re-arms the notice for a
 + * future outage). Best-effort — never throws into the wake path.
 + */
-+function noteSpawnFailure(session: Session): void {
++async function noteSpawnFailure(session: Session): Promise<void> {
 +  const n = (spawnFailures.get(session.id) ?? 0) + 1;
 +  spawnFailures.set(session.id, n);
 +  if (n !== SPAWN_FAILURE_NOTICE_AT) return; // fire exactly once per outage
 +  try {
-+    const mg = session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined;
++    const mg = await (session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined);
 +    if (!mg || !mg.platform_id) return; // nowhere to post (e.g. agent-only session)
 +    writeOutboundDirect(session.agent_group_id, session.id, {
 +      id: `spawn-fail-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

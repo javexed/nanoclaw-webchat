@@ -1,5 +1,5 @@
 diff --git a/src/cli/resources/destinations.ts b/src/cli/resources/destinations.ts
-index 00e7b86e..9fa1ee28 100644
+index 00e7b86e..c7b5a418 100644
 --- a/src/cli/resources/destinations.ts
 +++ b/src/cli/resources/destinations.ts
 @@ -1,21 +1,44 @@
@@ -73,8 +73,8 @@ index 00e7b86e..9fa1ee28 100644
 +  }
 +}
 +
-+function refreshAgentSessions(agentGroupId: string, reason: string): void {
-+  const sessions = getSessionsByAgentGroup(agentGroupId).filter((s) => s.status === 'active');
++async function refreshAgentSessions(agentGroupId: string, reason: string): Promise<void> {
++  const sessions = (await getSessionsByAgentGroup(agentGroupId)).filter((s) => s.status === 'active');
 +  for (const s of sessions) {
 +    try {
 +      writeDestinations(agentGroupId, s.id);

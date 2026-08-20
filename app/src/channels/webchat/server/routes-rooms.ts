@@ -140,18 +140,23 @@ export async function rRoomAgentsGet(ctx: RouteCtx, m: RegExpMatchArray): Promis
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
   if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
   const agents = await getAgentsForWebchatRoom(roomId);
-  const primeAgentId = getPrimeAgentForWebchatRoom(roomId);
+  const primeAgentId = await getPrimeAgentForWebchatRoom(roomId);
+  // Promise.all around the map: the callback is async (learning_auto reads
+  // the DB), so without it `json` would serialize an array of Promises —
+  // which stringify as {} and hand the client a room full of empty agents.
   return json(
     res,
     200,
-    agents.map(async (a) => ({
-      ...a,
-      is_prime: a.id === primeAgentId,
-      // Whether this agent auto-runs the learning review after busy turns.
-      // Member-visible on purpose: the client uses it to suppress the manual
-      // nudge (auto already ran — a tap would just double the review).
-      learning_auto: (await parseAgentLearning(a.id)).autoTrigger !== false,
-    })),
+    await Promise.all(
+      agents.map(async (a) => ({
+        ...a,
+        is_prime: a.id === primeAgentId,
+        // Whether this agent auto-runs the learning review after busy turns.
+        // Member-visible on purpose: the client uses it to suppress the manual
+        // nudge (auto already ran — a tap would just double the review).
+        learning_auto: (await parseAgentLearning(a.id)).autoTrigger !== false,
+      })),
+    ),
   );
 }
 
@@ -198,7 +203,8 @@ export async function rRoomCredModePut(ctx: RouteCtx, m: RegExpMatchArray): Prom
   const roomId = decodeURIComponent(m[1]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
   // Owner, or an admin over ANY agent wired to this room.
-  const allowed = isOwner(userId) || (await getAgentsForWebchatRoom(roomId)).some((a) => hasAdminPrivilege(userId, a.id));
+  const allowed =
+    isOwner(userId) || (await getAgentsForWebchatRoom(roomId)).some((a) => hasAdminPrivilege(userId, a.id));
   if (!allowed) return json(res, 403, { error: 'Admin privilege required' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -229,7 +235,8 @@ export async function rRoomOauthPut(ctx: RouteCtx, m: RegExpMatchArray): Promise
   const { req, res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  const allowed = isOwner(userId) || (await getAgentsForWebchatRoom(roomId)).some((a) => hasAdminPrivilege(userId, a.id));
+  const allowed =
+    isOwner(userId) || (await getAgentsForWebchatRoom(roomId)).some((a) => hasAdminPrivilege(userId, a.id));
   if (!allowed) return json(res, 403, { error: 'Admin privilege required' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -678,11 +685,21 @@ export const FRESH_SYNC_LIMIT = 50;
  * session). Existing sessions only — a thread with no session yet has no agent
  * memory to seed; the copied transcript is still visible in chat and the agent
  * picks it up when its session is first created through the normal inbound path. */
-export async function sessionsForThreadKey(messagingGroupId: string, sessionKey: string | null): Promise<TeardownTarget[]> {
+export async function sessionsForThreadKey(
+  messagingGroupId: string,
+  sessionKey: string | null,
+): Promise<TeardownTarget[]> {
   const rows = (
     sessionKey === null
-      ? await getDb().all(`SELECT id, agent_group_id FROM sessions WHERE messaging_group_id = ? AND thread_id IS NULL`, messagingGroupId)
-      : await getDb().all(`SELECT id, agent_group_id FROM sessions WHERE messaging_group_id = ? AND thread_id = ?`, messagingGroupId, sessionKey)
+      ? await getDb().all(
+          `SELECT id, agent_group_id FROM sessions WHERE messaging_group_id = ? AND thread_id IS NULL`,
+          messagingGroupId,
+        )
+      : await getDb().all(
+          `SELECT id, agent_group_id FROM sessions WHERE messaging_group_id = ? AND thread_id = ?`,
+          messagingGroupId,
+          sessionKey,
+        )
   ) as { id: string; agent_group_id: string }[];
   return rows.map((r) => ({ sessionId: r.id, agentGroupId: r.agent_group_id }));
 }
@@ -879,7 +896,7 @@ export async function createRoomHandler(req: IncomingMessage, res: ServerRespons
 
   const roomId = nameToFolder(roomName);
   if (!roomId) return json(res, 400, { error: 'Could not derive room id from name' });
-  if ((await getMessagingGroupByPlatform('webchat', roomId))) {
+  if (await getMessagingGroupByPlatform('webchat', roomId)) {
     return json(res, 409, { error: 'Room with this name already exists' });
   }
 
@@ -1072,7 +1089,7 @@ export async function addAgentToRoomHandler(
   // re-added after the prior one was unwired) auto-primes the newcomer.
   // Rooms going from 1+ → 2+ leave the existing prime alone — operator
   // picks via the ★ toggle if they want to swap.
-  const wasEmpty = countAgentsForWebchatRoom(roomId) === 0;
+  const wasEmpty = (await countAgentsForWebchatRoom(roomId)) === 0;
 
   try {
     wireAgentToWebchatRoom(room.name, roomId, agentId);
@@ -1105,7 +1122,7 @@ export function removeAgentFromRoomHandler(res: ServerResponse, roomId: string, 
   // way so remaining wirings get a fresh pattern set (the prime's
   // negative-lookahead may need to lose this agent's folder, or the
   // patterns may need to revert to '.').
-  if (getPrimeAgentForWebchatRoom(roomId) === agentId) {
+  if ((await getPrimeAgentForWebchatRoom(roomId)) === agentId) {
     clearPrimeAgentForWebchatRoom(roomId);
   }
   recomputeEngagePatterns(roomId);
