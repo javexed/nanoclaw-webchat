@@ -24,14 +24,11 @@ import { ensureContainerConfig, updateContainerConfigScalars } from '../../db/co
 
 /** Make `id` a Codex-provider agent group (parent row required by the FK). */
 async function makeCodexGroup(id: string): Promise<void> {
-  await getDb().run(
-    `INSERT INTO agent_groups (id, name, folder, created_at) VALUES (?, ?, ?, ?)`,
-    id,
-    id,
-    id,
-    new Date().toISOString(),
-  );
-  await ensureContainerConfig(id);
+  await getDb().run(`INSERT INTO agent_groups (id, name, folder, created_at) VALUES (?, ?, ?, ?)`, id, id, id, new Date().toISOString());
+  // Pin explicitly: ensureContainerConfig stamps DEFAULT_AGENT_PROVIDER when no
+  // provider is given, so these cases silently changed meaning on an install
+  // whose default is not claude. The provider under test belongs in the test.
+  await ensureContainerConfig(id, 'claude');
   await updateContainerConfigScalars(id, { provider: 'codex' });
 }
 
@@ -204,14 +201,8 @@ describe('ensureGroupEnrollment (lazy, at first spawn)', () => {
   it('re-enrolls with the new provider when the group provider is switched after enrollment', async () => {
     const { admin, secrets } = fakeAdmin();
     // ag-sw starts as a default (claude) group; member enrolls as claude.
-    await getDb().run(
-      `INSERT INTO agent_groups (id, name, folder, created_at) VALUES (?, ?, ?, ?)`,
-      'ag-sw',
-      'ag-sw',
-      'ag-sw',
-      new Date().toISOString(),
-    );
-    await ensureContainerConfig('ag-sw');
+    await getDb().run(`INSERT INTO agent_groups (id, name, folder, created_at) VALUES (?, ?, ?, ?)`, 'ag-sw', 'ag-sw', 'ag-sw', new Date().toISOString());
+    await ensureContainerConfig('ag-sw', 'claude'); // explicit: see makeCodexGroup
     await storeUserCredential(admin, 'webchat:frank', 'claude', 'sk-ant-frank', 'api_key');
     await ensureGroupEnrollment(admin, 'webchat:frank', 'ag-sw');
     expect((await getUserCredsCredential('webchat:frank', 'ag-sw'))!.provider).toBe('claude');
@@ -467,7 +458,7 @@ describe('setWorkspaceDefaultCredential fan-out (re-mint must not orphan selecti
     id: string,
   ) {
     await getDb().run(`INSERT INTO agent_groups (id,name,folder,created_at) VALUES (?,?,?,?)`, id, id, id, '');
-    await ensureContainerConfig(id);
+    await ensureContainerConfig(id, 'claude'); // explicit: see makeCodexGroup
     const uuid = await admin.ensureAgent(id, id);
     await admin.setSecretMode(uuid, 'selective');
     return uuid;
