@@ -42,57 +42,35 @@ afterEach(() => {
 
 // ── Seed helpers (mirror reads.test.ts) ──
 
-function insertUser(userId: string): void {
-  getDb()
-    .prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`)
-    .run(userId, new Date().toISOString());
+async function insertUser(userId: string): Promise<void> {
+  await getDb().run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, userId, new Date().toISOString());
 }
 
-function insertAgentGroup(id: string): void {
-  getDb()
-    .prepare(
-      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-    )
-    .run(id, id, id, new Date().toISOString());
+async function insertAgentGroup(id: string): Promise<void> {
+  await getDb().run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, id, id, id, new Date().toISOString());
 }
 
-function insertRoom(roomId: string, name = roomId): void {
-  getDb()
-    .prepare(
-      `INSERT OR IGNORE INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
-       VALUES (?, 'webchat', 'webchat', ?, ?, 0, 'public', ?)`,
-    )
-    .run(roomId, roomId, name, new Date().toISOString());
+async function insertRoom(roomId: string, name = roomId): Promise<void> {
+  await getDb().run(`INSERT OR IGNORE INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
+       VALUES (?, 'webchat', 'webchat', ?, ?, 0, 'public', ?)`, roomId, roomId, name, new Date().toISOString());
 }
 
-function wire(roomId: string, agentGroupId: string): void {
-  getDb()
-    .prepare(
-      `INSERT OR IGNORE INTO messaging_group_agents
+async function wire(roomId: string, agentGroupId: string): Promise<void> {
+  await getDb().run(`INSERT OR IGNORE INTO messaging_group_agents
          (id, messaging_group_id, agent_group_id, engage_mode, engage_pattern,
           sender_scope, ignored_message_policy, session_mode, priority, created_at)
-       VALUES (?, ?, ?, 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`,
-    )
-    .run(randomUUID(), roomId, agentGroupId, new Date().toISOString());
+       VALUES (?, ?, ?, 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`, randomUUID(), roomId, agentGroupId, new Date().toISOString());
 }
 
-function grantOwner(userId: string): void {
+async function grantOwner(userId: string): Promise<void> {
   insertUser(userId);
-  getDb()
-    .prepare(
-      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
-       VALUES (?, 'owner', NULL, NULL, ?)`,
-    )
-    .run(userId, new Date().toISOString());
+  await getDb().run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
+       VALUES (?, 'owner', NULL, NULL, ?)`, userId, new Date().toISOString());
 }
 
-function insertMessage(roomId: string, content: string, createdAt: number): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_messages (id, room_id, sender, content, created_at)
-       VALUES (?, ?, 'someone', ?, ?)`,
-    )
-    .run(randomUUID(), roomId, content, createdAt);
+async function insertMessage(roomId: string, content: string, createdAt: number): Promise<void> {
+  await getDb().run(`INSERT INTO webchat_messages (id, room_id, sender, content, created_at)
+       VALUES (?, ?, 'someone', ?, ?)`, randomUUID(), roomId, content, createdAt);
 }
 
 describe('slugifyHandle', () => {
@@ -171,10 +149,10 @@ describe('userIdForHandle / resolveHandlesToUserIds', () => {
     expect(userIdForHandle('nobody')).toBeNull();
   });
 
-  it('maps a set of handles to user ids, dedups, and drops unknowns', () => {
+  it('maps a set of handles to user ids, dedups, and drops unknowns', async () => {
     setWebchatUserHandle('webchat:u1', 'alice');
     setWebchatUserHandle('webchat:u2', 'bob');
-    const ids = resolveHandlesToUserIds(['alice', 'BOB', 'alice', 'ghost']);
+    const ids = await resolveHandlesToUserIds(['alice', 'BOB', 'alice', 'ghost']);
     expect(ids.sort()).toEqual(['webchat:u1', 'webchat:u2']);
   });
 
@@ -184,14 +162,12 @@ describe('userIdForHandle / resolveHandlesToUserIds', () => {
 });
 
 describe('getWebchatHandleUsers', () => {
-  it('returns every handle with its display name (null when unknown)', () => {
-    getDb()
-      .prepare(`INSERT INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', ?, ?)`)
-      .run('webchat:u1', 'Jane Doe', new Date().toISOString());
+  it('returns every handle with its display name (null when unknown)', async () => {
+    await getDb().run(`INSERT INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', ?, ?)`, 'webchat:u1', 'Jane Doe', new Date().toISOString());
     setWebchatUserHandle('webchat:u1', 'jane');
     setWebchatUserHandle('webchat:u2', 'bob'); // no users row → null display name
 
-    const rows = getWebchatHandleUsers().sort((a, b) => a.handle.localeCompare(b.handle));
+    const rows = (await getWebchatHandleUsers()).sort((a, b) => a.handle.localeCompare(b.handle));
     expect(rows).toEqual([
       { userId: 'webchat:u2', handle: 'bob', displayName: null },
       { userId: 'webchat:u1', handle: 'jane', displayName: 'Jane Doe' },
@@ -222,40 +198,40 @@ describe('extractHandles', () => {
 });
 
 describe('getMentionedRoomIdsForUser', () => {
-  it('flags a room whose unread message @-mentions the handle', () => {
+  it('flags a room whose unread message @-mentions the handle', async () => {
     setWebchatUserHandle('webchat:alice', 'alice');
     insertMessage('room-1', 'hey @alice look at this', 1000);
-    expect(getMentionedRoomIdsForUser('webchat:alice', 'alice').has('room-1')).toBe(true);
+    expect((await getMentionedRoomIdsForUser('webchat:alice', 'alice')).has('room-1')).toBe(true);
   });
 
-  it('clears once the room is read past the mention', () => {
+  it('clears once the room is read past the mention', async () => {
     setWebchatUserHandle('webchat:alice', 'alice');
     insertMessage('room-1', 'hey @alice', 1000);
     markRoomRead('webchat:alice', 'room-1', 1000);
-    expect(getMentionedRoomIdsForUser('webchat:alice', 'alice').has('room-1')).toBe(false);
+    expect((await getMentionedRoomIdsForUser('webchat:alice', 'alice')).has('room-1')).toBe(false);
   });
 
-  it('re-flags when a newer mention arrives after reading', () => {
+  it('re-flags when a newer mention arrives after reading', async () => {
     setWebchatUserHandle('webchat:alice', 'alice');
     insertMessage('room-1', 'hey @alice', 1000);
     markRoomRead('webchat:alice', 'room-1', 1000);
     insertMessage('room-1', '@alice again', 2000);
-    expect(getMentionedRoomIdsForUser('webchat:alice', 'alice').has('room-1')).toBe(true);
+    expect((await getMentionedRoomIdsForUser('webchat:alice', 'alice')).has('room-1')).toBe(true);
   });
 
-  it('ignores rooms that mention someone else', () => {
+  it('ignores rooms that mention someone else', async () => {
     insertMessage('room-1', 'hey @bob', 1000);
-    expect(getMentionedRoomIdsForUser('webchat:alice', 'alice').has('room-1')).toBe(false);
+    expect((await getMentionedRoomIdsForUser('webchat:alice', 'alice')).has('room-1')).toBe(false);
   });
 
-  it('is empty for a blank handle', () => {
+  it('is empty for a blank handle', async () => {
     insertMessage('room-1', 'hey @alice', 1000);
-    expect(getMentionedRoomIdsForUser('webchat:alice', '').size).toBe(0);
+    expect((await getMentionedRoomIdsForUser('webchat:alice', '')).size).toBe(0);
   });
 });
 
 describe('annotateRoomsForUser — mention flag', () => {
-  it('sets mention:true for an accessible room with an unread @-mention', () => {
+  it('sets mention:true for an accessible room with an unread @-mention', async () => {
     grantOwner('webchat:owner');
     setWebchatUserHandle('webchat:owner', 'owner');
     insertAgentGroup('ag-1');
@@ -263,12 +239,12 @@ describe('annotateRoomsForUser — mention flag', () => {
     wire('room-1', 'ag-1');
     insertMessage('room-1', 'ping @owner', 1000);
 
-    const room = annotateRoomsForUser('webchat:owner').find((r) => r.id === 'room-1');
+    const room = (await annotateRoomsForUser('webchat:owner')).find((r) => r.id === 'room-1');
     expect(room?.mention).toBe(true);
     expect(room?.unread).toBe(true);
   });
 
-  it('clears the mention flag once the room is read', () => {
+  it('clears the mention flag once the room is read', async () => {
     grantOwner('webchat:owner');
     setWebchatUserHandle('webchat:owner', 'owner');
     insertAgentGroup('ag-1');
@@ -277,11 +253,11 @@ describe('annotateRoomsForUser — mention flag', () => {
     insertMessage('room-1', 'ping @owner', 1000);
     markRoomRead('webchat:owner', 'room-1', 1000);
 
-    const room = annotateRoomsForUser('webchat:owner').find((r) => r.id === 'room-1');
+    const room = (await annotateRoomsForUser('webchat:owner')).find((r) => r.id === 'room-1');
     expect(room?.mention).toBe(false);
   });
 
-  it('does not flag a plain unread room (no mention) as mention', () => {
+  it('does not flag a plain unread room (no mention) as mention', async () => {
     grantOwner('webchat:owner');
     setWebchatUserHandle('webchat:owner', 'owner');
     insertAgentGroup('ag-1');
@@ -289,7 +265,7 @@ describe('annotateRoomsForUser — mention flag', () => {
     wire('room-1', 'ag-1');
     insertMessage('room-1', 'just a normal message', 1000);
 
-    const room = annotateRoomsForUser('webchat:owner').find((r) => r.id === 'room-1');
+    const room = (await annotateRoomsForUser('webchat:owner')).find((r) => r.id === 'room-1');
     expect(room?.unread).toBe(true);
     expect(room?.mention).toBe(false);
   });

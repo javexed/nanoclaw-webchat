@@ -43,16 +43,12 @@ export interface RoomHuman {
  * a system prompt. Agent and side-channel rows are excluded — `sender_type`
  * 'user' is the only one that denotes a person.
  */
-export function getRoomHumans(roomId: string): RoomHuman[] {
-  return getDb()
-    .prepare(
-      `SELECT DISTINCT h.user_id AS user_id, h.handle AS handle, u.display_name AS display_name
+export async function getRoomHumans(roomId: string): Promise<RoomHuman[]> {
+  return (await getDb().all(`SELECT DISTINCT h.user_id AS user_id, h.handle AS handle, u.display_name AS display_name
          FROM webchat_user_handles h
          JOIN webchat_messages m ON m.sender = h.user_id AND m.room_id = ? AND m.sender_type = 'user'
          LEFT JOIN users u ON u.id = h.user_id
-        ORDER BY h.handle`,
-    )
-    .all(roomId) as RoomHuman[];
+        ORDER BY h.handle`, roomId)) as RoomHuman[];
 }
 
 /**
@@ -60,13 +56,13 @@ export function getRoomHumans(roomId: string): RoomHuman[] {
  * writeDestinations: refreshed on every spawn, so a newly-joined person becomes
  * mentionable on the next wake rather than needing a restart.
  */
-export function writeRoomHumans(agentGroupId: string, sessionId: string): void {
+export async function writeRoomHumans(agentGroupId: string, sessionId: string): Promise<void> {
   const dbPath = inboundDbPath(agentGroupId, sessionId);
   if (!fs.existsSync(dbPath)) return;
 
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session?.messaging_group_id) return;
-  const mg = getMessagingGroup(session.messaging_group_id);
+  const mg = await getMessagingGroup(session.messaging_group_id);
   // Webchat-only: @-handles are a webchat concept. Other channels have their
   // own mention syntax and are left alone.
   if (!mg || mg.channel_type !== 'webchat') return;

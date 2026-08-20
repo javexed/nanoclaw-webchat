@@ -496,15 +496,15 @@ describe('triage tiers', () => {
 describe('buildApprovalTriageView', () => {
   const payload = JSON.stringify({ frame: 'roles grant' });
 
-  it('reports unscreened when nothing was recorded, and still derives the never-list flags', () => {
-    const v = buildApprovalTriageView('appr-x', 'cli_command', payload, { getTriage: () => undefined });
+  it('reports unscreened when nothing was recorded, and still derives the never-list flags', async () => {
+    const v = await buildApprovalTriageView('appr-x', 'cli_command', payload, { getTriage: () => undefined });
     expect(v.tier).toBe('unscreened');
     expect(v.heuristic).toEqual(['permissions']);
     expect(v.flags).toEqual([]);
   });
 
-  it('recomputes heuristics live rather than trusting the stored copy', () => {
-    const v = buildApprovalTriageView('appr-x', 'cli_command', payload, {
+  it('recomputes heuristics live rather than trusting the stored copy', async () => {
+    const v = await buildApprovalTriageView('appr-x', 'cli_command', payload, {
       getTriage: () => ({
         tier: 'model',
         reason: 'grants a role',
@@ -518,8 +518,8 @@ describe('buildApprovalTriageView', () => {
     expect(v.reversible).toBe('no');
   });
 
-  it('drops stored flags outside the vocabulary', () => {
-    const v = buildApprovalTriageView('appr-x', 'cli_command', '{}', {
+  it('drops stored flags outside the vocabulary', async () => {
+    const v = await buildApprovalTriageView('appr-x', 'cli_command', '{}', {
       getTriage: () => ({
         tier: 'model',
         reason: '',

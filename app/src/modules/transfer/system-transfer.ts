@@ -45,9 +45,9 @@ export interface SystemExportManifest {
 
 export function buildSystemManifest(lean: boolean): SystemExportManifest {
   const db = getDb();
-  const count = (sql: string): number => {
+  const count = async (sql: string): Promise<number> => {
     try {
-      return (db.prepare(sql).get() as { n: number }).n;
+      return ((await db.get(sql)) as { n: number }).n;
     } catch {
       return 0;
     }
@@ -128,7 +128,7 @@ export interface SystemPreview {
   schemaOk: boolean;
 }
 
-export function previewSystemImport(bundleDir: string): SystemPreview {
+export async function previewSystemImport(bundleDir: string): Promise<SystemPreview> {
   const manifest = JSON.parse(fs.readFileSync(path.join(bundleDir, 'manifest.json'), 'utf8')) as SystemExportManifest;
   if (manifest.format !== SYSTEM_FORMAT) throw new Error('Not a NanoClaw system export');
   if (manifest.version > SYSTEM_VERSION)
@@ -142,7 +142,7 @@ export function previewSystemImport(bundleDir: string): SystemPreview {
   } finally {
     bundleDb.close();
   }
-  const current = (getDb().prepare('SELECT COALESCE(MAX(version), 0) AS n FROM schema_version').get() as { n: number })
+  const current = ((await getDb().get('SELECT COALESCE(MAX(version), 0) AS n FROM schema_version')) as { n: number })
     .n;
   return {
     manifest: { ...manifest, schemaVersion: bundleSchema },

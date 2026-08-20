@@ -69,9 +69,9 @@ function uploadsDirFor(roomId: string): string {
 }
 
 /** Stage the whole room bundle (rooms are small enough to stage fully). */
-export function stageRoomExport(roomId: string): { stage: string; manifest: RoomExportManifest } {
+export async function stageRoomExport(roomId: string): Promise<{ stage: string; manifest: RoomExportManifest }> {
   const db = getDb();
-  const mg = getMessagingGroupByPlatform('webchat', roomId);
+  const mg = await getMessagingGroupByPlatform('webchat', roomId);
   if (!mg) throw new Error('Room not found');
 
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-roomexport-'));
@@ -83,27 +83,27 @@ export function stageRoomExport(roomId: string): { stage: string; manifest: Room
   const tables: Record<string, Record<string, unknown>[]> = {};
   for (const t of ROOM_TABLES) {
     try {
-      tables[t] = db.prepare(`SELECT * FROM ${t} WHERE room_id = ?`).all(roomId) as Record<string, unknown>[];
+      tables[t] = (await db.all(`SELECT * FROM ${t} WHERE room_id = ?`, roomId)) as Record<string, unknown>[];
     } catch {
       tables[t] = []; // table absent on this install — fine
     }
     write(`${t}.json`, tables[t]);
   }
 
-  const wirings = db.prepare(`SELECT * FROM messaging_group_agents WHERE messaging_group_id = ?`).all(mg.id) as Record<
+  const wirings = (await db.all(`SELECT * FROM messaging_group_agents WHERE messaging_group_id = ?`, mg.id)) as Record<
     string,
     unknown
   >[];
   const agents = wirings
     .map((w) => getAgentGroup(String(w.agent_group_id)))
     .filter((a): a is NonNullable<typeof a> => !!a)
-    .map((a) => ({ name: a.name, folder: a.folder }));
+    .map(async (a) => ({ name: (await a).name, folder: (await a).folder }));
   write('messaging_group.json', mg);
   write('wirings.json', wirings);
 
   let learning: Record<string, unknown> | null = null;
   try {
-    learning = (db.prepare(`SELECT * FROM learning_room_settings WHERE messaging_group_id = ?`).get(mg.id) ??
+    learning = (await db.get(`SELECT * FROM learning_room_settings WHERE messaging_group_id = ?`, mg.id) ??
       null) as Record<string, unknown> | null;
   } catch {
     /* module table absent */
@@ -157,9 +157,9 @@ export function previewRoomImport(bundleDir: string): RoomImportPreview {
   if (manifest.version > ROOM_VERSION)
     throw new Error(`Export version ${manifest.version} is newer than this install understands`);
   const db = getDb();
-  const agents = manifest.references.agents.map((a) => ({
+  const agents = manifest.references.agents.map(async (a) => ({
     ...a,
-    found: !!db.prepare(`SELECT 1 FROM agent_groups WHERE folder = ?`).get(a.folder),
+    found: !!await db.get(`SELECT 1 FROM agent_groups WHERE folder = ?`, a.folder),
   }));
   return { manifest, suggestedRoomId: uniqueRoomId(manifest.entity.roomId), agents };
 }
@@ -225,10 +225,10 @@ export function applyRoomImport(bundleDir: string): RoomApplyResult {
     // wirings[] and manifest.references.agents[] were built from the same
     // list in the same order at export time — pair by index, resolve the
     // folder on THIS install. Works same-install and cross-install alike.
-    wirings.forEach((w, i) => {
+    wirings.forEach(async (w, i) => {
       const folder = preview.agents[i]?.folder;
       const target = folder
-        ? (db.prepare(`SELECT id FROM agent_groups WHERE folder = ?`).get(folder) as { id: string } | undefined)
+        ? ((await db.get(`SELECT id FROM agent_groups WHERE folder = ?`, folder)) as { id: string } | undefined)
         : undefined;
       if (!target) {
         if (folder) skippedAgents.push(folder);

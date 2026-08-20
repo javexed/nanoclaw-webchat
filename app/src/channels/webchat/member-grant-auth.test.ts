@@ -21,20 +21,13 @@ beforeEach(() => {
 });
 afterEach(() => closeDb());
 
-function role(userId: string, r: 'owner' | 'admin', agentGroupId: string | null): void {
+async function role(userId: string, r: 'owner' | 'admin', agentGroupId: string | null): Promise<void> {
   const db = getDb();
-  db.prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`).run(
-    userId,
-    now,
-  );
+  await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, userId, now);
   if (agentGroupId) {
-    db.prepare(
-      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-    ).run(agentGroupId, agentGroupId, agentGroupId, now);
+    await db.run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, agentGroupId, agentGroupId, agentGroupId, now);
   }
-  db.prepare(
-    `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
-  ).run(userId, r, agentGroupId, now);
+  await db.run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`, userId, r, agentGroupId, now);
 }
 
 const allowed = (v: ReturnType<typeof checkMemberGrantAuth>) => v === null;

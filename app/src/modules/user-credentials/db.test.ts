@@ -60,12 +60,12 @@ describe('user_credential_members', () => {
     expect(agentGroupForUserCredsAgent('unknown')).toBeNull();
   });
 
-  it('lists only ACTIVE members for a group (fan-out source)', () => {
+  it('lists only ACTIVE members for a group (fan-out source)', async () => {
     upsertUserCredsCredential('webchat:alice', 'ag-1', 'user-creds-alice', 'sec-a');
     upsertUserCredsCredential('webchat:bob', 'ag-1', 'user-creds-bob', 'sec-b');
     upsertUserCredsCredential('webchat:carol', 'ag-2', 'user-creds-carol', 'sec-c');
     setUserCredsStatus('webchat:bob', 'ag-1', 'revoked');
-    expect(activeMembersForGroup('ag-1').sort()).toEqual(['webchat:alice']);
+    expect((await activeMembersForGroup('ag-1')).sort()).toEqual(['webchat:alice']);
   });
 
   it('revoke clears active status', () => {
@@ -79,9 +79,9 @@ describe('user_credential_members', () => {
 });
 
 describe('userCreds oauth credentials (vault-only)', () => {
-  it('stores an oauth credential with a vault secret_id + oauth cred_type', () => {
+  it('stores an oauth credential with a vault secret_id + oauth cred_type', async () => {
     upsertUserCredsCredential('webchat:alice', 'ag-1', 'user-creds-alice-aaa', 'sec-oat', 'oauth_token');
-    const row = getUserCredsCredential('webchat:alice', 'ag-1')!;
+    const row = await getUserCredsCredential('webchat:alice', 'ag-1')!;
     expect(row.cred_type).toBe('oauth_token');
     expect(row.secret_id).toBe('sec-oat'); // lives in the OneCLI vault, like api keys
     expect(userHasActiveKey('webchat:alice', 'ag-1')).toBe(true);
@@ -97,12 +97,12 @@ describe('userCreds oauth credentials (vault-only)', () => {
     expect(userHasActiveOauth('webchat:alice', 'ag-1')).toBe(false); // revoked
   });
 
-  it('switching oauth→api_key flips cred_type and updates secret_id', () => {
+  it('switching oauth→api_key flips cred_type and updates secret_id', async () => {
     upsertUserCredsCredential('webchat:alice', 'ag-1', 'user-creds-alice', 'sec-oat', 'oauth_token');
     expect(userHasActiveOauth('webchat:alice', 'ag-1')).toBe(true);
 
     upsertUserCredsCredential('webchat:alice', 'ag-1', 'user-creds-alice', 'sec-key', 'api_key');
-    const row = getUserCredsCredential('webchat:alice', 'ag-1')!;
+    const row = await getUserCredsCredential('webchat:alice', 'ag-1')!;
     expect(row.cred_type).toBe('api_key');
     expect(row.secret_id).toBe('sec-key');
     expect(userHasActiveOauth('webchat:alice', 'ag-1')).toBe(false);
@@ -122,18 +122,12 @@ describe('room oauth_allowed', () => {
 });
 
 describe('room credential_mode', () => {
-  it('defaults to disabled, round-trips, preserves engage_default', () => {
+  it('defaults to disabled, round-trips, preserves engage_default', async () => {
     expect(getRoomCredentialMode('room-x')).toBe('disabled');
-    getDb()
-      .prepare(
-        `INSERT INTO webchat_room_settings (room_id, engage_default, updated_at) VALUES ('room-y','mention-only',1)`,
-      )
-      .run();
+    await getDb().run(`INSERT INTO webchat_room_settings (room_id, engage_default, updated_at) VALUES ('room-y','mention-only',1)`);
     setRoomCredentialMode('room-y', 'required');
     expect(getRoomCredentialMode('room-y')).toBe('required');
-    const row = getDb()
-      .prepare(`SELECT engage_default, credential_mode FROM webchat_room_settings WHERE room_id='room-y'`)
-      .get() as { engage_default: string; credential_mode: string };
+    const row = (await getDb().get(`SELECT engage_default, credential_mode FROM webchat_room_settings WHERE room_id='room-y'`)) as { engage_default: string; credential_mode: string };
     expect(row).toEqual({ engage_default: 'mention-only', credential_mode: 'required' });
   });
 });

@@ -61,15 +61,15 @@ describe('resolveInboundDeliveryPlan', () => {
     expect(resolveInboundDeliveryPlan(mg, null, '@alice hi', undefined)).toBeNull();
   });
 
-  it('peer fan-out: an agent reply goes to the OTHER engaged agents as defer context', () => {
+  it('peer fan-out: an agent reply goes to the OTHER engaged agents as defer context', async () => {
     engageAgent('r1', 't1', 'ag-a');
     engageAgent('r1', 't1', 'ag-b');
     // ag-a (Alice) just replied → fanned to ag-b only, as defer + isPeerReply.
     const d = resolveInboundDeliveryPlan(mg, 't1', "alice's reply text", 'ag-a');
     expect(d).not.toBeNull();
-    expect(d!.isPeerReply).toBe(true);
-    expect(d!.perAgent.get('ag-b')).toBe('defer');
-    expect(d!.perAgent.has('ag-a')).toBe(false); // never fan back to the producer
+    expect((await d!).isPeerReply).toBe(true);
+    expect((await d!).perAgent.get('ag-b')).toBe('defer');
+    expect((await d!).perAgent.has('ag-a')).toBe(false); // never fan back to the producer
   });
 
   it('peer fan-out: null when the producer is the only engaged agent', () => {
@@ -82,35 +82,35 @@ describe('resolveInboundDeliveryPlan', () => {
     expect(getEngagedAgents('r1', 't1')).toEqual([]);
   });
 
-  it('@mention auto-engages the agent and marks it expected', () => {
+  it('@mention auto-engages the agent and marks it expected', async () => {
     const d = resolveInboundDeliveryPlan(mg, 't1', '@alice please review', undefined);
     expect(d).not.toBeNull();
-    expect(d!.participants).toEqual(['ag-a']);
-    expect(d!.perAgent.get('ag-a')).toBe('expected');
-    expect(d!.perAgent.has('ag-b')).toBe(false); // not engaged → absent → silent
+    expect((await d!).participants).toEqual(['ag-a']);
+    expect((await d!).perAgent.get('ag-a')).toBe('expected');
+    expect((await d!).perAgent.has('ag-b')).toBe(false); // not engaged → absent → silent
     expect(getEngagedAgents('r1', 't1')).toEqual(['ag-a']); // persisted
   });
 
-  it('sole engaged agent replies to un-addressed follow-ups (stay engaged)', () => {
+  it('sole engaged agent replies to un-addressed follow-ups (stay engaged)', async () => {
     engageAgent('r1', 't1', 'ag-a');
     const d = resolveInboundDeliveryPlan(mg, 't1', 'and what about the tests?', undefined);
-    expect(d!.perAgent.get('ag-a')).toBe('expected');
+    expect((await d!).perAgent.get('ag-a')).toBe('expected');
   });
 
-  it('with multiple engaged, only the addressed agent is expected; others defer', () => {
+  it('with multiple engaged, only the addressed agent is expected; others defer', async () => {
     engageAgent('r1', 't1', 'ag-a');
     engageAgent('r1', 't1', 'ag-b');
     const d = resolveInboundDeliveryPlan(mg, 't1', '@bob thoughts?', undefined);
-    expect(d!.perAgent.get('ag-b')).toBe('expected');
-    expect(d!.perAgent.get('ag-a')).toBe('defer');
+    expect((await d!).perAgent.get('ag-b')).toBe('expected');
+    expect((await d!).perAgent.get('ag-a')).toBe('defer');
   });
 
-  it('multiple engaged + un-addressed broadcast → everyone defers (no pile-on)', () => {
+  it('multiple engaged + un-addressed broadcast → everyone defers (no pile-on)', async () => {
     engageAgent('r1', 't1', 'ag-a');
     engageAgent('r1', 't1', 'ag-b');
     const d = resolveInboundDeliveryPlan(mg, 't1', 'hmm', undefined);
-    expect(d!.perAgent.get('ag-a')).toBe('defer');
-    expect(d!.perAgent.get('ag-b')).toBe('defer');
+    expect((await d!).perAgent.get('ag-a')).toBe('defer');
+    expect((await d!).perAgent.get('ag-b')).toBe('defer');
   });
 
   it('does not match mentions inside words (email ≠ @alice)', () => {

@@ -88,25 +88,15 @@ describe('GET /api/overview — owner (loopback no-auth path)', () => {
       const now = new Date().toISOString();
       const agentA = randomUUID();
       const agentB = randomUUID();
-      db.prepare(
-        `INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      ).run(agentA, 'Alpha', 'alpha', now);
-      db.prepare(
-        `INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      ).run(agentB, 'Beta', 'beta', now);
+      await db.run(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, agentA, 'Alpha', 'alpha', now);
+      await db.run(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, agentB, 'Beta', 'beta', now);
       const mgA = randomUUID();
-      db.prepare(
-        `INSERT INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
-         VALUES (?, 'webchat', 'webchat', 'alpha', 'Alpha', 1, 'public', ?)`,
-      ).run(mgA, now);
-      db.prepare(
-        `INSERT INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
-         VALUES (?, 'whatsapp', 'whatsapp', '1234@g.us', 'Group', 1, 'public', ?)`,
-      ).run(randomUUID(), now);
-      db.prepare(
-        `INSERT INTO messaging_group_agents (id, messaging_group_id, agent_group_id, engage_mode, engage_pattern, sender_scope, ignored_message_policy, session_mode, priority, created_at)
-         VALUES (?, ?, ?, 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`,
-      ).run(randomUUID(), mgA, agentA, now);
+      await db.run(`INSERT INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
+         VALUES (?, 'webchat', 'webchat', 'alpha', 'Alpha', 1, 'public', ?)`, mgA, now);
+      await db.run(`INSERT INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
+         VALUES (?, 'whatsapp', 'whatsapp', '1234@g.us', 'Group', 1, 'public', ?)`, randomUUID(), now);
+      await db.run(`INSERT INTO messaging_group_agents (id, messaging_group_id, agent_group_id, engage_mode, engage_pattern, sender_scope, ignored_message_policy, session_mode, priority, created_at)
+         VALUES (?, ?, ?, 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`, randomUUID(), mgA, agentA, now);
 
       const { body } = await getOverview(wc);
       expect(body.agents).toMatchObject({ total: 2, visible: 2 });
@@ -123,10 +113,8 @@ describe('GET /api/overview — owner (loopback no-auth path)', () => {
       const db = conn.getDb();
       const now = new Date().toISOString();
       // Seed a room first.
-      db.prepare(
-        `INSERT INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
-         VALUES (?, 'webchat', 'webchat', 'r1', 'R1', 1, 'public', ?)`,
-      ).run(randomUUID(), now);
+      await db.run(`INSERT INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
+         VALUES (?, 'webchat', 'webchat', 'r1', 'R1', 1, 'public', ?)`, randomUUID(), now);
       // 3 messages in the last hour, 1 from 25 hours ago.
       const recent = Date.now();
       const old = Date.now() - 25 * 3600 * 1000;
@@ -155,18 +143,12 @@ describe('GET /api/overview — owner (loopback no-auth path)', () => {
       const db = conn.getDb();
       const now = new Date().toISOString();
       const agentId = randomUUID();
-      db.prepare(
-        `INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, 'A', 'a', NULL, ?)`,
-      ).run(agentId, now);
+      await db.run(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, 'A', 'a', NULL, ?)`, agentId, now);
       // 1 active session, 1 idle session.
       const active = new Date(Date.now() - 60_000).toISOString();
       const idle = new Date(Date.now() - 10 * 60_000).toISOString();
-      db.prepare(
-        `INSERT INTO sessions (id, agent_group_id, status, last_active, created_at) VALUES (?, ?, 'active', ?, ?)`,
-      ).run('sess-active', agentId, active, now);
-      db.prepare(
-        `INSERT INTO sessions (id, agent_group_id, status, last_active, created_at) VALUES (?, ?, 'active', ?, ?)`,
-      ).run('sess-idle', agentId, idle, now);
+      await db.run(`INSERT INTO sessions (id, agent_group_id, status, last_active, created_at) VALUES (?, ?, 'active', ?, ?)`, 'sess-active', agentId, active, now);
+      await db.run(`INSERT INTO sessions (id, agent_group_id, status, last_active, created_at) VALUES (?, ?, 'active', ?, ?)`, 'sess-idle', agentId, idle, now);
 
       const { body } = await getOverview(wc);
       expect(body.sessions).toMatchObject({ active: 1, total: 2 });

@@ -6,9 +6,9 @@
  */
 import { getDb } from '../../db/connection.js';
 
-export function getLearningMasterEnabled(): boolean {
+export async function getLearningMasterEnabled(): Promise<boolean> {
   try {
-    const row = getDb().prepare(`SELECT enabled FROM learning_master WHERE id = 1`).get() as
+    const row = (await getDb().get(`SELECT enabled FROM learning_master WHERE id = 1`)) as
       | { enabled: number }
       | undefined;
     return row ? row.enabled === 1 : true; // default on when unset
@@ -17,13 +17,9 @@ export function getLearningMasterEnabled(): boolean {
   }
 }
 
-export function setLearningMasterEnabled(enabled: boolean): void {
-  getDb()
-    .prepare(
-      `INSERT INTO learning_master (id, enabled) VALUES (1, ?)
-       ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled`,
-    )
-    .run(enabled ? 1 : 0);
+export async function setLearningMasterEnabled(enabled: boolean): Promise<void> {
+  await getDb().run(`INSERT INTO learning_master (id, enabled) VALUES (1, ?)
+       ON CONFLICT(id) DO UPDATE SET enabled = excluded.enabled`, enabled ? 1 : 0);
 }
 
 export interface LearningClassifier {
@@ -34,11 +30,9 @@ export interface LearningClassifier {
   model: string | null;
 }
 
-export function getLearningClassifier(): LearningClassifier {
+export async function getLearningClassifier(): Promise<LearningClassifier> {
   try {
-    const row = getDb()
-      .prepare(`SELECT classifier_model_id, classifier_url, classifier_model FROM learning_master WHERE id = 1`)
-      .get() as
+    const row = (await getDb().get(`SELECT classifier_model_id, classifier_url, classifier_model FROM learning_master WHERE id = 1`)) as
       | { classifier_model_id: string | null; classifier_url: string | null; classifier_model: string | null }
       | undefined;
     return {
@@ -53,15 +47,11 @@ export function getLearningClassifier(): LearningClassifier {
 
 /** Store the picked model id + its resolved container-reachable call params.
  *  Pass all-null to clear (heuristic only). */
-export function setLearningClassifier(modelId: string | null, url: string | null, model: string | null): void {
-  getDb()
-    .prepare(
-      `INSERT INTO learning_master (id, enabled, classifier_model_id, classifier_url, classifier_model)
+export async function setLearningClassifier(modelId: string | null, url: string | null, model: string | null): Promise<void> {
+  await getDb().run(`INSERT INTO learning_master (id, enabled, classifier_model_id, classifier_url, classifier_model)
        VALUES (1, 1, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          classifier_model_id = excluded.classifier_model_id,
          classifier_url = excluded.classifier_url,
-         classifier_model = excluded.classifier_model`,
-    )
-    .run(modelId, url, model);
+         classifier_model = excluded.classifier_model`, modelId, url, model);
 }

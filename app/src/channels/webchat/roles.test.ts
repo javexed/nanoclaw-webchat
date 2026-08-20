@@ -20,25 +20,18 @@ afterEach(() => {
   closeDb();
 });
 
-function insertRole(userId: string, role: 'owner' | 'admin' | 'member', agentGroupId: string | null): void {
+async function insertRole(userId: string, role: 'owner' | 'admin' | 'member', agentGroupId: string | null): Promise<void> {
   const db = getDb();
   // user_roles has an FK to users; satisfy it idempotently.
-  db.prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`).run(
-    userId,
-    new Date().toISOString(),
-  );
+  await db.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, userId, new Date().toISOString());
   // Scoped roles need a real agent_groups row to satisfy the FK on
   // agent_group_id. Create a stub if the test asks for one.
   if (agentGroupId) {
-    db.prepare(
-      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at)
-       VALUES (?, ?, ?, NULL, ?)`,
-    ).run(agentGroupId, agentGroupId, agentGroupId, new Date().toISOString());
+    await db.run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at)
+       VALUES (?, ?, ?, NULL, ?)`, agentGroupId, agentGroupId, agentGroupId, new Date().toISOString());
   }
-  db.prepare(
-    `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
-     VALUES (?, ?, ?, NULL, ?)`,
-  ).run(userId, role, agentGroupId, new Date().toISOString());
+  await db.run(`INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
+     VALUES (?, ?, ?, NULL, ?)`, userId, role, agentGroupId, new Date().toISOString());
 }
 
 describe('isOwner', () => {
@@ -127,29 +120,29 @@ describe('ensureOwnerRoleOnFirstLogin', () => {
     expect(isOwner('webchat:alice')).toBe(true);
   });
 
-  it('is idempotent — second call does not change ownership', () => {
+  it('is idempotent — second call does not change ownership', async () => {
     runMigrations(getDb());
     ensureOwnerRoleOnFirstLogin('webchat:alice');
     ensureOwnerRoleOnFirstLogin('webchat:alice');
     const ownerCount = (
-      getDb().prepare(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`).get() as { c: number }
+      (await getDb().get(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`)) as { c: number }
     ).c;
     expect(ownerCount).toBe(1);
   });
 
-  it('does not promote a second user when an owner already exists', () => {
+  it('does not promote a second user when an owner already exists', async () => {
     runMigrations(getDb());
     ensureOwnerRoleOnFirstLogin('webchat:alice');
     ensureOwnerRoleOnFirstLogin('webchat:bob');
     expect(isOwner('webchat:alice')).toBe(true);
     expect(isOwner('webchat:bob')).toBe(false);
     const ownerCount = (
-      getDb().prepare(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`).get() as { c: number }
+      (await getDb().get(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`)) as { c: number }
     ).c;
     expect(ownerCount).toBe(1);
   });
 
-  it('atomic guard: simulated concurrent first-login produces exactly one owner', () => {
+  it('atomic guard: simulated concurrent first-login produces exactly one owner', async () => {
     // The check-and-insert is atomic via INSERT ... WHERE NOT EXISTS,
     // so even back-to-back calls intended to race can't double-insert.
     // We simulate the race by calling many times with different userIds
@@ -160,17 +153,17 @@ describe('ensureOwnerRoleOnFirstLogin', () => {
       ensureOwnerRoleOnFirstLogin(u);
     }
     const ownerCount = (
-      getDb().prepare(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`).get() as { c: number }
+      (await getDb().get(`SELECT COUNT(*) AS c FROM user_roles WHERE role='owner'`)) as { c: number }
     ).c;
     expect(ownerCount).toBe(1);
     // First caller wins.
     expect(isOwner('webchat:alice')).toBe(true);
   });
 
-  it('creates a users row with kind=webchat when users table exists', () => {
+  it('creates a users row with kind=webchat when users table exists', async () => {
     runMigrations(getDb());
     ensureOwnerRoleOnFirstLogin('webchat:alice');
-    const row = getDb().prepare(`SELECT kind FROM users WHERE id = ?`).get('webchat:alice') as
+    const row = (await getDb().get(`SELECT kind FROM users WHERE id = ?`, 'webchat:alice')) as
       | { kind: string }
       | undefined;
     expect(row?.kind).toBe('webchat');

@@ -156,7 +156,7 @@ describe('workspace-scoped secrets', () => {
   it('still reaches an ISOLATED agent — system-wide must not mean "except the locked-down ones"', async () => {
     const { admin, injectedFor } = fakeAdmin();
     seedWorkspaceDefault();
-    getDb().prepare(`INSERT INTO agent_groups (id,name,folder,created_at) VALUES (?,?,?,?)`).run('ag-1', 'a', 'a', '');
+    await getDb().run(`INSERT INTO agent_groups (id,name,folder,created_at) VALUES (?,?,?,?)`, 'ag-1', 'a', 'a', '');
     await seedGroupAgent(admin, 'ag-1');
     await isolateGroup(admin, 'ag-1');
     const shared = await createToolSecret(admin, WORKSPACE, 'dev.azure.com', 'v');

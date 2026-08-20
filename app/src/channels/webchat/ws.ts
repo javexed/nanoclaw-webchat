@@ -59,12 +59,12 @@ import { writeSessionMessage } from '../../session-manager.js';
  * `agentName` (the thinking bubble's per-agent Stop) targets just that agent's
  * session; omitted, it stops every running agent in the room.
  */
-function interruptRoomSessions(roomId: string, agentName?: string | null): void {
-  const mg = getMessagingGroupByPlatform('webchat', roomId);
+async function interruptRoomSessions(roomId: string, agentName?: string | null): Promise<void> {
+  const mg = await getMessagingGroupByPlatform('webchat', roomId);
   if (!mg) return;
-  let sessions = getRunningSessions().filter((s) => s.messaging_group_id === mg.id);
+  let sessions = (await getRunningSessions()).filter((s) => s.messaging_group_id === mg.id);
   if (agentName) {
-    sessions = sessions.filter((s) => getAgentGroup(s.agent_group_id)?.name === agentName);
+    sessions = sessions.filter(async (s) => (await getAgentGroup(s.agent_group_id))?.name === agentName);
   }
   for (const s of sessions) {
     writeSessionMessage(s.agent_group_id, s.id, {
@@ -212,7 +212,7 @@ export function setupWebSocket(
       }
     };
 
-    ws.on('message', (raw) => {
+    ws.on('message', async (raw) => {
       let msg: { type?: string; [k: string]: unknown };
       try {
         msg = JSON.parse(raw.toString()) as typeof msg;
@@ -241,7 +241,7 @@ export function setupWebSocket(
       // ── JOIN ─────────────────────────────────────────────────────────────
       if (msg.type === 'join') {
         const roomId = typeof msg.room_id === 'string' ? msg.room_id : '';
-        const room = getWebchatRoom(roomId);
+        const room = await getWebchatRoom(roomId);
         if (!room) {
           send({ type: 'error', error: `Room not found: ${roomId}` });
           return;
@@ -263,7 +263,7 @@ export function setupWebSocket(
           type: 'history',
           room_id: room.id,
           thread_id: joinThread,
-          messages: getWebchatMessages(room.id, 50, joinThread).map((m) => ({
+          messages: (await getWebchatMessages(room.id, 50, joinThread)).map((m) => ({
             ...m,
             content: redactSensitiveData(m.content),
           })),
@@ -308,7 +308,7 @@ export function setupWebSocket(
       if (msg.type === 'read') {
         const roomId = typeof msg.room_id === 'string' ? msg.room_id : '';
         if (!roomId) return;
-        const room = getWebchatRoom(roomId);
+        const room = await getWebchatRoom(roomId);
         if (!room || !canAccessRoom(client.userId, room.id)) return;
         markRoomReadForUser(client.userId, room.id, Date.now(), clientId);
         // Per-thread marker (default 'main') so thread badges clear too.
@@ -345,7 +345,7 @@ export function setupWebSocket(
         // shared with the file-upload handlers so both enforce the same bound.
         const storeThread = resolveBoundedThread(client.room_id, msg.thread_id);
 
-        const stored = storeWebchatMessage(client.room_id, client.identity, client.identity_type, text, storeThread);
+        const stored = await storeWebchatMessage(client.room_id, client.identity, client.identity_type, text, storeThread);
         // The sender has by definition read their own message — advance their
         // marker (and sync their other devices) so it never self-unreads.
         markRoomReadForUser(client.userId, client.room_id, stored.created_at, clientId);

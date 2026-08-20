@@ -95,8 +95,8 @@ export async function checkMcpServer(server: WebchatMcpServer): Promise<McpHealt
 
 /** One sweep pass over every assigned remote server. Returns servers checked. */
 export async function sweepMcpHealth(): Promise<number> {
-  const servers = listWebchatMcpServers().filter(
-    (s) => s.transport !== 'stdio' && s.url && getAgentsAssignedToMcpServer(s.id).length > 0,
+  const servers = (await listWebchatMcpServers()).filter(
+    async (s) => s.transport !== 'stdio' && s.url && (await getAgentsAssignedToMcpServer(s.id)).length > 0,
   );
   for (const s of servers) {
     try {

@@ -24,11 +24,11 @@ const fromEnvFile = readEnvFile(['CLAUDE_CODE_AUTO_COMPACT_WINDOW']);
 export const CLAUDE_CODE_AUTO_COMPACT_WINDOW =
   process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || fromEnvFile.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '';
 
-registerContainerEnvResolver((agentGroupId): Record<string, string> => {
+registerContainerEnvResolver(async (agentGroupId): Promise<Record<string, string>> => {
   if (!CLAUDE_CODE_AUTO_COMPACT_WINDOW) return {};
   // Claude only. opencode / ollama / codex configure their own limits
   // elsewhere, and handing them this variable would be noise at best.
-  const provider = getContainerConfig(agentGroupId)?.provider ?? 'claude';
+  const provider = (await getContainerConfig(agentGroupId))?.provider ?? 'claude';
   if (provider !== 'claude') return {};
   return { CLAUDE_CODE_AUTO_COMPACT_WINDOW };
 });

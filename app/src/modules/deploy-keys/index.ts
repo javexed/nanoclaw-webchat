@@ -60,8 +60,8 @@ function targetFromComment(pub: string): string | undefined {
   return TARGET_RE.test(comment) ? comment : undefined;
 }
 
-function groupDir(agentGroupId: string): string | null {
-  const group = getAgentGroup(agentGroupId);
+async function groupDir(agentGroupId: string): Promise<string | null> {
+  const group = await getAgentGroup(agentGroupId);
   if (!group) return null;
   const dir = path.join(GROUPS_DIR, group.folder);
   return fs.existsSync(dir) ? dir : null;
@@ -107,7 +107,7 @@ export function listDeployKeys(agentGroupId: string): DeployKeyInfo[] {
  * the private key is written 0600 and has no read path through this module, so
  * it cannot be surfaced by any caller, deliberately or by mistake.
  */
-export function createDeployKey(agentGroupId: string, name: string, target?: string): DeployKeyInfo {
+export async function createDeployKey(agentGroupId: string, name: string, target?: string): Promise<DeployKeyInfo> {
   if (!NAME_RE.test(name)) throw new Error('Name must be lowercase letters, numbers and hyphens');
   if (target && !TARGET_RE.test(target)) throw new Error('Target must look like user@host');
   const dir = groupDir(agentGroupId);
@@ -115,7 +115,7 @@ export function createDeployKey(agentGroupId: string, name: string, target?: str
   const priv = keyFile(dir, name);
   if (fs.existsSync(priv) || fs.existsSync(`${priv}.pub`)) throw new Error(`A key named "${name}" already exists`);
 
-  const group = getAgentGroup(agentGroupId)!;
+  const group = await getAgentGroup(agentGroupId)!;
   // The comment carries the target when we know it — that is what tells the
   // agent (via its memory note) who to log in as.
   const comment = target || `${name}@${group.folder}`;

@@ -89,7 +89,7 @@ export async function handleProposeSkill(
     kind,
     targetSkill: kind === 'patch' ? target : null,
     agentGroupId: session.agent_group_id,
-    agentName: getAgentGroup(session.agent_group_id)?.name ?? 'agent',
+    agentName: (await getAgentGroup(session.agent_group_id))?.name ?? 'agent',
     session,
   });
 
@@ -127,19 +127,19 @@ export async function handleProposeSkill(
   }
 }
 
-function isAutoKeepEnabled(session: Session): boolean {
+async function isAutoKeepEnabled(session: Session): Promise<boolean> {
   // Room layer first (learning_room_settings) — the room the lesson came from
   // overrides the agent default. Absent → agent config → default OFF.
   try {
     if (session.messaging_group_id) {
-      const room = getRoomLearning(session.messaging_group_id);
+      const room = await getRoomLearning(session.messaging_group_id);
       if (room.autoKeep !== undefined) return room.autoKeep === true;
     }
   } catch {
     /* fall through to the agent level */
   }
   try {
-    const raw = getContainerConfig(session.agent_group_id)?.learning;
+    const raw = (await getContainerConfig(session.agent_group_id))?.learning;
     if (!raw) return false;
     return (JSON.parse(raw) as { autoKeep?: boolean }).autoKeep === true;
   } catch {

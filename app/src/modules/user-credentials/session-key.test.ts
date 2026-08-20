@@ -21,12 +21,10 @@ import './index.js'; // registers the resolvers under test
 const USER = 'webchat:tailscale:mark@example.com';
 const AG = 'ag-key';
 
-beforeEach(() => {
-  const db = initTestDb();
+beforeEach(async () => {
+  const db = await initTestDb();
   runMigrations(db);
-  db.prepare(
-    `INSERT OR IGNORE INTO agent_groups (id,name,folder,agent_provider,created_at) VALUES (?,?,?,NULL,'t')`,
-  ).run(AG, AG, AG);
+  await db.run(`INSERT OR IGNORE INTO agent_groups (id,name,folder,agent_provider,created_at) VALUES (?,?,?,NULL,'t')`, AG, AG, AG);
   upsertUserCredential(USER, 'claude', 'sec-1', 'api_key');
 });
 afterEach(() => closeDb());

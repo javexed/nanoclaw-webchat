@@ -18,16 +18,14 @@ beforeEach(() => {
 });
 afterEach(() => closeDb());
 
-function cardRow(approvalId: string) {
-  return getDb()
-    .prepare(`SELECT room_id, sender, message_type, content FROM webchat_messages WHERE id = ?`)
-    .get(`appr-card-${approvalId}`) as
+async function cardRow(approvalId: string) {
+  return (await getDb().get(`SELECT room_id, sender, message_type, content FROM webchat_messages WHERE id = ?`, `appr-card-${approvalId}`)) as
     | { room_id: string; sender: string; message_type: string; content: string }
     | undefined;
 }
 
 describe('in-room approval card', () => {
-  it('stores an actionable approval row with the eligible approvers', () => {
+  it('stores an actionable approval row with the eligible approvers', async () => {
     storeWebchatApprovalCard('room-approvals', 'Gamma Agent', {
       questionId: 'appr-1',
       title: 'Install Packages Request',
@@ -36,7 +34,7 @@ describe('in-room approval card', () => {
       action: 'install_packages',
       approvers: ['webchat:tailscale:a@x.com', 'webchat:tailscale:b@x.com'],
     });
-    const row = cardRow('appr-1')!;
+    const row = await cardRow('appr-1')!;
     expect(row.room_id).toBe('room-approvals');
     expect(row.sender).toBe('Gamma Agent');
     expect(row.message_type).toBe('approval');
@@ -45,7 +43,7 @@ describe('in-room approval card', () => {
     expect(c.approvers).toEqual(['webchat:tailscale:a@x.com', 'webchat:tailscale:b@x.com']);
   });
 
-  it('markRoomApprovalResolved flips the card to resolved + records who', () => {
+  it('markRoomApprovalResolved flips the card to resolved + records who', async () => {
     storeWebchatApprovalCard('room-approvals', 'Gamma Agent', {
       questionId: 'appr-2',
       title: 'T',
@@ -55,12 +53,12 @@ describe('in-room approval card', () => {
       approvers: [],
     });
     markRoomApprovalResolved('appr-2', 'webchat:tailscale:a@x.com');
-    const row = cardRow('appr-2')!;
+    const row = await cardRow('appr-2')!;
     expect(row.message_type).toBe('approval_resolved');
     expect(JSON.parse(row.content).resolvedBy).toBe('webchat:tailscale:a@x.com');
   });
 
-  it('re-storing the same approvalId is idempotent (INSERT OR REPLACE)', () => {
+  it('re-storing the same approvalId is idempotent (INSERT OR REPLACE)', async () => {
     const p = {
       questionId: 'appr-3',
       title: 'T',
@@ -71,7 +69,7 @@ describe('in-room approval card', () => {
     };
     storeWebchatApprovalCard('room', 'a', p);
     storeWebchatApprovalCard('room', 'a', p);
-    const n = getDb().prepare(`SELECT COUNT(*) AS n FROM webchat_messages WHERE id='appr-card-appr-3'`).get() as {
+    const n = (await getDb().get(`SELECT COUNT(*) AS n FROM webchat_messages WHERE id='appr-card-appr-3'`)) as {
       n: number;
     };
     expect(n.n).toBe(1);

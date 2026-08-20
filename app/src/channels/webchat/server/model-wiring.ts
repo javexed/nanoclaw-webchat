@@ -58,10 +58,10 @@ export function reloadAgentModelEnv(agentGroupId: string, reason: string): void 
  * Assigned groups are untouched (their assignment wins), as are non-Claude
  * (Codex) groups (their harness ignores the ANTHROPIC_* env this writes).
  */
-export function refreshUnassignedGroupsForDefaultModel(reason: string): void {
+export async function refreshUnassignedGroupsForDefaultModel(reason: string): Promise<void> {
   for (const g of getAllAgentGroups()) {
     if (getAssignedModelForAgent(g.id)) continue;
-    const provider = getContainerConfig(g.id)?.provider;
+    const provider = (await getContainerConfig(g.id))?.provider;
     // Codex ignores the ANTHROPIC_* env and has no local-model wiring — skip it.
     // OpenCode DOES follow the default local model, so it's processed: the sync
     // below re-derives its provider and rewrites its per-agent local-model.json

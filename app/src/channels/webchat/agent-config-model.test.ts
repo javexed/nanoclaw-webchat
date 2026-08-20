@@ -134,9 +134,9 @@ describe('PUT /api/agents/:id/config-model', () => {
   const as = (n: string) => ({ 'x-forwarded-user': n, 'content-type': 'application/json', 'x-webchat-csrf': '1' });
   const put = (agent: string, who: string, model: unknown) =>
     httpRequest(port, 'PUT', `/api/agents/${agent}/config-model`, as(who), JSON.stringify({ model }));
-  const stored = (id: string) =>
+  const stored = async (id: string) =>
     (
-      conn.getDb().prepare(`SELECT model FROM container_configs WHERE agent_group_id = ?`).get(id) as
+      (await conn.getDb().get(`SELECT model FROM container_configs WHERE agent_group_id = ?`, id)) as
         | { model: string | null }
         | undefined
     )?.model ?? null;
@@ -180,13 +180,9 @@ describe('PUT /api/agents/:id/config-model', () => {
     // ANTHROPIC_MODEL (from the assignment) is env; container_configs.model is the
     // SDK's explicit `model` option, which wins. Two levers, one silent loser.
     const db = conn.getDb();
-    db.prepare(
-      `INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
-       VALUES ('m-anth', 'Anthropic pin', 'anthropic', NULL, 'claude-sonnet-5', NULL, 0)`,
-    ).run();
-    db.prepare(
-      `INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES ('ag-mdl-a','m-anth',0)`,
-    ).run();
+    await db.run(`INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
+       VALUES ('m-anth', 'Anthropic pin', 'anthropic', NULL, 'claude-sonnet-5', NULL, 0)`);
+    await db.run(`INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES ('ag-mdl-a','m-anth',0)`);
 
     const r = await put('ag-mdl-a', 'admina', 'claude-opus-5');
     expect(r.status).toBe(409);
@@ -200,13 +196,11 @@ describe('PUT /api/agents/:id/config-model', () => {
   // so a pin was accepted and then quietly ignored. Harder to notice than the
   // assigned case, because nothing on the agent names the model it inherited.
 
-  const setWorkspaceDefault = (kind: 'anthropic' | 'ollama') => {
+  const setWorkspaceDefault = async (kind: 'anthropic' | 'ollama') => {
     const db = conn.getDb();
-    db.prepare(
-      `INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
-       VALUES ('m-def', 'Workspace default', ?, ?, 'claude-sonnet-5', NULL, 0)`,
-    ).run(kind, kind === 'anthropic' ? null : 'http://127.0.0.1:11434');
-    db.prepare(`UPDATE webchat_settings SET default_model_id = 'm-def'`).run();
+    await db.run(`INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
+       VALUES ('m-def', 'Workspace default', ?, ?, 'claude-sonnet-5', NULL, 0)`, kind, kind === 'anthropic' ? null : 'http://127.0.0.1:11434');
+    await db.run(`UPDATE webchat_settings SET default_model_id = 'm-def'`);
   };
 
   it('refuses when an anthropic-kind WORKSPACE DEFAULT is inherited, not just an assignment', async () => {
@@ -243,13 +237,9 @@ describe('PUT /api/agents/:id/config-model', () => {
     // the assignment to the default underneath it.
     setWorkspaceDefault('anthropic');
     const db = conn.getDb();
-    db.prepare(
-      `INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
-       VALUES ('m-oll', 'Local', 'ollama', 'http://127.0.0.1:11434', 'qwen3:8b', NULL, 0)`,
-    ).run();
-    db.prepare(
-      `INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES ('ag-mdl-a','m-oll',0)`,
-    ).run();
+    await db.run(`INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
+       VALUES ('m-oll', 'Local', 'ollama', 'http://127.0.0.1:11434', 'qwen3:8b', NULL, 0)`);
+    await db.run(`INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES ('ag-mdl-a','m-oll',0)`);
 
     const r = await put('ag-mdl-a', 'admina', 'claude-opus-5');
     expect(r.status).toBe(200);
@@ -259,13 +249,9 @@ describe('PUT /api/agents/:id/config-model', () => {
   it('still allows CLEARING the pin while such a model is assigned', async () => {
     // The refusal exists to stop a NEW silent conflict; unpinning removes one.
     const db = conn.getDb();
-    db.prepare(
-      `INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
-       VALUES ('m-anth', 'Anthropic pin', 'anthropic', NULL, 'claude-sonnet-5', NULL, 0)`,
-    ).run();
-    db.prepare(
-      `INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES ('ag-mdl-a','m-anth',0)`,
-    ).run();
+    await db.run(`INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
+       VALUES ('m-anth', 'Anthropic pin', 'anthropic', NULL, 'claude-sonnet-5', NULL, 0)`);
+    await db.run(`INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at) VALUES ('ag-mdl-a','m-anth',0)`);
 
     const r = await put('ag-mdl-a', 'admina', '');
     expect(r.status).toBe(200);

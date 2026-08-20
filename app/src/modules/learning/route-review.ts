@@ -32,8 +32,8 @@ function generateId(prefix: string): string {
 }
 
 /** The group's provider mapped to the UserCreds families (mirrors user-credentials). */
-function groupProvider(agentGroupId: string): UserCredsProvider {
-  return getContainerConfig(agentGroupId)?.provider === 'codex' ? 'codex' : 'claude';
+async function groupProvider(agentGroupId: string): Promise<UserCredsProvider> {
+  return (await getContainerConfig(agentGroupId))?.provider === 'codex' ? 'codex' : 'claude';
 }
 
 export async function handleRouteLearningReview(content: Record<string, unknown>, session: Session): Promise<void> {
@@ -45,7 +45,7 @@ export async function handleRouteLearningReview(content: Record<string, unknown>
 
   // `learning` is a JSON column; tolerate both parsed-object and raw-string
   // reads (the CRUD layer parses known JSON columns, but stay shape-robust).
-  const rawLearning = getContainerConfig(agentGroupId)?.learning as unknown;
+  const rawLearning = (await getContainerConfig(agentGroupId))?.learning as unknown;
   let learning: { chargeInvoker?: string } | null = null;
   if (typeof rawLearning === 'string') {
     try {
@@ -113,7 +113,7 @@ export async function handleRouteLearningReview(content: Record<string, unknown>
   // are "privileged"; a plain member may spend only in 'off' mode (where the
   // operator has explicitly accepted shared-credential spend); a non-member
   // or unknown user never spends.
-  const access = invoker ? canAccessAgentGroup(invoker, agentGroupId) : { allowed: false, reason: 'unknown' };
+  const access = await (invoker ? canAccessAgentGroup(invoker, agentGroupId) : { allowed: false, reason: 'unknown' });
   const privileged = access.allowed && access.reason !== 'member';
 
   // MEMBERSHIP GATE — applies in every mode, including 'off'. An unknown
@@ -137,7 +137,7 @@ export async function handleRouteLearningReview(content: Record<string, unknown>
 
   let target: Session;
   if (enrolled && origin.channel_type && origin.platform_id) {
-    const mg = getMessagingGroupByPlatform(origin.channel_type, origin.platform_id);
+    const mg = await getMessagingGroupByPlatform(origin.channel_type, origin.platform_id);
     if (!mg) {
       log.warn('route_learning_review: origin room not found — dropping', { agentGroupId, origin });
       notice('Could not route the review — the originating room was not found.');
@@ -145,7 +145,7 @@ export async function handleRouteLearningReview(content: Record<string, unknown>
     }
     // Member-session thread_id IS the user id — spawning it puts the review
     // under the invoker's OneCLI identity (their key pays).
-    target = resolveSession(agentGroupId, mg.id, invoker, 'per-thread').session;
+    target = (await resolveSession(agentGroupId, mg.id, invoker, 'per-thread')).session;
   } else if (mode === 'require') {
     notice('/learn here runs on your own credential — connect one for this workspace, then try again.');
     return;

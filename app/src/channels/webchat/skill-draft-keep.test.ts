@@ -263,7 +263,7 @@ describe('POST /api/skill-drafts/:id/keep — async review', () => {
     expect(msg.outcome).toBe('overlaps');
     expect(msg.overlaps).toEqual([{ name: 'existing-twin', source: 'scoped', reason: 'same job' }]);
     const drafts = await import('../../db/skill-drafts.js');
-    expect(drafts.getSkillDraft(DRAFT)?.status).toBe('pending');
+    expect((await drafts.getSkillDraft(DRAFT))?.status).toBe('pending');
   });
 
   it('refuses a same-draft double keep (409) while the review is in flight', async () => {
@@ -335,7 +335,7 @@ describe('POST /api/skill-drafts/:id/keep — async review', () => {
     // Row stays pending; only the on-disk body goes.
     fs.rmSync(path.join(process.cwd(), 'data', 'skill-drafts', DRAFT), { recursive: true, force: true });
     const drafts = await import('../../db/skill-drafts.js');
-    expect(drafts.getSkillDraft(DRAFT)?.status).toBe('pending');
+    expect((await drafts.getSkillDraft(DRAFT))?.status).toBe('pending');
 
     const job = server.keepReviewJobFor(DRAFT);
     release();

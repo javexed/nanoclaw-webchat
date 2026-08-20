@@ -159,7 +159,7 @@ export async function rSkillsDuplicatesGet(ctx: RouteCtx, _m: RegExpMatchArray):
   const { res } = ctx;
   const dups = findDuplicateScopedSkills().map((d) => ({
     ...d,
-    agents: d.agents.map((id) => getAgentGroup(id)?.name || id),
+    agents: d.agents.map(async (id) => (await getAgentGroup(id))?.name || id),
   }));
   return json(res, 200, { duplicates: dups });
 }
@@ -235,14 +235,14 @@ export async function rSkillDraftsGet(ctx: RouteCtx, _m: RegExpMatchArray): Prom
   // pass hasAdminPrivilege for every group) — same tier as the per-draft routes.
   const drafts = listSkillDrafts()
     .filter((d) => hasAdminPrivilege(userId, d.agent_group_id))
-    .map((d) => ({
+    .map(async (d) => ({
       id: d.id,
       skillName: d.skill_name,
       description: d.description,
       kind: d.kind,
       targetSkill: d.target_skill,
       agentGroupId: d.agent_group_id,
-      agentName: getAgentGroup(d.agent_group_id)?.name || d.agent_group_id,
+      agentName: (await getAgentGroup(d.agent_group_id))?.name || d.agent_group_id,
       createdAt: d.created_at,
       // The conversation this draft was distilled FROM — reviewing a skill
       // without the session that produced it is guessing.
@@ -400,7 +400,7 @@ export async function catalogPoolHandler(res: ServerResponse, tier: string, q: s
   const query = q.trim();
   const ql = query.toLowerCase();
   const installed = new Set(listAvailableSkills().map((s) => s.name));
-  const tierSources = listSkillSources().filter((s) => !!s.official === wantOfficial);
+  const tierSources = (await listSkillSources()).filter((s) => !!s.official === wantOfficial);
   const out: PoolSkill[] = [];
   const seen = new Set<string>();
   for (const src of tierSources) {

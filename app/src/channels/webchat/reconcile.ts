@@ -169,16 +169,12 @@ async function reconcileOnce(server: WebchatServer): Promise<void> {
 }
 
 /** All webchat-channel sessions known to the central DB. */
-function listWebchatSessions(): WebchatSessionRow[] {
-  return getDb()
-    .prepare(
-      `SELECT s.id AS session_id, s.agent_group_id, ag.name AS agent_name, mg.platform_id AS room_id
+async function listWebchatSessions(): Promise<WebchatSessionRow[]> {
+  return (await getDb().all(`SELECT s.id AS session_id, s.agent_group_id, ag.name AS agent_name, mg.platform_id AS room_id
        FROM sessions s
        JOIN agent_groups ag ON ag.id = s.agent_group_id
        JOIN messaging_groups mg ON mg.id = s.messaging_group_id
-       WHERE mg.channel_type = 'webchat'`,
-    )
-    .all() as WebchatSessionRow[];
+       WHERE mg.channel_type = 'webchat'`)) as WebchatSessionRow[];
 }
 
 /**
@@ -187,36 +183,28 @@ function listWebchatSessions(): WebchatSessionRow[] {
  * outbound timestamps are SQL `datetime('now')` and webchat_messages uses
  * `Date.now()` ms — they can drift a bit.
  */
-function findStoredAgentMessage(
+async function findStoredAgentMessage(
   roomId: string,
   content: string,
   outboundTsMs: number,
-): WebchatMessageProbe | undefined {
+): Promise<WebchatMessageProbe | undefined> {
   const lo = outboundTsMs - 30_000;
   const hi = outboundTsMs + 30_000;
-  return getDb()
-    .prepare(
-      `SELECT id FROM webchat_messages
+  return (await getDb().get(`SELECT id FROM webchat_messages
        WHERE room_id = ? AND sender_type = 'agent' AND message_type = 'text'
          AND content = ?
          AND created_at BETWEEN ? AND ?
-       LIMIT 1`,
-    )
-    .get(roomId, content, lo, hi) as WebchatMessageProbe | undefined;
+       LIMIT 1`, roomId, content, lo, hi)) as WebchatMessageProbe | undefined;
 }
 
-function findStoredAgentFile(roomId: string, filename: string, outboundTsMs: number): WebchatMessageProbe | undefined {
+async function findStoredAgentFile(roomId: string, filename: string, outboundTsMs: number): Promise<WebchatMessageProbe | undefined> {
   const lo = outboundTsMs - 30_000;
   const hi = outboundTsMs + 30_000;
-  return getDb()
-    .prepare(
-      `SELECT id FROM webchat_messages
+  return (await getDb().get(`SELECT id FROM webchat_messages
        WHERE room_id = ? AND sender_type = 'agent' AND message_type = 'file'
          AND file_meta LIKE ?
          AND created_at BETWEEN ? AND ?
-       LIMIT 1`,
-    )
-    .get(roomId, `%"filename":"${filename.replace(/"/g, '\\"')}"%`, lo, hi) as WebchatMessageProbe | undefined;
+       LIMIT 1`, roomId, `%"filename":"${filename.replace(/"/g, '\\"')}"%`, lo, hi)) as WebchatMessageProbe | undefined;
 }
 
 function parseTextFromContent(raw: string): string | null {

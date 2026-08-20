@@ -52,18 +52,14 @@ async function seedAgent(mcpServers: Record<string, unknown> = {}): Promise<void
   conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
   migrations.runMigrations(conn.getDb());
-  conn
-    .getDb()
-    .prepare(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`)
-    .run(GROUP.id, GROUP.name, GROUP.folder, '2026-08-17T00:00:00.000Z');
+  await conn
+    .getDb().run(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, GROUP.id, GROUP.name, GROUP.folder, '2026-08-17T00:00:00.000Z');
 
   const { ensureContainerConfig, updateContainerConfigScalars } = await import('../../db/container-configs.js');
   ensureContainerConfig(GROUP.id);
   if (Object.keys(mcpServers).length) {
-    conn
-      .getDb()
-      .prepare('UPDATE container_configs SET mcp_servers = ? WHERE agent_group_id = ?')
-      .run(JSON.stringify(mcpServers), GROUP.id);
+    await conn
+      .getDb().run('UPDATE container_configs SET mcp_servers = ? WHERE agent_group_id = ?', JSON.stringify(mcpServers), GROUP.id);
   }
   updateContainerConfigScalars(GROUP.id, { timezone: 'Europe/Amsterdam' });
 
@@ -88,7 +84,7 @@ describe('exporting an agent as a template', () => {
   it('round-trips: what it writes, upstream can read back', async () => {
     await seedAgent();
     const { exportAgentAsTemplate } = await import('./server/template-export.js');
-    const result = exportAgentAsTemplate(GROUP, { name: 'research-buddy', description: 'Researches things' });
+    const result = await exportAgentAsTemplate(GROUP, { name: 'research-buddy', description: 'Researches things' });
 
     expect(result.ref).toBe('mine/research-buddy');
     expect(result.included).toMatchObject({ persona: true, skills: ['deep-read'], contextFiles: ['sources.md'] });
@@ -120,7 +116,7 @@ describe('exporting an agent as a template', () => {
       docs: { type: 'streamable-http', url: 'https://example.test/mcp', headers: { Authorization: 'Bearer abc123' } },
     });
     const { exportAgentAsTemplate } = await import('./server/template-export.js');
-    const result = exportAgentAsTemplate(GROUP, { name: 'research-buddy' });
+    const result = await exportAgentAsTemplate(GROUP, { name: 'research-buddy' });
 
     const raw = fs.readFileSync(path.join(libDir, 'mine', 'research-buddy', 'mcp.json'), 'utf8');
     expect(raw).not.toContain('sk-ant-secret');
@@ -138,10 +134,8 @@ describe('exporting an agent as a template', () => {
   it('names what a template cannot carry, packages loudest', async () => {
     await seedAgent();
     const conn = await import('../../db/connection.js');
-    conn
-      .getDb()
-      .prepare('UPDATE container_configs SET packages_apt = ?, provider = ? WHERE agent_group_id = ?')
-      .run(JSON.stringify(['ripgrep']), 'codex', GROUP.id);
+    await conn
+      .getDb().run('UPDATE container_configs SET packages_apt = ?, provider = ? WHERE agent_group_id = ?', JSON.stringify(['ripgrep']), 'codex', GROUP.id);
 
     const { exportAgentAsTemplate } = await import('./server/template-export.js');
     const { omitted } = exportAgentAsTemplate(GROUP, { name: 'research-buddy' });

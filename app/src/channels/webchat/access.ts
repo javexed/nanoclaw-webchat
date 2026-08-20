@@ -12,11 +12,11 @@ import { getAgentsForWebchatRoom } from './db.js';
 import type { WebchatRoom } from './db.js';
 import { hasAdminPrivilege, isGlobalAdmin, isOwner } from './roles.js';
 
-export function canAccessRoom(userId: string, roomId: string): boolean {
-  const agents = getAgentsForWebchatRoom(roomId);
+export async function canAccessRoom(userId: string, roomId: string): Promise<boolean> {
+  const agents = await getAgentsForWebchatRoom(roomId);
   if (agents.length === 0) return false;
   for (const a of agents) {
-    if (canAccessAgentGroup(userId, a.id).allowed) return true;
+    if ((await canAccessAgentGroup(userId, a.id)).allowed) return true;
   }
   return false;
 }

@@ -25,7 +25,7 @@ export async function rMeHandlePut(ctx: RouteCtx, _m: RegExpMatchArray): Promise
     return json(res, 400, { error: 'Invalid JSON' });
   }
   const handle = typeof body.handle === 'string' ? body.handle.trim().toLowerCase() : '';
-  const result = setWebchatUserHandle(userId, handle);
+  const result = await setWebchatUserHandle(userId, handle);
   if (!result.ok) {
     return result.reason === 'taken'
       ? json(res, 409, { error: 'That handle is already taken' })

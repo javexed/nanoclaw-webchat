@@ -53,33 +53,15 @@ async function boot() {
   // exercised rather than short-circuited at the access check.
   const dbh = conn.getDb();
   const now = new Date().toISOString();
-  dbh
-    .prepare(
-      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-    )
-    .run('ag-1', 'Agent', 'agent', now);
-  dbh
-    .prepare(
-      `INSERT OR IGNORE INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
-       VALUES ('room-1', 'webchat', 'webchat', 'room-1', 'Room', 0, 'public', ?)`,
-    )
-    .run(now);
-  dbh
-    .prepare(
-      `INSERT OR IGNORE INTO messaging_group_agents
+  await dbh.run(`INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`, 'ag-1', 'Agent', 'agent', now);
+  await dbh.run(`INSERT OR IGNORE INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
+       VALUES ('room-1', 'webchat', 'webchat', 'room-1', 'Room', 0, 'public', ?)`, now);
+  await dbh.run(`INSERT OR IGNORE INTO messaging_group_agents
          (id, messaging_group_id, agent_group_id, engage_mode, engage_pattern,
           sender_scope, ignored_message_policy, session_mode, priority, created_at)
-       VALUES (?, 'room-1', 'ag-1', 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`,
-    )
-    .run(randomUUID(), now);
-  dbh
-    .prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`)
-    .run(LOCAL_OWNER, now);
-  dbh
-    .prepare(
-      `INSERT OR IGNORE INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, 'owner', NULL, NULL, ?)`,
-    )
-    .run(LOCAL_OWNER, now);
+       VALUES (?, 'room-1', 'ag-1', 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`, randomUUID(), now);
+  await dbh.run(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, LOCAL_OWNER, now);
+  await dbh.run(`INSERT OR IGNORE INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, 'owner', NULL, NULL, ?)`, LOCAL_OWNER, now);
 
   const server = await import('./server.js');
   const wc = await server.startWebchatServer(noopHooks);
@@ -177,7 +159,7 @@ describe('thread endpoints — HTTP/authz', () => {
     try {
       // A real topic thread exists, so the only reason for a 404 here is the
       // ENGAGED_AGENTS_ENABLED dormancy gate (not a missing room/thread).
-      const t = db.createWebchatThread('room-1', 'Topic');
+      const t = await db.createWebchatThread('room-1', 'Topic');
       const url = `http://127.0.0.1:${port(wc)}/api/rooms/room-1/threads/${t.thread_id}/engaged`;
 
       let res = await fetch(url); // GET list

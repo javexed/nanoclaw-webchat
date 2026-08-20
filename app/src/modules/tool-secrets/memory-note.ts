@@ -124,13 +124,13 @@ function renderBlock(hosts: string[], keys: { name: string; path: string; target
  * secret operation that triggered it — the credential is already wired, and a
  * stale note is a much smaller problem than a half-applied write.
  */
-export function syncCredentialNote(
+export async function syncCredentialNote(
   agentGroupId: string,
   hosts: string[],
   keys: { name: string; path: string; target?: string }[] = [],
-): void {
+): Promise<void> {
   try {
-    const group = getAgentGroup(agentGroupId);
+    const group = await getAgentGroup(agentGroupId);
     if (!group) return;
     const groupDir = path.join(GROUPS_DIR, group.folder);
     if (!fs.existsSync(groupDir)) return;

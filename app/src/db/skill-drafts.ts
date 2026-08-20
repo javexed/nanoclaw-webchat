@@ -27,16 +27,12 @@ export function skillDraftDir(id: string): string {
 }
 
 /** Stage a draft: metadata row + the SKILL.md body on disk. */
-export function createSkillDraft(d: Omit<SkillDraft, 'status' | 'created_at'> & { body: string }): void {
+export async function createSkillDraft(d: Omit<SkillDraft, 'status' | 'created_at'> & { body: string }): Promise<void> {
   const dir = skillDraftDir(d.id);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'SKILL.md'), d.body);
-  getDb()
-    .prepare(
-      `INSERT INTO skill_drafts (id, agent_group_id, session_id, kind, skill_name, target_skill, description, status, created_at)
-       VALUES (@id, @agent_group_id, @session_id, @kind, @skill_name, @target_skill, @description, 'pending', @created_at)`,
-    )
-    .run({
+  await getDb().run(`INSERT INTO skill_drafts (id, agent_group_id, session_id, kind, skill_name, target_skill, description, status, created_at)
+       VALUES (@id, @agent_group_id, @session_id, @kind, @skill_name, @target_skill, @description, 'pending', @created_at)`, {
       id: d.id,
       agent_group_id: d.agent_group_id,
       session_id: d.session_id,
@@ -56,20 +52,20 @@ export function listSkillDrafts(agentGroupId?: string): SkillDraft[] {
   return (agentGroupId ? stmt.all(agentGroupId) : stmt.all()) as SkillDraft[];
 }
 
-export function getSkillDraft(id: string): SkillDraft | undefined {
-  return getDb().prepare('SELECT * FROM skill_drafts WHERE id = ?').get(id) as SkillDraft | undefined;
+export async function getSkillDraft(id: string): Promise<SkillDraft | undefined> {
+  return (await getDb().get('SELECT * FROM skill_drafts WHERE id = ?', id)) as SkillDraft | undefined;
 }
 
 /**
  * Replace a pending draft's body (the review-time edit). The description column
  * follows the new front-matter so every list stays in step with the content.
  */
-export function updateSkillDraftBody(id: string, body: string): boolean {
-  const d = getSkillDraft(id);
+export async function updateSkillDraftBody(id: string, body: string): Promise<boolean> {
+  const d = await getSkillDraft(id);
   if (!d || d.status !== 'pending') return false;
   const desc = /^---\s*\n[\s\S]*?^\s*description:\s*(.+)$/m.exec(body)?.[1]?.trim() ?? d.description;
   fs.writeFileSync(path.join(skillDraftDir(id), 'SKILL.md'), body);
-  getDb().prepare('UPDATE skill_drafts SET description = ? WHERE id = ?').run(desc, id);
+  await getDb().run('UPDATE skill_drafts SET description = ? WHERE id = ?', desc, id);
   return true;
 }
 
@@ -86,8 +82,8 @@ export function readSkillDraftBody(id: string): string | null {
  * DELETE the row + its staged files. (Keeping a resolved row around would also
  * pin the agent_groups FK, blocking agent deletion.)
  */
-export function resolveSkillDraft(id: string, _status: 'kept' | 'discarded'): boolean {
-  const changed = getDb().prepare('DELETE FROM skill_drafts WHERE id = ?').run(id).changes > 0;
+export async function resolveSkillDraft(id: string, _status: 'kept' | 'discarded'): Promise<boolean> {
+  const changed = (await getDb().run('DELETE FROM skill_drafts WHERE id = ?', id)).changes > 0;
   if (changed) fs.rmSync(skillDraftDir(id), { recursive: true, force: true });
   return changed;
 }

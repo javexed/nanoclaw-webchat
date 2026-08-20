@@ -19,10 +19,10 @@ afterEach(() => {
 });
 
 describe('thread engaged agents', () => {
-  it('engage / getEngaged / disengage round-trips', () => {
+  it('engage / getEngaged / disengage round-trips', async () => {
     engageAgent('room-1', 't1', 'ag-a');
     engageAgent('room-1', 't1', 'ag-b');
-    expect(getEngagedAgents('room-1', 't1').sort()).toEqual(['ag-a', 'ag-b']);
+    expect((await getEngagedAgents('room-1', 't1')).sort()).toEqual(['ag-a', 'ag-b']);
     expect(isAgentEngaged('room-1', 't1', 'ag-a')).toBe(true);
     disengageAgent('room-1', 't1', 'ag-a');
     expect(getEngagedAgents('room-1', 't1')).toEqual(['ag-b']);

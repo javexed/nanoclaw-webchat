@@ -11,8 +11,8 @@ beforeEach(() => {
 afterEach(() => closeDb());
 
 describe('onboarding_complete (first-run wizard state)', () => {
-  it('adds the column and defaults to not-complete on a fresh install', () => {
-    const cols = (getDb().prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>).map(
+  it('adds the column and defaults to not-complete on a fresh install', async () => {
+    const cols = ((await getDb().all("PRAGMA table_info('webchat_settings')")) as Array<{ name: string }>).map(
       (c) => c.name,
     );
     expect(cols).toContain('onboarding_complete');
@@ -26,10 +26,10 @@ describe('onboarding_complete (first-run wizard state)', () => {
     expect(getOnboardingComplete()).toBe(false);
   });
 
-  it('does not clobber the credentials policy on the same singleton row', () => {
+  it('does not clobber the credentials policy on the same singleton row', async () => {
     setCredentialsConfig({ defaultMode: 'optional', allowClaudeOauth: true });
     setOnboardingComplete(true);
-    const cfg = getCredentialsConfig();
+    const cfg = await getCredentialsConfig();
     expect(cfg.defaultMode).toBe('optional');
     expect(cfg.allowClaudeOauth).toBe(true);
     expect(getOnboardingComplete()).toBe(true);

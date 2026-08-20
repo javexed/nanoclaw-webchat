@@ -347,14 +347,14 @@ export function envForModel(model: WebchatModel | null): Record<string, string> 
  *
  * Idempotent. Preserves any pre-existing env keys we don't manage.
  */
-export function writeAgentSettingsForAssignedModel(agentGroupId: string): void {
+export async function writeAgentSettingsForAssignedModel(agentGroupId: string): Promise<void> {
   // Per-agent assignment wins; a claude-family group WITHOUT one falls back to
   // the workspace default model (wizard "default engine = Ollama"). Groups on
   // a non-default provider (e.g. codex) never inherit the fallback — their
   // harness doesn't read the ANTHROPIC_* env this writes.
   let model = getAssignedModelForAgent(agentGroupId);
   if (!model) {
-    const provider = getContainerConfig(agentGroupId)?.provider;
+    const provider = (await getContainerConfig(agentGroupId))?.provider;
     if (!provider || provider === 'claude') model = getEffectiveModelForAgent(agentGroupId);
   }
   const overrides = envForModel(model);
@@ -440,13 +440,13 @@ export function providerForModelKind(kind: string | null | undefined): 'opencode
  * default Claude provider. Also (re)writes or clears the per-agent OpenCode model
  * file so the harness always talks to the right local model. Idempotent.
  */
-export function syncAgentProviderForAssignedModel(agentGroupId: string): void {
+export async function syncAgentProviderForAssignedModel(agentGroupId: string): Promise<void> {
   // Only manage the local-harness axis (Claude ↔ OpenCode ↔ pi). Any OTHER
   // non-default provider (e.g. codex) is an explicit harness the webchat model
   // registry doesn't own — never clobber it. Within the managed axis, an explicit
   // OpenCode/pi choice (Agent → Harness) is sticky when installed; a
   // stale/uninstalled one is un-wedged to the default so the group can spawn.
-  const current = getContainerConfig(agentGroupId)?.provider;
+  const current = (await getContainerConfig(agentGroupId))?.provider;
   const managed = !current || current === 'claude' || current === 'opencode' || current === 'pi';
   const sticky = (current === 'opencode' && opencodeInstalled()) || (current === 'pi' && piInstalled());
   if (managed && !sticky) {
@@ -477,12 +477,12 @@ export const LOCAL_MODEL_FILE = 'local-model.json';
 /** Pre-rename name. Written by no one; still read as a fallback. */
 export const LEGACY_LOCAL_MODEL_FILE = 'opencode-model.json';
 
-export function writeLocalModelForAgent(agentGroupId: string): void {
+export async function writeLocalModelForAgent(agentGroupId: string): Promise<void> {
   const dir = path.join(DATA_DIR, 'v2-sessions', agentGroupId, '.claude-shared');
   const file = path.join(dir, LOCAL_MODEL_FILE);
   const legacy = path.join(dir, LEGACY_LOCAL_MODEL_FILE);
   // Shared local-model wiring: both local harnesses (opencode + pi) read this file.
-  const provider = getContainerConfig(agentGroupId)?.provider;
+  const provider = (await getContainerConfig(agentGroupId))?.provider;
   const onLocalHarness = (provider === 'opencode' && opencodeInstalled()) || (provider === 'pi' && piInstalled());
   const model = onLocalHarness ? getEffectiveModelForAgent(agentGroupId) : null;
   if (!model || model.kind !== 'ollama' || !model.endpoint) {

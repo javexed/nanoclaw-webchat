@@ -133,7 +133,7 @@ export function getActiveTurns(roomId: string): string[] {
   return [...(activeTurns.get(roomId) ?? [])];
 }
 
-export function broadcast(roomId: string, msg: object, excludeId?: string): void {
+export async function broadcast(roomId: string, msg: object, excludeId?: string): Promise<void> {
   const isMessage = (msg as { type?: string }).type === 'message';
   const outgoing = isMessage
     ? { ...msg, content: redactSensitiveData((msg as { content?: string }).content || '') }
@@ -171,7 +171,7 @@ export function broadcast(roomId: string, msg: object, excludeId?: string): void
     !['a2a', 'approval', 'approval_resolved'].includes((msg as { message_type?: string }).message_type ?? '')
   ) {
     const m = msg as { sender?: string; content?: string; id?: string };
-    const room = getWebchatRoom(roomId);
+    const room = await getWebchatRoom(roomId);
     sendPushForMessage({
       roomId,
       roomName: room?.name || roomId,
@@ -194,7 +194,7 @@ export function broadcast(roomId: string, msg: object, excludeId?: string): void
  * text is surfaced (file attachments are not). Self-messages (from === to,
  * used for system notes) and empty text are skipped.
  */
-export function surfaceA2aMessage(fromAgentGroupId: string, toAgentGroupId: string, contentJson: string): void {
+export async function surfaceA2aMessage(fromAgentGroupId: string, toAgentGroupId: string, contentJson: string): Promise<void> {
   if (fromAgentGroupId === toAgentGroupId) return;
 
   let text = '';
@@ -208,11 +208,11 @@ export function surfaceA2aMessage(fromAgentGroupId: string, toAgentGroupId: stri
   text = text.trim();
   if (!text) return;
 
-  const rooms = getSharedWebchatRooms(fromAgentGroupId, toAgentGroupId);
+  const rooms = await getSharedWebchatRooms(fromAgentGroupId, toAgentGroupId);
   if (rooms.length === 0) return;
 
-  const fromName = getAgentGroup(fromAgentGroupId)?.name ?? fromAgentGroupId;
-  const toName = getAgentGroup(toAgentGroupId)?.name ?? toAgentGroupId;
+  const fromName = (await getAgentGroup(fromAgentGroupId))?.name ?? fromAgentGroupId;
+  const toName = (await getAgentGroup(toAgentGroupId))?.name ?? toAgentGroupId;
 
   for (const room of rooms) {
     const stored = storeWebchatA2aMessage(room.id, fromName, toName, text);
@@ -287,13 +287,13 @@ export function pushApprovalResolvedToUser(userId: string, approvalId: string, r
  * appearing for live messages. `allRooms`/`archivedSet` are accepted so a
  * fan-out (broadcastRooms) computes them once across all clients.
  */
-export function annotateRoomsForUser(
+export async function annotateRoomsForUser(
   userId: string,
   allRooms: WebchatRoom[] = getAllWebchatRooms(),
   archivedSet: Set<string> = getArchivedRoomIds(),
   activityMap: Map<string, number> = getRoomLastActivity(),
   threadCounts: Map<string, number> = getTopicThreadCounts(),
-): Array<
+): Promise<Array<
   WebchatRoom & {
     archived: boolean;
     hidden: boolean;
@@ -305,12 +305,12 @@ export function annotateRoomsForUser(
     last_activity: number;
     thread_count: number;
   }
-> {
+>> {
   const visible = filterRoomsForUser(userId, allRooms);
-  const hiddenSet = getHiddenRoomIdsForUser(userId); // per-user
-  const unreadSet = getUnreadRoomIdsForUser(userId); // per-user
-  const mentionSet = getMentionedRoomIdsForUser(userId, getWebchatUserHandle(userId) ?? ''); // per-user
-  const pinnedPos = getPinnedPositionsForUser(userId); // per-user: room → manual order
+  const hiddenSet = await getHiddenRoomIdsForUser(userId); // per-user
+  const unreadSet = await getUnreadRoomIdsForUser(userId); // per-user
+  const mentionSet = await getMentionedRoomIdsForUser(userId, getWebchatUserHandle(userId) ?? ''); // per-user
+  const pinnedPos = await getPinnedPositionsForUser(userId); // per-user: room → manual order
   return visible.map((r) => ({
     ...r,
     archived: archivedSet.has(r.id),
