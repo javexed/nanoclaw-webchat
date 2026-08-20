@@ -1,9 +1,9 @@
 diff --git a/src/router.ts b/src/router.ts
-index 57c46005..aa920ad8 100644
+index 6a374739..2a1796fa 100644
 --- a/src/router.ts
 +++ b/src/router.ts
-@@ -388,6 +388,11 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
-     const agentGroup = getAgentGroup(agent.agent_group_id);
+@@ -449,6 +449,11 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
+     const agentGroup = await getAgentGroup(agent.agent_group_id);
      if (!agentGroup) continue;
  
 +    // Lifecycle gate: only `active` agents respond. `paused` (benched) and
@@ -14,7 +14,26 @@ index 57c46005..aa920ad8 100644
      // Effective thread id for THIS wiring: the event-derived address is
      // policy-stripped when the wiring (or its channel declaration) opts out
      // of threads. event.replyTo is operator intent from the CLI admin
-@@ -428,6 +433,13 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
+@@ -475,12 +480,12 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
+       if (!expectation) continue;
+       const planWake = expectation === 'expected';
+       if (planWake) {
+-          // Both gates became async upstream (the central DB is async now), and
+-          // the seam's plan branch is the one caller that still read them
+-          // synchronously — an un-awaited promise is truthy, so `.allowed` on it
+-          // read undefined and every gate silently PASSED.
+-          const pAccessOk = !accessGate || (await accessGate(event, userId, mg, agent.agent_group_id)).allowed;
+-          const pScopeOk = !senderScopeGate || (await senderScopeGate(event, userId, mg, agent)).allowed;
++        // Both gates became async upstream (the central DB is async now), and
++        // the seam's plan branch is the one caller that still read them
++        // synchronously — an un-awaited promise is truthy, so `.allowed` on it
++        // read undefined and every gate silently PASSED.
++        const pAccessOk = !accessGate || (await accessGate(event, userId, mg, agent.agent_group_id)).allowed;
++        const pScopeOk = !senderScopeGate || (await senderScopeGate(event, userId, mg, agent)).allowed;
+         if (!pAccessOk || !pScopeOk) continue;
+       }
+       await deliverToAgent(agent, agentGroup, mg, event, userId, threadsEnabled, effectiveThreadId, planWake, {
+@@ -493,6 +498,13 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
        continue;
      }
  
@@ -25,10 +44,10 @@ index 57c46005..aa920ad8 100644
 +      continue;
 +    }
 +
-     const engages = evaluateEngage(agent, messageText, isMention, mg, effectiveThreadId);
+     const engages = await evaluateEngage(agent, messageText, isMention, mg, effectiveThreadId);
  
-     const accessOk = engages && (!accessGate || accessGate(event, userId, mg, agent.agent_group_id).allowed);
-@@ -512,6 +524,26 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
+     const accessOk = engages && (!accessGate || (await accessGate(event, userId, mg, agent.agent_group_id)).allowed);
+@@ -577,6 +589,26 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
   *                      a thread has engaged us once, follow-ups arrive
   *                      with no mention and should still fire.
   */
@@ -52,10 +71,10 @@ index 57c46005..aa920ad8 100644
 +  return t;
 +}
 +
- function evaluateEngage(
+ async function evaluateEngage(
    agent: MessagingGroupAgent,
    text: string,
-@@ -524,7 +556,12 @@ function evaluateEngage(
+@@ -589,7 +621,12 @@ async function evaluateEngage(
        const pat = agent.engage_pattern ?? '.';
        if (pat === '.') return true;
        try {
@@ -69,7 +88,39 @@ index 57c46005..aa920ad8 100644
        } catch {
          // Bad regex: fail open so admin sees the agent responding + can fix.
          return true;
-@@ -691,6 +728,7 @@ async function deliverToAgent(
+@@ -640,7 +677,7 @@ async function deliverToAgent(
+   // the module's reason; the user-facing notice is the module's own job.
+   const veto = await consultTurnGates(mg, agent.agent_group_id, userId);
+   if (veto) {
+-    recordDroppedMessage({
++    await recordDroppedMessage({
+       channel_type: event.channelType,
+       platform_id: event.platformId,
+       user_id: userId,
+@@ -665,12 +702,7 @@ async function deliverToAgent(
+     sessionThreadId = keyOverride.threadId;
+   }
+ 
+-  const { session, created } = await resolveSession(
+-        agent.agent_group_id,
+-        mg.id,
+-        sessionThreadId,
+-        effectiveSessionMode,
+-      );
++  const { session, created } = await resolveSession(agent.agent_group_id, mg.id, sessionThreadId, effectiveSessionMode);
+ 
+   // The inbound row's (channel_type, platform_id, thread_id) is the address
+   // the agent's reply will be delivered to. Normally it mirrors the source
+@@ -743,7 +775,7 @@ async function deliverToAgent(
+         /* non-JSON content — deliver without hints */
+       }
+     }
+-    writeSessionMessage(session.agent_group_id, session.id, {
++    await writeSessionMessage(session.agent_group_id, session.id, {
+       id: messageId,
+       kind: event.message.kind,
+       timestamp: event.message.timestamp,
+@@ -813,6 +845,7 @@ async function deliverToAgent(
      startTypingRefresh(
        session.id,
        session.agent_group_id,

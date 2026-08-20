@@ -9,21 +9,21 @@ import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { getLearningMasterEnabled, setLearningMasterEnabled } from './master.js';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 afterEach(() => closeDb());
 
 describe('learning master switch', () => {
-  it('defaults to enabled', () => {
-    expect(getLearningMasterEnabled()).toBe(true);
+  it('defaults to enabled', async () => {
+    expect(await getLearningMasterEnabled()).toBe(true);
   });
 
-  it('set/get roundtrips both ways', () => {
-    setLearningMasterEnabled(false);
-    expect(getLearningMasterEnabled()).toBe(false);
-    setLearningMasterEnabled(true);
-    expect(getLearningMasterEnabled()).toBe(true);
+  it('set/get roundtrips both ways', async () => {
+    await setLearningMasterEnabled(false);
+    expect(await getLearningMasterEnabled()).toBe(false);
+    await setLearningMasterEnabled(true);
+    expect(await getLearningMasterEnabled()).toBe(true);
   });
 });

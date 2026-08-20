@@ -49,7 +49,7 @@ function ndjsonStream(lines: string[]): Response {
   return { ok: true, status: 200, body: stream } as unknown as Response;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   mockFetch.mockReset();
   _resetPullsForTest();
 });
@@ -138,31 +138,31 @@ describe('startPull', () => {
 });
 
 describe('parseConfiguredHosts', () => {
-  it('reads the gen-config header comment', () => {
+  it('reads the gen-config header comment', async () => {
     expect(parseConfiguredHosts('# Generated…\n# hosts: http://a:11434, http://b:11434\nmodel_list:\n')).toBe(
       'http://a:11434,http://b:11434',
     );
   });
-  it('returns null when absent', () => {
+  it('returns null when absent', async () => {
     expect(parseConfiguredHosts('model_list: []\n')).toBeNull();
   });
 });
 
 describe('getRosterRefreshState', () => {
-  it('reports unavailable when the litellm skill is not installed', () => {
+  it('reports unavailable when the litellm skill is not installed', async () => {
     expect(getRosterRefreshState('/nonexistent-root').available).toBe(false);
   });
 });
 
 describe('LiteLLM install (routing prerequisite)', () => {
-  it('getLitellmInstallState: no installer + no config under a bogus root', () => {
+  it('getLitellmInstallState: no installer + no config under a bogus root', async () => {
     const st = getLitellmInstallState('/nonexistent-root');
     expect(st.installerPresent).toBe(false);
     expect(st.installed).toBe(false);
     expect(st.running).toBe(false);
   });
 
-  it('getLitellmInstallState: installer present, no config → gated; config present → installed', () => {
+  it('getLitellmInstallState: installer present, no config → gated; config present → installed', async () => {
     // Hermetic root — never depends on whether LiteLLM happens to be installed
     // on the dev machine (data/litellm/config.yaml is runtime state).
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'litellm-state-'));
@@ -186,7 +186,7 @@ describe('LiteLLM install (routing prerequisite)', () => {
     }
   });
 
-  it('startLitellmInstall: refuses (no spawn) when the skill is absent', () => {
+  it('startLitellmInstall: refuses (no spawn) when the skill is absent', async () => {
     expect(startLitellmInstall('/nonexistent-root')).toEqual({
       started: false,
       error: 'installer-missing',
@@ -195,13 +195,13 @@ describe('LiteLLM install (routing prerequisite)', () => {
 });
 
 describe('Codex provider install', () => {
-  it('getCodexInstallProgress reports an idle state before any install', () => {
+  it('getCodexInstallProgress reports an idle state before any install', async () => {
     const st = getCodexInstallProgress();
     expect(st.running).toBe(false);
     expect(Array.isArray(st.lines)).toBe(true);
   });
 
-  it('codexInstallSteps omits the container typecheck on a gitless/deployed host (no bun-types)', () => {
+  it('codexInstallSteps omits the container typecheck on a gitless/deployed host (no bun-types)', async () => {
     // Regression guard: #247 added this skip and a branch rebuild silently dropped
     // it, so Codex install died with "Cannot find type definition file for 'bun'".
     // A deployed tarball has no container/agent-runner/node_modules/bun-types.
@@ -214,7 +214,7 @@ describe('Codex provider install', () => {
     expect(cmds.some((c) => c.includes('container/build.sh'))).toBe(true);
   });
 
-  it('codexInstallSteps includes the container typecheck on a dev checkout (bun-types present)', () => {
+  it('codexInstallSteps includes the container typecheck on a dev checkout (bun-types present)', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-steps-'));
     try {
       fs.mkdirSync(path.join(root, 'container/agent-runner/node_modules/bun-types'), { recursive: true });
@@ -227,7 +227,7 @@ describe('Codex provider install', () => {
     }
   });
 
-  it('startCodexInstall: refuses (no spawn / no build) when the add-codex skill is absent', () => {
+  it('startCodexInstall: refuses (no spawn / no build) when the add-codex skill is absent', async () => {
     // A bogus root has no .claude/skills/add-codex/SKILL.md — so it must bail
     // out BEFORE spawning the source-mutating, image-rebuilding chain.
     expect(startCodexInstall('/nonexistent-root')).toEqual({
@@ -236,7 +236,7 @@ describe('Codex provider install', () => {
     });
   });
 
-  it('tailscale install: state reports tun/root/canInstall; install gated on canInstall', () => {
+  it('tailscale install: state reports tun/root/canInstall; install gated on canInstall', async () => {
     const st = getTailscaleInstallState();
     expect(typeof st.tunPresent).toBe('boolean');
     expect(typeof st.isRoot).toBe('boolean');
@@ -248,7 +248,7 @@ describe('Codex provider install', () => {
     }
   });
 
-  it('cloudflared install: state reports install/service/root; install gated + token-validated', () => {
+  it('cloudflared install: state reports install/service/root; install gated + token-validated', async () => {
     const st = getCloudflaredInstallState();
     expect(typeof st.installed).toBe('boolean');
     expect(typeof st.serviceInstalled).toBe('boolean');
@@ -266,7 +266,7 @@ describe('Codex provider install', () => {
     }
   });
 
-  it('looksLikeTunnelToken accepts long base64url blobs, rejects junk', () => {
+  it('looksLikeTunnelToken accepts long base64url blobs, rejects junk', async () => {
     expect(looksLikeTunnelToken('eyJ' + 'A1b2C3d4_-='.repeat(6))).toBe(true); // ~66 base64url chars
     expect(looksLikeTunnelToken('')).toBe(false);
     expect(looksLikeTunnelToken('   ')).toBe(false);
@@ -274,7 +274,7 @@ describe('Codex provider install', () => {
     expect(looksLikeTunnelToken('has spaces in it ' + 'x'.repeat(60))).toBe(false);
   });
 
-  it('providerRestartCommand picks the right restarter per context', () => {
+  it('providerRestartCommand picks the right restarter per context', async () => {
     const base = { unit: 'nanoclaw-v2-abc', label: 'com.nanoclaw-v2-abc' };
     // macOS → launchd kickstart.
     expect(providerRestartCommand({ ...base, platform: 'darwin', hasUserSession: true })).toBe(
@@ -295,7 +295,7 @@ describe('Codex provider install', () => {
     );
   });
 
-  it('parseSystemdUnitFromCgroup finds the leaf unit whatever the installer named it', () => {
+  it('parseSystemdUnitFromCgroup finds the leaf unit whatever the installer named it', async () => {
     // Proxmox/deploy names it plainly — the bug: restart targeted nanoclaw-v2-<slug>
     // (from getSystemdUnit) while the process actually ran under nanoclaw.service.
     expect(parseSystemdUnitFromCgroup('0::/system.slice/nanoclaw.service\n')).toBe('nanoclaw.service');
@@ -555,19 +555,19 @@ describe('removeRouteFromConfig', () => {
     },
   });
 
-  it('removes a non-default route (the model-delete cascade)', () => {
+  it('removes a non-default route (the model-delete cascade)', async () => {
     const cfg = base() as unknown as Record<string, unknown>;
     removeRouteFromConfig(cfg, 'auto', 'vision');
     const routes = (cfg.routers as Record<string, { routes: { name: string }[] }>).auto.routes;
     expect(routes.map((r) => r.name)).toEqual(['general']);
   });
 
-  it("refuses the router's default route", () => {
+  it("refuses the router's default route", async () => {
     const cfg = base() as unknown as Record<string, unknown>;
     expect(() => removeRouteFromConfig(cfg, 'auto', 'general')).toThrow(/default/);
   });
 
-  it('throws on an unknown router', () => {
+  it('throws on an unknown router', async () => {
     expect(() => removeRouteFromConfig(base() as unknown as Record<string, unknown>, 'nope', 'vision')).toThrow(
       /no router/,
     );

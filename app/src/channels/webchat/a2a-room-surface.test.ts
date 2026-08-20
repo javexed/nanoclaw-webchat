@@ -40,24 +40,42 @@ function wire(roomId: string, agentId: string) {
   });
 }
 
-function a2aRows(roomId: string) {
-  return getDb().prepare(`SELECT * FROM webchat_messages WHERE room_id = ? AND message_type = 'a2a'`).all(roomId) as {
+async function a2aRows(roomId: string) {
+  return (await getDb().all(`SELECT * FROM webchat_messages WHERE room_id = ? AND message_type = 'a2a'`, roomId)) as {
     sender: string;
     sender_type: string;
     content: string;
   }[];
 }
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 
-  createAgentGroup({ id: 'ag-gamma', name: 'Gamma Agent', folder: 'green', agent_provider: null, created_at: now() });
-  createAgentGroup({ id: 'ag-delta', name: 'Delta Agent', folder: 'rev', agent_provider: null, created_at: now() });
-  createAgentGroup({ id: 'ag-lonely', name: 'Lonely', folder: 'lonely', agent_provider: null, created_at: now() });
+  await createAgentGroup({
+    id: 'ag-gamma',
+    name: 'Gamma Agent',
+    folder: 'green',
+    agent_provider: null,
+    created_at: now(),
+  });
+  await createAgentGroup({
+    id: 'ag-delta',
+    name: 'Delta Agent',
+    folder: 'rev',
+    agent_provider: null,
+    created_at: now(),
+  });
+  await createAgentGroup({
+    id: 'ag-lonely',
+    name: 'Lonely',
+    folder: 'lonely',
+    agent_provider: null,
+    created_at: now(),
+  });
 
   // Shared room: Gamma Agent + Delta Agent both wired.
-  createMessagingGroup({
+  await createMessagingGroup({
     id: 'mg-shared',
     channel_type: 'webchat',
     platform_id: 'plant-vision',
@@ -70,7 +88,7 @@ beforeEach(() => {
   wire('mg-shared', 'ag-delta');
 
   // A room only Gamma Agent is in (Lonely is not co-resident anywhere with green).
-  createMessagingGroup({
+  await createMessagingGroup({
     id: 'mg-solo',
     channel_type: 'webchat',
     platform_id: 'solo',
@@ -82,26 +100,26 @@ beforeEach(() => {
   wire('mg-solo', 'ag-gamma');
 });
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeDb();
 });
 
 describe('getSharedWebchatRooms', () => {
-  it('returns rooms both agents are wired to', () => {
-    const rooms = getSharedWebchatRooms('ag-gamma', 'ag-delta');
+  it('returns rooms both agents are wired to', async () => {
+    const rooms = await getSharedWebchatRooms('ag-gamma', 'ag-delta');
     expect(rooms.map((r) => r.id)).toEqual(['plant-vision']);
   });
 
-  it('returns nothing when the agents share no room', () => {
-    expect(getSharedWebchatRooms('ag-gamma', 'ag-lonely')).toEqual([]);
+  it('returns nothing when the agents share no room', async () => {
+    expect(await getSharedWebchatRooms('ag-gamma', 'ag-lonely')).toEqual([]);
   });
 });
 
 describe('surfaceA2aMessage', () => {
-  it('writes an a2a-typed copy into the shared room with from/to attribution', () => {
-    surfaceA2aMessage('ag-gamma', 'ag-delta', JSON.stringify({ text: 'can you check your status?' }));
+  it('writes an a2a-typed copy into the shared room with from/to attribution', async () => {
+    await surfaceA2aMessage('ag-gamma', 'ag-delta', JSON.stringify({ text: 'can you check your status?' }));
 
-    const rows = a2aRows('plant-vision');
+    const rows = await a2aRows('plant-vision');
     expect(rows).toHaveLength(1);
     expect(rows[0].sender).toBe('Gamma Agent');
     expect(rows[0].sender_type).toBe('a2a');
@@ -109,19 +127,19 @@ describe('surfaceA2aMessage', () => {
     expect(parsed).toEqual({ to: 'Delta Agent', text: 'can you check your status?' });
   });
 
-  it('does not surface when the agents share no room', () => {
-    surfaceA2aMessage('ag-gamma', 'ag-lonely', JSON.stringify({ text: 'hi' }));
-    expect(a2aRows('solo')).toHaveLength(0);
+  it('does not surface when the agents share no room', async () => {
+    await surfaceA2aMessage('ag-gamma', 'ag-lonely', JSON.stringify({ text: 'hi' }));
+    expect(await a2aRows('solo')).toHaveLength(0);
   });
 
-  it('skips self-messages (from === to)', () => {
-    surfaceA2aMessage('ag-gamma', 'ag-gamma', JSON.stringify({ text: 'note to self' }));
-    expect(a2aRows('plant-vision')).toHaveLength(0);
-    expect(a2aRows('solo')).toHaveLength(0);
+  it('skips self-messages (from === to)', async () => {
+    await surfaceA2aMessage('ag-gamma', 'ag-gamma', JSON.stringify({ text: 'note to self' }));
+    expect(await a2aRows('plant-vision')).toHaveLength(0);
+    expect(await a2aRows('solo')).toHaveLength(0);
   });
 
-  it('skips empty text', () => {
-    surfaceA2aMessage('ag-gamma', 'ag-delta', JSON.stringify({ text: '   ' }));
-    expect(a2aRows('plant-vision')).toHaveLength(0);
+  it('skips empty text', async () => {
+    await surfaceA2aMessage('ag-gamma', 'ag-delta', JSON.stringify({ text: '   ' }));
+    expect(await a2aRows('plant-vision')).toHaveLength(0);
   });
 });

@@ -58,7 +58,14 @@ PRIVATE_ADDR_RE='(10[.][0-9]+[.][0-9]+[.][0-9]+|172[.](1[6-9]|2[0-9]|3[01])[.][0
 # They are exempted per-line by the leak-scan-allow marker instead. Note RSA is
 # listed but OPENSSH is not: RSA is a redact.test.ts fixture, OPENSSH is a
 # self-test fixture.
-ALLOWED_SECRET_RE='^(-----BEGIN RSA PRIVATE KEY-----|ghp_ABCDEFGHIJKLMNOPQRSTuvwx|sk-abc123DEF456ghi789|sk-ant-api03-REGRESSION-SECRET-DO-NOT-LEAK-000|sk-ant-oat-WORKSPACE|xoxb-12345-67890-abcdef|xoxb-REAL-SECRET)$'  # leak-scan-allow — this line IS the list;
+#
+# xoxb-existing-token / xoxb-fresh-token are UPSTREAM's own placeholders in  # leak-scan-allow
+# setup/lib/skill-driver.test.ts. They reach the gate as CONTEXT lines inside a
+# regenerated patch, not as anything this repo wrote, so a per-line marker
+# would have to be added to upstream's source and would churn the patch on
+# every sync. Neither is secret-SHAPED (a real bot token is
+# xoxb-<digits>-<digits>-<alnum>); these are English words after the prefix.
+ALLOWED_SECRET_RE='^(-----BEGIN RSA PRIVATE KEY-----|ghp_ABCDEFGHIJKLMNOPQRSTuvwx|sk-abc123DEF456ghi789|sk-ant-api03-REGRESSION-SECRET-DO-NOT-LEAK-000|sk-ant-oat-WORKSPACE|xoxb-12345-67890-abcdef|xoxb-REAL-SECRET|xoxb-existing-token|xoxb-fresh-token)$'  # leak-scan-allow — this line IS the list;
 # the `new` tier matches secret shapes strictly (an allowlisted token in a NEW
 # commit should still be questioned), so the definition needs the same per-line
 # marker the self-test fixtures use. The marker is visible in review, which is
@@ -209,11 +216,39 @@ scan_content() {  # <text> <label> <mode:new|tree>
   fi
 }
 
-mode_staged() { scan_content "$(git diff --cached --no-color | added_lines)" "staged changes" new; }
+# A .patch file's CONTEXT and REMOVAL lines are upstream's own text, reproduced
+# verbatim so the patch can locate and replace it — they are not authored here.
+# They also cannot carry the `leak-scan-allow` marker: a removal line must match
+# upstream byte-for-byte or the patch stops applying. So an upstream test fixture
+# that happens to be secret-SHAPED (setup/lib/skill-driver.test.ts writes
+# SLACK_BOT_TOKEN=xoxb-...) is unfixable by construction — marking the source
+# only moves the token onto the removal line, and leaving it moves it onto the
+# context line. Either way one unmarked line survives and the gate can never go
+# green, which is how a gate teaches people to pass --no-verify.
+#
+# What this repo actually CONTRIBUTES through a patch is its ADDED lines, and
+# those stay fully gated below. Everything outside patches/ is unchanged.
+patch_contributions() { awk '{ if (substr($0,1,3)=="+++") next; if (substr($0,1,1)=="+") print substr($0,2) }'; }
+
+mode_staged() {
+  local outside inside
+  outside=$(git diff --cached --no-color -- . ':(exclude)patches' | added_lines)
+  inside=$(git diff --cached --no-color -- patches | added_lines | patch_contributions)
+  scan_content "$outside
+$inside" "staged changes" new
+}
 
 mode_range() {
   local range="$1"
-  scan_content "$(git diff --no-color "$range" | added_lines)" "range $range" new
+  # Same patches/ narrowing as mode_staged, for the same reason: a .patch file's
+  # context/removal lines are upstream's own text and cannot carry the per-line
+  # marker (a removal line must match upstream byte-for-byte). What a patch
+  # CONTRIBUTES — its added lines — stays fully gated.
+  local outside inside
+  outside=$(git diff --no-color "$range" -- . ':(exclude)patches' | added_lines)
+  inside=$(git diff --no-color "$range" -- patches | added_lines | patch_contributions)
+  scan_content "$outside
+$inside" "range $range" new
   local msgs; msgs=$(git log --format='%H %B' "$range" 2>/dev/null | drop_allowed)
   match "$TRAILER_RE" "$msgs" i "forge merge trailers with an internal instance URL"
   match "$(operator_regex_ci)" "$msgs" i "operator identifiers in commit messages"
@@ -280,6 +315,20 @@ selftest() {
   staged_blocks "PEM (staged) blocks"            '-----BEGIN OPENSSH PRIVATE KEY-----'  # leak-scan-allow
   staged_blocks "AWS key (staged) blocks"        'AKIA1234567890ABCDEF'  # leak-scan-allow
   staged_blocks "operator id (staged) blocks"    'host acme-tailnet.example.net'
+
+  # The patches/ exemption, both directions. It must stay NARROW: a secret this
+  # repo introduces THROUGH a patch is still this repo's secret.
+  patch_case() { # <name> <want-fail 0|1> <patch-body-line>
+    ( cd "$gt"; mkdir -p patches; rm -f patches/p.patch
+      printf 'diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1,1 +1,2 @@\n%s\n' "$3" > patches/p.patch
+      git add patches/p.patch 2>/dev/null
+      fail=0; mode_staged >/dev/null 2>&1; git reset -q patches/p.patch 2>/dev/null; rm -rf patches
+      [ "$fail" -eq "$2" ] )
+    if [ $? -eq 0 ]; then echo "  ok   $1"; pass=$((pass+1)); else echo "  FAIL $1"; tf=$((tf+1)); fi
+  }
+  patch_case "patch CONTEXT line with an upstream fixture is exempt" 0 ' k="ghp_0123456789abcdef0123456789abcdefABCD"'  # leak-scan-allow
+  patch_case "patch REMOVAL line with an upstream fixture is exempt" 0 '-k="ghp_0123456789abcdef0123456789abcdefABCD"'  # leak-scan-allow
+  patch_case "patch ADDED line with a secret still BLOCKS"           1 '+k="ghp_0123456789abcdef0123456789abcdefABCD"'  # leak-scan-allow
   ( cd "$gt" && git add . 2>/dev/null; git commit -qm x --no-verify >/dev/null 2>&1 || true
     printf 'ghp_0123456789abcdef0123456789abcdefABCD\n' > r.ts; git add r.ts; git commit -qm leak --no-verify  # leak-scan-allow
     fail=0; mode_range HEAD~1..HEAD >/dev/null 2>&1; [ "$fail" -ne 0 ] ) \

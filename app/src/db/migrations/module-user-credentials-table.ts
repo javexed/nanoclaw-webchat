@@ -15,6 +15,8 @@ import type { Migration } from './index.js';
  * seeds the matching user-level row, so already-connected members stay connected.
  */
 export const moduleUserCredentialsTable: Migration = {
+  // PRAGMA/table_info is sqlite's vocabulary, not the portable driver's.
+  sqliteOnly: true,
   version: 23,
   // Tracking key — FROZEN at the historical byok-* name; migrations key on
   // `name`, so renaming it would re-run this migration on live installs.

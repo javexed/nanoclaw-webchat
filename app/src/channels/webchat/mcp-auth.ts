@@ -106,7 +106,7 @@ export async function refreshOAuthToken(serverId: string, auth: McpAuthOAuth): P
       refresh_token: tok.refresh_token || auth.refresh_token,
       expires_at: tok.expires_in ? Date.now() + tok.expires_in * 1000 : undefined,
     };
-    setMcpServerAuth(serverId, next as unknown as Record<string, unknown>);
+    await setMcpServerAuth(serverId, next as unknown as Record<string, unknown>);
     return next;
   } catch (err) {
     log.warn('MCP OAuth refresh threw', { serverId, err: String(err) });
@@ -213,7 +213,7 @@ export async function startOAuthFlow(
   redirectUri: string,
   staticClient?: { client_id: string; client_secret?: string },
 ): Promise<string> {
-  const server = getWebchatMcpServer(serverId);
+  const server = await getWebchatMcpServer(serverId);
   if (!server?.url) throw new Error('Not a remote MCP server');
   const meta = await discoverAuthServer(server.url);
   const client = staticClient?.client_id ? staticClient : await registerClient(meta, redirectUri);
@@ -286,6 +286,6 @@ export async function finishOAuthFlow(state: string, code: string): Promise<{ se
     refresh_token: tok.refresh_token,
     expires_at: tok.expires_in ? Date.now() + tok.expires_in * 1000 : undefined,
   };
-  setMcpServerAuth(p.serverId, auth as unknown as Record<string, unknown>);
+  await setMcpServerAuth(p.serverId, auth as unknown as Record<string, unknown>);
   return { serverId: p.serverId };
 }

@@ -54,10 +54,11 @@ export interface BroadcastPushMsg {
   messageId?: string;
 }
 
-function getSubscriptionsExcludingIdentity(identity: string): WebchatPushSubscription[] {
-  return getDb()
-    .prepare(`SELECT * FROM webchat_push_subscriptions WHERE identity != ?`)
-    .all(identity) as WebchatPushSubscription[];
+async function getSubscriptionsExcludingIdentity(identity: string): Promise<WebchatPushSubscription[]> {
+  return (await getDb().all(
+    `SELECT * FROM webchat_push_subscriptions WHERE identity != ?`,
+    identity,
+  )) as WebchatPushSubscription[];
 }
 
 export async function sendPushForMessage(m: BroadcastPushMsg): Promise<void> {
@@ -65,7 +66,7 @@ export async function sendPushForMessage(m: BroadcastPushMsg): Promise<void> {
     log.debug('Webchat push: skipped (not ready)', { sender: m.sender });
     return;
   }
-  const subs = getSubscriptionsExcludingIdentity(m.sender);
+  const subs = await getSubscriptionsExcludingIdentity(m.sender);
   if (subs.length === 0) return;
 
   const payload = JSON.stringify({
@@ -86,7 +87,7 @@ export async function sendPushForMessage(m: BroadcastPushMsg): Promise<void> {
         // 404/410 = subscription revoked on the device; prune it.
         const e = err as { statusCode?: number; message?: string; body?: string };
         if (e?.statusCode === 404 || e?.statusCode === 410) {
-          deleteWebchatPushSubscriptionByEndpoint(row.endpoint);
+          await deleteWebchatPushSubscriptionByEndpoint(row.endpoint);
           log.info('Webchat push: pruned dead subscription', { endpointTail: row.endpoint.slice(-24) });
         } else {
           log.warn('Webchat push: send failed', {

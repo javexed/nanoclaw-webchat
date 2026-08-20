@@ -106,8 +106,8 @@ function labelFromName(scope: Scope, name: string | undefined): string | null {
   return name && name.startsWith(prefix) ? name.slice(prefix.length) : null;
 }
 
-function providerSecretType(agentGroupId: string): 'anthropic' | 'openai' {
-  return getContainerConfig(agentGroupId)?.provider === 'codex' ? 'openai' : 'anthropic';
+async function providerSecretType(agentGroupId: string): Promise<'anthropic' | 'openai'> {
+  return (await getContainerConfig(agentGroupId))?.provider === 'codex' ? 'openai' : 'anthropic';
 }
 
 /**
@@ -186,10 +186,10 @@ async function reconcileGroupAgent(admin: OnecliAdmin, agentGroupId: string): Pr
  */
 async function reconcile(admin: OnecliAdmin, scope: Scope): Promise<void> {
   if (scope.kind === 'user') return reconcileMember(admin, scope.agentGroupId, scope.userId);
-  const groups = scope.kind === 'workspace' ? getAllAgentGroups().map((g) => g.id) : [scope.agentGroupId];
+  const groups = scope.kind === 'workspace' ? (await getAllAgentGroups()).map((g) => g.id) : [scope.agentGroupId];
   for (const gid of groups) {
     await reconcileGroupAgent(admin, gid);
-    for (const row of listGroupMemberEnrollments(gid)) await reconcileMember(admin, gid, row.user_id);
+    for (const row of await listGroupMemberEnrollments(gid)) await reconcileMember(admin, gid, row.user_id);
   }
 }
 
@@ -215,15 +215,15 @@ export async function isolateGroup(admin: OnecliAdmin, agentGroupId: string): Pr
   if ((await admin.getSecretMode(agentId)) === 'selective') return;
 
   const assigned = await admin.listAgentSecretIds(agentId);
-  const wantType = providerSecretType(agentGroupId);
+  const wantType = await providerSecretType(agentGroupId);
   const all = await admin.listAllSecrets();
-  const typeById = new Map(all.map((s) => [s.id, s.type]));
+  const typeById = await new Map(all.map((s) => [s.id, s.type]));
   // Prefer a provider secret already assigned; otherwise the workspace default,
   // which is what an `all`-mode agent has been implicitly using all along.
   let modelCred = assigned.find((id) => typeById.get(id) === wantType) ?? null;
   if (!modelCred) {
     const provider = wantType === 'openai' ? 'codex' : 'claude';
-    const row = getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider);
+    const row = await getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider);
     modelCred = row?.status === 'active' ? row.secret_id : null;
   }
   if (!modelCred)
@@ -254,7 +254,7 @@ export async function isolateAllGroups(
 ): Promise<{ isolated: string[]; skipped: { id: string; reason: string }[] }> {
   const isolated: string[] = [];
   const skipped: { id: string; reason: string }[] = [];
-  for (const group of getAllAgentGroups()) {
+  for (const group of await getAllAgentGroups()) {
     try {
       const { available } = await getGroupIsolation(admin, group.id);
       if (!available) {
@@ -365,20 +365,24 @@ async function accessibleHosts(admin: OnecliAdmin, agentGroupId: string): Promis
   const own = await listToolSecrets(admin, { kind: 'agent', agentGroupId });
   const shared = await listToolSecrets(admin, WORKSPACE);
   const perUser: ToolSecretInfo[] = [];
-  for (const row of listGroupMemberEnrollments(agentGroupId))
+  for (const row of await listGroupMemberEnrollments(agentGroupId))
     perUser.push(...(await listToolSecrets(admin, { kind: 'user', agentGroupId, userId: row.user_id })));
   return [...own, ...shared, ...perUser].map((s) => s.hostPattern).filter(Boolean);
 }
 
 /** Refresh one group's note — exported so deploy-key changes can trigger it too. */
 export async function refreshCredentialNote(admin: OnecliAdmin, agentGroupId: string): Promise<void> {
-  syncCredentialNote(agentGroupId, await accessibleHosts(admin, agentGroupId), listDeployKeys(agentGroupId));
+  await syncCredentialNote(
+    agentGroupId,
+    await accessibleHosts(admin, agentGroupId),
+    await listDeployKeys(agentGroupId),
+  );
 }
 
 /** Refresh the credential note for one group, or for every group (shared secret). */
 async function refreshNotes(admin: OnecliAdmin, scope: Scope): Promise<void> {
-  const groups = scope.kind === 'workspace' ? getAllAgentGroups().map((g) => g.id) : [scope.agentGroupId];
-  for (const id of groups) syncCredentialNote(id, await accessibleHosts(admin, id), listDeployKeys(id));
+  const groups = scope.kind === 'workspace' ? (await getAllAgentGroups()).map((g) => g.id) : [scope.agentGroupId];
+  for (const id of groups) await syncCredentialNote(id, await accessibleHosts(admin, id), await listDeployKeys(id));
 }
 
 /** Wired tool secrets for a scope — metadata only, never values. */
@@ -416,7 +420,7 @@ export async function createToolSecret(
     // identifier is the same one container-runner uses.
     let { isolated, available } = await getGroupIsolation(admin, scope.agentGroupId);
     if (!available) {
-      const group = getAgentGroup(scope.agentGroupId);
+      const group = await getAgentGroup(scope.agentGroupId);
       if (!group) throw new Error('Unknown agent group');
       await admin.ensureAgent(group.name, scope.agentGroupId);
       ({ isolated, available } = await getGroupIsolation(admin, scope.agentGroupId));
@@ -434,7 +438,7 @@ export async function createToolSecret(
     // A per-member agent exists only after UserCreds enrollment. Without it
     // there is no identity to attach the credential to, and silently falling
     // back to the group would make Person A's PAT everyone's PAT.
-    const enrolled = listGroupMemberEnrollments(scope.agentGroupId).some((r) => r.user_id === scope.userId);
+    const enrolled = (await listGroupMemberEnrollments(scope.agentGroupId)).some((r) => r.user_id === scope.userId);
     if (!enrolled) throw new Error('This person has not connected their credentials for this agent yet');
   }
   const existing = await listToolSecrets(admin, scope);

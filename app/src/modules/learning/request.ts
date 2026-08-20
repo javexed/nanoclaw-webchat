@@ -60,15 +60,15 @@ export async function handleProposeSkill(
   // One pending draft per (agent, name): auto-trigger plus a manual /learn can
   // both stage the same lesson, and twins in the review queue are pure noise.
   // The newer draft supersedes — its body reflects the later look at the session.
-  for (const prior of listSkillDrafts()) {
+  for (const prior of await listSkillDrafts()) {
     if (prior.agent_group_id !== session.agent_group_id) continue;
     if (prior.skill_name !== skillName) continue;
-    resolveSkillDraft(prior.id, 'discarded');
+    await resolveSkillDraft(prior.id, 'discarded');
     notifySkillDraftResolved({ draftId: prior.id, outcome: 'discarded', by: 'superseded' });
     log.info('Pending draft superseded by a newer one', { old: prior.id, skillName });
   }
 
-  createSkillDraft({
+  await createSkillDraft({
     id,
     agent_group_id: session.agent_group_id,
     session_id: session.id,
@@ -89,21 +89,21 @@ export async function handleProposeSkill(
     kind,
     targetSkill: kind === 'patch' ? target : null,
     agentGroupId: session.agent_group_id,
-    agentName: getAgentGroup(session.agent_group_id)?.name ?? 'agent',
+    agentName: (await getAgentGroup(session.agent_group_id))?.name ?? 'agent',
     session,
   });
 
   // Auto-keep (docs/webchat/learning-loop.md §4) — OFF unless an owner/global admin
   // switched it on for this agent. It reuses the exact same apply path as the
   // human Keep, so the only thing autonomy removes is the wait, never a rule.
-  if (isAutoKeepEnabled(session)) {
-    const draft = getSkillDraft(id);
+  if (await isAutoKeepEnabled(session)) {
+    const draft = await getSkillDraft(id);
     if (draft) {
       // Keep-time overlap review, autonomous flavor: a human can click
       // "Keep anyway" — autonomy can't. Any detected overlap degrades
       // auto-keep to the normal staged flow so a person decides.
       try {
-        const overlaps = await findKeepOverlaps(draft);
+        const overlaps = await findKeepOverlaps(await draft);
         if (overlaps.length > 0) {
           log.info('Auto-keep held — possible overlap; draft stays pending', {
             id,
@@ -114,7 +114,7 @@ export async function handleProposeSkill(
       } catch {
         /* review failure never blocks the staged flow */
       }
-      const r = applySkillDraft(draft, 'Learning auto-keep applied a skill draft');
+      const r = await applySkillDraft(await draft, 'Learning auto-keep applied a skill draft');
       if (r.ok) {
         log.info('Skill draft auto-kept', { id, agentGroup: session.agent_group_id, name: r.name, patched: r.patched });
         notifySkillDraftResolved({ draftId: id, outcome: 'kept', by: 'auto-keep' });
@@ -127,19 +127,19 @@ export async function handleProposeSkill(
   }
 }
 
-function isAutoKeepEnabled(session: Session): boolean {
+async function isAutoKeepEnabled(session: Session): Promise<boolean> {
   // Room layer first (learning_room_settings) — the room the lesson came from
   // overrides the agent default. Absent → agent config → default OFF.
   try {
     if (session.messaging_group_id) {
-      const room = getRoomLearning(session.messaging_group_id);
+      const room = await getRoomLearning(session.messaging_group_id);
       if (room.autoKeep !== undefined) return room.autoKeep === true;
     }
   } catch {
     /* fall through to the agent level */
   }
   try {
-    const raw = getContainerConfig(session.agent_group_id)?.learning;
+    const raw = (await getContainerConfig(session.agent_group_id))?.learning;
     if (!raw) return false;
     return (JSON.parse(raw) as { autoKeep?: boolean }).autoKeep === true;
   } catch {

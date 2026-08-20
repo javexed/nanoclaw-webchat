@@ -333,16 +333,16 @@ export async function prejudgeApproval(
   const heuristic = heuristicFlags(approval.action, approval.payload);
   const withHeuristic = (reason: string, tier: TriageTier) => escalate(reason, tier, { heuristic });
 
-  const modelId = (deps.getModelId ?? getApprovalPrejudgeModelId)();
+  const modelId = await (deps.getModelId ?? getApprovalPrejudgeModelId)();
   if (!modelId) return withHeuristic('pre-judge is not configured (no model)', 'unscreened');
-  const actions = (deps.getActions ?? getApprovalPrejudgeActions)();
+  const actions = await (deps.getActions ?? getApprovalPrejudgeActions)();
   if (!actions.includes(approval.action)) return withHeuristic('action is not opted in to pre-judge', 'unscreened');
   // A targeted approval names its approver deliberately — never intercept.
   if (approval.approver_user_id) return withHeuristic('approval targets a specific approver', 'unscreened');
   if (isNeverAutoApprovable(approval.action, approval.payload)) {
     return withHeuristic('action matches the never-auto-approve list', 'heuristic');
   }
-  const model = (deps.getModel ?? getWebchatModel)(modelId);
+  const model = await (deps.getModel ?? getWebchatModel)(modelId);
   if (!isUsableJudgeModel(model)) {
     return withHeuristic('configured pre-judge model is unavailable', 'unavailable');
   }
@@ -424,11 +424,11 @@ export async function maybePrejudgeApproval(
   deps: MaybePrejudgeDeps = {},
 ): Promise<boolean> {
   try {
-    const modelId = (deps.getModelId ?? getApprovalPrejudgeModelId)();
+    const modelId = await (deps.getModelId ?? getApprovalPrejudgeModelId)();
     if (!modelId) return false; // feature off — zero overhead, no logging
-    const approval = (deps.getApproval ?? getPendingApproval)(approvalId);
+    const approval = await (deps.getApproval ?? getPendingApproval)(approvalId);
     if (!approval) return false;
-    const actions = (deps.getActions ?? getApprovalPrejudgeActions)();
+    const actions = await (deps.getActions ?? getApprovalPrejudgeActions)();
     if (!actions.includes(approval.action)) return false; // not opted in — silent
 
     const result = await prejudgeApproval(approval, question, deps);
@@ -504,14 +504,18 @@ export interface ApprovalTriageView {
  * is why absence is a valid state rather than a gap to paper over — with chips
  * on the card, "nothing shown" must never be mistaken for "screened, clean".
  */
-export function buildApprovalTriageView(
+export async function buildApprovalTriageView(
   approvalId: string,
   action: string,
   payloadJson: string,
-  deps: { getTriage?: typeof getApprovalTriage } = {},
-): ApprovalTriageView {
+  deps: {
+    getTriage?: (
+      approvalId: string,
+    ) => ReturnType<typeof getApprovalTriage> | Awaited<ReturnType<typeof getApprovalTriage>>;
+  } = {},
+): Promise<ApprovalTriageView> {
   const heuristic = heuristicFlags(action, payloadJson);
-  const row = (deps.getTriage ?? getApprovalTriage)(approvalId);
+  const row = await (deps.getTriage ?? getApprovalTriage)(approvalId);
   if (!row) return { tier: 'unscreened', reason: '', flags: [], heuristic, reversible: 'unknown' };
   return {
     tier: row.tier,

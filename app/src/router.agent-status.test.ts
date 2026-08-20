@@ -36,14 +36,14 @@ vi.mock('./config.js', async () => {
 const TEST_DIR = '/tmp/nanoclaw-test-agent-status';
 const now = () => new Date().toISOString();
 
-beforeEach(() => {
+beforeEach(async () => {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
-  const db = initTestDb();
-  runMigrations(db);
+  const db = await initTestDb();
+  await runMigrations(await db);
 
-  createAgentGroup({ id: 'ag-bot', name: 'Bot', folder: 'bot', agent_provider: null, created_at: now() });
-  createMessagingGroup({
+  await createAgentGroup({ id: 'ag-bot', name: 'Bot', folder: 'bot', agent_provider: null, created_at: now() });
+  await createMessagingGroup({
     id: 'mg-room',
     channel_type: 'webchat',
     platform_id: 'room',
@@ -52,7 +52,7 @@ beforeEach(() => {
     unknown_sender_policy: 'public',
     created_at: now(),
   });
-  createMessagingGroupAgent({
+  await createMessagingGroupAgent({
     id: 'mga-bot',
     messaging_group_id: 'mg-room',
     agent_group_id: 'ag-bot',
@@ -66,8 +66,8 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeDb();
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 });
 
@@ -88,30 +88,30 @@ describe('agent status gate', () => {
   it('active agent engages (baseline)', async () => {
     const { routeInbound } = await import('./router.js');
     await routeInbound(event('hello'));
-    const active = getActiveSessions();
+    const active = await getActiveSessions();
     expect(active).toHaveLength(1);
     expect(active[0].agent_group_id).toBe('ag-bot');
   });
 
   it('paused agent does NOT engage', async () => {
-    setAgentStatus('ag-bot', 'paused');
+    await setAgentStatus('ag-bot', 'paused');
     const { routeInbound } = await import('./router.js');
     await routeInbound(event('hello'));
-    expect(getActiveSessions()).toHaveLength(0);
+    expect(await getActiveSessions()).toHaveLength(0);
   });
 
   it('archived agent does NOT engage', async () => {
-    setAgentStatus('ag-bot', 'archived');
+    await setAgentStatus('ag-bot', 'archived');
     const { routeInbound } = await import('./router.js');
     await routeInbound(event('hello'));
-    expect(getActiveSessions()).toHaveLength(0);
+    expect(await getActiveSessions()).toHaveLength(0);
   });
 
   it('re-activating a paused agent restores engagement', async () => {
-    setAgentStatus('ag-bot', 'paused');
-    setAgentStatus('ag-bot', 'active');
+    await setAgentStatus('ag-bot', 'paused');
+    await setAgentStatus('ag-bot', 'active');
     const { routeInbound } = await import('./router.js');
     await routeInbound(event('hello'));
-    expect(getActiveSessions()).toHaveLength(1);
+    expect(await getActiveSessions()).toHaveLength(1);
   });
 });

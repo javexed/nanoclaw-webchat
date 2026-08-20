@@ -30,18 +30,14 @@ const SESSION: Session = {
   created_at: 't',
 } as Session;
 
-function seedSession() {
-  getDb()
-    .prepare(
-      `INSERT OR IGNORE INTO agent_groups (id,name,folder,agent_provider,created_at) VALUES ('ag-1','ag-1','ag-1',NULL,'t')`,
-    )
-    .run();
-  getDb()
-    .prepare(
-      `INSERT INTO messaging_groups (id,channel_type,instance,platform_id,created_at) VALUES ('mg-1','webchat','webchat','room-1','t')`,
-    )
-    .run();
-  createSession(SESSION);
+async function seedSession() {
+  await getDb().run(
+    `INSERT OR IGNORE INTO agent_groups (id,name,folder,agent_provider,created_at) VALUES ('ag-1','ag-1','ag-1',NULL,'t')`,
+  );
+  await getDb().run(
+    `INSERT INTO messaging_groups (id,channel_type,instance,platform_id,created_at) VALUES ('mg-1','webchat','webchat','room-1','t')`,
+  );
+  await createSession(SESSION);
   initSessionFolder('ag-1', 'sess-alice'); // scaffolds the session dir + inbound.db
 }
 
@@ -62,23 +58,23 @@ const addr = { platformId: 'room-1', channelType: 'webchat', threadId: null };
 
 const testSessionTree = path.join(DATA_DIR, 'v2-sessions', 'ag-1');
 
-beforeEach(() => {
+beforeEach(async () => {
   fs.rmSync(testSessionTree, { recursive: true, force: true }); // fresh session dir each test
-  initTestDb();
-  runMigrations(getDb());
-  seedSession();
+  await initTestDb();
+  await runMigrations(getDb());
+  await seedSession();
 });
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeDb();
   fs.rmSync(testSessionTree, { recursive: true, force: true });
 });
 
 describe('writeMemberTranscript', () => {
-  it('writes the transcript with exactly one trigger=1 (the current message)', () => {
-    const a = storeWebchatMessage('room-1', 'Alice', 'user', 'hi from alice');
-    const b = storeWebchatMessage('room-1', 'Bob', 'user', 'hi from bob');
-    const cur = storeWebchatMessage('room-1', 'Alice', 'user', 'what did bob say?');
-    const handled = writeMemberTranscript({
+  it('writes the transcript with exactly one trigger=1 (the current message)', async () => {
+    const a = await storeWebchatMessage('room-1', 'Alice', 'user', 'hi from alice');
+    const b = await storeWebchatMessage('room-1', 'Bob', 'user', 'hi from bob');
+    const cur = await storeWebchatMessage('room-1', 'Alice', 'user', 'what did bob say?');
+    const handled = await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
@@ -100,13 +96,13 @@ describe('writeMemberTranscript', () => {
   // live in file_meta. Serialising content alone handed the agent {"text":""}
   // for every upload — 21 of Mark's files in a row arrived blank and the
   // attachment never reached the container at all.
-  it("delivers the current turn's file as a staged attachment, not a blank message", () => {
+  it("delivers the current turn's file as a staged attachment, not a blank message", async () => {
     const meta = { url: '/api/files/room-1/abc123.pdf', filename: 'Drawing.pdf', mime: 'application/pdf', size: 5 };
     fs.mkdirSync(uploadsDir('room-1'), { recursive: true });
     fs.writeFileSync(path.join(uploadsDir('room-1'), 'abc123.pdf'), 'HELLO');
-    const cur = storeWebchatFileMessage('room-1', 'Alice', 'user', '', meta);
+    const cur = await storeWebchatFileMessage('room-1', 'Alice', 'user', '', meta);
 
-    writeMemberTranscript({
+    await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
@@ -126,14 +122,14 @@ describe('writeMemberTranscript', () => {
     expect(fs.readFileSync(onDisk, 'utf8')).toBe('HELLO');
   });
 
-  it('describes historical files rather than inlining them, and never emits an empty message', () => {
+  it('describes historical files rather than inlining them, and never emits an empty message', async () => {
     const meta = { url: '/api/files/room-1/old1.pdf', filename: 'Old.pdf', mime: 'application/pdf', size: 3 };
     fs.mkdirSync(uploadsDir('room-1'), { recursive: true });
     fs.writeFileSync(path.join(uploadsDir('room-1'), 'old1.pdf'), 'OLD');
-    const old = storeWebchatFileMessage('room-1', 'Alice', 'user', '', meta);
-    const cur = storeWebchatMessage('room-1', 'Alice', 'user', 'what was in that PDF?');
+    const old = await storeWebchatFileMessage('room-1', 'Alice', 'user', '', meta);
+    const cur = await storeWebchatMessage('room-1', 'Alice', 'user', 'what was in that PDF?');
 
-    writeMemberTranscript({
+    await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
@@ -148,9 +144,9 @@ describe('writeMemberTranscript', () => {
     expect(parsed.attachments, 'past uploads are described, not re-encoded every turn').toBeUndefined();
   });
 
-  it('is idempotent — re-running adds only genuinely new messages', () => {
-    const m1 = storeWebchatMessage('room-1', 'Alice', 'user', 'one');
-    writeMemberTranscript({
+  it('is idempotent — re-running adds only genuinely new messages', async () => {
+    const m1 = await storeWebchatMessage('room-1', 'Alice', 'user', 'one');
+    await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
@@ -159,7 +155,7 @@ describe('writeMemberTranscript', () => {
     });
     expect(inboundRows()).toHaveLength(1);
     // Same turn re-run → no dup.
-    writeMemberTranscript({
+    await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
@@ -169,8 +165,8 @@ describe('writeMemberTranscript', () => {
     expect(inboundRows()).toHaveLength(1);
     // A new message arrives → only it is added (idempotent: m1 not rewritten,
     // keeps its original trigger; the new current message is trigger=1).
-    const m2 = storeWebchatMessage('room-1', 'Alice', 'user', 'two');
-    writeMemberTranscript({
+    const m2 = await storeWebchatMessage('room-1', 'Alice', 'user', 'two');
+    await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
@@ -182,9 +178,9 @@ describe('writeMemberTranscript', () => {
     expect(rows.find((r) => r.id === `user-creds-sess-alice-${m2.id}`)!.trigger).toBe(1); // current wakes
   });
 
-  it('falls back (returns false) when the current message is not in the transcript', () => {
-    storeWebchatMessage('room-1', 'Alice', 'user', 'old');
-    const handled = writeMemberTranscript({
+  it('falls back (returns false) when the current message is not in the transcript', async () => {
+    await storeWebchatMessage('room-1', 'Alice', 'user', 'old');
+    const handled = await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',
@@ -194,16 +190,13 @@ describe('writeMemberTranscript', () => {
     expect(handled).toBe(false);
   });
 
-  it('skips a2a / approval side-channel rows', () => {
-    const cur = storeWebchatMessage('room-1', 'Alice', 'user', 'hello');
+  it('skips a2a / approval side-channel rows', async () => {
+    const cur = await storeWebchatMessage('room-1', 'Alice', 'user', 'hello');
     // an a2a side-channel row in the same room
-    getDb()
-      .prepare(
-        `INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, created_at)
-         VALUES ('a2a-1','room-1','x','a2a','{"to":"y","text":"z"}','a2a', ${Date.now() - 1000})`,
-      )
-      .run();
-    writeMemberTranscript({
+    await getDb()
+      .run(`INSERT INTO webchat_messages (id, room_id, sender, sender_type, content, message_type, created_at)
+         VALUES ('a2a-1','room-1','x','a2a','{"to":"y","text":"z"}','a2a', ${Date.now() - 1000})`);
+    await writeMemberTranscript({
       agentGroupId: 'ag-1',
       session: SESSION,
       roomId: 'room-1',

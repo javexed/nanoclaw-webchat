@@ -86,11 +86,11 @@ function rowToRoom(row: { platform_id: string; name: string | null; created_at: 
   };
 }
 
-export function createWebchatRoom(name: string, id?: string): WebchatRoom {
+export async function createWebchatRoom(name: string, id?: string): Promise<WebchatRoom> {
   const platformId = id ?? randomUUID();
   // Guard against duplicate creation — re-running setup or the install-time
   // bootstrap can call this twice for the same canonical room.
-  const existing = getMessagingGroupByPlatform('webchat', platformId);
+  const existing = await getMessagingGroupByPlatform('webchat', platformId);
   if (existing) {
     return {
       id: existing.platform_id,
@@ -99,7 +99,7 @@ export function createWebchatRoom(name: string, id?: string): WebchatRoom {
     };
   }
   const createdAt = new Date().toISOString();
-  createMessagingGroup({
+  await createMessagingGroup({
     id: randomUUID(),
     channel_type: 'webchat',
     platform_id: platformId,
@@ -115,8 +115,8 @@ export function createWebchatRoom(name: string, id?: string): WebchatRoom {
   };
 }
 
-export function getWebchatRoom(id: string): WebchatRoom | undefined {
-  const mg = getMessagingGroupByPlatform('webchat', id);
+export async function getWebchatRoom(id: string): Promise<WebchatRoom | undefined> {
+  const mg = await getMessagingGroupByPlatform('webchat', id);
   if (!mg) return undefined;
   return {
     id: mg.platform_id,
@@ -168,13 +168,14 @@ export interface PendingApprovalRow {
  * insert time. We record the mapping here, on our side, and join against
  * it in the read path below.
  */
-export function recordWebchatApproval(approvalId: string, platformId: string): void {
-  getDb()
-    .prepare(
-      `INSERT OR IGNORE INTO webchat_approvals_index (approval_id, platform_id, recorded_at)
+export async function recordWebchatApproval(approvalId: string, platformId: string): Promise<void> {
+  await getDb().run(
+    `INSERT OR IGNORE INTO webchat_approvals_index (approval_id, platform_id, recorded_at)
        VALUES (?, ?, ?)`,
-    )
-    .run(approvalId, platformId, Date.now());
+    approvalId,
+    platformId,
+    Date.now(),
+  );
 }
 
 /**
@@ -185,10 +186,12 @@ export function recordWebchatApproval(approvalId: string, platformId: string): v
  * responder. We can't authorize against `pending_approvals.channel_type/
  * platform_id` because trunk's `requestApproval` doesn't populate those.
  */
-export function isWebchatApprovalIndexedFor(approvalId: string, platformId: string): boolean {
-  const row = getDb()
-    .prepare(`SELECT 1 FROM webchat_approvals_index WHERE approval_id = ? AND platform_id = ? LIMIT 1`)
-    .get(approvalId, platformId) as { 1: number } | undefined;
+export async function isWebchatApprovalIndexedFor(approvalId: string, platformId: string): Promise<boolean> {
+  const row = (await getDb().get(
+    `SELECT 1 FROM webchat_approvals_index WHERE approval_id = ? AND platform_id = ? LIMIT 1`,
+    approvalId,
+    platformId,
+  )) as { 1: number } | undefined;
   return row !== undefined;
 }
 
@@ -197,10 +200,11 @@ export function isWebchatApprovalIndexedFor(approvalId: string, platformId: stri
  * approval-resolved listener uses this to fan out a clear event to each admin
  * whose UI still shows the now-stale card.
  */
-export function getWebchatApprovalInboxes(approvalId: string): string[] {
-  const rows = getDb()
-    .prepare(`SELECT platform_id FROM webchat_approvals_index WHERE approval_id = ? ORDER BY recorded_at`)
-    .all(approvalId) as { platform_id: string }[];
+export async function getWebchatApprovalInboxes(approvalId: string): Promise<string[]> {
+  const rows = (await getDb().all(
+    `SELECT platform_id FROM webchat_approvals_index WHERE approval_id = ? ORDER BY recorded_at`,
+    approvalId,
+  )) as { platform_id: string }[];
   return rows.map((r) => r.platform_id);
 }
 
@@ -208,8 +212,8 @@ export function getWebchatApprovalInboxes(approvalId: string): string[] {
  * Drop every index row for an approval — called after it resolves so we don't
  * accumulate dead pointers. Safe to call on unknown ids.
  */
-export function deleteWebchatApprovalIndex(approvalId: string): void {
-  getDb().prepare(`DELETE FROM webchat_approvals_index WHERE approval_id = ?`).run(approvalId);
+export async function deleteWebchatApprovalIndex(approvalId: string): Promise<void> {
+  await getDb().run(`DELETE FROM webchat_approvals_index WHERE approval_id = ?`, approvalId);
 }
 
 /** Inverse of `approvalInboxForUser`. Returns null for non-approval platform_ids. */
@@ -226,31 +230,26 @@ export function userForApprovalInbox(platformId: string): string | null {
  * Instead we JOIN against the skill-owned `webchat_approvals_index`,
  * which webchat's deliver() populates on the way through.
  */
-export function getWebchatPendingApprovalsForUser(userId: string): PendingApprovalRow[] {
+export async function getWebchatPendingApprovalsForUser(userId: string): Promise<PendingApprovalRow[]> {
   const platformId = approvalInboxForUser(userId);
   if (!platformId) return [];
-  return getDb()
-    .prepare(
-      `SELECT pa.approval_id, pa.action, pa.title, pa.options_json, pa.payload, pa.created_at
+  return (await getDb().all(
+    `SELECT pa.approval_id, pa.action, pa.title, pa.options_json, pa.payload, pa.created_at
          FROM pending_approvals pa
          JOIN webchat_approvals_index wai ON wai.approval_id = pa.approval_id
         WHERE wai.platform_id = ?
           AND pa.status = 'pending'
         ORDER BY pa.created_at`,
-    )
-    .all(platformId) as PendingApprovalRow[];
+    platformId,
+  )) as PendingApprovalRow[];
 }
 
-export function getAllWebchatRooms(): WebchatRoom[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT platform_id, name, created_at
+export async function getAllWebchatRooms(): Promise<WebchatRoom[]> {
+  const rows = (await getDb().all(`SELECT platform_id, name, created_at
          FROM messaging_groups
         WHERE channel_type = 'webchat'
           AND platform_id NOT LIKE 'approvals:%'
-        ORDER BY created_at`,
-    )
-    .all() as { platform_id: string; name: string | null; created_at: string }[];
+        ORDER BY created_at`)) as { platform_id: string; name: string | null; created_at: string }[];
   return rows.map(rowToRoom);
 }
 
@@ -271,10 +270,8 @@ export function sanitizeRoomName(raw: unknown): string | null {
   return name;
 }
 
-export function updateWebchatRoomName(id: string, name: string): void {
-  getDb()
-    .prepare(`UPDATE messaging_groups SET name = ? WHERE channel_type='webchat' AND platform_id = ?`)
-    .run(name, id);
+export async function updateWebchatRoomName(id: string, name: string): Promise<void> {
+  await getDb().run(`UPDATE messaging_groups SET name = ? WHERE channel_type='webchat' AND platform_id = ?`, name, id);
 }
 
 /**
@@ -283,41 +280,41 @@ export function updateWebchatRoomName(id: string, name: string): void {
  * pointing at this room, the prime designation, and the messaging_group itself.
  * Idempotent — no-op if the room doesn't exist.
  */
-export function deleteWebchatRoom(id: string): void {
-  const mg = getMessagingGroupByPlatform('webchat', id);
+export async function deleteWebchatRoom(id: string): Promise<void> {
+  const mg = await getMessagingGroupByPlatform('webchat', id);
   if (!mg) return;
   const db = getDb();
-  db.prepare(`DELETE FROM webchat_messages WHERE room_id = ?`).run(id);
-  db.prepare(`DELETE FROM messaging_group_agents WHERE messaging_group_id = ?`).run(mg.id);
-  db.prepare(`DELETE FROM webchat_room_primes WHERE room_id = ?`).run(id);
-  db.prepare(`DELETE FROM webchat_user_room_hides WHERE room_id = ?`).run(id);
-  db.prepare(`DELETE FROM webchat_room_archives WHERE room_id = ?`).run(id);
-  db.prepare(`DELETE FROM webchat_room_reads WHERE room_id = ?`).run(id);
-  db.prepare(`DELETE FROM webchat_room_pins WHERE room_id = ?`).run(id);
+  await db.run(`DELETE FROM webchat_messages WHERE room_id = ?`, id);
+  await db.run(`DELETE FROM messaging_group_agents WHERE messaging_group_id = ?`, mg.id);
+  await db.run(`DELETE FROM webchat_room_primes WHERE room_id = ?`, id);
+  await db.run(`DELETE FROM webchat_user_room_hides WHERE room_id = ?`, id);
+  await db.run(`DELETE FROM webchat_room_archives WHERE room_id = ?`, id);
+  await db.run(`DELETE FROM webchat_room_reads WHERE room_id = ?`, id);
+  await db.run(`DELETE FROM webchat_room_pins WHERE room_id = ?`, id);
   // Thread registry + per-thread read markers (guarded — the threads migration
   // may predate this room's data, but the tables exist once migrated).
-  if (hasTable(db, 'webchat_threads')) {
-    db.prepare(`DELETE FROM webchat_thread_reads WHERE room_id = ?`).run(id);
-    db.prepare(`DELETE FROM webchat_threads WHERE room_id = ?`).run(id);
+  if (await hasTable(db, 'webchat_threads')) {
+    await db.run(`DELETE FROM webchat_thread_reads WHERE room_id = ?`, id);
+    await db.run(`DELETE FROM webchat_threads WHERE room_id = ?`, id);
   }
-  if (hasTable(db, 'webchat_thread_engaged')) {
-    db.prepare(`DELETE FROM webchat_thread_engaged WHERE room_id = ?`).run(id);
+  if (await hasTable(db, 'webchat_thread_engaged')) {
+    await db.run(`DELETE FROM webchat_thread_engaged WHERE room_id = ?`, id);
   }
-  if (hasTable(db, 'webchat_thread_sync')) {
-    db.prepare(`DELETE FROM webchat_thread_sync WHERE room_id = ?`).run(id);
+  if (await hasTable(db, 'webchat_thread_sync')) {
+    await db.run(`DELETE FROM webchat_thread_sync WHERE room_id = ?`, id);
   }
   // Drop any agent_destinations rows pointing at this room. target_id has no
   // FK so they wouldn't block, just rot. Guarded — a2a module may not be installed.
-  if (hasTable(db, 'agent_destinations')) {
-    db.prepare(`DELETE FROM agent_destinations WHERE target_type = 'channel' AND target_id = ?`).run(mg.id);
+  if (await hasTable(db, 'agent_destinations')) {
+    await db.run(`DELETE FROM agent_destinations WHERE target_type = 'channel' AND target_id = ?`, mg.id);
   }
   // sessions.messaging_group_id has an FK to messaging_groups(id) and is NOT
   // NULL; any active session for this room would otherwise block the
   // deleteMessagingGroup below with an FK error. Running containers are
   // reaped by the host sweep on its next stale-heartbeat tick once the
   // session row is gone.
-  db.prepare(`DELETE FROM sessions WHERE messaging_group_id = ?`).run(mg.id);
-  deleteMessagingGroup(mg.id);
+  await db.run(`DELETE FROM sessions WHERE messaging_group_id = ?`, mg.id);
+  await deleteMessagingGroup(mg.id);
 }
 
 // ── Room ↔ Agent wirings ──
@@ -332,18 +329,17 @@ export interface WebchatRoomAgent {
  * List the agents currently wired to a webchat room. Empty array when the
  * room doesn't exist or has no wirings.
  */
-export function getAgentsForWebchatRoom(roomId: string): WebchatRoomAgent[] {
-  const mg = getMessagingGroupByPlatform('webchat', roomId);
+export async function getAgentsForWebchatRoom(roomId: string): Promise<WebchatRoomAgent[]> {
+  const mg = await getMessagingGroupByPlatform('webchat', roomId);
   if (!mg) return [];
-  return getDb()
-    .prepare(
-      `SELECT ag.id, ag.name, ag.folder
+  return (await getDb().all(
+    `SELECT ag.id, ag.name, ag.folder
        FROM messaging_group_agents mga
        JOIN agent_groups ag ON ag.id = mga.agent_group_id
        WHERE mga.messaging_group_id = ?
        ORDER BY ag.name`,
-    )
-    .all(mg.id) as WebchatRoomAgent[];
+    mg.id,
+  )) as WebchatRoomAgent[];
 }
 
 /**
@@ -354,18 +350,22 @@ export function getAgentsForWebchatRoom(roomId: string): WebchatRoomAgent[] {
  * Also drops the matching agent_destinations row so the agent's session
  * doesn't keep a destination pointing at a chat it can no longer write to.
  */
-export function unwireAgentFromWebchatRoom(roomId: string, agentGroupId: string): boolean {
-  const mg = getMessagingGroupByPlatform('webchat', roomId);
+export async function unwireAgentFromWebchatRoom(roomId: string, agentGroupId: string): Promise<boolean> {
+  const mg = await getMessagingGroupByPlatform('webchat', roomId);
   if (!mg) return false;
   const db = getDb();
-  const result = db
-    .prepare(`DELETE FROM messaging_group_agents WHERE messaging_group_id = ? AND agent_group_id = ?`)
-    .run(mg.id, agentGroupId);
-  if (hasTable(db, 'agent_destinations')) {
-    db.prepare(
+  const result = await db.run(
+    `DELETE FROM messaging_group_agents WHERE messaging_group_id = ? AND agent_group_id = ?`,
+    mg.id,
+    agentGroupId,
+  );
+  if (await hasTable(db, 'agent_destinations')) {
+    await db.run(
       `DELETE FROM agent_destinations
        WHERE agent_group_id = ? AND target_type = 'channel' AND target_id = ?`,
-    ).run(agentGroupId, mg.id);
+      agentGroupId,
+      mg.id,
+    );
   }
   return result.changes > 0;
 }
@@ -385,24 +385,29 @@ export interface AgentWebchatRoom {
  * lets the UI enforce the same "can't unwire the last agent" guard the
  * room-detail panel uses.
  */
-export function getWebchatRoomsForAgent(agentGroupId: string): AgentWebchatRoom[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT mg.platform_id AS id, mg.name AS name
+export async function getWebchatRoomsForAgent(agentGroupId: string): Promise<AgentWebchatRoom[]> {
+  const rows = (await getDb().all(
+    `SELECT mg.platform_id AS id, mg.name AS name
        FROM messaging_group_agents mga
        JOIN messaging_groups mg ON mg.id = mga.messaging_group_id
        WHERE mga.agent_group_id = ? AND mg.channel_type = 'webchat'
        ORDER BY mg.name`,
-    )
-    .all(agentGroupId) as { id: string; name: string | null }[];
-  return rows
-    .filter((r) => !isApprovalInbox(r.id))
-    .map((r) => ({
-      id: r.id,
-      name: r.name ?? r.id,
-      is_prime: getPrimeAgentForWebchatRoom(r.id) === agentGroupId,
-      agent_count: countAgentsForWebchatRoom(r.id),
-    }));
+    agentGroupId,
+  )) as { id: string; name: string | null }[];
+  // Promise.all, not an awaited .map: each row needs two DB reads now, and a
+  // bare `await` inside the callback would make .map return promises rather
+  // than values — `is_prime` would be a Promise compared to a string, which is
+  // the always-false bug this is fixing, moved one level out.
+  return Promise.all(
+    rows
+      .filter((r) => !isApprovalInbox(r.id))
+      .map(async (r) => ({
+        id: r.id,
+        name: r.name ?? r.id,
+        is_prime: (await getPrimeAgentForWebchatRoom(r.id)) === agentGroupId,
+        agent_count: await countAgentsForWebchatRoom(r.id),
+      })),
+  );
 }
 
 /**
@@ -423,11 +428,11 @@ export function getWebchatRoomsForAgent(agentGroupId: string): AgentWebchatRoom[
  * Falls back to the first wired agent if `last_active` is null on every
  * session (fresh container, no traffic yet).
  */
-export function findActiveAgentForWebchatRoom(roomId: string): WebchatRoomAgent | null {
-  const agents = getAgentsForWebchatRoom(roomId);
+export async function findActiveAgentForWebchatRoom(roomId: string): Promise<WebchatRoomAgent | null> {
+  const agents = await getAgentsForWebchatRoom(roomId);
   if (agents.length === 0) return null;
   if (agents.length === 1) return agents[0];
-  const mg = getMessagingGroupByPlatform('webchat', roomId);
+  const mg = await getMessagingGroupByPlatform('webchat', roomId);
   if (!mg) return agents[0];
   // Filter to sessions whose container is actually running. Without this,
   // `writeSessionMessage` bumps `last_active` even for accumulate writes
@@ -438,9 +443,8 @@ export function findActiveAgentForWebchatRoom(roomId: string): WebchatRoomAgent 
   // `senderAgentGroupId` into the Pattern C loop-back, breaking router
   // self-exclusion. Container-status filtering identifies the actual
   // producer because only true wakes spawn/run a container.
-  const row = getDb()
-    .prepare(
-      `SELECT ag.id, ag.name, ag.folder
+  const row = (await getDb().get(
+    `SELECT ag.id, ag.name, ag.folder
        FROM sessions s
        JOIN agent_groups ag ON ag.id = s.agent_group_id
        WHERE s.messaging_group_id = ?
@@ -448,8 +452,8 @@ export function findActiveAgentForWebchatRoom(roomId: string): WebchatRoomAgent 
          AND s.container_status IN ('running', 'idle')
        ORDER BY s.last_active DESC
        LIMIT 1`,
-    )
-    .get(mg.id) as { id: string; name: string; folder: string } | undefined;
+    mg.id,
+  )) as { id: string; name: string; folder: string } | undefined;
   return row ?? agents[0];
 }
 
@@ -457,12 +461,13 @@ export function findActiveAgentForWebchatRoom(roomId: string): WebchatRoomAgent 
  * Count agents wired to a webchat room. Used to enforce the "no empty rooms"
  * invariant when removing an agent.
  */
-export function countAgentsForWebchatRoom(roomId: string): number {
-  const mg = getMessagingGroupByPlatform('webchat', roomId);
+export async function countAgentsForWebchatRoom(roomId: string): Promise<number> {
+  const mg = await getMessagingGroupByPlatform('webchat', roomId);
   if (!mg) return 0;
-  const row = getDb()
-    .prepare(`SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ?`)
-    .get(mg.id) as { c: number };
+  const row = (await getDb().get(
+    `SELECT COUNT(*) AS c FROM messaging_group_agents WHERE messaging_group_id = ?`,
+    mg.id,
+  )) as { c: number };
   return row.c;
 }
 
@@ -478,25 +483,26 @@ export function countAgentsForWebchatRoom(roomId: string): number {
 // Stale rows can exist transiently (an unwired prime, a deleted agent's row);
 // the wiring-change paths in server.ts clear them when they notice.
 
-export function getPrimeAgentForWebchatRoom(roomId: string): string | null {
-  const row = getDb().prepare(`SELECT agent_group_id FROM webchat_room_primes WHERE room_id = ?`).get(roomId) as
+export async function getPrimeAgentForWebchatRoom(roomId: string): Promise<string | null> {
+  const row = (await getDb().get(`SELECT agent_group_id FROM webchat_room_primes WHERE room_id = ?`, roomId)) as
     | { agent_group_id: string }
     | undefined;
   return row?.agent_group_id ?? null;
 }
 
-export function setPrimeAgentForWebchatRoom(roomId: string, agentGroupId: string): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_room_primes (room_id, agent_group_id, created_at)
+export async function setPrimeAgentForWebchatRoom(roomId: string, agentGroupId: string): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_room_primes (room_id, agent_group_id, created_at)
        VALUES (?, ?, ?)
        ON CONFLICT(room_id) DO UPDATE SET agent_group_id = excluded.agent_group_id, created_at = excluded.created_at`,
-    )
-    .run(roomId, agentGroupId, Date.now());
+    roomId,
+    agentGroupId,
+    Date.now(),
+  );
 }
 
-export function clearPrimeAgentForWebchatRoom(roomId: string): void {
-  getDb().prepare(`DELETE FROM webchat_room_primes WHERE room_id = ?`).run(roomId);
+export async function clearPrimeAgentForWebchatRoom(roomId: string): Promise<void> {
+  await getDb().run(`DELETE FROM webchat_room_primes WHERE room_id = ?`, roomId);
 }
 
 // ── Room settings (engage_default) ──
@@ -516,35 +522,37 @@ export function getRoomEngageDefault(_roomId: string): EngageDefault {
   return 'mention-only';
 }
 
-export function setRoomEngageDefault(roomId: string, mode: EngageDefault): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_room_settings (room_id, engage_default, updated_at)
+export async function setRoomEngageDefault(roomId: string, mode: EngageDefault): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_room_settings (room_id, engage_default, updated_at)
        VALUES (?, ?, ?)
        ON CONFLICT(room_id) DO UPDATE SET engage_default = excluded.engage_default, updated_at = excluded.updated_at`,
-    )
-    .run(roomId, mode, Date.now());
+    roomId,
+    mode,
+    Date.now(),
+  );
 }
 
 // ── UserCreds: per-room credential mode ──
 export type CredentialMode = 'disabled' | 'optional' | 'required';
 
 /** Secure by default: rooms with no settings row read as 'disabled'. */
-export function getRoomCredentialMode(roomId: string): CredentialMode {
-  const row = getDb().prepare(`SELECT credential_mode FROM webchat_room_settings WHERE room_id = ?`).get(roomId) as
+export async function getRoomCredentialMode(roomId: string): Promise<CredentialMode> {
+  const row = (await getDb().get(`SELECT credential_mode FROM webchat_room_settings WHERE room_id = ?`, roomId)) as
     | { credential_mode: CredentialMode }
     | undefined;
   return row?.credential_mode ?? 'disabled';
 }
 
-export function setRoomCredentialMode(roomId: string, mode: CredentialMode): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_room_settings (room_id, engage_default, credential_mode, updated_at)
+export async function setRoomCredentialMode(roomId: string, mode: CredentialMode): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_room_settings (room_id, engage_default, credential_mode, updated_at)
        VALUES (?, 'mention-only', ?, ?)
        ON CONFLICT(room_id) DO UPDATE SET credential_mode = excluded.credential_mode, updated_at = excluded.updated_at`,
-    )
-    .run(roomId, mode, Date.now());
+    roomId,
+    mode,
+    Date.now(),
+  );
 }
 
 /**
@@ -552,9 +560,9 @@ export function setRoomCredentialMode(roomId: string, mode: CredentialMode): voi
  * to credential_mode. The column is absent until its migration runs, so read
  * defensively and treat any error/missing value as not-allowed.
  */
-export function getRoomOauthAllowed(roomId: string): boolean {
+export async function getRoomOauthAllowed(roomId: string): Promise<boolean> {
   try {
-    const row = getDb().prepare(`SELECT oauth_allowed FROM webchat_room_settings WHERE room_id = ?`).get(roomId) as
+    const row = (await getDb().get(`SELECT oauth_allowed FROM webchat_room_settings WHERE room_id = ?`, roomId)) as
       | { oauth_allowed: number }
       | undefined;
     return (row?.oauth_allowed ?? 0) === 1;
@@ -563,14 +571,15 @@ export function getRoomOauthAllowed(roomId: string): boolean {
   }
 }
 
-export function setRoomOauthAllowed(roomId: string, allowed: boolean): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_room_settings (room_id, engage_default, oauth_allowed, updated_at)
+export async function setRoomOauthAllowed(roomId: string, allowed: boolean): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_room_settings (room_id, engage_default, oauth_allowed, updated_at)
        VALUES (?, 'mention-only', ?, ?)
        ON CONFLICT(room_id) DO UPDATE SET oauth_allowed = excluded.oauth_allowed, updated_at = excluded.updated_at`,
-    )
-    .run(roomId, allowed ? 1 : 0, Date.now());
+    roomId,
+    allowed ? 1 : 0,
+    Date.now(),
+  );
 }
 
 // ── UserCreds: workspace-wide credentials policy (singleton webchat_settings) ──
@@ -593,9 +602,9 @@ const DEFAULT_CREDENTIALS_CONFIG: CredentialsConfig = {
 };
 
 /** Secure defaults if the singleton row is somehow missing or the table is absent. */
-export function getCredentialsConfig(): CredentialsConfig {
+export async function getCredentialsConfig(): Promise<CredentialsConfig> {
   try {
-    const row = getDb().prepare(`SELECT * FROM webchat_settings WHERE id = 1`).get() as
+    const row = (await getDb().get(`SELECT * FROM webchat_settings WHERE id = 1`)) as
       | {
           default_credential_mode: CredentialMode;
           allow_anthropic_key: number;
@@ -617,11 +626,12 @@ export function getCredentialsConfig(): CredentialsConfig {
   }
 }
 
-export function setCredentialsConfig(patch: Partial<CredentialsConfig>): void {
-  const next = { ...getCredentialsConfig(), ...patch };
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_settings
+export async function setCredentialsConfig(patch: Partial<CredentialsConfig>): Promise<void> {
+  // Await before spreading: spreading a PROMISE contributes zero keys, so
+  // `next` silently became just the patch and every other column went NULL.
+  const next = { ...(await getCredentialsConfig()), ...patch };
+  await getDb().run(
+    `INSERT INTO webchat_settings
          (id, default_credential_mode, allow_anthropic_key, allow_claude_oauth, allow_openai_key, allow_codex_oauth, updated_at)
        VALUES (1, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
@@ -631,15 +641,13 @@ export function setCredentialsConfig(patch: Partial<CredentialsConfig>): void {
          allow_openai_key        = excluded.allow_openai_key,
          allow_codex_oauth       = excluded.allow_codex_oauth,
          updated_at              = excluded.updated_at`,
-    )
-    .run(
-      next.defaultMode,
-      next.allowAnthropicKey ? 1 : 0,
-      next.allowClaudeOauth ? 1 : 0,
-      next.allowOpenaiKey ? 1 : 0,
-      next.allowCodexOauth ? 1 : 0,
-      Date.now(),
-    );
+    next.defaultMode,
+    next.allowAnthropicKey ? 1 : 0,
+    next.allowClaudeOauth ? 1 : 0,
+    next.allowOpenaiKey ? 1 : 0,
+    next.allowCodexOauth ? 1 : 0,
+    Date.now(),
+  );
 }
 
 // ── Settings-singleton column factory ──
@@ -649,10 +657,10 @@ export function setCredentialsConfig(patch: Partial<CredentialsConfig>): void {
 // NOT NULL credential columns from current config so the row can be created if
 // it doesn't exist yet, then flips only its own column on conflict.
 
-function settingsGetter<T>(column: string, decode: (value: unknown) => T): () => T {
-  return () => {
+function settingsGetter<T>(column: string, decode: (value: unknown) => T): () => Promise<T> {
+  return async () => {
     try {
-      const row = getDb().prepare(`SELECT ${column} FROM webchat_settings WHERE id = 1`).get() as
+      const row = (await getDb().get(`SELECT ${column} FROM webchat_settings WHERE id = 1`)) as
         | Record<string, unknown>
         | undefined;
       return decode(row?.[column]);
@@ -663,26 +671,23 @@ function settingsGetter<T>(column: string, decode: (value: unknown) => T): () =>
 }
 
 function settingsSetter<V>(column: string, encode: (value: V) => string | number | null): (value: V) => void {
-  return (value) => {
-    const cfg = getCredentialsConfig();
-    getDb()
-      .prepare(
-        `INSERT INTO webchat_settings
+  return async (value) => {
+    const cfg = await getCredentialsConfig();
+    await getDb().run(
+      `INSERT INTO webchat_settings
            (id, default_credential_mode, allow_anthropic_key, allow_claude_oauth, allow_openai_key, allow_codex_oauth, ${column}, updated_at)
          VALUES (1, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            ${column} = excluded.${column},
            updated_at = excluded.updated_at`,
-      )
-      .run(
-        cfg.defaultMode,
-        cfg.allowAnthropicKey ? 1 : 0,
-        cfg.allowClaudeOauth ? 1 : 0,
-        cfg.allowOpenaiKey ? 1 : 0,
-        cfg.allowCodexOauth ? 1 : 0,
-        encode(value),
-        Date.now(),
-      );
+      cfg.defaultMode,
+      cfg.allowAnthropicKey ? 1 : 0,
+      cfg.allowClaudeOauth ? 1 : 0,
+      cfg.allowOpenaiKey ? 1 : 0,
+      cfg.allowCodexOauth ? 1 : 0,
+      encode(value),
+      Date.now(),
+    );
   };
 }
 
@@ -783,30 +788,32 @@ export const setPromoteFirstTailscaleOwner = settingsSetter('promote_first_tails
 // Per-room mode override: NULL = inherit the global default.
 export type RoomModeOverride = CredentialMode | null;
 
-export function getRoomModeOverride(roomId: string): RoomModeOverride {
+export async function getRoomModeOverride(roomId: string): Promise<RoomModeOverride> {
   try {
-    const row = getDb()
-      .prepare(`SELECT credential_mode_override FROM webchat_room_settings WHERE room_id = ?`)
-      .get(roomId) as { credential_mode_override: CredentialMode | null } | undefined;
+    const row = (await getDb().get(
+      `SELECT credential_mode_override FROM webchat_room_settings WHERE room_id = ?`,
+      roomId,
+    )) as { credential_mode_override: CredentialMode | null } | undefined;
     return row?.credential_mode_override ?? null;
   } catch {
     return null;
   }
 }
 
-export function setRoomModeOverride(roomId: string, mode: RoomModeOverride): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_room_settings (room_id, engage_default, credential_mode_override, updated_at)
+export async function setRoomModeOverride(roomId: string, mode: RoomModeOverride): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_room_settings (room_id, engage_default, credential_mode_override, updated_at)
        VALUES (?, 'mention-only', ?, ?)
        ON CONFLICT(room_id) DO UPDATE SET credential_mode_override = excluded.credential_mode_override, updated_at = excluded.updated_at`,
-    )
-    .run(roomId, mode, Date.now());
+    roomId,
+    mode,
+    Date.now(),
+  );
 }
 
 /** The room's effective credential mode: its own override, else the global default. */
-export function getEffectiveRoomMode(roomId: string): CredentialMode {
-  return getRoomModeOverride(roomId) ?? getCredentialsConfig().defaultMode;
+export async function getEffectiveRoomMode(roomId: string): Promise<CredentialMode> {
+  return (await getRoomModeOverride(roomId)) ?? (await getCredentialsConfig()).defaultMode;
 }
 
 // ── Messages ──
@@ -818,13 +825,13 @@ function rowToMessage(row: WebchatMessageRow): WebchatMessage {
   };
 }
 
-export function storeWebchatMessage(
+export async function storeWebchatMessage(
   roomId: string,
   sender: string,
   senderType: string,
   content: string,
   threadId = 'main',
-): WebchatMessage {
+): Promise<WebchatMessage> {
   const msg: WebchatMessage = {
     id: randomUUID(),
     room_id: roomId,
@@ -836,12 +843,11 @@ export function storeWebchatMessage(
     file_meta: null,
     created_at: Date.now(),
   };
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at)
+  await getDb().run(
+    `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at)
        VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at)`,
-    )
-    .run({ ...msg, file_meta: null });
+    { ...msg, file_meta: null },
+  );
   return msg;
 }
 
@@ -852,7 +858,7 @@ export function storeWebchatMessage(
  * approve/deny buttons only to those users). Keyed by a deterministic id so
  * re-firing is idempotent and the card can be updated on resolution.
  */
-export function storeWebchatApprovalCard(
+export async function storeWebchatApprovalCard(
   roomId: string,
   sender: string,
   payload: {
@@ -866,7 +872,7 @@ export function storeWebchatApprovalCard(
     triage?: unknown;
   },
   threadId = 'main',
-): WebchatMessage {
+): Promise<WebchatMessage> {
   const msg: WebchatMessage = {
     id: `appr-card-${payload.questionId}`,
     room_id: roomId,
@@ -878,12 +884,11 @@ export function storeWebchatApprovalCard(
     file_meta: null,
     created_at: Date.now(),
   };
-  getDb()
-    .prepare(
-      `INSERT OR REPLACE INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at)
+  await getDb().run(
+    `INSERT OR REPLACE INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at)
        VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at)`,
-    )
-    .run({ ...msg, file_meta: null });
+    { ...msg, file_meta: null },
+  );
   return msg;
 }
 
@@ -902,14 +907,12 @@ export interface ApprovalTriage {
  * Record what the pre-judge concluded, keyed by approval id. Written once as
  * the hold is created; INSERT OR REPLACE so a retried hold is idempotent.
  */
-export function storeApprovalTriage(approvalId: string, triage: ApprovalTriage): void {
-  getDb()
-    .prepare(
-      `INSERT OR REPLACE INTO webchat_approval_triage
+export async function storeApprovalTriage(approvalId: string, triage: ApprovalTriage): Promise<void> {
+  await getDb().run(
+    `INSERT OR REPLACE INTO webchat_approval_triage
          (approval_id, tier, reason, flags, heuristic_flags, reversible, created_at)
        VALUES (@approval_id, @tier, @reason, @flags, @heuristic_flags, @reversible, @created_at)`,
-    )
-    .run({
+    {
       approval_id: approvalId,
       tier: triage.tier,
       reason: triage.reason,
@@ -917,21 +920,19 @@ export function storeApprovalTriage(approvalId: string, triage: ApprovalTriage):
       heuristic_flags: JSON.stringify(triage.heuristicFlags),
       reversible: triage.reversible,
       created_at: Date.now(),
-    });
+    },
+  );
 }
 
 /**
  * Read a triage record. Returns undefined for approvals raised before this
  * existed — the card then renders nothing rather than implying it was screened.
  */
-export function getApprovalTriage(approvalId: string): ApprovalTriage | undefined {
-  const row = getDb()
-    .prepare(
-      `SELECT tier, reason, flags, heuristic_flags, reversible FROM webchat_approval_triage WHERE approval_id = ?`,
-    )
-    .get(approvalId) as
-    | { tier: string; reason: string; flags: string; heuristic_flags: string; reversible: string }
-    | undefined;
+export async function getApprovalTriage(approvalId: string): Promise<ApprovalTriage | undefined> {
+  const row = (await getDb().get(
+    `SELECT tier, reason, flags, heuristic_flags, reversible FROM webchat_approval_triage WHERE approval_id = ?`,
+    approvalId,
+  )) as { tier: string; reason: string; flags: string; heuristic_flags: string; reversible: string } | undefined;
   if (!row) return undefined;
   const parseList = (raw: string): string[] => {
     try {
@@ -955,7 +956,7 @@ export function getApprovalTriage(approvalId: string): ApprovalTriage | undefine
  * Same shape as the approval card: a persisted row the client renders with
  * Keep/Discard, flipped to resolved once handled.
  */
-export function storeWebchatSkillDraftCard(
+export async function storeWebchatSkillDraftCard(
   roomId: string,
   sender: string,
   payload: {
@@ -968,7 +969,7 @@ export function storeWebchatSkillDraftCard(
     agentName: string;
   },
   threadId = 'main',
-): WebchatMessage {
+): Promise<WebchatMessage> {
   const msg: WebchatMessage = {
     id: `skill-draft-card-${payload.draftId}`,
     room_id: roomId,
@@ -980,12 +981,11 @@ export function storeWebchatSkillDraftCard(
     file_meta: null,
     created_at: Date.now(),
   };
-  getDb()
-    .prepare(
-      `INSERT OR REPLACE INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at)
+  await getDb().run(
+    `INSERT OR REPLACE INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at)
        VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at)`,
-    )
-    .run({ ...msg, file_meta: null });
+    { ...msg, file_meta: null },
+  );
   return msg;
 }
 
@@ -996,26 +996,31 @@ export function storeWebchatSkillDraftCard(
  * messages after it has scrolled away for anyone opening the room. Null when no
  * card exists at all (a non-webchat draft, or one from before cards shipped).
  */
-export function skillDraftCardPosition(draftId: string): { roomId: string; newerMessages: number } | null {
+export async function skillDraftCardPosition(
+  draftId: string,
+): Promise<{ roomId: string; newerMessages: number } | null> {
   const id = `skill-draft-card-${draftId}`;
-  const row = getDb().prepare('SELECT room_id, created_at FROM webchat_messages WHERE id = ?').get(id) as
+  const row = (await getDb().get('SELECT room_id, created_at FROM webchat_messages WHERE id = ?', id)) as
     | { room_id: string; created_at: number }
     | undefined;
   if (!row) return null;
-  const n = getDb()
-    .prepare('SELECT count(*) AS n FROM webchat_messages WHERE room_id = ? AND created_at > ? AND id != ?')
-    .get(row.room_id, row.created_at, id) as { n: number };
+  const n = (await getDb().get(
+    'SELECT count(*) AS n FROM webchat_messages WHERE room_id = ? AND created_at > ? AND id != ?',
+    row.room_id,
+    row.created_at,
+    id,
+  )) as { n: number };
   return { roomId: row.room_id, newerMessages: n.n };
 }
 
 /** Flip a proposed-skill card to resolved (kept | discarded). No-op if absent. */
-export function markRoomSkillDraftResolved(
+export async function markRoomSkillDraftResolved(
   draftId: string,
   outcome: 'kept' | 'discarded',
   resolvedBy: string,
-): { roomId: string; message: WebchatMessage } | null {
+): Promise<{ roomId: string; message: WebchatMessage } | null> {
   const id = `skill-draft-card-${draftId}`;
-  const row = getDb().prepare('SELECT * FROM webchat_messages WHERE id = ?').get(id) as WebchatMessage | undefined;
+  const row = (await getDb().get('SELECT * FROM webchat_messages WHERE id = ?', id)) as WebchatMessage | undefined;
   if (!row) return null;
   let payload: Record<string, unknown> = {};
   try {
@@ -1024,7 +1029,7 @@ export function markRoomSkillDraftResolved(
     /* keep whatever we can */
   }
   const content = JSON.stringify({ ...payload, status: outcome, resolvedBy });
-  getDb().prepare('UPDATE webchat_messages SET content = ? WHERE id = ?').run(content, id);
+  await getDb().run('UPDATE webchat_messages SET content = ? WHERE id = ?', content, id);
   return { roomId: row.room_id, message: { ...row, content } };
 }
 
@@ -1050,14 +1055,14 @@ export interface SkillDraftCardRow {
   agentName: string;
 }
 
-export function listSkillDraftCards(before?: number, limit = 200): SkillDraftCardRow[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT room_id, content, created_at FROM webchat_messages
+export async function listSkillDraftCards(before?: number, limit = 200): Promise<SkillDraftCardRow[]> {
+  const rows = (await getDb().all(
+    `SELECT room_id, content, created_at FROM webchat_messages
        WHERE message_type = 'skill_draft' AND created_at < ?
        ORDER BY created_at DESC LIMIT ?`,
-    )
-    .all(before ?? Number.MAX_SAFE_INTEGER, limit) as Array<{ room_id: string; content: string; created_at: number }>;
+    before ?? Number.MAX_SAFE_INTEGER,
+    limit,
+  )) as Array<{ room_id: string; content: string; created_at: number }>;
   const out: SkillDraftCardRow[] = [];
   for (const r of rows) {
     try {
@@ -1088,9 +1093,9 @@ export function listSkillDraftCards(before?: number, limit = 200): SkillDraftCar
  * No-op if the card row doesn't exist. The live clear is a broadcast handled
  * by the resolved-listener; this keeps the persisted row consistent.
  */
-export function markRoomApprovalResolved(approvalId: string, resolvedBy: string): void {
+export async function markRoomApprovalResolved(approvalId: string, resolvedBy: string): Promise<void> {
   const id = `appr-card-${approvalId}`;
-  const row = getDb().prepare(`SELECT content FROM webchat_messages WHERE id = ?`).get(id) as
+  const row = (await getDb().get(`SELECT content FROM webchat_messages WHERE id = ?`, id)) as
     | { content: string }
     | undefined;
   if (!row) return;
@@ -1101,9 +1106,11 @@ export function markRoomApprovalResolved(approvalId: string, resolvedBy: string)
     /* keep empty */
   }
   payload.resolvedBy = resolvedBy;
-  getDb()
-    .prepare(`UPDATE webchat_messages SET message_type = 'approval_resolved', content = ? WHERE id = ?`)
-    .run(JSON.stringify(payload), id);
+  await getDb().run(
+    `UPDATE webchat_messages SET message_type = 'approval_resolved', content = ? WHERE id = ?`,
+    JSON.stringify(payload),
+    id,
+  );
 }
 
 /**
@@ -1114,13 +1121,13 @@ export function markRoomApprovalResolved(approvalId: string, resolvedBy: string)
  * `{to, text}` — the client renders a "from → to" label. `sender` is the
  * source agent's display name; no users-table row is created (display only).
  */
-export function storeWebchatA2aMessage(
+export async function storeWebchatA2aMessage(
   roomId: string,
   fromName: string,
   toName: string,
   text: string,
   threadId = 'main',
-): WebchatMessage {
+): Promise<WebchatMessage> {
   const msg: WebchatMessage = {
     id: randomUUID(),
     room_id: roomId,
@@ -1132,12 +1139,11 @@ export function storeWebchatA2aMessage(
     file_meta: null,
     created_at: Date.now(),
   };
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at)
+  await getDb().run(
+    `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at)
        VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at)`,
-    )
-    .run({ ...msg, file_meta: null });
+    { ...msg, file_meta: null },
+  );
   return msg;
 }
 
@@ -1146,28 +1152,31 @@ export function storeWebchatA2aMessage(
  * target). Excludes approval inboxes. Returns the room platform_id (the
  * `room_id` used by webchat_messages / broadcast) and display name.
  */
-export function getSharedWebchatRooms(agentGroupIdA: string, agentGroupIdB: string): { id: string; name: string }[] {
-  const rows = getDb()
-    .prepare(
-      `SELECT mg.platform_id AS id, mg.name AS name
+export async function getSharedWebchatRooms(
+  agentGroupIdA: string,
+  agentGroupIdB: string,
+): Promise<{ id: string; name: string }[]> {
+  const rows = (await getDb().all(
+    `SELECT mg.platform_id AS id, mg.name AS name
        FROM messaging_groups mg
        JOIN messaging_group_agents a ON a.messaging_group_id = mg.id AND a.agent_group_id = ?
        JOIN messaging_group_agents b ON b.messaging_group_id = mg.id AND b.agent_group_id = ?
        WHERE mg.channel_type = 'webchat'
        ORDER BY mg.name`,
-    )
-    .all(agentGroupIdA, agentGroupIdB) as { id: string; name: string | null }[];
+    agentGroupIdA,
+    agentGroupIdB,
+  )) as { id: string; name: string | null }[];
   return rows.filter((r) => !isApprovalInbox(r.id)).map((r) => ({ id: r.id, name: r.name ?? r.id }));
 }
 
-export function storeWebchatFileMessage(
+export async function storeWebchatFileMessage(
   roomId: string,
   sender: string,
   senderType: string,
   caption: string,
   fileMeta: FileMeta,
   threadId = 'main',
-): WebchatMessage {
+): Promise<WebchatMessage> {
   const msg: WebchatMessage = {
     id: randomUUID(),
     room_id: roomId,
@@ -1179,26 +1188,28 @@ export function storeWebchatFileMessage(
     file_meta: fileMeta,
     created_at: Date.now(),
   };
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at)
+  await getDb().run(
+    `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at)
        VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at)`,
-    )
-    .run({ ...msg, file_meta: JSON.stringify(fileMeta) });
+    { ...msg, file_meta: JSON.stringify(fileMeta) },
+  );
   return msg;
 }
 
-export function getWebchatMessages(roomId: string, limit = 200, threadId?: string): WebchatMessage[] {
+export async function getWebchatMessages(roomId: string, limit = 200, threadId?: string): Promise<WebchatMessage[]> {
   const rows = (
     threadId === undefined
-      ? getDb()
-          .prepare(`SELECT * FROM webchat_messages WHERE room_id = ? ORDER BY created_at DESC LIMIT ?`)
-          .all(roomId, limit)
-      : getDb()
-          .prepare(
-            `SELECT * FROM webchat_messages WHERE room_id = ? AND thread_id = ? ORDER BY created_at DESC LIMIT ?`,
-          )
-          .all(roomId, threadId, limit)
+      ? await getDb().all(
+          `SELECT * FROM webchat_messages WHERE room_id = ? ORDER BY created_at DESC LIMIT ?`,
+          roomId,
+          limit,
+        )
+      : await getDb().all(
+          `SELECT * FROM webchat_messages WHERE room_id = ? AND thread_id = ? ORDER BY created_at DESC LIMIT ?`,
+          roomId,
+          threadId,
+          limit,
+        )
   ) as WebchatMessageRow[];
   return rows.reverse().map(rowToMessage);
 }
@@ -1211,39 +1222,49 @@ export function getWebchatMessages(roomId: string, limit = 200, threadId?: strin
  * every client carries the same `webchat:owner` identity). Returns true
  * on success.
  */
-export function deleteWebchatMessage(messageId: string, requesterIdentity: string, roomId: string): boolean {
-  const result = getDb()
-    .prepare(`DELETE FROM webchat_messages WHERE id = ? AND sender = ? AND room_id = ?`)
-    .run(messageId, requesterIdentity, roomId);
+export async function deleteWebchatMessage(
+  messageId: string,
+  requesterIdentity: string,
+  roomId: string,
+): Promise<boolean> {
+  const result = await getDb().run(
+    `DELETE FROM webchat_messages WHERE id = ? AND sender = ? AND room_id = ?`,
+    messageId,
+    requesterIdentity,
+    roomId,
+  );
   return result.changes > 0;
 }
 
-export function getWebchatMessagesAfterId(
+export async function getWebchatMessagesAfterId(
   roomId: string,
   afterId: string,
   limit = 500,
   threadId?: string,
-): WebchatMessage[] {
-  const anchor = getDb().prepare(`SELECT created_at FROM webchat_messages WHERE id = ?`).get(afterId) as
+): Promise<WebchatMessage[]> {
+  const anchor = (await getDb().get(`SELECT created_at FROM webchat_messages WHERE id = ?`, afterId)) as
     | { created_at: number }
     | undefined;
   if (!anchor) return [];
   const rows = (
     threadId === undefined
-      ? getDb()
-          .prepare(
-            `SELECT * FROM webchat_messages
+      ? await getDb().all(
+          `SELECT * FROM webchat_messages
              WHERE room_id = ? AND created_at > ?
              ORDER BY created_at LIMIT ?`,
-          )
-          .all(roomId, anchor.created_at, limit)
-      : getDb()
-          .prepare(
-            `SELECT * FROM webchat_messages
+          roomId,
+          anchor.created_at,
+          limit,
+        )
+      : await getDb().all(
+          `SELECT * FROM webchat_messages
              WHERE room_id = ? AND thread_id = ? AND created_at > ?
              ORDER BY created_at LIMIT ?`,
-          )
-          .all(roomId, threadId, anchor.created_at, limit)
+          roomId,
+          threadId,
+          anchor.created_at,
+          limit,
+        )
   ) as WebchatMessageRow[];
   return rows.map(rowToMessage);
 }
@@ -1274,15 +1295,18 @@ export interface WebchatSearchResult {
  * and AND-ed — so no user-supplied FTS5 operators/quotes reach the parser (which
  * would otherwise throw a syntax error on input like `"` or `AND`).
  */
-export function searchWebchatMessages(roomIds: string[], rawQuery: string, limit = 50): WebchatSearchResult[] {
+export async function searchWebchatMessages(
+  roomIds: string[],
+  rawQuery: string,
+  limit = 50,
+): Promise<WebchatSearchResult[]> {
   if (roomIds.length === 0) return [];
   const tokens = (rawQuery.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).slice(0, 12);
   if (tokens.length === 0) return [];
   const match = tokens.map((t) => `${t}*`).join(' ');
   const placeholders = roomIds.map(() => '?').join(',');
-  return getDb()
-    .prepare(
-      `SELECT m.id, m.room_id, m.sender, m.sender_type, m.message_type,
+  return (await getDb().all(
+    `SELECT m.id, m.room_id, m.sender, m.sender_type, m.message_type,
               snippet(webchat_messages_fts, 0, '«', '»', '…', 12) AS snippet,
               m.created_at
        FROM webchat_messages_fts f
@@ -1292,36 +1316,41 @@ export function searchWebchatMessages(roomIds: string[], rawQuery: string, limit
          AND m.message_type NOT IN ('approval', 'approval_resolved')
        ORDER BY rank
        LIMIT ?`,
-    )
-    .all(match, ...roomIds, limit) as WebchatSearchResult[];
+    match,
+    ...roomIds,
+    limit,
+  )) as WebchatSearchResult[];
 }
 
-export function getWebchatMessagesBeforeId(
+export async function getWebchatMessagesBeforeId(
   roomId: string,
   beforeId: string,
   limit = 50,
   threadId?: string,
-): WebchatMessage[] {
-  const anchor = getDb().prepare(`SELECT created_at FROM webchat_messages WHERE id = ?`).get(beforeId) as
+): Promise<WebchatMessage[]> {
+  const anchor = (await getDb().get(`SELECT created_at FROM webchat_messages WHERE id = ?`, beforeId)) as
     | { created_at: number }
     | undefined;
   if (!anchor) return [];
   const rows = (
     threadId === undefined
-      ? getDb()
-          .prepare(
-            `SELECT * FROM webchat_messages
+      ? await getDb().all(
+          `SELECT * FROM webchat_messages
              WHERE room_id = ? AND created_at < ?
              ORDER BY created_at DESC LIMIT ?`,
-          )
-          .all(roomId, anchor.created_at, limit)
-      : getDb()
-          .prepare(
-            `SELECT * FROM webchat_messages
+          roomId,
+          anchor.created_at,
+          limit,
+        )
+      : await getDb().all(
+          `SELECT * FROM webchat_messages
              WHERE room_id = ? AND thread_id = ? AND created_at < ?
              ORDER BY created_at DESC LIMIT ?`,
-          )
-          .all(roomId, threadId, anchor.created_at, limit)
+          roomId,
+          threadId,
+          anchor.created_at,
+          limit,
+        )
   ) as WebchatMessageRow[];
   return rows.reverse().map(rowToMessage);
 }
@@ -1363,7 +1392,7 @@ export function threadToSessionKey(threadId: string | null | undefined): string 
  * Per-member rooms therefore collapse threads for that member. That is a
  * property of the credential feature, not of this function.
  */
-export function sessionKeyToThread(threadId: string | null | undefined, roomId?: string): string {
+export async function sessionKeyToThread(threadId: string | null | undefined, roomId?: string): Promise<string> {
   if (!threadId) return MAIN_THREAD;
   // A per-member session key is `<userId>::<thread>` and therefore KNOWS its
   // thread — decode it rather than guessing. This supersedes the roomId
@@ -1378,7 +1407,9 @@ export function sessionKeyToThread(threadId: string | null | undefined, roomId?:
   if (sep > 0) return threadId.slice(sep + 2);
   // Legacy bare-user key (pre-composite) carries no thread at all, so main is
   // the only defensible answer.
-  if (roomId && !getWebchatThread(roomId, threadId)) return MAIN_THREAD;
+  // Await BEFORE negating: `!promise` is always false, which re-opened the
+  // phantom-thread reply loss this function exists to prevent.
+  if (roomId && !(await getWebchatThread(roomId, threadId))) return MAIN_THREAD;
   return threadId;
 }
 
@@ -1393,26 +1424,35 @@ export interface WebchatThread {
 
 /** Ensure a thread row exists; idempotent (never clobbers an existing title).
  * Returns the thread_id. Used for lazy 'main' and per-agent lanes. */
-export function ensureThread(roomId: string, threadId: string, title: string, kind: WebchatThread['kind']): string {
+export async function ensureThread(
+  roomId: string,
+  threadId: string,
+  title: string,
+  kind: WebchatThread['kind'],
+): Promise<string> {
   const now = Date.now();
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_threads (room_id, thread_id, title, kind, created_at, updated_at)
+  await getDb().run(
+    `INSERT INTO webchat_threads (room_id, thread_id, title, kind, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(room_id, thread_id) DO NOTHING`,
-    )
-    .run(roomId, threadId, title, kind, now, now);
+    roomId,
+    threadId,
+    title,
+    kind,
+    now,
+    now,
+  );
   return threadId;
 }
 
 /** Ensure the room's 'main' thread exists. */
-export function ensureMainThread(roomId: string): string {
-  return ensureThread(roomId, MAIN_THREAD, 'Main', 'main');
+export async function ensureMainThread(roomId: string): Promise<string> {
+  return await ensureThread(roomId, MAIN_THREAD, 'Main', 'main');
 }
 
 /** Ensure a per-agent lane ('agent:<folder>'); returns its thread_id. */
-export function ensureAgentThread(roomId: string, folder: string, displayName: string): string {
-  return ensureThread(roomId, `agent:${folder}`, displayName, 'agent');
+export async function ensureAgentThread(roomId: string, folder: string, displayName: string): Promise<string> {
+  return await ensureThread(roomId, `agent:${folder}`, displayName, 'agent');
 }
 
 /** Clean a user-supplied thread title: strip control chars, collapse
@@ -1428,7 +1468,7 @@ export function sanitizeThreadTitle(raw: unknown): string | null {
 }
 
 /** Create a manual topic thread (uuid). Returns the new thread. */
-export function createWebchatThread(roomId: string, title: string): WebchatThread {
+export async function createWebchatThread(roomId: string, title: string): Promise<WebchatThread> {
   const now = Date.now();
   const thread: WebchatThread = {
     room_id: roomId,
@@ -1438,23 +1478,21 @@ export function createWebchatThread(roomId: string, title: string): WebchatThrea
     created_at: now,
     updated_at: now,
   };
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_threads (room_id, thread_id, title, kind, created_at, updated_at)
+  await getDb().run(
+    `INSERT INTO webchat_threads (room_id, thread_id, title, kind, created_at, updated_at)
        VALUES (@room_id, @thread_id, @title, @kind, @created_at, @updated_at)`,
-    )
-    .run(thread);
+    thread,
+  );
   return thread;
 }
 
 /** All threads in a room, 'main' first, then by most-recent activity. */
-export function listWebchatThreads(roomId: string): WebchatThread[] {
-  return getDb()
-    .prepare(
-      `SELECT * FROM webchat_threads WHERE room_id = ?
+export async function listWebchatThreads(roomId: string): Promise<WebchatThread[]> {
+  return (await getDb().all(
+    `SELECT * FROM webchat_threads WHERE room_id = ?
        ORDER BY (kind = 'main') DESC, updated_at DESC`,
-    )
-    .all(roomId) as WebchatThread[];
+    roomId,
+  )) as WebchatThread[];
 }
 
 /**
@@ -1463,18 +1501,18 @@ export function listWebchatThreads(roomId: string): WebchatThread[] {
  * the client knows which rooms to offer an expander for — computed once per
  * rooms broadcast rather than one query per room.
  */
-export function getTopicThreadCounts(): Map<string, number> {
+export async function getTopicThreadCounts(): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
-  if (!hasTable(getDb(), 'webchat_threads')) return counts;
-  const rows = getDb()
-    .prepare(`SELECT room_id, COUNT(*) AS n FROM webchat_threads WHERE kind = 'topic' GROUP BY room_id`)
-    .all() as Array<{ room_id: string; n: number }>;
+  if (!(await hasTable(getDb(), 'webchat_threads'))) return counts;
+  const rows = (await getDb().all(
+    `SELECT room_id, COUNT(*) AS n FROM webchat_threads WHERE kind = 'topic' GROUP BY room_id`,
+  )) as Array<{ room_id: string; n: number }>;
   for (const r of rows) counts.set(r.room_id, r.n);
   return counts;
 }
 
-export function getWebchatThread(roomId: string, threadId: string): WebchatThread | undefined {
-  return getDb().prepare(`SELECT * FROM webchat_threads WHERE room_id = ? AND thread_id = ?`).get(roomId, threadId) as
+export async function getWebchatThread(roomId: string, threadId: string): Promise<WebchatThread | undefined> {
+  return (await getDb().get(`SELECT * FROM webchat_threads WHERE room_id = ? AND thread_id = ?`, roomId, threadId)) as
     | WebchatThread
     | undefined;
 }
@@ -1492,37 +1530,41 @@ export function getWebchatThread(roomId: string, threadId: string): WebchatThrea
  * they route. Shared by the WS send path (ws.ts) and the file-upload handlers
  * (files.ts) so both enforce the identical bound.
  */
-export function resolveBoundedThread(roomId: string, requested: unknown): string {
+export async function resolveBoundedThread(roomId: string, requested: unknown): Promise<string> {
   const want = typeof requested === 'string' && requested ? requested : MAIN_THREAD;
   if (want === MAIN_THREAD) return MAIN_THREAD;
   if (want.startsWith('agent:')) {
     const folder = want.slice('agent:'.length);
-    const agent = getAgentsForWebchatRoom(roomId).find((a) => a.folder === folder);
+    const agent = (await getAgentsForWebchatRoom(roomId)).find((a) => a.folder === folder);
     if (agent) {
-      ensureAgentThread(roomId, folder, agent.name ?? folder);
+      await ensureAgentThread(roomId, folder, agent.name ?? folder);
       return want;
     }
     return MAIN_THREAD; // unknown agent folder → main (don't spawn)
   }
-  return getWebchatThread(roomId, want) ? want : MAIN_THREAD; // unknown topic id → main (no lazy create)
+  return (await getWebchatThread(roomId, want)) ? want : MAIN_THREAD; // unknown topic id → main (no lazy create)
 }
 
-export function renameWebchatThread(roomId: string, threadId: string, title: string): void {
-  getDb()
-    .prepare(`UPDATE webchat_threads SET title = ?, updated_at = ? WHERE room_id = ? AND thread_id = ?`)
-    .run(title, Date.now(), roomId, threadId);
+export async function renameWebchatThread(roomId: string, threadId: string, title: string): Promise<void> {
+  await getDb().run(
+    `UPDATE webchat_threads SET title = ?, updated_at = ? WHERE room_id = ? AND thread_id = ?`,
+    title,
+    Date.now(),
+    roomId,
+    threadId,
+  );
 }
 
 /** Delete a thread + its messages + its read markers. 'main' is not deletable
  * (the caller enforces; this guards too). Session teardown is the caller's job. */
-export function deleteWebchatThread(roomId: string, threadId: string): void {
+export async function deleteWebchatThread(roomId: string, threadId: string): Promise<void> {
   if (threadId === MAIN_THREAD) return;
   const db = getDb();
-  db.prepare(`DELETE FROM webchat_messages WHERE room_id = ? AND thread_id = ?`).run(roomId, threadId);
-  db.prepare(`DELETE FROM webchat_thread_reads WHERE room_id = ? AND thread_id = ?`).run(roomId, threadId);
-  db.prepare(`DELETE FROM webchat_thread_engaged WHERE room_id = ? AND thread_id = ?`).run(roomId, threadId);
-  db.prepare(`DELETE FROM webchat_thread_sync WHERE room_id = ? AND thread_id = ?`).run(roomId, threadId);
-  db.prepare(`DELETE FROM webchat_threads WHERE room_id = ? AND thread_id = ?`).run(roomId, threadId);
+  await db.run(`DELETE FROM webchat_messages WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
+  await db.run(`DELETE FROM webchat_thread_reads WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
+  await db.run(`DELETE FROM webchat_thread_engaged WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
+  await db.run(`DELETE FROM webchat_thread_sync WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
+  await db.run(`DELETE FROM webchat_threads WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
 }
 
 // ── Thread context sync (pull / push) ──
@@ -1535,25 +1577,31 @@ export interface ThreadSyncMarks {
 }
 
 /** Per-thread sync high-water marks (default 0 when no row yet). */
-export function getThreadSyncMarks(roomId: string, threadId: string): ThreadSyncMarks {
-  const row = getDb()
-    .prepare(
-      `SELECT last_pulled_src_ts AS pulled, last_pushed_src_ts AS pushed
+export async function getThreadSyncMarks(roomId: string, threadId: string): Promise<ThreadSyncMarks> {
+  const row = (await getDb().get(
+    `SELECT last_pulled_src_ts AS pulled, last_pushed_src_ts AS pushed
        FROM webchat_thread_sync WHERE room_id = ? AND thread_id = ?`,
-    )
-    .get(roomId, threadId) as ThreadSyncMarks | undefined;
+    roomId,
+    threadId,
+  )) as ThreadSyncMarks | undefined;
   return row ?? { pulled: 0, pushed: 0 };
 }
 
 /** Advance a sync high-water mark (monotonic: never moves backwards). */
-export function setThreadSyncMark(roomId: string, threadId: string, dir: 'pulled' | 'pushed', ts: number): void {
+export async function setThreadSyncMark(
+  roomId: string,
+  threadId: string,
+  dir: 'pulled' | 'pushed',
+  ts: number,
+): Promise<void> {
   const col = dir === 'pulled' ? 'last_pulled_src_ts' : 'last_pushed_src_ts';
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_thread_sync (room_id, thread_id, ${col}) VALUES (?, ?, ?)
+  await getDb().run(
+    `INSERT INTO webchat_thread_sync (room_id, thread_id, ${col}) VALUES (?, ?, ?)
        ON CONFLICT(room_id, thread_id) DO UPDATE SET ${col} = MAX(${col}, excluded.${col})`,
-    )
-    .run(roomId, threadId, ts);
+    roomId,
+    threadId,
+    ts,
+  );
 }
 
 /**
@@ -1562,25 +1610,32 @@ export function setThreadSyncMark(roomId: string, threadId: string, dir: 'pulled
  * already-copied rows are excluded. `freshLimit` caps the first sync (sinceTs=0)
  * so an initial pull can't drag in an enormous backlog; <=0 means no cap.
  */
-export function getSyncDelta(roomId: string, srcThreadId: string, sinceTs: number, freshLimit = 0): WebchatMessage[] {
+export async function getSyncDelta(
+  roomId: string,
+  srcThreadId: string,
+  sinceTs: number,
+  freshLimit = 0,
+): Promise<WebchatMessage[]> {
   const db = getDb();
   if (freshLimit > 0 && sinceTs === 0) {
-    const rows = db
-      .prepare(
-        `SELECT * FROM webchat_messages
+    const rows = (await db.all(
+      `SELECT * FROM webchat_messages
          WHERE room_id = ? AND thread_id = ? AND origin IS NULL AND message_type != 'context-divider'
          ORDER BY created_at DESC LIMIT ?`,
-      )
-      .all(roomId, srcThreadId, freshLimit) as WebchatMessage[];
+      roomId,
+      srcThreadId,
+      freshLimit,
+    )) as WebchatMessage[];
     return rows.reverse();
   }
-  return db
-    .prepare(
-      `SELECT * FROM webchat_messages
+  return (await db.all(
+    `SELECT * FROM webchat_messages
        WHERE room_id = ? AND thread_id = ? AND origin IS NULL AND message_type != 'context-divider' AND created_at > ?
        ORDER BY created_at ASC`,
-    )
-    .all(roomId, srcThreadId, sinceTs) as WebchatMessage[];
+    roomId,
+    srcThreadId,
+    sinceTs,
+  )) as WebchatMessage[];
 }
 
 /**
@@ -1589,31 +1644,34 @@ export function getSyncDelta(roomId: string, srcThreadId: string, sinceTs: numbe
  * current end; originals are untouched. Returns the inserted rows (divider first)
  * for broadcast.
  */
-export function insertSyncedMessages(
+export async function insertSyncedMessages(
   roomId: string,
   destThreadId: string,
   rows: WebchatMessage[],
   origin: 'pulled' | 'pushed',
   dividerText: string,
-): WebchatMessage[] {
+): Promise<WebchatMessage[]> {
   const db = getDb();
   // Land strictly after the destination's current tail. Date.now() alone collides
   // when two syncs fire inside the same millisecond (back-to-back pushes), which
   // would interleave their dividers ahead of their messages; clamping to the
   // existing max+1 keeps each batch contiguous and in order.
   const tail = (
-    db
-      .prepare(`SELECT COALESCE(MAX(created_at), 0) AS m FROM webchat_messages WHERE room_id = ? AND thread_id = ?`)
-      .get(roomId, destThreadId) as { m: number }
+    (await db.get(
+      `SELECT COALESCE(MAX(created_at), 0) AS m FROM webchat_messages WHERE room_id = ? AND thread_id = ?`,
+      roomId,
+      destThreadId,
+    )) as { m: number }
   ).m;
   const base = Math.max(Date.now(), tail + 1);
-  const insert = db.prepare(
-    `INSERT INTO webchat_messages
+  // The driver has no statement objects, so the SQL is hoisted instead of a
+  // prepared statement. It still binds by NAME — the driver detects a single
+  // object argument and passes it through to better-sqlite3's named binding.
+  const INSERT_MESSAGE = `INSERT INTO webchat_messages
        (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at, origin)
-     VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at, @origin)`,
-  );
+     VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at, @origin)`;
   const out: WebchatMessage[] = [];
-  db.transaction(() => {
+  await db.transaction(async () => {
     const divider: WebchatMessage = {
       id: randomUUID(),
       room_id: roomId,
@@ -1626,9 +1684,9 @@ export function insertSyncedMessages(
       created_at: base,
       origin,
     };
-    insert.run({ ...divider, file_meta: null });
+    await db.run(INSERT_MESSAGE, { ...divider, file_meta: null });
     out.push(divider);
-    rows.forEach((r, i) => {
+    for (const [i, r] of rows.entries()) {
       const copy: WebchatMessage = {
         id: randomUUID(),
         room_id: roomId,
@@ -1645,10 +1703,10 @@ export function insertSyncedMessages(
         created_at: base + i + 1,
         origin,
       };
-      insert.run({ ...copy, file_meta: copy.file_meta ? JSON.stringify(copy.file_meta) : null });
+      await db.run(INSERT_MESSAGE, { ...copy, file_meta: copy.file_meta ? JSON.stringify(copy.file_meta) : null });
       out.push(copy);
-    });
-  })();
+    }
+  });
   return out;
 }
 
@@ -1658,78 +1716,98 @@ export function insertSyncedMessages(
 // the regular chat stays mention-only. See docs/webchat/thread-engaged-agents.md.
 
 /** Engage an agent in a thread (idempotent). No-op for the 'main' thread. */
-export function engageAgent(roomId: string, threadId: string, agentGroupId: string, ts: number = Date.now()): void {
+export async function engageAgent(
+  roomId: string,
+  threadId: string,
+  agentGroupId: string,
+  ts: number = Date.now(),
+): Promise<void> {
   if (threadId === MAIN_THREAD) return;
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_thread_engaged (room_id, thread_id, agent_group_id, engaged_at)
+  await getDb().run(
+    `INSERT INTO webchat_thread_engaged (room_id, thread_id, agent_group_id, engaged_at)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(room_id, thread_id, agent_group_id) DO NOTHING`,
-    )
-    .run(roomId, threadId, agentGroupId, ts);
+    roomId,
+    threadId,
+    agentGroupId,
+    ts,
+  );
 }
 
 /** Disengage an agent from a thread (the × on a chip). No-op if not engaged. */
-export function disengageAgent(roomId: string, threadId: string, agentGroupId: string): void {
-  getDb()
-    .prepare(`DELETE FROM webchat_thread_engaged WHERE room_id = ? AND thread_id = ? AND agent_group_id = ?`)
-    .run(roomId, threadId, agentGroupId);
+export async function disengageAgent(roomId: string, threadId: string, agentGroupId: string): Promise<void> {
+  await getDb().run(
+    `DELETE FROM webchat_thread_engaged WHERE room_id = ? AND thread_id = ? AND agent_group_id = ?`,
+    roomId,
+    threadId,
+    agentGroupId,
+  );
 }
 
 /** Agent group ids currently engaged in a thread. Empty for 'main'/regular chat. */
-export function getEngagedAgents(roomId: string, threadId: string): string[] {
+export async function getEngagedAgents(roomId: string, threadId: string): Promise<string[]> {
   if (threadId === MAIN_THREAD) return [];
-  const rows = getDb()
-    .prepare(
-      `SELECT agent_group_id FROM webchat_thread_engaged WHERE room_id = ? AND thread_id = ? ORDER BY engaged_at`,
-    )
-    .all(roomId, threadId) as { agent_group_id: string }[];
+  const rows = (await getDb().all(
+    `SELECT agent_group_id FROM webchat_thread_engaged WHERE room_id = ? AND thread_id = ? ORDER BY engaged_at`,
+    roomId,
+    threadId,
+  )) as { agent_group_id: string }[];
   return rows.map((r) => r.agent_group_id);
 }
 
 /** True if the agent is engaged in the thread. */
-export function isAgentEngaged(roomId: string, threadId: string, agentGroupId: string): boolean {
+export async function isAgentEngaged(roomId: string, threadId: string, agentGroupId: string): Promise<boolean> {
   if (threadId === MAIN_THREAD) return false;
   return (
-    getDb()
-      .prepare(`SELECT 1 FROM webchat_thread_engaged WHERE room_id = ? AND thread_id = ? AND agent_group_id = ?`)
-      .get(roomId, threadId, agentGroupId) !== undefined
+    (await getDb().get(
+      `SELECT 1 FROM webchat_thread_engaged WHERE room_id = ? AND thread_id = ? AND agent_group_id = ?`,
+      roomId,
+      threadId,
+      agentGroupId,
+    )) !== undefined
   );
 }
 
 /** Mark a thread read for a user (monotonic high-water mark). */
-export function markThreadRead(userId: string, roomId: string, threadId: string, ts: number = Date.now()): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_thread_reads (user_id, room_id, thread_id, last_read_at)
+export async function markThreadRead(
+  userId: string,
+  roomId: string,
+  threadId: string,
+  ts: number = Date.now(),
+): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_thread_reads (user_id, room_id, thread_id, last_read_at)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(user_id, room_id, thread_id)
          DO UPDATE SET last_read_at = MAX(last_read_at, excluded.last_read_at)`,
-    )
-    .run(userId, roomId, threadId, ts);
+    userId,
+    roomId,
+    threadId,
+    ts,
+  );
 }
 
 /** Thread ids in a room with unread messages for this user (newest message
  * newer than the user's per-thread marker; no marker = unread if any message). */
-export function getUnreadThreadIdsForRoom(userId: string, roomId: string): Set<string> {
-  const rows = getDb()
-    .prepare(
-      `SELECT m.thread_id AS thread_id
+export async function getUnreadThreadIdsForRoom(userId: string, roomId: string): Promise<Set<string>> {
+  const rows = (await getDb().all(
+    `SELECT m.thread_id AS thread_id
          FROM webchat_messages m
          LEFT JOIN webchat_thread_reads r
            ON r.room_id = m.room_id AND r.thread_id = m.thread_id AND r.user_id = ?
         WHERE m.room_id = ?
         GROUP BY m.thread_id
        HAVING MAX(m.created_at) > COALESCE(MAX(r.last_read_at), 0)`,
-    )
-    .all(userId, roomId) as { thread_id: string }[];
+    userId,
+    roomId,
+  )) as { thread_id: string }[];
   return new Set(rows.map((r) => r.thread_id));
 }
 
 // ── Push subscriptions ──
 
-export function deleteWebchatPushSubscriptionByEndpoint(endpoint: string): void {
-  getDb().prepare(`DELETE FROM webchat_push_subscriptions WHERE endpoint = ?`).run(endpoint);
+export async function deleteWebchatPushSubscriptionByEndpoint(endpoint: string): Promise<void> {
+  await getDb().run(`DELETE FROM webchat_push_subscriptions WHERE endpoint = ?`, endpoint);
 }
 
 // ── Models ──
@@ -1760,49 +1838,51 @@ export interface WebchatModel {
   created_at: number;
 }
 
-export function listWebchatModels(): WebchatModel[] {
-  return getDb().prepare(`SELECT * FROM webchat_models ORDER BY name COLLATE NOCASE`).all() as WebchatModel[];
+export async function listWebchatModels(): Promise<WebchatModel[]> {
+  return (await getDb().all(`SELECT * FROM webchat_models ORDER BY name COLLATE NOCASE`)) as WebchatModel[];
 }
 
-export function getWebchatModel(id: string): WebchatModel | undefined {
-  return getDb().prepare(`SELECT * FROM webchat_models WHERE id = ?`).get(id) as WebchatModel | undefined;
+export async function getWebchatModel(id: string): Promise<WebchatModel | undefined> {
+  return (await getDb().get(`SELECT * FROM webchat_models WHERE id = ?`, id)) as WebchatModel | undefined;
 }
 
-export function createWebchatModel(m: WebchatModel): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
+export async function createWebchatModel(m: WebchatModel): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_models (id, name, kind, endpoint, model_id, credential_ref, created_at)
        VALUES (@id, @name, @kind, @endpoint, @model_id, @credential_ref, @created_at)`,
-    )
-    .run(m);
+    m,
+  );
 }
 
-export function updateWebchatModel(
+export async function updateWebchatModel(
   id: string,
   patch: { name?: string; endpoint?: string | null; model_id?: string; credential_ref?: string | null },
-): void {
-  const existing = getWebchatModel(id);
+): Promise<void> {
+  const existing = await getWebchatModel(id);
   if (!existing) return;
-  const next = { ...existing, ...patch };
-  getDb()
-    .prepare(
-      `UPDATE webchat_models
+  const next = { ...(await existing), ...patch };
+  await getDb().run(
+    `UPDATE webchat_models
        SET name = ?, endpoint = ?, model_id = ?, credential_ref = ?
        WHERE id = ?`,
-    )
-    .run(next.name, next.endpoint, next.model_id, next.credential_ref, id);
+    next.name,
+    next.endpoint,
+    next.model_id,
+    next.credential_ref,
+    id,
+  );
 }
 
-export function deleteWebchatModel(id: string): void {
+export async function deleteWebchatModel(id: string): Promise<void> {
   const db = getDb();
   // Cascade in JS — caller is expected to have surfaced the impact list.
-  db.prepare(`DELETE FROM webchat_agent_models WHERE model_id = ?`).run(id);
-  db.prepare(`DELETE FROM webchat_models WHERE id = ?`).run(id);
+  await db.run(`DELETE FROM webchat_agent_models WHERE model_id = ?`, id);
+  await db.run(`DELETE FROM webchat_models WHERE id = ?`, id);
 }
 
-export function getAgentsAssignedToModel(modelId: string): string[] {
+export async function getAgentsAssignedToModel(modelId: string): Promise<string[]> {
   return (
-    getDb().prepare(`SELECT agent_group_id FROM webchat_agent_models WHERE model_id = ?`).all(modelId) as {
+    (await getDb().all(`SELECT agent_group_id FROM webchat_agent_models WHERE model_id = ?`, modelId)) as {
       agent_group_id: string;
     }[]
   ).map((r) => r.agent_group_id);
@@ -1832,18 +1912,24 @@ export interface WebchatTopology {
  * and agents only — so nothing outside the caller's visible set leaks. Each
  * agent carries its assigned model; models are deduped. Powers GET /api/topology.
  */
-export function getWebchatTopology(
+export async function getWebchatTopology(
   rooms: { id: string; name: string }[],
   agents: { id: string; name: string }[],
-): WebchatTopology {
-  const agentNodes = agents.map((a) => {
-    const m = getAssignedModelForAgent(a.id);
-    return { id: a.id, name: a.name, modelId: m?.id ?? null, modelName: m?.name ?? null };
-  });
+): Promise<WebchatTopology> {
+  // Resolved HERE, once. Leaving this as an array of promises made
+  // `new Set(agentNodes.map(async …))` a Set of PROMISES, so `ids.has(a.id)`
+  // never matched and the topology rendered with no edges at all — a graph of
+  // disconnected nodes, with nothing failing to say so.
+  const agentNodes = await Promise.all(
+    agents.map(async (a) => {
+      const m = await getAssignedModelForAgent(a.id);
+      return { id: a.id, name: a.name, modelId: m?.id ?? null, modelName: m?.name ?? null };
+    }),
+  );
   const ids = new Set(agentNodes.map((a) => a.id));
   const edges: { room: string; agent: string }[] = [];
   for (const room of rooms) {
-    for (const a of getAgentsForWebchatRoom(room.id)) {
+    for (const a of await getAgentsForWebchatRoom(room.id)) {
       if (ids.has(a.id)) edges.push({ room: room.id, agent: a.id });
     }
   }
@@ -1855,7 +1941,7 @@ export function getWebchatTopology(
   const mcpMap = new Map<string, { id: string; name: string; remote: boolean; host: string | null }>();
   const mcpEdges: { agent: string; mcp: string }[] = [];
   for (const a of agentNodes) {
-    for (const srv of getMcpServersForAgent(a.id)) {
+    for (const srv of await getMcpServersForAgent(a.id)) {
       if (!mcpMap.has(srv.id)) {
         const remote = srv.transport !== 'stdio';
         let host: string | null = null;
@@ -1882,12 +1968,13 @@ export function getWebchatTopology(
   };
 }
 
-export function getAssignedModelForAgent(agentGroupId: string): WebchatModel | null {
-  const row = getDb()
-    .prepare(`SELECT model_id FROM webchat_agent_models WHERE agent_group_id = ?`)
-    .get(agentGroupId) as { model_id: string } | undefined;
+export async function getAssignedModelForAgent(agentGroupId: string): Promise<WebchatModel | null> {
+  const row = (await getDb().get(
+    `SELECT model_id FROM webchat_agent_models WHERE agent_group_id = ?`,
+    agentGroupId,
+  )) as { model_id: string } | undefined;
   if (!row) return null;
-  return getWebchatModel(row.model_id) ?? null;
+  return (await getWebchatModel(row.model_id)) ?? null;
 }
 
 /**
@@ -1904,25 +1991,26 @@ export const setDefaultModelId = settingsSetter('default_model_id', encodeNullab
  * lenientOutput augmentor consume — per-agent assignment always wins,
  * mirroring member-credential > workspace-credential layering.
  */
-export function getEffectiveModelForAgent(agentGroupId: string): WebchatModel | null {
-  const assigned = getAssignedModelForAgent(agentGroupId);
+export async function getEffectiveModelForAgent(agentGroupId: string): Promise<WebchatModel | null> {
+  const assigned = await getAssignedModelForAgent(agentGroupId);
   if (assigned) return assigned;
-  const defaultId = getDefaultModelId();
-  return defaultId ? (getWebchatModel(defaultId) ?? null) : null;
+  const defaultId = await getDefaultModelId();
+  return defaultId ? ((await getWebchatModel(defaultId)) ?? null) : null;
 }
 
-export function assignModelToAgent(agentGroupId: string, modelId: string): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at)
+export async function assignModelToAgent(agentGroupId: string, modelId: string): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_agent_models (agent_group_id, model_id, assigned_at)
        VALUES (?, ?, ?)
        ON CONFLICT(agent_group_id) DO UPDATE SET model_id = excluded.model_id, assigned_at = excluded.assigned_at`,
-    )
-    .run(agentGroupId, modelId, Date.now());
+    agentGroupId,
+    modelId,
+    Date.now(),
+  );
 }
 
-export function unassignModelFromAgent(agentGroupId: string): void {
-  getDb().prepare(`DELETE FROM webchat_agent_models WHERE agent_group_id = ?`).run(agentGroupId);
+export async function unassignModelFromAgent(agentGroupId: string): Promise<void> {
+  await getDb().run(`DELETE FROM webchat_agent_models WHERE agent_group_id = ?`, agentGroupId);
 }
 
 // ── Room state: global archive + per-user hide ──
@@ -1942,32 +2030,33 @@ export function unassignModelFromAgent(agentGroupId: string): void {
 
 // ── Global archive (settable by owners + admins) ──
 
-export function archiveRoom(roomId: string, archivedBy: string | null): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_room_archives (room_id, archived_at, archived_by)
+export async function archiveRoom(roomId: string, archivedBy: string | null): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_room_archives (room_id, archived_at, archived_by)
        VALUES (?, ?, ?)
        ON CONFLICT(room_id) DO NOTHING`,
-    )
-    .run(roomId, new Date().toISOString(), archivedBy);
+    roomId,
+    new Date().toISOString(),
+    archivedBy,
+  );
 }
 
-export function unarchiveRoom(roomId: string): void {
-  getDb().prepare(`DELETE FROM webchat_room_archives WHERE room_id = ?`).run(roomId);
+export async function unarchiveRoom(roomId: string): Promise<void> {
+  await getDb().run(`DELETE FROM webchat_room_archives WHERE room_id = ?`, roomId);
 }
 
-export function isRoomArchived(roomId: string): boolean {
-  const row = getDb().prepare(`SELECT 1 FROM webchat_room_archives WHERE room_id = ?`).get(roomId);
+export async function isRoomArchived(roomId: string): Promise<boolean> {
+  const row = await getDb().get(`SELECT 1 FROM webchat_room_archives WHERE room_id = ?`, roomId);
   return !!row;
 }
 
-export function getArchivedRoomIds(): Set<string> {
-  const rows = getDb().prepare(`SELECT room_id FROM webchat_room_archives`).all() as { room_id: string }[];
+export async function getArchivedRoomIds(): Promise<Set<string>> {
+  const rows = (await getDb().all(`SELECT room_id FROM webchat_room_archives`)) as { room_id: string }[];
   return new Set(rows.map((r) => r.room_id));
 }
 
-export function clearArchiveForRoom(roomId: string): void {
-  getDb().prepare(`DELETE FROM webchat_room_archives WHERE room_id = ?`).run(roomId);
+export async function clearArchiveForRoom(roomId: string): Promise<void> {
+  await getDb().run(`DELETE FROM webchat_room_archives WHERE room_id = ?`, roomId);
 }
 
 // ── Per-user room-flag table factory (hides / reads / pins) ──
@@ -1980,17 +2069,17 @@ export function clearArchiveForRoom(roomId: string): void {
 
 function userRoomFlagTable(table: string) {
   return {
-    removeForUser(userId: string, roomId: string): void {
-      getDb().prepare(`DELETE FROM ${table} WHERE user_id = ? AND room_id = ?`).run(userId, roomId);
+    async removeForUser(userId: string, roomId: string): Promise<void> {
+      await getDb().run(`DELETE FROM ${table} WHERE user_id = ? AND room_id = ?`, userId, roomId);
     },
-    roomIdsForUser(userId: string): Set<string> {
-      const rows = getDb().prepare(`SELECT room_id FROM ${table} WHERE user_id = ?`).all(userId) as {
+    async roomIdsForUser(userId: string): Promise<Set<string>> {
+      const rows = (await getDb().all(`SELECT room_id FROM ${table} WHERE user_id = ?`, userId)) as {
         room_id: string;
       }[];
       return new Set(rows.map((r) => r.room_id));
     },
-    clearForRoom(roomId: string): void {
-      getDb().prepare(`DELETE FROM ${table} WHERE room_id = ?`).run(roomId);
+    async clearForRoom(roomId: string): Promise<void> {
+      await getDb().run(`DELETE FROM ${table} WHERE room_id = ?`, roomId);
     },
   };
 }
@@ -2001,14 +2090,15 @@ const roomPins = userRoomFlagTable('webchat_room_pins');
 
 // ── Per-user hide (any user, on rooms they can access) ──
 
-export function hideRoomForUser(userId: string, roomId: string): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_user_room_hides (user_id, room_id, archived_at)
+export async function hideRoomForUser(userId: string, roomId: string): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_user_room_hides (user_id, room_id, archived_at)
        VALUES (?, ?, ?)
        ON CONFLICT(user_id, room_id) DO NOTHING`,
-    )
-    .run(userId, roomId, new Date().toISOString());
+    userId,
+    roomId,
+    new Date().toISOString(),
+  );
 }
 
 export const unhideRoomForUser = roomHides.removeForUser;
@@ -2030,14 +2120,15 @@ export const clearHidesForRoom = roomHides.clearForRoom;
  * and monotonic — never moves the marker backwards, so a late-arriving stale
  * read (e.g. a backgrounded tab catching up) can't un-read newer messages.
  */
-export function markRoomRead(userId: string, roomId: string, ts: number = Date.now()): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_room_reads (user_id, room_id, last_read_at)
+export async function markRoomRead(userId: string, roomId: string, ts: number = Date.now()): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_room_reads (user_id, room_id, last_read_at)
        VALUES (?, ?, ?)
        ON CONFLICT(user_id, room_id) DO UPDATE SET last_read_at = MAX(last_read_at, excluded.last_read_at)`,
-    )
-    .run(userId, roomId, ts);
+    userId,
+    roomId,
+    ts,
+  );
 }
 
 /**
@@ -2048,17 +2139,16 @@ export function markRoomRead(userId: string, roomId: string, ts: number = Date.n
  * rows count the same as in the live `unread` path — any new activity lights
  * the dot.
  */
-export function getUnreadRoomIdsForUser(userId: string): Set<string> {
-  const rows = getDb()
-    .prepare(
-      `SELECT m.room_id AS room_id
+export async function getUnreadRoomIdsForUser(userId: string): Promise<Set<string>> {
+  const rows = (await getDb().all(
+    `SELECT m.room_id AS room_id
          FROM webchat_messages m
          LEFT JOIN webchat_room_reads r
            ON r.room_id = m.room_id AND r.user_id = ?
         GROUP BY m.room_id
        HAVING MAX(m.created_at) > COALESCE(MAX(r.last_read_at), 0)`,
-    )
-    .all(userId) as { room_id: string }[];
+    userId,
+  )) as { room_id: string }[];
   return new Set(rows.map((r) => r.room_id));
 }
 
@@ -2074,27 +2164,30 @@ export const clearReadsForRoom = roomReads.clearForRoom;
  * A fresh pin lands at the BOTTOM of the user's pinned group (max position + 1)
  * so it doesn't disturb an order the user has arranged.
  */
-export function pinRoomForUser(userId: string, roomId: string, ts: number = Date.now()): void {
+export async function pinRoomForUser(userId: string, roomId: string, ts: number = Date.now()): Promise<void> {
   const next = (
-    getDb()
-      .prepare(`SELECT COALESCE(MAX(position) + 1, 0) AS n FROM webchat_room_pins WHERE user_id = ?`)
-      .get(userId) as { n: number }
+    (await getDb().get(
+      `SELECT COALESCE(MAX(position) + 1, 0) AS n FROM webchat_room_pins WHERE user_id = ?`,
+      userId,
+    )) as { n: number }
   ).n;
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_room_pins (user_id, room_id, pinned_at, position)
+  await getDb().run(
+    `INSERT INTO webchat_room_pins (user_id, room_id, pinned_at, position)
        VALUES (?, ?, ?, ?)
        ON CONFLICT(user_id, room_id) DO NOTHING`,
-    )
-    .run(userId, roomId, ts, next);
+    userId,
+    roomId,
+    ts,
+    next,
+  );
 }
 
 export const unpinRoomForUser = roomPins.removeForUser;
 export const getPinnedRoomIdsForUser = roomPins.roomIdsForUser;
 
 /** Per-user pinned room → manual sort position (lower = higher in the list). */
-export function getPinnedPositionsForUser(userId: string): Map<string, number> {
-  const rows = getDb().prepare(`SELECT room_id, position FROM webchat_room_pins WHERE user_id = ?`).all(userId) as {
+export async function getPinnedPositionsForUser(userId: string): Promise<Map<string, number>> {
+  const rows = (await getDb().all(`SELECT room_id, position FROM webchat_room_pins WHERE user_id = ?`, userId)) as {
     room_id: string;
     position: number;
   }[];
@@ -2107,13 +2200,17 @@ export function getPinnedPositionsForUser(userId: string): Map<string, number> {
  * pinned are silently ignored (the UPDATE matches nothing), so a stale or
  * hostile id can't create or reorder anyone else's pins.
  */
-export function setPinnedOrderForUser(userId: string, orderedRoomIds: string[]): void {
+export async function setPinnedOrderForUser(userId: string, orderedRoomIds: string[]): Promise<void> {
   const db = getDb();
-  const upd = db.prepare(`UPDATE webchat_room_pins SET position = ? WHERE user_id = ? AND room_id = ?`);
-  const tx = db.transaction((ids: string[]) => {
-    ids.forEach((roomId, i) => upd.run(i, userId, roomId));
+  // better-sqlite3's transaction() returned a callable taking the rows; the
+  // driver's takes the work itself, so the ids are closed over rather than
+  // passed. Sequential await, not forEach — a forEach callback cannot await and
+  // would fire every UPDATE outside the transaction it is meant to be inside.
+  await db.transaction(async () => {
+    for (const [i, roomId] of orderedRoomIds.entries()) {
+      await db.run(`UPDATE webchat_room_pins SET position = ? WHERE user_id = ? AND room_id = ?`, i, userId, roomId);
+    }
   });
-  tx(orderedRoomIds);
 }
 
 /** Drop a room's pins — called from deleteWebchatRoom's cascade. */
@@ -2125,10 +2222,10 @@ export const clearPinsForRoom = roomPins.clearForRoom;
  * own `created_at`. The `idx_webchat_messages_room` index makes the per-room MAX
  * cheap.
  */
-export function getRoomLastActivity(): Map<string, number> {
-  const rows = getDb()
-    .prepare(`SELECT room_id, MAX(created_at) AS last_at FROM webchat_messages GROUP BY room_id`)
-    .all() as { room_id: string; last_at: number }[];
+export async function getRoomLastActivity(): Promise<Map<string, number>> {
+  const rows = (await getDb().all(
+    `SELECT room_id, MAX(created_at) AS last_at FROM webchat_messages GROUP BY room_id`,
+  )) as { room_id: string; last_at: number }[];
   return new Map(rows.map((r) => [r.room_id, r.last_at]));
 }
 
@@ -2146,16 +2243,16 @@ export function slugifyHandle(name: string): string {
   return slug || 'user';
 }
 
-export function getWebchatUserHandle(userId: string): string | null {
-  const row = getDb().prepare(`SELECT handle FROM webchat_user_handles WHERE user_id = ?`).get(userId) as
+export async function getWebchatUserHandle(userId: string): Promise<string | null> {
+  const row = (await getDb().get(`SELECT handle FROM webchat_user_handles WHERE user_id = ?`, userId)) as
     | { handle: string }
     | undefined;
   return row?.handle ?? null;
 }
 
 /** Which user_id (if any) currently owns a handle. */
-export function userIdForHandle(handle: string): string | null {
-  const row = getDb().prepare(`SELECT user_id FROM webchat_user_handles WHERE handle = ?`).get(handle.toLowerCase()) as
+export async function userIdForHandle(handle: string): Promise<string | null> {
+  const row = (await getDb().get(`SELECT user_id FROM webchat_user_handles WHERE handle = ?`, handle.toLowerCase())) as
     | { user_id: string }
     | undefined;
   return row?.user_id ?? null;
@@ -2165,17 +2262,21 @@ export function userIdForHandle(handle: string): string | null {
  * Set a user's handle. Returns { ok } or { ok:false, reason } when the handle is
  * already taken by another user (caller surfaces a 409). Validates the shape too.
  */
-export function setWebchatUserHandle(userId: string, handle: string): { ok: true } | { ok: false; reason: string } {
+export async function setWebchatUserHandle(
+  userId: string,
+  handle: string,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   const h = handle.toLowerCase();
   if (!/^[a-z0-9-]{1,32}$/.test(h)) return { ok: false, reason: 'invalid' };
-  const owner = userIdForHandle(h);
+  const owner = await userIdForHandle(h);
   if (owner && owner !== userId) return { ok: false, reason: 'taken' };
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_user_handles (user_id, handle, created_at) VALUES (?, ?, ?)
+  await getDb().run(
+    `INSERT INTO webchat_user_handles (user_id, handle, created_at) VALUES (?, ?, ?)
        ON CONFLICT(user_id) DO UPDATE SET handle = excluded.handle`,
-    )
-    .run(userId, h, Date.now());
+    userId,
+    h,
+    Date.now(),
+  );
   return { ok: true };
 }
 
@@ -2184,17 +2285,22 @@ export function setWebchatUserHandle(userId: string, handle: string): { ok: true
  * numeric suffix on collision. Idempotent; called on WS connect so every user is
  * @-mentionable by default. Returns the effective handle.
  */
-export function ensureWebchatUserHandle(userId: string, displayName: string): string {
-  const existing = getWebchatUserHandle(userId);
+export async function ensureWebchatUserHandle(userId: string, displayName: string): Promise<string> {
+  const existing = await getWebchatUserHandle(userId);
   if (existing) return existing;
   const base = slugifyHandle(displayName);
   let candidate = base;
-  for (let n = 2; userIdForHandle(candidate) !== null; n++) candidate = `${base}-${n}`;
-  getDb()
-    .prepare(`INSERT OR IGNORE INTO webchat_user_handles (user_id, handle, created_at) VALUES (?, ?, ?)`)
-    .run(userId, candidate, Date.now());
+  // Await in the CONDITION: the un-awaited promise was always !== null, so
+  // this looped forever appending suffixes until the heap died.
+  for (let n = 2; (await userIdForHandle(candidate)) !== null; n++) candidate = `${base}-${n}`;
+  await getDb().run(
+    `INSERT OR IGNORE INTO webchat_user_handles (user_id, handle, created_at) VALUES (?, ?, ?)`,
+    userId,
+    candidate,
+    Date.now(),
+  );
   // Re-read in case a concurrent connect won the INSERT for this user_id.
-  return getWebchatUserHandle(userId) ?? candidate;
+  return (await getWebchatUserHandle(userId)) ?? candidate;
 }
 
 /**
@@ -2203,23 +2309,22 @@ export function ensureWebchatUserHandle(userId: string, displayName: string): st
  * are NOT limited to currently-connected members (you can mention someone who's
  * offline — they get the badge/notification when they return).
  */
-export function getWebchatHandleUsers(): { userId: string; handle: string; displayName: string | null }[] {
-  return getDb()
-    .prepare(
-      `SELECT h.user_id AS userId, h.handle AS handle, u.display_name AS displayName
+export async function getWebchatHandleUsers(): Promise<
+  { userId: string; handle: string; displayName: string | null }[]
+> {
+  return (await getDb().all(`SELECT h.user_id AS userId, h.handle AS handle, u.display_name AS displayName
          FROM webchat_user_handles h
-         LEFT JOIN users u ON u.id = h.user_id`,
-    )
-    .all() as { userId: string; handle: string; displayName: string | null }[];
+         LEFT JOIN users u ON u.id = h.user_id`)) as { userId: string; handle: string; displayName: string | null }[];
 }
 
 /** Resolve a set of @-handles to the user_ids that own them (for mention detection). */
-export function resolveHandlesToUserIds(handles: string[]): string[] {
+export async function resolveHandlesToUserIds(handles: string[]): Promise<string[]> {
   const uniq = [...new Set(handles.map((h) => h.toLowerCase()))].filter(Boolean);
   if (uniq.length === 0) return [];
-  const rows = getDb()
-    .prepare(`SELECT user_id FROM webchat_user_handles WHERE handle IN (${uniq.map(() => '?').join(',')})`)
-    .all(...uniq) as { user_id: string }[];
+  const rows = (await getDb().all(
+    `SELECT user_id FROM webchat_user_handles WHERE handle IN (${uniq.map(() => '?').join(',')})`,
+    ...uniq,
+  )) as { user_id: string }[];
   return rows.map((r) => r.user_id);
 }
 
@@ -2230,20 +2335,20 @@ export function resolveHandlesToUserIds(handles: string[]): string[] {
  * substring LIKE on the handle, so it's approximate (may include `@handle-2`
  * style near-matches) — acceptable for a badge. Empty when handle is blank.
  */
-export function getMentionedRoomIdsForUser(userId: string, handle: string): Set<string> {
+export async function getMentionedRoomIdsForUser(userId: string, handle: string): Promise<Set<string>> {
   const h = (handle || '').toLowerCase();
   if (!h) return new Set();
-  const rows = getDb()
-    .prepare(
-      `SELECT m.room_id AS room_id
+  const rows = (await getDb().all(
+    `SELECT m.room_id AS room_id
          FROM webchat_messages m
          LEFT JOIN webchat_room_reads r
            ON r.room_id = m.room_id AND r.user_id = ?
         WHERE m.content LIKE '%@' || ? || '%'
         GROUP BY m.room_id
        HAVING MAX(m.created_at) > COALESCE(MAX(r.last_read_at), 0)`,
-    )
-    .all(userId, h) as { room_id: string }[];
+    userId,
+    h,
+  )) as { room_id: string }[];
   return new Set(rows.map((r) => r.room_id));
 }
 
@@ -2262,34 +2367,34 @@ export interface WebchatTemplateSource {
 
 type TemplateSourceRow = Omit<WebchatTemplateSource, 'official'> & { official: number };
 
-export function listTemplateSources(): WebchatTemplateSource[] {
+export async function listTemplateSources(): Promise<WebchatTemplateSource[]> {
   return (
-    getDb()
-      .prepare('SELECT id, label, owner, repo, branch, official FROM webchat_template_sources ORDER BY created_at')
-      .all() as TemplateSourceRow[]
+    (await getDb().all(
+      'SELECT id, label, owner, repo, branch, official FROM webchat_template_sources ORDER BY created_at',
+    )) as TemplateSourceRow[]
   ).map((r) => ({ ...r, official: !!r.official }));
 }
 
-export function getTemplateSource(id: string): WebchatTemplateSource | undefined {
-  const r = getDb()
-    .prepare('SELECT id, label, owner, repo, branch, official FROM webchat_template_sources WHERE id = ?')
-    .get(id) as TemplateSourceRow | undefined;
+export async function getTemplateSource(id: string): Promise<WebchatTemplateSource | undefined> {
+  const r = (await getDb().get(
+    'SELECT id, label, owner, repo, branch, official FROM webchat_template_sources WHERE id = ?',
+    id,
+  )) as TemplateSourceRow | undefined;
   return r ? { ...r, official: !!r.official } : undefined;
 }
 
-export function upsertTemplateSource(s: Omit<WebchatTemplateSource, 'official'>): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_template_sources (id, label, owner, repo, branch, official, created_at)
+export async function upsertTemplateSource(s: Omit<WebchatTemplateSource, 'official'>): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_template_sources (id, label, owner, repo, branch, official, created_at)
        VALUES (@id, @label, @owner, @repo, @branch, 0, @created_at)
        ON CONFLICT(id) DO UPDATE SET label=@label, owner=@owner, repo=@repo, branch=@branch`,
-    )
-    .run({ ...s, created_at: Date.now() });
+    { ...s, created_at: Date.now() },
+  );
 }
 
 /** Official rows are code-seeded and not deletable — removing one would come back on the next migrate. */
-export function deleteTemplateSource(id: string): boolean {
-  return getDb().prepare('DELETE FROM webchat_template_sources WHERE id = ? AND official = 0').run(id).changes > 0;
+export async function deleteTemplateSource(id: string): Promise<boolean> {
+  return (await getDb().run('DELETE FROM webchat_template_sources WHERE id = ? AND official = 0', id)).changes > 0;
 }
 
 // ── Skill catalog sources (webchat_skill_sources) ───────────────────────────
@@ -2308,37 +2413,36 @@ export interface WebchatSkillSource {
 type SkillSourceRow = Omit<WebchatSkillSource, 'official'> & { official: number };
 const toSource = (r: SkillSourceRow): WebchatSkillSource => ({ ...r, official: !!r.official });
 
-export function listSkillSources(): WebchatSkillSource[] {
+export async function listSkillSources(): Promise<WebchatSkillSource[]> {
   return (
-    getDb()
-      .prepare('SELECT id, label, owner, repo, branch, dir, official FROM webchat_skill_sources ORDER BY created_at')
-      .all() as SkillSourceRow[]
+    (await getDb().all(
+      'SELECT id, label, owner, repo, branch, dir, official FROM webchat_skill_sources ORDER BY created_at',
+    )) as SkillSourceRow[]
   ).map(toSource);
 }
 
 // Admin-added sources are always community (official=0). The `official` flag is
 // set only by the seed/migration for first-party collections and is deliberately
 // NOT touched on edit, so re-saving a source can't silently promote/demote it.
-export function upsertSkillSource(s: Omit<WebchatSkillSource, 'official'>): void {
-  getDb()
-    .prepare(
-      `INSERT INTO webchat_skill_sources (id, label, owner, repo, branch, dir, official, created_at)
+export async function upsertSkillSource(s: Omit<WebchatSkillSource, 'official'>): Promise<void> {
+  await getDb().run(
+    `INSERT INTO webchat_skill_sources (id, label, owner, repo, branch, dir, official, created_at)
        VALUES (@id, @label, @owner, @repo, @branch, @dir, 0, @created_at)
        ON CONFLICT(id) DO UPDATE SET label=@label, owner=@owner, repo=@repo, branch=@branch, dir=@dir`,
-    )
-    .run({ ...s, created_at: Date.now() });
+    { ...s, created_at: Date.now() },
+  );
 }
 
-export function deleteSkillSource(id: string): boolean {
-  return getDb().prepare('DELETE FROM webchat_skill_sources WHERE id = ?').run(id).changes > 0;
+export async function deleteSkillSource(id: string): Promise<boolean> {
+  return (await getDb().run('DELETE FROM webchat_skill_sources WHERE id = ?', id)).changes > 0;
 }
 
 // Enable/disable a code-wired built-in source (the marketplace). A row in
 // webchat_disabled_sources means "switched off" — removed from the pool.
-export function isSourceDisabled(id: string): boolean {
-  return !!getDb().prepare('SELECT 1 FROM webchat_disabled_sources WHERE id = ?').get(id);
+export async function isSourceDisabled(id: string): Promise<boolean> {
+  return !!(await getDb().get('SELECT 1 FROM webchat_disabled_sources WHERE id = ?', id));
 }
-export function setSourceDisabled(id: string, disabled: boolean): void {
-  if (disabled) getDb().prepare('INSERT OR IGNORE INTO webchat_disabled_sources (id) VALUES (?)').run(id);
-  else getDb().prepare('DELETE FROM webchat_disabled_sources WHERE id = ?').run(id);
+export async function setSourceDisabled(id: string, disabled: boolean): Promise<void> {
+  if (disabled) await getDb().run('INSERT OR IGNORE INTO webchat_disabled_sources (id) VALUES (?)', id);
+  else await getDb().run('DELETE FROM webchat_disabled_sources WHERE id = ?', id);
 }

@@ -1,15 +1,14 @@
 diff --git a/src/cli/resources/destinations.ts b/src/cli/resources/destinations.ts
-index 6be522f3..ef3aab90 100644
+index 00e7b86e..b82245d1 100644
 --- a/src/cli/resources/destinations.ts
 +++ b/src/cli/resources/destinations.ts
-@@ -1,32 +1,112 @@
--import { getDb, hasTable } from '../../db/connection.js';
+@@ -1,21 +1,44 @@
 +import fs from 'fs';
 +import path from 'path';
 +
 +import { DATA_DIR } from '../../config.js';
 +import { restartAgentGroupContainers } from '../../container-restart.js';
-+import { getDb } from '../../db/connection.js';
+ import { getDb, hasTable } from '../../db/connection.js';
  import { getSessionsByAgentGroup } from '../../db/sessions.js';
  import { log } from '../../log.js';
 +import { writeDestinations } from '../../modules/agent-to-agent/write-destinations.js';
@@ -58,11 +57,10 @@ index 6be522f3..ef3aab90 100644
 + * prompt-cache problem, so projection alone is enough there.
   */
  export async function projectDestinationsToSessions(agentGroupId: string): Promise<void> {
--  if (!hasTable(getDb(), 'agent_destinations')) return;
-   const { writeDestinations } = await import('../../modules/agent-to-agent/write-destinations.js');
-   for (const session of getSessionsByAgentGroup(agentGroupId)) {
+   if (!(await hasTable(getDb(), 'agent_destinations'))) return;
+@@ -24,9 +47,67 @@ export async function projectDestinationsToSessions(agentGroupId: string): Promi
      try {
-       writeDestinations(agentGroupId, session.id);
+       await writeDestinations(agentGroupId, session.id);
      } catch (err) {
 -      log.warn('Failed to project destinations to session inbound.db', { agentGroupId, sessionId: session.id, err });
 +      log.warn('writeDestinations failed; agent will pick up changes on next spawn', {
@@ -74,11 +72,11 @@ index 6be522f3..ef3aab90 100644
 +  }
 +}
 +
-+function refreshAgentSessions(agentGroupId: string, reason: string): void {
-+  const sessions = getSessionsByAgentGroup(agentGroupId).filter((s) => s.status === 'active');
++async function refreshAgentSessions(agentGroupId: string, reason: string): Promise<void> {
++  const sessions = (await getSessionsByAgentGroup(agentGroupId)).filter((s) => s.status === 'active');
 +  for (const s of sessions) {
 +    try {
-+      writeDestinations(agentGroupId, s.id);
++      await writeDestinations(agentGroupId, s.id);
 +    } catch (err) {
 +      log.warn('writeDestinations failed; agent will pick up changes on next spawn', {
 +        agentGroupId,
@@ -125,25 +123,24 @@ index 6be522f3..ef3aab90 100644
 +    }
 +  }
 +
-+  restartAgentGroupContainers(agentGroupId, reason);
++  await restartAgentGroupContainers(agentGroupId, reason);
  }
  
  registerResource({
-@@ -113,7 +193,7 @@ registerResource({
-              VALUES (?, ?, ?, ?, ?)`,
-           )
-           .run(agentGroupId, localName, targetType, targetId, new Date().toISOString());
--        await projectDestinationsToSessions(agentGroupId);
-+        refreshAgentSessions(agentGroupId, `destination added: ${localName}`);
+@@ -116,6 +197,7 @@ registerResource({
+           new Date().toISOString(),
+         );
+         await projectDestinationsToSessions(agentGroupId);
++        await refreshAgentSessions(agentGroupId, `destination added: ${localName}`);
          return { agent_group_id: agentGroupId, local_name: localName, target_type: targetType, target_id: targetId };
        },
      },
-@@ -129,7 +209,7 @@ registerResource({
-           .prepare('DELETE FROM agent_destinations WHERE agent_group_id = ? AND local_name = ?')
-           .run(agentGroupId, localName);
+@@ -133,7 +215,7 @@ registerResource({
+           localName,
+         );
          if (result.changes === 0) throw new Error('destination not found');
 -        await projectDestinationsToSessions(agentGroupId);
-+        refreshAgentSessions(agentGroupId, `destination removed: ${localName}`);
++        await refreshAgentSessions(agentGroupId, `destination removed: ${localName}`);
          return { removed: { agent_group_id: agentGroupId, local_name: localName } };
        },
      },

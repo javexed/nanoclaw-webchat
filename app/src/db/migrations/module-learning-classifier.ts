@@ -12,6 +12,8 @@ import type { Migration } from './index.js';
  * a webchat dependency). NULL model id = no classifier (heuristic only).
  */
 export const moduleLearningClassifier: Migration = {
+  // PRAGMA/table_info is sqlite's vocabulary, not the portable driver's.
+  sqliteOnly: true,
   version: 206,
   name: 'learning-classifier',
   up(db: Database.Database) {

@@ -1,7 +1,7 @@
-diff --git c/container/agent-runner/src/integration.test.ts w/container/agent-runner/src/integration.test.ts
+diff --git a/container/agent-runner/src/integration.test.ts b/container/agent-runner/src/integration.test.ts
 index e4a7850b..a298892f 100644
---- c/container/agent-runner/src/integration.test.ts
-+++ w/container/agent-runner/src/integration.test.ts
+--- a/container/agent-runner/src/integration.test.ts
++++ b/container/agent-runner/src/integration.test.ts
 @@ -198,7 +198,48 @@ describe('poll loop integration', () => {
      // Only insert a message from discord — slack-new has never sent anything
      insertMessage('m1', { sender: 'Alice', text: 'tell slack' }, { platformId: 'chan-1', channelType: 'discord', threadId: 'discord-thread' });

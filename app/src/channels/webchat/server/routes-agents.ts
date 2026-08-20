@@ -125,7 +125,7 @@ export async function rAgentsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<v
 // /api/agents POST so the literal-path handlers stay distinct.
 export async function rAgentsDraftPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isAnyAdmin(userId)) return json(res, 403, { error: 'Admin only' });
+  if (!(await isAnyAdmin(userId))) return json(res, 403, { error: 'Admin only' });
   if (req.headers['x-webchat-csrf'] !== '1') {
     return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   }
@@ -134,7 +134,7 @@ export async function rAgentsDraftPost(ctx: RouteCtx, _m: RegExpMatchArray): Pro
 
 export async function rAgentsPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isAnyAdmin(userId)) return json(res, 403, { error: 'Admin only' });
+  if (!(await isAnyAdmin(userId))) return json(res, 403, { error: 'Admin only' });
   return createAgentHandler(req, res, userId);
 }
 
@@ -152,7 +152,8 @@ export async function rAgentsPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
 
 export async function rTemplatesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   try {
     return json(res, 200, { templates: listLocalTemplates() });
   } catch (err) {
@@ -167,7 +168,8 @@ export async function rTemplatesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 
 export async function rAgentsFromTemplatePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let body: { ref?: unknown; name?: unknown; timezone?: unknown };
@@ -190,18 +192,18 @@ export async function rAgentsFromTemplatePost(ctx: RouteCtx, _m: RegExpMatchArra
     // dry-run plan before applying). This message used to say the update was
     // CLI-only, which shipped in the same change as that button and sent people
     // to a terminal for something already on screen.
-    const carriers = groupsCarryingPlugin(ref);
+    const carriers = await groupsCarryingPlugin(ref);
     if (carriers.length > 0) {
       return json(res, 409, {
         error: `Already stamped as "${carriers[0].name}". To update it, open that agent and use Template → "Check for updates".`,
       });
     }
 
-    const { group, report } = createAgentFromTemplate(ref, {
+    const { group, report } = await createAgentFromTemplate(ref, {
       ...(typeof body.name === 'string' && body.name.trim() ? { name: body.name.trim() } : {}),
       ...(typeof body.timezone === 'string' && body.timezone.trim() ? { timezone: body.timezone.trim() } : {}),
     });
-    grantCreatorAdmin(userId, group.id);
+    await grantCreatorAdmin(userId, group.id);
     // `report` names anything the reader skipped (a non-conforming skill, an
     // unsupported transport). Components are never silently stripped, so it
     // travels to the client even on success.
@@ -219,17 +221,17 @@ export async function rAgentsFromTemplatePost(ctx: RouteCtx, _m: RegExpMatchArra
 // Same owner/global-admin gate as stamping: everything here decides what CAN
 // be stamped, so it is the same authority.
 
-const ownerOnly = (userId: string): boolean => isOwner(userId) || isGlobalAdmin(userId);
+const ownerOnly = async (userId: string): Promise<boolean> => (await isOwner(userId)) || (await isGlobalAdmin(userId));
 
 export async function rTemplateSourcesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
-  return json(res, 200, { sources: listTemplateSources() });
+  if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
+  return json(res, 200, { sources: await listTemplateSources() });
 }
 
 export async function rTemplateSourcePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let body: { id?: unknown; label?: unknown; owner?: unknown; repo?: unknown; branch?: unknown };
@@ -249,26 +251,26 @@ export async function rTemplateSourcePost(ctx: RouteCtx, _m: RegExpMatchArray): 
   }
   const branch = str(body.branch) || 'main';
   const id = str(body.id) || `${owner}-${repo}`.toLowerCase().replace(/[^a-z0-9-]+/g, '-');
-  upsertTemplateSource({ id, label: str(body.label) || `${owner}/${repo}`, owner, repo, branch });
-  return json(res, 200, { ok: true, sources: listTemplateSources() });
+  await upsertTemplateSource({ id, label: str(body.label) || `${owner}/${repo}`, owner, repo, branch });
+  return json(res, 200, { ok: true, sources: await listTemplateSources() });
 }
 
 export async function rTemplateSourceDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
   const id = decodeURIComponent(m[1]);
   // Official rows are code-seeded: deleting one would reappear on the next
   // migrate, so refusing is the honest answer rather than a no-op success.
-  if (!deleteTemplateSource(id)) {
+  if (!(await deleteTemplateSource(id))) {
     return json(res, 400, { error: 'No such source, or it is a built-in that cannot be removed' });
   }
-  return json(res, 200, { ok: true, sources: listTemplateSources() });
+  return json(res, 200, { ok: true, sources: await listTemplateSources() });
 }
 
 export async function rTemplateSourceBrowseGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
-  const src = getTemplateSource(decodeURIComponent(m[1]));
+  if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
+  const src = await getTemplateSource(decodeURIComponent(m[1]));
   if (!src) return json(res, 404, { error: 'Source not found' });
   try {
     return json(res, 200, { templates: await browseTemplateSource(src) });
@@ -282,7 +284,7 @@ export async function rTemplateSourceBrowseGet(ctx: RouteCtx, m: RegExpMatchArra
 
 export async function rTemplateFetchPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let body: { source?: unknown; ref?: unknown };
@@ -294,7 +296,7 @@ export async function rTemplateFetchPost(ctx: RouteCtx, _m: RegExpMatchArray): P
   if (typeof body.source !== 'string' || typeof body.ref !== 'string' || !body.ref.trim()) {
     return json(res, 400, { error: 'source and ref required' });
   }
-  const src = getTemplateSource(body.source);
+  const src = await getTemplateSource(body.source);
   if (!src) return json(res, 404, { error: 'Source not found' });
   try {
     const result = await fetchTemplateInto(src, body.ref.trim());
@@ -309,7 +311,7 @@ export async function rTemplateFetchPost(ctx: RouteCtx, _m: RegExpMatchArray): P
 // than a path segment — no double-encoding, no route pattern guessing.
 export async function rTemplateDetailGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, url, userId } = ctx;
-  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
   const ref = url.searchParams.get('ref');
   if (!ref) return json(res, 400, { error: 'ref required' });
   try {
@@ -321,7 +323,7 @@ export async function rTemplateDetailGet(ctx: RouteCtx, _m: RegExpMatchArray): P
 
 export async function rTemplateDelete(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, url, userId } = ctx;
-  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
   const ref = url.searchParams.get('ref');
   if (!ref) return json(res, 400, { error: 'ref required' });
   try {
@@ -360,16 +362,16 @@ function stampedRefFor(group: { folder: string }): string | null {
 
 export async function rAgentTemplatePlanGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  const ref = stampedRefFor(group);
+  const ref = stampedRefFor(await group);
   // Not stamped, or stamped from a template no longer in the library: both are
   // "nothing to update", and the second is worth saying rather than implying
   // the agent has no plugin at all.
   if (!ref) return json(res, 200, { stamped: false });
   try {
-    const plan = restampAgentFromTemplate(ref, group.id, { apply: false });
+    const plan = await restampAgentFromTemplate(ref, group.id, { apply: false });
     return json(res, 200, {
       stamped: true,
       ref,
@@ -386,16 +388,16 @@ export async function rAgentTemplatePlanGet(ctx: RouteCtx, m: RegExpMatchArray):
 
 export async function rAgentTemplateApplyPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  const ref = stampedRefFor(group);
+  const ref = stampedRefFor(await group);
   if (!ref) return json(res, 400, { error: 'This agent was not stamped from a template in the library' });
   try {
-    const applied = restampAgentFromTemplate(ref, group.id, { apply: true });
+    const applied = await restampAgentFromTemplate(ref, group.id, { apply: true });
     // Skill and MCP changes only take effect in a fresh container, which is
     // what the CLI tells the operator to do by hand after an apply.
-    restartAgentGroupContainers(group.id, 'Template update applied');
+    await restartAgentGroupContainers(group.id, 'Template update applied');
     return json(res, 200, { ok: true, ref, changes: applied.changes, report: applied.report });
   } catch (err) {
     log.warn('Webchat: template update failed', { agent: group.id, ref, err });
@@ -413,8 +415,8 @@ export async function rAgentTemplateApplyPost(ctx: RouteCtx, m: RegExpMatchArray
  */
 export async function rAgentExportTemplatePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!ownerOnly(userId)) return json(res, 403, { error: 'Global admin required' });
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -428,14 +430,14 @@ export async function rAgentExportTemplatePost(ctx: RouteCtx, m: RegExpMatchArra
   const name = str(body.name);
   if (!name) return json(res, 400, { error: 'name required' });
   try {
-    const result = exportAgentAsTemplate(group, {
+    const result = await exportAgentAsTemplate(await group, {
       name,
       ...(str(body.ref) ? { ref: str(body.ref)! } : {}),
       ...(str(body.version) ? { version: str(body.version)! } : {}),
       ...(str(body.description) ? { description: str(body.description)! } : {}),
       ...(str(body.agentName) ? { agentName: str(body.agentName)! } : {}),
     });
-    return json(res, 200, { ok: true, ...result });
+    return json(res, 200, { ok: true, ...(await result) });
   } catch (err) {
     log.warn('Webchat: exporting agent as template failed', { agent: group.id, err });
     return json(res, 400, { error: err instanceof Error ? err.message : 'Could not export the template' });
@@ -444,17 +446,17 @@ export async function rAgentExportTemplatePost(ctx: RouteCtx, m: RegExpMatchArra
 
 export async function rAgentPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   return updateAgentHandler(req, res, group.id);
 }
 
 export async function rAgentDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   return deleteAgentHandler(res, group.id);
 }
 
@@ -463,18 +465,18 @@ export async function rAgentDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<
 // owner-only POST/DELETE /api/rooms/:roomId/agents endpoints.
 export async function rAgentRoomsGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   return json(res, 200, getWebchatRoomsForAgent(group.id));
 }
 
 // ── Per-agent model assignment ─────────────────────────────────────────
 export async function rAgentModelPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   return assignAgentModelHandler(req, res, group.id);
 }
 
@@ -485,9 +487,9 @@ export async function rAgentModelPut(ctx: RouteCtx, m: RegExpMatchArray): Promis
 // syncAgentProviderForAssignedModel).
 export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let body: { provider?: unknown };
@@ -512,17 +514,17 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
             : `Unknown harness: ${provider}`,
     });
   }
-  ensureContainerConfig(group.id);
-  updateContainerConfigScalars(group.id, { provider: provider === 'claude' ? null : provider });
+  await ensureContainerConfig(group.id);
+  await updateContainerConfigScalars(group.id, { provider: provider === 'claude' ? null : provider });
   // (Re)write the local-model wiring for the NEW harness before the respawn —
   // opencode/pi read it at spawn; without this the switch only takes effect
   // after the next boot convergence or model change.
   try {
-    writeLocalModelForAgent(group.id);
+    await writeLocalModelForAgent(group.id);
   } catch (err) {
     log.warn('Webchat: wiring write after harness switch failed', { agentGroupId: group.id, err });
   }
-  const restarted = restartAgentGroupContainers(group.id, 'Harness changed');
+  const restarted = await restartAgentGroupContainers(group.id, 'Harness changed');
   return json(res, 200, { ok: true, provider, restarted });
 }
 
@@ -557,9 +559,9 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
  */
 export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -573,7 +575,7 @@ export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): 
   if (model && !isPlausibleAnthropicModelId(model)) {
     return json(res, 400, { error: 'That does not look like a model id (letters, digits, . _ - only).' });
   }
-  const assigned = getAssignedModelForAgent(group.id);
+  const assigned = await getAssignedModelForAgent(group.id);
   if (model && assigned && assigned.kind === 'anthropic') {
     return json(res, 409, {
       error: `This agent is assigned the webchat model "${assigned.name}", which already sets its Anthropic model. Unassign it first, or change the model there instead.`,
@@ -583,16 +585,16 @@ export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): 
   // var and wins the same way. Only reachable when there is no assignment —
   // the branch above already covers that case with its own wording.
   if (model && !assigned) {
-    const inherited = getEffectiveModelForAgent(group.id);
+    const inherited = await getEffectiveModelForAgent(group.id);
     if (inherited && inherited.kind === 'anthropic') {
       return json(res, 409, {
         error: `This agent inherits the workspace default model "${inherited.name}", which already sets its Anthropic model. Assign this agent its own model, or change the workspace default instead.`,
       });
     }
   }
-  ensureContainerConfig(group.id);
-  updateContainerConfigScalars(group.id, { model: model || null });
-  const restarted = restartAgentGroupContainers(group.id, 'Model changed');
+  await ensureContainerConfig(group.id);
+  await updateContainerConfigScalars(group.id, { model: model || null });
+  const restarted = await restartAgentGroupContainers(group.id, 'Model changed');
   return json(res, 200, { ok: true, model: model || null, restarted });
 }
 
@@ -613,9 +615,9 @@ export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): 
  */
 export async function rAgentEgressPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -629,11 +631,11 @@ export async function rAgentEgressPut(ctx: RouteCtx, m: RegExpMatchArray): Promi
     return json(res, 400, { error: "egress must be 'open' or 'host-only'" });
   // A group that has never spawned has no container_configs row, and the scalar
   // update is an UPDATE — it would match nothing and still report success.
-  ensureContainerConfig(group.id);
+  await ensureContainerConfig(group.id);
   // 'open' is stored as NULL — the column's absent state IS open, and writing
   // the string would make "never set" and "explicitly open" look different to
   // every reader of the row for no gain.
-  updateContainerConfigScalars(group.id, { egress: body.egress === 'open' ? null : 'host-only' });
+  await updateContainerConfigScalars(group.id, { egress: body.egress === 'open' ? null : 'host-only' });
   log.info('Agent egress changed', { agentGroupId: group.id, egress: body.egress, by: userId });
   return json(res, 200, { ok: true, egress: body.egress });
 }
@@ -654,9 +656,9 @@ export async function rAgentEgressPut(ctx: RouteCtx, m: RegExpMatchArray): Promi
  */
 export async function rAgentEnv(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, url, method, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   if (method === 'GET') return json(res, 200, { names: listAgentEnvNames(group.id) });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (method === 'DELETE') {
@@ -685,9 +687,9 @@ export async function rAgentEnv(ctx: RouteCtx, m: RegExpMatchArray): Promise<voi
 
 export async function rAgentMcp(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   if (method === 'GET') return listAgentMcpHandler(res, group.id);
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return setAgentMcpHandler(req, res, group.id);
@@ -695,16 +697,16 @@ export async function rAgentMcp(ctx: RouteCtx, m: RegExpMatchArray): Promise<voi
 
 export async function rAgentSkills(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   if (method === 'GET') {
     const available = listAvailableSkills();
     // getContainerConfig returns the raw row — skills is a JSON string ("all"
     // or a name array), so parse it (configFromDb does the same).
     let sel: string[] | 'all' = 'all';
     try {
-      const rawSkills = getContainerConfig(group.id)?.skills;
+      const rawSkills = (await getContainerConfig(group.id))?.skills;
       if (rawSkills != null) sel = JSON.parse(rawSkills) as string[] | 'all';
     } catch {
       sel = 'all';
@@ -729,9 +731,9 @@ export async function rAgentSkills(ctx: RouteCtx, m: RegExpMatchArray): Promise<
 // Per-group admin is sufficient: it can't affect any other group.
 export async function rAgentSkillImportPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return importScopedSkillHandler(req, res, group.id);
 }
@@ -739,16 +741,17 @@ export async function rAgentSkillImportPost(ctx: RouteCtx, m: RegExpMatchArray):
 // ── Agent export/import (backup Phase 1) ──────────────────────────────
 export async function rAgentExportGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, url, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
   const withConvos = url.searchParams.get('conversations') === '1';
   // Session DBs are DELETE-mode journals — only safe to copy with the
   // agent's containers stopped. They respawn on the next message.
-  if (withConvos) restartAgentGroupContainers(group.id, 'Export with conversations');
+  if (withConvos) await restartAgentGroupContainers(group.id, 'Export with conversations');
   let stage: string;
   try {
-    stage = stageAgentExport(group.id, withConvos);
+    stage = await stageAgentExport(group.id, withConvos);
   } catch (err) {
     return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
   }
@@ -757,7 +760,7 @@ export async function rAgentExportGet(ctx: RouteCtx, m: RegExpMatchArray): Promi
     'Content-Type': 'application/gzip',
     'Content-Disposition': `attachment; filename="${fname}"`,
   });
-  const tar = spawnTar(exportTarArgs(stage, group, withConvos));
+  const tar = spawnTar(exportTarArgs(stage, await group, withConvos));
   tar.stdout?.pipe(res);
   let tarErr = '';
   tar.stderr?.on('data', (d: Buffer) => (tarErr += d));
@@ -776,29 +779,31 @@ export async function rAgentExportGet(ctx: RouteCtx, m: RegExpMatchArray): Promi
 
 export async function rAgentsImportPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return importAgentUploadHandler(req, res);
 }
 
 export async function rAgentsImportApplyPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Global admin required' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+    return json(res, 403, { error: 'Global admin required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return importAgentApplyHandler(req, res);
 }
 
 export async function rAgentLearning(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
-  const current = parseAgentLearning(group.id);
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const current = await parseAgentLearning(group.id);
   // Auto-keep is admin-tier like the manual Keep it automates: a scoped admin
   // can already keep any draft for their agent with a tap, so gating the
   // toggle higher only added friction, not protection. The blast radius is
   // unchanged — a kept skill is scoped to the one agent they administer.
-  const canAutoKeep = hasAdminPrivilege(userId, group.id);
+  const canAutoKeep = await hasAdminPrivilege(userId, group.id);
   if (method === 'GET') {
     return json(res, 200, {
       autoTrigger: current.autoTrigger !== false, // absent = on
@@ -840,7 +845,7 @@ export async function rAgentLearning(ctx: RouteCtx, m: RegExpMatchArray): Promis
     }
     // 'off' re-opens workspace-credential spend to every member — a strictly
     // wider blast radius than the default, so it needs more than scoped admin.
-    if (ci === 'off' && !(isOwner(userId) || isGlobalAdmin(userId))) {
+    if (ci === 'off' && !((await isOwner(userId)) || (await isGlobalAdmin(userId)))) {
       return json(res, 403, { error: "Only an owner or global admin can set chargeInvoker to 'off'" });
     }
     if (ci === 'auto') delete next.chargeInvoker;
@@ -858,9 +863,9 @@ export async function rAgentLearning(ctx: RouteCtx, m: RegExpMatchArray): Promis
     if (body.replayReview) next.replayReview = true;
     else delete next.replayReview; // absent = digest, the default
   }
-  updateContainerConfigJson(group.id, 'learning', next);
+  await updateContainerConfigJson(group.id, 'learning', next);
   // Config materializes at spawn — restart so the container sees it now.
-  const restarted = restartAgentGroupContainers(group.id, 'Learning settings changed');
+  const restarted = await restartAgentGroupContainers(group.id, 'Learning settings changed');
   return json(res, 200, {
     ok: true,
     autoTrigger: next.autoTrigger !== false,
@@ -874,9 +879,9 @@ export async function rAgentLearning(ctx: RouteCtx, m: RegExpMatchArray): Promis
 
 export async function rAgentScopedSkillDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return deleteScopedSkillHandler(res, group.id, decodeURIComponent(m[2]));
 }
@@ -884,9 +889,9 @@ export async function rAgentScopedSkillDelete(ctx: RouteCtx, m: RegExpMatchArray
 // ── Lifecycle status (active | paused | archived) ──────────────────────
 export async function rAgentStatusPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
   return setAgentStatusHandler(req, res, group.id);
 }
 
@@ -895,10 +900,10 @@ export async function rAgentStatusPut(ctx: RouteCtx, m: RegExpMatchArray): Promi
 // sessions no room-typed /clear can target — and reset one (inject /clear).
 export async function rAgentSessionsGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const group = resolveAgent(decodeURIComponent(m[1]));
+  const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!hasAdminPrivilege(userId, group.id)) return json(res, 403, { error: 'Admin privilege required' });
-  const sessions = getSessionsByAgentGroup(group.id)
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const sessions = (await getSessionsByAgentGroup(group.id))
     .filter((s) => s.status === 'active')
     .map((s) => ({
       id: s.id,
@@ -914,10 +919,10 @@ export async function rAgentSessionsGet(ctx: RouteCtx, m: RegExpMatchArray): Pro
  * (agent-first) and POST /api/rooms (room-first) so they end up in the same
  * shape regardless of which entry point the caller used.
  */
-export function provisionWebchatAgentWithRoom(
+export async function provisionWebchatAgentWithRoom(
   name: string,
   opts: { folder?: string; instructions?: string } = {},
-): { group: AgentGroup } | { error: string; status: number } {
+): Promise<{ group: AgentGroup } | { error: string; status: number }> {
   const folder = opts.folder && /^[a-z0-9_-]+$/i.test(opts.folder) ? opts.folder : nameToFolder(name);
   if (!folder) return { error: 'Could not derive folder from name', status: 400 };
   const group: AgentGroup = {
@@ -938,18 +943,18 @@ export function provisionWebchatAgentWithRoom(
   const groupDir = path.resolve(GROUPS_DIR, folder);
   const dirExisted = fs.existsSync(groupDir);
   try {
-    getDb().transaction(() => {
-      createAgentGroup(group);
-      initGroupFilesystem(group, { instructions: opts.instructions });
-      wireAgentToWebchatRoom(name, folder, group.id);
+    await getDb().transaction(async () => {
+      await createAgentGroup(group);
+      await initGroupFilesystem(group, { instructions: opts.instructions });
+      await wireAgentToWebchatRoom(name, folder, group.id);
       // Auto-prime the agent on its own 1:1 room. With a single wired
       // agent the prime designation is a no-op for routing (engage_pattern
       // stays '.'), but pre-priming means that when the operator wires a
       // second agent later, the original keeps responding by default —
       // matching the user-visible expectation "the first agent answers
       // until I say otherwise."
-      setPrimeAgentForWebchatRoom(folder, group.id);
-    })();
+      await setPrimeAgentForWebchatRoom(folder, group.id);
+    });
   } catch (err) {
     // SQLite error messages can leak schema details ("UNIQUE constraint
     // failed: agent_groups.folder"). Return a stable string and log the
@@ -1009,18 +1014,18 @@ export async function createAgentHandler(
       instructions: typeof body.instructions === 'string' ? body.instructions : undefined,
     });
     if ('error' in result) return json(res, result.status, { error: result.error });
-    grantCreatorAdmin(creatorUserId, result.group.id);
+    await grantCreatorAdmin(creatorUserId, result.group.id);
     return json(res, 200, { ok: true, agentGroup: result.group, roomId: null });
   }
 
   const roomName = typeof body.roomName === 'string' && body.roomName.trim() ? body.roomName.trim() : name;
-  const provisioned = provisionWebchatAgentWithRoom(roomName, {
+  const provisioned = await provisionWebchatAgentWithRoom(roomName, {
     folder: typeof body.folder === 'string' ? body.folder : undefined,
     instructions: typeof body.instructions === 'string' ? body.instructions : undefined,
   });
   if ('error' in provisioned) return json(res, provisioned.status, { error: provisioned.error });
-  grantCreatorAdmin(creatorUserId, provisioned.group.id);
-  broadcastRooms();
+  await grantCreatorAdmin(creatorUserId, provisioned.group.id);
+  await broadcastRooms();
   return json(res, 200, {
     ok: true,
     agentGroup: provisioned.group,
@@ -1042,10 +1047,10 @@ export async function createAgentHandler(
  * every group, so a scoped row would be redundant noise in `user_roles`.
  * No-op if the permissions module isn't installed.
  */
-export function grantCreatorAdmin(creatorUserId: string, agentGroupId: string): void {
-  if (isOwner(creatorUserId) || isGlobalAdmin(creatorUserId)) return;
+export async function grantCreatorAdmin(creatorUserId: string, agentGroupId: string): Promise<void> {
+  if ((await isOwner(creatorUserId)) || (await isGlobalAdmin(creatorUserId))) return;
   try {
-    permsGrantRole({
+    await permsGrantRole({
       user_id: creatorUserId,
       role: 'admin',
       agent_group_id: agentGroupId,
@@ -1062,7 +1067,7 @@ export function grantCreatorAdmin(creatorUserId: string, agentGroupId: string): 
 }
 
 export async function updateAgentHandler(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
-  const existing = getAgentGroup(id);
+  const existing = await getAgentGroup(id);
   if (!existing) return json(res, 404, { error: 'Agent not found' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
@@ -1076,7 +1081,7 @@ export async function updateAgentHandler(req: IncomingMessage, res: ServerRespon
   if (typeof body.name === 'string' && body.name.trim()) updates.name = body.name.trim();
   if (typeof body.agent_provider === 'string') updates.agent_provider = body.agent_provider;
   if (body.agent_provider === null) updates.agent_provider = null;
-  updateAgentGroup(id, updates);
+  await updateAgentGroup(id, updates);
   return json(res, 200, { ok: true });
 }
 
@@ -1108,7 +1113,7 @@ export async function importAgentUploadHandler(req: IncomingMessage, res: Server
   try {
     tmpFile = await spoolUploadToTmp(req);
     const dir = await extractBundle(tmpFile);
-    const preview = previewImport(dir);
+    const preview = await previewImport(dir);
     const token = randomUUID();
     pendingAgentImports.set(token, { dir, at: Date.now() });
     return json(res, 200, { token, preview });
@@ -1131,20 +1136,20 @@ export async function importAgentApplyHandler(req: IncomingMessage, res: ServerR
   const staged = pendingAgentImports.get(String(body.token || ''));
   if (!staged) return json(res, 410, { error: 'Import expired — upload the bundle again' });
   try {
-    const result = applyImport(staged.dir, { name: typeof body.name === 'string' ? body.name : undefined });
+    const result = await applyImport(staged.dir, { name: typeof body.name === 'string' ? body.name : undefined });
     // Post-link derived state: MCP config re-sync + model env materialization —
     // the same helpers the interactive flows use, so nothing drifts.
     for (const mcpName of result.attachedMcp) {
-      const server = getWebchatMcpServerByName(mcpName);
-      if (server) syncAgentMcpConfig(result.id, server, true);
+      const server = await getWebchatMcpServerByName(mcpName);
+      if (server) await syncAgentMcpConfig(result.id, server, true);
     }
     if (result.modelAssigned) {
-      writeAgentSettingsForAssignedModel(result.id);
-      syncAgentProviderForAssignedModel(result.id);
+      await writeAgentSettingsForAssignedModel(result.id);
+      await syncAgentProviderForAssignedModel(result.id);
     }
     pendingAgentImports.delete(String(body.token));
     fs.rmSync(staged.dir, { recursive: true, force: true });
-    broadcastRooms();
+    await broadcastRooms();
     return json(res, 200, { ok: true, ...result });
   } catch (err) {
     log.error('Agent import apply failed', { err });
@@ -1152,29 +1157,27 @@ export async function importAgentApplyHandler(req: IncomingMessage, res: ServerR
   }
 }
 
-export function deleteAgentHandler(res: ServerResponse, id: string): void {
-  const group = getAgentGroup(id);
+export async function deleteAgentHandler(res: ServerResponse, id: string): Promise<void> {
+  const group = await getAgentGroup(id);
   if (!group) return json(res, 404, { error: 'Agent not found' });
 
   // Snapshot every session this agent owns — home-room and any other rooms
   // it's wired to. All of them FK to `agent_groups.id`, so all must be torn
   // down before deleteAgentGroup. Captured before the tx so post-commit
   // resource cleanup can find them.
-  const sessions = findSessionsByAgentGroup(id);
+  const sessions = await findSessionsByAgentGroup(id);
   // Draft BODY dirs live on disk keyed by draft id — capture before the tx
   // deletes the rows, remove after commit.
-  const draftIds = listSkillDrafts()
-    .filter((d) => d.agent_group_id === id)
-    .map((d) => d.id);
+  const draftIds = (await listSkillDrafts()).filter((d) => d.agent_group_id === id).map((d) => d.id);
 
   try {
-    getDb().transaction(() => {
+    await getDb().transaction(async () => {
       const db = getDb();
-      for (const s of sessions) deleteSessionDbState(s.sessionId);
-      db.prepare(`DELETE FROM messaging_group_agents WHERE agent_group_id = ?`).run(id);
+      for (const s of await sessions) await deleteSessionDbState(s.sessionId);
+      await db.run(`DELETE FROM messaging_group_agents WHERE agent_group_id = ?`, id);
       // Drop the model assignment too — the agent is going away, no point
       // keeping a row pointing at a dead agent_group_id.
-      unassignModelFromAgent(id);
+      await unassignModelFromAgent(id);
       // Drop EVERY row that FK-references agent_groups.id — any one of them
       // aborts deleteAgentGroup with "FOREIGN KEY constraint failed". This
       // list mirrors the schema's referencing tables (guarded per table:
@@ -1192,29 +1195,30 @@ export function deleteAgentHandler(res: ServerResponse, id: string): void {
         'skill_drafts',
         'webchat_agent_mcp_servers',
       ]) {
-        if (hasTable(db, table)) {
-          db.prepare(`DELETE FROM ${table} WHERE agent_group_id = ?`).run(id);
+        if (await hasTable(db, table)) {
+          await db.run(`DELETE FROM ${table} WHERE agent_group_id = ?`, id);
         }
       }
       // a2a policies key by from/to, not agent_group_id — either side dying
       // kills the policy.
-      if (hasTable(db, 'agent_message_policies')) {
-        db.prepare(`DELETE FROM agent_message_policies WHERE from_agent_group_id = ? OR to_agent_group_id = ?`).run(
+      if (await hasTable(db, 'agent_message_policies')) {
+        await db.run(
+          `DELETE FROM agent_message_policies WHERE from_agent_group_id = ? OR to_agent_group_id = ?`,
           id,
           id,
         );
       }
       // Delete the home room (its own session rows are already gone above).
-      deleteWebchatRoom(group.folder);
-      deleteAgentGroup(id);
-    })();
+      await deleteWebchatRoom(group.folder);
+      await deleteAgentGroup(id);
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     log.error('Webchat: deleteAgentHandler failed', { id, err });
     return json(res, 500, { error: 'Failed to delete agent', message });
   }
 
-  void teardownSessionResources(sessions, `webchat agent ${id} deleted`);
+  void teardownSessionResources(await sessions, `webchat agent ${id} deleted`);
 
   for (const draftId of draftIds) {
     try {
@@ -1231,7 +1235,7 @@ export function deleteAgentHandler(res: ServerResponse, id: string): void {
     log.warn('Webchat: failed to remove group folder', { folder: group.folder, err });
   }
 
-  broadcastRooms();
+  await broadcastRooms();
   return json(res, 200, { ok: true });
 }
 
@@ -1252,9 +1256,9 @@ export async function setAgentStatusHandler(
   if (status !== 'active' && status !== 'paused' && status !== 'archived') {
     return json(res, 400, { error: "status must be 'active', 'paused', or 'archived'" });
   }
-  setAgentStatus(agentGroupId, status);
-  const group = getAgentGroup(agentGroupId);
-  return json(res, 200, group ? toAgentForUI(group) : { status });
+  await setAgentStatus(agentGroupId, status);
+  const group = await getAgentGroup(agentGroupId);
+  return json(res, 200, group ? await toAgentForUI(group) : { status });
 }
 
 export async function assignAgentModelHandler(
@@ -1272,17 +1276,17 @@ export async function assignAgentModelHandler(
   }
   // null = unassign (back to default Anthropic credential + default model)
   if (body.modelId === null) {
-    unassignModelFromAgent(agentGroupId);
+    await unassignModelFromAgent(agentGroupId);
   } else {
     if (typeof body.modelId !== 'string' || !body.modelId.trim()) {
       return json(res, 400, { error: 'modelId must be a string or null' });
     }
-    const model = getWebchatModel(body.modelId.trim());
+    const model = await getWebchatModel(body.modelId.trim());
     if (!model) return json(res, 404, { error: 'Model not found' });
-    assignModelToAgent(agentGroupId, body.modelId.trim());
+    await assignModelToAgent(agentGroupId, body.modelId.trim());
   }
-  reloadAgentModelEnv(agentGroupId, 'Webchat model reassigned');
-  const current = getAssignedModelForAgent(agentGroupId);
+  await reloadAgentModelEnv(agentGroupId, 'Webchat model reassigned');
+  const current = await getAssignedModelForAgent(agentGroupId);
   // Preflight the newly-assigned model from a container's vantage point so the
   // operator learns NOW (not via silent "API retry") if the agent can't reach it.
   const reachability = current ? await probeContainerReachability(current.endpoint) : undefined;
@@ -1307,8 +1311,8 @@ export async function setAgentSkillsHandler(
   const skills = [...new Set(body.skills.map(String).filter((s) => available.has(s)))];
   // Persist the explicit selection (switches the agent off the 'all' default) and
   // respawn so syncSkillSymlinks re-points .claude/skills before the next turn.
-  updateContainerConfigJson(agentGroupId, 'skills', skills);
-  const restarted = restartAgentGroupContainers(agentGroupId, 'Webchat skills changed');
+  await updateContainerConfigJson(agentGroupId, 'skills', skills);
+  const restarted = await restartAgentGroupContainers(agentGroupId, 'Webchat skills changed');
   return json(res, 200, { ok: true, skills, restarted });
 }
 
@@ -1387,7 +1391,7 @@ export async function importScopedSkillHandler(
     fs.rmSync(staging, { recursive: true, force: true });
     return json(res, 500, { error: 'Write failed: ' + (err instanceof Error ? err.message : String(err)) });
   }
-  const restarted = restartAgentGroupContainers(agentGroupId, 'Webchat scoped skill added');
+  const restarted = await restartAgentGroupContainers(agentGroupId, 'Webchat scoped skill added');
   const inspection = inspectSkillFiles(skillName, files, { official: origin.official });
   return json(res, 200, { ok: true, name: skillName, files: files.length, restarted, warnings: inspection.warnings });
 }
@@ -1414,8 +1418,8 @@ export function deleteScopedSkillHandler(res: ServerResponse, agentGroupId: stri
   return json(res, 200, { ok: true, restarted });
 }
 
-export function listAgentMcpHandler(res: ServerResponse, agentGroupId: string): void {
-  const attached = getMcpServersForAgent(agentGroupId).map(mcpServerForUI);
+export async function listAgentMcpHandler(res: ServerResponse, agentGroupId: string): Promise<void> {
+  const attached = (await getMcpServersForAgent(agentGroupId)).map(mcpServerForUI);
   return json(res, 200, { servers: attached });
 }
 
@@ -1438,19 +1442,21 @@ export async function setAgentMcpHandler(
   if (add.length === 0 && remove.length === 0) return json(res, 400, { error: 'add or remove required' });
   let changed = 0;
   for (const id of add) {
-    const server = getWebchatMcpServer(id);
+    // Await BEFORE the guard: un-awaited, `server` was a promise — truthy — so
+    // the 404 for an unknown id never fired and a bad id got "assigned".
+    const server = await getWebchatMcpServer(id);
     if (!server) return json(res, 404, { error: `MCP server not found: ${id}` });
-    assignMcpServerToAgent(agentGroupId, id);
-    syncAgentMcpConfig(agentGroupId, server, true);
+    await assignMcpServerToAgent(agentGroupId, id);
+    await syncAgentMcpConfig(agentGroupId, server, true);
     changed++;
   }
   for (const id of remove) {
-    const server = getWebchatMcpServer(id);
+    const server = await getWebchatMcpServer(id);
     if (!server) return json(res, 404, { error: `MCP server not found: ${id}` });
-    unassignMcpServerFromAgent(agentGroupId, id);
-    syncAgentMcpConfig(agentGroupId, server, false);
+    await unassignMcpServerFromAgent(agentGroupId, id);
+    await syncAgentMcpConfig(agentGroupId, server, false);
     changed++;
   }
-  if (changed > 0) reloadAgentMcpServers(agentGroupId);
-  return json(res, 200, { ok: true, servers: getMcpServersForAgent(agentGroupId).map(mcpServerForUI) });
+  if (changed > 0) await reloadAgentMcpServers(agentGroupId);
+  return json(res, 200, { ok: true, servers: (await getMcpServersForAgent(agentGroupId)).map(mcpServerForUI) });
 }

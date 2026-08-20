@@ -3,7 +3,7 @@
  * one-shot (auth.ts finalize → roles.ts grantOwnerRole).
  *
  * WHY THIS FILE EXISTS SEPARATELY FROM auth.test.ts. That suite calls
- * `initTestDb()` without `runMigrations`, so `user_roles` does not exist and
+ * `await initTestDb()` without `runMigrations`, so `user_roles` does not exist and
  * every role helper degrades to a no-op by design — it is testing the
  * "permissions module not installed" posture. The consequence is that the
  * grant itself has never been exercised against a real schema, and the real
@@ -26,68 +26,71 @@ import { grantOwnerRole, isOwner } from './roles.js';
 
 const now = '2026-08-14T00:00:00.000Z';
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 afterEach(() => closeDb());
 
-function addUser(id: string): void {
-  getDb()
-    .prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`)
-    .run(id, now);
+async function addUser(id: string): Promise<void> {
+  await getDb().run(
+    `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+    id,
+    now,
+  );
 }
 
-function grantorOf(userId: string): string | null {
-  const row = getDb().prepare(`SELECT granted_by FROM user_roles WHERE user_id = ? AND role = 'owner'`).get(userId) as
+async function grantorOf(userId: string): Promise<string | null> {
+  const row = (await getDb().get(`SELECT granted_by FROM user_roles WHERE user_id = ? AND role = 'owner'`, userId)) as
     | { granted_by: string | null }
     | undefined;
   return row?.granted_by ?? null;
 }
 
 describe('grantOwnerRole — grantedBy must never cost the grant', () => {
-  it('grants when grantedBy is a sentinel that is not a user (the live failure)', () => {
+  it('grants when grantedBy is a sentinel that is not a user (the live failure)', async () => {
     const ts = 'webchat:tailscale:operator@example.com';
-    expect(grantOwnerRole(ts, 'webchat:first-tailscale-owner')).toBe(true);
-    expect(isOwner(ts)).toBe(true);
+    expect(await grantOwnerRole(ts, 'webchat:first-tailscale-owner')).toBe(true);
+    expect(await isOwner(ts)).toBe(true);
     // The sentinel can't be stored — it would violate the FK — so the row
     // records no grantor. Losing attribution beats losing the role.
-    expect(grantorOf(ts)).toBeNull();
+    expect(await grantorOf(ts)).toBeNull();
   });
 
-  it('grants alongside an existing owner (co-owner, the real install shape)', () => {
-    addUser('webchat:local-owner');
-    grantOwnerRole('webchat:local-owner');
+  it('grants alongside an existing owner (co-owner, the real install shape)', async () => {
+    await addUser('webchat:local-owner');
+    await grantOwnerRole('webchat:local-owner');
     const ts = 'webchat:tailscale:operator@example.com';
 
-    expect(grantOwnerRole(ts, 'webchat:first-tailscale-owner')).toBe(true);
-    expect(isOwner('webchat:local-owner')).toBe(true);
-    expect(isOwner(ts)).toBe(true);
+    expect(await grantOwnerRole(ts, 'webchat:first-tailscale-owner')).toBe(true);
+    expect(await isOwner('webchat:local-owner')).toBe(true);
+    expect(await isOwner(ts)).toBe(true);
   });
 
-  it('preserves grantedBy when it names a real user', () => {
-    addUser('webchat:local-owner');
+  it('preserves grantedBy when it names a real user', async () => {
+    await addUser('webchat:local-owner');
     const ts = 'webchat:tailscale:operator@example.com';
 
-    expect(grantOwnerRole(ts, 'webchat:local-owner')).toBe(true);
-    expect(grantorOf(ts)).toBe('webchat:local-owner');
+    expect(await grantOwnerRole(ts, 'webchat:local-owner')).toBe(true);
+    expect(await grantorOf(ts)).toBe('webchat:local-owner');
   });
 
-  it('is idempotent per identity — a second call inserts nothing', () => {
+  it('is idempotent per identity — a second call inserts nothing', async () => {
     const ts = 'webchat:tailscale:operator@example.com';
-    expect(grantOwnerRole(ts, 'webchat:first-tailscale-owner')).toBe(true);
-    expect(grantOwnerRole(ts, 'webchat:first-tailscale-owner')).toBe(false);
+    expect(await grantOwnerRole(ts, 'webchat:first-tailscale-owner')).toBe(true);
+    expect(await grantOwnerRole(ts, 'webchat:first-tailscale-owner')).toBe(false);
 
-    const count = getDb()
-      .prepare(`SELECT COUNT(*) AS n FROM user_roles WHERE user_id = ? AND role = 'owner'`)
-      .get(ts) as { n: number };
+    const count = (await getDb().get(
+      `SELECT COUNT(*) AS n FROM user_roles WHERE user_id = ? AND role = 'owner'`,
+      ts,
+    )) as { n: number };
     expect(count.n).toBe(1);
   });
 
-  it('creates the users row for the grantee so the role has somewhere to point', () => {
+  it('creates the users row for the grantee so the role has somewhere to point', async () => {
     const ts = 'webchat:tailscale:operator@example.com';
-    grantOwnerRole(ts, 'webchat:first-tailscale-owner');
-    const row = getDb().prepare(`SELECT id FROM users WHERE id = ?`).get(ts);
+    await grantOwnerRole(ts, 'webchat:first-tailscale-owner');
+    const row = await getDb().get(`SELECT id FROM users WHERE id = ?`, ts);
     expect(row).toBeDefined();
   });
 });

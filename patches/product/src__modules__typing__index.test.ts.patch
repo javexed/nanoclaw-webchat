@@ -1,8 +1,8 @@
 diff --git a/src/modules/typing/index.test.ts b/src/modules/typing/index.test.ts
-index 9c113073..ec759c2c 100644
+index 9c113073..906b4758 100644
 --- a/src/modules/typing/index.test.ts
 +++ b/src/modules/typing/index.test.ts
-@@ -16,13 +16,19 @@ vi.mock('../../config.js', async () => {
+@@ -16,23 +16,29 @@ vi.mock('../../config.js', async () => {
  
  import { setTypingAdapter, startTypingRefresh, stopTypingRefresh } from './index.js';
  
@@ -25,6 +25,18 @@ index 9c113073..ec759c2c 100644
      },
    });
    return calls;
+ }
+ 
+-beforeEach(() => {
++beforeEach(async () => {
+   vi.useFakeTimers();
+ });
+ 
+-afterEach(() => {
++afterEach(async () => {
+   stopTypingRefresh('sess-1');
+   vi.useRealTimers();
+ });
 @@ -40,7 +46,7 @@ afterEach(() => {
  describe('startTypingRefresh — instance forwarding', () => {
    it('immediate tick passes the instance to the adapter', async () => {

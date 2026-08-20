@@ -66,12 +66,12 @@ export function sanitizeOrigin(input: unknown): SkillOrigin | null {
 }
 
 /** Resolve a draft's source session to its webchat room, when there is one. */
-export function draftSourceRoom(sessionId: string | null): string | null {
+export async function draftSourceRoom(sessionId: string | null): Promise<string | null> {
   if (!sessionId) return null;
   try {
-    const sess = getSession(sessionId);
+    const sess = await getSession(sessionId);
     if (!sess?.messaging_group_id) return null;
-    const mg = getMessagingGroup(sess.messaging_group_id);
+    const mg = await getMessagingGroup(sess.messaging_group_id);
     return mg && mg.channel_type === 'webchat' ? mg.platform_id : null;
   } catch {
     return null;
@@ -201,13 +201,13 @@ export type ScopedSkillForList = {
   rooms: Array<{ id: string; name: string }>;
 };
 
-export function listScopedSkillsForUser(userId: string, pool: AvailableSkill[]): ScopedSkillForList[] {
+export async function listScopedSkillsForUser(userId: string, pool: AvailableSkill[]): Promise<ScopedSkillForList[]> {
   const poolNames = new Set(pool.map((s) => s.name));
   const out: ScopedSkillForList[] = [];
-  for (const a of listAgentsForUser(userId)) {
+  for (const a of await listAgentsForUser(userId)) {
     const scoped = listScopedSkills(a.id).filter((sk) => !poolNames.has(sk.name));
     if (!scoped.length) continue;
-    const rooms = getWebchatRoomsForAgent(a.id).map((r) => ({ id: r.id, name: r.name }));
+    const rooms = (await getWebchatRoomsForAgent(a.id)).map((r) => ({ id: r.id, name: r.name }));
     for (const sk of scoped) {
       out.push({
         name: sk.name,

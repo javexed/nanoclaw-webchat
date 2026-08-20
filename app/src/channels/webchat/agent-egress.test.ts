@@ -19,7 +19,7 @@ import type { WebchatServer } from './server.js';
 
 const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
 });
 
@@ -27,7 +27,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     // ignore
   }
@@ -38,9 +38,9 @@ async function loadServerWithEnv(env: Record<string, string | undefined>) {
   for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v ?? '');
   vi.resetModules();
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
+  await migrations.runMigrations(conn.getDb());
   return { server: await import('./server.js'), conn };
 }
 
@@ -70,23 +70,31 @@ const portOf = (wc: { http: { address: () => unknown } }): number => {
 };
 
 const now = '2026-07-30T00:00:00.000Z';
-function seed(db: import('better-sqlite3').Database): void {
-  const user = (id: string) =>
-    db
-      .prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`)
-      .run(id, now);
-  const group = (id: string) =>
-    db
-      .prepare(
-        `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      )
-      .run(id, id, id, now);
-  const role = (uid: string, r: 'owner' | 'admin', g: string | null) => {
-    user(uid);
-    if (g) group(g);
-    db.prepare(
+function seed(db: import('../../db/driver.js').DbDriver): void {
+  const user = async (id: string) =>
+    await db.run(
+      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+      id,
+      now,
+    );
+  const group = async (id: string) =>
+    await db.run(
+      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+      id,
+      id,
+      id,
+      now,
+    );
+  const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
+    await user(uid);
+    if (g) await group(g);
+    await db.run(
       `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
-    ).run(uid, r, g, now);
+      uid,
+      r,
+      g,
+      now,
+    );
   };
   group('ag-net-a');
   group('ag-net-b');
@@ -123,9 +131,9 @@ describe('PUT /api/agents/:id/egress', () => {
   const as = (n: string) => ({ 'x-forwarded-user': n, 'content-type': 'application/json', 'x-webchat-csrf': '1' });
   const put = (agent: string, who: string, egress: unknown) =>
     httpRequest(port, 'PUT', `/api/agents/${agent}/egress`, as(who), JSON.stringify({ egress }));
-  const stored = (id: string) =>
+  const stored = async (id: string) =>
     (
-      conn.getDb().prepare(`SELECT egress FROM container_configs WHERE agent_group_id = ?`).get(id) as
+      (await conn.getDb().get(`SELECT egress FROM container_configs WHERE agent_group_id = ?`, id)) as
         | { egress: string | null }
         | undefined
     )?.egress ?? null;
@@ -133,20 +141,20 @@ describe('PUT /api/agents/:id/egress', () => {
   it('a scoped admin may lock down an agent they administer', async () => {
     const r = await put('ag-net-a', 'admina', 'host-only');
     expect(r.status).toBe(200);
-    expect(stored('ag-net-a')).toBe('host-only');
+    expect(await stored('ag-net-a')).toBe('host-only');
   });
 
   it('open is stored as NULL, so it is indistinguishable from never-set', async () => {
     await put('ag-net-a', 'admina', 'host-only');
     const r = await put('ag-net-a', 'admina', 'open');
     expect(r.status).toBe(200);
-    expect(stored('ag-net-a')).toBeNull();
+    expect(await stored('ag-net-a')).toBeNull();
   });
 
   it('a scoped admin is refused on an agent they do NOT administer', async () => {
     const r = await put('ag-net-b', 'admina', 'host-only');
     expect(r.status).toBe(403);
-    expect(stored('ag-net-b')).toBeNull();
+    expect(await stored('ag-net-b')).toBeNull();
   });
 
   it('a user with no role anywhere is refused', async () => {
@@ -165,7 +173,7 @@ describe('PUT /api/agents/:id/egress', () => {
     const r = await put('ag-net-a', 'owner', 'none');
     expect(r.status).toBe(400);
     expect(r.body).toContain("'open' or 'host-only'");
-    expect(stored('ag-net-a')).toBeNull();
+    expect(await stored('ag-net-a')).toBeNull();
   });
 
   it('refuses anything else, including near-misses', async () => {
@@ -173,7 +181,7 @@ describe('PUT /api/agents/:id/egress', () => {
       const r = await put('ag-net-a', 'owner', bad);
       expect(r.status).toBe(400);
     }
-    expect(stored('ag-net-a')).toBeNull();
+    expect(await stored('ag-net-a')).toBeNull();
   });
 
   it('requires the CSRF header even for the right admin', async () => {
@@ -185,7 +193,7 @@ describe('PUT /api/agents/:id/egress', () => {
       JSON.stringify({ egress: 'host-only' }),
     );
     expect(r.status).toBe(403);
-    expect(stored('ag-net-a')).toBeNull();
+    expect(await stored('ag-net-a')).toBeNull();
   });
 
   it('404s an unknown agent', async () => {

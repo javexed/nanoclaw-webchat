@@ -9,10 +9,10 @@ import { assertSafeOutboundUrl, safeFetch } from './models.js';
 
 describe('assertSafeOutboundUrl', () => {
   const originalEnv = process.env.WEBCHAT_BLOCK_PRIVATE_IPS;
-  beforeEach(() => {
+  beforeEach(async () => {
     delete process.env.WEBCHAT_BLOCK_PRIVATE_IPS;
   });
-  afterEach(() => {
+  afterEach(async () => {
     if (originalEnv === undefined) delete process.env.WEBCHAT_BLOCK_PRIVATE_IPS;
     else process.env.WEBCHAT_BLOCK_PRIVATE_IPS = originalEnv;
   });
@@ -75,7 +75,7 @@ describe('assertSafeOutboundUrl', () => {
   });
 
   describe('private IPs (WEBCHAT_BLOCK_PRIVATE_IPS=true)', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       process.env.WEBCHAT_BLOCK_PRIVATE_IPS = 'true';
     });
 

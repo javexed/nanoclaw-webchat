@@ -1,8 +1,8 @@
 diff --git a/src/modules/agent-to-agent/message-gate.test.ts b/src/modules/agent-to-agent/message-gate.test.ts
-index 98bd380c..fd23eb2b 100644
+index 9124d5ca..30612495 100644
 --- a/src/modules/agent-to-agent/message-gate.test.ts
 +++ b/src/modules/agent-to-agent/message-gate.test.ts
-@@ -173,7 +173,12 @@ describe('agent message policies', () => {
+@@ -179,7 +179,12 @@ describe('agent message policies', () => {
        SA,
      );
      expect(requestApproval).not.toHaveBeenCalled();

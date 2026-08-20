@@ -20,10 +20,10 @@ async function loadWith(env: string | undefined, admin: Record<string, unknown>)
   return runSessionPrepareHooks;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   delete process.env.CREDENTIAL_ISOLATION;
 });
-afterEach(() => {
+afterEach(async () => {
   delete process.env.CREDENTIAL_ISOLATION;
   vi.resetModules();
   vi.doUnmock('../user-credentials/onecli-admin.js');

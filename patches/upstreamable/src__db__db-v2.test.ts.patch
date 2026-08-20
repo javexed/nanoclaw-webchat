@@ -1,12 +1,12 @@
 diff --git a/src/db/db-v2.test.ts b/src/db/db-v2.test.ts
-index 5db42cd2..74574f71 100644
+index 9b3c54dd..46131de5 100644
 --- a/src/db/db-v2.test.ts
 +++ b/src/db/db-v2.test.ts
-@@ -467,6 +467,7 @@ describe('container configs', () => {
+@@ -477,6 +477,7 @@ describe('container configs', () => {
        additional_mounts: '[]',
        cli_scope: 'global',
        timezone: null,
 +      egress: null,
        updated_at: now(),
      });
-     const row = getContainerConfig('ag-full');
+     const row = await getContainerConfig('ag-full');

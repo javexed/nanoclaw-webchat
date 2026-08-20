@@ -1,7 +1,7 @@
-diff --git c/src/channels/channel-registry.ts w/src/channels/channel-registry.ts
+diff --git a/src/channels/channel-registry.ts b/src/channels/channel-registry.ts
 index f6c4835a..4035a09f 100644
---- c/src/channels/channel-registry.ts
-+++ w/src/channels/channel-registry.ts
+--- a/src/channels/channel-registry.ts
++++ b/src/channels/channel-registry.ts
 @@ -4,7 +4,14 @@
   * Channels self-register on import. The host calls initChannelAdapters() at startup
   * to instantiate and set up all registered adapters.
@@ -46,9 +46,8 @@ index f6c4835a..4035a09f 100644
        status?: string,
        statusKind?: 'auto' | 'agent',
 +      agentName?: string,
-     ): Promise<void> {
-       const adapter = getChannelAdapterExact(instance ?? channelType);
--      await adapter?.setTyping?.(platformId, threadId, status, statusKind);
++    ): Promise<void> {
++      const adapter = getChannelAdapterExact(instance ?? channelType);
 +      await adapter?.setTyping?.(platformId, threadId, status, statusKind, agentName);
 +    },
 +    async sendStatus(
@@ -57,8 +56,9 @@ index f6c4835a..4035a09f 100644
 +      threadId: string | null,
 +      status: AgentActivityStatus,
 +      instance?: string,
-+    ): Promise<void> {
-+      const adapter = getChannelAdapterExact(instance ?? channelType);
+     ): Promise<void> {
+       const adapter = getChannelAdapterExact(instance ?? channelType);
+-      await adapter?.setTyping?.(platformId, threadId, status, statusKind);
 +      await adapter?.sendStatus?.(platformId, threadId, status);
      },
    };

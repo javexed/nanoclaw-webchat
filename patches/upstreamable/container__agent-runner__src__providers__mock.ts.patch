@@ -1,7 +1,7 @@
-diff --git c/container/agent-runner/src/providers/mock.ts w/container/agent-runner/src/providers/mock.ts
+diff --git a/container/agent-runner/src/providers/mock.ts b/container/agent-runner/src/providers/mock.ts
 index f0dab2eb..0eff7966 100644
---- c/container/agent-runner/src/providers/mock.ts
-+++ w/container/agent-runner/src/providers/mock.ts
+--- a/container/agent-runner/src/providers/mock.ts
++++ b/container/agent-runner/src/providers/mock.ts
 @@ -6,6 +6,25 @@ import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryIn
   * Mock provider for testing. Returns canned responses.
   * Supports push() — queued messages produce additional results.

@@ -50,15 +50,15 @@ export async function rWebchatCredentialsConfig(ctx: RouteCtx, _m: RegExpMatchAr
   const { req, res, method, userId } = ctx;
   if (method === 'GET') {
     return json(res, 200, {
-      ...getCredentialsConfig(),
+      ...(await getCredentialsConfig()),
       codexAvailable: codexAvailable(),
       opencodeAvailable: opencodeAvailable(),
       piAvailable: piAvailable(),
-      canEdit: isOwner(userId),
+      canEdit: await isOwner(userId),
     });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  if (!isOwner(userId)) return json(res, 403, { error: 'Owner only' });
+  if (!(await isOwner(userId))) return json(res, 403, { error: 'Owner only' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let body: Record<string, unknown>;
@@ -81,8 +81,8 @@ export async function rWebchatCredentialsConfig(ctx: RouteCtx, _m: RegExpMatchAr
   // Codex types are inert until the provider is installed — refuse to enable them.
   if ((patch.allowCodexOauth || patch.allowOpenaiKey) && !codexAvailable())
     return json(res, 400, { error: 'Codex support isn’t installed yet — add it with /add-codex first.' });
-  setCredentialsConfig(patch);
-  return json(res, 200, { ...getCredentialsConfig(), codexAvailable: codexAvailable() });
+  await setCredentialsConfig(patch);
+  return json(res, 200, { ...(await getCredentialsConfig()), codexAvailable: codexAvailable() });
 }
 
 // ── First-run setup wizard state ────────────────────────────────────────────────
@@ -91,9 +91,9 @@ export async function rWebchatCredentialsConfig(ctx: RouteCtx, _m: RegExpMatchAr
 // blocks or shows for them. PUT (finish/dismiss/reset) is owner/global-admin only.
 export async function rWebchatOnboarding(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const canEdit = isOwner(userId) || isGlobalAdmin(userId);
+  const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
   if (method === 'GET') {
-    return json(res, 200, { complete: canEdit ? getOnboardingComplete() : true, canEdit });
+    return json(res, 200, { complete: (await canEdit) ? getOnboardingComplete() : true, canEdit });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (!canEdit) return json(res, 403, { error: 'Forbidden' });
@@ -106,7 +106,7 @@ export async function rWebchatOnboarding(ctx: RouteCtx, _m: RegExpMatchArray): P
     return json(res, 400, { error: 'Invalid JSON' });
   }
   if (typeof body.complete !== 'boolean') return json(res, 400, { error: 'complete must be a boolean' });
-  setOnboardingComplete(body.complete);
+  await setOnboardingComplete(body.complete);
   return json(res, 200, { complete: body.complete });
 }
 
@@ -116,14 +116,14 @@ export async function rWebchatOnboarding(ctx: RouteCtx, _m: RegExpMatchArray): P
 // (default on/recommended). Disabling also 403s the endpoints (gate above).
 export async function rWebchatFeatures(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const canEdit = isOwner(userId) || isGlobalAdmin(userId);
+  const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
   if (method === 'GET') {
     // credentialIsolation is nullable: null = following .env, so the UI can say
     // "not set here" rather than implying the operator chose the env's value.
     return json(res, 200, {
-      marketplaceEnabled: !getMarketplaceDisabled(),
-      credentialIsolation: getCredentialIsolation(),
-      credentialIsolationEffective: fleetIsolationEnabled(),
+      marketplaceEnabled: !(await getMarketplaceDisabled()),
+      credentialIsolation: await getCredentialIsolation(),
+      credentialIsolationEffective: await fleetIsolationEnabled(),
       canEdit,
     });
   }
@@ -145,7 +145,7 @@ export async function rWebchatFeatures(ctx: RouteCtx, _m: RegExpMatchArray): Pro
     // Takes effect on each group's NEXT spawn — the hook reads it per spawn, so
     // there is nothing to restart.
     if (body.marketplaceEnabled === undefined)
-      return json(res, 200, { ok: true, credentialIsolation: getCredentialIsolation() });
+      return json(res, 200, { ok: true, credentialIsolation: await getCredentialIsolation() });
   }
   if (typeof body.marketplaceEnabled !== 'boolean') {
     return json(res, 400, { error: 'marketplaceEnabled must be a boolean' });
@@ -155,10 +155,10 @@ export async function rWebchatFeatures(ctx: RouteCtx, _m: RegExpMatchArray): Pro
   // "no marketplace" install starts with the skill marketplace and the MCP
   // registry REMOVED — not just hidden behind the flag. Re-enabling restores
   // both; Settings then manages them per-source.
-  setSourceDisabled(MARKETPLACE_ID, !body.marketplaceEnabled);
-  setSourceDisabled(mcpRegistryRemovedKey(), !body.marketplaceEnabled);
-  if (body.marketplaceEnabled) setSourceDisabled(MCP_REGISTRY_ID, false);
-  return json(res, 200, { marketplaceEnabled: !getMarketplaceDisabled() });
+  await setSourceDisabled(MARKETPLACE_ID, !body.marketplaceEnabled);
+  await setSourceDisabled(mcpRegistryRemovedKey(), !body.marketplaceEnabled);
+  if (body.marketplaceEnabled) await setSourceDisabled(MCP_REGISTRY_ID, false);
+  return json(res, 200, { marketplaceEnabled: !(await getMarketplaceDisabled()) });
 }
 
 // ── Wizard opt-in: first Tailscale login becomes owner ──────────────────────
@@ -167,9 +167,9 @@ export async function rWebchatFeatures(ctx: RouteCtx, _m: RegExpMatchArray): Pro
 // then the flag disarms itself.
 export async function rWebchatTailscaleOwner(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const canEdit = isOwner(userId) || isGlobalAdmin(userId);
+  const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
   if (method === 'GET') {
-    return json(res, 200, { armed: getPromoteFirstTailscaleOwner(), canEdit });
+    return json(res, 200, { armed: await getPromoteFirstTailscaleOwner(), canEdit });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (!canEdit) return json(res, 403, { error: 'Forbidden' });
@@ -182,8 +182,8 @@ export async function rWebchatTailscaleOwner(ctx: RouteCtx, _m: RegExpMatchArray
     return json(res, 400, { error: 'Invalid JSON' });
   }
   if (typeof body.armed !== 'boolean') return json(res, 400, { error: 'armed must be a boolean' });
-  setPromoteFirstTailscaleOwner(body.armed);
-  return json(res, 200, { armed: getPromoteFirstTailscaleOwner() });
+  await setPromoteFirstTailscaleOwner(body.armed);
+  return json(res, 200, { armed: await getPromoteFirstTailscaleOwner() });
 }
 
 // ── Audit syslog forwarder ──────────────────────────────────────────────────
@@ -207,7 +207,7 @@ export async function rWebchatTailscaleOwner(ctx: RouteCtx, _m: RegExpMatchArray
  */
 export async function rWebchatAuditLog(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, url, userId } = ctx;
-  if (!(isOwner(userId) || isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
+  if (!((await isOwner(userId)) || (await isGlobalAdmin(userId)))) return json(res, 403, { error: 'Forbidden' });
   const q = url.searchParams;
   const num = Number(q.get('limit'));
   const page = readAuditEvents({
@@ -222,10 +222,10 @@ export async function rWebchatAuditLog(ctx: RouteCtx, _m: RegExpMatchArray): Pro
 
 export async function rWebchatAuditSyslog(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const canEdit = isOwner(userId) || isGlobalAdmin(userId);
+  const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
   if (!canEdit) return json(res, 403, { error: 'Forbidden' });
   if (method === 'GET') {
-    return json(res, 200, { target: getAuditSyslogTarget(), status: getSyslogStatus() });
+    return json(res, 200, { target: await getAuditSyslogTarget(), status: getSyslogStatus() });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const raw = await readJsonBody(req, res);
@@ -243,7 +243,7 @@ export async function rWebchatAuditSyslog(ctx: RouteCtx, _m: RegExpMatchArray): 
       error: 'target must be udp://host:port, tcp://host:port or tls://host:port (explicit port required)',
     });
   }
-  const from = getAuditSyslogTarget() || null;
+  const from = (await getAuditSyslogTarget()) || null;
   // 1st emission → old sink + file: the outgoing collector records the change.
   audit({
     type: 'audit.config',
@@ -252,7 +252,7 @@ export async function rWebchatAuditSyslog(ctx: RouteCtx, _m: RegExpMatchArray): 
     detail: { from, to: target || null, phase: 'before-switch' },
   });
   configureSyslog(target); // validated above; '' tears down
-  setAuditSyslogTarget(target);
+  await setAuditSyslogTarget(target);
   // 2nd emission → new sink + file: the incoming collector starts with provenance.
   audit({
     type: 'audit.config',
@@ -260,7 +260,7 @@ export async function rWebchatAuditSyslog(ctx: RouteCtx, _m: RegExpMatchArray): 
     effect: 'applied',
     detail: { from, to: target || null, phase: 'after-switch' },
   });
-  return json(res, 200, { target: getAuditSyslogTarget(), status: getSyslogStatus() });
+  return json(res, 200, { target: await getAuditSyslogTarget(), status: getSyslogStatus() });
 }
 
 // ── Enable HTTPS over Tailscale (`tailscale serve`) ─────────────────────────
@@ -271,7 +271,7 @@ export async function rWebchatAuditSyslog(ctx: RouteCtx, _m: RegExpMatchArray): 
 // (tailscaleServeIdentity maps Serve's header back to the whois id).
 export async function rWebchatTailscaleHttps(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   // This endpoint reports HTTPS status in BOTH flavors: `tailscale serve`
   // (what the enable button sets up) and native TLS (WEBCHAT_TLS_CERT/KEY —
   // an install like the tailscale-https setup script produces). Without the
@@ -311,13 +311,13 @@ export async function rWebchatTailscaleHttps(ctx: RouteCtx, _m: RegExpMatchArray
 // enforced by the Cloudflare Access policy on the tunnel, dashboard-side.
 export async function rWebchatCloudflaredGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   return json(res, 200, getCloudflaredInstallState());
 }
 
 export async function rWebchatCloudflaredInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   const r = startCloudflaredInstall();
   if (r.error === 'prereq-missing')
     return json(res, 409, { error: 'Needs root + systemd — install cloudflared manually instead.' });
@@ -326,7 +326,7 @@ export async function rWebchatCloudflaredInstallPost(ctx: RouteCtx, _m: RegExpMa
 
 export async function rWebchatCloudflaredConnectPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  if (!isOwner(userId) && !isGlobalAdmin(userId)) return json(res, 403, { error: 'Forbidden' });
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   const raw = await readJsonBody(req, res);
   if (raw === null) return;
   let body: { token?: unknown };
@@ -374,5 +374,5 @@ export async function rWebchatUsageGet(ctx: RouteCtx, _m: RegExpMatchArray): Pro
   const { res, url } = ctx;
   const days = Math.min(90, Math.max(1, Math.floor(Number(url.searchParams.get('days')) || 7)));
   const sinceMs = Date.now() - days * 86_400_000;
-  return json(res, 200, { days, ...computeUsageRollup(sinceMs) });
+  return json(res, 200, { days, ...(await computeUsageRollup(sinceMs)) });
 }

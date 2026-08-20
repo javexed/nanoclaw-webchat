@@ -9,6 +9,8 @@ import type { Migration } from './index.js';
  * autoKeep off). JSON: { autoTrigger?: boolean; autoKeep?: boolean }.
  */
 export const moduleLearningRoomSettings: Migration = {
+  // PRAGMA/table_info is sqlite's vocabulary, not the portable driver's.
+  sqliteOnly: true,
   version: 203,
   name: 'learning-room-settings',
   up(db: Database.Database) {
