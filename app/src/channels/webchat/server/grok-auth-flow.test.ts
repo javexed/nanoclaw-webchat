@@ -140,11 +140,15 @@ describe('starting a login', () => {
   });
 
   it('cleans the temp directory up on reset, since it holds a refresh token', async () => {
+    // Count only dirs THIS test created: a shared /tmp accumulates orphans from
+    // crashed runs, and asserting the global count reaches zero makes the test
+    // fail on pollution it did not cause (16 strays did exactly that).
+    const preexisting = new Set(fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('grok-wizard-login-')));
     startGrokLogin();
-    const before = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('grok-wizard-login-'));
+    const before = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('grok-wizard-login-') && !preexisting.has(d));
     expect(before.length).toBeGreaterThan(0);
     __resetGrokLoginState();
-    const after = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('grok-wizard-login-'));
+    const after = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('grok-wizard-login-') && !preexisting.has(d));
     expect(after.length).toBe(0);
   });
 });
