@@ -8684,6 +8684,16 @@ async function wizardSelectOllamaModel(modelId) {
 			});
 			const out = await r.json().catch(() => ({}));
 			if (r.ok && out?.room?.id) deps$12.joinRoom(out.room.id, out.room.name);
+			if (wizardEngine === "claude" || wizardEngine === "codex" || wizardEngine === "grok") try {
+				await authFetch("/api/workspace-provider", {
+					method: "PUT",
+					headers: {
+						"Content-Type": "application/json",
+						"X-Webchat-CSRF": "1"
+					},
+					body: JSON.stringify({ provider: wizardEngine })
+				});
+			} catch {}
 			const created = out.created?.[0];
 			if (!r.ok || !created) {
 				wizardSetStatus("#wizard-ollama-status", out.error || out.failed?.[0]?.error || "Add failed.", "err");
