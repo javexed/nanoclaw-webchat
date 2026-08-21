@@ -15049,6 +15049,46 @@ function floorAge(ms) {
 	if (h < 24) return `${h}h`;
 	return `${Math.floor(h / 24)}d`;
 }
+var FLOOR_FEED_CAP = 80;
+var floorFeedCursor = null;
+var floorFeedEvents = [];
+/** session_id → agent_name, from the last desks payload — names a2a senders. */
+var floorSessionNames = /* @__PURE__ */ new Map();
+var FEED_KIND_LABEL = {
+	thinking: "Thinking",
+	tool: "Tool",
+	message: "Message",
+	a2a: "A2A"
+};
+function renderFloorFeed() {
+	const feed = $("#floor-feed");
+	if (!feed) return;
+	if (!floorFeedEvents.length) {
+		feed.innerHTML = "<div class=\"floor-feed-empty\">Quiet for the last 2 minutes.</div>";
+		return;
+	}
+	feed.innerHTML = floorFeedEvents.map((e) => {
+		const from = e.kind === "a2a" && e.from_session_id ? ` ← ${esc(floorSessionNames.get(e.from_session_id) || "agent")}` : "";
+		const age = floorAge(Date.now() - Date.parse(e.at));
+		return `<div class="floor-event${e.room_id ? " floor-event-link" : ""}" data-room="${esc(e.room_id || "")}">
+        <span class="ff-kind ff-${esc(e.kind)}">${esc(FEED_KIND_LABEL[e.kind] || e.kind)}</span>
+        <span class="ff-agent">${esc(e.agent_name)}${from}</span>
+        ${e.text ? `<span class="ff-text">${esc(e.text)}</span>` : ""}
+        <span class="ff-age">${esc(age)}</span>
+      </div>`;
+	}).join("");
+}
+async function refreshFloorFeed() {
+	try {
+		const r = await authFetch(`/api/floor/feed${floorFeedCursor ? `?since=${encodeURIComponent(floorFeedCursor)}` : ""}`);
+		if (!r.ok) return;
+		const data = await r.json();
+		floorFeedCursor = data?.cursor || floorFeedCursor;
+		const fresh = Array.isArray(data?.events) ? data.events : [];
+		if (fresh.length) floorFeedEvents = fresh.reverse().concat(floorFeedEvents).slice(0, FLOOR_FEED_CAP);
+		renderFloorFeed();
+	} catch {}
+}
 async function refreshFloor() {
 	const grid = $("#floor-grid");
 	const counts = $("#floor-counts");
@@ -15061,6 +15101,7 @@ async function refreshFloor() {
 			return;
 		}
 		renderFloor(await r.json());
+		refreshFloorFeed();
 	} catch {
 		if (!grid.childElementCount) grid.innerHTML = "<div class=\"dash-empty\">Could not load the floor.</div>";
 	}
@@ -15080,6 +15121,8 @@ function renderFloor(data) {
 		grid.innerHTML = "<div class=\"dash-empty\">No sessions yet.</div>";
 		return;
 	}
+	floorSessionNames.clear();
+	for (const d of desks) floorSessionNames.set(d.session_id, d.agent_name);
 	grid.innerHTML = desks.map((d) => {
 		const room = d.room_name ? esc(d.room_name) : "no room";
 		const age = floorAge(d.idle_ms);
@@ -15098,6 +15141,9 @@ function openFloor() {
 		$("#floor").hidden = false;
 		$("#app").classList.add("in-dashboard");
 		$("#app").classList.remove("in-room");
+		floorFeedCursor = null;
+		floorFeedEvents = [];
+		renderFloorFeed();
 		refreshFloor();
 		if (floorTimer) clearInterval(floorTimer);
 		floorTimer = setInterval(refreshFloor, FLOOR_POLL_MS);
@@ -22512,6 +22558,12 @@ wireViewChrome1();
 $("#journey-back")?.addEventListener("click", toggleJourney);
 $("#floor-grid")?.addEventListener("click", (e) => {
 	const roomId = (e.target?.closest(".floor-desk"))?.dataset.room;
+	if (!roomId) return;
+	toggleFloor();
+	joinRoom(roomId);
+});
+$("#floor-feed")?.addEventListener("click", (e) => {
+	const roomId = (e.target?.closest(".floor-event"))?.dataset.room;
 	if (!roomId) return;
 	toggleFloor();
 	joinRoom(roomId);
