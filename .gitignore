@@ -8,3 +8,4 @@ ui/node_modules/
 # codemod scratch — never track compiled python
 __pycache__/
 *.pyc
+test-results/

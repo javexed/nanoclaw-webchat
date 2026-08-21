@@ -10318,6 +10318,7 @@ function navigateLightbox(delta) {
 	setLightboxImage(next);
 }
 function blockingOverlayOpen() {
+	if (document.querySelector(".floor-popover")) return true;
 	if (document.querySelector(".modal-overlay:not([hidden])")) return true;
 	return [
 		"model-picker",
@@ -14974,6 +14975,15 @@ function hideOtherFullViews(keep) {
 		journeyActive = false;
 		$("#journey").hidden = true;
 	}
+	if (keep !== "floor" && floorActive) {
+		floorActive = false;
+		$("#floor").hidden = true;
+		if (floorTimer) {
+			clearInterval(floorTimer);
+			floorTimer = null;
+		}
+		closeDeskPopover();
+	}
 	if (keep !== "matrix" && matrixActive) {
 		matrixActive = false;
 		$("#matrix").hidden = true;
@@ -15039,6 +15049,15 @@ var FLOOR_LABEL = {
 	idle: "Idle",
 	cold: "Cold"
 };
+/** Raw status kinds, cased for display next to the state labels. */
+var KIND_META_LABEL = {
+	tool: "Tool",
+	reasoning: "Thinking",
+	progress: "Working",
+	start: "Started",
+	done: "Done",
+	stalled: "Stalled"
+};
 /** "4m", "2h" — a desk's age only needs to be readable, not precise. */
 function floorAge(ms) {
 	if (ms == null) return "";
@@ -15052,6 +15071,14 @@ function floorAge(ms) {
 var FLOOR_FEED_CAP = 80;
 var floorFeedCursor = null;
 var floorFeedEvents = [];
+/** Identity keys of everything in floorFeedEvents — the server re-reads a
+*  small window behind the cursor on purpose, so duplicates are expected. */
+var floorFeedSeen = /* @__PURE__ */ new Set();
+var floorFeedEpoch = 0;
+var floorFeedInFlight = false;
+function feedKey(e) {
+	return `${e.at}|${e.session_id}|${e.kind}|${e.text ?? ""}`;
+}
 /** session_id → agent_name, from the last desks payload — names a2a senders. */
 var floorSessionNames = /* @__PURE__ */ new Map();
 /** Last desks payload, for the popover; restricted gates the Restart action. */
@@ -15061,30 +15088,35 @@ var FEED_KIND_LABEL = {
 	thinking: "Thinking",
 	tool: "Tool",
 	message: "Message",
-	a2a: "A2A"
+	a2a: "Handoff"
 };
 function renderFloorFeed() {
 	const feed = $("#floor-feed");
 	if (!feed) return;
 	if (!floorFeedEvents.length) {
-		feed.innerHTML = "<div class=\"floor-feed-empty\">Quiet for the last 2 minutes.</div>";
+		feed.innerHTML = "<div class=\"floor-feed-empty\">Quiet for the last 2 minutes</div>";
 		return;
 	}
 	feed.innerHTML = floorFeedEvents.map((e) => {
-		const from = e.kind === "a2a" && e.from_session_id ? ` ← ${esc(floorSessionNames.get(e.from_session_id) || "agent")}` : "";
+		const agentLabel = e.kind === "a2a" && e.from_session_id ? `${esc(floorSessionNames.get(e.from_session_id) || "agent")} → ${esc(e.agent_name)}` : esc(e.agent_name);
 		const age = floorAge(Date.now() - Date.parse(e.at));
-		return `<div class="floor-event${e.room_id ? " floor-event-link" : ""}" data-room="${esc(e.room_id || "")}">
+		const tag = e.room_id ? "button" : "div";
+		return `<${tag} class="floor-event${e.room_id ? " floor-event-link" : ""}" data-room="${esc(e.room_id || "")}">
         <span class="ff-kind ff-${esc(e.kind)}">${esc(FEED_KIND_LABEL[e.kind] || e.kind)}</span>
-        <span class="ff-agent">${esc(e.agent_name)}${from}</span>
+        <span class="ff-agent">${agentLabel}</span>
         ${e.text ? `<span class="ff-text">${esc(e.text)}</span>` : ""}
         <span class="ff-age">${esc(age)}</span>
-      </div>`;
+      </${tag}>`;
 	}).join("");
 }
 var deskPopoverEl = null;
+var deskPopoverAnchor = null;
 function closeDeskPopover() {
+	const hadFocus = deskPopoverEl?.contains(document.activeElement) ?? false;
 	deskPopoverEl?.remove();
 	deskPopoverEl = null;
+	if (hadFocus && deskPopoverAnchor?.isConnected) deskPopoverAnchor.focus();
+	deskPopoverAnchor = null;
 	document.removeEventListener("click", onDocClickCloseDeskPopover, true);
 	document.removeEventListener("keydown", onEscCloseDeskPopover, true);
 }
@@ -15104,7 +15136,7 @@ function showDeskPopover(sessionId, anchor, onOpenRoom) {
 	const canRestart = d.state === "stuck" && !floorRestricted;
 	pop.innerHTML = `
     <div class="floor-pop-name">${esc(d.agent_name)}</div>
-    <div class="floor-pop-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${d.last_kind ? ` · ${esc(d.last_kind)}` : ""}${d.idle_ms != null ? ` · ${esc(floorAge(d.idle_ms))}` : ""}</div>
+    <div class="floor-pop-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${d.last_kind ? ` · ${esc(KIND_META_LABEL[d.last_kind] || d.last_kind)}` : ""}${d.idle_ms != null ? ` · ${esc(floorAge(d.idle_ms))}` : ""}</div>
     ${d.room_name ? `<div class="floor-pop-meta">${esc(d.room_name)}</div>` : ""}
     <div class="floor-pop-id">${esc(d.session_id)}</div>
     <div class="floor-pop-actions">
@@ -15113,26 +15145,33 @@ function showDeskPopover(sessionId, anchor, onOpenRoom) {
     </div>`;
 	pop.querySelector("[data-act=\"room\"]")?.addEventListener("click", () => {
 		closeDeskPopover();
-		onOpenRoom(d.room_id);
+		if (d.room_id) onOpenRoom(d.room_id);
 	});
 	pop.querySelector("[data-act=\"restart\"]")?.addEventListener("click", async (e) => {
 		const btn = e.currentTarget;
-		btn.disabled = true;
+		const restore = wizardBusy(btn, "Restarting…");
 		try {
-			if ((await authFetch(`/api/floor/sessions/${encodeURIComponent(sessionId)}/restart`, { method: "POST" })).ok) {
+			const r = await authFetch(`/api/floor/sessions/${encodeURIComponent(sessionId)}/restart`, { method: "POST" });
+			if (r.ok) {
+				showToast("Restarted", { kind: "success" });
 				closeDeskPopover();
 				refreshFloor();
-			} else btn.disabled = false;
-		} catch {
-			btn.disabled = false;
+			} else toastError((await r.json().catch(() => ({}))).error || `Restart failed (${r.status})`);
+		} catch (err) {
+			toastError(err, "Restart failed");
+		} finally {
+			restore();
 		}
 	});
+	pop.setAttribute("aria-label", d.agent_name);
 	document.body.appendChild(pop);
 	const r = anchor.getBoundingClientRect();
 	const pw = pop.offsetWidth;
 	pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pw - 8, r.left))}px`;
 	pop.style.top = `${Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 4)}px`;
 	deskPopoverEl = pop;
+	deskPopoverAnchor = anchor;
+	pop.querySelector("button")?.focus();
 	document.addEventListener("click", onDocClickCloseDeskPopover, true);
 	document.addEventListener("keydown", onEscCloseDeskPopover, true);
 }
@@ -15172,14 +15211,20 @@ function pulseDesk(sessionId) {
 	desk.classList.add("floor-desk-pulse");
 }
 async function refreshFloorFeed() {
+	if (floorFeedInFlight) return;
+	floorFeedInFlight = true;
+	const epoch = floorFeedEpoch;
 	try {
 		const r = await authFetch(`/api/floor/feed${floorFeedCursor ? `?since=${encodeURIComponent(floorFeedCursor)}` : ""}`);
+		if (epoch !== floorFeedEpoch) return;
 		if (!r.ok) return;
 		const data = await r.json();
+		if (epoch !== floorFeedEpoch) return;
 		floorFeedCursor = data?.cursor || floorFeedCursor;
-		const fresh = Array.isArray(data?.events) ? data.events : [];
+		const fresh = (Array.isArray(data?.events) ? data.events : []).filter((e) => !floorFeedSeen.has(feedKey(e)));
 		if (fresh.length) {
 			floorFeedEvents = fresh.reverse().concat(floorFeedEvents).slice(0, FLOOR_FEED_CAP);
+			floorFeedSeen = new Set(floorFeedEvents.map(feedKey));
 			for (const e of fresh) {
 				pulseDesk(e.session_id);
 				if (e.kind === "a2a") {
@@ -15189,7 +15234,9 @@ async function refreshFloorFeed() {
 			}
 		}
 		renderFloorFeed();
-	} catch {}
+	} catch {} finally {
+		floorFeedInFlight = false;
+	}
 }
 async function refreshFloor() {
 	const grid = $("#floor-grid");
@@ -15205,7 +15252,7 @@ async function refreshFloor() {
 		renderFloor(await r.json());
 		refreshFloorFeed();
 	} catch {
-		if (!grid.childElementCount) grid.innerHTML = "<div class=\"dash-empty\">Could not load the floor.</div>";
+		if (!grid.childElementCount) grid.innerHTML = "<div class=\"dash-empty\">Could not load the floor</div>";
 	}
 }
 function renderFloor(data) {
@@ -15222,15 +15269,16 @@ function renderFloor(data) {
 		"cold"
 	].map((k) => `<span class="floor-count floor-${k}"><b>${counts[k] ?? 0}</b> ${esc(FLOOR_LABEL[k])}</span>`).join("");
 	if (!desks.length) {
-		grid.innerHTML = "<div class=\"dash-empty\">No sessions yet.</div>";
+		grid.innerHTML = "<div class=\"dash-empty\">No sessions yet</div>";
 		return;
 	}
 	floorSessionNames.clear();
 	for (const d of desks) floorSessionNames.set(d.session_id, d.agent_name);
+	grid.querySelector(".floor-edges")?.remove();
 	grid.innerHTML = desks.map((d) => {
-		const room = d.room_name ? esc(d.room_name) : "no room";
+		const room = d.room_name ? esc(d.room_name) : "—";
 		const age = floorAge(d.idle_ms);
-		return `<button class="floor-desk floor-${esc(d.state)}" data-room="${esc(d.room_id || "")}" data-session="${esc(d.session_id)}" title="${esc(d.state)} · ${esc(d.session_id)}">
+		return `<button class="floor-desk floor-${esc(d.state)}" data-room="${esc(d.room_id || "")}" data-session="${esc(d.session_id)}" title="${esc(FLOOR_LABEL[d.state] || d.state)} · ${esc(d.session_id)}">
         <span class="floor-desk-name">${esc(d.agent_name)}</span>
         <span class="floor-desk-room">${room}</span>
         <span class="floor-desk-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${age ? ` · ${age}` : ""}</span>
@@ -15247,6 +15295,8 @@ function openFloor() {
 		$("#app").classList.remove("in-room");
 		floorFeedCursor = null;
 		floorFeedEvents = [];
+		floorFeedSeen = /* @__PURE__ */ new Set();
+		floorFeedEpoch++;
 		renderFloorFeed();
 		refreshFloor();
 		if (floorTimer) clearInterval(floorTimer);

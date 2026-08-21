@@ -8,9 +8,22 @@
 // it now means the panels that follow IMPORT it instead of being handed it
 // through provide*Deps.
 import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
-import { getMentionMatches, getMentionSelectedIndex, getMentionStart, setMentionMatches, setMentionSelectedIndex, setMentionStart } from './composer.js';
+import {
+  getMentionMatches,
+  getMentionSelectedIndex,
+  getMentionStart,
+  setMentionMatches,
+  setMentionSelectedIndex,
+  setMentionStart,
+} from './composer.js';
 import { lightboxOpen } from './modals-state.js';
-import { userCredsOauthReturnFocus, userCredsOauthSessionId, userCredsOauthTarget, userCredsProvider, userCredsWords } from './user-creds-state.js';
+import {
+  userCredsOauthReturnFocus,
+  userCredsOauthSessionId,
+  userCredsOauthTarget,
+  userCredsProvider,
+  userCredsWords,
+} from './user-creds-state.js';
 import { refreshWizardCredState } from './wizard.js';
 import { applySettings } from './settings.js';
 import { showToast, toastError } from '../core/toast.js';
@@ -50,7 +63,7 @@ export function provideModalsDeps(provided: Partial<ModalsDeps>): void {
 
 export function openHandlePopover() {
   const pop = $('#handle-popover');
-  const input = ($('#handle-input')) as HTMLInputElement;
+  const input = $('#handle-input') as HTMLInputElement;
   const status = $('#handle-status');
   if (!pop) return;
   if (input) input.value = state.myHandle || '';
@@ -96,7 +109,7 @@ function setLightboxImage(idx?: any) {
   if (idx < 0 || idx >= lightboxImages.length) return;
   lightboxIndex = idx;
   const { url, alt } = lightboxImages[idx];
-  const img = ($('#lightbox-img')!) as HTMLElement;
+  const img = $('#lightbox-img')! as HTMLElement;
   const spinner = $('#lightbox-spinner')!;
   resetLightboxTransform();
   spinner.hidden = false;
@@ -110,7 +123,7 @@ function setLightboxImage(idx?: any) {
   (img as HTMLImageElement).src = url;
   (img as HTMLImageElement).alt = alt;
   // Download href tracks the current image. Filename derived from URL tail.
-  const dl = ($('#lightbox-download')!) as HTMLElement;
+  const dl = $('#lightbox-download')! as HTMLElement;
   (dl as HTMLAnchorElement).href = url;
   try {
     const tail = new URL(url, location.href).pathname.split('/').pop();
@@ -175,11 +188,22 @@ export function navigateLightbox(delta?: any) {
 }
 
 export function blockingOverlayOpen() {
+  // The floor's desk popover is class-keyed, not id-keyed — without this the
+  // boot Esc handler closes the whole floor view instead of just the popover.
+  if (document.querySelector('.floor-popover')) return true;
   // `.modal-overlay` covers the settings, user-creds, and (dynamically mounted)
   // confirm modals; the rest are listed explicitly. Visible = present and not
   // [hidden].
   if (document.querySelector('.modal-overlay:not([hidden])')) return true;
-  const others = ['model-picker', 'lightbox', 'members-overlay', 'handle-popover', 'overflow-menu', 'search-results', 'learn-menu'];
+  const others = [
+    'model-picker',
+    'lightbox',
+    'members-overlay',
+    'handle-popover',
+    'overflow-menu',
+    'search-results',
+    'learn-menu',
+  ];
   return others.some((id) => {
     const el = document.getElementById(id);
     return el && !el.hidden;
@@ -304,7 +328,7 @@ export async function openOauthMintModal(target?: any) {
   $('#user-creds-oauth-step2')!.hidden = true;
   $('#user-creds-oauth-submit')!.hidden = true;
   $('#user-creds-oauth-spinner')!.hidden = false; // spinner while the mint warms up
-  const code = ($('#user-creds-oauth-code')) as HTMLInputElement;
+  const code = $('#user-creds-oauth-code') as HTMLInputElement;
   if (code) code.value = '';
   const codexCode = $('#user-creds-oauth-codex-code');
   userCredsOauthReturnFocus.value = document.activeElement as HTMLElement | null; // restore focus here on close
@@ -327,7 +351,7 @@ export async function openOauthMintModal(target?: any) {
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || r.statusText);
     userCredsOauthSessionId.value = data.sessionId;
-    const link = ($('#user-creds-oauth-link')) as HTMLElement;
+    const link = $('#user-creds-oauth-link') as HTMLElement;
     if (link) {
       (link as HTMLAnchorElement).href = data.url;
       link.textContent = isWorkspace
@@ -359,7 +383,15 @@ export async function openOauthMintModal(target?: any) {
   }
 }
 
-export function showConfirmModal({ title, body, confirmLabel = 'Confirm', cancelLabel = 'Cancel', destructive = false, extraActions = [], beforeConfirm = null }: any) {
+export function showConfirmModal({
+  title,
+  body,
+  confirmLabel = 'Confirm',
+  cancelLabel = 'Cancel',
+  destructive = false,
+  extraActions = [],
+  beforeConfirm = null,
+}: any) {
   return new Promise((resolve) => {
     // Per-instance, like the skill editor: the overlay is created here and the
     // app mounts INTO it, keeping the structure overlay > modal.
@@ -403,7 +435,13 @@ export function showConfirmModal({ title, body, confirmLabel = 'Confirm', cancel
   });
 }
 
-export async function showInputModal({ title, placeholder = '', value = '', confirmLabel = 'Create', validate = null }: any) {
+export async function showInputModal({
+  title,
+  placeholder = '',
+  value = '',
+  confirmLabel = 'Create',
+  validate = null,
+}: any) {
   const wrap = document.createElement('div');
   // Per-call state, injected rather than passed as root props: root props are
   // read once at createApp, and a module ref would let two open modals collide.
@@ -527,7 +565,9 @@ export async function inspectAndConfirmImport(importBody?: any, displayName?: an
     el.appendChild(d);
   };
   const kb = Math.max(1, Math.round(insp.totalBytes / 1024));
-  line(`${insp.files} file${insp.files === 1 ? '' : 's'} · ${kb} KB · SKILL.md ≈ ${insp.skillMdTokens.toLocaleString()} tokens of agent context`);
+  line(
+    `${insp.files} file${insp.files === 1 ? '' : 's'} · ${kb} KB · SKILL.md ≈ ${insp.skillMdTokens.toLocaleString()} tokens of agent context`,
+  );
   line(
     insp.scripts.length
       ? `Scripts: ${insp.scripts.slice(0, 5).join(', ')}${insp.scripts.length > 5 ? ` +${insp.scripts.length - 5} more` : ''}`
@@ -535,7 +575,8 @@ export async function inspectAndConfirmImport(importBody?: any, displayName?: an
   );
   if (insp.externalHosts.length) line(`Links out to: ${insp.externalHosts.slice(0, 6).join(', ')}`);
   for (const w of insp.warnings) line(`⚠ ${w}`, 'import-warning');
-  if (community) line('Community skill — unvetted. Its instructions and any scripts run in your agents.', 'import-note');
+  if (community)
+    line('Community skill — unvetted. Its instructions and any scripts run in your agents.', 'import-note');
   return showConfirmModal({
     title: `Import ${displayName}?`,
     body: el,
@@ -555,7 +596,6 @@ export async function confirmWithToggle({ title, toggleLabel, note, confirmLabel
   app.unmount();
   return { ok, checked };
 }
-
 
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // Shared modal chrome: backdrop dismissal, escape handling and the lightbox.
@@ -741,7 +781,8 @@ export function wireLightbox(): void {
 export function wireUserCredsOauth(): void {
   $<HTMLButtonElement>('#user-creds-oauth-submit')?.addEventListener('click', async () => {
     const isWorkspace = (userCredsOauthTarget.value ?? '').startsWith('workspace');
-    const isCodex = (userCredsOauthTarget.value ?? '') === 'workspace-codex' || (!isWorkspace && userCredsProvider.value === 'codex');
+    const isCodex =
+      (userCredsOauthTarget.value ?? '') === 'workspace-codex' || (!isWorkspace && userCredsProvider.value === 'codex');
     const code = ($<HTMLInputElement>('#user-creds-oauth-code')?.value || '').trim();
     if (!userCredsOauthSessionId.value) return;
     if (!isCodex && !code) return; // Claude needs the pasted code; Codex needs none.

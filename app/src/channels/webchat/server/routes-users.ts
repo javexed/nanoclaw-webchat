@@ -45,6 +45,7 @@ import {
   cancelMemberLogin,
   claimMemberCredential,
   getMemberLoginProgress,
+  restoreMemberCredential,
   startMemberLogin,
 } from './grok-member-login.js';
 import { realOnecliAdmin } from '../../../modules/user-credentials/onecli-admin.js';
@@ -617,6 +618,10 @@ export async function rGrokMemberLoginRoute(ctx: RouteCtx, m: RegExpMatchArray):
             });
           }
         } catch (err) {
+          // Give the credential back: without this the claim above destroyed
+          // it, the outcome stayed 'complete', and the NEXT poll reported
+          // success with nothing stored. Restored, the next poll retries.
+          restoreMemberCredential(userId, cred);
           return json(res, 500, {
             ...progress,
             error: `Signed in, but storing the credential failed: ${err instanceof Error ? err.message : String(err)}`,
