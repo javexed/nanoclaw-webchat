@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# RETIRED from CI 2026-08-21: trailers are scrubbed at the publish boundary
+# (the operator's publish-time scrub script) instead of policed on internal pushes.
+# Kept for its self-test and as the reference TRAILER_RE.
 # Fail when a pushed commit carries a forge merge trailer naming the private forge.
 #
 #   scripts/check-merge-trailers.sh <before-sha> <after-sha>
