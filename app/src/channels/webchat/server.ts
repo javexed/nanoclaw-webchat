@@ -1049,7 +1049,7 @@ async function handleHttp(
   // tailscale-on-server health flag; no tokens, IPs, or detailed failure
   // reasons. See `getAuthInfo` for why this is safe to expose.
   if (url.pathname === '/api/auth/info' && method === 'GET') {
-    return json(res, 200, getAuthInfo());
+    return json(res, 200, await getAuthInfo());
   }
 
   // Static PWA assets — the app shell that CONTAINS the login screen — must be
@@ -1244,7 +1244,7 @@ async function handleHttp(
     const threadId = decodeURIComponent(roomThreadEngagedMatch[2]);
     if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
     if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-    return json(res, 200, engagedAgentsForThread(roomId, threadId));
+    return json(res, 200, await engagedAgentsForThread(roomId, threadId));
   }
   if (ENGAGED_AGENTS_ENABLED && roomThreadEngagedMatch && method === 'POST') {
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
@@ -1413,9 +1413,9 @@ async function rOverviewGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
 // ── Floor ─────────────────────────────────────────────────────────────
 // Scope-aware inside buildFloor (a caller only sees desks for agent groups they
 // can access), so this needs no gate of its own — same contract as overview.
-function rFloorGet(ctx: RouteCtx, _m: RegExpMatchArray): void {
+async function rFloorGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  return json(res, 200, buildFloor(userId));
+  return json(res, 200, await buildFloor(userId));
 }
 
 // ── UserCreds Codex browser-mint: connect a ChatGPT subscription without a terminal

@@ -218,7 +218,7 @@ export async function rUserCredsMintPost(ctx: RouteCtx, m: RegExpMatchArray): Pr
 export async function rUsersGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   if (!(await isAnyAdmin(userId))) return json(res, 403, { error: 'Admin only' });
-  return json(res, 200, listUsersWithPermissions(userId));
+  return json(res, 200, await listUsersWithPermissions(userId));
 }
 
 export async function rUserIdDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {

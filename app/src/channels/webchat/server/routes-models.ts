@@ -49,7 +49,7 @@ export async function rModelsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<v
   // Members get the roster (pickers need id/name/kind/model_id) but not the
   // infrastructure fields — endpoint (internal model-server URLs) and
   // credential_ref stay owner-only, matching the rest of the model surface.
-  return json(res, 200, listModelsForUI(await isOwner(userId)));
+  return json(res, 200, await listModelsForUI(await isOwner(userId)));
 }
 
 export async function rModelsPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
