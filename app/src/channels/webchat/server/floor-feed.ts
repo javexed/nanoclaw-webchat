@@ -31,8 +31,9 @@ import { isContainerRunning } from '../../../container-runner.js';
 import { getMessagingGroup } from '../../../db/messaging-groups.js';
 import { hasAdminPrivilege } from '../roles.js';
 import { getDb } from '../../../db/connection.js';
-import { inboundDbPath, openOutboundDb, openInboundDb } from '../../../session-manager.js';
+import { inboundDbPath, outboundDbPath, openOutboundDb, openInboundDb } from '../../../session-manager.js';
 import { redactSensitiveData } from '../redact.js';
+import { agentNameFor, roomFor, type SessionRow } from './floor.js';
 
 /** One thing that happened at a desk. */
 export interface FloorEvent {
@@ -63,6 +64,9 @@ const TEXT_CAP = 120;
 /** Never let one slow tick return an unbounded page. */
 const MAX_EVENTS = 200;
 
+/** How far behind the client's cursor each poll re-reads (client dedupes). */
+const OVERLAP_MS = 5_000;
+
 /**
  * How far back a client with no cursor starts. Long enough that opening the
  * floor shows something rather than an empty room; short enough that it is not
@@ -72,26 +76,12 @@ const COLD_START_MS = 2 * 60 * 1000;
 
 export function clip(s: string | null | undefined): string | null {
   if (!s) return null;
+  // Redact FIRST — truncate-then-redact would leave half a key in place.
   const red = redactSensitiveData(String(s));
-  return red.length > TEXT_CAP ? red.slice(0, TEXT_CAP - 1) + '…' : red;
-}
-
-interface SessionRow {
-  id: string;
-  agent_group_id: string;
-  messaging_group_id: string | null;
-  last_active: string | null;
-}
-
-async function agentName(db: ReturnType<typeof getDb>, agentGroupId: string): Promise<string> {
-  try {
-    const r = (await db.get('SELECT name FROM agent_groups WHERE id = ?', agentGroupId)) as
-      | { name?: string }
-      | undefined;
-    return r?.name || agentGroupId;
-  } catch {
-    return agentGroupId;
-  }
+  if (red.length <= TEXT_CAP) return red;
+  // Code-point slice, not string slice: a UTF-16 cut can split a surrogate
+  // pair and ship a lone surrogate in the JSON payload.
+  return [...red].slice(0, TEXT_CAP - 1).join('') + '…';
 }
 
 /** status_events → thinking/tool. Read-only, and silent when absent. */
@@ -100,8 +90,12 @@ function readStatus(
   sessionId: string,
   sinceIso: string,
 ): Array<{ at: string; kind: string; text: string | null }> {
+  let db;
   try {
-    const db = openOutboundDb(agentGroupId, sessionId);
+    // Guard like the inbound reader: opening would CREATE a missing DB, and
+    // the host must never mint container-side files for a cold session.
+    if (!fs.existsSync(outboundDbPath(agentGroupId, sessionId))) return [];
+    db = openOutboundDb(agentGroupId, sessionId);
     return db
       .prepare(
         `SELECT created_at AS at, kind, text
@@ -113,6 +107,12 @@ function readStatus(
       .all(sinceIso, MAX_EVENTS) as Array<{ at: string; kind: string; text: string | null }>;
   } catch {
     return [];
+  } finally {
+    // Session DBs are open-read-close per op by contract; a 5s poll that held
+    // handles open would accumulate fds until GC and starve OTHER host paths.
+    try {
+      db?.close();
+    } catch {}
   }
 }
 
@@ -129,22 +129,30 @@ function readInbound(
   sessionId: string,
   sinceIso: string,
 ): Array<{ at: string; content: string | null; source_session_id: string | null }> {
+  let db;
   try {
     // Skip a session whose inbound DB has not been created yet rather than
     // letting openInboundDb create or fail on it.
     if (!fs.existsSync(inboundDbPath(agentGroupId, sessionId))) return [];
-    const db = openInboundDb(agentGroupId, sessionId);
+    db = openInboundDb(agentGroupId, sessionId);
+    // kind='chat' AND trigger=1: control rows (interrupts, tasks) are not
+    // conversation, and trigger-0 rows are fan-out echoes — one room message
+    // is copied into every sibling session, which would show once per desk.
     return db
       .prepare(
         `SELECT timestamp AS at, content, source_session_id
            FROM messages_in
-          WHERE timestamp > ?
+          WHERE timestamp > ? AND kind = 'chat' AND trigger = 1
           ORDER BY timestamp ASC
           LIMIT ?`,
       )
       .all(sinceIso, MAX_EVENTS) as Array<{ at: string; content: string | null; source_session_id: string | null }>;
   } catch {
     return [];
+  } finally {
+    try {
+      db?.close();
+    } catch {}
   }
 }
 
@@ -200,11 +208,18 @@ export async function readFloorEvents(
   sinceIso?: string,
 ): Promise<{ events: FloorEvent[]; cursor: string }> {
   const db = getDb();
+  // Re-read a small window BEHIND the cursor: rows can commit mid-scan with
+  // timestamps older than the advanced cursor (the scan awaits between
+  // sessions), platform timestamps can lag write time, and same-millisecond
+  // ties across DBs have no tiebreaker. The client dedupes, so overlap costs
+  // nothing; without it those events are skipped forever.
   const since =
-    sinceIso && !Number.isNaN(Date.parse(sinceIso)) ? sinceIso : new Date(Date.now() - COLD_START_MS).toISOString();
+    sinceIso && !Number.isNaN(Date.parse(sinceIso))
+      ? new Date(Date.parse(sinceIso) - OVERLAP_MS).toISOString()
+      : new Date(Date.now() - COLD_START_MS).toISOString();
 
   const rows = (await db.all(
-    'SELECT id, agent_group_id, messaging_group_id, last_active FROM sessions',
+    "SELECT id, agent_group_id, messaging_group_id, last_active FROM sessions WHERE status = 'active'",
   )) as SessionRow[];
   const out: FloorEvent[] = [];
 
@@ -217,12 +232,14 @@ export async function readFloorEvents(
     if (!(await hasAdminPrivilege(userId, row.agent_group_id))) continue;
 
     const mg = await (row.messaging_group_id ? getMessagingGroup(row.messaging_group_id) : undefined);
-    const roomId = mg?.channel_type === 'webchat' ? (mg.platform_id ?? null) : null;
-    const name = await agentName(db, row.agent_group_id);
+    // roomFor is the pinned platform-id/row-id distinction — do not re-inline it.
+    const { roomId } = roomFor(mg);
+    const name = await agentNameFor(db, row.agent_group_id);
 
-    for (const e of running ? readStatus(row.agent_group_id, row.id, since) : []) {
-      // 'done' and 'start' are state transitions the desk colour already shows;
-      // repeating them as feed lines would be noise on a busy floor.
+    for (const e of readStatus(row.agent_group_id, row.id, since)) {
+      // Allowlist, not blocklist: only tool/reasoning/progress become feed
+      // lines. Everything else — start, done, stalled, and any future kind —
+      // is state the desk colour already shows, and drops here by default.
       if (e.kind !== 'tool' && e.kind !== 'reasoning' && e.kind !== 'progress') continue;
       out.push({
         at: e.at,
@@ -248,7 +265,11 @@ export async function readFloorEvents(
   }
 
   out.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
-  const events = out.slice(-MAX_EVENTS);
+  // Keep the OLDEST page and advance the cursor only to the last KEPT event:
+  // a burst larger than the cap is then delivered across successive ticks
+  // instead of silently losing its head (slice(-MAX) + newest-cursor skipped
+  // the dropped older events forever).
+  const events = out.slice(0, MAX_EVENTS);
   // Advance the cursor even when nothing came back, or a quiet floor would
   // re-scan the same window forever.
   const cursor = events.length ? events[events.length - 1]!.at : new Date().toISOString();

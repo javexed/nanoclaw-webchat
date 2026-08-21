@@ -68,7 +68,7 @@ export interface FloorSnapshot {
  */
 export const STUCK_AFTER_MS = 30 * 60 * 1000;
 
-interface SessionRow {
+export interface SessionRow {
   id: string;
   agent_group_id: string;
   messaging_group_id: string | null;
@@ -82,12 +82,19 @@ interface SessionRow {
  * whose container has never opened its outbound DB simply has no feed, and a
  * cosmetic view must never throw because of that.
  */
-function lastKindFor(agentGroupId: string, sessionId: string): string | null {
+export function lastKindFor(agentGroupId: string, sessionId: string): string | null {
+  let db;
   try {
-    const db = openOutboundDb(agentGroupId, sessionId);
+    db = openOutboundDb(agentGroupId, sessionId);
     return getLastStatusEvent(db)?.kind ?? null;
   } catch {
     return null;
+  } finally {
+    // "Without holding the DB open" has to be literal: a 5s poll that leaked
+    // one handle per running session would starve fds host-wide.
+    try {
+      db?.close();
+    } catch {}
   }
 }
 
@@ -135,6 +142,7 @@ export async function buildFloor(userId: string): Promise<FloorSnapshot> {
 
   const rows = (await db.all(`SELECT id, agent_group_id, messaging_group_id, last_active
          FROM sessions
+        WHERE status = 'active'
         ORDER BY last_active DESC`)) as SessionRow[];
 
   const now = Date.now();
@@ -179,7 +187,7 @@ export async function buildFloor(userId: string): Promise<FloorSnapshot> {
 }
 
 /** Agent group display name, falling back to the id so a desk is never blank. */
-async function agentNameFor(db: ReturnType<typeof getDb>, agentGroupId: string): Promise<string> {
+export async function agentNameFor(db: ReturnType<typeof getDb>, agentGroupId: string): Promise<string> {
   try {
     const row = (await db.get('SELECT name FROM agent_groups WHERE id = ?', agentGroupId)) as
       | { name?: string }

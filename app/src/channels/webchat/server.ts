@@ -77,7 +77,7 @@ import {
   rOllamaPullsGet,
   rOllamaRecommendGet,
 } from './server/routes-ollama.js';
-import { buildFloor } from './server/floor.js';
+import { buildFloor, deskState, lastKindFor } from './server/floor.js';
 import { readFloorEvents } from './server/floor-feed.js';
 import { buildOverview } from './server/overview.js';
 import {
@@ -1451,6 +1451,17 @@ async function rFloorSessionRestartPost(ctx: RouteCtx, m: RegExpMatchArray): Pro
     return json(res, 403, { error: 'Admin privilege required' });
   }
   const wasRunning = isContainerRunning(session.id);
+  // A 5s-stale popover can offer Restart on a desk that un-stuck meanwhile.
+  // Killing an idle container is harmless (it respawns on demand); killing a
+  // MID-TURN one loses the turn — refuse and let the client re-poll.
+  if (wasRunning) {
+    const lastKind = lastKindFor(session.agent_group_id, session.id);
+    const parsed = session.last_active ? Date.parse(session.last_active) : NaN;
+    const idleMs = Number.isNaN(parsed) ? null : Math.max(0, Date.now() - parsed);
+    if (deskState(true, lastKind, idleMs) === 'working') {
+      return json(res, 409, { error: 'Session is mid-turn' });
+    }
+  }
   killContainer(session.id, 'floor-restart');
   return json(res, 200, { ok: true, was_running: wasRunning });
 }
