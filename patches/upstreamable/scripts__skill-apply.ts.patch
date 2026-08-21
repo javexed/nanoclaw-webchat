@@ -1,5 +1,5 @@
 diff --git a/scripts/skill-apply.ts b/scripts/skill-apply.ts
-index 9bcbb10a..fdf4e168 100644
+index 9bcbb10a..f92f2ade 100644
 --- a/scripts/skill-apply.ts
 +++ b/scripts/skill-apply.ts
 @@ -23,8 +23,9 @@
@@ -106,3 +106,41 @@ index 9bcbb10a..fdf4e168 100644
          // Last command wins for capture (a capture run should be a single command).
          // bindCapture binds stdout-as-is OR a multi-field JSON spec, and enforces
          // validate:<re> — a mismatch / unparseable JSON throws → bounced to an agent.
+@@ -857,7 +903,23 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
+     res.agentTasks.push({ kind: d.kind, line: d.line, reason, prose: proseFor(md, d.line) });
+   };
+ 
++  // A failed `copy` must disable the wiring that depends on it. The loop bounces a
++  // failed directive and CONTINUES, which is right for independent steps — but an
++  // `append` that adds `import './x.js';` after x.ts failed to arrive writes a
++  // barrel line for a module that does not exist, and the host then dies at boot
++  // with ERR_MODULE_NOT_FOUND before it can serve anything. Seen 2026-08-21: a
++  // codex install whose payload branch was unreachable left exactly that and
++  // crash-looped a working host.
++  let payloadFailed: string | null = null;
+   for (const d of directives) {
++    if (payloadFailed && (d.kind === 'append' || d.kind === 'json-merge')) {
++      bounce(
++        d,
++        `skipped: the payload copy failed first (${payloadFailed}) — wiring this in would ` +
++          `reference a file that was never written. An agent applies both from the prose, together.`,
++      );
++      continue;
++    }
+     // Tracks an in-flight step so the catch can always close a matching
+     // step-end (start/end stay balanced even when applyOne throws — a consumer's
+     // spinner is never orphaned). Set only after step-start fires.
+@@ -1019,7 +1081,12 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
+       }
+       if (/unresolved \{\{/.test(msg))
+         res.deferred.push(msg); // blocked on a prompt input
+-      else bounce(d, `engine could not apply (${msg}) — an agent applies it from the prose`);
++      else {
++        // A failed COPY is not just this step failing: the wiring below depends on
++        // the files it should have written.
++        if (d.kind === 'copy') payloadFailed = msg;
++        bounce(d, `engine could not apply (${msg}) — an agent applies it from the prose`);
++      }
+     }
+   }
+   // Surface the non-secret resolved values for a caller to consume.

@@ -1872,6 +1872,23 @@
                 <div id="opencode-install-progress" hidden>
                   <pre id="opencode-install-log" class="roster-refresh-log"></pre>
                 </div>
+                <!-- Grok provider install — Install button when the Grok payload isn't
+                     in the tree yet, green ✓ badge once it is. Same two-phase (build →
+                     host restart) flow as the others via the shared runner; on success
+                     grokAvailable flips and the Grok pill above enables. Grok's chain
+                     always rebuilds the image: its CLI is a native binary baked by a
+                     Dockerfile ARG, not an npm entry, so a skipped rebuild would leave a
+                     wired provider whose binary does not exist. -->
+                <div class="setting-group install-row" id="settings-grok-install" hidden>
+                  <span class="setting-label">Grok</span>
+                  <button id="grok-install-btn" class="btn btn-secondary" type="button">Install Grok…</button>
+                  <span id="grok-installed-badge" class="install-badge" hidden>
+                    <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;Installed
+                  </span>
+                </div>
+                <div id="grok-install-progress" hidden>
+                  <pre id="grok-install-log" class="roster-refresh-log"></pre>
+                </div>
                 <!-- pi harness install — the minimal local harness (add-pi-stack).
                      Same two-phase (build → restart) flow via the shared runner;
                      on success piAvailable flips and Agent → Harness gains pi. -->

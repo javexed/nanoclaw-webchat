@@ -126,7 +126,6 @@ var selectedRouteIdx = ref(null);
 //#endregion
 //#region src/features/installer-state.ts
 var codexInstallActive = ref(false);
-var grokInstallActive = ref(false);
 var opencodeInstallActive = ref(false);
 var routingInstallActive = ref(false);
 var sttInstallActive = ref(false);
@@ -8558,7 +8557,7 @@ async function refreshWizardCredState() {
 	}
 	const grokInstalled = grok?.installed !== false;
 	const grokInstallRow = $("#wizard-grok-install-row");
-	if (grokInstallRow && !grokInstallActive.value) grokInstallRow.hidden = grokInstalled;
+	if (grokInstallRow && !opencodeInstallActive.value) grokInstallRow.hidden = grokInstalled;
 	$("#wizard-grok-connect").hidden = !grokInstalled || !!grok?.connected;
 	$("#wizard-grok-connected").hidden = !grok?.connected;
 	const grokStatusLine = $("#wizard-grok-status");
@@ -19849,11 +19848,18 @@ async function renderCredentialsSettings() {
 	const piBadge = $("#pi-installed-badge");
 	if (piInstallBtn && !opencodeInstallActive.value) piInstallBtn.hidden = !!cfg.piAvailable;
 	if (piBadge) piBadge.hidden = !cfg.piAvailable;
+	const grokRow = $("#settings-grok-install");
+	if (grokRow) grokRow.hidden = false;
+	const grokInstallBtn = $("#grok-install-btn");
+	const grokBadge = $("#grok-installed-badge");
+	if (grokInstallBtn && !opencodeInstallActive.value) grokInstallBtn.hidden = !!cfg.grokAvailable;
+	if (grokBadge) grokBadge.hidden = !cfg.grokAvailable;
 	if (credConfigWired) return;
 	credConfigWired = true;
 	$("#codex-install-btn")?.addEventListener("click", () => runCodexInstall(CODEX_SETTINGS_ELS));
 	$("#opencode-install-btn")?.addEventListener("click", () => runOpencodeInstall(OPENCODE_SETTINGS_ELS));
 	$("#pi-install-btn")?.addEventListener("click", () => runOpencodeInstall(PI_SETTINGS_ELS));
+	$("#grok-install-btn")?.addEventListener("click", () => runOpencodeInstall(GROK_SETTINGS_ELS));
 	const putConfig = async (patch) => {
 		const r = await authFetch("/api/webchat/credentials-config", {
 			method: "PUT",
@@ -20000,6 +20006,14 @@ var OPENCODE_SETTINGS_ELS = {
 	btn: "#opencode-install-btn",
 	log: "#opencode-install-log",
 	progress: "#opencode-install-progress"
+};
+var GROK_SETTINGS_ELS = {
+	btn: "#grok-install-btn",
+	log: "#grok-install-log",
+	progress: "#grok-install-progress",
+	url: "/api/grok/install",
+	name: "Grok",
+	doneMsg: "Grok installed — sign in with a device code under Credentials."
 };
 var PI_SETTINGS_ELS = {
 	btn: "#pi-install-btn",

@@ -21,7 +21,6 @@ import {
   opencodeGatePoll,
   opencodeInstallActive,
   tailscaleInstallActive,
-  grokInstallActive,
 } from './installer-state.js';
 import { state } from '../core/state.js';
 import { createApp, nextTick } from 'vue';
@@ -229,7 +228,7 @@ export async function refreshWizardCredState() {
   // chain finishes and the host comes back.
   const grokInstalled = grok?.installed !== false;
   const grokInstallRow = $('#wizard-grok-install-row');
-  if (grokInstallRow && !grokInstallActive.value) grokInstallRow.hidden = grokInstalled;
+  if (grokInstallRow && !opencodeInstallActive.value) grokInstallRow.hidden = grokInstalled;
   $('#wizard-grok-connect')!.hidden = !grokInstalled || !!grok?.connected;
   $('#wizard-grok-connected')!.hidden = !grok?.connected;
   const grokStatusLine = $('#wizard-grok-status');
