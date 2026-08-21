@@ -33,7 +33,8 @@ import {
   agentGroupForUserCredsAgent,
   type UserCredsProvider,
 } from './db.js';
-import { ensureGroupEnrollment } from './onboard.js';
+import { ensureGroupEnrollment, userCredsProviderForGroup } from './onboard.js';
+import { apiKeyAllowedFor, credentialName, oauthAllowedFor } from './policy.js';
 import { realOnecliAdmin } from './onecli-admin.js';
 import {
   memberSessionKey,
@@ -43,9 +44,6 @@ import {
 } from './identity.js';
 
 /** The agent group's provider, mapped to the two UserCreds-supported families. */
-async function groupProvider(agentGroupId: string): Promise<UserCredsProvider> {
-  return (await getContainerConfig(agentGroupId))?.provider === 'codex' ? 'codex' : 'claude';
-}
 
 // Sentinel bearer for a per-member OAuth container. Its value is irrelevant
 // beyond being non-empty: it flips Claude Code into OAuth mode (so it sends
@@ -76,14 +74,15 @@ async function evaluateRoomCredState(
   // Effective mode = the room's override, else the global default. Which
   // credential TYPES the workspace accepts (key / OAuth, per provider) is set on
   // the Credentials admin page; the room's mode is the master switch over both.
-  const provider = await groupProvider(agentGroupId);
+  const provider = await userCredsProviderForGroup(agentGroupId);
   const cfg = await getCredentialsConfig();
   const mode = await getEffectiveRoomMode(mg.platform_id);
   // 'disabled' (User credentials: Off) means no UserCreds at all — neither key nor
   // OAuth — regardless of what the workspace accepts. Otherwise each method
   // applies if the workspace accepts it for this provider.
-  const apiOffered = mode !== 'disabled' && (provider === 'codex' ? cfg.allowOpenaiKey : cfg.allowAnthropicKey);
-  const oauthOffered = mode !== 'disabled' && (provider === 'codex' ? cfg.allowCodexOauth : cfg.allowClaudeOauth);
+  // Grok has no API-key path, so it is never offered one.
+  const apiOffered = mode !== 'disabled' && apiKeyAllowedFor(provider, cfg);
+  const oauthOffered = mode !== 'disabled' && oauthAllowedFor(provider, cfg);
   if (!apiOffered && !oauthOffered) return none; // UserCreds entirely off here.
 
   // A member gets their own per-member session ONLY if their connected credential
@@ -101,7 +100,7 @@ async function evaluateRoomCredState(
   }
   // No permitted credential: API-key 'required' rooms decline with guidance;
   // otherwise (optional, or OAuth-only) fall back to the shared session.
-  const credName = provider === 'codex' ? 'Codex credential' : 'Anthropic key';
+  const credName = credentialName(provider);
   return { ...none, requiredBlocked: mode === 'required', credName };
 }
 
@@ -193,7 +192,7 @@ const spawnCache = new Map<string, { identity: string | null; env: Record<string
 const spawnKey = (agentGroupId: string, threadId: string | null): string => `${agentGroupId}\u0000${threadId ?? ''}`;
 
 registerSessionPrepareHook(async (agentGroupId, threadId) => {
-  const provider = await groupProvider(agentGroupId);
+  const provider = await userCredsProviderForGroup(agentGroupId);
   const userId = memberUserFromKey(threadId) ?? threadId;
   // NOTE the await on userHasConnectedCredential: un-awaited, the promise was
   // truthy and this guard never fired — every session (including base ones)

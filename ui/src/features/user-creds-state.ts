@@ -40,6 +40,10 @@ export const userCredsOauthReturnFocus = ref<HTMLElement | null>(null);
  * module both can import is what let the bridge entry go.
  */
 export function userCredsWords(provider?: string) {
+  // Grok has no key path at all — a subscription is the only way in — so
+  // keyWord/keyPlaceholder are placeholders the key UI never reaches.
+  if (provider === 'grok')
+    return { name: 'Grok', subWord: 'SuperGrok or X Premium+ subscription', keyWord: 'xAI key', keyPlaceholder: '' };
   return provider === 'codex'
     ? { name: 'Codex', subWord: 'ChatGPT subscription', keyWord: 'OpenAI key', keyPlaceholder: 'sk-…' }
     : { name: 'Claude', subWord: 'Claude subscription', keyWord: 'Anthropic key', keyPlaceholder: 'sk-ant-…' };

@@ -289,23 +289,24 @@ import {
   sweepPendingImports,
 } from './server/archive.js';
 import {
-  rUserCredentialsCredential,
-  rUserCredsMintPost,
-  rUsersGet,
-  rUserIdDelete,
+  GrantBody,
+  MembershipEntry,
+  RoleEntry,
+  UserWithPermissions,
+  checkMemberGrantAuth,
+  deleteUserHandler,
+  deriveUserKind,
+  grantPermissionHandler,
+  listUsersWithPermissions,
+  rGrokMemberLoginRoute,
   rPermissionsGrantPost,
   rPermissionsRevokePost,
-  RoleEntry,
-  MembershipEntry,
-  UserWithPermissions,
-  listUsersWithPermissions,
-  deriveUserKind,
-  GrantBody,
-  validateGrantBody,
-  checkMemberGrantAuth,
-  grantPermissionHandler,
-  deleteUserHandler,
+  rUserCredentialsCredential,
+  rUserCredsMintPost,
+  rUserIdDelete,
+  rUsersGet,
   revokePermissionHandler,
+  validateGrantBody,
 } from './server/routes-users.js';
 import { USER_CREDS_MIN_INTERVAL_MS, userCredsActionAt, userCredsRateLimited } from './server/rate-limit.js';
 import {
@@ -1352,6 +1353,9 @@ const RE_WS_CODEX_MINT = /^\/api\/workspace-credential\/codex\/(start|finish|can
 // Grok's device login: POST start|cancel drives it, GET reports it. Polling is a
 // GET so it stays cache-neutral and needs no CSRF header on every tick.
 const RE_WS_GROK_LOGIN = /^\/api\/workspace-credential\/grok\/(start|cancel)$/;
+// The MEMBER equivalent. Not owner-guarded — any member the workspace lets
+// bring a credential must be able to mint one, which is the whole point.
+const RE_MEMBER_GROK_LOGIN = /^\/api\/user-credentials\/grok\/(start|cancel|status)$/;
 const RE_ROOM_AGENT = /^\/api\/rooms\/([^/]+)\/agents\/([^/]+)$/;
 const RE_ROOM_PRIME = /^\/api\/rooms\/([^/]+)\/prime$/;
 const RE_ROOM_ARCHIVE = /^\/api\/rooms\/([^/]+)\/(archive|unarchive)$/;
@@ -2949,6 +2953,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: RE_WS_CODEX_MINT, h: rWsCodexMintPost },
   { method: 'POST', path: RE_WS_GROK_LOGIN, guards: ['csrf', 'owner'], h: rGrokLoginPost },
   { method: 'GET', path: '/api/workspace-credential/grok', guards: ['owner'], h: rGrokLoginGet },
+  { method: ['GET', 'POST'], path: RE_MEMBER_GROK_LOGIN, h: rGrokMemberLoginRoute },
   { method: 'PUT', path: '/api/workspace-model', h: rWorkspaceModelPut },
   { method: 'GET', path: '/api/workspace-provider', guards: ['owner'], h: rWorkspaceProviderGet },
   { method: 'PUT', path: '/api/workspace-provider', guards: ['owner', 'csrf'], h: rWorkspaceProviderPut },
