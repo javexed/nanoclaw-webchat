@@ -21,10 +21,16 @@ vi.mock('../../../config.js', async (importOriginal) => ({
 }));
 vi.mock('./providers.js', () => ({ grokAvailable: () => available }));
 
-const { __resetGrokLoginState, credentialsFromCliAuth, getGrokLoginProgress, parseDevicePrompt, startGrokLogin } =
-  await import('./grok-auth-flow.js');
+const {
+  __resetGrokLoginState,
+  credentialsFromCliAuth,
+  getGrokLoginProgress,
+  parseDevicePrompt,
+  startGrokLogin,
+  sweepOrphanedLoginDirs,
+} = await import('./grok-auth-flow.js');
 
-beforeEach(async () => {
+beforeEach(() => {
   available = true;
   __resetGrokLoginState();
 });
@@ -41,32 +47,32 @@ Confirm this code in your browser:
   H9N6-4KX3
 `;
 
-  it('pulls the URL and code out of the CLI banner', async () => {
+  it('pulls the URL and code out of the CLI banner', () => {
     expect(parseDevicePrompt(real)).toEqual({
       verificationUrl: 'https://accounts.x.ai/oauth2/device?user_code=H9N6-4KX3',
       userCode: 'H9N6-4KX3',
     });
   });
 
-  it('survives ANSI colouring, which a real terminal adds', async () => {
+  it('survives ANSI colouring, which a real terminal adds', () => {
     const coloured = '\x1b[36mhttps://accounts.x.ai/oauth2/device?user_code=AAAA-BBBB\x1b[0m';
     expect(parseDevicePrompt(coloured).userCode).toBe('AAAA-BBBB');
   });
 
-  it('prefers the code embedded in the URL, so the two always agree', async () => {
+  it('prefers the code embedded in the URL, so the two always agree', () => {
     const mixed = 'https://accounts.x.ai/oauth2/device?user_code=AAAA-BBBB\nstray ZZZZ-YYYY';
     expect(parseDevicePrompt(mixed).userCode).toBe('AAAA-BBBB');
   });
 
-  it('finds a standalone code when no URL has been printed yet', async () => {
+  it('finds a standalone code when no URL has been printed yet', () => {
     expect(parseDevicePrompt('Confirm this code:\n\n  QQQQ-1234\n').userCode).toBe('QQQQ-1234');
   });
 
-  it('returns nothing rather than guessing on unrelated output', async () => {
+  it('returns nothing rather than guessing on unrelated output', () => {
     expect(parseDevicePrompt('Downloading grok 1.0.5...')).toEqual({});
   });
 
-  it('trims trailing punctuation off a URL', async () => {
+  it('trims trailing punctuation off a URL', () => {
     expect(parseDevicePrompt('see https://accounts.x.ai/oauth2/device?user_code=AB12-CD34.').verificationUrl).toBe(
       'https://accounts.x.ai/oauth2/device?user_code=AB12-CD34',
     );
@@ -87,7 +93,7 @@ describe('credentialsFromCliAuth', () => {
     },
   };
 
-  it('converts a real-shaped auth.json', async () => {
+  it('converts a real-shaped auth.json', () => {
     expect(credentialsFromCliAuth(cli)).toMatchObject({
       accessToken: 'access-XYZ',
       refreshToken: 'refresh-SECRET',
@@ -98,30 +104,30 @@ describe('credentialsFromCliAuth', () => {
     });
   });
 
-  it('carries create_time rather than synthesising it', async () => {
+  it('carries create_time rather than synthesising it', () => {
     // The CLI refuses a materialised credential without it — see grok-auth.ts.
     expect(credentialsFromCliAuth(cli)!.createdAt).toBe('2026-08-18T23:11:24.793Z');
   });
 
-  it('returns null for a file with no usable session', async () => {
+  it('returns null for a file with no usable session', () => {
     expect(credentialsFromCliAuth({})).toBeNull();
     expect(credentialsFromCliAuth({ 'x::y': { key: 'only-access' } })).toBeNull();
   });
 });
 
 describe('starting a login', () => {
-  it('refuses when the provider is not installed, and starts nothing', async () => {
+  it('refuses when the provider is not installed, and starts nothing', () => {
     available = false;
     expect(startGrokLogin()).toEqual({ started: false, error: 'not-installed' });
     expect(getGrokLoginProgress().running).toBe(false);
   });
 
-  it('is single-flight — a second tab cannot drive a second login', async () => {
+  it('is single-flight — a second tab cannot drive a second login', () => {
     expect(startGrokLogin().started).toBe(true);
     expect(startGrokLogin()).toEqual({ started: false, error: 'already-running' });
   });
 
-  it('reports pending immediately, before any code has been scraped', async () => {
+  it('reports pending immediately, before any code has been scraped', () => {
     startGrokLogin();
     const p = getGrokLoginProgress();
     expect(p.running).toBe(true);
@@ -131,7 +137,7 @@ describe('starting a login', () => {
     expect(p.expiresInMs).toBeGreaterThan(0);
   });
 
-  it('never reports the process handle or the temp directory to a client', async () => {
+  it('never reports the process handle or the temp directory to a client', () => {
     startGrokLogin();
     const keys = Object.keys(getGrokLoginProgress());
     expect(keys).not.toContain('proc');
@@ -139,16 +145,30 @@ describe('starting a login', () => {
     expect(keys).not.toContain('timer');
   });
 
-  it('cleans the temp directory up on reset, since it holds a refresh token', async () => {
-    // Count only dirs THIS test created: a shared /tmp accumulates orphans from
-    // crashed runs, and asserting the global count reaches zero makes the test
-    // fail on pollution it did not cause (16 strays did exactly that).
-    const preexisting = new Set(fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('grok-wizard-login-')));
+  it('cleans up ITS OWN temp directory on reset, since it holds a refresh token', () => {
+    const before = new Set(fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('grok-wizard-login-')));
     startGrokLogin();
-    const before = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('grok-wizard-login-') && !preexisting.has(d));
-    expect(before.length).toBeGreaterThan(0);
+    const mine = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('grok-wizard-login-') && !before.has(d));
+    // Assert on the directory THIS flow created, never on a glob of the whole
+    // tmpdir: a stray directory from another process (or an earlier crash) would
+    // otherwise fail a test about this flow's own cleanup.
+    expect(mine).toHaveLength(1);
     __resetGrokLoginState();
-    const after = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('grok-wizard-login-') && !preexisting.has(d));
-    expect(after.length).toBe(0);
+    expect(fs.existsSync(path.join(os.tmpdir(), mine[0]))).toBe(false);
+  });
+
+  it('sweeps directories left by a flow a restart killed', () => {
+    const stale = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-wizard-login-'));
+    const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'grok-wizard-login-'));
+    // Age the first past the login timeout; leave the second as a live flow.
+    const old = Date.now() - 60 * 60_000;
+    fs.utimesSync(stale, new Date(old), new Date(old));
+
+    sweepOrphanedLoginDirs();
+
+    expect(fs.existsSync(stale)).toBe(false);
+    // A concurrent login must never be pulled out from under itself.
+    expect(fs.existsSync(fresh)).toBe(true);
+    fs.rmSync(fresh, { recursive: true, force: true });
   });
 });
