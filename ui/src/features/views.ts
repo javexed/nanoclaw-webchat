@@ -316,6 +316,17 @@ function renderFloorFeed() {
     .join('');
 }
 
+function pulseDesk(sessionId: string | undefined) {
+  if (!sessionId) return;
+  const desk = document.querySelector(`.floor-desk[data-session="${CSS.escape(sessionId)}"]`);
+  if (!desk) return;
+  // Remove-reflow-add restarts the animation when a busy desk pulses again
+  // before the last pulse finished.
+  desk.classList.remove('floor-desk-pulse');
+  void (desk as HTMLElement).offsetWidth;
+  desk.classList.add('floor-desk-pulse');
+}
+
 async function refreshFloorFeed() {
   try {
     const q = floorFeedCursor ? `?since=${encodeURIComponent(floorFeedCursor)}` : '';
@@ -327,6 +338,12 @@ async function refreshFloorFeed() {
     if (fresh.length) {
       // Newest first in the DOM; server sends oldest-first.
       floorFeedEvents = fresh.reverse().concat(floorFeedEvents).slice(0, FLOOR_FEED_CAP);
+      // The desk answers the feed: whatever just spoke, flashes. An a2a hop
+      // flashes both ends — that is the edge, without drawing one.
+      for (const e of fresh) {
+        pulseDesk(e.session_id);
+        if (e.kind === 'a2a') pulseDesk(e.from_session_id);
+      }
     }
     renderFloorFeed();
   } catch {
@@ -379,7 +396,7 @@ function renderFloor(data: any) {
     .map((d) => {
       const room = d.room_name ? esc(d.room_name) : 'no room';
       const age = floorAge(d.idle_ms);
-      return `<button class="floor-desk floor-${esc(d.state)}" data-room="${esc(d.room_id || '')}" title="${esc(d.state)} · ${esc(d.session_id)}">
+      return `<button class="floor-desk floor-${esc(d.state)}" data-room="${esc(d.room_id || '')}" data-session="${esc(d.session_id)}" title="${esc(d.state)} · ${esc(d.session_id)}">
         <span class="floor-desk-name">${esc(d.agent_name)}</span>
         <span class="floor-desk-room">${room}</span>
         <span class="floor-desk-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${age ? ` · ${age}` : ''}</span>
