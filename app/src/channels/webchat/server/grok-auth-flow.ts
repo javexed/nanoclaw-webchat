@@ -255,9 +255,17 @@ export function startGrokLogin(root = process.cwd()): StartResult {
   proc.stdout?.on('data', onChunk);
   proc.stderr?.on('data', onChunk); // the CLI prints the prompt to either stream
 
-  proc.on('error', (err) => finish('failed', `Could not start the login: ${err.message}`));
+  proc.on('error', (err) => {
+    if (state.proc !== proc) return; // a later flow owns the state now
+    finish('failed', `Could not start the login: ${err.message}`);
+  });
 
   proc.on('exit', (code) => {
+    // Identity, not just the running flag: cancel-then-restart leaves THIS
+    // proc dying for a second while a new flow is already running — its late
+    // exit must not fail (and shred the tmp dir of) the new flow. The member
+    // login flow got this right by closing over a per-flow object.
+    if (state.proc !== proc) return;
     if (!state.running) return; // already cancelled or timed out
     if (code !== 0) return finish('failed', `The login exited with code ${code}.`);
     const file = path.join(state.tmpDir ?? '', 'auth.json');
