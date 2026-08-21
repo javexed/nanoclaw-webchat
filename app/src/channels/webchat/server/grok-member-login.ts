@@ -84,6 +84,17 @@ export function claimMemberCredential(userId: string): Record<string, unknown> |
   return cred;
 }
 
+/**
+ * Put a claimed credential back after a FAILED store. Claim-then-store means a
+ * transient vault outage would otherwise destroy the credential while the
+ * outcome stayed 'complete' — the next poll then reports success with nothing
+ * stored. Restoring makes the next poll retry the store instead.
+ */
+export function restoreMemberCredential(userId: string, cred: Record<string, unknown>): void {
+  const l = logins.get(userId);
+  if (l && l.outcome === 'complete' && !l.credential) l.credential = cred;
+}
+
 function shredTmp(l: MemberLogin): void {
   if (!l.tmpDir) return;
   try {
