@@ -80,6 +80,7 @@ interface SessionRow {
   id: string;
   agent_group_id: string;
   messaging_group_id: string | null;
+  last_active: string | null;
 }
 
 async function agentName(db: ReturnType<typeof getDb>, agentGroupId: string): Promise<string> {
@@ -164,12 +165,35 @@ export function messageText(content: string | null): string | null {
 }
 
 /**
+ * A session is worth reading for this long after its last activity even when
+ * its container is not (yet) running. The message that WAKES a cold session is
+ * written BEFORE the container exists — skip cold sessions outright and that
+ * arrival lands behind an already-advanced cursor, invisible forever. Ten
+ * minutes comfortably covers spawn time while keeping the per-tick cost
+ * bounded by recent activity, not by how many sessions have ever existed.
+ */
+export const ACTIVE_GRACE_MS = 10 * 60 * 1000;
+
+/**
+ * Whether a session's DBs are worth opening this tick: its container is
+ * running, or it was active recently enough that a cold-spawn arrival may not
+ * have been reported yet. Pure, because the cold-spawn miss shipped once
+ * already and this predicate is the whole fix.
+ */
+export function deskEligible(running: boolean, lastActiveIso: string | null, nowMs: number): boolean {
+  if (running) return true;
+  if (!lastActiveIso) return false;
+  const t = Date.parse(lastActiveIso);
+  if (Number.isNaN(t)) return false;
+  return nowMs - t < ACTIVE_GRACE_MS;
+}
+
+/**
  * Events newer than `sinceIso`, for the sessions this caller may see.
  *
- * Only sessions with a RUNNING container are read: a cold session cannot be
- * producing anything, and skipping them is what keeps the per-tick cost
- * proportional to what is actually happening rather than to how many sessions
- * have ever existed.
+ * Status events are only read from RUNNING containers (a cold session has no
+ * live status by definition); message arrivals also come from recently-active
+ * sessions, per deskEligible above.
  */
 export async function readFloorEvents(
   userId: string,
@@ -179,18 +203,21 @@ export async function readFloorEvents(
   const since =
     sinceIso && !Number.isNaN(Date.parse(sinceIso)) ? sinceIso : new Date(Date.now() - COLD_START_MS).toISOString();
 
-  const rows = (await db.all('SELECT id, agent_group_id, messaging_group_id FROM sessions')) as SessionRow[];
+  const rows = (await db.all(
+    'SELECT id, agent_group_id, messaging_group_id, last_active FROM sessions',
+  )) as SessionRow[];
   const out: FloorEvent[] = [];
 
   for (const row of rows) {
-    if (!isContainerRunning(row.id)) continue;
+    const running = isContainerRunning(row.id);
+    if (!deskEligible(running, row.last_active, Date.now())) continue;
     if (!(await canAccessAgentGroup(userId, row.agent_group_id))) continue;
 
     const mg = await (row.messaging_group_id ? getMessagingGroup(row.messaging_group_id) : undefined);
     const roomId = mg?.channel_type === 'webchat' ? (mg.platform_id ?? null) : null;
     const name = await agentName(db, row.agent_group_id);
 
-    for (const e of readStatus(row.agent_group_id, row.id, since)) {
+    for (const e of running ? readStatus(row.agent_group_id, row.id, since) : []) {
       // 'done' and 'start' are state transitions the desk colour already shows;
       // repeating them as feed lines would be noise on a busy floor.
       if (e.kind !== 'tool' && e.kind !== 'reasoning' && e.kind !== 'progress') continue;
