@@ -27,6 +27,10 @@ while read -r _lref lsha _rref rsha; do
 done
 [ "$status" -eq 0 ] || { echo "pre-push: LEAK gate blocked the push." >&2; exit 1; }
 
-# Freshness preflight (unchanged, still honors SKIP_PR_PREFLIGHT internally).
-[ -x "$ROOT/app/scripts/pre-push-preflight.sh" ] && exec sh "$ROOT/app/scripts/pre-push-preflight.sh"
+# Freshness preflight — ADVISORY since 2026-08-21. "Behind main" is worth a
+# heads-up, but blocking on it fought every legitimate push during history
+# maintenance, and a rebase can follow review feedback anyway.
+if [ -x "$ROOT/app/scripts/pre-push-preflight.sh" ] && ! sh "$ROOT/app/scripts/pre-push-preflight.sh"; then
+  echo "pre-push: preflight WARNING above is advisory — push continues." >&2
+fi
 exit 0
