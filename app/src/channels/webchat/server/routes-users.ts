@@ -413,9 +413,9 @@ export interface GrantBody {
   agentGroupId?: unknown;
 }
 
-export function validateGrantBody(
+export async function validateGrantBody(
   body: GrantBody,
-): { error: string } | { userId: string; kind: 'owner' | 'admin' | 'member'; agentGroupId: string | null } {
+): Promise<{ error: string } | { userId: string; kind: 'owner' | 'admin' | 'member'; agentGroupId: string | null }> {
   const rawUserId = typeof body.userId === 'string' ? body.userId.trim() : '';
   if (!rawUserId) return { error: 'userId required' };
   if (!rawUserId.includes(':')) return { error: 'userId must be namespaced (e.g. webchat:tailscale:foo@bar.com)' };
@@ -438,7 +438,7 @@ export function validateGrantBody(
   if (kind === 'member' && agentGroupId === null) {
     return { error: 'member role requires agentGroupId' };
   }
-  if (agentGroupId && !getAgentGroup(agentGroupId)) {
+  if (agentGroupId && !(await getAgentGroup(agentGroupId))) {
     return { error: `agentGroupId ${agentGroupId} does not exist` };
   }
   return { userId: targetUserId, kind, agentGroupId };
@@ -475,7 +475,7 @@ export async function grantPermissionHandler(
   body: GrantBody,
   callerUserId: string,
 ): Promise<void> {
-  const parsed = validateGrantBody(body);
+  const parsed = await validateGrantBody(body);
   if ('error' in parsed) return json(res, 400, { error: parsed.error });
   const { userId: targetUserId, kind, agentGroupId } = parsed;
 
@@ -558,7 +558,7 @@ export async function deleteUserHandler(
 }
 
 export async function revokePermissionHandler(res: ServerResponse, body: GrantBody): Promise<void> {
-  const parsed = validateGrantBody(body);
+  const parsed = await validateGrantBody(body);
   if ('error' in parsed) return json(res, 400, { error: parsed.error });
   const { userId: targetUserId, kind, agentGroupId } = parsed;
 

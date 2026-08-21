@@ -1699,8 +1699,8 @@ async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   try {
     if (method === 'DELETE') {
       const removed = await deleteDeployKey(agentGroupId, url.searchParams.get('name') ?? '');
-      if (await removed) await refreshCredentialNote(realOnecliAdmin, agentGroupId);
-      return (await removed) ? json(res, 200, { ok: true }) : json(res, 404, { error: 'No such key' });
+      if (removed) await refreshCredentialNote(realOnecliAdmin, agentGroupId);
+      return removed ? json(res, 200, { ok: true }) : json(res, 404, { error: 'No such key' });
     }
     const raw = await readJsonBody(req, res);
     if (raw === null) return;
@@ -1985,7 +1985,7 @@ async function rTopologyGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
   // ALL agents the caller manages become columns/nodes (not just wired ones),
   // so unused agents show as orphans and can be wired from the matrix.
   const agents = (await listAgentsForUser(userId)).map((a) => ({ id: a.id, name: a.name }));
-  const topo = await getWebchatTopology(await rooms, agents);
+  const topo = await getWebchatTopology(rooms, agents);
   // SCOPED skills only — the ones wired to a specific agent (including anything
   // the learning loop produced). The shared pool is on ~every agent, so drawing
   // it would add hundreds of identical edges that say nothing about any one
@@ -2001,7 +2001,7 @@ async function rTopologyGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
       skillEdges.push({ agent: a.id, skill: sk.name });
     }
   }
-  return json(res, 200, { ...(await topo), skills: [...skillMap.values()], skillEdges });
+  return json(res, 200, { ...topo, skills: [...skillMap.values()], skillEdges });
 }
 
 // Full-text search across the caller's accessible rooms (FTS5). Scoped to
