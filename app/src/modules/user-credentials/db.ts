@@ -12,9 +12,18 @@ export type UserCredsCredType = 'api_key' | 'oauth_token';
  * Which agent provider this credential is for — pinned from the group's
  * `container_configs.provider` at onboard time. 'claude' → `anthropic` vault
  * secret; 'codex' → `openai` secret (the member's ChatGPT/Codex auth.json or
- * OpenAI key). Drives secret-reuse scoping and Claude-OAuth-sentinel injection.
+ * OpenAI key); 'grok' → a `generic` secret injected as a bearer header on
+ * xAI's CLI host. Drives secret-reuse scoping and Claude-OAuth-sentinel
+ * injection.
+ *
+ * Grok is generic rather than a provider type because OneCLI has no xAI family.
+ * That works HERE and would not for Claude: a generic secret on a recognised
+ * provider host is shadowed by the provider gate (see createCredentialSecret),
+ * and xAI's host is not one. Measured, not assumed — a container holding a
+ * deliberately invalid token completed a real turn because the gateway swapped
+ * the header from a generic secret.
  */
-export type UserCredsProvider = 'claude' | 'codex';
+export type UserCredsProvider = 'claude' | 'codex' | 'grok';
 
 export interface UserCredsCredentialRow {
   user_id: string;

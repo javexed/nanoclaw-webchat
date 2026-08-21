@@ -41,15 +41,43 @@ import {
 import type { OnecliAdmin } from './onecli-admin.js';
 import { getAllAgentGroups } from '../../db/agent-groups.js';
 
-/** The agent group's provider, mapped to the two UserCreds-supported families. */
-async function groupProvider(agentGroupId: string): Promise<UserCredsProvider> {
-  return (await getContainerConfig(agentGroupId))?.provider === 'codex' ? 'codex' : 'claude';
+/**
+ * The agent group's provider, mapped to the UserCreds-supported families.
+ *
+ * EXPORTED because this derivation had been copied three times — onboard,
+ * the module index, and twice in routes-users — and each copy knew about a
+ * different set of providers. Adding Grok made the drift visible: a member
+ * could be in a Grok room while the credential routes still resolved them as
+ * Claude. One definition, imported everywhere.
+ */
+export async function userCredsProviderForGroup(agentGroupId: string): Promise<UserCredsProvider> {
+  const provider = (await getContainerConfig(agentGroupId))?.provider;
+  // A lookup rather than a chain of ternaries: the same shape drifted once
+  // already, when a provider the harness picker knew about was invisible to
+  // room creation. Anything unrecognised falls back to claude, the built-in.
+  return provider === 'codex' || provider === 'grok' ? provider : 'claude';
 }
 
 /** The vault secret type that holds a member's credential for a provider. */
-function secretTypeFor(provider: UserCredsProvider): 'anthropic' | 'openai' {
-  return provider === 'codex' ? 'openai' : 'anthropic';
+function secretTypeFor(provider: UserCredsProvider): 'anthropic' | 'openai' | 'generic' {
+  if (provider === 'codex') return 'openai';
+  if (provider === 'grok') return 'generic';
+  return 'anthropic';
 }
+
+/**
+ * Where a member's Grok token is injected.
+ *
+ * MEASURED, and not where the documentation points. The CLI talks to
+ * cli-chat-proxy.grok.com, not api.x.ai — a secret scoped to the documented host
+ * silently never matches, and the failure is `credential_not_found` with nothing
+ * naming the cause.
+ */
+export const GROK_SECRET_SPEC = {
+  hostPattern: 'cli-chat-proxy.grok.com',
+  headerName: 'Authorization',
+  valueFormat: 'Bearer {value}',
+} as const;
 
 /**
  * The group's tool secret ids EXCLUDING the member-supplied credential type, to
@@ -82,8 +110,14 @@ async function createCredentialSecret(
   credType: UserCredsCredType,
   credential: string,
 ): Promise<string> {
-  const name = provider === 'codex' ? `UserCreds ${userSlug(userId)} (codex)` : `UserCreds ${userSlug(userId)}`;
+  const name = provider === 'claude' ? `UserCreds ${userSlug(userId)}` : `UserCreds ${userSlug(userId)} (${provider})`;
   if (provider === 'codex') return admin.createOpenAISecret(name, credential, credType);
+  // Grok: the member's ACCESS token, injected as a bearer header. Only the
+  // access token goes to the vault — the refresh token stays on the host, which
+  // is the same split the install-wide credential uses and the reason a leak
+  // from a container is bounded by one token lifetime instead of being
+  // permanent.
+  if (provider === 'grok') return admin.createGenericSecret(name, credential, { ...GROK_SECRET_SPEC });
   return admin.createAnthropicSecret(name, credential);
 }
 
@@ -143,7 +177,7 @@ export async function ensureGroupEnrollment(admin: OnecliAdmin, userId: string, 
   // The workspace-default credential is an unassigned `all`-mode workspace secret
   // by design — it must never become a per-member `selective` enrollment.
   if (isWorkspaceDefaultUser(userId)) return;
-  const provider = await groupProvider(agentGroupId);
+  const provider = await userCredsProviderForGroup(agentGroupId);
   // Already enrolled — but only skip when the enrollment is for THIS group's
   // CURRENT provider. If the group's provider was switched after enrollment, the
   // stale row would otherwise pin the wrong secret; fall through to re-enroll.
@@ -236,7 +270,7 @@ async function fanOutWorkspaceCredential(
     assigned++;
   };
   for (const group of await getAllAgentGroups()) {
-    if ((await groupProvider(group.id)) !== provider) continue;
+    if ((await userCredsProviderForGroup(group.id)) !== provider) continue;
     try {
       await assign(group.id);
       for (const row of await listGroupMemberEnrollments(group.id)) {

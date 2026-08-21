@@ -1669,7 +1669,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 			return last ? " — " + (last.length > 90 ? `${last.slice(0, 89)}…` : last) : "";
 		};
 		return (_ctx, _cache) => {
-			return unref(transcriptEmpty) ? (openBlock(), createElementBlock("div", _hoisted_1$65, toDisplayString(unref(transcriptEmpty)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(messages), (row) => {
+			return unref(transcriptEmpty) && !unref(messages).length && !unref(thinkingTurns).length ? (openBlock(), createElementBlock("div", _hoisted_1$65, toDisplayString(unref(transcriptEmpty)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(messages), (row) => {
 				return openBlock(), createElementBlock(Fragment, { key: row.key }, [row.kind === "system" ? (openBlock(), createElementBlock("div", _hoisted_2$57, toDisplayString(row.text), 1)) : row.kind === "divider" ? (openBlock(), createElementBlock("div", _hoisted_3$52, [createElementVNode("span", null, toDisplayString(row.text), 1)])) : row.kind === "approval" ? (openBlock(), createElementBlock("div", {
 					key: 2,
 					class: "msg approval-msg",
@@ -3608,6 +3608,12 @@ var userCredsOauthReturnFocus = ref(null);
 * module both can import is what let the bridge entry go.
 */
 function userCredsWords(provider) {
+	if (provider === "grok") return {
+		name: "Grok",
+		subWord: "SuperGrok or X Premium+ subscription",
+		keyWord: "xAI key",
+		keyPlaceholder: ""
+	};
 	return provider === "codex" ? {
 		name: "Codex",
 		subWord: "ChatGPT subscription",
@@ -3871,6 +3877,14 @@ function closeUserCredsOauthModal() {
 		}).catch(() => {});
 		userCredsOauthSessionId.value = null;
 	}
+	cancelGrokMint();
+	if (userCredsProvider.value === "grok") authFetch("/api/user-credentials/grok/cancel", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"X-Webchat-CSRF": "1"
+		}
+	}).catch(() => {});
 	const modal = $("#user-creds-oauth-modal");
 	if (modal) modal.hidden = true;
 	if (userCredsOauthReturnFocus.value && typeof userCredsOauthReturnFocus.value.focus === "function") userCredsOauthReturnFocus.value.focus();
@@ -10318,11 +10332,101 @@ function blockingOverlayOpen() {
 		return el && !el.hidden;
 	});
 }
+/**
+* Member Grok device login.
+*
+* Two polls, not one: the first waits for the CLI to print a URL and code, the
+* second waits for the member to approve on whatever device they opened it on.
+* `grokMintToken` is the cancellation signal — reopening or closing the modal
+* bumps it, and any in-flight loop notices and stops rather than writing into
+* a dialog that has moved on.
+*/
+var grokMintToken = 0;
+function cancelGrokMint() {
+	grokMintToken++;
+}
+async function openGrokMintModal(modal) {
+	const token = ++grokMintToken;
+	const alive = () => token === grokMintToken && !modal.hidden;
+	const status = (msg, kind = "") => userCredsOauthStatus(msg, kind);
+	const title = $("#user-creds-oauth-title");
+	if (title) title.textContent = "Connect to Grok";
+	$("#user-creds-oauth-step2").hidden = true;
+	$("#user-creds-oauth-submit").hidden = true;
+	$("#user-creds-oauth-spinner").hidden = false;
+	const code = $("#user-creds-oauth-code");
+	if (code) code.hidden = true;
+	const codeLabel = $("#user-creds-oauth-code-label");
+	if (codeLabel) codeLabel.hidden = true;
+	userCredsOauthReturnFocus.value = document.activeElement;
+	modal.hidden = false;
+	$("#user-creds-oauth-close")?.focus();
+	status("Starting sign-in…");
+	const poll = async () => {
+		const r = await authFetch("/api/user-credentials/grok/status");
+		const d = await r.json();
+		if (!r.ok) throw new Error(d.error || r.statusText);
+		return d;
+	};
+	const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+	try {
+		const r = await authFetch("/api/user-credentials/grok/start", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Webchat-CSRF": "1"
+			},
+			body: JSON.stringify({ roomId: state.currentRoom })
+		});
+		const started = await r.json();
+		if (!r.ok) throw new Error(started.error || r.statusText);
+		let d = started;
+		for (let i = 0; alive() && !d.verificationUrl && d.outcome !== "error" && i < 40; i++) {
+			await wait(750);
+			if (!alive()) return;
+			d = await poll();
+		}
+		if (!alive()) return;
+		if (d.outcome === "error") throw new Error(d.error || "Sign-in failed.");
+		if (!d.verificationUrl) throw new Error("Timed out waiting for the sign-in link.");
+		const link = $("#user-creds-oauth-link");
+		if (link) {
+			link.href = d.verificationUrl;
+			link.textContent = "Open Grok sign-in ↗";
+		}
+		codexActive.value = true;
+		codexUserCode.value = d.userCode || "";
+		const codexCode = $("#user-creds-oauth-codex-code");
+		if (codexCode) codexCode.hidden = false;
+		mountCodexCode();
+		$("#user-creds-oauth-spinner").hidden = true;
+		$("#user-creds-oauth-step2").hidden = false;
+		status("Open the link and approve — this page finishes on its own.");
+		link?.focus();
+		while (alive() && d.outcome === "pending") {
+			await wait(2e3);
+			if (!alive()) return;
+			d = await poll();
+		}
+		if (!alive()) return;
+		if (d.outcome !== "complete") throw new Error(d.error || "Sign-in was not completed.");
+		grokMintToken++;
+		codexActive.value = false;
+		showToast("Connected your Grok subscription.", { kind: "success" });
+		modal.hidden = true;
+		await updateUserCredsBanner(state.currentRoom);
+	} catch (err) {
+		if (!alive()) return;
+		$("#user-creds-oauth-spinner").hidden = true;
+		status(err?.message || "Could not start sign-in.", "error");
+	}
+}
 async function openOauthMintModal(target) {
 	userCredsOauthTarget.value = target;
 	const modal = $("#user-creds-oauth-modal");
 	if (!modal) return;
 	const isWorkspace = target.startsWith("workspace");
+	if (!isWorkspace && userCredsProvider.value === "grok") return openGrokMintModal(modal);
 	const isCodex = target === "workspace-codex" || !isWorkspace && userCredsProvider.value === "codex";
 	const title = $("#user-creds-oauth-title");
 	if (title) title.textContent = isWorkspace ? `Connect ${isCodex ? "ChatGPT" : "Claude"} (workspace default)` : `Connect to ${userCredsWords(userCredsProvider.value).name}`;
@@ -19501,11 +19605,13 @@ async function renderCredentialsSettings() {
 	});
 	const providerOn = {
 		claude: !!(cfg.allowAnthropicKey && cfg.allowClaudeOauth),
-		codex: !!(cfg.allowOpenaiKey && cfg.allowCodexOauth)
+		codex: !!(cfg.allowOpenaiKey && cfg.allowCodexOauth),
+		grok: !!cfg.allowGrokOauth
 	};
 	const providerAvailable = {
 		claude: true,
-		codex: !!cfg.codexAvailable
+		codex: !!cfg.codexAvailable,
+		grok: !!cfg.grokAvailable
 	};
 	document.querySelectorAll("#cred-providers .setting-option").forEach((btn) => {
 		const p = btn.dataset.provider ?? "";
