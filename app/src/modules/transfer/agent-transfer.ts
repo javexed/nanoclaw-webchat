@@ -223,10 +223,12 @@ export async function previewImport(bundleDir: string): Promise<ImportPreview> {
   if (manifest.version > EXPORT_VERSION)
     throw new Error(`Export version ${manifest.version} is newer than this install understands`);
   const db = getDb();
-  const rooms = manifest.references.rooms.map((r) => ({
-    platform_id: r.platform_id,
-    found: !!getMessagingGroupByPlatform(r.channel_type, r.platform_id),
-  }));
+  const rooms = await Promise.all(
+    manifest.references.rooms.map(async (r) => ({
+      platform_id: r.platform_id,
+      found: !!(await getMessagingGroupByPlatform(r.channel_type, r.platform_id)),
+    })),
+  );
   const mcpServers = await Promise.all(
     manifest.references.mcpServers.map(async (name) => ({
       name,

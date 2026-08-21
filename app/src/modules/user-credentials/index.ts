@@ -159,7 +159,7 @@ registerTurnGate(async (mg, agentGroupId, userId) => {
         channelType: mg.channel_type,
         threadId: null,
         content: JSON.stringify({
-          text: `This room requires your own ${(await state).credName} — connect it in the banner above the chat.`,
+          text: `This room requires your own ${state.credName} — connect it in the banner above the chat.`,
         }),
       });
     } catch {
