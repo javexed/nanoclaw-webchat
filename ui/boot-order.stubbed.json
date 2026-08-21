@@ -275,6 +275,7 @@
  "on:wizard-ts-manual-copy:click",
  "on:wizard-claude-oauth:click",
  "on:wizard-codex-install:click",
+ "on:wizard-grok-install:click",
  "on:wizard-codex-oauth:click",
  "on:wizard-codex-save:click",
  "on:wizard-claude-save:click",
