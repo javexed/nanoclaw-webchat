@@ -18,12 +18,9 @@ src/mcp-server-config.ts
 src/mcp-server-config.test.ts
 src/modules/user-credentials
 src/modules/container-egress
-src/db/migrations/module-user-credentials-members.ts
-src/db/migrations/module-user-credentials-oauth.ts
+src/db/migrations/module-user-credentials.ts
+src/db/migrations/module-user-credentials.test.ts
 src/db/migrations/module-user-credentials-grok-flag.ts
-src/db/migrations/module-user-credentials-provider.ts
-src/db/migrations/module-user-credentials-table.ts
-src/db/migrations/module-user-credentials-rename.ts
 setup/get-oauth-token.sh
 src/modules/learning
 src/modules/skills

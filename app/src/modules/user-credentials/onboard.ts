@@ -298,7 +298,7 @@ export async function setWorkspaceDefaultCredential(
 
   // Before deleting the legacy secrets, re-point any `selective` agent that was
   // pinned to one onto the new workspace-default. Otherwise a base group agent
-  // stuck in selective mode (e.g. a leftover from an earlier per-agent BYOK
+  // stuck in selective mode (e.g. a leftover from an earlier per-agent credential
   // setup) silently loses its model credential the moment the legacy secret is
   // deleted — surfacing later as a 401 disguised as "issue with the selected
   // model". `all`-mode agents auto-inject the new secret and need no fixup; and

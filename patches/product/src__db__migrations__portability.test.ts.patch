@@ -1,8 +1,8 @@
 diff --git a/src/db/migrations/portability.test.ts b/src/db/migrations/portability.test.ts
-index 4a447695..edcb1455 100644
+index 4a447695..d7188fb8 100644
 --- a/src/db/migrations/portability.test.ts
 +++ b/src/db/migrations/portability.test.ts
-@@ -23,6 +23,60 @@ const FROZEN_SQLITE_ONLY = new Set([
+@@ -23,6 +23,59 @@ const FROZEN_SQLITE_ONLY = new Set([
    'wiring-threads-override',
    'container-config-timezone',
    'approval-question-render-metadata',
@@ -55,15 +55,14 @@ index 4a447695..edcb1455 100644
 +  'learning-master',
 +  'learning-room-settings',
 +  'webchat-mcp-hardening',
-+  'byok-credentials',
-+  'byok-oauth-credentials',
-+  'byok-provider',
-+  'byok-user-credentials',
-+  'rename-user-credentials',
++  // The consolidated user-credentials migration (replaced the five-step
++  // byok-era chain; old installs keep the historical names in their own
++  // schema_version, which nothing reads back).
++  'user-credentials',
  ]);
  
  const BANNED_PORTABLE_SQL = [
-@@ -36,12 +90,12 @@ const BANNED_PORTABLE_SQL = [
+@@ -36,12 +89,12 @@ const BANNED_PORTABLE_SQL = [
  ];
  
  describe('central migration portability policy', () => {
@@ -78,7 +77,7 @@ index 4a447695..edcb1455 100644
      for (const migration of migrations.filter((candidate) => !candidate.sqliteOnly)) {
        expect(migration.up.constructor.name, migration.name).toBe('AsyncFunction');
        const source = String(migration.up);
-@@ -49,7 +103,7 @@ describe('central migration portability policy', () => {
+@@ -49,7 +102,7 @@ describe('central migration portability policy', () => {
      }
    });
  
