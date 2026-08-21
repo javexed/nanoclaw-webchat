@@ -15,7 +15,18 @@ export function json(res: ServerResponse, status: number, data: unknown): void {
   // the awaited value, and surface a rejection as the 500 it is.
   if (data && typeof (data as { then?: unknown }).then === 'function') {
     (data as Promise<unknown>).then(
-      (v) => json(res, status, v),
+      (v) => {
+        // The continuation runs OUTSIDE the request's catch chain — a throw
+        // here (headers already sent, unserializable value) would otherwise
+        // become an unhandled rejection and a response that hangs to timeout.
+        try {
+          json(res, status, v);
+        } catch (err) {
+          console.error('[webchat] json(): serialization failed after resolve', err);
+          if (!res.headersSent) json(res, 500, { error: 'Internal error' });
+          else res.end();
+        }
+      },
       (err) => {
         console.error('[webchat] json(): promise argument rejected', err);
         if (!res.headersSent) json(res, 500, { error: 'Internal error' });

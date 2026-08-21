@@ -11,6 +11,7 @@ import { routingAvailable } from './routing-state.js';
 import { agentFilter, agentSortAz } from './agent-list-state.js';
 import { permsActive } from './perms-list-state.js';
 import { showToast, toastError } from '../core/toast.js';
+import { wizardBusy } from './wizard.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
 import {
@@ -181,6 +182,17 @@ export function hideOtherFullViews(keep?: any) {
     journeyActive = false;
     $('#journey')!.hidden = true;
   }
+  if (keep !== 'floor' && floorActive) {
+    // Not just hide: the floor polls while open, so skipping its teardown
+    // leaves a background timer fetching /api/floor forever.
+    floorActive = false;
+    $('#floor')!.hidden = true;
+    if (floorTimer) {
+      clearInterval(floorTimer);
+      floorTimer = null;
+    }
+    closeDeskPopover();
+  }
   if (keep !== 'matrix' && matrixActive) {
     matrixActive = false;
     $('#matrix')!.hidden = true;
@@ -265,6 +277,16 @@ const FLOOR_LABEL: Record<string, string> = {
   cold: 'Cold',
 };
 
+/** Raw status kinds, cased for display next to the state labels. */
+const KIND_META_LABEL: Record<string, string> = {
+  tool: 'Tool',
+  reasoning: 'Thinking',
+  progress: 'Working',
+  start: 'Started',
+  done: 'Done',
+  stalled: 'Stalled',
+};
+
 /** "4m", "2h" — a desk's age only needs to be readable, not precise. */
 function floorAge(ms: number | null): string {
   if (ms == null) return '';
@@ -282,39 +304,75 @@ function floorAge(ms: number | null): string {
 // timestamp as the cursor, so polling is stateless — send back the newest seen.
 const FLOOR_FEED_CAP = 80;
 
+/** Shapes mirror the server's Desk / FloorEvent (ui/ cannot import app/). */
+interface FloorDesk {
+  session_id: string;
+  agent_group_id: string;
+  agent_name: string;
+  room_id: string | null;
+  room_name: string | null;
+  state: string;
+  last_kind: string | null;
+  idle_ms: number | null;
+}
+interface FloorFeedEvent {
+  at: string;
+  session_id: string;
+  agent_name: string;
+  room_id: string | null;
+  kind: string;
+  text: string | null;
+  from_session_id?: string;
+}
+
 let floorFeedCursor: string | null = null;
-let floorFeedEvents: any[] = [];
+let floorFeedEvents: FloorFeedEvent[] = [];
+/** Identity keys of everything in floorFeedEvents — the server re-reads a
+ *  small window behind the cursor on purpose, so duplicates are expected. */
+let floorFeedSeen = new Set<string>();
+let floorFeedEpoch = 0;
+let floorFeedInFlight = false;
+
+function feedKey(e: FloorFeedEvent): string {
+  return `${e.at}|${e.session_id}|${e.kind}|${e.text ?? ''}`;
+}
 /** session_id → agent_name, from the last desks payload — names a2a senders. */
 const floorSessionNames = new Map<string, string>();
 /** Last desks payload, for the popover; restricted gates the Restart action. */
-let floorLastDesks: any[] = [];
+let floorLastDesks: FloorDesk[] = [];
 let floorRestricted = true;
 
 const FEED_KIND_LABEL: Record<string, string> = {
   thinking: 'Thinking',
   tool: 'Tool',
   message: 'Message',
-  a2a: 'A2A',
+  // Not "A2A": the transcript renders agent-to-agent as `A → B` and never
+  // shows the acronym; the badge matches the vocabulary users already have.
+  a2a: 'Handoff',
 };
 
 function renderFloorFeed() {
   const feed = $('#floor-feed');
   if (!feed) return;
   if (!floorFeedEvents.length) {
-    feed.innerHTML = '<div class="floor-feed-empty">Quiet for the last 2 minutes.</div>';
+    feed.innerHTML = '<div class="floor-feed-empty">Quiet for the last 2 minutes</div>';
     return;
   }
   feed.innerHTML = floorFeedEvents
     .map((e) => {
-      const from =
-        e.kind === 'a2a' && e.from_session_id ? ` ← ${esc(floorSessionNames.get(e.from_session_id) || 'agent')}` : '';
+      // Sender → recipient, the same direction the transcript draws.
+      const agentLabel =
+        e.kind === 'a2a' && e.from_session_id
+          ? `${esc(floorSessionNames.get(e.from_session_id) || 'agent')} → ${esc(e.agent_name)}`
+          : esc(e.agent_name);
       const age = floorAge(Date.now() - Date.parse(e.at));
-      return `<div class="floor-event${e.room_id ? ' floor-event-link' : ''}" data-room="${esc(e.room_id || '')}">
+      const tag = e.room_id ? 'button' : 'div';
+      return `<${tag} class="floor-event${e.room_id ? ' floor-event-link' : ''}" data-room="${esc(e.room_id || '')}">
         <span class="ff-kind ff-${esc(e.kind)}">${esc(FEED_KIND_LABEL[e.kind] || e.kind)}</span>
-        <span class="ff-agent">${esc(e.agent_name)}${from}</span>
+        <span class="ff-agent">${agentLabel}</span>
         ${e.text ? `<span class="ff-text">${esc(e.text)}</span>` : ''}
         <span class="ff-age">${esc(age)}</span>
-      </div>`;
+      </${tag}>`;
     })
     .join('');
 }
@@ -327,10 +385,14 @@ function renderFloorFeed() {
 // message). Room click-through moved in here rather than growing a second
 // gesture the mobile layout cannot express.
 let deskPopoverEl: HTMLElement | null = null;
+let deskPopoverAnchor: HTMLElement | null = null;
 
 function closeDeskPopover() {
+  const hadFocus = deskPopoverEl?.contains(document.activeElement) ?? false;
   deskPopoverEl?.remove();
   deskPopoverEl = null;
+  if (hadFocus && deskPopoverAnchor?.isConnected) deskPopoverAnchor.focus();
+  deskPopoverAnchor = null;
   document.removeEventListener('click', onDocClickCloseDeskPopover, true);
   document.removeEventListener('keydown', onEscCloseDeskPopover, true);
 }
@@ -354,7 +416,7 @@ export function showDeskPopover(sessionId: string, anchor: HTMLElement, onOpenRo
   const canRestart = d.state === 'stuck' && !floorRestricted;
   pop.innerHTML = `
     <div class="floor-pop-name">${esc(d.agent_name)}</div>
-    <div class="floor-pop-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${d.last_kind ? ` · ${esc(d.last_kind)}` : ''}${
+    <div class="floor-pop-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${d.last_kind ? ` · ${esc(KIND_META_LABEL[d.last_kind] || d.last_kind)}` : ''}${
       d.idle_ms != null ? ` · ${esc(floorAge(d.idle_ms))}` : ''
     }</div>
     ${d.room_name ? `<div class="floor-pop-meta">${esc(d.room_name)}</div>` : ''}
@@ -366,30 +428,43 @@ export function showDeskPopover(sessionId: string, anchor: HTMLElement, onOpenRo
 
   pop.querySelector('[data-act="room"]')?.addEventListener('click', () => {
     closeDeskPopover();
-    onOpenRoom(d.room_id);
+    // The button only renders when room_id is set; the type doesn't know that.
+    if (d.room_id) onOpenRoom(d.room_id);
   });
   pop.querySelector('[data-act="restart"]')?.addEventListener('click', async (e) => {
     const btn = e.currentTarget as HTMLButtonElement;
-    btn.disabled = true;
+    const restore = wizardBusy(btn, 'Restarting…');
     try {
       const r = await authFetch(`/api/floor/sessions/${encodeURIComponent(sessionId)}/restart`, { method: 'POST' });
       if (r.ok) {
+        // The kill is async server-side; the desk may read Stuck for one more
+        // poll — the toast is what says the action took.
+        showToast('Restarted', { kind: 'success' });
         closeDeskPopover();
         refreshFloor();
       } else {
-        btn.disabled = false;
+        const out = await r.json().catch(() => ({}));
+        toastError(out.error || `Restart failed (${r.status})`);
       }
-    } catch {
-      btn.disabled = false;
+    } catch (err) {
+      toastError(err, 'Restart failed');
+    } finally {
+      restore();
     }
   });
 
+  pop.setAttribute('aria-label', d.agent_name);
   document.body.appendChild(pop);
   const r = anchor.getBoundingClientRect();
   const pw = pop.offsetWidth;
   pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pw - 8, r.left))}px`;
   pop.style.top = `${Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 4)}px`;
   deskPopoverEl = pop;
+  deskPopoverAnchor = anchor;
+  // Same bar as every other dialog here: focus moves in, and back on close —
+  // the desk buttons re-render every poll, so end-of-document is the
+  // alternative for a keyboard user.
+  pop.querySelector<HTMLButtonElement>('button')?.focus();
   document.addEventListener('click', onDocClickCloseDeskPopover, true);
   document.addEventListener('keydown', onEscCloseDeskPopover, true);
 }
@@ -440,16 +515,28 @@ function pulseDesk(sessionId: string | undefined) {
 }
 
 async function refreshFloorFeed() {
+  // One request at a time, and results only apply to the floor-open epoch that
+  // started them: overlapping polls double events and can regress the cursor,
+  // and a quick close/reopen must not let a stale response clobber the reset.
+  if (floorFeedInFlight) return;
+  floorFeedInFlight = true;
+  const epoch = floorFeedEpoch;
   try {
     const q = floorFeedCursor ? `?since=${encodeURIComponent(floorFeedCursor)}` : '';
     const r = await authFetch(`/api/floor/feed${q}`);
+    if (epoch !== floorFeedEpoch) return;
     if (!r.ok) return; // the desks still render; the feed just stays as it was
     const data = await r.json();
+    if (epoch !== floorFeedEpoch) return;
     floorFeedCursor = data?.cursor || floorFeedCursor;
-    const fresh: any[] = Array.isArray(data?.events) ? data.events : [];
+    const incoming: FloorFeedEvent[] = Array.isArray(data?.events) ? data.events : [];
+    // The server re-reads a window behind the cursor (late timestamps,
+    // same-millisecond ties); identity-dedupe here makes that overlap free.
+    const fresh = incoming.filter((e) => !floorFeedSeen.has(feedKey(e)));
     if (fresh.length) {
       // Newest first in the DOM; server sends oldest-first.
       floorFeedEvents = fresh.reverse().concat(floorFeedEvents).slice(0, FLOOR_FEED_CAP);
+      floorFeedSeen = new Set(floorFeedEvents.map(feedKey));
       // The desk answers the feed: whatever just spoke, flashes. An a2a hop
       // flashes both ends — that is the edge, without drawing one.
       for (const e of fresh) {
@@ -463,6 +550,8 @@ async function refreshFloorFeed() {
     renderFloorFeed();
   } catch {
     // Same rule as the grid: a stale feed beats a blanked one.
+  } finally {
+    floorFeedInFlight = false;
   }
 }
 
@@ -483,7 +572,7 @@ export async function refreshFloor() {
     // Leave the last good render in place on a transient failure — a floor that
     // blanks itself every time the network hiccups is worse than a stale one,
     // and the poll will repaint in a few seconds anyway.
-    if (!grid.childElementCount) grid.innerHTML = '<div class="dash-empty">Could not load the floor.</div>';
+    if (!grid.childElementCount) grid.innerHTML = '<div class="dash-empty">Could not load the floor</div>';
   }
 }
 
@@ -500,20 +589,24 @@ function renderFloor(data: any) {
     .join('');
 
   if (!desks.length) {
-    grid.innerHTML = '<div class="dash-empty">No sessions yet.</div>';
+    grid.innerHTML = '<div class="dash-empty">No sessions yet</div>';
     return;
   }
 
   floorSessionNames.clear();
   for (const d of desks) floorSessionNames.set(d.session_id, d.agent_name);
 
+  // A re-render moves every desk; an in-flight edge would point at stale
+  // coordinates for up to 1.6s, so clear the overlay with the grid.
+  grid.querySelector('.floor-edges')?.remove();
+
   // Server sorts trouble-first; preserve that order rather than re-sorting here,
   // so the two never disagree about what matters most.
   grid.innerHTML = desks
     .map((d) => {
-      const room = d.room_name ? esc(d.room_name) : 'no room';
+      const room = d.room_name ? esc(d.room_name) : '—';
       const age = floorAge(d.idle_ms);
-      return `<button class="floor-desk floor-${esc(d.state)}" data-room="${esc(d.room_id || '')}" data-session="${esc(d.session_id)}" title="${esc(d.state)} · ${esc(d.session_id)}">
+      return `<button class="floor-desk floor-${esc(d.state)}" data-room="${esc(d.room_id || '')}" data-session="${esc(d.session_id)}" title="${esc(FLOOR_LABEL[d.state] || d.state)} · ${esc(d.session_id)}">
         <span class="floor-desk-name">${esc(d.agent_name)}</span>
         <span class="floor-desk-room">${room}</span>
         <span class="floor-desk-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${age ? ` · ${age}` : ''}</span>
@@ -534,6 +627,8 @@ function openFloor() {
     // what an opening floor shows, not whatever an old cursor remembers.
     floorFeedCursor = null;
     floorFeedEvents = [];
+    floorFeedSeen = new Set();
+    floorFeedEpoch++;
     renderFloorFeed();
     refreshFloor();
     if (floorTimer) clearInterval(floorTimer);

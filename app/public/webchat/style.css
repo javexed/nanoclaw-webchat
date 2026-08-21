@@ -4114,7 +4114,7 @@ a.lightbox-btn {
 .help-card {
   background: var(--surface2);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   padding: 14px 16px;
 }
 .help-card-head {
@@ -6585,7 +6585,7 @@ a.skill-badge-origin:hover {
 /* ── Model management (Settings → Models) ── */
 .mm-card {
   border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   padding: 10px 12px;
   margin: 8px 0;
   display: flex;
@@ -7739,7 +7739,9 @@ body {
 .routing-decisions-list,
 .routing-subpane,
 .slash-menu,
-.topology-canvas {
+.topology-canvas,
+.floor-body,
+.floor-feed {
   overscroll-behavior: contain;
 }
 
@@ -8661,7 +8663,7 @@ button[data-draft-id] {
 .mcp-health-text-drift { color: var(--warning, #d29922); }
 .mcp-drift-banner {
   border: 1px solid var(--warning, #d29922);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   padding: 10px;
   margin: 8px 0;
   display: flex;
@@ -9132,7 +9134,7 @@ button[data-draft-id] {
   overflow-wrap: anywhere;
 }
 .audit-actor {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
 }
 .audit-more {
   display: flex;
@@ -9145,24 +9147,40 @@ button[data-draft-id] {
    floor has to read at 6 desks and at 40, and auto-fill does that without a
    layout engine or a breakpoint per size. Trouble is first in DOM order
    (the server sorts it), so it lands top-left wherever the grid wraps. */
-.floor-body {
+#floor {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: var(--space-3, 12px);
-  padding: var(--space-3, 12px);
+  min-width: 0;
+}
+#floor[hidden] {
+  display: none;
+}
+.floor-body {
+  /* One declaration — a second .floor-body block below once redeclared this as
+     a row and silently lost: flex-direction stayed column and the panels'
+     flex-bases became HEIGHTS. Desks + feed sit side by side when there is
+     room; the feed drops below the grid on narrow screens. */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
   overflow-y: auto;
 }
 .floor-counts {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2, 8px);
+  gap: 8px;
 }
 .floor-count {
   font-size: var(--fs-sm);
-  padding: 2px var(--space-2, 8px);
-  border-radius: var(--radius-pill, 999px);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 .floor-count b {
   color: var(--text);
@@ -9170,7 +9188,7 @@ button[data-draft-id] {
 .floor-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: var(--space-2, 8px);
+  gap: 8px;
 }
 .floor-desk {
   display: flex;
@@ -9178,10 +9196,10 @@ button[data-draft-id] {
   gap: 2px;
   align-items: flex-start;
   text-align: left;
-  padding: var(--space-2, 8px);
+  padding: 8px;
   border: 1px solid var(--border);
   border-left-width: 3px;
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text);
   cursor: pointer;
@@ -9196,7 +9214,7 @@ button[data-draft-id] {
 .floor-desk-room,
 .floor-desk-meta {
   font-size: var(--fs-sm);
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 /* State is carried by the left edge AND the meta text, never by colour alone —
    a red border is invisible to a chunk of users and to a monochrome screen. */
@@ -9220,21 +9238,13 @@ button[data-draft-id] {
   color: var(--success);
 }
 
-/* ── Floor feed ─────────────────────────────────────────────────────────────
-   Two columns when there is room: desks stay the subject, the feed is the
-   soundtrack. On narrow screens the feed drops below the grid. */
-.floor-body {
-  display: flex;
-  gap: var(--space-3, 12px);
-  align-items: flex-start;
-  flex-wrap: wrap;
-}
+/* ── Floor feed ── */
 .floor-main {
   flex: 2 1 420px;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-2, 8px);
+  gap: 8px;
 }
 .floor-feed {
   flex: 1 1 260px;
@@ -9242,20 +9252,28 @@ button[data-draft-id] {
   max-height: 70vh;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 .floor-feed-empty {
-  padding: var(--space-3, 12px);
+  padding: 12px;
   font-size: var(--fs-sm);
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 .floor-event {
+  /* Linkable rows render as <button> for keyboard access — reset the UA button
+     chrome so both tags lay out identically. */
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  width: 100%;
   display: grid;
   grid-template-columns: auto 1fr auto;
-  column-gap: var(--space-2, 8px);
+  column-gap: 8px;
   row-gap: 2px;
-  padding: 6px var(--space-2, 8px);
+  padding: 6px 8px;
   border-bottom: 1px solid var(--border);
   font-size: var(--fs-sm);
 }
@@ -9266,7 +9284,7 @@ button[data-draft-id] {
   cursor: pointer;
 }
 .floor-event-link:hover {
-  background: var(--surface-2, var(--bg));
+  background: var(--surface2);
 }
 /* Kind is carried by the label text; colour only reinforces it. */
 .ff-kind {
@@ -9293,12 +9311,12 @@ button[data-draft-id] {
   white-space: nowrap;
 }
 .ff-age {
-  color: var(--text-muted);
+  color: var(--text-dim);
   white-space: nowrap;
 }
 .ff-text {
   grid-column: 1 / -1;
-  color: var(--text-muted);
+  color: var(--text-dim);
   overflow-wrap: anywhere;
 }
 /* A desk flashes when its session emits a feed event; an a2a hop flashes both
@@ -9327,9 +9345,9 @@ button[data-draft-id] {
   z-index: 60;
   min-width: 220px;
   max-width: 300px;
-  padding: var(--space-2, 8px);
+  padding: 8px;
   border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   background: var(--surface);
   box-shadow: 0 6px 24px color-mix(in srgb, var(--text) 18%, transparent);
   display: flex;
@@ -9341,17 +9359,17 @@ button[data-draft-id] {
 }
 .floor-pop-meta {
   font-size: var(--fs-sm);
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 .floor-pop-id {
-  font-family: var(--font-mono, monospace);
-  font-size: var(--fs-xs, 11px);
-  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
   overflow-wrap: anywhere;
 }
 .floor-pop-actions {
   display: flex;
-  gap: var(--space-2, 8px);
+  gap: 8px;
   margin-top: 4px;
 }
 

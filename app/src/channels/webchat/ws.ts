@@ -429,21 +429,29 @@ export function setupWebSocket(
       }
     };
     ws.on('message', (raw) => {
-      frameChain = frameChain.then(() => handleFrame(raw)).catch(() => {});
+      frameChain = frameChain
+        .then(() => handleFrame(raw))
+        .catch((err) => {
+          // Keep the chain alive and ordered, but never silently: a dropped
+          // frame is a lost message from the user's point of view.
+          log.warn('Webchat: WS frame handler failed', { err: err instanceof Error ? err.message : String(err) });
+        });
     });
 
     ws.on('close', () => {
       const c = removeClient(clientId);
       if (c?.room_id) {
         const roomId = c.room_id; // capture: the narrowing doesn't survive into the .then closure
-        broadcast(roomId, {
+        void broadcast(roomId, {
           type: 'system',
           room_id: roomId,
           message: `${c.identity} left`,
-        });
+        }).catch((err) => log.warn('Webchat: left-broadcast failed', { err: String(err) }));
         // The close handler is a sync event callback; resolve the member list
         // first, THEN broadcast — embedding the promise serialized as {}.
-        void getMemberList(roomId).then((members) => broadcast(roomId, { type: 'members', room_id: roomId, members }));
+        void getMemberList(roomId)
+          .then((members) => broadcast(roomId, { type: 'members', room_id: roomId, members }))
+          .catch((err) => log.warn('Webchat: members-broadcast failed', { err: String(err) }));
       }
     });
   });
