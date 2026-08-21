@@ -9301,3 +9301,22 @@ button[data-draft-id] {
   color: var(--text-muted);
   overflow-wrap: anywhere;
 }
+/* A desk flashes when its session emits a feed event; an a2a hop flashes both
+   ends. Decoration only — the feed row is the information — so reduced motion
+   simply turns it off. */
+@keyframes floor-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+.floor-desk-pulse {
+  animation: floor-pulse 1s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .floor-desk-pulse {
+    animation: none;
+  }
+}

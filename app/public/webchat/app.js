@@ -15078,6 +15078,14 @@ function renderFloorFeed() {
       </div>`;
 	}).join("");
 }
+function pulseDesk(sessionId) {
+	if (!sessionId) return;
+	const desk = document.querySelector(`.floor-desk[data-session="${CSS.escape(sessionId)}"]`);
+	if (!desk) return;
+	desk.classList.remove("floor-desk-pulse");
+	desk.offsetWidth;
+	desk.classList.add("floor-desk-pulse");
+}
 async function refreshFloorFeed() {
 	try {
 		const r = await authFetch(`/api/floor/feed${floorFeedCursor ? `?since=${encodeURIComponent(floorFeedCursor)}` : ""}`);
@@ -15085,7 +15093,13 @@ async function refreshFloorFeed() {
 		const data = await r.json();
 		floorFeedCursor = data?.cursor || floorFeedCursor;
 		const fresh = Array.isArray(data?.events) ? data.events : [];
-		if (fresh.length) floorFeedEvents = fresh.reverse().concat(floorFeedEvents).slice(0, FLOOR_FEED_CAP);
+		if (fresh.length) {
+			floorFeedEvents = fresh.reverse().concat(floorFeedEvents).slice(0, FLOOR_FEED_CAP);
+			for (const e of fresh) {
+				pulseDesk(e.session_id);
+				if (e.kind === "a2a") pulseDesk(e.from_session_id);
+			}
+		}
 		renderFloorFeed();
 	} catch {}
 }
@@ -15126,7 +15140,7 @@ function renderFloor(data) {
 	grid.innerHTML = desks.map((d) => {
 		const room = d.room_name ? esc(d.room_name) : "no room";
 		const age = floorAge(d.idle_ms);
-		return `<button class="floor-desk floor-${esc(d.state)}" data-room="${esc(d.room_id || "")}" title="${esc(d.state)} · ${esc(d.session_id)}">
+		return `<button class="floor-desk floor-${esc(d.state)}" data-room="${esc(d.room_id || "")}" data-session="${esc(d.session_id)}" title="${esc(d.state)} · ${esc(d.session_id)}">
         <span class="floor-desk-name">${esc(d.agent_name)}</span>
         <span class="floor-desk-room">${room}</span>
         <span class="floor-desk-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${age ? ` · ${age}` : ""}</span>
