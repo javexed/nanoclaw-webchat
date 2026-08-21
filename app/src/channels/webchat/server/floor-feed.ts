@@ -197,7 +197,7 @@ export async function readFloorEvents(
       out.push({
         at: e.at,
         session_id: row.id,
-        agent_name: await name,
+        agent_name: name,
         room_id: roomId,
         kind: e.kind === 'tool' ? 'tool' : 'thinking',
         text: clip(e.text),
@@ -208,7 +208,7 @@ export async function readFloorEvents(
       out.push({
         at: m.at,
         session_id: row.id,
-        agent_name: await name,
+        agent_name: name,
         room_id: roomId,
         kind: m.source_session_id ? 'a2a' : 'message',
         text: clip(messageText(m.content)),
