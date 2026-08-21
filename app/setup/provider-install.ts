@@ -21,6 +21,10 @@ const INSTALL_SKILLS: Record<string, string> = {
   opencode: '.claude/skills/add-opencode-stack',
   // The pi stack: same directive-apply shape, no SDK dep (CLI-only harness).
   pi: '.claude/skills/add-pi-stack',
+  // Grok: same directive-apply shape. Its payload lives on the providers-grok
+  // branch, which the skill's nc:copy resolves through whichever remote carries
+  // it — so a fresh install needs no private remote.
+  grok: '.claude/skills/add-grok',
 };
 
 export async function run(args: string[]): Promise<void> {

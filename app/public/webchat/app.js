@@ -126,6 +126,7 @@ var selectedRouteIdx = ref(null);
 //#endregion
 //#region src/features/installer-state.ts
 var codexInstallActive = ref(false);
+var grokInstallActive = ref(false);
 var opencodeInstallActive = ref(false);
 var routingInstallActive = ref(false);
 var sttInstallActive = ref(false);
@@ -7874,6 +7875,13 @@ var OPENCODE_WIZARD_ELS = {
 	log: "#wizard-opencode-install-log",
 	doneMsg: "OpenCode installed — your local agent can now use it (Agent → Harness)."
 };
+var GROK_WIZARD_ELS = {
+	btn: "#wizard-grok-install",
+	log: "#wizard-grok-install-log",
+	url: "/api/grok/install",
+	name: "Grok",
+	doneMsg: "Grok installed — sign in with a device code below."
+};
 async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
 	const url = els.url || "/api/opencode/install";
 	const name = els.name || "OpenCode";
@@ -8548,7 +8556,10 @@ async function refreshWizardCredState() {
 		grokChip.textContent = grok?.connected ? "✓ connected" : !grok?.available ? "not installed" : grok?.expired ? "expired" : "not connected";
 		grokChip.classList.toggle("ok", !!grok?.connected);
 	}
-	$("#wizard-grok-connect").hidden = !!grok?.connected;
+	const grokInstalled = grok?.installed !== false;
+	const grokInstallRow = $("#wizard-grok-install-row");
+	if (grokInstallRow && !grokInstallActive.value) grokInstallRow.hidden = grokInstalled;
+	$("#wizard-grok-connect").hidden = !grokInstalled || !!grok?.connected;
 	$("#wizard-grok-connected").hidden = !grok?.connected;
 	const grokStatusLine = $("#wizard-grok-status");
 	if (grokStatusLine) {
@@ -9581,6 +9592,7 @@ function wireWizard() {
 	});
 	$("#wizard-claude-oauth")?.addEventListener("click", () => deps$12.openOauthMintModal("workspace"));
 	$("#wizard-codex-install")?.addEventListener("click", () => runCodexInstall());
+	$("#wizard-grok-install")?.addEventListener("click", () => runOpencodeInstall(GROK_WIZARD_ELS));
 	$("#wizard-codex-oauth")?.addEventListener("click", () => deps$12.openOauthMintModal("workspace-codex"));
 	$("#wizard-codex-save")?.addEventListener("click", async () => {
 		const key = ($("#wizard-codex-key")?.value || "").trim();

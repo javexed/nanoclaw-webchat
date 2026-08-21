@@ -2668,6 +2668,14 @@
                        login, with no API-key path at all. So this card has no key input,
                        unlike Claude and Codex — offering one would imply a route that
                        does not exist. -->
+                  <!-- Install row, shown only when the provider is absent. Grok's payload
+                       lives on a branch and its CLI is a native binary baked by the image
+                       build, so "install" here is a real chain (copy + wire + build + image
+                       + restart), not a package add. Mirrors Codex. -->
+                  <div class="setting-group install-row" id="wizard-grok-install-row" hidden>
+                    <button id="wizard-grok-install" class="btn btn-primary" type="button">Install Grok…</button>
+                  </div>
+                  <pre id="wizard-grok-install-log" class="wizard-code" hidden></pre>
                   <div id="wizard-grok-connect">
                     <div class="setting-group install-row" id="wizard-grok-login-row">
                       <button id="wizard-grok-login" class="btn btn-primary" type="button">Sign in with a device code…</button>

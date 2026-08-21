@@ -9,6 +9,7 @@
 import { ref } from 'vue';
 
 export const codexInstallActive = ref(false);
+export const grokInstallActive = ref(false);
 export const opencodeInstallActive = ref(false);
 export const routingInstallActive = ref(false);
 export const sttInstallActive = ref(false);

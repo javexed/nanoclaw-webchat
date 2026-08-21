@@ -390,6 +390,8 @@ import { codexAvailable, opencodeAvailable, piAvailable } from './server/provide
 import { grokStatus } from './server/grok-status.js';
 import {
   rCodexInstallGet,
+  rGrokInstallGet,
+  rGrokInstallPost,
   rCodexInstallPost,
   rGrokLoginGet,
   rGrokLoginPost,
@@ -3163,6 +3165,8 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: '/api/ollama/install', guards: ['csrf', 'owner'], h: rOllamaInstallPost },
   { method: 'GET', path: '/api/codex/install', guards: ['owner'], h: rCodexInstallGet },
   { method: 'POST', path: '/api/codex/install', guards: ['csrf', 'owner'], h: rCodexInstallPost },
+  { method: 'GET', path: '/api/grok/install', guards: ['owner'], h: rGrokInstallGet },
+  { method: 'POST', path: '/api/grok/install', guards: ['csrf', 'owner'], h: rGrokInstallPost },
   { method: 'GET', path: '/api/opencode/install', guards: ['owner'], h: rOpencodeInstallGet },
   { method: 'POST', path: '/api/opencode/install', guards: ['csrf', 'owner'], h: rOpencodeInstallPost },
   { method: 'GET', path: '/api/pi/install', guards: ['owner'], h: rPiInstallGet },
