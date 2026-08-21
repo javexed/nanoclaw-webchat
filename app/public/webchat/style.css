@@ -9219,3 +9219,85 @@ button[data-draft-id] {
 .floor-count.floor-working b {
   color: var(--success);
 }
+
+/* ── Floor feed ─────────────────────────────────────────────────────────────
+   Two columns when there is room: desks stay the subject, the feed is the
+   soundtrack. On narrow screens the feed drops below the grid. */
+.floor-body {
+  display: flex;
+  gap: var(--space-3, 12px);
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.floor-main {
+  flex: 2 1 420px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+}
+.floor-feed {
+  flex: 1 1 260px;
+  min-width: 240px;
+  max-height: 70vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+  background: var(--surface);
+}
+.floor-feed-empty {
+  padding: var(--space-3, 12px);
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.floor-event {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  column-gap: var(--space-2, 8px);
+  row-gap: 2px;
+  padding: 6px var(--space-2, 8px);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+}
+.floor-event:last-child {
+  border-bottom: none;
+}
+.floor-event-link {
+  cursor: pointer;
+}
+.floor-event-link:hover {
+  background: var(--surface-2, var(--bg));
+}
+/* Kind is carried by the label text; colour only reinforces it. */
+.ff-kind {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ff-tool {
+  color: var(--success);
+}
+.ff-thinking {
+  color: var(--accent);
+}
+.ff-a2a {
+  color: var(--warning);
+}
+.ff-message {
+  color: var(--text);
+}
+.ff-agent {
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ff-age {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.ff-text {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}

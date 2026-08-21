@@ -13,7 +13,14 @@ import { permsActive } from './perms-list-state.js';
 import { showToast, toastError } from '../core/toast.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
-import { closeAgentDetail, fetchAgents, openAgentDetail, renderAgents, showAgentsDetail, showDetail } from './agents.js';
+import {
+  closeAgentDetail,
+  fetchAgents,
+  openAgentDetail,
+  renderAgents,
+  showAgentsDetail,
+  showDetail,
+} from './agents.js';
 import { closeMcpDetail, fetchMcpServers, openMcpDetail, renderMcpSources } from './mcp.js';
 import { showConfirmModal } from './modals.js';
 import { closeModelDetail, fetchModels, openModelDetail, renderModels } from './models.js';
@@ -133,8 +140,7 @@ export function switchManageTab(tab?: any) {
     renderSkillsRegistry();
     // The catalog's sources, owner-only — self-hiding for everyone else.
     void renderSkillSources();
-  }
-  else if (tab === 'routing') {
+  } else if (tab === 'routing') {
     if (!routingAvailable.value && !state.isOwnerView) return switchManageTab('agents');
     // Setup first (Install button ↔ badge), then the live panel when installed.
     void renderRoutingSetup();
@@ -270,6 +276,64 @@ function floorAge(ms: number | null): string {
   return `${Math.floor(h / 24)}d`;
 }
 
+// ── Floor feed ──────────────────────────────────────────────────────────────
+// What the desks are actually saying: thinking/tool fragments, message
+// arrivals, agent-to-agent hops. Server-side each event carries its own ISO
+// timestamp as the cursor, so polling is stateless — send back the newest seen.
+const FLOOR_FEED_CAP = 80;
+
+let floorFeedCursor: string | null = null;
+let floorFeedEvents: any[] = [];
+/** session_id → agent_name, from the last desks payload — names a2a senders. */
+const floorSessionNames = new Map<string, string>();
+
+const FEED_KIND_LABEL: Record<string, string> = {
+  thinking: 'Thinking',
+  tool: 'Tool',
+  message: 'Message',
+  a2a: 'A2A',
+};
+
+function renderFloorFeed() {
+  const feed = $('#floor-feed');
+  if (!feed) return;
+  if (!floorFeedEvents.length) {
+    feed.innerHTML = '<div class="floor-feed-empty">Quiet for the last 2 minutes.</div>';
+    return;
+  }
+  feed.innerHTML = floorFeedEvents
+    .map((e) => {
+      const from =
+        e.kind === 'a2a' && e.from_session_id ? ` ← ${esc(floorSessionNames.get(e.from_session_id) || 'agent')}` : '';
+      const age = floorAge(Date.now() - Date.parse(e.at));
+      return `<div class="floor-event${e.room_id ? ' floor-event-link' : ''}" data-room="${esc(e.room_id || '')}">
+        <span class="ff-kind ff-${esc(e.kind)}">${esc(FEED_KIND_LABEL[e.kind] || e.kind)}</span>
+        <span class="ff-agent">${esc(e.agent_name)}${from}</span>
+        ${e.text ? `<span class="ff-text">${esc(e.text)}</span>` : ''}
+        <span class="ff-age">${esc(age)}</span>
+      </div>`;
+    })
+    .join('');
+}
+
+async function refreshFloorFeed() {
+  try {
+    const q = floorFeedCursor ? `?since=${encodeURIComponent(floorFeedCursor)}` : '';
+    const r = await authFetch(`/api/floor/feed${q}`);
+    if (!r.ok) return; // the desks still render; the feed just stays as it was
+    const data = await r.json();
+    floorFeedCursor = data?.cursor || floorFeedCursor;
+    const fresh: any[] = Array.isArray(data?.events) ? data.events : [];
+    if (fresh.length) {
+      // Newest first in the DOM; server sends oldest-first.
+      floorFeedEvents = fresh.reverse().concat(floorFeedEvents).slice(0, FLOOR_FEED_CAP);
+    }
+    renderFloorFeed();
+  } catch {
+    // Same rule as the grid: a stale feed beats a blanked one.
+  }
+}
+
 export async function refreshFloor() {
   const grid = $('#floor-grid');
   const counts = $('#floor-counts');
@@ -282,6 +346,7 @@ export async function refreshFloor() {
       return;
     }
     renderFloor(await r.json());
+    void refreshFloorFeed();
   } catch {
     // Leave the last good render in place on a transient failure — a floor that
     // blanks itself every time the network hiccups is worse than a stale one,
@@ -297,16 +362,16 @@ function renderFloor(data: any) {
   const counts = data?.counts || {};
 
   countsEl.innerHTML = ['stuck', 'working', 'idle', 'cold']
-    .map(
-      (k) =>
-        `<span class="floor-count floor-${k}"><b>${counts[k] ?? 0}</b> ${esc(FLOOR_LABEL[k])}</span>`,
-    )
+    .map((k) => `<span class="floor-count floor-${k}"><b>${counts[k] ?? 0}</b> ${esc(FLOOR_LABEL[k])}</span>`)
     .join('');
 
   if (!desks.length) {
     grid.innerHTML = '<div class="dash-empty">No sessions yet.</div>';
     return;
   }
+
+  floorSessionNames.clear();
+  for (const d of desks) floorSessionNames.set(d.session_id, d.agent_name);
 
   // Server sorts trouble-first; preserve that order rather than re-sorting here,
   // so the two never disagree about what matters most.
@@ -331,6 +396,11 @@ function openFloor() {
     $('#floor')!.hidden = false;
     $('#app')!.classList.add('in-dashboard'); // reuse the full-view mobile layout
     $('#app')!.classList.remove('in-room');
+    // Fresh open, fresh feed: the server's cold-start window (2 min) decides
+    // what an opening floor shows, not whatever an old cursor remembers.
+    floorFeedCursor = null;
+    floorFeedEvents = [];
+    renderFloorFeed();
     refreshFloor();
     if (floorTimer) clearInterval(floorTimer);
     floorTimer = setInterval(refreshFloor, FLOOR_POLL_MS);
@@ -363,8 +433,12 @@ function setJourneyPreset(preset?: any) {
   journeyFilter.value.kind = '';
   journeyFilter.value.skill = preset?.skill || '';
   if (journeyFilter.value.agent && !journeyAgents.has(journeyFilter.value.agent)) {
-    const known = typeof state.allAgents !== 'undefined' && state.allAgents.find?.((a: any) => a.id === journeyFilter.value.agent);
-    journeyAgents.set(journeyFilter.value.agent, preset?.agentName || (known && known.name) || journeyFilter.value.agent);
+    const known =
+      typeof state.allAgents !== 'undefined' && state.allAgents.find?.((a: any) => a.id === journeyFilter.value.agent);
+    journeyAgents.set(
+      journeyFilter.value.agent,
+      preset?.agentName || (known && known.name) || journeyFilter.value.agent,
+    );
   }
   renderJourneyFilterControls();
 }
@@ -404,7 +478,6 @@ export function toggleJourney() {
 }
 
 let journeyCursor: any = null;
-
 
 export async function refreshJourney(reset?: any) {
   if (!$('#journey-list')) return;
@@ -496,7 +569,7 @@ function noteJourneyAgents(events: any[]) {
 }
 
 export function renderJourneyFilterControls() {
-  const sel = ($('#journey-agent-filter')) as HTMLInputElement;
+  const sel = $('#journey-agent-filter') as HTMLInputElement;
   if (sel) {
     sel.innerHTML = '';
     sel.appendChild(new Option('All agents', ''));
@@ -667,7 +740,13 @@ function renderTopology(data?: any) {
     return svg.appendChild(ln);
   };
   for (const e of edges) {
-    const ln = edgeLine(cols.room + LABEL_W, yPx(roomY, e.room), cols.agent - NODE_X, yPx(agentY, e.agent), roomColor(e.room));
+    const ln = edgeLine(
+      cols.room + LABEL_W,
+      yPx(roomY, e.room),
+      cols.agent - NODE_X,
+      yPx(agentY, e.agent),
+      roomColor(e.room),
+    );
     ln.setAttribute('data-room', e.room);
     ln.setAttribute('data-agent', e.agent);
   }
@@ -918,7 +997,9 @@ export async function renderUsagePanel() {
     document.querySelectorAll('#usage-range .setting-option').forEach((b) => {
       b.addEventListener('click', () => {
         usageRangeDays = Number((b as HTMLElement).dataset.days) || 7;
-        document.querySelectorAll('#usage-range .setting-option').forEach((x: any) => x.classList.toggle('active', x === b));
+        document
+          .querySelectorAll('#usage-range .setting-option')
+          .forEach((x: any) => x.classList.toggle('active', x === b));
         renderUsagePanel();
       });
     });
@@ -985,7 +1066,8 @@ export async function refreshDashboard() {
     }
     snap = await res.json();
   } catch (err) {
-    $('#dash-graph')!.innerHTML = `<div class="dash-empty">Unable to load overview: ${esc((err as any)?.message)}</div>`;
+    $('#dash-graph')!.innerHTML =
+      `<div class="dash-empty">Unable to load overview: ${esc((err as any)?.message)}</div>`;
     return;
   }
   renderHealthStrip(snap);
@@ -1000,7 +1082,6 @@ export function syncManageSortIcon() {
   btn!.classList.toggle('active', on);
   btn.setAttribute('aria-pressed', on ? 'true' : 'false');
 }
-
 
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // The full-view stack: opening, closing and the back affordance.
@@ -1028,7 +1109,6 @@ export function wireViewsPanel(): void {
     renderJourneyFilterControls();
     applyJourneyFilters();
   });
-
 
   $('#matrix-canvas')?.addEventListener('click', async (e: any) => {
     const cell = (e.target as Element | null)?.closest<HTMLElement>('.matrix-cell');
@@ -1099,7 +1179,6 @@ export function wireViewChrome1(): void {
   $<HTMLButtonElement>('#floor-back')?.addEventListener('click', toggleFloor);
   $<HTMLButtonElement>('#floor-refresh')?.addEventListener('click', refreshFloor);
 
-
   // ── Journey (learning timeline) ─────────────────────────────────────────────
   // A day-grouped, newest-first feed of what each agent learned: proposed /
   // kept / discarded / revised / archived. Data: GET /api/learning/timeline
@@ -1168,15 +1247,7 @@ export function applyTopoFocus() {
   }
   const hl = computeTopoFocus(topoData.value, topoFocus.kind, topoFocus.id);
   const setFor = (k: string | null) =>
-    k === 'room'
-      ? hl.rooms
-      : k === 'agent'
-        ? hl.agents
-        : k === 'mcp'
-          ? hl.mcps
-          : k === 'skill'
-            ? hl.skills
-            : hl.models;
+    k === 'room' ? hl.rooms : k === 'agent' ? hl.agents : k === 'mcp' ? hl.mcps : k === 'skill' ? hl.skills : hl.models;
   svg.querySelectorAll('.topo-node').forEach((g: any) => {
     const on = setFor(g.getAttribute('data-kind')).has(g.getAttribute('data-node-id') ?? '');
     g.classList.toggle('topo-dimmed', !on);
@@ -1187,8 +1258,8 @@ export function applyTopoFocus() {
       : ln.hasAttribute('data-mcp')
         ? hl.agents.has(ln.getAttribute('data-agent')) && hl.mcps.has(ln.getAttribute('data-mcp'))
         : ln.hasAttribute('data-model')
-        ? hl.agents.has(ln.getAttribute('data-agent')) && hl.models.has(ln.getAttribute('data-model'))
-        : hl.rooms.has(ln.getAttribute('data-room')) && hl.agents.has(ln.getAttribute('data-agent'));
+          ? hl.agents.has(ln.getAttribute('data-agent')) && hl.models.has(ln.getAttribute('data-model'))
+          : hl.rooms.has(ln.getAttribute('data-room')) && hl.agents.has(ln.getAttribute('data-agent'));
     ln.classList.toggle('topo-dimmed', !on);
   });
 }
@@ -1319,8 +1390,6 @@ export function computeTopoFocus(data: any, kind: string, id: string) {
 
 // routing skill isn't installed or the viewer isn't the owner.
 
-
-
 export function renderMetrics(snap: any) {
   const el = $('#dash-graph');
   const num = (v: any) => esc(String(Number(v) || 0));
@@ -1443,14 +1512,17 @@ export function renderMetrics(snap: any) {
   el!.innerHTML = topRow + systemCards + breakdownRow;
   // Wire the clickable cards here rather than inline onclick= — inline handlers
   // force these functions global and break under a stricter CSP.
-  const details: Record<string, () => Promise<void>> = { agents: showAgentsDetail, messages: showMessagesDetail, containers: showContainersDetail };
+  const details: Record<string, () => Promise<void>> = {
+    agents: showAgentsDetail,
+    messages: showMessagesDetail,
+    containers: showContainersDetail,
+  };
   el!.querySelectorAll('[data-detail]').forEach((card) => {
     card.addEventListener('click', details[(card as HTMLElement).dataset.detail ?? '']);
   });
 }
 
 // ── Dashboard detail panels ───────────────────────────────────────────────
-
 
 export function hideDetail() {
   $('#dash-detail')!.hidden = true;
@@ -1515,7 +1587,12 @@ export function closeOverflowMenu() {
 
 export function closeTopDetailAside() {
   const layers: Array<[string, () => void]> = [
-    ['members-panel', () => { $('#members-panel')!.hidden = true; }],
+    [
+      'members-panel',
+      () => {
+        $('#members-panel')!.hidden = true;
+      },
+    ],
     ['route-detail', closeRouteDetail],
     ['model-detail', closeModelDetail],
     ['agent-detail', closeAgentDetail],
