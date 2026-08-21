@@ -14,7 +14,14 @@
 // ordinary imports as the remaining features come out.
 import { $, lucide, lucideEl, esc } from '../core/dom.js';
 import { applyMarketplaceNav } from './thinking.js';
-import { cloudflaredInstallActive, codexInstallActive, opencodeGateFromServer, opencodeGatePoll, opencodeInstallActive, tailscaleInstallActive } from './installer-state.js';
+import {
+  cloudflaredInstallActive,
+  codexInstallActive,
+  opencodeGateFromServer,
+  opencodeGatePoll,
+  opencodeInstallActive,
+  tailscaleInstallActive,
+} from './installer-state.js';
 import { state } from '../core/state.js';
 import { createApp, nextTick } from 'vue';
 import WizardOllamaModels from './WizardOllamaModels.vue';
@@ -25,9 +32,7 @@ import { authFetch, apiJson, setAuthToken } from '../core/api.js';
 import { getTtsReadAloudEnabled, setTtsReadAloudEnabled, stopTts } from './voice.js';
 // Injected until phase 1e; now that installers is a module these are ordinary
 // imports. Each extraction turns a slice of the injection back into real edges.
-import {
-  pollTtsInstall, runTtsInstall, runSttInstall, pollSttInstall, runCodexInstall,
-} from './installers.js';
+import { pollTtsInstall, runTtsInstall, runSttInstall, pollSttInstall, runCodexInstall } from './installers.js';
 
 /**
  * What this module needs from legacy. Generated from its own `deps.*` uses and
@@ -169,7 +174,11 @@ export async function refreshWizardCredState() {
   const codexChip = $('#wizard-chip-codex');
   if (codexChip) {
     codexChip.hidden = false;
-    codexChip.textContent = s.codex?.connected ? '✓ connected' : wizardCodexAvailable ? 'not connected' : 'not installed';
+    codexChip.textContent = s.codex?.connected
+      ? '✓ connected'
+      : wizardCodexAvailable
+        ? 'not connected'
+        : 'not installed';
     codexChip.classList.toggle('ok', !!s.codex?.connected);
   }
   // The Codex radio is always selectable (no dead-end grey): selecting it opens
@@ -252,7 +261,7 @@ async function wizardCheckLocalOllama() {
     if (!r.ok) return;
     const st = await r.json();
     if (st.reachable) {
-      const url = ($('#wizard-ollama-url')) as HTMLInputElement;
+      const url = $('#wizard-ollama-url') as HTMLInputElement;
       if (url && !(url as HTMLInputElement).value) (url as HTMLInputElement).value = 'http://localhost:11434';
       $('#wizard-ollama-install-row')!.hidden = true;
       $('#wizard-ollama-dl-row')!.hidden = false;
@@ -356,11 +365,7 @@ async function wizardProbeOllama() {
     // Probe and see no feedback that it found anything". Errors always had a
     // line here; success now does too.
     const n = wizardOllamaModels.value.length;
-    wizardSetStatus(
-      '#wizard-ollama-status',
-      `Found ${n} model${n === 1 ? '' : 's'} at ${body.endpoint || url}`,
-      'ok',
-    );
+    wizardSetStatus('#wizard-ollama-status', `Found ${n} model${n === 1 ? '' : 's'} at ${body.endpoint || url}`, 'ok');
     // …and show them. nextTick first: the radios mount on the next render, and
     // scrolling before that measures an empty list.
     await nextTick();
@@ -395,9 +400,7 @@ export async function wizardSelectOllamaModel(modelId?: any) {
       id =
         (Array.isArray(roster) ? roster : []).find(
           (m) =>
-            m.kind === 'ollama' &&
-            String(m.endpoint || '').replace(/\/+$/, '') === endpoint &&
-            m.model_id === modelId,
+            m.kind === 'ollama' && String(m.endpoint || '').replace(/\/+$/, '') === endpoint && m.model_id === modelId,
         )?.id ?? null;
     } catch {
       /* no roster read — fall through to create */
@@ -407,35 +410,17 @@ export async function wizardSelectOllamaModel(modelId?: any) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          models: [{ name: `${host} · ${modelId}`, kind: wizardOllamaProbe.kind, endpoint: wizardOllamaProbe.endpoint, model_id: modelId }],
+          models: [
+            {
+              name: `${host} · ${modelId}`,
+              kind: wizardOllamaProbe.kind,
+              endpoint: wizardOllamaProbe.endpoint,
+              model_id: modelId,
+            },
+          ],
         }),
       });
       const out = await r.json().catch(() => ({}));
-      // JOIN WHAT WE CREATED. The WS echo only reaches clients whose tracked
-      // room matches the broadcast's (`c.room_id === roomId` in state.ts), so a
-      // client that never joined gets the unread signal instead of the message.
-      // The symptom is precise and was reported as such: the first message AND
-      // its reply are invisible until you switch rooms and back, because that
-      // finally issues a join and loads history. The room-create modal has
-      // always joined here; this path did not.
-      if (r.ok && out?.room?.id) deps.joinRoom(out.room.id, out.room.name);
-      // Make the chosen engine the install's default for agents created LATER,
-      // by any path — the per-agent pin above only covers the one this step
-      // creates. Ollama is excluded: it is a workspace default MODEL, and the
-      // harness is derived from it elsewhere. Best-effort: a wizard that
-      // finished should not fail on this, and the server refuses a default
-      // nobody can authenticate anyway.
-      if (wizardEngine === 'claude' || wizardEngine === 'codex' || wizardEngine === 'grok') {
-        try {
-          await authFetch('/api/workspace-provider', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-            body: JSON.stringify({ provider: wizardEngine }),
-          });
-        } catch {
-          /* the agent just created is still pinned correctly */
-        }
-      }
       const created = out.created?.[0];
       if (!r.ok || !created) {
         wizardSetStatus('#wizard-ollama-status', out.error || out.failed?.[0]?.error || 'Add failed.', 'err');
@@ -486,7 +471,7 @@ let wizardRecLoaded = false;
 async function wizardLoadRecommendation() {
   if (wizardRecLoaded) return;
   const hint = $('#wizard-ollama-rec');
-  const input = ($('#wizard-ollama-dl-model')) as HTMLInputElement;
+  const input = $('#wizard-ollama-dl-model') as HTMLInputElement;
   try {
     const r = await authFetch('/api/ollama/recommend');
     if (!r.ok) return;
@@ -544,7 +529,7 @@ function wizardEngineConnected() {
 function showWizardStep(i?: any) {
   wizardStep = Math.max(0, Math.min(WIZARD_STEPS - 1, i));
   document.querySelectorAll('.wizard-step').forEach((s) => {
-      const step = s as HTMLElement;
+    const step = s as HTMLElement;
     step.hidden = Number(step.dataset.step) !== wizardStep;
   });
   if (wizardStep === 0) syncWizardEngineBodies();
@@ -564,7 +549,7 @@ function showWizardStep(i?: any) {
 }
 
 export function refreshWizardNextGate() {
-  const btn = ($('#wizard-next')!) as HTMLInputElement;
+  const btn = $('#wizard-next')! as HTMLInputElement;
   if (!btn) return;
   if (opencodeInstallActive.value || opencodeGateFromServer.value) {
     (btn as HTMLInputElement).disabled = true;
@@ -663,7 +648,7 @@ async function wizardProbeHttps() {
 }
 
 async function wizardEnableHttps() {
-  const btn = ($('#wizard-https-btn')!) as HTMLInputElement;
+  const btn = $('#wizard-https-btn')! as HTMLInputElement;
   (btn as HTMLInputElement).disabled = true;
   const restore = btn.textContent;
   btn.textContent = 'Enabling…';
@@ -672,7 +657,11 @@ async function wizardEnableHttps() {
     const data = await r.json().catch(() => ({}));
     if (r.ok && data.ok) {
       btn.hidden = true;
-      wizardSetStatus('#wizard-https-status', data.url ? `HTTPS on — reach this at ${data.url}` : 'HTTPS enabled.', 'ok');
+      wizardSetStatus(
+        '#wizard-https-status',
+        data.url ? `HTTPS on — reach this at ${data.url}` : 'HTTPS enabled.',
+        'ok',
+      );
       // A URL the operator is meant to OPEN should be a link, not text to
       // retype. Same escape-then-innerHTML shape as the hintUrl branch below;
       // the host span is a .cred-hint, which is the only anchor theming in the
@@ -709,7 +698,8 @@ async function wizardEnableHttps() {
 // Show the body for the selected access radio (accordion, like step 0). When
 // Tailscale is picked, probe for the one-click HTTPS affordance.
 function syncWizardAccessBodies() {
-  const sel = (document.querySelector('input[name="wizard-access"]:checked') as HTMLInputElement | null)?.value || 'bearer';
+  const sel =
+    (document.querySelector('input[name="wizard-access"]:checked') as HTMLInputElement | null)?.value || 'bearer';
   document.querySelectorAll('.wizard-engine-body[data-access]').forEach((b) => {
     (b as HTMLElement).hidden = (b as HTMLElement).dataset.access !== sel;
   });
@@ -743,7 +733,7 @@ async function renderWizardDictation() {
     return;
   }
   section.hidden = false;
-  const enable = ($('#wizard-stt-enable')) as HTMLInputElement;
+  const enable = $('#wizard-stt-enable') as HTMLInputElement;
   if (enable) (enable as HTMLInputElement).checked = !!st.enabled;
   if (!wizardSttWired) {
     wizardSttWired = true;
@@ -789,11 +779,9 @@ async function renderWizardDictation() {
   const installed = !!st.installed;
   // Once installed, reflect the live backend; otherwise the operator's pick.
   const backend = installed ? st.provider || wizardSttBackend : wizardSttBackend;
-  document
-    .querySelectorAll('#wizard-stt-backend input[type="radio"]')
-    .forEach((b) => {
-      (b as HTMLInputElement).checked = (b as HTMLInputElement).value === backend;
-    });
+  document.querySelectorAll('#wizard-stt-backend input[type="radio"]').forEach((b) => {
+    (b as HTMLInputElement).checked = (b as HTMLInputElement).value === backend;
+  });
   const local = backend === 'local';
   const badge = $('#wizard-stt-installed');
   if (badge) badge.hidden = !installed;
@@ -811,9 +799,9 @@ async function renderWizardDictation() {
 
 export async function renderWizardFeatures() {
   void renderWizardDictation(); // independent owner surface; renders alongside TTS
-  const mkt = ($('#wizard-marketplace')) as HTMLInputElement;
+  const mkt = $('#wizard-marketplace') as HTMLInputElement;
   if (mkt) mkt.checked = state.marketplaceEnabled === true; // disabled by default — opt-in
-  const ttsDefault = ($('#wizard-tts-default')) as HTMLInputElement;
+  const ttsDefault = $('#wizard-tts-default') as HTMLInputElement;
   if (ttsDefault) (ttsDefault as HTMLInputElement).checked = getTtsReadAloudEnabled();
   if (!wizardTtsWired) {
     wizardTtsWired = true;
@@ -857,12 +845,12 @@ export async function renderWizardFeatures() {
     });
   }
   // Reflect current state on (re)render.
-  const alBox = ($('#wizard-autolearn')) as HTMLInputElement;
+  const alBox = $('#wizard-autolearn') as HTMLInputElement;
   if (alBox) alBox.checked = state.learningMasterEnabled;
   const row = $('#wizard-tts-install-row');
   const badge = $('#wizard-tts-installed');
   const progress = $('#wizard-tts-progress');
-  const btn = ($('#wizard-tts-install')) as HTMLInputElement;
+  const btn = $('#wizard-tts-install') as HTMLInputElement;
   const ttsOn = !!ttsDefault?.checked;
   let st = null;
   try {
@@ -905,7 +893,8 @@ let wizardAuthInfo: any = null; // last /api/webchat/auth snapshot — gates the
 // or a reverse proxy configured. Bearer is the current method, always valid.
 // Re-fetches auth so a just-completed sign-in / restart is picked up immediately.
 async function wizardAccessReady() {
-  const sel = (document.querySelector('input[name="wizard-access"]:checked') as HTMLInputElement | null)?.value || 'bearer';
+  const sel =
+    (document.querySelector('input[name="wizard-access"]:checked') as HTMLInputElement | null)?.value || 'bearer';
   // Bearer (the bootstrap default) and Localhost (loopback, auto-owner) need
   // nothing configured to be usable — always ready to advance.
   if (sel === 'bearer' || sel === 'localhost') return true;
@@ -925,7 +914,7 @@ async function wizardAccessReady() {
 }
 
 async function runTailscaleInstall() {
-  const btn = ($('#wizard-ts-install-btn')) as HTMLInputElement;
+  const btn = $('#wizard-ts-install-btn') as HTMLInputElement;
   const log = $('#wizard-ts-install-log')!;
   if (log) {
     log.hidden = false;
@@ -936,7 +925,10 @@ async function runTailscaleInstall() {
     btn.textContent = 'Installing…';
   }
   try {
-    const res = await authFetch('/api/webchat/tailscale/install', { method: 'POST', headers: { 'X-Webchat-CSRF': '1' } });
+    const res = await authFetch('/api/webchat/tailscale/install', {
+      method: 'POST',
+      headers: { 'X-Webchat-CSRF': '1' },
+    });
     if (!res.ok && res.status !== 202) {
       const err = await res.json().catch(() => ({}));
       if (log) log.textContent = err.error || 'Install failed to start.';
@@ -960,7 +952,7 @@ async function runTailscaleInstall() {
 async function pollTailscaleInstall() {
   if (tailscaleInstallActive.value) return;
   tailscaleInstallActive.value = true;
-  const btn = ($('#wizard-ts-install-btn')) as HTMLInputElement;
+  const btn = $('#wizard-ts-install-btn') as HTMLInputElement;
   const log = $('#wizard-ts-install-log')!;
   if (log) log.hidden = false;
   if (btn) (btn as HTMLInputElement).disabled = true;
@@ -1026,7 +1018,7 @@ async function runCloudflaredBinaryInstall() {
 async function runCloudflaredConnect() {
   const btn = $('#wizard-cf-connect-btn');
   const log = $('#wizard-cf-install-log')!;
-  const tokenEl = ($('#wizard-cf-token')) as HTMLInputElement;
+  const tokenEl = $('#wizard-cf-token') as HTMLInputElement;
   const token = (tokenEl?.value || '').trim();
   if (!token) {
     showToast('Paste the tunnel token first', { kind: 'error' });
@@ -1172,7 +1164,7 @@ async function renderWizardAccess() {
   if (!wizardAccessDefaulted && info) {
     wizardAccessDefaulted = true;
     if (localhostOnly) {
-      const r = (document.querySelector('input[name="wizard-access"][value="localhost"]')) as HTMLInputElement;
+      const r = document.querySelector('input[name="wizard-access"][value="localhost"]') as HTMLInputElement;
       if (r) r.checked = true;
     }
   }
@@ -1310,7 +1302,7 @@ async function wizardGenerateBearer() {
     // sends no token and 401s on everything (a self-inflicted lockout).
     setAuthToken(data.token);
     sessionStorage.setItem('nanoclaw-token', data.token);
-    const field = ($('#wizard-bearer-token')) as HTMLInputElement;
+    const field = $('#wizard-bearer-token') as HTMLInputElement;
     if (field) field.value = data.token;
     if ($('#wizard-bearer-result')) $('#wizard-bearer-result')!.hidden = false;
     if ($('#wizard-bearer-gen-row')) $('#wizard-bearer-gen-row')!.hidden = true;
@@ -1426,7 +1418,9 @@ function wireWizard() {
     // live — Tailscale signed in, or a reverse proxy configured. Bearer (the
     // current method) is always valid; Skip bypasses. Detected by the step's own
     // radios, so it holds wherever the Access step sits in the order.
-    const onAccessStep = !!document.querySelector(`.wizard-step[data-step="${wizardStep}"] input[name="wizard-access"]`);
+    const onAccessStep = !!document.querySelector(
+      `.wizard-step[data-step="${wizardStep}"] input[name="wizard-access"]`,
+    );
     if (onAccessStep && !(await wizardAccessReady())) {
       const sel = (document.querySelector('input[name="wizard-access"]:checked') as HTMLInputElement | null)?.value;
       showToast(
@@ -1453,8 +1447,8 @@ function wireWizard() {
           : wizardEngine === 'grok'
             ? 'authenticate Grok from a terminal (the command is on the card), then reload'
             : wizardEngine === 'codex' && !wizardCodexAvailable
-            ? 'install then connect Codex'
-            : `connect ${wizardEngine === 'codex' ? 'Codex' : 'Claude'}`;
+              ? 'install then connect Codex'
+              : `connect ${wizardEngine === 'codex' ? 'Codex' : 'Claude'}`;
       showToast(`Finish this engine first — ${how} above.`, { kind: 'info', timeout: 6000 });
       return;
     }
@@ -1462,7 +1456,8 @@ function wireWizard() {
   });
   $('#wizard-back')?.addEventListener('click', () => showWizardStep(wizardStep - 1));
   $('#wizard-skip')?.addEventListener('click', () => {
-    if (wizardStep === WIZARD_STEPS - 1) finishWizard(); // skip = close without creating
+    if (wizardStep === WIZARD_STEPS - 1)
+      finishWizard(); // skip = close without creating
     else showWizardStep(wizardStep + 1);
   });
   $('#wizard-close')?.addEventListener('click', () => finishWizard());
@@ -1588,7 +1583,6 @@ function wireWizard() {
     $('#wizard-ollama-setup')!.hidden = false;
   });
 
-
   // Ollama panel: one-click rootless install when nothing answers locally.
   $('#wizard-ollama-install')?.addEventListener('click', async () => {
     const btn = $('#wizard-ollama-install');
@@ -1680,7 +1674,9 @@ async function wizardCreateAndFinish() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
       body: JSON.stringify({
-        armed: (document.querySelector('input[name="wizard-access"]:checked') as HTMLInputElement | null)?.value === 'tailscale',
+        armed:
+          (document.querySelector('input[name="wizard-access"]:checked') as HTMLInputElement | null)?.value ===
+          'tailscale',
       }),
     });
   } catch {
@@ -1719,12 +1715,36 @@ async function wizardCreateAndFinish() {
       // No per-agent model assignment here: an Ollama engine is the WORKSPACE
       // default (set when the models were added), so the new agent — like every
       // unassigned agent — inherits it automatically.
+      // JOIN WHAT WE CREATED. The WS echo only reaches clients whose tracked
+      // room matches the broadcast's (`c.room_id === roomId` in state.ts), so a
+      // client that never joined gets the unread signal instead of the message.
+      // (Review note: this hunk and the provider default below originally landed
+      // in wizardSelectOllamaModel — a wrong-anchor patch apply against a shape
+      // both functions share — where neither condition could ever be true.)
+      if (out?.room?.id) deps.joinRoom(out.room.id, out.room.name);
       wizardSetStatus('#wizard-room-status', 'Created. Finishing…', 'ok');
       await finishWizard();
       // A bearer token generated earlier is written but inert until the host
       // reloads .env — fire that restart now, after onboarding is marked done.
       if (wizardBearerPendingRestart) await wizardTriggerRestart();
       if (typeof deps.fetchAgents === 'function') deps.fetchAgents().catch(() => {});
+      // Make the chosen engine the install's default for agents created LATER,
+      // by any path — the per-agent pin above only covers the one this step
+      // creates. Ollama is excluded: it is a workspace default MODEL, and the
+      // harness is derived from it elsewhere. Best-effort, and deliberately
+      // LAST: a changed default schedules a host restart on a short fuse, so
+      // everything the wizard still needed to do has already happened.
+      if (wizardEngine === 'claude' || wizardEngine === 'codex' || wizardEngine === 'grok') {
+        try {
+          await authFetch('/api/workspace-provider', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+            body: JSON.stringify({ provider: wizardEngine }),
+          });
+        } catch {
+          /* the agent just created is still pinned correctly */
+        }
+      }
     } finally {
       done();
     }
