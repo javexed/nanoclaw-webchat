@@ -78,6 +78,7 @@ import {
   rOllamaRecommendGet,
 } from './server/routes-ollama.js';
 import { buildFloor } from './server/floor.js';
+import { readFloorEvents } from './server/floor-feed.js';
 import { buildOverview } from './server/overview.js';
 import {
   rAgentsGet,
@@ -1422,6 +1423,16 @@ async function rOverviewGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
 async function rFloorGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   return json(res, 200, await buildFloor(userId));
+}
+
+// The desks say WHAT each session is; the feed says what it is DOING. Same
+// scope rule as the floor itself (readFloorEvents filters per caller), and the
+// cursor keeps the server stateless — the client sends back the newest
+// timestamp it has seen.
+async function rFloorFeedGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res, url, userId } = ctx;
+  const since = url.searchParams.get('since') || undefined;
+  return json(res, 200, await readFloorEvents(userId, since));
 }
 
 // ── UserCreds Codex browser-mint: connect a ChatGPT subscription without a terminal
@@ -2930,6 +2941,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'PUT', path: '/api/me/handle', guards: ['csrf'], h: rMeHandlePut },
   { method: 'GET', path: '/api/overview', h: rOverviewGet },
   { method: 'GET', path: '/api/floor', h: rFloorGet },
+  { method: 'GET', path: '/api/floor/feed', h: rFloorFeedGet },
   { method: 'GET', path: '/api/rooms', h: rRoomsGet },
   { method: 'POST', path: '/api/rooms', guards: ['csrf', 'owner'], h: rRoomsPost },
   { method: 'DELETE', path: RE_ROOM_ID, guards: ['owner', 'csrf'], h: rRoomIdDelete, audit: 'room.delete' },
