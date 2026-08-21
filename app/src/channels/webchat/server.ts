@@ -883,7 +883,7 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
   assertBearerTokenStrength();
 
   initWebPush();
-  warnIfNoPermissionsModule();
+  void warnIfNoPermissionsModule();
   // Re-establish the audit forwarder from the persisted target, so a restart
   // does not silently turn forwarding off. Invalid persisted value → off, and
   // the health status says so; it cannot brick boot.
@@ -1832,7 +1832,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
         });
       }
       await setWorkspaceDefaultCredential(realOnecliAdmin, provider, token, 'oauth_token');
-      afterWorkspaceCredentialSet(provider, priorOauth, true);
+      await afterWorkspaceCredentialSet(provider, priorOauth, true);
       return json(res, 200, { ok: true });
     }
     const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
@@ -1842,7 +1842,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       return json(res, 400, { error: 'Expected an Anthropic API key (sk-ant-…)' });
     }
     await setWorkspaceDefaultCredential(realOnecliAdmin, provider, apiKey, 'api_key');
-    afterWorkspaceCredentialSet(provider, priorOauth, false);
+    await afterWorkspaceCredentialSet(provider, priorOauth, false);
     return json(res, 200, { ok: true });
   } catch (err) {
     log.error('Workspace default credential failed', {
@@ -1892,7 +1892,7 @@ async function rWsCredMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void
     const priorOauth = priorRow?.status === 'active' && priorRow.cred_type === 'oauth_token';
     const token = await mintClaudeToken(userId, body.sessionId, body.code);
     await setWorkspaceDefaultCredential(realOnecliAdmin, 'claude', token, 'oauth_token');
-    afterWorkspaceCredentialSet('claude', priorOauth, true);
+    await afterWorkspaceCredentialSet('claude', priorOauth, true);
     return json(res, 200, { ok: true });
   } catch (err) {
     return json(res, 502, { error: err instanceof Error ? err.message : String(err) });
@@ -1937,7 +1937,7 @@ async function rWsCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<voi
     const priorOauth = priorRow?.status === 'active' && priorRow.cred_type === 'oauth_token';
     const authJson = await finishCodexMint(userId, body.sessionId);
     await setWorkspaceDefaultCredential(realOnecliAdmin, 'codex', authJson, 'oauth_token');
-    afterWorkspaceCredentialSet('codex', priorOauth, true);
+    await afterWorkspaceCredentialSet('codex', priorOauth, true);
     return json(res, 200, { ok: true });
   } catch (err) {
     return json(res, 502, { error: err instanceof Error ? err.message : String(err) });
@@ -2701,7 +2701,7 @@ async function rSttConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
   const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
   if (method === 'GET') {
-    const base = { enabled: sttEnabled(), cleanup: getSttCleanupModelId() !== null };
+    const base = { enabled: sttEnabled(), cleanup: (await getSttCleanupModelId()) !== null };
     return json(
       res,
       200,
@@ -2962,7 +2962,13 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/overview', h: rOverviewGet },
   { method: 'GET', path: '/api/floor', h: rFloorGet },
   { method: 'GET', path: '/api/floor/feed', h: rFloorFeedGet },
-  { method: 'POST', path: RE_FLOOR_SESSION_RESTART, guards: ['csrf'], h: rFloorSessionRestartPost },
+  {
+    method: 'POST',
+    path: RE_FLOOR_SESSION_RESTART,
+    guards: ['csrf'],
+    h: rFloorSessionRestartPost,
+    audit: 'session.restart',
+  },
   { method: 'GET', path: '/api/rooms', h: rRoomsGet },
   { method: 'POST', path: '/api/rooms', guards: ['csrf', 'owner'], h: rRoomsPost },
   { method: 'DELETE', path: RE_ROOM_ID, guards: ['owner', 'csrf'], h: rRoomIdDelete, audit: 'room.delete' },
@@ -3642,17 +3648,23 @@ async function restartGroupsForWorkspaceCredChange(
  * would silently keep agents on the local model. Clear the default model, then
  * respawn the affected groups (the respawn also applies the OAuth sentinel).
  */
-function afterWorkspaceCredentialSet(provider: 'claude' | 'codex', priorOauth: boolean, nowOauth: boolean): void {
+async function afterWorkspaceCredentialSet(
+  provider: 'claude' | 'codex',
+  priorOauth: boolean,
+  nowOauth: boolean,
+): Promise<void> {
   // The default model is always an ollama-kind (claude-family) model, so it only
   // conflicts with a claude engine — a codex credential leaves it untouched.
-  const clearModel = provider === 'claude' && getDefaultModelId() !== null;
+  // (Pre-review this compared the PROMISE to null — always true — so the claude
+  // path unconditionally cleared the model and the restart branch never ran.)
+  const clearModel = provider === 'claude' && (await getDefaultModelId()) !== null;
   if (clearModel) {
-    setDefaultModelId(null);
+    await setDefaultModelId(null);
     // Rewrites settings.json (drops the ollama env) + respawns unassigned
     // claude-family groups; the respawn also picks up the new OAuth sentinel.
-    refreshUnassignedGroupsForDefaultModel(`Workspace engine set to ${provider}`);
+    await refreshUnassignedGroupsForDefaultModel(`Workspace engine set to ${provider}`);
   } else {
-    restartGroupsForWorkspaceCredChange(provider, priorOauth, nowOauth);
+    await restartGroupsForWorkspaceCredChange(provider, priorOauth, nowOauth);
   }
 }
 
