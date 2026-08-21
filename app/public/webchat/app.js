@@ -15054,6 +15054,9 @@ var floorFeedCursor = null;
 var floorFeedEvents = [];
 /** session_id → agent_name, from the last desks payload — names a2a senders. */
 var floorSessionNames = /* @__PURE__ */ new Map();
+/** Last desks payload, for the popover; restricted gates the Restart action. */
+var floorLastDesks = [];
+var floorRestricted = true;
 var FEED_KIND_LABEL = {
 	thinking: "Thinking",
 	tool: "Tool",
@@ -15078,6 +15081,88 @@ function renderFloorFeed() {
       </div>`;
 	}).join("");
 }
+var deskPopoverEl = null;
+function closeDeskPopover() {
+	deskPopoverEl?.remove();
+	deskPopoverEl = null;
+	document.removeEventListener("click", onDocClickCloseDeskPopover, true);
+	document.removeEventListener("keydown", onEscCloseDeskPopover, true);
+}
+function onDocClickCloseDeskPopover(e) {
+	if (deskPopoverEl && !deskPopoverEl.contains(e.target)) closeDeskPopover();
+}
+function onEscCloseDeskPopover(e) {
+	if (e.key === "Escape") closeDeskPopover();
+}
+function showDeskPopover(sessionId, anchor, onOpenRoom) {
+	closeDeskPopover();
+	const d = floorLastDesks.find((x) => x.session_id === sessionId);
+	if (!d) return;
+	const pop = document.createElement("div");
+	pop.className = "floor-popover";
+	pop.setAttribute("role", "dialog");
+	const canRestart = d.state === "stuck" && !floorRestricted;
+	pop.innerHTML = `
+    <div class="floor-pop-name">${esc(d.agent_name)}</div>
+    <div class="floor-pop-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${d.last_kind ? ` · ${esc(d.last_kind)}` : ""}${d.idle_ms != null ? ` · ${esc(floorAge(d.idle_ms))}` : ""}</div>
+    ${d.room_name ? `<div class="floor-pop-meta">${esc(d.room_name)}</div>` : ""}
+    <div class="floor-pop-id">${esc(d.session_id)}</div>
+    <div class="floor-pop-actions">
+      ${d.room_id ? "<button class=\"btn btn-ghost\" data-act=\"room\">Open room</button>" : ""}
+      ${canRestart ? "<button class=\"btn btn-danger\" data-act=\"restart\">Restart</button>" : ""}
+    </div>`;
+	pop.querySelector("[data-act=\"room\"]")?.addEventListener("click", () => {
+		closeDeskPopover();
+		onOpenRoom(d.room_id);
+	});
+	pop.querySelector("[data-act=\"restart\"]")?.addEventListener("click", async (e) => {
+		const btn = e.currentTarget;
+		btn.disabled = true;
+		try {
+			if ((await authFetch(`/api/floor/sessions/${encodeURIComponent(sessionId)}/restart`, { method: "POST" })).ok) {
+				closeDeskPopover();
+				refreshFloor();
+			} else btn.disabled = false;
+		} catch {
+			btn.disabled = false;
+		}
+	});
+	document.body.appendChild(pop);
+	const r = anchor.getBoundingClientRect();
+	const pw = pop.offsetWidth;
+	pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pw - 8, r.left))}px`;
+	pop.style.top = `${Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 4)}px`;
+	deskPopoverEl = pop;
+	document.addEventListener("click", onDocClickCloseDeskPopover, true);
+	document.addEventListener("keydown", onEscCloseDeskPopover, true);
+}
+function drawEdge(fromSession, toSession) {
+	if (!fromSession) return;
+	if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+	const grid = $("#floor-grid");
+	if (!grid) return;
+	const a = grid.querySelector(`.floor-desk[data-session="${CSS.escape(fromSession)}"]`);
+	const b = grid.querySelector(`.floor-desk[data-session="${CSS.escape(toSession)}"]`);
+	if (!a || !b) return;
+	const gr = grid.getBoundingClientRect();
+	const ar = a.getBoundingClientRect();
+	const br = b.getBoundingClientRect();
+	let svg = grid.querySelector(".floor-edges");
+	if (!svg) {
+		svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		svg.setAttribute("class", "floor-edges");
+		grid.appendChild(svg);
+	}
+	svg.setAttribute("viewBox", `0 0 ${gr.width} ${gr.height}`);
+	const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+	line.setAttribute("x1", String(ar.left - gr.left + ar.width / 2));
+	line.setAttribute("y1", String(ar.top - gr.top + ar.height / 2));
+	line.setAttribute("x2", String(br.left - gr.left + br.width / 2));
+	line.setAttribute("y2", String(br.top - gr.top + br.height / 2));
+	line.setAttribute("class", "floor-edge");
+	svg.appendChild(line);
+	setTimeout(() => line.remove(), 1600);
+}
 function pulseDesk(sessionId) {
 	if (!sessionId) return;
 	const desk = document.querySelector(`.floor-desk[data-session="${CSS.escape(sessionId)}"]`);
@@ -15097,7 +15182,10 @@ async function refreshFloorFeed() {
 			floorFeedEvents = fresh.reverse().concat(floorFeedEvents).slice(0, FLOOR_FEED_CAP);
 			for (const e of fresh) {
 				pulseDesk(e.session_id);
-				if (e.kind === "a2a") pulseDesk(e.from_session_id);
+				if (e.kind === "a2a") {
+					pulseDesk(e.from_session_id);
+					drawEdge(e.from_session_id, e.session_id);
+				}
 			}
 		}
 		renderFloorFeed();
@@ -15125,6 +15213,8 @@ function renderFloor(data) {
 	const countsEl = $("#floor-counts");
 	const desks = Array.isArray(data?.desks) ? data.desks : [];
 	const counts = data?.counts || {};
+	floorLastDesks = desks;
+	floorRestricted = data?.restricted !== false;
 	countsEl.innerHTML = [
 		"stuck",
 		"working",
@@ -15165,6 +15255,7 @@ function openFloor() {
 	});
 }
 function teardownFloor() {
+	closeDeskPopover();
 	floorActive = false;
 	if (floorTimer) {
 		clearInterval(floorTimer);
@@ -22571,10 +22662,14 @@ wireMobileBack();
 wireViewChrome1();
 $("#journey-back")?.addEventListener("click", toggleJourney);
 $("#floor-grid")?.addEventListener("click", (e) => {
-	const roomId = (e.target?.closest(".floor-desk"))?.dataset.room;
-	if (!roomId) return;
-	toggleFloor();
-	joinRoom(roomId);
+	const desk = e.target?.closest(".floor-desk");
+	const sessionId = desk?.dataset.session;
+	if (!desk || !sessionId) return;
+	e.stopPropagation();
+	showDeskPopover(sessionId, desk, (roomId) => {
+		toggleFloor();
+		joinRoom(roomId);
+	});
 });
 $("#floor-feed")?.addEventListener("click", (e) => {
 	const roomId = (e.target?.closest(".floor-event"))?.dataset.room;
