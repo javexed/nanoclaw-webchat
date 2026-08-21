@@ -105,6 +105,7 @@
  "on:floor-refresh:click",
  "on:journey-back:click",
  "on:floor-grid:click",
+ "on:floor-feed:click",
  "on:journey-refresh:click",
  "on:journey-more:click",
  "on:journey-agent-filter:change",
