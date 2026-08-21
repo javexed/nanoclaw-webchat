@@ -313,7 +313,7 @@ describe('setWorkspaceDefaultAnthropic (owner default → single unassigned all-
   it('re-points a selective agent pinned to the legacy secret onto the new default (no stranding)', async () => {
     const { admin, secrets, seedGroupAgent } = fakeAdmin();
     // A base group agent left in SELECTIVE mode (e.g. leftover from an earlier
-    // per-agent BYOK setup) pinned to a legacy untracked anthropic secret plus a
+    // per-agent credential setup) pinned to a legacy untracked anthropic secret plus a
     // tool secret. This is the agent that would 401 after the reconcile.
     seedGroupAgent(
       'ag-construction',
