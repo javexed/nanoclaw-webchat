@@ -29,7 +29,7 @@ import fs from 'fs';
 
 import { isContainerRunning } from '../../../container-runner.js';
 import { getMessagingGroup } from '../../../db/messaging-groups.js';
-import { canAccessAgentGroup } from '../../../modules/permissions/access.js';
+import { hasAdminPrivilege } from '../roles.js';
 import { getDb } from '../../../db/connection.js';
 import { inboundDbPath, openOutboundDb, openInboundDb } from '../../../session-manager.js';
 import { redactSensitiveData } from '../redact.js';
@@ -211,7 +211,10 @@ export async function readFloorEvents(
   for (const row of rows) {
     const running = isContainerRunning(row.id);
     if (!deskEligible(running, row.last_active, Date.now())) continue;
-    if (!(await canAccessAgentGroup(userId, row.agent_group_id))) continue;
+    // Content gate is ADMIN-level, deliberately stricter than the desks: feed
+    // fragments cross room boundaries within an agent group, so mere group
+    // membership must not reveal other rooms' (or other members' DM) traffic.
+    if (!(await hasAdminPrivilege(userId, row.agent_group_id))) continue;
 
     const mg = await (row.messaging_group_id ? getMessagingGroup(row.messaging_group_id) : undefined);
     const roomId = mg?.channel_type === 'webchat' ? (mg.platform_id ?? null) : null;

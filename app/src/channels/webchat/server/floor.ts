@@ -142,7 +142,7 @@ export async function buildFloor(userId: string): Promise<FloorSnapshot> {
 
   for (const row of rows) {
     // Scope first: never do per-session work for a group the caller cannot see.
-    if (!(await canAccessAgentGroup(userId, row.agent_group_id))) continue;
+    if (!(await canAccessAgentGroup(userId, row.agent_group_id)).allowed) continue;
 
     // getWebchatRoom() keys on PLATFORM id, not the messaging-group row id that
     // sessions carry — passing the latter missed every time and painted the

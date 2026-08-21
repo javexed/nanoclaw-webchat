@@ -203,8 +203,8 @@ export async function grantOwnerRole(userId: string, grantedBy: string | null = 
  * Doesn't change runtime behavior; some installs deliberately skip the
  * permissions module (single-operator deploys behind explicit auth).
  */
-export function warnIfNoPermissionsModule(): void {
-  if (!hasTable(getDb(), 'user_roles')) {
+export async function warnIfNoPermissionsModule(): Promise<void> {
+  if (!(await hasTable(getDb(), 'user_roles'))) {
     log.warn(
       'Webchat: permissions module not installed — every authenticated caller has owner-equivalent access. ' +
         'This is fine for single-operator setups behind explicit auth (Tailscale / bearer token / proxy header) ' +
