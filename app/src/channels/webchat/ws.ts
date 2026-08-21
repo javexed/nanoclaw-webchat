@@ -213,7 +213,14 @@ export function setupWebSocket(
       }
     };
 
-    ws.on('message', async (raw) => {
+    // Frames must process IN ARRIVAL ORDER. The handler is async now (the DB
+    // is), and a bare async listener interleaves at every await — a `message`
+    // frame arriving while `join` awaited its access check saw no room_id and
+    // dropped silently. Every join-then-send client hit this: the ops
+    // post-to-room script first, but the UI's own reconnect path is the same
+    // shape. A per-connection chain restores the pre-async ordering guarantee.
+    let frameChain: Promise<void> = Promise.resolve();
+    const handleFrame = async (raw: Buffer | ArrayBuffer | Buffer[]) => {
       let msg: { type?: string; [k: string]: unknown };
       try {
         msg = JSON.parse(raw.toString()) as typeof msg;
@@ -411,6 +418,9 @@ export function setupWebSocket(
         }
         return;
       }
+    };
+    ws.on('message', (raw) => {
+      frameChain = frameChain.then(() => handleFrame(raw)).catch(() => {});
     });
 
     ws.on('close', () => {
