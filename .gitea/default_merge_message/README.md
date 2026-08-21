@@ -1,5 +1,12 @@
 # Merge-message templates
 
+> **2026-08-21 — web merges are OK again.** The public-mirror guarantee moved
+> to publish time: `nanoclaw-ops/publish-to-github.sh` replays every commit
+> onto the GitHub mirror with forge trailers stripped (tree-identical,
+> verified), so trailers on INTERNAL history are harmless. These templates
+> remain only to keep merge subjects tidy. The history below explains the era
+> when trailers had to be prevented at merge time.
+
 These shape the SUBJECT of a merge commit. They were introduced to omit one
 line the forge adds by default, which they do NOT do (see below):
 
