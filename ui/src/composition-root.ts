@@ -253,6 +253,7 @@ import {
   wireViewChrome2,
   wireViewsPanel,
   toggleFloor,
+  showDeskPopover,
 } from './features/views.js';
 
 // Modals, overlays and popovers now live in features/modals.ts.
@@ -1370,12 +1371,15 @@ $('#journey-back')?.addEventListener('click', toggleJourney);
 // views.ts importing it would close an import cycle.
 $('#floor-grid')?.addEventListener('click', (e) => {
   const desk = (e.target as HTMLElement | null)?.closest('.floor-desk') as HTMLElement | null;
-  const roomId = desk?.dataset.room;
-  // Agent-shared sessions and non-webchat rooms carry no room id; leave the
-  // desk inert rather than navigating somewhere that 404s.
-  if (!roomId) return;
-  toggleFloor(); // close the floor first, so the room lands on the chat view
-  joinRoom(roomId);
+  const sessionId = desk?.dataset.session;
+  if (!desk || !sessionId) return;
+  // The popover owns what a desk tap means now: details always, Open room when
+  // the session has one, Restart when it is stuck and the caller may act.
+  e.stopPropagation(); // the popover's outside-click closer runs on document
+  showDeskPopover(sessionId, desk, (roomId) => {
+    toggleFloor(); // close the floor first, so the room lands on the chat view
+    joinRoom(roomId);
+  });
 });
 // Feed rows link to their room the same way desks do (and for the same
 // delegation reason: the feed re-renders on every poll).

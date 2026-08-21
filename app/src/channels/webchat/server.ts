@@ -443,7 +443,7 @@ import {
 import { syncSessionContext, type ContextMessage } from '../../session-manager.js';
 import { getPendingApproval, getSession, getSessionsByAgentGroup } from '../../db/sessions.js';
 import { insertMessage, openInboundDb } from '../../db/session-db.js';
-import { killContainer } from '../../container-runner.js';
+import { isContainerRunning, killContainer } from '../../container-runner.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import {
@@ -1433,6 +1433,26 @@ async function rFloorFeedGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void>
   const { res, url, userId } = ctx;
   const since = url.searchParams.get('since') || undefined;
   return json(res, 200, await readFloorEvents(userId, since));
+}
+
+const RE_FLOOR_SESSION_RESTART = /^\/api\/floor\/sessions\/([^/]+)\/restart$/;
+
+// Kill one stuck session's container from the floor. Deliberately NOT the
+// group restart the agent settings use — a floor problem is one desk, and the
+// container comes back on the session's next message anyway. Privilege mirrors
+// the floor's own shape: owner or admin, and the admin must be able to access
+// the group the session belongs to (a scoped admin cannot unstick a desk they
+// cannot see).
+async function rFloorSessionRestartPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { res, userId } = ctx;
+  const session = await getSession(decodeURIComponent(m[1]!));
+  if (!session) return json(res, 404, { error: 'Session not found' });
+  if (!(await hasAdminPrivilege(userId, session.agent_group_id))) {
+    return json(res, 403, { error: 'Admin privilege required' });
+  }
+  const wasRunning = isContainerRunning(session.id);
+  killContainer(session.id, 'floor-restart');
+  return json(res, 200, { ok: true, was_running: wasRunning });
 }
 
 // ── UserCreds Codex browser-mint: connect a ChatGPT subscription without a terminal
@@ -2942,6 +2962,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/overview', h: rOverviewGet },
   { method: 'GET', path: '/api/floor', h: rFloorGet },
   { method: 'GET', path: '/api/floor/feed', h: rFloorFeedGet },
+  { method: 'POST', path: RE_FLOOR_SESSION_RESTART, guards: ['csrf'], h: rFloorSessionRestartPost },
   { method: 'GET', path: '/api/rooms', h: rRoomsGet },
   { method: 'POST', path: '/api/rooms', guards: ['csrf', 'owner'], h: rRoomsPost },
   { method: 'DELETE', path: RE_ROOM_ID, guards: ['owner', 'csrf'], h: rRoomIdDelete, audit: 'room.delete' },

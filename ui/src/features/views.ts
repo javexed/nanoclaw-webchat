@@ -286,6 +286,9 @@ let floorFeedCursor: string | null = null;
 let floorFeedEvents: any[] = [];
 /** session_id → agent_name, from the last desks payload — names a2a senders. */
 const floorSessionNames = new Map<string, string>();
+/** Last desks payload, for the popover; restricted gates the Restart action. */
+let floorLastDesks: any[] = [];
+let floorRestricted = true;
 
 const FEED_KIND_LABEL: Record<string, string> = {
   thinking: 'Thinking',
@@ -316,6 +319,115 @@ function renderFloorFeed() {
     .join('');
 }
 
+// ── Desk popover ────────────────────────────────────────────────────────────
+// A desk click opens this instead of jumping straight to the room: the same
+// tap now answers "what is this desk" (state, last kind, quiet-for) and offers
+// the two actions that make sense there — Open room, and for a stuck desk an
+// admin can Restart it (kill the container; it respawns on the session's next
+// message). Room click-through moved in here rather than growing a second
+// gesture the mobile layout cannot express.
+let deskPopoverEl: HTMLElement | null = null;
+
+function closeDeskPopover() {
+  deskPopoverEl?.remove();
+  deskPopoverEl = null;
+  document.removeEventListener('click', onDocClickCloseDeskPopover, true);
+  document.removeEventListener('keydown', onEscCloseDeskPopover, true);
+}
+
+function onDocClickCloseDeskPopover(e: Event) {
+  if (deskPopoverEl && !deskPopoverEl.contains(e.target as Node)) closeDeskPopover();
+}
+
+function onEscCloseDeskPopover(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeDeskPopover();
+}
+
+export function showDeskPopover(sessionId: string, anchor: HTMLElement, onOpenRoom: (roomId: string) => void) {
+  closeDeskPopover();
+  const d = floorLastDesks.find((x) => x.session_id === sessionId);
+  if (!d) return;
+
+  const pop = document.createElement('div');
+  pop.className = 'floor-popover';
+  pop.setAttribute('role', 'dialog');
+  const canRestart = d.state === 'stuck' && !floorRestricted;
+  pop.innerHTML = `
+    <div class="floor-pop-name">${esc(d.agent_name)}</div>
+    <div class="floor-pop-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${d.last_kind ? ` · ${esc(d.last_kind)}` : ''}${
+      d.idle_ms != null ? ` · ${esc(floorAge(d.idle_ms))}` : ''
+    }</div>
+    ${d.room_name ? `<div class="floor-pop-meta">${esc(d.room_name)}</div>` : ''}
+    <div class="floor-pop-id">${esc(d.session_id)}</div>
+    <div class="floor-pop-actions">
+      ${d.room_id ? '<button class="btn btn-ghost" data-act="room">Open room</button>' : ''}
+      ${canRestart ? '<button class="btn btn-danger" data-act="restart">Restart</button>' : ''}
+    </div>`;
+
+  pop.querySelector('[data-act="room"]')?.addEventListener('click', () => {
+    closeDeskPopover();
+    onOpenRoom(d.room_id);
+  });
+  pop.querySelector('[data-act="restart"]')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget as HTMLButtonElement;
+    btn.disabled = true;
+    try {
+      const r = await authFetch(`/api/floor/sessions/${encodeURIComponent(sessionId)}/restart`, { method: 'POST' });
+      if (r.ok) {
+        closeDeskPopover();
+        refreshFloor();
+      } else {
+        btn.disabled = false;
+      }
+    } catch {
+      btn.disabled = false;
+    }
+  });
+
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  const pw = pop.offsetWidth;
+  pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pw - 8, r.left))}px`;
+  pop.style.top = `${Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 4)}px`;
+  deskPopoverEl = pop;
+  document.addEventListener('click', onDocClickCloseDeskPopover, true);
+  document.addEventListener('keydown', onEscCloseDeskPopover, true);
+}
+
+// ── a2a edges ───────────────────────────────────────────────────────────────
+// An a2a hop draws a brief line between the two desks — the pulse says "these
+// two spoke", the edge says which way. Transient by design (the feed row is
+// the durable record), and skipped under reduced motion.
+function drawEdge(fromSession: string | undefined, toSession: string) {
+  if (!fromSession) return;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const grid = $('#floor-grid');
+  if (!grid) return;
+  const a = grid.querySelector(`.floor-desk[data-session="${CSS.escape(fromSession)}"]`);
+  const b = grid.querySelector(`.floor-desk[data-session="${CSS.escape(toSession)}"]`);
+  if (!a || !b) return;
+  const gr = grid.getBoundingClientRect();
+  const ar = a.getBoundingClientRect();
+  const br = b.getBoundingClientRect();
+
+  let svg = grid.querySelector<SVGSVGElement>('.floor-edges');
+  if (!svg) {
+    svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'floor-edges');
+    grid.appendChild(svg);
+  }
+  svg.setAttribute('viewBox', `0 0 ${gr.width} ${gr.height}`);
+
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  line.setAttribute('x1', String(ar.left - gr.left + ar.width / 2));
+  line.setAttribute('y1', String(ar.top - gr.top + ar.height / 2));
+  line.setAttribute('x2', String(br.left - gr.left + br.width / 2));
+  line.setAttribute('y2', String(br.top - gr.top + br.height / 2));
+  line.setAttribute('class', 'floor-edge');
+  svg.appendChild(line);
+  setTimeout(() => line.remove(), 1600);
+}
+
 function pulseDesk(sessionId: string | undefined) {
   if (!sessionId) return;
   const desk = document.querySelector(`.floor-desk[data-session="${CSS.escape(sessionId)}"]`);
@@ -342,7 +454,10 @@ async function refreshFloorFeed() {
       // flashes both ends — that is the edge, without drawing one.
       for (const e of fresh) {
         pulseDesk(e.session_id);
-        if (e.kind === 'a2a') pulseDesk(e.from_session_id);
+        if (e.kind === 'a2a') {
+          pulseDesk(e.from_session_id);
+          drawEdge(e.from_session_id, e.session_id);
+        }
       }
     }
     renderFloorFeed();
@@ -377,6 +492,8 @@ function renderFloor(data: any) {
   const countsEl = $('#floor-counts')!;
   const desks: any[] = Array.isArray(data?.desks) ? data.desks : [];
   const counts = data?.counts || {};
+  floorLastDesks = desks;
+  floorRestricted = data?.restricted !== false;
 
   countsEl.innerHTML = ['stuck', 'working', 'idle', 'cold']
     .map((k) => `<span class="floor-count floor-${k}"><b>${counts[k] ?? 0}</b> ${esc(FLOOR_LABEL[k])}</span>`)
@@ -426,6 +543,7 @@ function openFloor() {
 }
 
 function teardownFloor() {
+  closeDeskPopover();
   floorActive = false;
   if (floorTimer) {
     clearInterval(floorTimer);
