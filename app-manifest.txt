@@ -72,6 +72,7 @@ scripts/sync-providers-codex.sh
 setup/provider-install.ts
 .claude/skills/add-routing
 .claude/skills/add-litellm
+.claude/skills/add-grok
 .claude/skills/add-opencode-stack
 .claude/skills/add-pi-stack
 src/modules/compact-window

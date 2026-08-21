@@ -7874,6 +7874,13 @@ var OPENCODE_WIZARD_ELS = {
 	log: "#wizard-opencode-install-log",
 	doneMsg: "OpenCode installed — your local agent can now use it (Agent → Harness)."
 };
+var GROK_WIZARD_ELS = {
+	btn: "#wizard-grok-install",
+	log: "#wizard-grok-install-log",
+	url: "/api/grok/install",
+	name: "Grok",
+	doneMsg: "Grok installed — sign in with a device code below."
+};
 async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
 	const url = els.url || "/api/opencode/install";
 	const name = els.name || "OpenCode";
@@ -8548,7 +8555,10 @@ async function refreshWizardCredState() {
 		grokChip.textContent = grok?.connected ? "✓ connected" : !grok?.available ? "not installed" : grok?.expired ? "expired" : "not connected";
 		grokChip.classList.toggle("ok", !!grok?.connected);
 	}
-	$("#wizard-grok-connect").hidden = !!grok?.connected;
+	const grokInstalled = grok?.installed !== false;
+	const grokInstallRow = $("#wizard-grok-install-row");
+	if (grokInstallRow && !opencodeInstallActive.value) grokInstallRow.hidden = grokInstalled;
+	$("#wizard-grok-connect").hidden = !grokInstalled || !!grok?.connected;
 	$("#wizard-grok-connected").hidden = !grok?.connected;
 	const grokStatusLine = $("#wizard-grok-status");
 	if (grokStatusLine) {
@@ -9581,6 +9591,7 @@ function wireWizard() {
 	});
 	$("#wizard-claude-oauth")?.addEventListener("click", () => deps$12.openOauthMintModal("workspace"));
 	$("#wizard-codex-install")?.addEventListener("click", () => runCodexInstall());
+	$("#wizard-grok-install")?.addEventListener("click", () => runOpencodeInstall(GROK_WIZARD_ELS));
 	$("#wizard-codex-oauth")?.addEventListener("click", () => deps$12.openOauthMintModal("workspace-codex"));
 	$("#wizard-codex-save")?.addEventListener("click", async () => {
 		const key = ($("#wizard-codex-key")?.value || "").trim();
@@ -19837,11 +19848,18 @@ async function renderCredentialsSettings() {
 	const piBadge = $("#pi-installed-badge");
 	if (piInstallBtn && !opencodeInstallActive.value) piInstallBtn.hidden = !!cfg.piAvailable;
 	if (piBadge) piBadge.hidden = !cfg.piAvailable;
+	const grokRow = $("#settings-grok-install");
+	if (grokRow) grokRow.hidden = false;
+	const grokInstallBtn = $("#grok-install-btn");
+	const grokBadge = $("#grok-installed-badge");
+	if (grokInstallBtn && !opencodeInstallActive.value) grokInstallBtn.hidden = !!cfg.grokAvailable;
+	if (grokBadge) grokBadge.hidden = !cfg.grokAvailable;
 	if (credConfigWired) return;
 	credConfigWired = true;
 	$("#codex-install-btn")?.addEventListener("click", () => runCodexInstall(CODEX_SETTINGS_ELS));
 	$("#opencode-install-btn")?.addEventListener("click", () => runOpencodeInstall(OPENCODE_SETTINGS_ELS));
 	$("#pi-install-btn")?.addEventListener("click", () => runOpencodeInstall(PI_SETTINGS_ELS));
+	$("#grok-install-btn")?.addEventListener("click", () => runOpencodeInstall(GROK_SETTINGS_ELS));
 	const putConfig = async (patch) => {
 		const r = await authFetch("/api/webchat/credentials-config", {
 			method: "PUT",
@@ -19988,6 +20006,14 @@ var OPENCODE_SETTINGS_ELS = {
 	btn: "#opencode-install-btn",
 	log: "#opencode-install-log",
 	progress: "#opencode-install-progress"
+};
+var GROK_SETTINGS_ELS = {
+	btn: "#grok-install-btn",
+	log: "#grok-install-log",
+	progress: "#grok-install-progress",
+	url: "/api/grok/install",
+	name: "Grok",
+	doneMsg: "Grok installed — sign in with a device code under Credentials."
 };
 var PI_SETTINGS_ELS = {
 	btn: "#pi-install-btn",

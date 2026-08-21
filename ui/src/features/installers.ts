@@ -178,6 +178,14 @@ export const OPENCODE_WIZARD_ELS: Record<string, string> = {
   doneMsg: 'OpenCode installed — your local agent can now use it (Agent → Harness).',
 };
 
+export const GROK_WIZARD_ELS = {
+  btn: '#wizard-grok-install',
+  log: '#wizard-grok-install-log',
+  url: '/api/grok/install',
+  name: 'Grok',
+  doneMsg: 'Grok installed — sign in with a device code below.',
+} as Record<string, string>;
+
 export async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
   // Shared harness-install runner: els.url + els.name parameterize it for any
   // stack with the same GET/POST install contract (OpenCode, pi).

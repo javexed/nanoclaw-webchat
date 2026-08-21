@@ -172,11 +172,22 @@ export async function renderCredentialsSettings() {
   if (piInstallBtn && !opencodeInstallActive.value) piInstallBtn.hidden = !!cfg.piAvailable;
   if (piBadge) piBadge.hidden = !cfg.piAvailable;
 
+  // Grok install-row — same pattern, driven by grokAvailable. Shares
+  // opencodeInstallActive with the other harness installs: all of them rebuild the
+  // agent image, so they must not run concurrently.
+  const grokRow = $('#settings-grok-install');
+  if (grokRow) grokRow.hidden = false;
+  const grokInstallBtn = $('#grok-install-btn');
+  const grokBadge = $('#grok-installed-badge');
+  if (grokInstallBtn && !opencodeInstallActive.value) grokInstallBtn.hidden = !!cfg.grokAvailable;
+  if (grokBadge) grokBadge.hidden = !cfg.grokAvailable;
+
   if (credConfigWired) return;
   credConfigWired = true;
   $('#codex-install-btn')?.addEventListener('click', () => runCodexInstall(CODEX_SETTINGS_ELS));
   $('#opencode-install-btn')?.addEventListener('click', () => runOpencodeInstall(OPENCODE_SETTINGS_ELS));
   $('#pi-install-btn')?.addEventListener('click', () => runOpencodeInstall(PI_SETTINGS_ELS));
+  $('#grok-install-btn')?.addEventListener('click', () => runOpencodeInstall(GROK_SETTINGS_ELS));
   const putConfig = async (patch: any) => {
     const r = await authFetch('/api/webchat/credentials-config', {
       method: 'PUT',
@@ -335,6 +346,15 @@ const OPENCODE_SETTINGS_ELS = {
   btn: '#opencode-install-btn',
   log: '#opencode-install-log',
   progress: '#opencode-install-progress',
+} as Record<string, string>;
+
+const GROK_SETTINGS_ELS = {
+  btn: '#grok-install-btn',
+  log: '#grok-install-log',
+  progress: '#grok-install-progress',
+  url: '/api/grok/install',
+  name: 'Grok',
+  doneMsg: 'Grok installed — sign in with a device code under Credentials.',
 } as Record<string, string>;
 
 const PI_SETTINGS_ELS = {

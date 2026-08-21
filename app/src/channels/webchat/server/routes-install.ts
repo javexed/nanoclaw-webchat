@@ -15,6 +15,8 @@ import { scheduleHostRestart, upsertEnv } from '../ollama-manage.js';
 import { availableProviders, codexAvailable, grokAvailable, opencodeAvailable, piAvailable } from './providers.js';
 import {
   getCodexInstallProgress,
+  getGrokInstallProgress,
+  startGrokInstall,
   getOpencodeInstallProgress,
   getPiInstallProgress,
   getSttInstallState,
@@ -48,6 +50,24 @@ export async function rCodexInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Pr
   return json(res, r.started ? 202 : 409, {
     ...getCodexInstallProgress(),
     installed: codexAvailable(),
+    started: r.started,
+  });
+}
+
+export async function rGrokInstallGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  return json(res, 200, { ...getGrokInstallProgress(), installed: grokAvailable() });
+}
+
+export async function rGrokInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  if (grokAvailable()) return json(res, 409, { error: 'Grok is already installed', code: 'already-installed' });
+  const r = startGrokInstall();
+  if (r.error === 'skill-missing')
+    return json(res, 409, { error: 'The add-grok skill is not present in this checkout.', code: 'skill-missing' });
+  return json(res, r.started ? 202 : 409, {
+    ...getGrokInstallProgress(),
+    installed: grokAvailable(),
     started: r.started,
   });
 }

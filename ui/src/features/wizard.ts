@@ -32,7 +32,15 @@ import { authFetch, apiJson, setAuthToken } from '../core/api.js';
 import { getTtsReadAloudEnabled, setTtsReadAloudEnabled, stopTts } from './voice.js';
 // Injected until phase 1e; now that installers is a module these are ordinary
 // imports. Each extraction turns a slice of the injection back into real edges.
-import { pollTtsInstall, runTtsInstall, runSttInstall, pollSttInstall, runCodexInstall } from './installers.js';
+import {
+  pollTtsInstall,
+  runTtsInstall,
+  runSttInstall,
+  pollSttInstall,
+  runCodexInstall,
+  runOpencodeInstall,
+  GROK_WIZARD_ELS,
+} from './installers.js';
 
 /**
  * What this module needs from legacy. Generated from its own `deps.*` uses and
@@ -214,7 +222,14 @@ export async function refreshWizardCredState() {
           : 'not connected';
     grokChip.classList.toggle('ok', !!grok?.connected);
   }
-  $('#wizard-grok-connect')!.hidden = !!grok?.connected;
+  // Mirrors Codex: offer the one-click install while the provider is absent, and
+  // the connect controls only once it is present. `installed` comes from the same
+  // status payload the chip reads, so the row disappears as soon as the install
+  // chain finishes and the host comes back.
+  const grokInstalled = grok?.installed !== false;
+  const grokInstallRow = $('#wizard-grok-install-row');
+  if (grokInstallRow && !opencodeInstallActive.value) grokInstallRow.hidden = grokInstalled;
+  $('#wizard-grok-connect')!.hidden = !grokInstalled || !!grok?.connected;
   $('#wizard-grok-connected')!.hidden = !grok?.connected;
   const grokStatusLine = $('#wizard-grok-status');
   if (grokStatusLine) {
@@ -1500,6 +1515,7 @@ function wireWizard() {
   // credential shape (auto-detected).
   $('#wizard-claude-oauth')?.addEventListener('click', () => deps.openOauthMintModal('workspace'));
   $('#wizard-codex-install')?.addEventListener('click', () => runCodexInstall());
+  $('#wizard-grok-install')?.addEventListener('click', () => runOpencodeInstall(GROK_WIZARD_ELS));
   $('#wizard-codex-oauth')?.addEventListener('click', () => deps.openOauthMintModal('workspace-codex'));
   // Step 1 (codex panel) — paste an OpenAI API key as the workspace Codex default.
   $('#wizard-codex-save')?.addEventListener('click', async () => {
