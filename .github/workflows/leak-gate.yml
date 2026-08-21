@@ -77,7 +77,7 @@ jobs:
 
       # Forge merge trailers are no longer policed here. Since 2026-08-21 the
       # public-mirror guarantee lives at the publish boundary
-      # (nanoclaw-ops/publish-to-github.sh replays every commit with trailers
+      # (the operator's publish-time scrub script replays every commit with trailers
       # stripped and verifies zero internal-host mentions before pushing), so
       # internal history may carry them and the web merge button is fine.
 

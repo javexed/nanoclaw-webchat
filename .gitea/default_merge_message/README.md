@@ -1,7 +1,7 @@
 # Merge-message templates
 
 > **2026-08-21 — web merges are OK again.** The public-mirror guarantee moved
-> to publish time: `nanoclaw-ops/publish-to-github.sh` replays every commit
+> to publish time: the operator's publish-time scrub script replays every commit
 > onto the GitHub mirror with forge trailers stripped (tree-identical,
 > verified), so trailers on INTERNAL history are harmless. These templates
 > remain only to keep merge subjects tidy. The history below explains the era
