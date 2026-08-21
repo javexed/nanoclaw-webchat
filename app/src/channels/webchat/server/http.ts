@@ -8,6 +8,22 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 
 export function json(res: ServerResponse, status: number, data: unknown): void {
+  // A Promise handed here serializes as {} — json()'s `unknown` parameter means
+  // tsc never flags a missing await, and the async-DB migration proved the
+  // failure is invisible until a client chokes on the shape (/api/agents took
+  // the room UI down exactly this way). Resolve it instead of guessing: send
+  // the awaited value, and surface a rejection as the 500 it is.
+  if (data && typeof (data as { then?: unknown }).then === 'function') {
+    (data as Promise<unknown>).then(
+      (v) => json(res, status, v),
+      (err) => {
+        console.error('[webchat] json(): promise argument rejected', err);
+        if (!res.headersSent) json(res, 500, { error: 'Internal error' });
+        else res.end();
+      },
+    );
+    return;
+  }
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
 }
