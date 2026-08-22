@@ -37,6 +37,15 @@ export function summarizeToolTarget(toolName: string, input: Record<string, unkn
       return str(input?.url);
     case 'WebSearch':
       return str(input?.query);
+    // pi's built-ins. Lowercase names and its own argument keys, so they miss
+    // every case above and would otherwise render as a bare verb — "write"
+    // with no hint of what was written.
+    case 'read':
+    case 'write':
+    case 'edit':
+      return str(input?.path) ?? str(input?.file_path);
+    case 'bash':
+      return str(input?.command) ?? str(input?.cmd);
     default:
       return null;
   }
@@ -140,4 +149,3 @@ export function clearStatusEvents(): void {
     // ignore — see appendStatusEvent
   }
 }
-

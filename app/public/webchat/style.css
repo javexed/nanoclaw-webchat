@@ -4114,7 +4114,7 @@ a.lightbox-btn {
 .help-card {
   background: var(--surface2);
   border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   padding: 14px 16px;
 }
 .help-card-head {
@@ -6585,7 +6585,7 @@ a.skill-badge-origin:hover {
 /* ── Model management (Settings → Models) ── */
 .mm-card {
   border: 1px solid var(--border);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   padding: 10px 12px;
   margin: 8px 0;
   display: flex;
@@ -6710,6 +6710,14 @@ a.skill-badge-origin:hover {
 }
 .cred-hint a:hover {
   color: var(--accent);
+}
+/* The device-login URL is the panel's primary action, so it should not inherit
+   the extra-small hint size — and a 55-character URL has to wrap rather than
+   overflow a narrow PWA card. Colour still comes from the `.cred-hint a` rule
+   above, which is the only anchor theming in the sheet. */
+#wizard-grok-url {
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
 }
 /* Inline <code> in hint copy (e.g. the 127.0.0.1 in the Localhost-only note) —
    themed to match the app, not raw browser monospace. Mirrors chat-bubble code
@@ -7731,7 +7739,9 @@ body {
 .routing-decisions-list,
 .routing-subpane,
 .slash-menu,
-.topology-canvas {
+.topology-canvas,
+.floor-body,
+.floor-feed {
   overscroll-behavior: contain;
 }
 
@@ -8653,7 +8663,7 @@ button[data-draft-id] {
 .mcp-health-text-drift { color: var(--warning, #d29922); }
 .mcp-drift-banner {
   border: 1px solid var(--warning, #d29922);
-  border-radius: var(--radius-md, 8px);
+  border-radius: var(--radius-md);
   padding: 10px;
   margin: 8px 0;
   display: flex;
@@ -9124,10 +9134,268 @@ button[data-draft-id] {
   overflow-wrap: anywhere;
 }
 .audit-actor {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
 }
 .audit-more {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* ── Floor ─────────────────────────────────────────────────────────────────
+   A desk per session, coloured by state. Grid rather than a drawn room: the
+   floor has to read at 6 desks and at 40, and auto-fill does that without a
+   layout engine or a breakpoint per size. Trouble is first in DOM order
+   (the server sorts it), so it lands top-left wherever the grid wraps. */
+#floor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+#floor[hidden] {
+  display: none;
+}
+.floor-body {
+  /* One declaration — a second .floor-body block below once redeclared this as
+     a row and silently lost: flex-direction stayed column and the panels'
+     flex-bases became HEIGHTS. Desks + feed sit side by side when there is
+     room; the feed drops below the grid on narrow screens. */
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  overflow-y: auto;
+}
+.floor-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.floor-count {
+  font-size: var(--fs-sm);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.floor-count b {
+  color: var(--text);
+}
+.floor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+}
+.floor-desk {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: var(--transition);
+}
+.floor-desk:hover {
+  border-color: var(--accent);
+}
+.floor-desk-name {
+  font-weight: 600;
+}
+.floor-desk-room,
+.floor-desk-meta {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+/* State is carried by the left edge AND the meta text, never by colour alone —
+   a red border is invisible to a chunk of users and to a monochrome screen. */
+.floor-desk.floor-stuck {
+  border-left-color: var(--danger);
+}
+.floor-desk.floor-working {
+  border-left-color: var(--success);
+}
+.floor-desk.floor-idle {
+  border-left-color: var(--accent);
+}
+.floor-desk.floor-cold {
+  border-left-color: var(--border);
+  opacity: 0.72;
+}
+.floor-count.floor-stuck b {
+  color: var(--danger);
+}
+.floor-count.floor-working b {
+  color: var(--success);
+}
+
+/* ── Floor feed ── */
+.floor-main {
+  flex: 2 1 420px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.floor-feed {
+  flex: 1 1 260px;
+  min-width: 240px;
+  max-height: 70vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.floor-feed-empty {
+  padding: 12px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+.floor-event {
+  /* Linkable rows render as <button> for keyboard access — reset the UA button
+     chrome so both tags lay out identically. */
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  column-gap: 8px;
+  row-gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-sm);
+}
+.floor-event:last-child {
+  border-bottom: none;
+}
+.floor-event-link {
+  cursor: pointer;
+}
+.floor-event-link:hover {
+  background: var(--surface2);
+}
+/* Kind is carried by the label text; colour only reinforces it. */
+.ff-kind {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ff-tool {
+  color: var(--success);
+}
+.ff-thinking {
+  color: var(--accent);
+}
+.ff-a2a {
+  color: var(--warning);
+}
+.ff-message {
+  color: var(--text);
+}
+.ff-agent {
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ff-age {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.ff-text {
+  grid-column: 1 / -1;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+/* A desk flashes when its session emits a feed event; an a2a hop flashes both
+   ends. Decoration only — the feed row is the information — so reduced motion
+   simply turns it off. */
+@keyframes floor-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 10px transparent;
+  }
+}
+.floor-desk-pulse {
+  animation: floor-pulse 1s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .floor-desk-pulse {
+    animation: none;
+  }
+}
+
+/* ── Desk popover ── details + the two actions a desk supports. */
+.floor-popover {
+  position: fixed;
+  z-index: 60;
+  min-width: 220px;
+  max-width: 300px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: 0 6px 24px color-mix(in srgb, var(--text) 18%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.floor-pop-name {
+  font-weight: 600;
+}
+.floor-pop-meta {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+.floor-pop-id {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.floor-pop-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* ── a2a edges ── transient lines over the grid; the feed row is the record. */
+.floor-grid {
+  position: relative;
+}
+.floor-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+.floor-edge {
+  stroke: var(--warning);
+  stroke-width: 2;
+  stroke-linecap: round;
+  animation: floor-edge-fade 1.6s ease-out forwards;
+}
+@keyframes floor-edge-fade {
+  0% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+  }
 }

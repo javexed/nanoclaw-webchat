@@ -1,8 +1,8 @@
 diff --git a/src/modules/self-mod/apply.ts b/src/modules/self-mod/apply.ts
-index b817ce17..1af47fcb 100644
+index 18cf1b60..5e534095 100644
 --- a/src/modules/self-mod/apply.ts
 +++ b/src/modules/self-mod/apply.ts
-@@ -20,12 +20,60 @@ import {
+@@ -20,15 +20,63 @@ import {
  import { buildAgentGroupImage, killContainer, wakeContainer } from '../../container-runner.js';
  import { getAgentGroup } from '../../db/agent-groups.js';
  import { getContainerConfig, updateContainerConfigJson } from '../../db/container-configs.js';
@@ -13,6 +13,9 @@ index b817ce17..1af47fcb 100644
  import type { Session } from '../../types.js';
  import { notifyAgent } from '../approvals/index.js';
  
+-async function wakeSessionById(sessionId: string): Promise<void> {
+-  const session = await getSession(sessionId);
+-  if (session) await wakeContainer(session);
 +/**
 + * A config/image change applies to the whole agent group, but only the session
 + * that requested it gets its container killed+respawned above. Any OTHER active
@@ -25,8 +28,12 @@ index b817ce17..1af47fcb 100644
 + * request anything) and aren't force-woken — each respawns on the current
 + * image/config on its next message.
 + */
-+function respawnSiblingSessions(agentGroupId: string, requestingSessionId: string, reason: string): void {
-+  for (const s of getSessionsByAgentGroup(agentGroupId)) {
++async function respawnSiblingSessions(
++  agentGroupId: string,
++  requestingSessionId: string,
++  reason: string,
++): Promise<void> {
++  for (const s of await getSessionsByAgentGroup(agentGroupId)) {
 +    if (s.id === requestingSessionId || s.status !== 'active') continue;
 +    killContainer(s.id, reason);
 +  }
@@ -43,8 +50,8 @@ index b817ce17..1af47fcb 100644
 + * stale sibling session. `onWakeText` is the verify-and-report instruction the
 + * agent reads after respawn.
 + */
-+function notifyAndRespawn(session: Session, onWakeText: string, reason: string): void {
-+  writeSessionMessage(session.agent_group_id, session.id, {
++async function notifyAndRespawn(session: Session, onWakeText: string, reason: string): Promise<void> {
++  await writeSessionMessage(session.agent_group_id, session.id, {
 +    id: newApprNoteId(),
 +    kind: 'chat',
 +    timestamp: new Date().toISOString(),
@@ -54,21 +61,20 @@ index b817ce17..1af47fcb 100644
 +    content: JSON.stringify({ text: onWakeText, sender: 'system', senderId: 'system' }),
 +    onWake: 1,
 +  });
-+  killContainer(session.id, reason, () => {
-+    const s = getSession(session.id);
-+    if (s) wakeContainer(s);
++  killContainer(session.id, reason, async () => {
++    // Await BEFORE the guard — a truthy promise here would wake `undefined`.
++    const s = await getSession(session.id);
++    if (s) await wakeContainer(s);
 +  });
-+  respawnSiblingSessions(session.agent_group_id, session.id, `sibling session stale after ${reason}`);
-+}
-+
++  await respawnSiblingSessions(session.agent_group_id, session.id, `sibling session stale after ${reason}`);
+ }
+ 
  export async function applyInstallPackages(payload: Record<string, unknown>, session: Session): Promise<void> {
-   const agentGroup = getAgentGroup(session.agent_group_id);
-   if (!agentGroup) {
-@@ -62,24 +110,11 @@ export async function applyInstallPackages(payload: Record<string, unknown>, ses
+@@ -67,23 +115,11 @@ export async function applyInstallPackages(payload: Record<string, unknown>, ses
    log.info('Package install approved', { agentGroupId: session.agent_group_id });
    try {
      await buildAgentGroupImage(session.agent_group_id);
--    writeSessionMessage(session.agent_group_id, session.id, {
+-    await writeSessionMessage(session.agent_group_id, session.id, {
 -      id: `appr-note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 -      kind: 'chat',
 -      timestamp: new Date().toISOString(),
@@ -83,22 +89,21 @@ index b817ce17..1af47fcb 100644
 -      onWake: 1,
 -    });
 -    killContainer(session.id, 'rebuild applied', () => {
--      const s = getSession(session.id);
--      if (s) wakeContainer(s);
+-      void wakeSessionById(session.id);
 -    });
-+    notifyAndRespawn(
++    await notifyAndRespawn(
 +      session,
 +      `Packages installed (${pkgs}) and container rebuilt. Verify the new packages are available (e.g. run them or check versions) and report the result to the user.`,
 +      'rebuild applied',
 +    );
      log.info('Container rebuild completed (bundled with install)', { agentGroupId: session.agent_group_id });
    } catch (e) {
-     notifyAgent(
-@@ -136,23 +171,10 @@ export async function applyAddMcpServer(payload: Record<string, unknown>, sessio
+     await notifyAgent(
+@@ -140,22 +176,10 @@ export async function applyAddMcpServer(payload: Record<string, unknown>, sessio
    servers[name] = serverConfig;
-   updateContainerConfigJson(agentGroup.id, 'mcp_servers', servers);
+   await updateContainerConfigJson(agentGroup.id, 'mcp_servers', servers);
  
--  writeSessionMessage(session.agent_group_id, session.id, {
+-  await writeSessionMessage(session.agent_group_id, session.id, {
 -    id: `appr-note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 -    kind: 'chat',
 -    timestamp: new Date().toISOString(),
@@ -113,10 +118,9 @@ index b817ce17..1af47fcb 100644
 -    onWake: 1,
 -  });
 -  killContainer(session.id, 'mcp server added', () => {
--    const s = getSession(session.id);
--    if (s) wakeContainer(s);
+-    void wakeSessionById(session.id);
 -  });
-+  notifyAndRespawn(
++  await notifyAndRespawn(
 +    session,
 +    `MCP server "${payload.name}" added. Verify it's available (e.g. list your tools) and report the result to the user.`,
 +    'mcp server added',

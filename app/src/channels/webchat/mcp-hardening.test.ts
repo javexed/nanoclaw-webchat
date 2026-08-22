@@ -41,15 +41,15 @@ function row(over: Partial<WebchatMcpServer>): WebchatMcpServer {
 }
 
 describe('hashToolSurface / diffToolSurface', () => {
-  it('is order-independent — a reordered tool list is not a rug pull', () => {
+  it('is order-independent — a reordered tool list is not a rug pull', async () => {
     expect(hashToolSurface([T('a', 'x'), T('b', 'y')])).toBe(hashToolSurface([T('b', 'y'), T('a', 'x')]));
   });
 
-  it('is description-sensitive — a mutated description IS one', () => {
+  it('is description-sensitive — a mutated description IS one', async () => {
     expect(hashToolSurface([T('a', 'do the thing')])).not.toBe(hashToolSurface([T('a', 'do the thing, quietly')]));
   });
 
-  it('diff names added / removed / changed precisely', () => {
+  it('diff names added / removed / changed precisely', async () => {
     const d = diffToolSurface(
       [T('keep', 'same'), T('gone', 'x'), T('mut', 'old')],
       [T('keep', 'same'), T('mut', 'new'), T('fresh', 'y')],
@@ -62,12 +62,12 @@ describe('hashToolSurface / diffToolSurface', () => {
 });
 
 describe('mcpServerToConfig — relay rewrite (host-side credentials)', () => {
-  it('no auth → direct url, stored headers materialize as before', () => {
+  it('no auth → direct url, stored headers materialize as before', async () => {
     const cfg = mcpServerToConfig(row({ headers: JSON.stringify({ 'X-Static': '1' }) }));
     expect(cfg).toMatchObject({ type: 'http', url: 'https://grafana.example/mcp', headers: { 'X-Static': '1' } });
   });
 
-  it('host-side auth + relay token → relay url, credential absent, token scoped', () => {
+  it('host-side auth + relay token → relay url, credential absent, token scoped', async () => {
     const cfg = mcpServerToConfig(row({ auth: JSON.stringify({ kind: 'bearer', token: 'SECRET' }) }), 'mcr_tok123') as {
       url: string;
       headers: Record<string, string>;
@@ -77,14 +77,14 @@ describe('mcpServerToConfig — relay rewrite (host-side credentials)', () => {
     expect(JSON.stringify(cfg)).not.toContain('SECRET');
   });
 
-  it('auth without a relay token falls back to the direct form (never half-wired)', () => {
+  it('auth without a relay token falls back to the direct form (never half-wired)', async () => {
     const cfg = mcpServerToConfig(row({ auth: JSON.stringify({ kind: 'bearer', token: 'SECRET' }) })) as {
       url: string;
     };
     expect(cfg.url).toBe('https://grafana.example/mcp');
   });
 
-  it('enabledTools rides into the config entry; empty/absent means unrestricted', () => {
+  it('enabledTools rides into the config entry; empty/absent means unrestricted', async () => {
     const cfg = mcpServerToConfig(row({ enabled_tools: JSON.stringify(['query', 'render']) }));
     expect((cfg as { enabledTools?: string[] }).enabledTools).toEqual(['query', 'render']);
     expect((mcpServerToConfig(row({})) as { enabledTools?: string[] }).enabledTools).toBeUndefined();

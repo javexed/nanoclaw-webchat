@@ -16,7 +16,7 @@ import { normalizeMcpRegistry, safeHttpUrl } from './server/routes-mcp.js';
 const payload = (servers: unknown[]) => ({ servers: servers.map((server) => ({ server })) });
 
 describe('normalizeMcpRegistry', () => {
-  it('maps a remote server and marks it as NOT running local code', () => {
+  it('maps a remote server and marks it as NOT running local code', async () => {
     const [row] = normalizeMcpRegistry(
       payload([
         {
@@ -34,14 +34,14 @@ describe('normalizeMcpRegistry', () => {
     expect(row.publisher).toBe('ac.tandem');
   });
 
-  it('maps sse remotes to the sse transport', () => {
+  it('maps sse remotes to the sse transport', async () => {
     const [row] = normalizeMcpRegistry(
       payload([{ name: 'x/y', version: '1.0.0', remotes: [{ type: 'sse', url: 'https://e.x/sse' }] }]),
     );
     expect(row.transport).toBe('sse');
   });
 
-  it('flags npm/pypi packages as running code in the container', () => {
+  it('flags npm/pypi packages as running code in the container', async () => {
     const rows = normalizeMcpRegistry(
       payload([
         { name: 'a/npm-one', version: '1.0.0', packages: [{ registryType: 'npm', identifier: 'some-mcp' }] },
@@ -60,14 +60,14 @@ describe('normalizeMcpRegistry', () => {
     expect(py.args).toEqual(['py-mcp==1.0.0']);
   });
 
-  it('does not pin junk version strings — a bad pin would break the install', () => {
+  it('does not pin junk version strings — a bad pin would break the install', async () => {
     const [row] = normalizeMcpRegistry(
       payload([{ name: 'a/weird', version: 'latest-greatest', packages: [{ registryType: 'npm', identifier: 'w' }] }]),
     );
     expect(row.args).toEqual(['-y', 'w']);
   });
 
-  it('prefers the remote form when a server offers both — the safe one wins', () => {
+  it('prefers the remote form when a server offers both — the safe one wins', async () => {
     const [row] = normalizeMcpRegistry(
       payload([
         {
@@ -82,7 +82,7 @@ describe('normalizeMcpRegistry', () => {
     expect(row.runsCode).toBe(false);
   });
 
-  it('dedupes repeated names, keeping the newest version (numerically, not by string)', () => {
+  it('dedupes repeated names, keeping the newest version (numerically, not by string)', async () => {
     const rows = normalizeMcpRegistry(
       payload([
         { name: 'dup/server', version: '1.9.0', remotes: [{ type: 'streamable-http', url: 'https://old' }] },
@@ -94,7 +94,7 @@ describe('normalizeMcpRegistry', () => {
     expect(rows[0].url).toBe('https://new');
   });
 
-  it('skips entries we cannot run or reach (oci, or neither remote nor package)', () => {
+  it('skips entries we cannot run or reach (oci, or neither remote nor package)', async () => {
     const rows = normalizeMcpRegistry(
       payload([
         { name: 'oci/thing', version: '1.0.0', packages: [{ registryType: 'oci', identifier: 'img:tag' }] },
@@ -107,12 +107,12 @@ describe('normalizeMcpRegistry', () => {
 });
 
 describe('safeHttpUrl — registry data reaches an <a href>', () => {
-  it('passes http(s) through', () => {
+  it('passes http(s) through', async () => {
     expect(safeHttpUrl('https://github.com/foo/bar')).toBe('https://github.com/foo/bar');
     expect(safeHttpUrl('http://example.com/')).toBe('http://example.com/');
   });
 
-  it('rejects anything that could execute or smuggle content', () => {
+  it('rejects anything that could execute or smuggle content', async () => {
     // A registry entry is third-party data — it must not be able to put a
     // javascript:/data: URL into a link the operator is invited to click.
     expect(safeHttpUrl('javascript:alert(1)')).toBeUndefined();
@@ -125,7 +125,7 @@ describe('safeHttpUrl — registry data reaches an <a href>', () => {
 });
 
 describe('provenance links on catalog rows', () => {
-  it('carries the repository url so the badge can link to readable source', () => {
+  it('carries the repository url so the badge can link to readable source', async () => {
     const [row] = normalizeMcpRegistry({
       servers: [
         {
@@ -143,7 +143,7 @@ describe('provenance links on catalog rows', () => {
     expect(row.websiteUrl).toBe('https://tandem.ac/docs-mcp');
   });
 
-  it('drops a hostile repository url rather than passing it to the UI', () => {
+  it('drops a hostile repository url rather than passing it to the UI', async () => {
     const [row] = normalizeMcpRegistry({
       servers: [
         {

@@ -25,6 +25,8 @@ import type { Migration } from '../../db/migrations/index.js';
  *   - webchat_push_subscriptions: Web Push endpoints keyed by user identity.
  */
 export const moduleWebchat: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 100,
   name: 'webchat-initial',
   up(db: Database.Database) {
@@ -82,6 +84,8 @@ export const moduleWebchat: Migration = {
  *   3. Drop `webchat_rooms`.
  */
 export const moduleWebchatDropRooms: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 101,
   name: 'webchat-drop-rooms',
   up(db: Database.Database) {
@@ -160,6 +164,8 @@ export const moduleWebchatDropRooms: Migration = {
  * the deleteWebchatRoom path already cleans this table explicitly).
  */
 export const moduleWebchatRoomPrimes: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 102,
   name: 'webchat-room-primes',
   up(db: Database.Database) {
@@ -193,6 +199,8 @@ export const moduleWebchatRoomPrimes: Migration = {
  * the assignments disappear.
  */
 export const moduleWebchatModels: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 103,
   name: 'webchat-models',
   up(db: Database.Database) {
@@ -240,6 +248,8 @@ export const moduleWebchatModels: Migration = {
  * webchat_room_primes — no FK so the room-delete path can cascade in JS).
  */
 export const moduleWebchatRoomSettings: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 105,
   name: 'webchat-room-settings',
   up(db: Database.Database) {
@@ -272,6 +282,8 @@ export const moduleWebchatRoomSettings: Migration = {
  * cost is negligible.
  */
 export const moduleWebchatApprovalsIndex: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 104,
   name: 'webchat-approvals-index',
   up(db: Database.Database) {
@@ -303,6 +315,8 @@ export const moduleWebchatApprovalsIndex: Migration = {
  * webchat does per-user state (push subscriptions, role grants).
  */
 export const moduleWebchatUserArchives: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 105,
   name: 'webchat-user-archives',
   up(db: Database.Database) {
@@ -351,6 +365,8 @@ export const moduleWebchatUserArchives: Migration = {
  * separated cleanly.
  */
 export const moduleWebchatArchiveSplit: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 106,
   name: 'webchat-archive-split',
   up(db: Database.Database) {
@@ -397,6 +413,8 @@ export const moduleWebchatArchiveSplit: Migration = {
  * Existing rows are preserved; the platform_id lookup index is recreated.
  */
 export const moduleWebchatApprovalsIndexFanout: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 107,
   name: 'webchat-approvals-index-fanout',
   up(db: Database.Database) {
@@ -424,6 +442,8 @@ export const moduleWebchatApprovalsIndexFanout: Migration = {
  * Powers GET /api/search. FTS5 is compiled into the bundled SQLite.
  */
 export const moduleWebchatMessageFts: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 110,
   name: 'webchat-message-fts',
   up(db: Database.Database) {
@@ -457,6 +477,8 @@ export const moduleWebchatMessageFts: Migration = {
  * rest of the schema.
  */
 export const moduleWebchatAgentStatus: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 111,
   name: 'agent-status',
   up(db: Database.Database) {
@@ -486,6 +508,8 @@ export const moduleWebchatAgentStatus: Migration = {
  * webchat tables; deleteWebchatRoom clears rows in app code).
  */
 export const moduleWebchatRoomReads: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 112,
   name: 'webchat-room-reads',
   up(db: Database.Database) {
@@ -511,6 +535,8 @@ export const moduleWebchatRoomReads: Migration = {
  * Secure-by-default: rooms start 'disabled' until an admin opts in.
  */
 export const moduleWebchatRoomCredentialMode: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 108,
   name: 'webchat-room-credential-mode',
   up(db: Database.Database) {
@@ -527,6 +553,8 @@ export const moduleWebchatRoomCredentialMode: Migration = {
  * in. See docs/webchat/user-credentials-oauth.md.
  */
 export const moduleWebchatRoomOauthAllowed: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 109,
   name: 'webchat-room-oauth-allowed',
   up(db: Database.Database) {
@@ -543,6 +571,8 @@ export const moduleWebchatRoomOauthAllowed: Migration = {
  * Defaults to a slug of the display name on first connect (see ensureWebchatUserHandle).
  */
 export const moduleWebchatUserHandles: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 113,
   name: 'webchat-user-handles',
   up(db: Database.Database) {
@@ -570,6 +600,8 @@ export const moduleWebchatUserHandles: Migration = {
  * rows in app code).
  */
 export const moduleWebchatRoomPins: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 114,
   name: 'webchat-room-pins',
   up(db: Database.Database) {
@@ -603,6 +635,8 @@ export const moduleWebchatRoomPins: Migration = {
  * inert until the Codex provider is installed).
  */
 export const moduleWebchatCredentialsConfig: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 115,
   name: 'webchat-credentials-config',
   up(db: Database.Database) {
@@ -645,6 +679,8 @@ export const moduleWebchatCredentialsConfig: Migration = {
  *     existing `webchat_room_reads` rows seed the 'main' thread marker.
  */
 export const moduleWebchatThreads: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 116,
   name: 'webchat-threads',
   up(db: Database.Database) {
@@ -701,6 +737,8 @@ export const moduleWebchatThreads: Migration = {
  * stays mention-only). See docs/webchat/thread-engaged-agents.md.
  */
 export const moduleWebchatThreadEngaged: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 117,
   name: 'webchat-thread-engaged',
   up(db: Database.Database) {
@@ -726,6 +764,8 @@ export const moduleWebchatThreadEngaged: Migration = {
  * starting order; the room_id tiebreaker keeps it deterministic.
  */
 export const moduleWebchatRoomPinOrder: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 116,
   name: 'webchat-room-pin-order',
   up(db: Database.Database) {
@@ -753,6 +793,8 @@ export const moduleWebchatRoomPinOrder: Migration = {
  * See docs/webchat/thread-context-sync.md.
  */
 export const moduleWebchatThreadContextSync: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 118,
   name: 'webchat-thread-context-sync',
   up(db: Database.Database) {
@@ -805,6 +847,8 @@ export const moduleWebchatThreadContextSync: Migration = {
  * writes only ever touch the one key they own.
  */
 export const moduleWebchatMcpServers: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 119,
   name: 'webchat-mcp-servers',
   up(db: Database.Database) {
@@ -842,6 +886,8 @@ export const moduleWebchatMcpServers: Migration = {
  * new table — it's one workspace-wide flag.
  */
 export const moduleWebchatOnboarding: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 123,
   name: 'webchat-onboarding',
   up(db: Database.Database) {
@@ -871,6 +917,8 @@ export const moduleWebchatOnboarding: Migration = {
  * webchat_settings singleton: one workspace-wide choice, owner-set.
  */
 export const moduleWebchatStt: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 124,
   name: 'webchat-stt',
   up(db: Database.Database) {
@@ -894,6 +942,8 @@ export const moduleWebchatStt: Migration = {
  * 0 = bearer honored (default), 1 = bearer inert.
  */
 export const moduleWebchatBearerAuth: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 130,
   name: 'webchat-bearer-auth',
   up(db: Database.Database) {
@@ -915,6 +965,8 @@ export const moduleWebchatBearerAuth: Migration = {
  * rule). 0 = enabled (default), 1 = disabled.
  */
 export const moduleWebchatMarketplaceToggle: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 131,
   name: 'webchat-marketplace-toggle',
   up(db: Database.Database) {
@@ -942,6 +994,8 @@ export const moduleWebchatMarketplaceToggle: Migration = {
  * settings row was written for any other reason.
  */
 export const moduleWebchatCredentialIsolation: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 205,
   name: 'webchat-credential-isolation',
   up(db: Database.Database) {
@@ -960,6 +1014,8 @@ export const moduleWebchatCredentialIsolation: Migration = {
  * itself. 0 = off (default), 1 = armed.
  */
 export const moduleWebchatTailscaleOwner: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 132,
   name: 'webchat-tailscale-owner',
   up(db: Database.Database) {
@@ -979,6 +1035,8 @@ export const moduleWebchatTailscaleOwner: Migration = {
  * (default), 1 = on for every authed user.
  */
 export const moduleWebchatReadAloud: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 133,
   name: 'webchat-read-aloud',
   up(db: Database.Database) {
@@ -997,6 +1055,8 @@ export const moduleWebchatReadAloud: Migration = {
  * the place to teach the tidy pass domain words ("NanoClaw", not "Nano-clot").
  */
 export const moduleWebchatSttPrompt: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 134,
   name: 'webchat-stt-prompt',
   up(db: Database.Database) {
@@ -1017,6 +1077,8 @@ export const moduleWebchatSttPrompt: Migration = {
  * src/modules/approvals/prejudge.ts.
  */
 export const moduleWebchatApprovalPrejudge: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 207,
   name: 'webchat-approval-prejudge',
   up(db: Database.Database) {
@@ -1039,6 +1101,8 @@ export const moduleWebchatApprovalPrejudge: Migration = {
  * Anthropic credential as before).
  */
 export const moduleWebchatDefaultModel: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 125,
   name: 'webchat-default-model',
   up(db: Database.Database) {
@@ -1058,6 +1122,8 @@ export const moduleWebchatDefaultModel: Migration = {
  * folder per entry under `dir`.
  */
 export const moduleWebchatSkillSources: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 120,
   name: 'webchat-skill-sources',
   up(db: Database.Database) {
@@ -1088,6 +1154,8 @@ export const moduleWebchatSkillSources: Migration = {
  * and any admin-added collection — is community (review link + confirm gate).
  */
 export const moduleWebchatSkillSourcesOfficial: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 121,
   name: 'webchat-skill-sources-official',
   up(db: Database.Database) {
@@ -1103,6 +1171,8 @@ export const moduleWebchatSkillSourcesOfficial: Migration = {
 // an owner has switched off, so they can be removed from the pool like any GitHub
 // collection. Absence = enabled; a row = disabled.
 export const moduleWebchatDisabledBuiltins: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 122,
   name: 'webchat-disabled-builtins',
   up(db: Database.Database) {
@@ -1117,6 +1187,8 @@ export const moduleWebchatDisabledBuiltins: Migration = {
  * re-establishes the forwarder without re-configuration.
  */
 export const moduleWebchatAuditSyslog: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 208,
   name: 'webchat-audit-syslog',
   up(db: Database.Database) {
@@ -1146,6 +1218,8 @@ export const moduleWebchatAuditSyslog: Migration = {
  * disagreement between them.
  */
 export const moduleWebchatApprovalTriage: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 209,
   name: 'webchat-approval-triage',
   up(db: Database.Database) {
@@ -1174,6 +1248,8 @@ export const moduleWebchatApprovalTriage: Migration = {
  * always community (official=0), same contract as skill sources.
  */
 export const moduleWebchatTemplateSources: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
   version: 210,
   name: 'webchat-template-sources',
   up(db: Database.Database) {

@@ -24,7 +24,7 @@ import { checkComposition, collectVersions } from './server.js';
 
 let root: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   // Under os.tmpdir(), which is outside any git checkout — so the git probe
   // fails the way it would on a tarball install rather than picking up THIS
   // repo's HEAD and making the "no git" case untestable.
@@ -35,7 +35,7 @@ afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
 const write = (name: string, obj: unknown) => fs.writeFileSync(path.join(root, name), JSON.stringify(obj));
 
 describe('collectVersions', () => {
-  it('reports every source when they are all present', () => {
+  it('reports every source when they are all present', async () => {
     write('package.json', { name: 'nanoclaw', version: '2.1.54' });
     write('.webchat-provenance.json', {
       webchatRef: 'a'.repeat(40),
@@ -57,7 +57,7 @@ describe('collectVersions', () => {
     expect(v.components).toEqual({ 'onecli-gateway': '1.36.0', 'onecli-cli': '2.2.5' });
   });
 
-  it('returns webchat: null when the provenance stamp is absent', () => {
+  it('returns webchat: null when the provenance stamp is absent', async () => {
     // An install composed before the stamp existed. It must still report the
     // nanoclaw half rather than failing, and must NOT invent a webchat version.
     write('package.json', { version: '2.1.54' });
@@ -66,20 +66,20 @@ describe('collectVersions', () => {
     expect(v.nanoclaw.version).toBe('2.1.54');
   });
 
-  it('survives a completely empty directory', () => {
+  it('survives a completely empty directory', async () => {
     const v = collectVersions(root);
     expect(v.nanoclaw.version).toBeNull();
     expect(v.webchat).toBeNull();
     expect(v.components).toEqual({});
   });
 
-  it('reports no commit outside a git checkout instead of throwing', () => {
+  it('reports no commit outside a git checkout instead of throwing', async () => {
     write('package.json', { version: '2.1.54' });
     const v = collectVersions(root);
     expect(v.nanoclaw.commit).toBeNull();
   });
 
-  it('survives malformed JSON in any source', () => {
+  it('survives malformed JSON in any source', async () => {
     fs.writeFileSync(path.join(root, 'package.json'), '{ not json');
     fs.writeFileSync(path.join(root, '.webchat-provenance.json'), 'nope');
     fs.writeFileSync(path.join(root, 'versions.json'), '[[[');
@@ -89,14 +89,14 @@ describe('collectVersions', () => {
     expect(v.components).toEqual({});
   });
 
-  it('carries the dirty flag through, so a modified tree cannot masquerade as its SHA', () => {
+  it('carries the dirty flag through, so a modified tree cannot masquerade as its SHA', async () => {
     write('package.json', { version: '2.1.54' });
     write('.webchat-provenance.json', { webchatRef: 'd'.repeat(40), webchatDirty: true });
     const v = collectVersions(root);
     expect(v.webchat?.dirty).toBe(true);
   });
 
-  it('keeps only string component values, so a nested pin object cannot leak in', () => {
+  it('keeps only string component values, so a nested pin object cannot leak in', async () => {
     write('versions.json', { 'onecli-cli': '2.2.5', nested: { secret: 'x' }, n: 3 });
     const v = collectVersions(root);
     expect(v.components).toEqual({ 'onecli-cli': '2.2.5' });
@@ -108,7 +108,7 @@ describe('checkComposition', () => {
     fs.writeFileSync(path.join(root, '.webchat-payload.json'), JSON.stringify({ algorithm: 'sha256', files }));
   const sha = (text: string) => createHash('sha256').update(Buffer.from(text)).digest('hex');
 
-  it('reports a match when every payload file is untouched', () => {
+  it('reports a match when every payload file is untouched', async () => {
     fs.writeFileSync(path.join(root, 'a.txt'), 'one');
     fs.mkdirSync(path.join(root, 'sub'), { recursive: true });
     fs.writeFileSync(path.join(root, 'sub/b.txt'), 'two');
@@ -116,7 +116,7 @@ describe('checkComposition', () => {
     expect(checkComposition(root)).toEqual({ checked: 2, drifted: [], matches: true });
   });
 
-  it('names an edited file, and counts a deleted one as drift', () => {
+  it('names an edited file, and counts a deleted one as drift', async () => {
     // The two ways a live tree actually stops matching its release: someone
     // hand-copies a fixed file in, or something removes one.
     fs.writeFileSync(path.join(root, 'a.txt'), 'one');
@@ -129,7 +129,7 @@ describe('checkComposition', () => {
     expect(r.drifted).toEqual(['b.txt', 'gone.txt']);
   });
 
-  it('is null without a stamp, so "not checked" cannot read as "clean"', () => {
+  it('is null without a stamp, so "not checked" cannot read as "clean"', async () => {
     // An install composed before this existed must not claim to be verified.
     expect(checkComposition(root)).toBeNull();
   });

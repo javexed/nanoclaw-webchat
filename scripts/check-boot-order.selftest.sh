@@ -61,7 +61,16 @@ check_against() { ( cd "$HERE/ui" && node boot-order.mjs check "http://127.0.0.1
 # Sanity: the real baseline must PASS, or the faults below prove nothing.
 if ! check_against "$BASELINE"; then
   echo "❌ selftest: the committed baseline already fails against this bundle." >&2
-  echo "   Re-record it (scripts/check-boot-order.sh --record) before trusting the guard." >&2
+  echo "   The diff follows. If this change did not mean to touch startup, the DIFF is the" >&2
+  echo "   finding — do not re-record to make it green. Re-record (scripts/check-boot-order.sh" >&2
+  echo "   --record) only when the change is intended." >&2
+  echo "   ---- boot-order diff (${BASELINE##*/}) ----" >&2
+  # Re-run unsuppressed. check_against() hides output so the fault cases below
+  # stay quiet, but on THIS path the output is the entire point: without it the
+  # step says only "re-record me", which is advice, not evidence — and it is
+  # exactly wrong whenever the baseline is right and the bundle is not. Cost is
+  # one extra trace on a path that is already failing.
+  ( cd "$HERE/ui" && node boot-order.mjs check "http://127.0.0.1:$PORT/" "$BASELINE" ) >&2 || true
   exit 1
 fi
 echo "  committed baseline: passes (as it must)"

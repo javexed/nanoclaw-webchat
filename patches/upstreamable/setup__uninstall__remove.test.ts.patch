@@ -1,5 +1,5 @@
 diff --git a/setup/uninstall/remove.test.ts b/setup/uninstall/remove.test.ts
-index d32f383a..93772a18 100644
+index 4d40f3b9..060d7b02 100644
 --- a/setup/uninstall/remove.test.ts
 +++ b/setup/uninstall/remove.test.ts
 @@ -1,4 +1,4 @@
@@ -8,7 +8,7 @@ index d32f383a..93772a18 100644
  import fs from 'fs';
  import os from 'os';
  import path from 'path';
-@@ -139,14 +139,19 @@ describe('executePlan', () => {
+@@ -136,14 +136,19 @@ describe('executePlan', () => {
    it('keeps .env when the backup fails', () => {
      const envPath = path.join(tempDir, '.env');
      fs.writeFileSync(envPath, 'KEY=secret');

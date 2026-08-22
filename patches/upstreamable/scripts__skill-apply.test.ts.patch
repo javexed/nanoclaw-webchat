@@ -1,15 +1,21 @@
-diff --git c/scripts/skill-apply.test.ts w/scripts/skill-apply.test.ts
-index d246a4cb..4af0c7a8 100644
---- c/scripts/skill-apply.test.ts
-+++ w/scripts/skill-apply.test.ts
-@@ -1,10 +1,31 @@
+diff --git a/scripts/skill-apply.test.ts b/scripts/skill-apply.test.ts
+index 1a266f32..3b0d5ecf 100644
+--- a/scripts/skill-apply.test.ts
++++ b/scripts/skill-apply.test.ts
+@@ -1,4 +1,4 @@
 -import { describe, it, expect, beforeEach } from 'vitest';
 +import { describe, it, expect, beforeEach, afterAll } from 'vitest';
  import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
  import { tmpdir } from 'node:os';
  import { join } from 'node:path';
--import { applySkill, removeSkill, planSkill, fullyApplied, firstFailureHint, referenceProse, stepLabel, type ApplyEvent, type InputMeta } from './skill-apply.js';
-+import { applySkill, removeSkill, planSkill, fullyApplied, firstFailureHint, referenceProse, stepLabel, substituteForLog, type ApplyEvent, type InputMeta } from './skill-apply.js';
+@@ -10,11 +10,33 @@ import {
+   firstFailureHint,
+   referenceProse,
+   stepLabel,
++  substituteForLog,
+   type ApplyEvent,
+   type InputMeta,
+ } from './skill-apply.js';
  import { parseDirectives, validate } from './skill-directives.js';
  
 +/**
@@ -36,7 +42,7 @@ index d246a4cb..4af0c7a8 100644
  // A synthetic skill exercising the fs handlers for real (no network), plus one
  // directive the engine can't handle — to prove it bounces to an agent, not abort.
  const SKILL = `# demo skill
-@@ -44,8 +65,8 @@ const recordingExec = () => {
+@@ -57,8 +79,8 @@ const recordingExec = () => {
  };
  
  beforeEach(() => {
@@ -47,7 +53,7 @@ index d246a4cb..4af0c7a8 100644
    mkdirSync(join(skillDir, 'resources'), { recursive: true });
    writeFileSync(join(skillDir, 'SKILL.md'), SKILL);
    writeFileSync(join(skillDir, 'resources/sample.ts'), 'export const sample = true;\n');
-@@ -118,11 +139,12 @@ container/skills/demo-formatting/SKILL.md
+@@ -201,11 +223,12 @@ container/skills/demo-formatting/SKILL.md
  
  describe('from-branch copy apply path', () => {
    it('creates the missing dest parent dir before the git-show redirect', async () => {
@@ -62,7 +68,7 @@ index d246a4cb..4af0c7a8 100644
      // container/skills/demo-formatting/ deliberately absent from root
  
      const { cmds, exec } = recordingExec();
-@@ -138,6 +160,35 @@ describe('from-branch copy apply path', () => {
+@@ -227,6 +250,35 @@ describe('from-branch copy apply path', () => {
      rmSync(fskill, { recursive: true, force: true });
      rmSync(froot, { recursive: true, force: true });
    });
@@ -98,7 +104,7 @@ index d246a4cb..4af0c7a8 100644
  });
  
  // json-merge: push a body object into an array-of-objects JSON file, keyed.
-@@ -153,8 +204,8 @@ describe('json-merge directive', () => {
+@@ -242,8 +294,8 @@ describe('json-merge directive', () => {
    let jroot: string;
    let jskill: string;
    beforeEach(() => {
@@ -109,7 +115,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(jskill, 'SKILL.md'), JSON_MERGE_SKILL);
      mkdirSync(join(jroot, 'container'), { recursive: true });
      writeFileSync(join(jroot, 'container/cli-tools.json'), '[\n  { "name": "vercel", "version": "52.2.1" }\n]\n');
-@@ -223,8 +274,8 @@ describe('append at:<marker>', () => {
+@@ -336,8 +388,8 @@ describe('append at:<marker>', () => {
    let aroot: string;
    let askill: string;
    beforeEach(() => {
@@ -120,7 +126,7 @@ index d246a4cb..4af0c7a8 100644
      mkdirSync(join(aroot, 'setup'), { recursive: true });
      writeFileSync(join(aroot, 'setup/index.ts'), MARKER_FILE);
    });
-@@ -287,8 +338,8 @@ describe('nc:run variable substitution', () => {
+@@ -402,8 +454,8 @@ describe('nc:run variable substitution', () => {
    let rroot: string;
    let rskill: string;
    beforeEach(() => {
@@ -131,7 +137,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(rskill, 'SKILL.md'), RUN_WIRE_SKILL);
      writeFileSync(join(rroot, 'package.json'), '{"name":"scratch"}');
    });
-@@ -346,8 +397,8 @@ describe('nc:run capture', () => {
+@@ -464,8 +516,8 @@ describe('nc:run capture', () => {
    let croot: string;
    let cskill: string;
    beforeEach(() => {
@@ -142,7 +148,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(cskill, 'SKILL.md'), CAPTURE_SKILL);
      writeFileSync(join(croot, 'package.json'), '{"name":"scratch"}');
    });
-@@ -407,8 +458,8 @@ describe('nc:run multi-field JSON capture + validate', () => {
+@@ -525,8 +577,8 @@ describe('nc:run multi-field JSON capture + validate', () => {
    let mroot: string;
    let mskill: string;
    beforeEach(() => {
@@ -153,7 +159,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(mroot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(mroot, '.env'), '');
    });
-@@ -469,8 +520,8 @@ describe('nc:operator', () => {
+@@ -594,8 +646,8 @@ describe('nc:operator', () => {
    let oroot: string;
    let oskill: string;
    beforeEach(() => {
@@ -164,7 +170,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(oroot, 'package.json'), '{"name":"scratch"}');
    });
  
-@@ -520,8 +571,8 @@ describe('programmatic apply via inputs', () => {
+@@ -648,8 +700,8 @@ describe('programmatic apply via inputs', () => {
    let proot: string;
    let pskill: string;
    beforeEach(() => {
@@ -175,7 +181,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(proot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(proot, '.env'), '');
    });
-@@ -623,8 +674,8 @@ IMESSAGE_LOCAL=true
+@@ -761,8 +813,8 @@ IMESSAGE_LOCAL=true
  `;
  
  function modeScratch(): { sdir: string; rdir: string } {
@@ -186,7 +192,7 @@ index d246a4cb..4af0c7a8 100644
    writeFileSync(join(sdir, 'SKILL.md'), MODE_SKILL);
    writeFileSync(join(rdir, '.env'), '');
    writeFileSync(join(rdir, 'package.json'), '{"name":"scratch"}');
-@@ -679,8 +730,8 @@ DEMO_PLATFORM={{platform_id}}
+@@ -820,8 +872,8 @@ DEMO_PLATFORM={{platform_id}}
  `;
  
  function stepScratch(): { sdir: string; rdir: string } {
@@ -197,7 +203,7 @@ index d246a4cb..4af0c7a8 100644
    writeFileSync(join(sdir, 'SKILL.md'), STEP_SKILL);
    writeFileSync(join(rdir, '.env'), '');
    writeFileSync(join(rdir, 'package.json'), '{"name":"scratch"}');
-@@ -764,8 +815,8 @@ describe('run-health gate (a bounce blocks later side effects)', () => {
+@@ -905,8 +957,8 @@ describe('run-health gate (a bounce blocks later side effects)', () => {
    let groot: string;
    let gskill: string;
    beforeEach(() => {
@@ -208,7 +214,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(groot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(groot, '.env'), '');
    });
-@@ -909,8 +960,8 @@ describe('nc:run effect:check (precondition gate)', () => {
+@@ -1050,8 +1102,8 @@ describe('nc:run effect:check (precondition gate)', () => {
    let chkSkill: string;
    let chkRoot: string;
    beforeEach(() => {
@@ -219,7 +225,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(chkRoot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(chkRoot, '.env'), '');
    });
-@@ -987,8 +1038,8 @@ describe('onEvent (core event seam)', () => {
+@@ -1128,8 +1180,8 @@ describe('onEvent (core event seam)', () => {
    let eroot: string;
    let eskill: string;
    beforeEach(() => {
@@ -230,7 +236,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(eroot, '.env'), '');
      writeFileSync(join(eroot, 'package.json'), '{"name":"scratch"}');
    });
-@@ -1139,8 +1190,8 @@ describe('firstFailureHint', () => {
+@@ -1312,8 +1364,8 @@ describe('firstFailureHint', () => {
    let froot: string;
    let fskill: string;
    beforeEach(() => {
@@ -241,7 +247,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(froot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(froot, '.env'), '');
    });
-@@ -1185,8 +1236,8 @@ describe('nc:prompt normalize at bind + InputMeta declaration', () => {
+@@ -1358,8 +1410,8 @@ describe('nc:prompt normalize at bind + InputMeta declaration', () => {
    let nroot: string;
    let nskill: string;
    beforeEach(() => {
@@ -252,7 +258,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(nskill, 'SKILL.md'), NORMALIZE_SKILL);
      writeFileSync(join(nroot, '.env'), '');
      writeFileSync(join(nroot, 'package.json'), '{"name":"scratch"}');
-@@ -1240,8 +1291,8 @@ describe('resolveInput (core input seam)', () => {
+@@ -1416,8 +1468,8 @@ describe('resolveInput (core input seam)', () => {
    let iroot: string;
    let iskill: string;
    beforeEach(() => {
@@ -263,7 +269,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(iroot, '.env'), '');
      writeFileSync(join(iroot, 'package.json'), '{"name":"scratch"}');
    });
-@@ -1325,8 +1376,8 @@ describe('validate-at-bind (inputs + resolveInput answers)', () => {
+@@ -1501,8 +1553,8 @@ describe('validate-at-bind (inputs + resolveInput answers)', () => {
    let vroot: string;
    let vskill: string;
    beforeEach(() => {
@@ -274,7 +280,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(vskill, 'SKILL.md'), VALIDATE_BIND_SKILL);
      writeFileSync(join(vroot, '.env'), '');
      writeFileSync(join(vroot, 'package.json'), '{"name":"scratch"}');
-@@ -1485,8 +1536,8 @@ describe('referenceProse (reference-floor slice)', () => {
+@@ -1674,8 +1726,8 @@ describe('referenceProse (reference-floor slice)', () => {
    });
  
    it('is carried on ApplyResult.referenceProse through a real apply', async () => {
@@ -285,7 +291,7 @@ index d246a4cb..4af0c7a8 100644
      writeFileSync(join(rdir, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(rdir, '.env'), '');
      writeFileSync(join(sdir, 'SKILL.md'), REFERENCE_SKILL);
-@@ -1496,3 +1547,20 @@ describe('referenceProse (reference-floor slice)', () => {
+@@ -1685,3 +1737,20 @@ describe('referenceProse (reference-floor slice)', () => {
      expect(res.referenceProse).not.toContain('## Apply');
    });
  });

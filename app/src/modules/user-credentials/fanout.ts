@@ -92,7 +92,7 @@ function contentFor(m: WebchatMessage, roomId: string, isCurrent: boolean): stri
   }
 }
 
-export function writeMemberTranscript(args: SessionInboundWriterArgs): boolean {
+export async function writeMemberTranscript(args: SessionInboundWriterArgs): Promise<boolean> {
   // Scope to the session's OWN thread. The session key is (user, thread); a
   // room-wide transcript is what mixed 89 main-thread rows with 60 topic-thread
   // rows in one member's queue, leaving the agent to answer a room message into
@@ -104,7 +104,7 @@ export function writeMemberTranscript(args: SessionInboundWriterArgs): boolean {
     : getWebchatMessages(args.roomId, TRANSCRIPT_LIMIT);
   const msgs: ContextMessage[] = [];
   let sawCurrent = false;
-  for (const m of transcript) {
+  for (const m of await transcript) {
     if (SKIP_TYPES.has((m as { message_type?: string }).message_type ?? '')) continue;
     const isCurrent = m.id === args.currentMessageId;
     if (isCurrent) sawCurrent = true;

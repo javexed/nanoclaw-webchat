@@ -27,7 +27,7 @@ const { applySkillDraft } = await import('./apply.js');
 const AG = 'ag-apply-test';
 const scoped = path.join(DATA, 'v2-sessions', AG, '.claude-shared', 'skills');
 
-beforeEach(() => {
+beforeEach(async () => {
   fs.mkdirSync(path.join(scoped, 'existing-skill'), { recursive: true });
   fs.writeFileSync(path.join(scoped, 'existing-skill', 'SKILL.md'), 'OLD CONTENT');
   draftBody.value = 'NEW CONTENT';
@@ -35,7 +35,7 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(DATA, { recursive: true, force: true }));
 
 describe('applySkillDraft — update existing skill (patch)', () => {
-  it('replaces the target skill and snapshots the old version to .history', () => {
+  it('replaces the target skill and snapshots the old version to .history', async () => {
     // A create-draft re-typed as a patch of an existing skill — exactly what the
     // keep handler does for an "Update <skill>" overlap choice.
     const draft = {
@@ -45,7 +45,7 @@ describe('applySkillDraft — update existing skill (patch)', () => {
       target_skill: 'existing-skill',
       skill_name: 'newly-learned',
     };
-    const r = applySkillDraft(draft as Parameters<typeof applySkillDraft>[0], 'test update');
+    const r = await applySkillDraft(draft as Parameters<typeof applySkillDraft>[0], 'test update');
 
     expect(r.ok).toBe(true);
     expect(r.name).toBe('existing-skill'); // wrote to the TARGET, not the draft's own name
@@ -59,7 +59,7 @@ describe('applySkillDraft — update existing skill (patch)', () => {
     expect(fs.readFileSync(path.join(histRoot, snaps[0], 'SKILL.md'), 'utf8')).toBe('OLD CONTENT');
   });
 
-  it('does not touch a differently-named skill (the draft name is ignored on a patch)', () => {
+  it('does not touch a differently-named skill (the draft name is ignored on a patch)', async () => {
     const draft = {
       id: 'd2',
       agent_group_id: AG,
@@ -67,7 +67,7 @@ describe('applySkillDraft — update existing skill (patch)', () => {
       target_skill: 'existing-skill',
       skill_name: 'newly-learned',
     };
-    applySkillDraft(draft as Parameters<typeof applySkillDraft>[0], 'test update');
+    await applySkillDraft(draft as Parameters<typeof applySkillDraft>[0], 'test update');
     // No skill created under the draft's own name.
     expect(fs.existsSync(path.join(scoped, 'newly-learned'))).toBe(false);
   });

@@ -105,11 +105,11 @@ function frontMatter(md: string): { name: string; description: string } {
 }
 
 /** Everything a Keep for this agent could collide with (excluding the draft itself). */
-export function gatherOverlapCandidates(
+export async function gatherOverlapCandidates(
   agentGroupId: string,
   excludeDraftId: string,
   dataDir: string = DATA_DIR,
-): OverlapCandidate[] {
+): Promise<OverlapCandidate[]> {
   const out: OverlapCandidate[] = [];
   const scopedDir = path.join(dataDir, 'v2-sessions', agentGroupId, '.claude-shared', 'skills');
   try {
@@ -126,7 +126,7 @@ export function gatherOverlapCandidates(
     /* no scoped skills yet */
   }
   try {
-    for (const d of listSkillDrafts()) {
+    for (const d of await listSkillDrafts()) {
       if (d.id === excludeDraftId || d.agent_group_id !== agentGroupId) continue;
       out.push({ name: d.skill_name, description: d.description ?? '', source: 'pending-draft' });
     }
@@ -220,7 +220,7 @@ export async function findKeepOverlaps(draft: SkillDraft): Promise<OverlapHit[]>
   const me = { name: draft.skill_name, description: draft.description ?? '', body };
   // A patch REPLACES its target by design — the target is not "overlap".
   const targetName = draft.kind === 'patch' ? draft.target_skill : null;
-  const shortlist: OverlapHit[] = gatherOverlapCandidates(draft.agent_group_id, draft.id)
+  const shortlist: OverlapHit[] = (await gatherOverlapCandidates(draft.agent_group_id, draft.id))
     .filter((c) => c.name !== targetName)
     .map((c) => ({
       ...c,

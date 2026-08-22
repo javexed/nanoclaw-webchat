@@ -9,10 +9,10 @@ import { assertSafeOutboundUrl, safeFetch } from './models.js';
 
 describe('assertSafeOutboundUrl', () => {
   const originalEnv = process.env.WEBCHAT_BLOCK_PRIVATE_IPS;
-  beforeEach(() => {
+  beforeEach(async () => {
     delete process.env.WEBCHAT_BLOCK_PRIVATE_IPS;
   });
-  afterEach(() => {
+  afterEach(async () => {
     if (originalEnv === undefined) delete process.env.WEBCHAT_BLOCK_PRIVATE_IPS;
     else process.env.WEBCHAT_BLOCK_PRIVATE_IPS = originalEnv;
   });
@@ -75,7 +75,7 @@ describe('assertSafeOutboundUrl', () => {
   });
 
   describe('private IPs (WEBCHAT_BLOCK_PRIVATE_IPS=true)', () => {
-    beforeEach(() => {
+    beforeEach(async () => {
       process.env.WEBCHAT_BLOCK_PRIVATE_IPS = 'true';
     });
 
@@ -100,7 +100,14 @@ describe('assertSafeOutboundUrl', () => {
   });
 
   it('does not throw on unresolvable hostnames (lets fetch fail naturally)', async () => {
-    await expect(assertSafeOutboundUrl('http://this-host-does-not-exist.invalid.example/')).resolves.toBeUndefined();
+    // `.invalid`, NOT `.invalid.example`. RFC 6761 reserves `.invalid` and says
+    // resolvers should answer NXDOMAIN for it without forwarding upstream, so it
+    // fails fast anywhere. `.invalid.example` carries no such guarantee: it gets
+    // forwarded, and on a resolver that simply never answers it took 11.6s to
+    // return EAI_AGAIN here — past the 5s limit, so this test failed on a
+    // machine where nothing was wrong. Measured 2026-08-20: `.invalid` rejects
+    // in 6ms, `.invalid.example` in 11601ms.
+    await expect(assertSafeOutboundUrl('http://this-host-does-not-exist.invalid/')).resolves.toBeUndefined();
   });
 });
 

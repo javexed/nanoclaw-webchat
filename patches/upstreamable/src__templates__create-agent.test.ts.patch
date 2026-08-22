@@ -1,5 +1,5 @@
 diff --git a/src/templates/create-agent.test.ts b/src/templates/create-agent.test.ts
-index fd3a8611..b0d442a5 100644
+index 1a5799e5..530d4f20 100644
 --- a/src/templates/create-agent.test.ts
 +++ b/src/templates/create-agent.test.ts
 @@ -28,6 +28,12 @@ import { NANOCLAW_EXTENSION_NS } from './extension.js';

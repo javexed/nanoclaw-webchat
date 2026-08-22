@@ -8,9 +8,22 @@
 // it now means the panels that follow IMPORT it instead of being handed it
 // through provide*Deps.
 import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
-import { getMentionMatches, getMentionSelectedIndex, getMentionStart, setMentionMatches, setMentionSelectedIndex, setMentionStart } from './composer.js';
+import {
+  getMentionMatches,
+  getMentionSelectedIndex,
+  getMentionStart,
+  setMentionMatches,
+  setMentionSelectedIndex,
+  setMentionStart,
+} from './composer.js';
 import { lightboxOpen } from './modals-state.js';
-import { userCredsOauthReturnFocus, userCredsOauthSessionId, userCredsOauthTarget, userCredsProvider, userCredsWords } from './user-creds-state.js';
+import {
+  userCredsOauthReturnFocus,
+  userCredsOauthSessionId,
+  userCredsOauthTarget,
+  userCredsProvider,
+  userCredsWords,
+} from './user-creds-state.js';
 import { refreshWizardCredState } from './wizard.js';
 import { applySettings } from './settings.js';
 import { showToast, toastError } from '../core/toast.js';
@@ -50,7 +63,7 @@ export function provideModalsDeps(provided: Partial<ModalsDeps>): void {
 
 export function openHandlePopover() {
   const pop = $('#handle-popover');
-  const input = ($('#handle-input')) as HTMLInputElement;
+  const input = $('#handle-input') as HTMLInputElement;
   const status = $('#handle-status');
   if (!pop) return;
   if (input) input.value = state.myHandle || '';
@@ -96,7 +109,7 @@ function setLightboxImage(idx?: any) {
   if (idx < 0 || idx >= lightboxImages.length) return;
   lightboxIndex = idx;
   const { url, alt } = lightboxImages[idx];
-  const img = ($('#lightbox-img')!) as HTMLElement;
+  const img = $('#lightbox-img')! as HTMLElement;
   const spinner = $('#lightbox-spinner')!;
   resetLightboxTransform();
   spinner.hidden = false;
@@ -110,7 +123,7 @@ function setLightboxImage(idx?: any) {
   (img as HTMLImageElement).src = url;
   (img as HTMLImageElement).alt = alt;
   // Download href tracks the current image. Filename derived from URL tail.
-  const dl = ($('#lightbox-download')!) as HTMLElement;
+  const dl = $('#lightbox-download')! as HTMLElement;
   (dl as HTMLAnchorElement).href = url;
   try {
     const tail = new URL(url, location.href).pathname.split('/').pop();
@@ -175,15 +188,126 @@ export function navigateLightbox(delta?: any) {
 }
 
 export function blockingOverlayOpen() {
+  // The floor's desk popover is class-keyed, not id-keyed — without this the
+  // boot Esc handler closes the whole floor view instead of just the popover.
+  if (document.querySelector('.floor-popover')) return true;
   // `.modal-overlay` covers the settings, user-creds, and (dynamically mounted)
   // confirm modals; the rest are listed explicitly. Visible = present and not
   // [hidden].
   if (document.querySelector('.modal-overlay:not([hidden])')) return true;
-  const others = ['model-picker', 'lightbox', 'members-overlay', 'handle-popover', 'overflow-menu', 'search-results', 'learn-menu'];
+  const others = [
+    'model-picker',
+    'lightbox',
+    'members-overlay',
+    'handle-popover',
+    'overflow-menu',
+    'search-results',
+    'learn-menu',
+  ];
   return others.some((id) => {
     const el = document.getElementById(id);
     return el && !el.hidden;
   });
+}
+
+/**
+ * Member Grok device login.
+ *
+ * Two polls, not one: the first waits for the CLI to print a URL and code, the
+ * second waits for the member to approve on whatever device they opened it on.
+ * `grokMintToken` is the cancellation signal — reopening or closing the modal
+ * bumps it, and any in-flight loop notices and stops rather than writing into
+ * a dialog that has moved on.
+ */
+let grokMintToken = 0;
+
+export function cancelGrokMint(): void {
+  grokMintToken++;
+}
+
+async function openGrokMintModal(modal: HTMLElement): Promise<void> {
+  const token = ++grokMintToken;
+  const alive = () => token === grokMintToken && !modal.hidden;
+  const status = (msg: string, kind = '') => userCredsOauthStatus(msg, kind);
+
+  const title = $('#user-creds-oauth-title');
+  if (title) title.textContent = 'Connect to Grok';
+  $('#user-creds-oauth-step2')!.hidden = true;
+  $('#user-creds-oauth-submit')!.hidden = true; // nothing to submit — approval is detected
+  $('#user-creds-oauth-spinner')!.hidden = false;
+  const code = $('#user-creds-oauth-code') as HTMLInputElement | null;
+  if (code) code.hidden = true;
+  const codeLabel = $('#user-creds-oauth-code-label');
+  if (codeLabel) codeLabel.hidden = true;
+  userCredsOauthReturnFocus.value = document.activeElement as HTMLElement | null;
+  modal.hidden = false;
+  $('#user-creds-oauth-close')?.focus();
+  status('Starting sign-in…');
+
+  const poll = async () => {
+    const r = await authFetch('/api/user-credentials/grok/status');
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.statusText);
+    return d;
+  };
+  const wait = (ms: number) => new Promise((res) => setTimeout(res, ms));
+
+  try {
+    const r = await authFetch('/api/user-credentials/grok/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ roomId: state.currentRoom }),
+    });
+    const started = await r.json();
+    if (!r.ok) throw new Error(started.error || r.statusText);
+
+    // Phase 1 — wait for the URL and code.
+    let d = started;
+    for (let i = 0; alive() && !d.verificationUrl && d.outcome !== 'error' && i < 40; i++) {
+      await wait(750);
+      if (!alive()) return;
+      d = await poll();
+    }
+    if (!alive()) return;
+    if (d.outcome === 'error') throw new Error(d.error || 'Sign-in failed.');
+    if (!d.verificationUrl) throw new Error('Timed out waiting for the sign-in link.');
+
+    const link = $('#user-creds-oauth-link') as HTMLAnchorElement | null;
+    if (link) {
+      link.href = d.verificationUrl;
+      link.textContent = 'Open Grok sign-in ↗';
+    }
+    // Reuse the Codex pairing-code island — same job, same shape.
+    codexActive.value = true;
+    codexUserCode.value = d.userCode || '';
+    const codexCode = $('#user-creds-oauth-codex-code');
+    if (codexCode) codexCode.hidden = false;
+    mountCodexCode();
+    $('#user-creds-oauth-spinner')!.hidden = true;
+    $('#user-creds-oauth-step2')!.hidden = false;
+    status('Open the link and approve — this page finishes on its own.');
+    link?.focus();
+
+    // Phase 2 — wait for approval. The status route stores the credential the
+    // moment it sees a completed login, so arriving here means it is saved.
+    while (alive() && d.outcome === 'pending') {
+      await wait(2000);
+      if (!alive()) return;
+      d = await poll();
+    }
+    if (!alive()) return;
+    if (d.outcome !== 'complete') throw new Error(d.error || 'Sign-in was not completed.');
+
+    grokMintToken++; // this flow is done; nothing else should still be polling
+    codexActive.value = false;
+    showToast('Connected your Grok subscription.', { kind: 'success' });
+    modal.hidden = true;
+    await updateUserCredsBanner(state.currentRoom);
+  } catch (err) {
+    if (!alive()) return;
+    $('#user-creds-oauth-spinner')!.hidden = true;
+    status((err as any)?.message || 'Could not start sign-in.', 'error');
+  }
 }
 
 export async function openOauthMintModal(target?: any) {
@@ -191,6 +315,10 @@ export async function openOauthMintModal(target?: any) {
   const modal = $('#user-creds-oauth-modal');
   if (!modal) return;
   const isWorkspace = target.startsWith('workspace');
+  // Grok is a device flow with no code to paste back and no "finish" call: the
+  // server polls the CLI and the browser polls the server. It gets its own path
+  // rather than a third arm on every isCodex ternary below.
+  if (!isWorkspace && userCredsProvider.value === 'grok') return openGrokMintModal(modal);
   const isCodex = target === 'workspace-codex' || (!isWorkspace && userCredsProvider.value === 'codex');
   const title = $('#user-creds-oauth-title');
   if (title)
@@ -200,7 +328,7 @@ export async function openOauthMintModal(target?: any) {
   $('#user-creds-oauth-step2')!.hidden = true;
   $('#user-creds-oauth-submit')!.hidden = true;
   $('#user-creds-oauth-spinner')!.hidden = false; // spinner while the mint warms up
-  const code = ($('#user-creds-oauth-code')) as HTMLInputElement;
+  const code = $('#user-creds-oauth-code') as HTMLInputElement;
   if (code) code.value = '';
   const codexCode = $('#user-creds-oauth-codex-code');
   userCredsOauthReturnFocus.value = document.activeElement as HTMLElement | null; // restore focus here on close
@@ -223,7 +351,7 @@ export async function openOauthMintModal(target?: any) {
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || r.statusText);
     userCredsOauthSessionId.value = data.sessionId;
-    const link = ($('#user-creds-oauth-link')) as HTMLElement;
+    const link = $('#user-creds-oauth-link') as HTMLElement;
     if (link) {
       (link as HTMLAnchorElement).href = data.url;
       link.textContent = isWorkspace
@@ -255,7 +383,15 @@ export async function openOauthMintModal(target?: any) {
   }
 }
 
-export function showConfirmModal({ title, body, confirmLabel = 'Confirm', cancelLabel = 'Cancel', destructive = false, extraActions = [], beforeConfirm = null }: any) {
+export function showConfirmModal({
+  title,
+  body,
+  confirmLabel = 'Confirm',
+  cancelLabel = 'Cancel',
+  destructive = false,
+  extraActions = [],
+  beforeConfirm = null,
+}: any) {
   return new Promise((resolve) => {
     // Per-instance, like the skill editor: the overlay is created here and the
     // app mounts INTO it, keeping the structure overlay > modal.
@@ -299,7 +435,13 @@ export function showConfirmModal({ title, body, confirmLabel = 'Confirm', cancel
   });
 }
 
-export async function showInputModal({ title, placeholder = '', value = '', confirmLabel = 'Create', validate = null }: any) {
+export async function showInputModal({
+  title,
+  placeholder = '',
+  value = '',
+  confirmLabel = 'Create',
+  validate = null,
+}: any) {
   const wrap = document.createElement('div');
   // Per-call state, injected rather than passed as root props: root props are
   // read once at createApp, and a module ref would let two open modals collide.
@@ -423,7 +565,9 @@ export async function inspectAndConfirmImport(importBody?: any, displayName?: an
     el.appendChild(d);
   };
   const kb = Math.max(1, Math.round(insp.totalBytes / 1024));
-  line(`${insp.files} file${insp.files === 1 ? '' : 's'} · ${kb} KB · SKILL.md ≈ ${insp.skillMdTokens.toLocaleString()} tokens of agent context`);
+  line(
+    `${insp.files} file${insp.files === 1 ? '' : 's'} · ${kb} KB · SKILL.md ≈ ${insp.skillMdTokens.toLocaleString()} tokens of agent context`,
+  );
   line(
     insp.scripts.length
       ? `Scripts: ${insp.scripts.slice(0, 5).join(', ')}${insp.scripts.length > 5 ? ` +${insp.scripts.length - 5} more` : ''}`
@@ -431,7 +575,8 @@ export async function inspectAndConfirmImport(importBody?: any, displayName?: an
   );
   if (insp.externalHosts.length) line(`Links out to: ${insp.externalHosts.slice(0, 6).join(', ')}`);
   for (const w of insp.warnings) line(`⚠ ${w}`, 'import-warning');
-  if (community) line('Community skill — unvetted. Its instructions and any scripts run in your agents.', 'import-note');
+  if (community)
+    line('Community skill — unvetted. Its instructions and any scripts run in your agents.', 'import-note');
   return showConfirmModal({
     title: `Import ${displayName}?`,
     body: el,
@@ -451,7 +596,6 @@ export async function confirmWithToggle({ title, toggleLabel, note, confirmLabel
   app.unmount();
   return { ok, checked };
 }
-
 
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // Shared modal chrome: backdrop dismissal, escape handling and the lightbox.
@@ -637,7 +781,8 @@ export function wireLightbox(): void {
 export function wireUserCredsOauth(): void {
   $<HTMLButtonElement>('#user-creds-oauth-submit')?.addEventListener('click', async () => {
     const isWorkspace = (userCredsOauthTarget.value ?? '').startsWith('workspace');
-    const isCodex = (userCredsOauthTarget.value ?? '') === 'workspace-codex' || (!isWorkspace && userCredsProvider.value === 'codex');
+    const isCodex =
+      (userCredsOauthTarget.value ?? '') === 'workspace-codex' || (!isWorkspace && userCredsProvider.value === 'codex');
     const code = ($<HTMLInputElement>('#user-creds-oauth-code')?.value || '').trim();
     if (!userCredsOauthSessionId.value) return;
     if (!isCodex && !code) return; // Claude needs the pasted code; Codex needs none.

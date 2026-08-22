@@ -9,20 +9,20 @@ import { DRAFT_EXPIRY_MS, DRAFT_SCROLLED_AWAY_MESSAGES, draftHasExpired } from '
 const H = 60 * 60 * 1000;
 
 describe('draftHasExpired', () => {
-  it('never expires anything younger than 24h, however buried', () => {
+  it('never expires anything younger than 24h, however buried', async () => {
     expect(draftHasExpired(23 * H, { newerMessages: 500 })).toBe(false);
   });
 
-  it('never expires an old draft whose card is still in view', () => {
+  it('never expires an old draft whose card is still in view', async () => {
     expect(draftHasExpired(48 * H, { newerMessages: DRAFT_SCROLLED_AWAY_MESSAGES - 1 })).toBe(false);
     expect(draftHasExpired(400 * H, { newerMessages: 0 })).toBe(false);
   });
 
-  it('expires an old draft whose card has scrolled away', () => {
+  it('expires an old draft whose card has scrolled away', async () => {
     expect(draftHasExpired(DRAFT_EXPIRY_MS + 1, { newerMessages: DRAFT_SCROLLED_AWAY_MESSAGES })).toBe(true);
   });
 
-  it('a draft with no card at all expires on age alone', () => {
+  it('a draft with no card at all expires on age alone', async () => {
     expect(draftHasExpired(DRAFT_EXPIRY_MS + 1, null)).toBe(true);
     expect(draftHasExpired(1 * H, null)).toBe(false);
   });

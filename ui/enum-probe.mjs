@@ -1,0 +1,11 @@
+import { chromium } from 'playwright';
+const b = await chromium.launch(); const p = await b.newPage();
+await p.goto(process.argv[2], { waitUntil: 'networkidle' });
+await p.waitForTimeout(1200);
+const top = await p.evaluate(() => [...document.querySelectorAll('header button, .topbar button, #app > header *[id]')].map(e => ({ id: e.id, title: e.title || e.getAttribute('aria-label'), hidden: e.hidden })).filter(x => x.id));
+console.log('  top-bar controls:', JSON.stringify(top).slice(0, 600));
+await p.evaluate(() => document.querySelector('#overflow-btn')?.click());
+await p.waitForTimeout(400);
+const menu = await p.evaluate(() => [...document.querySelectorAll('#overflow-menu *[id], .overflow-menu *[id], [role="menu"] *[id]')].map(e => ({ id: e.id, text: (e.textContent||'').trim().slice(0,24), hidden: e.hidden })));
+console.log('  menu entries:', JSON.stringify(menu).slice(0, 700));
+await b.close();

@@ -56,6 +56,7 @@ function makeApproval(overrides: Partial<PendingApproval> = {}): PendingApproval
     question: '*Agent:* ag-1\n*Action:* tasks create',
     options_json: '[]',
     approver_user_id: null,
+    instance: null,
     ...overrides,
   };
 }
@@ -76,37 +77,37 @@ function baseDeps(fetchFn: (url: string, init?: RequestInit) => Promise<Response
 }
 
 describe('parseVerdict', () => {
-  it('approves only an exact approve verdict', () => {
+  it('approves only an exact approve verdict', async () => {
     expect(parseVerdict('{"verdict":"approve","reason":"routine"}')).toMatchObject({
       verdict: 'approve',
       reason: 'routine',
     });
   });
 
-  it('strips a single code fence', () => {
+  it('strips a single code fence', async () => {
     expect(parseVerdict('```json\n{"verdict":"approve","reason":"ok"}\n```').verdict).toBe('approve');
   });
 
-  it('escalates on garbage, prose, and truncation', () => {
+  it('escalates on garbage, prose, and truncation', async () => {
     for (const bad of ['sure, go ahead!', '{"verdict":"appro', '', '42', 'null', '"approve"']) {
       expect(parseVerdict(bad).verdict).toBe('escalate');
     }
   });
 
-  it('has NO auto-deny: deny/reject verdicts escalate', () => {
+  it('has NO auto-deny: deny/reject verdicts escalate', async () => {
     expect(parseVerdict('{"verdict":"deny","reason":"bad"}').verdict).toBe('escalate');
     expect(parseVerdict('{"verdict":"reject","reason":"bad"}').verdict).toBe('escalate');
   });
 });
 
 describe('never-list', () => {
-  it('blocks credential, package, and MCP actions outright', () => {
+  it('blocks credential, package, and MCP actions outright', async () => {
     for (const action of ['onecli_credential', 'install_packages', 'add_mcp_server']) {
       expect(isNeverAutoApprovable(action, '{}')).toBe(true);
     }
   });
 
-  it('blocks privilege- and config-shaped payloads for any action', () => {
+  it('blocks privilege- and config-shaped payloads for any action', async () => {
     expect(isNeverAutoApprovable('cli_command', '{"command":"roles grant --role admin"}')).toBe(true);
     expect(isNeverAutoApprovable('cli_command', '{"command":"groups config update"}')).toBe(true);
     expect(isNeverAutoApprovable('cli_command', '{"args":{"cli_scope":"global"}}')).toBe(true);
@@ -297,25 +298,25 @@ describe('anthropic-kind judge', () => {
 // (server.ts imports it) — anthropic qualifies without an endpoint; the
 // local kinds require one.
 describe('isUsableJudgeModel', () => {
-  it('accepts anthropic-kind models with or without an endpoint', () => {
+  it('accepts anthropic-kind models with or without an endpoint', async () => {
     expect(isUsableJudgeModel(ANTHROPIC_MODEL)).toBe(true);
     expect(isUsableJudgeModel({ ...ANTHROPIC_MODEL, endpoint: 'http://127.0.0.1:4000' })).toBe(true);
   });
 
-  it('accepts ollama / openai-compatible models only with an endpoint', () => {
+  it('accepts ollama / openai-compatible models only with an endpoint', async () => {
     expect(isUsableJudgeModel(MODEL)).toBe(true);
     expect(isUsableJudgeModel({ ...MODEL, kind: 'openai-compatible' })).toBe(true);
     expect(isUsableJudgeModel({ ...MODEL, endpoint: null })).toBe(false);
     expect(isUsableJudgeModel({ ...MODEL, kind: 'openai-compatible', endpoint: '' })).toBe(false);
   });
 
-  it('rejects a missing model', () => {
+  it('rejects a missing model', async () => {
     expect(isUsableJudgeModel(undefined)).toBe(false);
   });
 });
 
 describe('redactForPrompt', () => {
-  it('masks bearer, OneCLI, and MCP relay tokens on top of the webchat layer', () => {
+  it('masks bearer, OneCLI, and MCP relay tokens on top of the webchat layer', async () => {
     const out = redactForPrompt('Authorization: Bearer abcdef123456 x aoc_abcdefgh123 y mcr_abcdefgh123');
     expect(out).not.toContain('abcdef123456');
     expect(out).not.toContain('aoc_abcdefgh123');
@@ -401,13 +402,13 @@ describe('maybePrejudgeApproval wiring', () => {
 // about it, and an ABSENCE of description must never look like a clean bill.
 
 describe('triage flags', () => {
-  it('maps every never-list ACTION to a flag, so the two cannot drift', () => {
+  it('maps every never-list ACTION to a flag, so the two cannot drift', async () => {
     for (const action of NEVER_AUTO_APPROVE_ACTIONS) {
       expect(heuristicFlags(action, '{}'), `${action} has no flag`).not.toHaveLength(0);
     }
   });
 
-  it('maps every never-list PAYLOAD shape to a flag', () => {
+  it('maps every never-list PAYLOAD shape to a flag', async () => {
     const shapes = [
       'cli_scope',
       'roles grant',
@@ -421,37 +422,37 @@ describe('triage flags', () => {
     }
   });
 
-  it('says nothing about an ordinary request', () => {
+  it('says nothing about an ordinary request', async () => {
     expect(heuristicFlags('cli_command', JSON.stringify({ frame: 'tasks create' }))).toEqual([]);
   });
 
-  it('drops values outside the closed vocabulary', () => {
+  it('drops values outside the closed vocabulary', async () => {
     expect(parseFlags(['credentials', 'catastrophic', 'HIGH RISK', 7, null])).toEqual(['credentials']);
     expect(parseFlags('credentials')).toEqual([]);
     expect(parseFlags(undefined)).toEqual([]);
   });
 
-  it('accepts every documented flag, case-insensitively', () => {
+  it('accepts every documented flag, case-insensitively', async () => {
     expect(parseFlags(TRIAGE_FLAGS.map((f) => f.toUpperCase()))).toEqual([...TRIAGE_FLAGS]);
   });
 });
 
 describe('parseVerdict — flags never affect the verdict', () => {
-  it('reads flags and reversibility alongside an approve', () => {
+  it('reads flags and reversibility alongside an approve', async () => {
     const r = parseVerdict('{"verdict":"approve","reason":"routine","flags":["outbound"],"reversible":"yes"}');
     expect(r.verdict).toBe('approve');
     expect(r.flags).toEqual(['outbound']);
     expect(r.reversible).toBe('yes');
   });
 
-  it('keeps the approve when flags are garbage', () => {
+  it('keeps the approve when flags are garbage', async () => {
     const r = parseVerdict('{"verdict":"approve","reason":"routine","flags":"not-an-array","reversible":42}');
     expect(r.verdict).toBe('approve');
     expect(r.flags).toEqual([]);
     expect(r.reversible).toBe('unknown');
   });
 
-  it('keeps the escalate when flags look reassuring', () => {
+  it('keeps the escalate when flags look reassuring', async () => {
     const r = parseVerdict('{"verdict":"escalate","reason":"unsure","flags":[],"reversible":"yes"}');
     expect(r.verdict).toBe('escalate');
   });
@@ -496,15 +497,15 @@ describe('triage tiers', () => {
 describe('buildApprovalTriageView', () => {
   const payload = JSON.stringify({ frame: 'roles grant' });
 
-  it('reports unscreened when nothing was recorded, and still derives the never-list flags', () => {
-    const v = buildApprovalTriageView('appr-x', 'cli_command', payload, { getTriage: () => undefined });
+  it('reports unscreened when nothing was recorded, and still derives the never-list flags', async () => {
+    const v = await buildApprovalTriageView('appr-x', 'cli_command', payload, { getTriage: () => undefined });
     expect(v.tier).toBe('unscreened');
     expect(v.heuristic).toEqual(['permissions']);
     expect(v.flags).toEqual([]);
   });
 
-  it('recomputes heuristics live rather than trusting the stored copy', () => {
-    const v = buildApprovalTriageView('appr-x', 'cli_command', payload, {
+  it('recomputes heuristics live rather than trusting the stored copy', async () => {
+    const v = await buildApprovalTriageView('appr-x', 'cli_command', payload, {
       getTriage: () => ({
         tier: 'model',
         reason: 'grants a role',
@@ -518,8 +519,8 @@ describe('buildApprovalTriageView', () => {
     expect(v.reversible).toBe('no');
   });
 
-  it('drops stored flags outside the vocabulary', () => {
-    const v = buildApprovalTriageView('appr-x', 'cli_command', '{}', {
+  it('drops stored flags outside the vocabulary', async () => {
+    const v = await buildApprovalTriageView('appr-x', 'cli_command', '{}', {
       getTriage: () => ({
         tier: 'model',
         reason: '',

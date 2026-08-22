@@ -482,7 +482,7 @@ var _hoisted_5$35 = {
 	key: 0,
 	class: "triage-note"
 };
-var _hoisted_6$28 = {
+var _hoisted_6$29 = {
 	key: 1,
 	class: "approval-payload"
 };
@@ -588,7 +588,7 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 						title: chipTitle(c.authoritative)
 					}, toDisplayString(c.flag), 11, _hoisted_4$46);
 				}), 128)), triageNote() ? (openBlock(), createElementBlock("span", _hoisted_5$35, toDisplayString(triageNote()), 1)) : createCommentVNode("", true)])) : createCommentVNode("", true),
-				__props.approval.payload ? (openBlock(), createElementBlock("pre", _hoisted_6$28, toDisplayString(payloadText(__props.approval.payload)), 1)) : createCommentVNode("", true),
+				__props.approval.payload ? (openBlock(), createElementBlock("pre", _hoisted_6$29, toDisplayString(payloadText(__props.approval.payload)), 1)) : createCommentVNode("", true),
 				createElementVNode("div", _hoisted_7$20, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 					return openBlock(), createElementBlock("button", {
 						key: i,
@@ -863,7 +863,7 @@ var _hoisted_2$59 = { class: "sender" };
 var _hoisted_3$54 = { class: "thinking-verb" };
 var _hoisted_4$45 = { class: "thinking-elapsed" };
 var _hoisted_5$34 = { class: "bubble" };
-var _hoisted_6$27 = ["hidden"];
+var _hoisted_6$28 = ["hidden"];
 var _hoisted_7$19 = ["hidden"];
 var _hoisted_8$14 = ["hidden"];
 var _hoisted_9$9 = {
@@ -958,7 +958,7 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 				createElementVNode("div", {
 					class: "thinking-milestone",
 					hidden: !__props.turn.milestone
-				}, toDisplayString(__props.turn.milestone), 9, _hoisted_6$27),
+				}, toDisplayString(__props.turn.milestone), 9, _hoisted_6$28),
 				createElementVNode("div", {
 					class: "thinking-target",
 					hidden: !__props.turn.detail
@@ -1430,7 +1430,7 @@ var _hoisted_2$58 = ["src", "alt"];
 var _hoisted_3$53 = { class: "file-info" };
 var _hoisted_4$44 = ["innerHTML"];
 var _hoisted_5$33 = { class: "file-name" };
-var _hoisted_6$26 = { class: "file-size" };
+var _hoisted_6$27 = { class: "file-size" };
 var _hoisted_7$18 = ["href", "download"];
 var _hoisted_8$13 = {
 	key: 0,
@@ -1504,7 +1504,7 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 					innerHTML: fileIcon(__props.row.file)
 				}, null, 8, _hoisted_4$44),
 				createElementVNode("span", _hoisted_5$33, toDisplayString(__props.row.file.filename), 1),
-				createElementVNode("span", _hoisted_6$26, toDisplayString(fileSize(__props.row.file.size)), 1),
+				createElementVNode("span", _hoisted_6$27, toDisplayString(fileSize(__props.row.file.size)), 1),
 				createElementVNode("a", {
 					href: __props.row.file.url,
 					download: __props.row.file.filename,
@@ -1604,7 +1604,7 @@ var _hoisted_5$32 = {
 	key: 0,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_6$25 = {
+var _hoisted_6$26 = {
 	key: 2,
 	class: "approval-inroom-note"
 };
@@ -1669,7 +1669,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 			return last ? " — " + (last.length > 90 ? `${last.slice(0, 89)}…` : last) : "";
 		};
 		return (_ctx, _cache) => {
-			return unref(transcriptEmpty) ? (openBlock(), createElementBlock("div", _hoisted_1$65, toDisplayString(unref(transcriptEmpty)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(messages), (row) => {
+			return unref(transcriptEmpty) && !unref(messages).length && !unref(thinkingTurns).length ? (openBlock(), createElementBlock("div", _hoisted_1$65, toDisplayString(unref(transcriptEmpty)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(messages), (row) => {
 				return openBlock(), createElementBlock(Fragment, { key: row.key }, [row.kind === "system" ? (openBlock(), createElementBlock("div", _hoisted_2$57, toDisplayString(row.text), 1)) : row.kind === "divider" ? (openBlock(), createElementBlock("div", _hoisted_3$52, [createElementVNode("span", null, toDisplayString(row.text), 1)])) : row.kind === "approval" ? (openBlock(), createElementBlock("div", {
 					key: 2,
 					class: "msg approval-msg",
@@ -1678,7 +1678,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 					key: 1,
 					approval: row.payload,
 					"on-respond": props.onApprovalRespond
-				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", _hoisted_6$25, toDisplayString(row.note), 1))], 8, _hoisted_4$43)) : (openBlock(), createElementBlock("div", mergeProps({
+				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", _hoisted_6$26, toDisplayString(row.note), 1))], 8, _hoisted_4$43)) : (openBlock(), createElementBlock("div", mergeProps({
 					key: 3,
 					class: row.cls
 				}, { ref_for: true }, row.id ? { "data-message-id": row.id } : {}, { style: row.isA2a ? { "--a2a-accent": row.a2aAccent } : void 0 }), [
@@ -2608,6 +2608,11 @@ var _hoisted_5$31 = {
 	class: "agent-harness-badge",
 	title: "Runs on the OpenCode harness"
 };
+var _hoisted_6$25 = {
+	key: 2,
+	class: "agent-harness-badge",
+	title: "Runs on the Grok harness"
+};
 //#endregion
 //#region src/features/AgentList.vue
 var AgentList_default = /* @__PURE__ */ defineComponent({
@@ -2659,7 +2664,7 @@ var AgentList_default = /* @__PURE__ */ defineComponent({
 						key: 0,
 						class: normalizeClass(["agent-status-badge", "status-" + (agent.status || "active")])
 					}, toDisplayString(agent.status), 3)) : createCommentVNode("", true),
-					agent.provider === "opencode" ? (openBlock(), createElementBlock("span", _hoisted_5$31, "OpenCode")) : createCommentVNode("", true)
+					agent.provider === "opencode" ? (openBlock(), createElementBlock("span", _hoisted_5$31, "OpenCode")) : agent.provider === "grok" ? (openBlock(), createElementBlock("span", _hoisted_6$25, "Grok")) : createCommentVNode("", true)
 				])], 16, _hoisted_1$61);
 			}), 128);
 		};
@@ -3603,6 +3608,12 @@ var userCredsOauthReturnFocus = ref(null);
 * module both can import is what let the bridge entry go.
 */
 function userCredsWords(provider) {
+	if (provider === "grok") return {
+		name: "Grok",
+		subWord: "SuperGrok or X Premium+ subscription",
+		keyWord: "xAI key",
+		keyPlaceholder: ""
+	};
 	return provider === "codex" ? {
 		name: "Codex",
 		subWord: "ChatGPT subscription",
@@ -3866,15 +3877,24 @@ function closeUserCredsOauthModal() {
 		}).catch(() => {});
 		userCredsOauthSessionId.value = null;
 	}
+	cancelGrokMint();
+	if (userCredsProvider.value === "grok") authFetch("/api/user-credentials/grok/cancel", {
+		method: "POST",
+		headers: {
+			"Content-Type": "application/json",
+			"X-Webchat-CSRF": "1"
+		}
+	}).catch(() => {});
 	const modal = $("#user-creds-oauth-modal");
 	if (modal) modal.hidden = true;
 	if (userCredsOauthReturnFocus.value && typeof userCredsOauthReturnFocus.value.focus === "function") userCredsOauthReturnFocus.value.focus();
 	userCredsOauthReturnFocus.value = null;
 }
-function renderMembers(members) {
-	members.value = members;
+function renderMembers(list) {
+	const next = Array.isArray(list) ? list : [];
+	members.value = next;
 	const toggle = $("#members-toggle");
-	toggle.textContent = members.length;
+	toggle.textContent = String(next.length);
 	toggle.hidden = !state.currentRoom;
 	paintMembersList();
 }
@@ -7855,6 +7875,13 @@ var OPENCODE_WIZARD_ELS = {
 	log: "#wizard-opencode-install-log",
 	doneMsg: "OpenCode installed — your local agent can now use it (Agent → Harness)."
 };
+var GROK_WIZARD_ELS = {
+	btn: "#wizard-grok-install",
+	log: "#wizard-grok-install-log",
+	url: "/api/grok/install",
+	name: "Grok",
+	doneMsg: "Grok installed — sign in with a device code below."
+};
 async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
 	const url = els.url || "/api/opencode/install";
 	const name = els.name || "OpenCode";
@@ -7871,6 +7898,7 @@ async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
 	const finish = () => {
 		log.textContent = els.doneMsg || name + " installed.";
 		showToast(name + " installed", { kind: "success" });
+		deps$13.refreshWizardCredState?.();
 	};
 	try {
 		const res = await authFetch(url, { method: "POST" });
@@ -8522,6 +8550,25 @@ async function refreshWizardCredState() {
 	if (s.codex?.connected) $("#wizard-codex-connected-text").textContent = s.codex.external ? "Codex connected" : `Codex connected — ${credWord(s.codex.credType)}`;
 	const codexDisconnect = $("#wizard-codex-disconnect");
 	if (codexDisconnect) codexDisconnect.hidden = !!s.codex?.external;
+	const grokChip = $("#wizard-chip-grok");
+	const grok = s.grok;
+	if (grokChip) {
+		grokChip.hidden = false;
+		grokChip.textContent = grok?.connected ? "✓ connected" : !grok?.available ? "not installed" : grok?.expired ? "expired" : "not connected";
+		grokChip.classList.toggle("ok", !!grok?.connected);
+	}
+	const grokInstalled = grok?.available === true;
+	const grokInstallRow = $("#wizard-grok-install-row");
+	if (grokInstallRow && !opencodeInstallActive.value) grokInstallRow.hidden = grokInstalled;
+	$("#wizard-grok-connect").hidden = !grokInstalled || !!grok?.connected;
+	$("#wizard-grok-connected").hidden = !grok?.connected;
+	const grokStatusLine = $("#wizard-grok-status");
+	if (grokStatusLine) {
+		const why = grok?.available && grok?.expired ? "That Grok sign-in has expired. Sign in again to refresh it." : "";
+		grokStatusLine.textContent = why;
+		grokStatusLine.hidden = !why;
+	}
+	if (grok?.connected) $("#wizard-grok-connected-text").textContent = grok.email ? `Grok connected — ${grok.email}` : "Grok connected — subscription";
 	const ollamaSet = s.defaultModelKind === "ollama" && !!s.defaultModelId;
 	const ollamaModel = s.defaultModelModelId || s.defaultModelName;
 	const ollamaChip = $("#wizard-chip-ollama");
@@ -8736,6 +8783,7 @@ function syncWizardEngineBodies() {
 function wizardEngineConnected() {
 	const s = wizardCred || {};
 	if (wizardEngine === "codex") return !!s.codex?.connected;
+	if (wizardEngine === "grok") return !!s.grok?.connected;
 	if (wizardEngine === "ollama") return !!s.defaultModelId;
 	return !!s.connected;
 }
@@ -8833,6 +8881,7 @@ async function wizardProbeHttps() {
 		row.hidden = false;
 		$("#wizard-https-btn").hidden = true;
 		wizardSetStatus("#wizard-https-status", "HTTPS is already on.", "ok");
+		if (state.url) $("#wizard-https-status").innerHTML = `HTTPS is on — reach this at <a href="${esc(state.url)}" target="_blank" rel="noopener">${esc(state.url)}</a>`;
 	} else row.hidden = true;
 }
 async function wizardEnableHttps() {
@@ -8849,6 +8898,7 @@ async function wizardEnableHttps() {
 		if (r.ok && data.ok) {
 			btn.hidden = true;
 			wizardSetStatus("#wizard-https-status", data.url ? `HTTPS on — reach this at ${data.url}` : "HTTPS enabled.", "ok");
+			if (data.url) $("#wizard-https-status").innerHTML = `HTTPS on — reach this at <a href="${esc(data.url)}" target="_blank" rel="noopener">${esc(data.url)}</a>`;
 			showToast("HTTPS enabled over Tailscale", { kind: "success" });
 		} else {
 			const msg = [data.error, data.hint].filter(Boolean).join(" ") || "Could not enable HTTPS";
@@ -9300,8 +9350,6 @@ async function renderWizardAccess() {
 			if (r) r.checked = true;
 		}
 	}
-	const tsReady = $("#wizard-ts-ready");
-	if (tsReady) tsReady.hidden = !tsHealthy;
 	const tsHelper = $("#wizard-ts-helper");
 	const tsRow = $("#wizard-ts-install-row");
 	const tsManual = $("#wizard-ts-manual");
@@ -9494,6 +9542,8 @@ async function wizardTriggerRestart() {
 function wireWizard() {
 	if (wizardWired) return;
 	wizardWired = true;
+	wireGrokLogin();
+	resumeGrokLogin();
 	$("#wizard-next")?.addEventListener("click", async () => {
 		if (!!document.querySelector(`.wizard-step[data-step="${wizardStep}"] input[name="wizard-access"]`) && !await wizardAccessReady()) {
 			const sel = document.querySelector("input[name=\"wizard-access\"]:checked")?.value;
@@ -9508,7 +9558,7 @@ function wireWizard() {
 			return;
 		}
 		if (wizardStep === 0 && !wizardEngineConnected()) {
-			showToast(`Finish this engine first — ${wizardEngine === "ollama" ? "set a default Ollama model" : wizardEngine === "codex" && !wizardCodexAvailable ? "install then connect Codex" : `connect ${wizardEngine === "codex" ? "Codex" : "Claude"}`} above.`, {
+			showToast(`Finish this engine first — ${wizardEngine === "ollama" ? "set a default Ollama model" : wizardEngine === "grok" ? "authenticate Grok from a terminal (the command is on the card), then reload" : wizardEngine === "codex" && !wizardCodexAvailable ? "install then connect Codex" : `connect ${wizardEngine === "codex" ? "Codex" : "Claude"}`} above.`, {
 				kind: "info",
 				timeout: 6e3
 			});
@@ -9543,6 +9593,7 @@ function wireWizard() {
 	});
 	$("#wizard-claude-oauth")?.addEventListener("click", () => deps$12.openOauthMintModal("workspace"));
 	$("#wizard-codex-install")?.addEventListener("click", () => runCodexInstall());
+	$("#wizard-grok-install")?.addEventListener("click", () => runOpencodeInstall(GROK_WIZARD_ELS));
 	$("#wizard-codex-oauth")?.addEventListener("click", () => deps$12.openOauthMintModal("workspace-codex"));
 	$("#wizard-codex-save")?.addEventListener("click", async () => {
 		const key = ($("#wizard-codex-key")?.value || "").trim();
@@ -9702,7 +9753,7 @@ async function wizardCreateAndFinish() {
 			kind: "new",
 			name: agentName
 		};
-		if (wizardEngine === "codex") agentRef.provider = "codex";
+		if (wizardEngine === "codex" || wizardEngine === "grok") agentRef.provider = wizardEngine;
 		const r = await authFetch("/api/rooms", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -9721,10 +9772,21 @@ async function wizardCreateAndFinish() {
 			}
 			return wizardSetStatus("#wizard-room-status", out.error || "Create failed.", "err");
 		}
+		if (out?.room?.id) deps$12.joinRoom(out.room.id, out.room.name);
 		wizardSetStatus("#wizard-room-status", "Created. Finishing…", "ok");
 		await finishWizard();
 		if (wizardBearerPendingRestart) await wizardTriggerRestart();
 		if (typeof deps$12.fetchAgents === "function") deps$12.fetchAgents().catch(() => {});
+		if (wizardEngine === "claude" || wizardEngine === "codex" || wizardEngine === "grok") try {
+			await authFetch("/api/workspace-provider", {
+				method: "PUT",
+				headers: {
+					"Content-Type": "application/json",
+					"X-Webchat-CSRF": "1"
+				},
+				body: JSON.stringify({ provider: wizardEngine })
+			});
+		} catch {}
 	} finally {
 		done();
 	}
@@ -9735,6 +9797,86 @@ async function maybeAutoOpenWizard() {
 		if (!r.ok) return;
 		const s = await r.json();
 		if (s.canEdit && !s.complete) openWizard();
+	} catch {}
+}
+var grokPollTimer = null;
+function stopGrokPoll() {
+	if (grokPollTimer) clearInterval(grokPollTimer);
+	grokPollTimer = null;
+}
+function renderGrokLogin(p) {
+	const device = $("#wizard-grok-device");
+	const row = $("#wizard-grok-login-row");
+	const status = $("#wizard-grok-status");
+	if (!device || !row) return;
+	device.hidden = !p?.running;
+	row.hidden = !!p?.running;
+	if (p?.running) {
+		const url = $("#wizard-grok-url");
+		if (url && p.verificationUrl) {
+			url.textContent = p.verificationUrl;
+			url.href = p.verificationUrl;
+		}
+		$("#wizard-grok-code").textContent = p.userCode ?? "waiting for a code…";
+	}
+	if (status && p && !p.running && p.outcome && p.outcome !== "complete") {
+		status.textContent = p.error ?? "The login did not complete.";
+		status.hidden = false;
+	}
+}
+async function pollGrokLogin() {
+	const r = await authFetch("/api/workspace-credential/grok");
+	if (!r.ok) return stopGrokPoll();
+	const p = await r.json();
+	renderGrokLogin(p);
+	if (!p.running) {
+		stopGrokPoll();
+		if (p.outcome === "complete") await refreshWizardCredState();
+	}
+}
+function startGrokPoll() {
+	stopGrokPoll();
+	pollGrokLogin();
+	grokPollTimer = setInterval(() => void pollGrokLogin(), 2e3);
+}
+function wireGrokLogin() {
+	$("#wizard-grok-login")?.addEventListener("click", async () => {
+		const btn = $("#wizard-grok-login");
+		if (btn) btn.disabled = true;
+		const status = $("#wizard-grok-status");
+		if (status) status.hidden = true;
+		try {
+			const r = await authFetch("/api/workspace-credential/grok/start", { method: "POST" });
+			const p = await r.json();
+			if (!r.ok) {
+				if (status) {
+					status.textContent = p?.error ?? "Could not start the login.";
+					status.hidden = false;
+				}
+				return;
+			}
+			renderGrokLogin(p);
+			startGrokPoll();
+		} finally {
+			if (btn) btn.disabled = false;
+		}
+	});
+	$("#wizard-grok-cancel")?.addEventListener("click", async () => {
+		await authFetch("/api/workspace-credential/grok/cancel", { method: "POST" });
+		stopGrokPoll();
+		pollGrokLogin();
+	});
+}
+/** Resume a login that was started before this page loaded (or in another tab). */
+async function resumeGrokLogin() {
+	try {
+		const r = await authFetch("/api/workspace-credential/grok");
+		if (!r.ok) return;
+		const p = await r.json();
+		if (p.running) {
+			renderGrokLogin(p);
+			startGrokPoll();
+		}
 	} catch {}
 }
 //#endregion
@@ -10189,6 +10331,7 @@ function navigateLightbox(delta) {
 	setLightboxImage(next);
 }
 function blockingOverlayOpen() {
+	if (document.querySelector(".floor-popover")) return true;
 	if (document.querySelector(".modal-overlay:not([hidden])")) return true;
 	return [
 		"model-picker",
@@ -10203,11 +10346,101 @@ function blockingOverlayOpen() {
 		return el && !el.hidden;
 	});
 }
+/**
+* Member Grok device login.
+*
+* Two polls, not one: the first waits for the CLI to print a URL and code, the
+* second waits for the member to approve on whatever device they opened it on.
+* `grokMintToken` is the cancellation signal — reopening or closing the modal
+* bumps it, and any in-flight loop notices and stops rather than writing into
+* a dialog that has moved on.
+*/
+var grokMintToken = 0;
+function cancelGrokMint() {
+	grokMintToken++;
+}
+async function openGrokMintModal(modal) {
+	const token = ++grokMintToken;
+	const alive = () => token === grokMintToken && !modal.hidden;
+	const status = (msg, kind = "") => userCredsOauthStatus(msg, kind);
+	const title = $("#user-creds-oauth-title");
+	if (title) title.textContent = "Connect to Grok";
+	$("#user-creds-oauth-step2").hidden = true;
+	$("#user-creds-oauth-submit").hidden = true;
+	$("#user-creds-oauth-spinner").hidden = false;
+	const code = $("#user-creds-oauth-code");
+	if (code) code.hidden = true;
+	const codeLabel = $("#user-creds-oauth-code-label");
+	if (codeLabel) codeLabel.hidden = true;
+	userCredsOauthReturnFocus.value = document.activeElement;
+	modal.hidden = false;
+	$("#user-creds-oauth-close")?.focus();
+	status("Starting sign-in…");
+	const poll = async () => {
+		const r = await authFetch("/api/user-credentials/grok/status");
+		const d = await r.json();
+		if (!r.ok) throw new Error(d.error || r.statusText);
+		return d;
+	};
+	const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+	try {
+		const r = await authFetch("/api/user-credentials/grok/start", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Webchat-CSRF": "1"
+			},
+			body: JSON.stringify({ roomId: state.currentRoom })
+		});
+		const started = await r.json();
+		if (!r.ok) throw new Error(started.error || r.statusText);
+		let d = started;
+		for (let i = 0; alive() && !d.verificationUrl && d.outcome !== "error" && i < 40; i++) {
+			await wait(750);
+			if (!alive()) return;
+			d = await poll();
+		}
+		if (!alive()) return;
+		if (d.outcome === "error") throw new Error(d.error || "Sign-in failed.");
+		if (!d.verificationUrl) throw new Error("Timed out waiting for the sign-in link.");
+		const link = $("#user-creds-oauth-link");
+		if (link) {
+			link.href = d.verificationUrl;
+			link.textContent = "Open Grok sign-in ↗";
+		}
+		codexActive.value = true;
+		codexUserCode.value = d.userCode || "";
+		const codexCode = $("#user-creds-oauth-codex-code");
+		if (codexCode) codexCode.hidden = false;
+		mountCodexCode();
+		$("#user-creds-oauth-spinner").hidden = true;
+		$("#user-creds-oauth-step2").hidden = false;
+		status("Open the link and approve — this page finishes on its own.");
+		link?.focus();
+		while (alive() && d.outcome === "pending") {
+			await wait(2e3);
+			if (!alive()) return;
+			d = await poll();
+		}
+		if (!alive()) return;
+		if (d.outcome !== "complete") throw new Error(d.error || "Sign-in was not completed.");
+		grokMintToken++;
+		codexActive.value = false;
+		showToast("Connected your Grok subscription.", { kind: "success" });
+		modal.hidden = true;
+		await updateUserCredsBanner(state.currentRoom);
+	} catch (err) {
+		if (!alive()) return;
+		$("#user-creds-oauth-spinner").hidden = true;
+		status(err?.message || "Could not start sign-in.", "error");
+	}
+}
 async function openOauthMintModal(target) {
 	userCredsOauthTarget.value = target;
 	const modal = $("#user-creds-oauth-modal");
 	if (!modal) return;
 	const isWorkspace = target.startsWith("workspace");
+	if (!isWorkspace && userCredsProvider.value === "grok") return openGrokMintModal(modal);
 	const isCodex = target === "workspace-codex" || !isWorkspace && userCredsProvider.value === "codex";
 	const title = $("#user-creds-oauth-title");
 	if (title) title.textContent = isWorkspace ? `Connect ${isCodex ? "ChatGPT" : "Claude"} (workspace default)` : `Connect to ${userCredsWords(userCredsProvider.value).name}`;
@@ -11019,6 +11252,50 @@ async function loadAgentTemplates() {
 	wrap.hidden = false;
 	sel.addEventListener("change", applyTemplatePickVisibility);
 	applyTemplatePickVisibility();
+}
+/** One MCP server, rendered as the line an operator can actually judge. */
+function mcpLine(s) {
+	const env = s.envKeys?.length ? `  [env: ${s.envKeys.join(", ")}]` : "";
+	if (s.transport === "http") return `• ${s.name} — HTTP ${s.url ?? "(no url)"}${env}`;
+	const cmd = [s.command ?? "(no command)", ...s.args ?? []].join(" ");
+	return `• ${s.name} — runs: ${cmd}${env}`;
+}
+/**
+* Show what a template will do, and require an explicit yes.
+*
+* WHY THIS EXISTS. Stamping imports a stranger's blueprint: persona, skills,
+* MCP servers and scheduled tasks, in one click. Until this existed you found
+* out what was in it AFTERWARDS, from a report — while UPDATING a stamped
+* agent already showed a dry-run plan first. The riskier operation was the
+* less gated one.
+*
+* The MCP lines are the point. `command` is constrained by the reader, but
+* `args` is not, so the only honest review is the actual argv in front of the
+* person deciding. Returns false when the operator declines or the template
+* cannot be read — a plan that fails to load is a reason to stop, not to
+* proceed blind.
+*/
+async function confirmTemplatePlan(ref) {
+	let plan;
+	try {
+		const res = await authFetch(`/api/templates/detail?ref=${encodeURIComponent(ref)}`);
+		plan = await res.json().catch(() => ({}));
+		if (!res.ok) {
+			showToast(`Could not read ${ref}: ${plan.error || res.statusText}`, { kind: "error" });
+			return false;
+		}
+	} catch (err) {
+		showToast(`Could not read ${ref}: ${err?.message || err}`, { kind: "error" });
+		return false;
+	}
+	const section = (heading, lines) => lines.length ? `${heading}\n${lines.join("\n")}\n\n` : "";
+	const body = `${plan.version ? `${plan.ref} ${plan.version}` : plan.ref}\n` + (plan.description ? `${plan.description}\n` : "") + "\n" + section("MCP servers — these run inside the agent container:", plan.mcpServers.map(mcpLine)) + section("Skills:", plan.skills.map((s) => `• ${s}`)) + section("Scheduled tasks (created paused — you resume them):", plan.tasks.map((t) => `• ${t.name} — ${t.schedule}`)) + section("Extra context files:", plan.contextFiles.map((c) => `• ${c}`)) + `Persona: ${plan.persona ? "included" : "none — you can write your own after"}\n` + (plan.report.length ? `\nThe reader skipped:\n${plan.report.map((r) => `• ${r}`).join("\n")}` : "");
+	return await showConfirmModal({
+		title: `Create an agent from ${plan.name}?`,
+		body,
+		confirmLabel: "Create agent",
+		cancelLabel: "Cancel"
+	}) === true;
 }
 /**
 * Stamp the chosen template. Returns the server's error string, or null on
@@ -14172,6 +14449,7 @@ function wireSkillsRegistry() {
 		const instructions = $("#agent-create-instructions")?.value ?? "";
 		const templateRef = selectedTemplateRef();
 		if (templateRef) {
+			if (!await confirmTemplatePlan(templateRef)) return;
 			try {
 				const { error, report } = await stampTemplate(templateRef, name);
 				if (error) {
@@ -14710,6 +14988,15 @@ function hideOtherFullViews(keep) {
 		journeyActive = false;
 		$("#journey").hidden = true;
 	}
+	if (keep !== "floor" && floorActive) {
+		floorActive = false;
+		$("#floor").hidden = true;
+		if (floorTimer) {
+			clearInterval(floorTimer);
+			floorTimer = null;
+		}
+		closeDeskPopover();
+	}
 	if (keep !== "matrix" && matrixActive) {
 		matrixActive = false;
 		$("#matrix").hidden = true;
@@ -14765,6 +15052,285 @@ function teardownTopology() {
 function toggleTopology() {
 	if (topologyActive) closeView("topology");
 	else openTopology();
+}
+var floorActive = false;
+var floorTimer = null;
+var FLOOR_POLL_MS = 5e3;
+var FLOOR_LABEL = {
+	stuck: "Stuck",
+	working: "Working",
+	idle: "Idle",
+	cold: "Cold"
+};
+/** Raw status kinds, cased for display next to the state labels. */
+var KIND_META_LABEL = {
+	tool: "Tool",
+	reasoning: "Thinking",
+	progress: "Working",
+	start: "Started",
+	done: "Done",
+	stalled: "Stalled"
+};
+/** "4m", "2h" — a desk's age only needs to be readable, not precise. */
+function floorAge(ms) {
+	if (ms == null) return "";
+	const m = Math.floor(ms / 6e4);
+	if (m < 1) return "just now";
+	if (m < 60) return `${m}m`;
+	const h = Math.floor(m / 60);
+	if (h < 24) return `${h}h`;
+	return `${Math.floor(h / 24)}d`;
+}
+var FLOOR_FEED_CAP = 80;
+var floorFeedCursor = null;
+var floorFeedEvents = [];
+/** Identity keys of everything in floorFeedEvents — the server re-reads a
+*  small window behind the cursor on purpose, so duplicates are expected. */
+var floorFeedSeen = /* @__PURE__ */ new Set();
+var floorFeedEpoch = 0;
+var floorFeedInFlight = false;
+function feedKey(e) {
+	return `${e.at}|${e.session_id}|${e.kind}|${e.text ?? ""}`;
+}
+/** session_id → agent_name, from the last desks payload — names a2a senders. */
+var floorSessionNames = /* @__PURE__ */ new Map();
+/** Last desks payload, for the popover; restricted gates the Restart action. */
+var floorLastDesks = [];
+var floorRestricted = true;
+var FEED_KIND_LABEL = {
+	thinking: "Thinking",
+	tool: "Tool",
+	message: "Message",
+	a2a: "Handoff"
+};
+function renderFloorFeed() {
+	const feed = $("#floor-feed");
+	if (!feed) return;
+	if (!floorFeedEvents.length) {
+		feed.innerHTML = "<div class=\"floor-feed-empty\">Quiet for the last 2 minutes</div>";
+		return;
+	}
+	feed.innerHTML = floorFeedEvents.map((e) => {
+		const agentLabel = e.kind === "a2a" && e.from_session_id ? `${esc(floorSessionNames.get(e.from_session_id) || "agent")} → ${esc(e.agent_name)}` : esc(e.agent_name);
+		const age = floorAge(Date.now() - Date.parse(e.at));
+		const tag = e.room_id ? "button" : "div";
+		return `<${tag} class="floor-event${e.room_id ? " floor-event-link" : ""}" data-room="${esc(e.room_id || "")}">
+        <span class="ff-kind ff-${esc(e.kind)}">${esc(FEED_KIND_LABEL[e.kind] || e.kind)}</span>
+        <span class="ff-agent">${agentLabel}</span>
+        ${e.text ? `<span class="ff-text">${esc(e.text)}</span>` : ""}
+        <span class="ff-age">${esc(age)}</span>
+      </${tag}>`;
+	}).join("");
+}
+var deskPopoverEl = null;
+var deskPopoverAnchor = null;
+function closeDeskPopover() {
+	const hadFocus = deskPopoverEl?.contains(document.activeElement) ?? false;
+	deskPopoverEl?.remove();
+	deskPopoverEl = null;
+	if (hadFocus && deskPopoverAnchor?.isConnected) deskPopoverAnchor.focus();
+	deskPopoverAnchor = null;
+	document.removeEventListener("click", onDocClickCloseDeskPopover, true);
+	document.removeEventListener("keydown", onEscCloseDeskPopover, true);
+}
+function onDocClickCloseDeskPopover(e) {
+	if (deskPopoverEl && !deskPopoverEl.contains(e.target)) closeDeskPopover();
+}
+function onEscCloseDeskPopover(e) {
+	if (e.key === "Escape") closeDeskPopover();
+}
+function showDeskPopover(sessionId, anchor, onOpenRoom) {
+	closeDeskPopover();
+	const d = floorLastDesks.find((x) => x.session_id === sessionId);
+	if (!d) return;
+	const pop = document.createElement("div");
+	pop.className = "floor-popover";
+	pop.setAttribute("role", "dialog");
+	const canRestart = d.state === "stuck" && !floorRestricted;
+	pop.innerHTML = `
+    <div class="floor-pop-name">${esc(d.agent_name)}</div>
+    <div class="floor-pop-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${d.last_kind ? ` · ${esc(KIND_META_LABEL[d.last_kind] || d.last_kind)}` : ""}${d.idle_ms != null ? ` · ${esc(floorAge(d.idle_ms))}` : ""}</div>
+    ${d.room_name ? `<div class="floor-pop-meta">${esc(d.room_name)}</div>` : ""}
+    <div class="floor-pop-id">${esc(d.session_id)}</div>
+    <div class="floor-pop-actions">
+      ${d.room_id ? "<button class=\"btn btn-ghost\" data-act=\"room\">Open room</button>" : ""}
+      ${canRestart ? "<button class=\"btn btn-danger\" data-act=\"restart\">Restart</button>" : ""}
+    </div>`;
+	pop.querySelector("[data-act=\"room\"]")?.addEventListener("click", () => {
+		closeDeskPopover();
+		if (d.room_id) onOpenRoom(d.room_id);
+	});
+	pop.querySelector("[data-act=\"restart\"]")?.addEventListener("click", async (e) => {
+		const btn = e.currentTarget;
+		const restore = wizardBusy(btn, "Restarting…");
+		try {
+			const r = await authFetch(`/api/floor/sessions/${encodeURIComponent(sessionId)}/restart`, { method: "POST" });
+			if (r.ok) {
+				showToast("Restarted", { kind: "success" });
+				closeDeskPopover();
+				refreshFloor();
+			} else toastError((await r.json().catch(() => ({}))).error || `Restart failed (${r.status})`);
+		} catch (err) {
+			toastError(err, "Restart failed");
+		} finally {
+			restore();
+		}
+	});
+	pop.setAttribute("aria-label", d.agent_name);
+	document.body.appendChild(pop);
+	const r = anchor.getBoundingClientRect();
+	const pw = pop.offsetWidth;
+	pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pw - 8, r.left))}px`;
+	pop.style.top = `${Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 4)}px`;
+	deskPopoverEl = pop;
+	deskPopoverAnchor = anchor;
+	pop.querySelector("button")?.focus();
+	document.addEventListener("click", onDocClickCloseDeskPopover, true);
+	document.addEventListener("keydown", onEscCloseDeskPopover, true);
+}
+function drawEdge(fromSession, toSession) {
+	if (!fromSession) return;
+	if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+	const grid = $("#floor-grid");
+	if (!grid) return;
+	const a = grid.querySelector(`.floor-desk[data-session="${CSS.escape(fromSession)}"]`);
+	const b = grid.querySelector(`.floor-desk[data-session="${CSS.escape(toSession)}"]`);
+	if (!a || !b) return;
+	const gr = grid.getBoundingClientRect();
+	const ar = a.getBoundingClientRect();
+	const br = b.getBoundingClientRect();
+	let svg = grid.querySelector(".floor-edges");
+	if (!svg) {
+		svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+		svg.setAttribute("class", "floor-edges");
+		grid.appendChild(svg);
+	}
+	svg.setAttribute("viewBox", `0 0 ${gr.width} ${gr.height}`);
+	const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+	line.setAttribute("x1", String(ar.left - gr.left + ar.width / 2));
+	line.setAttribute("y1", String(ar.top - gr.top + ar.height / 2));
+	line.setAttribute("x2", String(br.left - gr.left + br.width / 2));
+	line.setAttribute("y2", String(br.top - gr.top + br.height / 2));
+	line.setAttribute("class", "floor-edge");
+	svg.appendChild(line);
+	setTimeout(() => line.remove(), 1600);
+}
+function pulseDesk(sessionId) {
+	if (!sessionId) return;
+	const desk = document.querySelector(`.floor-desk[data-session="${CSS.escape(sessionId)}"]`);
+	if (!desk) return;
+	desk.classList.remove("floor-desk-pulse");
+	desk.offsetWidth;
+	desk.classList.add("floor-desk-pulse");
+}
+async function refreshFloorFeed() {
+	if (floorFeedInFlight) return;
+	floorFeedInFlight = true;
+	const epoch = floorFeedEpoch;
+	try {
+		const r = await authFetch(`/api/floor/feed${floorFeedCursor ? `?since=${encodeURIComponent(floorFeedCursor)}` : ""}`);
+		if (epoch !== floorFeedEpoch) return;
+		if (!r.ok) return;
+		const data = await r.json();
+		if (epoch !== floorFeedEpoch) return;
+		floorFeedCursor = data?.cursor || floorFeedCursor;
+		const fresh = (Array.isArray(data?.events) ? data.events : []).filter((e) => !floorFeedSeen.has(feedKey(e)));
+		if (fresh.length) {
+			floorFeedEvents = fresh.reverse().concat(floorFeedEvents).slice(0, FLOOR_FEED_CAP);
+			floorFeedSeen = new Set(floorFeedEvents.map(feedKey));
+			for (const e of fresh) {
+				pulseDesk(e.session_id);
+				if (e.kind === "a2a") {
+					pulseDesk(e.from_session_id);
+					drawEdge(e.from_session_id, e.session_id);
+				}
+			}
+		}
+		renderFloorFeed();
+	} catch {} finally {
+		floorFeedInFlight = false;
+	}
+}
+async function refreshFloor() {
+	const grid = $("#floor-grid");
+	const counts = $("#floor-counts");
+	if (!grid || !counts) return;
+	try {
+		const r = await authFetch("/api/floor");
+		if (!r.ok) {
+			grid.innerHTML = `<div class="dash-empty">Could not load the floor (${r.status})</div>`;
+			counts.innerHTML = "";
+			return;
+		}
+		renderFloor(await r.json());
+		refreshFloorFeed();
+	} catch {
+		if (!grid.childElementCount) grid.innerHTML = "<div class=\"dash-empty\">Could not load the floor</div>";
+	}
+}
+function renderFloor(data) {
+	const grid = $("#floor-grid");
+	const countsEl = $("#floor-counts");
+	const desks = Array.isArray(data?.desks) ? data.desks : [];
+	const counts = data?.counts || {};
+	floorLastDesks = desks;
+	floorRestricted = data?.restricted !== false;
+	countsEl.innerHTML = [
+		"stuck",
+		"working",
+		"idle",
+		"cold"
+	].map((k) => `<span class="floor-count floor-${k}"><b>${counts[k] ?? 0}</b> ${esc(FLOOR_LABEL[k])}</span>`).join("");
+	if (!desks.length) {
+		grid.innerHTML = "<div class=\"dash-empty\">No sessions yet</div>";
+		return;
+	}
+	floorSessionNames.clear();
+	for (const d of desks) floorSessionNames.set(d.session_id, d.agent_name);
+	grid.querySelector(".floor-edges")?.remove();
+	grid.innerHTML = desks.map((d) => {
+		const room = d.room_name ? esc(d.room_name) : "—";
+		const age = floorAge(d.idle_ms);
+		return `<button class="floor-desk floor-${esc(d.state)}" data-room="${esc(d.room_id || "")}" data-session="${esc(d.session_id)}" title="${esc(FLOOR_LABEL[d.state] || d.state)} · ${esc(d.session_id)}">
+        <span class="floor-desk-name">${esc(d.agent_name)}</span>
+        <span class="floor-desk-room">${room}</span>
+        <span class="floor-desk-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${age ? ` · ${age}` : ""}</span>
+      </button>`;
+	}).join("");
+}
+function openFloor() {
+	openFullView(() => {
+		hideOtherFullViews("floor");
+		floorActive = true;
+		$("#chat").hidden = true;
+		$("#floor").hidden = false;
+		$("#app").classList.add("in-dashboard");
+		$("#app").classList.remove("in-room");
+		floorFeedCursor = null;
+		floorFeedEvents = [];
+		floorFeedSeen = /* @__PURE__ */ new Set();
+		floorFeedEpoch++;
+		renderFloorFeed();
+		refreshFloor();
+		if (floorTimer) clearInterval(floorTimer);
+		floorTimer = setInterval(refreshFloor, FLOOR_POLL_MS);
+		openView("floor", teardownFloor);
+	});
+}
+function teardownFloor() {
+	closeDeskPopover();
+	floorActive = false;
+	if (floorTimer) {
+		clearInterval(floorTimer);
+		floorTimer = null;
+	}
+	$("#chat").hidden = false;
+	$("#floor").hidden = true;
+	$("#app").classList.remove("in-dashboard");
+}
+function toggleFloor() {
+	if (floorActive) closeView("floor");
+	else openFloor();
 }
 var journeyActive = false;
 var journeyAgents = /* @__PURE__ */ new Map();
@@ -15127,6 +15693,7 @@ function openMatrix() {
 }
 function teardownMatrix() {
 	matrixActive = false;
+	unmountMatrix();
 	$("#chat").hidden = false;
 	$("#matrix").hidden = true;
 	$("#app").classList.remove("in-dashboard");
@@ -15138,16 +15705,17 @@ function toggleMatrix() {
 async function refreshMatrix() {
 	const canvas = $("#matrix-canvas");
 	if (!canvas) return;
-	canvas.textContent = "Loading…";
+	if (!matrixApp$1) canvas.textContent = "Loading…";
+	const fail = () => {
+		unmountMatrix();
+		canvas.textContent = "Could not load wiring.";
+	};
 	try {
 		const r = await authFetch("/api/topology");
-		if (!r.ok) {
-			canvas.textContent = "Could not load wiring.";
-			return;
-		}
+		if (!r.ok) return fail();
 		renderMatrix(await r.json());
 	} catch {
-		canvas.textContent = "Could not load wiring.";
+		fail();
 	}
 }
 var matrixApp$1 = null;
@@ -15157,6 +15725,18 @@ function mountMatrix() {
 	if (!host) return;
 	matrixApp$1 = createApp(WiringMatrix_default);
 	matrixApp$1.mount(host);
+}
+/**
+* Drop the island so the next open mounts a fresh one.
+*
+* Load-bearing: without it, `matrixApp` stayed set for the life of the page
+* while the host's DOM got wiped by the placeholder, and the mount guard then
+* refused to rebuild — the view never recovered short of a reload.
+*/
+function unmountMatrix() {
+	if (!matrixApp$1) return;
+	matrixApp$1.unmount();
+	matrixApp$1 = null;
 }
 function renderMatrix(data) {
 	if (!$("#matrix-canvas")) return;
@@ -15331,6 +15911,8 @@ function wireViewChrome1() {
 	$("#dash-refresh")?.addEventListener("click", refreshDashboard);
 	$("#topology-back")?.addEventListener("click", toggleTopology);
 	$("#topology-refresh")?.addEventListener("click", refreshTopology);
+	$("#floor-back")?.addEventListener("click", toggleFloor);
+	$("#floor-refresh")?.addEventListener("click", refreshFloor);
 }
 function wireViewChrome2() {
 	$("#agent-filter")?.addEventListener("input", (e) => {
@@ -17502,7 +18084,8 @@ var HARNESS_OPTIONS = [
 	"claude",
 	"opencode",
 	"pi",
-	"codex"
+	"codex",
+	"grok"
 ];
 function setAgentHarnessControl(provider) {
 	const p = HARNESS_OPTIONS.includes(provider) ? provider : "claude";
@@ -19236,11 +19819,13 @@ async function renderCredentialsSettings() {
 	});
 	const providerOn = {
 		claude: !!(cfg.allowAnthropicKey && cfg.allowClaudeOauth),
-		codex: !!(cfg.allowOpenaiKey && cfg.allowCodexOauth)
+		codex: !!(cfg.allowOpenaiKey && cfg.allowCodexOauth),
+		grok: !!cfg.allowGrokOauth
 	};
 	const providerAvailable = {
 		claude: true,
-		codex: !!cfg.codexAvailable
+		codex: !!cfg.codexAvailable,
+		grok: !!cfg.grokAvailable
 	};
 	document.querySelectorAll("#cred-providers .setting-option").forEach((btn) => {
 		const p = btn.dataset.provider ?? "";
@@ -19265,11 +19850,18 @@ async function renderCredentialsSettings() {
 	const piBadge = $("#pi-installed-badge");
 	if (piInstallBtn && !opencodeInstallActive.value) piInstallBtn.hidden = !!cfg.piAvailable;
 	if (piBadge) piBadge.hidden = !cfg.piAvailable;
+	const grokRow = $("#settings-grok-install");
+	if (grokRow) grokRow.hidden = false;
+	const grokInstallBtn = $("#grok-install-btn");
+	const grokBadge = $("#grok-installed-badge");
+	if (grokInstallBtn && !opencodeInstallActive.value) grokInstallBtn.hidden = !!cfg.grokAvailable;
+	if (grokBadge) grokBadge.hidden = !cfg.grokAvailable;
 	if (credConfigWired) return;
 	credConfigWired = true;
 	$("#codex-install-btn")?.addEventListener("click", () => runCodexInstall(CODEX_SETTINGS_ELS));
 	$("#opencode-install-btn")?.addEventListener("click", () => runOpencodeInstall(OPENCODE_SETTINGS_ELS));
 	$("#pi-install-btn")?.addEventListener("click", () => runOpencodeInstall(PI_SETTINGS_ELS));
+	$("#grok-install-btn")?.addEventListener("click", () => runOpencodeInstall(GROK_SETTINGS_ELS));
 	const putConfig = async (patch) => {
 		const r = await authFetch("/api/webchat/credentials-config", {
 			method: "PUT",
@@ -19416,6 +20008,14 @@ var OPENCODE_SETTINGS_ELS = {
 	btn: "#opencode-install-btn",
 	log: "#opencode-install-log",
 	progress: "#opencode-install-progress"
+};
+var GROK_SETTINGS_ELS = {
+	btn: "#grok-install-btn",
+	log: "#grok-install-log",
+	progress: "#grok-install-progress",
+	url: "/api/grok/install",
+	name: "Grok",
+	doneMsg: "Grok installed — sign in with a device code under Credentials."
 };
 var PI_SETTINGS_ELS = {
 	btn: "#pi-install-btn",
@@ -22018,6 +22618,7 @@ $("#overflow-menu")?.addEventListener("click", (e) => {
 	else if (action === "skills") openManage("skills");
 	else if (action === "routing") openManage("routing");
 	else if (action === "journey") toggleJourney();
+	else if (action === "floor") toggleFloor();
 	else if (action === "topology") toggleTopology();
 	else if (action === "wiring") toggleMatrix();
 	else if (action === "dashboard") toggleDashboard();
@@ -22138,6 +22739,22 @@ wireApprovalsPanel();
 wireMobileBack();
 wireViewChrome1();
 $("#journey-back")?.addEventListener("click", toggleJourney);
+$("#floor-grid")?.addEventListener("click", (e) => {
+	const desk = e.target?.closest(".floor-desk");
+	const sessionId = desk?.dataset.session;
+	if (!desk || !sessionId) return;
+	e.stopPropagation();
+	showDeskPopover(sessionId, desk, (roomId) => {
+		toggleFloor();
+		joinRoom(roomId);
+	});
+});
+$("#floor-feed")?.addEventListener("click", (e) => {
+	const roomId = (e.target?.closest(".floor-event"))?.dataset.room;
+	if (!roomId) return;
+	toggleFloor();
+	joinRoom(roomId);
+});
 $("#journey-refresh")?.addEventListener("click", () => void refreshJourney(true));
 wireViewsPanel();
 $("#topo-focus-pill")?.addEventListener("click", clearTopoFocus);
@@ -22481,7 +23098,8 @@ provideWizardDeps({
 	openOauthMintModal,
 	fetchAgents,
 	closeSettings,
-	applyLearningMaster
+	applyLearningMaster,
+	joinRoom
 });
 provideInstallerDeps({
 	wizardBusy,

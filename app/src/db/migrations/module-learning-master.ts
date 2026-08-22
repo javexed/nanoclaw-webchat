@@ -10,6 +10,8 @@ import type { Migration } from './index.js';
  * settings), and the webchat UI hides the per-agent / per-room learning controls.
  */
 export const moduleLearningMaster: Migration = {
+  // PRAGMA/table_info is sqlite's vocabulary, not the portable driver's.
+  sqliteOnly: true,
   version: 205,
   name: 'learning-master',
   up(db: Database.Database) {

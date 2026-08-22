@@ -26,7 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 let tmpDir: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-localmodel-'));
 });
@@ -34,7 +34,7 @@ beforeEach(() => {
 afterEach(async () => {
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     // ignore
   }
@@ -47,16 +47,20 @@ const GROUP = 'ag-local';
 /** A group on a local harness with an ollama-kind model assigned. */
 async function seed(kind: 'ollama' | 'anthropic', provider: string | null) {
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
-  conn
+  await migrations.runMigrations(conn.getDb());
+  await conn
     .getDb()
-    .prepare(`INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?,?,?,NULL,'t')`)
-    .run(GROUP, GROUP, GROUP);
+    .run(
+      `INSERT INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?,?,?,NULL,'t')`,
+      GROUP,
+      GROUP,
+      GROUP,
+    );
 
   const db = await import('./db.js');
-  db.createWebchatModel({
+  await db.createWebchatModel({
     id: 'm-1',
     name: 'm-1',
     kind,
@@ -65,12 +69,12 @@ async function seed(kind: 'ollama' | 'anthropic', provider: string | null) {
     credential_ref: null,
     created_at: Date.now(),
   });
-  db.assignModelToAgent(GROUP, 'm-1');
+  await db.assignModelToAgent(GROUP, 'm-1');
 
   const cc = await import('../../db/container-configs.js');
-  cc.ensureContainerConfig(GROUP);
+  await cc.ensureContainerConfig(GROUP);
   if (provider) {
-    cc.updateContainerConfigScalars(GROUP, { provider });
+    await cc.updateContainerConfigScalars(GROUP, { provider });
     // Setting the column is not enough: the writer asks whether the harness is
     // INSTALLED (registered in the provider-container registry), because a
     // composed tree carries no optional provider — they arrive as skill payload.
@@ -95,7 +99,7 @@ describe('local-model wiring file', () => {
     // An install that predates the rename is still carrying the old file.
     fs.writeFileSync(path.join(dir, 'opencode-model.json'), '{"provider":"stale"}');
 
-    models.writeLocalModelForAgent(GROUP);
+    await models.writeLocalModelForAgent(GROUP);
 
     expect(fs.existsSync(path.join(dir, 'local-model.json'))).toBe(true);
     // The legacy copy must go, or the readers' fallback could serve "stale"
@@ -113,7 +117,7 @@ describe('local-model wiring file', () => {
     fs.writeFileSync(path.join(dir, 'local-model.json'), '{"provider":"ollama"}');
     fs.writeFileSync(path.join(dir, 'opencode-model.json'), '{"provider":"ollama"}');
 
-    models.writeLocalModelForAgent(GROUP);
+    await models.writeLocalModelForAgent(GROUP);
 
     expect(fs.existsSync(path.join(dir, 'local-model.json'))).toBe(false);
     expect(fs.existsSync(path.join(dir, 'opencode-model.json'))).toBe(false);

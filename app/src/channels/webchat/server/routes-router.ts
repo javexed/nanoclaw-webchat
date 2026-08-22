@@ -60,11 +60,11 @@ export async function rRouterRoutesGet(ctx: RouteCtx, _m: RegExpMatchArray): Pro
 // working default. Idempotent + keyed on model_id 'auto' (not a fixed row id),
 // so a hand-created 'auto' row is respected rather than duplicated. Router
 // endpoint mirrors getRouterInfo()'s (ollama-manage.ts) — keep them in step.
-export function syncAutoRouterSelectable(live: boolean): void {
-  const existing = listWebchatModels().find((m) => m.model_id === 'auto');
+export async function syncAutoRouterSelectable(live: boolean): Promise<void> {
+  const existing = (await listWebchatModels()).find((m) => m.model_id === 'auto');
   if (live) {
     if (!existing) {
-      createWebchatModel({
+      await createWebchatModel({
         id: randomUUID(),
         name: 'auto',
         kind: 'openai-compatible',
@@ -75,7 +75,7 @@ export function syncAutoRouterSelectable(live: boolean): void {
       });
     }
   } else if (existing) {
-    deleteWebchatModel(existing.id);
+    await deleteWebchatModel(existing.id);
   }
 }
 
@@ -96,7 +96,7 @@ export async function rRouterRoutesPut(ctx: RouteCtx, _m: RegExpMatchArray): Pro
     const merged = mergeRoutesUpdate(cfg, update, target);
     writeRoutesConfig(merged);
     // Register/deregister the 'auto' selectable to match the new live state.
-    syncAutoRouterSelectable(Boolean((merged.live as { enabled?: boolean } | undefined)?.enabled));
+    await syncAutoRouterSelectable(Boolean((merged.live as { enabled?: boolean } | undefined)?.enabled));
     const view = routerView(merged, target);
     return json(res, 200, {
       ok: true,
@@ -130,8 +130,8 @@ export async function rRouterRoutersPost(ctx: RouteCtx, _m: RegExpMatchArray): P
     // Register the router as an openai-compatible model so agents can assign
     // it (the virtual model name = the router name, at the router endpoint).
     const endpoint = (await getRouterInfo()).endpoint;
-    if (!listWebchatModels().some((m) => m.model_id === name && m.endpoint === endpoint)) {
-      createWebchatModel({
+    if (!(await listWebchatModels()).some((m) => m.model_id === name && m.endpoint === endpoint)) {
+      await createWebchatModel({
         id: randomUUID(),
         name,
         kind: 'openai-compatible',
@@ -153,9 +153,9 @@ export async function rRouterDelDelete(ctx: RouteCtx, m: RegExpMatchArray): Prom
   const cfg = readRoutesConfig();
   if (!cfg) return json(res, 404, { error: 'Routing not installed' });
   // Refuse while an agent is still assigned to this router's model.
-  const model = listWebchatModels().find((m) => m.model_id === name);
+  const model = (await listWebchatModels()).find((m) => m.model_id === name);
   if (model) {
-    const assigned = getAgentsAssignedToModel(model.id);
+    const assigned = await getAgentsAssignedToModel(model.id);
     if (assigned.length > 0) {
       return json(res, 409, {
         error: `router "${name}" is assigned to ${assigned.length} agent(s) — unassign first`,
@@ -165,7 +165,7 @@ export async function rRouterDelDelete(ctx: RouteCtx, m: RegExpMatchArray): Prom
   try {
     const next = deleteRouter(cfg, name);
     writeRoutesConfig(next);
-    if (model) deleteWebchatModel(model.id);
+    if (model) await deleteWebchatModel(model.id);
     return json(res, 200, { ok: true, routers: listRouters(next) });
   } catch (err) {
     return json(res, 400, { error: err instanceof Error ? err.message : String(err) });
@@ -257,7 +257,7 @@ export async function rRouterLitellmInstallPost(ctx: RouteCtx, _m: RegExpMatchAr
   // the roster, or the hosts an existing config already declares) — not a
   // localhost Ollama that may not exist. Falls back to the localhost default
   // only when the roster is empty.
-  const r = startLitellmInstall(process.cwd(), deriveModelServerHosts() ?? undefined);
+  const r = startLitellmInstall(process.cwd(), (await deriveModelServerHosts()) ?? undefined);
   if (r.error === 'installer-missing') {
     return json(res, 409, {
       error: 'The add-litellm skill is not present in this checkout.',

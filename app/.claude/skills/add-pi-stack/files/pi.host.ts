@@ -66,7 +66,7 @@ registerProviderContainerConfig('pi', (ctx) => {
   fs.mkdirSync(path.join(piDir, 'sessions'), { recursive: true });
 
   const wiring = readAgentWiring(ctx.sessionDir);
-  const dotenv = readEnvFile(['PI_PROVIDER', 'PI_MODEL', 'ANTHROPIC_BASE_URL']);
+  const dotenv = readEnvFile(['PI_PROVIDER', 'PI_MODEL', 'PI_TOOLS', 'PI_THINKING', 'ANTHROPIC_BASE_URL']);
   const pick = (k: string): string | undefined => dotenv[k] || ctx.hostEnv[k];
 
   const provider = wiring.provider || pick('PI_PROVIDER') || 'ollama';
@@ -99,14 +99,17 @@ registerProviderContainerConfig('pi', (ctx) => {
   } catch {
     /* keep the local defaults */
   }
-  const noProxyList = ['127.0.0.1', 'localhost', 'host.docker.internal', modelHost]
-    .filter(Boolean)
-    .join(',');
+  const noProxyList = ['127.0.0.1', 'localhost', 'host.docker.internal', modelHost].filter(Boolean).join(',');
 
   return {
     mounts: [{ hostPath: piDir, containerPath: '/pi-agent', readonly: false }],
     env: {
       PI_CODING_AGENT_DIR: '/pi-agent',
+      // Tunable from .env without a code change. Unset, the container defaults
+      // to tools=read,write,edit,bash and thinking=high; PI_TOOLS=none restores
+      // the original toolless harness.
+      ...(pick('PI_TOOLS') ? { PI_TOOLS: pick('PI_TOOLS') as string } : {}),
+      ...(pick('PI_THINKING') ? { PI_THINKING: pick('PI_THINKING') as string } : {}),
       PI_PROVIDER: provider,
       PI_MODEL: modelId,
       // The model backend is reached directly, past the OneCLI proxy.

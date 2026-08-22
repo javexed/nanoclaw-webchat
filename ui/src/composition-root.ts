@@ -36,11 +36,49 @@ import { lightboxOpen } from './features/modals-state.js';
 import { attachPickerCfg, pendingFiles } from './features/attach-picker-state.js';
 import { helpActive, manageActive, manageTab, matrixWired, topoData, viewStack } from './features/views-state.js';
 import { allModels, lastProbeResult, modelSortAz, selectedModelId } from './features/model-list-state.js';
-import { agentDetailBaseline, agentDetailRooms, roomDetailWiredAgents, showArchivedAgents, turnElapsedTimer } from './features/agent-detail-state.js';
-import { routingAvailable, routingCurrentRouter, routingDraft, routingRouterInfo, selectedRouteIdx } from './features/routing-state.js';
-import { cloudflaredInstallActive, codexInstallActive, ollamaPullPoller, opencodeGateFromServer, opencodeGatePoll, opencodeInstallActive, routingInstallActive, sttInstallActive, tailscaleInstallActive, ttsInstallActive } from './features/installer-state.js';
-import { agentMcpServers, allMcpServers, lastMcpProbe, lastMcpProbeToken, mcpAddInProgress, mcpAgentForAdd, selectedMcpId } from './features/mcp-list-state.js';
-import { learnTurnToolCount, roomAutoLearn, roomSortAz, selectedRoomId, showArchived, showHidden } from './features/room-list-state.js';
+import {
+  agentDetailBaseline,
+  agentDetailRooms,
+  roomDetailWiredAgents,
+  showArchivedAgents,
+  turnElapsedTimer,
+} from './features/agent-detail-state.js';
+import {
+  routingAvailable,
+  routingCurrentRouter,
+  routingDraft,
+  routingRouterInfo,
+  selectedRouteIdx,
+} from './features/routing-state.js';
+import {
+  cloudflaredInstallActive,
+  codexInstallActive,
+  ollamaPullPoller,
+  opencodeGateFromServer,
+  opencodeGatePoll,
+  opencodeInstallActive,
+  routingInstallActive,
+  sttInstallActive,
+  tailscaleInstallActive,
+  ttsInstallActive,
+} from './features/installer-state.js';
+import {
+  agentMcpServers,
+  allMcpServers,
+  lastMcpProbe,
+  lastMcpProbeToken,
+  mcpAddInProgress,
+  mcpAgentForAdd,
+  selectedMcpId,
+} from './features/mcp-list-state.js';
+import {
+  learnTurnToolCount,
+  roomAutoLearn,
+  roomSortAz,
+  selectedRoomId,
+  showArchived,
+  showHidden,
+} from './features/room-list-state.js';
 import { agentSortAz, selectedAgentId } from './features/agent-list-state.js';
 import { members, membersFilter, usersSortAz } from './features/members-list-state.js';
 import DOMPurify from '/dompurify.min.js';
@@ -49,54 +87,432 @@ marked.setOptions({ breaks: true, gfm: true });
 
 // $ / lucide / lucideEl / esc now live in core/dom.ts.
 import { $, esc, lucide, lucideEl } from './core/dom.js';
-import { clearBadgeCount, closeAllDetailDrawers, copyTextToClipboard, getAfterDetailClose, getDetailRouterOpen, setAfterDetailClose, wireComposerPaste, wireDetailOverlay, wireManageTabs, wireMobileBack, wireServiceWorker, wireSortToggle, wireVisibilityRefresh } from './boot.js';
+import {
+  clearBadgeCount,
+  closeAllDetailDrawers,
+  copyTextToClipboard,
+  getAfterDetailClose,
+  getDetailRouterOpen,
+  setAfterDetailClose,
+  wireComposerPaste,
+  wireDetailOverlay,
+  wireManageTabs,
+  wireMobileBack,
+  wireServiceWorker,
+  wireSortToggle,
+  wireVisibilityRefresh,
+} from './boot.js';
 import { isAdminView, state } from './core/state.js';
 
-import { BULK_COMMANDS, acceptMention, broadcastSessionCommand, fetchMentionablePeople, getMentionMatches, getMentionSelectedIndex, getMentionStart, getWiredAgentsForCurrentRoom, handleTypingEvent, provideComposerDeps, renderTypingIndicator, sendCurrentMessage, setMentionMatches, setMentionSelectedIndex, setMentionStart, setWiredAgentsForCurrentRoom, slashKeydown, tryActivateMention, updateSlashMenu, wireComposer } from './features/composer.js';
+import {
+  BULK_COMMANDS,
+  acceptMention,
+  broadcastSessionCommand,
+  fetchMentionablePeople,
+  getMentionMatches,
+  getMentionSelectedIndex,
+  getMentionStart,
+  getWiredAgentsForCurrentRoom,
+  handleTypingEvent,
+  provideComposerDeps,
+  renderTypingIndicator,
+  sendCurrentMessage,
+  setMentionMatches,
+  setMentionSelectedIndex,
+  setMentionStart,
+  setWiredAgentsForCurrentRoom,
+  slashKeydown,
+  tryActivateMention,
+  updateSlashMenu,
+  wireComposer,
+} from './features/composer.js';
 
-import { closeRouteDetail, loadRoutingTab, probeRoutingAvailability, provideRoutingDeps, refreshRouterMetrics, renderRouterRoster, saveRoutingConfig, switchRoutingSubtab, wireRouterNew, wireRoutingPanel, wireRoutingProfiles } from './features/routing.js';
+import {
+  closeRouteDetail,
+  loadRoutingTab,
+  probeRoutingAvailability,
+  provideRoutingDeps,
+  refreshRouterMetrics,
+  renderRouterRoster,
+  saveRoutingConfig,
+  switchRoutingSubtab,
+  wireRouterNew,
+  wireRoutingPanel,
+  wireRoutingProfiles,
+} from './features/routing.js';
 
 import { toggleAdmin } from './features/admin.js';
-import { grantPerm, permsCreateComposedId, permsRefreshCreateUI, permsShowCreate, permsShowDetail, permsShowList, providePermsDeps, refreshPermissions, renderPermsDetail, togglePermissions, wirePermsCreate, wirePermsNew } from './features/perms.js';
-import { permsActive, permsAgents, permsCreateChannelTouched, permsMyUserId, permsSelectedUserId, permsUserFilter } from './features/perms-list-state.js';
-import { userCredsConnected, userCredsOauthReturnFocus, userCredsOauthSessionId, userCredsOauthTarget, userCredsProvider, userCredsState, userCredsWords } from './features/user-creds-state.js';
+import {
+  grantPerm,
+  permsCreateComposedId,
+  permsRefreshCreateUI,
+  permsShowCreate,
+  permsShowDetail,
+  permsShowList,
+  providePermsDeps,
+  refreshPermissions,
+  renderPermsDetail,
+  togglePermissions,
+  wirePermsCreate,
+  wirePermsNew,
+} from './features/perms.js';
+import {
+  permsActive,
+  permsAgents,
+  permsCreateChannelTouched,
+  permsMyUserId,
+  permsSelectedUserId,
+  permsUserFilter,
+} from './features/perms-list-state.js';
+import {
+  userCredsConnected,
+  userCredsOauthReturnFocus,
+  userCredsOauthSessionId,
+  userCredsOauthTarget,
+  userCredsProvider,
+  userCredsState,
+  userCredsWords,
+} from './features/user-creds-state.js';
 
-import { clearStagedFiles, closeAttachPicker, openAttachPicker, provideFilesDeps, renderAttachPickerList, stageFile, stageFiles, uploadFile, wireFileControls1, wireFileControls2, wireFileControls3 } from './features/files.js';
+import {
+  clearStagedFiles,
+  closeAttachPicker,
+  openAttachPicker,
+  provideFilesDeps,
+  renderAttachPickerList,
+  stageFile,
+  stageFiles,
+  uploadFile,
+  wireFileControls1,
+  wireFileControls2,
+  wireFileControls3,
+} from './features/files.js';
 
-import { applyLearningMaster, closeLearnMenu, hideLearnNudge, isLearnUrlToken, loadLearningMaster, pickLearnTarget, promptLearnSource, provideLearnDeps, renderAutoLearnSetting, showLearnNudge, toggleLearnMenu, triggerLearn, wireLearnPanel } from './features/learn.js';
+import {
+  applyLearningMaster,
+  closeLearnMenu,
+  hideLearnNudge,
+  isLearnUrlToken,
+  loadLearningMaster,
+  pickLearnTarget,
+  promptLearnSource,
+  provideLearnDeps,
+  renderAutoLearnSetting,
+  showLearnNudge,
+  toggleLearnMenu,
+  triggerLearn,
+  wireLearnPanel,
+} from './features/learn.js';
 
-import { applyCreateAuthDefault, applyLoginHint, checkAuth, ensureServerAuthMethods, enterAuthedApp, provideAuthDeps, reprobeAuthWhenOnline, toggleBearerToken, wireAuthPanel } from './features/auth.js';
+import {
+  applyCreateAuthDefault,
+  applyLoginHint,
+  checkAuth,
+  ensureServerAuthMethods,
+  enterAuthedApp,
+  provideAuthDeps,
+  reprobeAuthWhenOnline,
+  toggleBearerToken,
+  wireAuthPanel,
+} from './features/auth.js';
 
 // The full-view stack now lives in features/views.ts.
-import { applyJourneyFilters, applyTopoFocus, clearTopoFocus, closeOverflowMenu, closeTopDetailAside, closeView, hideDetail, hideOtherFullViews, openFullView, openJourney, openManage, openView, provideViewsDeps, refreshDashboard, refreshJourney, refreshMatrix, refreshTopology, renderHealthStrip, renderJourneyFilterControls, setTopoFocus, showContainersDetail, showMessagesDetail, svgEl, switchManageTab, syncManageSortIcon, toggleDashboard, toggleHelp, toggleJourney, toggleMatrix, toggleTopology, updateTopoFocusPill, wireViewChrome1, wireViewChrome2, wireViewsPanel } from './features/views.js';
+import {
+  applyJourneyFilters,
+  applyTopoFocus,
+  clearTopoFocus,
+  closeOverflowMenu,
+  closeTopDetailAside,
+  closeView,
+  hideDetail,
+  hideOtherFullViews,
+  openFullView,
+  openJourney,
+  openManage,
+  openView,
+  provideViewsDeps,
+  refreshDashboard,
+  refreshJourney,
+  refreshMatrix,
+  refreshTopology,
+  renderHealthStrip,
+  renderJourneyFilterControls,
+  setTopoFocus,
+  showContainersDetail,
+  showMessagesDetail,
+  svgEl,
+  switchManageTab,
+  syncManageSortIcon,
+  toggleDashboard,
+  toggleHelp,
+  toggleJourney,
+  toggleMatrix,
+  toggleTopology,
+  updateTopoFocusPill,
+  wireViewChrome1,
+  wireViewChrome2,
+  wireViewsPanel,
+  toggleFloor,
+  showDeskPopover,
+} from './features/views.js';
 
 // Modals, overlays and popovers now live in features/modals.ts.
-import { applyLightboxTransform, blockingOverlayOpen, closeHandlePopover, closeLightbox, confirmWithToggle, dismissMentionPopover, inspectAndConfirmImport, navigateLightbox, openHandlePopover, openLightbox, openOauthMintModal, provideModalsDeps, renderMentionPopover, resetLightboxTransform, showConfirmModal, showInputModal, wireLightbox, wireModalsPanel, wireUserCredsOauth } from './features/modals.js';
+import {
+  applyLightboxTransform,
+  blockingOverlayOpen,
+  closeHandlePopover,
+  closeLightbox,
+  confirmWithToggle,
+  dismissMentionPopover,
+  inspectAndConfirmImport,
+  navigateLightbox,
+  openHandlePopover,
+  openLightbox,
+  openOauthMintModal,
+  provideModalsDeps,
+  renderMentionPopover,
+  resetLightboxTransform,
+  showConfirmModal,
+  showInputModal,
+  wireLightbox,
+  wireModalsPanel,
+  wireUserCredsOauth,
+} from './features/modals.js';
 
-import { closeUserCredsOauthModal, deleteUser, disconnectUserCreds, findMembership, paintMembersList, provideMembersDeps, rememberServerAuthHint, renderHandleChip, renderMembers, renderPermsUserList, saveHandle, toggleMembersPanel, updateHandleCreds, updateUserCredsBanner, userDisplayName, userIsOwner, wireMembersOauth1, wireMembersOauth2, wireMembersPanel } from './features/members.js';
+import {
+  closeUserCredsOauthModal,
+  deleteUser,
+  disconnectUserCreds,
+  findMembership,
+  paintMembersList,
+  provideMembersDeps,
+  rememberServerAuthHint,
+  renderHandleChip,
+  renderMembers,
+  renderPermsUserList,
+  saveHandle,
+  toggleMembersPanel,
+  updateHandleCreds,
+  updateUserCredsBanner,
+  userDisplayName,
+  userIsOwner,
+  wireMembersOauth1,
+  wireMembersOauth2,
+  wireMembersPanel,
+} from './features/members.js';
 
-import { applySettings, closeSettings, enableWebPush, loadSettings, openSettings, provideSettingsDeps, renderAccessSettings, renderCredentialsSettings, renderHttpsSettings, renderRoutingSetup, renderSettingsModal, renderSttSetupSettings, renderTtsSetupSettings, saveSettings, wireSettingsPanel1, wireSettingsPanel2 } from './features/settings.js';
+import {
+  applySettings,
+  closeSettings,
+  enableWebPush,
+  loadSettings,
+  openSettings,
+  provideSettingsDeps,
+  renderAccessSettings,
+  renderCredentialsSettings,
+  renderHttpsSettings,
+  renderRoutingSetup,
+  renderSettingsModal,
+  renderSttSetupSettings,
+  renderTtsSetupSettings,
+  saveSettings,
+  wireSettingsPanel1,
+  wireSettingsPanel2,
+} from './features/settings.js';
 
-import { addSelectedFromProbe, bindDiscover, closeModelDetail, closeModelPicker, discoverModels, fetchModels, isRouterBackendModel, loadOllamaHostModels, maybeAssignAfterPickerAdd, modelKindLabel, openModelDetail, openModelPicker, populateKnownModelOptions, provideModelsDeps, renderModels, renderPickerList, renderProbeResults, runProbe, setPickerAdd, sttPopulateModelSelect, syncCreateFormToKind, warnIfUnreachable, wireModelCreate, wireModelsPanel } from './features/models.js';
+import {
+  addSelectedFromProbe,
+  bindDiscover,
+  closeModelDetail,
+  closeModelPicker,
+  discoverModels,
+  fetchModels,
+  isRouterBackendModel,
+  loadOllamaHostModels,
+  maybeAssignAfterPickerAdd,
+  modelKindLabel,
+  openModelDetail,
+  openModelPicker,
+  populateKnownModelOptions,
+  provideModelsDeps,
+  renderModels,
+  renderPickerList,
+  renderProbeResults,
+  runProbe,
+  setPickerAdd,
+  sttPopulateModelSelect,
+  syncCreateFormToKind,
+  warnIfUnreachable,
+  wireModelCreate,
+  wireModelsPanel,
+} from './features/models.js';
 
-import { clearRoomSearch, closeRoomDetail, continueRoomImport, deleteCurrentRoom, joinRoom, openRoomCreate, openRoomDetail, provideRoomsDeps, putRoomLearning, renderRooms, reorderPinnedRoom, roomColor, saveRoomName, snapshotRoomImages, toggleRoomArchive, toggleRoomSettings, wireRoomCreate, wireRoomDetail1, wireRoomDetail2, wireRoomDetail3, wireRoomDetail4, wireRoomDetail5, wireRoomsPanel } from './features/rooms.js';
+import {
+  clearRoomSearch,
+  closeRoomDetail,
+  continueRoomImport,
+  deleteCurrentRoom,
+  joinRoom,
+  openRoomCreate,
+  openRoomDetail,
+  provideRoomsDeps,
+  putRoomLearning,
+  renderRooms,
+  reorderPinnedRoom,
+  roomColor,
+  saveRoomName,
+  snapshotRoomImages,
+  toggleRoomArchive,
+  toggleRoomSettings,
+  wireRoomCreate,
+  wireRoomDetail1,
+  wireRoomDetail2,
+  wireRoomDetail3,
+  wireRoomDetail4,
+  wireRoomDetail5,
+  wireRoomsPanel,
+} from './features/rooms.js';
 
-import { AGENT_STATUS_HINTS, addExistingAgentToRoom, addNewAgentToRoom, agentColor, agentDetailSnapshot, beginAgentTurn, closeAgentDetail, continueAgentImport, endAgentTurn, endAllAgentTurns, endpointHost, fetchAgents, interruptAgent, loadAgentRooms, markTurnActivity, mentionAgentColor, openAgentDetail, openWireToAgentsPicker, populatePermsAgentDropdowns, provideAgentsDeps, refreshAgentModelTrigger, refreshAgentSaveDirty, refreshRoomWiredAgents, refreshWiredAgentsForCurrentRoom, removeAgentKey, removeToolSecret, renderAgentSecrets, renderAgents, renderRoomCreateAgentChecklist, renderRoomWiredAgents, renderToolSecrets, setAgentEgressControl, setAgentHarnessControl, setAgentStatusControl, setAgentSubtab, showAgentsDetail, showDetail, toolSecretUrl, wireAgentControls1, wireAgentControls2, wireAgentControls3, wireAgentControls4, wireAgentControls5, wireAgentCreate1, wireAgentCreate2, wireAgentDetail1, wireAgentDetail2, wireAgentDetail3, wireAgentsPanel, wireCustomScheme } from './features/agents.js';
+import {
+  AGENT_STATUS_HINTS,
+  addExistingAgentToRoom,
+  addNewAgentToRoom,
+  agentColor,
+  agentDetailSnapshot,
+  beginAgentTurn,
+  closeAgentDetail,
+  continueAgentImport,
+  endAgentTurn,
+  endAllAgentTurns,
+  endpointHost,
+  fetchAgents,
+  interruptAgent,
+  loadAgentRooms,
+  markTurnActivity,
+  mentionAgentColor,
+  openAgentDetail,
+  openWireToAgentsPicker,
+  populatePermsAgentDropdowns,
+  provideAgentsDeps,
+  refreshAgentModelTrigger,
+  refreshAgentSaveDirty,
+  refreshRoomWiredAgents,
+  refreshWiredAgentsForCurrentRoom,
+  removeAgentKey,
+  removeToolSecret,
+  renderAgentSecrets,
+  renderAgents,
+  renderRoomCreateAgentChecklist,
+  renderRoomWiredAgents,
+  renderToolSecrets,
+  setAgentEgressControl,
+  setAgentHarnessControl,
+  setAgentStatusControl,
+  setAgentSubtab,
+  showAgentsDetail,
+  showDetail,
+  toolSecretUrl,
+  wireAgentControls1,
+  wireAgentControls2,
+  wireAgentControls3,
+  wireAgentControls4,
+  wireAgentControls5,
+  wireAgentCreate1,
+  wireAgentCreate2,
+  wireAgentDetail1,
+  wireAgentDetail2,
+  wireAgentDetail3,
+  wireAgentsPanel,
+  wireCustomScheme,
+} from './features/agents.js';
 
-import { closeMcpDetail, createMcpServer, fetchMcpServers, loadMcpCatalog, maybeAttachAfterMcpAdd, openMcpDetail, provideMcpDeps, renderAgentMcp, renderMcpServers, renderMcpSources, runMcpProbe, setAgentMcp, syncMcpCreateTransportFields, wireMcpCatalog, wireMcpPanel } from './features/mcp.js';
+import {
+  closeMcpDetail,
+  createMcpServer,
+  fetchMcpServers,
+  loadMcpCatalog,
+  maybeAttachAfterMcpAdd,
+  openMcpDetail,
+  provideMcpDeps,
+  renderAgentMcp,
+  renderMcpServers,
+  renderMcpSources,
+  runMcpProbe,
+  setAgentMcp,
+  syncMcpCreateTransportFields,
+  wireMcpCatalog,
+  wireMcpPanel,
+} from './features/mcp.js';
 
 // The skills surface now lives in features/skills.js.
-import { loadAgentTemplates, renderTemplateLibrary, wireAgentTemplateExport, wireTemplateLibrary } from './features/agent-templates.js';
-import { applySkillsSections, discardSkillDraft, draftFor, draftKeepButton, getSkillEditorDraft, handleSkillDraftReview, importSkill, keepSkillDraft, openScopedSkillEditor, openSkillEditor, openSkillsAdd, provideSkillsDeps, refreshDraftBadge, renderAgentSkills, renderDraftEditor, renderRoomSkills, renderSkillPool, renderSkillSources, renderSkillsRegistry, saveSkillEditor, scheduleSkillSuggest, setSkillTrust, showSkillEditor, skillDraftRow, wireSkillsPanel, wireSkillsRegistry } from './features/skills.js';
+import {
+  loadAgentTemplates,
+  renderTemplateLibrary,
+  wireAgentTemplateExport,
+  wireTemplateLibrary,
+} from './features/agent-templates.js';
+import {
+  applySkillsSections,
+  discardSkillDraft,
+  draftFor,
+  draftKeepButton,
+  getSkillEditorDraft,
+  handleSkillDraftReview,
+  importSkill,
+  keepSkillDraft,
+  openScopedSkillEditor,
+  openSkillEditor,
+  openSkillsAdd,
+  provideSkillsDeps,
+  refreshDraftBadge,
+  renderAgentSkills,
+  renderDraftEditor,
+  renderRoomSkills,
+  renderSkillPool,
+  renderSkillSources,
+  renderSkillsRegistry,
+  saveSkillEditor,
+  scheduleSkillSuggest,
+  setSkillTrust,
+  showSkillEditor,
+  skillDraftRow,
+  wireSkillsPanel,
+  wireSkillsRegistry,
+} from './features/skills.js';
 
 // The socket and its dispatcher now live in core/ws.js.
 import { connect, diagnoseConnection, provideWsDeps, setConnectionBanner } from './core/ws.js';
 
 // The message transcript now lives in features/transcript.js.
-  import { appendMessage, appendSystem, clearUserScrollMarkers, decorateMentions, endTranscriptSwitch, incrementMissedMessages, isNearBottom, jumpToMessage, loadOlderMessages, messageMentionsMe, mountTranscript, provideTranscriptDeps, scheduleFollowScroll, scrollToBottom, setMessages, updateScrollButton, wireScrollTracking, wireTranscriptPanel } from './features/transcript.js';
+import {
+  appendMessage,
+  appendSystem,
+  clearUserScrollMarkers,
+  decorateMentions,
+  endTranscriptSwitch,
+  incrementMissedMessages,
+  isNearBottom,
+  jumpToMessage,
+  loadOlderMessages,
+  messageMentionsMe,
+  mountTranscript,
+  provideTranscriptDeps,
+  scheduleFollowScroll,
+  scrollToBottom,
+  setMessages,
+  updateScrollButton,
+  wireScrollTracking,
+  wireTranscriptPanel,
+} from './features/transcript.js';
 import { thinkingTurns, turnFor } from './features/transcript-state.js';
 
-import { fetchApprovals, handleApprovalEvent, handleApprovalResolvedEvent, respondToApproval, wireApprovalsPanel } from './features/approvals.js';
+import {
+  fetchApprovals,
+  handleApprovalEvent,
+  handleApprovalResolvedEvent,
+  respondToApproval,
+  wireApprovalsPanel,
+} from './features/approvals.js';
 import { provideSelectToggleDeps } from './features/select-toggle.js';
 import { createApp } from 'vue';
 import RouteList from './features/RouteList.vue';
@@ -116,22 +532,63 @@ import { prejudgeRows } from './features/prejudge-state.js';
 import { reachError, reachOutcome, reachPhase } from './features/reachability-state.js';
 import { pickerEmptyNote, pickerRows, pickerSelected } from './features/model-picker-state.js';
 import { probeEmptyNote, probeRows, probeSingle } from './features/probe-results-state.js';
-import { routeDefaultName, routeRows, routeSelectedIdx, routeSuggestBusy, routeSuggestions } from './features/route-list-state.js';
+import {
+  routeDefaultName,
+  routeRows,
+  routeSelectedIdx,
+  routeSuggestBusy,
+  routeSuggestions,
+} from './features/route-list-state.js';
 import { loadOllamaHosts, ollamaCardId } from './features/ollama-cards.js';
-import { closeThreadSwitcher, createThread, deleteThreadConfirm, loadRoomThreads, loadThreadList, openThreadSwitcher, provideThreadsDeps, roomThreads, syncThread, toggleRoomThreads, updateThreadSyncControls } from './features/threads.js';
+import {
+  closeThreadSwitcher,
+  createThread,
+  deleteThreadConfirm,
+  loadRoomThreads,
+  loadThreadList,
+  openThreadSwitcher,
+  provideThreadsDeps,
+  roomThreads,
+  syncThread,
+  toggleRoomThreads,
+  updateThreadSyncControls,
+} from './features/threads.js';
 
 // Install/pull runners now live in features/installers.js.
-import { OPENCODE_WIZARD_ELS, pollOllamaPulls, pollRoutingInstall, pollSttInstall, pollTtsInstall, provideInstallerDeps, renderRoutingInstallProgress, runCodexInstall, runOpencodeInstall, runRoutingInstall, runSttInstall, runTtsInstall, startOllamaPull } from './features/installers.js';
+import {
+  OPENCODE_WIZARD_ELS,
+  pollOllamaPulls,
+  pollRoutingInstall,
+  pollSttInstall,
+  pollTtsInstall,
+  provideInstallerDeps,
+  renderRoutingInstallProgress,
+  runCodexInstall,
+  runOpencodeInstall,
+  runRoutingInstall,
+  runSttInstall,
+  runTtsInstall,
+  startOllamaPull,
+} from './features/installers.js';
 
 // The setup wizard now lives in features/wizard.js. Only the 8 entry points
 // legacy still calls are imported; the other 34 functions are module-private.
-import { maybeAutoOpenWizard, provideWizardDeps, refreshWizardCredState, refreshWizardNextGate, renderSettingsWizardButton, renderWizardFeatures, renderWizardOpencodeInstall, wizardBusy, wizardSelectOllamaModel } from './features/wizard.js';
+import {
+  maybeAutoOpenWizard,
+  provideWizardDeps,
+  refreshWizardCredState,
+  refreshWizardNextGate,
+  renderSettingsWizardButton,
+  renderWizardFeatures,
+  renderWizardOpencodeInstall,
+  wizardBusy,
+  wizardSelectOllamaModel,
+} from './features/wizard.js';
 
 // ── Code block copy / wrap controls ──────────────────────────────────────
 // Decorates any <pre> inside a container with a toolbar (language label,
 // wrap toggle, copy button). Called after marked+DOMPurify renders agent
 // messages. Event handling is delegated on #messages below.
-
 
 // Auth token + fetch helpers now live in core/api.ts — it owns the token
 // because an imported binding cannot be reassigned, and the token is.
@@ -142,13 +599,33 @@ import { showToast, toastError } from './core/toast.js';
 // Voice (TTS playback + STT dictation) now lives in features/voice.js. The
 // Settings panels below still read/write three pieces of its state, so they go
 // through accessors — see the note in that file.
-import { cancelDictation, getSttConfig, getTtsReadAloudEnabled, initSttFeature, isDictationActive, loadTtsConfig, setSttConfig, setTtsReadAloudEnabled, speak, startDictation, stopDictation, stopTts, ttsPlainText } from './features/voice.js';
+import {
+  cancelDictation,
+  getSttConfig,
+  getTtsReadAloudEnabled,
+  initSttFeature,
+  isDictationActive,
+  loadTtsConfig,
+  setSttConfig,
+  setTtsReadAloudEnabled,
+  speak,
+  startDictation,
+  stopDictation,
+  stopTts,
+  ttsPlainText,
+} from './features/voice.js';
 
 // Thinking bubbles + reasoning feed. It needs five transcript helpers that are
 // still defined below; they are INJECTED (provideThinkingDeps, called once at
 // the bottom of this file) rather than imported back, to avoid a cycle through
 // this module. See the note in features/thinking.js.
-import { provideThinkingDeps, pushReasoning, setThinkingMilestone, toggleThinkingExpanded, updateThinkingBubble } from './features/thinking.js';
+import {
+  provideThinkingDeps,
+  pushReasoning,
+  setThinkingMilestone,
+  toggleThinkingExpanded,
+  updateThinkingBubble,
+} from './features/thinking.js';
 
 /**
  * Three outcomes, not two: 'ok' | 'unauthenticated' | 'unreachable'.
@@ -176,15 +653,6 @@ import { provideThinkingDeps, pushReasoning, setThinkingMilestone, toggleThinkin
 // Apply the learning master to the live UI: the composer 🎓 and its nudge only
 // exist while learning is on. Agent/room panels re-read the flag when opened.
 
-
-
-
-
-
-
-
-
-
 // Shared post-auth entry: reveal the app, open the socket, and run first-run
 // hooks. Called from BOTH initApp (reload with a stored token) and the login
 // form (fresh token entry) — the wizard must auto-open in both, not only on a
@@ -195,14 +663,12 @@ import { provideThinkingDeps, pushReasoning, setThinkingMilestone, toggleThinkin
  * all. Runs at most once, and only while still on the optimistic path.
  */
 
-
 // ── Suggest retiring the bearer token once a stronger identity is live ───────
 // Fires when THIS session authenticated via Tailscale/proxy (not bearer), the
 // shared bearer token is still active, and it's safe to drop (an alternative
 // method works). That's the natural moment — e.g. right after the first
 // Tailscale login is promoted to owner — so the operator doesn't have to hunt
 // through Settings. Dismissible; the same control lives in Settings → Access.
-
 
 async function initApp() {
   const verdict = await checkAuth();
@@ -227,7 +693,6 @@ async function initApp() {
 // persisted to localStorage so the connection-lost banner can suggest starting
 // Tailscale even when the device is currently offline (cold start, no network).
 
-
 // ── Connection diagnosis ───────────────────────────────────────────────────
 // "Reconnecting…" alone can't tell the user WHERE the path broke. Three states
 // are distinguishable from a browser:
@@ -241,9 +706,6 @@ async function initApp() {
 // relay + gstatic; both CSP-allowed in server.ts): an opaque response
 // resolving proves internet works without reading any content. Throttled —
 // reconnect retries fire on a backoff and don't each need a fresh probe.
-
-
-
 
 // Best-effort: cache the server's auth mode even for already-authenticated
 // users who never see the login screen (so applyLoginHint never runs for them).
@@ -263,15 +725,9 @@ wireAuthPanel();
 
 // ── Settings ──────────────────────────────────────────────────────────────
 
-
-
 state.settings = loadSettings(); // state.js cannot call this yet
 
-
-
 // ── Token usage (Settings → Token usage, owner-only) ──
-
-
 
 // ── Workspace credentials policy (Settings → User credentials, owner-only) ──
 
@@ -281,7 +737,6 @@ state.settings = loadSettings(); // state.js cannot call this yet
 // Runs capability checks (tailscale, docker, container→host networking) from
 // the vantage point that matters and shows verdicts + copy-paste fixes. Owner-
 // gated to match the endpoint (GET 401s everyone else → section stays hidden).
-
 
 // ── Access & security: bearer-token retirement ───────────────────────────────
 // Owner/global-admin only (GET 403s everyone else → section stays hidden). The
@@ -296,9 +751,6 @@ state.settings = loadSettings(); // state.js cannot call this yet
 // (auth.ts maps Serve's header back to the whois id), so an owner claimed over
 // http://<node>.ts.net:PORT stays owner over https.
 
-
-
-
 // Show/hide the MCP + Skills nav for the current session (admin AND enabled).
 /**
  * Credential isolation — an install policy, shown only to someone who can change
@@ -307,7 +759,6 @@ state.settings = loadSettings(); // state.js cannot call this yet
  * actually in force (`credentialIsolationEffective`) so it never contradicts
  * the agent panel's "Not private yet" note.
  */
-
 
 // ── First-run setup wizard ───────────────────────────────────────────────────
 // Owner/global-admin only. Auto-opens on first login while onboarding is
@@ -318,9 +769,6 @@ state.settings = loadSettings(); // state.js cannot call this yet
 // Codex install DOM sets — the wizard engine step and Settings → User credentials
 // drive the SAME two-phase server install (/api/codex/install: build → host
 // restart). Each surface passes its own element ids so one runner serves both.
-
-
-
 
 // The wizard OpenCode install-row: offered (prominently, one-click) once a local
 // Ollama model is the workspace default and OpenCode isn't installed — because the
@@ -339,12 +787,6 @@ $('#wizard-opencode-install')?.addEventListener('click', () => runOpencodeInstal
 /** Reveal the wizard's install-Ollama row when nothing answers locally (Linux
  *  only), or prefill the endpoint when a local Ollama is already running. */
 
-
-
-
-
-
-
 // Accordion: only the selected engine's connect controls are expanded.
 // True once the engine picked in step 0 has a usable credential/default set, from
 // the last refreshWizardCredState snapshot. Gates the step-0 Next so the operator
@@ -361,10 +803,6 @@ $('#wizard-opencode-install')?.addEventListener('click', () => runOpencodeInstal
  * user just pressed. Returns a restore function for the finally block.
  */
 
-
-
-
-
 // Step 1 "Features" — reflect the MCP + read-aloud toggles from state and surface
 // the TTS voice-model install (same /api/webchat/tts/install as Settings → Features,
 // via the shared runTtsInstall/pollTtsInstall with wizard element ids).
@@ -373,51 +811,25 @@ $('#wizard-opencode-install')?.addEventListener('click', () => runOpencodeInstal
 // a key (ElevenLabs). Drives the same /api/webchat/stt/install as Settings via the
 // shared run/pollSttInstall. Owner-only: the endpoint 403s → the whole block hides.
 
-
-
 // One-click Tailscale install (wizard Access step). Runs the install + sign-in on
 // the host; `tailscale up` prints its auth URL into the log for the operator to
 // open. Same install-row + progress-log shape as the other wizard installers.
 
-
-
-
-
-
-
-
-
-
-
 // Persist the @handle from the Settings field. Inline feedback (per DESIGN.md):
 // success/taken/invalid all surface on the #handle-status line, not a toast.
 
-
-
-
 wireModalsPanel();
 
-
-
-
-
 // ── Voice dictation (capture → /api/stt/transcribe → composer) ──────────────
-
-
 
 /** Recording chrome: mic ⇄ red pulsing stop square + elapsed chip (the
  *  standard voice-recorder idiom, so state is unmistakable at a glance). */
 
-
 /** Wrap accumulated PCM16 frames in a minimal 16 kHz mono WAV container. */
-
 
 /** Close the current segment and ship it for transcription (if it held speech). */
 
 /** Per-frame handler: RMS gate → segment bookkeeping → cut on pause/length. */
-
-
-
 
 /** Stop capture, flush the tail segment, wait for transcripts, then tidy. */
 
@@ -448,13 +860,6 @@ $('#mic-btn')?.addEventListener('click', () => {
 // select + Install, ElevenLabs swaps to key + Connect. Same install-row/log/
 // badge flow as Read aloud, through /api/webchat/stt/install.
 
-
-
-
-
-
-
-
 // ── Settings → Features → Auto-learn (workspace master, owner-only) ─────────
 // The master kill switch for the learning loop. Owner-gated (the section hides
 // for non-owners). Off disables learning workspace-wide and, via the flag,
@@ -467,18 +872,10 @@ $('#mic-btn')?.addEventListener('click', () => {
 // appear once a judge is set. Never-listed actions render disabled — they
 // always reach a human, no matter what.
 
-
-
 // ── Settings → "Set up routing" (one-click add-routing install) ─────────────
 // Owner-only (the /api/router/install endpoint 403s otherwise, hiding the whole
 // section). Scaffolds routing + pulls the classifier model, then the Routing tab
 // appears via probeRoutingAvailability().
-
-
-
-
-
-
 
 // ── Sidebar overflow menu (Dashboard / Permissions / Settings) ──────────────
 // Replaces the three unlabeled glyph buttons with one self-labeling menu, so
@@ -504,6 +901,7 @@ $('#overflow-menu')?.addEventListener('click', (e) => {
   else if (action === 'skills') openManage('skills');
   else if (action === 'routing') openManage('routing');
   else if (action === 'journey') toggleJourney();
+  else if (action === 'floor') toggleFloor();
   else if (action === 'topology') toggleTopology();
   else if (action === 'wiring') toggleMatrix();
   else if (action === 'dashboard') toggleDashboard();
@@ -514,7 +912,8 @@ $('#overflow-menu')?.addEventListener('click', (e) => {
 });
 document.addEventListener('click', (e) => {
   const menu = $('#overflow-menu');
-  if (menu && !menu.hidden && !menu.contains((e.target as Element)) && (e.target as Element) !== $('#overflow-btn')) closeOverflowMenu();
+  if (menu && !menu.hidden && !menu.contains(e.target as Element) && (e.target as Element) !== $('#overflow-btn'))
+    closeOverflowMenu();
 });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeOverflowMenu();
@@ -529,8 +928,6 @@ wireSettingsPanel1();
 // Features: prev/next nav over all images in the current room, pinch-zoom +
 // drag-to-pan on touch, native browser zoom on desktop, loading spinner for
 // slow images, explicit download button, fade-out on close, body-scroll lock.
-
-
 
 window.addEventListener('popstate', (e) => {
   // The lightbox manages its own history entry — handle it first.
@@ -604,19 +1001,14 @@ $('#handle-input')?.addEventListener('keydown', (e) => {
   }
 });
 
-
-
-
 // A–Z sort toggles per list. Off = the list's natural "auto" order (rooms by
 // recent activity, agents newest-first, models by provider); on = alphabetical.
-
 
 // Load my @-mention handle (server-stored, settable in Settings). Used to
 // highlight + notify when a message @-mentions me. Best-effort.
 
 // True when `text` contains an @-mention of the current user's handle. Mirrors
 // the token boundary used by decorateMentions so highlight + notify agree.
-
 
 // iOS/mobile: when the app returns from background, the WebSocket may be
 // silently dead without onclose firing. Force a full reconnect on resume.
@@ -632,14 +1024,10 @@ setInterval(() => {
   if (document.visibilityState === 'visible') fetchApprovals();
 }, APPROVAL_POLL_MS);
 
-
 // Sentinel rendered as a horizontal rule between the pinned group and the rest.
 
 // Deferred retry for renderRooms when it's skipped because a kebab menu is
 // open — see the guard at the top of renderRooms.
-
-
-
 
 // Id of the pinned room currently being dragged for reorder (null while
 // dragging an unpinned room to pin it, or when nothing is dragging).
@@ -653,8 +1041,6 @@ setInterval(() => {
 // a pinned room with its neighbour. Same optimistic reindex + persist as
 // reorderPinnedRoom. `dir` is -1 (up) or +1 (down).
 
-
-
 // ── Threads ─────────────────────────────────────────────────────────────────
 // A webchat thread maps to an isolated agent session. The sidebar nests a
 // room's threads under it; switching a thread re-joins the room scoped to that
@@ -663,27 +1049,6 @@ setInterval(() => {
 // room. The active room's threads are just threadCache.get(currentRoom) — see
 // roomThreads(). loadThreadList/loadRoomThreads write it; render reads it. One
 // cache means one invalidation point (no roomThreads-vs-threadsByRoom drift).
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // One-shot message queued behind a programmatic room switch (the Skills page's
 // 'Add from link…'): sending in the same tick as the join loses the optimistic
@@ -696,20 +1061,16 @@ setInterval(() => {
 // arrives and swaps them in (the 'history' handler calls endTranscriptSwitch).
 // A fallback un-dims if history never lands (e.g. a socket hiccup).
 
-
 // ── Message search (FTS) ────────────────────────────────────────────────────
 // Sidebar search across the user's accessible rooms. Results replace the room
 // list while a query is active; clearing the box (or picking a result) restores
 // it. Backend: GET /api/search (scoped server-side to rooms the user can see).
-
-
 
 wireRoomsPanel();
 
 // Stable per-name colour for a2a side-channel agent labels. Hashes the name to
 // a hue so the same agent is always tinted the same; fixed saturation/lightness
 // stay legible on both the light and dark themes.
-
 
 // Render an in-room approval card. Actionable (approve/deny buttons) only for
 // users in the card's `approvers` list — others see a read-only "pending" note.
@@ -719,12 +1080,8 @@ wireRoomsPanel();
 // lands in ITS OWN room so you can Keep/Discard in context — same shape as the
 // approval card. Keep wires it scoped to the proposing agent (no fan-out).
 
-
 // `beforeNode`, when given, inserts the message before that node instead of at
 // the bottom — used to PREPEND older messages during scroll-back pagination.
-
-
-
 
 // ── Scroll-back (older-message pagination) ──────────────────────────────────
 // Join loads only the most recent window; older history (it's all in SQLite)
@@ -733,7 +1090,6 @@ wireRoomsPanel();
 // During a search-jump we page older history in a tight loop; suppress
 // loadOlderMessages' per-page scroll re-pin so the viewport doesn't bounce —
 // jumpToMessage does one clean scroll at the end instead.
-
 
 // Center + briefly flash a specific message (used by search-result clicks). If
 // the target isn't in the loaded window, page older history in until it appears
@@ -760,11 +1116,7 @@ wireRoomsPanel();
 // Whether the member has a connected credential for the open room — drives the
 // 🔑 indicator on the @handle chip (the standalone key chip was merged into it).
 
-
-
-
 wireMembersPanel();
-
 
 // The same modal serves three flows: a MEMBER connecting their own credential
 // (per-member endpoints, room-gated), and the OWNER setting a WORKSPACE DEFAULT
@@ -787,7 +1139,6 @@ $('#user-creds-oauth-code')?.addEventListener('paste', () => {
 
 wireUserCredsOauth();
 
-
 /**
  * Promise-based confirmation modal. Resolves true on confirm, false on
  * cancel / backdrop / Escape. `body` may be a string or an HTMLElement (use an
@@ -809,26 +1160,8 @@ wireUserCredsOauth();
  * open with that message inline (DESIGN §5 — field validation is inline text),
  * or null/undefined to accept. */
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // Coalesce multiple image-load re-scroll requests into a single rAF call so
 // many simultaneous loads don't queue up overlapping scrollTo invocations.
-
-
-
 
 // Delegated clicks for code-block toolbar buttons (copy + wrap).
 
@@ -845,14 +1178,10 @@ wireComposer();
 // Map a mention handle (folder/slug) to its wired agent's colour, matching the
 // per-name tint used on a2a labels. Humans / unknown handles → null (default chip).
 
-
 // ── Members panel ─────────────────────────────────────────────────────────
-
-
 
 // Render #members-list from currentMembers, applying the search filter. Split
 // from renderMembers so the search box can re-paint without a re-fetch.
-
 
 $('#members-toggle')!.addEventListener('click', toggleMembersPanel);
 $('#members-close')!.addEventListener('click', toggleMembersPanel);
@@ -861,8 +1190,6 @@ $('#members-search')?.addEventListener('input', (e) => {
   paintMembersList();
 });
 wireMembersOauth2();
-
-
 
 // Shared tap-to-close for #agent-detail / #room-detail / #model-detail. There
 // are 14-ish call sites that toggle `.hidden` on those panels; rather than
@@ -894,7 +1221,6 @@ wireManageTabs();
 // View a shared-pool skill from the agent page, in-place. User-pool skills are
 // editable (server enforces owner/global-admin on save); built-ins are read-only.
 
-
 /**
  * Undo window: swaps an actions row for a sliding countdown + Undo. The action
  * commits when the bar empties; Undo restores the row untouched. The timer only
@@ -925,7 +1251,6 @@ wireSkillsPanel();
 
 /** Reflect a draft's in-flight review on its Keep button, if one is rendered. */
 
-
 // Async keep-review outcome, pushed by the server after a 202-queued Keep.
 // kept → success toast + list refresh; overlaps → the overlap-choice modal
 // (re-drives keep with force/updateTarget); error → toast. Fires on every
@@ -953,8 +1278,6 @@ wireSkillsPanel();
 // Without a query: headers always visible, rows follow the persisted collapse
 // state. With a query: rows show iff name+description match, sections with
 // matches are forced open, empty sections hide entirely.
-
-
 
 // Update checks ride AFTER render (one GitHub probe per pinned import, cached
 // server-side an hour) — rows get an Update button as results land. Imports
@@ -987,8 +1310,6 @@ wireSkillsPanel();
 // islands need the same decisions available declaratively — so the module
 // exports originBadgeProps() and both renderers read from it.
 
-
-
 // Switch trust tier: toggle the segment, gate the search box to Community (the
 // persistent community warning too), then load that tier's merged pool.
 
@@ -996,7 +1317,6 @@ wireSkillsPanel();
 // collection + the awesomeskill.ai marketplace equally; the search box filters
 // it. No per-source picker — each row's origin badge carries (and links to) its
 // provenance.
-
 
 // Adding a skill asks WHICH agents up front — the same multi-select attach picker
 // MCP uses. Each toggle wires the skill to just that agent (per-agent scoped
@@ -1007,9 +1327,6 @@ wireSkillsPanel();
 // the user commits. Falls back to a text-only confirm if inspection fails, so a
 // GitHub hiccup can't brick importing.
 
-
-
-
 // Filter-as-you-type over the rendered sections — a pure visibility pass, so
 // a light debounce is plenty even with a large registry.
 
@@ -1019,29 +1336,16 @@ wireSkillsPanel();
 // `/learn <url>` as the user — the command and the draft card that follows are
 // visible in the room, exactly like typing it there.
 
-
 // ── Settings: skill-collections registry (global admin) ────────────────────
 // Owners/global admins manage the Skills tab's catalog sources: label + a
 // GitHub folder URL per collection. Server verifies the folder actually lists
 // skills before saving.
 
-
-
 // Import-by-URL now asks which agents up front (same picker as the catalog rows).
-
-
 
 // ── Approvals ─────────────────────────────────────────────────────────────
 
-
-
-
 wireApprovalsPanel();
-
-
-
-
-
 
 // ── Mobile back button ────────────────────────────────────────────────────
 wireMobileBack();
@@ -1053,37 +1357,45 @@ wireMobileBack();
 // Non-owner admins see a graceful-degrade view: their visible agents,
 // session count, channel breakdown — no system info or busiest-rooms.
 
-
 // The full-width surfaces (dashboard/permissions/topology/matrix) are flex
 // siblings of #chat — only one may be visible at a time, or they'd split the
 // pane. Each opener hides its peers synchronously (the router stack still
 // unwinds normally on back).
 
-
 wireViewChrome1();
 $('#journey-back')?.addEventListener('click', toggleJourney);
+
+// A floor desk is a link to its room. Delegated: the grid is re-rendered on
+// every poll, so per-desk listeners would be re-attached every few seconds.
+// Wired here rather than in views.ts because joinRoom lives in rooms.ts and
+// views.ts importing it would close an import cycle.
+$('#floor-grid')?.addEventListener('click', (e) => {
+  const desk = (e.target as HTMLElement | null)?.closest('.floor-desk') as HTMLElement | null;
+  const sessionId = desk?.dataset.session;
+  if (!desk || !sessionId) return;
+  // The popover owns what a desk tap means now: details always, Open room when
+  // the session has one, Restart when it is stuck and the caller may act.
+  e.stopPropagation(); // the popover's outside-click closer runs on document
+  showDeskPopover(sessionId, desk, (roomId) => {
+    toggleFloor(); // close the floor first, so the room lands on the chat view
+    joinRoom(roomId);
+  });
+});
+// Feed rows link to their room the same way desks do (and for the same
+// delegation reason: the feed re-renders on every poll).
+$('#floor-feed')?.addEventListener('click', (e) => {
+  const row = (e.target as HTMLElement | null)?.closest('.floor-event') as HTMLElement | null;
+  const roomId = row?.dataset.room;
+  if (!roomId) return;
+  toggleFloor();
+  joinRoom(roomId);
+});
 $('#journey-refresh')?.addEventListener('click', () => void refreshJourney(true));
 wireViewsPanel();
-
-
 
 // ── Journey filters ─────────────────────────────────────────────────────────
 // Agent select options come from the loaded feed (plus a deep-linked agent),
 // so no extra endpoint is needed; they grow as 'Load more' pages in.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 $('#topo-focus-pill')?.addEventListener('click', clearTopoFocus);
 
@@ -1105,24 +1417,10 @@ $('#matrix-refresh')?.addEventListener('click', refreshMatrix);
 // matrix/topology dashboards so the back gesture and view stacking work for free.
 $('#help-back')?.addEventListener('click', toggleHelp);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
 $('#perms-user-search')?.addEventListener('input', (e) => {
   permsUserFilter.value = (e.target as HTMLInputElement).value.trim().toLowerCase();
   renderPermsUserList();
 });
-
 
 // findRole, auditTooltip and buildToggleRow moved out in phase 4.2g. The first
 // two are pure and live in features/perms-audit.ts; the third built the
@@ -1134,11 +1432,6 @@ $('#perms-user-search')?.addEventListener('input', (e) => {
  * /revoke. The cell is briefly disabled while the request is in flight, then
  * the canonical state is re-fetched from the server.
  */
-
-
-
-
-
 
 // Wiring
 $('#perms-exit')!.addEventListener('click', togglePermissions);
@@ -1166,33 +1459,22 @@ $('#perms-create-kind')!.addEventListener('change', permsRefreshCreateUI);
 
 wirePermsCreate();
 
-
-
-
-
 // Router traffic panel: per-model request counts from the routing decision
 // log (the shadow hook classifies every LiteLLM completion, so the log IS
 // the request ledger). Owner-only; the section stays hidden when the
 
-
 $('#dash-detail-close')!.addEventListener('click', hideDetail);
-
-
 
 // ── Agent management ────────────────────────────────────────────────────────
 
 // Archived agents are hidden by default (server-side). The Agents tab can opt
 // in to see them so they can be unarchived; pickers/topology never do.
 
-
-
-
 // Reflect the agent's egress mode on the segmented control + badge. 'none' is
 // only settable via ncl, so if an agent carries it, show it read-only rather
 // than silently rendering as one of the two we offer.
 
 // Reflect the agent's status on the 3-button segmented control + hint.
-
 
 // Switch the agent harness (provider). Restarts the group's containers, so it's
 // an admin action with a restart toast. OpenCode is gated server-side on the
@@ -1205,9 +1487,6 @@ wireAgentsPanel();
 // Status control: each button PUTs the new status, then refreshes the list so
 // the badge + (if archived) visibility update immediately.
 
-
-
-
 // "+ Wire to room" opens the shared attach picker — toggle the agent in/out of
 // any room. (Rooms are created from the room list, so no "+ Add new" here.)
 
@@ -1215,15 +1494,11 @@ wireAgentsPanel();
 // host-side — the only way to clear a background a2a session (a room-typed
 // /clear only reaches the session you're in). Admin-gated server-side.
 
-
 // Per-agent skills: list every available skill with a toggle reflecting whether
 // this agent loads it. Changes batch behind Save (one PUT → one respawn) rather
 // than restarting the agent on every toggle.
 
 // Skills wired to this one agent (imported into its own dir) + the import row.
-
-
-
 
 // Learning defaults (agent-level layer): two On/Off pill pairs backed by the
 // per-agent API. Room 🎓 settings override these — the section says so. The
@@ -1269,7 +1544,6 @@ $('#import-room-file')?.addEventListener('change', async (e) => {
   }
   return continueRoomImport(up);
 });
-
 
 // ── System backup (Phase 2) ──
 $('#system-export-btn')?.addEventListener('click', async () => {
@@ -1317,22 +1591,16 @@ wireFileControls2();
 
 wireAgentControls2();
 
-
-
-
-
-
 // ── Shared multi-select attach picker (MCP servers, rooms) ──────────────────
 // A single bottom-sheet reused by every "attach" surface. The caller supplies a
 // config describing the item source, how to render/search a row, whether an item
 // is already attached, and what to do on toggle. Reuses the model-picker chrome.
 
-
-
-
 $('#attach-picker-close')!.addEventListener('click', closeAttachPicker);
 $('#attach-picker .model-picker-backdrop')!.addEventListener('click', closeAttachPicker);
-$<HTMLInputElement>('#attach-picker-search')!.addEventListener('input', (e) => renderAttachPickerList((e.target as HTMLInputElement).value));
+$<HTMLInputElement>('#attach-picker-search')!.addEventListener('input', (e) =>
+  renderAttachPickerList((e.target as HTMLInputElement).value),
+);
 $('#attach-picker-add-new')!.addEventListener('click', () => attachPickerCfg.value?.onAddNew?.());
 
 // "+ Attach server" now opens the shared picker (attach/detach any registry
@@ -1388,12 +1656,7 @@ document.querySelectorAll('.drafter-btn').forEach((btn) => {
   btn.addEventListener('click', () => draftFor(btn));
 });
 
-
 // ── Room management ─────────────────────────────────────────────────────────
-
-
-
-
 
 // Rename the selected room. Owner-only (the field is hidden otherwise, and the
 // server re-checks). The server's broadcastRooms() pushes the new name, so the
@@ -1404,23 +1667,12 @@ document.querySelectorAll('.drafter-btn').forEach((btn) => {
 // @-mentioned); the legacy 'broadcast' mode has been retired. Mode-aware
 // rendering is in renderRoomWiredAgents.
 
-
 /**
  * Learning loop, room-level view: what this room's agents have proposed and what
  * they've learned — in the room, rather than buried in the global Skills page.
  * Pending proposals first (they need a decision); learned skills below, removable.
  * Purely a view over existing endpoints — no new backend.
  */
-
-
-
-
-
-
-
-
-
-
 
 // Wire up room-detail UI.
 // Tapping the room name opens/closes room settings (frees the chat-header slot
@@ -1453,15 +1705,19 @@ wireAgentControls5();
 
 // ── Create room ─────────────────────────────────────────────────────────────
 
-
-
 $('#create-room-btn')!.addEventListener('click', openRoomCreate);
 wireRoomDetail4();
 // A–Z sort toggles (rooms / agents / models). One small button each: off = the
 // list's natural order, on = alphabetical. State persists per-list.
-wireSortToggle('#room-sort-az', 'webchat:roomSortAz', () => roomSortAz.value, (v) => (roomSortAz.value = v), () => {
-  if (state.lastRoomsList.length) renderRooms(state.lastRoomsList);
-});
+wireSortToggle(
+  '#room-sort-az',
+  'webchat:roomSortAz',
+  () => roomSortAz.value,
+  (v) => (roomSortAz.value = v),
+  () => {
+    if (state.lastRoomsList.length) renderRooms(state.lastRoomsList);
+  },
+);
 wireSortToggle(
   '#perms-sort-az',
   'webchat:usersSortAz',
@@ -1482,7 +1738,6 @@ wireRoomCreate();
 // button the machine already presses is pure noise. Refreshed on join and when
 // the 🎓 toggle changes; unknown (fetch failed / non-admin) keeps the nudge.
 
-
 /**
  * 🎓 popover (DESIGN.md § Composer popups — mirrors .mention-popover, no third
  * style). Click the icon → "Distill now" plus the per-agent automation toggles:
@@ -1492,10 +1747,6 @@ wireRoomCreate();
  *                  when the server says canAutoKeep.
  */
 
-
-
-
-
 $('#learn-btn')?.addEventListener('click', toggleLearnMenu);
 
 // Composer overflow "+": on narrow screens the tools (attach/camera/learn)
@@ -1503,30 +1754,14 @@ $('#learn-btn')?.addEventListener('click', toggleLearnMenu);
 // tool inside is chosen (each opens its own dialog/menu).
 wireLearnPanel();
 
- // after this much silence, say "still working"
-
-
-
-
+// after this much silence, say "still working"
 
 // Remove every agent's bubble (room switch / reset).
-
-
-
-
-
 
 // Interrupt ONE agent's in-progress turn (per-agent Stop) — sends a "stop" over
 // the WS targeting that agent (the host resolves the name to its session). The
 // GUI equivalent of the CLI's ESC. Removes that agent's bubble optimistically;
 // the host's stream-abort + 'done' keep it gone.
-
-
-
-
-
-
-
 
 // ── Typing send (debounced) ───────────────────────────────────────────────
 let typingTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -1623,8 +1858,6 @@ wireServiceWorker(() => Array.isArray(pendingFiles.value) && pendingFiles.value.
 // assignment-to-agent flows through PUT /api/agents/:id/model, which the
 // host turns into per-agent settings.json env overrides on next spawn.
 
-
-
 // ── Servers & selection (owner-only; hidden entirely for non-owners) ──
 // One mental model: SERVERS (Ollama hosts + the LiteLLM router) each list
 // what they serve; +/− on a server row adds/removes that model from the
@@ -1637,10 +1870,6 @@ wireServiceWorker(() => Array.isArray(pendingFiles.value) && pendingFiles.value.
 // subtree, so the three had to leave together — none of them can become an
 // island while a builder here keeps rebuilding the elements they own.
 
-
-
-
-
 // ── Routing aside: routes editor + test bench + recent decisions ─────────
 // Opened from the router server card. Edits write routes.json through the
 // server (validated); the hook re-reads per request, so Save is immediate.
@@ -1652,7 +1881,6 @@ wireServiceWorker(() => Array.isArray(pendingFiles.value) && pendingFiles.value.
 
 // Which router (routing profile) the tab is currently editing. null → the
 // server picks the primary (auto).
-
 
 // The router (profile) picker: a dropdown of all routers + new/delete. Shown
 // only when the config exposes a routers list (multi-router aware). Switching
@@ -1685,7 +1913,6 @@ wireRoutingPanel();
 // Startup probe (deferred so auth is settled before the first owner-gated call).
 setTimeout(probeRoutingAvailability, 3000);
 
-
 // Display label for a model kind. The STORED kind stays 'openai-compatible'
 // (it names the endpoint's protocol — what the probe detects); the UI says
 // "openai" for brevity. All kinds run the default Claude provider — LiteLLM
@@ -1702,15 +1929,9 @@ setTimeout(probeRoutingAvailability, 3000);
 // "host · " into the display name — strip it for DISPLAY when it matches the
 // endpoint, so both naming eras render identically. Stored names untouched.
 
-
-
-
-
-
 // Live facts for ollama-kind models: is the model actually installed on its
 // endpoint, how big is it, is it in memory right now — the same facts the
 // host cards below show, so the two surfaces agree.
-
 
 $('#model-detail-close')!.addEventListener('click', closeModelDetail);
 $('#model-create-close')!.addEventListener('click', closeModelDetail);
@@ -1720,7 +1941,6 @@ wireModelCreate();
 $('#model-create-kind')!.addEventListener('change', syncCreateFormToKind);
 
 // ── Probe-by-URL flow ──────────────────────────────────────────────────────
-
 
 $('#model-probe-btn')!.addEventListener('click', runProbe);
 $('#model-probe-url')!.addEventListener('keydown', (e) => {
@@ -1736,10 +1956,6 @@ $('#model-probe-select-all')!.addEventListener('click', () => {
 });
 $('#model-probe-add-selected')!.addEventListener('click', addSelectedFromProbe);
 
-
-
-
-
 bindDiscover(
   '#model-create-discover-btn',
   () => $<HTMLInputElement>('#model-create-kind')!.value,
@@ -1748,8 +1964,6 @@ bindDiscover(
   '#model-create-discover-select',
 );
 wireModelsPanel();
-
-
 
 /**
  * MCP catalog — browse the public registry, prefill the add form.
@@ -1781,7 +1995,6 @@ wireModelsPanel();
  * value, so there is nothing to render and nothing to leak into a screenshot.
  */
 
-
 /**
  * One row per credential: the host, a scope pill, and Remove.
  *
@@ -1797,15 +2010,7 @@ wireModelsPanel();
 // in. Not admin-gated by design: a per-user PAT is only worth having if its
 // owner is the only one who ever handles it.
 
-
-
 /** Labelled input matching the .secret-field pattern used in the static forms. */
-
-
-
-
-
-
 
 /**
  * The learning loop's explicit trigger (docs/webchat/design/learning-loop.md §1): reviews
@@ -1819,18 +2024,13 @@ wireModelsPanel();
 
 /** Hide the catalog entirely when its source is switched off. */
 
-
-
 /** Prefill the add form from a catalog row. Package servers gate on an explicit confirm. */
 
 // Catalog wiring: load on first expand, debounce the search.
 wireMcpCatalog();
 
-
-
 // Health, drift re-approval, tool allowlist, OAuth connect — the hardening
 // surface of one server's detail panel (remote servers only).
-
 
 $('#mcp-detail-close')!.addEventListener('click', closeMcpDetail);
 $('#mcp-create-close')!.addEventListener('click', closeMcpDetail);
@@ -1845,9 +2045,6 @@ $('#mcp-create-transport')!.addEventListener('change', syncMcpCreateTransportFie
 // The bearer token used by the LAST SUCCESSFUL probe — carried into the add
 // body so the registered server keeps working. Kept out of lastMcpProbe.value (the
 // server response) so it can't leak via logging of that object.
-
-
-
 
 wireMcpPanel();
 
@@ -1884,11 +2081,15 @@ initApp();
 // Hand the thinking module the transcript helpers it calls. Declarations hoist,
 // so these are all defined by the time this runs.
 provideThinkingDeps({ interruptAgent });
-  // The wizard reaches back into legacy for install runners, a few panels, and,
-  // some module-level flags. Read-only views are getters; anything the wizard,
-  // ASSIGNS gets a setter too — a getter alone would silently drop the write.,
+// The wizard reaches back into legacy for install runners, a few panels, and,
+// some module-level flags. Read-only views are getters; anything the wizard,
+// ASSIGNS gets a setter too — a getter alone would silently drop the write.,
 provideWizardDeps({
-  openOauthMintModal, fetchAgents, closeSettings, applyLearningMaster,
+  openOauthMintModal,
+  fetchAgents,
+  closeSettings,
+  applyLearningMaster,
+  joinRoom,
 });
 
 // Installers run from both the wizard and settings, and reach back into legacy
@@ -1898,44 +2099,71 @@ provideWizardDeps({
 provideInstallerDeps({
   // wizard entry points, passed through from legacy's own import so that,
   // installers never has to import wizard (wizard already imports installers),
-  wizardBusy, refreshWizardNextGate, renderWizardOpencodeInstall,
-  renderWizardFeatures, refreshWizardCredState,
-  renderCredentialsSettings, renderTtsSetupSettings, renderSttSetupSettings,
-  renderRoutingSetup, probeRoutingAvailability, loadOllamaHostModels,
-  fetchModels, fetchAgents,
+  wizardBusy,
+  refreshWizardNextGate,
+  renderWizardOpencodeInstall,
+  renderWizardFeatures,
+  refreshWizardCredState,
+  renderCredentialsSettings,
+  renderTtsSetupSettings,
+  renderSttSetupSettings,
+  renderRoutingSetup,
+  probeRoutingAvailability,
+  loadOllamaHostModels,
+  fetchModels,
+  fetchAgents,
   // install re-entrancy flags still owned by legacy (not shared app state),
 });
 
 provideThreadsDeps({
-  hideOtherFullViews, joinRoom, renderRooms,
-  roomColor, showConfirmModal,
+  hideOtherFullViews,
+  joinRoom,
+  renderRooms,
+  roomColor,
+  showConfirmModal,
 });
 
 // The transcript reaches back for bubble decorations and the shared identity /
 // pager state. buildThoughtsDisclosure is injected rather than imported so the
 // transcript <-> thinking edge stays one-way (thinking imports transcript).
 provideTranscriptDeps({
-  agentColor, endAgentTurn, interruptAgent, mentionAgentColor,
-  openLightbox, skillDraftRow, toggleThinkingExpanded,
+  agentColor,
+  endAgentTurn,
+  interruptAgent,
+  mentionAgentColor,
+  openLightbox,
+  skillDraftRow,
+  toggleThinkingExpanded,
 });
 
 // The socket dispatcher turns server events into UI updates, so it reaches back
 // for the renderers and fetchers that still live here. All plain functions —
 // core/state removed every state accessor this used to need.
 provideWsDeps({
-  fetchApprovals, fetchMentionablePeople,
-  handleSkillDraftReview, handleTypingEvent, joinRoom,
+  fetchApprovals,
+  fetchMentionablePeople,
+  handleSkillDraftReview,
+  handleTypingEvent,
+  joinRoom,
   refreshDraftBadge,
-  refreshWiredAgentsForCurrentRoom, renderMembers, renderRooms,
+  refreshWiredAgentsForCurrentRoom,
+  renderMembers,
+  renderRooms,
   triggerLearn,
 });
 
 // Skills reaches back for view-stack/overlay plumbing, the undo bar and a few
 // selection ids. All read-only — it writes none of them, so getters only.
 provideSkillsDeps({
-  closeRoomDetail, closeView, joinRoom,
-  openJourney, openManage, openView, openWireToAgentsPicker,
-  showConfirmModal, triggerLearn,
+  closeRoomDetail,
+  closeView,
+  joinRoom,
+  openJourney,
+  openManage,
+  openView,
+  openWireToAgentsPicker,
+  showConfirmModal,
+  triggerLearn,
 });
 
 // MCP spans the registry view and the agent panel, so it reaches back for the
@@ -1945,8 +2173,11 @@ provideMcpDeps({
   // it, and check:refs matched only TS2304 at the time — tsc reports this one
   // as TS2552 ("did you mean fetchMcpServers?"), so the gate stayed green on a,
   // guaranteed ReferenceError. Widening the guard to TS2552 found it.,
-  closeAgentDetail, closeModelDetail, closeRoomDetail,
-  openAgentDetail, showConfirmModal,
+  closeAgentDetail,
+  closeModelDetail,
+  closeRoomDetail,
+  openAgentDetail,
+  showConfirmModal,
 });
 
 // Agents is referenced from nearly every other view, so it reaches back for
@@ -1957,9 +2188,15 @@ provideAgentsDeps({
   // Stays a dep: agents→composer would close a cycle (composer already
   // reaches agents), which is exactly what this seam is for.,
   getWiredAgentsForCurrentRoom,
-  closeAttachPicker, closeModelDetail, closeRoomDetail,
-  fetchModels, inspectAndConfirmImport,
-  modelKindLabel, openAttachPicker, openRoomDetail, populateKnownModelOptions,
+  closeAttachPicker,
+  closeModelDetail,
+  closeRoomDetail,
+  fetchModels,
+  inspectAndConfirmImport,
+  modelKindLabel,
+  openAttachPicker,
+  openRoomDetail,
+  populateKnownModelOptions,
   showConfirmModal,
   setWiredAgentsForCurrentRoom,
 });
@@ -1967,8 +2204,13 @@ provideAgentsDeps({
 // Rooms drives the sidebar and the room lifecycle, so it reaches back for the
 // detail panes, member/typing renderers and a few sort/visibility toggles.
 provideRoomsDeps({
-  closeModelDetail, fetchMentionablePeople, hideLearnNudge,
-  hideOtherFullViews, renderMembers, renderTypingIndicator, showConfirmModal,
+  closeModelDetail,
+  fetchMentionablePeople,
+  hideLearnNudge,
+  hideOtherFullViews,
+  renderMembers,
+  renderTypingIndicator,
+  showConfirmModal,
   updateUserCredsBanner,
 });
 
@@ -1987,14 +2229,18 @@ provideSettingsDeps({
   // dodge a settings→agents cycle. Both blocks live on the Admin view now, and
   // admin.ts imports them directly — nothing imports admin.ts, so there is no
   // cycle to dodge.
-  toggleBearerToken, updateUserCredsBanner,
+  toggleBearerToken,
+  updateUserCredsBanner,
 });
 
 // Members spans the room member list and the permissions view, so it reaches
 // back for the perms renderers and the per-user credential state legacy owns.
 provideMembersDeps({
-  permsShowDetail, permsShowList, refreshPermissions,
-  renderPermsDetail, showConfirmModal,
+  permsShowDetail,
+  permsShowList,
+  refreshPermissions,
+  renderPermsDetail,
+  showConfirmModal,
 });
 
 // Modals reach back for the mention-accept path, clipboard, and the OAuth
@@ -2002,13 +2248,16 @@ provideMembersDeps({
 provideModalsDeps({
   // Stays a dep: modals→members would close a cycle (members imports modals).
   updateHandleCreds,
-  acceptMention, copyTextToClipboard,
+  acceptMention,
+  copyTextToClipboard,
 });
 
 // The view stack reaches back for the topology/routing renderers and the
 // which-view-is-open flags legacy still owns.
 provideViewsDeps({
-  closeAllDetailDrawers, loadRoutingTab, probeRoutingAvailability,
+  closeAllDetailDrawers,
+  loadRoutingTab,
+  probeRoutingAvailability,
   refreshRouterMetrics,
   getDetailRouterOpen,
   getAfterDetailClose,
@@ -2029,28 +2278,26 @@ provideLearnDeps({
 });
 
 // Files reaches back for what legacy still owns.
-provideFilesDeps({
-});
+provideFilesDeps({});
 
 // The +/- selectable toggle needs the model registry legacy still owns, plus
 // the two things its click does afterwards. refreshRouterRoster keeps the
 // hidden-tab check that used to live inside the button handler.
 provideSelectToggleDeps({
   fetchModels,
-  refreshRouterRoster: () => { if (!$('#mtab-routing')!.hidden) renderRouterRoster(); },
+  refreshRouterRoster: () => {
+    if (!$('#mtab-routing')!.hidden) renderRouterRoster();
+  },
 });
 
 // The host cards read the classifier id to section it under System rather
 // than offering it as a selectable model.
 
 // Perms reaches back for what legacy still owns.
-providePermsDeps({
-});
+providePermsDeps({});
 
 // Routing reaches back for what legacy still owns.
-provideRoutingDeps({
-});
+provideRoutingDeps({});
 
 // Composer reaches back for what legacy still owns.
-provideComposerDeps({
-});
+provideComposerDeps({});

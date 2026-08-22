@@ -13,7 +13,7 @@ import { computeSwCacheVersion } from './server.js';
 
 let dir: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'swcache-'));
   fs.writeFileSync(path.join(dir, 'index.html'), '<html></html>');
   fs.writeFileSync(path.join(dir, 'app.js'), 'console.log(1);');
@@ -21,39 +21,39 @@ beforeEach(() => {
   fs.writeFileSync(path.join(dir, 'sw.js'), "const CACHE = '__CACHE_VERSION__';");
 });
 
-afterEach(() => {
+afterEach(async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
 describe('computeSwCacheVersion', () => {
-  it('produces a stable nanoclaw-chat- prefixed name', () => {
+  it('produces a stable nanoclaw-chat- prefixed name', async () => {
     const v = computeSwCacheVersion(dir);
     expect(v).toMatch(/^nanoclaw-chat-[0-9a-f]{12}$/);
   });
 
-  it('is deterministic for identical assets', () => {
+  it('is deterministic for identical assets', async () => {
     expect(computeSwCacheVersion(dir)).toBe(computeSwCacheVersion(dir));
   });
 
-  it('changes when an asset changes', () => {
+  it('changes when an asset changes', async () => {
     const before = computeSwCacheVersion(dir);
     fs.writeFileSync(path.join(dir, 'app.js'), 'console.log(2);');
     expect(computeSwCacheVersion(dir)).not.toBe(before);
   });
 
-  it('changes when an asset is added', () => {
+  it('changes when an asset is added', async () => {
     const before = computeSwCacheVersion(dir);
     fs.writeFileSync(path.join(dir, 'logo.svg'), '<svg/>');
     expect(computeSwCacheVersion(dir)).not.toBe(before);
   });
 
-  it('ignores sw.js content (avoids the self-referential hash)', () => {
+  it('ignores sw.js content (avoids the self-referential hash)', async () => {
     const before = computeSwCacheVersion(dir);
     fs.writeFileSync(path.join(dir, 'sw.js'), "const CACHE = 'nanoclaw-chat-something-else';");
     expect(computeSwCacheVersion(dir)).toBe(before);
   });
 
-  it('returns a stable fallback when the directory is unreadable', () => {
+  it('returns a stable fallback when the directory is unreadable', async () => {
     expect(computeSwCacheVersion(path.join(dir, 'does-not-exist'))).toBe('nanoclaw-chat-dev');
   });
 });

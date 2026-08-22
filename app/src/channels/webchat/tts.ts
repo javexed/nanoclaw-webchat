@@ -98,7 +98,7 @@ export async function maybeHandleTts(
       enabled: isEnabled(),
       voice: defaultVoice(),
       model: process.env.WEBCHAT_TTS_MODEL || 'kokoro',
-      readAloud: getReadAloudEnabled(),
+      readAloud: await getReadAloudEnabled(),
     });
     return true;
   }

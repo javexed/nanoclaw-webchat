@@ -1,8 +1,8 @@
 diff --git a/container/agent-runner/src/formatter.ts b/container/agent-runner/src/formatter.ts
-index 232ab910..faf444d0 100644
+index cf192779..7e36333d 100644
 --- a/container/agent-runner/src/formatter.ts
 +++ b/container/agent-runner/src/formatter.ts
-@@ -66,6 +66,7 @@ export function isClearCommand(msg: MessageInRow): boolean {
+@@ -81,6 +81,7 @@ export function isClearCommand(msg: MessageInRow): boolean {
    return text.toLowerCase().startsWith('/clear');
  }
  
@@ -10,7 +10,7 @@ index 232ab910..faf444d0 100644
  /**
   * True for any chat that needs the outer loop's command path: /clear plus
   * admin/passthrough slash commands the SDK can only dispatch when they are
-@@ -302,3 +303,31 @@ function escapeXml(str: string): string {
+@@ -388,3 +389,31 @@ function escapeXml(str: string): string {
  export function stripInternalTags(text: string): string {
    return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
  }

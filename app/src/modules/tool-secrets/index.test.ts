@@ -125,13 +125,13 @@ async function seedMember(admin: OnecliAdmin, agentGroupId: string, userId: stri
   const ident = userCredsAgentIdentifier(agentGroupId, userId);
   await admin.ensureAgent(`${userId} (UserCreds)`, ident);
   await admin.setSecretMode(`uuid-${ident}`, 'selective');
-  upsertUserCredsCredential(userId, agentGroupId, ident, 'user-secret', 'api_key', 'claude');
+  await upsertUserCredsCredential(userId, agentGroupId, ident, 'user-secret', 'api_key', 'claude');
   return ident;
 }
 
-beforeEach(() => {
-  initTestDb();
-  runMigrations(getDb());
+beforeEach(async () => {
+  await initTestDb();
+  await runMigrations(getDb());
 });
 afterEach(() => closeDb());
 
@@ -156,7 +156,7 @@ describe('workspace-scoped secrets', () => {
   it('still reaches an ISOLATED agent — system-wide must not mean "except the locked-down ones"', async () => {
     const { admin, injectedFor } = fakeAdmin();
     seedWorkspaceDefault();
-    getDb().prepare(`INSERT INTO agent_groups (id,name,folder,created_at) VALUES (?,?,?,?)`).run('ag-1', 'a', 'a', '');
+    await getDb().run(`INSERT INTO agent_groups (id,name,folder,created_at) VALUES (?,?,?,?)`, 'ag-1', 'a', 'a', '');
     await seedGroupAgent(admin, 'ag-1');
     await isolateGroup(admin, 'ag-1');
     const shared = await createToolSecret(admin, WORKSPACE, 'dev.azure.com', 'v');
@@ -435,7 +435,7 @@ describe('user-scoped secrets and precedence', () => {
  * the vault. So the scheme is statable, as a shape rather than a service list.
  */
 describe('wire format', () => {
-  it('still infers from the host when nothing is stated', () => {
+  it('still infers from the host when nothing is stated', async () => {
     expect(injectionForHost('api.github.com')).toMatchObject({
       headerName: 'Authorization',
       valueFormat: 'Bearer {value}',
@@ -447,7 +447,7 @@ describe('wire format', () => {
   // Addresses here are synthetic (192.168.0.x) on purpose: this tree is published
   // to a public mirror, and a real LAN address in a fixture leaks the operator's
   // network. check-public-tree.sh enforces it.
-  it('falls back to Bearer for an unrecognised host, as before', () => {
+  it('falls back to Bearer for an unrecognised host, as before', async () => {
     expect(injectionForHost('192.168.0.10')).toMatchObject({
       headerName: 'Authorization',
       valueFormat: 'Bearer {value}',
@@ -455,7 +455,7 @@ describe('wire format', () => {
   });
 
   // The point of the feature: a stated scheme reaches hosts inference cannot.
-  it('uses a stated scheme, overriding inference', () => {
+  it('uses a stated scheme, overriding inference', async () => {
     expect(injectionForHost('192.168.0.10', { headerName: 'X-Api-Key', valueFormat: '{value}' })).toMatchObject({
       hostPattern: '192.168.0.10',
       headerName: 'X-Api-Key',
@@ -467,7 +467,7 @@ describe('wire format', () => {
     ).toMatchObject({ headerName: 'Authorization', valueFormat: 'Bearer {value}' });
   });
 
-  it('expresses any real-world scheme without a code change', () => {
+  it('expresses any real-world scheme without a code change', async () => {
     // Shapes drawn from actual APIs — none of which the codebase names.
     const cases = [
       { headerName: 'X-Api-Key', valueFormat: '{value}' },
@@ -478,28 +478,28 @@ describe('wire format', () => {
     for (const c of cases) expect(resolveAuthScheme(c)).toEqual(c);
   });
 
-  it('preserves the host pattern verbatim so scoping is unchanged', () => {
+  it('preserves the host pattern verbatim so scoping is unchanged', async () => {
     expect(injectionForHost('*.example.com', { headerName: 'X-Api-Key', valueFormat: '{value}' }).hostPattern).toBe(
       '*.example.com',
     );
   });
 
-  it('rejects anything that is not a {headerName, valueFormat} pair', () => {
+  it('rejects anything that is not a {headerName, valueFormat} pair', async () => {
     for (const bad of ['bearer', 'X-Custom-Header', '', undefined, null, 42, 'constructor', 'toString'])
       expect(resolveAuthScheme(bad)).toHaveProperty('error');
   });
 
-  it('rejects header names that are not HTTP tokens', () => {
+  it('rejects header names that are not HTTP tokens', async () => {
     for (const bad of ['X Api Key', 'X-Api-Key:', 'X\nInjected', '', 'a'.repeat(65), 'Ünicode'])
       expect(parseCustomScheme(bad, '{value}')).toHaveProperty('error');
   });
 
-  it('rejects headers that control the request rather than authenticate it', () => {
+  it('rejects headers that control the request rather than authenticate it', async () => {
     for (const bad of ['Host', 'host', 'Content-Length', 'Transfer-Encoding', 'Connection', 'Proxy-Authorization'])
       expect(parseCustomScheme(bad, '{value}')).toHaveProperty('error');
   });
 
-  it('requires exactly one {value} — zero would never send the credential', () => {
+  it('requires exactly one {value} — zero would never send the credential', async () => {
     expect(parseCustomScheme('X-Api-Key', 'no placeholder')).toHaveProperty('error');
     expect(parseCustomScheme('X-Api-Key', '{value} {value}')).toHaveProperty('error');
     expect(parseCustomScheme('X-Api-Key', '{value}')).not.toHaveProperty('error');
@@ -507,7 +507,7 @@ describe('wire format', () => {
 
   // CR/LF in a header value is request splitting, and the template is the one
   // operator-supplied string that reaches a header verbatim.
-  it('rejects templates that could split the request', () => {
+  it('rejects templates that could split the request', async () => {
     expect(parseCustomScheme('X-Api-Key', 'a\r\nX-Evil: 1 {value}')).toHaveProperty('error');
     expect(parseCustomScheme('X-Api-Key', 'a\n{value}')).toHaveProperty('error');
     expect(parseCustomScheme('X-Api-Key', `{value}${'x'.repeat(200)}`)).toHaveProperty('error');

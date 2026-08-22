@@ -16,7 +16,7 @@ import { ARCHIVE_DIR, findDuplicateScopedSkills, promoteScopedSkill } from './cu
 
 /** Scratch dirs from makeInstall(), removed when this file finishes. */
 const SCRATCH: string[] = [];
-afterAll(() => {
+afterAll(async () => {
   for (const d of SCRATCH) fs.rmSync(d, { recursive: true, force: true });
   SCRATCH.length = 0;
 });
@@ -38,7 +38,7 @@ function addSkill(root: string, agent: string, name: string, body: string, mtime
 }
 
 describe('findDuplicateScopedSkills', () => {
-  it('finds names held by 2+ agents, newest copy first', () => {
+  it('finds names held by 2+ agents, newest copy first', async () => {
     const { root } = makeInstall();
     const old = Date.now() - 1_000_000;
     addSkill(root, 'ag-a', 'shared-lesson', 'newer', Date.now() - 1000);
@@ -53,7 +53,7 @@ describe('findDuplicateScopedSkills', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('empty for a fresh install and ignores dot-dirs', () => {
+  it('empty for a fresh install and ignores dot-dirs', async () => {
     const { root } = makeInstall();
     expect(findDuplicateScopedSkills(root)).toEqual([]);
     addSkill(root, 'ag-a', 'x', '1');
@@ -66,7 +66,7 @@ describe('findDuplicateScopedSkills', () => {
 });
 
 describe('promoteScopedSkill', () => {
-  it('pools the newest copy and archives every agent copy — nothing deleted', () => {
+  it('pools the newest copy and archives every agent copy — nothing deleted', async () => {
     const { root, pool } = makeInstall();
     addSkill(root, 'ag-a', 'lesson', 'NEWEST', Date.now() - 1000);
     addSkill(root, 'ag-b', 'lesson', 'older', Date.now() - 1_000_000);
@@ -86,7 +86,7 @@ describe('promoteScopedSkill', () => {
     fs.rmSync(pool, { recursive: true, force: true });
   });
 
-  it('refuses a non-duplicate and an existing pool entry', () => {
+  it('refuses a non-duplicate and an existing pool entry', async () => {
     const { root, pool } = makeInstall();
     addSkill(root, 'ag-a', 'solo', 'x');
     expect(promoteScopedSkill('solo', root, pool).ok).toBe(false);

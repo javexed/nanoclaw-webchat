@@ -169,6 +169,12 @@ WorkingDirectory=$DIR
 # A system unit runs with HOME unset; onecli reads its auth token from
 # \$HOME/.config, so without this every credential call is Unauthorized (exit 2).
 Environment=HOME=/root
+# Docker starts the onecli containers, systemd starts us, and nothing orders the
+# two — so on a reboot the host can probe a gateway that is still binding its
+# port. Wait for it first (warn-and-continue; never blocks the unit).
+ExecStartPre=/bin/bash $DIR/deploy/wait-for-onecli.sh
+# The wait budget (60s) plus node boot must fit inside the start timeout.
+TimeoutStartSec=150
 ExecStart=$NODE_BIN $DIR/dist/index.js
 Restart=on-failure
 RestartSec=5
@@ -192,6 +198,12 @@ After=docker.service
 [Service]
 Type=simple
 WorkingDirectory=$DIR
+# Docker starts the onecli containers, systemd starts us, and nothing orders the
+# two — so on a reboot the host can probe a gateway that is still binding its
+# port. Wait for it first (warn-and-continue; never blocks the unit).
+ExecStartPre=/bin/bash $DIR/deploy/wait-for-onecli.sh
+# The wait budget (60s) plus node boot must fit inside the start timeout.
+TimeoutStartSec=150
 ExecStart=$(command -v node) $DIR/dist/index.js
 Restart=on-failure
 RestartSec=5

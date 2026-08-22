@@ -180,18 +180,6 @@ for p in "${PATCH_FILES[@]}"; do
   fi
 done
 
-# ── 4b. Pre-adaptation removals ──────────────────────────────────────────────
-# See pre-adaptation-removals.txt — goes away with the adaptation pass.
-if [ -f "$HERE/pre-adaptation-removals.txt" ]; then
-  while IFS= read -r rel; do
-    case "$rel" in ''|'#'*) continue ;; esac
-    if [ -f "$rel" ]; then
-      rm -f "$rel"
-      echo "  → removed stranded seam file: $rel (pre-adaptation)"
-    fi
-  done < "$HERE/pre-adaptation-removals.txt"
-fi
-
 # ── 5. Channels barrel: idempotent append ────────────────────────────────────
 if ! grep -qF "'./webchat/index.js'" src/channels/index.ts; then
   say "Registering channel adapter in src/channels/index.ts"

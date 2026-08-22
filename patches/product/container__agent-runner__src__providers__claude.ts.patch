@@ -1,7 +1,7 @@
-diff --git c/container/agent-runner/src/providers/claude.ts w/container/agent-runner/src/providers/claude.ts
+diff --git a/container/agent-runner/src/providers/claude.ts b/container/agent-runner/src/providers/claude.ts
 index 23b6a3fb..f753b94b 100644
---- c/container/agent-runner/src/providers/claude.ts
-+++ w/container/agent-runner/src/providers/claude.ts
+--- a/container/agent-runner/src/providers/claude.ts
++++ b/container/agent-runner/src/providers/claude.ts
 @@ -134,6 +134,16 @@ function mcpAllowPattern(serverName: string): string {
    return `mcp__${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}__*`;
  }

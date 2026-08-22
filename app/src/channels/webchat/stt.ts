@@ -154,9 +154,9 @@ export async function cleanupTranscript(
   const trimmed = raw.trim();
   if (!trimmed) return fallback;
 
-  const modelId = getSttCleanupModelId();
+  const modelId = await getSttCleanupModelId();
   if (!modelId) return fallback;
-  const model = getWebchatModel(modelId);
+  const model = await getWebchatModel(modelId);
   // Deleted since it was selected, or a kind that can't serve chat completions.
   if (!model || !model.endpoint || (model.kind !== 'ollama' && model.kind !== 'openai-compatible')) return fallback;
 
@@ -168,7 +168,7 @@ export async function cleanupTranscript(
         model: model.model_id,
         temperature: 0,
         messages: [
-          { role: 'system', content: getSttCleanupPrompt() ?? DEFAULT_CLEANUP_PROMPT },
+          { role: 'system', content: (await getSttCleanupPrompt()) ?? DEFAULT_CLEANUP_PROMPT },
           { role: 'user', content: trimmed },
         ],
       }),

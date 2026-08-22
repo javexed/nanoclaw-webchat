@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { CONVERSATION_DIRS, EXCLUDE_ALWAYS, exportTarArgs, isSafeTarEntry } from './agent-transfer.js';
 
 describe('isSafeTarEntry', () => {
-  it('accepts the bundle layout', () => {
+  it('accepts the bundle layout', async () => {
     for (const e of [
       'manifest.json',
       'db/agent_group.json',
@@ -25,7 +25,7 @@ describe('isSafeTarEntry', () => {
     }
   });
 
-  it('rejects traversal, absolute paths, and out-of-root members', () => {
+  it('rejects traversal, absolute paths, and out-of-root members', async () => {
     for (const e of [
       '/etc/passwd',
       '../outside',
@@ -45,12 +45,12 @@ describe('isSafeTarEntry', () => {
 describe('exportTarArgs', () => {
   const group = { id: 'ag-x', folder: 'nonexistent-folder-for-args-test' };
 
-  it('always excludes rebuildable junk', () => {
+  it('always excludes rebuildable junk', async () => {
     const args = exportTarArgs('/tmp/stage', group, false);
     for (const e of EXCLUDE_ALWAYS) expect(args).toContain(`--exclude=${e}`);
   });
 
-  it('gates conversation state on the flag', () => {
+  it('gates conversation state on the flag', async () => {
     const without = exportTarArgs('/tmp/stage', group, false);
     for (const d of CONVERSATION_DIRS) expect(without).toContain(`--exclude=.claude-shared/${d}`);
     const withConvos = exportTarArgs('/tmp/stage', group, true);

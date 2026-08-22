@@ -1,6 +1,6 @@
 diff --git a/src/modules/agent-to-agent/write-destinations.test.ts b/src/modules/agent-to-agent/write-destinations.test.ts
 new file mode 100644
-index 00000000..b3ce0d10
+index 00000000..ef511061
 --- /dev/null
 +++ b/src/modules/agent-to-agent/write-destinations.test.ts
 @@ -0,0 +1,55 @@
@@ -44,7 +44,7 @@ index 00000000..b3ce0d10
 +    const { projectDestinationsToActiveSessions } = await import('./write-destinations.js');
 +    mockGetSessions.mockReturnValue([s('sess-a', 'active'), s('sess-b', 'stale'), s('sess-c', 'active')]);
 +
-+    projectDestinationsToActiveSessions('ag-1');
++    await projectDestinationsToActiveSessions('ag-1');
 +
 +    // writeDestinations is called internally for each ACTIVE session. We assert
 +    // via the sessions query + that no throw escapes (inactive filtered out).

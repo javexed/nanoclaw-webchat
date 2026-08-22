@@ -1,5 +1,5 @@
 diff --git a/src/session-manager.attachments.test.ts b/src/session-manager.attachments.test.ts
-index ee79ede0..d38e13b2 100644
+index 2afd9d73..96e2be15 100644
 --- a/src/session-manager.attachments.test.ts
 +++ b/src/session-manager.attachments.test.ts
 @@ -29,7 +29,7 @@ vi.mock('./config.js', async () => {
@@ -11,7 +11,7 @@ index ee79ede0..d38e13b2 100644
  import type { Session } from './types.js';
  
  const TEST_DIR = '/tmp/nanoclaw-test-saveatt-gap';
-@@ -68,6 +68,72 @@ afterEach(() => {
+@@ -68,6 +68,72 @@ afterEach(async () => {
    if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
  });
  
@@ -22,12 +22,12 @@ index ee79ede0..d38e13b2 100644
 +  // hostPath attachment was skipped in silence — the row kept a bare filename,
 +  // no bytes reached the container, and nothing was logged. Two production
 +  // uploads (28MB, 45MB) were lost this way.
-+  it('stages a hostPath attachment into the inbox', () => {
++  it('stages a hostPath attachment into the inbox', async () => {
 +    const staged = path.join(TEST_DIR, 'uploads', 'big.pdf');
 +    fs.mkdirSync(path.dirname(staged), { recursive: true });
 +    fs.writeFileSync(staged, 'LARGE-FILE-BYTES');
 +
-+    writeSessionMessage(AG, SESS, {
++    await writeSessionMessage(AG, SESS, {
 +      id: 'msg-hostpath',
 +      kind: 'chat',
 +      timestamp: now(),
@@ -54,14 +54,14 @@ index ee79ede0..d38e13b2 100644
 +    expect(att.hostPath, 'host-side path must not reach the container').toBeUndefined();
 +  });
 +
-+  it('refuses a hostPath outside the data dir', () => {
++  it('refuses a hostPath outside the data dir', async () => {
 +    // A hostPath copies whatever it names, so it is a stronger primitive than
 +    // supplied bytes. Legitimate producers stage into DATA_DIR; anything else
 +    // is refused rather than copied into the agent's inbox.
 +    const outside = path.join('/tmp', `nanoclaw-hostpath-escape-${process.pid}.txt`);
 +    fs.writeFileSync(outside, 'SECRET');
 +    try {
-+      writeSessionMessage(AG, SESS, {
++      await writeSessionMessage(AG, SESS, {
 +        id: 'msg-escape',
 +        kind: 'chat',
 +        timestamp: now(),
@@ -82,5 +82,5 @@ index ee79ede0..d38e13b2 100644
 +});
 +
  describe('extractAttachmentFiles — inbox-root symlink containment (#2828 sibling)', () => {
-   it('does not write an attachment outside the session root via a symlinked inbox root', () => {
+   it('does not write an attachment outside the session root via a symlinked inbox root', async () => {
      // Attacker-controlled location outside the session sandbox.

@@ -91,6 +91,42 @@ models stream reasoning into the webchat bubble (pi emits structured
 thinking_delta events); a reasoning-only stall auto-retries with `/no_think`
 (same recovery as the OpenCode provider).
 
+## Tuning: tools and thinking level
+
+Two knobs, both env vars. Precedence is code default → install `.env` →
+the agent's own Environment panel (per-agent env wins a collision), so a
+single agent can differ from the install without a code change.
+
+| var | default | values |
+|---|---|---|
+| `PI_TOOLS` | `read,write,edit,bash` | comma-separated allowlist, or `none` for a chat-only agent |
+| `PI_THINKING` | `high` | `off, minimal, low, medium, high, xhigh, max` |
+
+**Tools were off originally, and turning them on matters.** A toolless pi
+answers "Create a file called hello.sh…" with *"Creating `hello.sh` now."*
+and creates nothing — it cannot know it has no hands. With tools it writes
+the file, chmods it, and reports the path. Set `PI_TOOLS=none` only if you
+want a deliberately chat-only agent.
+
+**Thinking high is FASTER than low on a reasoning model.** Measured on
+ornith-1.5:9b, same task, clean session each time:
+
+| | `low` | `high` |
+|---|---|---|
+| wall time | 660s | **130s** |
+| reasoning events | 68 | **17** |
+| answer | announced an intention, never confirmed | reported the path and that it runs |
+
+Starved of budget the model flails in fragments that never converge; given
+room it plans once and acts. Lower the level only for a model that does not
+reason, where the thinking is pure overhead.
+
+**Latency floor is the model server, not pi.** If the backend evicts the
+model between turns (Ollama's default `keep_alive` is 5 minutes), every turn
+after an idle gap pays a full cold load — measured at 14.5s cold vs 2.0s
+warm for a 9B model. Raise `OLLAMA_KEEP_ALIVE` on the model host before
+blaming the harness.
+
 ## Notes / gotchas
 
 - **Session continuation** uses pi `--session-id` (runner-minted UUID) with

@@ -48,6 +48,7 @@ import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { getRunningSessions } from '../../db/sessions.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { writeSessionMessage } from '../../session-manager.js';
+import { filterAsync } from './async-array.js';
 
 /**
  * Deliver a "stop" signal to live session(s) behind a webchat room (the GUI Stop
@@ -59,15 +60,15 @@ import { writeSessionMessage } from '../../session-manager.js';
  * `agentName` (the thinking bubble's per-agent Stop) targets just that agent's
  * session; omitted, it stops every running agent in the room.
  */
-function interruptRoomSessions(roomId: string, agentName?: string | null): void {
-  const mg = getMessagingGroupByPlatform('webchat', roomId);
+async function interruptRoomSessions(roomId: string, agentName?: string | null): Promise<void> {
+  const mg = await getMessagingGroupByPlatform('webchat', roomId);
   if (!mg) return;
-  let sessions = getRunningSessions().filter((s) => s.messaging_group_id === mg.id);
+  let sessions = (await getRunningSessions()).filter((s) => s.messaging_group_id === mg.id);
   if (agentName) {
-    sessions = sessions.filter((s) => getAgentGroup(s.agent_group_id)?.name === agentName);
+    sessions = await filterAsync(sessions, async (s) => (await getAgentGroup(s.agent_group_id))?.name === agentName);
   }
   for (const s of sessions) {
-    writeSessionMessage(s.agent_group_id, s.id, {
+    await writeSessionMessage(s.agent_group_id, s.id, {
       id: `interrupt-${randomUUID()}`,
       kind: 'interrupt',
       timestamp: new Date().toISOString(),
@@ -212,7 +213,14 @@ export function setupWebSocket(
       }
     };
 
-    ws.on('message', (raw) => {
+    // Frames must process IN ARRIVAL ORDER. The handler is async now (the DB
+    // is), and a bare async listener interleaves at every await — a `message`
+    // frame arriving while `join` awaited its access check saw no room_id and
+    // dropped silently. Every join-then-send client hit this: the ops
+    // post-to-room script first, but the UI's own reconnect path is the same
+    // shape. A per-connection chain restores the pre-async ordering guarantee.
+    let frameChain: Promise<void> = Promise.resolve();
+    const handleFrame = async (raw: Buffer | ArrayBuffer | Buffer[]) => {
       let msg: { type?: string; [k: string]: unknown };
       try {
         msg = JSON.parse(raw.toString()) as typeof msg;
@@ -229,7 +237,7 @@ export function setupWebSocket(
         send({ type: 'system', message: `Connected as ${client.identity}` });
         // Annotated payload (incl. per-user `unread`) so the sidebar reconstructs
         // unread badges on reconnect — not just for messages seen live.
-        send({ type: 'rooms', rooms: annotateRoomsForUser(client.userId) });
+        send({ type: 'rooms', rooms: await annotateRoomsForUser(client.userId) });
         return;
       }
 
@@ -241,12 +249,21 @@ export function setupWebSocket(
       // ── JOIN ─────────────────────────────────────────────────────────────
       if (msg.type === 'join') {
         const roomId = typeof msg.room_id === 'string' ? msg.room_id : '';
-        const room = getWebchatRoom(roomId);
+        const room = await getWebchatRoom(roomId);
+        // A REFUSED JOIN WAS SILENT HERE. The client is told, but nothing is
+        // logged — and the symptom it produces is deeply confusing: messages
+        // are stored correctly and simply never render, because live delivery
+        // is gated on the client's tracked room, and a refused join leaves that
+        // pointing at the previous one. Reported twice as "I don't see my
+        // message until I switch rooms and come back". Log it so the next
+        // occurrence names its own cause.
         if (!room) {
+          log.warn('Webchat: join refused — room not found', { roomId, userId: client.userId });
           send({ type: 'error', error: `Room not found: ${roomId}` });
           return;
         }
-        if (!canAccessRoom(client.userId, room.id)) {
+        if (!(await canAccessRoom(client.userId, room.id))) {
+          log.warn('Webchat: join refused — access denied', { roomId: room.id, userId: client.userId });
           send({ type: 'error', error: 'Access denied' });
           return;
         }
@@ -258,21 +275,21 @@ export function setupWebSocket(
         // Opening reads it: advance the room marker (clears the room dot + syncs
         // devices) and the per-thread marker.
         markRoomReadForUser(client.userId, room.id, Date.now(), clientId);
-        markThreadRead(client.userId, room.id, joinThread);
+        await markThreadRead(client.userId, room.id, joinThread);
         send({
           type: 'history',
           room_id: room.id,
           thread_id: joinThread,
-          messages: getWebchatMessages(room.id, 50, joinThread).map((m) => ({
+          messages: (await getWebchatMessages(room.id, 50, joinThread)).map((m) => ({
             ...m,
             content: redactSensitiveData(m.content),
           })),
         });
-        broadcast(room.id, { type: 'system', room_id: room.id, message: `${client.identity} joined` }, clientId);
-        broadcast(room.id, {
+        await broadcast(room.id, { type: 'system', room_id: room.id, message: `${client.identity} joined` }, clientId);
+        await broadcast(room.id, {
           type: 'members',
           room_id: room.id,
-          members: getMemberList(room.id),
+          members: await getMemberList(room.id),
         });
         // Replay any in-progress agent turn so a re-join mid-turn re-shows the
         // thinking bubble (status frames are live-only + room-scoped, so leaving
@@ -287,7 +304,7 @@ export function setupWebSocket(
       // ── TYPING ───────────────────────────────────────────────────────────
       if (msg.type === 'typing') {
         if (!client.room_id) return;
-        broadcast(
+        await broadcast(
           client.room_id,
           {
             type: 'typing',
@@ -308,12 +325,12 @@ export function setupWebSocket(
       if (msg.type === 'read') {
         const roomId = typeof msg.room_id === 'string' ? msg.room_id : '';
         if (!roomId) return;
-        const room = getWebchatRoom(roomId);
-        if (!room || !canAccessRoom(client.userId, room.id)) return;
+        const room = await getWebchatRoom(roomId);
+        if (!room || !(await canAccessRoom(client.userId, room.id))) return;
         markRoomReadForUser(client.userId, room.id, Date.now(), clientId);
         // Per-thread marker (default 'main') so thread badges clear too.
         const readThread = typeof msg.thread_id === 'string' && msg.thread_id ? msg.thread_id : MAIN_THREAD;
-        markThreadRead(client.userId, room.id, readThread);
+        await markThreadRead(client.userId, room.id, readThread);
         return;
       }
 
@@ -343,15 +360,21 @@ export function setupWebSocket(
         // client-supplied thread_id can't lazily spawn unbounded threads/sessions
         // (the spawn-amplification vector). See resolveBoundedThread in db.ts —
         // shared with the file-upload handlers so both enforce the same bound.
-        const storeThread = resolveBoundedThread(client.room_id, msg.thread_id);
+        const storeThread = await resolveBoundedThread(client.room_id, msg.thread_id);
 
-        const stored = storeWebchatMessage(client.room_id, client.identity, client.identity_type, text, storeThread);
+        const stored = await storeWebchatMessage(
+          client.room_id,
+          client.identity,
+          client.identity_type,
+          text,
+          await storeThread,
+        );
         // The sender has by definition read their own message — advance their
         // marker (and sync their other devices) so it never self-unreads.
         markRoomReadForUser(client.userId, client.room_id, stored.created_at, clientId);
         const outgoing: Record<string, unknown> = { type: 'message', ...stored };
         if (typeof msg.client_id === 'string') outgoing.client_id = msg.client_id;
-        broadcast(client.room_id, outgoing, clientId);
+        await broadcast(client.room_id, outgoing, clientId);
 
         // Pipe the inbound to the router so the agent sees it. content carries
         // senderId (namespaced for the v2 permissions module's senderResolver).
@@ -371,7 +394,7 @@ export function setupWebSocket(
               senderName: client.identity,
             },
           },
-          threadToSessionKey(storeThread),
+          threadToSessionKey(await storeThread),
         );
 
         send({ ...outgoing, content: redactSensitiveData(stored.content) });
@@ -382,7 +405,7 @@ export function setupWebSocket(
       if (msg.type === 'interrupt') {
         if (!client.room_id) return;
         const agentName = typeof msg.agent_name === 'string' ? msg.agent_name : undefined;
-        interruptRoomSessions(client.room_id, agentName);
+        await interruptRoomSessions(client.room_id, agentName);
         return;
       }
 
@@ -394,9 +417,9 @@ export function setupWebSocket(
           send({ type: 'error', error: 'message_id required' });
           return;
         }
-        const deleted = deleteWebchatMessage(messageId, client.identity, client.room_id);
-        if (deleted) {
-          broadcast(client.room_id, {
+        const deleted = await deleteWebchatMessage(messageId, client.identity, client.room_id);
+        if (await deleted) {
+          await broadcast(client.room_id, {
             type: 'delete_message',
             room_id: client.room_id,
             message_id: messageId,
@@ -404,21 +427,31 @@ export function setupWebSocket(
         }
         return;
       }
+    };
+    ws.on('message', (raw) => {
+      frameChain = frameChain
+        .then(() => handleFrame(raw))
+        .catch((err) => {
+          // Keep the chain alive and ordered, but never silently: a dropped
+          // frame is a lost message from the user's point of view.
+          log.warn('Webchat: WS frame handler failed', { err: err instanceof Error ? err.message : String(err) });
+        });
     });
 
     ws.on('close', () => {
       const c = removeClient(clientId);
       if (c?.room_id) {
-        broadcast(c.room_id, {
+        const roomId = c.room_id; // capture: the narrowing doesn't survive into the .then closure
+        void broadcast(roomId, {
           type: 'system',
-          room_id: c.room_id,
+          room_id: roomId,
           message: `${c.identity} left`,
-        });
-        broadcast(c.room_id, {
-          type: 'members',
-          room_id: c.room_id,
-          members: getMemberList(c.room_id),
-        });
+        }).catch((err) => log.warn('Webchat: left-broadcast failed', { err: String(err) }));
+        // The close handler is a sync event callback; resolve the member list
+        // first, THEN broadcast — embedding the promise serialized as {}.
+        void getMemberList(roomId)
+          .then((members) => broadcast(roomId, { type: 'members', room_id: roomId, members }))
+          .catch((err) => log.warn('Webchat: members-broadcast failed', { err: String(err) }));
       }
     });
   });

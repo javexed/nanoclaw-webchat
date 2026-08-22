@@ -1,8 +1,8 @@
 diff --git a/src/modules/approvals/response-handler.ts b/src/modules/approvals/response-handler.ts
-index 79014597..465e2d8a 100644
+index c29374ae..b2f2558c 100644
 --- a/src/modules/approvals/response-handler.ts
 +++ b/src/modules/approvals/response-handler.ts
-@@ -27,6 +27,35 @@ import { ONECLI_ACTION, resolveOneCLIApproval } from './onecli-approvals.js';
+@@ -32,6 +32,35 @@ import { ONECLI_ACTION, resolveOneCLIApproval } from './onecli-approvals.js';
  import { getApprovalHandler, notifyApprovalResolved, REJECT_WITH_REASON_VALUE } from './primitive.js';
  import { armReasonCapture } from './reason-capture.js';
  
@@ -36,10 +36,10 @@ index 79014597..465e2d8a 100644
 +}
 +
  export async function handleApprovalsResponse(payload: ResponsePayload): Promise<boolean> {
-   const approval = getPendingApproval(payload.questionId);
+   const approval = await getPendingApproval(payload.questionId);
    if (!approval) return false;
-@@ -85,6 +114,12 @@ async function handleRegisteredApproval(
-   }
+@@ -92,6 +121,12 @@ async function handleRegisteredApproval(
+   if (!(await transitionPendingApprovalStatus(approval.approval_id, 'pending', 'approved'))) return;
  
    // Approved — dispatch to the module that registered for this action.
 +  //
@@ -48,20 +48,20 @@ index 79014597..465e2d8a 100644
 +  // replay's guard liveness check still sees it — see the claimApproval note.
 +  if (!claimApproval(approval.approval_id)) return;
 +
-   const notify = (text: string): void => {
-     writeSessionMessage(session.agent_group_id, session.id, {
+   const notify = async (text: string): Promise<void> => {
+     await writeSessionMessage(session.agent_group_id, session.id, {
        id: `appr-note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-@@ -104,7 +139,7 @@ async function handleRegisteredApproval(
+@@ -111,7 +146,7 @@ async function handleRegisteredApproval(
        action: approval.action,
      });
-     notify(`Your ${approval.action} was approved, but no handler is installed to apply it.`);
--    deletePendingApproval(approval.approval_id);
-+    releaseApproval(approval.approval_id);
+     await notify(`Your ${approval.action} was approved, but no handler is installed to apply it.`);
+-    await deletePendingApproval(approval.approval_id);
++    await releaseApproval(approval.approval_id);
      await notifyApprovalResolved({ approval, session, outcome: 'approve', userId });
      await wakeContainer(session);
      return;
-@@ -119,13 +154,26 @@ async function handleRegisteredApproval(
-     notify(
+@@ -126,13 +161,26 @@ async function handleRegisteredApproval(
+     await notify(
        `Your ${approval.action} was approved, but applying it failed: ${err instanceof Error ? err.message : String(err)}.`,
      );
 +  } finally {
@@ -70,7 +70,7 @@ index 79014597..465e2d8a 100644
 +    releaseApproval(approval.approval_id);
    }
  
--  deletePendingApproval(approval.approval_id);
+-  await deletePendingApproval(approval.approval_id);
    await notifyApprovalResolved({ approval, session, outcome: 'approve', userId });
    await wakeContainer(session);
  }

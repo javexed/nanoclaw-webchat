@@ -60,8 +60,8 @@ function targetFromComment(pub: string): string | undefined {
   return TARGET_RE.test(comment) ? comment : undefined;
 }
 
-function groupDir(agentGroupId: string): string | null {
-  const group = getAgentGroup(agentGroupId);
+async function groupDir(agentGroupId: string): Promise<string | null> {
+  const group = await getAgentGroup(agentGroupId);
   if (!group) return null;
   const dir = path.join(GROUPS_DIR, group.folder);
   return fs.existsSync(dir) ? dir : null;
@@ -82,8 +82,8 @@ function fingerprintOf(pubPath: string): string {
   }
 }
 
-export function listDeployKeys(agentGroupId: string): DeployKeyInfo[] {
-  const dir = groupDir(agentGroupId);
+export async function listDeployKeys(agentGroupId: string): Promise<DeployKeyInfo[]> {
+  const dir = await groupDir(agentGroupId);
   if (!dir) return [];
   const out: DeployKeyInfo[] = [];
   for (const entry of fs.readdirSync(dir)) {
@@ -107,15 +107,15 @@ export function listDeployKeys(agentGroupId: string): DeployKeyInfo[] {
  * the private key is written 0600 and has no read path through this module, so
  * it cannot be surfaced by any caller, deliberately or by mistake.
  */
-export function createDeployKey(agentGroupId: string, name: string, target?: string): DeployKeyInfo {
+export async function createDeployKey(agentGroupId: string, name: string, target?: string): Promise<DeployKeyInfo> {
   if (!NAME_RE.test(name)) throw new Error('Name must be lowercase letters, numbers and hyphens');
   if (target && !TARGET_RE.test(target)) throw new Error('Target must look like user@host');
-  const dir = groupDir(agentGroupId);
+  const dir = await groupDir(agentGroupId);
   if (!dir) throw new Error('This agent has no workspace folder yet');
   const priv = keyFile(dir, name);
   if (fs.existsSync(priv) || fs.existsSync(`${priv}.pub`)) throw new Error(`A key named "${name}" already exists`);
 
-  const group = getAgentGroup(agentGroupId)!;
+  const group = (await getAgentGroup(agentGroupId))!;
   // The comment carries the target when we know it — that is what tells the
   // agent (via its memory note) who to log in as.
   const comment = target || `${name}@${group.folder}`;
@@ -124,7 +124,7 @@ export function createDeployKey(agentGroupId: string, name: string, target?: str
   fs.chmodSync(`${priv}.pub`, 0o644);
   log.info('Deploy key created', { agentGroupId, name });
 
-  const info = listDeployKeys(agentGroupId).find((k) => k.name === name);
+  const info = (await listDeployKeys(agentGroupId)).find((k) => k.name === name);
   if (!info) throw new Error('Key generation reported success but no key was found');
   return info;
 }
@@ -134,22 +134,22 @@ export function createDeployKey(agentGroupId: string, name: string, target?: str
  * field, so this rewrites that rather than regenerating the pair — the key
  * material, and anything already trusting it, stays valid.
  */
-export function setDeployKeyTarget(agentGroupId: string, name: string, target: string): DeployKeyInfo {
+export async function setDeployKeyTarget(agentGroupId: string, name: string, target: string): Promise<DeployKeyInfo> {
   if (!NAME_RE.test(name)) throw new Error('Name must be lowercase letters, numbers and hyphens');
   if (!TARGET_RE.test(target)) throw new Error('Target must look like user@host');
-  const dir = groupDir(agentGroupId);
+  const dir = await groupDir(agentGroupId);
   if (!dir) throw new Error('This agent has no workspace folder yet');
   const pubPath = `${keyFile(dir, name)}.pub`;
   if (!fs.existsSync(pubPath)) throw new Error(`No key named "${name}"`);
   const [type, material] = fs.readFileSync(pubPath, 'utf-8').trim().split(/\s+/);
   fs.writeFileSync(pubPath, `${type} ${material} ${target}\n`, { mode: 0o644 });
   log.info('Deploy key target set', { agentGroupId, name, target });
-  return listDeployKeys(agentGroupId).find((k) => k.name === name)!;
+  return (await listDeployKeys(agentGroupId)).find((k) => k.name === name)!;
 }
 
-export function deleteDeployKey(agentGroupId: string, name: string): boolean {
+export async function deleteDeployKey(agentGroupId: string, name: string): Promise<boolean> {
   if (!NAME_RE.test(name)) return false;
-  const dir = groupDir(agentGroupId);
+  const dir = await groupDir(agentGroupId);
   if (!dir) return false;
   const priv = keyFile(dir, name);
   if (!fs.existsSync(`${priv}.pub`)) return false;

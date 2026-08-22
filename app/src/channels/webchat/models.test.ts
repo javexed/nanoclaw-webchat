@@ -22,7 +22,7 @@ function model(p: Partial<WebchatModel>): WebchatModel {
 }
 
 describe('classifierParamsForModel', () => {
-  it('remote Ollama → its own endpoint + /v1/chat/completions', () => {
+  it('remote Ollama → its own endpoint + /v1/chat/completions', async () => {
     expect(
       classifierParamsForModel(model({ kind: 'ollama', endpoint: 'http://192.0.2.90:11434', model_id: 'llama3.2:3b' })),
     ).toEqual({
@@ -31,7 +31,7 @@ describe('classifierParamsForModel', () => {
     });
   });
 
-  it('local loopback is rewritten to the docker host-gateway (a container can’t reach 127.0.0.1)', () => {
+  it('local loopback is rewritten to the docker host-gateway (a container can’t reach 127.0.0.1)', async () => {
     expect(
       classifierParamsForModel(
         model({ kind: 'openai-compatible', endpoint: 'http://127.0.0.1:4000/v1', model_id: 'auto' }),
@@ -45,7 +45,7 @@ describe('classifierParamsForModel', () => {
     ).toBe('http://host.docker.internal:11434/v1/chat/completions');
   });
 
-  it('anthropic / endpoint-less / null → null (no local endpoint to call → heuristic)', () => {
+  it('anthropic / endpoint-less / null → null (no local endpoint to call → heuristic)', async () => {
     expect(
       classifierParamsForModel(model({ kind: 'anthropic', endpoint: null, model_id: 'claude-opus-4-8' })),
     ).toBeNull();

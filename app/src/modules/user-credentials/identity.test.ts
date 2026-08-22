@@ -5,19 +5,19 @@ import { userSlug, userCredsAgentIdentifier, isUserCredsAgentIdentifier } from '
 const VALID_ONECLI_ID = /^[a-z0-9-]+$/;
 
 describe('userSlug', () => {
-  it('produces a valid lowercase [a-z0-9-] slug', () => {
+  it('produces a valid lowercase [a-z0-9-] slug', async () => {
     const s = userSlug('webchat:tailscale:Alice@Example.com');
     expect(s).toMatch(VALID_ONECLI_ID);
     expect(s).not.toMatch(/[:@.]/);
   });
-  it('is deterministic', () => {
+  it('is deterministic', async () => {
     expect(userSlug('webchat:bob')).toBe(userSlug('webchat:bob'));
   });
-  it('never returns empty', () => {
+  it('never returns empty', async () => {
     expect(userSlug('::@@')).toBe('user');
     expect(userSlug('')).toBe('user');
   });
-  it('has no leading/trailing hyphen and is bounded', () => {
+  it('has no leading/trailing hyphen and is bounded', async () => {
     const s = userSlug('@@@a-very-long-handle-that-keeps-going-and-going@@@');
     expect(s).not.toMatch(/^-|-$/);
     expect(s.length).toBeLessThanOrEqual(24);
@@ -25,26 +25,26 @@ describe('userSlug', () => {
 });
 
 describe('userCredsAgentIdentifier', () => {
-  it('is a valid OneCLI identifier', () => {
+  it('is a valid OneCLI identifier', async () => {
     expect(userCredsAgentIdentifier('ag-123', 'webchat:tailscale:alice@x.com')).toMatch(VALID_ONECLI_ID);
   });
-  it('is deterministic and idempotent', () => {
+  it('is deterministic and idempotent', async () => {
     const a = userCredsAgentIdentifier('ag-123', 'webchat:alice');
     expect(userCredsAgentIdentifier('ag-123', 'webchat:alice')).toBe(a);
   });
-  it('differs by user and by group (collision resistance)', () => {
+  it('differs by user and by group (collision resistance)', async () => {
     const a = userCredsAgentIdentifier('ag-1', 'webchat:alice');
     const b = userCredsAgentIdentifier('ag-1', 'webchat:bob');
     const c = userCredsAgentIdentifier('ag-2', 'webchat:alice');
     expect(new Set([a, b, c]).size).toBe(3);
   });
-  it('distinguishes users whose slugs collide (hash suffix)', () => {
+  it('distinguishes users whose slugs collide (hash suffix)', async () => {
     // Two raw ids that slug to the same prefix still get distinct identifiers.
     const a = userCredsAgentIdentifier('ag-1', 'webchat:alice@a.com');
     const b = userCredsAgentIdentifier('ag-1', 'webchat:alice@b.com');
     expect(a).not.toBe(b);
   });
-  it('is recognized by isUserCredsAgentIdentifier', () => {
+  it('is recognized by isUserCredsAgentIdentifier', async () => {
     expect(isUserCredsAgentIdentifier(userCredsAgentIdentifier('ag-1', 'u'))).toBe(true);
     expect(isUserCredsAgentIdentifier('ag-1778-xyz')).toBe(false);
     expect(isUserCredsAgentIdentifier(null)).toBe(false);

@@ -1,5 +1,5 @@
 diff --git a/src/container-config.ts b/src/container-config.ts
-index dd4c7521..027c8529 100644
+index 61902f5f..3f4c07ed 100644
 --- a/src/container-config.ts
 +++ b/src/container-config.ts
 @@ -13,7 +13,9 @@ import path from 'path';
@@ -153,8 +153,8 @@ index dd4c7521..027c8529 100644
    };
  }
  
-@@ -346,10 +406,39 @@ export function materializeContainerJson(agentGroupId: string): ContainerConfig
-   const row = getContainerConfig(agentGroupId);
+@@ -346,10 +406,39 @@ export async function materializeContainerJson(agentGroupId: string): Promise<Co
+   const row = await getContainerConfig(agentGroupId);
    if (!row) throw new Error(`Container config not found for agent group: ${agentGroupId}`);
  
 -  // Module-contributed fields merge over the DB-backed config (see the
@@ -169,10 +169,10 @@ index dd4c7521..027c8529 100644
 +  // turn ever auto-reviews and no draft auto-keeps. On → per-room overrides
 +  // ride the same learning blob (rooms win over the agent level; see
 +  // src/modules/learning/room-settings.ts for the precedence contract).
-+  if (getLearningMasterEnabled()) {
-+    const roomLearning = roomLearningMapForAgent(agentGroupId);
++  if (await getLearningMasterEnabled()) {
++    const roomLearning = await roomLearningMapForAgent(agentGroupId);
 +    if (Object.keys(roomLearning).length > 0) {
-+      config.learning = { ...(config.learning ?? {}), rooms: roomLearning };
++      config.learning = { ...(config.learning ?? {}), rooms: await roomLearning };
 +    }
 +    // Classifier gate (docs/webchat/learning-loop.md): a small local model the runner
 +    // consults before an expensive review. Precedence:
@@ -182,9 +182,9 @@ index dd4c7521..027c8529 100644
 +    //      endpoint (resolver contributed by the webchat module) — zero setup.
 +    //   3. Else none → the runner uses the busy-turn heuristic (Claude agents,
 +    //      which have no local endpoint to call, land here).
-+    const clf = getLearningClassifier();
++    const clf = await getLearningClassifier();
 +    const classifier =
-+      clf.url && clf.model ? { url: clf.url, model: clf.model } : resolveLearningClassifier(agentGroupId);
++      clf.url && clf.model ? { url: clf.url, model: clf.model } : await resolveLearningClassifier(agentGroupId);
 +    if (classifier) {
 +      config.learning = { ...(config.learning ?? {}), classifier };
 +    }
