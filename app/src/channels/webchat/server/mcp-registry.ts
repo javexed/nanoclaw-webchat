@@ -16,9 +16,9 @@ import { getAgentsAssignedToMcpServer } from '../mcp-registry.js';
 import type { WebchatMcpServer, WebchatMcpTransport } from '../mcp-registry.js';
 
 /** Restart a group's containers so an mcp_servers change is picked up at spawn. */
-export function reloadAgentMcpServers(agentGroupId: string): void {
+export async function reloadAgentMcpServers(agentGroupId: string): Promise<void> {
   try {
-    const restarted = restartAgentGroupContainers(agentGroupId, 'Webchat MCP servers changed');
+    const restarted = await restartAgentGroupContainers(agentGroupId, 'Webchat MCP servers changed');
     if (restarted > 0) log.info('Webchat: restarted containers after MCP change', { agentGroupId, restarted });
   } catch (err) {
     log.warn('Webchat: container restart after MCP change failed', { agentGroupId, err });
@@ -40,7 +40,7 @@ export interface McpServerForUI {
   auth: { kind: string } | null;
 }
 
-export function mcpServerForUI(s: WebchatMcpServer): McpServerForUI {
+export async function mcpServerForUI(s: WebchatMcpServer): Promise<McpServerForUI> {
   const parse = (v: string | null) => {
     try {
       return v ? (JSON.parse(v) as Record<string, unknown>) : null;
@@ -54,7 +54,7 @@ export function mcpServerForUI(s: WebchatMcpServer): McpServerForUI {
     name: s.name,
     transport: s.transport,
     target: (s.transport === 'stdio' ? s.command : s.url) ?? '',
-    agents_assigned: getAgentsAssignedToMcpServer(s.id).length,
+    agents_assigned: (await getAgentsAssignedToMcpServer(s.id)).length,
     health: parse(s.health),
     drift: parse(s.drift),
     pinned_tools: pinned?.tools ?? null,

@@ -1,5 +1,5 @@
 // ── Provider availability probes ─────────────────────────────────────────────
-// "Is this harness installed?" for each optional coding-agent stack. All three
+// "Is this harness installed?" for each optional coding-agent stack. All of them
 // answer the same way — the provider registers a container config when its
 // install skill has run — so they live together.
 //
@@ -18,4 +18,25 @@ export function opencodeAvailable(): boolean {
 /** The pi harness (add-pi-stack) — same registration test. */
 export function piAvailable(): boolean {
   return listProviderContainerConfigNames().includes('pi');
+}
+/** The Grok harness (add-grok) — same registration test. */
+export function grokAvailable(): boolean {
+  return listProviderContainerConfigNames().includes('grok');
+}
+
+/**
+ * Every non-default harness this install can actually run.
+ *
+ * Exists because the same list was being re-derived per call site — the harness
+ * picker knew about a provider that room creation did not, so choosing it in the
+ * wizard silently produced an agent on the default harness. One list, consulted
+ * everywhere, so adding a provider cannot half-land again.
+ */
+export function availableProviders(): string[] {
+  return [
+    ...(opencodeAvailable() ? ['opencode'] : []),
+    ...(piAvailable() ? ['pi'] : []),
+    ...(codexAvailable() ? ['codex'] : []),
+    ...(grokAvailable() ? ['grok'] : []),
+  ];
 }

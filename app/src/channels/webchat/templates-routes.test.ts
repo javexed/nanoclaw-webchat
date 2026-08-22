@@ -29,7 +29,7 @@ const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
 
 let libDir = '';
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
 });
 
@@ -37,7 +37,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     // ignore
   }
@@ -70,9 +70,9 @@ async function loadServerWithEnv(env: Record<string, string | undefined>) {
   }
   vi.resetModules();
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
+  await migrations.runMigrations(conn.getDb());
   return { server: await import('./server.js'), conn };
 }
 
@@ -102,23 +102,31 @@ const portOf = (wc: { http: { address: () => unknown } }): number => {
 };
 
 const now = '2026-08-17T00:00:00.000Z';
-function seed(db: import('better-sqlite3').Database): void {
-  const user = (id: string) =>
-    db
-      .prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`)
-      .run(id, now);
-  const group = (id: string) =>
-    db
-      .prepare(
-        `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      )
-      .run(id, id, id, now);
-  const role = (uid: string, r: 'owner' | 'admin', g: string | null) => {
-    user(uid);
-    if (g) group(g);
-    db.prepare(
+function seed(db: import('../../db/driver.js').DbDriver): void {
+  const user = async (id: string) =>
+    await db.run(
+      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+      id,
+      now,
+    );
+  const group = async (id: string) =>
+    await db.run(
+      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+      id,
+      id,
+      id,
+      now,
+    );
+  const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
+    await user(uid);
+    if (g) await group(g);
+    await db.run(
       `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
-    ).run(uid, r, g, now);
+      uid,
+      r,
+      g,
+      now,
+    );
   };
   group('ag-test-a');
   role('webchat:owner', 'owner', null);
@@ -168,6 +176,47 @@ describe('agent-template endpoints', () => {
       const body = JSON.parse(r.body) as { templates: Array<{ ref: string; name: string; description?: string }> };
       expect(body.templates).toHaveLength(1);
       expect(body.templates[0]).toMatchObject({ ref: 'demo/helper', name: 'helper', description: 'A test plugin' });
+    });
+
+    // The pre-stamp plan is only worth having if it shows the thing that
+    // actually needs judging. `command` is constrained by the reader, but
+    // `args` is not — `command: "bash"` with `args: ["-c", …]` is a legal
+    // template — so the argv has to reach the operator verbatim. env VALUES
+    // must not: keys name what a server wants, values stay on the host.
+    it('reports each MCP server as the argv it will run, with env KEYS only', async () => {
+      const tpl = path.join(libDir, 'demo', 'helper');
+      fs.writeFileSync(
+        path.join(tpl, 'mcp.json'),
+        JSON.stringify({
+          $schema: 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json',
+          mcpServers: {
+            files: {
+              type: 'stdio',
+              command: 'npx',
+              args: ['-y', '@modelcontextprotocol/server-filesystem', '/workspace'],
+              env: { DATA_DIR: '/tmp/should-not-be-reported' },
+            },
+          },
+        }),
+      );
+
+      const r = await httpRequest(port, 'GET', '/api/templates/detail?ref=demo%2Fhelper', as('owner'));
+      expect(r.status).toBe(200);
+      const body = JSON.parse(r.body) as {
+        mcpServers: Array<{ name: string; transport: string; command?: string; args?: string[]; envKeys?: string[] }>;
+      };
+
+      expect(body.mcpServers).toHaveLength(1);
+      expect(body.mcpServers[0]).toMatchObject({
+        name: 'files',
+        transport: 'stdio',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-filesystem', '/workspace'],
+        envKeys: ['DATA_DIR'],
+      });
+      // The whole response, not just that field: a value leaking anywhere in
+      // the payload is the failure this guards against.
+      expect(r.body).not.toContain('should-not-be-reported');
     });
 
     it('refuses a scoped admin and a non-admin', async () => {

@@ -99,6 +99,17 @@ jobs:
       - name: UI — typecheck
         run: pnpm --dir ui run typecheck
 
+      - name: UI — shadowed-ref guard self-test (proves it still detects faults)
+        run: node ui/check-shadowed-refs.mjs --selftest
+
+      - name: UI — no parameter shadows an imported ref
+        # renderMembers(members) shadowed the imported `members` ref, so the
+        # assignment landed on the argument and the island that reads the ref
+        # never updated: the room reported "1 member" and listed nobody. tsc,
+        # check-refs and the browser guards were all silent — the identifier IS
+        # defined, just not the one meant.
+        run: node ui/check-shadowed-refs.mjs
+
       - name: UI — reference integrity (extracted modules define what they use)
         # Narrow on purpose: TS2304 only. The modules carved out of legacy.js are
         # still plain JS with checkJs off, so the compiler is otherwise silent
@@ -198,6 +209,23 @@ jobs:
         # message, so a cold load has nothing to click until the socket is open.
         # A plain load-and-click test would never catch this.
         run: bash scripts/check-first-open.sh
+
+      - name: UI — wiring-remount self-test (proves the probe still detects it)
+        # Restores the shipped bug — the placeholder written into the island's
+        # mount host unconditionally — and requires the probe to go red.
+        run: bash scripts/check-wiring-remount.sh --selftest
+
+      - name: UI — wiring view survives a second render
+        # Field report: Wiring sat on "Loading…" forever. #matrix-canvas is both
+        # the placeholder target and the island's mount host, so the placeholder
+        # wiped the mounted DOM while mountMatrix() refused to rebuild. First
+        # render fine, every one after it dead until a reload.
+        #
+        # A mount-host collision, not a data problem: /api/topology answered in
+        # 2ms with correct JSON throughout, which is why nothing was red and a
+        # first look at the view works. Drives all three entrances — first open,
+        # Refresh, and close + reopen.
+        run: bash scripts/check-wiring-remount.sh
 
       - name: UI — bundle-drift guard (committed bundle == fresh build)
         run: |

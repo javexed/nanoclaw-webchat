@@ -17,7 +17,7 @@ import { fileURLToPath } from 'url';
 const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
 const LOCAL_OWNER = 'webchat:local-owner';
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
 });
 
@@ -25,7 +25,7 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   try {
     const conn = await import('../../db/connection.js');
-    conn.closeDb();
+    await conn.closeDb();
   } catch {
     // ignore
   }
@@ -40,39 +40,42 @@ async function boot() {
   vi.stubEnv('WEBCHAT_TRUSTED_PROXY_IPS', '');
   vi.resetModules();
   const conn = await import('../../db/connection.js');
-  conn.initTestDb();
+  await conn.initTestDb();
   const migrations = await import('../../db/migrations/index.js');
-  migrations.runMigrations(conn.getDb());
+  await migrations.runMigrations(conn.getDb());
 
   const dbh = conn.getDb();
   const now = new Date().toISOString();
-  dbh
-    .prepare(
-      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-    )
-    .run('ag-1', 'Agent', 'agent', now);
-  dbh
-    .prepare(
-      `INSERT OR IGNORE INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
+  await dbh.run(
+    `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
+    'ag-1',
+    'Agent',
+    'agent',
+    now,
+  );
+  await dbh.run(
+    `INSERT OR IGNORE INTO messaging_groups (id, channel_type, instance, platform_id, name, is_group, unknown_sender_policy, created_at)
        VALUES ('room-1', 'webchat', 'webchat', 'room-1', 'Room', 0, 'public', ?)`,
-    )
-    .run(now);
-  dbh
-    .prepare(
-      `INSERT OR IGNORE INTO messaging_group_agents
+    now,
+  );
+  await dbh.run(
+    `INSERT OR IGNORE INTO messaging_group_agents
          (id, messaging_group_id, agent_group_id, engage_mode, engage_pattern,
           sender_scope, ignored_message_policy, session_mode, priority, created_at)
        VALUES (?, 'room-1', 'ag-1', 'pattern', '.', 'all', 'drop', 'shared', 0, ?)`,
-    )
-    .run(randomUUID(), now);
-  dbh
-    .prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`)
-    .run(LOCAL_OWNER, now);
-  dbh
-    .prepare(
-      `INSERT OR IGNORE INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, 'owner', NULL, NULL, ?)`,
-    )
-    .run(LOCAL_OWNER, now);
+    randomUUID(),
+    now,
+  );
+  await dbh.run(
+    `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
+    LOCAL_OWNER,
+    now,
+  );
+  await dbh.run(
+    `INSERT OR IGNORE INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, 'owner', NULL, NULL, ?)`,
+    LOCAL_OWNER,
+    now,
+  );
 
   const server = await import('./server.js');
   const wc = await server.startWebchatServer(noopHooks);
@@ -115,7 +118,7 @@ const claudeStartUrl = clientCalls('/api/user-credentials/oauth/start');
 const codexCancelUrl = clientCalls('/api/user-credentials/codex/cancel');
 
 describe('user-credentials OAuth-mint routes — client/server path parity', () => {
-  it('app.js still points at /api/user-credentials/oauth/* and /api/user-credentials/codex/*', () => {
+  it('app.js still points at /api/user-credentials/oauth/* and /api/user-credentials/codex/*', async () => {
     // Sanity on the extraction itself: both known branches must resolve, and to
     // the expected prefixes — guards against the regex silently matching nothing.
     expect(claudeStartUrl).toBe('/api/user-credentials/oauth/start');

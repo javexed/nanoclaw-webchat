@@ -45,6 +45,32 @@ TRAILER_RE='^(Reviewed-on|Reviewed-by|Co-authored-by):.*(10[.]|172[.](1[6-9]|2[0
 ALLOWED_ADDR_RE='^(127[.]0[.]0[.]1|0[.]0[.]0[.]0|172[.]17[.]0[.]1|172[.]17[.]0[.]0|172[.]16[.]0[.]0|10[.]0[.]0[.]0|192[.]168[.]0[.]0|100[.]64[.]0[.]0|10[.]0[.][0-9]+[.][0-9]+|10[.]4[.]0[.][0-9]+|192[.]168[.]0[.][0-9]+|100[.]96[.][0-9]+[.][0-9]+|100[.]1[.]2[.]3|100[.]100[.]100[.]200)$'
 PRIVATE_ADDR_RE='(10[.][0-9]+[.][0-9]+[.][0-9]+|172[.](1[6-9]|2[0-9]|3[01])[.][0-9]+[.][0-9]+|192[.]168[.][0-9]+[.][0-9]+|100[.](6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])[.][0-9]+[.][0-9]+)'
 
+# ── GENERIC: secret-shaped fixtures that are provably synthetic ──────────────
+# A redaction module needs tests, and those tests must contain secret-SHAPED
+# strings to prove redaction works — so a tree-wide shape scan will always hit
+# them. Enumerated exactly, never by path: exempting "*.test.ts" wholesale would
+# wave through a REAL key pasted into a test, which is a realistic way secrets
+# leak. Every entry below is sequential filler or a dictionary word; a genuine
+# key is not on this list and still blocks. Adding one is a reviewable diff line.
+#
+# The self-test's own fixtures are deliberately ABSENT: they exist to prove the
+# gate CATCHES secrets, so allowlisting them would silently disable the test.
+# They are exempted per-line by the leak-scan-allow marker instead. Note RSA is
+# listed but OPENSSH is not: RSA is a redact.test.ts fixture, OPENSSH is a
+# self-test fixture.
+#
+# xoxb-existing-token / xoxb-fresh-token are UPSTREAM's own placeholders in  # leak-scan-allow
+# setup/lib/skill-driver.test.ts. They reach the gate as CONTEXT lines inside a
+# regenerated patch, not as anything this repo wrote, so a per-line marker
+# would have to be added to upstream's source and would churn the patch on
+# every sync. Neither is secret-SHAPED (a real bot token is
+# xoxb-<digits>-<digits>-<alnum>); these are English words after the prefix.
+ALLOWED_SECRET_RE='^(-----BEGIN RSA PRIVATE KEY-----|ghp_ABCDEFGHIJKLMNOPQRSTuvwx|sk-abc123DEF456ghi789|sk-ant-api03-REGRESSION-SECRET-DO-NOT-LEAK-000|sk-ant-oat-WORKSPACE|xoxb-12345-67890-abcdef|xoxb-REAL-SECRET|xoxb-existing-token|xoxb-fresh-token)$'  # leak-scan-allow — this line IS the list;
+# the `new` tier matches secret shapes strictly (an allowlisted token in a NEW
+# commit should still be questioned), so the definition needs the same per-line
+# marker the self-test fixtures use. The marker is visible in review, which is
+# the whole contract.
+
 # ── OPERATOR identifiers: injected at runtime, never stored here ──────────────
 # A pattern prefixed `cs:` is matched CASE-SENSITIVELY — needed for the internal
 # org path (mixed-case), which folded to lowercase matches the PUBLIC repo path
@@ -140,16 +166,18 @@ drop_allowed() { grep -vF -- 'leak-scan-allow' || true; }
 #        private addresses. This is the gate that matters, because it sees what
 #        a commit ADDS. Nothing new gets through it.
 #
-#   tree (whole checkout) — private addresses only. Secret shapes AND operator
-#        identifiers are deliberately GRANDFATHERED tree-wide, because both
-#        appear legitimately in long-standing test fixtures: fake tokens
-#        (sk-ant-…-DO-NOT-LEAK) and real project names used as seed data. A
-#        tree-wide grep for those is false positives on content that predates
-#        the gate and that refusing today's commit cannot fix — and a gate that
-#        cries wolf on untouchable content is a gate people learn to bypass.
-#        Addresses stay tree-wide: the tree is verifiably clean of them, so the
-#        check costs nothing and catches anything that arrives out-of-band
-#        (a force-push, an imported root commit).
+#   tree (whole checkout) — private addresses, plus secret shapes checked
+#        against an ENUMERATED fixture allowlist. Operator identifiers stay
+#        GRANDFATHERED tree-wide: real project names are used as seed data
+#        throughout, a tree-wide grep for them is false positives on content
+#        that refusing today's commit cannot fix, and a gate that cries wolf on
+#        untouchable content is a gate people learn to bypass.
+#        Secret shapes no longer need that amnesty. The tree contains exactly
+#        seven secret-shaped tokens and all seven are enumerated fixtures, so
+#        the scan is silent today and any EIGHTH — however it arrives — blocks.
+#        Addresses stay tree-wide for the same reason: the tree is verifiably
+#        clean, so the check costs nothing and catches anything arriving
+#        out-of-band (a force-push, an imported root commit).
 #
 # Coverage is therefore: everything NEW is fully gated; the historical tree is
 # gated for addresses. GitHub's native secret scanning covers tree-wide tokens.
@@ -159,6 +187,22 @@ scan_content() {  # <text> <label> <mode:new|tree>
     match "$SECRET_RE" "$text" I "secret-shaped strings in $label"
     match "$(operator_regex_ci)" "$text" i "operator identifiers in $label"
     match "$(operator_regex_cs)" "$text" I "operator org path (case-sensitive) in $label"
+  fi
+  # Secret hygiene (tree only — `new` is covered by the strict match above, and
+  # running both would report the same token twice). Mirrors the address check
+  # below: every secret-shaped string present must be a known synthetic fixture.
+  # Reported as bare tokens rather than whole lines so a genuine hit is not
+  # echoed with its surrounding context.
+  if [ "$mode" = tree ]; then
+    local tok badtok=""
+    while IFS= read -r tok; do
+      [ -z "$tok" ] && continue
+      printf '%s' "$tok" | grep -qE -- "$ALLOWED_SECRET_RE" || badtok="$badtok$tok"$'\n'
+    done < <(printf '%s\n' "$text" | grep -oiE -- "$SECRET_RE" 2>/dev/null | sort -u)
+    if [ -n "$badtok" ]; then
+      say "❌ secret-shaped strings not on the fixture allowlist ($label) — add a line to leak-scan.sh, or use a synthetic value:"
+      printf '     %s\n' $badtok; fail=1
+    fi
   fi
   # Address hygiene: every private address present must be on the allowlist.
   local addr bad=""
@@ -172,11 +216,39 @@ scan_content() {  # <text> <label> <mode:new|tree>
   fi
 }
 
-mode_staged() { scan_content "$(git diff --cached --no-color | added_lines)" "staged changes" new; }
+# A .patch file's CONTEXT and REMOVAL lines are upstream's own text, reproduced
+# verbatim so the patch can locate and replace it — they are not authored here.
+# They also cannot carry the `leak-scan-allow` marker: a removal line must match
+# upstream byte-for-byte or the patch stops applying. So an upstream test fixture
+# that happens to be secret-SHAPED (setup/lib/skill-driver.test.ts writes
+# SLACK_BOT_TOKEN=xoxb-...) is unfixable by construction — marking the source
+# only moves the token onto the removal line, and leaving it moves it onto the
+# context line. Either way one unmarked line survives and the gate can never go
+# green, which is how a gate teaches people to pass --no-verify.
+#
+# What this repo actually CONTRIBUTES through a patch is its ADDED lines, and
+# those stay fully gated below. Everything outside patches/ is unchanged.
+patch_contributions() { awk '{ if (substr($0,1,3)=="+++") next; if (substr($0,1,1)=="+") print substr($0,2) }'; }
+
+mode_staged() {
+  local outside inside
+  outside=$(git diff --cached --no-color -- . ':(exclude)patches' | added_lines)
+  inside=$(git diff --cached --no-color -- patches | added_lines | patch_contributions)
+  scan_content "$outside
+$inside" "staged changes" new
+}
 
 mode_range() {
   local range="$1"
-  scan_content "$(git diff --no-color "$range" | added_lines)" "range $range" new
+  # Same patches/ narrowing as mode_staged, for the same reason: a .patch file's
+  # context/removal lines are upstream's own text and cannot carry the per-line
+  # marker (a removal line must match upstream byte-for-byte). What a patch
+  # CONTRIBUTES — its added lines — stays fully gated.
+  local outside inside
+  outside=$(git diff --no-color "$range" -- . ':(exclude)patches' | added_lines)
+  inside=$(git diff --no-color "$range" -- patches | added_lines | patch_contributions)
+  scan_content "$outside
+$inside" "range $range" new
   local msgs; msgs=$(git log --format='%H %B' "$range" 2>/dev/null | drop_allowed)
   match "$TRAILER_RE" "$msgs" i "forge merge trailers with an internal instance URL"
   match "$(operator_regex_ci)" "$msgs" i "operator identifiers in commit messages"
@@ -211,9 +283,10 @@ selftest() {
     "$3" "$tmp/t"; run_tree "$tmp/t"; local rc=$?
     if [ "$rc" -eq "$2" ]; then echo "  ok   $1"; pass=$((pass+1)); else echo "  FAIL $1 (rc=$rc want $2)"; tf=$((tf+1)); fi
   }
-  # TREE checks — operator identifiers + private addresses (what must NEVER be
-  # present). Secret shapes are NOT tree-scanned (grandfathered fixtures), so
-  # they're asserted on the staged path below.
+  # TREE checks — operator identifiers, private addresses, and secret shapes
+  # against the fixture allowlist. The allowlist needs a case in BOTH directions
+  # or it is just an untested hole: an enumerated fixture must pass, and a token
+  # one character off it must still block.
   s_clean(){ :; }
   s_lan(){ echo 'http://192.168.5.90:11434'>"$1/c.ts"; }  # leak-scan-allow
   s_op(){ echo 'host acme-forge.acme-tailnet.internal'>"$1/d.md"; }
@@ -223,6 +296,10 @@ selftest() {
   check "unlisted private LAN caught"          1 s_lan
   check "operator id NOT tree-flagged (grandfathered)" 0 s_op
   check "allowlisted addresses pass"           0 s_allowed
+  s_allowed_secret(){ echo "k='sk-ant-oat-WORKSPACE'">"$1/w.ts"; }  # leak-scan-allow
+  s_nearmiss(){ echo "k='sk-ant-oat-WORKSPACF'">"$1/n.ts"; }  # leak-scan-allow
+  check "allowlisted secret fixture passes"    0 s_allowed_secret
+  check "near-miss of an allowlisted token blocks" 1 s_nearmiss
 
   # STAGED/RANGE checks in a throwaway git repo — the paths that fail-opened
   # before, and where secret shapes ARE scanned (new additions).
@@ -238,6 +315,20 @@ selftest() {
   staged_blocks "PEM (staged) blocks"            '-----BEGIN OPENSSH PRIVATE KEY-----'  # leak-scan-allow
   staged_blocks "AWS key (staged) blocks"        'AKIA1234567890ABCDEF'  # leak-scan-allow
   staged_blocks "operator id (staged) blocks"    'host acme-tailnet.example.net'
+
+  # The patches/ exemption, both directions. It must stay NARROW: a secret this
+  # repo introduces THROUGH a patch is still this repo's secret.
+  patch_case() { # <name> <want-fail 0|1> <patch-body-line>
+    ( cd "$gt"; mkdir -p patches; rm -f patches/p.patch
+      printf 'diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1,1 +1,2 @@\n%s\n' "$3" > patches/p.patch
+      git add patches/p.patch 2>/dev/null
+      fail=0; mode_staged >/dev/null 2>&1; git reset -q patches/p.patch 2>/dev/null; rm -rf patches
+      [ "$fail" -eq "$2" ] )
+    if [ $? -eq 0 ]; then echo "  ok   $1"; pass=$((pass+1)); else echo "  FAIL $1"; tf=$((tf+1)); fi
+  }
+  patch_case "patch CONTEXT line with an upstream fixture is exempt" 0 ' k="ghp_0123456789abcdef0123456789abcdefABCD"'  # leak-scan-allow
+  patch_case "patch REMOVAL line with an upstream fixture is exempt" 0 '-k="ghp_0123456789abcdef0123456789abcdefABCD"'  # leak-scan-allow
+  patch_case "patch ADDED line with a secret still BLOCKS"           1 '+k="ghp_0123456789abcdef0123456789abcdefABCD"'  # leak-scan-allow
   ( cd "$gt" && git add . 2>/dev/null; git commit -qm x --no-verify >/dev/null 2>&1 || true
     printf 'ghp_0123456789abcdef0123456789abcdefABCD\n' > r.ts; git add r.ts; git commit -qm leak --no-verify  # leak-scan-allow
     fail=0; mode_range HEAD~1..HEAD >/dev/null 2>&1; [ "$fail" -ne 0 ] ) \

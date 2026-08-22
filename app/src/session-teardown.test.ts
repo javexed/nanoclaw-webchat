@@ -52,27 +52,27 @@ function seed(opts: { sessionsPerRoom?: number } = {}): { agentGroupId: string; 
   return { agentGroupId: 'ag-1', messagingGroupId: 'mg-1' };
 }
 
-beforeEach(() => {
-  const db = initTestDb();
-  runMigrations(db);
+beforeEach(async () => {
+  const db = await initTestDb();
+  await runMigrations(await db);
 });
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeDb();
 });
 
 describe('findSessionsByMessagingGroup / findSessionsByAgentGroup', () => {
-  it('returns every session linked to the messaging group', () => {
+  it('returns every session linked to the messaging group', async () => {
     seed({ sessionsPerRoom: 3 });
-    const targets = findSessionsByMessagingGroup('mg-1');
+    const targets = await findSessionsByMessagingGroup('mg-1');
     expect(targets).toHaveLength(3);
     expect(targets.every((t) => t.agentGroupId === 'ag-1')).toBe(true);
     expect(new Set(targets.map((t) => t.sessionId))).toEqual(new Set(['sess-1', 'sess-2', 'sess-3']));
   });
 
-  it('returns every session linked to the agent group across rooms', () => {
+  it('returns every session linked to the agent group across rooms', async () => {
     seed({ sessionsPerRoom: 1 });
-    createMessagingGroup({
+    await createMessagingGroup({
       id: 'mg-2',
       channel_type: 'webchat',
       platform_id: 'room-2',
@@ -81,7 +81,7 @@ describe('findSessionsByMessagingGroup / findSessionsByAgentGroup', () => {
       unknown_sender_policy: 'public',
       created_at: now(),
     });
-    createSession({
+    await createSession({
       id: 'sess-other-room',
       agent_group_id: 'ag-1',
       messaging_group_id: 'mg-2',
@@ -92,26 +92,26 @@ describe('findSessionsByMessagingGroup / findSessionsByAgentGroup', () => {
       last_active: now(),
       created_at: now(),
     });
-    expect(findSessionsByAgentGroup('ag-1')).toHaveLength(2);
-    expect(findSessionsByMessagingGroup('mg-2')).toHaveLength(1);
+    expect(await findSessionsByAgentGroup('ag-1')).toHaveLength(2);
+    expect(await findSessionsByMessagingGroup('mg-2')).toHaveLength(1);
   });
 
-  it('returns empty for unknown ids', () => {
-    expect(findSessionsByMessagingGroup('nope')).toEqual([]);
-    expect(findSessionsByAgentGroup('nope')).toEqual([]);
+  it('returns empty for unknown ids', async () => {
+    expect(await findSessionsByMessagingGroup('nope')).toEqual([]);
+    expect(await findSessionsByAgentGroup('nope')).toEqual([]);
   });
 });
 
 describe('deleteSessionDbState', () => {
-  it('drops the session row', () => {
+  it('drops the session row', async () => {
     seed();
-    deleteSessionDbState('sess-1');
-    expect(getSession('sess-1')).toBeUndefined();
+    await deleteSessionDbState('sess-1');
+    expect(await getSession('sess-1')).toBeUndefined();
   });
 
-  it('drops pending_questions and pending_approvals that FK to the session', () => {
+  it('drops pending_questions and pending_approvals that FK to the session', async () => {
     seed();
-    createPendingQuestion({
+    await createPendingQuestion({
       question_id: 'q-1',
       session_id: 'sess-1',
       message_out_id: 'msg-out-1',
@@ -122,7 +122,7 @@ describe('deleteSessionDbState', () => {
       options: [],
       created_at: now(),
     });
-    createPendingApproval({
+    await createPendingApproval({
       approval_id: 'a-1',
       session_id: 'sess-1',
       request_id: 'req-1',
@@ -132,62 +132,62 @@ describe('deleteSessionDbState', () => {
       title: 'Install?',
       options_json: '[]',
     });
-    deleteSessionDbState('sess-1');
+    await deleteSessionDbState('sess-1');
     const db = getDb();
-    expect(db.prepare('SELECT COUNT(*) as n FROM pending_questions WHERE session_id = ?').get('sess-1')).toEqual({
+    expect(await db.get('SELECT COUNT(*) as n FROM pending_questions WHERE session_id = ?', 'sess-1')).toEqual({
       n: 0,
     });
-    expect(db.prepare('SELECT COUNT(*) as n FROM pending_approvals WHERE session_id = ?').get('sess-1')).toEqual({
+    expect(await db.get('SELECT COUNT(*) as n FROM pending_approvals WHERE session_id = ?', 'sess-1')).toEqual({
       n: 0,
     });
   });
 });
 
 describe('FK behavior — the bug this primitive prevents', () => {
-  it('deleting a messaging_group with an active session throws FOREIGN KEY', () => {
-    seed();
+  it('deleting a messaging_group with an active session throws FOREIGN KEY', async () => {
+    await seed();
     // Without teardown, SQLite rejects the parent delete. This is the
     // exact scenario that surfaced as "Failed to delete room: Internal
     // error" in the webchat UI.
-    expect(() => deleteMessagingGroup('mg-1')).toThrow(/FOREIGN KEY/);
+    await expect(deleteMessagingGroup('mg-1')).rejects.toThrow(/FOREIGN KEY/);
   });
 
-  it('deleting an agent_group with an active session throws FOREIGN KEY', () => {
+  it('deleting an agent_group with an active session throws FOREIGN KEY', async () => {
     seed();
-    expect(() => deleteAgentGroup('ag-1')).toThrow(/FOREIGN KEY/);
+    await expect(deleteAgentGroup('ag-1')).rejects.toThrow(/FOREIGN KEY/);
   });
 
-  it('the teardown + parent-delete sequence inside a transaction succeeds', () => {
+  it('the teardown + parent-delete sequence inside a transaction succeeds', async () => {
     const { messagingGroupId } = seed({ sessionsPerRoom: 2 });
-    const targets = findSessionsByMessagingGroup(messagingGroupId);
+    const targets = await findSessionsByMessagingGroup(messagingGroupId);
     expect(targets).toHaveLength(2);
 
-    getDb().transaction(() => {
-      for (const t of targets) deleteSessionDbState(t.sessionId);
-      deleteMessagingGroup(messagingGroupId);
-    })();
+    await getDb().transaction(async () => {
+      for (const t of targets) await deleteSessionDbState(t.sessionId);
+      await deleteMessagingGroup(messagingGroupId);
+    });
 
     const db = getDb();
-    expect(db.prepare('SELECT COUNT(*) as n FROM messaging_groups WHERE id = ?').get(messagingGroupId)).toEqual({
+    expect(await db.get('SELECT COUNT(*) as n FROM messaging_groups WHERE id = ?', messagingGroupId)).toEqual({
       n: 0,
     });
-    expect(db.prepare('SELECT COUNT(*) as n FROM sessions WHERE messaging_group_id = ?').get(messagingGroupId)).toEqual(
-      { n: 0 },
-    );
+    expect(await db.get('SELECT COUNT(*) as n FROM sessions WHERE messaging_group_id = ?', messagingGroupId)).toEqual({
+      n: 0,
+    });
   });
 
-  it('a failing parent-delete inside a transaction rolls back the session teardown', () => {
+  it('a failing parent-delete inside a transaction rolls back the session teardown', async () => {
     seed();
     // Simulate a multi-step delete where the final step fails AFTER the
     // session was torn down. The transaction must roll back both, leaving
     // the session intact for a retry — no half-gutted state.
-    expect(() => {
-      getDb().transaction(() => {
-        deleteSessionDbState('sess-1');
+    await expect(
+      getDb().transaction(async () => {
+        await deleteSessionDbState('sess-1');
         // Force a failure inside the transaction.
         throw new Error('simulated handler failure');
-      })();
-    }).toThrow(/simulated/);
-    expect(getSession('sess-1')).toBeDefined();
+      }),
+    ).rejects.toThrow(/simulated/);
+    expect(await getSession('sess-1')).toBeDefined();
   });
 });

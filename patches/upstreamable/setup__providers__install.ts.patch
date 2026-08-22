@@ -1,0 +1,66 @@
+diff --git a/setup/providers/install.ts b/setup/providers/install.ts
+index 1d05a0ca..a4a95891 100644
+--- a/setup/providers/install.ts
++++ b/setup/providers/install.ts
+@@ -36,7 +36,15 @@ function isFlowOwnedCommand(cmd: string): boolean {
+   return (
+     /\bpnpm\s+run\s+build\b/.test(cmd) ||
+     /\btsc\b/.test(cmd) ||
+-    /container\/build\.sh/.test(cmd) ||
++    // Anchored to an INVOCATION, not any mention of the path. The old
++    // /container\/build\.sh/ also matched the copy directive's command --
++    // `git show <remote>/<branch>:container/build.sh > container/build.sh` --
++    // so a payload that ships build.sh had that one file silently dropped while
++    // every sibling in the same fence landed. Nothing errored: the filter
++    // returns as if the step were deliberately skipped. Found 2026-08-21, when a
++    // clean install got a Dockerfile carrying ARG GROK_VERSION and a build.sh
++    // with no code to pass it, so a .env override was quietly ignored.
++    /(^|[;&|]\s*)(bash\s+|sh\s+|\.\/)?container\/build\.sh(\s|$)/.test(cmd) ||
+     /\bvitest\b/.test(cmd) ||
+     /\bbun\s+test\b/.test(cmd) ||
+     // The skill's auth step re-invokes `--step provider-auth` — running it from
+@@ -65,12 +73,41 @@ export async function applyProviderSkill(skillDir: string, projectRoot: string):
+     // Fork-aware: reuse the existing resolver (handles upstream/fork remotes and
+     // the auto-add-upstream fallback) instead of assuming `origin` — same call
+     // setup/channels/slack.ts makes for the `channels` branch.
+-    resolveRemote: () =>
+-      execSync('source setup/lib/channels-remote.sh; resolve_channels_remote', {
++    // Resolve the remote FOR THE BRANCH BEING COPIED. This used to call
++    // resolve_channels_remote unconditionally — that finds whichever remote
++    // carries the `channels` branch and takes NO branch argument, so every
++    // provider payload resolved to the same remote regardless of where it lives.
++    // On a fresh install that is `origin` (upstream), which carries no provider
++    // branch, and the install died with "couldn't find remote ref
++    // providers-grok" while the branch sat on another configured remote.
++    // Prefer a remote that demonstrably HAS the branch; fall back to the
++    // channels resolver when none does, so the channels path is unchanged.
++    resolveRemote: (branch: string) => {
++      const remotes = execSync('git remote', { cwd: projectRoot, encoding: 'utf8' })
++        .split('\n')
++        .map((r) => r.trim())
++        .filter(Boolean);
++      const ordered = remotes.includes('origin') ? ['origin', ...remotes.filter((r) => r !== 'origin')] : remotes;
++      for (const r of ordered) {
++        try {
++          if (
++            execSync(`git ls-remote --heads ${r} ${branch}`, {
++              cwd: projectRoot,
++              encoding: 'utf8',
++              stdio: ['ignore', 'pipe', 'ignore'],
++            }).trim()
++          )
++            return r;
++        } catch {
++          /* unreachable remote — try the next */
++        }
++      }
++      return execSync('source setup/lib/channels-remote.sh; resolve_channels_remote', {
+         cwd: projectRoot,
+         shell: '/bin/bash',
+         encoding: 'utf8',
+-      }).trim(),
++      }).trim();
++    },
+   });
+ 
+   const blockers = [...result.agentTasks.map((t) => t.reason), ...result.deferred];

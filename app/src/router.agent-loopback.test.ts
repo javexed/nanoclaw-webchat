@@ -39,20 +39,26 @@ vi.mock('./config.js', async () => {
 const TEST_DIR = '/tmp/nanoclaw-test-loopback';
 const now = () => new Date().toISOString();
 
-beforeEach(() => {
+beforeEach(async () => {
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
-  const db = initTestDb();
-  runMigrations(db);
+  const db = await initTestDb();
+  await runMigrations(await db);
 
   // Three-agent room mirroring the user's `floor` setup:
   //   News    — prime (negative-lookahead pattern, ignores @-mentions to others)
   //   FOMC    — \B@fomc\b
   //   Advisor — \B@advisor\b
-  createAgentGroup({ id: 'ag-news', name: 'News', folder: 'news', agent_provider: null, created_at: now() });
-  createAgentGroup({ id: 'ag-fomc', name: 'FOMC', folder: 'fomc', agent_provider: null, created_at: now() });
-  createAgentGroup({ id: 'ag-advisor', name: 'Advisor', folder: 'advisor', agent_provider: null, created_at: now() });
-  createMessagingGroup({
+  await createAgentGroup({ id: 'ag-news', name: 'News', folder: 'news', agent_provider: null, created_at: now() });
+  await createAgentGroup({ id: 'ag-fomc', name: 'FOMC', folder: 'fomc', agent_provider: null, created_at: now() });
+  await createAgentGroup({
+    id: 'ag-advisor',
+    name: 'Advisor',
+    folder: 'advisor',
+    agent_provider: null,
+    created_at: now(),
+  });
+  await createMessagingGroup({
     id: 'mg-floor',
     channel_type: 'webchat',
     platform_id: 'floor',
@@ -74,13 +80,13 @@ beforeEach(() => {
       priority: 0,
       created_at: now(),
     });
-  wire('mga-news', 'ag-news', '^(?!.*\\B@([Ff][Oo][Mm][Cc]|[Aa][Dd][Vv][Ii][Ss][Oo][Rr])\\b)');
-  wire('mga-fomc', 'ag-fomc', '\\B@[Ff][Oo][Mm][Cc]\\b');
-  wire('mga-advisor', 'ag-advisor', '\\B@[Aa][Dd][Vv][Ii][Ss][Oo][Rr]\\b');
+  await wire('mga-news', 'ag-news', '^(?!.*\\B@([Ff][Oo][Mm][Cc]|[Aa][Dd][Vv][Ii][Ss][Oo][Rr])\\b)');
+  await wire('mga-fomc', 'ag-fomc', '\\B@[Ff][Oo][Mm][Cc]\\b');
+  await wire('mga-advisor', 'ag-advisor', '\\B@[Aa][Dd][Vv][Ii][Ss][Oo][Rr]\\b');
 });
 
-afterEach(() => {
-  closeDb();
+afterEach(async () => {
+  await closeDb();
   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
 });
 
@@ -103,11 +109,11 @@ describe('agent-authored loop-back', () => {
   it('human @-mention engages only the addressed agent (baseline)', async () => {
     const { routeInbound } = await import('./router.js');
     await routeInbound(baseEvent({ text: '@fomc what is next' }));
-    expect(findSession('mg-floor', null)).toBeDefined();
+    expect(await findSession('mg-floor', null)).toBeDefined();
     // News should NOT have a session — its negative-lookahead excludes messages mentioning @fomc.
     // Quick check via session table: only one session exists, and it's FOMC's.
     const { getActiveSessions } = await import('./db/sessions.js');
-    const active = getActiveSessions();
+    const active = await getActiveSessions();
     expect(active).toHaveLength(1);
     expect(active[0].agent_group_id).toBe('ag-fomc');
   });
@@ -116,7 +122,7 @@ describe('agent-authored loop-back', () => {
     const { routeInbound } = await import('./router.js');
     await routeInbound(baseEvent({ text: 'general market chatter' }));
     const { getActiveSessions } = await import('./db/sessions.js');
-    const active = getActiveSessions();
+    const active = await getActiveSessions();
     expect(active).toHaveLength(1);
     expect(active[0].agent_group_id).toBe('ag-news');
   });
@@ -127,7 +133,7 @@ describe('agent-authored loop-back', () => {
     // matches, but self-exclusion drops it — FOMC must not re-engage itself.
     await routeInbound(baseEvent({ text: '@fomc reporting — meeting Tuesday', senderAgentGroupId: 'ag-fomc' }));
     const { getActiveSessions } = await import('./db/sessions.js');
-    expect(getActiveSessions()).toHaveLength(0);
+    expect(await getActiveSessions()).toHaveLength(0);
   });
 
   it('agent loop-back: prime is skipped on unaddressed agent posts', async () => {
@@ -136,7 +142,7 @@ describe('agent-authored loop-back', () => {
     // For an agent sender, the prime is skipped — no spontaneous chain reaction.
     await routeInbound(baseEvent({ text: 'FOMC meets Tuesday at 2pm', senderAgentGroupId: 'ag-fomc' }));
     const { getActiveSessions } = await import('./db/sessions.js');
-    expect(getActiveSessions()).toHaveLength(0);
+    expect(await getActiveSessions()).toHaveLength(0);
   });
 
   it('agent loop-back: explicit @-mention to another agent DOES engage', async () => {
@@ -144,7 +150,7 @@ describe('agent-authored loop-back', () => {
     // FOMC explicitly addresses Advisor — that's the entire point of Pattern C.
     await routeInbound(baseEvent({ text: '@advisor your view on the FOMC decision?', senderAgentGroupId: 'ag-fomc' }));
     const { getActiveSessions } = await import('./db/sessions.js');
-    const active = getActiveSessions();
+    const active = await getActiveSessions();
     expect(active).toHaveLength(1);
     expect(active[0].agent_group_id).toBe('ag-advisor');
   });
@@ -154,7 +160,7 @@ describe('agent-authored loop-back', () => {
     // FOMC writes "@fomc to @advisor". Self skipped; Advisor engages.
     await routeInbound(baseEvent({ text: '@fomc to @advisor — your read on this?', senderAgentGroupId: 'ag-fomc' }));
     const { getActiveSessions } = await import('./db/sessions.js');
-    const active = getActiveSessions();
+    const active = await getActiveSessions();
     expect(active).toHaveLength(1);
     expect(active[0].agent_group_id).toBe('ag-advisor');
   });

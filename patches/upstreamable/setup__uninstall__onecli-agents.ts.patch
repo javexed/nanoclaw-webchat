@@ -1,0 +1,63 @@
+diff --git a/setup/uninstall/onecli-agents.ts b/setup/uninstall/onecli-agents.ts
+index edbfc347..5913ea2d 100644
+--- a/setup/uninstall/onecli-agents.ts
++++ b/setup/uninstall/onecli-agents.ts
+@@ -134,3 +134,58 @@ export function resolveOnecliDeletions(input: {
+   if (!input.assumeYes && input.deleteOrphans) out.push(...input.orphans);
+   return out;
+ }
++
++// ── Vault SECRETS ────────────────────────────────────────────────────────────
++//
++// Agents were enumerated here from the start; secrets were not, and that gap has
++// teeth. The uninstall deliberately leaves the OneCLI vault alone — right for a
++// SHARED vault — but a per-user credential this copy created survives the
++// teardown, and the gateway injects by hostPattern WITHOUT consulting any
++// database. So the next install authenticates cleanly, writes a good credential,
++// and still gets 401s: a stale secret from the dead install is overwriting it on
++// the wire, and the error names the provider rather than the vault.
++//
++// Cost an hour on 2026-08-21, on a Grok clean-install validation: a surviving
++// "UserCreds webchat-local-owner (grok)" secret scoped to cli-chat-proxy.grok.com
++// shadowed a credential created minutes earlier.
++//
++// Same treatment as orphan agents: never delete silently — this copy cannot prove
++// a secret is not another install's — but NAME them and print the exact command,
++// so the next operator is not debugging a provider that is working fine.
++
++export interface VaultSecret {
++  id: string;
++  name: string;
++  hostPattern?: string | null;
++}
++
++/**
++ * Secrets this copy plausibly created, split from ones we must not touch.
++ *
++ * `trackedIds` are the secret ids this install's DB still references. Anything
++ * tracked is unambiguously ours. Anything matching the naming convention this
++ * copy writes ("UserCreds <user> (<provider>)") but NOT tracked is an orphan —
++ * most likely ours from a previous life, but unprovable, so it is reported
++ * rather than removed.
++ */
++export function splitVaultSecrets(
++  secrets: VaultSecret[],
++  trackedIds: Set<string>,
++): { mine: VaultSecret[]; orphans: VaultSecret[] } {
++  const mine: VaultSecret[] = [];
++  const orphans: VaultSecret[] = [];
++  for (const secret of secrets) {
++    if (trackedIds.has(secret.id)) mine.push(secret);
++    else if (/^UserCreds .+ \(.+\)$/.test(secret.name)) orphans.push(secret);
++  }
++  return { mine, orphans };
++}
++
++/** The lines the uninstall prints for secrets it will not delete itself. */
++export function orphanSecretHints(orphans: VaultSecret[]): string[] {
++  return orphans.map(
++    (s) =>
++      `  onecli secrets delete --id ${s.id}   # ${s.name}` +
++      (s.hostPattern ? ` — injects on ${s.hostPattern}` : ''),
++  );
++}

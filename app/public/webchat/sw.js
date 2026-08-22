@@ -110,6 +110,11 @@ self.addEventListener('notificationclick', (e) => {
   );
 });
 
+/** A real Response for a request we could not fetch and have not cached. */
+function offlineResponse() {
+  return new Response('', { status: 503, statusText: 'Offline' });
+}
+
 self.addEventListener('fetch', (e) => {
   if (e.request.url.includes('/api/') || e.request.url.includes('/ws')) return;
 
@@ -138,13 +143,33 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     caches.match(cacheKey || e.request).then((cached) => {
       if (cached) return cached;
-      return fetch(e.request).then((res) => {
-        if (cacheKey && res.ok && res.type !== 'opaque') {
-          const clone = res.clone();
-          caches.open(CACHE).then((c) => c.put(cacheKey, clone));
-        }
-        return res;
-      });
+      return fetch(e.request)
+        .then((res) => {
+          if (cacheKey && res.ok && res.type !== 'opaque') {
+            const clone = res.clone();
+            caches.open(CACHE).then((c) => c.put(cacheKey, clone));
+          }
+          return res;
+        })
+        .catch(() => {
+          // A rejected fetch here rejects respondWith itself, which the browser
+          // reports as BOTH "FetchEvent resulted in a network error response"
+          // and an uncaught TypeError from inside the worker — noisy, and it
+          // fails the request harder than it needs to. Seen for real behind an
+          // auth proxy: an expired session turned /manifest.json into a
+          // cross-origin login redirect, which the page CSP then blocked.
+          //
+          // Degrade instead. Any cached copy beats a hard failure, a navigation
+          // can still be served the app shell, and everything else gets a real
+          // Response so the caller sees a status rather than an exception.
+          return caches.match(e.request).then((stale) => {
+            if (stale) return stale;
+            if (e.request.mode === 'navigate') {
+              return caches.match('/').then((shell) => shell || offlineResponse());
+            }
+            return offlineResponse();
+          });
+        });
     }),
   );
 });

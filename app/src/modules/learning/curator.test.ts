@@ -21,7 +21,7 @@ const DAY = 24 * 60 * 60 * 1000;
 
 describe('decideStale', () => {
   const now = 1_800_000_000_000;
-  it('archives only what has gone unused past the threshold', () => {
+  it('archives only what has gone unused past the threshold', async () => {
     const stale = decideStale(
       [
         { name: 'fresh', lastUsedAt: now - 5 * DAY },
@@ -34,14 +34,14 @@ describe('decideStale', () => {
     expect(stale).toEqual(['stale']);
   });
 
-  it('threshold ≤ 0 turns the curator off — nothing is ever stale', () => {
+  it('threshold ≤ 0 turns the curator off — nothing is ever stale', async () => {
     expect(decideStale([{ name: 'ancient', lastUsedAt: 0 }], now, 0)).toEqual([]);
     expect(decideStale([{ name: 'ancient', lastUsedAt: 0 }], now, -1)).toEqual([]);
   });
 });
 
 describe('skillLastUsedAt', () => {
-  it('prefers the .last-invoked stamp over SKILL.md mtime — use beats age', () => {
+  it('prefers the .last-invoked stamp over SKILL.md mtime — use beats age', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'curator-'));
     const skill = path.join(dir, 's');
     fs.mkdirSync(skill);
@@ -56,7 +56,7 @@ describe('skillLastUsedAt', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  it('returns null for a dir with no SKILL.md (not a skill)', () => {
+  it('returns null for a dir with no SKILL.md (not a skill)', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'curator-'));
     expect(skillLastUsedAt(dir)).toBeNull();
     fs.rmSync(dir, { recursive: true, force: true });
@@ -72,7 +72,7 @@ describe('restoreArchivedSkill', () => {
     return { root, skillsDir, groupId };
   }
 
-  it('moves an archived skill back, content intact, and stamps it as used', () => {
+  it('moves an archived skill back, content intact, and stamps it as used', async () => {
     const { root, skillsDir, groupId } = makeAgent();
     const arch = path.join(skillsDir, ARCHIVE_DIR, 'dormant');
     fs.mkdirSync(arch, { recursive: true });
@@ -89,7 +89,7 @@ describe('restoreArchivedSkill', () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it('refuses to clobber a live skill re-learned since archiving', () => {
+  it('refuses to clobber a live skill re-learned since archiving', async () => {
     const { root, skillsDir, groupId } = makeAgent();
     fs.mkdirSync(path.join(skillsDir, ARCHIVE_DIR, 'dup'), { recursive: true });
     fs.writeFileSync(path.join(skillsDir, ARCHIVE_DIR, 'dup', 'SKILL.md'), 'old');

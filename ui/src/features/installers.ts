@@ -178,6 +178,14 @@ export const OPENCODE_WIZARD_ELS: Record<string, string> = {
   doneMsg: 'OpenCode installed — your local agent can now use it (Agent → Harness).',
 };
 
+export const GROK_WIZARD_ELS = {
+  btn: '#wizard-grok-install',
+  log: '#wizard-grok-install-log',
+  url: '/api/grok/install',
+  name: 'Grok',
+  doneMsg: 'Grok installed — sign in with a device code below.',
+} as Record<string, string>;
+
 export async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
   // Shared harness-install runner: els.url + els.name parameterize it for any
   // stack with the same GET/POST install contract (OpenCode, pi).
@@ -196,6 +204,13 @@ export async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
   const finish = () => {
     log.textContent = els.doneMsg || name + ' installed.';
     showToast(name + ' installed', { kind: 'success' });
+    // Re-render the card. Without this the install BUTTON stays on screen after a
+    // successful install: the row's visibility is computed from wizard state that
+    // was fetched before the provider existed, and the chain restarts the host, so
+    // nothing re-reads it. The operator is left looking at "Install X" for a
+    // provider that is already installed, with the control they actually need —
+    // authenticate — still hidden behind the same stale flag.
+    void deps.refreshWizardCredState?.();
   };
   try {
     const res = await authFetch(url, { method: 'POST' });

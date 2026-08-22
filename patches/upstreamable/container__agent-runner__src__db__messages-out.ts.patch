@@ -1,8 +1,8 @@
 diff --git a/container/agent-runner/src/db/messages-out.ts b/container/agent-runner/src/db/messages-out.ts
-index 6c5c5b2d..73c571ca 100644
+index bd9770ca..45fd13e5 100644
 --- a/container/agent-runner/src/db/messages-out.ts
 +++ b/container/agent-runner/src/db/messages-out.ts
-@@ -132,6 +132,17 @@ export function getRoutingBySeq(
+@@ -177,6 +177,17 @@ export function getRoutingBySeq(
    return outRow ?? null;
  }
  

@@ -8,9 +8,15 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 
 import { json, readJsonBody } from './http.js';
-import { codexAvailable, opencodeAvailable, piAvailable } from './providers.js';
+import { defaultProviderChanges, readDefaultProvider } from './default-provider.js';
+import { cancelGrokLogin, getGrokLoginProgress, startGrokLogin } from './grok-auth-flow.js';
+import { grokStatus } from './grok-status.js';
+import { scheduleHostRestart, upsertEnv } from '../ollama-manage.js';
+import { availableProviders, codexAvailable, grokAvailable, opencodeAvailable, piAvailable } from './providers.js';
 import {
   getCodexInstallProgress,
+  getGrokInstallProgress,
+  startGrokInstall,
   getOpencodeInstallProgress,
   getPiInstallProgress,
   getSttInstallState,
@@ -44,6 +50,24 @@ export async function rCodexInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Pr
   return json(res, r.started ? 202 : 409, {
     ...getCodexInstallProgress(),
     installed: codexAvailable(),
+    started: r.started,
+  });
+}
+
+export async function rGrokInstallGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  return json(res, 200, { ...getGrokInstallProgress(), installed: grokAvailable() });
+}
+
+export async function rGrokInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  if (grokAvailable()) return json(res, 409, { error: 'Grok is already installed', code: 'already-installed' });
+  const r = startGrokInstall();
+  if (r.error === 'skill-missing')
+    return json(res, 409, { error: 'The add-grok skill is not present in this checkout.', code: 'skill-missing' });
+  return json(res, r.started ? 202 : 409, {
+    ...getGrokInstallProgress(),
+    installed: grokAvailable(),
     started: r.started,
   });
 }
@@ -138,4 +162,77 @@ export async function rWebchatSttInstallPost(ctx: RouteCtx, _m: RegExpMatchArray
     return json(res, 409, { error: msg });
   }
   return json(res, 202, { ...getSttInstallState(), started: true });
+}
+
+/**
+ * Grok device login — the same GET-reports / POST-starts contract as the
+ * installs above, with one extra verb: a login can be abandoned, and the
+ * container behind it must not outlive the operator's interest in it.
+ */
+export async function rGrokLoginGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  return json(res, 200, { ...getGrokLoginProgress(), installed: grokAvailable() });
+}
+
+export async function rGrokLoginPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  const verb = m[1];
+  if (verb === 'cancel') return json(res, 200, { ...cancelGrokLogin(), ...getGrokLoginProgress() });
+
+  const r = startGrokLogin();
+  if (r.error === 'not-installed')
+    return json(res, 409, {
+      error: 'The Grok provider is not installed — run /add-grok, then rebuild the agent image.',
+      code: 'not-installed',
+    });
+  if (r.error === 'already-running')
+    // Not an error worth surfacing as one: another tab already started it, and
+    // the progress body tells this client everything it needs to render.
+    return json(res, 200, { ...getGrokLoginProgress(), started: false });
+  return json(res, 202, { ...getGrokLoginProgress(), started: true });
+}
+
+/**
+ * The install-wide default provider for NEW agents — what the wizard's engine
+ * choice should actually mean beyond its own create step.
+ */
+export async function rWorkspaceProviderGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  return json(res, 200, { provider: readDefaultProvider(), available: availableProviders() });
+}
+
+export async function rWorkspaceProviderPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { req, res } = ctx;
+  const raw = await readJsonBody(req, res);
+  if (raw === null) return;
+  let body: { provider?: unknown };
+  try {
+    body = JSON.parse(raw) as { provider?: unknown };
+  } catch {
+    return json(res, 400, { error: 'Invalid JSON' });
+  }
+
+  const provider = String(body.provider ?? '').toLowerCase();
+  // 'claude' is always valid — it is the built-in default and the way back.
+  const allowed = new Set(['claude', ...availableProviders()]);
+  if (!allowed.has(provider)) return json(res, 400, { error: `provider must be one of: ${[...allowed].join(', ')}` });
+
+  // A default nobody can authenticate is worse than no default: every new agent
+  // would fail at its first message. Selecting an engine is not enough — the
+  // credential has to actually be connected.
+  if (provider === 'grok' && !grokStatus().connected)
+    return json(res, 409, {
+      error: 'Grok is not connected — finish the sign-in before making it the default.',
+      code: 'not-connected',
+    });
+
+  const changed = defaultProviderChanges(provider);
+  if (!changed) return json(res, 200, { provider, changed: false, restarting: false });
+
+  upsertEnv(process.cwd(), 'DEFAULT_AGENT_PROVIDER', provider);
+  // config.ts caches this in a const at import, so the running host cannot see
+  // the new value — restart, exactly as the Codex/OpenCode installs do. Only on
+  // a real change, so finishing the wizard on the current default is free.
+  scheduleHostRestart();
+  return json(res, 200, { provider, changed: true, restarting: true });
 }

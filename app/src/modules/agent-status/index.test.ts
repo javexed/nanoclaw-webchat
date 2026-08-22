@@ -95,7 +95,7 @@ function stubAdapter() {
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   messagingGroup = mgRow;
   containerRunning = true; // default: a live container, so reconcile stays quiet
   seedDb();
@@ -103,7 +103,7 @@ beforeEach(() => {
   stopSessionStatus('sess-1'); // reset watermark between tests
 });
 
-afterEach(() => {
+afterEach(async () => {
   if (fs.existsSync(OUT_DIR)) fs.rmSync(OUT_DIR, { recursive: true });
 });
 

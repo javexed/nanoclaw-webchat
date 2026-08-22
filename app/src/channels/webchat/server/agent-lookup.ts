@@ -16,6 +16,7 @@ import { getContainerConfig } from '../../../db/container-configs.js';
 import type { AgentGroup } from '../../../types.js';
 import { getAssignedModelForAgent, getEffectiveModelForAgent, getWebchatRoom } from '../db.js';
 import { hasAdminPrivilege, isOwner } from '../roles.js';
+import { filterAsync } from '../async-array.js';
 
 export interface AgentForUI extends AgentGroup {
   room_id: string | null;
@@ -49,16 +50,17 @@ export interface AgentForUI extends AgentGroup {
 /**
  * Derive a display label for an agent with NO assigned webchat model, from its
  * runtime provider. Returns null for the built-in Claude path (caller shows the
- * Anthropic default). Only a non-Claude harness (Codex) gets an explicit label.
+ * Anthropic default). Only a non-Claude harness (Codex, Grok) gets an explicit label.
  */
-export function deriveEffectiveModelLabel(agentGroupId: string): string | null {
-  const cfg = getContainerConfig(agentGroupId);
+export async function deriveEffectiveModelLabel(agentGroupId: string): Promise<string | null> {
+  const cfg = await getContainerConfig(agentGroupId);
   const provider = cfg?.provider ?? 'claude';
   if (provider === 'codex') return 'Codex';
+  if (provider === 'grok') return 'Grok';
   // Claude family with no assignment: the group may still run on the WORKSPACE
   // DEFAULT model (the wizard's Ollama engine). Label it honestly — showing
   // "anthropic" for an agent that answers via Ollama misleads the operator.
-  const effective = getEffectiveModelForAgent(agentGroupId);
+  const effective = await getEffectiveModelForAgent(agentGroupId);
   if (effective) return `${effective.model_id} (workspace default)`;
   // A model pinned in container_configs (webchat's own field, or `ncl groups
   // config update --model`) is what the SDK is actually handed. Showing the
@@ -68,34 +70,34 @@ export function deriveEffectiveModelLabel(agentGroupId: string): string | null {
   return null;
 }
 
-export function toAgentForUI(g: AgentGroup): AgentForUI {
+export async function toAgentForUI(g: AgentGroup): Promise<AgentForUI> {
   // Convention: createAgentHandler uses `group.folder` as the webchat_room id when it
   // creates a room alongside the agent. Look that up directly so the PWA
   // doesn't have to guess.
-  const room = getWebchatRoom(g.folder);
-  const assigned = getAssignedModelForAgent(g.id);
+  const room = await getWebchatRoom(g.folder);
+  const assigned = await getAssignedModelForAgent(g.id);
   return {
     ...g,
     room_id: room ? room.id : null,
     assigned_model_id: assigned ? assigned.id : null,
-    egress: getContainerConfig(g.id)?.egress ?? 'open',
-    effective_model_label: assigned ? null : deriveEffectiveModelLabel(g.id),
-    config_model: getContainerConfig(g.id)?.model ?? null,
+    egress: (await getContainerConfig(g.id))?.egress ?? 'open',
+    effective_model_label: assigned ? null : await deriveEffectiveModelLabel(g.id),
+    config_model: (await getContainerConfig(g.id))?.model ?? null,
     // Which agent harness the group runs: 'claude' (built-in) or 'opencode'.
-    provider: (getContainerConfig(g.id)?.provider as string | null) || 'claude',
+    provider: ((await getContainerConfig(g.id))?.provider as string | null) || 'claude',
   };
 }
 
-export function resolveAgent(idOrJid: string): AgentGroup | null {
-  return getAgentGroup(idOrJid) ?? null;
+export async function resolveAgent(idOrJid: string): Promise<AgentGroup | null> {
+  return (await getAgentGroup(idOrJid)) ?? null;
 }
 
-export function listAgentsForUser(userId: string, includeArchived = false): AgentForUI[] {
-  const all = getAllAgentGroups();
-  const role = isOwner(userId) ? all : all.filter((g) => hasAdminPrivilege(userId, g.id));
+export async function listAgentsForUser(userId: string, includeArchived = false): Promise<AgentForUI[]> {
+  const all = await getAllAgentGroups();
+  const role = (await isOwner(userId)) ? all : await filterAsync(all, (g) => hasAdminPrivilege(userId, g.id));
   // Archived agents are hidden by default — this declutters every consumer
   // (agent list, pickers, topology/matrix) at once. The agent list opts in via
   // ?includeArchived=1 so they can still be managed (unarchived).
   const visible = includeArchived ? role : role.filter((g) => g.status !== 'archived');
-  return visible.map(toAgentForUI);
+  return Promise.all(visible.map(toAgentForUI));
 }

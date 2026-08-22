@@ -350,7 +350,7 @@ export function parseConfiguredHosts(configText: string): string | null {
  * Returns null when nothing is known; the caller then keeps install-litellm's
  * localhost default (which yields its clear "no model server reachable" hint).
  */
-export function deriveModelServerHosts(root = process.cwd()): string | null {
+export async function deriveModelServerHosts(root = process.cwd()): Promise<string | null> {
   const configPath = path.join(root, 'data/litellm/config.yaml');
   if (fs.existsSync(configPath)) {
     const fromConfig = parseConfiguredHosts(fs.readFileSync(configPath, 'utf8'));
@@ -358,7 +358,7 @@ export function deriveModelServerHosts(root = process.cwd()): string | null {
   }
   try {
     const seen = new Set<string>();
-    for (const m of listWebchatModels()) {
+    for (const m of await listWebchatModels()) {
       if (m.kind !== 'ollama' || !m.endpoint) continue;
       const host = m.endpoint.replace(/\/+$/, '');
       if (host) seen.add(host);
@@ -1436,6 +1436,58 @@ export function startCodexInstall(root = process.cwd()): {
  * 'bun'". Run it only where the host has them (a dev checkout); container/build.sh
  * compiles the same code inside the image anyway.
  */
+const grokInstallState: InstallState = {
+  running: false,
+  lines: [],
+  exitCode: null,
+  startedAt: null,
+  finishedAt: null,
+};
+
+export function getGrokInstallProgress(): InstallState {
+  return { ...grokInstallState, lines: grokInstallState.lines.slice(-40) };
+}
+
+export function startGrokInstall(root = process.cwd()): {
+  started: boolean;
+  error?: 'already-running' | 'skill-missing';
+} {
+  if (grokInstallState.running) return { started: false, error: 'already-running' };
+  if (!fs.existsSync(path.join(root, '.claude/skills/add-grok/SKILL.md'))) {
+    return { started: false, error: 'skill-missing' };
+  }
+  grokInstallState.running = true;
+  grokInstallState.lines = [];
+  grokInstallState.exitCode = null;
+  grokInstallState.startedAt = Date.now();
+  grokInstallState.finishedAt = null;
+  runInstallChain(grokInstallState, grokInstallSteps(root), root);
+  return { started: true };
+}
+
+/**
+ * The Grok install chain. Same shape as Codex with one difference that matters:
+ * the image build is NOT optional here. Grok ships as a native binary installed
+ * by an ARG in the Dockerfile (it cannot go in the npm-shaped cli-tools.json), so
+ * skipping the rebuild leaves a wired provider whose CLI does not exist and every
+ * spawn dies with ENOENT.
+ *
+ * runInstallChain stops on the first non-zero exit, so the restart is reached
+ * only from a fully-green build — never into a half-wired tree.
+ */
+export function grokInstallSteps(root: string): InstallStep[] {
+  const canTypecheckContainer = fs.existsSync(path.join(root, 'container/agent-runner/node_modules/bun-types'));
+  return [
+    { run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', 'grok']] },
+    { run: ['pnpm', ['run', 'build']] },
+    ...(canTypecheckContainer
+      ? [{ run: ['pnpm', ['exec', 'tsc', '-p', 'container/agent-runner/tsconfig.json', '--noEmit']] } as InstallStep]
+      : []),
+    { run: ['bash', ['container/build.sh']] },
+    { call: () => scheduleHostRestart(), label: 'installed — restarting to load Grok' },
+  ];
+}
+
 export function codexInstallSteps(root: string): InstallStep[] {
   const canTypecheckContainer = fs.existsSync(path.join(root, 'container/agent-runner/node_modules/bun-types'));
   return [

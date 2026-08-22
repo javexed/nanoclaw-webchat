@@ -9,6 +9,8 @@ import type { IncomingMessage, ServerResponse } from 'http';
 
 import { json, readJsonBody } from './http.js';
 import { killContainer } from '../../../container-runner.js';
+import { userCredsProviderForGroup } from '../../../modules/user-credentials/onboard.js';
+import { apiKeyAllowedFor, oauthAllowedFor, providerLabel } from '../../../modules/user-credentials/policy.js';
 import { getAgentGroup, getAllAgentGroups } from '../../../db/agent-groups.js';
 import { getDb } from '../../../db/connection.js';
 import { getContainerConfig } from '../../../db/container-configs.js';
@@ -37,14 +39,30 @@ import {
   userHasConnectedCredential,
 } from '../../../modules/user-credentials/db.js';
 import { revokeUserCredential, storeUserCredential } from '../../../modules/user-credentials/onboard.js';
+import { getUserSecretId } from '../../../modules/user-credentials/db.js';
+import { deleteUserCredential, writeUserCredential } from './grok-user-creds.js';
+import {
+  cancelMemberLogin,
+  claimMemberCredential,
+  getMemberLoginProgress,
+  restoreMemberCredential,
+  startMemberLogin,
+} from './grok-member-login.js';
 import { realOnecliAdmin } from '../../../modules/user-credentials/onecli-admin.js';
 import { canAccessRoom } from '../access.js';
 import { canonicalizeWebchatUserId } from '../auth.js';
-import { getAgentsForWebchatRoom, getCredentialsConfig, getEffectiveRoomMode, getWebchatRoom } from '../db.js';
+import {
+  getAgentsForWebchatRoom,
+  getCredentialsConfig,
+  getEffectiveRoomMode,
+  getWebchatRoom,
+  type CredentialsConfig,
+} from '../db.js';
 import { MAX_ACTIVE_MINTS, activeMintCount, cancelMint, mintClaudeToken, startClaudeMint } from '../oauth-mint.js';
 import { hasAdminPrivilege, isAnyAdmin, isGlobalAdmin, isOwner } from '../roles.js';
 import { userCredsRateLimited } from './rate-limit.js';
 import type { RouteCtx } from '../server.js';
+import { filterAsync } from '../async-array.js';
 
 // ── UserCreds: a member connects / disconnects THEIR own Anthropic key ──────────
 // userId is the server-resolved caller — a user can only manage their own key.
@@ -53,25 +71,27 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
   const reqRoomId = method === 'GET' ? (url.searchParams.get('roomId') ?? '') : undefined; // POST/DELETE read roomId from the body below
   if (method === 'GET') {
     const roomId = decodeURIComponent(reqRoomId ?? '');
-    if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-    if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
-    const groups = getAgentsForWebchatRoom(roomId);
+    if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
+    if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+    const groups = await getAgentsForWebchatRoom(roomId);
     // Effective mode (room override → global default). Credential TYPES are
     // workspace-wide (Credentials admin page); which ones apply here depends on
     // the room's provider (Claude vs Codex).
-    const cfg = getCredentialsConfig();
-    const provider = groups[0] && getContainerConfig(groups[0].id)?.provider === 'codex' ? 'codex' : 'claude';
+    const cfg = await getCredentialsConfig();
+    const provider = groups[0] ? await userCredsProviderForGroup(groups[0].id) : 'claude';
     // Connection is now user-level (connect once → all same-provider rooms).
-    const connected = userHasConnectedCredential(userId, provider);
+    const connected = await userHasConnectedCredential(userId, provider);
     // Report the connected credential type so the UI shows the right banner.
-    const credType = connected ? (getUserCredential(userId, provider)?.cred_type ?? null) : null;
+    const credType = (await connected) ? ((await getUserCredential(userId, provider))?.cred_type ?? null) : null;
     return json(res, 200, {
       connected,
       credType,
       provider,
-      mode: getEffectiveRoomMode(roomId),
-      oauthAllowed: provider === 'codex' ? cfg.allowCodexOauth : cfg.allowClaudeOauth,
-      apiKeyAllowed: provider === 'codex' ? cfg.allowOpenaiKey : cfg.allowAnthropicKey,
+      mode: await getEffectiveRoomMode(roomId),
+      oauthAllowed: oauthAllowedFor(provider, cfg),
+      // Grok has no API-key path at all, so this is false for it by
+      // construction rather than by configuration.
+      apiKeyAllowed: apiKeyAllowedFor(provider, cfg),
     });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
@@ -84,22 +104,22 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
     return json(res, 400, { error: 'Invalid JSON' });
   }
   const roomId = typeof body.roomId === 'string' ? body.roomId : '';
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
-  const groups = getAgentsForWebchatRoom(roomId);
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const groups = await getAgentsForWebchatRoom(roomId);
   if (groups.length === 0) return json(res, 400, { error: 'Room has no wired agent' });
-  const provider = groups[0] && getContainerConfig(groups[0].id)?.provider === 'codex' ? 'codex' : 'claude';
+  const provider = groups[0] ? await userCredsProviderForGroup(groups[0].id) : 'claude';
   const credType = body.type === 'oauth_token' ? 'oauth_token' : 'api_key';
-  const cfg = getCredentialsConfig();
+  const cfg = await getCredentialsConfig();
   // Rate-limit connects (each recreates a vault secret + spawns onecli procs).
   if (method === 'POST' && userCredsRateLimited(userId, 'connect'))
     return json(res, 429, { error: 'Too many attempts — wait a moment and try again.' });
   try {
     if (method === 'POST' && credType === 'oauth_token') {
       // Gate 1: the workspace must accept this provider's subscriptions (Credentials page).
-      if (!(provider === 'codex' ? cfg.allowCodexOauth : cfg.allowClaudeOauth))
+      if (!oauthAllowedFor(provider, cfg))
         return json(res, 403, {
-          error: `This workspace does not accept ${provider === 'codex' ? 'Codex (ChatGPT)' : 'Claude'} subscription (OAuth) connections.`,
+          error: `This workspace does not accept ${providerLabel(provider)} subscription connections.`,
         });
       const token = typeof body.token === 'string' ? body.token.trim() : '';
       if (provider === 'codex') {
@@ -116,14 +136,52 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
           return json(res, 400, {
             error: 'Expected a Codex auth.json — use “Connect with my ChatGPT subscription” instead of pasting.',
           });
+      } else if (provider === 'grok') {
+        // A Grok subscription credential is the CLI's own credentials JSON, the
+        // artefact of a device login. Require it to parse and to carry both
+        // halves: an access token alone cannot be refreshed, and a member whose
+        // credential silently stops working in six hours is worse than one who
+        // is told now.
+        let ok = false;
+        try {
+          const parsed = JSON.parse(token) as Record<string, unknown>;
+          ok = typeof parsed.accessToken === 'string' && typeof parsed.refreshToken === 'string';
+        } catch {
+          ok = false;
+        }
+        if (!ok)
+          return json(res, 400, {
+            error: 'Expected a Grok credential from the device login — use “Connect with my Grok subscription”.',
+          });
       } else if (!/^sk-ant-oat/.test(token)) {
         return json(res, 400, {
           error: 'Expected a Claude subscription token from `claude setup-token` (sk-ant-oat…)',
         });
       }
-      await storeUserCredential(realOnecliAdmin, userId, provider, token, 'oauth_token');
+      if (provider === 'grok') {
+        // SPLIT AT THE DOOR. The vault gets the ACCESS token only — that is what
+        // the gateway injects as a bearer header, and the vault is write-only so
+        // nothing can read it back. The REFRESH token stays on the host, because
+        // a 6h access token has to be renewed by something that still holds it,
+        // and neither the vault nor the container can.
+        const parsed = JSON.parse(token) as Record<string, string>;
+        await storeUserCredential(realOnecliAdmin, userId, provider, parsed.accessToken, 'oauth_token');
+        const secretId = await getUserSecretId(userId, 'grok');
+        if (secretId) {
+          writeUserCredential({
+            userId,
+            secretId,
+            refreshToken: parsed.refreshToken,
+            expiresAt: parsed.expiresAt ?? new Date(Date.now() + 6 * 3600_000).toISOString(),
+            clientId: parsed.clientId ?? '',
+            issuer: parsed.issuer ?? 'https://auth.x.ai',
+          });
+        }
+      } else {
+        await storeUserCredential(realOnecliAdmin, userId, provider, token, 'oauth_token');
+      }
     } else if (method === 'POST') {
-      if (!(provider === 'codex' ? cfg.allowOpenaiKey : cfg.allowAnthropicKey))
+      if (!apiKeyAllowedFor(provider, cfg))
         return json(res, 403, {
           error: `This workspace does not accept ${provider === 'codex' ? 'OpenAI' : 'Anthropic'} API keys.`,
         });
@@ -131,7 +189,7 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
       // and allowed even in an OAuth-only 'disabled' room — see the spawn gate).
       // Credentials are user-level, so connecting via a disabled room would
       // otherwise silently enable UserCreds in the member's other rooms.
-      if (getEffectiveRoomMode(roomId) === 'disabled')
+      if ((await getEffectiveRoomMode(roomId)) === 'disabled')
         return json(res, 403, { error: 'This room does not accept member API keys.' });
       const apiKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : '';
       // Codex: an OpenAI key (sk-…). Claude: an Anthropic key (sk-ant-…).
@@ -146,10 +204,14 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
       // Capture the enrolled groups BEFORE revoke (it clears them) so we can
       // also stop any running per-member container immediately — otherwise it
       // lingers (with its copy of the session) to the idle ceiling.
-      const enrolledGroupIds = listEnrolledGroups(userId, provider).map((r) => r.agent_group_id);
+      const enrolledGroupIds = (await listEnrolledGroups(userId, provider)).map((r) => r.agent_group_id);
       await revokeUserCredential(realOnecliAdmin, userId, provider);
+      // Disconnecting must take the host-side half with it. Leaving the refresh
+      // token behind would keep renewing a vault secret the member has revoked —
+      // a credential that outlives its own disconnect.
+      if (provider === 'grok') deleteUserCredential(userId);
       for (const gid of enrolledGroupIds) {
-        for (const s of getSessionsByAgentGroup(gid)) {
+        for (const s of await getSessionsByAgentGroup(gid)) {
           if (s.thread_id === userId) killContainer(s.id, 'UserCreds credential disconnected');
         }
       }
@@ -183,11 +245,11 @@ export async function rUserCredsMintPost(ctx: RouteCtx, m: RegExpMatchArray): Pr
     return json(res, 200, { ok: true });
   }
   const roomId = typeof body.roomId === 'string' ? body.roomId : '';
-  if (!getWebchatRoom(roomId)) return json(res, 404, { error: 'Room not found' });
-  if (!canAccessRoom(userId, roomId)) return json(res, 403, { error: 'Access denied' });
-  if (!getCredentialsConfig().allowClaudeOauth)
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  if (!(await getCredentialsConfig()).allowClaudeOauth)
     return json(res, 403, { error: 'This workspace does not accept Claude subscription (OAuth) connections.' });
-  const groups = getAgentsForWebchatRoom(roomId);
+  const groups = await getAgentsForWebchatRoom(roomId);
   if (groups.length === 0) return json(res, 400, { error: 'Room has no wired agent' });
   try {
     if (step === 'start') {
@@ -216,8 +278,8 @@ export async function rUserCredsMintPost(ctx: RouteCtx, m: RegExpMatchArray): Pr
 // escalate privilege. The /api/users view is scoped per-caller below.
 export async function rUsersGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  if (!isAnyAdmin(userId)) return json(res, 403, { error: 'Admin only' });
-  return json(res, 200, listUsersWithPermissions(userId));
+  if (!(await isAnyAdmin(userId))) return json(res, 403, { error: 'Admin only' });
+  return json(res, 200, await listUsersWithPermissions(userId));
 }
 
 export async function rUserIdDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
@@ -235,7 +297,7 @@ export async function rPermissionsGrantPost(ctx: RouteCtx, _m: RegExpMatchArray)
   } catch {
     return json(res, 400, { error: 'Invalid JSON' });
   }
-  const granted = checkMemberGrantAuth(userId, body.kind, body.agentGroupId);
+  const granted = await checkMemberGrantAuth(userId, body.kind, body.agentGroupId);
   if (granted) return json(res, 403, granted);
   return grantPermissionHandler(res, body, userId);
 }
@@ -250,7 +312,7 @@ export async function rPermissionsRevokePost(ctx: RouteCtx, _m: RegExpMatchArray
   } catch {
     return json(res, 400, { error: 'Invalid JSON' });
   }
-  const revoked = checkMemberGrantAuth(userId, body.kind, body.agentGroupId);
+  const revoked = await checkMemberGrantAuth(userId, body.kind, body.agentGroupId);
   if (revoked) return json(res, 403, revoked);
   return revokePermissionHandler(res, body);
 }
@@ -282,52 +344,54 @@ export interface UserWithPermissions {
   memberships: MembershipEntry[];
 }
 
-export function listUsersWithPermissions(callerUserId?: string): UserWithPermissions[] {
-  const users = permsGetAllUsers();
-  const groups = getAllAgentGroups();
+export async function listUsersWithPermissions(callerUserId?: string): Promise<UserWithPermissions[]> {
+  const users = await permsGetAllUsers();
+  const groups = await getAllAgentGroups();
   // Scoping: owners and global admins get the full cross-group matrix. A
   // scoped admin only sees role/membership assignments within the groups they
   // administer — never the global owner/admin roster or other groups' members.
   // The user *list* itself is unfiltered (an admin must be able to add any
   // user as a member of their group), but the per-user roles/memberships are
   // restricted to the caller's administered groups.
-  const fullView = !callerUserId || isOwner(callerUserId) || isGlobalAdmin(callerUserId);
+  const fullView = !callerUserId || (await isOwner(callerUserId)) || (await isGlobalAdmin(callerUserId));
   const scopedGroupIds = fullView
     ? null
-    : new Set(groups.filter((g) => hasAdminPrivilege(callerUserId, g.id)).map((g) => g.id));
+    : new Set((await filterAsync(groups, (g) => hasAdminPrivilege(callerUserId, g.id))).map((g) => g.id));
   const visibleGroups = scopedGroupIds ? groups.filter((g) => scopedGroupIds.has(g.id)) : groups;
   // Pre-fetch members once per group, keep the full audit-rich rows so we
   // can surface added_by / added_at to the UI.
   const membersByGroup = new Map(visibleGroups.map((g) => [g.id, permsGetMembers(g.id)]));
 
-  return users.map((u) => {
-    const roles: RoleEntry[] = permsGetUserRoles(u.id)
-      .filter((r) => fullView || (r.agent_group_id !== null && scopedGroupIds!.has(r.agent_group_id)))
-      .map((r) => ({
-        kind: r.role,
-        agent_group_id: r.agent_group_id,
-        granted_by: r.granted_by,
-        granted_at: r.granted_at,
-      }));
-    const memberships: MembershipEntry[] = [];
-    for (const [groupId, members] of membersByGroup) {
-      const m = members.find((x) => x.user_id === u.id);
-      if (m) {
-        memberships.push({
-          agent_group_id: groupId,
-          added_by: m.added_by,
-          added_at: m.added_at,
-        });
+  return Promise.all(
+    users.map(async (u) => {
+      const roles: RoleEntry[] = (await permsGetUserRoles(u.id))
+        .filter((r) => fullView || (r.agent_group_id !== null && scopedGroupIds!.has(r.agent_group_id)))
+        .map((r) => ({
+          kind: r.role,
+          agent_group_id: r.agent_group_id,
+          granted_by: r.granted_by,
+          granted_at: r.granted_at,
+        }));
+      const memberships: MembershipEntry[] = [];
+      for (const [groupId, members] of membersByGroup) {
+        const m = (await members).find((x) => x.user_id === u.id);
+        if (m) {
+          memberships.push({
+            agent_group_id: groupId,
+            added_by: m.added_by,
+            added_at: m.added_at,
+          });
+        }
       }
-    }
-    return {
-      id: u.id,
-      kind: u.kind,
-      display_name: u.display_name ?? null,
-      roles,
-      memberships,
-    };
-  });
+      return {
+        id: u.id,
+        kind: u.kind,
+        display_name: u.display_name ?? null,
+        roles,
+        memberships,
+      };
+    }),
+  );
 }
 
 /**
@@ -350,9 +414,9 @@ export interface GrantBody {
   agentGroupId?: unknown;
 }
 
-export function validateGrantBody(
+export async function validateGrantBody(
   body: GrantBody,
-): { error: string } | { userId: string; kind: 'owner' | 'admin' | 'member'; agentGroupId: string | null } {
+): Promise<{ error: string } | { userId: string; kind: 'owner' | 'admin' | 'member'; agentGroupId: string | null }> {
   const rawUserId = typeof body.userId === 'string' ? body.userId.trim() : '';
   if (!rawUserId) return { error: 'userId required' };
   if (!rawUserId.includes(':')) return { error: 'userId must be namespaced (e.g. webchat:tailscale:foo@bar.com)' };
@@ -375,7 +439,7 @@ export function validateGrantBody(
   if (kind === 'member' && agentGroupId === null) {
     return { error: 'member role requires agentGroupId' };
   }
-  if (agentGroupId && !getAgentGroup(agentGroupId)) {
+  if (agentGroupId && !(await getAgentGroup(agentGroupId))) {
     return { error: `agentGroupId ${agentGroupId} does not exist` };
   }
   return { userId: targetUserId, kind, agentGroupId };
@@ -393,30 +457,39 @@ export function validateGrantBody(
  * send. This is the privilege boundary for delegated member management;
  * keep it pure and unit-tested (member-grant-auth.test.ts).
  */
-export function checkMemberGrantAuth(
+export async function checkMemberGrantAuth(
   callerUserId: string,
   kind: unknown,
   agentGroupId: unknown,
-): { error: string } | null {
-  if (isOwner(callerUserId)) return null;
+): Promise<{ error: string } | null> {
+  if (await isOwner(callerUserId)) return null;
   if (kind !== 'member') return { error: 'Owner only' };
   const groupId = typeof agentGroupId === 'string' ? agentGroupId : null;
-  if (!groupId || !hasAdminPrivilege(callerUserId, groupId)) {
+  if (!groupId || !(await hasAdminPrivilege(callerUserId, groupId))) {
     return { error: 'Admin privilege required for this group' };
   }
   return null;
 }
 
-export function grantPermissionHandler(res: ServerResponse, body: GrantBody, callerUserId: string): void {
-  const parsed = validateGrantBody(body);
+export async function grantPermissionHandler(
+  res: ServerResponse,
+  body: GrantBody,
+  callerUserId: string,
+): Promise<void> {
+  const parsed = await validateGrantBody(body);
   if ('error' in parsed) return json(res, 400, { error: parsed.error });
   const { userId: targetUserId, kind, agentGroupId } = parsed;
 
   // Upsert the users row so grants on never-seen-before identities work.
   // The kind is derived from the namespace; the display_name is left null
   // and gets populated by the channel adapter on first auth.
-  if (!permsGetUser(targetUserId)) {
-    permsUpsertUser({
+  // Await BEFORE negating: `!promise` is always false, so this guard never
+  // fired after the async migration — the users-row upsert was skipped and a
+  // grant to a never-seen identity died on the user_roles FK. The same
+  // negated-guard class the migration cleared elsewhere; this one hid inside a
+  // sync handler every codemod skipped.
+  if (!(await permsGetUser(targetUserId))) {
+    await permsUpsertUser({
       id: targetUserId,
       kind: deriveUserKind(targetUserId),
       display_name: null,
@@ -426,7 +499,7 @@ export function grantPermissionHandler(res: ServerResponse, body: GrantBody, cal
 
   const now = new Date().toISOString();
   if (kind === 'member') {
-    permsAddMember({
+    await permsAddMember({
       user_id: targetUserId,
       agent_group_id: agentGroupId as string,
       added_by: callerUserId,
@@ -434,7 +507,7 @@ export function grantPermissionHandler(res: ServerResponse, body: GrantBody, cal
     });
     log.info('Webchat: granted member', { targetUserId, agentGroupId, by: callerUserId });
   } else {
-    permsGrantRole({
+    await permsGrantRole({
       user_id: targetUserId,
       role: kind,
       agent_group_id: agentGroupId,
@@ -452,14 +525,18 @@ export function grantPermissionHandler(res: ServerResponse, body: GrantBody, cal
  * honest. Also refuses to delete the caller themselves (you can't sit on
  * the branch you're sawing).
  */
-export function deleteUserHandler(res: ServerResponse, targetUserId: string, callerUserId: string): void {
+export async function deleteUserHandler(
+  res: ServerResponse,
+  targetUserId: string,
+  callerUserId: string,
+): Promise<void> {
   if (!targetUserId) return json(res, 400, { error: 'userId required' });
   if (targetUserId === callerUserId) {
     return json(res, 409, { error: 'Cannot delete yourself' });
   }
-  const target = permsGetUser(targetUserId);
+  const target = await permsGetUser(targetUserId);
   if (!target) return json(res, 404, { error: 'User not found' });
-  const roles = permsGetUserRoles(targetUserId);
+  const roles = await permsGetUserRoles(targetUserId);
   if (roles.length > 0) {
     return json(res, 409, {
       error: 'User still has roles — revoke them first',
@@ -468,28 +545,28 @@ export function deleteUserHandler(res: ServerResponse, targetUserId: string, cal
   }
   // Iterate agent_groups to find lingering member rows — there's no
   // direct "memberships for user" helper today, so reuse the listing path.
-  for (const g of getAllAgentGroups()) {
-    if (permsGetMembers(g.id).some((m) => m.user_id === targetUserId)) {
+  for (const g of await getAllAgentGroups()) {
+    if ((await permsGetMembers(g.id)).some((m) => m.user_id === targetUserId)) {
       return json(res, 409, { error: 'User still has memberships — revoke them first' });
     }
   }
   // Clean up user_dms cache rows before deleting — user_dms.user_id has a
   // FK reference to users(id) that would otherwise block the delete.
-  getDb().prepare('DELETE FROM user_dms WHERE user_id = ?').run(targetUserId);
-  permsDeleteUser(targetUserId);
+  await getDb().run('DELETE FROM user_dms WHERE user_id = ?', targetUserId);
+  await permsDeleteUser(targetUserId);
   log.info('Webchat: deleted user', { targetUserId, by: callerUserId });
   return json(res, 200, { ok: true });
 }
 
-export function revokePermissionHandler(res: ServerResponse, body: GrantBody): void {
-  const parsed = validateGrantBody(body);
+export async function revokePermissionHandler(res: ServerResponse, body: GrantBody): Promise<void> {
+  const parsed = await validateGrantBody(body);
   if ('error' in parsed) return json(res, 400, { error: parsed.error });
   const { userId: targetUserId, kind, agentGroupId } = parsed;
 
   // Last-owner protection: revoking the only owner would brick the system
   // (no one could grant roles back). Refuse.
   if (kind === 'owner') {
-    const owners = permsGetOwners();
+    const owners = await permsGetOwners();
     const stillOwner = owners.filter((o) => o.user_id !== targetUserId);
     if (stillOwner.length === 0) {
       return json(res, 409, { error: 'Cannot revoke the last owner' });
@@ -497,11 +574,75 @@ export function revokePermissionHandler(res: ServerResponse, body: GrantBody): v
   }
 
   if (kind === 'member') {
-    permsRemoveMember(targetUserId, agentGroupId as string);
+    await permsRemoveMember(targetUserId, agentGroupId as string);
     log.info('Webchat: revoked member', { targetUserId, agentGroupId });
   } else {
-    permsRevokeRole(targetUserId, kind, agentGroupId);
+    await permsRevokeRole(targetUserId, kind, agentGroupId);
     log.info('Webchat: revoked role', { targetUserId, role: kind, agentGroupId });
   }
   return json(res, 200, { ok: true });
+}
+
+/**
+ * Member Grok device login — the same start / report / cancel contract the
+ * wizard uses, scoped to the caller instead of the workspace.
+ *
+ * On completion the credential is claimed ONCE and split exactly as a pasted
+ * one would be: the access token into the member's vault secret, the refresh
+ * token onto the host. Doing it here rather than in the flow keeps the state
+ * machine ignorant of the vault, and means a member who abandons a completed
+ * login stores nothing.
+ */
+export async function rGrokMemberLoginRoute(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { req, res, userId } = ctx;
+  const verb = m[1];
+
+  if (req.method === 'GET') {
+    const progress = getMemberLoginProgress(userId);
+    // A completed login is stored on the poll that observes it, so the client
+    // needs no extra round trip and cannot forget to finish the job.
+    if (progress.outcome === 'complete') {
+      const cred = claimMemberCredential(userId);
+      if (cred) {
+        try {
+          await storeUserCredential(realOnecliAdmin, userId, 'grok', String(cred.accessToken), 'oauth_token');
+          const secretId = await getUserSecretId(userId, 'grok');
+          if (secretId) {
+            writeUserCredential({
+              userId,
+              secretId,
+              refreshToken: String(cred.refreshToken),
+              expiresAt: String(cred.expiresAt ?? new Date(Date.now() + 6 * 3600_000).toISOString()),
+              clientId: String(cred.clientId ?? ''),
+              issuer: String(cred.issuer ?? 'https://auth.x.ai'),
+            });
+          }
+        } catch (err) {
+          // Give the credential back: without this the claim above destroyed
+          // it, the outcome stayed 'complete', and the NEXT poll reported
+          // success with nothing stored. Restored, the next poll retries.
+          restoreMemberCredential(userId, cred);
+          return json(res, 500, {
+            ...progress,
+            error: `Signed in, but storing the credential failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+      }
+    }
+    return json(res, 200, progress);
+  }
+
+  if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
+  if (verb === 'cancel') return json(res, 200, { ...cancelMemberLogin(userId), ...getMemberLoginProgress(userId) });
+
+  // Same gate as pasting one: a workspace that does not accept member Grok
+  // subscriptions must not mint them either.
+  if (!oauthAllowedFor('grok', await getCredentialsConfig()))
+    return json(res, 403, { error: 'This workspace does not accept Grok subscription connections.' });
+
+  const r = startMemberLogin(userId);
+  if (r.error === 'not-installed')
+    return json(res, 409, { error: 'Grok is not installed on this workspace.', code: 'not-installed' });
+  // already-running is not an error: the caller renders from the progress body.
+  return json(res, r.started ? 202 : 200, { ...getMemberLoginProgress(userId), started: r.started });
 }

@@ -10,16 +10,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const AG = 'ag-cw';
 
 async function envFor(agentGroupId = AG): Promise<Record<string, string>> {
-  const { resolveContainerEnv } = await import('../../container-runtime.js');
+  // The resolver is sync-by-contract and reads the prepare-hook cache; the
+  // spawn path runs the hook first, so the test does too.
+  const { resolveContainerEnv, runSessionPrepareHooks } = await import('../../container-runtime.js');
+  await runSessionPrepareHooks(agentGroupId, null);
   return resolveContainerEnv(agentGroupId, null);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.resetModules();
   delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
 });
 
-afterEach(() => {
+afterEach(async () => {
   delete process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
   vi.resetModules();
 });

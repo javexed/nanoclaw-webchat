@@ -1,7 +1,7 @@
-diff --git c/src/guard/guard.ts w/src/guard/guard.ts
-index 327c698b..97b4b4c5 100644
---- c/src/guard/guard.ts
-+++ w/src/guard/guard.ts
+diff --git a/src/guard/guard.ts b/src/guard/guard.ts
+index 50e0ab97..08cc45d6 100644
+--- a/src/guard/guard.ts
++++ b/src/guard/guard.ts
 @@ -21,12 +21,34 @@
   *
   * The guard itself fails closed: a throwing decide denies.
@@ -12,8 +12,8 @@ index 327c698b..97b4b4c5 100644
  import { isGuardedAction, type GuardedAction } from './guard-actions.js';
  import { ALLOW, DENY, type GuardDecision, type GuardInput } from './types.js';
  
- export function guard(action: GuardedAction, input: GuardInput): GuardDecision {
-+  const decision = decide(action, input);
+ export async function guard(action: GuardedAction, input: GuardInput): Promise<GuardDecision> {
++  const decision = await decide(action, input);
 +  // Every consult leaves a record — the decision was previously computed and
 +  // thrown away, which meant an incident review could see WHAT an actor did
 +  // only when a hold produced an approval row. Identifiers only, never
@@ -33,7 +33,7 @@ index 327c698b..97b4b4c5 100644
 +  return decision;
 +}
 +
-+function decide(action: GuardedAction, input: GuardInput): GuardDecision {
++async function decide(action: GuardedAction, input: GuardInput): Promise<GuardDecision> {
    if (!isGuardedAction(action)) {
      // JS-level backstop — the branded type already forbids this. A
      // hand-rolled object must not carry a decide fn never vetted at

@@ -13,8 +13,8 @@ import type { Migration } from './index.js';
 export const moduleLearningSkillDrafts: Migration = {
   version: 200,
   name: 'learning-skill-drafts',
-  up(db) {
-    db.exec(`
+  async up(db) {
+    await db.exec(`
       CREATE TABLE skill_drafts (
         id             TEXT PRIMARY KEY,
         agent_group_id TEXT NOT NULL REFERENCES agent_groups(id) ON DELETE CASCADE,

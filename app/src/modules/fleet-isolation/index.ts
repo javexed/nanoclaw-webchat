@@ -60,9 +60,9 @@ export const CREDENTIAL_ISOLATION = (
  * rather than at import is what makes the toggle take effect on the next spawn
  * instead of requiring a host restart.
  */
-export function fleetIsolationEnabled(): boolean {
+export async function fleetIsolationEnabled(): Promise<boolean> {
   try {
-    const chosen = getCredentialIsolation();
+    const chosen = await getCredentialIsolation();
     if (chosen !== null) return chosen;
   } catch {
     // Settings table unavailable (early boot / fresh DB) — fall back to env.
@@ -72,12 +72,12 @@ export function fleetIsolationEnabled(): boolean {
 
 registerSessionPrepareHook(async (agentGroupId): Promise<void> => {
   // Gated first so an install with this off pays nothing per spawn.
-  if (!fleetIsolationEnabled()) return;
+  if (!(await fleetIsolationEnabled())) return;
   try {
     let { isolated, available } = await getGroupIsolation(realOnecliAdmin, agentGroupId);
     if (isolated) return; // already selective — nothing to do, and no vault writes
     if (!available) {
-      const group = getAgentGroup(agentGroupId);
+      const group = await getAgentGroup(agentGroupId);
       if (!group) return;
       await realOnecliAdmin.ensureAgent(group.name, agentGroupId);
     }

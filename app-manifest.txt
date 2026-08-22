@@ -2,6 +2,7 @@ src/channels/webchat
 public/webchat
 src/session-teardown.ts
 src/session-teardown.test.ts
+src/container-runtime.test.ts
 src/router.agent-loopback.test.ts
 src/router.agent-status.test.ts
 src/router.backtick-escape.test.ts
@@ -16,11 +17,10 @@ src/onecli-preflight.test.ts
 src/mcp-server-config.ts
 src/mcp-server-config.test.ts
 src/modules/user-credentials
-src/db/migrations/module-user-credentials-members.ts
-src/db/migrations/module-user-credentials-oauth.ts
-src/db/migrations/module-user-credentials-provider.ts
-src/db/migrations/module-user-credentials-table.ts
-src/db/migrations/module-user-credentials-rename.ts
+src/modules/container-egress
+src/db/migrations/module-user-credentials.ts
+src/db/migrations/module-user-credentials.test.ts
+src/db/migrations/module-user-credentials-grok-flag.ts
 setup/get-oauth-token.sh
 src/modules/learning
 src/modules/skills
@@ -60,6 +60,7 @@ src/container-warm.ts
 src/container-warm.test.ts
 container/agent-runner/src/providers/hooks.test.ts
 container/agent-runner/src/status-feed.ts
+container/agent-runner/src/status-feed.pi-tools.test.ts
 container/agent-runner/src/send-file-hint.ts
 docs/webchat
 e2e
@@ -72,6 +73,7 @@ scripts/sync-providers-codex.sh
 setup/provider-install.ts
 .claude/skills/add-routing
 .claude/skills/add-litellm
+.claude/skills/add-grok
 .claude/skills/add-opencode-stack
 .claude/skills/add-pi-stack
 src/modules/compact-window
@@ -84,3 +86,7 @@ scripts/repair-model-credential.ts
 src/audit.ts
 src/audit.test.ts
 vitest.setup.ts
+src/container-runner.max-output.test.ts
+src/channels/webchat/pi-model-change-clear.test.ts
+src/channels/webchat/server/floor.ts
+src/channels/webchat/floor.test.ts

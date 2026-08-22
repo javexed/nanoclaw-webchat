@@ -25,36 +25,38 @@ import { audit } from '../../audit.js';
 import { getDb, hasTable } from '../../db/connection.js';
 import { log } from '../../log.js';
 
-export function isOwner(userId: string): boolean {
+export async function isOwner(userId: string): Promise<boolean> {
   const db = getDb();
-  if (!hasTable(db, 'user_roles')) return true; // no permissions module = trust authenticated
-  const row = db
-    .prepare(`SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'owner' AND agent_group_id IS NULL`)
-    .get(userId);
+  if (!(await hasTable(db, 'user_roles'))) return true; // no permissions module = trust authenticated
+  const row = await db.get(
+    `SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'owner' AND agent_group_id IS NULL`,
+    userId,
+  );
   return !!row;
 }
 
-export function hasAdminPrivilege(userId: string, agentGroupId: string): boolean {
+export async function hasAdminPrivilege(userId: string, agentGroupId: string): Promise<boolean> {
   const db = getDb();
-  if (!hasTable(db, 'user_roles')) return true;
-  const row = db
-    .prepare(
-      `SELECT 1 FROM user_roles
+  if (!(await hasTable(db, 'user_roles'))) return true;
+  const row = await db.get(
+    `SELECT 1 FROM user_roles
        WHERE user_id = ?
          AND (role = 'owner' OR role = 'admin')
          AND (agent_group_id IS NULL OR agent_group_id = ?)`,
-    )
-    .get(userId, agentGroupId);
+    userId,
+    agentGroupId,
+  );
   return !!row;
 }
 
 /** Global admin: role='admin' with no group scope (admin of every group). */
-export function isGlobalAdmin(userId: string): boolean {
+export async function isGlobalAdmin(userId: string): Promise<boolean> {
   const db = getDb();
-  if (!hasTable(db, 'user_roles')) return true;
-  const row = db
-    .prepare(`SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'admin' AND agent_group_id IS NULL`)
-    .get(userId);
+  if (!(await hasTable(db, 'user_roles'))) return true;
+  const row = await db.get(
+    `SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'admin' AND agent_group_id IS NULL`,
+    userId,
+  );
   return !!row;
 }
 
@@ -66,12 +68,10 @@ export function isGlobalAdmin(userId: string): boolean {
  * new group (see `createAgentHandler`), so creation authority stays bounded
  * to people who already administer something.
  */
-export function isAnyAdmin(userId: string): boolean {
+export async function isAnyAdmin(userId: string): Promise<boolean> {
   const db = getDb();
-  if (!hasTable(db, 'user_roles')) return true;
-  const row = db
-    .prepare(`SELECT 1 FROM user_roles WHERE user_id = ? AND role IN ('owner', 'admin') LIMIT 1`)
-    .get(userId);
+  if (!(await hasTable(db, 'user_roles'))) return true;
+  const row = await db.get(`SELECT 1 FROM user_roles WHERE user_id = ? AND role IN ('owner', 'admin') LIMIT 1`, userId);
   return !!row;
 }
 
@@ -86,17 +86,19 @@ export function isAnyAdmin(userId: string): boolean {
  * SQLite's row-level write lock plus the WHERE-NOT-EXISTS subquery means
  * exactly one INSERT succeeds.
  */
-export function ensureOwnerRoleOnFirstLogin(userId: string): void {
+export async function ensureOwnerRoleOnFirstLogin(userId: string): Promise<void> {
   const db = getDb();
-  if (!hasTable(db, 'user_roles')) return; // permissions module not installed
+  if (!(await hasTable(db, 'user_roles'))) return; // permissions module not installed
 
   // Make sure the user row exists so the role grant's audit trail has somewhere
   // to point. Use INSERT OR IGNORE in case the senderResolver beat us to it.
-  if (hasTable(db, 'users')) {
-    db.prepare(
+  if (await hasTable(db, 'users')) {
+    await db.run(
       `INSERT OR IGNORE INTO users (id, kind, display_name, created_at)
        VALUES (?, 'webchat', NULL, ?)`,
-    ).run(userId, new Date().toISOString());
+      userId,
+      new Date().toISOString(),
+    );
   }
   try {
     // Atomic guard: insert iff there's no owner yet. SQLite evaluates the
@@ -104,13 +106,13 @@ export function ensureOwnerRoleOnFirstLogin(userId: string): void {
     // concurrent caller racing the same first-login window can't squeeze
     // a second INSERT through. Subsequent calls see an owner exists and
     // the INSERT inserts zero rows (no error).
-    const result = db
-      .prepare(
-        `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
+    const result = await db.run(
+      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
          SELECT ?, 'owner', NULL, NULL, ?
          WHERE NOT EXISTS (SELECT 1 FROM user_roles WHERE role = 'owner')`,
-      )
-      .run(userId, new Date().toISOString());
+      userId,
+      new Date().toISOString(),
+    );
     if (result.changes > 0) {
       log.info('Webchat: granted owner role to first authenticated user', { userId });
       // THE event of a fresh install — exactly one identity ever gets this.
@@ -127,9 +129,9 @@ export function ensureOwnerRoleOnFirstLogin(userId: string): void {
 }
 
 /** Does this id name a real row in `users`? False if the table is absent. */
-function userExists(db: ReturnType<typeof getDb>, id: string): boolean {
+async function userExists(db: ReturnType<typeof getDb>, id: string): Promise<boolean> {
   try {
-    return db.prepare(`SELECT 1 FROM users WHERE id = ?`).get(id) !== undefined;
+    return (await db.get(`SELECT 1 FROM users WHERE id = ?`, id)) !== undefined;
   } catch {
     return false;
   }
@@ -142,11 +144,12 @@ function userExists(db: ReturnType<typeof getDb>, id: string): boolean {
  * operator's real (Tailscale) identity alongside it. Idempotent per user —
  * won't create a duplicate owner row for the same id. Returns true if inserted.
  */
-export function grantOwnerRole(userId: string, grantedBy: string | null = null): boolean {
+export async function grantOwnerRole(userId: string, grantedBy: string | null = null): Promise<boolean> {
   const db = getDb();
-  if (!hasTable(db, 'user_roles')) return false;
-  if (hasTable(db, 'users')) {
-    db.prepare(`INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`).run(
+  if (!(await hasTable(db, 'user_roles'))) return false;
+  if (await hasTable(db, 'users')) {
+    await db.run(
+      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
       userId,
       new Date().toISOString(),
     );
@@ -162,17 +165,19 @@ export function grantOwnerRole(userId: string, grantedBy: string | null = null):
   // Keep the audit value when it names a real user; otherwise record the
   // grant with no grantor. Losing the attribution is strictly better than
   // losing the role.
-  const grantor = grantedBy && userExists(db, grantedBy) ? grantedBy : null;
+  const grantor = grantedBy && (await userExists(db, grantedBy)) ? grantedBy : null;
   try {
-    const result = db
-      .prepare(
-        `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
+    const result = await db.run(
+      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
          SELECT ?, 'owner', NULL, ?, ?
          WHERE NOT EXISTS (
            SELECT 1 FROM user_roles WHERE user_id = ? AND role = 'owner' AND agent_group_id IS NULL
          )`,
-      )
-      .run(userId, grantor, new Date().toISOString(), userId);
+      userId,
+      grantor,
+      new Date().toISOString(),
+      userId,
+    );
     if (result.changes > 0) {
       log.info('Webchat: granted owner role', { userId, grantedBy: grantor, reason: grantedBy });
       audit({
@@ -198,8 +203,8 @@ export function grantOwnerRole(userId: string, grantedBy: string | null = null):
  * Doesn't change runtime behavior; some installs deliberately skip the
  * permissions module (single-operator deploys behind explicit auth).
  */
-export function warnIfNoPermissionsModule(): void {
-  if (!hasTable(getDb(), 'user_roles')) {
+export async function warnIfNoPermissionsModule(): Promise<void> {
+  if (!(await hasTable(getDb(), 'user_roles'))) {
     log.warn(
       'Webchat: permissions module not installed — every authenticated caller has owner-equivalent access. ' +
         'This is fine for single-operator setups behind explicit auth (Tailscale / bearer token / proxy header) ' +

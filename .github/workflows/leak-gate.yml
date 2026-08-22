@@ -75,6 +75,12 @@ jobs:
           LEAK_REQUIRE_OPERATOR_TIER: ${{ github.event.pull_request.head.repo.fork && '0' || '1' }}
         run: bash scripts/leak-scan.sh --range "${{ steps.r.outputs.range }}"
 
+      # Forge merge trailers are no longer policed here. Since 2026-08-21 the
+      # public-mirror guarantee lives at the publish boundary
+      # (the operator's publish-time scrub script replays every commit with trailers
+      # stripped and verifies zero internal-host mentions before pushing), so
+      # internal history may carry them and the web merge button is fine.
+
       - name: Scan the working tree (belt-and-suspenders)
         env:
           LEAK_PATTERNS: ${{ secrets.LEAK_PATTERNS }}

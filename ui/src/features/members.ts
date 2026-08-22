@@ -9,7 +9,7 @@ import PermsUserList from './PermsUserList.vue';
 import { members, membersFilter, usersSortAz } from './members-list-state.js';
 import { permsMyUserId, permsSelectedUserId, permsSortAz, permsUserFilter, permsUsers, usersError } from './perms-list-state.js';
 import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
-import { closeHandlePopover, showConfirmModal } from './modals.js';
+import { cancelGrokMint, closeHandlePopover, showConfirmModal } from './modals.js';
 import { showToast, toastError } from '../core/toast.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
@@ -140,6 +140,15 @@ export function closeUserCredsOauthModal() {
     }).catch(() => {});
     userCredsOauthSessionId.value = null;
   }
+  // Grok's device login has no sessionId — it is keyed by the caller — so it
+  // is torn down separately: stop the browser poll, then tell the server to
+  // drop the CLI process rather than leaving it running until it expires.
+  cancelGrokMint();
+  if (userCredsProvider.value === 'grok')
+    authFetch('/api/user-credentials/grok/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+    }).catch(() => {});
   const modal = $('#user-creds-oauth-modal');
   if (modal) modal.hidden = true;
   // Return focus to whatever opened the dialog (a11y dismissal contract).
@@ -147,10 +156,16 @@ export function closeUserCredsOauthModal() {
   userCredsOauthReturnFocus.value = null;
 }
 
-export function renderMembers(members?: any) {
-  members.value = members;
+export function renderMembers(list?: any) {
+  // The parameter used to be named `members`, which SHADOWED the imported ref
+  // of the same name: `members.value = members` set .value on the plain array
+  // argument and left the ref the MembersList island reads untouched. The count
+  // came straight off the argument, so it stayed correct while the list stayed
+  // empty — a room would report "1" and show nobody, including you.
+  const next = Array.isArray(list) ? list : [];
+  members.value = next;
   const toggle = $('#members-toggle')!;
-  toggle.textContent = members.length; // full count — independent of the filter
+  toggle.textContent = String(next.length); // full count — independent of the filter
   toggle.hidden = !state.currentRoom;
   paintMembersList();
 }

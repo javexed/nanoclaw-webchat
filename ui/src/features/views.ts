@@ -11,9 +11,17 @@ import { routingAvailable } from './routing-state.js';
 import { agentFilter, agentSortAz } from './agent-list-state.js';
 import { permsActive } from './perms-list-state.js';
 import { showToast, toastError } from '../core/toast.js';
+import { wizardBusy } from './wizard.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
-import { closeAgentDetail, fetchAgents, openAgentDetail, renderAgents, showAgentsDetail, showDetail } from './agents.js';
+import {
+  closeAgentDetail,
+  fetchAgents,
+  openAgentDetail,
+  renderAgents,
+  showAgentsDetail,
+  showDetail,
+} from './agents.js';
 import { closeMcpDetail, fetchMcpServers, openMcpDetail, renderMcpSources } from './mcp.js';
 import { showConfirmModal } from './modals.js';
 import { closeModelDetail, fetchModels, openModelDetail, renderModels } from './models.js';
@@ -133,8 +141,7 @@ export function switchManageTab(tab?: any) {
     renderSkillsRegistry();
     // The catalog's sources, owner-only — self-hiding for everyone else.
     void renderSkillSources();
-  }
-  else if (tab === 'routing') {
+  } else if (tab === 'routing') {
     if (!routingAvailable.value && !state.isOwnerView) return switchManageTab('agents');
     // Setup first (Install button ↔ badge), then the live panel when installed.
     void renderRoutingSetup();
@@ -174,6 +181,17 @@ export function hideOtherFullViews(keep?: any) {
   if (keep !== 'journey' && journeyActive) {
     journeyActive = false;
     $('#journey')!.hidden = true;
+  }
+  if (keep !== 'floor' && floorActive) {
+    // Not just hide: the floor polls while open, so skipping its teardown
+    // leaves a background timer fetching /api/floor forever.
+    floorActive = false;
+    $('#floor')!.hidden = true;
+    if (floorTimer) {
+      clearInterval(floorTimer);
+      floorTimer = null;
+    }
+    closeDeskPopover();
   }
   if (keep !== 'matrix' && matrixActive) {
     matrixActive = false;
@@ -239,6 +257,403 @@ export function toggleTopology() {
   else openTopology();
 }
 
+// ── Floor ───────────────────────────────────────────────────────────────────
+// A desk per session, coloured by what it is doing. The dashboard answers "how
+// much is happening"; this answers "WHICH agent is wedged", which otherwise
+// costs an `ncl sessions list` and a log read.
+//
+// Polled while open and only while open: an admin watching the floor wants it
+// live, and a background timer on a view nobody is looking at is just load. The
+// interval is cleared in teardown, so closing the view stops the traffic.
+let floorActive = false;
+let floorTimer: ReturnType<typeof setInterval> | null = null;
+
+const FLOOR_POLL_MS = 5_000;
+
+const FLOOR_LABEL: Record<string, string> = {
+  stuck: 'Stuck',
+  working: 'Working',
+  idle: 'Idle',
+  cold: 'Cold',
+};
+
+/** Raw status kinds, cased for display next to the state labels. */
+const KIND_META_LABEL: Record<string, string> = {
+  tool: 'Tool',
+  reasoning: 'Thinking',
+  progress: 'Working',
+  start: 'Started',
+  done: 'Done',
+  stalled: 'Stalled',
+};
+
+/** "4m", "2h" — a desk's age only needs to be readable, not precise. */
+function floorAge(ms: number | null): string {
+  if (ms == null) return '';
+  const m = Math.floor(ms / 60_000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+// ── Floor feed ──────────────────────────────────────────────────────────────
+// What the desks are actually saying: thinking/tool fragments, message
+// arrivals, agent-to-agent hops. Server-side each event carries its own ISO
+// timestamp as the cursor, so polling is stateless — send back the newest seen.
+const FLOOR_FEED_CAP = 80;
+
+/** Shapes mirror the server's Desk / FloorEvent (ui/ cannot import app/). */
+interface FloorDesk {
+  session_id: string;
+  agent_group_id: string;
+  agent_name: string;
+  room_id: string | null;
+  room_name: string | null;
+  state: string;
+  last_kind: string | null;
+  idle_ms: number | null;
+}
+interface FloorFeedEvent {
+  at: string;
+  session_id: string;
+  agent_name: string;
+  room_id: string | null;
+  kind: string;
+  text: string | null;
+  from_session_id?: string;
+}
+
+let floorFeedCursor: string | null = null;
+let floorFeedEvents: FloorFeedEvent[] = [];
+/** Identity keys of everything in floorFeedEvents — the server re-reads a
+ *  small window behind the cursor on purpose, so duplicates are expected. */
+let floorFeedSeen = new Set<string>();
+let floorFeedEpoch = 0;
+let floorFeedInFlight = false;
+
+function feedKey(e: FloorFeedEvent): string {
+  return `${e.at}|${e.session_id}|${e.kind}|${e.text ?? ''}`;
+}
+/** session_id → agent_name, from the last desks payload — names a2a senders. */
+const floorSessionNames = new Map<string, string>();
+/** Last desks payload, for the popover; restricted gates the Restart action. */
+let floorLastDesks: FloorDesk[] = [];
+let floorRestricted = true;
+
+const FEED_KIND_LABEL: Record<string, string> = {
+  thinking: 'Thinking',
+  tool: 'Tool',
+  message: 'Message',
+  // Not "A2A": the transcript renders agent-to-agent as `A → B` and never
+  // shows the acronym; the badge matches the vocabulary users already have.
+  a2a: 'Handoff',
+};
+
+function renderFloorFeed() {
+  const feed = $('#floor-feed');
+  if (!feed) return;
+  if (!floorFeedEvents.length) {
+    feed.innerHTML = '<div class="floor-feed-empty">Quiet for the last 2 minutes</div>';
+    return;
+  }
+  feed.innerHTML = floorFeedEvents
+    .map((e) => {
+      // Sender → recipient, the same direction the transcript draws.
+      const agentLabel =
+        e.kind === 'a2a' && e.from_session_id
+          ? `${esc(floorSessionNames.get(e.from_session_id) || 'agent')} → ${esc(e.agent_name)}`
+          : esc(e.agent_name);
+      const age = floorAge(Date.now() - Date.parse(e.at));
+      const tag = e.room_id ? 'button' : 'div';
+      return `<${tag} class="floor-event${e.room_id ? ' floor-event-link' : ''}" data-room="${esc(e.room_id || '')}">
+        <span class="ff-kind ff-${esc(e.kind)}">${esc(FEED_KIND_LABEL[e.kind] || e.kind)}</span>
+        <span class="ff-agent">${agentLabel}</span>
+        ${e.text ? `<span class="ff-text">${esc(e.text)}</span>` : ''}
+        <span class="ff-age">${esc(age)}</span>
+      </${tag}>`;
+    })
+    .join('');
+}
+
+// ── Desk popover ────────────────────────────────────────────────────────────
+// A desk click opens this instead of jumping straight to the room: the same
+// tap now answers "what is this desk" (state, last kind, quiet-for) and offers
+// the two actions that make sense there — Open room, and for a stuck desk an
+// admin can Restart it (kill the container; it respawns on the session's next
+// message). Room click-through moved in here rather than growing a second
+// gesture the mobile layout cannot express.
+let deskPopoverEl: HTMLElement | null = null;
+let deskPopoverAnchor: HTMLElement | null = null;
+
+function closeDeskPopover() {
+  const hadFocus = deskPopoverEl?.contains(document.activeElement) ?? false;
+  deskPopoverEl?.remove();
+  deskPopoverEl = null;
+  if (hadFocus && deskPopoverAnchor?.isConnected) deskPopoverAnchor.focus();
+  deskPopoverAnchor = null;
+  document.removeEventListener('click', onDocClickCloseDeskPopover, true);
+  document.removeEventListener('keydown', onEscCloseDeskPopover, true);
+}
+
+function onDocClickCloseDeskPopover(e: Event) {
+  if (deskPopoverEl && !deskPopoverEl.contains(e.target as Node)) closeDeskPopover();
+}
+
+function onEscCloseDeskPopover(e: KeyboardEvent) {
+  if (e.key === 'Escape') closeDeskPopover();
+}
+
+export function showDeskPopover(sessionId: string, anchor: HTMLElement, onOpenRoom: (roomId: string) => void) {
+  closeDeskPopover();
+  const d = floorLastDesks.find((x) => x.session_id === sessionId);
+  if (!d) return;
+
+  const pop = document.createElement('div');
+  pop.className = 'floor-popover';
+  pop.setAttribute('role', 'dialog');
+  const canRestart = d.state === 'stuck' && !floorRestricted;
+  pop.innerHTML = `
+    <div class="floor-pop-name">${esc(d.agent_name)}</div>
+    <div class="floor-pop-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${d.last_kind ? ` · ${esc(KIND_META_LABEL[d.last_kind] || d.last_kind)}` : ''}${
+      d.idle_ms != null ? ` · ${esc(floorAge(d.idle_ms))}` : ''
+    }</div>
+    ${d.room_name ? `<div class="floor-pop-meta">${esc(d.room_name)}</div>` : ''}
+    <div class="floor-pop-id">${esc(d.session_id)}</div>
+    <div class="floor-pop-actions">
+      ${d.room_id ? '<button class="btn btn-ghost" data-act="room">Open room</button>' : ''}
+      ${canRestart ? '<button class="btn btn-danger" data-act="restart">Restart</button>' : ''}
+    </div>`;
+
+  pop.querySelector('[data-act="room"]')?.addEventListener('click', () => {
+    closeDeskPopover();
+    // The button only renders when room_id is set; the type doesn't know that.
+    if (d.room_id) onOpenRoom(d.room_id);
+  });
+  pop.querySelector('[data-act="restart"]')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget as HTMLButtonElement;
+    const restore = wizardBusy(btn, 'Restarting…');
+    try {
+      const r = await authFetch(`/api/floor/sessions/${encodeURIComponent(sessionId)}/restart`, { method: 'POST' });
+      if (r.ok) {
+        // The kill is async server-side; the desk may read Stuck for one more
+        // poll — the toast is what says the action took.
+        showToast('Restarted', { kind: 'success' });
+        closeDeskPopover();
+        refreshFloor();
+      } else {
+        const out = await r.json().catch(() => ({}));
+        toastError(out.error || `Restart failed (${r.status})`);
+      }
+    } catch (err) {
+      toastError(err, 'Restart failed');
+    } finally {
+      restore();
+    }
+  });
+
+  pop.setAttribute('aria-label', d.agent_name);
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  const pw = pop.offsetWidth;
+  pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pw - 8, r.left))}px`;
+  pop.style.top = `${Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 4)}px`;
+  deskPopoverEl = pop;
+  deskPopoverAnchor = anchor;
+  // Same bar as every other dialog here: focus moves in, and back on close —
+  // the desk buttons re-render every poll, so end-of-document is the
+  // alternative for a keyboard user.
+  pop.querySelector<HTMLButtonElement>('button')?.focus();
+  document.addEventListener('click', onDocClickCloseDeskPopover, true);
+  document.addEventListener('keydown', onEscCloseDeskPopover, true);
+}
+
+// ── a2a edges ───────────────────────────────────────────────────────────────
+// An a2a hop draws a brief line between the two desks — the pulse says "these
+// two spoke", the edge says which way. Transient by design (the feed row is
+// the durable record), and skipped under reduced motion.
+function drawEdge(fromSession: string | undefined, toSession: string) {
+  if (!fromSession) return;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const grid = $('#floor-grid');
+  if (!grid) return;
+  const a = grid.querySelector(`.floor-desk[data-session="${CSS.escape(fromSession)}"]`);
+  const b = grid.querySelector(`.floor-desk[data-session="${CSS.escape(toSession)}"]`);
+  if (!a || !b) return;
+  const gr = grid.getBoundingClientRect();
+  const ar = a.getBoundingClientRect();
+  const br = b.getBoundingClientRect();
+
+  let svg = grid.querySelector<SVGSVGElement>('.floor-edges');
+  if (!svg) {
+    svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'floor-edges');
+    grid.appendChild(svg);
+  }
+  svg.setAttribute('viewBox', `0 0 ${gr.width} ${gr.height}`);
+
+  const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  line.setAttribute('x1', String(ar.left - gr.left + ar.width / 2));
+  line.setAttribute('y1', String(ar.top - gr.top + ar.height / 2));
+  line.setAttribute('x2', String(br.left - gr.left + br.width / 2));
+  line.setAttribute('y2', String(br.top - gr.top + br.height / 2));
+  line.setAttribute('class', 'floor-edge');
+  svg.appendChild(line);
+  setTimeout(() => line.remove(), 1600);
+}
+
+function pulseDesk(sessionId: string | undefined) {
+  if (!sessionId) return;
+  const desk = document.querySelector(`.floor-desk[data-session="${CSS.escape(sessionId)}"]`);
+  if (!desk) return;
+  // Remove-reflow-add restarts the animation when a busy desk pulses again
+  // before the last pulse finished.
+  desk.classList.remove('floor-desk-pulse');
+  void (desk as HTMLElement).offsetWidth;
+  desk.classList.add('floor-desk-pulse');
+}
+
+async function refreshFloorFeed() {
+  // One request at a time, and results only apply to the floor-open epoch that
+  // started them: overlapping polls double events and can regress the cursor,
+  // and a quick close/reopen must not let a stale response clobber the reset.
+  if (floorFeedInFlight) return;
+  floorFeedInFlight = true;
+  const epoch = floorFeedEpoch;
+  try {
+    const q = floorFeedCursor ? `?since=${encodeURIComponent(floorFeedCursor)}` : '';
+    const r = await authFetch(`/api/floor/feed${q}`);
+    if (epoch !== floorFeedEpoch) return;
+    if (!r.ok) return; // the desks still render; the feed just stays as it was
+    const data = await r.json();
+    if (epoch !== floorFeedEpoch) return;
+    floorFeedCursor = data?.cursor || floorFeedCursor;
+    const incoming: FloorFeedEvent[] = Array.isArray(data?.events) ? data.events : [];
+    // The server re-reads a window behind the cursor (late timestamps,
+    // same-millisecond ties); identity-dedupe here makes that overlap free.
+    const fresh = incoming.filter((e) => !floorFeedSeen.has(feedKey(e)));
+    if (fresh.length) {
+      // Newest first in the DOM; server sends oldest-first.
+      floorFeedEvents = fresh.reverse().concat(floorFeedEvents).slice(0, FLOOR_FEED_CAP);
+      floorFeedSeen = new Set(floorFeedEvents.map(feedKey));
+      // The desk answers the feed: whatever just spoke, flashes. An a2a hop
+      // flashes both ends — that is the edge, without drawing one.
+      for (const e of fresh) {
+        pulseDesk(e.session_id);
+        if (e.kind === 'a2a') {
+          pulseDesk(e.from_session_id);
+          drawEdge(e.from_session_id, e.session_id);
+        }
+      }
+    }
+    renderFloorFeed();
+  } catch {
+    // Same rule as the grid: a stale feed beats a blanked one.
+  } finally {
+    floorFeedInFlight = false;
+  }
+}
+
+export async function refreshFloor() {
+  const grid = $('#floor-grid');
+  const counts = $('#floor-counts');
+  if (!grid || !counts) return;
+  try {
+    const r = await authFetch('/api/floor');
+    if (!r.ok) {
+      grid.innerHTML = `<div class="dash-empty">Could not load the floor (${r.status})</div>`;
+      counts.innerHTML = '';
+      return;
+    }
+    renderFloor(await r.json());
+    void refreshFloorFeed();
+  } catch {
+    // Leave the last good render in place on a transient failure — a floor that
+    // blanks itself every time the network hiccups is worse than a stale one,
+    // and the poll will repaint in a few seconds anyway.
+    if (!grid.childElementCount) grid.innerHTML = '<div class="dash-empty">Could not load the floor</div>';
+  }
+}
+
+function renderFloor(data: any) {
+  const grid = $('#floor-grid')!;
+  const countsEl = $('#floor-counts')!;
+  const desks: any[] = Array.isArray(data?.desks) ? data.desks : [];
+  const counts = data?.counts || {};
+  floorLastDesks = desks;
+  floorRestricted = data?.restricted !== false;
+
+  countsEl.innerHTML = ['stuck', 'working', 'idle', 'cold']
+    .map((k) => `<span class="floor-count floor-${k}"><b>${counts[k] ?? 0}</b> ${esc(FLOOR_LABEL[k])}</span>`)
+    .join('');
+
+  if (!desks.length) {
+    grid.innerHTML = '<div class="dash-empty">No sessions yet</div>';
+    return;
+  }
+
+  floorSessionNames.clear();
+  for (const d of desks) floorSessionNames.set(d.session_id, d.agent_name);
+
+  // A re-render moves every desk; an in-flight edge would point at stale
+  // coordinates for up to 1.6s, so clear the overlay with the grid.
+  grid.querySelector('.floor-edges')?.remove();
+
+  // Server sorts trouble-first; preserve that order rather than re-sorting here,
+  // so the two never disagree about what matters most.
+  grid.innerHTML = desks
+    .map((d) => {
+      const room = d.room_name ? esc(d.room_name) : '—';
+      const age = floorAge(d.idle_ms);
+      return `<button class="floor-desk floor-${esc(d.state)}" data-room="${esc(d.room_id || '')}" data-session="${esc(d.session_id)}" title="${esc(FLOOR_LABEL[d.state] || d.state)} · ${esc(d.session_id)}">
+        <span class="floor-desk-name">${esc(d.agent_name)}</span>
+        <span class="floor-desk-room">${room}</span>
+        <span class="floor-desk-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${age ? ` · ${age}` : ''}</span>
+      </button>`;
+    })
+    .join('');
+}
+
+function openFloor() {
+  openFullView(() => {
+    hideOtherFullViews('floor');
+    floorActive = true;
+    $('#chat')!.hidden = true;
+    $('#floor')!.hidden = false;
+    $('#app')!.classList.add('in-dashboard'); // reuse the full-view mobile layout
+    $('#app')!.classList.remove('in-room');
+    // Fresh open, fresh feed: the server's cold-start window (2 min) decides
+    // what an opening floor shows, not whatever an old cursor remembers.
+    floorFeedCursor = null;
+    floorFeedEvents = [];
+    floorFeedSeen = new Set();
+    floorFeedEpoch++;
+    renderFloorFeed();
+    refreshFloor();
+    if (floorTimer) clearInterval(floorTimer);
+    floorTimer = setInterval(refreshFloor, FLOOR_POLL_MS);
+    openView('floor', teardownFloor);
+  });
+}
+
+function teardownFloor() {
+  closeDeskPopover();
+  floorActive = false;
+  if (floorTimer) {
+    clearInterval(floorTimer);
+    floorTimer = null;
+  }
+  $('#chat')!.hidden = false;
+  $('#floor')!.hidden = true;
+  $('#app')!.classList.remove('in-dashboard');
+}
+
+export function toggleFloor() {
+  if (floorActive) closeView('floor');
+  else openFloor();
+}
+
 let journeyActive = false;
 
 const journeyAgents = new Map(); // agentGroupId → agentName, from loaded events
@@ -248,8 +663,12 @@ function setJourneyPreset(preset?: any) {
   journeyFilter.value.kind = '';
   journeyFilter.value.skill = preset?.skill || '';
   if (journeyFilter.value.agent && !journeyAgents.has(journeyFilter.value.agent)) {
-    const known = typeof state.allAgents !== 'undefined' && state.allAgents.find?.((a: any) => a.id === journeyFilter.value.agent);
-    journeyAgents.set(journeyFilter.value.agent, preset?.agentName || (known && known.name) || journeyFilter.value.agent);
+    const known =
+      typeof state.allAgents !== 'undefined' && state.allAgents.find?.((a: any) => a.id === journeyFilter.value.agent);
+    journeyAgents.set(
+      journeyFilter.value.agent,
+      preset?.agentName || (known && known.name) || journeyFilter.value.agent,
+    );
   }
   renderJourneyFilterControls();
 }
@@ -289,7 +708,6 @@ export function toggleJourney() {
 }
 
 let journeyCursor: any = null;
-
 
 export async function refreshJourney(reset?: any) {
   if (!$('#journey-list')) return;
@@ -381,7 +799,7 @@ function noteJourneyAgents(events: any[]) {
 }
 
 export function renderJourneyFilterControls() {
-  const sel = ($('#journey-agent-filter')) as HTMLInputElement;
+  const sel = $('#journey-agent-filter') as HTMLInputElement;
   if (sel) {
     sel.innerHTML = '';
     sel.appendChild(new Option('All agents', ''));
@@ -552,7 +970,13 @@ function renderTopology(data?: any) {
     return svg.appendChild(ln);
   };
   for (const e of edges) {
-    const ln = edgeLine(cols.room + LABEL_W, yPx(roomY, e.room), cols.agent - NODE_X, yPx(agentY, e.agent), roomColor(e.room));
+    const ln = edgeLine(
+      cols.room + LABEL_W,
+      yPx(roomY, e.room),
+      cols.agent - NODE_X,
+      yPx(agentY, e.agent),
+      roomColor(e.room),
+    );
     ln.setAttribute('data-room', e.room);
     ln.setAttribute('data-agent', e.agent);
   }
@@ -673,6 +1097,9 @@ function openMatrix() {
 
 function teardownMatrix() {
   matrixActive = false;
+  // Unmount on the way out, so reopening rebuilds rather than showing a
+  // placeholder over a corpse.
+  unmountMatrix();
   $('#chat')!.hidden = false;
   $('#matrix')!.hidden = true;
   $('#app')!.classList.remove('in-dashboard');
@@ -686,16 +1113,24 @@ export function toggleMatrix() {
 export async function refreshMatrix() {
   const canvas = $('#matrix-canvas');
   if (!canvas) return;
-  canvas.textContent = 'Loading…';
+  // `#matrix-canvas` is BOTH the placeholder target and the island's mount
+  // host, so writing textContent into it destroys the mounted app's DOM — and
+  // mountMatrix() refuses to rebuild while matrixApp is set. Painting the
+  // placeholder unconditionally therefore left "Loading…" on screen forever
+  // from the second render on (reopen the view, or press Refresh). Only paint
+  // it when nothing is mounted; tear the island down first on the paths that
+  // must replace it with text.
+  if (!matrixApp) canvas.textContent = 'Loading…';
+  const fail = () => {
+    unmountMatrix();
+    canvas.textContent = 'Could not load wiring.';
+  };
   try {
     const r = await authFetch('/api/topology');
-    if (!r.ok) {
-      canvas.textContent = 'Could not load wiring.';
-      return;
-    }
+    if (!r.ok) return fail();
     renderMatrix(await r.json());
   } catch {
-    canvas.textContent = 'Could not load wiring.';
+    fail();
   }
 }
 
@@ -707,6 +1142,19 @@ function mountMatrix(): void {
   if (!host) return;
   matrixApp = createApp(WiringMatrix);
   matrixApp.mount(host);
+}
+
+/**
+ * Drop the island so the next open mounts a fresh one.
+ *
+ * Load-bearing: without it, `matrixApp` stayed set for the life of the page
+ * while the host's DOM got wiped by the placeholder, and the mount guard then
+ * refused to rebuild — the view never recovered short of a reload.
+ */
+function unmountMatrix(): void {
+  if (!matrixApp) return;
+  matrixApp.unmount();
+  matrixApp = null;
 }
 
 function renderMatrix(data?: any) {
@@ -779,7 +1227,9 @@ export async function renderUsagePanel() {
     document.querySelectorAll('#usage-range .setting-option').forEach((b) => {
       b.addEventListener('click', () => {
         usageRangeDays = Number((b as HTMLElement).dataset.days) || 7;
-        document.querySelectorAll('#usage-range .setting-option').forEach((x: any) => x.classList.toggle('active', x === b));
+        document
+          .querySelectorAll('#usage-range .setting-option')
+          .forEach((x: any) => x.classList.toggle('active', x === b));
         renderUsagePanel();
       });
     });
@@ -846,7 +1296,8 @@ export async function refreshDashboard() {
     }
     snap = await res.json();
   } catch (err) {
-    $('#dash-graph')!.innerHTML = `<div class="dash-empty">Unable to load overview: ${esc((err as any)?.message)}</div>`;
+    $('#dash-graph')!.innerHTML =
+      `<div class="dash-empty">Unable to load overview: ${esc((err as any)?.message)}</div>`;
     return;
   }
   renderHealthStrip(snap);
@@ -861,7 +1312,6 @@ export function syncManageSortIcon() {
   btn!.classList.toggle('active', on);
   btn.setAttribute('aria-pressed', on ? 'true' : 'false');
 }
-
 
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // The full-view stack: opening, closing and the back affordance.
@@ -889,7 +1339,6 @@ export function wireViewsPanel(): void {
     renderJourneyFilterControls();
     applyJourneyFilters();
   });
-
 
   $('#matrix-canvas')?.addEventListener('click', async (e: any) => {
     const cell = (e.target as Element | null)?.closest<HTMLElement>('.matrix-cell');
@@ -953,6 +1402,12 @@ export function wireViewChrome1(): void {
   // unused. Data: GET /api/topology (access-scoped server-side).
   $<HTMLButtonElement>('#topology-back')?.addEventListener('click', toggleTopology);
   $<HTMLButtonElement>('#topology-refresh')?.addEventListener('click', refreshTopology);
+
+  // ── Floor ───────────────────────────────────────────────────────────────────
+  // Desk per session, state by colour. Refresh is manual as well as polled: an
+  // admin who just killed a container wants to confirm it now, not in 5s.
+  $<HTMLButtonElement>('#floor-back')?.addEventListener('click', toggleFloor);
+  $<HTMLButtonElement>('#floor-refresh')?.addEventListener('click', refreshFloor);
 
   // ── Journey (learning timeline) ─────────────────────────────────────────────
   // A day-grouped, newest-first feed of what each agent learned: proposed /
@@ -1022,15 +1477,7 @@ export function applyTopoFocus() {
   }
   const hl = computeTopoFocus(topoData.value, topoFocus.kind, topoFocus.id);
   const setFor = (k: string | null) =>
-    k === 'room'
-      ? hl.rooms
-      : k === 'agent'
-        ? hl.agents
-        : k === 'mcp'
-          ? hl.mcps
-          : k === 'skill'
-            ? hl.skills
-            : hl.models;
+    k === 'room' ? hl.rooms : k === 'agent' ? hl.agents : k === 'mcp' ? hl.mcps : k === 'skill' ? hl.skills : hl.models;
   svg.querySelectorAll('.topo-node').forEach((g: any) => {
     const on = setFor(g.getAttribute('data-kind')).has(g.getAttribute('data-node-id') ?? '');
     g.classList.toggle('topo-dimmed', !on);
@@ -1041,8 +1488,8 @@ export function applyTopoFocus() {
       : ln.hasAttribute('data-mcp')
         ? hl.agents.has(ln.getAttribute('data-agent')) && hl.mcps.has(ln.getAttribute('data-mcp'))
         : ln.hasAttribute('data-model')
-        ? hl.agents.has(ln.getAttribute('data-agent')) && hl.models.has(ln.getAttribute('data-model'))
-        : hl.rooms.has(ln.getAttribute('data-room')) && hl.agents.has(ln.getAttribute('data-agent'));
+          ? hl.agents.has(ln.getAttribute('data-agent')) && hl.models.has(ln.getAttribute('data-model'))
+          : hl.rooms.has(ln.getAttribute('data-room')) && hl.agents.has(ln.getAttribute('data-agent'));
     ln.classList.toggle('topo-dimmed', !on);
   });
 }
@@ -1173,8 +1620,6 @@ export function computeTopoFocus(data: any, kind: string, id: string) {
 
 // routing skill isn't installed or the viewer isn't the owner.
 
-
-
 export function renderMetrics(snap: any) {
   const el = $('#dash-graph');
   const num = (v: any) => esc(String(Number(v) || 0));
@@ -1297,14 +1742,17 @@ export function renderMetrics(snap: any) {
   el!.innerHTML = topRow + systemCards + breakdownRow;
   // Wire the clickable cards here rather than inline onclick= — inline handlers
   // force these functions global and break under a stricter CSP.
-  const details: Record<string, () => Promise<void>> = { agents: showAgentsDetail, messages: showMessagesDetail, containers: showContainersDetail };
+  const details: Record<string, () => Promise<void>> = {
+    agents: showAgentsDetail,
+    messages: showMessagesDetail,
+    containers: showContainersDetail,
+  };
   el!.querySelectorAll('[data-detail]').forEach((card) => {
     card.addEventListener('click', details[(card as HTMLElement).dataset.detail ?? '']);
   });
 }
 
 // ── Dashboard detail panels ───────────────────────────────────────────────
-
 
 export function hideDetail() {
   $('#dash-detail')!.hidden = true;
@@ -1369,7 +1817,12 @@ export function closeOverflowMenu() {
 
 export function closeTopDetailAside() {
   const layers: Array<[string, () => void]> = [
-    ['members-panel', () => { $('#members-panel')!.hidden = true; }],
+    [
+      'members-panel',
+      () => {
+        $('#members-panel')!.hidden = true;
+      },
+    ],
     ['route-detail', closeRouteDetail],
     ['model-detail', closeModelDetail],
     ['agent-detail', closeAgentDetail],
