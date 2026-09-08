@@ -1,19 +1,18 @@
 diff --git a/src/container-config.ts b/src/container-config.ts
-index 61902f5f..3f4c07ed 100644
+index 9b272196..0d37566d 100644
 --- a/src/container-config.ts
 +++ b/src/container-config.ts
-@@ -13,7 +13,9 @@ import path from 'path';
+@@ -14,6 +14,9 @@ import { resolveContainerConfigAugmentation } from './seam/spawn-hooks.js';
  
- import { GROUPS_DIR, TIMEZONE } from './config.js';
+ import { DEFAULT_MODEL, FAST_MODE, GROUPS_DIR, TIMEZONE } from './config.js';
  import { getContainerConfig } from './db/container-configs.js';
--import { resolveContainerConfigAugmentation } from './container-runtime.js';
 +import { roomLearningMapForAgent } from './modules/learning/room-settings.js';
 +import { getLearningMasterEnabled, getLearningClassifier } from './modules/learning/master.js';
-+import { resolveContainerConfigAugmentation, resolveLearningClassifier } from './container-runtime.js';
++import { resolveLearningClassifier } from './container-runtime-extras.js';
  import { getAgentGroup } from './db/agent-groups.js';
  import { isValidTimezone } from './timezone.js';
  import { log } from './log.js';
-@@ -63,12 +65,24 @@ export interface McpStdioServerConfig {
+@@ -63,12 +66,24 @@ export interface McpStdioServerConfig {
  }
  
  export interface McpHttpServerConfig {
@@ -39,7 +38,7 @@ index 61902f5f..3f4c07ed 100644
  }
  
  export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
-@@ -132,9 +146,8 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
+@@ -132,9 +147,8 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
    // (url → http, command → stdio). "streamable-http" is the Agent Plugins
    // spelling of the internal "http".
    const type = input.type === 'streamable-http' ? 'http' : input.type;
@@ -51,7 +50,7 @@ index 61902f5f..3f4c07ed 100644
    }
    if (type === 'stdio' && !command) throw new Error('type "stdio" requires command');
    if (type === 'http' && !url) throw new Error('type "http" requires url');
-@@ -156,8 +169,19 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
+@@ -156,8 +170,19 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
        throw new Error('url must be a valid HTTP(S) URL', { cause: err });
      }
      const loopback = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'].includes(parsed.hostname);
@@ -73,7 +72,7 @@ index 61902f5f..3f4c07ed 100644
      }
      if (parsed.username || parsed.password || parsed.hash) {
        throw new Error('url must not contain credentials or fragments; use OneCLI for authentication');
-@@ -169,7 +193,7 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
+@@ -169,7 +194,7 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
      }
      const headers = parseStringRecord(input.headers, 'headers');
      return {
@@ -82,10 +81,10 @@ index 61902f5f..3f4c07ed 100644
        url,
        ...(headers === undefined ? {} : { headers }),
        ...(instructions === undefined ? {} : { instructions }),
-@@ -251,6 +275,42 @@ export interface ContainerConfig {
-   model?: string;
-   effort?: string;
+@@ -260,6 +285,42 @@ export interface ContainerConfig {
    timezone?: string;
+   /** Session isolation tier for the group's containers; absent = the composer's default ('container'). */
+   runtimeTier?: 'container' | 'vm';
 +  /** Network egress mode: 'open' (default) | 'host-only' | 'none'. */
 +  egress?: string;
 +  /**
@@ -125,7 +124,7 @@ index 61902f5f..3f4c07ed 100644
  }
  
  /**
-@@ -284,14 +344,10 @@ export function sanitizeStoredMcpServers(raw: unknown, groupName: string): Recor
+@@ -293,14 +354,10 @@ export function sanitizeStoredMcpServers(raw: unknown, groupName: string): Recor
        validateMcpServerName(name);
        const server = parseMcpServerConfig(entry as Record<string, unknown>);
        const pluginRoot = (entry as Record<string, unknown>).pluginRoot;
@@ -142,10 +141,10 @@ index 61902f5f..3f4c07ed 100644
          // cwd resolves against a plugin root; without provenance nothing can
          // resolve it. This strip is the ONLY layer (the runtime passes
          // provenance-less servers through untouched), and the breadcrumb
-@@ -331,6 +387,10 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
-     model: row.model ?? undefined,
-     effort: row.effort ?? undefined,
+@@ -384,6 +441,10 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
+     ...speedFields(parseContainerSpeed(row.speed) ?? (FAST_MODE ? 'fast' : undefined)),
      timezone: row.timezone && isValidTimezone(row.timezone) ? row.timezone : undefined,
+     runtimeTier: parseRuntimeTier(row.runtime_tier, group.name),
 +    // Without this the column, the ncl flag and the container-runner branch all
 +    // exist but never meet: buildContainerArgs reads undefined and every group
 +    // spawns with open egress, whatever was configured.
@@ -153,16 +152,9 @@ index 61902f5f..3f4c07ed 100644
    };
  }
  
-@@ -346,10 +406,39 @@ export async function materializeContainerJson(agentGroupId: string): Promise<Co
-   const row = await getContainerConfig(agentGroupId);
-   if (!row) throw new Error(`Container config not found for agent group: ${agentGroupId}`);
- 
--  // Module-contributed fields merge over the DB-backed config (see the
--  // augmentor registry in container-runtime.ts). {} when nothing registers.
-+  // Merge module-contributed fields (e.g. webchat's lenientOutput for ollama
-+  // groups). Augmentors only add keys not owned by the DB row, so a stray key
-+  // can't clobber core config; spread last so an explicit contribution wins.
-   const config = { ...configFromDb(row, group), ...resolveContainerConfigAugmentation(agentGroupId) };
+@@ -417,6 +478,34 @@ export async function materializeContainerJson(agentGroupId: string): Promise<Co
+   const config = configFromDb(row, group);
+   Object.assign(config, resolveContainerConfigAugmentation(agentGroupId)); // seam: module-contributed fields win
  
 +  // Workspace MASTER switch (Settings → Features → Auto-learn). Off overrides
 +  // agent AND room settings: the runner sees learning fully off, so no busy

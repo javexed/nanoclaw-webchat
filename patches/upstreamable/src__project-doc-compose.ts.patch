@@ -1,0 +1,52 @@
+diff --git a/src/project-doc-compose.ts b/src/project-doc-compose.ts
+index 12929a3e..ac68d97e 100644
+--- a/src/project-doc-compose.ts
++++ b/src/project-doc-compose.ts
+@@ -21,6 +21,7 @@ import path from 'path';
+ 
+ import { parseSkillSelection, sanitizeStoredMcpServers } from './container-config.js';
+ import { getContainerConfig } from './db/container-configs.js';
++import { providerLacksMcpTools } from './providers/provider-container-registry.js';
+ import { readGroupPersona } from './group-persona.js';
+ import { log } from './log.js';
+ import type { AgentGroup } from './types.js';
+@@ -134,6 +135,13 @@ export async function composeGroupProjectDoc(group: AgentGroup, groupDir: string
+   // Module instructions — every MCP/CLI module shipping a sibling
+   // `<name>.instructions.md`, describing how to use that module's tools.
+   const cliDisabled = configRow?.cli_scope === 'disabled';
++  // A provider whose model has no MCP client (pi is the live one) must not be
++  // handed the manual for tools it cannot call — a model given that manual will
++  // try to call the tool, and pi burned whole turns retrying. The two modules
++  // that survive the cut teach `ncl`, a binary in the container that reaches the
++  // host over the session DB: no MCP involved, so any provider with a shell can
++  // follow them. That is the same set cli_scope gates, for the same reason.
++  const noMcpTools = providerLacksMcpTools(configRow?.provider);
+   const mcpToolsHostDir = path.join(process.cwd(), MCP_TOOLS_HOST_SUBPATH);
+   if (fs.existsSync(mcpToolsHostDir)) {
+     for (const entry of fs.readdirSync(mcpToolsHostDir).sort()) {
+@@ -141,6 +149,9 @@ export async function composeGroupProjectDoc(group: AgentGroup, groupDir: string
+       if (!match) continue;
+       const moduleName = match[1];
+       if (cliDisabled && NCL_DEPENDENT_MODULES.has(moduleName)) continue;
++      // A NEW module defaults to MCP-dependent: losing a usable instruction is a
++      // smaller harm than promising an uncallable tool.
++      if (noMcpTools && !NCL_DEPENDENT_MODULES.has(moduleName)) continue;
+       push(`NanoClaw Module: ${moduleName}`, fs.readFileSync(path.join(mcpToolsHostDir, entry), 'utf-8'), true);
+     }
+   }
+@@ -160,8 +171,13 @@ export async function composeGroupProjectDoc(group: AgentGroup, groupDir: string
+   }
+ 
+   // Inline instructions from container.json for user-added external MCP servers.
+-  for (const [name, mcp] of Object.entries(mcpServers)) {
+-    if (mcp.instructions) push(`MCP Server: ${name}`, mcp.instructions, true);
++  // Gated like the module fragments: no MCP client means an external server is
++  // as unreachable as the built-in one. Configuring it stays allowed — it just
++  // is not documented to a model that cannot call it.
++  if (!noMcpTools) {
++    for (const [name, mcp] of Object.entries(mcpServers)) {
++      if (mcp.instructions) push(`MCP Server: ${name}`, mcp.instructions, true);
++    }
+   }
+ 
+   const content =

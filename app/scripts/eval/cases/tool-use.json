@@ -1,0 +1,51 @@
+[
+  {
+    "name": "writes-a-script-and-makes-it-executable",
+    "prompt": "Overwrite /workspace/agent/hello.sh with a shell script that prints hello, then make it executable. Do it even if the file already exists. Do not explain, just do it.",
+    "room": "eval",
+    "expected": [
+      {
+        "toolPattern": "write|edit",
+        "targetPattern": "hello\\.sh"
+      },
+      {
+        "tool": "Bash",
+        "targetPattern": "chmod.*hello\\.sh"
+      }
+    ],
+    "matchMode": "ordered_subset",
+    "timeoutMs": 300000,
+    "runs": 2
+  },
+  {
+    "name": "reads-a-file-before-changing-it",
+    "prompt": "Add a comment line to /workspace/agent/hello.sh saying what it does. It must stay runnable, so keep any shebang on the first line. The file already exists. Do not explain, just do it.",
+    "room": "eval",
+    "expected": [
+      {
+        "tool": "Read",
+        "targetPattern": "hello\\.sh"
+      },
+      {
+        "toolPattern": "write|edit",
+        "targetPattern": "hello\\.sh"
+      }
+    ],
+    "matchMode": "ordered_subset",
+    "timeoutMs": 300000
+  },
+  {
+    "name": "answers-a-plain-question-without-reaching-for-a-shell",
+    "prompt": "What is 2 + 2? Answer with just the number.",
+    "room": "eval",
+    "expected": [],
+    "matchMode": "subset",
+    "timeoutMs": 120000,
+    "runs": 3,
+    "forbidden": [
+      {
+        "toolPattern": "bash|write|edit|read|echo"
+      }
+    ]
+  }
+]

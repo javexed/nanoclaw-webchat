@@ -80,6 +80,30 @@ export function readSkillDraftBody(id: string): string | null {
 }
 
 /**
+ * Discard REVERSIBLY: flip the row to 'discarded' and leave the staged body on
+ * disk, so restoreSkillDraft can put it back. Every listing already filters
+ * status = 'pending' (listSkillDrafts), so a discarded draft leaves every
+ * surface and the badge count without being erased — which is what lets the
+ * in-room card offer Undo after the fact instead of before.
+ *
+ * resolveSkillDraft's hard delete cited the agent_groups FK: a resolved row
+ * pinning it would block agent deletion. It does not — the agent delete path
+ * clears the table for the group explicitly (cli/resources/groups.ts) — so the
+ * row can outlive the decision. Automatic paths (supersede, bulk cleanup) keep
+ * using resolveSkillDraft; only a human discard is reversible.
+ */
+export async function discardSkillDraftSoft(id: string): Promise<boolean> {
+  const r = await getDb().run("UPDATE skill_drafts SET status = 'discarded' WHERE id = ? AND status = 'pending'", id);
+  return r.changes > 0;
+}
+
+/** Undo a soft discard. The body was never removed, so this is a flip back. */
+export async function restoreSkillDraft(id: string): Promise<boolean> {
+  const r = await getDb().run("UPDATE skill_drafts SET status = 'pending' WHERE id = ? AND status = 'discarded'", id);
+  return r.changes > 0;
+}
+
+/**
  * Resolve a draft (kept or discarded): a terminal state carries no value, so we
  * DELETE the row + its staged files. (Keeping a resolved row around would also
  * pin the agent_groups FK, blocking agent deletion.)

@@ -1,8 +1,8 @@
 diff --git a/src/modules/index.ts b/src/modules/index.ts
-index 2724a53e..ff2d15d9 100644
+index d23864fc..453f3ab9 100644
 --- a/src/modules/index.ts
 +++ b/src/modules/index.ts
-@@ -21,3 +21,15 @@ import './interactive/index.js';
+@@ -24,3 +24,19 @@ import './interactive/index.js';
  import './permissions/index.js';
  import './agent-to-agent/index.js';
  import './self-mod/index.js';
@@ -18,3 +18,7 @@ index 2724a53e..ff2d15d9 100644
 +import './fleet-isolation/index.js';
 +import './agent-env/index.js';
 +import './host-extras/index.js';
++// Boot check: warn when a group names a provider that never registered. Skill-
++// installed providers can land on disk without their barrel import, which
++// compiles and tests clean and only fails at spawn — see the module header.
++import './provider-guard/index.js';

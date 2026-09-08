@@ -1,11 +1,11 @@
 diff --git a/src/modules/approvals/primitive.ts b/src/modules/approvals/primitive.ts
-index af1a94fa..f9c128ac 100644
+index 533e47d8..0fbc74d6 100644
 --- a/src/modules/approvals/primitive.ts
 +++ b/src/modules/approvals/primitive.ts
-@@ -258,6 +258,28 @@ export function registerApprovalRequestedListener(cb: ApprovalRequestedListener)
-   approvalRequestedListeners.push(cb);
- }
- 
+@@ -231,6 +231,28 @@ export interface RequestApprovalOptions {
+  * caller's perspective — the admin's response kicks off the registered
+  * approval handler for this action via the response dispatcher.
+  */
 +/**
 + * Resolve every reachable approver in the list, deduped by user id. Used by
 + * the fan-out delivery path in `requestApproval` — every eligible admin gets a
@@ -28,29 +28,33 @@ index af1a94fa..f9c128ac 100644
 +  return results;
 +}
 +
- export function notifyApprovalRequested(e: ApprovalRequestedEvent): void {
-   for (const cb of approvalRequestedListeners) {
-     try {
-@@ -301,12 +323,8 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
+ export async function requestApproval(opts: RequestApprovalOptions): Promise<void> {
+   const { session, action, payload, title, question, agentName, approverUserId } = opts;
+ 
+@@ -240,11 +262,8 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
      return;
    }
  
--  const originChannelType = session.messaging_group_id
--    ? ((await getMessagingGroup(session.messaging_group_id))?.channel_type ?? '')
--    : '';
+-  const origin = session.messaging_group_id ? await getMessagingGroup(session.messaging_group_id) : undefined;
+-  const originChannelType = origin?.channel_type ?? '';
 -
--  const target = await pickApprovalDelivery(approvers, originChannelType);
+-  const target = await pickApprovalDelivery(approvers, originChannelType, origin?.instance);
 -  if (!target) {
 +  const targets = await pickAllApprovalDeliveries(approvers);
 +  if (targets.length === 0) {
      await notifyAgent(session, `${action} failed: no DM channel found for any eligible approver.`);
      return;
    }
-@@ -323,7 +341,13 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
-     // The bot identity this card goes out as. This flow persists no delivery
-     // address (it has no card-edit path today), but the instance is the one
-     // piece that cannot be re-derived later, so record it while we hold it.
+@@ -258,15 +277,22 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
+     action,
+     payload: JSON.stringify(payload),
+     created_at: new Date().toISOString(),
+-    channel_type: target.messagingGroup.channel_type,
+-    platform_id: target.messagingGroup.platform_id,
 -    instance: target.messagingGroup.instance ?? null,
++    // The bot identity this card goes out as. This flow persists no delivery
++    // address (it has no card-edit path today), but the instance is the one
++    // piece that cannot be re-derived later, so record it while we hold it.
 +    //
 +    // With fan-out there can be several targets, so this records the FIRST.
 +    // The column names the bot identity, and approvers reached on the same
@@ -61,7 +65,14 @@ index af1a94fa..f9c128ac 100644
      title,
      question,
      options_json: JSON.stringify(normalizedOptions),
-@@ -348,29 +372,45 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
+     // The DM'd approver is the identity this card was routed to; recording it
+     // makes resolution exact — only that user may decide the row.
+-    approver_user_id: approverUserId ?? target.userId ?? null,
++    approver_user_id: approverUserId ?? targets[0]?.userId ?? null,
+   });
+ 
+   // Seam: an intercept may resolve the hold outright; listeners mirror the card.
+@@ -284,31 +310,47 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
  
    const adapter = getDeliveryAdapter();
    if (adapter) {
@@ -78,6 +89,8 @@ index af1a94fa..f9c128ac 100644
 -          question,
 -          options: APPROVAL_OPTIONS,
 -        }),
+-        undefined,
+-        target.messagingGroup.instance,
 -      );
 -    } catch (err) {
 -      log.error('Failed to deliver approval card', { action, approvalId, err });
@@ -102,6 +115,8 @@ index af1a94fa..f9c128ac 100644
 +          null,
 +          'chat-sdk',
 +          cardJson,
++          undefined,
++          target.messagingGroup.instance,
 +        );
 +        delivered.push(target.userId);
 +      } catch (err) {

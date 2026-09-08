@@ -471,24 +471,24 @@ var approvalBusy = ref(/* @__PURE__ */ new Set());
 var approvalErrors = ref({});
 //#endregion
 //#region src/features/ApprovalCard.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$70 = ["data-question-id"];
-var _hoisted_2$61 = { class: "approval-title" };
-var _hoisted_3$56 = {
+var _hoisted_1$71 = ["data-question-id"];
+var _hoisted_2$62 = { class: "approval-title" };
+var _hoisted_3$57 = {
 	key: 0,
 	class: "approval-triage"
 };
-var _hoisted_4$46 = ["title"];
-var _hoisted_5$35 = {
+var _hoisted_4$47 = ["title"];
+var _hoisted_5$36 = {
 	key: 0,
 	class: "triage-note"
 };
-var _hoisted_6$29 = {
+var _hoisted_6$30 = {
 	key: 1,
 	class: "approval-payload"
 };
-var _hoisted_7$20 = { class: "approval-actions" };
-var _hoisted_8$15 = ["disabled", "onClick"];
-var _hoisted_9$10 = {
+var _hoisted_7$21 = { class: "approval-actions" };
+var _hoisted_8$16 = ["disabled", "onClick"];
+var _hoisted_9$11 = {
 	key: 2,
 	class: "approval-error"
 };
@@ -580,25 +580,25 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 				class: "approval-card",
 				"data-question-id": __props.approval.questionId
 			}, [
-				createElementVNode("div", _hoisted_2$61, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1),
-				triageChips().length || triageNote() ? (openBlock(), createElementBlock("div", _hoisted_3$56, [(openBlock(true), createElementBlock(Fragment, null, renderList(triageChips(), (c) => {
+				createElementVNode("div", _hoisted_2$62, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1),
+				triageChips().length || triageNote() ? (openBlock(), createElementBlock("div", _hoisted_3$57, [(openBlock(true), createElementBlock(Fragment, null, renderList(triageChips(), (c) => {
 					return openBlock(), createElementBlock("span", {
 						key: c.flag,
 						class: normalizeClass(["triage-flag", { authoritative: c.authoritative }]),
 						title: chipTitle(c.authoritative)
-					}, toDisplayString(c.flag), 11, _hoisted_4$46);
-				}), 128)), triageNote() ? (openBlock(), createElementBlock("span", _hoisted_5$35, toDisplayString(triageNote()), 1)) : createCommentVNode("", true)])) : createCommentVNode("", true),
-				__props.approval.payload ? (openBlock(), createElementBlock("pre", _hoisted_6$29, toDisplayString(payloadText(__props.approval.payload)), 1)) : createCommentVNode("", true),
-				createElementVNode("div", _hoisted_7$20, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
+					}, toDisplayString(c.flag), 11, _hoisted_4$47);
+				}), 128)), triageNote() ? (openBlock(), createElementBlock("span", _hoisted_5$36, toDisplayString(triageNote()), 1)) : createCommentVNode("", true)])) : createCommentVNode("", true),
+				__props.approval.payload ? (openBlock(), createElementBlock("pre", _hoisted_6$30, toDisplayString(payloadText(__props.approval.payload)), 1)) : createCommentVNode("", true),
+				createElementVNode("div", _hoisted_7$21, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 					return openBlock(), createElementBlock("button", {
 						key: i,
 						class: normalizeClass(btnClass(o.value)),
 						disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
 						onClick: ($event) => props.onRespond(__props.approval.questionId, o.value)
-					}, toDisplayString(o.label || o.value), 11, _hoisted_8$15);
+					}, toDisplayString(o.label || o.value), 11, _hoisted_8$16);
 				}), 128))]),
-				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_9$10, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
-			], 8, _hoisted_1$70);
+				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_9$11, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
+			], 8, _hoisted_1$71);
 		};
 	}
 });
@@ -628,9 +628,9 @@ var ApprovalsList_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/ApprovalToast.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$69 = { class: "approval-title" };
-var _hoisted_2$60 = { class: "approval-actions" };
-var _hoisted_3$55 = ["disabled", "onClick"];
+var _hoisted_1$70 = { class: "approval-title" };
+var _hoisted_2$61 = { class: "approval-actions" };
+var _hoisted_3$56 = ["disabled", "onClick"];
 //#endregion
 //#region src/features/ApprovalToast.vue
 var ApprovalToast_default = /* @__PURE__ */ defineComponent({
@@ -667,13 +667,13 @@ var ApprovalToast_default = /* @__PURE__ */ defineComponent({
 		const options = () => Array.isArray(props.approval.options) && props.approval.options.length ? props.approval.options : FALLBACK;
 		const btnClass = (v) => v === "approve" ? "approve" : v === "reject" ? "reject" : "";
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [createElementVNode("div", _hoisted_1$69, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1), createElementVNode("div", _hoisted_2$60, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
+			return openBlock(), createElementBlock(Fragment, null, [createElementVNode("div", _hoisted_1$70, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1), createElementVNode("div", _hoisted_2$61, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 				return openBlock(), createElementBlock("button", {
 					key: i,
 					class: normalizeClass(btnClass(o.value)),
 					disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
 					onClick: ($event) => props.onRespond(__props.approval.questionId, o.value)
-				}, toDisplayString(o.label || o.value), 11, _hoisted_3$55);
+				}, toDisplayString(o.label || o.value), 11, _hoisted_3$56);
 			}), 128))])], 64);
 		};
 	}
@@ -858,15 +858,15 @@ var thinkingTurns = ref([]);
 var turnFor = (name) => thinkingTurns.value.find((t) => t.name === name);
 //#endregion
 //#region src/features/ThinkingBubble.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$68 = ["data-agent"];
-var _hoisted_2$59 = { class: "sender" };
-var _hoisted_3$54 = { class: "thinking-verb" };
-var _hoisted_4$45 = { class: "thinking-elapsed" };
-var _hoisted_5$34 = { class: "bubble" };
-var _hoisted_6$28 = ["hidden"];
-var _hoisted_7$19 = ["hidden"];
-var _hoisted_8$14 = ["hidden"];
-var _hoisted_9$9 = {
+var _hoisted_1$69 = ["data-agent"];
+var _hoisted_2$60 = { class: "sender" };
+var _hoisted_3$55 = { class: "thinking-verb" };
+var _hoisted_4$46 = { class: "thinking-elapsed" };
+var _hoisted_5$35 = { class: "bubble" };
+var _hoisted_6$29 = ["hidden"];
+var _hoisted_7$20 = ["hidden"];
+var _hoisted_8$15 = ["hidden"];
+var _hoisted_9$10 = {
 	ref: "trace",
 	class: "thinking-fulltrace"
 };
@@ -932,14 +932,14 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 			return openBlock(), createElementBlock("div", mergeProps({
 				class: __props.turn.expanded ? "msg agent thinking-bubble expanded" : "msg agent thinking-bubble",
 				"data-agent": __props.turn.name
-			}, __props.turn.statusLive ? { "data-status-live": "1" } : {}, { onClick }), [createElementVNode("div", _hoisted_2$59, [
+			}, __props.turn.statusLive ? { "data-status-live": "1" } : {}, { onClick }), [createElementVNode("div", _hoisted_2$60, [
 				_cache[2] || (_cache[2] = createElementVNode("svg", {
 					class: "icon",
 					"aria-hidden": "true"
 				}, [createElementVNode("use", { href: "#i-bot" })], -1)),
 				createTextVNode(toDisplayString(` ${__props.turn.name} — `), 1),
-				createElementVNode("span", _hoisted_3$54, toDisplayString(__props.turn.verb), 1),
-				createElementVNode("span", _hoisted_4$45, toDisplayString(__props.turn.elapsed), 1),
+				createElementVNode("span", _hoisted_3$55, toDisplayString(__props.turn.verb), 1),
+				createElementVNode("span", _hoisted_4$46, toDisplayString(__props.turn.elapsed), 1),
 				_cache[3] || (_cache[3] = createElementVNode("span", { class: "thinking-chevron" }, [createElementVNode("svg", {
 					class: "icon",
 					"aria-hidden": "true"
@@ -954,15 +954,15 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 					class: "stop-square",
 					"aria-hidden": "true"
 				}, null, -1)), createTextVNode(toDisplayString(STOP))])
-			]), createElementVNode("div", _hoisted_5$34, [
+			]), createElementVNode("div", _hoisted_5$35, [
 				createElementVNode("div", {
 					class: "thinking-milestone",
 					hidden: !__props.turn.milestone
-				}, toDisplayString(__props.turn.milestone), 9, _hoisted_6$28),
+				}, toDisplayString(__props.turn.milestone), 9, _hoisted_6$29),
 				createElementVNode("div", {
 					class: "thinking-target",
 					hidden: !__props.turn.detail
-				}, toDisplayString(__props.turn.detail), 9, _hoisted_7$19),
+				}, toDisplayString(__props.turn.detail), 9, _hoisted_7$20),
 				createElementVNode("div", {
 					ref: "feed",
 					class: "thinking-feed",
@@ -972,8 +972,8 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 						key: l.key,
 						class: normalizeClass(l.fading ? "thinking-feed-line fading" : "thinking-feed-line")
 					}, toDisplayString(l.text), 3);
-				}), 128))], 8, _hoisted_8$14),
-				createElementVNode("div", _hoisted_9$9, [createTextVNode(toDisplayString(traceEmpty.value), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(traceRows.value, (l, i) => {
+				}), 128))], 8, _hoisted_8$15),
+				createElementVNode("div", _hoisted_9$10, [createTextVNode(toDisplayString(traceEmpty.value), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(traceRows.value, (l, i) => {
 					return openBlock(), createElementBlock("div", {
 						key: i,
 						class: "thinking-fulltrace-line"
@@ -984,7 +984,7 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 					createElementVNode("span"),
 					createElementVNode("span")
 				], -1))
-			])], 16, _hoisted_1$68);
+			])], 16, _hoisted_1$69);
 		};
 	}
 });
@@ -1373,7 +1373,7 @@ function isDictationActive() {
 }
 //#endregion
 //#region src/features/TtsButton.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$67 = [
+var _hoisted_1$68 = [
 	"aria-label",
 	"title",
 	"innerHTML"
@@ -1419,24 +1419,24 @@ var TtsButton_default = /* @__PURE__ */ defineComponent({
 				title: title.value,
 				innerHTML: phase.value === "playing" ? SQUARE : VOLUME,
 				onClick: _cache[0] || (_cache[0] = withModifiers(($event) => unref(toggleTts)(props.msgKey, props.getText), ["stop"]))
-			}, null, 10, _hoisted_1$67);
+			}, null, 10, _hoisted_1$68);
 		};
 	}
 });
 //#endregion
 //#region src/features/MessageBubble.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$66 = { class: "file-bubble" };
-var _hoisted_2$58 = ["src", "alt"];
-var _hoisted_3$53 = { class: "file-info" };
-var _hoisted_4$44 = ["innerHTML"];
-var _hoisted_5$33 = { class: "file-name" };
-var _hoisted_6$27 = { class: "file-size" };
-var _hoisted_7$18 = ["href", "download"];
-var _hoisted_8$13 = {
+var _hoisted_1$67 = { class: "file-bubble" };
+var _hoisted_2$59 = ["src", "alt"];
+var _hoisted_3$54 = { class: "file-info" };
+var _hoisted_4$45 = ["innerHTML"];
+var _hoisted_5$34 = { class: "file-name" };
+var _hoisted_6$28 = { class: "file-size" };
+var _hoisted_7$19 = ["href", "download"];
+var _hoisted_8$14 = {
 	key: 0,
 	class: "file-caption"
 };
-var _hoisted_9$8 = ["innerHTML"];
+var _hoisted_9$9 = ["innerHTML"];
 var DOWNLOAD = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-download\"></use></svg>";
 var IMAGE = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-image\"></use></svg>";
 var FILE_TEXT = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-file-text\"></use></svg>";
@@ -1491,33 +1491,33 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 				ref_key: "bubbleEl",
 				ref: bubbleEl,
 				class: "bubble"
-			}, [createElementVNode("div", _hoisted_1$66, [__props.row.file.mime?.startsWith("image/") ? (openBlock(), createElementBlock("img", {
+			}, [createElementVNode("div", _hoisted_1$67, [__props.row.file.mime?.startsWith("image/") ? (openBlock(), createElementBlock("img", {
 				key: 0,
 				src: __props.row.file.url,
 				alt: __props.row.file.filename,
 				class: "file-image-preview",
 				loading: "lazy",
 				onClick: _cache[0] || (_cache[0] = ($event) => props.onOpenLightbox(__props.row.file.url, __props.row.file.filename))
-			}, null, 8, _hoisted_2$58)) : createCommentVNode("", true), createElementVNode("div", _hoisted_3$53, [
+			}, null, 8, _hoisted_2$59)) : createCommentVNode("", true), createElementVNode("div", _hoisted_3$54, [
 				createElementVNode("span", {
 					class: "file-icon",
 					innerHTML: fileIcon(__props.row.file)
-				}, null, 8, _hoisted_4$44),
-				createElementVNode("span", _hoisted_5$33, toDisplayString(__props.row.file.filename), 1),
-				createElementVNode("span", _hoisted_6$27, toDisplayString(fileSize(__props.row.file.size)), 1),
+				}, null, 8, _hoisted_4$45),
+				createElementVNode("span", _hoisted_5$34, toDisplayString(__props.row.file.filename), 1),
+				createElementVNode("span", _hoisted_6$28, toDisplayString(fileSize(__props.row.file.size)), 1),
 				createElementVNode("a", {
 					href: __props.row.file.url,
 					download: __props.row.file.filename,
 					class: "file-download",
 					title: DOWNLOAD_TITLE,
 					innerHTML: DOWNLOAD
-				}, null, 8, _hoisted_7$18)
-			])]), __props.row.caption ? (openBlock(), createElementBlock("div", _hoisted_8$13, toDisplayString(__props.row.caption), 1)) : createCommentVNode("", true)], 512)) : __props.row.html ? (openBlock(), createElementBlock("div", {
+				}, null, 8, _hoisted_7$19)
+			])]), __props.row.caption ? (openBlock(), createElementBlock("div", _hoisted_8$14, toDisplayString(__props.row.caption), 1)) : createCommentVNode("", true)], 512)) : __props.row.html ? (openBlock(), createElementBlock("div", {
 				key: 1,
 				ref: bind,
 				class: "bubble",
 				innerHTML: __props.row.html
-			}, null, 8, _hoisted_9$8)) : (openBlock(), createElementBlock("div", {
+			}, null, 8, _hoisted_9$9)) : (openBlock(), createElementBlock("div", {
 				key: 2,
 				ref: bind,
 				class: "bubble"
@@ -1586,6 +1586,333 @@ var MsgDeleteButton_default = /* @__PURE__ */ defineComponent({
 	}
 });
 //#endregion
+//#region src/features/origin-badge.ts
+/**
+* Stable hue per label, so a publisher keeps its colour across renders.
+*
+* The 60–190 band is excluded, not wrapped around: those are the yellows and
+* greens that read as "warning" and "success" elsewhere in the console, and a
+* publisher name is neither. Copied exactly — a plain `% 360` would look right
+* and quietly recolour every badge.
+*/
+function labelHue(str) {
+	const BAND_LO = 60;
+	const usable = 230;
+	let h = 0;
+	for (let i = 0; i < String(str).length; i++) h = (h * 31 + str.charCodeAt(i)) % usable;
+	return h < BAND_LO ? h : h + 130;
+}
+/**
+* Everything the badge renders, decided once.
+*
+* Only http(s) — never let a javascript:/data: URL become a click-XSS sink
+* (defense-in-depth; the source list is owner-gated config).
+*/
+function originBadgeProps(origin) {
+	const safeUrl = /^https?:\/\//i.test(origin.url || "") ? origin.url : null;
+	return {
+		tag: safeUrl ? "a" : "span",
+		className: "skill-badge skill-badge-origin" + (origin.official ? " skill-badge-official" : ""),
+		label: origin.label,
+		hue: origin.official ? null : String(labelHue(origin.label)),
+		href: safeUrl,
+		title: safeUrl ? `${origin.label} — open source ↗` : null
+	};
+}
+//#endregion
+//#region src/features/OriginBadge.vue
+var OriginBadge_default = /* @__PURE__ */ defineComponent({
+	__name: "OriginBadge",
+	props: { origin: {} },
+	setup(__props) {
+		/**
+		* The provenance pill — where a skill or MCP server comes from.
+		*
+		* Not an island: it has no mount point of its own. It is the declarative half
+		* of origin-badge.ts, used by islands that render rows containing a badge,
+		* while the still-imperative call sites keep using originBadgeEl().
+		*
+		* Every decision — element type, classes, hue, and the http(s) test that keeps
+		* a javascript:/data: URL out of an href — comes from originBadgeProps(). This
+		* component makes none of them. That is the whole point of the split: writing
+		* the conditionals again here would put a second copy of a security check in
+		* the codebase, and the copy that drifts is the one that stops checking.
+		*
+		* The click handler stops propagation because the rows that carry a badge are
+		* themselves clickable (they open an editor), matching the imperative version.
+		*/
+		const props = __props;
+		const p = computed(() => originBadgeProps(props.origin));
+		/**
+		* Built as one object so absent values emit NO attribute rather than an empty
+		* one. :href="null" removes it, but --badge-hue via :style would still emit
+		* style="", which is the class of difference the first island was caught on.
+		*/
+		const attrs = computed(() => {
+			const v = p.value;
+			const out = { class: v.className };
+			if (v.hue !== null) out.style = { "--badge-hue": v.hue };
+			if (v.href) {
+				out.href = v.href;
+				out.target = "_blank";
+				out.rel = "noopener noreferrer";
+				out.title = v.title;
+				out.onClick = (e) => e.stopPropagation();
+			}
+			return out;
+		});
+		return (_ctx, _cache) => {
+			return openBlock(), createBlock(resolveDynamicComponent(p.value.tag), normalizeProps(guardReactiveProps(attrs.value)), {
+				default: withCtx(() => [createTextVNode(toDisplayString(p.value.label), 1)]),
+				_: 1
+			}, 16);
+		};
+	}
+});
+//#endregion
+//#region src/features/skills-panel-state.ts
+/** /api/skills/duplicates rows — a name plus the agents that each learned it. */
+var skillDuplicates = ref([]);
+/** One agent's own scoped skills, as the agent detail pane receives them. */
+var agentScopedSkills = ref([]);
+/**
+* Rows whose promote button is mid-request.
+*
+* The imperative version disabled the clicked BUTTON directly and re-enabled it
+* on failure. There is no clicked element to hold onto once the row is a vnode,
+* and disabling by identity is what keeps a double-click from promoting twice —
+* so the pending set is state. Keyed by skill name, which is what the endpoint
+* takes.
+*/
+var promotingSkills = ref(/* @__PURE__ */ new Set());
+/**
+* Skill collections shown in Settings, already shaped.
+*
+* `kind` distinguishes the two row types the one template renders: 'source' is
+* an editable GitHub collection, 'builtin' a marketplace entry. `raw` carries
+* the record the callbacks need — it is never rendered.
+*/
+var skillSources = ref([]);
+var skillSections = ref([]);
+/** 'loading' | 'empty' | 'ready' — the registry's three list-level states. */
+var skillsPhase = ref("loading");
+/** Lower-cased filter box contents. An active filter OWNS section expansion. */
+var skillsFilter = ref("");
+/** Section keys currently expanded, when no filter is active. */
+var skillsOpenSections = ref(/* @__PURE__ */ new Set());
+/** Skill name → true when its source repo has newer commits. */
+var skillUpdates = ref({});
+/** Skill names whose Update request is in flight. */
+var skillUpdating = ref(/* @__PURE__ */ new Set());
+/** One learned-skill draft awaiting review. */
+var skillDrafts = ref([]);
+/**
+* Draft id → the undo countdown currently replacing its actions.
+*
+* armUndo held this in the DOM by swapping the actions element's children. As
+* state it survives a re-render, which the imperative version could not manage —
+* it froze the element's width to stop the row jumping instead.
+*/
+var draftUndo = ref({});
+/** Drafts whose Keep is mid-flight; a re-render must not resurrect a live Keep. */
+var draftsReviewing = ref(/* @__PURE__ */ new Set());
+/** The marketplace pool's rows for the open trust tier. */
+var skillPool = ref([]);
+/** 'loading' | 'error' | 'empty' | 'ready' — the pool's four list-level states. */
+var skillPoolPhase = ref("loading");
+/** The wait/empty copy differs when a search is active, so the query rides along. */
+var skillPoolQuery = ref("");
+/** Community tier shows a Review link; Anthropic tier does not. */
+var skillPoolCommunity = ref(false);
+/** Skill suggestions for the agent-create form, derived from its prompt text. */
+var skillSuggestions = ref([]);
+/** Room-skills rows, already shaped and ordered: proposed, then learned, then archived. */
+var roomSkillRows = ref([]);
+/** Draft id → its undo countdown, same shape as draftUndo but for this list. */
+var roomSkillUndo = ref({});
+/** Draft ids whose Keep is mid-flight. */
+var roomSkillsReviewing = ref(/* @__PURE__ */ new Set());
+var draftAction = ref({});
+//#endregion
+//#region src/features/SkillDraftCard.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$66 = {
+	key: 0,
+	class: "skill-draft-card resolved"
+};
+var _hoisted_2$58 = { class: "skill-head" };
+var _hoisted_3$53 = { class: "skill-name" };
+var _hoisted_4$44 = { class: "skill-draft-actions" };
+var _hoisted_5$33 = {
+	key: 1,
+	class: "approval-inroom-note resolved"
+};
+var _hoisted_6$27 = {
+	key: 2,
+	class: "approval-inroom-note resolved"
+};
+var _hoisted_7$18 = {
+	key: 3,
+	class: "approval-inroom-note"
+};
+var _hoisted_8$13 = {
+	key: 4,
+	class: "approval-inroom-note resolved"
+};
+var _hoisted_9$8 = {
+	key: 5,
+	class: "skill-draft-card"
+};
+var _hoisted_10$8 = { class: "skill-head" };
+var _hoisted_11$6 = { class: "skill-name" };
+var _hoisted_12$6 = { class: "skill-desc" };
+var _hoisted_13$5 = { class: "skill-draft-actions" };
+var _hoisted_14$5 = ["onClick"];
+var _hoisted_15$5 = {
+	key: 1,
+	class: "skill-draft-actions"
+};
+var _hoisted_16$5 = [
+	"title",
+	"data-draft-id",
+	"disabled"
+];
+var _hoisted_17$4 = ["disabled"];
+var _hoisted_18$3 = {
+	key: 2,
+	class: "import-warning"
+};
+var VIEW$1 = "View";
+var KEEP$2 = "Keep";
+var DISCARD$2 = "Discard";
+var SAVING$1 = "Keeping…";
+var CHECKING$1 = "Checking for overlaps…";
+var DISCARDING = "Discarding…";
+var UNDO$1 = "Undo";
+var UNDOING = "Undoing…";
+//#endregion
+//#region src/features/SkillDraftCard.vue
+var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
+	__name: "SkillDraftCard",
+	props: {
+		title: {},
+		resolved: { type: Boolean },
+		status: {},
+		agentName: {},
+		desc: {},
+		undoSeconds: {},
+		draftId: {},
+		onView: { type: Function },
+		onKeep: { type: Function },
+		onDiscard: { type: Function },
+		onUndoKeep: { type: Function },
+		onUndoDiscard: { type: Function },
+		onOverlapChoice: { type: Function }
+	},
+	setup(__props) {
+		/**
+		* An in-transcript skill-draft card.
+		*
+		* Everything about a keep in progress — in flight, checking, overlapping,
+		* kept, undone, failed — comes from ONE store keyed by draft id (draftAction),
+		* not from props and not from imperative writes to the buttons. A root app's
+		* props are read once, so a prop would freeze at mount; and the labels this
+		* used to get written directly onto its buttons ('Keeping…', 'Reviewing…')
+		* could never be reverted, because Vue owns them.
+		*
+		* Both decisions commit immediately and the card then offers Undo, which
+		* reverses what happened rather than cancelling a countdown: a keep is undone
+		* by deleting/reverting the skill, a discard by restoring the draft (the
+		* server soft-discards, so the body is still there). No pre-commit timer
+		* remains on this surface — the list surfaces keep theirs, because a
+		* discarded draft leaves those lists and an Undo would have nowhere to live.
+		*/
+		const props = __props;
+		const busy = computed(() => {
+			const p = draftAction.value[props.draftId]?.phase;
+			return p === "saving" || p === "checking" || p === "discarding";
+		});
+		return (_ctx, _cache) => {
+			return unref(draftAction)[__props.draftId]?.phase === "kept" ? (openBlock(), createElementBlock("div", _hoisted_1$66, [createElementVNode("div", _hoisted_2$58, [createElementVNode("span", _hoisted_3$53, "✅ " + toDisplayString(unref(draftAction)[__props.draftId].patched ? "Updated" : "Kept as") + " " + toDisplayString(unref(draftAction)[__props.draftId].name), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
+				key: 0,
+				origin: {
+					label: `wired to ${__props.agentName}`,
+					official: false
+				}
+			}, null, 8, ["origin"])) : createCommentVNode("", true)]), createElementVNode("div", _hoisted_4$44, [createElementVNode("button", {
+				type: "button",
+				class: "btn btn-ghost",
+				onClick: _cache[0] || (_cache[0] = ($event) => props.onView())
+			}, toDisplayString(VIEW$1)), createElementVNode("button", {
+				type: "button",
+				class: "btn btn-secondary",
+				onClick: _cache[1] || (_cache[1] = ($event) => props.onUndoKeep())
+			}, toDisplayString(UNDO$1))])])) : unref(draftAction)[__props.draftId]?.phase === "discarded" ? (openBlock(), createElementBlock("div", _hoisted_5$33, [createElementVNode("span", null, "🗑 " + toDisplayString(unref(draftAction)[__props.draftId].skillName || __props.title) + " — discarded", 1), createElementVNode("button", {
+				type: "button",
+				class: "btn btn-ghost",
+				onClick: _cache[2] || (_cache[2] = ($event) => props.onUndoDiscard())
+			}, toDisplayString(UNDO$1))])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_6$27, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : unref(draftAction)[__props.draftId]?.phase === "undoing" ? (openBlock(), createElementBlock("div", _hoisted_7$18, toDisplayString(UNDOING))) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_8$13, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_9$8, [
+				createElementVNode("div", _hoisted_10$8, [createElementVNode("span", _hoisted_11$6, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
+					key: 0,
+					origin: {
+						label: `learned · ${__props.agentName}`,
+						official: false
+					}
+				}, null, 8, ["origin"])) : createCommentVNode("", true)]),
+				createElementVNode("div", _hoisted_12$6, toDisplayString(__props.desc), 1),
+				unref(draftAction)[__props.draftId]?.phase === "overlaps" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(draftAction)[__props.draftId].overlaps, (o) => {
+					return openBlock(), createElementBlock("div", {
+						key: o.name,
+						class: "import-warning"
+					}, " ⚠ " + toDisplayString(o.name) + " (" + toDisplayString(o.source === "pending-draft" ? "pending draft" : o.source) + ") — " + toDisplayString(o.reason), 1);
+				}), 128)), createElementVNode("div", _hoisted_13$5, [
+					(openBlock(true), createElementBlock(Fragment, null, renderList(unref(draftAction)[__props.draftId].overlaps.filter((x) => x.source !== "pending-draft"), (o) => {
+						return openBlock(), createElementBlock("button", {
+							key: o.name,
+							type: "button",
+							class: "btn btn-primary",
+							onClick: ($event) => props.onOverlapChoice({
+								action: "update",
+								target: o.name
+							})
+						}, " Update " + toDisplayString(o.name), 9, _hoisted_14$5);
+					}), 128)),
+					createElementVNode("button", {
+						type: "button",
+						class: "btn btn-secondary",
+						onClick: _cache[3] || (_cache[3] = ($event) => props.onOverlapChoice({ action: "keep-new" }))
+					}, " Keep as new "),
+					createElementVNode("button", {
+						type: "button",
+						class: "skill-delete",
+						onClick: _cache[4] || (_cache[4] = ($event) => props.onOverlapChoice({ action: "discard" }))
+					}, toDisplayString(DISCARD$2))
+				])], 64)) : (openBlock(), createElementBlock("div", _hoisted_15$5, [
+					createElementVNode("button", {
+						type: "button",
+						class: "btn btn-ghost",
+						onClick: _cache[5] || (_cache[5] = ($event) => props.onView())
+					}, toDisplayString(VIEW$1)),
+					createElementVNode("button", {
+						type: "button",
+						class: "btn btn-primary",
+						title: `Wire to ${__props.agentName}`,
+						"data-draft-id": __props.draftId,
+						disabled: busy.value || void 0,
+						onClick: _cache[6] || (_cache[6] = ($event) => props.onKeep())
+					}, toDisplayString(unref(draftAction)[__props.draftId]?.phase === "saving" ? SAVING$1 : unref(draftAction)[__props.draftId]?.phase === "checking" ? CHECKING$1 : KEEP$2), 9, _hoisted_16$5),
+					createElementVNode("button", {
+						type: "button",
+						class: "skill-delete",
+						disabled: busy.value || void 0,
+						onClick: _cache[7] || (_cache[7] = ($event) => props.onDiscard())
+					}, toDisplayString(unref(draftAction)[__props.draftId]?.phase === "discarding" ? DISCARDING : DISCARD$2), 9, _hoisted_17$4)
+				])),
+				unref(draftAction)[__props.draftId]?.phase === "error" ? (openBlock(), createElementBlock("div", _hoisted_18$3, " ⚠ " + toDisplayString(unref(draftAction)[__props.draftId].error), 1)) : createCommentVNode("", true)
+			]));
+		};
+	}
+});
+//#endregion
 //#region src/features/Transcript.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$65 = {
 	key: 0,
@@ -1608,20 +1935,21 @@ var _hoisted_6$26 = {
 	key: 2,
 	class: "approval-inroom-note"
 };
-var _hoisted_7$17 = {
+var _hoisted_7$17 = ["data-draft-id"];
+var _hoisted_8$12 = {
 	key: 0,
 	class: "msg-body"
 };
-var _hoisted_8$12 = {
+var _hoisted_9$7 = {
 	key: 2,
 	class: "thoughts"
 };
-var _hoisted_9$7 = {
+var _hoisted_10$7 = {
 	key: 0,
 	class: "thoughts-preview"
 };
-var _hoisted_10$7 = { class: "thoughts-body" };
-var _hoisted_11$5 = ["title"];
+var _hoisted_11$5 = { class: "thoughts-body" };
+var _hoisted_12$5 = ["title"];
 var THOUGHTS = "Thoughts";
 //#endregion
 //#region src/features/Transcript.vue
@@ -1678,8 +2006,12 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 					key: 1,
 					approval: row.payload,
 					"on-respond": props.onApprovalRespond
-				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", _hoisted_6$26, toDisplayString(row.note), 1))], 8, _hoisted_4$43)) : (openBlock(), createElementBlock("div", mergeProps({
+				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", _hoisted_6$26, toDisplayString(row.note), 1))], 8, _hoisted_4$43)) : row.kind === "draft" ? (openBlock(), createElementBlock("div", {
 					key: 3,
+					class: "msg skill-draft-msg",
+					"data-draft-id": row.id || ""
+				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_7$17)) : (openBlock(), createElementBlock("div", mergeProps({
+					key: 4,
 					class: row.cls
 				}, { ref_for: true }, row.id ? { "data-message-id": row.id } : {}, { style: row.isA2a ? { "--a2a-accent": row.a2aAccent } : void 0 }), [
 					createElementVNode("div", { class: normalizeClass(row.isA2a ? "sender a2a-label" : "sender") }, [row.isA2a ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("span", {
@@ -1692,7 +2024,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						class: "icon",
 						"aria-hidden": "true"
 					}, [createElementVNode("use", { href: "#i-bot" })], -1)), createTextVNode(toDisplayString(" " + row.sender), 1)], 64)) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [createTextVNode(toDisplayString(row.isMine ? "You" : row.sender), 1)], 64))], 2),
-					row.body ? (openBlock(), createElementBlock("div", _hoisted_7$17, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
+					row.body ? (openBlock(), createElementBlock("div", _hoisted_8$12, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
 						key: 0,
 						"message-id": row.id
 					}, null, 8, ["message-id"])) : createCommentVNode("", true), createVNode(MessageBubble_default, {
@@ -1717,14 +2049,14 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						"clamp-a2a",
 						"on-open-lightbox"
 					])),
-					row.thoughts && row.thoughts.length ? (openBlock(), createElementBlock("details", _hoisted_8$12, [createElementVNode("summary", null, [
+					row.thoughts && row.thoughts.length ? (openBlock(), createElementBlock("details", _hoisted_9$7, [createElementVNode("summary", null, [
 						_cache[2] || (_cache[2] = createElementVNode("svg", {
 							class: "icon",
 							"aria-hidden": "true"
 						}, [createElementVNode("use", { href: "#i-sparkles" })], -1)),
 						createTextVNode(toDisplayString(` ${THOUGHTS} (${row.thoughts.length})`), 1),
-						thoughtsPreview(row.thoughts) ? (openBlock(), createElementBlock("span", _hoisted_9$7, toDisplayString(thoughtsPreview(row.thoughts)), 1)) : createCommentVNode("", true)
-					]), createElementVNode("div", _hoisted_10$7, [(openBlock(true), createElementBlock(Fragment, null, renderList(row.thoughts, (l, i) => {
+						thoughtsPreview(row.thoughts) ? (openBlock(), createElementBlock("span", _hoisted_10$7, toDisplayString(thoughtsPreview(row.thoughts)), 1)) : createCommentVNode("", true)
+					]), createElementVNode("div", _hoisted_11$5, [(openBlock(true), createElementBlock(Fragment, null, renderList(row.thoughts, (l, i) => {
 						return openBlock(), createElementBlock("div", {
 							key: i,
 							class: "thoughts-line"
@@ -1734,7 +2066,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						key: 3,
 						class: "timestamp",
 						title: row.timeTitle || void 0
-					}, toDisplayString(row.timeStr), 9, _hoisted_11$5)) : createCommentVNode("", true),
+					}, toDisplayString(row.timeStr), 9, _hoisted_12$5)) : createCommentVNode("", true),
 					row.isMine && row.status ? (openBlock(), createElementBlock("div", {
 						key: 4,
 						class: normalizeClass(row.status === "✓✓" ? "status delivered" : "status")
@@ -1992,6 +2324,13 @@ function appendMessage(msg, statusText, prepend) {
 /** Append, or PREPEND for older-message pagination — which is what beforeNode
 *  expressed when the transcript was a node list. */
 function pushRow(row, prepend) {
+	const at = messages.value.findIndex((r) => r.key === row.key);
+	if (at !== -1) {
+		const next = [...messages.value];
+		next[at] = row;
+		messages.value = next;
+		return messages.value[at];
+	}
 	if (prepend) messages.value = [row, ...messages.value];
 	else messages.value = [...messages.value, row];
 	return prepend ? messages.value[0] : messages.value[messages.value.length - 1];
@@ -4266,90 +4605,6 @@ var McpList_default = /* @__PURE__ */ defineComponent({
 	}
 });
 //#endregion
-//#region src/features/origin-badge.ts
-/**
-* Stable hue per label, so a publisher keeps its colour across renders.
-*
-* The 60–190 band is excluded, not wrapped around: those are the yellows and
-* greens that read as "warning" and "success" elsewhere in the console, and a
-* publisher name is neither. Copied exactly — a plain `% 360` would look right
-* and quietly recolour every badge.
-*/
-function labelHue(str) {
-	const BAND_LO = 60;
-	const usable = 230;
-	let h = 0;
-	for (let i = 0; i < String(str).length; i++) h = (h * 31 + str.charCodeAt(i)) % usable;
-	return h < BAND_LO ? h : h + 130;
-}
-/**
-* Everything the badge renders, decided once.
-*
-* Only http(s) — never let a javascript:/data: URL become a click-XSS sink
-* (defense-in-depth; the source list is owner-gated config).
-*/
-function originBadgeProps(origin) {
-	const safeUrl = /^https?:\/\//i.test(origin.url || "") ? origin.url : null;
-	return {
-		tag: safeUrl ? "a" : "span",
-		className: "skill-badge skill-badge-origin" + (origin.official ? " skill-badge-official" : ""),
-		label: origin.label,
-		hue: origin.official ? null : String(labelHue(origin.label)),
-		href: safeUrl,
-		title: safeUrl ? `${origin.label} — open source ↗` : null
-	};
-}
-//#endregion
-//#region src/features/OriginBadge.vue
-var OriginBadge_default = /* @__PURE__ */ defineComponent({
-	__name: "OriginBadge",
-	props: { origin: {} },
-	setup(__props) {
-		/**
-		* The provenance pill — where a skill or MCP server comes from.
-		*
-		* Not an island: it has no mount point of its own. It is the declarative half
-		* of origin-badge.ts, used by islands that render rows containing a badge,
-		* while the still-imperative call sites keep using originBadgeEl().
-		*
-		* Every decision — element type, classes, hue, and the http(s) test that keeps
-		* a javascript:/data: URL out of an href — comes from originBadgeProps(). This
-		* component makes none of them. That is the whole point of the split: writing
-		* the conditionals again here would put a second copy of a security check in
-		* the codebase, and the copy that drifts is the one that stops checking.
-		*
-		* The click handler stops propagation because the rows that carry a badge are
-		* themselves clickable (they open an editor), matching the imperative version.
-		*/
-		const props = __props;
-		const p = computed(() => originBadgeProps(props.origin));
-		/**
-		* Built as one object so absent values emit NO attribute rather than an empty
-		* one. :href="null" removes it, but --badge-hue via :style would still emit
-		* style="", which is the class of difference the first island was caught on.
-		*/
-		const attrs = computed(() => {
-			const v = p.value;
-			const out = { class: v.className };
-			if (v.hue !== null) out.style = { "--badge-hue": v.hue };
-			if (v.href) {
-				out.href = v.href;
-				out.target = "_blank";
-				out.rel = "noopener noreferrer";
-				out.title = v.title;
-				out.onClick = (e) => e.stopPropagation();
-			}
-			return out;
-		});
-		return (_ctx, _cache) => {
-			return openBlock(), createBlock(resolveDynamicComponent(p.value.tag), normalizeProps(guardReactiveProps(attrs.value)), {
-				default: withCtx(() => [createTextVNode(toDisplayString(p.value.label), 1)]),
-				_: 1
-			}, 16);
-		};
-	}
-});
-//#endregion
 //#region src/features/mcp-panel-state.ts
 /** /api/mcp-sources rows — the built-in registry entries and their on/off state. */
 var mcpSources = ref([]);
@@ -5662,9 +5917,11 @@ var UndoTimer_default = /* @__PURE__ */ defineComponent({
 		* so an island could never call it, and its last caller (the thread delete)
 		* was handing it a row that ThreadRows renders.
 		*
-		* Both users drive it from state keyed by id — cardUndo for skill drafts,
-		* threadUndo for threads — and both measure the width BEFORE arming, which is
-		* what armUndo's getBoundingClientRect() call was for.
+		* Its users drive it from state keyed by id — draftUndo/roomSkillUndo for the
+		* skill-draft lists, threadUndo for threads — and each measures the width
+		* BEFORE arming, which is what armUndo's getBoundingClientRect() call was for.
+		* The in-transcript card no longer uses it: both of its decisions commit
+		* immediately and offer a post-hoc Undo instead.
 		*
 		* The two-frame delay is load-bearing: the fill has to paint at 100% before the
 		* transition to 0% starts, or the bar jumps straight to empty.
@@ -9753,7 +10010,7 @@ async function wizardCreateAndFinish() {
 			kind: "new",
 			name: agentName
 		};
-		if (wizardEngine === "codex" || wizardEngine === "grok") agentRef.provider = wizardEngine;
+		agentRef.provider = wizardEngine === "ollama" ? "claude" : wizardEngine;
 		const r = await authFetch("/api/rooms", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -10331,7 +10588,6 @@ function navigateLightbox(delta) {
 	setLightboxImage(next);
 }
 function blockingOverlayOpen() {
-	if (document.querySelector(".floor-popover")) return true;
 	if (document.querySelector(".modal-overlay:not([hidden])")) return true;
 	return [
 		"model-picker",
@@ -12197,73 +12453,6 @@ function wireLearnPanel() {
 	$("#learn-nudge-dismiss")?.addEventListener("click", hideLearnNudge);
 }
 //#endregion
-//#region src/features/skills-panel-state.ts
-/** /api/skills/duplicates rows — a name plus the agents that each learned it. */
-var skillDuplicates = ref([]);
-/** One agent's own scoped skills, as the agent detail pane receives them. */
-var agentScopedSkills = ref([]);
-/**
-* Rows whose promote button is mid-request.
-*
-* The imperative version disabled the clicked BUTTON directly and re-enabled it
-* on failure. There is no clicked element to hold onto once the row is a vnode,
-* and disabling by identity is what keeps a double-click from promoting twice —
-* so the pending set is state. Keyed by skill name, which is what the endpoint
-* takes.
-*/
-var promotingSkills = ref(/* @__PURE__ */ new Set());
-/**
-* Skill collections shown in Settings, already shaped.
-*
-* `kind` distinguishes the two row types the one template renders: 'source' is
-* an editable GitHub collection, 'builtin' a marketplace entry. `raw` carries
-* the record the callbacks need — it is never rendered.
-*/
-var skillSources = ref([]);
-var skillSections = ref([]);
-/** 'loading' | 'empty' | 'ready' — the registry's three list-level states. */
-var skillsPhase = ref("loading");
-/** Lower-cased filter box contents. An active filter OWNS section expansion. */
-var skillsFilter = ref("");
-/** Section keys currently expanded, when no filter is active. */
-var skillsOpenSections = ref(/* @__PURE__ */ new Set());
-/** Skill name → true when its source repo has newer commits. */
-var skillUpdates = ref({});
-/** Skill names whose Update request is in flight. */
-var skillUpdating = ref(/* @__PURE__ */ new Set());
-/** One learned-skill draft awaiting review. */
-var skillDrafts = ref([]);
-/**
-* Draft id → the undo countdown currently replacing its actions.
-*
-* armUndo held this in the DOM by swapping the actions element's children. As
-* state it survives a re-render, which the imperative version could not manage —
-* it froze the element's width to stop the row jumping instead.
-*/
-var draftUndo = ref({});
-/** Drafts whose Keep is mid-flight; a re-render must not resurrect a live Keep. */
-var draftsReviewing = ref(/* @__PURE__ */ new Set());
-/** The marketplace pool's rows for the open trust tier. */
-var skillPool = ref([]);
-/** 'loading' | 'error' | 'empty' | 'ready' — the pool's four list-level states. */
-var skillPoolPhase = ref("loading");
-/** The wait/empty copy differs when a search is active, so the query rides along. */
-var skillPoolQuery = ref("");
-/** Community tier shows a Review link; Anthropic tier does not. */
-var skillPoolCommunity = ref(false);
-/** Skill suggestions for the agent-create form, derived from its prompt text. */
-var skillSuggestions = ref([]);
-/** Room-skills rows, already shaped and ordered: proposed, then learned, then archived. */
-var roomSkillRows = ref([]);
-/** Draft id → its undo countdown, same shape as draftUndo but for this list. */
-var roomSkillUndo = ref({});
-/** Draft ids whose Keep is mid-flight. */
-var roomSkillsReviewing = ref(/* @__PURE__ */ new Set());
-/** In-transcript draft cards: id → its undo countdown. */
-var cardUndo = ref({});
-/** In-transcript draft cards whose Keep is mid-flight. */
-var cardReviewing = ref(/* @__PURE__ */ new Set());
-//#endregion
 //#region src/features/SkillDuplicates.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$21 = { class: "skill-info" };
 var _hoisted_2$17 = { class: "skill-head" };
@@ -12652,7 +12841,7 @@ var _hoisted_7$7 = [
 var _hoisted_8$5 = ["onClick"];
 var KEEP$1 = "Keep";
 var DISCARD$1 = "Discard";
-var REVIEWING$1 = "Reviewing…";
+var REVIEWING$1 = "Checking for overlaps…";
 var SOURCE = "from this conversation →";
 /**
 * The separator is BOUND, not a literal space in the template: the imperative
@@ -12921,7 +13110,7 @@ var _hoisted_17$2 = { class: "room-skill-name" };
 var _hoisted_18$1 = ["onClick"];
 var VIEW = "View";
 var KEEP = "Keep";
-var REVIEWING = "Reviewing…";
+var REVIEWING = "Checking for overlaps…";
 var DISCARD = "Discard";
 var REVERT$1 = "Revert";
 var REVERT_TITLE = "Back to the previous revision";
@@ -13190,7 +13379,12 @@ function skillDraftRow(msg) {
 	const id = d.draftId || msg.id;
 	const resolved = d.status === "kept" || d.status === "discarded";
 	const title = d.kind === "patch" ? `Proposed change to ${d.targetSkill || d.skillName}` : `Proposed skill: ${d.skillName}`;
-	if (reviewingDrafts.has(id)) cardReviewing.value = new Set(cardReviewing.value).add(id);
+	const draft = {
+		id: d.draftId,
+		agentGroupId: d.agentGroupId,
+		agentName: d.agentName,
+		skillName: d.skillName
+	};
 	const props = {
 		title,
 		resolved,
@@ -13200,40 +13394,18 @@ function skillDraftRow(msg) {
 		undoSeconds: 10,
 		draftId: id,
 		onView: () => openSkillDraft(d.draftId),
-		onKeep: () => armCardUndo(id, `Keeping ${d.skillName}…`, () => keepSkillDraft({
-			id: d.draftId,
-			agentGroupId: d.agentGroupId,
-			agentName: d.agentName
-		}, null)),
-		onDiscard: () => armCardUndo(id, `Discarding ${d.skillName}…`, () => discardSkillDraft(d.draftId)),
-		onUndo: () => clearCardUndo(id)
+		onKeep: () => void keepSkillDraft(draft),
+		onDiscard: () => void discardDraftFromCard(id, draft),
+		onUndoKeep: () => void undoKeptSkill(id, draft),
+		onUndoDiscard: () => void restoreDiscardedDraft(id, draft),
+		onOverlapChoice: (decision) => void resolveOverlap(id, draft, decision)
 	};
 	return {
-		key: nextKey(),
+		key: `draft:${id}`,
 		kind: "draft",
 		id,
 		payload: props
 	};
-}
-function armCardUndo(id, label, commit) {
-	const el = $(`#messages .skill-draft-msg[data-draft-id="${id}"] .skill-draft-actions`);
-	const w = el ? el.getBoundingClientRect().width : 0;
-	cardUndo.value = {
-		...cardUndo.value,
-		[id]: {
-			label,
-			width: w ? `${w}px` : "",
-			commit: () => {
-				clearCardUndo(id);
-				commit();
-			}
-		}
-	};
-}
-function clearCardUndo(id) {
-	const next = { ...cardUndo.value };
-	delete next[id];
-	cardUndo.value = next;
 }
 async function refreshDraftBadge(known) {
 	let n = known;
@@ -13263,7 +13435,7 @@ function mountSkillDrafts() {
 			const room = state.lastRoomsList.find((r) => r.id === roomId);
 			deps$8.joinRoom(roomId, room ? room.name : roomId);
 		},
-		onKeep: (r) => armDraftUndo(r.id, `Keeping ${r.raw.skillName}…`, () => keepSkillDraft(r.raw, null)),
+		onKeep: (r) => void keepSkillDraft(r.raw),
 		onDiscard: (r) => armDraftUndo(r.id, `Discarding ${r.raw.skillName}…`, () => discardSkillDraft(r.id)),
 		onUndo: (id) => clearDraftUndo(id)
 	});
@@ -13440,61 +13612,185 @@ function renderDraftEditor() {
 	}
 	showSkillEditor(true);
 }
+/**
+* Draft ids whose keep is still moving. The two list surfaces (drafts panel,
+* room skills) recompute their own reactive sets from this on every render;
+* setPhase is the only writer.
+*/
 var reviewingDrafts = /* @__PURE__ */ new Set();
-function draftKeepButton(draftId) {
-	return document.querySelector(`button[data-draft-id="${CSS.escape(draftId)}"]`);
+/**
+* The keep flow's ONE writer.
+*
+* Everything a card shows about a keep — in flight, checking, overlapping,
+* kept, undone, failed — is this phase, so there is no second place for the
+* truth to rot. The imperative button writes this replaced (btn.textContent =
+* 'Keeping…' / markDraftReviewing) could not be reverted by anything reactive:
+* Vue owns those labels, so a card that entered a state never left it.
+*/
+function setPhase(id, phase) {
+	const next = { ...draftAction.value };
+	if (phase) next[id] = phase;
+	else delete next[id];
+	draftAction.value = next;
+	if (phase !== null && (phase.phase === "saving" || phase.phase === "checking" || phase.phase === "discarding" || phase.phase === "undoing")) reviewingDrafts.add(id);
+	else reviewingDrafts.delete(id);
 }
-function markDraftReviewing(btn, reviewing) {
-	if (!btn) return;
-	btn.disabled = reviewing;
-	btn.textContent = reviewing ? "Reviewing…" : "Keep";
+/** Does this draft have a card in the transcript currently on screen? */
+function hasDraftCard(id) {
+	return messages.value.some((r) => r.key === `draft:${id}`);
 }
 function handleSkillDraftReview(msg) {
-	reviewingDrafts.delete(msg.draftId);
-	const d = {
-		id: msg.draftId,
-		skillName: msg.skillName,
-		agentGroupId: msg.agentGroupId,
-		agentName: msg.agentName
-	};
+	const id = msg.draftId;
 	if (msg.outcome === "kept") {
-		showToast(msg.updated ? `Updated ${msg.name || d.skillName} — wired to ${d.agentName}` : `Kept ${msg.name || d.skillName} — wired to ${d.agentName}`, { kind: "success" });
+		setPhase(id, {
+			phase: "kept",
+			name: msg.name || msg.skillName,
+			patched: !!msg.patched,
+			agentGroupId: msg.agentGroupId,
+			agentName: msg.agentName
+		});
 		refreshDraftBadge();
 		renderSkillsRegistry();
 		return;
 	}
-	markDraftReviewing(draftKeepButton(msg.draftId), false);
 	if (msg.outcome === "overlaps" && Array.isArray(msg.overlaps) && msg.overlaps.length) {
-		showOverlapChoice(d, msg.overlaps);
+		if (hasDraftCard(id)) {
+			setPhase(id, {
+				phase: "overlaps",
+				overlaps: msg.overlaps
+			});
+			return;
+		}
+		setPhase(id, null);
+		showOverlapChoice({
+			id,
+			skillName: msg.skillName,
+			agentGroupId: msg.agentGroupId,
+			agentName: msg.agentName
+		}, msg.overlaps);
 		return;
 	}
+	setPhase(id, {
+		phase: "error",
+		error: msg.error || "Review failed"
+	});
 	toastError(new Error(msg.error || "Review failed"), "Keep failed");
 }
-async function keepSkillDraft(d, btn, force, updateTarget) {
-	if (btn) {
-		btn.disabled = true;
-		btn.textContent = updateTarget ? "Updating…" : "Keeping…";
-	}
+/**
+* Keep + wire a draft. Commits immediately: the pre-commit countdown is gone,
+* and the undo it used to wait out now sits on the kept card, where it also
+* covers keeps this click never made (auto-keep, another operator).
+*/
+async function keepSkillDraft(d, force, updateTarget) {
+	const id = d.id;
+	setPhase(id, { phase: "saving" });
 	try {
 		const qs = updateTarget ? `?updateTarget=${encodeURIComponent(updateTarget)}` : force ? "?force=1" : "";
-		const res = await authFetch(`/api/skill-drafts/${encodeURIComponent(d.id)}/keep${qs}`, {
+		const res = await authFetch(`/api/skill-drafts/${encodeURIComponent(id)}/keep${qs}`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ agentGroupId: d.agentGroupId })
 		});
 		const body = await res.json().catch(() => ({}));
 		if (res.status === 202 && body.queued) {
-			reviewingDrafts.add(d.id);
-			markDraftReviewing(btn, true);
+			setPhase(id, { phase: "checking" });
 			return;
 		}
 		if (!res.ok) throw new Error(body.error || res.statusText);
-		showToast(body.updated ? `Updated ${body.name} — wired to ${d.agentName}` : `Kept ${body.name} — wired to ${d.agentName}`, { kind: "success" });
+		setPhase(id, {
+			phase: "kept",
+			name: body.name || d.skillName,
+			patched: !!body.updated || !!body.patched,
+			agentGroupId: d.agentGroupId,
+			agentName: d.agentName
+		});
 		refreshDraftBadge();
 		renderSkillsRegistry();
 	} catch (err) {
+		setPhase(id, {
+			phase: "error",
+			error: err?.message || String(err)
+		});
 		toastError(err, "Keep failed");
-		markDraftReviewing(btn, false);
+	}
+}
+/** Act on an inline overlap choice. */
+async function resolveOverlap(id, d, decision) {
+	if (decision.action === "update") return keepSkillDraft(d, false, decision.target);
+	if (decision.action === "keep-new") return keepSkillDraft(d, true);
+	setPhase(id, { phase: "saving" });
+	await discardSkillDraft(d.id);
+	setPhase(id, null);
+}
+/**
+* Discard from a card: immediate, then undoable.
+*
+* The server soft-discards — the row flips to 'discarded' and the staged body
+* stays on disk — so the card can offer Undo afterwards rather than making the
+* operator wait out a countdown before anything happens. The list surfaces keep
+* their pre-commit window instead: a discarded draft leaves those lists (they
+* filter to pending), so there is nowhere for an Undo to live.
+*/
+async function discardDraftFromCard(id, d) {
+	setPhase(id, { phase: "discarding" });
+	try {
+		await apiJson(`/api/skill-drafts/${encodeURIComponent(d.id)}`, { method: "DELETE" });
+		setPhase(id, {
+			phase: "discarded",
+			skillName: d.skillName
+		});
+		refreshDraftBadge();
+		renderSkillDrafts();
+	} catch (err) {
+		setPhase(id, {
+			phase: "error",
+			error: err?.message || String(err)
+		});
+		toastError(err, "Discard failed");
+	}
+}
+/** Undo a discard: the draft comes back with its own id and body. */
+async function restoreDiscardedDraft(id, d) {
+	setPhase(id, { phase: "undoing" });
+	try {
+		await apiJson(`/api/skill-drafts/${encodeURIComponent(d.id)}/restore`, { method: "POST" });
+		setPhase(id, null);
+		refreshDraftBadge();
+		renderSkillDrafts();
+	} catch (err) {
+		setPhase(id, {
+			phase: "discarded",
+			skillName: d.skillName
+		});
+		toastError(err, "Undo failed");
+	}
+}
+/**
+* Undo a keep AFTER it landed — the reverse of the write, not a cancelled
+* countdown. A new skill is deleted (the server archives it, so it stays
+* restorable); a keep that revised an existing skill reverts to the snapshot
+* applySkillDraft took first. Either way the agent's containers restart again,
+* which is why this is a deliberate button and not automatic.
+*/
+async function undoKeptSkill(id, d) {
+	const kept = draftAction.value[id];
+	if (!kept || kept.phase !== "kept") return;
+	setPhase(id, { phase: "undoing" });
+	const agent = encodeURIComponent(kept.agentGroupId || d.agentGroupId);
+	const name = encodeURIComponent(kept.name);
+	try {
+		if (kept.patched) await apiJson(`/api/agents/${agent}/skills/scoped/${name}/revert`, { method: "POST" });
+		else await apiJson(`/api/agents/${agent}/skills/scoped/${name}`, { method: "DELETE" });
+		setPhase(id, {
+			phase: "undone",
+			name: kept.name
+		});
+		showToast(kept.patched ? `Reverted ${kept.name}` : `Removed ${kept.name}`, { kind: "success" });
+		refreshDraftBadge();
+		renderSkillsRegistry();
+	} catch (err) {
+		setPhase(id, kept);
+		toastError(err, "Undo failed");
 	}
 }
 async function discardSkillDraft(id) {
@@ -14197,14 +14493,13 @@ function mountRoomSkills() {
 	roomSkillsApp = createApp(RoomSkills_default, {
 		undoSeconds: 10,
 		onView: (id) => openSkillDraft(id),
-		onKeep: (r) => armRoomSkillUndo(r.id, `Keeping ${r.skillName}…`, async () => {
-			await keepSkillDraft({
+		onKeep: (r) => {
+			keepSkillDraft({
 				id: r.id,
 				agentGroupId: r.agentGroupId,
 				agentName: r.agentName
-			}, null);
-			renderRoomSkills();
-		}),
+			}).then(() => renderRoomSkills());
+		},
 		onDiscard: (r) => armRoomSkillUndo(r.id, `Discarding ${r.skillName}…`, async () => {
 			await discardSkillDraft(r.id);
 			renderRoomSkills();
@@ -14548,8 +14843,8 @@ async function showOverlapChoice(d, overlaps) {
 		extraActions: extras
 	});
 	const decision = choice === true ? confirmDecision : choice || { action: "cancel" };
-	if (decision.action === "update") return keepSkillDraft(d, draftKeepButton(d.id), false, decision.target);
-	if (decision.action === "keep-new") return keepSkillDraft(d, draftKeepButton(d.id), true);
+	if (decision.action === "update") return keepSkillDraft(d, false, decision.target);
+	if (decision.action === "keep-new") return keepSkillDraft(d, true);
 	if (decision.action === "discard") {
 		await discardSkillDraft(d.id);
 		showToast(`Discarded ${d.skillName || "draft"}`, { kind: "success" });
@@ -14988,15 +15283,6 @@ function hideOtherFullViews(keep) {
 		journeyActive = false;
 		$("#journey").hidden = true;
 	}
-	if (keep !== "floor" && floorActive) {
-		floorActive = false;
-		$("#floor").hidden = true;
-		if (floorTimer) {
-			clearInterval(floorTimer);
-			floorTimer = null;
-		}
-		closeDeskPopover();
-	}
 	if (keep !== "matrix" && matrixActive) {
 		matrixActive = false;
 		$("#matrix").hidden = true;
@@ -15052,285 +15338,6 @@ function teardownTopology() {
 function toggleTopology() {
 	if (topologyActive) closeView("topology");
 	else openTopology();
-}
-var floorActive = false;
-var floorTimer = null;
-var FLOOR_POLL_MS = 5e3;
-var FLOOR_LABEL = {
-	stuck: "Stuck",
-	working: "Working",
-	idle: "Idle",
-	cold: "Cold"
-};
-/** Raw status kinds, cased for display next to the state labels. */
-var KIND_META_LABEL = {
-	tool: "Tool",
-	reasoning: "Thinking",
-	progress: "Working",
-	start: "Started",
-	done: "Done",
-	stalled: "Stalled"
-};
-/** "4m", "2h" — a desk's age only needs to be readable, not precise. */
-function floorAge(ms) {
-	if (ms == null) return "";
-	const m = Math.floor(ms / 6e4);
-	if (m < 1) return "just now";
-	if (m < 60) return `${m}m`;
-	const h = Math.floor(m / 60);
-	if (h < 24) return `${h}h`;
-	return `${Math.floor(h / 24)}d`;
-}
-var FLOOR_FEED_CAP = 80;
-var floorFeedCursor = null;
-var floorFeedEvents = [];
-/** Identity keys of everything in floorFeedEvents — the server re-reads a
-*  small window behind the cursor on purpose, so duplicates are expected. */
-var floorFeedSeen = /* @__PURE__ */ new Set();
-var floorFeedEpoch = 0;
-var floorFeedInFlight = false;
-function feedKey(e) {
-	return `${e.at}|${e.session_id}|${e.kind}|${e.text ?? ""}`;
-}
-/** session_id → agent_name, from the last desks payload — names a2a senders. */
-var floorSessionNames = /* @__PURE__ */ new Map();
-/** Last desks payload, for the popover; restricted gates the Restart action. */
-var floorLastDesks = [];
-var floorRestricted = true;
-var FEED_KIND_LABEL = {
-	thinking: "Thinking",
-	tool: "Tool",
-	message: "Message",
-	a2a: "Handoff"
-};
-function renderFloorFeed() {
-	const feed = $("#floor-feed");
-	if (!feed) return;
-	if (!floorFeedEvents.length) {
-		feed.innerHTML = "<div class=\"floor-feed-empty\">Quiet for the last 2 minutes</div>";
-		return;
-	}
-	feed.innerHTML = floorFeedEvents.map((e) => {
-		const agentLabel = e.kind === "a2a" && e.from_session_id ? `${esc(floorSessionNames.get(e.from_session_id) || "agent")} → ${esc(e.agent_name)}` : esc(e.agent_name);
-		const age = floorAge(Date.now() - Date.parse(e.at));
-		const tag = e.room_id ? "button" : "div";
-		return `<${tag} class="floor-event${e.room_id ? " floor-event-link" : ""}" data-room="${esc(e.room_id || "")}">
-        <span class="ff-kind ff-${esc(e.kind)}">${esc(FEED_KIND_LABEL[e.kind] || e.kind)}</span>
-        <span class="ff-agent">${agentLabel}</span>
-        ${e.text ? `<span class="ff-text">${esc(e.text)}</span>` : ""}
-        <span class="ff-age">${esc(age)}</span>
-      </${tag}>`;
-	}).join("");
-}
-var deskPopoverEl = null;
-var deskPopoverAnchor = null;
-function closeDeskPopover() {
-	const hadFocus = deskPopoverEl?.contains(document.activeElement) ?? false;
-	deskPopoverEl?.remove();
-	deskPopoverEl = null;
-	if (hadFocus && deskPopoverAnchor?.isConnected) deskPopoverAnchor.focus();
-	deskPopoverAnchor = null;
-	document.removeEventListener("click", onDocClickCloseDeskPopover, true);
-	document.removeEventListener("keydown", onEscCloseDeskPopover, true);
-}
-function onDocClickCloseDeskPopover(e) {
-	if (deskPopoverEl && !deskPopoverEl.contains(e.target)) closeDeskPopover();
-}
-function onEscCloseDeskPopover(e) {
-	if (e.key === "Escape") closeDeskPopover();
-}
-function showDeskPopover(sessionId, anchor, onOpenRoom) {
-	closeDeskPopover();
-	const d = floorLastDesks.find((x) => x.session_id === sessionId);
-	if (!d) return;
-	const pop = document.createElement("div");
-	pop.className = "floor-popover";
-	pop.setAttribute("role", "dialog");
-	const canRestart = d.state === "stuck" && !floorRestricted;
-	pop.innerHTML = `
-    <div class="floor-pop-name">${esc(d.agent_name)}</div>
-    <div class="floor-pop-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${d.last_kind ? ` · ${esc(KIND_META_LABEL[d.last_kind] || d.last_kind)}` : ""}${d.idle_ms != null ? ` · ${esc(floorAge(d.idle_ms))}` : ""}</div>
-    ${d.room_name ? `<div class="floor-pop-meta">${esc(d.room_name)}</div>` : ""}
-    <div class="floor-pop-id">${esc(d.session_id)}</div>
-    <div class="floor-pop-actions">
-      ${d.room_id ? "<button class=\"btn btn-ghost\" data-act=\"room\">Open room</button>" : ""}
-      ${canRestart ? "<button class=\"btn btn-danger\" data-act=\"restart\">Restart</button>" : ""}
-    </div>`;
-	pop.querySelector("[data-act=\"room\"]")?.addEventListener("click", () => {
-		closeDeskPopover();
-		if (d.room_id) onOpenRoom(d.room_id);
-	});
-	pop.querySelector("[data-act=\"restart\"]")?.addEventListener("click", async (e) => {
-		const btn = e.currentTarget;
-		const restore = wizardBusy(btn, "Restarting…");
-		try {
-			const r = await authFetch(`/api/floor/sessions/${encodeURIComponent(sessionId)}/restart`, { method: "POST" });
-			if (r.ok) {
-				showToast("Restarted", { kind: "success" });
-				closeDeskPopover();
-				refreshFloor();
-			} else toastError((await r.json().catch(() => ({}))).error || `Restart failed (${r.status})`);
-		} catch (err) {
-			toastError(err, "Restart failed");
-		} finally {
-			restore();
-		}
-	});
-	pop.setAttribute("aria-label", d.agent_name);
-	document.body.appendChild(pop);
-	const r = anchor.getBoundingClientRect();
-	const pw = pop.offsetWidth;
-	pop.style.left = `${Math.max(8, Math.min(window.innerWidth - pw - 8, r.left))}px`;
-	pop.style.top = `${Math.min(window.innerHeight - pop.offsetHeight - 8, r.bottom + 4)}px`;
-	deskPopoverEl = pop;
-	deskPopoverAnchor = anchor;
-	pop.querySelector("button")?.focus();
-	document.addEventListener("click", onDocClickCloseDeskPopover, true);
-	document.addEventListener("keydown", onEscCloseDeskPopover, true);
-}
-function drawEdge(fromSession, toSession) {
-	if (!fromSession) return;
-	if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-	const grid = $("#floor-grid");
-	if (!grid) return;
-	const a = grid.querySelector(`.floor-desk[data-session="${CSS.escape(fromSession)}"]`);
-	const b = grid.querySelector(`.floor-desk[data-session="${CSS.escape(toSession)}"]`);
-	if (!a || !b) return;
-	const gr = grid.getBoundingClientRect();
-	const ar = a.getBoundingClientRect();
-	const br = b.getBoundingClientRect();
-	let svg = grid.querySelector(".floor-edges");
-	if (!svg) {
-		svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-		svg.setAttribute("class", "floor-edges");
-		grid.appendChild(svg);
-	}
-	svg.setAttribute("viewBox", `0 0 ${gr.width} ${gr.height}`);
-	const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-	line.setAttribute("x1", String(ar.left - gr.left + ar.width / 2));
-	line.setAttribute("y1", String(ar.top - gr.top + ar.height / 2));
-	line.setAttribute("x2", String(br.left - gr.left + br.width / 2));
-	line.setAttribute("y2", String(br.top - gr.top + br.height / 2));
-	line.setAttribute("class", "floor-edge");
-	svg.appendChild(line);
-	setTimeout(() => line.remove(), 1600);
-}
-function pulseDesk(sessionId) {
-	if (!sessionId) return;
-	const desk = document.querySelector(`.floor-desk[data-session="${CSS.escape(sessionId)}"]`);
-	if (!desk) return;
-	desk.classList.remove("floor-desk-pulse");
-	desk.offsetWidth;
-	desk.classList.add("floor-desk-pulse");
-}
-async function refreshFloorFeed() {
-	if (floorFeedInFlight) return;
-	floorFeedInFlight = true;
-	const epoch = floorFeedEpoch;
-	try {
-		const r = await authFetch(`/api/floor/feed${floorFeedCursor ? `?since=${encodeURIComponent(floorFeedCursor)}` : ""}`);
-		if (epoch !== floorFeedEpoch) return;
-		if (!r.ok) return;
-		const data = await r.json();
-		if (epoch !== floorFeedEpoch) return;
-		floorFeedCursor = data?.cursor || floorFeedCursor;
-		const fresh = (Array.isArray(data?.events) ? data.events : []).filter((e) => !floorFeedSeen.has(feedKey(e)));
-		if (fresh.length) {
-			floorFeedEvents = fresh.reverse().concat(floorFeedEvents).slice(0, FLOOR_FEED_CAP);
-			floorFeedSeen = new Set(floorFeedEvents.map(feedKey));
-			for (const e of fresh) {
-				pulseDesk(e.session_id);
-				if (e.kind === "a2a") {
-					pulseDesk(e.from_session_id);
-					drawEdge(e.from_session_id, e.session_id);
-				}
-			}
-		}
-		renderFloorFeed();
-	} catch {} finally {
-		floorFeedInFlight = false;
-	}
-}
-async function refreshFloor() {
-	const grid = $("#floor-grid");
-	const counts = $("#floor-counts");
-	if (!grid || !counts) return;
-	try {
-		const r = await authFetch("/api/floor");
-		if (!r.ok) {
-			grid.innerHTML = `<div class="dash-empty">Could not load the floor (${r.status})</div>`;
-			counts.innerHTML = "";
-			return;
-		}
-		renderFloor(await r.json());
-		refreshFloorFeed();
-	} catch {
-		if (!grid.childElementCount) grid.innerHTML = "<div class=\"dash-empty\">Could not load the floor</div>";
-	}
-}
-function renderFloor(data) {
-	const grid = $("#floor-grid");
-	const countsEl = $("#floor-counts");
-	const desks = Array.isArray(data?.desks) ? data.desks : [];
-	const counts = data?.counts || {};
-	floorLastDesks = desks;
-	floorRestricted = data?.restricted !== false;
-	countsEl.innerHTML = [
-		"stuck",
-		"working",
-		"idle",
-		"cold"
-	].map((k) => `<span class="floor-count floor-${k}"><b>${counts[k] ?? 0}</b> ${esc(FLOOR_LABEL[k])}</span>`).join("");
-	if (!desks.length) {
-		grid.innerHTML = "<div class=\"dash-empty\">No sessions yet</div>";
-		return;
-	}
-	floorSessionNames.clear();
-	for (const d of desks) floorSessionNames.set(d.session_id, d.agent_name);
-	grid.querySelector(".floor-edges")?.remove();
-	grid.innerHTML = desks.map((d) => {
-		const room = d.room_name ? esc(d.room_name) : "—";
-		const age = floorAge(d.idle_ms);
-		return `<button class="floor-desk floor-${esc(d.state)}" data-room="${esc(d.room_id || "")}" data-session="${esc(d.session_id)}" title="${esc(FLOOR_LABEL[d.state] || d.state)} · ${esc(d.session_id)}">
-        <span class="floor-desk-name">${esc(d.agent_name)}</span>
-        <span class="floor-desk-room">${room}</span>
-        <span class="floor-desk-meta">${esc(FLOOR_LABEL[d.state] || d.state)}${age ? ` · ${age}` : ""}</span>
-      </button>`;
-	}).join("");
-}
-function openFloor() {
-	openFullView(() => {
-		hideOtherFullViews("floor");
-		floorActive = true;
-		$("#chat").hidden = true;
-		$("#floor").hidden = false;
-		$("#app").classList.add("in-dashboard");
-		$("#app").classList.remove("in-room");
-		floorFeedCursor = null;
-		floorFeedEvents = [];
-		floorFeedSeen = /* @__PURE__ */ new Set();
-		floorFeedEpoch++;
-		renderFloorFeed();
-		refreshFloor();
-		if (floorTimer) clearInterval(floorTimer);
-		floorTimer = setInterval(refreshFloor, FLOOR_POLL_MS);
-		openView("floor", teardownFloor);
-	});
-}
-function teardownFloor() {
-	closeDeskPopover();
-	floorActive = false;
-	if (floorTimer) {
-		clearInterval(floorTimer);
-		floorTimer = null;
-	}
-	$("#chat").hidden = false;
-	$("#floor").hidden = true;
-	$("#app").classList.remove("in-dashboard");
-}
-function toggleFloor() {
-	if (floorActive) closeView("floor");
-	else openFloor();
 }
 var journeyActive = false;
 var journeyAgents = /* @__PURE__ */ new Map();
@@ -15911,8 +15918,6 @@ function wireViewChrome1() {
 	$("#dash-refresh")?.addEventListener("click", refreshDashboard);
 	$("#topology-back")?.addEventListener("click", toggleTopology);
 	$("#topology-refresh")?.addEventListener("click", refreshTopology);
-	$("#floor-back")?.addEventListener("click", toggleFloor);
-	$("#floor-refresh")?.addEventListener("click", refreshFloor);
 }
 function wireViewChrome2() {
 	$("#agent-filter")?.addEventListener("input", (e) => {
@@ -22618,7 +22623,6 @@ $("#overflow-menu")?.addEventListener("click", (e) => {
 	else if (action === "skills") openManage("skills");
 	else if (action === "routing") openManage("routing");
 	else if (action === "journey") toggleJourney();
-	else if (action === "floor") toggleFloor();
 	else if (action === "topology") toggleTopology();
 	else if (action === "wiring") toggleMatrix();
 	else if (action === "dashboard") toggleDashboard();
@@ -22739,22 +22743,6 @@ wireApprovalsPanel();
 wireMobileBack();
 wireViewChrome1();
 $("#journey-back")?.addEventListener("click", toggleJourney);
-$("#floor-grid")?.addEventListener("click", (e) => {
-	const desk = e.target?.closest(".floor-desk");
-	const sessionId = desk?.dataset.session;
-	if (!desk || !sessionId) return;
-	e.stopPropagation();
-	showDeskPopover(sessionId, desk, (roomId) => {
-		toggleFloor();
-		joinRoom(roomId);
-	});
-});
-$("#floor-feed")?.addEventListener("click", (e) => {
-	const roomId = (e.target?.closest(".floor-event"))?.dataset.room;
-	if (!roomId) return;
-	toggleFloor();
-	joinRoom(roomId);
-});
 $("#journey-refresh")?.addEventListener("click", () => void refreshJourney(true));
 wireViewsPanel();
 $("#topo-focus-pill")?.addEventListener("click", clearTopoFocus);

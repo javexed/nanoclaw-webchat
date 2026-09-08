@@ -26,7 +26,7 @@ import Database from 'better-sqlite3';
 import { getDb } from '../../db/connection.js';
 import { getSession } from '../../db/sessions.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
-import { inboundDbPath } from '../../session-manager.js';
+import { inboundDbPath } from '../../session-db-access.js';
 import { log } from '../../log.js';
 
 export interface RoomHuman {

@@ -1,8 +1,8 @@
 diff --git a/container/Dockerfile b/container/Dockerfile
-index 88bd2dab..171bbd3c 100644
+index f14bedfa..ee5c5094 100644
 --- a/container/Dockerfile
 +++ b/container/Dockerfile
-@@ -106,6 +106,24 @@ COPY cli-tools.json install-cli-tools.sh /tmp/
+@@ -113,6 +113,24 @@ COPY cli-tools.json install-cli-tools.sh /tmp/
  RUN --mount=type=cache,target=/root/.cache/pnpm \
      sh /tmp/install-cli-tools.sh /tmp/cli-tools.json
  

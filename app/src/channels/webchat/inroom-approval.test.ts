@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { storeWebchatApprovalCard, markRoomApprovalResolved } from './db.js';
-import { registerApprovalRequestedListener, notifyApprovalRequested } from '../../modules/approvals/primitive.js';
+import { registerApprovalRequestedListener, notifyApprovalRequested } from '../../seam/index.js';
 import type { Session } from '../../types.js';
 
 beforeEach(async () => {

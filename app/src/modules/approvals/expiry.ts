@@ -10,7 +10,7 @@
  * the window is hours, not an interactive CLI's 60 seconds.)
  */
 import { getExpiredPendingApprovals, getSession } from '../../db/sessions.js';
-import { registerSweepTask } from '../../host-sweep.js';
+import { registerModuleSweep } from '../../module-sweep.js';
 import { finalizeReject } from './finalize.js';
 import { log } from '../../log.js';
 
@@ -55,6 +55,6 @@ export async function sweepExpiredApprovals(now = Date.now()): Promise<number> {
 // Self-register on the host sweep (seam H7): unanswered approvals deny
 // themselves after NANOCLAW_APPROVAL_TTL_HOURS (default 24h) — security model
 // §approvals. Loaded via the approvals barrel.
-registerSweepTask('approval-expiry', async () => {
+registerModuleSweep('approval-expiry', async () => {
   await sweepExpiredApprovals();
 });

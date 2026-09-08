@@ -1,5 +1,5 @@
 diff --git a/setup/channels/run-channel-skill.test.ts b/setup/channels/run-channel-skill.test.ts
-index 3608631f..10c1248b 100644
+index 0ecc9885..89f6312d 100644
 --- a/setup/channels/run-channel-skill.test.ts
 +++ b/setup/channels/run-channel-skill.test.ts
 @@ -1,4 +1,4 @@
@@ -37,7 +37,7 @@ index 3608631f..10c1248b 100644
      mkdirSync(join(root, 'src/channels'), { recursive: true });
      writeFileSync(join(root, 'src/channels/index.ts'), '// barrel\n');
      writeFileSync(join(root, '.env'), '');
-@@ -96,7 +109,7 @@ describe('runChannelSkill adapter (Option A)', () => {
+@@ -98,7 +111,7 @@ describe('runChannelSkill adapter (Option A)', () => {
    // the install-link operator — is when:-skipped, the wire inputs stay
    // unresolved, and the run drops through to restart without wiring.
    it('wireIfResolved (Teams): existing credentials skip the whole CLI create flow, never reach the shared wire', async () => {
@@ -46,7 +46,7 @@ index 3608631f..10c1248b 100644
      mkdirSync(join(root, 'src/channels'), { recursive: true });
      writeFileSync(join(root, 'src/channels/index.ts'), '// barrel\n');
      writeFileSync(join(root, '.env'), 'TEAMS_APP_ID=existing\nTEAMS_APP_PASSWORD=existing-password\n');
-@@ -173,7 +186,7 @@ describe('runChannelSkill adapter (Option A)', () => {
+@@ -175,7 +188,7 @@ describe('runChannelSkill adapter (Option A)', () => {
        [null, 'no'], // no .env at all
      ];
      for (const [env, expected] of cases) {
@@ -55,7 +55,7 @@ index 3608631f..10c1248b 100644
        if (env !== null) writeFileSync(join(dir, '.env'), env);
        const out = execSync(cmd, { cwd: dir, shell: '/bin/bash', encoding: 'utf8' }).trim();
        expect(out, `env=${JSON.stringify(env)}`).toBe(expected);
-@@ -187,7 +200,7 @@ describe('runChannelSkill adapter (Option A)', () => {
+@@ -189,7 +202,7 @@ describe('runChannelSkill adapter (Option A)', () => {
    // CLI-first chain end-to-end: login step → create's JSON multi-capture → the
    // env writes → the substituted install link surviving into the URL offer.
    it('Teams fresh create: login step + JSON capture drive the env writes and the install-link offer', async () => {
@@ -64,7 +64,7 @@ index 3608631f..10c1248b 100644
      mkdirSync(join(root, 'src/channels'), { recursive: true });
      writeFileSync(join(root, 'src/channels/index.ts'), '// barrel\n');
      writeFileSync(join(root, '.env'), '');
-@@ -306,7 +319,7 @@ describe('runChannelSkill adapter (Option A)', () => {
+@@ -308,7 +321,7 @@ describe('runChannelSkill adapter (Option A)', () => {
    // account's), and the wire inputs resolve to that person — the assistant
    // messages the desired user first. There is no skip: someone is always wired.
    it('Teams fresh create, wiring another account by Entra object ID: the chain runs against the target user', async () => {
@@ -73,7 +73,7 @@ index 3608631f..10c1248b 100644
      mkdirSync(join(root, 'src/channels'), { recursive: true });
      writeFileSync(join(root, 'src/channels/index.ts'), '// barrel\n');
      writeFileSync(join(root, '.env'), '');
-@@ -367,7 +380,7 @@ describe('runChannelSkill adapter (Option A)', () => {
+@@ -369,7 +382,7 @@ describe('runChannelSkill adapter (Option A)', () => {
    // branch back to yes with the CLI account's own id — same outcome as a yes
    // at the first ask, no ID ever typed or shown.
    it('Teams fresh create, no then logged-in-account: the chain runs against the CLI account', async () => {
@@ -82,7 +82,7 @@ index 3608631f..10c1248b 100644
      mkdirSync(join(root, 'src/channels'), { recursive: true });
      writeFileSync(join(root, 'src/channels/index.ts'), '// barrel\n');
      writeFileSync(join(root, '.env'), '');
-@@ -428,7 +441,7 @@ describe('runChannelSkill adapter (Option A)', () => {
+@@ -432,7 +445,7 @@ describe('runChannelSkill adapter (Option A)', () => {
    afterEach(() => rmSync(wireSkillDir, { recursive: true, force: true }));
  
    it('wireIfResolved: a run that resolves owner_handle + platform_id wires through init-first-agent', async () => {
@@ -91,7 +91,7 @@ index 3608631f..10c1248b 100644
      writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(root, '.env'), '');
      mkdirSync(wireSkillDir, { recursive: true });
-@@ -494,7 +507,7 @@ describe('runChannelSkill adapter (Option A)', () => {
+@@ -503,7 +516,7 @@ describe('runChannelSkill adapter (Option A)', () => {
    // prose becomes the dimmed hint (which fail() also forwards to the Claude
    // handoff). Asserted via an injected fail spy (the real fail() process.exits).
    it('threads the bounced step prose into fail() when the skill does not fully apply', async () => {

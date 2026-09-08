@@ -19,8 +19,8 @@ import path from 'path';
 
 import { getContainerConfig } from '../../../db/container-configs.js';
 import { findTaskSessions } from '../../../db/sessions.js';
-import { parseTaskContent } from '../../../modules/scheduling/db.js';
-import { withInboundDb, inboundDbPath } from '../../../session-manager.js';
+import { parseTaskContent } from '../../../modules/scheduling/task-content.js';
+import { withInboundDb, inboundDbPath } from '../../../session-db-access.js';
 import { groupSkillsOverlayDir } from '../../../templates/create-agent.js';
 import { parseTemplate } from '../../../templates/parse.js';
 import { resolveGroupFolderPath } from '../../../group-folder.js';

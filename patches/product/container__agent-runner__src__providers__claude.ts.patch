@@ -1,26 +1,9 @@
 diff --git a/container/agent-runner/src/providers/claude.ts b/container/agent-runner/src/providers/claude.ts
-index 23b6a3fb..f753b94b 100644
+index a4238dba..61e8b64f 100644
 --- a/container/agent-runner/src/providers/claude.ts
 +++ b/container/agent-runner/src/providers/claude.ts
-@@ -134,6 +134,16 @@ function mcpAllowPattern(serverName: string): string {
-   return `mcp__${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}__*`;
- }
- 
-+// Tool-level allowlisting: a server with `enabledTools` gets ONLY those tools
-+// listed; everything else the server exposes is filtered out by the SDK and
-+// never even enters the agent's context. No allowlist → the whole namespace.
-+function mcpAllowEntries(serverName: string, cfg: import('./types.js').McpServerConfig): string[] {
-+  const enabled = cfg.enabledTools;
-+  if (!Array.isArray(enabled) || enabled.length === 0) return [mcpAllowPattern(serverName)];
-+  const ns = serverName.replace(/[^a-zA-Z0-9_-]/g, '_');
-+  return enabled.map((t) => `mcp__${ns}__${String(t).replace(/[^a-zA-Z0-9_-]/g, '_')}`);
-+}
-+
- interface SDKUserMessage {
-   type: 'user';
-   message: { role: 'user'; content: string };
-@@ -229,6 +239,27 @@ function formatTranscriptMarkdown(messages: ParsedMessage[], title?: string | nu
-   return lines.join('\n');
+@@ -115,6 +115,27 @@ class MessageStream {
+   }
  }
  
 +/** Max reasoning lines surfaced per thinking block, and per-line char cap. The
@@ -47,7 +30,7 @@ index 23b6a3fb..f753b94b 100644
  /**
   * PreToolUse hook: record the current tool + its declared timeout so the host
   * sweep can widen its stuck tolerance while Bash is running a long-declared
-@@ -465,8 +496,59 @@ const CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WIN
+@@ -193,7 +214,60 @@ const CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WIN
   */
  const STALE_SESSION_RE = /no conversation found|ENOENT.*\.jsonl|session.*not found/i;
  
@@ -55,9 +38,8 @@ index 23b6a3fb..f753b94b 100644
 + * Classify a terminal error's text so the poll-loop can react precisely:
 + *
 + *  - `'config'` — the model itself is unusable: not found, invalid, rejected,
-+ *    or an auth failure that means the configured model/backend is wrong
-+ *    (model-not-found, invalid-model, 401/404, unauthorized). These are the
-+ *    cases worth retrying against the SDK default model.
++ *    or an auth failure that means the configured model/backend is wrong.
++ *    These are the cases worth retrying against the SDK default model.
 + *  - `'network'` — the backend was unreachable (connection refused, fetch
 + *    failed, timed out). Retrying the same broken endpoint won't help.
 + *  - `undefined` — unclassified; surfaced verbatim, no special handling.
@@ -98,61 +80,29 @@ index 23b6a3fb..f753b94b 100644
 +}
 +
  export class ClaudeProvider implements AgentProvider {
-   readonly supportsNativeSlashCommands = true;
++  /** The SDK wires NanoClaw's MCP server into every query. */
++  readonly supportsMcpTools = true;
 +  // Both halves are real here: allowedTools drops to draft_skill alone, and the
 +  // SDK's forkSession keeps the review off the main session's transcript.
 +  readonly supportsRestrictedReview = true;
++
 +  private settingSources: Array<'project' | 'user' | 'local'>;
 +  private lenientPrompt?: boolean;
-   /**
-    * Static capability, not runtime state: this provider yields a `text`
-    * event for every assistant message that carries non-empty text (see the
-@@ -481,7 +563,27 @@ export class ClaudeProvider implements AgentProvider {
-    * streaming door missed everything (premise violation), the poll-loop
-    * fires the wrap-nudge so the model re-sends through the mid-turn door.
-    */
--  readonly emitsMidTurnText = true;
-+  /**
-+   * Upstream declares this true, which makes mid-turn streaming the single
-+   * content door: each <message> block delivers the moment it closes, segment
-+   * by segment.
-+   *
-+   * This overlay keeps it FALSE, and the reason is a hard incompatibility
-+   * rather than a preference. The single-reply misfire guard in
-+   * dispatchResultText redirects a lone reply addressed away from the turn's
-+   * origin — a real failure mode for the small local models this fork runs,
-+   * which answer into a room they can see instead of back to their caller.
-+   * "Lone" is load-bearing: a deliberate multi-destination reply must not be
-+   * redirected. Under mid-turn delivery the block count for the turn is not
-+   * knowable at delivery time — block one is already sent before the door
-+   * learns whether a block two exists — so the guard cannot be expressed at
-+   * all on that path.
-+   *
-+   * Every other upstream change on the delivery path is taken as-is. This is
-+   * one flag on our own provider, not a fork of upstream's logic, and it can
-+   * be flipped the day the guard is re-expressed in a streaming-safe form.
-+   */
-+  readonly emitsMidTurnText = false;
- 
    private assistantName?: string;
-   private mcpServers: Record<string, McpServerConfig>;
-@@ -499,11 +601,13 @@ export class ClaudeProvider implements AgentProvider {
-     this.additionalDirectories = options.additionalDirectories;
-     this.model = options.model;
-     this.effort = options.effort;
+   private mcp: ReturnType<typeof resolveClaudeMcpServers>;
+   private inference: ReturnType<typeof resolveClaudeInference>;
+@@ -209,6 +283,8 @@ export class ClaudeProvider implements AgentProvider {
+    */
+   constructor(options: ProviderOptions, configuration: ResolvedRuntimeConfiguration) {
+     this.assistantName = options.assistantName;
 +    this.lenientPrompt = options.lenientPrompt;
-     this.env = {
-       ...(options.env ?? {}),
-       CLAUDE_CODE_AUTO_COMPACT_WINDOW,
-       CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
-     };
 +    this.settingSources = options.settingSources ?? ['project', 'user', 'local'];
-   }
- 
-   registerMemorySessionHook(hook: MemorySessionHookRegistration): void {
-@@ -571,10 +675,20 @@ export class ClaudeProvider implements AgentProvider {
+     this.mcp = configuration.mcpServers as ReturnType<typeof resolveClaudeMcpServers>;
+     this.additionalDirectories = options.additionalDirectories;
+     this.inference = configuration.inference as ReturnType<typeof resolveClaudeInference>;
+@@ -259,8 +335,16 @@ export class ClaudeProvider implements AgentProvider {
+         additionalDirectories: this.additionalDirectories,
          resume: input.continuation,
-         forkSession: contrib.forkSession,
          pathToClaudeCodeExecutable: '/pnpm/claude',
 +        // Lenient prompt (weak/local models): drop the heavy `claude_code`
 +        // preset and use the persona/destinations addendum as the entire system
@@ -166,19 +116,14 @@ index 23b6a3fb..f753b94b 100644
 +            ? instructions
 +            : { type: 'preset' as const, preset: 'claude_code' as const, append: instructions }
            : undefined,
--        allowedTools: contrib.allowedTools ?? [...TOOL_ALLOWLIST, ...Object.keys(this.mcpServers).map(mcpAllowPattern)],
-+        allowedTools:
-+          contrib.allowedTools ??
-+          [...TOOL_ALLOWLIST, ...Object.entries(this.mcpServers).flatMap(([name, cfg]) => mcpAllowEntries(name, cfg))],
-         disallowedTools: SDK_DISALLOWED_TOOLS,
-         env: this.env,
-         model: contrib.model ?? this.model,
-@@ -582,7 +696,7 @@ export class ClaudeProvider implements AgentProvider {
-         effort: this.effort as any,
-         permissionMode: 'bypassPermissions',
-         allowDangerouslySkipPermissions: true,
+         allowedTools: [...this.mcp.allowedTools],
+         disallowedTools: [...this.executionPolicy.disallowedTools],
+@@ -270,7 +354,7 @@ export class ClaudeProvider implements AgentProvider {
+         effort: this.inference.effort as any,
+         permissionMode: this.executionPolicy.permissionMode,
+         allowDangerouslySkipPermissions: this.executionPolicy.allowDangerouslySkipPermissions,
 -        settingSources: ['project', 'user', 'local'],
 +        settingSources: this.settingSources,
-         mcpServers: this.mcpServers,
-         hooks: {
-           PreToolUse: [{ hooks: [preToolUseHook] }],
+         // Only sent when enabled, so an install that never turns it on passes
+         // exactly the options it always did. `fastMode` is a Settings member
+         // rather than a query option, which is why it rides `settings`.

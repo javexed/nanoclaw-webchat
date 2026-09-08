@@ -31,7 +31,8 @@ import { initTestDb, closeDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { createAgentGroup } from '../../db/agent-groups.js';
 import { findSession } from '../../db/sessions.js';
-import { openInboundDb, sessionDir } from '../../session-manager.js';
+import { sessionDir } from '../../session-manager.js';
+import { openInboundDb } from '../../session-db-access.js';
 import {
   storeWebchatFileMessage,
   storeWebchatMessage,

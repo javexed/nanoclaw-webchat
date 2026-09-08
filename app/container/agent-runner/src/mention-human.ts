@@ -12,8 +12,8 @@
  * message including agent-authored ones, and the mentioned person gets a room
  * badge plus a push. Only the knowledge was missing.
  */
-import { getInboundDb } from './db/connection.js';
-import { registerPromptSectionContributor } from './destinations.js';
+import { getInboundDb } from './mailbox/sqlite/connection.js';
+import { registerPromptSectionContributor } from './seam/index.js';
 
 interface RoomHumanRow {
   handle: string;

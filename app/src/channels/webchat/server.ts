@@ -77,8 +77,6 @@ import {
   rOllamaPullsGet,
   rOllamaRecommendGet,
 } from './server/routes-ollama.js';
-import { buildFloor, deskState, lastKindFor } from './server/floor.js';
-import { readFloorEvents } from './server/floor-feed.js';
 import { buildOverview } from './server/overview.js';
 import { registerGrokReauthPrompter } from './server/grok-reauth-prompter.js';
 import {
@@ -428,7 +426,7 @@ import {
   type TeardownTarget,
 } from '../../session-teardown.js';
 import type { AgentGroup, MessagingGroup } from '../../types.js';
-import type { InboundDeliveryPlan } from '../../router.js';
+import type { InboundDeliveryPlan } from '../../seam/index.js';
 import {
   createAgentGroup,
   deleteAgentGroup,
@@ -443,10 +441,10 @@ import {
   getMessagingGroupAgents,
   getMessagingGroupByPlatform,
 } from '../../db/messaging-groups.js';
-import { syncSessionContext, type ContextMessage } from '../../session-manager.js';
+import { syncSessionContext, type ContextMessage } from '../../session-db-access.js';
 import { getPendingApproval, getSession, getSessionsByAgentGroup } from '../../db/sessions.js';
-import { insertMessage, openInboundDb } from '../../db/session-db.js';
-import { isContainerRunning, killContainer } from '../../container-runner.js';
+import { insertMessage } from '../../mailbox/sqlite/session-db.js';
+import { openInboundDb } from '../../session-db-access.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
 import { initGroupFilesystem } from '../../group-init.js';
 import {
@@ -660,7 +658,7 @@ import {
   NEVER_AUTO_APPROVE_ACTIONS,
   NEVER_AUTO_APPROVE_PATTERNS,
 } from '../../modules/approvals/prejudge.js';
-import { listRegisteredApprovalActions } from '../../modules/approvals/primitive.js';
+import { listRegisteredApprovalActions } from '../../seam/index.js';
 import { maybeHandleTts, ttsEndpoint } from './tts.js';
 import {
   DEFAULT_CLEANUP_PROMPT,
@@ -761,7 +759,8 @@ import {
   listSkillDrafts,
   getSkillDraft,
   readSkillDraftBody,
-  resolveSkillDraft,
+  discardSkillDraftSoft,
+  restoreSkillDraft,
   updateSkillDraftBody,
 } from '../../db/skill-drafts.js';
 import type { SkillDraft } from '../../db/skill-drafts.js';
@@ -836,6 +835,9 @@ const DEFAULT_HOST = '127.0.0.1';
 const STATIC_MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript',
+  // .mjs must carry a JS MIME type: browsers hard-refuse module scripts served
+  // as octet-stream, so a missing entry here breaks every dynamic import of a
+  '.mjs': 'application/javascript',
   '.css': 'text/css',
   '.json': 'application/json',
   '.png': 'image/png',
@@ -1409,6 +1411,7 @@ const RE_SKILL_REVERT = /^\/api\/agents\/([^/]+)\/skills\/scoped\/([^/]+)\/rever
 const RE_SKILL_RESTORE = /^\/api\/agents\/([^/]+)\/skills\/archived\/([^/]+)\/restore$/;
 const RE_AGENT_SCOPED_SKILL = /^\/api\/agents\/([^/]+)\/skills\/scoped\/([^/]+)$/;
 const RE_DRAFT = /^\/api\/skill-drafts\/([^/]+)$/;
+const RE_DRAFT_RESTORE = /^\/api\/skill-drafts\/([^/]+)\/restore$/;
 const RE_DRAFT_KEEP = /^\/api\/skill-drafts\/([^/]+)\/keep$/;
 const RE_AGENT_STATUS = /^\/api\/agents\/([^/]+)\/status$/;
 const RE_AGENT_SESSIONS = /^\/api\/agents\/([^/]+)\/sessions$/;
@@ -1423,55 +1426,6 @@ const RE_USER_ID = /^\/api\/users\/([^/]+)$/;
 async function rOverviewGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   return json(res, 200, await buildOverview(userId));
-}
-
-// ── Floor ─────────────────────────────────────────────────────────────
-// Scope-aware inside buildFloor (a caller only sees desks for agent groups they
-// can access), so this needs no gate of its own — same contract as overview.
-async function rFloorGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  return json(res, 200, await buildFloor(userId));
-}
-
-// The desks say WHAT each session is; the feed says what it is DOING. Same
-// scope rule as the floor itself (readFloorEvents filters per caller), and the
-// cursor keeps the server stateless — the client sends back the newest
-// timestamp it has seen.
-async function rFloorFeedGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res, url, userId } = ctx;
-  const since = url.searchParams.get('since') || undefined;
-  return json(res, 200, await readFloorEvents(userId, since));
-}
-
-const RE_FLOOR_SESSION_RESTART = /^\/api\/floor\/sessions\/([^/]+)\/restart$/;
-
-// Kill one stuck session's container from the floor. Deliberately NOT the
-// group restart the agent settings use — a floor problem is one desk, and the
-// container comes back on the session's next message anyway. Privilege mirrors
-// the floor's own shape: owner or admin, and the admin must be able to access
-// the group the session belongs to (a scoped admin cannot unstick a desk they
-// cannot see).
-async function rFloorSessionRestartPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  const session = await getSession(decodeURIComponent(m[1]!));
-  if (!session) return json(res, 404, { error: 'Session not found' });
-  if (!(await hasAdminPrivilege(userId, session.agent_group_id))) {
-    return json(res, 403, { error: 'Admin privilege required' });
-  }
-  const wasRunning = isContainerRunning(session.id);
-  // A 5s-stale popover can offer Restart on a desk that un-stuck meanwhile.
-  // Killing an idle container is harmless (it respawns on demand); killing a
-  // MID-TURN one loses the turn — refuse and let the client re-poll.
-  if (wasRunning) {
-    const lastKind = lastKindFor(session.agent_group_id, session.id);
-    const parsed = session.last_active ? Date.parse(session.last_active) : NaN;
-    const idleMs = Number.isNaN(parsed) ? null : Math.max(0, Date.now() - parsed);
-    if (deskState(true, lastKind, idleMs) === 'working') {
-      return json(res, 409, { error: 'Session is mid-turn' });
-    }
-  }
-  killContainer(session.id, 'floor-restart');
-  return json(res, 200, { ok: true, was_running: wasRunning });
 }
 
 // ── UserCreds Codex browser-mint: connect a ChatGPT subscription without a terminal
@@ -2400,9 +2354,30 @@ async function rDraft(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
     });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  if (!(await resolveSkillDraft(id, 'discarded'))) return json(res, 404, { error: 'Draft not found' });
+  // Soft: the row flips to 'discarded' and the staged body stays on disk, so
+  // the card can offer Undo afterwards instead of making the operator wait out
+  // a countdown before anything happens. Automatic supersede/cleanup paths
+  // still hard-delete through resolveSkillDraft.
+  if (!(await discardSkillDraftSoft(id))) return json(res, 404, { error: 'Draft not found' });
   await resolveDraftCard(id, 'discarded', userId);
   return json(res, 200, { ok: true });
+}
+
+// Undo a discard. The row is still there ('discarded') and so is its staged
+// body, so this is a flip back rather than a re-proposal — the draft returns
+// with its original id, description and evidence intact.
+async function rDraftRestorePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { req, res, userId } = ctx;
+  const id = decodeURIComponent(m[1]);
+  const draft = await getSkillDraft(id);
+  if (!draft || draft.status !== 'discarded') return json(res, 404, { error: 'No discarded draft to restore' });
+  if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
+  if (!(await hasAdminPrivilege(userId, draft.agent_group_id)))
+    return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await restoreSkillDraft(id))) return json(res, 404, { error: 'No discarded draft to restore' });
+  // Put the card's buttons back for every viewer, not just the one who undid it.
+  await resolveDraftCard(id, 'pending', userId);
+  return json(res, 200, { ok: true, id });
 }
 
 // Keep + wire a draft to an agent group (scoped, origin "learned").
@@ -2424,7 +2399,8 @@ async function rDraftKeepPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void>
 // Read-only chronological feed of what each agent learned, derived from the
 // records that already exist — no new event storage:
 //   - proposed / kept / discarded: the persisted in-room skill-draft cards
-//     (the ONLY durable outcome record — resolveSkillDraft deletes the row),
+//     (the durable outcome record: a keep deletes the skill_drafts row, and a
+//     discard leaves it only as a restorable 'discarded'),
 //     plus pending skill_drafts rows that never got a card (non-webchat).
 //     Card events are dated by PROPOSAL time; resolution time isn't stored.
 //   - kept (fallback): a learned-origin scoped skill with no card recording
@@ -2979,15 +2955,6 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/me/handle', h: rMeHandleGet },
   { method: 'PUT', path: '/api/me/handle', guards: ['csrf'], h: rMeHandlePut },
   { method: 'GET', path: '/api/overview', h: rOverviewGet },
-  { method: 'GET', path: '/api/floor', h: rFloorGet },
-  { method: 'GET', path: '/api/floor/feed', h: rFloorFeedGet },
-  {
-    method: 'POST',
-    path: RE_FLOOR_SESSION_RESTART,
-    guards: ['csrf'],
-    h: rFloorSessionRestartPost,
-    audit: 'session.restart',
-  },
   { method: 'GET', path: '/api/rooms', h: rRoomsGet },
   { method: 'POST', path: '/api/rooms', guards: ['csrf', 'owner'], h: rRoomsPost },
   { method: 'DELETE', path: RE_ROOM_ID, guards: ['owner', 'csrf'], h: rRoomIdDelete, audit: 'room.delete' },
@@ -3148,6 +3115,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/learning/timeline', guards: ['anyAdmin'], h: rLearningTimelineGet },
   { method: 'PUT', path: RE_DRAFT, h: rDraftPut },
   { method: ['GET', 'DELETE'], path: RE_DRAFT, guards: ['anyAdmin'], h: rDraft },
+  { method: 'POST', path: RE_DRAFT_RESTORE, guards: ['anyAdmin'], h: rDraftRestorePost },
   { method: 'POST', path: RE_DRAFT_KEEP, h: rDraftKeepPost },
   { method: 'PUT', path: RE_AGENT_STATUS, guards: ['csrf'], h: rAgentStatusPut },
   { method: 'GET', path: RE_AGENT_SESSIONS, h: rAgentSessionsGet },
@@ -3830,7 +3798,11 @@ async function putScopedSkillContentHandler(
 
 // Flip the in-room "proposed skill" card (if the draft was surfaced in a webchat
 // room) so it stops being actionable, and push the update to connected clients.
-async function resolveDraftCard(draftId: string, outcome: 'kept' | 'discarded', userId: string): Promise<void> {
+async function resolveDraftCard(
+  draftId: string,
+  outcome: 'kept' | 'discarded' | 'pending',
+  userId: string,
+): Promise<void> {
   const flipped = await markRoomSkillDraftResolved(draftId, outcome, userId);
   if (flipped) await broadcast(flipped.roomId, { type: 'message', ...flipped.message });
 }
@@ -3900,6 +3872,18 @@ async function runKeepReview(draft: KeepDraftMeta, group: { id: string; name: st
     agentGroupId: group.id,
     agentName: group.name,
   };
+  // pushToUser returns the number of open sockets it reached, and every exit
+  // below is a push: the WS outcome is the ONLY signal the card gets. On the
+  // 'overlaps' path nothing is logged and the draft stays pending, so a push
+  // that lands nowhere leaves the card on "Reviewing…" with no trace on either
+  // side. Approvals already log this gap and the PWA refetches
+  // /api/approvals/pending on connect; review outcomes have no such backstop,
+  // so at minimum make the drop visible to an operator.
+  const report = (outcome: string, payload: object): void => {
+    if (pushToUser(userId, payload) === 0) {
+      log.warn('Keep review: outcome reached no open client', { draftId: draft.id, userId, outcome });
+    }
+  };
   try {
     // Re-fetch: the draft may have been discarded (or kept via a concurrent
     // force) between the 202 and the job actually running.
@@ -3912,7 +3896,7 @@ async function runKeepReview(draft: KeepDraftMeta, group: { id: string; name: st
         draftId: draft.id,
         status: fresh?.status ?? '(row gone)',
       });
-      pushToUser(userId, { ...base, outcome: 'error', error: 'Draft no longer pending' });
+      report('error', { ...base, outcome: 'error', error: 'Draft no longer pending' });
       return;
     }
     // Keep-time overlap review: compare the draft against the agent's scoped
@@ -3928,7 +3912,7 @@ async function runKeepReview(draft: KeepDraftMeta, group: { id: string; name: st
       log.warn('Keep overlap review failed — keeping without it', { draftId: draft.id, err: String(err) });
     }
     if (overlaps.length > 0) {
-      pushToUser(userId, {
+      report('overlaps', {
         ...base,
         outcome: 'overlaps',
         overlaps: overlaps.map((o) => ({ name: o.name, source: o.source, reason: o.reason })),
@@ -3942,13 +3926,13 @@ async function runKeepReview(draft: KeepDraftMeta, group: { id: string; name: st
         status: r.status,
         err: String(r.body.error ?? 'Keep failed'),
       });
-      pushToUser(userId, { ...base, outcome: 'error', error: String(r.body.error ?? 'Keep failed') });
+      report('error', { ...base, outcome: 'error', error: String(r.body.error ?? 'Keep failed') });
       return;
     }
-    pushToUser(userId, { ...base, outcome: 'kept', ...r.body });
+    report('kept', { ...base, outcome: 'kept', ...r.body });
   } catch (err) {
     log.warn('Keep review job failed', { draftId: draft.id, err: String(err) });
-    pushToUser(userId, { ...base, outcome: 'error', error: err instanceof Error ? err.message : String(err) });
+    report('error', { ...base, outcome: 'error', error: err instanceof Error ? err.message : String(err) });
   }
 }
 

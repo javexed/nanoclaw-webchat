@@ -1,5 +1,5 @@
 diff --git a/.gitignore b/.gitignore
-index d337db47..dec15763 100644
+index bc569ff2..3c1c70c7 100644
 --- a/.gitignore
 +++ b/.gitignore
 @@ -1,5 +1,5 @@
@@ -18,7 +18,7 @@ index d337db47..dec15763 100644
  logs/
  
  # Groups - per-installation state, not tracked
-@@ -46,3 +46,4 @@ AGENTS.md
+@@ -48,3 +48,4 @@ AGENTS.md
  docs/maintainer-guide.md
  docs/drafts/
  forks.md

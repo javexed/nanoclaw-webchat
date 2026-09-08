@@ -14,7 +14,7 @@
  * value is per-agent-group (it depends on the group's provider) and the seam
  * expresses that without touching nanoclaw-owned files. Patches only shrink.
  */
-import { registerContainerEnvResolver, registerSessionPrepareHook } from '../../container-runtime.js';
+import { registerContainerEnvResolver, registerSessionPrepareHook } from '../../seam/index.js';
 import { getContainerConfig } from '../../db/container-configs.js';
 import { readEnvFile } from '../../env.js';
 

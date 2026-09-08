@@ -16,7 +16,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 
-import { closeSessionDb, getInboundDb, initTestSessionDb } from './db/connection.js';
+import { closeSessionDb, getInboundDb, initTestSessionDb } from './mailbox/sqlite/connection.js';
 import { getPendingMessages } from './db/messages-in.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
 import { runPollLoop } from './poll-loop.js';

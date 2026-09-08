@@ -12,7 +12,7 @@ const AG = 'ag-cw';
 async function envFor(agentGroupId = AG): Promise<Record<string, string>> {
   // The resolver is sync-by-contract and reads the prepare-hook cache; the
   // spawn path runs the hook first, so the test does too.
-  const { resolveContainerEnv, runSessionPrepareHooks } = await import('../../container-runtime.js');
+  const { resolveContainerEnv, runSessionPrepareHooks } = await import('../../seam/index.js');
   await runSessionPrepareHooks(agentGroupId, null);
   return resolveContainerEnv(agentGroupId, null);
 }

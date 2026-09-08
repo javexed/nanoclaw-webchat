@@ -16,7 +16,7 @@ async function loadWith(env: string | undefined, admin: Record<string, unknown>)
   vi.doMock('../user-credentials/onecli-admin.js', () => ({ realOnecliAdmin: admin }));
   vi.doMock('../../db/agent-groups.js', () => ({ getAgentGroup: () => ({ id: AG, name: 'Fleet' }) }));
   await import('./index.js');
-  const { runSessionPrepareHooks } = await import('../../container-runtime.js');
+  const { runSessionPrepareHooks } = await import('../../seam/index.js');
   return runSessionPrepareHooks;
 }
 

@@ -252,8 +252,6 @@ import {
   wireViewChrome1,
   wireViewChrome2,
   wireViewsPanel,
-  toggleFloor,
-  showDeskPopover,
 } from './features/views.js';
 
 // Modals, overlays and popovers now live in features/modals.ts.
@@ -455,7 +453,6 @@ import {
   applySkillsSections,
   discardSkillDraft,
   draftFor,
-  draftKeepButton,
   getSkillEditorDraft,
   handleSkillDraftReview,
   importSkill,
@@ -901,7 +898,6 @@ $('#overflow-menu')?.addEventListener('click', (e) => {
   else if (action === 'skills') openManage('skills');
   else if (action === 'routing') openManage('routing');
   else if (action === 'journey') toggleJourney();
-  else if (action === 'floor') toggleFloor();
   else if (action === 'topology') toggleTopology();
   else if (action === 'wiring') toggleMatrix();
   else if (action === 'dashboard') toggleDashboard();
@@ -1365,31 +1361,6 @@ wireMobileBack();
 wireViewChrome1();
 $('#journey-back')?.addEventListener('click', toggleJourney);
 
-// A floor desk is a link to its room. Delegated: the grid is re-rendered on
-// every poll, so per-desk listeners would be re-attached every few seconds.
-// Wired here rather than in views.ts because joinRoom lives in rooms.ts and
-// views.ts importing it would close an import cycle.
-$('#floor-grid')?.addEventListener('click', (e) => {
-  const desk = (e.target as HTMLElement | null)?.closest('.floor-desk') as HTMLElement | null;
-  const sessionId = desk?.dataset.session;
-  if (!desk || !sessionId) return;
-  // The popover owns what a desk tap means now: details always, Open room when
-  // the session has one, Restart when it is stuck and the caller may act.
-  e.stopPropagation(); // the popover's outside-click closer runs on document
-  showDeskPopover(sessionId, desk, (roomId) => {
-    toggleFloor(); // close the floor first, so the room lands on the chat view
-    joinRoom(roomId);
-  });
-});
-// Feed rows link to their room the same way desks do (and for the same
-// delegation reason: the feed re-renders on every poll).
-$('#floor-feed')?.addEventListener('click', (e) => {
-  const row = (e.target as HTMLElement | null)?.closest('.floor-event') as HTMLElement | null;
-  const roomId = row?.dataset.room;
-  if (!roomId) return;
-  toggleFloor();
-  joinRoom(roomId);
-});
 $('#journey-refresh')?.addEventListener('click', () => void refreshJourney(true));
 wireViewsPanel();
 

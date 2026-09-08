@@ -1,10 +1,10 @@
 diff --git a/src/modules/approvals/onecli-approvals.ts b/src/modules/approvals/onecli-approvals.ts
-index 9f5325fa..5758a2a3 100644
+index 91ecf4b6..0b4cd8ce 100644
 --- a/src/modules/approvals/onecli-approvals.ts
 +++ b/src/modules/approvals/onecli-approvals.ts
-@@ -38,6 +38,25 @@ export const ONECLI_ACTION = 'onecli_credential';
- type Decision = 'approve' | 'deny';
- type ExpiryReason = 'no response' | 'host restarted';
+@@ -49,6 +49,25 @@ type ExpiryReason = 'no response' | 'host restarted';
+ 
+ const EXPIRY_SWEEP_MS = 60_000;
  
 +/**
 + * Fallback to recover an agent group id from a OneCLI external identifier that
@@ -25,11 +25,11 @@ index 9f5325fa..5758a2a3 100644
 +  }
 +}
 +
- const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
- 
  interface PendingState {
-@@ -123,8 +142,15 @@ async function handleRequest(request: ApprovalRequest): Promise<Decision> {
-   // Originating agent group is carried on the request via OneCLI's agent
+   resolve: (decision: Decision) => void;
+   timer: NodeJS.Timeout;
+@@ -221,8 +240,15 @@ async function handleRequest(request: GatewayApprovalRequest): Promise<Decision>
+   // Originating agent group is carried on the request via the gateway's agent
    // identifier (set by container-runner.ts to agentGroup.id). Use it as
    // the scope for approver selection: admin @ group → global admin → owner.
 -  const originGroup = request.agent.externalId ? await getAgentGroup(request.agent.externalId) : undefined;
@@ -45,4 +45,4 @@ index 9f5325fa..5758a2a3 100644
 +  const originGroup = agentGroupId ? await getAgentGroup(agentGroupId) : undefined;
    const approvers = await pickApprover(agentGroupId);
    if (approvers.length === 0) {
-     log.warn('OneCLI approval auto-denied: no eligible approver', {
+     log.warn('Gateway approval auto-denied: no eligible approver', {

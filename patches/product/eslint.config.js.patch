@@ -1,9 +1,9 @@
 diff --git a/eslint.config.js b/eslint.config.js
-index fa257de3..21263481 100644
+index fda29c79..1ad3ce64 100644
 --- a/eslint.config.js
 +++ b/eslint.config.js
-@@ -29,4 +29,25 @@ export default [
-       '@typescript-eslint/no-explicit-any': 'warn',
+@@ -40,4 +40,25 @@ export default [
+       '@typescript-eslint/await-thenable': 'error',
      },
    },
 +  {

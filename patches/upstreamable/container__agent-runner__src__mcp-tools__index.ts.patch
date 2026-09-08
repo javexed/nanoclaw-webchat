@@ -1,8 +1,8 @@
 diff --git a/container/agent-runner/src/mcp-tools/index.ts b/container/agent-runner/src/mcp-tools/index.ts
-index 95c0e962..6eb0e9eb 100644
+index 592bf748..32a2b369 100644
 --- a/container/agent-runner/src/mcp-tools/index.ts
 +++ b/container/agent-runner/src/mcp-tools/index.ts
-@@ -3,18 +3,28 @@
+@@ -3,12 +3,13 @@
   * `registerTools([...])` call, then starts the MCP server.
   *
   * Adding a new tool module: create the file, call `registerTools([...])`
@@ -18,9 +18,10 @@ index 95c0e962..6eb0e9eb 100644
 -import './interactive.js';
 -import './agents.js';
 -import './self-mod.js';
- import { startMcpServer } from './server.js';
- 
- function log(msg: string): void {
+ // Module barrel — loads registration modules, including the singular mailbox slot.
+ import '../modules/index.js';
+ import { getAgentMailbox, readMailboxContext } from '../mailbox/index.js';
+@@ -18,6 +19,15 @@ function log(msg: string): void {
    console.error(`[mcp-tools] ${msg}`);
  }
  
@@ -33,6 +34,6 @@ index 95c0e962..6eb0e9eb 100644
 +  }
 +}
 +
- startMcpServer().catch((err) => {
-   log(`MCP server error: ${err instanceof Error ? err.message : String(err)}`);
-   process.exit(1);
+ async function main(): Promise<void> {
+   const mailbox = getAgentMailbox();
+   await mailbox.start(await readMailboxContext());

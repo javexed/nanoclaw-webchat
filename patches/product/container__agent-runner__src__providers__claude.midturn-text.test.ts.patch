@@ -1,20 +1,19 @@
 diff --git a/container/agent-runner/src/providers/claude.midturn-text.test.ts b/container/agent-runner/src/providers/claude.midturn-text.test.ts
-index ccd5f926..f0954eac 100644
+index 682e7cf5..fbe1c46a 100644
 --- a/container/agent-runner/src/providers/claude.midturn-text.test.ts
 +++ b/container/agent-runner/src/providers/claude.midturn-text.test.ts
-@@ -38,8 +38,13 @@ afterEach(() => {
+@@ -41,8 +41,12 @@ afterEach(() => {
  });
  
  describe('assistant text block surfacing', () => {
--  it('declares the emitsMidTurnText capability the poll-loop keys one-door delivery on', () => {
--    expect(new ClaudeProvider({}).emitsMidTurnText).toBe(true);
-+  it('declares emitsMidTurnText FALSE — this fork keeps the result door', () => {
-+    // Upstream asserts true here. This fork deliberately sets false: the
-+    // single-reply misfire guard keys on the turn's total block count, which
-+    // is unknowable at streaming-delivery time. See
-+    // docs/pin-bump-mid-turn-delivery.md in nanoclaw-webchat. The streaming
-+    // machinery itself stays tested via MockProvider, which still declares it.
-+    expect(new ClaudeProvider({}).emitsMidTurnText).toBe(false);
+-  it('declares mid-turn delivery in the runtime contract', () => {
+-    expect(claudeRuntimeContract.textDelivery).toBe('mid-turn-complete');
++  it("declares result-door delivery — this fork keeps the result door", () => {
++    // Upstream declares 'mid-turn-complete' here. This fork deliberately keeps
++    // 'result': the single-reply misfire guard keys on the turn's total block
++    // count, which is unknowable at streaming-delivery time. See the rationale
++    // on claudeRuntimeContract.textDelivery in provider-contracts/claude.ts.
++    expect(claudeRuntimeContract.textDelivery).toBe('result');
    });
  
    it('yields one text event per assistant message with text, before the result', async () => {

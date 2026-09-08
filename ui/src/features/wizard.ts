@@ -1709,11 +1709,15 @@ async function wizardCreateAndFinish() {
   {
     try {
       const agentRef: Record<string, unknown> = { kind: 'new', name: agentName };
-      // Pin whichever non-default harness the operator chose. Ollama is not a
-      // provider — it is a workspace default MODEL, handled above — so only the
-      // real harnesses appear here. Codex-only was the bug: choosing Grok
-      // authenticated it and then created an agent on the default harness.
-      if (wizardEngine === 'codex' || wizardEngine === 'grok') agentRef.provider = wizardEngine;
+      // Pin the harness the operator chose — always, Claude included. The
+      // install default (DEFAULT_AGENT_PROVIDER) is only switched AFTER this
+      // create, because switching it restarts the host; so an install whose
+      // .env already names another harness would otherwise hand the wizard's
+      // own agent that old default. Codex-only was the first form of this bug
+      // (choosing Grok created a Claude agent); Claude-on-a-Grok-default was
+      // the second. Ollama is not a provider — it is a workspace default MODEL,
+      // handled above — and its agents run on the Claude harness.
+      agentRef.provider = wizardEngine === 'ollama' ? 'claude' : wizardEngine;
       const r = await authFetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

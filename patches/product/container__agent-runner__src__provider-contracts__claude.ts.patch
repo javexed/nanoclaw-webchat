@@ -1,0 +1,33 @@
+diff --git a/container/agent-runner/src/provider-contracts/claude.ts b/container/agent-runner/src/provider-contracts/claude.ts
+index 57267c2e..2db4838f 100644
+--- a/container/agent-runner/src/provider-contracts/claude.ts
++++ b/container/agent-runner/src/provider-contracts/claude.ts
+@@ -34,7 +34,27 @@ export const claudeRuntimeContract: ProviderRuntimeContract = {
+   // Pre-compact archiving and continuation rotation are provider-internal
+   // (providers/claude-history.ts); core only needs the trace lookup.
+   history: { readTrace: newestClaudeTranscript },
+-  textDelivery: 'mid-turn-complete',
++  /**
++   * Upstream declares 'mid-turn-complete', which makes mid-turn streaming the
++   * single content door: each <message> block delivers the moment it closes.
++   *
++   * This overlay keeps delivery at the RESULT door, and the reason is a hard
++   * incompatibility rather than a preference. The single-reply misfire guard in
++   * dispatchResultText redirects a lone reply addressed away from the turn's
++   * origin — a real failure mode for the small local models this fork runs,
++   * which answer into a room they can see instead of back to their caller.
++   * "Lone" is load-bearing: a deliberate multi-destination reply must not be
++   * redirected. Under mid-turn delivery the block count for the turn is not
++   * knowable at delivery time — block one is already sent before the door
++   * learns whether a block two exists — so the guard cannot be expressed at
++   * all on that path.
++   *
++   * Every other upstream change on the delivery path is taken as-is. This is
++   * one field on our own provider's contract, not a fork of upstream's logic,
++   * and it can be flipped the day the guard is re-expressed in a
++   * streaming-safe form.
++   */
++  textDelivery: 'result',
+   commands: {
+     formatting: 'native',
+     nativeAdmin: ['/remote-control', '/compact', '/context', '/cost', '/files'],

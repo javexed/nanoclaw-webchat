@@ -24,7 +24,11 @@ export default defineConfig({
     // (60KB more) is never needed in the browser. Importing a build WITH the
     // compiler would work and silently ship dead weight, which is why this
     // points at an exact filename rather than the package.
-    alias: { vue: '/vue.runtime.min.js' },
+    alias: {
+      vue: '/vue.runtime.min.js',
+      // Same shape as vue: the vendored file is the module, the bare specifier
+      // is rewritten to its web-root path, and the external list leaves it
+    },
   },
   build: {
     outDir: '../app/public/webchat',

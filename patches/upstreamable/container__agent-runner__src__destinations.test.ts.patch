@@ -1,0 +1,106 @@
+diff --git a/container/agent-runner/src/destinations.test.ts b/container/agent-runner/src/destinations.test.ts
+index b24a2e5e..a5e7d5e1 100644
+--- a/container/agent-runner/src/destinations.test.ts
++++ b/container/agent-runner/src/destinations.test.ts
+@@ -64,7 +64,11 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
+   it('gives task sessions only explicit-tool delivery instructions', () => {
+     seedDestination('casa', 'Casa', 'whatsapp', 'group-1@g.us');
+ 
+-    const prompt = buildSystemPromptAddendum('Casa', { kind: 'task', taskId: 'daily-briefing-a25c' });
++    const prompt = buildSystemPromptAddendum(
++      'Casa',
++      { kind: 'task', taskId: 'daily-briefing-a25c' },
++      { mcpTools: true },
++    );
+ 
+     expect(prompt).toContain('isolated task run');
+     expect(prompt).toContain('send_message({ to: "name"');
+@@ -83,7 +87,9 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
+       )
+       .run();
+ 
+-    const prompt = buildSystemPromptAddendum('Casa', { kind: 'task', taskId: 'weekly-report' });
++    // Escalation guidance only applies to a provider that can actually send;
++    // see the mcpTools capability (a model without the tools is told so instead).
++    const prompt = buildSystemPromptAddendum('Casa', { kind: 'task', taskId: 'weekly-report' }, { mcpTools: true });
+ 
+     expect(prompt).toContain(
+       'For user-visible escalation output, default to your own channel destination(s): `casa`',
+@@ -102,10 +108,76 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
+       )
+       .run();
+ 
+-    const prompt = buildSystemPromptAddendum('Casa', { kind: 'task', taskId: 'weekly-report' });
++    // Escalation guidance only applies to a provider that can actually send;
++    // see the mcpTools capability (a model without the tools is told so instead).
++    const prompt = buildSystemPromptAddendum('Casa', { kind: 'task', taskId: 'weekly-report' }, { mcpTools: true });
+ 
+     expect(prompt).toContain('Always pass the explicit named destination.');
+     expect(prompt).not.toContain('For user-visible escalation output, default to');
+     expect(prompt).not.toContain('your own channel destination(s):');
+   });
+ });
++
++// A provider without MCP tools (pi, and any harness with its own fixed
++// toolset) must never be told about them. This is not cosmetic: a local model
++// read the description, called the tool, failed, and retried until the turn was
++// gone — four attempts and no answer, while it reasoned aloud about the
++// contradiction between its instructions and what it could actually do.
++describe('buildSystemPromptAddendum — a provider without MCP tools', () => {
++  it('never names a messaging tool in a chat session', () => {
++    seedDestination('casa', 'Casa', 'whatsapp', 'group-1@g.us');
++
++    const prompt = buildSystemPromptAddendum('Casa');
++
++    expect(prompt).not.toContain('send_message');
++    expect(prompt).not.toContain('send_file');
++    // The envelope is how this provider delivers, so it must still be taught.
++    expect(prompt).toContain('Wrap each delivered message');
++    expect(prompt).toContain('<message to="name">');
++  });
++
++  it('still teaches the surrounding guidance it can act on', () => {
++    seedDestination('casa', 'Casa', 'whatsapp', 'group-1@g.us');
++
++    const prompt = buildSystemPromptAddendum('Casa');
++
++    expect(prompt).toContain('default to addressing the destination it came `from`');
++    expect(prompt).toContain('For a short turn, do not narrate');
++  });
++
++  it('tells a task run plainly that it has no way to reach anyone', () => {
++    // Task mode has no envelope path either — the final output is not sent. So
++    // the honest statement is that there is no delivery at all. Silence here
++    // invites the model to invent a messaging tool, which is the bug.
++    seedDestination('casa', 'Casa', 'whatsapp', 'group-1@g.us');
++
++    const prompt = buildSystemPromptAddendum('Casa', { kind: 'task', taskId: 'daily-briefing-a25c' });
++
++    expect(prompt).not.toContain('send_message');
++    expect(prompt).toContain('no tool for sending messages');
++    expect(prompt).toContain('tasks/daily-briefing-a25c.md');
++  });
++
++  it('drops contributor sections that assert an MCP tool', () => {
++    // send-file-hint appends its own section to this same prompt. Gating the
++    // paragraph above while leaving the contributor alone put the promise
++    // straight back — the observed loop quoted the contributor's wording, not
++    // the paragraph's.
++    seedDestination('casa', 'Casa', 'whatsapp', 'group-1@g.us');
++
++    const prompt = buildSystemPromptAddendum('Casa');
++
++    expect(prompt).not.toContain('mcp__nanoclaw__send_file');
++    expect(prompt).not.toContain('Sending files');
++  });
++
++  it('is the default, so a provider that declares nothing is told nothing', () => {
++    // Absent-means-false is the whole safety property: a new provider that
++    // forgets to declare the capability loses a convenience, rather than
++    // inheriting a promise it cannot keep.
++    seedDestination('casa', 'Casa', 'whatsapp', 'group-1@g.us');
++
++    expect(buildSystemPromptAddendum('Casa', { kind: 'chat' }, {})).not.toContain('send_message');
++    expect(buildSystemPromptAddendum('Casa', { kind: 'chat' }, { mcpTools: true })).toContain('send_message');
++  });
++});

@@ -16,6 +16,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { readEnvFile } from '../env.js';
+import { resolveWithBackgroundProbe } from '../model-profile-store.js';
 import { registerProviderContainerConfig } from './provider-container-registry.js';
 
 function mergeNoProxy(current: string | undefined, additions: string): string {
@@ -61,73 +62,101 @@ function readAgentWiring(sessionDir: string): LocalModelWiring {
   return {};
 }
 
-registerProviderContainerConfig('pi', (ctx) => {
-  const piDir = path.join(ctx.sessionDir, 'pi-agent');
-  fs.mkdirSync(path.join(piDir, 'sessions'), { recursive: true });
+registerProviderContainerConfig(
+  'pi',
+  (ctx) => {
+    const piDir = path.join(ctx.sessionDir, 'pi-agent');
+    fs.mkdirSync(path.join(piDir, 'sessions'), { recursive: true });
 
-  const wiring = readAgentWiring(ctx.sessionDir);
-  const dotenv = readEnvFile(['PI_PROVIDER', 'PI_MODEL', 'PI_TOOLS', 'PI_THINKING', 'ANTHROPIC_BASE_URL']);
-  const pick = (k: string): string | undefined => dotenv[k] || ctx.hostEnv[k];
+    const wiring = readAgentWiring(ctx.sessionDir);
+    const dotenv = readEnvFile(['PI_PROVIDER', 'PI_MODEL', 'PI_TOOLS', 'PI_THINKING', 'ANTHROPIC_BASE_URL']);
+    const pick = (k: string): string | undefined => dotenv[k] || ctx.hostEnv[k];
 
-  const provider = wiring.provider || pick('PI_PROVIDER') || 'ollama';
-  // Wiring model is `<provider>/<id>` (opencode convention) — strip the prefix.
-  const rawModel = wiring.model || pick('PI_MODEL') || '';
-  const modelId = rawModel.replace(new RegExp(`^${provider}/`), '');
-  const baseURL = wiring.baseURL || pick('ANTHROPIC_BASE_URL') || 'http://host.docker.internal:11434/v1';
+    const provider = wiring.provider || pick('PI_PROVIDER') || 'ollama';
+    // Wiring model is `<provider>/<id>` (opencode convention) — strip the prefix.
+    const rawModel = wiring.model || pick('PI_MODEL') || '';
+    const modelId = rawModel.replace(new RegExp(`^${provider}/`), '');
+    const baseURL = wiring.baseURL || pick('ANTHROPIC_BASE_URL') || 'http://host.docker.internal:11434/v1';
 
-  // models.json — pi's custom-provider catalog. openai-completions + the compat
-  // flags Ollama-class servers need (no `developer` role, no reasoning_effort).
-  const modelsJson = {
-    providers: {
-      [provider]: {
-        baseUrl: baseURL,
-        api: 'openai-completions',
-        apiKey: 'placeholder',
-        compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
-        models: [{ id: modelId, reasoning: true }],
+    // models.json — pi's custom-provider catalog. openai-completions + the compat
+    // flags Ollama-class servers need (no `developer` role, no reasoning_effort).
+    const modelsJson = {
+      providers: {
+        [provider]: {
+          baseUrl: baseURL,
+          api: 'openai-completions',
+          apiKey: 'placeholder',
+          compat: { supportsDeveloperRole: false, supportsReasoningEffort: false },
+          models: [{ id: modelId, reasoning: true }],
+        },
       },
-    },
-  };
-  fs.writeFileSync(path.join(piDir, 'models.json'), JSON.stringify(modelsJson, null, 2) + '\n');
+    };
+    fs.writeFileSync(path.join(piDir, 'models.json'), JSON.stringify(modelsJson, null, 2) + '\n');
 
-  // Hostname only — NO_PROXY matches on host, which also covers the port. An
-  // unparseable baseURL falls back to the local-only list rather than throwing
-  // at spawn time.
-  let modelHost = '';
-  try {
-    modelHost = new URL(baseURL).hostname;
-  } catch {
-    /* keep the local defaults */
-  }
-  const noProxyList = ['127.0.0.1', 'localhost', 'host.docker.internal', modelHost].filter(Boolean).join(',');
+    // Hostname only — NO_PROXY matches on host, which also covers the port. An
+    // unparseable baseURL falls back to the local-only list rather than throwing
+    // at spawn time.
+    let modelHost = '';
+    try {
+      modelHost = new URL(baseURL).hostname;
+    } catch {
+      /* keep the local defaults */
+    }
+    const noProxyList = ['127.0.0.1', 'localhost', 'host.docker.internal', modelHost].filter(Boolean).join(',');
 
-  return {
-    mounts: [{ hostPath: piDir, containerPath: '/pi-agent', readonly: false }],
-    env: {
-      PI_CODING_AGENT_DIR: '/pi-agent',
-      // Tunable from .env without a code change. Unset, the container defaults
-      // to tools=read,write,edit,bash and thinking=high; PI_TOOLS=none restores
-      // the original toolless harness.
-      ...(pick('PI_TOOLS') ? { PI_TOOLS: pick('PI_TOOLS') as string } : {}),
-      ...(pick('PI_THINKING') ? { PI_THINKING: pick('PI_THINKING') as string } : {}),
-      PI_PROVIDER: provider,
-      PI_MODEL: modelId,
-      // The model backend is reached directly, past the OneCLI proxy.
-      //
-      // The three literals below describe a LOCAL Ollama. Once inference moves
-      // off-box — a LAN GPU host, the normal shape at any size — that hostname is
-      // absent from the list, pi's requests route through the egress proxy, and
-      // every turn fails with a bare "Connection error.": three retries, zero
-      // tokens, an empty turn, and nothing in any log naming the cause.
-      //
-      // What makes it hard to place is that `curl` through the SAME proxy from the
-      // SAME container succeeds. pi is Node/undici behind EnvHttpProxyAgent, and
-      // the two clients do not treat this proxy alike — so every check reaching for
-      // curl reports a healthy network while pi cannot talk at all.
-      //
-      // Derive the host from the resolved baseURL rather than assuming locality.
-      NO_PROXY: mergeNoProxy(ctx.hostEnv.NO_PROXY, noProxyList),
-      no_proxy: mergeNoProxy(ctx.hostEnv.no_proxy, noProxyList),
-    },
-  };
-});
+    // Per-model harness settings. An explicit .env value still wins — an
+    // operator overriding a knob must not be silently overruled by a profile.
+    const profile = resolveWithBackgroundProbe({
+      dataDir: path.join(process.cwd(), 'data'),
+      model: modelId,
+      baseURL,
+      log: (msg) => console.log(`[pi] ${msg}`),
+    });
+    const tools = pick('PI_TOOLS') ?? profile.tools;
+    const thinking = pick('PI_THINKING') ?? profile.thinking;
+
+    return {
+      mounts: [{ hostPath: piDir, containerPath: '/pi-agent', readonly: false }],
+      env: {
+        PI_CODING_AGENT_DIR: '/pi-agent',
+        // A hard ceiling on ONE turn. pi's idle timeout only notices silence, so
+        // a model looping productively — read, edit, read, edit, as ornith did —
+        // looks busy forever and never trips it. Derived from parameter count,
+        // doubled for headroom; see model-profiles.ts.
+        PI_TURN_TIMEOUT_MS: String(profile.turnTimeoutMs),
+        ...(profile.noopCapThreshold ? { PI_NOOP_CAP: String(profile.noopCapThreshold) } : {}),
+        // Tunable from .env without a code change. Unset, the container defaults
+        // to tools=read,write,edit,bash and thinking=high; PI_TOOLS=none restores
+        // the original toolless harness.
+        ...(tools ? { PI_TOOLS: tools } : {}),
+        ...(thinking ? { PI_THINKING: thinking } : {}),
+        PI_PROVIDER: provider,
+        PI_MODEL: modelId,
+        // The model backend is reached directly, past the OneCLI proxy.
+        //
+        // The three literals below describe a LOCAL Ollama. Once inference moves
+        // off-box — a LAN GPU host, the normal shape at any size — that hostname is
+        // absent from the list, pi's requests route through the egress proxy, and
+        // every turn fails with a bare "Connection error.": three retries, zero
+        // tokens, an empty turn, and nothing in any log naming the cause.
+        //
+        // What makes it hard to place is that `curl` through the SAME proxy from the
+        // SAME container succeeds. pi is Node/undici behind EnvHttpProxyAgent, and
+        // the two clients do not treat this proxy alike — so every check reaching for
+        // curl reports a healthy network while pi cannot talk at all.
+        //
+        // Derive the host from the resolved baseURL rather than assuming locality.
+        NO_PROXY: mergeNoProxy(ctx.hostEnv.NO_PROXY, noProxyList),
+        no_proxy: mergeNoProxy(ctx.hostEnv.no_proxy, noProxyList),
+      },
+    };
+  },
+  {
+    // pi runs its own harness with a fixed toolset (read/write/edit/bash) and
+    // no MCP client, so NanoClaw's `mcp__nanoclaw__*` tools are unreachable
+    // from it. Without this the host composes their instruction fragments into
+    // this group's project doc, and a small model handed the manual for a tool
+    // it cannot call will spend the turn trying to call it.
+    lacksMcpTools: true,
+  },
+);

@@ -1,0 +1,42 @@
+diff --git a/container/agent-runner/src/mailbox/registry.test.ts b/container/agent-runner/src/mailbox/registry.test.ts
+index d8d0c1c2..02ad2dbc 100644
+--- a/container/agent-runner/src/mailbox/registry.test.ts
++++ b/container/agent-runner/src/mailbox/registry.test.ts
+@@ -1,4 +1,4 @@
+-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
++import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+ import { randomUUID } from 'node:crypto';
+ import fs from 'node:fs';
+ import os from 'node:os';
+@@ -96,10 +96,28 @@ describe('agent mailbox context', () => {
+     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-mailbox-context-'));
+     const file = path.join(dir, 'context.json');
+     try {
+-      fs.writeFileSync(file, '{}', { mode: 0o000 });
+-      expect(await readMailboxContext(file)).toBeNull();
++      fs.writeFileSync(file, '{}');
++      // Make the READ fail rather than the permission bits: CI containers run
++      // as root, which bypasses `mode: 0o000`, so a chmod-based version of this
++      // test silently read the file and asserted the opposite of what it means.
++      // Only this path is intercepted; everything else uses the real Bun.file.
++      const realFile = Bun.file.bind(Bun);
++      const spy = spyOn(Bun, 'file').mockImplementation(((p: Parameters<typeof Bun.file>[0], ...rest: unknown[]) => {
++        const handle = realFile(p as string, ...(rest as []));
++        if (String(p) !== file) return handle;
++        return {
++          ...handle,
++          exists: () => Promise.resolve(true),
++          json: () =>
++            Promise.reject(Object.assign(new Error(`EACCES: permission denied, open '${file}'`), { code: 'EACCES' })),
++        } as unknown as ReturnType<typeof Bun.file>;
++      }) as typeof Bun.file);
++      try {
++        expect(await readMailboxContext(file)).toBeNull();
++      } finally {
++        spy.mockRestore();
++      }
+     } finally {
+-      fs.chmodSync(file, 0o600);
+       fs.rmSync(dir, { recursive: true, force: true });
+     }
+   });

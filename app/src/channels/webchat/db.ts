@@ -1030,7 +1030,9 @@ export async function skillDraftCardPosition(
 /** Flip a proposed-skill card to resolved (kept | discarded). No-op if absent. */
 export async function markRoomSkillDraftResolved(
   draftId: string,
-  outcome: 'kept' | 'discarded',
+  // 'pending' un-resolves the card: undoing a discard has to put the buttons
+  // back, and the timeline already reads this field as a three-state.
+  outcome: 'kept' | 'discarded' | 'pending',
   resolvedBy: string,
 ): Promise<{ roomId: string; message: WebchatMessage } | null> {
   const id = `skill-draft-card-${draftId}`;

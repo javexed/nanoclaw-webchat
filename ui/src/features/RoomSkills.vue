@@ -34,7 +34,7 @@ const props = defineProps<{
 
 const VIEW = 'View';
 const KEEP = 'Keep';
-const REVIEWING = 'Reviewing…';
+const REVIEWING = 'Checking for overlaps…';
 const DISCARD = 'Discard';
 const REVERT = 'Revert';
 const REVERT_TITLE = 'Back to the previous revision';

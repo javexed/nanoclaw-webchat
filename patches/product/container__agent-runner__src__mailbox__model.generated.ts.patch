@@ -1,0 +1,17 @@
+diff --git a/container/agent-runner/src/mailbox/model.generated.ts b/container/agent-runner/src/mailbox/model.generated.ts
+index c66bc7d1..5bc72858 100644
+--- a/container/agent-runner/src/mailbox/model.generated.ts
++++ b/container/agent-runner/src/mailbox/model.generated.ts
+@@ -23,7 +23,11 @@ export type ProcessingStatus = 'processing' | 'completed' | 'failed' | 'script-s
+ export type TaskStatus = 'pending' | 'paused' | 'completed' | 'failed' | 'cancelled';
+ export type InboundStatus = TaskStatus | 'processing';
+ 
+-const INBOUND_KINDS = ['chat', 'chat-sdk', 'task', 'webhook', 'system'] as const;
++// 'interrupt' is a control row, not a message: the webchat stop button writes one
++// with trigger=false so it never wakes a container. A live turn's follow-up poll
++// consumes it to abort; one that lands between turns is completed as a no-op
++// (see the stale-interrupt filter in poll-loop).
++const INBOUND_KINDS = ['chat', 'chat-sdk', 'task', 'webhook', 'system', 'interrupt'] as const;
+ 
+ export type InboundKind = (typeof INBOUND_KINDS)[number];
+ 

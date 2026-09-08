@@ -8,9 +8,11 @@
  * so an island could never call it, and its last caller (the thread delete)
  * was handing it a row that ThreadRows renders.
  *
- * Both users drive it from state keyed by id — cardUndo for skill drafts,
- * threadUndo for threads — and both measure the width BEFORE arming, which is
- * what armUndo's getBoundingClientRect() call was for.
+ * Its users drive it from state keyed by id — draftUndo/roomSkillUndo for the
+ * skill-draft lists, threadUndo for threads — and each measures the width
+ * BEFORE arming, which is what armUndo's getBoundingClientRect() call was for.
+ * The in-transcript card no longer uses it: both of its decisions commit
+ * immediately and offer a post-hoc Undo instead.
  *
  * The two-frame delay is load-bearing: the fill has to paint at 100% before the
  * transition to 0% starts, or the bar jumps straight to empty.

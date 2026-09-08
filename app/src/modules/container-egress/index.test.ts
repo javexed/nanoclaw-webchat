@@ -21,13 +21,12 @@ let resolve: (spec: never) => string[] | null;
 
 beforeEach(async () => {
   vi.resetModules();
-  const runtime = await import('../../container-runtime.js');
-  const drivers = await import('../../drivers/index.js');
-  drivers.__resetNetworkPolicyResolversForTest();
+  const seam = await import('../../seam/index.js');
+  seam.__resetNetworkPolicyResolversForTest();
   const prepares: (typeof prepare)[] = [];
   const resolvers: (typeof resolve)[] = [];
-  vi.spyOn(runtime, 'registerSessionPrepareHook').mockImplementation((fn) => void prepares.push(fn as never));
-  vi.spyOn(drivers, 'registerNetworkPolicyResolver').mockImplementation((fn) => void resolvers.push(fn as never));
+  vi.spyOn(seam, 'registerSessionPrepareHook').mockImplementation((fn) => void prepares.push(fn as never));
+  vi.spyOn(seam, 'registerNetworkPolicyResolver').mockImplementation((fn) => void resolvers.push(fn as never));
   await import('./index.js');
   prepare = prepares[0]!;
   resolve = resolvers[0]!;

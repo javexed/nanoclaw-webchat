@@ -1,0 +1,13 @@
+diff --git a/src/provider-surfaces.test.ts b/src/provider-surfaces.test.ts
+index 97893df3..934d968e 100644
+--- a/src/provider-surfaces.test.ts
++++ b/src/provider-surfaces.test.ts
+@@ -467,6 +467,8 @@ describe('buildMounts agent surfaces', () => {
+       '/workspace/agent/plugins',
+       '/app/src',
+       '/app/skills',
++      // Fork addition: imported user skills ride a second read-only mount.
++      '/app/user-skills',
+       '/workspace/extra/operator',
+       '/home/node/.codex',
+       '/workspace/agent/.agents',

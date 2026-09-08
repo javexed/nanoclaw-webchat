@@ -1,11 +1,11 @@
 diff --git a/src/db/container-configs.ts b/src/db/container-configs.ts
-index 741de287..a9db3652 100644
+index 35ec0133..2e174a3f 100644
 --- a/src/db/container-configs.ts
 +++ b/src/db/container-configs.ts
-@@ -11,8 +11,16 @@ const SCALAR_COLUMNS = new Set([
-   'max_messages_per_prompt',
+@@ -12,8 +12,16 @@ const SCALAR_COLUMNS = new Set([
    'cli_scope',
    'timezone',
+   'speed',
 +  'egress',
 +]);
 +const JSON_COLUMNS = new Set([
@@ -20,15 +20,15 @@ index 741de287..a9db3652 100644
  
  export async function getContainerConfig(agentGroupId: string): Promise<ContainerConfigRow | undefined> {
    return getDb().get<ContainerConfigRow>('SELECT * FROM container_configs WHERE agent_group_id = ?', agentGroupId);
-@@ -86,6 +94,7 @@ export async function updateContainerConfigScalars(
-       | 'max_messages_per_prompt'
+@@ -88,6 +96,7 @@ export async function updateContainerConfigScalars(
        | 'cli_scope'
        | 'timezone'
+       | 'speed'
 +      | 'egress'
      >
    >,
  ): Promise<void> {
-@@ -110,7 +119,7 @@ export async function updateContainerConfigScalars(
+@@ -112,7 +121,7 @@ export async function updateContainerConfigScalars(
  /** Overwrite a JSON column wholesale. Used for skills, mcp_servers, packages_*, additional_mounts. */
  export async function updateContainerConfigJson(
    agentGroupId: string,

@@ -1,17 +1,17 @@
 diff --git a/src/modules/agent-to-agent/write-destinations.ts b/src/modules/agent-to-agent/write-destinations.ts
-index 98fa37ff..673c50ed 100644
+index 1219ea54..d759c4a0 100644
 --- a/src/modules/agent-to-agent/write-destinations.ts
 +++ b/src/modules/agent-to-agent/write-destinations.ts
-@@ -12,6 +12,7 @@ import fs from 'fs';
+@@ -10,6 +10,7 @@
  import { getAgentGroup } from '../../db/agent-groups.js';
  import { getMessagingGroup } from '../../db/messaging-groups.js';
- import { replaceDestinations, type DestinationRow } from '../../db/session-db.js';
+ import type { Destination } from '../../mailbox/index.js';
 +import { getSessionsByAgentGroup } from '../../db/sessions.js';
  import { log } from '../../log.js';
- import { inboundDbPath, openInboundDb } from '../../session-manager.js';
+ import { withMailboxSession } from '../../session-manager.js';
  import { getDestinations } from './db/agent-destinations.js';
-@@ -57,3 +58,31 @@ export async function writeDestinations(agentGroupId: string, sessionId: string)
-   }
+@@ -49,3 +50,31 @@ export async function writeDestinations(agentGroupId: string, sessionId: string)
+   });
    log.debug('Destination map written', { sessionId, count: resolved.length });
  }
 +

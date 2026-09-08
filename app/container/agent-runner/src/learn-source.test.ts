@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 
-import { closeSessionDb, getInboundDb, initTestSessionDb } from './db/connection.js';
+import { closeSessionDb, getInboundDb, initTestSessionDb } from './mailbox/sqlite/connection.js';
 import { getUndeliveredMessages } from './db/messages-out.js';
 import { LEARNING_REVIEW_PROMPT } from './mcp-tools/draft-skill.js';
 import {

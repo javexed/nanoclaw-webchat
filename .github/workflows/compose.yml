@@ -33,6 +33,7 @@ jobs:
       # credentials rather than depending on token auth working.
       - name: checkout (anonymous)
         run: |
+          echo "checkout (anonymous)" > "$RUNNER_TEMP/ci-step"
           git init -q .
           git remote add origin ${{ github.server_url }}/${{ github.repository }}.git
           git fetch -q --depth 1 origin ${{ github.sha }}
@@ -94,13 +95,19 @@ jobs:
       # pushed without rebuilding. Runs before compose, since compose copies
       # app/ into the composed tree.
       - name: UI — install
-        run: pnpm --dir ui install --frozen-lockfile
+        run: |
+          echo "UI — install" > "$RUNNER_TEMP/ci-step"
+          pnpm --dir ui install --frozen-lockfile
 
       - name: UI — typecheck
-        run: pnpm --dir ui run typecheck
+        run: |
+          echo "UI — typecheck" > "$RUNNER_TEMP/ci-step"
+          pnpm --dir ui run typecheck
 
       - name: UI — shadowed-ref guard self-test (proves it still detects faults)
-        run: node ui/check-shadowed-refs.mjs --selftest
+        run: |
+          echo "UI — shadowed-ref guard self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
+          node ui/check-shadowed-refs.mjs --selftest
 
       - name: UI — no parameter shadows an imported ref
         # renderMembers(members) shadowed the imported `members` ref, so the
@@ -108,7 +115,9 @@ jobs:
         # never updated: the room reported "1 member" and listed nobody. tsc,
         # check-refs and the browser guards were all silent — the identifier IS
         # defined, just not the one meant.
-        run: node ui/check-shadowed-refs.mjs
+        run: |
+          echo "UI — no parameter shadows an imported ref" > "$RUNNER_TEMP/ci-step"
+          node ui/check-shadowed-refs.mjs
 
       - name: UI — reference integrity (extracted modules define what they use)
         # Narrow on purpose: TS2304 only. The modules carved out of legacy.js are
@@ -118,7 +127,9 @@ jobs:
         # That bundles fine, builds fine, passes e2e, and throws ReferenceError on
         # the first run of the path. It reached main once already (`lucide`,
         # unimported in features/voice.js).
-        run: pnpm --dir ui run check:refs
+        run: |
+          echo "UI — reference integrity (extracted modules define what they use)" > "$RUNNER_TEMP/ci-step"
+          pnpm --dir ui run check:refs
 
       - name: UI — injected dependencies are all supplied
         # Complements the reference check. A `deps.X` that legacy never supplies
@@ -127,7 +138,9 @@ jobs:
         # only catches it if a test happens to walk there. A cleanup pass that
         # dropped a spread from one provide*Deps call emptied it completely and
         # every static gate still passed.
-        run: pnpm --dir ui run check:deps
+        run: |
+          echo "UI — injected dependencies are all supplied" > "$RUNNER_TEMP/ci-step"
+          pnpm --dir ui run check:deps
 
       - name: UI — mounted components get their required props
         # The same failure shape as check:deps, at the other seam. Vue types the
@@ -136,13 +149,19 @@ jobs:
         # and throws only when that path runs. RoomList shipped to production
         # without `activityOf` — its sort comparator — so the sidebar rendered
         # empty for every authenticated user while every gate here stayed green.
-        run: pnpm --dir ui run check:props
+        run: |
+          echo "UI — mounted components get their required props" > "$RUNNER_TEMP/ci-step"
+          pnpm --dir ui run check:props
 
       - name: UI — build
-        run: pnpm --dir ui run build
+        run: |
+          echo "UI — build" > "$RUNNER_TEMP/ci-step"
+          pnpm --dir ui run build
 
       - name: UI — install Chromium (boot-order guard)
-        run: pnpm --dir ui exec playwright install --with-deps chromium
+        run: |
+          echo "UI — install Chromium (boot-order guard)" > "$RUNNER_TEMP/ci-step"
+          pnpm --dir ui exec playwright install --with-deps chromium
 
       - name: UI — boot-order guard self-test (proves it still detects faults)
         # Runs against perturbed COPIES of the baselines, never the committed
@@ -154,6 +173,7 @@ jobs:
         # stubbed one is what covers the wizard, and a fault-detector proven only
         # against the cold path would say nothing about that half.
         run: |
+          echo "UI — boot-order guard self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
           bash scripts/check-boot-order.selftest.sh cold
           bash scripts/check-boot-order.selftest.sh stubbed
 
@@ -168,14 +188,18 @@ jobs:
         # blocks in source order, so every extraction can reorder side effects.
         # If this reddens on a PR that did not mean to touch startup, the diff is
         # the finding — re-record only when the change is intended.
-        run: bash scripts/check-boot-order.sh
+        run: |
+          echo "UI — boot order (startup sequence unchanged)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-boot-order.sh
 
       - name: UI — role-matrix guard self-test (proves it still detects faults)
         # Strips `hidden` off the gated controls on a timer, which is what a
         # removed or skipped gate looks like from outside, and requires the guard
         # to reject it — then requires it to accept the unperturbed build, so a
         # guard that is simply always-red cannot pass this step.
-        run: bash scripts/check-role-matrix.sh --selftest
+        run: |
+          echo "UI — role-matrix guard self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-role-matrix.sh --selftest
 
       - name: UI — role matrix (no control offered to someone who can't use it)
         # Three privilege-leak bugs shipped here in a row and NONE was visible
@@ -190,13 +214,17 @@ jobs:
         # Only checking the hidden half would pass a build where nothing renders.
         # The scoped-admin persona is the load-bearing one: it is the only thing
         # that distinguishes "gated on owner" from "gated on any admin".
-        run: bash scripts/check-role-matrix.sh
+        run: |
+          echo "UI — role matrix (no control offered to someone who can't use it)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-role-matrix.sh
 
       - name: UI — first-open self-test (proves the probe still detects faults)
         # Puts the unguarded join send back into the built bundle and requires
         # the probe to go red. Without this the probe could quietly stop
         # exercising the resume window and still report green forever.
-        run: bash scripts/check-first-open.sh --selftest
+        run: |
+          echo "UI — first-open self-test (proves the probe still detects faults)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-first-open.sh --selftest
 
       - name: UI — first open (a room tapped on a connecting socket still opens)
         # Field report: the first room tapped after opening the app did not
@@ -208,12 +236,16 @@ jobs:
         # Only reachable on RESUME: rooms are painted from the WS `rooms`
         # message, so a cold load has nothing to click until the socket is open.
         # A plain load-and-click test would never catch this.
-        run: bash scripts/check-first-open.sh
+        run: |
+          echo "UI — first open (a room tapped on a connecting socket still opens)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-first-open.sh
 
       - name: UI — wiring-remount self-test (proves the probe still detects it)
         # Restores the shipped bug — the placeholder written into the island's
         # mount host unconditionally — and requires the probe to go red.
-        run: bash scripts/check-wiring-remount.sh --selftest
+        run: |
+          echo "UI — wiring-remount self-test (proves the probe still detects it)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-wiring-remount.sh --selftest
 
       - name: UI — wiring view survives a second render
         # Field report: Wiring sat on "Loading…" forever. #matrix-canvas is both
@@ -225,10 +257,13 @@ jobs:
         # 2ms with correct JSON throughout, which is why nothing was red and a
         # first look at the view works. Drives all three entrances — first open,
         # Refresh, and close + reopen.
-        run: bash scripts/check-wiring-remount.sh
+        run: |
+          echo "UI — wiring view survives a second render" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-wiring-remount.sh
 
       - name: UI — bundle-drift guard (committed bundle == fresh build)
         run: |
+          echo "UI — bundle-drift guard (committed bundle == fresh build)" > "$RUNNER_TEMP/ci-step"
           # `git status --porcelain`, not `git diff`: diff only reports TRACKED
           # files, so a build that emits a NEW file would slip through silently.
           # status covers modified and untracked alike.
@@ -261,19 +296,25 @@ jobs:
           # mise in the image, so opt out of the .nvmrc major check explicitly.
           # The binding verification remains the real gate.
           NANOCLAW_ALLOW_NODE_MISMATCH: '1'
-        run: bash install.sh --dir "$RUNNER_TEMP/composed"
+        run: |
+          echo "Compose (clone base + seam, overlay, patch, register, build)" > "$RUNNER_TEMP/ci-step"
+          bash install.sh --dir "$RUNNER_TEMP/composed"
 
       - name: Manifest guard self-test (proves it still detects faults)
         # Runs against throwaway fixtures, never the repo's own tree. A guard
         # only ever seen to pass is not evidence.
-        run: bash scripts/check-manifest.selftest.sh
+        run: |
+          echo "Manifest guard self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-manifest.selftest.sh
 
       - name: Manifest integrity (migrations register; dev tree matches)
         # Reference-free. Catches the silent one: a migration file with no
         # manifest entry ships into installs and never runs. This replaced the
         # fork-diff coverage guard when channels-webchat was decommissioned —
         # see docs/coverage-guards.md.
-        run: bash scripts/check-manifest.sh
+        run: |
+          echo "Manifest integrity (migrations register; dev tree matches)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-manifest.sh
 
       - name: Format (owned files are prettier-clean)
         # The composed tree carries upstream's format:fix pre-commit hook. If our
@@ -281,7 +322,9 @@ jobs:
         # commit and the running install stops matching the released artifact.
         # Scoped to paths this repo owns, so upstream drift can never redden a
         # gate we cannot fix.
-        run: bash scripts/check-format.sh "$RUNNER_TEMP/composed"
+        run: |
+          echo "Format (owned files are prettier-clean)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-format.sh "$RUNNER_TEMP/composed"
 
       - name: Host tests (composed tree)
         working-directory: ${{ runner.temp }}/composed
@@ -293,7 +336,9 @@ jobs:
         # assertion. Raising the ceiling here (this workflow is repo-B-owned, so
         # it needs no patch against upstream) removes the false red without
         # weakening a single assertion.
-        run: pnpm exec vitest run --testTimeout=30000 --hookTimeout=30000
+        run: |
+          echo "Host tests (composed tree)" > "$RUNNER_TEMP/ci-step"
+          pnpm exec vitest run --testTimeout=30000 --hookTimeout=30000
 
       # Does this change reach the container tree at all? A CSS-only PR ran the
       # full bun suite for nothing — real minutes on a serial runner.
@@ -310,6 +355,7 @@ jobs:
       - name: Does this touch the container tree?
         id: touched
         run: |
+          echo "Does this touch the container tree?" > "$RUNNER_TEMP/ci-step"
           set -uo pipefail
           decide() { echo "container=$1" >> "$GITHUB_OUTPUT"; echo "container tests: $1"; exit 0; }
           [ "${{ github.event_name }}" = "pull_request" ] || decide true
@@ -328,6 +374,7 @@ jobs:
         if: steps.touched.outputs.container == 'true'
         working-directory: ${{ runner.temp }}/composed/container/agent-runner
         run: |
+          echo "Container typecheck + tests (composed tree)" > "$RUNNER_TEMP/ci-step"
           # Plain install (not --frozen-lockfile): the composed tree carries
           # upstream's bun.lock while the app tree adds runner sources; the
           # proven local compose flow installs the same way.
@@ -337,6 +384,7 @@ jobs:
 
       - name: Pack composed tarball
         run: |
+          echo "Pack composed tarball" > "$RUNNER_TEMP/ci-step"
           cd "$RUNNER_TEMP"
           # Ship sources, not installs: node_modules re-materialize from the
           # lockfile on the target; .git stays out of release artifacts.
@@ -392,7 +440,68 @@ jobs:
         # mistaken for coverage later.
         if: github.server_url != 'https://github.com'
         run: |
+          echo "Artifact upload skipped (unsupported on this runner)" > "$RUNNER_TEMP/ci-step"
           echo "::notice::Composed tarball was built, packed and verified, but NOT uploaded."
           echo "::notice::upload-artifact@v4 needs actions/artifact v2+, which refuses GHES-style APIs."
           echo "::notice::Every gate above ran; artifact retention is a GitHub-only convenience."
 
+
+      # ── Make a failure readable without opening the web UI ──────────────────
+      #
+      # WHY. Artifacts do not work on this runner (see the upload step above),
+      # the per-job and per-log API routes 404 on this instance, and the web log
+      # route will not take token auth. So for anyone working through the API a
+      # red compose has been a status and a duration and nothing else.
+      #
+      # That is not a theoretical gap. Failures here cluster at two durations,
+      # and one of those clusters was read as infrastructure flake for hours
+      # while it was actually a new guard crashing with ENOENT — visible in the
+      # step log the whole time, which nobody could fetch. Naming the step turns
+      # "compose is red again" into "go read this one step".
+      #
+      # Each run step writes its own name to $RUNNER_TEMP/ci-step as its first
+      # line, so this reports the last step to START — which is the one that
+      # died. `uses:` steps (the setup and cache actions) are not instrumented,
+      # so a failure inside one of those reports the previous run step; the
+      # wording below says "at or after" rather than pretending otherwise.
+      - name: Name the failing step in a PR comment
+        if: failure() && github.event_name == 'pull_request'
+        # Never let the reporter change the build's verdict: the job has already
+        # failed and this only adds information. Any error here is printed and
+        # swallowed.
+        continue-on-error: true
+        env:
+          FORGE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          STEP="$(cat "$RUNNER_TEMP/ci-step" 2>/dev/null || echo '<none recorded — failed before the first run step>')"
+          echo "::error::compose failed at or after: $STEP"
+          if [ -z "${FORGE_TOKEN:-}" ]; then
+            echo "::warning::No token available, so the failing step could not be posted to the PR."
+            exit 0
+          fi
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_number }}"
+          python3 - "$STEP" "$RUN_URL" <<'PY' || echo "::warning::could not post the failure comment"
+          import json, os, sys, urllib.request, urllib.error
+          step, run_url = sys.argv[1], sys.argv[2]
+          body = (
+              "**compose failed at or after:** `%s`\n\n"
+              "[run %s](%s)\n\n"
+              "<sub>Posted by the compose job because artifacts and the log API are "
+              "unavailable on this runner. `uses:` steps are not instrumented, so a "
+              "failure inside a setup or cache action reports the run step before it."
+              "</sub>" % (step, os.environ["GITHUB_RUN_NUMBER"], run_url)
+          )
+          url = "%s/api/v1/repos/%s/issues/%s/comments" % (
+              os.environ["GITHUB_SERVER_URL"], os.environ["GITHUB_REPOSITORY"],
+              json.load(open(os.environ["GITHUB_EVENT_PATH"]))["pull_request"]["number"])
+          req = urllib.request.Request(
+              url, data=json.dumps({"body": body}).encode(),
+              headers={"Authorization": "token " + os.environ["FORGE_TOKEN"],
+                       "Content-Type": "application/json"}, method="POST")
+          try:
+              urllib.request.urlopen(req, timeout=30)
+              print("posted the failing step to the PR")
+          except urllib.error.HTTPError as e:
+              print("HTTP %s: %s" % (e.code, e.read()[:200].decode()))
+              sys.exit(1)
+          PY

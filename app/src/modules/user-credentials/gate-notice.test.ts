@@ -9,7 +9,7 @@ vi.mock('../../config.js', async () => {
 import Database from 'better-sqlite3';
 import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
-import { consultTurnGates } from '../../session-manager.js';
+import { consultTurnGates } from '../../seam/index.js';
 import { getSessionsByAgentGroup } from '../../db/sessions.js';
 import { setRoomModeOverride } from '../../channels/webchat/db.js';
 import { createAgentGroup } from '../../db/agent-groups.js';

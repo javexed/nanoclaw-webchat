@@ -26,7 +26,8 @@ import path from 'node:path';
 import { getWebchatMessages, type WebchatMessage } from '../../channels/webchat/db.js';
 import { memberThreadFromKey } from './identity.js';
 import { uploadsDir } from '../../channels/webchat/files.js';
-import { syncSessionContext, type ContextMessage, type SessionInboundWriterArgs } from '../../session-manager.js';
+import { syncSessionContext, type ContextMessage } from '../../session-db-access.js';
+import type { SessionInboundWriterArgs } from '../../seam/index.js';
 import { log } from '../../log.js';
 
 const TRANSCRIPT_LIMIT = 60;

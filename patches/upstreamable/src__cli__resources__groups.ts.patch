@@ -1,8 +1,8 @@
 diff --git a/src/cli/resources/groups.ts b/src/cli/resources/groups.ts
-index 960e3fa2..58ef2d86 100644
+index 52351f8b..f1cae25a 100644
 --- a/src/cli/resources/groups.ts
 +++ b/src/cli/resources/groups.ts
-@@ -240,6 +240,8 @@ registerResource({
+@@ -259,6 +259,8 @@ registerResource({
              agent_group_members: 0,
              user_roles: 0,
              container_configs: 0,
@@ -11,7 +11,7 @@ index 960e3fa2..58ef2d86 100644
            };
  
            if (hasAgentDestinations) {
-@@ -279,6 +281,21 @@ registerResource({
+@@ -298,6 +300,21 @@ registerResource({
              await db.run('DELETE FROM agent_group_members WHERE agent_group_id = ?', id)
            ).changes;
            counts.user_roles = (await db.run('DELETE FROM user_roles WHERE agent_group_id = ?', id)).changes;
@@ -33,17 +33,17 @@ index 960e3fa2..58ef2d86 100644
            // migration-014 has ON DELETE CASCADE on container_configs.agent_group_id;
            // the explicit delete here mirrors the other tables and surfaces the count.
            counts.container_configs = (
-@@ -371,7 +388,8 @@ registerResource({
-       description:
+@@ -391,7 +408,8 @@ registerResource({
          'Update container config scalar fields. Changes are saved but do NOT take effect until you run `ncl groups restart`. ' +
-         'Use --id <group-id> and any of: --provider, --model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope, ' +
+         'Use --id <group-id> and any of: --provider, --model, --effort, --speed, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope, ' +
+         '--speed must be one of the speed tiers the group\'s provider declares (Claude: "standard", "fast"), or "" to follow the install default; a provider that declares none accepts only "". ' +
 -        '--timezone (IANA id like "Europe/Lisbon"; "" clears back to the install default; scheduled-task times follow it immediately, message display after restart).',
 +        '--timezone (IANA id like "Europe/Lisbon"; "" clears back to the install default; scheduled-task times follow it immediately, message display after restart), ' +
 +        '--egress (open|host-only|none).',
        handler: async (args) => {
          const id = args.id as string;
          if (!id) throw new Error('--id is required');
-@@ -389,6 +407,7 @@ registerResource({
+@@ -410,6 +428,7 @@ registerResource({
              | 'max_messages_per_prompt'
              | 'cli_scope'
              | 'timezone'
@@ -51,7 +51,7 @@ index 960e3fa2..58ef2d86 100644
            >
          > = {};
          if (args.provider !== undefined) updates.provider = args.provider as string;
-@@ -408,9 +427,18 @@ registerResource({
+@@ -437,9 +456,18 @@ registerResource({
            updates.cli_scope = scope;
          }
  
@@ -66,12 +66,12 @@ index 960e3fa2..58ef2d86 100644
 +
          if (Object.keys(updates).length === 0) {
            throw new Error(
--            'Nothing to update — provide at least one of: --provider, --model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope, --timezone',
-+            'Nothing to update — provide at least one of: --provider, --model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope, --timezone, --egress',
+-            'Nothing to update — provide at least one of: --provider, --model, --effort, --speed, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope, --timezone',
++            'Nothing to update — provide at least one of: --provider, --model, --effort, --speed, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope, --timezone, --egress',
            );
          }
  
-@@ -425,7 +453,7 @@ registerResource({
+@@ -454,7 +482,7 @@ registerResource({
        description:
          'Add an MCP server to a group. Requires `ncl groups restart` to take effect. ' +
          'Use --id <group-id> --name <server-name> with either --command <cmd> [--args <json-array>] [--env <json-object>] ' +
@@ -80,7 +80,7 @@ index 960e3fa2..58ef2d86 100644
        handler: async (args) => {
          const id = args.id as string;
          if (!id) throw new Error('--id is required');
-@@ -446,6 +474,7 @@ registerResource({
+@@ -475,6 +503,7 @@ registerResource({
          }
          servers[name] = parseMcpServerConfig({
            command: args.command,

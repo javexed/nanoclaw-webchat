@@ -1,8 +1,8 @@
 diff --git a/src/modules/cross-session-context/backfill.ts b/src/modules/cross-session-context/backfill.ts
-index d502d767..ee04fd06 100644
+index 58daa6a0..fd5bf271 100644
 --- a/src/modules/cross-session-context/backfill.ts
 +++ b/src/modules/cross-session-context/backfill.ts
-@@ -122,6 +122,13 @@ function collectSiblingTopLevel(agentGroup: AgentGroup, sessionId: string, limit
+@@ -104,6 +104,13 @@ async function collectSiblingTopLevel(
  export async function backfillNewSession(agentGroup: AgentGroup, session: Session, mg: MessagingGroup): Promise<void> {
    try {
      if (session.thread_id !== null && isTaskThread(session.thread_id)) return;

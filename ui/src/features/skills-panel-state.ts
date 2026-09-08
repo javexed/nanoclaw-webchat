@@ -97,7 +97,26 @@ export const roomSkillUndo = ref<Record<string, { label: string; width: string; 
 /** Draft ids whose Keep is mid-flight. */
 export const roomSkillsReviewing = ref<Set<string>>(new Set());
 
-/** In-transcript draft cards: id → its undo countdown. */
-export const cardUndo = ref<Record<string, { label: string; width: string; commit: () => void }>>({});
-/** In-transcript draft cards whose Keep is mid-flight. */
-export const cardReviewing = ref<Set<string>>(new Set());
+/**
+ * The keep flow's ONE source of truth, id → phase. Replaces cardReviewing plus
+ * the imperative button writes (btn.textContent / btn.disabled) that used to
+ * carry 'Keeping…' and 'Reviewing…'. Those could not be reverted by anything
+ * reactive, so a card that entered a phase never left it.
+ *
+ * A phase is the whole truth about a card: what it renders, whether its
+ * actions are live, and what its Undo does. Terminal phases ('kept') live here
+ * too, so a card shows its outcome even if the server's re-broadcast never
+ * arrives.
+ */
+export type DraftPhase =
+  | { phase: 'saving' }
+  | { phase: 'checking' }
+  | { phase: 'overlaps'; overlaps: Array<{ name: string; source: string; reason: string }> }
+  | { phase: 'kept'; name: string; patched: boolean; agentGroupId: string; agentName: string }
+  | { phase: 'discarding' }
+  | { phase: 'discarded'; skillName: string }
+  | { phase: 'undoing' }
+  | { phase: 'undone'; name: string }
+  | { phase: 'restored' }
+  | { phase: 'error'; error: string };
+export const draftAction = ref<Record<string, DraftPhase>>({});

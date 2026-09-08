@@ -28,11 +28,9 @@ function sanitizeSkillName(raw: string): string {
     .slice(0, 64);
 }
 
-export async function handleProposeSkill(
-  content: Record<string, unknown>,
-  session: Session,
-  _inDb: Database.Database,
-): Promise<void> {
+// Upstream's DeliveryActionHandler dropped the inbound-DB parameter in the
+// mailbox refactor; this handler never used it.
+export async function handleProposeSkill(content: Record<string, unknown>, session: Session): Promise<void> {
   const skillName = sanitizeSkillName(String(content.skill_name || content.name || ''));
   const body = String(content.body || '');
   const kind = content.kind === 'patch' ? 'patch' : 'create';

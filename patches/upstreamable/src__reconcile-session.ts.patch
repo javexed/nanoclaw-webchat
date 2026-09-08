@@ -1,0 +1,126 @@
+diff --git a/src/reconcile-session.ts b/src/reconcile-session.ts
+index 8c6d796c..4cf3cc5c 100644
+--- a/src/reconcile-session.ts
++++ b/src/reconcile-session.ts
+@@ -36,6 +36,8 @@ import { getSession, isTaskThread, updateSession } from './db/sessions.js';
+ import { getAgentGroup } from './db/agent-groups.js';
+ import { log } from './log.js';
+ import { heartbeatPath, withExistingMailboxSession } from './session-manager.js';
++import { openOutboundDbRw } from './mailbox/sqlite/session-db.js';
++import { outboundDbPath } from './mailbox/sqlite/paths.js';
+ import { getContainerStartedAtMs, isContainerRunning, killContainer } from './container-runner.js';
+ import { requestWake } from './request-wake.js';
+ import type { Session } from './types.js';
+@@ -98,7 +100,7 @@ export function decideStuckAction(args: {
+ 
+   const tolerance = Math.max(CLAIM_STUCK_MS, declaredBashMs ?? 0);
+   for (const claim of claims) {
+-    const claimedAt = Date.parse(claim.statusChanged);
++    const claimedAt = parseSqliteUtc(claim.statusChanged);
+     if (Number.isNaN(claimedAt)) continue;
+     const claimAge = now - claimedAt;
+     if (claimAge <= tolerance) continue;
+@@ -236,14 +238,14 @@ async function enforceRunningContainerSla(
+   let incarnationStartMs = 0;
+   const claimRow = await getSessionClaim(session.id);
+   if (claimRow?.claimed_at) {
+-    const parsed = Date.parse(claimRow.claimed_at);
++    const parsed = parseSqliteUtc(claimRow.claimed_at);
+     if (!Number.isNaN(parsed)) incarnationStartMs = parsed;
+   }
+ 
+   const rawHeartbeatMs = heartbeatMtimeMs(agentGroupId, session.id);
+   const gatedHeartbeatMs = rawHeartbeatMs >= incarnationStartMs ? rawHeartbeatMs : 0;
+   const gatedClaims = outDb.getProcessingClaims().map((claim) => {
+-    const claimedAt = Date.parse(claim.statusChanged);
++    const claimedAt = parseSqliteUtc(claim.statusChanged);
+     if (Number.isNaN(claimedAt) || claimedAt >= incarnationStartMs) return claim;
+     return { ...claim, statusChanged: new Date(incarnationStartMs).toISOString() };
+   });
+@@ -266,6 +268,7 @@ async function enforceRunningContainerSla(
+     });
+     killContainer(session.id, 'absolute-ceiling');
+     resetStuckProcessingRows(inDb, outDb, session, 'absolute-ceiling');
++    selfHealBloatedContinuation(session);
+     return;
+   }
+ 
+@@ -338,3 +341,78 @@ function resetStuckProcessingRows(
+     log.warn('Failed to clear orphan processing claims', { sessionId: session.id, err });
+   }
+ }
++
++/**
++ * Parse a timestamp that may lack a zone marker as UTC. SQLite-style stamps
++ * (`YYYY-MM-DD HH:MM:SS`) carry no zone, and Date.parse reads those as LOCAL
++ * time — on a non-UTC host every claim looked (TZ offset) hours stale and the
++ * claim-stuck check killed freshly-claimed messages. Appends "Z" only when no
++ * marker is present, so an explicit Z or numeric offset is preserved.
++ */
++export function parseSqliteUtc(s: string): number {
++  return Date.parse(/[zZ]|[+-]\d{2}:?\d{2}$/.test(s) ? s : s + 'Z');
++}
++
++// After this many consecutive absolute-ceiling kills that produced NO new output,
++// treat the session as stuck resuming a continuation too large to process within
++// the ceiling (context bloat — every turn just recompacts and dies) and clear the
++// continuation so the next turn starts fresh.
++const CEILING_HEAL_STREAK = 2;
++
++/**
++ * Self-heal for a bloated continuation. Tracks, in the session's own outbound
++ * DB, how many ceiling kills in a row produced no output; at the streak
++ * threshold it clears every stored continuation so the next turn starts from a
++ * fresh session. Returns true when it cleared. A caller that already holds the
++ * writable handle passes it in (tests do); otherwise one is opened and closed
++ * here. Best-effort: any failure here is
++ * logged and the sweep goes on — a kill already happened, this only decides
++ * whether the NEXT spawn resumes or restarts.
++ */
++export function selfHealBloatedContinuation(
++  session: Session,
++  writableOutDb?: ReturnType<typeof openOutboundDbRw>,
++): boolean {
++  const ownsDb = !writableOutDb;
++  let db: ReturnType<typeof openOutboundDbRw> | null = writableOutDb ?? null;
++  try {
++    if (!db) db = openOutboundDbRw(outboundDbPath(session.agent_group_id, session.id));
++    db.exec(
++      `CREATE TABLE IF NOT EXISTS session_state (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)`,
++    );
++    const maxOut = (db.prepare('SELECT COALESCE(MAX(seq), 0) AS m FROM messages_out').get() as { m: number }).m;
++    const prevRaw = (
++      db.prepare("SELECT value FROM session_state WHERE key = '_ceiling_heal'").get() as { value: string } | undefined
++    )?.value;
++    let prev: { lastMaxOut: number; streak: number } | null = null;
++    try {
++      prev = prevRaw ? (JSON.parse(prevRaw) as { lastMaxOut: number; streak: number }) : null;
++    } catch {
++      prev = null;
++    }
++    // Output advanced since the last kill (or this is the first kill) → the
++    // streak restarts at 1; otherwise it's another no-output kill in a row.
++    const streak = prev && maxOut <= prev.lastMaxOut ? prev.streak + 1 : 1;
++
++    if (streak >= CEILING_HEAL_STREAK) {
++      const cleared = db.prepare("DELETE FROM session_state WHERE key LIKE 'continuation:%'").run().changes;
++      db.prepare("DELETE FROM session_state WHERE key = '_ceiling_heal'").run();
++      log.warn('Self-heal: cleared bloated continuation after repeated no-output ceiling kills', {
++        sessionId: session.id,
++        streak,
++        continuationsCleared: cleared,
++      });
++      return true;
++    }
++    db.prepare("INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES ('_ceiling_heal', ?, ?)").run(
++      JSON.stringify({ lastMaxOut: maxOut, streak }),
++      new Date().toISOString(),
++    );
++    return false;
++  } catch (err) {
++    log.warn('Self-heal continuation check failed', { sessionId: session.id, err });
++    return false;
++  } finally {
++    if (ownsDb) db?.close();
++  }
++}

@@ -32,6 +32,7 @@ import ThinkingBubble from './ThinkingBubble.vue';
 import MessageBubble from './MessageBubble.vue';
 import MsgDeleteButton from './MsgDeleteButton.vue';
 import ApprovalCard from './ApprovalCard.vue';
+import SkillDraftCard from './SkillDraftCard.vue';
 
 const props = defineProps<{
   decorate: (bubble: HTMLElement) => void;
@@ -77,6 +78,16 @@ const thoughtsPreview = (lines: string[]) => {
           :on-respond="props.onApprovalRespond"
         />
         <div v-else class="approval-inroom-note">{{ row.note }}</div>
+      </div>
+
+      <!--
+        Skill-draft card. Keyed `draft:<id>` by skillDraftRow, so the resolve
+        re-broadcast REPLACES this row rather than appending a second card
+        below it. The wrapper mirrors the approval branch's .approval-msg +
+        data-question-id so the row stays addressable by draft id.
+      -->
+      <div v-else-if="row.kind === 'draft'" class="msg skill-draft-msg" :data-draft-id="row.id || ''">
+        <SkillDraftCard v-bind="row.payload" />
       </div>
 
       <div

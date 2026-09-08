@@ -241,6 +241,19 @@ export function appendMessage(msg?: any, statusText?: any, prepend?: boolean): M
 /** Append, or PREPEND for older-message pagination — which is what beforeNode
  *  expressed when the transcript was a node list. */
 function pushRow(row: MsgRow, prepend?: boolean): MsgRow {
+  // A row whose key is already in the list REPLACES it rather than appending a
+  // second copy. Only rows with a stable identity can collide: message rows
+  // carry nextKey() counters, while a skill-draft card is keyed `draft:<id>`
+  // precisely so the server's resolve re-broadcast updates the card in place.
+  // Appending instead left the original card sitting above the outcome still
+  // offering Keep — two rows for one draft, disagreeing.
+  const at = messages.value.findIndex((r) => r.key === row.key);
+  if (at !== -1) {
+    const next = [...messages.value];
+    next[at] = row;
+    messages.value = next;
+    return messages.value[at];
+  }
   if (prepend) messages.value = [row, ...messages.value];
   else messages.value = [...messages.value, row];
   // The PROXIED row, not the literal: callers keep these (the optimistic echo,

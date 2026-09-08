@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/scheduling/task-script.ts b/container/agent-runner/src/scheduling/task-script.ts
-index ff68fd5d..71246ba3 100644
+index 1f5c964b..22549914 100644
 --- a/container/agent-runner/src/scheduling/task-script.ts
 +++ b/container/agent-runner/src/scheduling/task-script.ts
 @@ -1,4 +1,5 @@
@@ -8,10 +8,10 @@ index ff68fd5d..71246ba3 100644
  import fs from 'node:fs';
  import path from 'node:path';
  import type { MessageInRow } from '../db/messages-in.js';
-@@ -17,7 +18,13 @@ function log(msg: string): void {
- }
- 
- export async function runScript(script: string, taskId: string): Promise<ScriptResult | null> {
+@@ -21,7 +22,13 @@ export async function runScript(
+   taskId: string,
+   timeoutMs: number = SCRIPT_TIMEOUT_MS,
+ ): Promise<ScriptResult | null> {
 -  const scriptPath = path.join('/tmp', `task-script-${taskId}.sh`);
 +  // taskId alone is not a safe filename key: two invocations sharing one
 +  // (concurrent callers, or a retry racing the original) would write, exec

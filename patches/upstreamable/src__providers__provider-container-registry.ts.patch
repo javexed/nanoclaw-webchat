@@ -1,0 +1,48 @@
+diff --git a/src/providers/provider-container-registry.ts b/src/providers/provider-container-registry.ts
+index 6cb42f88..f215f56e 100644
+--- a/src/providers/provider-container-registry.ts
++++ b/src/providers/provider-container-registry.ts
+@@ -75,6 +75,25 @@ export interface ProviderHostCapabilities {
+    * this get the default surfaces, which is today's behavior.
+    */
+   readonly providesAgentSurfaces?: boolean;
++
++  /**
++   * Optional. Set by a provider whose model cannot call NanoClaw's MCP tools at
++   * all — its harness ships a fixed toolset and no MCP client (pi). The host
++   * then leaves those modules' instruction fragments out of the composed
++   * project doc, because handing a model the documentation for a tool it cannot
++   * call is not a harmless extra page: one small model read it, tried the call,
++   * and retried until the turn was gone.
++   *
++   * NEGATIVE polarity, unlike the container-side `AgentProvider.supportsMcpTools`
++   * which is positive. The difference is deliberate. Every container-side
++   * provider is a class in this tree that can be given the flag, so opt-in is
++   * safe there. This registry is sparse by design: a provider with no host-side
++   * container needs never registers at all, and `claude` is exactly that case
++   * (see the barrel in ./index.ts, which says so). Positive polarity here would
++   * read the default provider's absence as "has no MCP tools" and strip the
++   * fragments from every standard install.
++   */
++  readonly lacksMcpTools?: boolean;
+ }
+ 
+ export type ProviderContainerConfigFn = (
+@@ -113,6 +132,17 @@ export function providerProvidesAgentSurfaces(name: string | null | undefined):
+   return registry.get(name)?.capabilities.providesAgentSurfaces === true;
+ }
+ 
++/**
++ * Capability lookup by provider name, same contract as
++ * providerProvidesAgentSurfaces: an unregistered provider reports nothing and
++ * is therefore assumed to HAVE MCP tools — which is true of every provider but
++ * pi, and is what the host did before this existed.
++ */
++export function providerLacksMcpTools(name: string | null | undefined): boolean {
++  if (!name) return false;
++  return registry.get(name)?.capabilities.lacksMcpTools === true;
++}
++
+ export function listProviderContainerConfigNames(): string[] {
+   return [...registry.keys()];
+ }

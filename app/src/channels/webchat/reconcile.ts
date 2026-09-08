@@ -24,7 +24,7 @@ import path from 'path';
 import { DATA_DIR } from '../../config.js';
 import { getDb } from '../../db/connection.js';
 import { log } from '../../log.js';
-import { openOutboundDb } from '../../session-manager.js';
+import { openOutboundDb } from '../../session-db-access.js';
 
 import { storeWebchatFileMessage, storeWebchatMessage, type FileMeta } from './db.js';
 import type { WebchatServer } from './server.js';

@@ -2,11 +2,8 @@ import fs from 'fs';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  makeContainerWritable,
-  registerContainerConfigAugmentor,
-  resolveContainerConfigAugmentation,
-} from './container-runtime.js';
+import { makeContainerWritable } from './container-runtime-extras.js';
+import { registerContainerConfigAugmentor, resolveContainerConfigAugmentation } from './seam/index.js';
 
 // This file was a PATCH against upstream's own container-runtime.test.ts until
 // upstream gutted container-runtime.ts (the runtime logic moved behind the
