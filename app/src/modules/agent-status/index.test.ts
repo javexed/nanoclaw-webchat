@@ -21,7 +21,9 @@ vi.mock('../../db/messaging-groups.js', () => ({
   getMessagingGroup: () => messagingGroup,
 }));
 
-vi.mock('../../session-manager.js', () => ({
+// openOutboundDb moved to the fork's session-db-access module when upstream's
+// mailbox refactor dropped session-manager's by-session DB openers.
+vi.mock('../../session-db-access.js', () => ({
   openOutboundDb: () => new Database(OUT_PATH, { readonly: true }),
 }));
 

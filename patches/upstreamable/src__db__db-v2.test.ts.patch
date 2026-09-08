@@ -1,11 +1,11 @@
 diff --git a/src/db/db-v2.test.ts b/src/db/db-v2.test.ts
-index 9b3c54dd..46131de5 100644
+index 5d6c67f9..ae7cf8c0 100644
 --- a/src/db/db-v2.test.ts
 +++ b/src/db/db-v2.test.ts
-@@ -477,6 +477,7 @@ describe('container configs', () => {
-       additional_mounts: '[]',
+@@ -480,6 +480,7 @@ describe('container configs', () => {
        cli_scope: 'global',
        timezone: null,
+       speed: null,
 +      egress: null,
        updated_at: now(),
      });

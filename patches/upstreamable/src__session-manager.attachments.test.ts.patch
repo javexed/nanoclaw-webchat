@@ -1,17 +1,16 @@
 diff --git a/src/session-manager.attachments.test.ts b/src/session-manager.attachments.test.ts
-index 2afd9d73..96e2be15 100644
+index 2afd9d73..d71283c0 100644
 --- a/src/session-manager.attachments.test.ts
 +++ b/src/session-manager.attachments.test.ts
-@@ -29,7 +29,7 @@ vi.mock('./config.js', async () => {
- 
+@@ -30,6 +30,7 @@ vi.mock('./config.js', async () => {
  import { initTestDb, closeDb, runMigrations, createAgentGroup } from './db/index.js';
  import { createSession } from './db/sessions.js';
--import { initSessionFolder, sessionDir, writeSessionMessage } from './session-manager.js';
-+import { initSessionFolder, openInboundDb, sessionDir, writeSessionMessage } from './session-manager.js';
+ import { initSessionFolder, sessionDir, writeSessionMessage } from './session-manager.js';
++import { openInboundDb } from './session-db-access.js';
  import type { Session } from './types.js';
  
  const TEST_DIR = '/tmp/nanoclaw-test-saveatt-gap';
-@@ -68,6 +68,72 @@ afterEach(async () => {
+@@ -68,6 +69,72 @@ afterEach(async () => {
    if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
  });
  

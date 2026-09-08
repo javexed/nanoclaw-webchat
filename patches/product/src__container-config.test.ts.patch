@@ -1,10 +1,10 @@
 diff --git a/src/container-config.test.ts b/src/container-config.test.ts
-index 1a979f61..aad06db9 100644
+index eb98b7b3..dd673864 100644
 --- a/src/container-config.test.ts
 +++ b/src/container-config.test.ts
-@@ -63,10 +63,29 @@ describe('resolveGroupTimezone', () => {
-     await updateContainerConfigScalars(GROUP.id, { timezone: 'Not/AZone' });
-     expect(configFromDb((await getContainerConfig(GROUP.id))!, GROUP).timezone).toBeUndefined();
+@@ -90,10 +90,29 @@ describe('resolveGroupTimezone', () => {
+     );
+     expect(configFromDb({ ...row, runtime_tier: null }, GROUP).runtimeTier).toBeUndefined();
    });
 +
 +  /**
@@ -33,7 +33,7 @@ index 1a979f61..aad06db9 100644
      expect(parseMcpServerConfig({ command: 'pnpm', args: ['dlx', 'server'], env: { TOKEN: 'stub' } })).toEqual({
        command: 'pnpm',
        args: ['dlx', 'server'],
-@@ -118,7 +137,7 @@ describe('parseMcpServerConfig', () => {
+@@ -145,7 +164,7 @@ describe('parseMcpServerConfig', () => {
      expect(() => parseMcpServerConfig(input)).toThrow(message);
    });
  
@@ -42,7 +42,7 @@ index 1a979f61..aad06db9 100644
      expect(parseMcpServerConfig({ type: 'stdio', command: 'server' })).toEqual({
        command: 'server',
        args: [],
-@@ -131,7 +150,6 @@ describe('parseMcpServerConfig', () => {
+@@ -158,7 +177,6 @@ describe('parseMcpServerConfig', () => {
    });
  
    it.each([
@@ -50,7 +50,7 @@ index 1a979f61..aad06db9 100644
      [{ type: 'websocket', url: 'https://mcp.example.com/mcp' }, /type must be/],
      [{ type: 'stdio', url: 'https://mcp.example.com/mcp' }, /requires command/],
      [{ type: 'http', command: 'server' }, /requires url/],
-@@ -139,7 +157,14 @@ describe('parseMcpServerConfig', () => {
+@@ -166,7 +184,14 @@ describe('parseMcpServerConfig', () => {
      expect(() => parseMcpServerConfig(input)).toThrow(message);
    });
  
@@ -66,7 +66,7 @@ index 1a979f61..aad06db9 100644
      expect(parseMcpServerConfig({ url: 'https://mcp.example.com/mcp', headers: { 'X-Client': 'nanoclaw' } })).toEqual({
        type: 'http',
        url: 'https://mcp.example.com/mcp',
-@@ -174,7 +199,7 @@ describe('parseMcpServerConfig', () => {
+@@ -201,7 +226,7 @@ describe('parseMcpServerConfig', () => {
  });
  
  describe('sanitizeStoredMcpServers', () => {
@@ -75,7 +75,7 @@ index 1a979f61..aad06db9 100644
      const sanitized = sanitizeStoredMcpServers(
        {
          good: { command: 'server', args: [], env: {}, pluginRoot: `${CONTAINER_PLUGINS_DIR}/sdr` },
-@@ -191,7 +216,7 @@ describe('sanitizeStoredMcpServers', () => {
+@@ -218,7 +243,7 @@ describe('sanitizeStoredMcpServers', () => {
      expect(sanitized.badRoot).not.toHaveProperty('pluginRoot');
    });
  
@@ -84,7 +84,7 @@ index 1a979f61..aad06db9 100644
      const sanitized = sanitizeStoredMcpServers(
        {
          planted: { command: 'server', cwd: '${PLUGIN_DATA}/x' },
-@@ -203,13 +228,13 @@ describe('sanitizeStoredMcpServers', () => {
+@@ -230,13 +255,13 @@ describe('sanitizeStoredMcpServers', () => {
      expect(sanitized.plugin).toMatchObject({ cwd: '${PLUGIN_DATA}/x' });
    });
  
@@ -100,7 +100,7 @@ index 1a979f61..aad06db9 100644
      expect(() => validateMcpServerName('brave-search_2')).not.toThrow();
      // __proto__ matches the regex but would set the record's prototype
      // instead of an own key on assignment — rejected by name.
-@@ -225,7 +250,7 @@ describe('validateMcpServerName', () => {
+@@ -252,7 +277,7 @@ describe('validateMcpServerName', () => {
   * the copies byte-identical so drift fails a test instead of shipping.
   */
  describe('host/container validation parity', () => {

@@ -3,7 +3,7 @@
  * the curator's host-sweep task. See docs/webchat/design/learning-loop.md.
  */
 import { registerDeliveryAction } from '../../delivery.js';
-import { registerSweepTask } from '../../host-sweep.js';
+import { registerModuleSweep } from '../../module-sweep.js';
 import { unguarded } from '../../guard/index.js';
 import { handleProposeSkill } from './request.js';
 import { handleRouteLearningReview } from './route-review.js';
@@ -29,7 +29,7 @@ registerDeliveryAction(
 // Curator: archive scoped skills nothing has invoked in months (learning loop
 // §6). Registered on the host-sweep seam (H7); self-gated to one real run per
 // day inside sweepStaleScopedSkills.
-registerSweepTask('learning-curator', async () => {
+registerModuleSweep('learning-curator', async () => {
   await sweepStaleScopedSkills();
 });
 

@@ -34,7 +34,7 @@
  * and it mirrors what createToolSecret already does when an operator adds a
  * secret to a never-spawned group.
  */
-import { registerSessionPrepareHook } from '../../container-runtime.js';
+import { registerSessionPrepareHook } from '../../seam/index.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { isolateGroup, getGroupIsolation } from '../tool-secrets/index.js';
 import { realOnecliAdmin } from '../user-credentials/onecli-admin.js';

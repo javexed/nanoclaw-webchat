@@ -44,15 +44,13 @@ import { readEnvFile } from '../../env.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { createMessagingGroup, getMessagingGroup, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { getPendingApproval } from '../../db/sessions.js';
-import {
-  registerContainerConfigAugmentor,
-  registerLearningClassifierResolver,
-  registerSessionPrepareHook,
-} from '../../container-runtime.js';
-import { registerA2aRouteObserver } from '../../modules/agent-to-agent/agent-route.js';
+import { registerLearningClassifierResolver } from '../../container-runtime-extras.js';
+import { registerContainerConfigAugmentor, registerSessionPrepareHook } from '../../seam/index.js';
+import { registerA2aRouteObserver } from '../../seam/index.js';
 import { classifierParamsForModel } from './models.js';
 import { registerChannelAdapter } from '../channel-registry.js';
-import type { AgentActivityStatus, ChannelAdapter, ChannelSetup, OutboundMessage } from '../adapter.js';
+import type { ChannelAdapter, ChannelSetup, OutboundMessage } from '../adapter.js';
+import type { AgentActivityStatus } from '../../seam/index.js';
 import { redactSensitiveData } from './redact.js';
 import { startWebchatServer, stopWebchatServer, type WebchatServer } from './server.js';
 import { sweepMcpHealth } from './mcp-health.js';
@@ -87,11 +85,8 @@ import {
   recordTurnEnd,
   surfaceA2aMessage,
 } from './state.js';
-import {
-  registerApprovalIntercept,
-  registerApprovalRequestedListener,
-  registerApprovalResolvedHandler,
-} from '../../modules/approvals/primitive.js';
+import { registerApprovalResolvedHandler } from '../../modules/approvals/primitive.js';
+import { registerApprovalIntercept, registerApprovalRequestedListener } from '../../seam/index.js';
 import { buildApprovalTriageView, maybePrejudgeApproval } from '../../modules/approvals/prejudge.js';
 import { startReconcileLoop, stopReconcileLoop } from './reconcile.js';
 import {

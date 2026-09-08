@@ -1,15 +1,15 @@
 {
   "nanoclaw": {
     "upstreamRepo": "https://github.com/nanocoai/nanoclaw.git",
-    "upstreamRef": "882305ebafee70759c4c391a41eb74be30972412",
+    "upstreamRef": "6656b326a900dcfba4be8ca76412d954cfc915b5",
     "seamRepo": "https://github.com/javexed/nanoclaw.git",
     "seamBranch": "pub/module-hooks",
-    "seamRef": "bb820f72f13630d31f86a76341cd1f539a04265a",
-    "seamH5Ref": "bb820f72f13630d31f86a76341cd1f539a04265a",
+    "seamRef": "ed5d6e6fb1dc61745cd5806ced0d5e02584d2f28",
+    "seamH5Ref": "ed5d6e6fb1dc61745cd5806ced0d5e02584d2f28",
     "forkRef": "3e55bebd6ff2a11a56d53923a38b3bda8ba30e11",
     "forkArchiveTag": "archive/channels-webchat-2026-07-28",
     "forkRefNote": "final channels-webchat tip (fork decommissioned 2026-07-28, preserved at forkArchiveTag). NOT a build input and no longer a guard reference — the only consumer is scripts/migrate-from-fork.sh, which resolves this SHA inside a user's own fork install to refuse migrating an install that is NEWER than the split. Keep it pinned for as long as fork installs may still migrate.",
-    "seamNote": "pub/module-hooks: adds registerNetworkPolicyResolver (15th registry) so per-group egress survives the driver seam, and honours spec.network which upstream declared but never read"
+    "seamNote": "pub/module-hooks: 13 upstream files, +188 -0 (insertions only). Hook registries live in src/seam/ and container/agent-runner/src/seam/; SEAM.md in the seam is the ledger."
   },
   "seamApiVersion": 4,
   "status": "working — all adaptation passes complete (H5, H12, R3)"

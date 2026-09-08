@@ -27,8 +27,8 @@
  * resolvers" — and it is why the resolver never needs to await.
  */
 import { getContainerConfig } from '../../db/container-configs.js';
-import { registerNetworkPolicyResolver } from '../../drivers/index.js';
-import { registerSessionPrepareHook } from '../../container-runtime.js';
+import { registerNetworkPolicyResolver } from '../../seam/index.js';
+import { registerSessionPrepareHook } from '../../seam/index.js';
 import { ensureEgressNetwork, egressNetworkArgs } from '../../egress-lockdown.js';
 import { log } from '../../log.js';
 

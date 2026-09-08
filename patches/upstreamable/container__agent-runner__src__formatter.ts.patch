@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/formatter.ts b/container/agent-runner/src/formatter.ts
-index cf192779..7e36333d 100644
+index cf192779..76ad4c61 100644
 --- a/container/agent-runner/src/formatter.ts
 +++ b/container/agent-runner/src/formatter.ts
 @@ -81,6 +81,7 @@ export function isClearCommand(msg: MessageInRow): boolean {
@@ -10,7 +10,31 @@ index cf192779..7e36333d 100644
  /**
   * True for any chat that needs the outer loop's command path: /clear plus
   * admin/passthrough slash commands the SDK can only dispatch when they are
-@@ -388,3 +389,31 @@ function escapeXml(str: string): string {
+@@ -127,6 +128,23 @@ export interface RoutingContext {
+  * back to the plain first row if the batch is somehow all echo (shouldn't
+  * happen — echo rows never trigger).
+  */
++/**
++ * The origin of ONE inbound row.
++ *
++ * extractRouting deliberately collapses a batch to a single origin, which is
++ * right for a turn's reply but wrong for anything answering an individual row:
++ * one poll can carry rows from several rooms, so a per-row response addressed
++ * to the batch origin lands in whichever room sorted first. Runner commands
++ * (/clear, /upload-trace) confirm per row and must use this instead.
++ */
++export function originOf(message: MessageInRow): Pick<MessageInRow, 'platform_id' | 'channel_type' | 'thread_id'> {
++  return {
++    platform_id: message.platform_id,
++    channel_type: message.channel_type,
++    thread_id: message.thread_id,
++  };
++}
++
+ export function extractRouting(messages: MessageInRow[]): RoutingContext {
+   const first = messages.find((m) => !isSessionEcho(m)) ?? messages[0];
+   return {
+@@ -388,3 +406,31 @@ function escapeXml(str: string): string {
  export function stripInternalTags(text: string): string {
    return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
  }

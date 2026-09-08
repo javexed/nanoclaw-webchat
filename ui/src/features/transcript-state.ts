@@ -21,7 +21,13 @@ let seq = 0;
 export const nextKey = (): number => ++seq;
 
 export interface MsgRow {
-  key: number;
+  /**
+   * Row identity. Message rows take a nextKey() counter, so they are unique by
+   * construction. A skill-draft card instead takes the stable `draft:<id>`, so
+   * the resolve re-broadcast replaces the card in place — pushRow keys off
+   * this, and Vue reuses the component instead of remounting it.
+   */
+  key: number | string;
   kind: 'msg' | 'system' | 'divider' | 'approval' | 'draft';
   /** Server id, once known. The optimistic echo gets one when the echo lands. */
   id?: string | null;

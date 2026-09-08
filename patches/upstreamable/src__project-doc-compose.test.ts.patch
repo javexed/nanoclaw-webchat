@@ -1,0 +1,111 @@
+diff --git a/src/project-doc-compose.test.ts b/src/project-doc-compose.test.ts
+index fd964370..f2166735 100644
+--- a/src/project-doc-compose.test.ts
++++ b/src/project-doc-compose.test.ts
+@@ -10,8 +10,8 @@ vi.mock('./log.js', () => ({
+ 
+ import {
+   ensureContainerConfig,
+-  updateContainerConfigScalars,
+   updateContainerConfigJson,
++  updateContainerConfigScalars,
+ } from './db/container-configs.js';
+ import { closeDb, createAgentGroup, getDb, initTestDb, runMigrations } from './db/index.js';
+ import { PERSONA_PREPEND_FILE } from './group-persona.js';
+@@ -24,6 +24,7 @@ import {
+   renderBaseInstructions,
+   type ProjectDocSpec,
+ } from './project-doc-compose.js';
++import { registerProviderContainerConfig } from './providers/provider-container-registry.js';
+ import type { AgentGroup } from './types.js';
+ 
+ const CLAUDE_SPEC: ProjectDocSpec = {
+@@ -443,3 +444,88 @@ describe('composeGroupProjectDoc size cap', () => {
+     expect(log.error).not.toHaveBeenCalled();
+   });
+ });
++
++// A provider whose model has no MCP client (pi is the live one) must not be
++// handed the manual for tools it cannot call — that is what sent a small model
++// into a retry loop that consumed the whole turn.
++//
++// These register their OWN provider rather than leaning on pi: pi arrives via a
++// skill, so it is absent from a freshly composed tree and a test that depended
++// on it would pass here and vanish in CI.
++describe('composeGroupProjectDoc — a provider with no MCP tools', () => {
++  const MCP_MODULES = ['core', 'agents', 'interactive', 'self-mod'];
++
++  it('leaves out the fragments that document MCP tools', async () => {
++    registerProviderContainerConfig('test-nomcp', () => ({}), { lacksMcpTools: true });
++    const ag = await seed('ag-nomcp', 'nomcp-group');
++    await updateContainerConfigScalars(ag.id, { provider: 'test-nomcp' });
++
++    const doc = await compose(ag);
++
++    for (const m of MCP_MODULES) expect(doc).not.toContain(`# NanoClaw Module: ${m}`);
++  });
++
++  it('keeps the ncl fragments, which do not go through MCP at all', async () => {
++    // `ncl` is a binary in the container that reaches the host over the session
++    // DB. Dropping these would take away a capability the provider really has.
++    registerProviderContainerConfig('test-nomcp-ncl', () => ({}), { lacksMcpTools: true });
++    const ag = await seed('ag-nomcp-ncl', 'nomcp-ncl-group');
++    await updateContainerConfigScalars(ag.id, { provider: 'test-nomcp-ncl' });
++
++    const doc = await compose(ag);
++
++    expect(doc).toContain('# NanoClaw Module: cli');
++    expect(doc).toContain('# NanoClaw Module: scheduling');
++  });
++
++  it('changes nothing for a provider that never declared the capability', async () => {
++    // The polarity that matters: this registry is sparse, and `claude` does not
++    // appear in it at all. Reading absence as "no MCP tools" would strip these
++    // fragments from every standard install.
++    registerProviderContainerConfig('test-plain', () => ({}));
++    const ag = await seed('ag-plain', 'plain-group');
++    await updateContainerConfigScalars(ag.id, { provider: 'test-plain' });
++
++    const doc = await compose(ag);
++
++    for (const m of MCP_MODULES) expect(doc).toContain(`# NanoClaw Module: ${m}`);
++  });
++
++  it("also withholds an external MCP server's instructions", async () => {
++    // The capability means no MCP client at all, so a user-added server is as
++    // unreachable as the built-in one. Configuring it is still allowed — it
++    // just is not documented to a model that cannot call it.
++    registerProviderContainerConfig('test-nomcp-ext', () => ({}), { lacksMcpTools: true });
++    const ag = await seed('ag-nomcp-ext', 'nomcp-ext-group');
++    await updateContainerConfigScalars(ag.id, { provider: 'test-nomcp-ext' });
++    await updateContainerConfigJson(ag.id, 'mcp_servers', {
++      docs: { command: 'docs-server', instructions: 'Call docs_search to look things up.' },
++    });
++
++    const doc = await compose(ag);
++
++    expect(doc).not.toContain('# MCP Server: docs');
++  });
++
++  it('still documents an external MCP server for a provider that can call it', async () => {
++    registerProviderContainerConfig('test-mcp-ext', () => ({}));
++    const ag = await seed('ag-mcp-ext', 'mcp-ext-group');
++    await updateContainerConfigScalars(ag.id, { provider: 'test-mcp-ext' });
++    await updateContainerConfigJson(ag.id, 'mcp_servers', {
++      docs: { command: 'docs-server', instructions: 'Call docs_search to look things up.' },
++    });
++
++    const doc = await compose(ag);
++
++    expect(doc).toContain('# MCP Server: docs');
++  });
++
++  it('changes nothing for an unregistered provider', async () => {
++    const ag = await seed('ag-unreg', 'unreg-group');
++    await updateContainerConfigScalars(ag.id, { provider: 'never-registered' });
++
++    const doc = await compose(ag);
++
++    expect(doc).toContain('# NanoClaw Module: core');
++  });
++});

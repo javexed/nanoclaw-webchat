@@ -1,57 +1,13 @@
 diff --git a/src/channels/adapter.ts b/src/channels/adapter.ts
-index b45261bf..49bdf90c 100644
+index 136014df..cc16f16c 100644
 --- a/src/channels/adapter.ts
 +++ b/src/channels/adapter.ts
-@@ -62,8 +62,8 @@ export interface InboundEvent {
-     /** True when the source is a group/channel thread, false for DMs. */
-     isGroup?: boolean;
-     /**
--     * Set when this inbound was authored by an agent — loop-back fan-out from
--     * an adapter that re-routes agent posts through onInbound. See
-+     * Producing agent's `agent_group_id` when this event was synthesised by
-+     * an adapter that loops agent posts back through onInbound. See
-      * `InboundMessage.senderAgentGroupId` for rationale.
-      */
-     senderAgentGroupId?: string;
-@@ -97,10 +97,11 @@ export interface InboundMessage {
-   isGroup?: boolean;
-   /**
-    * When set, this inbound was authored by an agent (loop-back fan-out from
--   * an adapter that re-routes agent posts through onInbound). The value is
--   * the producing agent's `agent_group_id`. The router uses it for
--   * self-exclusion and passes it to the inbound delivery-plan resolver.
--   * Adapters that don't loop back leave it undefined.
-+   * an adapter that re-routes agent posts through onInbound — e.g. webchat).
-+   * The value is the producing agent's `agent_group_id`. Router uses this
-+   * for self-exclusion and to skip prime-style negative-lookahead wirings
-+   * (which model "catch unaddressed human messages" semantics, not "catch
-+   * everything"). Adapters that don't loop back leave it undefined.
-    */
-   senderAgentGroupId?: string;
- }
-@@ -118,9 +119,9 @@ export interface OutboundMessage {
-   files?: OutboundFile[]; // file attachments from the session outbox
-   /**
-    * Producing session's id. Threaded through delivery so adapters that need
--   * to know exactly who emitted the message (e.g. for sender attribution or
--   * loop-back fan-out) don't have to fall back to most-recently-active
--   * heuristics that race under concurrent containers.
-+   * to know exactly who emitted the message (e.g. webchat for sender
-+   * attribution + Pattern C loop-back) don't have to fall back to
-+   * `most-recently-active` heuristics that race under concurrent containers.
-    */
-   senderSessionId?: string;
-   /** Producing session's agent_group_id (correlates with `senderSessionId`). */
-@@ -129,7 +130,7 @@ export interface OutboundMessage {
- 
+@@ -1,3 +1,4 @@
++import type { AgentActivityStatus } from '../seam/delivery-hooks.js';
  /**
-  * Fine-grained agent activity status for the current turn, surfaced to rich
-- * clients for a live "thinking"/activity display. Cosmetic; carries no routing
-+ * clients (webchat) for the "thinking" bubble. Cosmetic; carries no routing
-  * data.
-  *   - start:     a turn began; show the bubble and keep it until done/stalled
-  *   - tool:      `text` = tool name, `detail` = target (file/command/query)
-@@ -267,13 +268,28 @@ export interface ChannelAdapter {
+  * v2 Channel Adapter interface.
+  *
+@@ -231,13 +232,28 @@ export interface ChannelAdapter {
    // Outbound delivery — returns the platform message ID if available
    deliver(platformId: string, threadId: string | null, message: OutboundMessage): Promise<string | undefined>;
  
@@ -79,5 +35,5 @@ index b45261bf..49bdf90c 100644
 +  sendStatus?(platformId: string, threadId: string | null, status: AgentActivityStatus): Promise<void>;
 +
    syncConversations?(): Promise<ConversationInfo[]>;
-   resolveChannelName?(platformId: string): Promise<string | null>;
- 
+   /** Resolve conversation type and human-readable metadata for host UI. */
+   resolveConversation?(platformId: string): Promise<ResolvedConversation | null>;

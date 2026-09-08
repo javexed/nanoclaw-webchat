@@ -11,8 +11,9 @@ import fs from 'fs';
 import path from 'path';
 
 import type { MessageInRow } from './db/messages-in.js';
-import { writeMessageOut, getMaxOutboundSeq } from './db/messages-out.js';
-import { getOutboundDb } from './db/connection.js';
+import { writeMessageOut } from './db/messages-out.js';
+import { getMaxOutboundSeq } from './outbound-seq.js';
+import { getOutboundDb } from './mailbox/sqlite/connection.js';
 import { appendStatusEvent, getTurnToolCount } from './status-feed.js';
 import {
   registerProviderMessageObserver,
@@ -576,7 +577,7 @@ export async function runLearningReview(
   let sawError = false;
   appendStatusEvent('start', null);
   const originDests = resolveOriginDestinations(messages);
-  const query = config.provider.query({
+  const reviewInput = {
     prompt: digest !== null ? buildDigestReviewPrompt(reviewPrompt, digest) : reviewPrompt,
     continuation: digest !== null ? undefined : continuation,
     cwd: config.cwd,
@@ -586,7 +587,8 @@ export async function runLearningReview(
       reviewModel: resolveReviewModel(resolved),
       learningReviewTools: opts.reviewTools,
     },
-  });
+  };
+  const query = config.provider.query(reviewInput);
   try {
     for await (const event of query.events) {
       if (event.type !== 'activity') {
@@ -604,7 +606,10 @@ export async function runLearningReview(
             query.end();
             continue;
           }
-          const { sent } = dispatchResultText(event.text, routing, {
+          // dispatchResultText became async upstream (the mailbox write it makes
+          // is a promise now); without the await `sent` reads undefined off a
+          // Promise and the decline-notice branch below never fires.
+          const { sent } = await dispatchResultText(event.text, routing, {
             originDests,
             lenient: config.lenientOutput ?? false,
           });

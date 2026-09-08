@@ -1,5 +1,5 @@
 diff --git a/src/container-runner.test.ts b/src/container-runner.test.ts
-index ea71a59f..618e554a 100644
+index 3139235d..2f485e83 100644
 --- a/src/container-runner.test.ts
 +++ b/src/container-runner.test.ts
 @@ -33,25 +33,25 @@ vi.mock('./log.js', () => ({
@@ -35,7 +35,7 @@ index ea71a59f..618e554a 100644
      expect(resolveProviderName(null, '')).toBe('claude');
    });
  });
-@@ -125,11 +125,11 @@ function composeWithFolder(folder: string) {
+@@ -133,11 +133,11 @@ function composeWithFolder(folder: string) {
  }
  
  describe('composeSessionSpec', () => {
@@ -49,8 +49,8 @@ index ea71a59f..618e554a 100644
      // Registry-sourced env is provenance-exempt from the credential-NAME check
      // — the custom-endpoint provider registers ANTHROPIC_AUTH_TOKEN=placeholder
      // for the gateway to overwrite on the wire, and composed-lane rules would
-@@ -144,7 +144,7 @@ describe('composeSessionSpec', () => {
-     expect(spec.containers[0].env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+@@ -156,7 +156,7 @@ describe('composeSessionSpec', () => {
+     expect(compose().containers[0].env.NANOCLAW_MAILBOX_BACKEND).toBe('sqlite');
    });
  
 -  it('the gateway contribution fills the contributed lane last and wins a collision', () => {
@@ -58,7 +58,7 @@ index ea71a59f..618e554a 100644
      const spec = compose({
        contribution: { env: { HTTPS_PROXY: 'http://provider:1' } },
        gateway: { env: { HTTPS_PROXY: 'http://gateway-must-win:15001' } },
-@@ -152,7 +152,7 @@ describe('composeSessionSpec', () => {
+@@ -164,7 +164,7 @@ describe('composeSessionSpec', () => {
      expect(spec.containers[0].contributedEnv?.HTTPS_PROXY).toBe('http://gateway-must-win:15001');
    });
  
@@ -67,7 +67,7 @@ index ea71a59f..618e554a 100644
      const spec = compose({
        gateway: {
          mounts: [
-@@ -179,7 +179,7 @@ describe('composeSessionSpec', () => {
+@@ -191,7 +191,7 @@ describe('composeSessionSpec', () => {
      expect(targets).toContain('/tmp/onecli-ca.pem');
    });
  
@@ -76,7 +76,7 @@ index ea71a59f..618e554a 100644
      const spec = compose({
        gateway: {
          containers: [{ role: 'egress-proxy', image: 'proxy:1', env: {}, mounts: [] }],
-@@ -188,7 +188,7 @@ describe('composeSessionSpec', () => {
+@@ -200,7 +200,7 @@ describe('composeSessionSpec', () => {
      expect(spec.containers.map((c) => c.role)).toEqual(['agent', 'egress-proxy']);
    });
  
@@ -85,7 +85,7 @@ index ea71a59f..618e554a 100644
      // The id→folder mapping lives only in the central DB; carrying the folder
      // on the session is what lets an admission-side check pin `groups/<folder>`
      // mounts to the session. Byte-identical to `agentGroup.folder` — drivers
-@@ -197,7 +197,7 @@ describe('composeSessionSpec', () => {
+@@ -209,7 +209,7 @@ describe('composeSessionSpec', () => {
      expect(compose().labels['nanoclaw-group-folder']).toBe(agentGroup.folder);
    });
  
@@ -94,7 +94,7 @@ index ea71a59f..618e554a 100644
      // Admission joins `groups/<folder>` hostPaths to this label by string
      // concatenation; no admission-side check can invert a hash-suffix
      // projection, so an unlabelable folder must refuse at composition —
-@@ -214,7 +214,7 @@ describe('composeSessionSpec', () => {
+@@ -226,7 +226,7 @@ describe('composeSessionSpec', () => {
      expect(String((thrown as Error).message)).toContain('rename the group folder');
    });
  
@@ -103,7 +103,7 @@ index ea71a59f..618e554a 100644
      for (const folder of ['spike agent', 'café', 'agent-']) {
        let thrown: unknown;
        try {
-@@ -226,7 +226,7 @@ describe('composeSessionSpec', () => {
+@@ -238,7 +238,7 @@ describe('composeSessionSpec', () => {
      }
    });
  
@@ -112,7 +112,7 @@ index ea71a59f..618e554a 100644
      // The bound is the cap itself, not a timid margin below it — and the
      // ~42-byte `agent-<uuid>` shape minted group folders get must stay legal,
      // so refusals are rare and loud rather than routine.
-@@ -237,13 +237,13 @@ describe('composeSessionSpec', () => {
+@@ -249,13 +249,13 @@ describe('composeSessionSpec', () => {
      expect(composeWithFolder(minted).labels['nanoclaw-group-folder']).toBe(minted);
    });
  
@@ -128,8 +128,8 @@ index ea71a59f..618e554a 100644
      const spec = compose();
      expect(spec.network).toBe('shared-private');
      expect(spec.hardening).toBe('standard');
-@@ -251,7 +251,7 @@ describe('composeSessionSpec', () => {
-     expect(spec.stopGraceSeconds).toBe(1);
+@@ -271,7 +271,7 @@ describe('composeSessionSpec', () => {
+     );
    });
  
 -  it('composes an explicit runAs posture on a uid-1000 host', () => {
@@ -137,7 +137,7 @@ index ea71a59f..618e554a 100644
      // uid 1000 matches the agent image's node user, so Docker's realization of
      // this posture is a no-op — but the spec contract (drivers/types.ts) says
      // the identity that must read 0600 host-owned material is explicit for
-@@ -270,7 +270,7 @@ describe('composeSessionSpec', () => {
+@@ -290,7 +290,7 @@ describe('composeSessionSpec', () => {
      }
    });
  
@@ -146,7 +146,7 @@ index ea71a59f..618e554a 100644
      // Under a uid the image has no passwd entry for, HOME resolves to '/' and
      // the provider SDK's `mkdir ~/.claude` dies EACCES — so the mapping and
      // the explicit HOME travel together, exactly as they did in the old argv.
-@@ -286,7 +286,7 @@ describe('composeSessionSpec', () => {
+@@ -306,7 +306,7 @@ describe('composeSessionSpec', () => {
      }
    });
  
@@ -155,7 +155,7 @@ index ea71a59f..618e554a 100644
      // The hardened posture pins non-root, so a composed uid-0 runAs could never
      // be realized; Docker's root behavior (image USER wins) stays unchanged.
      const getuid = vi.spyOn(process, 'getuid').mockReturnValue(0);
-@@ -299,38 +299,40 @@ describe('composeSessionSpec', () => {
+@@ -319,38 +319,40 @@ describe('composeSessionSpec', () => {
      }
    });
  
@@ -204,7 +204,7 @@ index ea71a59f..618e554a 100644
      // Fail-closed like the raw pass-through this replaced: Docker used to
      // reject an invalid value at spawn. Returning undefined would fail in the
      // one wrong direction a resource limit has — quietly uncapped.
-@@ -341,12 +343,12 @@ describe('parseMemoryMb', () => {
+@@ -361,12 +363,12 @@ describe('parseMemoryMb', () => {
  });
  
  describe('parsePidsLimit', () => {
@@ -219,7 +219,7 @@ index ea71a59f..618e554a 100644
      // cgroups v2 rejects `--pids-limit 0` with EINVAL, killing the spawn.
      for (const value of ['0', '-1', '', '   ', 'lots']) {
        expect(parsePidsLimit(value)).toBeUndefined();
-@@ -355,7 +357,7 @@ describe('parsePidsLimit', () => {
+@@ -375,7 +377,7 @@ describe('parsePidsLimit', () => {
  });
  
  describe('toMountSpecs', () => {
@@ -228,7 +228,7 @@ index ea71a59f..618e554a 100644
      expect(toMountSpecs(mounts, 'agent-1')).toEqual([
        {
          class: 'group-state',
-@@ -374,7 +376,7 @@ describe('toMountSpecs', () => {
+@@ -394,7 +396,7 @@ describe('toMountSpecs', () => {
      ]);
    });
  
@@ -237,7 +237,7 @@ index ea71a59f..618e554a 100644
      const [spec] = toMountSpecs([{ hostPath: '/x', containerPath: '/y', readonly: false }], 'agent-1');
      expect(spec.class).toBe('allowlisted-extra');
      expect(spec.groupScope).toBe('agent-1');
-@@ -439,7 +441,7 @@ describe('syncSkillSymlinks', () => {
+@@ -459,7 +461,7 @@ describe('syncSkillSymlinks', () => {
      return fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-skills-'));
    }
  
@@ -246,7 +246,7 @@ index ea71a59f..618e554a 100644
      const dir = tmpClaudeDir();
      syncSkillSymlinks(dir, { ...containerConfig, skills: ['welcome'] } as ContainerConfig);
  
-@@ -449,7 +451,7 @@ describe('syncSkillSymlinks', () => {
+@@ -469,7 +471,7 @@ describe('syncSkillSymlinks', () => {
      expect(fs.readlinkSync(link)).toBe('/app/skills/welcome');
    });
  
@@ -255,7 +255,7 @@ index ea71a59f..618e554a 100644
      const dir = tmpClaudeDir();
      syncSkillSymlinks(dir, { ...containerConfig, skills: ['welcome', 'vercel-cli'] } as ContainerConfig);
      syncSkillSymlinks(dir, { ...containerConfig, skills: ['welcome'] } as ContainerConfig);
-@@ -457,7 +459,7 @@ describe('syncSkillSymlinks', () => {
+@@ -477,7 +479,7 @@ describe('syncSkillSymlinks', () => {
      expect(fs.existsSync(path.join(dir, 'skills', 'vercel-cli'))).toBe(false);
    });
  
@@ -264,12 +264,12 @@ index ea71a59f..618e554a 100644
      // Template overlays depend on surviving the prune (see src/group-skills.ts);
      // a stale pre-refactor skill copy (#3001) otherwise gets served forever with
      // no trace.
-@@ -467,7 +469,7 @@ describe('syncSkillSymlinks', () => {
+@@ -487,7 +489,7 @@ describe('syncSkillSymlinks', () => {
      syncSkillSymlinks(dir, { ...containerConfig, skills: ['welcome'] } as ContainerConfig);
  
      expect(log.warn).toHaveBeenCalledWith(
 -      expect.stringContaining('Shared skill not symlinked'),
-+      expect.stringContaining('Skill not symlinked'),
++      expect.stringContaining('skill not symlinked'),
        expect.objectContaining({ skill: 'welcome' }),
      );
    });

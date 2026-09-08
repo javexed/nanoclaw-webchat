@@ -5,7 +5,7 @@
  * `$SERVICE_API_KEY` exists can't use it; an agent that can read its value has
  * gained nothing over a workspace file. So the note lists names only.
  */
-import { registerContainerEnvResolver } from '../../container-runtime.js';
+import { registerContainerEnvResolver } from '../../seam/index.js';
 import { log } from '../../log.js';
 import { listAgentEnvNames, readAgentEnv } from './store.js';
 

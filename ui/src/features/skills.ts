@@ -39,7 +39,6 @@ import SkillDrafts from './SkillDrafts.vue';
 import SkillPool from './SkillPool.vue';
 import SkillSuggestions from './SkillSuggestions.vue';
 import RoomSkills from './RoomSkills.vue';
-import SkillDraftCard from './SkillDraftCard.vue';
 import SkillEditorModal from './SkillEditorModal.vue';
 import {
   agentScopedSkills,
@@ -63,10 +62,10 @@ import {
   roomSkillRows,
   roomSkillUndo,
   roomSkillsReviewing,
-  cardUndo,
-  cardReviewing,
+  draftAction,
+  type DraftPhase,
 } from './skills-panel-state.js';
-import { nextKey } from './transcript-state.js';
+import { messages } from './transcript-state.js';
 
 /**
  * A skill in the catalog. Derived from every property this module reads —
@@ -184,7 +183,7 @@ export function skillDraftRow(msg?: any): any {
   const resolved = d.status === 'kept' || d.status === 'discarded';
   const title = d.kind === 'patch' ? `Proposed change to ${d.targetSkill || d.skillName}` : `Proposed skill: ${d.skillName}`;
 
-  if (reviewingDrafts.has(id)) cardReviewing.value = new Set(cardReviewing.value).add(id);
+  const draft = { id: d.draftId, agentGroupId: d.agentGroupId, agentName: d.agentName, skillName: d.skillName };
   const props = {
     title,
     resolved,
@@ -194,34 +193,20 @@ export function skillDraftRow(msg?: any): any {
     undoSeconds: UNDO_SECONDS,
     draftId: id,
     onView: () => openSkillDraft(d.draftId),
-    onKeep: () =>
-      armCardUndo(id, `Keeping ${d.skillName}…`, () =>
-        keepSkillDraft({ id: d.draftId, agentGroupId: d.agentGroupId, agentName: d.agentName }, null),
-      ),
-    onDiscard: () => armCardUndo(id, `Discarding ${d.skillName}…`, () => discardSkillDraft(d.draftId)),
-    onUndo: () => clearCardUndo(id),
+    // Keep commits immediately: the undo it used to wait out now lives AFTER
+    // the write, where it can also cover the auto-keep path. Discard keeps its
+    // pre-commit window — it deletes the draft body, so there is no after.
+    onKeep: () => void keepSkillDraft(draft),
+    onDiscard: () => void discardDraftFromCard(id, draft),
+    onUndoKeep: () => void undoKeptSkill(id, draft),
+    onUndoDiscard: () => void restoreDiscardedDraft(id, draft),
+    onOverlapChoice: (decision: OverlapDecision) => void resolveOverlap(id, draft, decision),
   };
-  // Resolving re-broadcasts the SAME card id. That used to mean replacing the
-  // element and unmounting the old card's app; as a row it is keyed by draftId,
-  // so the transcript replaces it by identity and there is no app to unmount.
-  return { key: nextKey(), kind: 'draft', id, payload: props };
-}
-
-function armCardUndo(id: string, label: string, commit: () => unknown) {
-  // Measured BEFORE the swap, as armUndo did — after would read the timer. The
-  // card is found by draft id now that the caller no longer holds its wrapper.
-  const el = $(`#messages .skill-draft-msg[data-draft-id="${id}"] .skill-draft-actions`);
-  const w = el ? (el as HTMLElement).getBoundingClientRect().width : 0;
-  cardUndo.value = {
-    ...cardUndo.value,
-    [id]: { label, width: w ? `${w}px` : '', commit: () => { clearCardUndo(id); void commit(); } },
-  };
-}
-
-function clearCardUndo(id: string) {
-  const next = { ...cardUndo.value };
-  delete next[id];
-  cardUndo.value = next;
+  // Keyed by DRAFT ID, not a fresh counter. Resolving re-broadcasts the same
+  // card, and pushRow replaces a row whose key it already holds — so the card
+  // updates in place instead of appending a second, contradictory copy below
+  // the first. This is what the comment here always claimed happened.
+  return { key: `draft:${id}`, kind: 'draft', id, payload: props };
 }
 
 export async function refreshDraftBadge(known?: any) {
@@ -258,7 +243,7 @@ function mountSkillDrafts(): void {
       const room = state.lastRoomsList.find((r: any) => r.id === roomId);
       deps.joinRoom(roomId, room ? room.name : roomId);
     },
-    onKeep: (r: any) => armDraftUndo(r.id, `Keeping ${r.raw.skillName}…`, () => keepSkillDraft(r.raw, null)),
+    onKeep: (r: any) => void keepSkillDraft(r.raw),
     onDiscard: (r: any) => armDraftUndo(r.id, `Discarding ${r.raw.skillName}…`, () => discardSkillDraft(r.id)),
     onUndo: (id: string) => clearDraftUndo(id),
   });
@@ -469,68 +454,185 @@ export function renderDraftEditor() {
   showSkillEditor(true);
 }
 
-const reviewingDrafts = new Set();
+/**
+ * Draft ids whose keep is still moving. The two list surfaces (drafts panel,
+ * room skills) recompute their own reactive sets from this on every render;
+ * setPhase is the only writer.
+ */
+const reviewingDrafts = new Set<string>();
 
-export function draftKeepButton(draftId?: any) {
-  return document.querySelector(`button[data-draft-id="${CSS.escape(draftId)}"]`);
+export type OverlapDecision = { action: 'update'; target: string } | { action: 'keep-new' } | { action: 'discard' };
+
+/**
+ * The keep flow's ONE writer.
+ *
+ * Everything a card shows about a keep — in flight, checking, overlapping,
+ * kept, undone, failed — is this phase, so there is no second place for the
+ * truth to rot. The imperative button writes this replaced (btn.textContent =
+ * 'Keeping…' / markDraftReviewing) could not be reverted by anything reactive:
+ * Vue owns those labels, so a card that entered a state never left it.
+ */
+function setPhase(id: string, phase: DraftPhase | null): void {
+  const next = { ...draftAction.value };
+  if (phase) next[id] = phase;
+  else delete next[id];
+  draftAction.value = next;
+  // The list surfaces only care whether the row is mid-flight. Terminal phases
+  // release it so a re-render does not resurrect a clickable Keep.
+  const moving =
+    phase !== null &&
+    (phase.phase === 'saving' ||
+      phase.phase === 'checking' ||
+      phase.phase === 'discarding' ||
+      phase.phase === 'undoing');
+  if (moving) reviewingDrafts.add(id);
+  else reviewingDrafts.delete(id);
 }
 
-function markDraftReviewing(btn?: any, reviewing?: any) {
-  if (!btn) return;
-  btn.disabled = reviewing;
-  btn.textContent = reviewing ? 'Reviewing…' : 'Keep';
+/** Does this draft have a card in the transcript currently on screen? */
+function hasDraftCard(id: string): boolean {
+  return messages.value.some((r: any) => r.key === `draft:${id}`);
 }
 
 export function handleSkillDraftReview(msg?: any) {
-  reviewingDrafts.delete(msg.draftId);
-  const d = { id: msg.draftId, skillName: msg.skillName, agentGroupId: msg.agentGroupId, agentName: msg.agentName };
+  const id = msg.draftId;
   if (msg.outcome === 'kept') {
-    showToast(
-      msg.updated
-        ? `Updated ${msg.name || d.skillName} — wired to ${d.agentName}`
-        : `Kept ${msg.name || d.skillName} — wired to ${d.agentName}`,
-      { kind: 'success' },
-    );
+    setPhase(id, {
+      phase: 'kept',
+      name: msg.name || msg.skillName,
+      patched: !!msg.patched,
+      agentGroupId: msg.agentGroupId,
+      agentName: msg.agentName,
+    });
     void refreshDraftBadge();
     renderSkillsRegistry();
     return;
   }
-  markDraftReviewing(draftKeepButton(msg.draftId), false);
   if (msg.outcome === 'overlaps' && Array.isArray(msg.overlaps) && msg.overlaps.length) {
+    // Inline in the card when one is on screen — the comparison being asked
+    // for is card-against-card, and a modal drops that context. The list
+    // surfaces have no inline form, so they still get the dialog.
+    if (hasDraftCard(id)) {
+      setPhase(id, { phase: 'overlaps', overlaps: msg.overlaps });
+      return;
+    }
+    setPhase(id, null);
+    const d = { id, skillName: msg.skillName, agentGroupId: msg.agentGroupId, agentName: msg.agentName };
     void showOverlapChoice(d, msg.overlaps);
     return;
   }
+  setPhase(id, { phase: 'error', error: msg.error || 'Review failed' });
   toastError(new Error(msg.error || 'Review failed'), 'Keep failed');
 }
 
-export async function keepSkillDraft(d?: any, btn?: any, force?: any, updateTarget?: any) {
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = updateTarget ? 'Updating…' : 'Keeping…';
-  }
+/**
+ * Keep + wire a draft. Commits immediately: the pre-commit countdown is gone,
+ * and the undo it used to wait out now sits on the kept card, where it also
+ * covers keeps this click never made (auto-keep, another operator).
+ */
+export async function keepSkillDraft(d?: any, force?: any, updateTarget?: any) {
+  const id = d.id;
+  setPhase(id, { phase: 'saving' });
   try {
     const qs = updateTarget ? `?updateTarget=${encodeURIComponent(updateTarget)}` : force ? '?force=1' : '';
-    const res = await authFetch(`/api/skill-drafts/${encodeURIComponent(d.id)}/keep${qs}`, {
+    const res = await authFetch(`/api/skill-drafts/${encodeURIComponent(id)}/keep${qs}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agentGroupId: d.agentGroupId }),
     });
     const body = await res.json().catch(() => ({}));
+    // 202: the overlap check runs server-side and lands as a skill_draft_review
+    // WS event (handleSkillDraftReview above).
     if (res.status === 202 && body.queued) {
-      reviewingDrafts.add(d.id);
-      markDraftReviewing(btn, true);
+      setPhase(id, { phase: 'checking' });
       return;
     }
     if (!res.ok) throw new Error(body.error || res.statusText);
-    showToast(
-      body.updated ? `Updated ${body.name} — wired to ${d.agentName}` : `Kept ${body.name} — wired to ${d.agentName}`,
-      { kind: 'success' },
-    );
+    setPhase(id, {
+      phase: 'kept',
+      name: body.name || d.skillName,
+      patched: !!body.updated || !!body.patched,
+      agentGroupId: d.agentGroupId,
+      agentName: d.agentName,
+    });
     void refreshDraftBadge();
     renderSkillsRegistry();
   } catch (err) {
+    setPhase(id, { phase: 'error', error: (err as any)?.message || String(err) });
     toastError(err, 'Keep failed');
-    markDraftReviewing(btn, false);
+  }
+}
+
+/** Act on an inline overlap choice. */
+async function resolveOverlap(id: string, d: any, decision: OverlapDecision): Promise<void> {
+  if (decision.action === 'update') return keepSkillDraft(d, false, decision.target);
+  if (decision.action === 'keep-new') return keepSkillDraft(d, true);
+  setPhase(id, { phase: 'saving' });
+  await discardSkillDraft(d.id);
+  setPhase(id, null);
+}
+
+/**
+ * Discard from a card: immediate, then undoable.
+ *
+ * The server soft-discards — the row flips to 'discarded' and the staged body
+ * stays on disk — so the card can offer Undo afterwards rather than making the
+ * operator wait out a countdown before anything happens. The list surfaces keep
+ * their pre-commit window instead: a discarded draft leaves those lists (they
+ * filter to pending), so there is nowhere for an Undo to live.
+ */
+async function discardDraftFromCard(id: string, d: any): Promise<void> {
+  setPhase(id, { phase: 'discarding' });
+  try {
+    await apiJson(`/api/skill-drafts/${encodeURIComponent(d.id)}`, { method: 'DELETE' });
+    setPhase(id, { phase: 'discarded', skillName: d.skillName });
+    void refreshDraftBadge();
+    renderSkillDrafts();
+  } catch (err) {
+    setPhase(id, { phase: 'error', error: (err as any)?.message || String(err) });
+    toastError(err, 'Discard failed');
+  }
+}
+
+/** Undo a discard: the draft comes back with its own id and body. */
+async function restoreDiscardedDraft(id: string, d: any): Promise<void> {
+  setPhase(id, { phase: 'undoing' });
+  try {
+    await apiJson(`/api/skill-drafts/${encodeURIComponent(d.id)}/restore`, { method: 'POST' });
+    // Back to no phase at all: the server also un-resolves the stored card, so
+    // the row that replaces this one renders the actionable form again.
+    setPhase(id, null);
+    void refreshDraftBadge();
+    renderSkillDrafts();
+  } catch (err) {
+    setPhase(id, { phase: 'discarded', skillName: d.skillName });
+    toastError(err, 'Undo failed');
+  }
+}
+
+/**
+ * Undo a keep AFTER it landed — the reverse of the write, not a cancelled
+ * countdown. A new skill is deleted (the server archives it, so it stays
+ * restorable); a keep that revised an existing skill reverts to the snapshot
+ * applySkillDraft took first. Either way the agent's containers restart again,
+ * which is why this is a deliberate button and not automatic.
+ */
+async function undoKeptSkill(id: string, d: any): Promise<void> {
+  const kept = draftAction.value[id];
+  if (!kept || kept.phase !== 'kept') return;
+  setPhase(id, { phase: 'undoing' });
+  const agent = encodeURIComponent(kept.agentGroupId || d.agentGroupId);
+  const name = encodeURIComponent(kept.name);
+  try {
+    if (kept.patched) await apiJson(`/api/agents/${agent}/skills/scoped/${name}/revert`, { method: 'POST' });
+    else await apiJson(`/api/agents/${agent}/skills/scoped/${name}`, { method: 'DELETE' });
+    setPhase(id, { phase: 'undone', name: kept.name });
+    showToast(kept.patched ? `Reverted ${kept.name}` : `Removed ${kept.name}`, { kind: 'success' });
+    void refreshDraftBadge();
+    renderSkillsRegistry();
+  } catch (err) {
+    setPhase(id, kept);
+    toastError(err, 'Undo failed');
   }
 }
 
@@ -1315,11 +1417,11 @@ function mountRoomSkills(): void {
   roomSkillsApp = createApp(RoomSkills, {
     undoSeconds: UNDO_SECONDS,
     onView: (id: string) => openSkillDraft(id),
-    onKeep: (r: any) =>
-      armRoomSkillUndo(r.id, `Keeping ${r.skillName}…`, async () => {
-        await keepSkillDraft({ id: r.id, agentGroupId: r.agentGroupId, agentName: r.agentName }, null);
-        void renderRoomSkills();
-      }),
+    onKeep: (r: any) => {
+      void keepSkillDraft({ id: r.id, agentGroupId: r.agentGroupId, agentName: r.agentName }).then(() =>
+        renderRoomSkills(),
+      );
+    },
     onDiscard: (r: any) =>
       armRoomSkillUndo(r.id, `Discarding ${r.skillName}…`, async () => {
         await discardSkillDraft(r.id);
@@ -1713,8 +1815,8 @@ export async function showOverlapChoice(d: any, overlaps: any) {
   const decision = choice === true ? confirmDecision : choice || { action: 'cancel' };
   // force / updateTarget skip the server-side review, so these re-drives
   // resolve synchronously through the same keepSkillDraft.
-  if (decision.action === 'update') return keepSkillDraft(d, draftKeepButton(d.id), false, decision.target);
-  if (decision.action === 'keep-new') return keepSkillDraft(d, draftKeepButton(d.id), true);
+  if (decision.action === 'update') return keepSkillDraft(d, false, decision.target);
+  if (decision.action === 'keep-new') return keepSkillDraft(d, true);
   if (decision.action === 'discard') {
     await discardSkillDraft(d.id);
     showToast(`Discarded ${d.skillName || 'draft'}`, { kind: 'success' });

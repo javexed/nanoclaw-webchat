@@ -10,7 +10,7 @@
  * Best-effort by contract: a write failure must never break the tool call it
  * observes (the seam's notify wrapper also guarantees that).
  */
-import { getOutboundDb, registerOutboundSchemaExtension } from './db/connection.js';
+import { getOutboundDb } from './mailbox/sqlite/connection.js';
 import { registerProviderMessageObserver } from './providers/hooks.js';
 
 /**
@@ -83,7 +83,17 @@ registerProviderMessageObserver((ev) => {
 // status_events: append-only UI activity feed for the "thinking" bubble.
 // Declared via the outbound schema-extension seam — core schema stays
 // untouched, and older session DBs pick the table up on their next open.
-registerOutboundSchemaExtension(`
+// The status_events table is created on first write (below) rather than at DB
+// open — the reader (agent-status) already tolerates its absence, and creating
+// it lazily means the seam does not need an outbound-schema hook in upstream's
+// connection module. Idempotent: CREATE TABLE IF NOT EXISTS, guarded once.
+// Keyed on the DB INSTANCE, not a boolean: initTestSessionDb() swaps in a fresh
+// database, and a module-level flag would then skip creation on the new one and
+// every read would hit "no such table".
+const statusTableReady = new WeakSet<object>();
+function ensureStatusTable(db: ReturnType<typeof getOutboundDb>): void {
+  if (statusTableReady.has(db)) return;
+  db.exec(`
   CREATE TABLE IF NOT EXISTS status_events (
         seq        INTEGER PRIMARY KEY AUTOINCREMENT,
         kind       TEXT NOT NULL,
@@ -92,6 +102,8 @@ registerOutboundSchemaExtension(`
         created_at TEXT NOT NULL
       );
 `);
+  statusTableReady.add(db);
+}
 
 /**
  * Max status_events rows to keep mid-turn. The host only needs rows past its
@@ -122,6 +134,7 @@ export function appendStatusEvent(kind: string, text: string | null, detail: str
   else if (kind === 'tool') turnToolCount++;
   try {
     const db = getOutboundDb();
+    ensureStatusTable(db);
     db.prepare(`INSERT INTO status_events (kind, text, detail, created_at) VALUES ($kind, $text, $detail, $now)`).run({
       $kind: kind,
       $text: text,
@@ -144,7 +157,9 @@ export function appendStatusEvent(kind: string, text: string | null, detail: str
  */
 export function clearStatusEvents(): void {
   try {
-    getOutboundDb().prepare(`DELETE FROM status_events`).run();
+    const db = getOutboundDb();
+    ensureStatusTable(db);
+    db.prepare(`DELETE FROM status_events`).run();
   } catch {
     // ignore — see appendStatusEvent
   }

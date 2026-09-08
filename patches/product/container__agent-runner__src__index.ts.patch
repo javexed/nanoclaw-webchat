@@ -1,11 +1,11 @@
 diff --git a/container/agent-runner/src/index.ts b/container/agent-runner/src/index.ts
-index 8cc00fb6..b18a46e7 100644
+index 02676af8..ad250e07 100644
 --- a/container/agent-runner/src/index.ts
 +++ b/container/agent-runner/src/index.ts
-@@ -33,6 +33,13 @@ import { MEMORY_SESSION_HOOK } from './memory/session-hook.js';
- // Providers barrel — each enabled provider self-registers on import.
- // Provider skills append imports to providers/index.ts.
- import './providers/index.js';
+@@ -38,6 +38,13 @@ import './providers/index.js';
+ // registration on import. Provider skills append imports to
+ // provider-contracts/index.ts alongside the providers barrel line.
+ import './provider-contracts/index.js';
 +// Status feed — registers a provider-message observer (seam R1) that turns
 +// tool-use events into status_events rows for rich clients.
 +import './status-feed.js';
@@ -13,10 +13,28 @@ index 8cc00fb6..b18a46e7 100644
 +// Send-file hint — registers a destinations prompt section (seam R4).
 +import './send-file-hint.js';
 +import './mention-human.js';
- import { createProvider, type ProviderName } from './providers/factory.js';
+ import { createProvider } from './providers/factory.js';
+ import { getProviderRuntimeContract, requireProviderName } from './providers/provider-registry.js';
  import { resolvePluginServer } from './plugin-mcp.js';
- import type { McpServerConfig } from './providers/types.js';
-@@ -98,11 +105,8 @@ async function main(): Promise<void> {
+@@ -63,17 +70,7 @@ async function main(): Promise<void> {
+   // operator-run migration and never happen in this normal startup path.
+   ensureMemoryScaffold();
+ 
+-  // Runtime-generated system-prompt addendum: agent identity (name) plus
+-  // the live destinations map. Everything else (capabilities, per-module
+-  // instructions, per-channel formatting) is loaded by Claude Code from
+-  // /workspace/agent/CLAUDE.md — one flat file the host composes per spawn
+-  // with every instruction source inlined, no imports. Memory is supplied
+-  // separately by each provider's native lifecycle hook.
+   const taskId = getTaskSeriesId();
+-  const instructions = buildSystemPromptAddendum(
+-    config.assistantName || undefined,
+-    taskId ? { kind: 'task', taskId } : { kind: 'chat' },
+-  );
+ 
+   // Discover additional directories mounted at /workspace/extra/*
+   const additionalDirectories: string[] = [];
+@@ -107,11 +104,8 @@ async function main(): Promise<void> {
      // Plugin-shipped servers get ${PLUGIN_ROOT}/${PLUGIN_DATA} expansion and
      // the two injected env vars; everything else passes through untouched.
      mcpServers[name] = resolvePluginServer(serverConfig);
@@ -30,20 +48,41 @@ index 8cc00fb6..b18a46e7 100644
    }
  
    const provider = createProvider(providerName, {
-@@ -112,6 +116,7 @@ async function main(): Promise<void> {
-     additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
+@@ -122,9 +116,28 @@ async function main(): Promise<void> {
      model: config.model,
      effort: config.effort,
+     speed: config.speed,
 +    lenientPrompt: config.lenientPrompt,
    });
-   provider.registerMemorySessionHook(MEMORY_SESSION_HOOK);
+   registerProviderMemorySessionHook(providerName, provider, MEMORY_SESSION_HOOK);
  
-@@ -120,6 +125,8 @@ async function main(): Promise<void> {
-     providerName,
-     cwd: CWD,
-     systemContext: { instructions },
-+    lenientOutput: config.lenientOutput,
-+    learning: config.learning,
-   });
- }
- 
++  // Runtime-generated system-prompt addendum: agent identity (name) plus
++  // the live destinations map. Everything else (capabilities, per-module
++  // instructions, per-channel formatting) is loaded by Claude Code from
++  // /workspace/agent/CLAUDE.md — one flat file the host composes per spawn
++  // with every instruction source inlined, no imports. Memory is supplied
++  // separately by each provider's native lifecycle hook.
++  //
++  // Built AFTER the provider, because it describes the provider's own toolset:
++  // the MCP tools are only mentioned to a provider that actually exposes them.
++  // Promising a tool the model cannot call is worse than staying quiet — pi
++  // read the promise, retried the call until the turn was gone, and answered
++  // nothing.
++  const instructions = buildSystemPromptAddendum(
++    config.assistantName || undefined,
++    taskId ? { kind: 'task', taskId } : { kind: 'chat' },
++    { mcpTools: provider.supportsMcpTools === true },
++  );
++
+   try {
+     await runPollLoop({
+       provider,
+@@ -132,6 +145,8 @@ async function main(): Promise<void> {
+       providerName,
+       cwd: CWD,
+       systemContext: { instructions },
++      lenientOutput: config.lenientOutput,
++      learning: config.learning,
+     });
+   } finally {
+     await mailbox.stop();

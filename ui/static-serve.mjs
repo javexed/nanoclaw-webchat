@@ -4,7 +4,7 @@
 // server is reproducible in a way that a run against a live install is not.
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
 const [root, port] = process.argv.slice(2);
-const TYPES = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.json':'application/json', '.svg':'image/svg+xml' };
+const TYPES = { '.html':'text/html', '.js':'text/javascript', '.mjs':'text/javascript', '.css':'text/css', '.json':'application/json', '.svg':'image/svg+xml' };
 http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   if (p === '/' ) p = '/index.html';
@@ -16,6 +16,10 @@ http.createServer((req, res) => {
       if (!path.resolve(f).startsWith(path.resolve(root) + path.sep) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) {
     res.writeHead(404, {'content-type':'application/json'}); res.end('{}'); return;
   }
-  res.writeHead(200, { 'content-type': TYPES[path.extname(f)] || 'application/octet-stream' });
+  // Optional production-faithful CSP (STATIC_CSP env). A probe
+  // that runs in a laxer environment than production proves the lax half.
+  const headers = { 'content-type': TYPES[path.extname(f)] || 'application/octet-stream' };
+  if (process.env.STATIC_CSP) headers['content-security-policy'] = process.env.STATIC_CSP;
+  res.writeHead(200, headers);
   res.end(fs.readFileSync(f));
 }).listen(Number(port), '127.0.0.1');

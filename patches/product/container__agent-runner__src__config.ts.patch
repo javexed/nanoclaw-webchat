@@ -1,11 +1,13 @@
 diff --git a/container/agent-runner/src/config.ts b/container/agent-runner/src/config.ts
-index 91126802..993db9db 100644
+index 6aad0796..0e36dd8e 100644
 --- a/container/agent-runner/src/config.ts
 +++ b/container/agent-runner/src/config.ts
-@@ -20,6 +20,44 @@ export interface RunnerConfig {
-   mcpServers: Record<string, McpServerConfig>;
+@@ -21,6 +21,46 @@ export interface RunnerConfig {
    model?: string;
    effort?: string;
+   speed?: ProviderSpeed;
++  /** API fast serving tier (host-configured; see the host's container-config). */
++  fastMode?: boolean;
 +  /**
 +   * Lenient output mode for weak/local models. When true, a result turn that
 +   * produces plain prose with no <message to="..."> envelope is delivered to the
@@ -47,15 +49,17 @@ index 91126802..993db9db 100644
  }
  
  const DEFAULT_MAX_MESSAGES = 10;
-@@ -47,8 +85,11 @@ export function loadConfig(): RunnerConfig {
+@@ -55,9 +95,13 @@ export function runnerConfigFromRaw(raw: Record<string, unknown>): RunnerConfig
      agentGroupId: (raw.agentGroupId as string) || '',
      maxMessagesPerPrompt: (raw.maxMessagesPerPrompt as number) || DEFAULT_MAX_MESSAGES,
      mcpServers: (raw.mcpServers as RunnerConfig['mcpServers']) || {},
 +    learning: raw.learning as RunnerConfig['learning'],
      model: (raw.model as string) || undefined,
      effort: (raw.effort as string) || undefined,
+     speed: readSpeed(raw),
++    fastMode: raw.fastMode === true || undefined,
 +    lenientOutput: raw.lenientOutput === true,
 +    lenientPrompt: raw.lenientPrompt === true,
    };
+ }
  
-   return _config;

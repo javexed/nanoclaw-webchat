@@ -436,7 +436,7 @@ export class OpenCodeProvider implements AgentProvider {
                   const seen = reasoningEmittedLen.get(part.id) ?? 0;
                   const grown = part.text.slice(seen);
                   if (grown.length >= REASONING_MIN_CHUNK || /[.!?\n]/.test(grown)) {
-                    for (const line of reasoningChunks(grown)) yield { type: 'reasoning', message: line };
+                    for (const line of reasoningChunks(grown)) notifyProviderMessage({ kind: 'reasoning', text: line }); // seam: direct, no ProviderEvent
                     reasoningEmittedLen.set(part.id, part.text.length);
                   }
                 } else if (part?.type === 'tool' && part.tool && part.callID) {

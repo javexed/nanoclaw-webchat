@@ -9,18 +9,13 @@
  *
  * Imported for side effects by src/modules/index.js (added by the installer).
  */
-import {
-  registerSessionKeyResolver,
-  registerSessionInboundWriter,
-  registerTurnGate,
-  resolveSession,
-  writeOutboundDirect,
-} from '../../session-manager.js';
+import { resolveSession, writeOutboundDirect } from '../../session-manager.js';
+import { registerSessionKeyResolver, registerSessionInboundWriter, registerTurnGate } from '../../seam/index.js';
 import {
   registerAgentIdentityResolver,
   registerContainerEnvResolver,
   registerSessionPrepareHook,
-} from '../../container-runtime.js';
+} from '../../seam/index.js';
 import { writeMemberTranscript } from './fanout.js';
 import { log } from '../../log.js';
 import { getDb, hasTable } from '../../db/connection.js';

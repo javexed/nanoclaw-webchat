@@ -29,12 +29,19 @@ replacement, so the model gets NanoClaw's instructions and nothing else.
 
 ## 1. Install the provider files
 
-Copy the two bundled provider files into place:
+Copy the three bundled provider files into place. The extension is not
+optional: without it pi has no `message` tool, and the provider passes
+`--extension` pointing at that path on every spawn.
 
 ```nc:copy
 files/pi.container.ts -> container/agent-runner/src/providers/pi.ts
 files/pi.host.ts -> src/providers/pi.ts
+files/pi-message-extension.ts -> container/agent-runner/src/providers/pi-message-extension.ts
 ```
+
+It lands under `container/agent-runner/src` because that tree is the only one
+mounted into the agent container — an extension anywhere else is invisible to
+the running pi.
 
 Register the provider in both barrels (idempotent append):
 

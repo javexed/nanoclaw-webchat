@@ -28,7 +28,7 @@ const props = defineProps<{
 
 const KEEP = 'Keep';
 const DISCARD = 'Discard';
-const REVIEWING = 'Reviewing…';
+const REVIEWING = 'Checking for overlaps…';
 const SOURCE = 'from this conversation →';
 /**
  * The separator is BOUND, not a literal space in the template: the imperative

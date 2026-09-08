@@ -143,12 +143,46 @@ say() { printf '  %s\n' "$*"; }
 
 # match <regex> <text> <case-flag i|I> <label> — 0 hit / 1 clean / >=2 error.
 # Both a hit AND a scanner error set fail=1 (fail closed).
+# In CI the log is PUBLIC (this repo is), so a hit must not echo what it hit:
+# the operator patterns are regexes, so GitHub's exact-string masking never
+# fires on the matched text, and printing a real internal address or hostname
+# into a public log is the leak the gate exists to prevent. CI gets counts and pattern ordinals;
+# the operator resolves ordinals against the private list. Locally (hooks) the
+# lines are shown, because that is where they get fixed. LEAK_SCAN_SHOW=1
+# forces the local behaviour anywhere.
+withhold() { [ "${LEAK_SCAN_SHOW:-0}" != 1 ] && [ -n "${GITHUB_ACTIONS:-}${CI:-}" ]; }
+
+# Which operator pattern lines matched — ordinals only, never the pattern.
+which_patterns() {  # <text> <ci-flag>
+  local text="$1" ci="$2" n=0 hit="" line re
+  while IFS= read -r line; do
+    n=$((n+1))
+    # ordinals are positions in the private list; each tier only tests its own lines
+    case "$ci:$line" in i:cs:*) continue ;; I:cs:*) ;; I:*) continue ;; esac
+    re="${line#cs:}"
+    if [ "$ci" = i ]; then printf '%s\n' "$text" | grep -qiE -- "$re" && hit="$hit #$n"
+    else printf '%s\n' "$text" | grep -qE -- "$re" && hit="$hit #$n"; fi
+  done < <(operator_lines)
+  printf '%s' "${hit# }"
+}
+
 match() {
   local re="$1" text="$2" ci="$3" label="$4" out rc
   [ -n "$re" ] || return 0                          # empty operator regex → skip cleanly
   if [ "$ci" = i ]; then out=$(printf '%s\n' "$text" | grep -inE -- "$re"); rc=$?
   else out=$(printf '%s\n' "$text" | grep -nE -- "$re"); rc=$?; fi
-  if [ "$rc" -eq 0 ]; then say "❌ $label:"; printf '     %s\n' "$out" | head -20; fail=1
+  if [ "$rc" -eq 0 ]; then
+    say "❌ $label:"
+    if withhold; then
+      local n; n=$(printf '%s\n' "$out" | wc -l | tr -d ' ')
+      case "$label" in
+        operator*) say "   $n line(s) matched operator pattern(s) $(which_patterns "$text" "$ci") — content withheld from this log; re-run locally to see the lines" ;;
+        *)         say "   $n line(s) matched — content withheld from this log; re-run locally to see the lines" ;;
+      esac
+    else
+      printf '     %s\n' "$out" | head -20
+    fi
+    fail=1
   elif [ "$rc" -ge 2 ]; then say "❌ scanner ERROR on '$label' (grep rc=$rc) — failing closed"; fail=1; fi
 }
 
@@ -201,7 +235,8 @@ scan_content() {  # <text> <label> <mode:new|tree>
     done < <(printf '%s\n' "$text" | grep -oiE -- "$SECRET_RE" 2>/dev/null | sort -u)
     if [ -n "$badtok" ]; then
       say "❌ secret-shaped strings not on the fixture allowlist ($label) — add a line to leak-scan.sh, or use a synthetic value:"
-      printf '     %s\n' $badtok; fail=1
+      if withhold; then say "   $(printf '%s' "$badtok" | grep -c .) token(s) — withheld from this log"; else printf '     %s\n' $badtok; fi
+      fail=1
     fi
   fi
   # Address hygiene: every private address present must be on the allowlist.
@@ -212,7 +247,8 @@ scan_content() {  # <text> <label> <mode:new|tree>
   done < <(printf '%s\n' "$text" | grep -oE -- "$PRIVATE_ADDR_RE" 2>/dev/null | sort -u)
   if [ -n "$bad" ]; then
     say "❌ private addresses not on the allowlist ($label) — add a line to leak-scan.sh, or use a synthetic value:"
-    printf '     %s\n' $bad; fail=1
+    if withhold; then say "   $(printf '%s' "$bad" | grep -c .) address(es) — withheld from this log"; else printf '     %s\n' $bad; fi
+    fail=1
   fi
 }
 
@@ -240,6 +276,15 @@ $inside" "staged changes" new
 
 mode_range() {
   local range="$1"
+  # FAIL CLOSED on a range git cannot resolve. Every scan below reads from a
+  # command substitution, and a fatal inside $( ) yields an EMPTY string — which
+  # scans as perfectly clean. Observed 2026-08-22: a fabricated SHA produced two
+  # "fatal: Invalid revision range" lines followed by "leak gate clean", which is
+  # the one output a gate must never produce for input it never read.
+  git rev-list --max-count=0 "$range" -- >/dev/null 2>&1 || {
+    echo "leak-scan: cannot resolve range '$range' — refusing to report clean on nothing" >&2
+    exit 2
+  }
   # Same patches/ narrowing as mode_staged, for the same reason: a .patch file's
   # context/removal lines are upstream's own text and cannot carry the per-line
   # marker (a removal line must match upstream byte-for-byte). What a patch
@@ -354,6 +399,16 @@ selftest() {
   tier_case "declared file MISSING fails closed"        1 d_env_missing
   tier_case "required flag + no list fails closed"      1 d_flag_missing
   tier_case "declared file present passes"              0 d_env_present
+
+  # A hit in CI reports WHICH pattern (ordinal) and never the matched text —
+  # the log on this repo is public.
+  printf 'acme-tailnet\ncs:AcmeOrg/secret-path\n' > "$tmp/w.txt"
+  printf 'visit acme-tailnet\nsee AcmeOrg/secret-path\n' > "$tmp/w.in"
+  out=$(CI=1 LEAK_PATTERNS_FILE="$tmp/w.txt" bash "$0" --text "$tmp/w.in" 2>&1 || true)
+  if printf '%s' "$out" | grep -q 'pattern(s) #1 ' && printf '%s' "$out" | grep -q 'pattern(s) #2 ' \
+     && ! printf '%s' "$out" | grep -qE 'acme-tailnet|AcmeOrg'; then
+    pass=$((pass+1)); printf '  ok   CI withholds matched text, reports ordinals\n'
+  else tf=$((tf+1)); printf '  FAIL CI withholds matched text, reports ordinals\n%s\n' "$out"; fi
 
   echo "  $pass passed, $tf failed"
   [ "$tf" -eq 0 ]

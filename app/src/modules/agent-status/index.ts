@@ -21,13 +21,15 @@
  *   - Removing = dropping the barrel import; core call-sites are inert.
  */
 import type { Session } from '../../types.js';
-import type { AgentActivityStatus } from '../../channels/adapter.js';
+import type { AgentActivityStatus } from '../../seam/index.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
-import { openOutboundDb } from '../../session-manager.js';
+import { openOutboundDb } from '../../session-db-access.js';
 import type Database from 'better-sqlite3';
-import { isContainerRunning, registerContainerExitObserver } from '../../container-runner.js';
-import { onDeliveryAdapterReady, registerSessionDeliveryObserver } from '../../delivery.js';
+import { isContainerRunning } from '../../container-runner.js';
+import { registerContainerExitObserver } from '../../seam/index.js';
+import { onDeliveryAdapterReady } from '../../delivery.js';
+import { registerSessionDeliveryObserver } from '../../seam/index.js';
 
 interface StatusAdapter {
   sendStatus?(

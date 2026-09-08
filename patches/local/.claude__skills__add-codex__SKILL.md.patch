@@ -1,8 +1,8 @@
 diff --git a/.claude/skills/add-codex/SKILL.md b/.claude/skills/add-codex/SKILL.md
-index 67c70c21..9350c67b 100644
+index 6d0e804f..54a5161a 100644
 --- a/.claude/skills/add-codex/SKILL.md
 +++ b/.claude/skills/add-codex/SKILL.md
-@@ -5,9 +5,9 @@ description: Use Codex (OpenAI's codex app-server) as a full agent provider —
+@@ -11,9 +11,9 @@ metadata:
  
  # Codex agent provider
  
@@ -14,32 +14,31 @@ index 67c70c21..9350c67b 100644
  
  The provider runs `codex app-server` as a child process speaking JSON-RPC over stdio: native streaming, MCP tools, server-side conversation history (the continuation is a thread id, no on-disk transcript). Credentials are **vault-only**: OneCLI serves a sentinel `auth.json` stub into the container and swaps the real ChatGPT token or API key on the wire — no key in `.env`, nothing readable in the container.
  
-@@ -27,9 +27,9 @@ Check whether the payload is already wired (a prior apply, or a trunk that still
+@@ -36,9 +36,9 @@ Check whether the payload is already wired (a prior apply, or a trunk that still
  
  ### 1. Fetch and copy the payload
  
--Fetch the `providers` branch and copy the Codex payload into all three trees (additive — overwrite each file, never merge the branch). The host files are the provider contribution + AGENTS.md compose + their guards; the container files are the provider runtime (turn loop, JSON-RPC wrapper, native memory SessionStart hook, per-exchange archiver) + their guards; the setup file is the picker entry + vault auth walk-through; `container/AGENTS.md` is the runtime-contract base the composed AGENTS.md embeds.
-+Fetch the **`providers-codex`** branch and copy the Codex payload into all three trees (additive — overwrite each file, never merge the branch). `providers-codex` is this fork's own Codex source (on its private mirror): upstream's `providers` payload plus a small carried patch — the MCP-union writer fix, since Codex's `config.toml` can't express this fork's remote (sse/http) MCP servers, so the writer skips them. Keep it current with upstream via `scripts/sync-providers-codex.sh` (rebase-carry; see its header). The host files are the provider contribution + AGENTS.md compose + their guards; the container files are the provider runtime (turn loop, JSON-RPC wrapper, native memory SessionStart hook, per-exchange archiver) + their guards; the setup file is the picker entry + vault auth walk-through; `container/AGENTS.md` is the runtime-contract base the composed AGENTS.md embeds.
+-Fetch the `providers` branch and copy the Codex payload into all three trees (additive — overwrite each file, never merge the branch). The host files are the provider contribution + the AGENTS.md spec (composition itself lives in trunk's `src/project-doc-compose.ts`) + their guards; the container files are the provider runtime (turn loop, JSON-RPC wrapper, native memory SessionStart hook, per-exchange archiver) + their guards; the setup file is the picker entry + vault auth walk-through; `container/AGENTS.md` is the runtime-contract base the composed AGENTS.md embeds.
++Fetch the **`providers-codex`** branch and copy the Codex payload into all three trees (additive — overwrite each file, never merge the branch). `providers-codex` is this fork's own Codex source (on its private mirror): upstream's `providers` payload plus a small carried patch — the MCP-union writer fix, since Codex's `config.toml` can't express this fork's remote (sse/http) MCP servers, so the writer skips them. Keep it current with upstream via `scripts/sync-providers-codex.sh` (rebase-carry; see its header). The host files are the provider contribution + the AGENTS.md spec (composition itself lives in trunk's `src/project-doc-compose.ts`) + their guards; the container files are the provider runtime (turn loop, JSON-RPC wrapper, native memory SessionStart hook, per-exchange archiver) + their guards; the setup file is the picker entry + vault auth walk-through; `container/AGENTS.md` is the runtime-contract base the composed AGENTS.md embeds.
  
 -```nc:copy from-branch:providers
 +```nc:copy from-branch:providers-codex
  src/providers/codex.ts
  src/providers/codex-agents-md.ts
  src/providers/codex-registration.test.ts
-@@ -88,9 +88,15 @@ pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit
- pnpm vitest run src/providers/codex-registration.test.ts src/providers/codex-host-contribution.test.ts src/providers/codex-agents-md.test.ts setup/providers/
- ```
+@@ -110,6 +110,15 @@ pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit
  ```nc:run effect:test
--cd container/agent-runner && bun test src/providers/
-+cd container/agent-runner && bun install --frozen-lockfile && bun test src/providers/
+ pnpm exec tsx scripts/provider-contract-verifier.ts --required-declared codex
  ```
- 
++```nc:run effect:test
++cd container/agent-runner && bun install --frozen-lockfile && bun test src/providers/
++```
++
 +The `bun install` is not redundant. The agent-runner tree is a separate package
 +whose dependencies normally exist only inside the image, so on a host that has
 +never run it the registration test fails to even load — it imports the real
 +barrel, which imports `claude.ts`, which needs the Agent SDK. Installing first
 +is idempotent and matches the documented container dev loop.
-+
+ 
  The registration tests import only the real barrels — they go red if a barrel line is missing, a barrel fails to evaluate, or the payload is broken.
  
- ## Authenticate

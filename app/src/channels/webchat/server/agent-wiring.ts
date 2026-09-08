@@ -17,7 +17,8 @@ import { createAgentGroup } from '../../../db/agent-groups.js';
 import { getDb, hasTable } from '../../../db/connection.js';
 import { getContainerConfig } from '../../../db/container-configs.js';
 import { createMessagingGroupAgent, getMessagingGroupByPlatform } from '../../../db/messaging-groups.js';
-import { insertMessage, openInboundDb } from '../../../db/session-db.js';
+import { insertMessage } from '../../../mailbox/sqlite/session-db.js';
+import { inboundDbPath, openInboundDb } from '../../../session-db-access.js';
 import { initGroupFilesystem } from '../../../group-init.js';
 import { log } from '../../../log.js';
 import {
@@ -262,9 +263,8 @@ export const SESSION_COMMANDS = new Set(['/clear', '/compact']);
 
 export function injectSessionCommand(agentGroupId: string, sessionId: string, command: string): void {
   if (!SESSION_COMMANDS.has(command)) throw new Error(`unsupported session command: ${command}`);
-  const dbPath = path.join(DATA_DIR, 'v2-sessions', agentGroupId, sessionId, 'inbound.db');
-  if (!fs.existsSync(dbPath)) throw new Error('session inbound.db not found');
-  const db = openInboundDb(dbPath);
+  if (!fs.existsSync(inboundDbPath(agentGroupId, sessionId))) throw new Error('session inbound.db not found');
+  const db = openInboundDb(agentGroupId, sessionId);
   try {
     insertMessage(db, {
       id: `${randomUUID()}:${agentGroupId}`,
@@ -281,7 +281,7 @@ export function injectSessionCommand(agentGroupId: string, sessionId: string, co
       }),
       processAfter: null,
       recurrence: null,
-      trigger: 1,
+      trigger: true,
     });
   } finally {
     db.close();

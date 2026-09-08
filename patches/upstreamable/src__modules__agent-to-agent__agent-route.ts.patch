@@ -1,8 +1,8 @@
 diff --git a/src/modules/agent-to-agent/agent-route.ts b/src/modules/agent-to-agent/agent-route.ts
-index 1d557375..923566db 100644
+index d1e2debf..22aa7fb1 100644
 --- a/src/modules/agent-to-agent/agent-route.ts
 +++ b/src/modules/agent-to-agent/agent-route.ts
-@@ -357,6 +357,23 @@ async function performAgentRoute(
+@@ -329,6 +329,23 @@ async function performAgentRoute(
    targetAgentGroupId: string,
  ): Promise<void> {
    const targetSession = await resolveTargetSession(msg, session, targetAgentGroupId);
@@ -26,7 +26,7 @@ index 1d557375..923566db 100644
    const a2aMsgId = `a2a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
  
    // If the source message references files (via `send_file`), forward the
-@@ -380,6 +397,12 @@ async function performAgentRoute(
+@@ -352,6 +369,12 @@ async function performAgentRoute(
      from: session.agent_group_id,
      to: targetAgentGroupId,
      targetSession: targetSession.id,

@@ -1,8 +1,8 @@
 diff --git a/pnpm-workspace.yaml b/pnpm-workspace.yaml
-index 53327583..b20ad6e3 100644
+index bf5a7e42..164d064e 100644
 --- a/pnpm-workspace.yaml
 +++ b/pnpm-workspace.yaml
-@@ -3,6 +3,9 @@ onlyBuiltDependencies:
+@@ -2,6 +2,9 @@ onlyBuiltDependencies:
    - esbuild
    - protobufjs
    - sharp
@@ -10,5 +10,5 @@ index 53327583..b20ad6e3 100644
 +  # Human-approved 2026-06-15 (webchat happy-path E2E).
 +  - '@playwright/test'
  
- pnpm:
-   minimumReleaseAge: 4320
+ # Top-level, NOT nested under a `pnpm:` key: pnpm reads a `pnpm:` config block
+ # only from package.json. Nested here in pnpm-workspace.yaml the setting is

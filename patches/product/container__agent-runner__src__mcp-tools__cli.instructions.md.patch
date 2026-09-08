@@ -1,8 +1,8 @@
-diff --git c/container/agent-runner/src/mcp-tools/cli.instructions.md w/container/agent-runner/src/mcp-tools/cli.instructions.md
-index d0e3e0ea..32656a8a 100644
---- c/container/agent-runner/src/mcp-tools/cli.instructions.md
-+++ w/container/agent-runner/src/mcp-tools/cli.instructions.md
-@@ -86,9 +86,14 @@ ncl members add --user telegram:jane
+diff --git a/container/agent-runner/src/mcp-tools/cli.instructions.md b/container/agent-runner/src/mcp-tools/cli.instructions.md
+index f8b5385c..f74e775c 100644
+--- a/container/agent-runner/src/mcp-tools/cli.instructions.md
++++ b/container/agent-runner/src/mcp-tools/cli.instructions.md
+@@ -87,9 +87,14 @@ ncl members add --user telegram:jane
  ncl wirings update --engage-mode pattern --engage-pattern "."
  ```
  

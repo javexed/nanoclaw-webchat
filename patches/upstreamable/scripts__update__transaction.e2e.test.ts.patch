@@ -1,0 +1,50 @@
+diff --git a/scripts/update/transaction.e2e.test.ts b/scripts/update/transaction.e2e.test.ts
+index b68fb7aa..767c3441 100644
+--- a/scripts/update/transaction.e2e.test.ts
++++ b/scripts/update/transaction.e2e.test.ts
+@@ -3,7 +3,7 @@ import fs from 'node:fs';
+ import os from 'node:os';
+ import path from 'node:path';
+ 
+-import { afterEach, describe, expect, it } from 'vitest';
++import { afterEach, describe, expect, it, vi } from 'vitest';
+ 
+ import {
+   acknowledgeRequirement,
+@@ -468,7 +468,23 @@ describe('update-nanoclaw transaction end to end', () => {
+     // run an automatic rollback — which must see a COMPLETE snapshot.
+     failTargetBuild = false;
+     write(fixture.install, 'data/aaa-unreadable', 'secret');
+-    fs.chmodSync(path.join(fixture.install, 'data/aaa-unreadable'), 0o000);
++    // Fail the copy of THIS entry directly rather than via chmod 0o000: root
++    // (as in CI containers) bypasses permission bits, so a chmod-based failure
++    // silently succeeds there and the copy completes — the exact opposite of
++    // what this test asserts. Spying is uid-independent, and scoping it to the
++    // planted path keeps the rest of the snapshot copying normally so the
++    // partial-copy state under test is still what the rollback sees.
++    const realCopy = fs.copyFileSync;
++    const copySpy = vi.spyOn(fs, 'copyFileSync').mockImplementation(((
++      src: fs.PathLike,
++      dest: fs.PathLike,
++      mode?: number,
++    ) => {
++      if (String(src).endsWith('data/aaa-unreadable')) {
++        throw Object.assign(new Error(`EACCES: permission denied, open '${String(src)}'`), { code: 'EACCES' });
++      }
++      return realCopy(src, dest, mode);
++    }) as typeof fs.copyFileSync);
+     try {
+       await expect(cutoverUpdate(fixture.install, state.id, runtime)).rejects.toThrow(/EACCES|permission denied/i);
+ 
+@@ -480,10 +496,7 @@ describe('update-nanoclaw transaction end to end', () => {
+       expect(fs.existsSync(snapshotDb)).toBe(true);
+       expect(fs.existsSync(path.join(state.transactionRoot, 'snapshot.prev'))).toBe(false);
+     } finally {
+-      // A successful rollback legitimately removes the planted file (the
+-      // prior snapshot never contained it); re-chmod only if it survived.
+-      const planted = path.join(fixture.install, 'data/aaa-unreadable');
+-      if (fs.existsSync(planted)) fs.chmodSync(planted, 0o644);
++      copySpy.mockRestore();
+     }
+   });
+ });

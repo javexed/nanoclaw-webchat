@@ -1,5 +1,5 @@
 diff --git a/src/modules/approvals/response-handler.ts b/src/modules/approvals/response-handler.ts
-index c29374ae..b2f2558c 100644
+index 483ee3eb..ae1fedf2 100644
 --- a/src/modules/approvals/response-handler.ts
 +++ b/src/modules/approvals/response-handler.ts
 @@ -32,6 +32,35 @@ import { ONECLI_ACTION, resolveOneCLIApproval } from './onecli-approvals.js';
@@ -48,19 +48,19 @@ index c29374ae..b2f2558c 100644
 +  // replay's guard liveness check still sees it — see the claimApproval note.
 +  if (!claimApproval(approval.approval_id)) return;
 +
-   const notify = async (text: string): Promise<void> => {
-     await writeSessionMessage(session.agent_group_id, session.id, {
+   const notify = (text: string): Promise<void> =>
+     writeSessionMessage(session.agent_group_id, session.id, {
        id: `appr-note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-@@ -111,7 +146,7 @@ async function handleRegisteredApproval(
+@@ -110,7 +145,7 @@ async function handleRegisteredApproval(
        action: approval.action,
      });
      await notify(`Your ${approval.action} was approved, but no handler is installed to apply it.`);
 -    await deletePendingApproval(approval.approval_id);
 +    await releaseApproval(approval.approval_id);
      await notifyApprovalResolved({ approval, session, outcome: 'approve', userId });
-     await wakeContainer(session);
+     await requestWake(session, 'approval-response');
      return;
-@@ -126,13 +161,26 @@ async function handleRegisteredApproval(
+@@ -125,13 +160,26 @@ async function handleRegisteredApproval(
      await notify(
        `Your ${approval.action} was approved, but applying it failed: ${err instanceof Error ? err.message : String(err)}.`,
      );
@@ -72,7 +72,7 @@ index c29374ae..b2f2558c 100644
  
 -  await deletePendingApproval(approval.approval_id);
    await notifyApprovalResolved({ approval, session, outcome: 'approve', userId });
-   await wakeContainer(session);
+   await requestWake(session, 'approval-response');
  }
  
 +/**

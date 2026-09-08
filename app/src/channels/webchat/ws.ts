@@ -73,7 +73,7 @@ async function interruptRoomSessions(roomId: string, agentName?: string | null):
       kind: 'interrupt',
       timestamp: new Date().toISOString(),
       content: JSON.stringify({ reason: 'user-stop' }),
-      trigger: 0, // control signal only — must not wake/spawn a container
+      trigger: false, // control signal only — must not wake/spawn a container
     });
   }
 }

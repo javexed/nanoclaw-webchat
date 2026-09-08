@@ -1,8 +1,8 @@
 diff --git a/container/agent-runner/src/integration.test.ts b/container/agent-runner/src/integration.test.ts
-index e4a7850b..a298892f 100644
+index 1e587c29..b266f1bb 100644
 --- a/container/agent-runner/src/integration.test.ts
 +++ b/container/agent-runner/src/integration.test.ts
-@@ -198,7 +198,48 @@ describe('poll loop integration', () => {
+@@ -211,17 +211,56 @@ describe('poll loop integration', () => {
      // Only insert a message from discord — slack-new has never sent anything
      insertMessage('m1', { sender: 'Alice', text: 'tell slack' }, { platformId: 'chan-1', channelType: 'discord', threadId: 'discord-thread' });
  
@@ -15,9 +15,9 @@ index e4a7850b..a298892f 100644
 +      {},
 +      () => '<message to="discord-test">on it</message><message to="slack-new">hello slack</message>',
 +    );
-+    const controller = new AbortController();
-+    const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
-+
+     const controller = new AbortController();
+     const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
+ 
 +    await waitFor(() => getUndeliveredMessages().length >= 2, 2000);
 +    controller.abort();
 +
@@ -39,20 +39,19 @@ index e4a7850b..a298892f 100644
 +    // names the wrong room (slack-test). A lone reply must be pinned to origin.
 +    insertMessage('m1', { sender: 'Alice', text: 'hi' }, { platformId: 'chan-1', channelType: 'discord', threadId: 't1' });
 +
-+    // A RESULT-DOOR mock: MockProvider streams (emitsMidTurnText = true), and
-+    // on the streaming door the block would deliver before the misfire guard
-+    // could see the turn's block count — the exact incompatibility that keeps
-+    // this fork's claude.ts on the result door (see nanoclaw-webchat
-+    // docs/pin-bump-mid-turn-delivery.md). The guard is a result-door feature,
-+    // so it is tested through a provider shaped like the one that carries it.
-+    class ResultDoorMock extends MockProvider {
-+      override readonly emitsMidTurnText = false;
-+    }
-+    const provider = new ResultDoorMock({}, () => '<message to="slack-test">answer for the user</message>');
-     const controller = new AbortController();
-     const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000);
- 
-@@ -207,8 +248,8 @@ describe('poll loop integration', () => {
++    // A RESULT-DOOR run. The mock's stock contract declares
++    // 'mid-turn-complete', and on the streaming door the block would deliver
++    // before the misfire guard could see the turn's block count — the exact
++    // incompatibility that keeps this fork's Claude contract on the result
++    // door. Delivery is chosen by the CONTRACT, not by an instance flag, so
++    // the door is selected the same way the real override selects it.
++    const resultDoorContract = { ...MOCK_PROVIDER_CONTRACT, textDelivery: 'result' as const };
++    const provider = new MockProvider({}, () => '<message to="slack-test">answer for the user</message>');
++    const controller = new AbortController();
++    const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 2000, resultDoorContract);
++
+     await waitFor(() => getUndeliveredMessages().length > 0, 2000);
+     controller.abort();
  
      const out = getUndeliveredMessages();
      expect(out).toHaveLength(1);
@@ -63,3 +62,22 @@ index e4a7850b..a298892f 100644
  
      await loopPromise.catch(() => {});
    });
+@@ -312,11 +351,16 @@ describe('poll loop integration', () => {
+ });
+ 
+ // Helper: run poll loop until aborted or timeout
+-async function runPollLoopWithTimeout(provider: MockProvider, signal: AbortSignal, timeoutMs: number): Promise<void> {
++async function runPollLoopWithTimeout(
++  provider: MockProvider,
++  signal: AbortSignal,
++  timeoutMs: number,
++  contract = MOCK_PROVIDER_CONTRACT,
++): Promise<void> {
+   return Promise.race([
+     runPollLoop({
+       provider,
+-      providerContract: MOCK_PROVIDER_CONTRACT,
++      providerContract: contract,
+       providerName: 'mock',
+       cwd: '/tmp',
+       signal,

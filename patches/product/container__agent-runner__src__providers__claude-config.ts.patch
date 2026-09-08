@@ -1,0 +1,33 @@
+diff --git a/container/agent-runner/src/providers/claude-config.ts b/container/agent-runner/src/providers/claude-config.ts
+index 8c1eada2..7c4e3bdd 100644
+--- a/container/agent-runner/src/providers/claude-config.ts
++++ b/container/agent-runner/src/providers/claude-config.ts
+@@ -78,6 +78,16 @@ export function mcpAllowPattern(serverName: string): string {
+   return `mcp__${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}__*`;
+ }
+ 
++// Tool-level allowlisting: a server with `enabledTools` gets ONLY those tools
++// listed; everything else the server exposes is filtered out by the SDK and
++// never even enters the agent's context. No allowlist → the whole namespace.
++export function mcpAllowEntries(serverName: string, cfg: McpServerConfig): string[] {
++  const enabled = (cfg as { enabledTools?: unknown }).enabledTools;
++  if (!Array.isArray(enabled) || enabled.length === 0) return [mcpAllowPattern(serverName)];
++  const ns = serverName.replace(/[^a-zA-Z0-9_-]/g, '_');
++  return enabled.map((t) => `mcp__${ns}__${String(t).replace(/[^a-zA-Z0-9_-]/g, '_')}`);
++}
++
+ /**
+  * Claude runs unrestricted inside the container: NanoClaw's container
+  * isolation and the OneCLI allow-list are the security boundary, not the
+@@ -127,7 +137,10 @@ export function resolveClaudeMcpServers(
+   const mcpServers = Object.fromEntries(Object.entries(input).map(([name, server]) => [name, shimCwd(server)]));
+   return {
+     mcpServers,
+-    allowedTools: [...TOOL_ALLOWLIST, ...Object.keys(mcpServers).map(mcpAllowPattern)],
++    allowedTools: [
++      ...TOOL_ALLOWLIST,
++      ...Object.entries(mcpServers).flatMap(([name, cfg]) => mcpAllowEntries(name, cfg)),
++    ],
+   };
+ }
+ 

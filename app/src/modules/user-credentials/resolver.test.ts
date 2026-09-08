@@ -8,8 +8,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
-import { consultTurnGates, resolveSessionKeyOverride } from '../../session-manager.js';
-import { resolveAgentIdentity, resolveContainerEnv, runSessionPrepareHooks } from '../../container-runtime.js';
+import { consultTurnGates, resolveSessionKeyOverride } from '../../seam/index.js';
+import { resolveAgentIdentity, resolveContainerEnv, runSessionPrepareHooks } from '../../seam/index.js';
 import { setRoomModeOverride, setCredentialsConfig } from '../../channels/webchat/db.js';
 import { upsertUserCredential, setUserCredentialStatus } from './db.js';
 import { userCredsAgentIdentifier, WORKSPACE_DEFAULT_USER_ID } from './identity.js';

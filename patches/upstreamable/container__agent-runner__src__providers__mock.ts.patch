@@ -1,10 +1,10 @@
 diff --git a/container/agent-runner/src/providers/mock.ts b/container/agent-runner/src/providers/mock.ts
-index f0dab2eb..0eff7966 100644
+index 562f1fbb..c222fd9e 100644
 --- a/container/agent-runner/src/providers/mock.ts
 +++ b/container/agent-runner/src/providers/mock.ts
-@@ -6,6 +6,25 @@ import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryIn
-  * Mock provider for testing. Returns canned responses.
-  * Supports push() — queued messages produce additional results.
+@@ -10,13 +10,35 @@ import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryIn
+  * registerProviderContract, the same two-step path every provider uses; this
+  * module does not import it.
   */
 +/**
 + * A factory may return either a plain string (treated as result text, the
@@ -26,13 +26,10 @@ index f0dab2eb..0eff7966 100644
 +  | { silent: true };
 +
  export class MockProvider implements AgentProvider {
-   readonly supportsNativeSlashCommands = false;
-   /**
-@@ -15,12 +34,12 @@ export class MockProvider implements AgentProvider {
-    */
-   readonly emitsMidTurnText = true;
- 
 -  private responseFactory: (prompt: string) => string;
++  /** Stands in for a full provider, so it describes the full toolset. */
++  readonly supportsMcpTools = true;
++
 +  private responseFactory: (prompt: string, input: QueryInput) => MockResponse;
    private textFactory: ((prompt: string) => string[]) | undefined;
  
@@ -43,7 +40,7 @@ index f0dab2eb..0eff7966 100644
      /**
       * Optional mid-turn text segments: returns the `text` events to emit
       * before the result for a given prompt (mirrors SDK assistant messages
-@@ -34,8 +53,11 @@ export class MockProvider implements AgentProvider {
+@@ -30,8 +52,11 @@ export class MockProvider implements AgentProvider {
  
    registerMemorySessionHook(_hook: MemorySessionHookRegistration): void {}
  
@@ -57,11 +54,14 @@ index f0dab2eb..0eff7966 100644
    }
  
    query(input: QueryInput): AgentQuery {
-@@ -50,13 +72,41 @@ export class MockProvider implements AgentProvider {
+@@ -44,14 +69,43 @@ export class MockProvider implements AgentProvider {
+     // Mid-turn text segments (if configured) followed by the turn's result —
+     // mirrors the SDK's assistant-message → result ordering. The result text
      // itself streams as the LAST text event first: the real SDK's result only
-     // repeats the final assistant text, which already streamed — that is the
-     // emitsMidTurnText contract this mock declares.
+-    // repeats the final assistant text, which already streamed.
 -    function* turnEvents(prompt: string): Generator<ProviderEvent> {
++    // repeats the final assistant text, which already streamed — that is the
++    // mid-turn-complete delivery this mock's contract declares.
 +    function* turnEvents(prompt: string): Generator<ProviderEvent, boolean> {
        for (const text of textFactory?.(prompt) ?? []) {
          yield { type: 'text', text };
@@ -103,7 +103,7 @@ index f0dab2eb..0eff7966 100644
      }
  
      const events: AsyncIterable<ProviderEvent> = {
-@@ -66,13 +116,13 @@ export class MockProvider implements AgentProvider {
+@@ -61,13 +115,13 @@ export class MockProvider implements AgentProvider {
  
          // Process initial prompt
          yield { type: 'activity' };
@@ -119,7 +119,7 @@ index f0dab2eb..0eff7966 100644
              continue;
            }
            // Wait for push() or end()
-@@ -85,7 +135,7 @@ export class MockProvider implements AgentProvider {
+@@ -80,7 +134,7 @@ export class MockProvider implements AgentProvider {
          // Drain remaining
          while (pending.length > 0) {
            const msg = pending.shift()!;

@@ -1,0 +1,16 @@
+diff --git a/container/agent-runner/src/provider-contracts/registry.test.ts b/container/agent-runner/src/provider-contracts/registry.test.ts
+index f9446067..54113748 100644
+--- a/container/agent-runner/src/provider-contracts/registry.test.ts
++++ b/container/agent-runner/src/provider-contracts/registry.test.ts
+@@ -76,7 +76,10 @@ describe('provider runtime contracts', () => {
+     expect(typeof contract?.lifecycle?.memorySessionHookRegistration).toBe('function');
+     expect(typeof contract?.history?.readTrace).toBe('function');
+     expect(contract?.history?.afterExchange).toBeUndefined();
+-    expect(contract?.textDelivery).toBe('mid-turn-complete');
++    // Upstream declares 'mid-turn-complete'; this fork keeps Claude on the
++    // result door so the single-reply misfire guard can see the turn's block
++    // count. See the rationale on claudeRuntimeContract.textDelivery.
++    expect(contract?.textDelivery).toBe('result');
+     expect(contract?.commands.formatting).toBe('native');
+     expect(contract?.seamVersion).toBe(PROVIDER_RUNTIME_CONTRACT_SEAM_VERSION);
+     expect(hasDeclaredProviderRuntimeContract('CLAUDE')).toBe(true);

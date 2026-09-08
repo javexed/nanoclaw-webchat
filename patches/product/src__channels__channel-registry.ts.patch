@@ -1,24 +1,16 @@
 diff --git a/src/channels/channel-registry.ts b/src/channels/channel-registry.ts
-index f6c4835a..4035a09f 100644
+index 692dde9d..bf817ea4 100644
 --- a/src/channels/channel-registry.ts
 +++ b/src/channels/channel-registry.ts
-@@ -4,7 +4,14 @@
-  * Channels self-register on import. The host calls initChannelAdapters() at startup
+@@ -5,6 +5,7 @@
   * to instantiate and set up all registered adapters.
   */
--import type { ChannelAdapter, ChannelDefaults, ChannelRegistration, ChannelSetup, OutboundFile } from './adapter.js';
-+import type {
-+  AgentActivityStatus,
-+  ChannelAdapter,
-+  ChannelDefaults,
-+  ChannelRegistration,
-+  ChannelSetup,
-+  OutboundFile,
-+} from './adapter.js';
+ import type { ChannelAdapter, ChannelDefaults, ChannelRegistration, ChannelSetup, OutboundFile } from './adapter.js';
++import type { AgentActivityStatus } from '../seam/delivery-hooks.js';
  import type { ChannelDeliveryAdapter } from '../delivery.js';
  import { log } from '../log.js';
  
-@@ -103,12 +110,21 @@ export function createChannelDeliveryAdapter(): ChannelDeliveryAdapter {
+@@ -106,12 +107,21 @@ export function createChannelDeliveryAdapter(): ChannelDeliveryAdapter {
        content: string,
        files?: OutboundFile[],
        instance?: string,
@@ -41,7 +33,7 @@ index f6c4835a..4035a09f 100644
      },
      async setTyping(
        channelType: string,
-@@ -117,9 +133,20 @@ export function createChannelDeliveryAdapter(): ChannelDeliveryAdapter {
+@@ -120,9 +130,20 @@ export function createChannelDeliveryAdapter(): ChannelDeliveryAdapter {
        instance?: string,
        status?: string,
        statusKind?: 'auto' | 'agent',

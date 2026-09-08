@@ -1,5 +1,5 @@
 diff --git a/.claude/skills/add-mnemon/SKILL.md b/.claude/skills/add-mnemon/SKILL.md
-index 3ab7a864..0bfe7ba2 100644
+index 8167d21e..7d232863 100644
 --- a/.claude/skills/add-mnemon/SKILL.md
 +++ b/.claude/skills/add-mnemon/SKILL.md
 @@ -15,7 +15,7 @@ mnemon hooks fire only under `--target claude-code`. Use this skill on agent gro

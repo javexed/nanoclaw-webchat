@@ -1,8 +1,8 @@
 diff --git a/setup/auto.ts b/setup/auto.ts
-index c61aef25..918e2874 100644
+index a16922e4..17055eaf 100644
 --- a/setup/auto.ts
 +++ b/setup/auto.ts
-@@ -150,8 +150,11 @@ async function main(): Promise<void> {
+@@ -164,8 +164,11 @@ async function main(): Promise<void> {
    // Welcome menu — default path or open advanced overrides before any setup
    // work begins. Default lands on standard so Enter is the happy path.
    // On sg re-exec, the user already chose — skip straight to standard.
@@ -15,14 +15,19 @@ index c61aef25..918e2874 100644
      startChoice = ensureAnswer(
        await brightSelect<'default' | 'advanced'>({
          message: 'How would you like to begin?',
-@@ -950,8 +953,8 @@ function sendChatMessage(message: string): Promise<void> {
+@@ -928,6 +931,15 @@ function sendChatMessage(message: string): Promise<void> {
  
- // Providers offered for install are hard-wired in trunk — an audited control
- // surface (no branch enumeration that anyone with write access could extend).
--// Codex is the only one offered here; opencode/ollama install via their own
--// /add-* skills. Each is installed by applying its `/add-<name>` SKILL.md
+ // ─── auth step (select → branch) ────────────────────────────────────────
+ 
++// Providers offered for install are hard-wired in trunk — an audited control
++// surface (no branch enumeration that anyone with write access could extend).
 +// Codex is the only one offered here; ollama installs via its own
 +// /add-* skill. Each is installed by applying its `/add-<name>` SKILL.md
- // in-process via the directive engine.
- const INSTALLABLE_PROVIDERS = [
-   { value: 'codex', label: 'Codex', hint: 'OpenAI — ChatGPT subscription or API key' },
++// in-process via the directive engine.
++const INSTALLABLE_PROVIDERS = [
++  { value: 'codex', label: 'Codex', hint: 'OpenAI — ChatGPT subscription or API key' },
++] as const;
++
+ // `pickSavedByPreviousRun`: the .env bridge promoted a pick persisted by a
+ // PREVIOUS run. That pick is a default to confirm, not a decision to replay:
+ // the operator may be rerunning precisely to change it. In-process presets

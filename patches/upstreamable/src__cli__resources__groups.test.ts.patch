@@ -1,8 +1,8 @@
 diff --git a/src/cli/resources/groups.test.ts b/src/cli/resources/groups.test.ts
-index e5102c4e..cb0bd3f8 100644
+index 62e836f3..4f44907d 100644
 --- a/src/cli/resources/groups.test.ts
 +++ b/src/cli/resources/groups.test.ts
-@@ -267,6 +267,90 @@ describe('groups CLI delete cascades dependent rows (#2525)', () => {
+@@ -301,6 +301,90 @@ describe('groups CLI delete cascades dependent rows (#2525)', () => {
    });
  });
  
@@ -90,6 +90,6 @@ index e5102c4e..cb0bd3f8 100644
 +  });
 +});
 +
- describe('groups config add-mount / remove-mount (host-only)', () => {
+ describe('groups config (host-only)', () => {
    beforeEach(async () => {
      if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });

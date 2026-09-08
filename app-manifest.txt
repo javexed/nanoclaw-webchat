@@ -1,5 +1,10 @@
 src/channels/webchat
 public/webchat
+src/model-profiles.ts
+src/model-profiles.test.ts
+src/model-probe.ts
+src/model-probe.test.ts
+src/model-profile-store.ts
 src/session-teardown.ts
 src/session-teardown.test.ts
 src/container-runtime.test.ts
@@ -9,6 +14,8 @@ src/router.backtick-escape.test.ts
 container/agent-runner/src/graceful-degradation.test.ts
 container/agent-runner/src/mention-human.ts
 container/agent-runner/src/mention-human.test.ts
+container/agent-runner/src/noop-tool-cap.ts
+container/agent-runner/src/noop-tool-cap.test.ts
 src/modules/agent-status
 container/agent-runner/src/db/status-events.test.ts
 container/agent-runner/src/providers/summarize-thinking.test.ts
@@ -18,6 +25,7 @@ src/mcp-server-config.ts
 src/mcp-server-config.test.ts
 src/modules/user-credentials
 src/modules/container-egress
+src/modules/provider-guard
 src/db/migrations/module-user-credentials.ts
 src/db/migrations/module-user-credentials.test.ts
 src/db/migrations/module-user-credentials-grok-flag.ts
@@ -88,5 +96,8 @@ src/audit.test.ts
 vitest.setup.ts
 src/container-runner.max-output.test.ts
 src/channels/webchat/pi-model-change-clear.test.ts
-src/channels/webchat/server/floor.ts
-src/channels/webchat/floor.test.ts
+scripts/eval
+src/container-runtime-extras.ts
+src/module-sweep.ts
+src/session-db-access.ts
+container/agent-runner/src/outbound-seq.ts

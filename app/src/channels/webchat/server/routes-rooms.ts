@@ -24,8 +24,8 @@ import {
   roomTarArgs,
   stageRoomExport,
 } from '../../../modules/transfer/room-transfer.js';
-import { syncSessionContext } from '../../../session-manager.js';
-import type { ContextMessage } from '../../../session-manager.js';
+import { syncSessionContext } from '../../../session-db-access.js';
+import type { ContextMessage } from '../../../session-db-access.js';
 import {
   deleteSessionDbState,
   findSessionsByMessagingGroup,
@@ -861,16 +861,17 @@ export function parseAgentRef(raw: unknown): AgentRef | { error: string } {
   }
   if (r.kind === 'new') {
     if (typeof r.name !== 'string' || !r.name.trim()) return { error: 'agent.name required for kind=new' };
-    // Optional non-default provider for the new agent (wizard "default engine"
-    // = Codex). Only 'codex' is accepted — 'claude' is the implicit default.
+    // Optional explicit provider for the new agent. 'claude' is always
+    // accepted — it is the built-in harness and the way back — plus whichever
+    // non-default harnesses are installed. Letting a caller say 'claude'
+    // matters: the wizard creates its agent BEFORE it switches the install
+    // default (that switch restarts the host), so without an explicit pin an
+    // install whose .env already names another default would hand the new
+    // agent that old default. Same rule as PUT /api/workspace-provider.
     if (r.provider !== undefined) {
-      const allowed = availableProviders();
+      const allowed = ['claude', ...availableProviders()];
       if (typeof r.provider !== 'string' || !allowed.includes(r.provider))
-        return {
-          error: allowed.length
-            ? `agent.provider must be one of: ${allowed.join(', ')}`
-            : 'agent.provider is not settable — no non-default harness is installed',
-        };
+        return { error: `agent.provider must be one of: ${allowed.join(', ')}` };
     }
     return {
       kind: 'new',

@@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
-import { resolveAgentIdentity, runSessionPrepareHooks, resolveContainerEnv } from '../../container-runtime.js';
+import { resolveAgentIdentity, runSessionPrepareHooks, resolveContainerEnv } from '../../seam/index.js';
 import { upsertUserCredential } from './db.js';
 import { memberSessionKey, memberUserFromKey, memberThreadFromKey, userCredsAgentIdentifier } from './identity.js';
 import './index.js'; // registers the resolvers under test

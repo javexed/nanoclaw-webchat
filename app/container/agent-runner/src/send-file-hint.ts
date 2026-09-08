@@ -5,10 +5,14 @@
  * prompt when at least one destination is a chat channel (webchat, slack,
  * telegram, ...). Loaded for side effects from the runner entry (index.ts).
  */
-import { registerPromptSectionContributor } from './destinations.js';
+import { registerPromptSectionContributor } from './seam/index.js';
 
-registerPromptSectionContributor((destinations) => {
+registerPromptSectionContributor((destinations, capabilities) => {
   if (!destinations.some((d) => d.type === 'channel')) return null;
+  // The whole section is about calling an MCP tool. To a provider without one
+  // it is not merely useless, it is the promise that sends a small model into
+  // a retry loop — this text is what one was observed quoting back.
+  if (!capabilities.mcpTools) return null;
   return [
     '### Sending files',
     '',

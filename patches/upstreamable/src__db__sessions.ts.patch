@@ -1,5 +1,5 @@
 diff --git a/src/db/sessions.ts b/src/db/sessions.ts
-index f8964ff0..817515d5 100644
+index bec956f6..bfcff030 100644
 --- a/src/db/sessions.ts
 +++ b/src/db/sessions.ts
 @@ -232,6 +232,23 @@ export async function getPendingApproval(approvalId: string): Promise<PendingApp

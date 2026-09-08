@@ -188,9 +188,6 @@ export function navigateLightbox(delta?: any) {
 }
 
 export function blockingOverlayOpen() {
-  // The floor's desk popover is class-keyed, not id-keyed — without this the
-  // boot Esc handler closes the whole floor view instead of just the popover.
-  if (document.querySelector('.floor-popover')) return true;
   // `.modal-overlay` covers the settings, user-creds, and (dynamically mounted)
   // confirm modals; the rest are listed explicitly. Visible = present and not
   // [hidden].

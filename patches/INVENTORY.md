@@ -17,7 +17,7 @@
 #   scripts/regen-patches.sh <composed-tree> <file> ...
 
 
-## UPSTREAMABLE — candidate upstream PRs (61)
+## UPSTREAMABLE — candidate upstream PRs (68)
 
 CLAUDE.md
     operator docs for the above
@@ -31,8 +31,27 @@ container/agent-runner/package.json
     own CLAUDE.md already says to bump it deliberately and never `bun update`
     blindly; this makes the manifest say what the docs say. No lockfile change:
     bun.lock already resolved 0.3.197, so the caret was latitude nothing used.
-container/agent-runner/src/db/messages-out.ts
-    getMaxOutboundSeq — empty-turn detection primitive
+src/providers/provider-container-registry.ts
+    lacksMcpTools capability. NEGATIVE polarity on purpose: this registry is
+    sparse (a provider with no host-side container needs never registers, and
+    `claude` is exactly that), so absence must keep today's behaviour.
+src/project-doc-compose.ts
+    do not compose MCP tool documentation into the project doc of a group whose
+    provider has no MCP client. Covers both the built-in module fragments and
+    user-added external MCP servers; `cli` and `scheduling` survive the cut
+    because they teach `ncl`, which rides the session DB rather than MCP.
+src/project-doc-compose.test.ts
+    coverage for the above, including the polarity (an unregistered or
+    undeclared provider is unaffected)
+container/agent-runner/src/destinations.ts
+    do not describe the MCP messaging tools to a provider that has none. The
+    prompt asserted `send_message` unconditionally; on a provider whose model
+    cannot call it (pi, and any harness with its own fixed toolset) that is a
+    promise the model spends the turn trying to keep — observed looping four
+    times and answering nothing. Gated on the new AgentProvider.supportsMcpTools,
+    so upstreaming this wants the types.ts hunk of the same name alongside it.
+container/agent-runner/src/destinations.test.ts
+    coverage for the above, both chat and task mode
 container/agent-runner/src/formatter.test.ts
     tests for redaction
 container/agent-runner/src/formatter.ts
@@ -50,14 +69,9 @@ container/agent-runner/src/mcp-tools/index.ts
 container/agent-runner/src/mcp-tools/server.ts
     shape guard for malformed tool definitions
 container/agent-runner/src/providers/mock.ts
-    richer mock descriptor for provider tests
+    richer mock descriptor for provider tests; declares supportsMcpTools
 container/agent-runner/src/upload-trace.test.ts
     abort signal so the test loop is stoppable
-container/cli-tools.json
-    claude-code pin bump (2.1.219: first CLI with claude-opus-5).
-    Re-derived 2026-07-31 for upstream 3c804169, which pretty-printed the file
-    and dropped vercel (now opt-in via /add-vercel). Do NOT re-add vercel here:
-    upstream guards it with `expect(names).not.toContain('vercel')`.
 pnpm-workspace.yaml
     dependency policy tweaks
 scripts/skill-apply.test.ts
@@ -90,6 +104,17 @@ setup/service.test.ts
     tests for the PATH fix
 setup/service.ts
     /snap/bin on the service PATH so snap CLIs (tailscale) resolve
+container/agent-runner/src/mailbox/registry.test.ts
+    make the unreadable-context test uid-independent. It wrote the file with
+    mode 0o000 so the read would fail; root (CI containers) bypasses that, read
+    it fine, and the test asserted the opposite of its intent. Spies Bun.file for
+    that one path so json() rejects with EACCES regardless of uid.
+scripts/update/transaction.e2e.test.ts
+    make the partial-snapshot test uid-independent. It planted an unreadable
+    file with chmod 0o000 to force copyEntry to throw; CI containers run as
+    root, which bypasses permission bits, so the copy succeeded and the test
+    asserted the opposite of what it meant. Spies fs.copyFileSync for that one
+    path instead — same technique as remove.test.ts below.
 setup/uninstall/remove.test.ts
     failure injection via spy — root in CI bypasses chmod bits
 src/backfill-container-configs.ts
@@ -105,9 +130,9 @@ src/container-runner.test.ts
 src/container-runner.ts
     root-host chown, user-skills mount, memory cap default, bun cache, output-token ceiling, per-group egress
 src/container-runtime.test.ts
-    tests for the runtime helpers
-src/container-runtime.ts
-    egress lockdown force mode + runtime helpers
+    tests for the runtime helpers (which live in app/src/container-runtime-extras.ts — they were
+    a patch into upstream's container-runtime.ts until 2026-09-06; the seam no longer touches that
+    file and neither do we)
 src/db/agent-groups.ts
     lifecycle status setter with validation
 src/db/db-v2.test.ts
@@ -140,6 +165,21 @@ src/modules/approvals/response-handler.test.ts
 src/modules/approvals/response-handler.ts
     double-fire guard on the approve path (slow handler tempts a second click)
     respawn ALL of a group's sessions after install/mcp change, not just one
+src/mailbox/model.ts
+    add the 'interrupt' inbound kind — the webchat stop button writes a control
+    row of that kind (trigger=false, never wakes a container) and the runner's
+    poll loop consumes it to abort a live turn. Without the kind in the union the
+    feature's own comparisons were dead code that failed the container typecheck.
+container/agent-runner/src/mailbox/model.generated.ts
+    the same change, byte-identical: `pnpm mailbox-model:check` cmp's the two
+    copies, so this patch must always mirror src/mailbox/model.ts exactly.
+src/reconcile-session.ts
+    UTC-safe claim-timestamp parsing (SQLite stamps carry no zone, so Date.parse
+    read them as local and the claim-stuck check killed fresh claims on a
+    non-UTC host), plus the bloated-continuation self-heal: after two ceiling
+    kills that produced no output, clear the stored continuation so the next
+    turn starts fresh. Was in host-sweep.ts until upstream moved the sweep
+    decision logic here.
 src/router.ts
     agent lifecycle gate (active/paused/archived) + prime negative-lookahead
 src/session-manager.ts
@@ -154,12 +194,13 @@ src/templates/local-dir.ts
 src/types.ts
     agent-group lifecycle status type
 
-## PRODUCT — shrink via seam registries (23)
+## PRODUCT — shrink via seam registries (26)
 
 container/agent-runner/src/config.ts
     lenientOutput + learning config surface read by the runner
 container/agent-runner/src/index.ts
-    module imports (status feed, learning, send-file hint)
+    module imports (status feed, learning, send-file hint); the prompt addendum
+    is built after the provider so it can consult supportsMcpTools
 container/agent-runner/src/mcp-tools/cli.instructions.md
     agent-facing CLI instructions
 container/agent-runner/src/mcp-tools/core.instructions.md
@@ -175,7 +216,8 @@ container/agent-runner/src/providers/cwd-shim.ts
 container/agent-runner/src/providers/claude.ts
     thinking/reasoning stream taps, restricted-review support, rate-limit classification
 container/agent-runner/src/providers/types.ts
-    provider capability flags (supportsRestrictedReview, memory scaffold, settings scopes)
+    provider capability flags (supportsRestrictedReview, memory scaffold, settings
+    scopes, supportsMcpTools)
 container/skills/onecli-gateway/SKILL.md
     secret intake points at the webchat Agents → Secrets UI, not the OneCLI dashboard
 eslint.config.js
@@ -203,7 +245,7 @@ src/modules/typing/index.test.ts
 src/modules/typing/index.ts
     agentName on the typing indicator (multi-agent rooms)
 
-## LOCAL — install-local, expected to persist (0)
+## LOCAL — install-local, expected to persist (6)
 
 .claude/skills/add-codex/SKILL.md
     points the codex payload at this fork's providers-codex branch

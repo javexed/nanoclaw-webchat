@@ -1,30 +1,31 @@
 diff --git a/src/container-runner.ts b/src/container-runner.ts
-index edda6a4a..5fc28c9a 100644
+index 20d7c8ce..0e6538fb 100644
 --- a/src/container-runner.ts
 +++ b/src/container-runner.ts
-@@ -25,13 +25,18 @@ import {
+@@ -26,8 +26,10 @@ import {
  } from './config.js';
  import { CONTAINER_PLUGINS_DIR, materializeContainerJson } from './container-config.js';
  import { getContainerConfig } from './db/container-configs.js';
 -import { updateContainerConfigScalars } from './db/container-configs.js';
 +import { updateContainerConfigScalars, updateContainerConfigJson } from './db/container-configs.js';
+ import { CONTAINER_RUNTIME_BIN } from './container-runtime.js';
++import { hostGatewayArgs, makeContainerWritable, readonlyMountArgs } from './container-runtime-extras.js';
++import { availableSkillNames } from './provider-contracts/realize.js';
  import {
-   CONTAINER_RUNTIME_BIN,
-+  hostGatewayArgs,
-+  makeContainerWritable,
-+  readonlyMountArgs,
-   resolveAgentIdentity,
+   notifyContainerExit,
    resolveContainerEnv,
-   runSessionPrepareHooks,
- } from './container-runtime.js';
+@@ -35,6 +37,8 @@ import {
+   seamGatewayKey,
+ } from './seam/spawn-hooks.js';
+ import { composeGroupProjectDoc, DEFAULT_PROJECT_DOC } from './project-doc-compose.js';
 +import { EGRESS_NETWORK, egressNetworkArgs, ensureEgressNetwork } from './egress-lockdown.js';
 +import { EGRESS_LOCKDOWN } from './config.js';
- import { composeGroupClaudeMd } from './claude-md-compose.js';
  import { getAgentGroup } from './db/agent-groups.js';
- import { getDb, hasTable } from './db/connection.js';
-@@ -60,7 +65,9 @@ import {
-   markContainerStopped,
+ import {
+   getLiveHostInstance,
+@@ -87,7 +91,9 @@ import {
    sessionDir,
+   writeSessionContext,
    writeSessionRouting,
 +  writeOutboundDirect,
  } from './session-manager.js';
@@ -32,7 +33,7 @@ index edda6a4a..5fc28c9a 100644
  import type { AgentGroup, Session } from './types.js';
  
  /**
-@@ -174,9 +181,13 @@ export function wakeContainer(session: Session): Promise<boolean> {
+@@ -279,9 +285,13 @@ export function wakeContainer(session: Session): Promise<boolean> {
      return existing;
    }
    const promise = spawnContainer(session)
@@ -47,7 +48,7 @@ index edda6a4a..5fc28c9a 100644
        return false;
      })
      .finally(() => {
-@@ -186,6 +197,50 @@ export function wakeContainer(session: Session): Promise<boolean> {
+@@ -291,6 +301,50 @@ export function wakeContainer(session: Session): Promise<boolean> {
    return promise;
  }
  
@@ -96,9 +97,9 @@ index edda6a4a..5fc28c9a 100644
 +}
 +
  async function spawnContainer(session: Session): Promise<void> {
-   const agentGroup = await getAgentGroup(session.agent_group_id);
-   if (!agentGroup) {
-@@ -200,6 +255,13 @@ async function spawnContainer(session: Session): Promise<void> {
+   if (pendingAdoptions.has(session.id)) {
+     // A running container is waiting to be re-fenced after a failed adoption
+@@ -311,6 +365,13 @@ async function spawnContainer(session: Session): Promise<void> {
      const { writeDestinations } = await import('./modules/agent-to-agent/write-destinations.js');
      await writeDestinations(agentGroup.id, session.id);
    }
@@ -110,12 +111,12 @@ index edda6a4a..5fc28c9a 100644
 +    await writeRoomHumans(agentGroup.id, session.id);
 +  }
    await writeSessionRouting(agentGroup.id, session.id);
- 
-   // Materialize container.json from DB — writes fresh file and returns
-@@ -612,6 +674,12 @@ export async function buildMounts(
-   // Per-group .claude-shared at /home/node/.claude (provider state, settings,
-   // skill symlinks). Per agent group, not per session.
-   if (defaultSurfaces) {
+   const mailboxKey = { agentGroupId: agentGroup.id, sessionId: session.id };
+   const mailbox = getAgentMailbox();
+@@ -965,6 +1026,12 @@ export async function buildMounts(
+       }
+     }
+   } else if (defaultSurfaces) {
 +    // On a root host this dir is created root:root, but it's mounted RW into a
 +    // UID-1000 container which must write /home/node/.claude/settings.json —
 +    // otherwise the agent-runner dies with EACCES. Chown it to the container UID
@@ -125,7 +126,7 @@ index edda6a4a..5fc28c9a 100644
      mounts.push({
        hostPath: claudeDir,
        containerPath: '/home/node/.claude',
-@@ -642,6 +710,19 @@ export async function buildMounts(
+@@ -995,6 +1062,19 @@ export async function buildMounts(
        scope,
      });
    }
@@ -145,7 +146,7 @@ index edda6a4a..5fc28c9a 100644
  
    // Additional mounts from container config — already vetted by the allowlist.
    if (containerConfig.additionalMounts && containerConfig.additionalMounts.length > 0) {
-@@ -784,11 +865,25 @@ export function composeSessionSpec(input: ComposeSessionSpecInput): SessionSpec
+@@ -1147,11 +1227,25 @@ export function composeSessionSpec(input: ComposeSessionSpecInput): SessionSpec
      // The gateway's auxiliary containers ride beside the agent; capability-
      // gated in the spawn path before composition ever runs.
      containers: [agent, ...(gateway.containers ?? [])],
@@ -173,108 +174,7 @@ index edda6a4a..5fc28c9a 100644
        pidsLimit: parsePidsLimit(CONTAINER_PIDS_LIMIT),
        shmSizeMb: SHM_SIZE_MB,
      },
-@@ -867,54 +962,163 @@ export function syncSkillSymlinks(
-     } catch {
-       continue;
-     }
--    if (isSymlink && !desiredSet.has(entry)) {
-+    // Unlink when deselected OR when the skill no longer exists in any mount —
-+    // a deleted-but-still-selected skill would otherwise leave a dangling
-+    // symlink in .claude/skills (the create loop below can't repair a target
-+    // that resolves to nothing).
-+    if (isSymlink && (!desiredSet.has(entry) || !skillContainerTarget(entry))) {
-       fs.unlinkSync(entryPath);
-     }
-   }
- 
--  // Create symlinks for desired skills (container path targets)
-+  // Create/repair symlinks for desired skills, each pointing at whichever mount
-+  // actually holds it (/app/skills for shipped, /app/user-skills for imported).
-   for (const skill of desired) {
-+    const target = skillContainerTarget(skill);
-+    if (!target) continue; // skill no longer exists in either source — skip
-     const linkPath = path.join(skillsDir, skill);
--    let entry: fs.Stats | undefined;
-+    let current: string | null = null;
-+    let isRealEntry = false;
-     try {
--      entry = fs.lstatSync(linkPath);
-+      const st = fs.lstatSync(linkPath);
-+      if (st.isSymbolicLink()) {
-+        current = fs.readlinkSync(linkPath);
-+      } else {
-+        // A real entry here is either a template overlay (intentional; see
-+        // src/group-skills.ts) or a stale pre-refactor skill copy that shadows
-+        // the shared skill (#3001). No marker distinguishes them yet, so
-+        // surface the skip instead of staying silent — and never delete it.
-+        current = '';
-+        isRealEntry = true;
-+      }
-     } catch {
--      /* missing */
-+      current = null; // no entry
-     }
--    if (!entry) {
--      fs.symlinkSync(`/app/skills/${skill}`, linkPath);
--    } else if (!entry.isSymbolicLink()) {
--      // A real entry here is either a template overlay (intentional; see
--      // src/group-skills.ts) or a stale pre-refactor skill copy that shadows
--      // the shared skill (#3001). No marker distinguishes them yet, so
--      // surface the skip instead of staying silent.
--      log.warn(
--        'Shared skill not symlinked: real entry occupies the path (template overlay or stale pre-refactor copy)',
--        {
--          skill,
--          path: linkPath,
--        },
--      );
-+    if (current === target) continue; // already correct
-+    if (isRealEntry) {
-+      log.warn('Skill not symlinked: real entry occupies the path (template overlay or stale pre-refactor copy)', {
-+        skill,
-+        path: linkPath,
-+      });
-+      continue;
-+    }
-+    try {
-+      if (current !== null) fs.unlinkSync(linkPath);
-+    } catch {
-+      /* ignore */
-     }
-+    fs.symlinkSync(target, linkPath);
-   }
- }
- 
-+// The container path for a skill, chosen by which host mount holds it. Shipped
-+// skills win over user skills of the same name (a user can't shadow a builtin).
-+function skillContainerTarget(name: string): string | null {
-+  if (fs.existsSync(path.join(process.cwd(), 'container', 'skills', name))) return `/app/skills/${name}`;
-+  if (fs.existsSync(path.join(process.cwd(), 'data', 'user-skills', name))) return `/app/user-skills/${name}`;
-+  return null;
-+}
-+
-+// Every skill directory across both mounts (shipped + user), deduped.
-+function availableSkillNames(): string[] {
-+  const dirs = [path.join(process.cwd(), 'container', 'skills'), path.join(process.cwd(), 'data', 'user-skills')];
-+  const names = new Set<string>();
-+  for (const dir of dirs) {
-+    if (!fs.existsSync(dir)) continue;
-+    for (const e of fs.readdirSync(dir)) {
-+      try {
-+        if (fs.statSync(path.join(dir, e)).isDirectory()) names.add(e);
-+      } catch {
-+        /* skip unreadable */
-+      }
-+    }
-+  }
-+  return [...names];
-+}
-+
- /**
-  * Resolve the group's skill selection to concrete names — `'all'` recomputes
-- * from `container/skills/` so newly-added upstream skills appear automatically.
-+ * from both skill mounts so newly-added (shipped or imported) skills appear
-+ * automatically.
+@@ -1237,16 +1331,78 @@ export function syncSkillSymlinks(
   */
  function selectedSkillNames(containerConfig: import('./container-config.js').ContainerConfig): string[] {
    if (containerConfig.skills !== 'all') return containerConfig.skills;
@@ -296,16 +196,12 @@ index edda6a4a..5fc28c9a 100644
 + *
 + * Left unset, the SDK caps a turn at 32000 output tokens and kills it with
 + * "Claude's response exceeded the 32000 output token maximum" — which killed real
-+ * turns (a long CAD/OpenSCAD answer in rolling-bench). Current models allow far
-+ * more, so there is no reason to leave that headroom unused.
++ * turns (a long CAD/OpenSCAD answer). Current models allow far more, so there is
++ * no reason to leave that headroom unused.
 + *
-+ * Recognised ceilings:
-+ *   Haiku 4.5                                    ->  64K
-+ *   Opus 4.6+/5, Sonnet 4.6+/5, Fable 5          -> 128K
-+ *
-+ * Anything else returns null and the caller leaves the variable UNSET, so the
-+ * SDK keeps its own default. Guessing high is NOT a safe failure: overshooting a
-+ * model's real ceiling is a 400, and older models sit far below these numbers
++ * Anything unrecognised returns null and the caller leaves the variable UNSET, so
++ * the SDK keeps its own default. Guessing high is NOT a safe failure: overshooting
++ * a model's real ceiling is a 400, and older models sit far below these numbers
 + * (Claude 3 Opus is 4096). A substring match on "opus" also catches
 + * claude-3-opus-20240229 and would hand it 128000 — reintroducing exactly the
 + * killed-turn failure this function exists to prevent. Matching is therefore on

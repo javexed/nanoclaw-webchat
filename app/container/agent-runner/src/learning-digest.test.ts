@@ -12,7 +12,7 @@
  */
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test';
 
-import { closeSessionDb, initTestSessionDb } from './db/connection.js';
+import { closeSessionDb, initTestSessionDb } from './mailbox/sqlite/connection.js';
 import { writeMessageOut } from './db/messages-out.js';
 import type { MessageInRow } from './db/messages-in.js';
 import { MockProvider, type MockResponse } from './providers/mock.js';

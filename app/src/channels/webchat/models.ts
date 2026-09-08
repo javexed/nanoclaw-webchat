@@ -227,6 +227,8 @@ export async function safeFetch(url: string, init?: RequestInit): Promise<Respon
 //
 // Update when Anthropic ships new models.
 export const KNOWN_ANTHROPIC_MODELS = [
+  'claude-opus-5',
+  'claude-sonnet-5',
   'claude-fable-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
