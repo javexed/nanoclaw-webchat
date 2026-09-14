@@ -73,6 +73,7 @@ function ensureTurn(name?: string): ThinkingTurn {
       detail: null,
       milestone: null,
       reasoningLog: [],
+      fullTrace: [],
       feed: [],
       expanded: false,
       elapsed: '',
@@ -116,12 +117,21 @@ const REASONING_FADE_MS = 500; // fade-out transition duration (matches CSS)
 // under the top gradient mask. Each line also self-fades after REASONING_FEED_TTL
 // so the feed drains when reasoning pauses; the whole thing clears with the
 // bubble when the agent's message lands. A bounded DOM buffer caps memory.
-function pushReasoning(name: string, text: string) {
+function pushReasoning(name: string, text: string, full?: string) {
   const turn = ensureTurn(name);
 
-  // Retain the full line for the click-to-expand view and the reply disclosure.
+  // Retain the clipped line for the feed and the reply disclosure.
   turn.reasoningLog.push(text);
   if (turn.reasoningLog.length > REASONING_LOG_MAX) turn.reasoningLog.shift();
+
+  // The untruncated block rides `detail` on the FIRST line of each thinking
+  // block (see claude.ts). It is what click-to-expand shows: reasoningLog is
+  // capped at 8 lines x 200 chars per block by summarizeThinking, so expanding
+  // it only ever showed the same clipped text the feed already scrolled past.
+  if (full) {
+    turn.fullTrace.push(full);
+    if (turn.fullTrace.length > REASONING_LOG_MAX) turn.fullTrace.shift();
+  }
 
   // The feed is a BOUNDED TAIL, not a slice of reasoningLog: lines fade out on
   // their own timer and the buffer is trimmed independently of the log, which

@@ -44,7 +44,7 @@ bash install.sh --dir /path/to/your/nanoclaw
 
 Add `--seam preinstalled` if that checkout already carries the hook seam. Full
 walkthrough:
-**[readme.md](readme.md)** and **[guide.md](guide.md)**.
+**[guide.md](guide.md)**.
 
 ## What it needs
 
@@ -56,6 +56,6 @@ walkthrough:
 - **Docker** — each agent session runs in its own sandbox; the installers set it
   up for you.
 
-Reach it over your LAN or [Tailscale](readme.md#authentication-at-a-glance); the
+Reach it over your LAN or [Tailscale](webchat.md#authentication-methods); the
 first Tailscale login becomes owner, after which you can enable HTTPS and retire
 the bearer token from the wizard.

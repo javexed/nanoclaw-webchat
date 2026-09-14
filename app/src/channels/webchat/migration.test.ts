@@ -32,6 +32,7 @@ describe('moduleWebchat migration', () => {
       `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'webchat_%' ORDER BY name`,
     )) as { name: string }[];
     expect(tables.map((t) => t.name)).toEqual([
+      'webchat_activity_log',
       'webchat_agent_mcp_servers',
       'webchat_agent_models',
       'webchat_approval_triage',
@@ -70,6 +71,7 @@ describe('moduleWebchat migration', () => {
     )) as { name: string }[];
     expect(indexes.map((i) => i.name).sort()).toEqual(
       [
+        'idx_webchat_activity_room_time',
         'idx_webchat_agent_mcp_servers_server',
         'idx_webchat_agent_models_model',
         'idx_webchat_approvals_platform',
@@ -91,6 +93,7 @@ describe('moduleWebchat migration', () => {
       name: string;
     }[];
     expect(rows.map((r) => r.name)).toEqual([
+      'webchat-activity-log',
       'webchat-approval-prejudge',
       'webchat-approval-triage',
       'webchat-approvals-index',

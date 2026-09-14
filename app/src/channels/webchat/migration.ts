@@ -281,6 +281,35 @@ export const moduleWebchatRoomSettings: Migration = {
  * sizes (dozens of approvals total in the lifetime of an install), the
  * cost is negligible.
  */
+export const moduleWebchatActivityLog: Migration = {
+  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
+  sqliteOnly: true,
+  version: 211,
+  name: 'webchat-activity-log',
+  up(db: Database.Database) {
+    // Durable copy of the agent activity feed (the thinking bubble): tool
+    // calls, progress, and reasoning. The container's status_events table is
+    // per-session and wiped each turn, so this is the only place the feed
+    // survives a turn. `detail` holds the FULL reasoning block for a
+    // 'reasoning' row (the live ticker only carries the clipped line);
+    // everything is already redacted upstream at the feed's choke point AND
+    // again in sendStatus before it reaches here. Pruned to 30 days.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS webchat_activity_log (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        room_id     TEXT NOT NULL,
+        agent_name  TEXT,
+        kind        TEXT NOT NULL,
+        text        TEXT,
+        detail      TEXT,
+        created_at  INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_webchat_activity_room_time
+        ON webchat_activity_log (room_id, created_at);
+    `);
+  },
+};
+
 export const moduleWebchatApprovalsIndex: Migration = {
   // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,

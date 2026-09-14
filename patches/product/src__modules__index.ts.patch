@@ -1,8 +1,8 @@
 diff --git a/src/modules/index.ts b/src/modules/index.ts
-index d23864fc..453f3ab9 100644
+index f88885c5..6161e5ca 100644
 --- a/src/modules/index.ts
 +++ b/src/modules/index.ts
-@@ -24,3 +24,19 @@ import './interactive/index.js';
+@@ -24,4 +24,20 @@ import './interactive/index.js';
  import './permissions/index.js';
  import './agent-to-agent/index.js';
  import './self-mod/index.js';
@@ -22,3 +22,4 @@ index d23864fc..453f3ab9 100644
 +// installed providers can land on disk without their barrel import, which
 +// compiles and tests clean and only fails at spawn — see the module header.
 +import './provider-guard/index.js';
+ import './community-portal/index.js';

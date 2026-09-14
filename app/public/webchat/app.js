@@ -922,8 +922,8 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 		}));
 		/** renderFullTrace only ran on expand, so a collapsed bubble's trace div stayed
 		*  EMPTY — not merely hidden. Both derivations reproduce that. */
-		const traceRows = computed(() => props.turn.expanded ? props.turn.reasoningLog : []);
-		const traceEmpty = computed(() => props.turn.expanded && !props.turn.reasoningLog.length ? NO_TRACE : "");
+		const traceRows = computed(() => props.turn.expanded ? props.turn.fullTrace.length ? props.turn.fullTrace : props.turn.reasoningLog : []);
+		const traceEmpty = computed(() => props.turn.expanded && !props.turn.fullTrace.length && !props.turn.reasoningLog.length ? NO_TRACE : "");
 		function onClick(e) {
 			if (e.target?.closest("a, button")) return;
 			props.onToggle(props.turn.name);
@@ -2658,6 +2658,7 @@ function ensureTurn(name) {
 		detail: null,
 		milestone: null,
 		reasoningLog: [],
+		fullTrace: [],
 		feed: [],
 		expanded: false,
 		elapsed: "",
@@ -2684,10 +2685,14 @@ function setThinkingMilestone(name, text) {
 var REASONING_FEED_BUFFER = 40;
 var REASONING_FEED_TTL = 7e3;
 var REASONING_FADE_MS = 500;
-function pushReasoning(name, text) {
+function pushReasoning(name, text, full) {
 	const turn = ensureTurn(name);
 	turn.reasoningLog.push(text);
 	if (turn.reasoningLog.length > REASONING_LOG_MAX) turn.reasoningLog.shift();
+	if (full) {
+		turn.fullTrace.push(full);
+		if (turn.fullTrace.length > REASONING_LOG_MAX) turn.fullTrace.shift();
+	}
 	const line = {
 		key: nextKey(),
 		text,
@@ -11448,6 +11453,193 @@ var RoutingDecisions_default = /* @__PURE__ */ defineComponent({
 	}
 });
 //#endregion
+//#region src/features/docs.ts
+var docs = [];
+var loaded = false;
+/**
+* Rewrites the two link shapes the docs use for their own tree, which mean
+* nothing to a browser at this origin:
+*
+*   ![alt](./screenshots/x.png)  → the asset route
+*   [text](other.md#anchor)      → in-app navigation, when `other` is served;
+*                                  otherwise the link is flattened to its text,
+*                                  because a dead link reads as a bug and the
+*                                  reader cannot tell that the target simply
+*                                  isn't published in-app.
+*
+* Done on the markdown rather than the DOM: marked emits the anchors already
+* resolved, and rewriting text is far less fiddly than walking nodes.
+*/
+function rewriteDocLinks(md, known) {
+	return md.replace(/!\[([^\]]*)\]\(\.?\/?screenshots\/([a-z0-9-]+\.(?:png|gif))\)/g, (_m, alt, file) => {
+		return `![${alt}](/api/docs/asset/${file})`;
+	}).replace(/\[([^\]]+)\]\(([a-z0-9-]+)\.md(#[a-z0-9-]*)?\)/g, (_m, text, slug, hash) => {
+		return known.has(slug) ? `[${text}](#doc/${slug}${hash ?? ""})` : text;
+	});
+}
+function renderNav() {
+	const nav = $("#docs-nav");
+	if (!nav) return;
+	if (docs.length === 0) {
+		nav.innerHTML = "<p class=\"docs-empty\">This install ships no documentation.</p>";
+		return;
+	}
+	const sections = [];
+	let current = "";
+	for (const d of docs) {
+		if (d.section !== current) {
+			if (current) sections.push("</ul>");
+			sections.push(`<h3 class="docs-nav-head">${esc(d.section)}</h3><ul class="docs-nav-list">`);
+			current = d.section;
+		}
+		sections.push(`<li><a class="docs-link" href="#doc/${esc(d.slug)}" data-doc="${esc(d.slug)}">${esc(d.title)}</a></li>`);
+	}
+	sections.push("</ul>");
+	nav.innerHTML = `<h2 class="docs-nav-title">Documentation</h2>${sections.join("")}`;
+}
+/** Fetch the list once per session; the set only changes on a recompose. */
+async function loadDocs() {
+	if (loaded) return;
+	try {
+		docs = (await apiJson("/api/docs")).docs ?? [];
+		loaded = true;
+	} catch (err) {
+		console.error("Docs list failed", err);
+		docs = [];
+	}
+	renderNav();
+}
+/**
+* Mermaid is 3.4MB, so it is fetched on demand — the first time a doc with a
+* diagram is opened — and never for the many docs that have none. Vendored and
+* same-origin like every other library here, so `script-src 'self'` covers it;
+* the bundle contains no eval/new Function, so it needs no CSP relaxation.
+*/
+var mermaidLoad = null;
+function loadMermaid() {
+	if (mermaidLoad) return mermaidLoad;
+	mermaidLoad = new Promise((resolve) => {
+		const el = document.createElement("script");
+		el.src = "/mermaid.min.js";
+		el.onload = () => resolve(window.mermaid ?? null);
+		el.onerror = () => resolve(null);
+		document.head.appendChild(el);
+	});
+	return mermaidLoad;
+}
+/** Mermaid's own theme, picked from the app's — 'system' follows the OS. */
+function mermaidTheme() {
+	const attr = document.documentElement.getAttribute("data-theme");
+	if (attr === "dark") return "dark";
+	if (attr === "light") return "default";
+	return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "default";
+}
+var mermaidReady = false;
+/**
+* Replace each fence with its rendered diagram. Per-block try/catch: one
+* malformed diagram keeps its source and the rest of the page still renders.
+*/
+async function renderMermaid(article, fences) {
+	const mermaid = await loadMermaid();
+	if (!mermaid) return;
+	if (!mermaidReady) {
+		mermaid.initialize({
+			startOnLoad: false,
+			securityLevel: "strict",
+			theme: mermaidTheme()
+		});
+		mermaidReady = true;
+	}
+	for (const [i, code] of fences.entries()) {
+		const pre = code.parentElement;
+		if (!pre || !article.contains(pre)) continue;
+		try {
+			const { svg } = await mermaid.render(`docs-mmd-${Date.now()}-${i}`, code.textContent ?? "");
+			const fig = document.createElement("figure");
+			fig.className = "docs-diagram";
+			fig.innerHTML = svg;
+			pre.replaceWith(fig);
+		} catch (err) {
+			console.error("Diagram render failed; keeping its source", err);
+		}
+	}
+}
+/** Show one doc; the landing cards and the list step aside while it is open. */
+async function openDoc(slug, hash = "") {
+	const article = $("#docs-article");
+	const landing = $("#docs-landing");
+	if (!article || !landing) return;
+	article.innerHTML = `<p class="docs-loading">Loading ${esc(docs.find((d) => d.slug === slug)?.title ?? slug)}…</p>`;
+	landing.hidden = true;
+	article.hidden = false;
+	let markdown;
+	try {
+		markdown = (await apiJson(`/api/docs/${encodeURIComponent(slug)}`)).markdown ?? "";
+	} catch (err) {
+		console.error("Doc load failed", err);
+		article.innerHTML = "<p class=\"docs-error\">That document could not be loaded. It may not ship with this install.</p><p><a class=\"docs-back\" href=\"#docs\">← All documentation</a></p>";
+		return;
+	}
+	const known = new Set(docs.map((d) => d.slug));
+	let html;
+	try {
+		html = DOMPurify.sanitize(marked.parse(rewriteDocLinks(markdown, known)), {
+			FORBID_TAGS: [
+				"form",
+				"input",
+				"button",
+				"select",
+				"textarea",
+				"option",
+				"style"
+			],
+			FORBID_ATTR: ["style"]
+		});
+	} catch (err) {
+		console.error("Doc render failed", err);
+		html = `<pre class="docs-raw">${esc(markdown)}</pre>`;
+	}
+	article.innerHTML = `<p><a class="docs-back" href="#docs">← All documentation</a></p>${html}`;
+	const fences = Array.from(article.querySelectorAll("pre > code.language-mermaid"));
+	for (const code of fences) code.parentElement?.classList.add("docs-mermaid");
+	if (fences.length > 0) renderMermaid(article, fences);
+	if (hash) {
+		const target = article.querySelector(`#${CSS.escape(hash.slice(1))}`);
+		if (target) target.scrollIntoView();
+		else article.scrollIntoView();
+	} else article.scrollIntoView();
+}
+/** Back to the landing cards + list. */
+function closeDoc() {
+	const article = $("#docs-article");
+	const landing = $("#docs-landing");
+	if (article) {
+		article.hidden = true;
+		article.innerHTML = "";
+	}
+	if (landing) landing.hidden = false;
+}
+/**
+* One delegated listener for every doc link — the nav's, and the cross-links
+* inside a rendered doc, which do not exist when this is wired.
+*/
+function wireDocLinks(root = document) {
+	root.addEventListener("click", (ev) => {
+		const el = ev.target?.closest("a");
+		if (!el) return;
+		const href = el.getAttribute("href") ?? "";
+		if (href === "#docs") {
+			ev.preventDefault();
+			closeDoc();
+			return;
+		}
+		const m = href.match(/^#doc\/([a-z0-9-]+)(#[a-z0-9-]*)?$/);
+		if (!m) return;
+		ev.preventDefault();
+		openDoc(m[1], m[2] ?? "");
+	});
+}
+//#endregion
 //#region src/features/agent-templates.ts
 /** Empty until loadAgentTemplates() runs; the picker stays hidden while it is. */
 var templates = [];
@@ -16235,6 +16427,8 @@ function closeTopDetailAside() {
 	return false;
 }
 function openHelp() {
+	loadDocs();
+	closeDoc();
 	closeAgentDetail();
 	closeRoomDetail();
 	closeModelDetail();
@@ -16248,6 +16442,7 @@ function openHelp() {
 	openView("help", teardownHelp);
 }
 function teardownHelp() {
+	closeDoc();
 	helpActive.value = false;
 	$("#chat").hidden = false;
 	$("#help").hidden = true;
@@ -21329,7 +21524,7 @@ function handleStatusEvent(msg) {
 			break;
 		case "reasoning":
 			markTurnActivity(name);
-			if (msg.text) pushReasoning(name, msg.text);
+			if (msg.text) pushReasoning(name, msg.text, msg.detail ?? void 0);
 			break;
 		case "done":
 			endAgentTurn(name);
@@ -22749,6 +22944,7 @@ $("#topo-focus-pill")?.addEventListener("click", clearTopoFocus);
 $("#matrix-back")?.addEventListener("click", toggleMatrix);
 $("#matrix-refresh")?.addEventListener("click", refreshMatrix);
 $("#help-back")?.addEventListener("click", toggleHelp);
+wireDocLinks($("#help") ?? document);
 $("#perms-user-search")?.addEventListener("input", (e) => {
 	permsUserFilter.value = e.target.value.trim().toLowerCase();
 	renderPermsUserList();

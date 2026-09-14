@@ -615,7 +615,7 @@ export function handleStatusEvent(msg: any) {
       break;
     case 'reasoning':
       markTurnActivity(name);
-      if (msg.text) pushReasoning(name, msg.text);
+      if (msg.text) pushReasoning(name, msg.text, msg.detail ?? undefined);
       break;
     case 'done':
       endAgentTurn(name);

@@ -9,19 +9,30 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { getStatusEventsSince, getMaxStatusEventSeq } from './index.js';
 
-const TEST_DIR = path.join(os.tmpdir(), 'nanoclaw-agent-status-readers-test');
+// mkdtemp, NOT a fixed path. A fixed name under os.tmpdir() is shared between
+// users: a run as root leaves the directory root-owned, and every later run as
+// a normal user then dies with EACCES trying to rmSync it — which is exactly
+// what happened on the 2026-09-10 deploy, where three tests failed for a
+// reason that had nothing to do with the code under test. A per-run directory
+// cannot collide with anyone.
+let testDir: string;
 
 describe('status_events readers (webchat thinking bubble)', () => {
-  const OUT_PATH = path.join(TEST_DIR, 'outbound.db');
+  beforeEach(() => {
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-agent-status-readers-'));
+  });
+  afterEach(() => {
+    fs.rmSync(testDir, { recursive: true, force: true });
+  });
+
+  const outPath = (): string => path.join(testDir, 'outbound.db');
 
   function freshOutbound(): Database.Database {
-    if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
-    fs.mkdirSync(TEST_DIR, { recursive: true });
-    const db = new Database(OUT_PATH);
+    const db = new Database(outPath());
     db.exec(`
       CREATE TABLE status_events (
         seq        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,9 +89,7 @@ describe('status_events readers (webchat thinking bubble)', () => {
   });
 
   it('readers tolerate a missing status_events table (older session DB)', async () => {
-    if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
-    fs.mkdirSync(TEST_DIR, { recursive: true });
-    const db = new Database(OUT_PATH);
+    const db = new Database(outPath());
     db.exec('CREATE TABLE messages_out (id TEXT PRIMARY KEY)'); // no status_events
     expect(getStatusEventsSince(db, 0)).toEqual([]);
     expect(getMaxStatusEventSeq(db)).toBe(0);

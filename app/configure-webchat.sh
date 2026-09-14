@@ -6,7 +6,7 @@
 # skips lines that already exist. Does not rotate VAPID keys.
 #
 # For TLS, multi-method auth, or advanced configs, edit .env by hand;
-# see docs/webchat/readme.md.
+# see docs/webchat/guide.md.
 
 set -euo pipefail
 

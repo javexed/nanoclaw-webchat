@@ -4143,6 +4143,161 @@ a.lightbox-btn {
 .help-card p + p {
   margin-top: 0.7em;
 }
+/* ── Documentation viewer ────────────────────────────────────────────────── */
+/* The docs list under the help cards, and the rendered article that replaces
+   them. Tokens only — same surfaces, borders and type scale as the cards. */
+.docs-nav {
+  max-width: 640px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.docs-nav-title {
+  margin: 0 0 10px;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text);
+}
+.docs-nav-head {
+  margin: 14px 0 6px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.docs-nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.docs-link {
+  display: block;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  text-decoration: none;
+  font-size: var(--fs-base);
+}
+.docs-link:hover {
+  background: var(--surface2);
+  color: var(--accent);
+}
+.docs-empty,
+.docs-loading,
+.docs-error {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.docs-article {
+  max-width: 760px;
+  color: var(--text);
+  font-size: var(--fs-base);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.docs-back {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: var(--fs-sm);
+}
+.docs-back:hover {
+  text-decoration: underline;
+}
+.docs-article h1 {
+  font-size: 1.5em;
+  margin: 0.2em 0 0.5em;
+}
+.docs-article h2 {
+  font-size: 1.2em;
+  margin: 1.4em 0 0.4em;
+  padding-top: 0.6em;
+  border-top: 1px solid var(--border);
+}
+.docs-article h3 {
+  font-size: 1.05em;
+  margin: 1.1em 0 0.3em;
+}
+.docs-article p,
+.docs-article li {
+  color: var(--text-dim);
+}
+.docs-article a {
+  color: var(--accent);
+}
+.docs-article code {
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+  font-size: 0.9em;
+}
+.docs-article pre {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  overflow-x: auto;
+}
+.docs-article pre code {
+  background: none;
+  padding: 0;
+}
+/* A diagram fence shows its source until mermaid has rendered it — and stays
+   that way if the bundle cannot load. Labelled, so the reader knows what the
+   syntax is rather than meeting it cold. */
+.docs-mermaid::before {
+  content: 'Diagram source';
+  display: block;
+  margin-bottom: 8px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+.docs-diagram {
+  margin: 1.2em 0;
+  padding: 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  text-align: center;
+}
+.docs-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+.docs-article img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.docs-article table {
+  border-collapse: collapse;
+  width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+.docs-article th,
+.docs-article td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+  font-size: var(--fs-sm);
+}
+.docs-article th {
+  color: var(--text);
+  font-weight: 600;
+}
+.docs-article blockquote {
+  margin: 1em 0;
+  padding: 2px 14px;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim);
+}
+
 .matrix-body {
   flex: 1;
   min-height: 0;

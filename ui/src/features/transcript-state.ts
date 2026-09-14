@@ -104,6 +104,9 @@ export interface ThinkingTurn {
   /** Every reasoning line this turn, for the expanded trace and the reply's
    *  Thoughts disclosure. */
   reasoningLog: string[];
+  /** Untruncated thinking blocks — what click-to-expand renders. Empty for a
+   *  provider that sends no `detail` (only the clipped reasoningLog). */
+  fullTrace: string[];
   /** The fading feed window — a bounded tail of reasoningLog with per-line
    *  fade state, which is why it is not just a slice of it. */
   feed: Array<{ key: number; text: string; fading: boolean }>;

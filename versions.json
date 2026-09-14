@@ -1,11 +1,11 @@
 {
   "nanoclaw": {
     "upstreamRepo": "https://github.com/nanocoai/nanoclaw.git",
-    "upstreamRef": "6656b326a900dcfba4be8ca76412d954cfc915b5",
+    "upstreamRef": "409a88456d1487d6e48f25638b24b5494efbd665",
     "seamRepo": "https://github.com/javexed/nanoclaw.git",
     "seamBranch": "pub/module-hooks",
-    "seamRef": "ed5d6e6fb1dc61745cd5806ced0d5e02584d2f28",
-    "seamH5Ref": "ed5d6e6fb1dc61745cd5806ced0d5e02584d2f28",
+    "seamRef": "6d333797c912bd6c193b90493eecad6a362f1e01",
+    "seamH5Ref": "6d333797c912bd6c193b90493eecad6a362f1e01",
     "forkRef": "3e55bebd6ff2a11a56d53923a38b3bda8ba30e11",
     "forkArchiveTag": "archive/channels-webchat-2026-07-28",
     "forkRefNote": "final channels-webchat tip (fork decommissioned 2026-07-28, preserved at forkArchiveTag). NOT a build input and no longer a guard reference — the only consumer is scripts/migrate-from-fork.sh, which resolves this SHA inside a user's own fork install to refuse migrating an install that is NEWER than the split. Keep it pinned for as long as fork installs may still migrate.",

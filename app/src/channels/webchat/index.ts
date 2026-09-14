@@ -4,17 +4,21 @@
  * Disabled by default. Enable with `WEBCHAT_ENABLED=true` in .env. The server
  * binds to `WEBCHAT_HOST` (default 127.0.0.1) on `WEBCHAT_PORT` (default 3100).
  *
- * Auth modes (selected via `WEBCHAT_AUTH_MODE`):
- *   - localhost      single-machine, no auth (default when host is loopback)
- *   - bearer         shared token in `WEBCHAT_TOKEN`
- *   - tailscale      tailnet whois → email becomes the user identity
- *   - proxy-header   trust X-Forwarded-User from a fronting reverse proxy
+ * Auth methods — there is no mode switch: each enables itself from its own env
+ * var, and localhost auto-owner switches off the moment any of them is set
+ * (see auth.ts, which owns the resolution order):
+ *   - localhost      single-machine, no auth (default while bound to loopback)
+ *   - bearer         shared token in `WEBCHAT_TOKEN` (>=24 chars)
+ *   - tailscale      `WEBCHAT_TAILSCALE=true`; tailnet whois -> login is the identity
+ *   - proxy-header   `WEBCHAT_TRUSTED_PROXY_IPS` ('auto' | '*' | CIDR list); the
+ *                    identity header is `WEBCHAT_TRUSTED_PROXY_HEADER`
  *
  * Identity → user_id mapping (used by permissions module if installed):
  *   - localhost      → "webchat:local-owner"
  *   - bearer         → "webchat:owner"  (one shared identity per token)
- *   - tailscale      → "webchat:tailscale:<email>"
- *   - proxy-header   → "webchat:<x-forwarded-user>"
+ *   - tailscale      → "webchat:tailscale:<login>"
+ *   - proxy-header   → "webchat:<identity>"
+ *   Both are normalized (lowercased, anything outside [a-z0-9._@+-] → '-').
  *
  * Privilege model:
  *   - First identity to log in is auto-granted role='owner' (when permissions
@@ -54,7 +58,7 @@ import type { AgentActivityStatus } from '../../seam/index.js';
 import { redactSensitiveData } from './redact.js';
 import { startWebchatServer, stopWebchatServer, type WebchatServer } from './server.js';
 import { sweepMcpHealth } from './mcp-health.js';
-import { startMcpRelay, stopMcpRelay } from './mcp-relay.js';
+import { startMcpRelayIfAssigned, stopMcpRelay } from './mcp-relay.js';
 import {
   APPROVAL_INBOX_PREFIX,
   deleteWebchatApprovalIndex,
@@ -76,6 +80,8 @@ import {
   userForApprovalInbox,
   type FileMeta,
   type WebchatRoomAgent,
+  recordActivity,
+  pruneActivity,
 } from './db.js';
 import {
   broadcast,
@@ -141,6 +147,14 @@ function createAdapter(): ChannelAdapter {
       // for channel type webchat" and mark a message delivered without
       // actually delivering. See reconcile.ts for details.
       startReconcileLoop(server);
+      // Prune the durable activity log past its 30-day window. Daily is ample —
+      // it is a retention floor, not a size cap, and the volume is modest.
+      activityPruneTimer = setInterval(
+        () => {
+          pruneActivity().catch((err) => log.error('Activity-log prune failed', { err }));
+        },
+        24 * 60 * 60 * 1000,
+      );
       // Hourly draft-expiry sweep (see sweepExpiredSkillDrafts above).
       draftExpiryTimer = setInterval(
         () => {
@@ -153,7 +167,9 @@ function createAdapter(): ChannelAdapter {
         60 * 60 * 1000,
       );
       // MCP auth relay (credentials stay host-side) + hourly health/drift sweep.
-      startMcpRelay();
+      // Binds only if a server assignment already carries a relay token; an
+      // install with no authed remote MCP server never opens the port.
+      void startMcpRelayIfAssigned();
       mcpHealthTimer = setInterval(
         () => {
           sweepMcpHealth().catch((err) => log.error('MCP health sweep failed', { err }));
@@ -178,6 +194,7 @@ function createAdapter(): ChannelAdapter {
         mcpHealthTimer = null;
       }
       if (draftExpiryTimer) {
+        if (activityPruneTimer) clearInterval(activityPruneTimer);
         clearInterval(draftExpiryTimer);
         draftExpiryTimer = null;
       }
@@ -346,13 +363,26 @@ function createAdapter(): ChannelAdapter {
       const turnAgent = status.agentName ?? '';
       if (status.kind === 'start') recordTurnStart(platformId, turnAgent);
       else if (status.kind === 'done' || status.kind === 'stalled') recordTurnEnd(platformId, turnAgent);
+      const text = redact(status.text);
+      const detail = redact(status.detail);
       server.broadcast(platformId, {
         type: 'status',
         room_id: platformId,
         agent_name: status.agentName ?? null,
         event: status.kind,
-        text: redact(status.text),
-        detail: redact(status.detail),
+        text,
+        detail,
+      });
+      // Durable copy of the same (already-redacted) frame — the live broadcast
+      // is ephemeral and room-scoped; this is what survives the turn for the
+      // 30-day store and click-to-expand. Fire-and-forget: never delay the feed.
+      void recordActivity({
+        roomId: platformId,
+        agentName: status.agentName ?? null,
+        kind: status.kind,
+        text,
+        detail,
+        createdAt: Date.now(),
       });
     },
   };
@@ -635,4 +665,5 @@ export async function sweepExpiredSkillDrafts(): Promise<number> {
 }
 
 let draftExpiryTimer: ReturnType<typeof setInterval> | null = null;
+let activityPruneTimer: ReturnType<typeof setInterval> | undefined;
 let mcpHealthTimer: ReturnType<typeof setInterval> | null = null;

@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/providers/claude.ts b/container/agent-runner/src/providers/claude.ts
-index a4238dba..61e8b64f 100644
+index a4238dba..0a5b2307 100644
 --- a/container/agent-runner/src/providers/claude.ts
 +++ b/container/agent-runner/src/providers/claude.ts
 @@ -115,6 +115,27 @@ class MessageStream {
@@ -127,3 +127,40 @@ index a4238dba..61e8b64f 100644
          // Only sent when enabled, so an install that never turns it on passes
          // exactly the options it always did. `fastMode` is a Settings member
          // rather than a query option, which is why it rides `settings`.
+@@ -318,9 +402,34 @@ export class ClaudeProvider implements AgentProvider {
+           // result reports. Blocks split across ASSISTANT MESSAGES (a tool
+           // call between them) remain unparseable mid-turn by design; the
+           // poll-loop's midTurnSent===0 fallback and wrap-nudge cover that.
+-          const content = (message as { message?: { content?: Array<{ type?: string; text?: string }> } }).message
+-            ?.content;
++          const content = (message as {
++            message?: { content?: Array<{ type?: string; text?: string; thinking?: string }> };
++          }).message?.content;
+           if (Array.isArray(content)) {
++            // Thinking blocks ride the same content array as text. Nothing
++            // consumed them before — which is why summarizeThinking() existed
++            // with no caller and the reasoning feed was empty for every
++            // Claude-backed agent, while pi's was not. One event per summarised
++            // line, matching the shape the feed renders.
++            for (const block of content) {
++              if (block.type !== 'thinking' || !block.thinking) continue;
++              // Per-line clipped events drive the live ticker; the FIRST also
++              // carries the full block in `detail`, redacted at the feed's
++              // choke point, so the durable store and click-to-expand have the
++              // untruncated trace without duplicating it on every line.
++              const lines = summarizeThinking(block.thinking);
++              lines.forEach((line, i) => {
++                // `detail` is not on upstream's reasoning event type, so it rides
++                // as an extra field through a cast rather than editing upstream
++                // hooks.ts — the fork-owned status-feed observer reads it back
++                // the same way. Keeps the full trace off every line but the first.
++                notifyProviderMessage({
++                  kind: 'reasoning',
++                  text: line,
++                  ...(i === 0 ? { detail: block.thinking } : {}),
++                } as Parameters<typeof notifyProviderMessage>[0]); // seam
++              });
++            }
+             const text = content
+               .filter((block) => block.type === 'text' && block.text)
+               .map((block) => block.text)

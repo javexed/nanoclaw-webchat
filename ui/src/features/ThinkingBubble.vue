@@ -50,9 +50,14 @@ watch(
 
 /** renderFullTrace only ran on expand, so a collapsed bubble's trace div stayed
  *  EMPTY — not merely hidden. Both derivations reproduce that. */
-const traceRows = computed(() => (props.turn.expanded ? props.turn.reasoningLog : []));
+// Prefer the untruncated blocks when the provider sent them; fall back to the
+// clipped feed lines otherwise. Expanding used to show the same clipped text
+// the feed had already scrolled past, which made the click feel broken.
+const traceRows = computed(() =>
+  props.turn.expanded ? (props.turn.fullTrace.length ? props.turn.fullTrace : props.turn.reasoningLog) : [],
+);
 const traceEmpty = computed(() =>
-  props.turn.expanded && !props.turn.reasoningLog.length ? NO_TRACE : '',
+  props.turn.expanded && !props.turn.fullTrace.length && !props.turn.reasoningLog.length ? NO_TRACE : '',
 );
 
 function onClick(e: MouseEvent): void {
