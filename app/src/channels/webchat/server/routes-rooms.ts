@@ -80,6 +80,7 @@ import {
   unpinRoomForUser,
   unwireAgentFromWebchatRoom,
   updateWebchatRoomName,
+  getReasoningForRoom,
 } from '../db.js';
 import type { WebchatRoomAgent } from '../db.js';
 import { hasAdminPrivilege, isGlobalAdmin, isOwner } from '../roles.js';
@@ -178,6 +179,35 @@ export async function rRoomMentionableGet(ctx: RouteCtx, m: RegExpMatchArray): P
     )
   ).map((u) => ({ handle: u.handle, name: u.displayName || u.handle }));
   return json(res, 200, people);
+}
+
+/**
+ * Full reasoning traces for a room, newest first.
+ *
+ * The live bubble only ever holds the CURRENT turn's clipped lines — the
+ * container wipes status_events each turn — so click-to-expand on an older
+ * turn had nothing to show. This reads the durable copy, where each reasoning
+ * row's `detail` is the untruncated block.
+ *
+ * Same room guard as every other room-scoped read: membership decides, not
+ * whether you happen to know the room id.
+ */
+export async function rRoomReasoningGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { res, userId } = ctx;
+  const roomId = decodeURIComponent(m[1]);
+  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
+  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const rows = await getReasoningForRoom(roomId);
+  return json(
+    res,
+    200,
+    rows.map((r) => ({
+      id: r.id,
+      agent_name: r.agent_name,
+      text: r.detail ?? r.text,
+      created_at: r.created_at,
+    })),
+  );
 }
 
 export async function rRoomAgentsPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {

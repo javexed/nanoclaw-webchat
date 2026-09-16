@@ -112,6 +112,7 @@
  "on:matrix-back:click",
  "on:matrix-refresh:click",
  "on:help-back:click",
+ "on:help:click",
  "on:perms-user-search:input",
  "on:perms-exit:click",
  "on:admin-exit:click",

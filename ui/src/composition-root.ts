@@ -253,6 +253,7 @@ import {
   wireViewChrome2,
   wireViewsPanel,
 } from './features/views.js';
+import { wireDocLinks } from './features/docs.js';
 
 // Modals, overlays and popovers now live in features/modals.ts.
 import {
@@ -1387,6 +1388,9 @@ $('#matrix-refresh')?.addEventListener('click', refreshMatrix);
 // Help — a static full-view (no data to load); same open/close mechanics as the
 // matrix/topology dashboards so the back gesture and view stacking work for free.
 $('#help-back')?.addEventListener('click', toggleHelp);
+// Delegated: covers the nav's links and the cross-links inside a rendered
+// doc, which do not exist yet when this runs.
+wireDocLinks($('#help') ?? document);
 
 $('#perms-user-search')?.addEventListener('input', (e) => {
   permsUserFilter.value = (e.target as HTMLInputElement).value.trim().toLowerCase();

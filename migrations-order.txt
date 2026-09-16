@@ -36,3 +36,4 @@ moduleWebchatCredentialIsolation
 moduleWebchatAuditSyslog
 moduleWebchatApprovalTriage
 moduleWebchatTemplateSources
+moduleWebchatActivityLog

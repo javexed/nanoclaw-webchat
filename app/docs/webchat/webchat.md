@@ -225,6 +225,8 @@ Loaded from `.env` into `process.env` (if unset) by the adapter's `env-load.ts`
 | `WEBCHAT_VAPID_SUBJECT` | VAPID subject | `mailto:admin@example.com` |
 | `WEBCHAT_DRAFTER_MODEL` | Model for draft-from-prompt | `claude-haiku-4-5` |
 | `WEBCHAT_BLOCK_PRIVATE_IPS` | `=true` extends the SSRF block to loopback/RFC1918/CGNAT | off |
+| `WEBCHAT_MCP_RELAY_PORT` | Port for the MCP auth relay (see below) | `3102` |
+| `WEBCHAT_MCP_RELAY_HOST` | Interface the relay binds — the address agent containers reach as `host.docker.internal`. Required on hosts with no `docker0` | auto (docker0 IP) |
 | `OLLAMA_HOST` | Dashboard "is Ollama up" probe only | `''` |
 
 ## REST endpoints (by area)

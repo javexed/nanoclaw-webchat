@@ -3,6 +3,7 @@
 // Topology, Journey and the wiring Matrix, plus openView/closeView and the
 // hide-the-others plumbing every panel calls when it takes over the screen.
 import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { closeDoc, loadDocs } from './docs.js';
 import { closeRouteDetail } from './routing.js';
 import { renderRoutingSetup } from './settings.js';
 import { adminActive, helpActive, manageActive, manageTab, matrixWired, topoData, viewStack } from './views-state.js';
@@ -1426,6 +1427,11 @@ export function closeTopDetailAside() {
 }
 
 export function openHelp() {
+  // The list is fetched once per session and rendered into #docs-nav; the
+  // landing cards are already in the DOM, so the view is never blank while it
+  // loads.
+  void loadDocs();
+  closeDoc();
   closeAgentDetail();
   closeRoomDetail();
   closeModelDetail();
@@ -1439,6 +1445,7 @@ export function openHelp() {
   openView('help', teardownHelp);
 }
 export function teardownHelp() {
+  closeDoc();
   helpActive.value = false;
   $('#chat')!.hidden = false;
   $('#help')!.hidden = true;

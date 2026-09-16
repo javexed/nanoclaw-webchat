@@ -166,6 +166,47 @@ deployment's stack into the product.
 carries `paramName`/`paramFormat` and `onecli-admin` forwards them, but the
 installed CLI exposes only `--header-name` / `--value-format`.
 
+## Host listeners
+
+Two, and only one of them is meant for you:
+
+| Port | Bound to | Who dials it |
+| --- | --- | --- |
+| `WEBCHAT_PORT` (3100) | `WEBCHAT_HOST`, default `127.0.0.1` | browsers; refuses a non-loopback bind until an auth method is configured |
+| `WEBCHAT_MCP_RELAY_PORT` (3102) | the `docker0` bridge IP (e.g. `172.17.0.1`) | agent containers, via `host.docker.internal` |
+
+The relay is the host-side hop that keeps MCP server credentials out of
+containers — a remote server with stored auth is synced into container config
+as a relay url plus a per-(agent group, server) token, and the real
+`Authorization` header is injected here at forward time. It is the MCP
+counterpart to what the OneCLI gateway does for model credentials, and exists
+separately because it also refreshes OAuth tokens and scopes per (group,
+server) rather than per host pattern.
+
+Three properties worth knowing, because "a second listener" deserves them
+written down:
+
+- **It binds the bridge, not `0.0.0.0`.** The only legitimate clients are agent
+  containers, which reach the host as `host.docker.internal` → the
+  default-bridge gateway. Note this is still every container on that bridge,
+  not only nanoclaw's — the relay token, which names one (group, server) pair
+  and is useless elsewhere, is what gates access.
+- **It refuses to bind when it cannot identify that interface.** No `docker0`
+  and no `WEBCHAT_MCP_RELAY_HOST` (macOS Docker Desktop, custom networks) means
+  the relay does not start and says so loudly; relay-backed MCP servers stay
+  unreachable until an operator names the interface. Failing closed matches the
+  rest of the credential path — the OneCLI gateway refuses to spawn without
+  credentials, and egress lockdown throws rather than spawning open.
+- **It only listens while it is used.** The relay binds when a server
+  assignment first carries a relay token, and at boot only when one already
+  does. An install with no authed remote MCP server never opens the port.
+
+**Interaction with `host-only` egress:** the relay is reached at
+`host.docker.internal`, which on the lockdown network is aliased to the OneCLI
+gateway rather than the host — so relay-backed MCP servers are expected to be
+unreachable for a group set to `host-only`, in the same way host-local LiteLLM
+and Ollama are. Not measured; treat it as unreachable until it is.
+
 ## Container hardening & resource limits
 
 Supersedes upstream **§Resource Limits** for this fork. Every agent container

@@ -10,6 +10,7 @@
  *   POST /api/rooms                              create room + wire 1+ agents  [owner]
  *   DELETE /api/rooms/:id                        delete room + wirings (agents preserved)  [owner]
  *   GET  /api/rooms/:id/agents                   list agents wired to a room (incl. is_prime flag)
+ *   GET  /api/rooms/:id/reasoning                full reasoning traces (durable, 30d)
  *   POST /api/rooms/:id/agents                   wire an agent (existing or new)  [owner]
  *   DELETE /api/rooms/:id/agents/:agentId        unwire an agent (refuses last)  [owner]
  *   PUT  /api/rooms/:id/prime                    set { agentId } as the room's prime  [owner]
@@ -196,6 +197,7 @@ import {
   resolveAgent,
   toAgentForUI,
 } from './server/agent-lookup.js';
+import { rDocAssetGet, rDocGet, rDocsGet } from './server/routes-docs.js';
 import { rMeHandleGet, rMeHandlePut } from './server/routes-me.js';
 import {
   rModelsKnownGet,
@@ -228,6 +230,7 @@ import {
   rRoomIdDelete,
   rRoomAgentsGet,
   rRoomMentionableGet,
+  rRoomReasoningGet,
   rRoomAgentsPost,
   rRoomCredModeGet,
   rRoomCredModePut,
@@ -1355,6 +1358,7 @@ const RE_TEMPLATE_SOURCE_BROWSE = /^\/api\/template-sources\/([^/]+)\/browse$/;
 const RE_TEMPLATE_SOURCE = /^\/api\/template-sources\/([^/]+)$/;
 const RE_ROOM_AGENTS = /^\/api\/rooms\/([^/]+)\/agents$/;
 const RE_ROOM_MENTIONABLE = /^\/api\/rooms\/([^/]+)\/mentionable$/;
+const RE_ROOM_REASONING = /^\/api\/rooms\/([^/]+)\/reasoning$/;
 const RE_ROOM_CRED_MODE = /^\/api\/rooms\/([^/]+)\/credential-mode$/;
 const RE_ROOM_OAUTH = /^\/api\/rooms\/([^/]+)\/oauth-allowed$/;
 const RE_USER_CREDS_MINT = /^\/api\/user-credentials\/oauth\/(start|code|cancel)$/;
@@ -1382,6 +1386,10 @@ const RE_HIST = /^\/api\/rooms\/([^/]+)\/messages$/;
 const RE_UPLOAD = /^\/api\/rooms\/([^/]+)\/upload$/;
 const RE_CHUNK = /^\/api\/rooms\/([^/]+)\/upload\/chunk$/;
 const RE_FILE = /^\/api\/files\/([^/]+)\/([^/]+)$/;
+// Docs: the asset pattern must be declared before the doc-slug one and
+// registered before it too, or '/api/docs/asset/x.png' matches as a slug.
+const RE_DOC_ASSET = /^\/api\/docs\/asset\/([^/]+)$/;
+const RE_DOC = /^\/api\/docs\/([a-z0-9-]+)$/;
 const RE_AGENT = /^\/api\/agents\/([^/]+)$/;
 const RE_INSTR = /^\/api\/agents\/([^/]+)\/instructions$/;
 const RE_AGENT_ROOMS = /^\/api\/agents\/([^/]+)\/rooms$/;
@@ -2960,6 +2968,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'DELETE', path: RE_ROOM_ID, guards: ['owner', 'csrf'], h: rRoomIdDelete, audit: 'room.delete' },
   { method: 'GET', path: RE_ROOM_AGENTS, h: rRoomAgentsGet },
   { method: 'GET', path: RE_ROOM_MENTIONABLE, h: rRoomMentionableGet },
+  { method: 'GET', path: RE_ROOM_REASONING, h: rRoomReasoningGet },
   { method: 'POST', path: RE_ROOM_AGENTS, guards: ['csrf'], h: rRoomAgentsPost },
   { method: 'GET', path: RE_ROOM_CRED_MODE, h: rRoomCredModeGet },
   { method: 'PUT', path: RE_ROOM_CRED_MODE, guards: ['csrf'], h: rRoomCredModePut },
@@ -3010,6 +3019,9 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'PATCH', path: RE_ROOM_THREAD, guards: ['csrf'], h: rRoomThreadPatch },
   { method: 'DELETE', path: RE_ROOM_THREAD, guards: ['csrf', 'owner'], h: rRoomThreadDelete },
   { method: 'POST', path: RE_ROOM_THREAD_PULL, guards: ['csrf'], h: rRoomThreadPullPost },
+  { method: 'GET', path: '/api/docs', h: rDocsGet },
+  { method: 'GET', path: RE_DOC_ASSET, h: rDocAssetGet },
+  { method: 'GET', path: RE_DOC, h: rDocGet },
   { method: 'GET', path: '/api/topology', h: rTopologyGet },
   { method: 'GET', path: '/api/search', h: rSearchGet },
   { method: 'GET', path: RE_HIST, h: rHistGet },

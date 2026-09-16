@@ -5,8 +5,10 @@ normal router/session/delivery model exactly like Discord or Slack, but is the
 only channel that also ships its own management surface (a PWA + operator
 console) over an embedded HTTP + WebSocket server. This doc diagrams the
 webchat-specific pieces; for the host/container/session model underneath it,
-see the main [architecture diagram](../architecture-diagram.md). For the full
-prose reference, see [webchat.md](webchat.md).
+see [message-path.md](message-path.md) (a message end to end: adapter, router,
+session container, turn, delivery) and the main [architecture
+diagram](../architecture-diagram.md). For the full prose reference, see
+[webchat.md](webchat.md).
 
 ## System overview
 
@@ -164,5 +166,6 @@ flowchart LR
 
 *Two-DB session split and central-DB model are unchanged by webchat — it's a
 consumer of them, not a new IO path. See
+[message-path.md](message-path.md) and
 [../architecture-diagram.md](../architecture-diagram.md) for that part of the
 picture.*

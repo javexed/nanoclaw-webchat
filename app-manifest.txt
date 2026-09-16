@@ -19,6 +19,7 @@ container/agent-runner/src/noop-tool-cap.test.ts
 src/modules/agent-status
 container/agent-runner/src/db/status-events.test.ts
 container/agent-runner/src/providers/summarize-thinking.test.ts
+container/agent-runner/src/providers/claude.thinking-feed.test.ts
 src/onecli-preflight.ts
 src/onecli-preflight.test.ts
 src/mcp-server-config.ts
@@ -69,6 +70,7 @@ src/container-warm.test.ts
 container/agent-runner/src/providers/hooks.test.ts
 container/agent-runner/src/status-feed.ts
 container/agent-runner/src/status-feed.pi-tools.test.ts
+container/agent-runner/src/status-feed.redaction.test.ts
 container/agent-runner/src/send-file-hint.ts
 docs/webchat
 e2e
@@ -101,3 +103,5 @@ src/container-runtime-extras.ts
 src/module-sweep.ts
 src/session-db-access.ts
 container/agent-runner/src/outbound-seq.ts
+src/channels/webchat/activity-log.test.ts
+src/channels/webchat/reasoning-route.test.ts

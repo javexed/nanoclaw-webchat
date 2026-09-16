@@ -281,7 +281,14 @@ export async function ensureRelayToken(agentGroupId: string, serverId: string): 
     serverId,
   )) as { relay_token: string | null } | undefined;
   if (!row) return null;
-  if (row.relay_token) return row.relay_token;
+  // This is the only path by which a container can be handed a relay url, so
+  // it is also where the listener must be up. Idempotent; dynamic import keeps
+  // mcp-relay's static dependency on this module acyclic.
+  const started = await import('./mcp-relay.js').then((m) => m.startMcpRelay);
+  if (row.relay_token) {
+    started();
+    return row.relay_token;
+  }
   const token = `mcr_${randomUUID().replace(/-/g, '')}`;
   await getDb().run(
     `UPDATE webchat_agent_mcp_servers SET relay_token = ? WHERE agent_group_id = ? AND mcp_server_id = ?`,
@@ -289,6 +296,7 @@ export async function ensureRelayToken(agentGroupId: string, serverId: string): 
     agentGroupId,
     serverId,
   );
+  started();
   return token;
 }
 

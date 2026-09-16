@@ -295,7 +295,7 @@
                   <svg class="icon" aria-hidden="true"><use href="#i-settings"></use></svg>&nbsp;&nbsp;Settings
                 </button>
                 <button class="overflow-item" data-action="help" role="menuitem">
-                  <svg class="icon" aria-hidden="true"><use href="#i-help"></use></svg>&nbsp;&nbsp;Help
+                  <svg class="icon" aria-hidden="true"><use href="#i-help"></use></svg>&nbsp;&nbsp;Documentation
                 </button>
               </div>
             </div>
@@ -2198,9 +2198,10 @@
           <button id="help-back" class="mobile-back" aria-label="Back">
             <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
           </button>
-          <span>Help</span>
+          <span>Documentation</span>
         </div>
         <div class="dash-body">
+          <div id="docs-landing">
           <div class="help-content">
             <p class="help-intro">How the pieces fit together.</p>
 
@@ -2317,6 +2318,9 @@
               </p>
             </div>
           </div>
+          <nav id="docs-nav" class="docs-nav"></nav>
+          </div>
+          <article id="docs-article" class="docs-article markdown" hidden></article>
         </div>
       </section>
       <div id="members-overlay" class="members-overlay" hidden></div>

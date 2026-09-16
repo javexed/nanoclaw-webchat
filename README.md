@@ -8,6 +8,9 @@ multi-agent rooms, per-room threads, per-member credentials, local-model
 routing, and a full operator console, in one installable PWA that binds to
 `127.0.0.1`.
 
+It flows through NanoClaw's normal router and session model — a **channel
+adapter**, not a side process.
+
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![PWA](https://img.shields.io/badge/PWA-installable-5a3.svg)](#)
 
@@ -82,12 +85,35 @@ in shadow mode so you can watch before switching.
 **Operator console.** Create and wire agents, register models with live
 discovery, pull Ollama models with progress, manage MCP servers, roles and
 members, and an approvals inbox for credentialed actions — all in the browser.
+Draft a whole agent from a prompt, host-side via OneCLI. Roles are owner /
+admin, global or scoped to one agent group, with per-room access gating.
+
+**The app itself.** An installable **PWA**: Web Push (VAPID), an offline shell
+via service worker, an unread app-badge, and light / dark / system themes.
+Rooms pin, archive, hide, drag-reorder, and take a colour.
 
 **Security posture.** Binds `127.0.0.1` by default and refuses a public
 interface without explicit auth. CSRF header on mutations, strict CSP, SSRF
 guards on every operator-supplied URL, secret redaction on every broadcast and
 push payload, optional TLS.
 → [security model](app/docs/webchat/security.md)
+
+---
+
+## Screenshots
+
+Real shots from a live install.
+
+| Agent settings — Settings / Instructions tabs | Auto routing — rules + classify bench |
+|---|---|
+| ![Agent settings panel](app/docs/webchat/screenshots/agent-settings.png) | ![Auto routing console](app/docs/webchat/screenshots/routing.png) |
+
+| Dashboard — health, sessions, containers | Wiring — which agents reach which rooms |
+|---|---|
+| ![Dashboard](app/docs/webchat/screenshots/dashboard.png) | ![Wiring and topology](app/docs/webchat/screenshots/wiring.png) |
+
+_The hero lobby GIF and the DM / approvals shots want a **populated** demo
+install — see [screenshots/CAPTURE.md](app/docs/webchat/screenshots/CAPTURE.md)._
 
 ---
 

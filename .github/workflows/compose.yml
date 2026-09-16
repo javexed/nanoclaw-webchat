@@ -38,6 +38,10 @@ jobs:
           git remote add origin ${{ github.server_url }}/${{ github.repository }}.git
           git fetch -q --depth 1 origin ${{ github.sha }}
           git checkout -q FETCH_HEAD
+          # The image ships whatever Node it ships and the job does not pin it,
+          # so record it: "which Node did CI run" has been guesswork.
+          { echo "node $(node -v)"; echo "image $(cat /etc/os-release 2>/dev/null | sed -n 's/^PRETTY_NAME=//p')"; } \
+            > "$RUNNER_TEMP/ci-env" 2>/dev/null || true
       # No actions/setup-node here: it breaks on some Actions implementations,
       # and the runner image already ships a current Node.
       - uses: pnpm/action-setup@v4
@@ -328,6 +332,19 @@ jobs:
 
       - name: Host tests (composed tree)
         working-directory: ${{ runner.temp }}/composed
+        env:
+          # Actions runners export GITHUB_TOKEN into every job. setup/verify.ts
+          # treats a present GITHUB_TOKEN as "the github channel is configured"
+          # (`has()` reads process.env before the install's own env), so under Actions
+          # verify() reports CONFIGURED_CHANNELS "slack,github" where the test wrote
+          # "slack", flips STATUS to failed and exits — five failures in
+          # setup/verify-slack.test.ts, all one cause. It is an upstream hermeticity
+          # bug (the suite inherits ambient env) and it will bite any Actions-like CI.
+          # Clearing it for this step is the no-drift fix: this workflow is repo-B
+          # owned, so it needs no patch against an upstream file. `has()` is a
+          # truthiness check, so empty reads as absent. Remove when upstream makes
+          # the check read the install's env only.
+          GITHUB_TOKEN: ''
         # vitest's 5s default is tuned for a developer machine. These suites do
         # real SQLite file IO (journal_mode=DELETE is load-bearing for
         # cross-mount visibility), and inside a contended runner container the
@@ -338,7 +355,35 @@ jobs:
         # weakening a single assertion.
         run: |
           echo "Host tests (composed tree)" > "$RUNNER_TEMP/ci-step"
-          pnpm exec vitest run --testTimeout=30000 --hookTimeout=30000
+
+          # Node 26 deprecates `module.register()` (DEP0205). Upstream's lockfile
+          # pins tsx 4.21.0, which calls it, so on such a Node every
+          # `node --import tsx` spawn prints the warning to stderr — and three
+          # upstream CLI tests (src/cli/stdin-json{,.e2e}.test.ts) assert stderr
+          # is exactly empty or exactly one line, and fail.
+          #
+          # NOT what is red today: these runners ship Node 24, where DEP0205 does
+          # not exist. This is forward insurance only, for the day the image moves
+          # — the job pins no Node, so that day arrives without warning.
+          #
+          # PROBED, not assumed: --disable-warning does not exist before Node
+          # 21.3, where passing it would make every node invocation fail and turn
+          # a warning into a much worse red. Set it only if this Node takes it.
+          #
+          # DELETE once the composed tree resolves tsx >= 4.23.13, which no longer
+          # calls module.register(). Verified both ways: 4.21.0 warns, 4.23.13 is
+          # silent.
+          if node --disable-warning=DEP0205 -e '' 2>/dev/null; then
+            export NODE_OPTIONS="--disable-warning=DEP0205${NODE_OPTIONS:+ $NODE_OPTIONS}"
+          fi
+
+          # Tee to a file the failure reporter can quote. The log API 404s on
+          # this forge and artifacts do not work, so an un-captured failure is
+          # a failure nobody can read: three separate investigations have ended
+          # in inference because the only signal was a step name.
+          set -o pipefail
+          pnpm exec vitest run --testTimeout=30000 --hookTimeout=30000 2>&1 \
+            | tee "$RUNNER_TEMP/host-tests.log"
 
       # Does this change reach the container tree at all? A CSS-only PR ran the
       # full bun suite for nothing — real minutes on a serial runner.
@@ -475,21 +520,44 @@ jobs:
         run: |
           STEP="$(cat "$RUNNER_TEMP/ci-step" 2>/dev/null || echo '<none recorded — failed before the first run step>')"
           echo "::error::compose failed at or after: $STEP"
+          CIENV="$(cat "$RUNNER_TEMP/ci-env" 2>/dev/null || echo 'not recorded')"
+          # Failing test names only — never the whole log. Enough to tell a real
+          # break from the boot-order/timeout flake without pasting a novel.
+          # STRIP ANSI FIRST, then match. vitest colours its output, so an
+          # anchored ^FAIL never matches a raw line — the first cut of this
+          # reported totals only and no test names, which is half a diagnosis.
+          CLEAN="$(mktemp)"
+          sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/host-tests.log" > "$CLEAN" 2>/dev/null || true
+          NAMES="$(grep -aE "^ *(FAIL|×|✕)|Test Files|^ *Tests " "$CLEAN" | sort -u | head -20)"
+          # Names say WHICH broke; the assertion says WHY. Without it, a red that
+          # does not reproduce locally costs a day of permutations — which is what
+          # setup/verify-slack.test.ts cost before this line existed.
+          # -A12 so the object diff that follows an AssertionError comes too:
+          # vitest elides the payload in the headline ("…(13)"), so the headline
+          # alone says two objects differ without saying in which field.
+          WHY="$(grep -a -A12 -E "AssertionError" "$CLEAN" | cut -c1-200 | head -60)"
+          EVIDENCE="$(printf '%s\n' "$NAMES"; [ -n "$WHY" ] && printf '%s\n%s\n' "--- why ---" "$WHY")"
+
           if [ -z "${FORGE_TOKEN:-}" ]; then
             echo "::warning::No token available, so the failing step could not be posted to the PR."
             exit 0
           fi
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_number }}"
-          python3 - "$STEP" "$RUN_URL" <<'PY' || echo "::warning::could not post the failure comment"
+          python3 - "$STEP" "$RUN_URL" "$CIENV" "$EVIDENCE" <<'PY' || echo "::warning::could not post the failure comment"
           import json, os, sys, urllib.request, urllib.error
-          step, run_url = sys.argv[1], sys.argv[2]
+          step, run_url, cienv, evidence = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+          detail = ""
+          if evidence.strip():
+              detail = "\n```\n%s\n```\n" % evidence.strip()
           body = (
               "**compose failed at or after:** `%s`\n\n"
-              "[run %s](%s)\n\n"
+              "ran on: `%s`\n" % (step, cienv.replace("\n", " · ")) +
+              detail +
+              "\n[run %s](%s)\n\n"
               "<sub>Posted by the compose job because artifacts and the log API are "
               "unavailable on this runner. `uses:` steps are not instrumented, so a "
               "failure inside a setup or cache action reports the run step before it."
-              "</sub>" % (step, os.environ["GITHUB_RUN_NUMBER"], run_url)
+              "</sub>" % (os.environ["GITHUB_RUN_NUMBER"], run_url)
           )
           url = "%s/api/v1/repos/%s/issues/%s/comments" % (
               os.environ["GITHUB_SERVER_URL"], os.environ["GITHUB_REPOSITORY"],

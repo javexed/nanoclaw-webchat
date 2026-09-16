@@ -2462,3 +2462,90 @@ export async function setSourceDisabled(id: string, disabled: boolean): Promise<
   if (disabled) await getDb().run('INSERT OR IGNORE INTO webchat_disabled_sources (id) VALUES (?)', id);
   else await getDb().run('DELETE FROM webchat_disabled_sources WHERE id = ?', id);
 }
+
+// ── Agent activity log (durable thinking-bubble feed) ───────────────────────
+// The container's per-session status_events is wiped each turn; this is where
+// the feed survives. Every frame is already redacted twice before it lands
+// here (container choke point + sendStatus). 30-day retention.
+
+const ACTIVITY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+export interface ActivityRow {
+  id: number;
+  room_id: string;
+  agent_name: string | null;
+  kind: string;
+  text: string | null;
+  detail: string | null;
+  created_at: number;
+}
+
+/** Persist one activity frame. Best-effort: the live bubble must never wait on
+ *  or fail because of the durable copy. */
+export async function recordActivity(row: {
+  roomId: string;
+  agentName: string | null;
+  kind: string;
+  text: string | null;
+  detail: string | null;
+  createdAt: number;
+}): Promise<void> {
+  try {
+    await getDb().run(
+      `INSERT INTO webchat_activity_log (room_id, agent_name, kind, text, detail, created_at)
+         VALUES (@room_id, @agent_name, @kind, @text, @detail, @created_at)`,
+      {
+        room_id: row.roomId,
+        agent_name: row.agentName,
+        kind: row.kind,
+        text: row.text,
+        detail: row.detail,
+        created_at: row.createdAt,
+      },
+    );
+  } catch {
+    // Durable feed is a convenience, not a correctness surface.
+  }
+}
+
+/** Drop activity older than the retention window. Returns rows removed. */
+export async function pruneActivity(now: number = Date.now()): Promise<number> {
+  try {
+    const res = (await getDb().run(`DELETE FROM webchat_activity_log WHERE created_at < @cutoff`, {
+      cutoff: now - ACTIVITY_RETENTION_MS,
+    })) as { changes?: number } | undefined;
+    return res?.changes ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Activity for a room, newest first, capped. For the durable trace view. */
+export async function getActivityForRoom(roomId: string, limit = 200): Promise<ActivityRow[]> {
+  try {
+    return (await getDb().all(
+      `SELECT id, room_id, agent_name, kind, text, detail, created_at
+         FROM webchat_activity_log WHERE room_id = @room_id
+         ORDER BY created_at DESC, id DESC LIMIT @limit`,
+      { room_id: roomId, limit },
+    )) as ActivityRow[];
+  } catch {
+    return [];
+  }
+}
+
+/** Full reasoning blocks for a room's most recent turn(s) — what click-to-expand
+ *  fetches for a turn no longer in the live feed. */
+export async function getReasoningForRoom(roomId: string, limit = 50): Promise<ActivityRow[]> {
+  try {
+    return (await getDb().all(
+      `SELECT id, room_id, agent_name, kind, text, detail, created_at
+         FROM webchat_activity_log
+         WHERE room_id = @room_id AND kind = 'reasoning' AND detail IS NOT NULL
+         ORDER BY created_at DESC, id DESC LIMIT @limit`,
+      { room_id: roomId, limit },
+    )) as ActivityRow[];
+  } catch {
+    return [];
+  }
+}

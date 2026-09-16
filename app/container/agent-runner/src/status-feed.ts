@@ -11,6 +11,7 @@
  * observes (the seam's notify wrapper also guarantees that).
  */
 import { getOutboundDb } from './mailbox/sqlite/connection.js';
+import { redactSecrets } from './formatter.js';
 import { registerProviderMessageObserver } from './providers/hooks.js';
 
 /**
@@ -74,7 +75,10 @@ registerProviderMessageObserver((ev) => {
       appendStatusEvent('progress', ev.text);
       break;
     case 'reasoning':
-      appendStatusEvent('reasoning', ev.text);
+      // `detail` (the full block) rides as an untyped extra field on the first
+      // line's event — see the cast in claude.ts. Read it back the same way so
+      // upstream's event type stays untouched.
+      appendStatusEvent('reasoning', ev.text, (ev as { detail?: string }).detail ?? null);
       break;
   }
 });
@@ -130,6 +134,13 @@ export function getTurnToolCount(): number {
 }
 
 export function appendStatusEvent(kind: string, text: string | null, detail: string | null = null): void {
+  // Redact HERE, not at each call site. This is the one choke point every
+  // provider's events pass through on the way to something a person can read
+  // — the live bubble now, the durable feed next — and reasoning is where a
+  // model most readily restates a token it just read. A missed call site
+  // would put a secret somewhere it is kept.
+  if (text !== null) text = redactSecrets(text);
+  if (detail !== null) detail = redactSecrets(detail);
   if (kind === 'start') turnToolCount = 0;
   else if (kind === 'tool') turnToolCount++;
   try {

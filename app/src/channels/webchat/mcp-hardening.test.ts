@@ -5,10 +5,13 @@
  *   - the drift diff names exactly what changed;
  *   - a server with host-side auth syncs into container config as a RELAY url
  *     + scoped token — the real credential never appears;
- *   - enabledTools flows into the config entry (the SDK allowlist enforces it).
+ *   - enabledTools flows into the config entry (the SDK allowlist enforces it);
+ *   - the relay binds the container-facing interface or refuses — never every
+ *     interface on a guess.
  */
 import { describe, expect, it } from 'vitest';
 
+import { resolveRelayBindHost } from './mcp-relay.js';
 import {
   diffToolSurface,
   hashToolSurface,
@@ -91,5 +94,32 @@ describe('mcpServerToConfig — relay rewrite (host-side credentials)', () => {
     expect(
       (mcpServerToConfig(row({ enabled_tools: '[]' })) as { enabledTools?: string[] }).enabledTools,
     ).toBeUndefined();
+  });
+});
+
+describe('resolveRelayBindHost — the listener never guesses "every interface"', () => {
+  it('binds the docker bridge when it is discoverable', () => {
+    expect(resolveRelayBindHost(undefined, '172.17.0.1')).toEqual({ kind: 'bind', host: '172.17.0.1' });
+  });
+
+  it('an explicit host wins over the bridge — the escape hatch for custom networks', () => {
+    expect(resolveRelayBindHost('192.0.2.1', '172.17.0.1')).toEqual({ kind: 'bind', host: '192.0.2.1' });
+  });
+
+  it('refuses when no bridge is discoverable rather than falling back to 0.0.0.0', () => {
+    const bind = resolveRelayBindHost(undefined, null);
+    expect(bind.kind).toBe('refuse');
+    // The message has to name the way out, because the symptom operators see
+    // is a missing toolset, not a bind error.
+    expect(bind.kind === 'refuse' && bind.reason).toContain('WEBCHAT_MCP_RELAY_HOST');
+  });
+
+  it('an explicit host still binds with no bridge — macOS / custom nets stay serviceable', () => {
+    expect(resolveRelayBindHost('host.lima.internal', null)).toEqual({ kind: 'bind', host: 'host.lima.internal' });
+  });
+
+  it('a blank or whitespace override is not an override', () => {
+    expect(resolveRelayBindHost('   ', '172.17.0.1')).toEqual({ kind: 'bind', host: '172.17.0.1' });
+    expect(resolveRelayBindHost('', null).kind).toBe('refuse');
   });
 });
