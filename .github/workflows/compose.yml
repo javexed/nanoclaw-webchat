@@ -42,6 +42,19 @@ jobs:
           # so record it: "which Node did CI run" has been guesswork.
           { echo "node $(node -v)"; echo "image $(cat /etc/os-release 2>/dev/null | sed -n 's/^PRETTY_NAME=//p')"; } \
             > "$RUNNER_TEMP/ci-env" 2>/dev/null || true
+      # ── Scope ──────────────────────────────────────────────────────────────
+      # What does this change touch? A PR that never goes near ui/ used to pay
+      # ~5 minutes for Chromium and the browser probes, and every PR ran all of
+      # upstream's host suite — two thirds of the files, already run by
+      # upstream at the pinned ref. scripts/ci-scope.sh decides; it FAILS OPEN
+      # (push events, no base, any error → run everything) and is exercised
+      # locally exactly as here. The container gate below keeps its own rule.
+      - name: Scope (what this change touches)
+        id: scope
+        run: |
+          echo "Scope (what this change touches)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/ci-scope.sh "${{ github.event_name }}" "${{ github.base_ref }}" origin | tee -a "$GITHUB_OUTPUT"
+
       # No actions/setup-node here: it breaks on some Actions implementations,
       # and the runner image already ships a current Node.
       - uses: pnpm/action-setup@v4
@@ -86,6 +99,7 @@ jobs:
       # version in the lockfile so a bump repopulates rather than silently
       # running an old browser against new bindings.
       - name: Cache — Playwright browsers
+        if: steps.scope.outputs.ui == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
@@ -99,21 +113,25 @@ jobs:
       # pushed without rebuilding. Runs before compose, since compose copies
       # app/ into the composed tree.
       - name: UI — install
+        if: steps.scope.outputs.ui == 'true'
         run: |
           echo "UI — install" > "$RUNNER_TEMP/ci-step"
           pnpm --dir ui install --frozen-lockfile
 
       - name: UI — typecheck
+        if: steps.scope.outputs.ui == 'true'
         run: |
           echo "UI — typecheck" > "$RUNNER_TEMP/ci-step"
           pnpm --dir ui run typecheck
 
       - name: UI — shadowed-ref guard self-test (proves it still detects faults)
+        if: steps.scope.outputs.ui == 'true'
         run: |
           echo "UI — shadowed-ref guard self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
           node ui/check-shadowed-refs.mjs --selftest
 
       - name: UI — no parameter shadows an imported ref
+        if: steps.scope.outputs.ui == 'true'
         # renderMembers(members) shadowed the imported `members` ref, so the
         # assignment landed on the argument and the island that reads the ref
         # never updated: the room reported "1 member" and listed nobody. tsc,
@@ -124,6 +142,7 @@ jobs:
           node ui/check-shadowed-refs.mjs
 
       - name: UI — reference integrity (extracted modules define what they use)
+        if: steps.scope.outputs.ui == 'true'
         # Narrow on purpose: TS2304 only. The modules carved out of legacy.js are
         # still plain JS with checkJs off, so the compiler is otherwise silent
         # about them — including about the one failure mode extraction actually
@@ -136,6 +155,7 @@ jobs:
           pnpm --dir ui run check:refs
 
       - name: UI — injected dependencies are all supplied
+        if: steps.scope.outputs.ui == 'true'
         # Complements the reference check. A `deps.X` that legacy never supplies
         # is `undefined` at runtime and throws only when that path executes —
         # typecheck, check:refs and the build are all silent about it, and e2e
@@ -147,6 +167,7 @@ jobs:
           pnpm --dir ui run check:deps
 
       - name: UI — mounted components get their required props
+        if: steps.scope.outputs.ui == 'true'
         # The same failure shape as check:deps, at the other seam. Vue types the
         # createApp props argument as a bare index signature, so vue-tsc compares
         # it against nothing: a required prop that is never passed is `undefined`
@@ -158,16 +179,19 @@ jobs:
           pnpm --dir ui run check:props
 
       - name: UI — build
+        if: steps.scope.outputs.ui == 'true'
         run: |
           echo "UI — build" > "$RUNNER_TEMP/ci-step"
           pnpm --dir ui run build
 
       - name: UI — install Chromium (boot-order guard)
+        if: steps.scope.outputs.ui == 'true'
         run: |
           echo "UI — install Chromium (boot-order guard)" > "$RUNNER_TEMP/ci-step"
           pnpm --dir ui exec playwright install --with-deps chromium
 
       - name: UI — boot-order guard self-test (proves it still detects faults)
+        if: steps.scope.outputs.ui == 'true'
         # Runs against perturbed COPIES of the baselines, never the committed
         # ones. The guard's whole value is catching a reorder that leaves the
         # event set and count identical — a guard only ever seen to pass cannot
@@ -182,6 +206,7 @@ jobs:
           bash scripts/check-boot-order.selftest.sh stubbed
 
       - name: UI — boot order (startup sequence unchanged)
+        if: steps.scope.outputs.ui == 'true'
         # The listener-set diff proves WHICH listeners attach and is blind to
         # ORDER, which is where bootstrap correctness actually lives. Moving one
         # .vue import from one line of a feature module's import list to the next
@@ -197,6 +222,7 @@ jobs:
           bash scripts/check-boot-order.sh
 
       - name: UI — role-matrix guard self-test (proves it still detects faults)
+        if: steps.scope.outputs.ui == 'true'
         # Strips `hidden` off the gated controls on a timer, which is what a
         # removed or skipped gate looks like from outside, and requires the guard
         # to reject it — then requires it to accept the unperturbed build, so a
@@ -206,6 +232,7 @@ jobs:
           bash scripts/check-role-matrix.sh --selftest
 
       - name: UI — role matrix (no control offered to someone who can't use it)
+        if: steps.scope.outputs.ui == 'true'
         # Three privilege-leak bugs shipped here in a row and NONE was visible
         # from the source: twelve Settings sections that set `hidden` and
         # rendered anyway (an author `display:flex` beats the UA `[hidden]`
@@ -223,6 +250,7 @@ jobs:
           bash scripts/check-role-matrix.sh
 
       - name: UI — first-open self-test (proves the probe still detects faults)
+        if: steps.scope.outputs.ui == 'true'
         # Puts the unguarded join send back into the built bundle and requires
         # the probe to go red. Without this the probe could quietly stop
         # exercising the resume window and still report green forever.
@@ -231,6 +259,7 @@ jobs:
           bash scripts/check-first-open.sh --selftest
 
       - name: UI — first open (a room tapped on a connecting socket still opens)
+        if: steps.scope.outputs.ui == 'true'
         # Field report: the first room tapped after opening the app did not
         # open, and tapping another room then tapping back "fixed" it. Cause was
         # `state.ws?.send(...)` in joinRoom — `?.` guards a null socket, not a
@@ -245,6 +274,7 @@ jobs:
           bash scripts/check-first-open.sh
 
       - name: UI — wiring-remount self-test (proves the probe still detects it)
+        if: steps.scope.outputs.ui == 'true'
         # Restores the shipped bug — the placeholder written into the island's
         # mount host unconditionally — and requires the probe to go red.
         run: |
@@ -252,6 +282,7 @@ jobs:
           bash scripts/check-wiring-remount.sh --selftest
 
       - name: UI — wiring view survives a second render
+        if: steps.scope.outputs.ui == 'true'
         # Field report: Wiring sat on "Loading…" forever. #matrix-canvas is both
         # the placeholder target and the island's mount host, so the placeholder
         # wiped the mounted DOM while mountMatrix() refused to rebuild. First
@@ -266,6 +297,7 @@ jobs:
           bash scripts/check-wiring-remount.sh
 
       - name: UI — bundle-drift guard (committed bundle == fresh build)
+        if: steps.scope.outputs.ui == 'true'
         run: |
           echo "UI — bundle-drift guard (committed bundle == fresh build)" > "$RUNNER_TEMP/ci-step"
           # `git status --porcelain`, not `git diff`: diff only reports TRACKED
@@ -320,6 +352,29 @@ jobs:
           echo "Manifest integrity (migrations register; dev tree matches)" > "$RUNNER_TEMP/ci-step"
           bash scripts/check-manifest.sh
 
+      - name: Patch header self-test (proves it still detects faults)
+        # Throwaway fixture patches, never the repo's own. A guard only ever seen
+        # to pass is not evidence.
+        run: |
+          echo "Patch header self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-patch-headers.selftest.sh
+
+      - name: Patch headers (a/ b/, no escape codes, names match paths)
+        # A regenerated patch carries the regenerator's git diff config. c/ w/
+        # headers are churn; a missing prefix or escape codes make install.sh's
+        # git apply fail with an error that never says why.
+        run: |
+          echo "Patch headers (a/ b/, no escape codes, names match paths)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-patch-headers.sh
+
+      - name: Subset selector self-test (proves it still refuses to under-select)
+        # Throwaway fixtures, never the repo's own tree. The failure that matters
+        # for a test SELECTOR is quietly picking too little; this proves it maps
+        # a changed file to its sibling tests and refuses an empty selection.
+        run: |
+          echo "Subset selector self-test (proves it still refuses to under-select)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/ci-host-test-subset.selftest.sh
+
       - name: Format (owned files are prettier-clean)
         # The composed tree carries upstream's format:fix pre-commit hook. If our
         # payload is not already clean, that hook rewrites files during a deploy
@@ -333,18 +388,23 @@ jobs:
       - name: Host tests (composed tree)
         working-directory: ${{ runner.temp }}/composed
         env:
-          # Actions runners export GITHUB_TOKEN into every job. setup/verify.ts
-          # treats a present GITHUB_TOKEN as "the github channel is configured"
-          # (`has()` reads process.env before the install's own env), so under Actions
-          # verify() reports CONFIGURED_CHANNELS "slack,github" where the test wrote
-          # "slack", flips STATUS to failed and exits — five failures in
-          # setup/verify-slack.test.ts, all one cause. It is an upstream hermeticity
-          # bug (the suite inherits ambient env) and it will bite any Actions-like CI.
-          # Clearing it for this step is the no-drift fix: this workflow is repo-B
-          # owned, so it needs no patch against an upstream file. `has()` is a
-          # truthiness check, so empty reads as absent. Remove when upstream makes
-          # the check read the install's env only.
-          GITHUB_TOKEN: ''
+          # GITHUB_TOKEN is no longer cleared here. Actions runners export one
+          # into every job, and verify()'s `has()` reads process.env before the
+          # install's own env, so an ambient token invented a github channel and
+          # failed five tests in setup/verify-slack.test.ts. Clearing it was a
+          # workaround for OUR CI only; the real fix now rides in
+          # patches/upstreamable/setup__verify{,-slack.test}.ts.patch, so every
+          # install gets it and a developer with `gh` in their shell stops
+          # hitting it too. Both patches DELETE when upstream merges the PR they
+          # carry. Proven: with an ambient GITHUB_TOKEN the patched tree passes
+          # 18/18 where an unpatched one fails exactly those five.
+          # Skips exactly two tests in setup/lib/restart-readiness.test.ts, via
+          # patches/local/setup__lib__restart-readiness.test.ts.patch. They
+          # exercise restart.sh's nohup fallback and hang the full 30s on THIS
+          # runner — while passing in 4.4s in the runner's own image, as root, on
+          # Node 24, and down to 0.5 CPU. The patch carries the measurements and
+          # the removal condition. Unset it and they run, here and everywhere.
+          NANOCLAW_WEBCHAT_SKIP_RESTART_FALLBACK: '1'
         # vitest's 5s default is tuned for a developer machine. These suites do
         # real SQLite file IO (journal_mode=DELETE is load-bearing for
         # cross-mount visibility), and inside a contended runner container the
@@ -382,8 +442,17 @@ jobs:
           # a failure nobody can read: three separate investigations have ended
           # in inference because the only signal was a step name.
           set -o pipefail
-          pnpm exec vitest run --testTimeout=30000 --hookTimeout=30000 2>&1 \
-            | tee "$RUNNER_TEMP/host-tests.log"
+          # full: every test in the composed tree. subset: this repo's own tests
+          # plus upstream tests for the files the seam, a patch, or an app/
+          # overwrite changes — see scripts/ci-host-test-subset.sh. The selector
+          # refuses to pick nothing, and its self-test ran just above.
+          if [ "${{ steps.scope.outputs.host }}" = "subset" ]; then
+            bash "$GITHUB_WORKSPACE/scripts/ci-host-test-subset.sh" "$GITHUB_WORKSPACE" . > "$RUNNER_TEMP/host-tests.files"
+            echo "::notice::Host tests: SUBSET — $(wc -l < "$RUNNER_TEMP/host-tests.files") files (this repo's tests + upstream tests for the files it changes). The full suite runs when versions.json, patches/, install.sh, scripts/ or the workflow change, and on every push to main."
+            bash "$GITHUB_WORKSPACE/scripts/ci-run-host-tests.sh" "$RUNNER_TEMP/host-tests.log" "$RUNNER_TEMP/host-tests.files"
+          else
+            bash "$GITHUB_WORKSPACE/scripts/ci-run-host-tests.sh" "$RUNNER_TEMP/host-tests.log"
+          fi
 
       # Does this change reach the container tree at all? A CSS-only PR ran the
       # full bun suite for nothing — real minutes on a serial runner.
@@ -407,7 +476,12 @@ jobs:
           BASE_REF="${{ github.base_ref }}"
           [ -n "$BASE_REF" ] || decide true
           git fetch -q --depth 50 origin "$BASE_REF" 2>/dev/null || decide true
-          MB=$(git merge-base FETCH_HEAD HEAD 2>/dev/null) || decide true
+          BASE_SHA=$(git rev-parse FETCH_HEAD)
+          # Same defect the scope step had: the checkout is --depth 1, so HEAD
+          # has no ancestry and merge-base always failed → this gate had never
+          # actually skipped a run. Deepen HEAD too.
+          git fetch -q --depth 50 origin "$(git rev-parse HEAD)" 2>/dev/null || decide true
+          MB=$(git merge-base "$BASE_SHA" HEAD 2>/dev/null) || decide true
           [ -n "$MB" ] || decide true
           CHANGED=$(git diff --name-only "$MB"..HEAD 2>/dev/null) || decide true
           if printf '%s\n' "$CHANGED" | grep -qE '^(container/|app/container/|patches/|versions\.json)'; then
@@ -426,6 +500,14 @@ jobs:
           bun install
           bun run typecheck
           bun test
+
+      - name: Say what this run skipped
+        # A green run that silently did less is the kind of silence that gets
+        # mistaken for coverage later. Name it.
+        if: steps.scope.outputs.ui != 'true'
+        run: |
+          echo "Say what this run skipped" > "$RUNNER_TEMP/ci-step"
+          echo "::notice::UI phase SKIPPED — this change touches neither ui/ nor app/public/webchat/. The committed bundle was composed as-is; the bundle-drift guard, boot-order, role-matrix, first-open and wiring-remount probes did not run."
 
       - name: Pack composed tarball
         run: |

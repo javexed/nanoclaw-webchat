@@ -6,7 +6,6 @@
 //
 // The loosest cluster in server.ts — three references outside its own handlers,
 // two of them constants now in server/constants.ts.
-import type { IncomingMessage, ServerResponse } from 'http';
 
 import { json, readJsonBody } from './http.js';
 import { audit, readAuditEvents, readAuditFacets } from '../../../audit.js';
@@ -28,13 +27,7 @@ import {
   setSourceDisabled,
 } from '../db.js';
 import type { CredentialMode, CredentialsConfig } from '../db.js';
-import {
-  getCloudflaredInstallState,
-  getTailscaleInstallState,
-  startCloudflaredConnect,
-  startCloudflaredInstall,
-  startTailscaleInstall,
-} from '../ollama-manage.js';
+import { installGet, installPost } from './routes-install.js';
 import { runPreflight } from '../preflight.js';
 import { isGlobalAdmin, isOwner } from '../roles.js';
 import { DEFAULT_PORT, MARKETPLACE_ID } from './constants.js';
@@ -330,16 +323,13 @@ export async function rWebchatTailscaleHttps(ctx: RouteCtx, _m: RegExpMatchArray
 export async function rWebchatCloudflaredGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
-  return json(res, 200, getCloudflaredInstallState());
+  return installGet(res, 'cloudflared');
 }
 
 export async function rWebchatCloudflaredInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
-  const r = startCloudflaredInstall();
-  if (r.error === 'prereq-missing')
-    return json(res, 409, { error: 'Needs root + systemd — install cloudflared manually instead.' });
-  return json(res, r.started ? 202 : 409, { ...getCloudflaredInstallState(), started: r.started });
+  return installPost(res, 'cloudflared', {});
 }
 
 export async function rWebchatCloudflaredConnectPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
@@ -354,17 +344,11 @@ export async function rWebchatCloudflaredConnectPost(ctx: RouteCtx, _m: RegExpMa
     return json(res, 400, { error: 'Invalid JSON' });
   }
   if (typeof body.token !== 'string' || !body.token.trim()) return json(res, 400, { error: 'token required' });
-  const r = startCloudflaredConnect(body.token);
-  if (r.error === 'prereq-missing')
-    return json(res, 409, { error: 'Needs root + systemd — install cloudflared manually instead.' });
-  if (r.error === 'not-installed') return json(res, 409, { error: 'Install cloudflared first.' });
-  if (r.error === 'bad-token') return json(res, 400, { error: 'That doesn’t look like a tunnel token.' });
-  return json(res, r.started ? 202 : 409, { ...getCloudflaredInstallState(), started: r.started });
+  return installPost(res, 'cloudflared', { token: body.token }, ['bad-token']);
 }
 
 export async function rWebchatTailscaleInstallGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  return json(res, 200, getTailscaleInstallState());
+  return installGet(ctx.res, 'tailscale');
 }
 
 // Wizard/Settings self-test: run capability checks (tailscale, docker,
@@ -376,14 +360,7 @@ export async function rWebchatPreflightGet(ctx: RouteCtx, _m: RegExpMatchArray):
 }
 
 export async function rWebchatTailscaleInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  const r = startTailscaleInstall();
-  if (!r.started && r.error === 'prereq-missing') {
-    return json(res, 409, {
-      error: "Can't install Tailscale here — /dev/net/tun or root is missing. Use the Proxmox community helper.",
-    });
-  }
-  return json(res, r.started ? 202 : 409, { ...getTailscaleInstallState(), started: r.started });
+  return installPost(ctx.res, 'tailscale');
 }
 
 // Owner-only per-user token-usage rollup (estimated from the message store — see

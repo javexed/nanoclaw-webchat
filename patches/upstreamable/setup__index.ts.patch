@@ -1,12 +1,12 @@
 diff --git a/setup/index.ts b/setup/index.ts
-index 7d8f1c45..11ad7e50 100644
+index 4bf93ea3..1360a8f7 100644
 --- a/setup/index.ts
 +++ b/setup/index.ts
-@@ -22,6 +22,7 @@ const STEPS: Record<string, () => Promise<{ run: (args: string[]) => Promise<voi
+@@ -23,6 +23,7 @@ const STEPS: Record<string, () => Promise<{ run: (args: string[]) => Promise<voi
    onecli: () => import('./onecli.js'),
    auth: () => import('./auth.js'),
    'provider-auth': () => import('./provider-auth.js'),
 +  'provider-install': () => import('./provider-install.js'),
    'cli-agent': () => import('./cli-agent.js'),
    registry: () => import('./registry.js'),
-   'registry-reconcile': () => import('./registry-reconcile.js'),
+   portal: () => import('./portal.js'),

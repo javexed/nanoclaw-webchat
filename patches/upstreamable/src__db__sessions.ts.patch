@@ -1,8 +1,8 @@
 diff --git a/src/db/sessions.ts b/src/db/sessions.ts
-index bec956f6..bfcff030 100644
+index 9cca6e54..0aa14861 100644
 --- a/src/db/sessions.ts
 +++ b/src/db/sessions.ts
-@@ -232,6 +232,23 @@ export async function getPendingApproval(approvalId: string): Promise<PendingApp
+@@ -259,6 +259,23 @@ export async function getPendingApproval(approvalId: string): Promise<PendingApp
    return getDb().get<PendingApproval>('SELECT * FROM pending_approvals WHERE approval_id = ?', approvalId);
  }
  
@@ -26,7 +26,7 @@ index bec956f6..bfcff030 100644
  /** Atomically claim one approval state transition. */
  export async function transitionPendingApprovalStatus(
    approvalId: string,
-@@ -275,6 +292,13 @@ export async function deletePendingApproval(approvalId: string): Promise<void> {
+@@ -302,6 +319,13 @@ export async function deletePendingApproval(approvalId: string): Promise<void> {
    await getDb().run('DELETE FROM pending_approvals WHERE approval_id = ?', approvalId);
  }
  

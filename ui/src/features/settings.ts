@@ -6,7 +6,7 @@
 // credentials, TTS/STT install) deliberately stay with that feature and are
 // called from here — the overlay is a host, not an owner.
 import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
-import { removeToolSecret, toolSecretUrl } from './agents.js';
+import { openAgentDetail, removeToolSecret, toolSecretUrl } from './agents.js';
 import { permsMyUserId } from './perms-list-state.js';
 import { myCredGroups, myCredSaving } from './my-credentials-state.js';
 import { preflightChecks, preflightMessage, preflightPhase } from './preflight-state.js';
@@ -18,7 +18,7 @@ import { codexInstallActive, opencodeInstallActive } from './installer-state.js'
 import { showToast, toastError } from '../core/toast.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
-import { pollRoutingInstall, pollSttInstall, pollTtsInstall, renderRoutingInstallProgress, runCodexInstall, runOpencodeInstall, runRoutingInstall, runSttInstall, runTtsInstall } from './installers.js';
+import { pollRoutingInstall, pollSttInstall, pollTtsInstall, renderRoutingInstallProgress, runInstall, runRoutingInstall, runSttInstall, runTtsInstall } from './installers.js';
 import { sttPopulateModelSelect } from './models.js';
 import { cancelDictation, getSttConfig, getTtsReadAloudEnabled, isDictationActive, loadTtsConfig, setSttConfig, setTtsReadAloudEnabled, stopTts } from './voice.js';
 import { createApp, nextTick } from 'vue';
@@ -144,7 +144,7 @@ export async function renderCredentialsSettings() {
 
   // Codex install-row: Install button when the provider isn't in the agent image,
   // green ✓ badge once it is — same install-row pattern as Auto routing / Read
-  // aloud. Install runs the wizard's two-phase build→restart flow (runCodexInstall).
+  // aloud. Install runs the wizard's two-phase build→restart flow (runInstall).
   // Leave the button alone mid-install so its spinner isn't clobbered by a re-render.
   const codexRow = $('#settings-codex-install');
   if (codexRow) codexRow.hidden = false;
@@ -184,10 +184,10 @@ export async function renderCredentialsSettings() {
 
   if (credConfigWired) return;
   credConfigWired = true;
-  $('#codex-install-btn')?.addEventListener('click', () => runCodexInstall(CODEX_SETTINGS_ELS));
-  $('#opencode-install-btn')?.addEventListener('click', () => runOpencodeInstall(OPENCODE_SETTINGS_ELS));
-  $('#pi-install-btn')?.addEventListener('click', () => runOpencodeInstall(PI_SETTINGS_ELS));
-  $('#grok-install-btn')?.addEventListener('click', () => runOpencodeInstall(GROK_SETTINGS_ELS));
+  $('#codex-install-btn')?.addEventListener('click', () => runInstall('codex', CODEX_SETTINGS_ELS));
+  $('#opencode-install-btn')?.addEventListener('click', () => runInstall('opencode', OPENCODE_SETTINGS_ELS));
+  $('#pi-install-btn')?.addEventListener('click', () => runInstall('pi', PI_SETTINGS_ELS));
+  $('#grok-install-btn')?.addEventListener('click', () => runInstall('grok', GROK_SETTINGS_ELS));
   const putConfig = async (patch: any) => {
     const r = await authFetch('/api/webchat/credentials-config', {
       method: 'PUT',
@@ -352,8 +352,6 @@ const GROK_SETTINGS_ELS = {
   btn: '#grok-install-btn',
   log: '#grok-install-log',
   progress: '#grok-install-progress',
-  url: '/api/grok/install',
-  name: 'Grok',
   doneMsg: 'Grok installed — sign in with a device code under Credentials.',
 } as Record<string, string>;
 
@@ -361,8 +359,6 @@ const PI_SETTINGS_ELS = {
   btn: '#pi-install-btn',
   log: '#pi-install-log',
   progress: '#pi-install-progress',
-  url: '/api/pi/install',
-  name: 'pi',
   doneMsg: 'pi installed — switch an agent to it under Agent → Harness.',
 } as Record<string, string>;
 
@@ -1399,6 +1395,11 @@ export function mountMyCredentials() {
   const host = $('#my-credentials-list');
   if (!host) return;
   myCredsApp = createApp(MyCredentials, {
+    // The same rows live under "Only you" on the agent's own panel.
+    onOpenAgent: (group: any) => {
+      closeSettings();
+      void openAgentDetail(group.agentGroupId);
+    },
     onRemove: async (group: any, sec: any) => {
       await removeToolSecret({ agentGroupId: group.agentGroupId, userId: permsMyUserId.value }, sec, null);
       await renderMyCredentials();

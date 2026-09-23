@@ -12,25 +12,21 @@ import { safeFetch } from './models.js';
 import {
   _resetPullsForTest,
   getPullsSnapshot,
-  getCodexInstallProgress,
   providerRestartCommand,
   parseSystemdUnitFromCgroup,
-  getLitellmInstallState,
   getRosterRefreshState,
   listHostModels,
   parseConfiguredHosts,
   removeRouteFromConfig,
-  startCodexInstall,
   codexInstallSteps,
-  startLitellmInstall,
+  grokInstallSteps,
+  opencodeInstallSteps,
+  piInstallSteps,
+  restartPending,
   startPull,
-  getTailscaleInstallState,
-  startTailscaleInstall,
-  getCloudflaredInstallState,
-  startCloudflaredInstall,
-  startCloudflaredConnect,
   looksLikeTunnelToken,
 } from './ollama-manage.js';
+import { installStatus, startFeatureInstall } from './install-engine.js';
 
 const mockFetch = vi.mocked(safeFetch);
 
@@ -156,7 +152,7 @@ describe('getRosterRefreshState', () => {
 
 describe('LiteLLM install (routing prerequisite)', () => {
   it('getLitellmInstallState: no installer + no config under a bogus root', async () => {
-    const st = getLitellmInstallState('/nonexistent-root');
+    const st = await installStatus('litellm', '/nonexistent-root');
     expect(st.installerPresent).toBe(false);
     expect(st.installed).toBe(false);
     expect(st.running).toBe(false);
@@ -172,14 +168,14 @@ describe('LiteLLM install (routing prerequisite)', () => {
       fs.writeFileSync(path.join(resources, 'install-litellm.sh'), '#!/usr/bin/env bash\n');
 
       // Installer present, no config yet — the exact state that gates the UI button.
-      let st = getLitellmInstallState(root);
+      let st = await installStatus('litellm', root);
       expect(st.installerPresent).toBe(true);
       expect(st.installed).toBe(false);
 
       // A written config flips it to installed.
       fs.mkdirSync(path.join(root, 'data/litellm'), { recursive: true });
       fs.writeFileSync(path.join(root, 'data/litellm/config.yaml'), 'model_list: []\n');
-      st = getLitellmInstallState(root);
+      st = await installStatus('litellm', root);
       expect(st.installed).toBe(true);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
@@ -187,17 +183,19 @@ describe('LiteLLM install (routing prerequisite)', () => {
   });
 
   it('startLitellmInstall: refuses (no spawn) when the skill is absent', async () => {
-    expect(startLitellmInstall('/nonexistent-root')).toEqual({
+    expect(await startFeatureInstall('litellm', '/nonexistent-root')).toMatchObject({
       started: false,
-      error: 'installer-missing',
+      code: 'installer-missing',
     });
   });
 });
 
 describe('Codex provider install', () => {
-  it('getCodexInstallProgress reports an idle state before any install', async () => {
-    const st = getCodexInstallProgress();
+  it('reports an idle state before any install', async () => {
+    const st = await installStatus('codex');
     expect(st.running).toBe(false);
+    expect(st.installed).toBe(false);
+    expect(st.restartPending).toBe(false);
     expect(Array.isArray(st.lines)).toBe(true);
   });
 
@@ -227,29 +225,46 @@ describe('Codex provider install', () => {
     }
   });
 
-  it('startCodexInstall: refuses (no spawn / no build) when the add-codex skill is absent', async () => {
+  it('refuses (no spawn / no build) when the add-codex skill is absent', async () => {
     // A bogus root has no .claude/skills/add-codex/SKILL.md — so it must bail
     // out BEFORE spawning the source-mutating, image-rebuilding chain.
-    expect(startCodexInstall('/nonexistent-root')).toEqual({
+    expect(await startFeatureInstall('codex', '/nonexistent-root')).toMatchObject({
       started: false,
-      error: 'skill-missing',
+      code: 'skill-missing',
     });
   });
 
+  it('registers every install: the four harnesses and the seven stacks', async () => {
+    for (const f of [
+      'codex',
+      'grok',
+      'opencode',
+      'pi',
+      'routing',
+      'tts',
+      'stt',
+      'tailscale',
+      'cloudflared',
+      'litellm',
+      'ollama',
+    ])
+      expect((await installStatus(f)).feature).toBe(f);
+  });
+
   it('tailscale install: state reports tun/root/canInstall; install gated on canInstall', async () => {
-    const st = getTailscaleInstallState();
+    const st = await installStatus('tailscale');
     expect(typeof st.tunPresent).toBe('boolean');
     expect(typeof st.isRoot).toBe('boolean');
     expect(st.canInstall).toBe(st.tunPresent && st.isRoot); // both prereqs, or no install offer
     // The test runner isn't root, so the guard must refuse before spawning the
     // curl|sh installer + `tailscale up` (the one path that mutates the host).
     if (!st.canInstall) {
-      expect(startTailscaleInstall()).toEqual({ started: false, error: 'prereq-missing' });
+      expect(await startFeatureInstall('tailscale')).toMatchObject({ started: false, code: 'prereq-missing' });
     }
   });
 
   it('cloudflared install: state reports install/service/root; install gated + token-validated', async () => {
-    const st = getCloudflaredInstallState();
+    const st = await installStatus('cloudflared');
     expect(typeof st.installed).toBe('boolean');
     expect(typeof st.serviceInstalled).toBe('boolean');
     expect(typeof st.isRoot).toBe('boolean');
@@ -261,8 +276,14 @@ describe('Codex provider install', () => {
     // apt install / `cloudflared service install`. Connect refuses on prereqs
     // before it even reaches the token check.
     if (!st.canInstall) {
-      expect(startCloudflaredInstall()).toEqual({ started: false, error: 'prereq-missing' });
-      expect(startCloudflaredConnect('a'.repeat(120))).toEqual({ started: false, error: 'prereq-missing' });
+      expect(await startFeatureInstall('cloudflared', process.cwd(), {})).toMatchObject({
+        started: false,
+        code: 'prereq-missing',
+      });
+      expect(await startFeatureInstall('cloudflared', process.cwd(), { token: 'a'.repeat(120) })).toMatchObject({
+        started: false,
+        code: 'prereq-missing',
+      });
     }
   });
 
@@ -571,5 +592,50 @@ describe('removeRouteFromConfig', () => {
     expect(() => removeRouteFromConfig(base() as unknown as Record<string, unknown>, 'nope', 'vision')).toThrow(
       /no router/,
     );
+  });
+});
+
+describe('restartPending', () => {
+  const done = { running: false, exitCode: 0, finishedAt: 1_000 };
+
+  it('is true when the chain succeeded but this process still says not installed', () => {
+    // The process that ran the install imported the provider barrel before the
+    // skill was applied, so its registry can never contain the new provider.
+    // The client must read this as "success, waiting", not "failed".
+    expect(restartPending({ ...done, installed: false })).toBe(true);
+  });
+
+  it('is false once the restarted process reports it installed', () => {
+    expect(restartPending({ ...done, installed: true })).toBe(false);
+  });
+
+  it('is false while the chain is still running', () => {
+    expect(restartPending({ running: true, exitCode: null, finishedAt: null, installed: false })).toBe(false);
+  });
+
+  it('is false after a real failure — that button should come back', () => {
+    expect(restartPending({ running: false, exitCode: 1, finishedAt: 1_000, installed: false })).toBe(false);
+  });
+
+  it('is false before anything has ever run', () => {
+    expect(restartPending({ running: false, exitCode: null, finishedAt: null, installed: false })).toBe(false);
+  });
+});
+
+describe('harness install chains name their steps', () => {
+  // The image rebuild emits almost nothing for minutes; the label is what the
+  // wizard shows instead of a last line that stopped changing.
+  it.each([
+    ['codex', codexInstallSteps],
+    ['grok', grokInstallSteps],
+    ['opencode', opencodeInstallSteps],
+    ['pi', piInstallSteps],
+  ])('%s: every step carries a label', (_name, steps) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-chain-'));
+    try {
+      for (const step of steps(root)) expect(step.label, JSON.stringify(step)).toBeTruthy();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

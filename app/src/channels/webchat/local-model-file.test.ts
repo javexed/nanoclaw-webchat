@@ -14,6 +14,10 @@
  *   - the READERS (skill payloads, tested by their own shape) accept either
  *     name, new first, so a file written before the rename still resolves.
  *
+ * OpenCode is no longer one of those readers: upstream's add-opencode owns that
+ * provider now and reads the model from OPENCODE_MODEL instead, so pi is the
+ * only reader left.
+ *
  * The clearing path is the sharp edge: it has to remove BOTH names. Clearing
  * only the new one would leave a stale legacy file that the readers' fallback
  * happily picks up — wiring that outlives the reason it existed.
@@ -138,12 +142,26 @@ describe('the skill payloads read BOTH names, new first', () => {
   // The payloads run in the host but ship as skill files, so they are asserted
   // by shape rather than executed: a reader that stops accepting the legacy
   // name would strand every install whose file predates the rename.
-  it.each([
-    ['pi', '.claude/skills/add-pi-stack/files/pi.host.ts'],
-    ['opencode', '.claude/skills/add-opencode-stack/files/opencode.host.ts'],
-  ])('%s reader tries local-model.json before opencode-model.json', (_name, rel) => {
-    const src = fs.readFileSync(path.join(process.cwd(), rel), 'utf8');
-    const order = src.match(/\['local-model\.json', 'opencode-model\.json'\]/);
-    expect(order, `${rel} must read both names, new first`).not.toBeNull();
+  it.each([['pi', '.claude/skills/add-pi-stack/files/pi.host.ts']])(
+    '%s reader tries local-model.json before opencode-model.json',
+    (_name, rel) => {
+      const src = fs.readFileSync(path.join(process.cwd(), rel), 'utf8');
+      const order = src.match(/\['local-model\.json', 'opencode-model\.json'\]/);
+      expect(order, `${rel} must read both names, new first`).not.toBeNull();
+    },
+  );
+
+  // OpenCode used to be the second reader, from a forked host provider this
+  // repo shipped as a skill payload. Upstream's own add-opencode now owns the
+  // provider and takes the model from the group's container config, else
+  // OPENCODE_MODEL in .env (both written by syncAgentProviderForAssignedModel),
+  // so there is no opencode reader of this file any more — see the note on
+  // writeLocalModelForAgent. Asserting the payload is GONE keeps the fork from
+  // creeping back: a `files/` directory here means someone re-forked the
+  // provider, and would silently shadow upstream's payload at install time
+  // (nc:copy skips a destination that already exists).
+  it('add-opencode-stack ships no forked payload — upstream owns the provider', () => {
+    const dir = path.join(process.cwd(), '.claude/skills/add-opencode-stack/files');
+    expect(fs.existsSync(dir), `${dir} must not exist — upstream's add-opencode owns the provider`).toBe(false);
   });
 });

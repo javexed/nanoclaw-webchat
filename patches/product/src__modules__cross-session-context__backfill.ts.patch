@@ -1,9 +1,9 @@
 diff --git a/src/modules/cross-session-context/backfill.ts b/src/modules/cross-session-context/backfill.ts
-index 58daa6a0..fd5bf271 100644
+index e00bcd09..0077acb0 100644
 --- a/src/modules/cross-session-context/backfill.ts
 +++ b/src/modules/cross-session-context/backfill.ts
-@@ -104,6 +104,13 @@ async function collectSiblingTopLevel(
- export async function backfillNewSession(agentGroup: AgentGroup, session: Session, mg: MessagingGroup): Promise<void> {
+@@ -129,6 +129,13 @@ export async function backfillSession(
+ ): Promise<void> {
    try {
      if (session.thread_id !== null && isTaskThread(session.thread_id)) return;
 +    // Per-member (UserCreds) sessions get their context from the module's OWN
@@ -13,6 +13,6 @@ index 58daa6a0..fd5bf271 100644
 +    // composite is the member-key codec (identity.ts / sessionKeyToThread);
 +    // parsed locally, as elsewhere, to keep core free of a module import.
 +    if (session.thread_id !== null && session.thread_id.includes('::')) return;
+     const now = options.now ?? Date.now();
  
-     const siblings = (await getSessionsByAgentGroup(agentGroup.id)).filter(
-       (s) => s.id !== session.id && s.status === 'active' && s.messaging_group_id === mg.id,
+     const candidates = await loadHotCandidates(agentGroup.id, mg.id, now);

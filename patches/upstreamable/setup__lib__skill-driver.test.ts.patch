@@ -1,5 +1,5 @@
 diff --git a/setup/lib/skill-driver.test.ts b/setup/lib/skill-driver.test.ts
-index 369cf208..16e17c2f 100644
+index 5e81e44d..4cadbf27 100644
 --- a/setup/lib/skill-driver.test.ts
 +++ b/setup/lib/skill-driver.test.ts
 @@ -1,6 +1,6 @@
@@ -11,8 +11,8 @@ index 369cf208..16e17c2f 100644
  import { tmpdir } from 'node:os';
  import { join } from 'node:path';
  
-@@ -20,6 +20,27 @@ import {
- } from './skill-driver.js';
+@@ -21,6 +21,27 @@ import {
+ import * as setupLog from '../logs.js';
  import { fullyApplied, type ApplyEvent, type ApplyResult } from '../../scripts/skill-apply.js';
  
 +/**
@@ -39,7 +39,7 @@ index 369cf208..16e17c2f 100644
  // Shared test state for the clack + claude-handoff mocks (hoisted so the vi.mock
  // factories — which run before imports — can close over it). `answers` is the
  // queue each mocked text/password prompt pops from; `handoffSpy` stands in for
-@@ -75,8 +96,8 @@ ncl wire --token {{token}}
+@@ -76,8 +97,8 @@ ncl wire --token {{token}}
  `;
  
  function scratch(): { root: string; skill: string } {
@@ -50,7 +50,7 @@ index 369cf208..16e17c2f 100644
    writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
    writeFileSync(join(root, '.env'), '');
    writeFileSync(join(skill, 'SKILL.md'), SKILL);
-@@ -137,7 +158,7 @@ describe('thin skill driver', () => {
+@@ -138,7 +159,7 @@ describe('thin skill driver', () => {
    });
  
    it('hostExec puts the project bin/ on PATH so a bare command resolves to it', async () => {
@@ -59,7 +59,7 @@ index 369cf208..16e17c2f 100644
      mkdirSync(join(root, 'bin'));
      writeFileSync(join(root, 'bin/greet'), '#!/usr/bin/env bash\necho hi-from-bin\n');
      chmodSync(join(root, 'bin/greet'), 0o755);
-@@ -146,19 +167,19 @@ describe('thin skill driver', () => {
+@@ -147,19 +168,19 @@ describe('thin skill driver', () => {
    });
  
    it('hostExec returns stdout so a capture run can bind it', async () => {
@@ -82,7 +82,7 @@ index 369cf208..16e17c2f 100644
      const rawLog = join(root, 'raw.log');
      const exec = hostExec(root, rawLog);
      await exec('echo out-line; echo warn-line >&2');
-@@ -172,7 +193,7 @@ describe('thin skill driver', () => {
+@@ -205,7 +226,7 @@ printf '%s' '{{token}}'; printf '%s' '{{token}}' >&2; exit ${exit}
    });
  
    it('hostExecStream runs a step and captures the terminal status block fields (for effect:step)', async () => {
@@ -91,7 +91,7 @@ index 369cf208..16e17c2f 100644
      const out = await hostExecStream(root)(
        'echo show-this-to-the-operator; echo "=== NANOCLAW SETUP: PAIR ==="; echo "STATUS: success"; echo "PLATFORM_ID: telegram:42"; echo "=== END ==="',
      );
-@@ -181,7 +202,7 @@ describe('thin skill driver', () => {
+@@ -214,7 +235,7 @@ printf '%s' '{{token}}'; printf '%s' '{{token}}' >&2; exit ${exit}
    });
  
    it('hostExecStream children run with LOG_LEVEL=warn — host logger info noise stays off the wizard', async () => {
@@ -100,7 +100,7 @@ index 369cf208..16e17c2f 100644
      const prev = process.env.LOG_LEVEL;
      delete process.env.LOG_LEVEL; // simulate an operator who didn't set one
      try {
-@@ -195,8 +216,8 @@ describe('thin skill driver', () => {
+@@ -228,8 +249,8 @@ printf '%s' '{{token}}'; printf '%s' '{{token}}' >&2; exit ${exit}
    });
  
    function reuseScratch(): { root: string; skill: string } {
@@ -111,7 +111,7 @@ index 369cf208..16e17c2f 100644
      writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(root, '.env'), 'SLACK_BOT_TOKEN=xoxb-existing-token\n');
      // a skill whose env-set maps bot_token → SLACK_BOT_TOKEN (the reuse linkage)
-@@ -247,8 +268,8 @@ describe('thin skill driver', () => {
+@@ -280,8 +301,8 @@ printf '%s' '{{token}}'; printf '%s' '{{token}}' >&2; exit ${exit}
    // env-set→ENV_KEY linkage to infer. An explicit `nc:prompt … reuse:<ENV_KEY>`
    // restores the masked reuse offer — the imessage Photon case.
    function helperReuseScratch(): { root: string; skill: string } {
@@ -122,7 +122,7 @@ index 369cf208..16e17c2f 100644
      writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
      // present in .env, but NOT written by any nc:env-set in the skill below
      writeFileSync(join(root, '.env'), 'IMESSAGE_SERVER_URL=https://photon.example.com\n');
-@@ -286,8 +307,8 @@ describe('thin skill driver', () => {
+@@ -319,8 +340,8 @@ printf '%s' '{{token}}'; printf '%s' '{{token}}' >&2; exit ${exit}
    // validate-at-bind is NEVER offered — the operator is prompted fresh instead
    // of the reused input rejecting loudly with no interactive recovery.
    it('reuse: a stale .env value failing the prompt validate is never offered — prompted fresh', async () => {
@@ -133,7 +133,7 @@ index 369cf208..16e17c2f 100644
      writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(root, '.env'), 'SLACK_BOT_TOKEN=legacy-not-a-bot-token\n'); // fails ^xoxb-
      writeFileSync(
-@@ -315,8 +336,8 @@ describe('thin skill driver', () => {
+@@ -348,8 +369,8 @@ printf '%s' '{{token}}'; printf '%s' '{{token}}' >&2; exit ${exit}
    });
  
    it('reuse pre-filter mirrors bind order: normalize-then-validate, so a normalizable value still offers', async () => {
@@ -144,7 +144,7 @@ index 369cf208..16e17c2f 100644
      writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(root, '.env'), 'BASE_URL=https://x.example/\n'); // trailing slash — valid only after rstrip-slash
      writeFileSync(
-@@ -342,8 +363,8 @@ describe('thin skill driver', () => {
+@@ -375,8 +396,8 @@ printf '%s' '{{token}}'; printf '%s' '{{token}}' >&2; exit ${exit}
    // would replace the policy, §5.0): note → URL offer (confirm → openUrl) →
    // natural-barrier confirm, all through the injectable confirm/openUrl seams.
    it('default handler: offers the operator-body URL, then the barrier confirm — in that order', async () => {
@@ -155,7 +155,7 @@ index 369cf208..16e17c2f 100644
      writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
      writeFileSync(
        join(skill, 'SKILL.md'),
-@@ -369,8 +390,8 @@ describe('thin skill driver', () => {
+@@ -402,8 +423,8 @@ printf '%s' '{{token}}'; printf '%s' '{{token}}' >&2; exit ${exit}
    });
  
    it('default handler: readiness flavor before an effect:step; decline = proceed (never an abort)', async () => {
@@ -166,7 +166,7 @@ index 369cf208..16e17c2f 100644
      writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
      writeFileSync(
        join(skill, 'SKILL.md'),
-@@ -393,8 +414,8 @@ describe('thin skill driver', () => {
+@@ -426,8 +447,8 @@ printf '%s' '{{token}}'; printf '%s' '{{token}}' >&2; exit ${exit}
    });
  
    it('default handler: declining the URL offer skips the open', async () => {

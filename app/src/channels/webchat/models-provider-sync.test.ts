@@ -13,7 +13,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { closeDb, initDb } from '../../db/index.js';
 import { runMigrations } from '../../db/migrations/index.js';
@@ -23,10 +23,22 @@ import { registerProviderContainerConfig } from '../../providers/provider-contai
 import { assignModelToAgent, createWebchatModel, unassignModelFromAgent, type WebchatModelKind } from './db.js';
 import { providerForModelKind, syncAgentProviderForAssignedModel } from './models.js';
 
+// The sync writes the OpenCode backend into the install's .env; capture the
+// writes instead of touching the tree the tests run in.
+const envWrites = vi.hoisted(() => [] as Array<[string, string]>);
+vi.mock('./env-write.js', () => ({
+  upsertEnv: (_root: string, k: string, v: string) => envWrites.push([k, v]),
+}));
+vi.mock('../../env.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../env.js')>()),
+  readEnvFile: () => ({}),
+}));
+
 let tmpDir: string;
 
 beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wc-provider-sync-'));
+  envWrites.length = 0;
   await initDb(path.join(tmpDir, 'test.db'));
   await runMigrations(getDb());
   await getDb().run(
@@ -123,8 +135,46 @@ describe('with OpenCode installed', () => {
     await assignModelToAgent('ag-1', 'm-ol');
     await syncAgentProviderForAssignedModel('ag-1'); // creates the config row
     await getDb().run(`UPDATE container_configs SET provider = 'codex' WHERE agent_group_id = 'ag-1'`);
+    envWrites.length = 0;
     await syncAgentProviderForAssignedModel('ag-1');
     expect((await getContainerConfig('ag-1'))?.provider).toBe('codex');
+    expect(envWrites).toEqual([]); // and never re-points OpenCode for a group not on it
+  });
+
+  // Upstream's provider reads the group's container config model first, then
+  // OPENCODE_MODEL from .env. Neither used to be written: the skill hardcoded
+  // one model and the UI pick never reached the harness.
+  it('carries the picked model to the group config and the install env', async () => {
+    makeModel('ollama', 'm-ol');
+    await assignModelToAgent('ag-1', 'm-ol');
+    await syncAgentProviderForAssignedModel('ag-1');
+    expect((await getContainerConfig('ag-1'))?.model).toBe('openai/gemma4:latest');
+    const env = Object.fromEntries(envWrites);
+    expect(env.OPENCODE_PROVIDER).toBe('openai');
+    expect(env.OPENCODE_BASE_URL).toBe('http://host.docker.internal:4000/v1');
+    expect(env.OPENCODE_MODEL).toBe('openai/gemma4:latest');
+    expect(env.OPENCODE_SMALL_MODEL).toBe('openai/gemma4:latest');
+    expect(env.OPENCODE_MODEL_CONTEXT_LIMIT).toBe('32768');
+    expect(env.NO_PROXY).toContain('host.docker.internal');
+  });
+
+  it('clears the model it wrote when the group leaves opencode, never an operator-set one', async () => {
+    makeModel('ollama', 'm-ol');
+    makeModel('anthropic', 'm-an');
+    await assignModelToAgent('ag-1', 'm-ol');
+    await syncAgentProviderForAssignedModel('ag-1');
+    expect((await getContainerConfig('ag-1'))?.model).toBe('openai/gemma4:latest');
+
+    await assignModelToAgent('ag-1', 'm-an');
+    await syncAgentProviderForAssignedModel('ag-1');
+    // The explicit opencode harness is sticky (above); the model this module
+    // wrote for it is not — a stale local id must not outlive the pick.
+    expect((await getContainerConfig('ag-1'))?.provider).toBe('opencode');
+    expect((await getContainerConfig('ag-1'))?.model).toBeNull();
+
+    await getDb().run(`UPDATE container_configs SET model = 'claude-opus-5' WHERE agent_group_id = 'ag-1'`);
+    await syncAgentProviderForAssignedModel('ag-1');
+    expect((await getContainerConfig('ag-1'))?.model).toBe('claude-opus-5');
   });
 });
 

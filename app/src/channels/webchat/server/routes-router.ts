@@ -1,7 +1,6 @@
 // ── Router routes ────────────────────────────────────────────────────────────
 // The model-router surface: profiles, the model roster, classification,
 // decisions, metrics and suggestions. The route table stays in server.ts.
-import type { IncomingMessage, ServerResponse } from 'http';
 
 import { json, readJsonBody } from './http.js';
 import { createWebchatModel, deleteWebchatModel, getAgentsAssignedToModel, listWebchatModels } from '../db.js';
@@ -11,22 +10,19 @@ import {
   deleteRouter,
   deriveModelServerHosts,
   dryClassify,
-  getLitellmInstallState,
   getRosterRefreshState,
   getRouteSuggestions,
   getRouterInfo,
   getRouterMetrics,
-  getRoutingInstallState,
   listRouters,
   mergeRoutesUpdate,
   readRoutesConfig,
   recentDecisions,
   routerView,
-  startLitellmInstall,
   startRosterRefresh,
-  startRoutingInstall,
   writeRoutesConfig,
 } from '../ollama-manage.js';
+import { installGet, installPost } from './routes-install.js';
 import { randomUUID } from 'crypto';
 import type { RouteCtx } from '../server.js';
 
@@ -224,31 +220,15 @@ export async function rRouterRosterRefreshPost(ctx: RouteCtx, _m: RegExpMatchArr
 }
 
 export async function rRouterInstallGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  return json(res, 200, getRoutingInstallState());
+  return installGet(ctx.res, 'routing');
 }
 
 export async function rRouterInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  const r = startRoutingInstall();
-  if (r.error === 'litellm-not-installed') {
-    return json(res, 409, {
-      error: 'LiteLLM is not installed. Run /add-litellm first.',
-      code: 'litellm-not-installed',
-    });
-  }
-  if (r.error === 'installer-missing') {
-    return json(res, 409, {
-      error: 'The add-routing skill is not present in this checkout.',
-      code: 'installer-missing',
-    });
-  }
-  return json(res, r.started ? 202 : 409, { ...getRoutingInstallState(), started: r.started });
+  return installPost(ctx.res, 'routing');
 }
 
 export async function rRouterLitellmInstallGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  return json(res, 200, getLitellmInstallState());
+  return installGet(ctx.res, 'litellm');
 }
 
 export async function rRouterLitellmInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
@@ -257,12 +237,5 @@ export async function rRouterLitellmInstallPost(ctx: RouteCtx, _m: RegExpMatchAr
   // the roster, or the hosts an existing config already declares) — not a
   // localhost Ollama that may not exist. Falls back to the localhost default
   // only when the roster is empty.
-  const r = startLitellmInstall(process.cwd(), (await deriveModelServerHosts()) ?? undefined);
-  if (r.error === 'installer-missing') {
-    return json(res, 409, {
-      error: 'The add-litellm skill is not present in this checkout.',
-      code: 'installer-missing',
-    });
-  }
-  return json(res, r.started ? 202 : 409, { ...getLitellmInstallState(), started: r.started });
+  return installPost(res, 'litellm', { hosts: (await deriveModelServerHosts()) ?? undefined });
 }

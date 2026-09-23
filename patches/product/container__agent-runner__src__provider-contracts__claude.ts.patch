@@ -1,8 +1,8 @@
 diff --git a/container/agent-runner/src/provider-contracts/claude.ts b/container/agent-runner/src/provider-contracts/claude.ts
-index 57267c2e..2db4838f 100644
+index fb12d263..0d7daa48 100644
 --- a/container/agent-runner/src/provider-contracts/claude.ts
 +++ b/container/agent-runner/src/provider-contracts/claude.ts
-@@ -34,7 +34,27 @@ export const claudeRuntimeContract: ProviderRuntimeContract = {
+@@ -36,7 +36,27 @@ export const claudeRuntimeContract: ProviderRuntimeContract = {
    // Pre-compact archiving and continuation rotation are provider-internal
    // (providers/claude-history.ts); core only needs the trace lookup.
    history: { readTrace: newestClaudeTranscript },

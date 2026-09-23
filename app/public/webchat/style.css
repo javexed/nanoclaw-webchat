@@ -8054,21 +8054,49 @@ body {
 }
 /* Same labelled-column shape as the text fields, so the three headers align;
    only the control differs. Sized to its label rather than growing. */
-.secret-personal {
-  flex: 0 0 auto;
-  min-width: 0;
-  align-items: flex-start;
-  white-space: nowrap;
-}
-/* The switch styling comes from .setting-toggle (DESIGN.md 2b: binary control
-   is a switch, never a bare checkbox). Only the row layout belongs here. */
-.secret-form .secret-personal input {
-  flex: 0 0 auto;
+/* Secrets grouped by reach. The heading is a list item so the island keeps
+   owning one flat <ul>; it reads as a section label, not a row. */
+.secret-section-head {
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
   margin: 6px 0 0;
 }
-.secret-personal input {
-  flex: 0 0 auto;
-  min-width: 0;
+/* A secret row stacks host+badge over its note: the drawer is narrow, and a
+   truncated "yours is used inste…" says nothing. The badge never wraps. */
+.secret-row .skill-info {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.secret-row .skill-desc {
+  white-space: normal;
+}
+.secret-scope {
+  white-space: nowrap;
+}
+/* "For you: host → yours · host → this agent’s" — the direct answer, one line. */
+.secret-effective {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary, var(--text));
+  opacity: 0.85;
+  line-height: 1.4;
+  margin: 0 0 4px;
+}
+/* The reach control takes the form's full width: three options do not fit
+   beside two text fields, and the help line wants the room. */
+.secret-reach {
+  flex: 1 0 100%;
+}
+.secret-reach .cred-hint {
+  margin: 2px 0 0;
+}
+.my-cred-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .secret-actions {
   display: flex;

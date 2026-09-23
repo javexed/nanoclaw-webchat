@@ -1,19 +1,28 @@
 diff --git a/scripts/skill-apply.ts b/scripts/skill-apply.ts
-index 9bcbb10a..f92f2ade 100644
+index a4332813..8d721ec2 100644
 --- a/scripts/skill-apply.ts
 +++ b/scripts/skill-apply.ts
-@@ -23,8 +23,9 @@
+@@ -23,8 +23,18 @@
  // Usage: pnpm exec tsx scripts/skill-apply.ts <skillDir>     # plan (no writes)
  
  import { execSync } from 'node:child_process';
 -import { readFileSync, existsSync, writeFileSync, appendFileSync, copyFileSync, mkdirSync, rmSync } from 'node:fs';
-+import { readFileSync, existsSync, writeFileSync, appendFileSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
++import {
++  readFileSync,
++  existsSync,
++  writeFileSync,
++  appendFileSync,
++  copyFileSync,
++  mkdirSync,
++  mkdtempSync,
++  rmSync,
++} from 'node:fs';
  import { join, dirname } from 'node:path';
 +import { tmpdir } from 'node:os';
+ import { gitFetchBranchCommand } from './git-fetch-branch.js';
+ import { gitShowToFileCommand } from './git-show-to-file.js';
  import { parseDirectives, promptVar, type Directive } from './skill-directives.js';
- 
- // What an `nc:prompt` DECLARES about the value it needs — the core seam's input
-@@ -570,6 +571,20 @@ function substitute(value: string, vars: Map<string, { value: string; secret: bo
+@@ -578,6 +588,20 @@ function substitute(value: string, vars: Map<string, { value: string; secret: bo
    });
  }
  
@@ -34,7 +43,7 @@ index 9bcbb10a..f92f2ade 100644
  // A `when:<var>=<value>` guard: the directive applies only when an earlier
  // prompt/capture bound <var> to exactly <value>. Unmet — including the var still
  // unresolved (a deferred prompt) — skips the directive, so a guarded prompt is
-@@ -635,7 +650,7 @@ async function applyOne(
+@@ -643,7 +667,7 @@ async function applyOne(
    ctx: {
      root: string;
      skillDir: string;
@@ -43,27 +52,27 @@ index 9bcbb10a..f92f2ade 100644
      execStream?: (c: string) => Promise<StepOutcome>;
      resolveRemote: (b: string) => string;
      resolveDependencyCommand?: (request: DependencyCommandRequest) => string;
-@@ -649,14 +664,45 @@ async function applyOne(
-     case 'copy':
+@@ -661,14 +685,45 @@ async function applyOne(
+       if (lines.length === 0) break;
        if (d.attrs['from-branch']) {
          const b = String(d.attrs['from-branch']);
 -        const remote = ctx.resolveRemote(b);
--        await exec(`git fetch ${remote} ${b}`);
--        for (const l of d.body) {
+-        await exec(gitFetchBranchCommand(remote, b));
+-        for (const l of lines) {
 -          // The shell redirect can't create parent directories, and the dest
 -          // may not exist on trunk (e.g. container skills that live only on
 -          // the channels branch). Mirror the local-copy path's mkdir.
 -          mkdirSync(dirname(join(root, destOf(l))), { recursive: true });
--          await exec(`git show ${remote}/${b}:${srcOf(l)} > ${destOf(l)}`);
+-          await exec(gitShowToFileCommand(`refs/remotes/${remote}/${b}`, srcOf(l), destOf(l)));
 +        if (existsSync(join(root, '.git'))) {
 +          const remote = ctx.resolveRemote(b);
-+          await exec(`git fetch ${remote} ${b}`);
-+          for (const l of d.body) {
++          await exec(gitFetchBranchCommand(remote, b));
++          for (const l of lines) {
 +            // The shell redirect can't create parent directories, and the dest
 +            // may not exist on trunk (e.g. container skills that live only on
 +            // the channels branch). Mirror the local-copy path's mkdir.
 +            mkdirSync(dirname(join(root, destOf(l))), { recursive: true });
-+            await exec(`git show ${remote}/${b}:${srcOf(l)} > ${destOf(l)}`);
++            await exec(gitShowToFileCommand(`refs/remotes/${remote}/${b}`, srcOf(l), destOf(l)));
 +          }
 +        } else {
 +          // Gitless deploy (a release / tarball extract has no .git, so
@@ -77,7 +86,7 @@ index 9bcbb10a..f92f2ade 100644
 +          try {
 +            await exec(`git init -q "${tmp}"`);
 +            await exec(`git -C "${tmp}" fetch --depth 1 "${url}" ${b}`);
-+            for (const l of d.body) {
++            for (const l of lines) {
 +              mkdirSync(dirname(join(root, destOf(l))), { recursive: true });
 +              try {
 +                await exec(`git -C "${tmp}" show FETCH_HEAD:${srcOf(l)} > ${destOf(l)}`);
@@ -87,7 +96,7 @@ index 9bcbb10a..f92f2ade 100644
 +                // the bare git error ("path … does not exist in FETCH_HEAD") hides
 +                // WHICH repo was fetched.
 +                throw new Error(
-+                  `${srcOf(l)} is not on branch '${b}' at ${url} — set NANOCLAW_CHANNELS_REMOTE_URL to a repo that carries this payload`,
++                  `${srcOf(l)} is not on branch '${b}' at ${url} — set NANOCLAW_CHANNELS_REMOTE_URL to a repo that carries this file`,
 +                );
 +              }
 +            }
@@ -96,8 +105,8 @@ index 9bcbb10a..f92f2ade 100644
 +          }
          }
        } else {
-         for (const l of d.body) {
-@@ -761,7 +807,7 @@ async function applyOne(
+         for (const l of lines) {
+@@ -774,7 +829,7 @@ async function applyOne(
          // call `ncl ... {{owner_email}}` to wire from collected input. A command
          // with no {{...}} (build/test) is returned unchanged; an unresolved var
          // throws → caught → deferred (the prompt hasn't been answered yet).
@@ -106,7 +115,7 @@ index 9bcbb10a..f92f2ade 100644
          // Last command wins for capture (a capture run should be a single command).
          // bindCapture binds stdout-as-is OR a multi-field JSON spec, and enforces
          // validate:<re> — a mismatch / unparseable JSON throws → bounced to an agent.
-@@ -857,7 +903,23 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
+@@ -876,7 +931,23 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
      res.agentTasks.push({ kind: d.kind, line: d.line, reason, prose: proseFor(md, d.line) });
    };
  
@@ -130,7 +139,7 @@ index 9bcbb10a..f92f2ade 100644
      // Tracks an in-flight step so the catch can always close a matching
      // step-end (start/end stay balanced even when applyOne throws — a consumer's
      // spinner is never orphaned). Set only after step-start fires.
-@@ -1019,7 +1081,12 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
+@@ -1038,7 +1109,12 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
        }
        if (/unresolved \{\{/.test(msg))
          res.deferred.push(msg); // blocked on a prompt input

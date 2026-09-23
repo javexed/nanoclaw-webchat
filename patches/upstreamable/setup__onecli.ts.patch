@@ -1,8 +1,8 @@
 diff --git a/setup/onecli.ts b/setup/onecli.ts
-index 29ce2315..df1ec10d 100644
+index b1d0cdc1..0b23f0f8 100644
 --- a/setup/onecli.ts
 +++ b/setup/onecli.ts
-@@ -169,6 +169,46 @@ function installOnecli(): { stdout: string; ok: boolean } {
+@@ -173,6 +173,46 @@ function installOnecli(): { stdout: string; ok: boolean } {
    return { stdout, ok: true };
  }
  
@@ -49,7 +49,7 @@ index 29ce2315..df1ec10d 100644
  function runInstall(cmd: string): { stdout: string; stderr?: string; ok: boolean } {
    try {
      const stdout = execSync(cmd, {
-@@ -439,6 +479,7 @@ export async function run(args: string[]): Promise<void> {
+@@ -443,6 +483,7 @@ export async function run(args: string[]): Promise<void> {
  
    writeEnvOnecliUrl(url);
    log.info('Wrote ONECLI_URL to .env', { url });
