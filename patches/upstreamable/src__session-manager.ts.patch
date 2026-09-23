@@ -1,5 +1,5 @@
 diff --git a/src/session-manager.ts b/src/session-manager.ts
-index bec8ff5c..7e4677f4 100644
+index 2d4f2ff7..e4a4bda5 100644
 --- a/src/session-manager.ts
 +++ b/src/session-manager.ts
 @@ -13,6 +13,7 @@ import { DATA_DIR } from './config.js';
@@ -22,7 +22,7 @@ index bec8ff5c..7e4677f4 100644
    getAgentMailbox().prepare(mailboxKey(agentGroupId, sessionId));
  }
  
-@@ -247,6 +253,7 @@ export async function writeSessionRouting(agentGroupId: string, sessionId: strin
+@@ -249,6 +255,7 @@ export async function writeSessionRouting(agentGroupId: string, sessionId: strin
    log.debug('Session routing written', { sessionId, channelType, platformId, threadId: session.thread_id });
  }
  
@@ -30,7 +30,7 @@ index bec8ff5c..7e4677f4 100644
  /**
   * Write a message to a session's inbound mailbox. Host-only.
   */
-@@ -335,7 +342,7 @@ export async function writeSessionMessage(
+@@ -337,7 +344,7 @@ export async function writeSessionMessage(
   *   4. `wx` flag on writeFileSync to refuse following a pre-existing symlink
   *      at the target file path or overwriting any existing file.
   */
@@ -39,7 +39,7 @@ index bec8ff5c..7e4677f4 100644
    agentGroupId: string,
    sessionId: string,
    messageId: string,
-@@ -366,7 +373,28 @@ function extractAttachmentFiles(
+@@ -368,7 +375,28 @@ function extractAttachmentFiles(
  
    let changed = false;
    for (const att of attachments) {
@@ -69,7 +69,7 @@ index bec8ff5c..7e4677f4 100644
  
      const rawName = deriveAttachmentName(att);
      const filename = isSafeAttachmentName(rawName) ? rawName : `attachment-${Date.now()}`;
-@@ -390,7 +418,13 @@ function extractAttachmentFiles(
+@@ -392,7 +420,13 @@ function extractAttachmentFiles(
        // wx = exclusive create. Refuses to follow a pre existing symlink or
        // overwrite any existing file. The host expects to be the sole writer
        // of these attachments.
@@ -84,7 +84,7 @@ index bec8ff5c..7e4677f4 100644
      } catch (err: unknown) {
        const e = err as NodeJS.ErrnoException;
        if (e.code === 'EEXIST') {
-@@ -406,6 +440,7 @@ function extractAttachmentFiles(
+@@ -408,6 +442,7 @@ function extractAttachmentFiles(
      att.name = filename;
      att.localPath = `inbox/${messageId}/${filename}`;
      delete att.data;

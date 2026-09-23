@@ -1,8 +1,8 @@
 diff --git a/src/providers/provider-container-registry.ts b/src/providers/provider-container-registry.ts
-index 6cb42f88..f215f56e 100644
+index 49c59a59..632c5e01 100644
 --- a/src/providers/provider-container-registry.ts
 +++ b/src/providers/provider-container-registry.ts
-@@ -75,6 +75,25 @@ export interface ProviderHostCapabilities {
+@@ -82,6 +82,25 @@ export interface ProviderHostCapabilities {
     * this get the default surfaces, which is today's behavior.
     */
    readonly providesAgentSurfaces?: boolean;
@@ -28,7 +28,7 @@ index 6cb42f88..f215f56e 100644
  }
  
  export type ProviderContainerConfigFn = (
-@@ -113,6 +132,17 @@ export function providerProvidesAgentSurfaces(name: string | null | undefined):
+@@ -120,6 +139,17 @@ export function providerProvidesAgentSurfaces(name: string | null | undefined):
    return registry.get(name)?.capabilities.providesAgentSurfaces === true;
  }
  

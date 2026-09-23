@@ -1,10 +1,10 @@
 diff --git a/container/agent-runner/src/integration.test.ts b/container/agent-runner/src/integration.test.ts
-index 1e587c29..b266f1bb 100644
+index e9b4759f..af93b2ce 100644
 --- a/container/agent-runner/src/integration.test.ts
 +++ b/container/agent-runner/src/integration.test.ts
-@@ -211,17 +211,56 @@ describe('poll loop integration', () => {
-     // Only insert a message from discord — slack-new has never sent anything
-     insertMessage('m1', { sender: 'Alice', text: 'tell slack' }, { platformId: 'chan-1', channelType: 'discord', threadId: 'discord-thread' });
+@@ -232,17 +232,56 @@ describe('poll loop integration', () => {
+       { platformId: 'chan-1', channelType: 'discord', threadId: 'discord-thread' },
+     );
  
 -    const provider = new MockProvider({}, () => '<message to="slack-new">hello slack</message>');
 +    // Address the origin (discord-test) AND slack-new. A *lone* reply to a room
@@ -62,7 +62,7 @@ index 1e587c29..b266f1bb 100644
  
      await loopPromise.catch(() => {});
    });
-@@ -312,11 +351,16 @@ describe('poll loop integration', () => {
+@@ -342,11 +381,16 @@ describe('poll loop integration', () => {
  });
  
  // Helper: run poll loop until aborted or timeout

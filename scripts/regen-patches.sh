@@ -77,7 +77,15 @@ for f in "${FILES[@]}"; do
   name="$(echo "$f" | sed 's|/|__|g').patch"
   target="$(find_patch "$name")"
   if ! assert_applied "$f" "$target"; then RC=1; continue; fi
-  diff_out=$(git -C "$TREE" diff HEAD -- "$f")
+  # Pin the diff format. A patch file is whatever `git diff` printed, and git diff
+  # follows the regenerating person's config: diff.mnemonicPrefix writes c/ w/
+  # headers (12 commits of churn here, 24 patches at the peak), diff.algorithm
+  # reshapes hunks (2 of 107 patches differ under histogram), and diff.noprefix or
+  # color.diff=always produce patches git apply rejects. Each flag overrides one of
+  # those; myers matches every committed patch. check-patch-headers.sh guards the
+  # result for patches this script did not write.
+  diff_out=$(git -C "$TREE" diff --no-color --no-ext-diff --no-relative \
+    --diff-algorithm=myers -U3 --src-prefix=a/ --dst-prefix=b/ HEAD -- "$f")
   if [ -z "$diff_out" ]; then
     if [ -f "$target" ]; then
       rm "$target"

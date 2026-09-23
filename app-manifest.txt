@@ -99,6 +99,7 @@ vitest.setup.ts
 src/container-runner.max-output.test.ts
 src/channels/webchat/pi-model-change-clear.test.ts
 scripts/eval
+scripts/skill-payload-guard.test.ts
 src/container-runtime-extras.ts
 src/module-sweep.ts
 src/session-db-access.ts

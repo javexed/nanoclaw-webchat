@@ -1,8 +1,8 @@
 diff --git a/setup/service.test.ts b/setup/service.test.ts
-index c0ebf6c1..255c11f4 100644
+index 10a9968e..f92198b9 100644
 --- a/setup/service.test.ts
 +++ b/setup/service.test.ts
-@@ -58,7 +58,7 @@ Restart=always
+@@ -57,7 +57,7 @@ Restart=always
  RestartSec=5
  KillMode=process
  Environment=HOME=${homeDir}

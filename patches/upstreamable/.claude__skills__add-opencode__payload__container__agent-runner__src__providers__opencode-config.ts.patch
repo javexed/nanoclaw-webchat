@@ -1,0 +1,30 @@
+diff --git a/.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode-config.ts b/.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode-config.ts
+index 88e7656d..785c8598 100644
+--- a/.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode-config.ts
++++ b/.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode-config.ts
+@@ -40,7 +40,24 @@ export function resolveOpenCodeInference(
+ ): Record<string, unknown> {
+   const provider = environment.OPENCODE_PROVIDER || 'anthropic';
+   const model = input.model ?? environment.OPENCODE_MODEL;
+-  const smallModel = environment.OPENCODE_SMALL_MODEL;
++  // Falls back to the MAIN model rather than leaving OpenCode to its own
++  // built-in default. Unset, OpenCode asks for the model it ships as the small
++  // default — an OpenAI cloud name — and a self-hosted endpoint does not serve
++  // it. Observed against Ollama, on every session:
++  //
++  //   ERROR "stream error" providerID=openai modelID=gpt-5.4-nano
++  //     small=true agent=title
++  //     error="AI_APICallError: model 'gpt-5.4-nano' not found"
++  //
++  // Side tasks (titles, summaries) therefore failed silently for the whole
++  // local-endpoint case, while the main reply worked — so it read as log noise
++  // rather than a fault. The main model is the one model this endpoint is known
++  // to serve, which makes it the only safe fallback.
++  //
++  // Deliberately NOT a change to the shape below: an explicit
++  // OPENCODE_SMALL_MODEL still wins, and a small model equal to the main one
++  // already shares its declared limits through the isMainModel branch.
++  const smallModel = environment.OPENCODE_SMALL_MODEL ?? model;
+   // Reasoning effort from the group's container config (ncl groups config
+   // update --effort). OpenCode forwards a free-form per-model `options` object
+   // to the ai-sdk provider, which maps reasoningEffort onto reasoning_effort in

@@ -1,5 +1,5 @@
 diff --git a/src/backfill-container-configs.ts b/src/backfill-container-configs.ts
-index 09c1d89a..e4e11666 100644
+index 7816eeb6..ddbf2cc2 100644
 --- a/src/backfill-container-configs.ts
 +++ b/src/backfill-container-configs.ts
 @@ -64,6 +64,7 @@ export async function backfillContainerConfigs(): Promise<void> {
@@ -9,4 +9,4 @@ index 09c1d89a..e4e11666 100644
 +      egress: null,
        cli_scope: 'group',
        timezone: null,
-       updated_at: new Date().toISOString(),
+       speed: null,

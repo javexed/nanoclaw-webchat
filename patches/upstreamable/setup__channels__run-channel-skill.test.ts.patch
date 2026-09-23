@@ -1,5 +1,5 @@
 diff --git a/setup/channels/run-channel-skill.test.ts b/setup/channels/run-channel-skill.test.ts
-index 0ecc9885..89f6312d 100644
+index 2ce8b0ed..8992fd00 100644
 --- a/setup/channels/run-channel-skill.test.ts
 +++ b/setup/channels/run-channel-skill.test.ts
 @@ -1,4 +1,4 @@

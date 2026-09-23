@@ -11,127 +11,65 @@ import { json, readJsonBody } from './http.js';
 import { defaultProviderChanges, readDefaultProvider } from './default-provider.js';
 import { cancelGrokLogin, getGrokLoginProgress, startGrokLogin } from './grok-auth-flow.js';
 import { grokStatus } from './grok-status.js';
-import { scheduleHostRestart, upsertEnv } from '../ollama-manage.js';
-import { availableProviders, codexAvailable, grokAvailable, opencodeAvailable, piAvailable } from './providers.js';
-import {
-  getCodexInstallProgress,
-  getGrokInstallProgress,
-  startGrokInstall,
-  getOpencodeInstallProgress,
-  getPiInstallProgress,
-  getSttInstallState,
-  getTtsInstallState,
-  startCodexInstall,
-  startOllamaInstall,
-  startOpencodeInstall,
-  startPiInstall,
-  startSttInstall,
-  startTtsInstall,
-} from '../ollama-manage.js';
+import { scheduleHostRestart } from '../ollama-manage.js';
+import { upsertEnv } from '../env-write.js';
+import { availableProviders, grokAvailable } from './providers.js';
+import { hasFeatureInstall, installStatus, startFeatureInstall } from '../install-engine.js';
 import type { RouteCtx } from '../server.js';
 
 export async function rOllamaInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  const result = startOllamaInstall();
-  return json(res, result.started ? 200 : 409, result);
+  return installPost(ctx.res, 'ollama');
 }
 
-export async function rCodexInstallGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  return json(res, 200, { ...getCodexInstallProgress(), installed: codexAvailable() });
+// ── Feature installs on the engine ──────────────────────────────────────────
+// One GET/POST pair for every registered feature: GET is the status, POST starts
+// the chain and answers 202 with the status, or 409 with the refusal's code —
+// `already-installed`, `already-running`, `skill-missing`, `pnpm-missing`. The
+// per-feature paths (/api/codex/install …) are bindings of the same pair; the
+// generic /api/install/:feature is the one new clients should use.
+export async function installGet(res: ServerResponse, feature: string): Promise<void> {
+  if (!hasFeatureInstall(feature)) return json(res, 404, { error: `No install named '${feature}'` });
+  return json(res, 200, await installStatus(feature));
 }
 
-export async function rCodexInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  if (codexAvailable()) return json(res, 409, { error: 'Codex is already installed', code: 'already-installed' });
-  const r = startCodexInstall();
-  if (r.error === 'skill-missing')
-    return json(res, 409, { error: 'The add-codex skill is not present in this checkout.', code: 'skill-missing' });
-  return json(res, r.started ? 202 : 409, {
-    ...getCodexInstallProgress(),
-    installed: codexAvailable(),
-    started: r.started,
-  });
+/**
+ * Start `feature` with `args` and answer with the status. A refusal is 409 with
+ * the engine's code — except the codes in `badRequest`, which say the CALLER's
+ * input was wrong (a malformed token) and are 400.
+ */
+export async function installPost(
+  res: ServerResponse,
+  feature: string,
+  args?: unknown,
+  badRequest: string[] = [],
+): Promise<void> {
+  if (!hasFeatureInstall(feature)) return json(res, 404, { error: `No install named '${feature}'` });
+  const r = await startFeatureInstall(feature, process.cwd(), args);
+  if (!r.started) return json(res, badRequest.includes(r.code) ? 400 : 409, { error: r.error, code: r.code });
+  return json(res, 202, { ...(await installStatus(feature)), started: true });
 }
 
-export async function rGrokInstallGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  return json(res, 200, { ...getGrokInstallProgress(), installed: grokAvailable() });
+export async function rInstallGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  return installGet(ctx.res, m[1]);
 }
 
-export async function rGrokInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  if (grokAvailable()) return json(res, 409, { error: 'Grok is already installed', code: 'already-installed' });
-  const r = startGrokInstall();
-  if (r.error === 'skill-missing')
-    return json(res, 409, { error: 'The add-grok skill is not present in this checkout.', code: 'skill-missing' });
-  return json(res, r.started ? 202 : 409, {
-    ...getGrokInstallProgress(),
-    installed: grokAvailable(),
-    started: r.started,
-  });
+export async function rInstallPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  return installPost(ctx.res, m[1]);
 }
 
-export async function rOpencodeInstallGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  return json(res, 200, { ...getOpencodeInstallProgress(), installed: opencodeAvailable() });
-}
+const bound = (feature: string) => ({
+  get: async (ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> => installGet(ctx.res, feature),
+  post: async (ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> => installPost(ctx.res, feature),
+});
+export const { get: rCodexInstallGet, post: rCodexInstallPost } = bound('codex');
+export const { get: rGrokInstallGet, post: rGrokInstallPost } = bound('grok');
+export const { get: rOpencodeInstallGet, post: rOpencodeInstallPost } = bound('opencode');
+export const { get: rPiInstallGet, post: rPiInstallPost } = bound('pi');
 
-export async function rOpencodeInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  if (opencodeAvailable()) return json(res, 409, { error: 'OpenCode is already installed', code: 'already-installed' });
-  const r = startOpencodeInstall();
-  if (r.error === 'skill-missing')
-    return json(res, 409, {
-      error: 'The add-opencode-stack skill is not present in this checkout.',
-      code: 'skill-missing',
-    });
-  return json(res, r.started ? 202 : 409, {
-    ...getOpencodeInstallProgress(),
-    installed: opencodeAvailable(),
-    started: r.started,
-  });
-}
-
-// pi harness install — same two-phase (build → restart) contract as OpenCode.
-export async function rPiInstallGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  return json(res, 200, { ...getPiInstallProgress(), installed: piAvailable() });
-}
-
-export async function rPiInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  if (piAvailable()) return json(res, 409, { error: 'pi is already installed', code: 'already-installed' });
-  const r = startPiInstall();
-  if (r.error === 'skill-missing')
-    return json(res, 409, {
-      error: 'The add-pi-stack skill is not present in this checkout.',
-      code: 'skill-missing',
-    });
-  return json(res, r.started ? 202 : 409, {
-    ...getPiInstallProgress(),
-    installed: piAvailable(),
-    started: r.started,
-  });
-}
-
-export async function rWebchatTtsInstallGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  return json(res, 200, await getTtsInstallState());
-}
-
-export async function rWebchatTtsInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  const r = startTtsInstall();
-  if (!r.started && r.error === 'installer-missing') {
-    return json(res, 409, { error: 'The /add-webchat-tts installer is missing from this checkout.' });
-  }
-  return json(res, r.started ? 202 : 409, { ...(await getTtsInstallState()), started: r.started });
-}
+export const { get: rWebchatTtsInstallGet, post: rWebchatTtsInstallPost } = bound('tts');
 
 export async function rWebchatSttInstallGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  return json(res, 200, getSttInstallState());
+  return installGet(ctx.res, 'stt');
 }
 
 export async function rWebchatSttInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
@@ -144,24 +82,11 @@ export async function rWebchatSttInstallPost(ctx: RouteCtx, _m: RegExpMatchArray
   } catch {
     return json(res, 400, { error: 'Invalid JSON' });
   }
-  const provider = body.provider === 'elevenlabs' ? 'elevenlabs' : 'local';
-  const r = startSttInstall({
-    provider,
+  return installPost(res, 'stt', {
+    provider: body.provider === 'elevenlabs' ? 'elevenlabs' : 'local',
     model: typeof body.model === 'string' ? body.model : undefined,
     apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
   });
-  if (!r.started) {
-    const msg =
-      r.error === 'installer-missing'
-        ? 'The add-webchat-dictation installer is missing from this checkout.'
-        : r.error === 'missing-key'
-          ? 'An ElevenLabs API key is required.'
-          : r.error === 'bad-model'
-            ? 'Unknown model.'
-            : 'An install is already running.';
-    return json(res, 409, { error: msg });
-  }
-  return json(res, 202, { ...getSttInstallState(), started: true });
 }
 
 /**

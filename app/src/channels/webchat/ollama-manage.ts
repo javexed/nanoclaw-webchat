@@ -34,6 +34,19 @@ import os from 'os';
 import path from 'path';
 
 import { safeFetch } from './models.js';
+import { upsertEnv } from './env-write.js';
+import { pnpmDir } from './host-path.js';
+import {
+  type InstallState,
+  type InstallStep,
+  allPreflights,
+  installerPreflight,
+  pnpmPreflight,
+  registerFeatureInstall,
+  runInstallChain,
+  skillPreflight,
+} from './install-engine.js';
+import { listProviderContainerConfigNames } from '../../providers/provider-container-registry.js';
 import { listWebchatModels } from './db.js';
 import { getSystemdUnit, getLaunchdLabel } from '../../install-slug.js';
 
@@ -297,17 +310,9 @@ async function consumePullStream(job: PullJob, res: Response, key: string): Prom
 
 // ── Roster refresh (LiteLLM + routing layer) ───────────────────────────────
 
-export interface RosterRefreshState {
+export interface RosterRefreshState extends InstallState {
   available: boolean;
-  running: boolean;
-  /** Rolling tail of installer output (capped). */
-  lines: string[];
-  exitCode: number | null;
-  startedAt: number | null;
-  finishedAt: number | null;
 }
-
-const LINES_CAP = 200;
 
 const refreshState: RosterRefreshState = {
   available: false,
@@ -316,6 +321,9 @@ const refreshState: RosterRefreshState = {
   exitCode: null,
   startedAt: null,
   finishedAt: null,
+  stepIndex: 0,
+  stepCount: 0,
+  stepLabel: null,
 };
 
 function litellmInstallerPath(root: string): string {
@@ -376,128 +384,9 @@ export function getRosterRefreshState(root = process.cwd()): RosterRefreshState 
 }
 
 /** The subset of installer state the shared runner drives (a rolling log job). */
-interface InstallState {
-  running: boolean;
-  lines: string[];
-  exitCode: number | null;
-  startedAt: number | null;
-  finishedAt: number | null;
-}
-
-/** A chain step: a spawned command, or an in-process callback (with a log label).
- *  Callbacks may be async — the chain awaits a returned promise. */
-export type InstallStep =
-  | { run: [string, string[]]; env?: Record<string, string> }
-  | { call: () => void | Promise<void>; label: string };
-
-/**
- * Child env for a chain step. The service PATH frequently omits the directory of
- * the node that's running us — mise/nvm/asdf/Volta install node (and its bundled
- * pnpm/corepack) under a versioned dir that systemd's own PATH never lists — so a
- * bare `spawn('pnpm', …)` dies with `spawn pnpm ENOENT`. pnpm ships alongside that
- * node, so splice its dir onto PATH for every step and its own children (e.g.
- * `container/build.sh`'s pnpm/node calls). Step-specific env still layers on top.
- */
-function installChainEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
-  const nodeDir = path.dirname(process.execPath);
-  const parts = (env.PATH ?? '').split(path.delimiter).filter(Boolean);
-  if (!parts.includes(nodeDir)) env.PATH = [nodeDir, ...parts].join(path.delimiter);
-  return env;
-}
-
-/**
- * Run installer steps in sequence, streaming a capped rolling log into `state`.
- * Stops on the first non-zero exit or thrown callback. Shared by the roster
- * refresh and the routing install so the spawn/log boilerplate lives once.
- */
-function runInstallChain(state: InstallState, steps: InstallStep[], root: string): void {
-  // Line-buffered append. Chunks rarely align with lines: progress output
-  // (health-check dots, docker/ollama status) arrives newline-free or
-  // \r-separated. An unterminated tail is held as `partial` and rendered as a
-  // mutable last line — so a dot stream reads "....." growing in place instead
-  // of one single-dot line per chunk. \r counts as a line break so in-place
-  // progress rewrites surface as their latest state.
-  let partial = '';
-  let partialShown = false;
-  const append = (chunk: Buffer | string): void => {
-    const parts = (partial + String(chunk)).split(/\r\n|\n|\r/);
-    partial = parts.pop() ?? '';
-    if (partialShown) {
-      state.lines.pop();
-      partialShown = false;
-    }
-    for (const l of parts) {
-      const line = l.trimEnd();
-      if (!line) continue;
-      state.lines.push(line);
-    }
-    if (partial.trimEnd()) {
-      state.lines.push(partial.trimEnd());
-      partialShown = true;
-    }
-    while (state.lines.length > LINES_CAP) state.lines.shift();
-  };
-  // Finalize any partial at a step boundary so the next step's header can't
-  // pop-and-merge into real output from the previous one.
-  const flush = (): void => {
-    partial = '';
-    partialShown = false;
-  };
-  const fail = (code: number): void => {
-    state.running = false;
-    state.exitCode = code;
-    state.finishedAt = Date.now();
-  };
-  const runStep = (i: number): void => {
-    if (i >= steps.length) {
-      state.running = false;
-      state.exitCode = 0;
-      state.finishedAt = Date.now();
-      return;
-    }
-    const step = steps[i];
-    if ('call' in step) {
-      append(`→ ${step.label} …
-`);
-      Promise.resolve()
-        .then(() => step.call())
-        .then(() => runStep(i + 1))
-        .catch((err: unknown) => {
-          append(`✗ ${err instanceof Error ? err.message : String(err)}
-`);
-          fail(1);
-        });
-      return;
-    }
-    const [cmd, args] = step.run;
-    append(`→ ${args[0].split('/').slice(-1)[0]} …\n`);
-    // A step may carry extra env (e.g. a secret token) — merged over the parent
-    // so it reaches the child WITHOUT ever appearing in the streamed log or args.
-    const child = spawn(cmd, args, { cwd: root, env: installChainEnv(step.env) });
-    child.stdout.on('data', append);
-    child.stderr.on('data', append);
-    // A missing binary (ENOENT — e.g. node/pnpm not on the service PATH) emits
-    // 'error', not 'close'. Without this listener it becomes an uncaughtException
-    // → process.exit(1), taking down the whole host on one install click.
-    let closed = false;
-    child.on('error', (err) => {
-      if (closed) return;
-      closed = true;
-      append(`✗ ${err instanceof Error ? err.message : String(err)}\n`);
-      flush();
-      fail(1);
-    });
-    child.on('close', (code) => {
-      if (closed) return; // 'error' already finalized this step
-      closed = true;
-      flush();
-      if (code !== 0) return fail(code ?? 1);
-      runStep(i + 1);
-    });
-  };
-  runStep(0);
-}
+// The chain machinery (InstallState, InstallStep, runInstallChain, restartPending)
+// lives in install-engine.ts; re-exported so existing importers keep their path.
+export { restartPending, type InstallState, type InstallStep } from './install-engine.js';
 
 /**
  * Re-run the litellm installer with the hosts the current config was built
@@ -549,33 +438,6 @@ export function startRosterRefresh(root = process.cwd()): boolean {
 
 const ARCH_ROUTER_MODEL = 'hf.co/katanemo/Arch-Router-1.5B.gguf:Q4_K_M';
 
-const routingInstallState: InstallState = {
-  running: false,
-  lines: [],
-  exitCode: null,
-  startedAt: null,
-  finishedAt: null,
-};
-
-export interface RoutingInstallState extends InstallState {
-  /** routes.json exists — routing is scaffolded and the Routing tab can show. */
-  installed: boolean;
-  /** The LiteLLM router is installed (add-litellm ran) — routing's prerequisite. */
-  litellmReady: boolean;
-  /** The Arch-Router classifier download, if one has been kicked off. */
-  pull: PullJob | null;
-}
-
-export function getRoutingInstallState(root = process.cwd()): RoutingInstallState {
-  const pull = getPullsSnapshot().find((j) => j.model === ARCH_ROUTER_MODEL) ?? null;
-  return {
-    ...routingInstallState,
-    installed: fs.existsSync(routesPathFor(root)),
-    litellmReady: fs.existsSync(path.join(root, 'data/litellm/config.yaml')),
-    pull,
-  };
-}
-
 /**
  * Point the seeded classifier at the real Ollama host. router_hook.py runs
  * INSIDE the LiteLLM container, so the host is `host.docker.internal`, not
@@ -596,40 +458,40 @@ function configureClassifierHost(root: string): void {
   }
 }
 
-export interface StartRoutingResult {
-  started: boolean;
-  error?: 'already-running' | 'litellm-not-installed' | 'installer-missing' | 'prereq-missing';
-}
-
 /**
  * One-click routing setup: kick the Arch-Router classifier pull (streamed via
  * the normal pull machinery, in parallel), then run install-routing.sh → point
  * the classifier at the host → auto-bind routes to the roster. Shadow mode by
  * default (the template's `live.enabled:false`). One install at a time.
  */
-export function startRoutingInstall(root = process.cwd()): StartRoutingResult {
-  if (routingInstallState.running) return { started: false, error: 'already-running' };
-  const configPath = path.join(root, 'data/litellm/config.yaml');
-  if (!fs.existsSync(configPath)) return { started: false, error: 'litellm-not-installed' };
-  if (!fs.existsSync(routingInstallerPath(root)) || !fs.existsSync(bindRoutesPath(root))) {
-    return { started: false, error: 'installer-missing' };
-  }
-
-  // Kick the classifier-model pull in parallel on the host-side Ollama. The
-  // install steps don't wait on it — the model is only needed at classify time.
-  const ollamaHost =
-    parseConfiguredHosts(fs.readFileSync(configPath, 'utf8'))?.split(',')[0] ?? 'http://localhost:11434';
-  void startPull(ollamaHost, ARCH_ROUTER_MODEL).catch(() => {
-    /* failure surfaces on the pull job's own status/error */
-  });
-
-  routingInstallState.running = true;
-  routingInstallState.lines = [];
-  routingInstallState.exitCode = null;
-  routingInstallState.startedAt = Date.now();
-  routingInstallState.finishedAt = null;
-
-  const steps: InstallStep[] = [
+registerFeatureInstall('routing', {
+  label: 'Auto routing',
+  idempotent: true,
+  installed: (root) => fs.existsSync(routesPathFor(root)),
+  status: (root) => ({
+    // routes.json exists — routing is scaffolded and the Routing tab can show.
+    litellmReady: fs.existsSync(path.join(root, 'data/litellm/config.yaml')),
+    // The Arch-Router classifier download, if one has been kicked off.
+    pull: getPullsSnapshot().find((j) => j.model === ARCH_ROUTER_MODEL) ?? null,
+  }),
+  preflight: (root) => {
+    if (!fs.existsSync(path.join(root, 'data/litellm/config.yaml')))
+      return { code: 'litellm-not-installed', error: 'LiteLLM is not installed. Run /add-litellm first.' };
+    if (!fs.existsSync(routingInstallerPath(root)) || !fs.existsSync(bindRoutesPath(root)))
+      return { code: 'installer-missing', error: 'The add-routing skill is not present in this checkout.' };
+    return null;
+  },
+  onStart: (root) => {
+    // Kick the classifier-model pull in parallel on the host-side Ollama. The
+    // install steps don't wait on it — the model is only needed at classify time.
+    const configPath = path.join(root, 'data/litellm/config.yaml');
+    const ollamaHost =
+      parseConfiguredHosts(fs.readFileSync(configPath, 'utf8'))?.split(',')[0] ?? 'http://localhost:11434';
+    void startPull(ollamaHost, ARCH_ROUTER_MODEL).catch(() => {
+      /* failure surfaces on the pull job's own status/error */
+    });
+  },
+  steps: (root) => [
     { run: ['bash', [routingInstallerPath(root)]] },
     { call: () => configureClassifierHost(root), label: 'configure classifier host' },
     { run: ['node', [bindRoutesPath(root), '--apply']] },
@@ -641,10 +503,8 @@ export function startRoutingInstall(root = process.cwd()): StartRoutingResult {
       },
       label: 'auto-routing: create routes from your models',
     },
-  ];
-  runInstallChain(routingInstallState, steps, root);
-  return { started: true };
-}
+  ],
+});
 
 // ── Read-aloud (Kokoro TTS) install — one-click from Settings ───────────────
 // Same chain machinery as routing: the /add-webchat-tts skill's installer does
@@ -653,23 +513,8 @@ export function startRoutingInstall(root = process.cwd()): StartRoutingResult {
 // written WEBCHAT_TTS_* keys into THIS process so the feature goes live with
 // no host restart.
 
-const ttsInstallState: InstallState = {
-  running: false,
-  lines: [],
-  exitCode: null,
-  startedAt: null,
-  finishedAt: null,
-};
-
 function ttsInstallerPath(root: string): string {
   return path.join(root, '.claude/skills/add-webchat-tts/resources/install-kokoro.sh');
-}
-
-export interface TtsInstallState extends InstallState {
-  /** Server-side synthesis is configured and live in this process. */
-  installed: boolean;
-  /** The /add-webchat-tts installer is present in this checkout. */
-  installerPresent: boolean;
 }
 
 /**
@@ -690,15 +535,6 @@ async function ttsBackendUp(): Promise<boolean> {
   }
 }
 
-export async function getTtsInstallState(root = process.cwd()): Promise<TtsInstallState> {
-  const flagOn = process.env.WEBCHAT_TTS_ENABLED === 'true';
-  return {
-    ...ttsInstallState,
-    installed: flagOn && (await ttsBackendUp()),
-    installerPresent: fs.existsSync(ttsInstallerPath(root)),
-  };
-}
-
 /** Load the installer-written WEBCHAT_TTS_* keys into the running process. */
 function activateTtsEnv(root: string): void {
   const envFile = path.join(root, '.env');
@@ -709,23 +545,22 @@ function activateTtsEnv(root: string): void {
   }
 }
 
-export function startTtsInstall(root = process.cwd()): StartRoutingResult {
-  if (ttsInstallState.running) return { started: false, error: 'already-running' };
-  if (!fs.existsSync(ttsInstallerPath(root))) return { started: false, error: 'installer-missing' };
-
-  ttsInstallState.running = true;
-  ttsInstallState.lines = [];
-  ttsInstallState.exitCode = null;
-  ttsInstallState.startedAt = Date.now();
-  ttsInstallState.finishedAt = null;
-
-  const steps: InstallStep[] = [
+registerFeatureInstall('tts', {
+  label: 'Read aloud',
+  idempotent: true,
+  // `installed` uses the probe instead of trusting WEBCHAT_TTS_ENABLED alone,
+  // which can be stale (a persisted .env, a stopped container).
+  installed: async () => process.env.WEBCHAT_TTS_ENABLED === 'true' && (await ttsBackendUp()),
+  status: (root) => ({ installerPresent: fs.existsSync(ttsInstallerPath(root)) }),
+  preflight: installerPreflight(
+    '.claude/skills/add-webchat-tts/resources/install-kokoro.sh',
+    'The /add-webchat-tts installer is missing from this checkout.',
+  ),
+  steps: (root) => [
     { run: ['bash', [ttsInstallerPath(root)]] },
     { call: () => activateTtsEnv(root), label: 'activate (no restart needed)' },
-  ];
-  runInstallChain(ttsInstallState, steps, root);
-  return { started: true };
-}
+  ],
+});
 
 // ── Voice-dictation (STT) install — Settings → Features → Voice dictation ──
 // Local (recommended): the /add-webchat-dictation skill's installer provisions
@@ -733,14 +568,6 @@ export function startTtsInstall(root = process.cwd()): StartRoutingResult {
 // ggml model. Cloud (explicit opt-in): ElevenLabs — no container, just a key
 // probe + .env write. Either way a final step loads the WEBCHAT_STT_* keys
 // into THIS process so the mic goes live with no host restart.
-
-const sttInstallState: InstallState = {
-  running: false,
-  lines: [],
-  exitCode: null,
-  startedAt: null,
-  finishedAt: null,
-};
 
 function sttInstallerPath(root: string): string {
   return path.join(root, '.claude/skills/add-webchat-dictation/resources/install-whisper.sh');
@@ -767,38 +594,6 @@ export function suggestSttModel(): string {
   return 'tiny';
 }
 
-export interface SttInstallState extends InstallState {
-  /** A backend is provisioned (env config present) — independent of the toggle. */
-  installed: boolean;
-  /** Workspace toggle: the mic is on for everyone. */
-  enabled: boolean;
-  /** Which backend the env is configured for (meaningful when installed). */
-  provider: string;
-  /** Current transcription model (env truth; null before first install). */
-  model: string | null;
-  /** The /add-webchat-dictation installer is present in this checkout. */
-  installerPresent: boolean;
-  /** Hardware-suggested default for the model select. */
-  suggestedModel: string;
-  models: string[];
-}
-
-export function getSttInstallState(root = process.cwd()): SttInstallState {
-  return {
-    ...sttInstallState,
-    installed: Boolean(
-      process.env.WEBCHAT_STT_URL ||
-      (process.env.WEBCHAT_STT_PROVIDER === 'elevenlabs' && process.env.WEBCHAT_STT_API_KEY),
-    ),
-    enabled: process.env.WEBCHAT_STT_ENABLED === 'true',
-    provider: process.env.WEBCHAT_STT_PROVIDER || 'local',
-    model: process.env.WEBCHAT_STT_MODEL || null,
-    installerPresent: fs.existsSync(sttInstallerPath(root)),
-    suggestedModel: suggestSttModel(),
-    models: STT_MODELS,
-  };
-}
-
 const STT_ENV_KEYS = [
   'WEBCHAT_STT_ENABLED',
   'WEBCHAT_STT_PROVIDER',
@@ -818,28 +613,6 @@ function activateSttEnv(root: string): void {
   }
 }
 
-/** Idempotent KEY=VALUE upsert into .env (mirrors the installers' set_env). */
-export function upsertEnv(root: string, key: string, val: string): void {
-  const envFile = path.join(root, '.env');
-  // Strip CR/LF so a value can never inject an extra KEY=value line (e.g. a
-  // crafted ElevenLabs key rebinding WEBCHAT_HOST). Keys here are constants.
-  const safeVal = String(val).replace(/[\r\n]/g, '');
-  let raw = fs.existsSync(envFile) ? fs.readFileSync(envFile, 'utf8') : '';
-  raw = raw
-    .split('\n')
-    .filter((l) => !l.startsWith(`${key}=`))
-    .join('\n');
-  if (raw && !raw.endsWith('\n')) raw += '\n';
-  fs.writeFileSync(envFile, raw + `${key}=${safeVal}\n`, { mode: 0o600 });
-  // mode only applies on create; force 0600 on the (usual) pre-existing file so
-  // WEBCHAT_STT_API_KEY never lands in a group/world-readable .env.
-  try {
-    fs.chmodSync(envFile, 0o600);
-  } catch {
-    /* best-effort; non-fatal on platforms without chmod semantics */
-  }
-}
-
 export interface StartSttOptions {
   provider: 'local' | 'elevenlabs';
   /** local only — one of STT_MODELS; defaults to the hardware suggestion. */
@@ -848,90 +621,74 @@ export interface StartSttOptions {
   apiKey?: string;
 }
 
-export interface StartSttResult {
-  started: boolean;
-  error?: 'already-running' | 'installer-missing' | 'bad-model' | 'missing-key';
-}
-
-export function startSttInstall(opts: StartSttOptions, root = process.cwd()): StartSttResult {
-  if (sttInstallState.running) return { started: false, error: 'already-running' };
-
-  let steps: InstallStep[];
-  if (opts.provider === 'elevenlabs') {
-    const apiKey = (opts.apiKey ?? '').trim();
-    if (!apiKey) return { started: false, error: 'missing-key' };
-    steps = [
-      {
-        label: 'validate the ElevenLabs key',
-        call: async () => {
-          // Hostname fixed — the key goes to ElevenLabs and nowhere else.
-          const res = await fetch('https://api.elevenlabs.io/v1/user', {
-            headers: { 'xi-api-key': apiKey },
-            signal: AbortSignal.timeout(10_000),
-          });
-          if (res.status === 401) throw new Error('ElevenLabs rejected the key (401)');
-          if (!res.ok) throw new Error(`ElevenLabs answered ${res.status}`);
+registerFeatureInstall<StartSttOptions>('stt', {
+  label: 'Voice dictation',
+  idempotent: true,
+  // A backend is provisioned (env config present) — independent of the toggle.
+  installed: () =>
+    Boolean(
+      process.env.WEBCHAT_STT_URL ||
+      (process.env.WEBCHAT_STT_PROVIDER === 'elevenlabs' && process.env.WEBCHAT_STT_API_KEY),
+    ),
+  status: (root) => ({
+    enabled: process.env.WEBCHAT_STT_ENABLED === 'true',
+    provider: process.env.WEBCHAT_STT_PROVIDER || 'local',
+    model: process.env.WEBCHAT_STT_MODEL || null,
+    installerPresent: fs.existsSync(sttInstallerPath(root)),
+    suggestedModel: suggestSttModel(),
+    models: STT_MODELS,
+  }),
+  preflight: (root, opts) => {
+    if (opts.provider === 'elevenlabs') {
+      if (!(opts.apiKey ?? '').trim()) return { code: 'missing-key', error: 'An ElevenLabs API key is required.' };
+      return null;
+    }
+    if (!fs.existsSync(sttInstallerPath(root)))
+      return { code: 'installer-missing', error: 'The add-webchat-dictation installer is missing from this checkout.' };
+    if (!STT_MODELS.includes(opts.model ?? suggestSttModel())) return { code: 'bad-model', error: 'Unknown model.' };
+    return null;
+  },
+  steps: (root, opts) => {
+    if (opts.provider === 'elevenlabs') {
+      const apiKey = (opts.apiKey ?? '').trim();
+      return [
+        {
+          label: 'validate the ElevenLabs key',
+          call: async () => {
+            // Hostname fixed — the key goes to ElevenLabs and nowhere else.
+            const res = await fetch('https://api.elevenlabs.io/v1/user', {
+              headers: { 'xi-api-key': apiKey },
+              signal: AbortSignal.timeout(10_000),
+            });
+            if (res.status === 401) throw new Error('ElevenLabs rejected the key (401)');
+            if (!res.ok) throw new Error(`ElevenLabs answered ${res.status}`);
+          },
         },
-      },
-      {
-        label: 'write WEBCHAT_STT_* to .env',
-        call: () => {
-          upsertEnv(root, 'WEBCHAT_STT_ENABLED', 'true');
-          upsertEnv(root, 'WEBCHAT_STT_PROVIDER', 'elevenlabs');
-          upsertEnv(root, 'WEBCHAT_STT_MODEL', 'scribe_v1');
-          upsertEnv(root, 'WEBCHAT_STT_LANG', 'auto');
-          upsertEnv(root, 'WEBCHAT_STT_API_KEY', apiKey);
+        {
+          label: 'write WEBCHAT_STT_* to .env',
+          call: () => {
+            upsertEnv(root, 'WEBCHAT_STT_ENABLED', 'true');
+            upsertEnv(root, 'WEBCHAT_STT_PROVIDER', 'elevenlabs');
+            upsertEnv(root, 'WEBCHAT_STT_MODEL', 'scribe_v1');
+            upsertEnv(root, 'WEBCHAT_STT_LANG', 'auto');
+            upsertEnv(root, 'WEBCHAT_STT_API_KEY', apiKey);
+          },
         },
-      },
+        { call: () => activateSttEnv(root), label: 'activate (no restart needed)' },
+      ];
+    }
+    return [
+      { run: ['bash', [sttInstallerPath(root), '--model', opts.model ?? suggestSttModel()]] },
       { call: () => activateSttEnv(root), label: 'activate (no restart needed)' },
     ];
-  } else {
-    if (!fs.existsSync(sttInstallerPath(root))) return { started: false, error: 'installer-missing' };
-    const model = opts.model ?? suggestSttModel();
-    if (!STT_MODELS.includes(model)) return { started: false, error: 'bad-model' };
-    steps = [
-      { run: ['bash', [sttInstallerPath(root), '--model', model]] },
-      { call: () => activateSttEnv(root), label: 'activate (no restart needed)' },
-    ];
-  }
-
-  sttInstallState.running = true;
-  sttInstallState.lines = [];
-  sttInstallState.exitCode = null;
-  sttInstallState.startedAt = Date.now();
-  sttInstallState.finishedAt = null;
-  runInstallChain(sttInstallState, steps, root);
-  return { started: true };
-}
+  },
+});
 
 // ── Tailscale install (one-click from the wizard Access step) ───────────────
 // Only offered where it can actually succeed: tailscaled needs /dev/net/tun (an
 // unprivileged Proxmox LXC only has it if the host passes it through) and the
 // install + sign-in need root. When those don't hold, the UI points at the
 // Proxmox community helper (which does the host-side TUN setup) instead.
-const tailscaleInstallState: InstallState = {
-  running: false,
-  lines: [],
-  exitCode: null,
-  startedAt: null,
-  finishedAt: null,
-};
-
-export interface TailscaleInstallState extends InstallState {
-  /** /dev/net/tun is present — the kernel device tailscaled needs. */
-  tunPresent: boolean;
-  /** The host process is root — the installer + `tailscale up` require it. */
-  isRoot: boolean;
-  /** Both hold, so a one-click install can bring Tailscale up here. */
-  canInstall: boolean;
-}
-
-export function getTailscaleInstallState(): TailscaleInstallState {
-  const tunPresent = fs.existsSync('/dev/net/tun');
-  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
-  return { ...tailscaleInstallState, tunPresent, isRoot, canInstall: tunPresent && isRoot };
-}
-
 // Distro-aware, signed-repo Tailscale install (no curl|sh). Debian/Ubuntu via
 // apt with the GPG-verified keyring; RHEL/Fedora via dnf/yum repo. Everything
 // is apt/dnf-verified; the only network trust is the static signing key, after
@@ -962,15 +719,28 @@ const TAILSCALE_PKG_INSTALL = [
   'fi',
 ].join('\n');
 
-export function startTailscaleInstall(root = process.cwd()): StartRoutingResult {
-  if (tailscaleInstallState.running) return { started: false, error: 'already-running' };
-  if (!getTailscaleInstallState().canInstall) return { started: false, error: 'prereq-missing' };
-  tailscaleInstallState.running = true;
-  tailscaleInstallState.lines = [];
-  tailscaleInstallState.exitCode = null;
-  tailscaleInstallState.startedAt = Date.now();
-  tailscaleInstallState.finishedAt = null;
-  const steps: InstallStep[] = [
+/** /dev/net/tun (the device tailscaled needs) and root (the installer + `tailscale up` need it). */
+function tailscaleFacts() {
+  const tunPresent = fs.existsSync('/dev/net/tun');
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  return { tunPresent, isRoot, canInstall: tunPresent && isRoot };
+}
+
+registerFeatureInstall('tailscale', {
+  label: 'Tailscale',
+  // The chain is install + `tailscale up`: a present binary still wants the sign-in.
+  idempotent: true,
+  installed: () =>
+    ['/usr/bin/tailscale', '/usr/sbin/tailscale', '/usr/local/bin/tailscale'].some((p) => fs.existsSync(p)),
+  status: () => tailscaleFacts(),
+  preflight: () =>
+    tailscaleFacts().canInstall
+      ? null
+      : {
+          code: 'prereq-missing',
+          error: "Can't install Tailscale here — /dev/net/tun or root is missing. Use the Proxmox community helper.",
+        },
+  steps: () => [
     // Install tailscaled from Tailscale's SIGNED package repo (apt/dnf/yum),
     // not `curl … | sh`. apt/dnf verify the GPG-signed keyring + package, so a
     // MITM'd or compromised endpoint can't inject arbitrary root code the way a
@@ -983,10 +753,8 @@ export function startTailscaleInstall(root = process.cwd()): StartRoutingResult 
     // to open, and returns once they authenticate. A 10-minute cap keeps a
     // never-completed sign-in from hanging the chain forever.
     { run: ['bash', ['-c', 'timeout 600 tailscale up --accept-dns=false']] },
-  ];
-  runInstallChain(tailscaleInstallState, steps, root);
-  return { started: true };
-}
+  ],
+});
 
 // ── Cloudflare Tunnel install (one-click from the wizard Access step) ────────
 // Token-driven, remotely-MANAGED tunnel: the operator creates the tunnel + its
@@ -998,14 +766,6 @@ export function startTailscaleInstall(root = process.cwd()): StartRoutingResult 
 // The token reaches the child via env (TUNNEL_TOKEN), so it never lands in the
 // streamed install log; it does persist in the service unit at rest, as the
 // managed-tunnel model requires.
-const cloudflaredInstallState: InstallState = {
-  running: false,
-  lines: [],
-  exitCode: null,
-  startedAt: null,
-  finishedAt: null,
-};
-
 function cloudflaredPresent(): boolean {
   return ['/usr/bin/cloudflared', '/usr/local/bin/cloudflared', '/bin/cloudflared'].some((p) => fs.existsSync(p));
 }
@@ -1016,40 +776,12 @@ function cloudflaredServicePresent(): boolean {
   );
 }
 
-export interface CloudflaredInstallState extends InstallState {
-  /** cloudflared binary present. */
-  installed: boolean;
-  /** The systemd connector service is registered (token-mode configured). */
-  serviceInstalled: boolean;
-  /** Host process is root — the install + service registration need it. */
-  isRoot: boolean;
-  /** systemd is PID 1 here — `cloudflared service install` registers a unit. */
-  hasSystemd: boolean;
-  /** Linux + root + systemd, so a one-click install can run here. cloudflared
-   *  itself needs no TUN/caps (unlike tailscaled), so an unprivileged LXC with
-   *  systemd + container-root qualifies — the common Proxmox case. */
-  canInstall: boolean;
-}
-
 // `/run/systemd/system` exists iff the box booted with systemd as init — the
 // canonical check. `cloudflared service install` needs a reachable systemd; a
 // non-systemd container (Docker / minimal LXC) gets the manual-link fallback
 // instead of a failing install, matching the Tailscale card's UX.
 function systemdBooted(): boolean {
   return fs.existsSync('/run/systemd/system');
-}
-
-export function getCloudflaredInstallState(): CloudflaredInstallState {
-  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
-  const hasSystemd = systemdBooted();
-  return {
-    ...cloudflaredInstallState,
-    installed: cloudflaredPresent(),
-    serviceInstalled: cloudflaredServicePresent(),
-    isRoot,
-    hasSystemd,
-    canInstall: process.platform === 'linux' && isRoot && hasSystemd,
-  };
 }
 
 // Signed apt repo (Debian/Ubuntu — the LXC/Proxmox target). Fetches only the GPG
@@ -1070,11 +802,6 @@ const CLOUDFLARED_PKG_INSTALL = [
   'fi',
 ].join('\n');
 
-export interface StartCloudflaredResult {
-  started: boolean;
-  error?: 'already-running' | 'prereq-missing' | 'bad-token' | 'not-installed';
-}
-
 // A connector token is a long base64url blob (a base64-encoded JSON). Reject
 // empties / obviously-wrong values before spawning anything as root — not full
 // validation (only Cloudflare can confirm), just a shape guard.
@@ -1082,98 +809,80 @@ export function looksLikeTunnelToken(t: string): boolean {
   return /^[A-Za-z0-9+/=_-]{40,}$/.test((t || '').trim());
 }
 
-function beginCloudflared(): void {
-  cloudflaredInstallState.running = true;
-  cloudflaredInstallState.lines = [];
-  cloudflaredInstallState.exitCode = null;
-  cloudflaredInstallState.startedAt = Date.now();
-  cloudflaredInstallState.finishedAt = null;
-}
-
-// Step 1 — install just the cloudflared binary (signed apt repo). No token, so
-// the operator can install first, then create the tunnel + paste its token to
-// connect. Idempotent (no-ops if already present).
-export function startCloudflaredInstall(root = process.cwd()): StartCloudflaredResult {
-  if (cloudflaredInstallState.running) return { started: false, error: 'already-running' };
-  if (!getCloudflaredInstallState().canInstall) return { started: false, error: 'prereq-missing' };
-  beginCloudflared();
-  runInstallChain(cloudflaredInstallState, [{ run: ['bash', ['-c', CLOUDFLARED_PKG_INSTALL]] }], root);
-  return { started: true };
-}
-
-// Step 2 — register + start the managed-tunnel connector from the operator's
-// token. Requires cloudflared already present (step 1). The token arrives via env
-// so it never reaches the streamed log; `service install` reads it as its arg.
-// Reinstall-safe: drop any prior unit first (ignore failure).
-export function startCloudflaredConnect(token: string, root = process.cwd()): StartCloudflaredResult {
-  if (cloudflaredInstallState.running) return { started: false, error: 'already-running' };
-  if (!getCloudflaredInstallState().canInstall) return { started: false, error: 'prereq-missing' };
-  if (!cloudflaredPresent()) return { started: false, error: 'not-installed' };
-  const tok = (token || '').trim();
-  if (!looksLikeTunnelToken(tok)) return { started: false, error: 'bad-token' };
-  beginCloudflared();
-  const steps: InstallStep[] = [
-    {
-      run: [
-        'bash',
-        ['-c', 'cloudflared service uninstall >/dev/null 2>&1 || true; cloudflared service install "$TUNNEL_TOKEN"'],
-      ],
-      env: { TUNNEL_TOKEN: tok },
-    },
-  ];
-  runInstallChain(cloudflaredInstallState, steps, root);
-  return { started: true };
-}
-
-// ── LiteLLM install (routing's prerequisite, one-click from Settings) ───────
-
-const litellmInstallState: InstallState = {
-  running: false,
-  lines: [],
-  exitCode: null,
-  startedAt: null,
-  finishedAt: null,
-};
-
-export interface LitellmInstallState extends InstallState {
-  /** config.yaml exists — the LiteLLM router is installed. */
-  installed: boolean;
-  /** The add-litellm skill's installer is present in this checkout. */
-  installerPresent: boolean;
-}
-
-export function getLitellmInstallState(root = process.cwd()): LitellmInstallState {
+/** Linux + root + systemd: cloudflared needs no TUN/caps (unlike tailscaled),
+ *  so an unprivileged LXC with systemd + container-root qualifies — the common
+ *  Proxmox case. */
+function cloudflaredFacts() {
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  const hasSystemd = systemdBooted();
   return {
-    ...litellmInstallState,
-    installed: fs.existsSync(path.join(root, 'data/litellm/config.yaml')),
-    installerPresent: fs.existsSync(litellmInstallerPath(root)),
+    serviceInstalled: cloudflaredServicePresent(),
+    isRoot,
+    hasSystemd,
+    canInstall: process.platform === 'linux' && isRoot && hasSystemd,
   };
 }
 
-export interface StartLitellmResult {
-  started: boolean;
-  error?: 'already-running' | 'installer-missing';
-}
+/**
+ * Two phases on one state. Without a token: install just the cloudflared
+ * binary (signed apt repo), so the operator can install first, then create the
+ * tunnel + paste its token. With one: register + start the managed-tunnel
+ * connector — the token arrives via env so it never reaches the streamed log,
+ * and `service install` reads it as its arg. Reinstall-safe: any prior unit is
+ * dropped first (failure ignored).
+ */
+registerFeatureInstall<{ token?: string }>('cloudflared', {
+  label: 'Cloudflare Tunnel',
+  idempotent: true,
+  installed: () => cloudflaredPresent(),
+  status: () => cloudflaredFacts(),
+  preflight: (_root, args) => {
+    if (!cloudflaredFacts().canInstall)
+      return { code: 'prereq-missing', error: 'Needs root + systemd — install cloudflared manually instead.' };
+    if (args?.token === undefined) return null;
+    if (!cloudflaredPresent()) return { code: 'not-installed', error: 'Install cloudflared first.' };
+    if (!looksLikeTunnelToken(args.token))
+      return { code: 'bad-token', error: 'That doesn’t look like a tunnel token.' };
+    return null;
+  },
+  steps: (_root, args) =>
+    args?.token === undefined
+      ? [{ run: ['bash', ['-c', CLOUDFLARED_PKG_INSTALL]] }]
+      : [
+          {
+            run: [
+              'bash',
+              [
+                '-c',
+                'cloudflared service uninstall >/dev/null 2>&1 || true; cloudflared service install "$TUNNEL_TOKEN"',
+              ],
+            ],
+            env: { TUNNEL_TOKEN: args.token.trim() },
+          },
+        ],
+});
+
+// ── LiteLLM install (routing's prerequisite, one-click from Settings) ───────
 
 /**
  * One-click LiteLLM router install — routing's prerequisite, run from Settings
  * so the operator never has to drop to a shell for `/add-litellm`. The
  * installer is idempotent and defaults to the local Ollama host; the roster
- * refresh path re-runs it later with the configured hosts. One install at a
- * time; streams into its own state.
+ * refresh path re-runs it later with the configured hosts.
  */
-export function startLitellmInstall(root = process.cwd(), hosts = 'http://localhost:11434'): StartLitellmResult {
-  if (litellmInstallState.running) return { started: false, error: 'already-running' };
-  const installer = litellmInstallerPath(root);
-  if (!fs.existsSync(installer)) return { started: false, error: 'installer-missing' };
-  litellmInstallState.running = true;
-  litellmInstallState.lines = [];
-  litellmInstallState.exitCode = null;
-  litellmInstallState.startedAt = Date.now();
-  litellmInstallState.finishedAt = null;
-  runInstallChain(litellmInstallState, [{ run: ['bash', [installer, '--hosts', hosts]] }], root);
-  return { started: true };
-}
+registerFeatureInstall<{ hosts?: string }>('litellm', {
+  label: 'LiteLLM router',
+  idempotent: true,
+  installed: (root) => fs.existsSync(path.join(root, 'data/litellm/config.yaml')),
+  status: (root) => ({ installerPresent: fs.existsSync(litellmInstallerPath(root)) }),
+  preflight: (root) =>
+    fs.existsSync(litellmInstallerPath(root))
+      ? null
+      : { code: 'installer-missing', error: 'The add-litellm skill is not present in this checkout.' },
+  steps: (root, args) => [
+    { run: ['bash', [litellmInstallerPath(root), '--hosts', args?.hosts ?? 'http://localhost:11434']] },
+  ],
+});
 
 // ── Local Ollama install (wizard) ──────────────────────────────────────────
 // Rootless install: the host service runs unprivileged, so the official
@@ -1181,13 +890,6 @@ export function startLitellmInstall(root = process.cwd(), hosts = 'http://localh
 // Instead: official release tarball → ~/.local, a systemd --user unit, and
 // `enable --now`. Matches how a rootless operator installs by hand and needs
 // no credentials. Linux-only; other platforms get a manual hint.
-const ollamaInstallState: InstallState = {
-  running: false,
-  lines: [],
-  exitCode: null,
-  startedAt: null,
-  finishedAt: null,
-};
 
 const OLLAMA_INSTALL_SCRIPT = `
 set -e
@@ -1269,44 +971,28 @@ fi
 exit 1
 `;
 
-export interface OllamaLocalState {
-  reachable: boolean;
-  canInstall: boolean;
-  running: boolean;
-  lines: string[];
-  exitCode: number | null;
-}
-
-/** Local-Ollama status for the wizard: is :11434 answering, can we install here? */
-export async function getOllamaLocalState(): Promise<OllamaLocalState> {
-  let reachable = false;
+/** Is the local Ollama answering on :11434? */
+async function ollamaReachable(): Promise<boolean> {
   try {
     const r = await safeFetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(1500) });
-    reachable = r.ok;
+    return r.ok;
   } catch {
-    /* not running */
+    return false;
   }
-  return {
-    reachable,
-    canInstall: process.platform === 'linux',
-    running: ollamaInstallState.running,
-    lines: ollamaInstallState.lines.slice(-20),
-    exitCode: ollamaInstallState.exitCode,
-  };
 }
 
-export function startOllamaInstall(): { started: boolean; error?: string } {
-  if (ollamaInstallState.running) return { started: false, error: 'already-running' };
-  if (process.platform !== 'linux')
-    return { started: false, error: 'Automatic install is Linux-only — install Ollama from ollama.com manually.' };
-  ollamaInstallState.running = true;
-  ollamaInstallState.lines = [];
-  ollamaInstallState.exitCode = null;
-  ollamaInstallState.startedAt = Date.now();
-  ollamaInstallState.finishedAt = null;
-  runInstallChain(ollamaInstallState, [{ run: ['sh', ['-c', OLLAMA_INSTALL_SCRIPT]] }], process.cwd());
-  return { started: true };
-}
+registerFeatureInstall('ollama', {
+  label: 'Ollama',
+  idempotent: true,
+  installed: () => ollamaReachable(),
+  // `reachable` is the name the wizard has always read; `canInstall` gates the button.
+  status: async () => ({ reachable: await ollamaReachable(), canInstall: process.platform === 'linux' }),
+  preflight: () =>
+    process.platform === 'linux'
+      ? null
+      : { code: 'unsupported', error: 'Automatic install is Linux-only — install Ollama from ollama.com manually.' },
+  steps: () => [{ run: ['sh', ['-c', OLLAMA_INSTALL_SCRIPT]] }],
+});
 
 // ── Codex provider install (wizard engine step) ─────────────────────────────
 // Installing a *provider* is heavier than Ollama/LiteLLM: it mutates the source
@@ -1314,18 +1000,6 @@ export function startOllamaInstall(): { started: boolean; error?: string } {
 // CLI manifest), rebuilds the host + agent image, then needs a HOST restart —
 // `codexAvailable()` only flips true once the process re-imports the provider
 // barrel at boot. The chain gates the restart on a fully-green build.
-
-const codexInstallState: InstallState = {
-  running: false,
-  lines: [],
-  exitCode: null,
-  startedAt: null,
-  finishedAt: null,
-};
-
-export function getCodexInstallProgress(): InstallState {
-  return { ...codexInstallState, lines: codexInstallState.lines.slice(-40) };
-}
 
 /**
  * Restart the host so a freshly-installed provider barrel is loaded. Fired only
@@ -1406,65 +1080,6 @@ export function scheduleHostRestart(): void {
   spawn('sh', ['-c', `sleep 2; ${cmd}`], { detached: true, stdio: 'ignore' }).unref();
 }
 
-export function startCodexInstall(root = process.cwd()): {
-  started: boolean;
-  error?: 'already-running' | 'skill-missing';
-} {
-  if (codexInstallState.running) return { started: false, error: 'already-running' };
-  if (!fs.existsSync(path.join(root, '.claude/skills/add-codex/SKILL.md'))) {
-    return { started: false, error: 'skill-missing' };
-  }
-  codexInstallState.running = true;
-  codexInstallState.lines = [];
-  codexInstallState.exitCode = null;
-  codexInstallState.startedAt = Date.now();
-  codexInstallState.finishedAt = null;
-  runInstallChain(codexInstallState, codexInstallSteps(root), root);
-  return { started: true };
-}
-
-/**
- * The Codex install chain. Extracted + exported so the container-typecheck guard
- * is a TESTED invariant, not a fragile inline hunk — #247 added it and a branch
- * rebuild silently dropped it once already.
- *
- * runInstallChain stops on the first non-zero exit, so the restart step is reached
- * ONLY when install + both builds are green — never restart into a broken tree.
- * The agent-runner typecheck needs its Bun deps (bun-types) on the HOST; a deployed
- * tarball install never runs `bun install` here (those deps live only inside the
- * Docker image), so the check would die with "Cannot find type definition file for
- * 'bun'". Run it only where the host has them (a dev checkout); container/build.sh
- * compiles the same code inside the image anyway.
- */
-const grokInstallState: InstallState = {
-  running: false,
-  lines: [],
-  exitCode: null,
-  startedAt: null,
-  finishedAt: null,
-};
-
-export function getGrokInstallProgress(): InstallState {
-  return { ...grokInstallState, lines: grokInstallState.lines.slice(-40) };
-}
-
-export function startGrokInstall(root = process.cwd()): {
-  started: boolean;
-  error?: 'already-running' | 'skill-missing';
-} {
-  if (grokInstallState.running) return { started: false, error: 'already-running' };
-  if (!fs.existsSync(path.join(root, '.claude/skills/add-grok/SKILL.md'))) {
-    return { started: false, error: 'skill-missing' };
-  }
-  grokInstallState.running = true;
-  grokInstallState.lines = [];
-  grokInstallState.exitCode = null;
-  grokInstallState.startedAt = Date.now();
-  grokInstallState.finishedAt = null;
-  runInstallChain(grokInstallState, grokInstallSteps(root), root);
-  return { started: true };
-}
-
 /**
  * The Grok install chain. Same shape as Codex with one difference that matters:
  * the image build is NOT optional here. Grok ships as a native binary installed
@@ -1488,6 +1103,19 @@ export function grokInstallSteps(root: string): InstallStep[] {
   ];
 }
 
+/**
+ * The Codex install chain. Extracted + exported so the container-typecheck guard
+ * is a TESTED invariant, not a fragile inline hunk — #247 added it and a branch
+ * rebuild silently dropped it once already.
+ *
+ * runInstallChain stops on the first non-zero exit, so the restart step is reached
+ * ONLY when install + both builds are green — never restart into a broken tree.
+ * The agent-runner typecheck needs its Bun deps (bun-types) on the HOST; a deployed
+ * tarball install never runs `bun install` here (those deps live only inside the
+ * Docker image), so the check would die with "Cannot find type definition file for
+ * 'bun'". Run it only where the host has them (a dev checkout); container/build.sh
+ * compiles the same code inside the image anyway.
+ */
 export function codexInstallSteps(root: string): InstallStep[] {
   const canTypecheckContainer = fs.existsSync(path.join(root, 'container/agent-runner/node_modules/bun-types'));
   return [
@@ -1509,44 +1137,28 @@ export function codexInstallSteps(root: string): InstallStep[] {
 export function opencodeInstallSteps(root: string): InstallStep[] {
   const canTypecheckContainer = fs.existsSync(path.join(root, 'container/agent-runner/node_modules/bun-types'));
   return [
-    { run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', 'opencode']] },
+    {
+      run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', 'opencode']],
+      label: 'Applying the OpenCode skill',
+    },
     // @opencode-ai/sdk is an agent-runner BUN dep (not the root pnpm tree), so it
     // can't ride the directive engine — add it here, before the image build.
-    { run: ['bash', ['-c', 'cd container/agent-runner && bun add @opencode-ai/sdk@1.4.17']] },
-    { run: ['pnpm', ['run', 'build']] },
+    {
+      run: ['bash', ['-c', 'cd container/agent-runner && bun add @opencode-ai/sdk@1.4.17']],
+      label: 'Adding the OpenCode SDK to the agent runner',
+    },
+    { run: ['pnpm', ['run', 'build']], label: 'Rebuilding NanoClaw' },
     ...(canTypecheckContainer
-      ? [{ run: ['pnpm', ['exec', 'tsc', '-p', 'container/agent-runner/tsconfig.json', '--noEmit']] } as InstallStep]
+      ? [
+          {
+            run: ['pnpm', ['exec', 'tsc', '-p', 'container/agent-runner/tsconfig.json', '--noEmit']],
+            label: 'Type-checking the agent runner',
+          } as InstallStep,
+        ]
       : []),
-    { run: ['bash', ['container/build.sh']] },
+    { run: ['bash', ['container/build.sh']], label: 'Rebuilding the agent image' },
     { call: () => scheduleHostRestart(), label: 'installed — restarting to load OpenCode' },
   ];
-}
-
-const opencodeInstallState: InstallState = {
-  running: false,
-  lines: [],
-  exitCode: null,
-  startedAt: null,
-  finishedAt: null,
-};
-export function getOpencodeInstallProgress(): InstallState {
-  return { ...opencodeInstallState, lines: opencodeInstallState.lines.slice(-40) };
-}
-export function startOpencodeInstall(root = process.cwd()): {
-  started: boolean;
-  error?: 'already-running' | 'skill-missing';
-} {
-  if (opencodeInstallState.running) return { started: false, error: 'already-running' };
-  if (!fs.existsSync(path.join(root, '.claude/skills/add-opencode-stack/SKILL.md'))) {
-    return { started: false, error: 'skill-missing' };
-  }
-  opencodeInstallState.running = true;
-  opencodeInstallState.lines = [];
-  opencodeInstallState.exitCode = null;
-  opencodeInstallState.startedAt = Date.now();
-  opencodeInstallState.finishedAt = null;
-  runInstallChain(opencodeInstallState, opencodeInstallSteps(root), root);
-  return { started: true };
 }
 
 // ── pi harness install (add-pi-stack) ──────────────────────────────────────
@@ -1556,42 +1168,55 @@ export function startOpencodeInstall(root = process.cwd()): {
 export function piInstallSteps(root: string): InstallStep[] {
   const canTypecheckContainer = fs.existsSync(path.join(root, 'container/agent-runner/node_modules/bun-types'));
   return [
-    { run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', 'pi']] },
-    { run: ['pnpm', ['run', 'build']] },
+    {
+      run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', 'pi']],
+      label: 'Applying the pi skill',
+    },
+    { run: ['pnpm', ['run', 'build']], label: 'Rebuilding NanoClaw' },
     ...(canTypecheckContainer
-      ? [{ run: ['pnpm', ['exec', 'tsc', '-p', 'container/agent-runner/tsconfig.json', '--noEmit']] } as InstallStep]
+      ? [
+          {
+            run: ['pnpm', ['exec', 'tsc', '-p', 'container/agent-runner/tsconfig.json', '--noEmit']],
+            label: 'Type-checking the agent runner',
+          } as InstallStep,
+        ]
       : []),
-    { run: ['bash', ['container/build.sh']] },
+    { run: ['bash', ['container/build.sh']], label: 'Rebuilding the agent image' },
     { call: () => scheduleHostRestart(), label: 'installed — restarting to load pi' },
   ];
 }
 
-const piInstallState: InstallState = {
-  running: false,
-  lines: [],
-  exitCode: null,
-  startedAt: null,
-  finishedAt: null,
-};
-export function getPiInstallProgress(): InstallState {
-  return { ...piInstallState, lines: piInstallState.lines.slice(-40) };
-}
-export function startPiInstall(root = process.cwd()): {
-  started: boolean;
-  error?: 'already-running' | 'skill-missing';
-} {
-  if (piInstallState.running) return { started: false, error: 'already-running' };
-  if (!fs.existsSync(path.join(root, '.claude/skills/add-pi-stack/SKILL.md'))) {
-    return { started: false, error: 'skill-missing' };
-  }
-  piInstallState.running = true;
-  piInstallState.lines = [];
-  piInstallState.exitCode = null;
-  piInstallState.startedAt = Date.now();
-  piInstallState.finishedAt = null;
-  runInstallChain(piInstallState, piInstallSteps(root), root);
-  return { started: true };
-}
+// ── The four harness installs, on the engine ────────────────────────────────
+// Each is its steps builder plus the two facts that differ: which skill must be
+// present, and which provider name proves the restart loaded it. State, the
+// running/installed refusals, the pnpm check, progress and restart-pending are
+// the engine's, once. (All four chains shell out to pnpm; codex and grok used to
+// discover that on their first step, half-applied.)
+const providerRegistered = (name: string) => () => listProviderContainerConfigNames().includes(name);
+registerFeatureInstall('codex', {
+  label: 'Codex',
+  installed: providerRegistered('codex'),
+  preflight: allPreflights(skillPreflight('add-codex'), pnpmPreflight),
+  steps: codexInstallSteps,
+});
+registerFeatureInstall('grok', {
+  label: 'Grok',
+  installed: providerRegistered('grok'),
+  preflight: allPreflights(skillPreflight('add-grok'), pnpmPreflight),
+  steps: grokInstallSteps,
+});
+registerFeatureInstall('opencode', {
+  label: 'OpenCode',
+  installed: providerRegistered('opencode'),
+  preflight: allPreflights(skillPreflight('add-opencode-stack'), pnpmPreflight),
+  steps: opencodeInstallSteps,
+});
+registerFeatureInstall('pi', {
+  label: 'pi',
+  installed: providerRegistered('pi'),
+  preflight: allPreflights(skillPreflight('add-pi-stack'), pnpmPreflight),
+  steps: piInstallSteps,
+});
 
 // ── Router (LiteLLM) as a server card ─────────────────────────────────────
 

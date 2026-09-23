@@ -1,8 +1,8 @@
 diff --git a/container/agent-runner/src/formatter.ts b/container/agent-runner/src/formatter.ts
-index cf192779..76ad4c61 100644
+index a08fc1da..d8655b6c 100644
 --- a/container/agent-runner/src/formatter.ts
 +++ b/container/agent-runner/src/formatter.ts
-@@ -81,6 +81,7 @@ export function isClearCommand(msg: MessageInRow): boolean {
+@@ -119,6 +119,7 @@ export function isClearCommand(msg: MessageInRow): boolean {
    return text.toLowerCase().startsWith('/clear');
  }
  
@@ -10,7 +10,7 @@ index cf192779..76ad4c61 100644
  /**
   * True for any chat that needs the outer loop's command path: /clear plus
   * admin/passthrough slash commands the SDK can only dispatch when they are
-@@ -127,6 +128,23 @@ export interface RoutingContext {
+@@ -165,6 +166,23 @@ export interface RoutingContext {
   * back to the plain first row if the batch is somehow all echo (shouldn't
   * happen — echo rows never trigger).
   */
@@ -34,7 +34,7 @@ index cf192779..76ad4c61 100644
  export function extractRouting(messages: MessageInRow[]): RoutingContext {
    const first = messages.find((m) => !isSessionEcho(m)) ?? messages[0];
    return {
-@@ -388,3 +406,31 @@ function escapeXml(str: string): string {
+@@ -424,3 +442,31 @@ function escapeXml(str: string): string {
  export function stripInternalTags(text: string): string {
    return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
  }

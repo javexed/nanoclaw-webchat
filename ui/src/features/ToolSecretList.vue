@@ -18,8 +18,8 @@ import { toolSecretRows } from './tool-secrets-state.js';
 
 const props = defineProps<{ onRemove: (secret: any) => void }>();
 
-const EMPTY = 'No system secrets';
-const SHARED = 'shared';
+const EMPTY = 'No all-agents secrets yet';
+const SHARED = 'all agents';
 const REMOVE = 'Remove';
 </script>
 

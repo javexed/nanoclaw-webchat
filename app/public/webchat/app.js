@@ -125,8 +125,15 @@ var routingRouterInfo = ref(null);
 var selectedRouteIdx = ref(null);
 //#endregion
 //#region src/features/installer-state.ts
-var codexInstallActive = ref(false);
-var opencodeInstallActive = ref(false);
+/**
+* One flag for the four harness installs (codex, opencode, pi, grok): each
+* rebuilds the agent image and restarts the host, so two at once is never
+* right. The two older names are the same ref — readers that gate a row on
+* "is a harness installing?" keep working, and now mean it for all four.
+*/
+var harnessInstallActive = ref(false);
+var codexInstallActive = harnessInstallActive;
+var opencodeInstallActive = harnessInstallActive;
 var routingInstallActive = ref(false);
 var sttInstallActive = ref(false);
 var ttsInstallActive = ref(false);
@@ -478,17 +485,17 @@ var _hoisted_3$57 = {
 	class: "approval-triage"
 };
 var _hoisted_4$47 = ["title"];
-var _hoisted_5$36 = {
+var _hoisted_5$37 = {
 	key: 0,
 	class: "triage-note"
 };
-var _hoisted_6$30 = {
+var _hoisted_6$31 = {
 	key: 1,
 	class: "approval-payload"
 };
-var _hoisted_7$21 = { class: "approval-actions" };
-var _hoisted_8$16 = ["disabled", "onClick"];
-var _hoisted_9$11 = {
+var _hoisted_7$22 = { class: "approval-actions" };
+var _hoisted_8$18 = ["disabled", "onClick"];
+var _hoisted_9$13 = {
 	key: 2,
 	class: "approval-error"
 };
@@ -587,17 +594,17 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 						class: normalizeClass(["triage-flag", { authoritative: c.authoritative }]),
 						title: chipTitle(c.authoritative)
 					}, toDisplayString(c.flag), 11, _hoisted_4$47);
-				}), 128)), triageNote() ? (openBlock(), createElementBlock("span", _hoisted_5$36, toDisplayString(triageNote()), 1)) : createCommentVNode("", true)])) : createCommentVNode("", true),
-				__props.approval.payload ? (openBlock(), createElementBlock("pre", _hoisted_6$30, toDisplayString(payloadText(__props.approval.payload)), 1)) : createCommentVNode("", true),
-				createElementVNode("div", _hoisted_7$21, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
+				}), 128)), triageNote() ? (openBlock(), createElementBlock("span", _hoisted_5$37, toDisplayString(triageNote()), 1)) : createCommentVNode("", true)])) : createCommentVNode("", true),
+				__props.approval.payload ? (openBlock(), createElementBlock("pre", _hoisted_6$31, toDisplayString(payloadText(__props.approval.payload)), 1)) : createCommentVNode("", true),
+				createElementVNode("div", _hoisted_7$22, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 					return openBlock(), createElementBlock("button", {
 						key: i,
 						class: normalizeClass(btnClass(o.value)),
 						disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
 						onClick: ($event) => props.onRespond(__props.approval.questionId, o.value)
-					}, toDisplayString(o.label || o.value), 11, _hoisted_8$16);
+					}, toDisplayString(o.label || o.value), 11, _hoisted_8$18);
 				}), 128))]),
-				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_9$11, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
+				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_9$13, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
 			], 8, _hoisted_1$71);
 		};
 	}
@@ -862,11 +869,11 @@ var _hoisted_1$69 = ["data-agent"];
 var _hoisted_2$60 = { class: "sender" };
 var _hoisted_3$55 = { class: "thinking-verb" };
 var _hoisted_4$46 = { class: "thinking-elapsed" };
-var _hoisted_5$35 = { class: "bubble" };
-var _hoisted_6$29 = ["hidden"];
-var _hoisted_7$20 = ["hidden"];
-var _hoisted_8$15 = ["hidden"];
-var _hoisted_9$10 = {
+var _hoisted_5$36 = { class: "bubble" };
+var _hoisted_6$30 = ["hidden"];
+var _hoisted_7$21 = ["hidden"];
+var _hoisted_8$17 = ["hidden"];
+var _hoisted_9$12 = {
 	ref: "trace",
 	class: "thinking-fulltrace"
 };
@@ -954,15 +961,15 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 					class: "stop-square",
 					"aria-hidden": "true"
 				}, null, -1)), createTextVNode(toDisplayString(STOP))])
-			]), createElementVNode("div", _hoisted_5$35, [
+			]), createElementVNode("div", _hoisted_5$36, [
 				createElementVNode("div", {
 					class: "thinking-milestone",
 					hidden: !__props.turn.milestone
-				}, toDisplayString(__props.turn.milestone), 9, _hoisted_6$29),
+				}, toDisplayString(__props.turn.milestone), 9, _hoisted_6$30),
 				createElementVNode("div", {
 					class: "thinking-target",
 					hidden: !__props.turn.detail
-				}, toDisplayString(__props.turn.detail), 9, _hoisted_7$20),
+				}, toDisplayString(__props.turn.detail), 9, _hoisted_7$21),
 				createElementVNode("div", {
 					ref: "feed",
 					class: "thinking-feed",
@@ -972,8 +979,8 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 						key: l.key,
 						class: normalizeClass(l.fading ? "thinking-feed-line fading" : "thinking-feed-line")
 					}, toDisplayString(l.text), 3);
-				}), 128))], 8, _hoisted_8$15),
-				createElementVNode("div", _hoisted_9$10, [createTextVNode(toDisplayString(traceEmpty.value), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(traceRows.value, (l, i) => {
+				}), 128))], 8, _hoisted_8$17),
+				createElementVNode("div", _hoisted_9$12, [createTextVNode(toDisplayString(traceEmpty.value), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(traceRows.value, (l, i) => {
 					return openBlock(), createElementBlock("div", {
 						key: i,
 						class: "thinking-fulltrace-line"
@@ -1429,14 +1436,14 @@ var _hoisted_1$67 = { class: "file-bubble" };
 var _hoisted_2$59 = ["src", "alt"];
 var _hoisted_3$54 = { class: "file-info" };
 var _hoisted_4$45 = ["innerHTML"];
-var _hoisted_5$34 = { class: "file-name" };
-var _hoisted_6$28 = { class: "file-size" };
-var _hoisted_7$19 = ["href", "download"];
-var _hoisted_8$14 = {
+var _hoisted_5$35 = { class: "file-name" };
+var _hoisted_6$29 = { class: "file-size" };
+var _hoisted_7$20 = ["href", "download"];
+var _hoisted_8$16 = {
 	key: 0,
 	class: "file-caption"
 };
-var _hoisted_9$9 = ["innerHTML"];
+var _hoisted_9$11 = ["innerHTML"];
 var DOWNLOAD = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-download\"></use></svg>";
 var IMAGE = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-image\"></use></svg>";
 var FILE_TEXT = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-file-text\"></use></svg>";
@@ -1503,21 +1510,21 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 					class: "file-icon",
 					innerHTML: fileIcon(__props.row.file)
 				}, null, 8, _hoisted_4$45),
-				createElementVNode("span", _hoisted_5$34, toDisplayString(__props.row.file.filename), 1),
-				createElementVNode("span", _hoisted_6$28, toDisplayString(fileSize(__props.row.file.size)), 1),
+				createElementVNode("span", _hoisted_5$35, toDisplayString(__props.row.file.filename), 1),
+				createElementVNode("span", _hoisted_6$29, toDisplayString(fileSize(__props.row.file.size)), 1),
 				createElementVNode("a", {
 					href: __props.row.file.url,
 					download: __props.row.file.filename,
 					class: "file-download",
 					title: DOWNLOAD_TITLE,
 					innerHTML: DOWNLOAD
-				}, null, 8, _hoisted_7$19)
-			])]), __props.row.caption ? (openBlock(), createElementBlock("div", _hoisted_8$14, toDisplayString(__props.row.caption), 1)) : createCommentVNode("", true)], 512)) : __props.row.html ? (openBlock(), createElementBlock("div", {
+				}, null, 8, _hoisted_7$20)
+			])]), __props.row.caption ? (openBlock(), createElementBlock("div", _hoisted_8$16, toDisplayString(__props.row.caption), 1)) : createCommentVNode("", true)], 512)) : __props.row.html ? (openBlock(), createElementBlock("div", {
 				key: 1,
 				ref: bind,
 				class: "bubble",
 				innerHTML: __props.row.html
-			}, null, 8, _hoisted_9$9)) : (openBlock(), createElementBlock("div", {
+			}, null, 8, _hoisted_9$11)) : (openBlock(), createElementBlock("div", {
 				key: 2,
 				ref: bind,
 				class: "bubble"
@@ -1742,27 +1749,27 @@ var _hoisted_1$66 = {
 var _hoisted_2$58 = { class: "skill-head" };
 var _hoisted_3$53 = { class: "skill-name" };
 var _hoisted_4$44 = { class: "skill-draft-actions" };
-var _hoisted_5$33 = {
+var _hoisted_5$34 = {
 	key: 1,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_6$27 = {
+var _hoisted_6$28 = {
 	key: 2,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_7$18 = {
+var _hoisted_7$19 = {
 	key: 3,
 	class: "approval-inroom-note"
 };
-var _hoisted_8$13 = {
+var _hoisted_8$15 = {
 	key: 4,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_9$8 = {
+var _hoisted_9$10 = {
 	key: 5,
 	class: "skill-draft-card"
 };
-var _hoisted_10$8 = { class: "skill-head" };
+var _hoisted_10$9 = { class: "skill-head" };
 var _hoisted_11$6 = { class: "skill-name" };
 var _hoisted_12$6 = { class: "skill-desc" };
 var _hoisted_13$5 = { class: "skill-draft-actions" };
@@ -1846,12 +1853,12 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 				type: "button",
 				class: "btn btn-secondary",
 				onClick: _cache[1] || (_cache[1] = ($event) => props.onUndoKeep())
-			}, toDisplayString(UNDO$1))])])) : unref(draftAction)[__props.draftId]?.phase === "discarded" ? (openBlock(), createElementBlock("div", _hoisted_5$33, [createElementVNode("span", null, "🗑 " + toDisplayString(unref(draftAction)[__props.draftId].skillName || __props.title) + " — discarded", 1), createElementVNode("button", {
+			}, toDisplayString(UNDO$1))])])) : unref(draftAction)[__props.draftId]?.phase === "discarded" ? (openBlock(), createElementBlock("div", _hoisted_5$34, [createElementVNode("span", null, "🗑 " + toDisplayString(unref(draftAction)[__props.draftId].skillName || __props.title) + " — discarded", 1), createElementVNode("button", {
 				type: "button",
 				class: "btn btn-ghost",
 				onClick: _cache[2] || (_cache[2] = ($event) => props.onUndoDiscard())
-			}, toDisplayString(UNDO$1))])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_6$27, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : unref(draftAction)[__props.draftId]?.phase === "undoing" ? (openBlock(), createElementBlock("div", _hoisted_7$18, toDisplayString(UNDOING))) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_8$13, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_9$8, [
-				createElementVNode("div", _hoisted_10$8, [createElementVNode("span", _hoisted_11$6, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
+			}, toDisplayString(UNDO$1))])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_6$28, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : unref(draftAction)[__props.draftId]?.phase === "undoing" ? (openBlock(), createElementBlock("div", _hoisted_7$19, toDisplayString(UNDOING))) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_8$15, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_9$10, [
+				createElementVNode("div", _hoisted_10$9, [createElementVNode("span", _hoisted_11$6, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
 					key: 0,
 					origin: {
 						label: `learned · ${__props.agentName}`,
@@ -1927,24 +1934,24 @@ var _hoisted_3$52 = {
 	class: "context-divider"
 };
 var _hoisted_4$43 = ["data-question-id"];
-var _hoisted_5$32 = {
+var _hoisted_5$33 = {
 	key: 0,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_6$26 = {
+var _hoisted_6$27 = {
 	key: 2,
 	class: "approval-inroom-note"
 };
-var _hoisted_7$17 = ["data-draft-id"];
-var _hoisted_8$12 = {
+var _hoisted_7$18 = ["data-draft-id"];
+var _hoisted_8$14 = {
 	key: 0,
 	class: "msg-body"
 };
-var _hoisted_9$7 = {
+var _hoisted_9$9 = {
 	key: 2,
 	class: "thoughts"
 };
-var _hoisted_10$7 = {
+var _hoisted_10$8 = {
 	key: 0,
 	class: "thoughts-preview"
 };
@@ -2002,15 +2009,15 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 					key: 2,
 					class: "msg approval-msg",
 					"data-question-id": row.id || ""
-				}, [row.approvalState === "resolved" ? (openBlock(), createElementBlock("div", _hoisted_5$32, toDisplayString(row.note), 1)) : row.approvalState === "eligible" ? (openBlock(), createBlock(ApprovalCard_default, {
+				}, [row.approvalState === "resolved" ? (openBlock(), createElementBlock("div", _hoisted_5$33, toDisplayString(row.note), 1)) : row.approvalState === "eligible" ? (openBlock(), createBlock(ApprovalCard_default, {
 					key: 1,
 					approval: row.payload,
 					"on-respond": props.onApprovalRespond
-				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", _hoisted_6$26, toDisplayString(row.note), 1))], 8, _hoisted_4$43)) : row.kind === "draft" ? (openBlock(), createElementBlock("div", {
+				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", _hoisted_6$27, toDisplayString(row.note), 1))], 8, _hoisted_4$43)) : row.kind === "draft" ? (openBlock(), createElementBlock("div", {
 					key: 3,
 					class: "msg skill-draft-msg",
 					"data-draft-id": row.id || ""
-				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_7$17)) : (openBlock(), createElementBlock("div", mergeProps({
+				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_7$18)) : (openBlock(), createElementBlock("div", mergeProps({
 					key: 4,
 					class: row.cls
 				}, { ref_for: true }, row.id ? { "data-message-id": row.id } : {}, { style: row.isA2a ? { "--a2a-accent": row.a2aAccent } : void 0 }), [
@@ -2024,7 +2031,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						class: "icon",
 						"aria-hidden": "true"
 					}, [createElementVNode("use", { href: "#i-bot" })], -1)), createTextVNode(toDisplayString(" " + row.sender), 1)], 64)) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [createTextVNode(toDisplayString(row.isMine ? "You" : row.sender), 1)], 64))], 2),
-					row.body ? (openBlock(), createElementBlock("div", _hoisted_8$12, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
+					row.body ? (openBlock(), createElementBlock("div", _hoisted_8$14, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
 						key: 0,
 						"message-id": row.id
 					}, null, 8, ["message-id"])) : createCommentVNode("", true), createVNode(MessageBubble_default, {
@@ -2049,13 +2056,13 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						"clamp-a2a",
 						"on-open-lightbox"
 					])),
-					row.thoughts && row.thoughts.length ? (openBlock(), createElementBlock("details", _hoisted_9$7, [createElementVNode("summary", null, [
+					row.thoughts && row.thoughts.length ? (openBlock(), createElementBlock("details", _hoisted_9$9, [createElementVNode("summary", null, [
 						_cache[2] || (_cache[2] = createElementVNode("svg", {
 							class: "icon",
 							"aria-hidden": "true"
 						}, [createElementVNode("use", { href: "#i-sparkles" })], -1)),
 						createTextVNode(toDisplayString(` ${THOUGHTS} (${row.thoughts.length})`), 1),
-						thoughtsPreview(row.thoughts) ? (openBlock(), createElementBlock("span", _hoisted_10$7, toDisplayString(thoughtsPreview(row.thoughts)), 1)) : createCommentVNode("", true)
+						thoughtsPreview(row.thoughts) ? (openBlock(), createElementBlock("span", _hoisted_10$8, toDisplayString(thoughtsPreview(row.thoughts)), 1)) : createCommentVNode("", true)
 					]), createElementVNode("div", _hoisted_11$5, [(openBlock(true), createElementBlock(Fragment, null, renderList(row.thoughts, (l, i) => {
 						return openBlock(), createElementBlock("div", {
 							key: i,
@@ -2756,8 +2763,8 @@ var _hoisted_1$63 = {
 var _hoisted_2$56 = { class: "skill-info" };
 var _hoisted_3$51 = { class: "skill-head" };
 var _hoisted_4$42 = ["onClick"];
-var EMPTY$17 = "No system secrets";
-var SHARED = "shared";
+var EMPTY$18 = "No all-agents secrets yet";
+var SHARED = "all agents";
 var REMOVE$7 = "Remove";
 //#endregion
 //#region src/features/ToolSecretList.vue
@@ -2782,7 +2789,7 @@ var ToolSecretList_default = /* @__PURE__ */ defineComponent({
 		*/
 		const props = __props;
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [unref(toolSecretRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$63, toDisplayString(EMPTY$17))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(toolSecretRows), (s, i) => {
+			return openBlock(), createElementBlock(Fragment, null, [unref(toolSecretRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$63, toDisplayString(EMPTY$18))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(toolSecretRows), (s, i) => {
 				return openBlock(), createElementBlock("li", {
 					key: i,
 					class: "skill-source-row secret-row"
@@ -2947,12 +2954,12 @@ var _hoisted_1$61 = [
 var _hoisted_2$54 = ["innerHTML"];
 var _hoisted_3$49 = { class: "agent-info" };
 var _hoisted_4$40 = { class: "agent-info-name" };
-var _hoisted_5$31 = {
+var _hoisted_5$32 = {
 	key: 1,
 	class: "agent-harness-badge",
 	title: "Runs on the OpenCode harness"
 };
-var _hoisted_6$25 = {
+var _hoisted_6$26 = {
 	key: 2,
 	class: "agent-harness-badge",
 	title: "Runs on the Grok harness"
@@ -3008,12 +3015,43 @@ var AgentList_default = /* @__PURE__ */ defineComponent({
 						key: 0,
 						class: normalizeClass(["agent-status-badge", "status-" + (agent.status || "active")])
 					}, toDisplayString(agent.status), 3)) : createCommentVNode("", true),
-					agent.provider === "opencode" ? (openBlock(), createElementBlock("span", _hoisted_5$31, "OpenCode")) : agent.provider === "grok" ? (openBlock(), createElementBlock("span", _hoisted_6$25, "Grok")) : createCommentVNode("", true)
+					agent.provider === "opencode" ? (openBlock(), createElementBlock("span", _hoisted_5$32, "OpenCode")) : agent.provider === "grok" ? (openBlock(), createElementBlock("span", _hoisted_6$26, "Grok")) : createCommentVNode("", true)
 				])], 16, _hoisted_1$61);
 			}), 128);
 		};
 	}
 });
+//#endregion
+//#region src/features/agent-lists-state.ts
+/** Unwired, non-archived agents offered when adding to an existing room. */
+var addAgentCandidates = ref([]);
+/** Non-archived agents offered by the room-create form. */
+var createAgentCandidates = ref([]);
+/**
+* Whether ANY agent exists, archived or not.
+*
+* Separate from createAgentCandidates because the imperative version keyed its
+* empty note off state.allAgents.length, not off the filtered list — so with
+* every agent archived it rendered an empty <ul> and no note. That is arguably
+* a bug, but harmonising it is a behaviour change and this phase does not make
+* those; the flag reproduces it exactly.
+*/
+var createAgentAnyExist = ref(false);
+var agentSecretRows = ref([]);
+/** One line: what the viewer's own turns send, per host. */
+var agentSecretEffective = ref("");
+/**
+* Deploy keys for the open agent, already shaped.
+*
+* `meta` is composed by the renderer because it was one text node in the
+* imperative row; `key` is the untouched API object, which is what the delete
+* call takes.
+*/
+var agentKeyRows = ref([]);
+/** Env var NAMES for the open agent — values are never sent to the client. */
+var agentEnvNames = ref([]);
+/** Names whose delete is in flight. */
+var agentEnvDeleting = ref(/* @__PURE__ */ new Set());
 //#endregion
 //#region src/features/AgentWiredRooms.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$60 = {
@@ -3035,7 +3073,7 @@ var _hoisted_4$39 = [
 	"innerHTML",
 	"onClick"
 ];
-var EMPTY$16 = "Not assigned to any room yet.";
+var EMPTY$17 = "Not assigned to any room yet.";
 //#endregion
 //#region src/features/AgentWiredRooms.vue
 var AgentWiredRooms_default = /* @__PURE__ */ defineComponent({
@@ -3079,7 +3117,7 @@ var AgentWiredRooms_default = /* @__PURE__ */ defineComponent({
 			}
 		}
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$60, toDisplayString(EMPTY$16))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
+			return openBlock(), createElementBlock(Fragment, null, [rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$60, toDisplayString(EMPTY$17))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", { key: r.id }, [createElementVNode("span", {
 					class: "room-wired-name room-wired-name-link",
 					role: "button",
@@ -3115,11 +3153,11 @@ var _hoisted_3$47 = {
 	class: "agent-session-row muted"
 };
 var _hoisted_4$38 = { class: "agent-session-meta" };
-var _hoisted_5$30 = { class: "agent-session-label" };
-var _hoisted_6$24 = { class: "agent-session-sub" };
-var _hoisted_7$16 = ["onClick"];
+var _hoisted_5$31 = { class: "agent-session-label" };
+var _hoisted_6$25 = { class: "agent-session-sub" };
+var _hoisted_7$17 = ["onClick"];
 var LOADING$3 = "Loading…";
-var EMPTY$15 = "No active sessions.";
+var EMPTY$16 = "No active sessions.";
 var RESET_TITLE = "Reset this session (inject /clear — drops context, next turn starts fresh)";
 /**
 * Bound, not written as template text. `btn.textContent = 'Reset'` produced
@@ -3160,56 +3198,20 @@ var AgentSessions_default = /* @__PURE__ */ defineComponent({
 			props.onReset(id, e.currentTarget);
 		}
 		return (_ctx, _cache) => {
-			return unref(sessionsPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$59, toDisplayString(LOADING$3))) : unref(sessionsPhase) === "error" ? (openBlock(), createElementBlock("li", _hoisted_2$52, toDisplayString(unref(sessionsError)), 1)) : rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_3$47, toDisplayString(EMPTY$15))) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(rows.value, (r) => {
+			return unref(sessionsPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$59, toDisplayString(LOADING$3))) : unref(sessionsPhase) === "error" ? (openBlock(), createElementBlock("li", _hoisted_2$52, toDisplayString(unref(sessionsError)), 1)) : rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_3$47, toDisplayString(EMPTY$16))) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", {
 					key: r.id,
 					class: "agent-session-row"
-				}, [createElementVNode("div", _hoisted_4$38, [createElementVNode("span", _hoisted_5$30, toDisplayString(r.label), 1), createElementVNode("span", _hoisted_6$24, toDisplayString(r.sub), 1)]), createElementVNode("button", {
+				}, [createElementVNode("div", _hoisted_4$38, [createElementVNode("span", _hoisted_5$31, toDisplayString(r.label), 1), createElementVNode("span", _hoisted_6$25, toDisplayString(r.sub), 1)]), createElementVNode("button", {
 					type: "button",
 					class: "btn btn-ghost agent-session-reset",
 					title: RESET_TITLE,
 					onClick: ($event) => reset(r.id, $event)
-				}, toDisplayString(RESET_LABEL), 8, _hoisted_7$16)]);
+				}, toDisplayString(RESET_LABEL), 8, _hoisted_7$17)]);
 			}), 128));
 		};
 	}
 });
-//#endregion
-//#region src/features/agent-lists-state.ts
-/** Unwired, non-archived agents offered when adding to an existing room. */
-var addAgentCandidates = ref([]);
-/** Non-archived agents offered by the room-create form. */
-var createAgentCandidates = ref([]);
-/**
-* Whether ANY agent exists, archived or not.
-*
-* Separate from createAgentCandidates because the imperative version keyed its
-* empty note off state.allAgents.length, not off the filtered list — so with
-* every agent archived it rendered an empty <ul> and no note. That is arguably
-* a bug, but harmonising it is a behaviour change and this phase does not make
-* those; the flag reproduces it exactly.
-*/
-var createAgentAnyExist = ref(false);
-/**
-* Secret rows, already flattened. The imperative version built shared rows and
-* per-member personal rows from one local row() helper and appended both to the
-* same <ul>; the component sees a single list because that is what the DOM was.
-* `scope` is carried through untouched — it is the argument removeToolSecret
-* needs, not something the template renders.
-*/
-var agentSecretRows = ref([]);
-/**
-* Deploy keys for the open agent, already shaped.
-*
-* `meta` is composed by the renderer because it was one text node in the
-* imperative row; `key` is the untouched API object, which is what the delete
-* call takes.
-*/
-var agentKeyRows = ref([]);
-/** Env var NAMES for the open agent — values are never sent to the client. */
-var agentEnvNames = ref([]);
-/** Names whose delete is in flight. */
-var agentEnvDeleting = ref(/* @__PURE__ */ new Set());
 //#endregion
 //#region src/features/AddAgentPicker.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$58 = {
@@ -3219,8 +3221,8 @@ var _hoisted_1$58 = {
 var _hoisted_2$51 = ["value", "id"];
 var _hoisted_3$46 = ["for"];
 var _hoisted_4$37 = { class: "room-add-agent-name" };
-var _hoisted_5$29 = { class: "room-add-agent-sub" };
-var EMPTY$14 = "No unwired agents — switch to \"New\" to create one.";
+var _hoisted_5$30 = { class: "room-add-agent-sub" };
+var EMPTY$15 = "No unwired agents — switch to \"New\" to create one.";
 //#endregion
 //#region src/features/AddAgentPicker.vue
 var AddAgentPicker_default = /* @__PURE__ */ defineComponent({
@@ -3251,7 +3253,7 @@ var AddAgentPicker_default = /* @__PURE__ */ defineComponent({
 			sub: a.folder || a.id
 		})));
 		return (_ctx, _cache) => {
-			return rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$58, toDisplayString(EMPTY$14))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (r) => {
+			return rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$58, toDisplayString(EMPTY$15))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", {
 					key: r.id,
 					class: "room-add-agent-row"
@@ -3263,7 +3265,7 @@ var AddAgentPicker_default = /* @__PURE__ */ defineComponent({
 				}, null, 40, _hoisted_2$51), createElementVNode("label", {
 					for: r.cbId,
 					class: "room-add-agent-label"
-				}, [createElementVNode("span", _hoisted_4$37, toDisplayString(r.name), 1), createElementVNode("span", _hoisted_5$29, toDisplayString(r.sub), 1)], 8, _hoisted_3$46)]);
+				}, [createElementVNode("span", _hoisted_4$37, toDisplayString(r.name), 1), createElementVNode("span", _hoisted_5$30, toDisplayString(r.sub), 1)], 8, _hoisted_3$46)]);
 			}), 128));
 		};
 	}
@@ -3276,7 +3278,7 @@ var _hoisted_1$57 = {
 };
 var _hoisted_2$50 = ["value", "id"];
 var _hoisted_3$45 = ["for"];
-var EMPTY$13 = "No agents yet — create one inline below.";
+var EMPTY$14 = "No agents yet — create one inline below.";
 //#endregion
 //#region src/features/RoomCreateAgentChecklist.vue
 var RoomCreateAgentChecklist_default = /* @__PURE__ */ defineComponent({
@@ -3306,7 +3308,7 @@ var RoomCreateAgentChecklist_default = /* @__PURE__ */ defineComponent({
 			label: a.name ?? ""
 		})));
 		return (_ctx, _cache) => {
-			return !unref(createAgentAnyExist) ? (openBlock(), createElementBlock("li", _hoisted_1$57, toDisplayString(EMPTY$13))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (r) => {
+			return !unref(createAgentAnyExist) ? (openBlock(), createElementBlock("li", _hoisted_1$57, toDisplayString(EMPTY$14))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", { key: r.id }, [createElementVNode("input", {
 					type: "checkbox",
 					value: r.id,
@@ -3318,14 +3320,33 @@ var RoomCreateAgentChecklist_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/AgentSecretList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$56 = { class: "skill-info" };
-var _hoisted_2$49 = { class: "skill-head" };
-var _hoisted_3$44 = {
+var _hoisted_1$56 = {
+	key: 0,
+	class: "secret-effective"
+};
+var _hoisted_2$49 = {
+	key: 1,
+	class: "skill-desc"
+};
+var _hoisted_3$44 = { class: "secret-section-head" };
+var _hoisted_4$36 = { class: "skill-info" };
+var _hoisted_5$29 = { class: "skill-head" };
+var _hoisted_6$24 = {
+	key: 0,
+	class: "skill-badge secret-scope"
+};
+var _hoisted_7$16 = {
+	key: 1,
+	class: "skill-badge secret-scope skill-badge-user"
+};
+var _hoisted_8$13 = {
 	key: 0,
 	class: "skill-desc"
 };
-var _hoisted_4$36 = ["onClick"];
+var _hoisted_9$8 = ["onClick"];
 var REMOVE$6 = "Remove";
+var EMPTY$13 = "No secrets yet";
+var MINE = "only you";
 //#endregion
 //#region src/features/AgentSecretList.vue
 var AgentSecretList_default = /* @__PURE__ */ defineComponent({
@@ -3337,26 +3358,53 @@ var AgentSecretList_default = /* @__PURE__ */ defineComponent({
 		*
 		* Mounted into <ul id="agent-secrets-list">, exclusively owned by this module.
 		*
-		* The imperative version had a local row() helper and called it twice: once per
-		* shared secret, then once per member secret with `personal` set. Both appended
-		* to the same <ul>, so the DOM was always one flat list — the rows arrive here
-		* already flattened and the component does not know there were two loops.
-		*
-		* No empty state, deliberately. The original rendered nothing when both loops
-		* were empty, and adding a note here would be new UI rather than a conversion.
+		* Grouped by REACH, nearest scope first, because "whose is this?" was the
+		* question the flat list could not answer: yours, everyone on this agent's, the
+		* all-agents ones, and other people's own — which are listed so an admin can
+		* see who holds a key here, but carry no Remove: only their owner may touch
+		* them, and a button the server refuses is worse than none.
 		*/
 		const props = __props;
+		const SECTIONS = [
+			{
+				reach: "mine",
+				title: "Only you"
+			},
+			{
+				reach: "agent",
+				title: "Everyone on this agent"
+			},
+			{
+				reach: "workspace",
+				title: "All agents"
+			},
+			{
+				reach: "other",
+				title: "Other people (read-only)"
+			}
+		];
+		const sections = computed(() => SECTIONS.map((s) => ({
+			...s,
+			rows: agentSecretRows.value.filter((r) => r.reach === s.reach)
+		})).filter((s) => s.rows.length > 0));
 		return (_ctx, _cache) => {
-			return openBlock(true), createElementBlock(Fragment, null, renderList(unref(agentSecretRows), (r) => {
-				return openBlock(), createElementBlock("li", {
-					key: r.key,
-					class: "skill-source-row secret-row"
-				}, [createElementVNode("div", _hoisted_1$56, [createElementVNode("div", _hoisted_2$49, [createElementVNode("span", null, toDisplayString(r.host), 1), createElementVNode("span", { class: normalizeClass(`skill-badge secret-scope${r.personal ? " skill-badge-user" : ""}`) }, toDisplayString(r.personal ? "personal" : "shared"), 3)]), r.personal ? (openBlock(), createElementBlock("span", _hoisted_3$44, toDisplayString(r.ownerLabel), 1)) : createCommentVNode("", true)]), createElementVNode("button", {
-					class: "btn btn-danger",
-					type: "button",
-					onClick: ($event) => props.onRemove(r)
-				}, toDisplayString(REMOVE$6), 8, _hoisted_4$36)]);
-			}), 128);
+			return openBlock(), createElementBlock(Fragment, null, [
+				unref(agentSecretEffective) ? (openBlock(), createElementBlock("li", _hoisted_1$56, toDisplayString(unref(agentSecretEffective)), 1)) : createCommentVNode("", true),
+				sections.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_2$49, toDisplayString(EMPTY$13))) : createCommentVNode("", true),
+				(openBlock(true), createElementBlock(Fragment, null, renderList(sections.value, (s) => {
+					return openBlock(), createElementBlock(Fragment, { key: s.reach }, [createElementVNode("li", _hoisted_3$44, toDisplayString(s.title), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(s.rows, (r) => {
+						return openBlock(), createElementBlock("li", {
+							key: r.key,
+							class: "skill-source-row secret-row"
+						}, [createElementVNode("div", _hoisted_4$36, [createElementVNode("div", _hoisted_5$29, [createElementVNode("span", null, toDisplayString(r.host), 1), r.reach === "other" ? (openBlock(), createElementBlock("span", _hoisted_6$24, toDisplayString(r.ownerLabel), 1)) : r.reach === "mine" ? (openBlock(), createElementBlock("span", _hoisted_7$16, toDisplayString(MINE))) : createCommentVNode("", true)]), r.note ? (openBlock(), createElementBlock("span", _hoisted_8$13, toDisplayString(r.note), 1)) : createCommentVNode("", true)]), r.canRemove ? (openBlock(), createElementBlock("button", {
+							key: 0,
+							class: "btn btn-danger",
+							type: "button",
+							onClick: ($event) => props.onRemove(r)
+						}, toDisplayString(REMOVE$6), 8, _hoisted_9$8)) : createCommentVNode("", true)]);
+					}), 128))], 64);
+				}), 128))
+			], 64);
 		};
 	}
 });
@@ -4043,7 +4091,7 @@ var _hoisted_6$18 = {
 	class: "perms-you-tag"
 };
 var _hoisted_7$14 = { class: "perms-user-id-sub" };
-var _hoisted_8$11 = { class: "perms-user-summary" };
+var _hoisted_8$12 = { class: "perms-user-summary" };
 var NO_USERS = "No users yet — anyone who authenticates will appear here.";
 var NO_MATCH$2 = "No users match.";
 //#endregion
@@ -4117,7 +4165,7 @@ var PermsUserList_default = /* @__PURE__ */ defineComponent({
 				}), [
 					createElementVNode("div", _hoisted_4$27, [createElementVNode("span", _hoisted_5$22, toDisplayString(unref(userDisplayName)(u)), 1), u.id === unref(permsMyUserId) ? (openBlock(), createElementBlock("span", _hoisted_6$18, "YOU")) : createCommentVNode("", true)]),
 					createElementVNode("div", _hoisted_7$14, toDisplayString(u.id), 1),
-					createElementVNode("div", _hoisted_8$11, toDisplayString(unref(userRoleSummary)(u)), 1)
+					createElementVNode("div", _hoisted_8$12, toDisplayString(unref(userRoleSummary)(u)), 1)
 				], 16, _hoisted_3$34);
 			}), 128));
 		};
@@ -4742,7 +4790,7 @@ var _hoisted_4$23 = { class: "mcp-tools-list" };
 var _hoisted_5$20 = ["checked", "data-tool"];
 var _hoisted_6$17 = ["title"];
 var _hoisted_7$13 = ["disabled"];
-var _hoisted_8$10 = {
+var _hoisted_8$11 = {
 	key: 3,
 	class: "room-prime-note"
 };
@@ -4848,7 +4896,7 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 					disabled: unref(oauthBusy) || void 0,
 					onClick: _cache[2] || (_cache[2] = ($event) => props.onOauth())
 				}, toDisplayString(oauthLabel.value), 9, _hoisted_7$13),
-				s.value.auth ? (openBlock(), createElementBlock("p", _hoisted_8$10, toDisplayString(authNote.value), 1)) : createCommentVNode("", true)
+				s.value.auth ? (openBlock(), createElementBlock("p", _hoisted_8$11, toDisplayString(authNote.value), 1)) : createCommentVNode("", true)
 			], 64)) : createCommentVNode("", true);
 		};
 	}
@@ -5989,12 +6037,12 @@ var _hoisted_6$15 = {
 	class: "thread-unread"
 };
 var _hoisted_7$11 = ["onClick", "innerHTML"];
-var _hoisted_8$9 = {
+var _hoisted_8$10 = {
 	key: 3,
 	class: "thread-menu"
 };
-var _hoisted_9$6 = ["onClick"];
-var _hoisted_10$6 = ["onClick"];
+var _hoisted_9$7 = ["onClick"];
+var _hoisted_10$7 = ["onClick"];
 var RENAME = "Rename";
 var DELETE = "Delete";
 var NEW_THREAD$1 = "New thread";
@@ -6125,11 +6173,11 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 						"aria-label": NEW_THREAD$1,
 						onClick: _cache[0] || (_cache[0] = withModifiers((...args) => __props.onStartCreate && __props.onStartCreate(...args), ["stop"]))
 					}, toDisplayString(PLUS$1))) : createCommentVNode("", true),
-					__props.active && unref(openThreadMenuId) === t.thread_id ? (openBlock(), createElementBlock("div", _hoisted_8$9, [createElementVNode("button", { onClick: withModifiers(($event) => __props.onStartRename(t.thread_id), ["stop"]) }, toDisplayString(RENAME), 8, _hoisted_9$6), unref(state).isOwnerView ? (openBlock(), createElementBlock("button", {
+					__props.active && unref(openThreadMenuId) === t.thread_id ? (openBlock(), createElementBlock("div", _hoisted_8$10, [createElementVNode("button", { onClick: withModifiers(($event) => __props.onStartRename(t.thread_id), ["stop"]) }, toDisplayString(RENAME), 8, _hoisted_9$7), unref(state).isOwnerView ? (openBlock(), createElementBlock("button", {
 						key: 0,
 						class: "danger",
 						onClick: withModifiers(($event) => __props.onDelete(t.thread_id), ["stop"])
-					}, toDisplayString(DELETE), 8, _hoisted_10$6)) : createCommentVNode("", true)])) : createCommentVNode("", true)
+					}, toDisplayString(DELETE), 8, _hoisted_10$7)) : createCommentVNode("", true)])) : createCommentVNode("", true)
 				], 64))], 16, _hoisted_3$27))], 64);
 			}), 128)), __props.active && unref(state).threadCreating ? (openBlock(), createBlock(ThreadNameInput_default, {
 				key: 0,
@@ -6174,12 +6222,12 @@ var _hoisted_6$14 = {
 	title: "You were mentioned here"
 };
 var _hoisted_7$10 = ["innerHTML"];
-var _hoisted_8$8 = {
+var _hoisted_8$9 = {
 	key: 4,
 	class: "thread-list"
 };
-var _hoisted_9$5 = { class: "room-actions" };
-var _hoisted_10$5 = ["onClick", "innerHTML"];
+var _hoisted_9$6 = { class: "room-actions" };
+var _hoisted_10$6 = ["onClick", "innerHTML"];
 var _hoisted_11$4 = ["aria-label", "onClick"];
 var _hoisted_12$4 = {
 	key: 5,
@@ -6410,7 +6458,7 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 						"aria-label": "Pinned",
 						innerHTML: unref(PIN_ICON)
 					}, null, 8, _hoisted_7$10)) : createCommentVNode("", true),
-					adding(room) ? (openBlock(), createElementBlock("div", _hoisted_8$8, [createVNode(ThreadNameInput_default, {
+					adding(room) ? (openBlock(), createElementBlock("div", _hoisted_8$9, [createVNode(ThreadNameInput_default, {
 						"aria-label": `New thread in #${room.id}`,
 						onSubmit: (title) => __props.onCreateThread(room.id, title),
 						onCancel: __props.onCancelAddThread
@@ -6419,13 +6467,13 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 						"onSubmit",
 						"onCancel"
 					])])) : createCommentVNode("", true),
-					createElementVNode("span", _hoisted_9$5, [createElementVNode("button", {
+					createElementVNode("span", _hoisted_9$6, [createElementVNode("button", {
 						class: "room-kebab",
 						type: "button",
 						"aria-label": "Room actions",
 						onClick: withModifiers(($event) => toggleMenu(room), ["stop"]),
 						innerHTML: unref(KEBAB)
-					}, null, 8, _hoisted_10$5), room.id !== unref(state).currentRoom && !adding(room) ? (openBlock(), createElementBlock("button", {
+					}, null, 8, _hoisted_10$6), room.id !== unref(state).currentRoom && !adding(room) ? (openBlock(), createElementBlock("button", {
 						key: 0,
 						class: "thread-add-inline",
 						type: "button",
@@ -8049,89 +8097,6 @@ var CODEX_WIZARD_ELS = {
 	log: "#wizard-codex-install-log",
 	doneMsg: "Codex loaded — connect your credentials below."
 };
-async function runCodexInstall(els = CODEX_WIZARD_ELS) {
-	const btn = $(els.btn);
-	const log = $(els.log);
-	if (!btn || codexInstallActive.value) return;
-	codexInstallActive.value = true;
-	const progress = els.progress ? $(els.progress) : null;
-	if (progress) progress.hidden = false;
-	log.hidden = false;
-	log.textContent = "Installing…";
-	let done = deps$13.wizardBusy(btn, "Installing…");
-	const finish = () => {
-		log.textContent = els.doneMsg || "Codex installed.";
-		showToast("Codex installed", { kind: "success" });
-	};
-	try {
-		const res = await authFetch("/api/codex/install", { method: "POST" });
-		if (!res.ok && res.status !== 202) {
-			const err = await res.json().catch(() => ({}));
-			log.textContent = "Install failed: " + (err.error || res.status);
-			showToast(err.error || "Codex install failed", { kind: "error" });
-			return;
-		}
-		let restarting = false;
-		for (;;) {
-			await new Promise((r) => setTimeout(r, 2500));
-			let st;
-			try {
-				st = await (await authFetch("/api/codex/install")).json();
-			} catch {
-				restarting = true;
-				break;
-			}
-			if (Array.isArray(st.lines) && st.lines.length) log.textContent = st.lines.slice(-14).join("\n");
-			if (st.installed) {
-				finish();
-				return;
-			}
-			if (!st.running && st.exitCode === 0) {
-				restarting = true;
-				break;
-			}
-			if (!st.running && st.exitCode != null && st.exitCode !== 0) {
-				log.textContent = "Install failed — see log:\n" + (st.lines || []).slice(-14).join("\n");
-				showToast("Codex install failed — see log", { kind: "error" });
-				return;
-			}
-		}
-		if (restarting) {
-			done();
-			done = deps$13.wizardBusy(btn, "Restarting…");
-			log.textContent = "Restarting…";
-			const deadline = Date.now() + 15e4;
-			let sawResponsive = false;
-			for (;;) {
-				await new Promise((r) => setTimeout(r, 2500));
-				let st = null;
-				try {
-					st = await (await authFetch("/api/codex/install")).json();
-					sawResponsive = true;
-				} catch {
-					st = null;
-				}
-				if (st?.installed) {
-					finish();
-					return;
-				}
-				if (Date.now() > deadline) {
-					log.textContent = sawResponsive ? "Codex didn’t load — restart the service, then reopen setup." : "Server didn’t come back — restart it, then reopen setup.";
-					showToast("Codex built — restart the server to finish", { kind: "error" });
-					return;
-				}
-			}
-		}
-	} catch (err) {
-		log.textContent = "Install error: " + err.message;
-		showToast("Codex install error", { kind: "error" });
-	} finally {
-		done();
-		codexInstallActive.value = false;
-		deps$13.refreshWizardCredState();
-		deps$13.renderCredentialsSettings();
-	}
-}
 var OPENCODE_WIZARD_ELS = {
 	btn: "#wizard-opencode-install",
 	log: "#wizard-opencode-install-log",
@@ -8140,17 +8105,34 @@ var OPENCODE_WIZARD_ELS = {
 var GROK_WIZARD_ELS = {
 	btn: "#wizard-grok-install",
 	log: "#wizard-grok-install-log",
-	url: "/api/grok/install",
-	name: "Grok",
 	doneMsg: "Grok installed — sign in with a device code below."
 };
-async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
-	const url = els.url || "/api/opencode/install";
-	const name = els.name || "OpenCode";
+var HARNESS_NAME = {
+	codex: "Codex",
+	opencode: "OpenCode",
+	pi: "pi",
+	grok: "Grok"
+};
+/**
+* One line of progress for a chain install: which step, of how many, and for
+* how long. The agent-image rebuild emits almost nothing for minutes — with
+* only the last output line the pane stopped changing and read as hung. Built
+* from the poll, so the elapsed time visibly moves on every re-render.
+*/
+function installProgressLine(st) {
+	const step = st.stepCount ? `Step ${st.stepIndex} of ${st.stepCount}` : "Installing";
+	const label = st.stepLabel ? ` — ${st.stepLabel}` : "";
+	const secs = st.startedAt ? Math.max(0, Math.round((Date.now() - st.startedAt) / 1e3)) : 0;
+	return `${step}${label} · ${secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`}`;
+}
+/** Install a harness through /api/install/:feature, rendering into `els`. */
+async function runInstall(feature, els) {
+	const url = `/api/install/${feature}`;
+	const name = HARNESS_NAME[feature] ?? feature;
 	const btn = $(els.btn);
 	const log = $(els.log);
-	if (!btn || opencodeInstallActive.value) return;
-	opencodeInstallActive.value = true;
+	if (!btn || harnessInstallActive.value) return;
+	harnessInstallActive.value = true;
 	deps$13.refreshWizardNextGate();
 	const progress = els.progress ? $(els.progress) : null;
 	if (progress) progress.hidden = false;
@@ -8184,7 +8166,9 @@ async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
 				restarting = true;
 				break;
 			}
-			if (Array.isArray(st.lines) && st.lines.length) log.textContent = st.lines.slice(-14).join("\n");
+			const tail = Array.isArray(st.lines) ? st.lines.slice(-14) : [];
+			if (st.running) log.textContent = [installProgressLine(st), ...tail].join("\n");
+			else if (tail.length) log.textContent = tail.join("\n");
 			if (st.installed) {
 				finish();
 				return;
@@ -8219,7 +8203,7 @@ async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
 					return;
 				}
 				if (Date.now() > deadline) {
-					log.textContent = sawResponsive ? "OpenCode didn’t load — restart the service, then reopen setup." : "Server didn’t come back — restart it, then reopen setup.";
+					log.textContent = sawResponsive ? name + " didn’t load — restart the service, then reopen setup." : "Server didn’t come back — restart it, then reopen setup.";
 					showToast(name + " built — restart the server to finish", { kind: "error" });
 					return;
 				}
@@ -8230,9 +8214,10 @@ async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
 		showToast(name + " install error", { kind: "error" });
 	} finally {
 		done();
-		opencodeInstallActive.value = false;
+		harnessInstallActive.value = false;
 		deps$13.refreshWizardNextGate();
 		deps$13.renderWizardOpencodeInstall();
+		deps$13.refreshWizardCredState();
 		deps$13.renderCredentialsSettings();
 		deps$13.fetchAgents();
 	}
@@ -8738,6 +8723,7 @@ var wizardOllamaProbe = null;
 var wizardEngine = "claude";
 var wizardCodexAvailable = false;
 var wizardCred = null;
+var OPENCODE_RECOMMENDED = "Recommended: small local models follow tools far better on OpenCode. Rebuilds and restarts NanoClaw — a few minutes.";
 async function renderWizardOpencodeInstall() {
 	const row = $("#wizard-opencode-install-row");
 	const hint = $("#wizard-opencode-hint");
@@ -8747,25 +8733,70 @@ async function renderWizardOpencodeInstall() {
 		if (hint) hint.hidden = true;
 		return;
 	}
-	let installed = false;
-	let running = false;
+	let st = {};
 	try {
-		const st = await (await authFetch("/api/opencode/install")).json();
-		installed = !!st.installed;
-		running = !!st.running;
+		st = await (await authFetch("/api/install/opencode")).json();
 	} catch {}
+	const installed = !!st.installed;
+	const running = !!st.running;
+	const restarting = !!st.restartPending && Date.now() - (st.startedAt ?? Date.now()) < 9e5;
 	const badge = $("#wizard-opencode-installed-badge");
 	const btn = $("#wizard-opencode-install");
 	row.hidden = false;
-	if (hint) hint.hidden = installed;
 	if (badge) badge.hidden = !installed;
-	if (btn && !opencodeInstallActive.value) btn.hidden = installed;
-	opencodeGateFromServer.value = running;
+	if (btn && !opencodeInstallActive.value) {
+		btn.hidden = installed;
+		btn.disabled = running || restarting;
+		btn.textContent = restarting ? "Restarting…" : running ? "Installing…" : "Install OpenCode harness…";
+	}
+	if (hint) {
+		hint.hidden = installed;
+		if (!opencodeInstallActive.value) hint.textContent = running ? installProgressLine(st) : restarting ? "Installed — restarting to load it." : OPENCODE_RECOMMENDED;
+	}
+	opencodeGateFromServer.value = running || restarting;
 	refreshWizardNextGate();
-	if (running) {
+	if (running || restarting) {
 		clearTimeout(opencodeGatePoll.value ?? void 0);
 		opencodeGatePoll.value = setTimeout(renderWizardOpencodeInstall, 3e3);
 	}
+}
+var RESUME_KEY = "nanoclaw-wizard-resume";
+function saveResume() {
+	try {
+		sessionStorage.setItem(RESUME_KEY, JSON.stringify({
+			engine: wizardEngine,
+			step: wizardStep,
+			at: Date.now()
+		}));
+	} catch {}
+}
+function consumeResume() {
+	try {
+		const raw = sessionStorage.getItem(RESUME_KEY);
+		if (!raw) return null;
+		const r = JSON.parse(raw);
+		if (!r.at || Date.now() - r.at > 36e5) return null;
+		return {
+			engine: r.engine || "claude",
+			step: Number(r.step) || 0
+		};
+	} catch {
+		return null;
+	}
+}
+function clearResume() {
+	try {
+		sessionStorage.removeItem(RESUME_KEY);
+	} catch {}
+}
+/** Make `engine` the step-0 choice: radio, body, and the Ollama probe it implies. */
+function selectWizardEngine(engine) {
+	wizardEngine = engine;
+	const radio = document.querySelector(`input[name="wizard-engine"][value="${engine}"]`);
+	if (radio) radio.checked = true;
+	syncWizardEngineBodies();
+	if (engine === "ollama") wizardCheckLocalOllama();
+	saveResume();
 }
 function buildWizardDots() {
 	const dots = $("#wizard-dots");
@@ -9065,6 +9096,7 @@ function showWizardStep(i) {
 	$("#wizard-back").hidden = wizardStep === 0;
 	const isLast = wizardStep === 2;
 	$("#wizard-next").textContent = isLast ? "Finish" : "Next";
+	saveResume();
 	refreshWizardNextGate();
 }
 function refreshWizardNextGate() {
@@ -9085,12 +9117,15 @@ function refreshWizardNextGate() {
 async function openWizard() {
 	wireWizard();
 	buildWizardDots();
-	showWizardStep(0);
+	const resume = consumeResume();
+	if (resume) selectWizardEngine(resume.engine);
+	showWizardStep(resume?.step ?? 0);
 	await refreshWizardCredState();
 	$("#wizard-overlay").hidden = false;
 }
 function closeWizard() {
 	$("#wizard-overlay").hidden = true;
+	clearResume();
 }
 async function finishWizard() {
 	try {
@@ -9847,15 +9882,13 @@ function wireWizard() {
 	$("#wizard-ts-manual-copy")?.addEventListener("click", () => wizardCopyText("#wizard-ts-manual-cmd", "Copied"));
 	document.querySelectorAll("input[name=\"wizard-engine\"]").forEach((radio) => {
 		radio.addEventListener("change", () => {
-			wizardEngine = radio.value;
-			syncWizardEngineBodies();
-			if (wizardEngine === "ollama") wizardCheckLocalOllama();
-			else wizardClearOllamaDefault();
+			selectWizardEngine(radio.value);
+			if (wizardEngine !== "ollama") wizardClearOllamaDefault();
 		});
 	});
 	$("#wizard-claude-oauth")?.addEventListener("click", () => deps$12.openOauthMintModal("workspace"));
-	$("#wizard-codex-install")?.addEventListener("click", () => runCodexInstall());
-	$("#wizard-grok-install")?.addEventListener("click", () => runOpencodeInstall(GROK_WIZARD_ELS));
+	$("#wizard-codex-install")?.addEventListener("click", () => runInstall("codex", CODEX_WIZARD_ELS));
+	$("#wizard-grok-install")?.addEventListener("click", () => runInstall("grok", GROK_WIZARD_ELS));
 	$("#wizard-codex-oauth")?.addEventListener("click", () => deps$12.openOauthMintModal("workspace-codex"));
 	$("#wizard-codex-save")?.addEventListener("click", async () => {
 		const key = ($("#wizard-codex-key")?.value || "").trim();
@@ -11259,7 +11292,7 @@ var _hoisted_7$9 = {
 	key: 2,
 	class: "model-row-uses"
 };
-var _hoisted_8$7 = {
+var _hoisted_8$8 = {
 	key: 3,
 	class: "model-row-host"
 };
@@ -11315,7 +11348,7 @@ var RouteList_default = /* @__PURE__ */ defineComponent({
 					createElementVNode("span", _hoisted_5$15, toDisplayString(r.name), 1),
 					unref(routeDefaultName) === r.name ? (openBlock(), createElementBlock("span", _hoisted_6$13, toDisplayString(DEFAULT_CHIP))) : createCommentVNode("", true),
 					r.pinned ? (openBlock(), createElementBlock("span", _hoisted_7$9, toDisplayString(PINNED))) : createCommentVNode("", true),
-					!r.escalate ? (openBlock(), createElementBlock("span", _hoisted_8$7, toDisplayString(r.model || ""), 1)) : createCommentVNode("", true)
+					!r.escalate ? (openBlock(), createElementBlock("span", _hoisted_8$8, toDisplayString(r.model || ""), 1)) : createCommentVNode("", true)
 				]), createElementVNode("div", { class: normalizeClass(r.description ? "route-row-desc" : "route-row-desc empty") }, toDisplayString(r.description || NO_DESC), 3)], 42, _hoisted_2$23);
 			}), 128))], 64);
 		};
@@ -12864,9 +12897,9 @@ var _hoisted_7$8 = [
 	"data-search",
 	"hidden"
 ];
-var _hoisted_8$6 = ["onClick", "onKeydown"];
-var _hoisted_9$4 = { class: "skill-head" };
-var _hoisted_10$4 = { class: "skill-name" };
+var _hoisted_8$7 = ["onClick", "onKeydown"];
+var _hoisted_9$5 = { class: "skill-head" };
+var _hoisted_10$5 = { class: "skill-name" };
 var _hoisted_11$3 = { class: "skill-desc" };
 var _hoisted_12$3 = ["disabled", "onClick"];
 var _hoisted_13$3 = ["onClick"];
@@ -12974,8 +13007,8 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 								props.onOpen(r);
 							}
 						}
-					}, [createElementVNode("div", _hoisted_9$4, [
-						createElementVNode("span", _hoisted_10$4, toDisplayString(r.name), 1),
+					}, [createElementVNode("div", _hoisted_9$5, [
+						createElementVNode("span", _hoisted_10$5, toDisplayString(r.name), 1),
 						r.badge.kind === "origin" ? (openBlock(), createBlock(OriginBadge_default, {
 							key: 0,
 							origin: r.badge.origin
@@ -12987,7 +13020,7 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 							key: 2,
 							origin: r.extraOrigin
 						}, null, 8, ["origin"])) : createCommentVNode("", true)
-					]), createElementVNode("span", _hoisted_11$3, toDisplayString(r.desc), 1)], 40, _hoisted_8$6), r.source === "user" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [unref(skillUpdates)[r.name] ? (openBlock(), createElementBlock("button", {
+					]), createElementVNode("span", _hoisted_11$3, toDisplayString(r.desc), 1)], 40, _hoisted_8$7), r.source === "user" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [unref(skillUpdates)[r.name] ? (openBlock(), createElementBlock("button", {
 						key: 0,
 						type: "button",
 						class: "btn btn-secondary skill-update-btn",
@@ -13030,7 +13063,7 @@ var _hoisted_7$7 = [
 	"disabled",
 	"onClick"
 ];
-var _hoisted_8$5 = ["onClick"];
+var _hoisted_8$6 = ["onClick"];
 var KEEP$1 = "Keep";
 var DISCARD$1 = "Discard";
 var REVIEWING$1 = "Checking for overlaps…";
@@ -13117,7 +13150,7 @@ var SkillDrafts_default = /* @__PURE__ */ defineComponent({
 					type: "button",
 					class: "skill-delete",
 					onClick: ($event) => props.onDiscard(r)
-				}, toDisplayString(DISCARD$1), 8, _hoisted_8$5)], 64))], 16)], 8, _hoisted_1$17);
+				}, toDisplayString(DISCARD$1), 8, _hoisted_8$6)], 64))], 16)], 8, _hoisted_1$17);
 			}), 128);
 		};
 	}
@@ -13140,12 +13173,12 @@ var _hoisted_4$9 = { class: "skill-info" };
 var _hoisted_5$7 = { class: "skill-head" };
 var _hoisted_6$7 = { class: "skill-name" };
 var _hoisted_7$6 = { class: "skill-desc" };
-var _hoisted_8$4 = ["href"];
-var _hoisted_9$3 = {
+var _hoisted_8$5 = ["href"];
+var _hoisted_9$4 = {
 	key: 1,
 	class: "skill-badge skill-badge-user"
 };
-var _hoisted_10$3 = ["onClick"];
+var _hoisted_10$4 = ["onClick"];
 var FAILED$1 = "Couldn’t load skills — import by URL below.";
 var REVIEW = "Review ↗";
 var ADDED = "added";
@@ -13197,13 +13230,13 @@ var SkillPool_default = /* @__PURE__ */ defineComponent({
 						href: s.review,
 						target: "_blank",
 						rel: "noopener noreferrer"
-					}, toDisplayString(REVIEW), 8, _hoisted_8$4)) : createCommentVNode("", true),
-					s.installed ? (openBlock(), createElementBlock("span", _hoisted_9$3, toDisplayString(ADDED))) : (openBlock(), createElementBlock("button", {
+					}, toDisplayString(REVIEW), 8, _hoisted_8$5)) : createCommentVNode("", true),
+					s.installed ? (openBlock(), createElementBlock("span", _hoisted_9$4, toDisplayString(ADDED))) : (openBlock(), createElementBlock("button", {
 						key: 2,
 						type: "button",
 						class: "btn btn-secondary skill-catalog-add",
 						onClick: ($event) => props.onAdd(s)
-					}, toDisplayString(ADD$1), 8, _hoisted_10$3))
+					}, toDisplayString(ADD$1), 8, _hoisted_10$4))
 				]);
 			}), 128));
 		};
@@ -13277,12 +13310,12 @@ var _hoisted_6$5 = [
 	"onClick"
 ];
 var _hoisted_7$5 = ["onClick"];
-var _hoisted_8$3 = {
+var _hoisted_8$4 = {
 	key: 1,
 	class: "room-skill-row"
 };
-var _hoisted_9$2 = { class: "room-skill-head" };
-var _hoisted_10$2 = { class: "room-skill-name" };
+var _hoisted_9$3 = { class: "room-skill-head" };
+var _hoisted_10$3 = { class: "room-skill-name" };
 var _hoisted_11$2 = {
 	key: 1,
 	class: "room-skill-agent"
@@ -13379,8 +13412,8 @@ var RoomSkills_default = /* @__PURE__ */ defineComponent({
 							onClick: ($event) => props.onDiscard(r)
 						}, toDisplayString(DISCARD), 8, _hoisted_7$5)
 					], 64))], 16)
-				])) : r.kind === "learned" ? (openBlock(), createElementBlock("li", _hoisted_8$3, [createElementVNode("div", _hoisted_9$2, [
-					createElementVNode("span", _hoisted_10$2, toDisplayString(r.name), 1),
+				])) : r.kind === "learned" ? (openBlock(), createElementBlock("li", _hoisted_8$4, [createElementVNode("div", _hoisted_9$3, [
+					createElementVNode("span", _hoisted_10$3, toDisplayString(r.name), 1),
 					r.origin ? (openBlock(), createBlock(OriginBadge_default, {
 						key: 0,
 						origin: r.origin
@@ -15247,7 +15280,7 @@ var _hoisted_4$4 = { class: "journey-skill" };
 var _hoisted_5$3 = { class: "skill-badge skill-badge-scope" };
 var _hoisted_6$3 = { class: "journey-meta" };
 var _hoisted_7$3 = { class: "journey-time" };
-var _hoisted_8$2 = ["onClick"];
+var _hoisted_8$3 = ["onClick"];
 var LOADING$1 = "Loading…";
 var FAILED = "Could not load the timeline.";
 var EMPTY$2 = "Nothing learned yet.";
@@ -15359,7 +15392,7 @@ var JourneyList_default = /* @__PURE__ */ defineComponent({
 							type: "button",
 							class: "btn btn-secondary",
 							onClick: withModifiers(($event) => props.onRevert(r.ev), ["stop"])
-						}, toDisplayString(REVERT), 8, _hoisted_8$2)) : createCommentVNode("", true)
+						}, toDisplayString(REVERT), 8, _hoisted_8$3)) : createCommentVNode("", true)
 					], 16, _hoisted_3$7);
 				}), 128))], 64);
 			}), 128));
@@ -17042,15 +17075,15 @@ var _hoisted_7$2 = {
 	key: 0,
 	class: "ollama-muted"
 };
-var _hoisted_8$1 = {
+var _hoisted_8$2 = {
 	key: 1,
 	class: "ollama-muted"
 };
-var _hoisted_9$1 = {
+var _hoisted_9$2 = {
 	key: 2,
 	class: "ollama-muted"
 };
-var _hoisted_10$1 = { class: "ollama-model-name" };
+var _hoisted_10$2 = { class: "ollama-model-name" };
 var _hoisted_11$1 = { class: "ollama-model-meta" };
 var _hoisted_12$1 = ["title"];
 var _hoisted_13$1 = ["aria-label", "onClick"];
@@ -17180,9 +17213,9 @@ var OllamaHostCards_default = /* @__PURE__ */ defineComponent({
 						}, toDisplayString(c.summary), 9, _hoisted_4$3)
 					], 8, _hoisted_2$5),
 					createElementVNode("div", { hidden: !c.open }, [
-						createElementVNode("ul", _hoisted_6$2, [c.phase === "loading" ? (openBlock(), createElementBlock("li", _hoisted_7$2, toDisplayString(LOADING))) : c.phase === "error" ? (openBlock(), createElementBlock("li", _hoisted_8$1, toDisplayString(c.error), 1)) : c.selectable.length === 0 && c.system.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_9$1, toDisplayString(NO_MODELS))) : (openBlock(), createElementBlock(Fragment, { key: 3 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(c.selectable, (m) => {
+						createElementVNode("ul", _hoisted_6$2, [c.phase === "loading" ? (openBlock(), createElementBlock("li", _hoisted_7$2, toDisplayString(LOADING))) : c.phase === "error" ? (openBlock(), createElementBlock("li", _hoisted_8$2, toDisplayString(c.error), 1)) : c.selectable.length === 0 && c.system.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_9$2, toDisplayString(NO_MODELS))) : (openBlock(), createElementBlock(Fragment, { key: 3 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(c.selectable, (m) => {
 							return openBlock(), createElementBlock("li", { key: m.name }, [
-								createElementVNode("span", _hoisted_10$1, toDisplayString(m.name), 1),
+								createElementVNode("span", _hoisted_10$2, toDisplayString(m.name), 1),
 								createElementVNode("span", _hoisted_11$1, toDisplayString(m.meta), 1),
 								m.loaded ? (openBlock(), createElementBlock("span", {
 									key: 0,
@@ -18904,6 +18937,28 @@ async function renderAgentEnv(agentGroupId) {
 		});
 	}
 }
+var REACH_HELP = {
+	me: "Your turns only. Wins over the agent’s.",
+	agent: "Every member’s turns, unless they have their own.",
+	all: "Every agent, unless a nearer one exists."
+};
+var REACH_ME_UNAVAILABLE = "Only me needs your own Claude/Codex account — connect it from the @handle menu.";
+function reachChoice() {
+	return $("#agent-secrets-section").dataset.reach || "agent";
+}
+function setReachChoice(choice) {
+	$("#agent-secrets-section").dataset.reach = choice;
+	document.querySelectorAll("#agent-secret-reach .setting-option").forEach((btn) => {
+		btn.classList.toggle("active", btn.dataset.value === choice);
+	});
+	$("#agent-secret-reach-help").textContent = REACH_HELP[choice];
+}
+/** Source words for the "For you" line — the section titles, possessive. */
+var SOURCE_WORD = {
+	user: "yours",
+	agent: "this agent’s",
+	workspace: "all agents’"
+};
 async function renderAgentSecrets(agentGroupId) {
 	const section = $("#agent-secrets-section");
 	if (!section) return;
@@ -18911,11 +18966,18 @@ async function renderAgentSecrets(agentGroupId) {
 		agentSecretsWired = true;
 		$("#agent-secret-save").addEventListener("click", () => {
 			const agentGroupId = $("#agent-secrets-section").dataset.agentId;
-			const personal = $("#agent-secret-personal").checked;
-			saveToolSecret(personal ? {
+			const choice = reachChoice();
+			saveToolSecret(choice === "me" ? {
 				agentGroupId,
 				userId: permsMyUserId.value
-			} : agentGroupId, "#agent-secret");
+			} : choice === "agent" ? agentGroupId : null, "#agent-secret");
+		});
+		document.querySelectorAll("#agent-secret-reach .setting-option").forEach((btn) => {
+			btn.addEventListener("click", () => {
+				const el = btn;
+				if (el.classList.contains("is-unavailable")) return;
+				setReachChoice(el.dataset.value);
+			});
 		});
 		wireCustomScheme("#agent-secret");
 	}
@@ -18923,6 +18985,8 @@ async function renderAgentSecrets(agentGroupId) {
 	let isolation = null;
 	let secrets = [];
 	let members = [];
+	let effective = [];
+	let workspace = null;
 	try {
 		const r = await authFetch(toolSecretUrl(agentGroupId));
 		if (r.ok) {
@@ -18930,19 +18994,26 @@ async function renderAgentSecrets(agentGroupId) {
 			isolation = b.isolation;
 			secrets = b.secrets || [];
 			members = b.members || [];
+			effective = b.effective || [];
+			workspace = b.workspace ?? null;
 		}
 	} catch {}
 	const isolated = !!isolation?.isolated;
 	$("#agent-secrets-note").textContent = !isolated && isolation?.available ? "Not private yet — secrets added here would also reach other agents" : "";
 	$("#agent-secret-form").hidden = false;
 	const enrolled = members.some((m) => m.userId === permsMyUserId.value);
-	const personalBox = $("#agent-secret-personal");
-	const personalRow = $("#agent-secret-personal-row");
-	personalRow.hidden = !enrolled;
-	if (!enrolled) personalBox.checked = false;
-	renderAgentSecretList(agentGroupId, secrets, members);
-	const total = secrets.length + members.reduce((n, m) => n + m.secrets.length, 0);
-	$("#agent-secrets-count").textContent = total ? String(total) : "";
+	const meBtn = $("#agent-secret-reach [data-value=\"me\"]");
+	const allBtn = $("#agent-secret-reach [data-value=\"all\"]");
+	if (meBtn) meBtn.classList.toggle("is-unavailable", !enrolled);
+	if (allBtn) allBtn.hidden = workspace === null;
+	const current = reachChoice();
+	const usable = (c) => c === "me" ? enrolled : c === "all" ? workspace !== null : true;
+	setReachChoice(section.dataset.reach && usable(current) ? current : enrolled ? "me" : "agent");
+	if (!enrolled) $("#agent-secret-reach-help").textContent = REACH_ME_UNAVAILABLE;
+	renderAgentSecretList(agentGroupId, secrets, members, workspace, effective);
+	const mine = members.find((m) => m.userId === permsMyUserId.value)?.secrets.length ?? 0;
+	const total = secrets.length + (workspace?.length ?? 0) + members.reduce((n, m) => n + m.secrets.length, 0);
+	$("#agent-secrets-count").textContent = total ? mine ? `${total} · ${mine} only you` : String(total) : "";
 }
 var agentSecretsApp = null;
 /**
@@ -18958,26 +19029,54 @@ function mountAgentSecretList() {
 	agentSecretsApp = createApp(AgentSecretList_default, { onRemove: (r) => void removeToolSecret(r.scope, r.sec, "#agent-secrets-list", agentSecretsGroupId) });
 	agentSecretsApp.mount(host);
 }
-function renderAgentSecretList(agentGroupId, secrets, members) {
+function renderAgentSecretList(agentGroupId, secrets, members, workspace, effective) {
 	agentSecretsGroupId = agentGroupId;
-	agentSecretRows.value = [...(secrets ?? []).map((s) => ({
-		key: `shared:${s.hostPattern}`,
-		host: s.hostPattern,
-		personal: false,
-		ownerLabel: "",
-		scope: agentGroupId,
-		sec: s
-	})), ...(members ?? []).flatMap((m) => (m.secrets ?? []).map((s) => ({
-		key: `user:${m.userId}:${s.hostPattern}`,
-		host: s.hostPattern,
-		personal: true,
-		ownerLabel: userDisplayName({ id: m.userId }),
-		scope: {
-			agentGroupId,
-			userId: m.userId
-		},
-		sec: s
-	})))];
+	const servedFrom = new Map((effective ?? []).map((e) => [e.hostPattern, e.source]));
+	const beatenNote = (host, own) => {
+		const src = servedFrom.get(host);
+		if (!src || src === own) return "";
+		return src === "user" ? "yours is used instead" : "this agent’s is used instead";
+	};
+	agentSecretRows.value = [
+		...(members ?? []).flatMap((m) => {
+			const mine = m.userId === permsMyUserId.value;
+			return (m.secrets ?? []).map((s) => ({
+				key: `user:${m.userId}:${s.hostPattern}`,
+				host: s.hostPattern,
+				reach: mine ? "mine" : "other",
+				ownerLabel: mine ? "" : userDisplayName({ id: m.userId }),
+				note: "",
+				canRemove: mine,
+				scope: {
+					agentGroupId,
+					userId: m.userId
+				},
+				sec: s
+			}));
+		}),
+		...(secrets ?? []).map((s) => ({
+			key: `agent:${s.hostPattern}`,
+			host: s.hostPattern,
+			reach: "agent",
+			ownerLabel: "",
+			note: beatenNote(s.hostPattern, "agent"),
+			canRemove: true,
+			scope: agentGroupId,
+			sec: s
+		})),
+		...(workspace ?? []).map((s) => ({
+			key: `workspace:${s.hostPattern}`,
+			host: s.hostPattern,
+			reach: "workspace",
+			ownerLabel: "",
+			note: beatenNote(s.hostPattern, "workspace"),
+			canRemove: true,
+			scope: null,
+			sec: s
+		}))
+	];
+	const parts = (effective ?? []).map((e) => `${e.hostPattern} → ${SOURCE_WORD[e.source] ?? e.source}`);
+	agentSecretEffective.value = parts.length ? `For you: ${parts.join(" · ")}` : "For you: no credential yet";
 	mountAgentSecretList();
 }
 var agentKeysWired = false;
@@ -19658,8 +19757,9 @@ async function saveToolSecret(scope = null, p = "#secret") {
 		if ($(`${p}-custom-header`)) $(`${p}-custom-header`).value = "";
 		if ($(`${p}-custom-format`)) $(`${p}-custom-format`).value = "";
 		showToast(`Added ${hostPattern}`);
-		if (scope) await renderAgentSecrets(typeof scope === "object" ? scope.agentGroupId : scope);
-		else await loadToolSecretList(null, "#secrets-list");
+		if (p === "#agent-secret") await renderAgentSecrets($("#agent-secrets-section").dataset.agentId);
+		else if (scope) await renderAgentSecrets(typeof scope === "object" ? scope.agentGroupId : scope);
+		if (!scope) await loadToolSecretList(null, "#secrets-list");
 	} catch {
 		showToast("Could not add secret", { kind: "error" });
 	} finally {
@@ -19684,6 +19784,7 @@ async function removeToolSecret(scope, secret, listSel = "#secrets-list", agentG
 		showToast(`Removed ${secret.label}`);
 		if (agentGroupId) await renderAgentSecrets(agentGroupId);
 		else if (listSel) await loadToolSecretList(scope, listSel);
+		if (scope === null && agentGroupId && $("#secrets-list")) await loadToolSecretList(null, "#secrets-list");
 	} catch {
 		showToast("Could not remove secret", { kind: "error" });
 	}
@@ -19762,15 +19863,20 @@ var PrejudgeActions_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/MyCredentials.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$5 = { class: "form-label" };
-var _hoisted_2$4 = { class: "skill-sources-list" };
-var _hoisted_3$4 = { class: "skill-info" };
-var _hoisted_4$2 = { class: "skill-head" };
-var _hoisted_5$1 = ["onClick"];
-var _hoisted_6$1 = { class: "secret-form" };
-var _hoisted_7$1 = ["disabled", "onClick"];
+var _hoisted_1$5 = { class: "my-cred-head" };
+var _hoisted_2$4 = { class: "form-label" };
+var _hoisted_3$4 = ["onClick"];
+var _hoisted_4$2 = { class: "secret-effective" };
+var _hoisted_5$1 = { class: "skill-sources-list" };
+var _hoisted_6$1 = { class: "skill-info" };
+var _hoisted_7$1 = { class: "skill-head" };
+var _hoisted_8$1 = ["onClick"];
+var _hoisted_9$1 = { class: "secret-form" };
+var _hoisted_10$1 = ["disabled", "onClick"];
 var ADD = "Add secret";
 var REMOVE = "Remove";
+var OPEN = "Open agent";
+var BADGE = "only you";
 var HOST_LABEL = "Host";
 var VALUE_LABEL = "Token or key";
 var HOST_PLACEHOLDER = "dev.azure.com";
@@ -19780,7 +19886,8 @@ var MyCredentials_default = /* @__PURE__ */ defineComponent({
 	__name: "MyCredentials",
 	props: {
 		onRemove: { type: Function },
-		onAdd: { type: Function }
+		onAdd: { type: Function },
+		onOpenAgent: { type: Function }
 	},
 	setup(__props) {
 		/**
@@ -19793,6 +19900,9 @@ var MyCredentials_default = /* @__PURE__ */ defineComponent({
 		* ONE add-form per agent, not a shared form with an agent picker — that would
 		* just be the "Used by" dropdown again, and this list is short by construction.
 		*
+		* These are the same rows the agent panel files under "Only you"; the badge and
+		* the "For you" line use that panel's words so the two views read as one.
+		*
 		* The two fields are UNCONTROLLED and read at click time, exactly as the
 		* imperative version read hostField.input.value. v-model would have been the
 		* obvious Vue idiom and is wrong here: it attaches an input listener to every
@@ -19803,6 +19913,15 @@ var MyCredentials_default = /* @__PURE__ */ defineComponent({
 		* login for a token box — and spellcheck off.
 		*/
 		const props = __props;
+		const SOURCE_WORD = {
+			user: "yours",
+			agent: "this agent’s",
+			workspace: "all agents’"
+		};
+		function forYou(g) {
+			const parts = (g.effective ?? []).map((e) => `${e.hostPattern} → ${SOURCE_WORD[e.source] ?? e.source}`);
+			return parts.length ? `For you: ${parts.join(" · ")}` : "For you: no credential yet";
+		}
 		function add(g, e) {
 			const [host, value] = [...e.currentTarget.closest(".secret-form").querySelectorAll("input")];
 			props.onAdd(g, host.value.trim(), value.value, [host, value]);
@@ -19813,22 +19932,28 @@ var MyCredentials_default = /* @__PURE__ */ defineComponent({
 					key: g.agentGroupId,
 					class: "my-cred-group"
 				}, [
-					createElementVNode("span", _hoisted_1$5, toDisplayString(g.name), 1),
-					createElementVNode("ul", _hoisted_2$4, [(openBlock(true), createElementBlock(Fragment, null, renderList(g.secrets, (sec, i) => {
+					createElementVNode("div", _hoisted_1$5, [createElementVNode("span", _hoisted_2$4, toDisplayString(g.name), 1), createElementVNode("button", {
+						class: "btn btn-ghost",
+						type: "button",
+						onClick: ($event) => props.onOpenAgent(g)
+					}, toDisplayString(OPEN), 8, _hoisted_3$4)]),
+					createElementVNode("p", _hoisted_4$2, toDisplayString(forYou(g)), 1),
+					createElementVNode("ul", _hoisted_5$1, [(openBlock(true), createElementBlock(Fragment, null, renderList(g.secrets, (sec, i) => {
 						return openBlock(), createElementBlock("li", {
 							key: i,
 							class: "skill-source-row secret-row"
-						}, [createElementVNode("div", _hoisted_3$4, [createElementVNode("div", _hoisted_4$2, toDisplayString(sec.hostPattern), 1)]), createElementVNode("button", {
+						}, [createElementVNode("div", _hoisted_6$1, [createElementVNode("div", _hoisted_7$1, [createElementVNode("span", null, toDisplayString(sec.hostPattern), 1), createElementVNode("span", { class: "skill-badge secret-scope skill-badge-user" }, toDisplayString(BADGE))])]), createElementVNode("button", {
 							class: "btn btn-danger",
 							type: "button",
 							onClick: ($event) => props.onRemove(g, sec)
-						}, toDisplayString(REMOVE), 8, _hoisted_5$1)]);
+						}, toDisplayString(REMOVE), 8, _hoisted_8$1)]);
 					}), 128))]),
-					createElementVNode("div", _hoisted_6$1, [
+					createElementVNode("div", _hoisted_9$1, [
 						createElementVNode("label", { class: "secret-field" }, [createElementVNode("span", { class: "form-label" }, toDisplayString(HOST_LABEL)), createElementVNode("input", {
 							type: "text",
 							placeholder: HOST_PLACEHOLDER,
 							autocomplete: "off",
+							autocapitalize: "none",
 							spellcheck: "false"
 						})]),
 						createElementVNode("label", { class: "secret-field" }, [createElementVNode("span", { class: "form-label" }, toDisplayString(VALUE_LABEL)), _cache[0] || (_cache[0] = createElementVNode("input", {
@@ -19841,7 +19966,7 @@ var MyCredentials_default = /* @__PURE__ */ defineComponent({
 							type: "button",
 							disabled: unref(myCredSaving).has(g.agentGroupId) || void 0,
 							onClick: ($event) => add(g, $event)
-						}, toDisplayString(ADD), 8, _hoisted_7$1)
+						}, toDisplayString(ADD), 8, _hoisted_10$1)
 					])
 				]);
 			}), 128);
@@ -20058,10 +20183,10 @@ async function renderCredentialsSettings() {
 	if (grokBadge) grokBadge.hidden = !cfg.grokAvailable;
 	if (credConfigWired) return;
 	credConfigWired = true;
-	$("#codex-install-btn")?.addEventListener("click", () => runCodexInstall(CODEX_SETTINGS_ELS));
-	$("#opencode-install-btn")?.addEventListener("click", () => runOpencodeInstall(OPENCODE_SETTINGS_ELS));
-	$("#pi-install-btn")?.addEventListener("click", () => runOpencodeInstall(PI_SETTINGS_ELS));
-	$("#grok-install-btn")?.addEventListener("click", () => runOpencodeInstall(GROK_SETTINGS_ELS));
+	$("#codex-install-btn")?.addEventListener("click", () => runInstall("codex", CODEX_SETTINGS_ELS));
+	$("#opencode-install-btn")?.addEventListener("click", () => runInstall("opencode", OPENCODE_SETTINGS_ELS));
+	$("#pi-install-btn")?.addEventListener("click", () => runInstall("pi", PI_SETTINGS_ELS));
+	$("#grok-install-btn")?.addEventListener("click", () => runInstall("grok", GROK_SETTINGS_ELS));
 	const putConfig = async (patch) => {
 		const r = await authFetch("/api/webchat/credentials-config", {
 			method: "PUT",
@@ -20213,16 +20338,12 @@ var GROK_SETTINGS_ELS = {
 	btn: "#grok-install-btn",
 	log: "#grok-install-log",
 	progress: "#grok-install-progress",
-	url: "/api/grok/install",
-	name: "Grok",
 	doneMsg: "Grok installed — sign in with a device code under Credentials."
 };
 var PI_SETTINGS_ELS = {
 	btn: "#pi-install-btn",
 	log: "#pi-install-log",
 	progress: "#pi-install-progress",
-	url: "/api/pi/install",
-	name: "pi",
 	doneMsg: "pi installed — switch an agent to it under Agent → Harness."
 };
 /**
@@ -21104,6 +21225,10 @@ function mountMyCredentials() {
 	const host = $("#my-credentials-list");
 	if (!host) return;
 	myCredsApp = createApp(MyCredentials_default, {
+		onOpenAgent: (group) => {
+			closeSettings();
+			openAgentDetail(group.agentGroupId);
+		},
 		onRemove: async (group, sec) => {
 			await removeToolSecret({
 				agentGroupId: group.agentGroupId,
@@ -22761,7 +22886,7 @@ state.settings = loadSettings();
 * actually in force (`credentialIsolationEffective`) so it never contradicts
 * the agent panel's "Not private yet" note.
 */
-$("#wizard-opencode-install")?.addEventListener("click", () => runOpencodeInstall(OPENCODE_WIZARD_ELS));
+$("#wizard-opencode-install")?.addEventListener("click", () => runInstall("opencode", OPENCODE_WIZARD_ELS));
 /**
 * Reflect live credential state on the engine list: connected engines swap
 * their connect controls for a prominent ✓ card (standard OAuth-connect UX —

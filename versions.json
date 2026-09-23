@@ -1,16 +1,16 @@
 {
   "nanoclaw": {
     "upstreamRepo": "https://github.com/nanocoai/nanoclaw.git",
-    "upstreamRef": "409a88456d1487d6e48f25638b24b5494efbd665",
+    "upstreamRef": "7902716b5b930215dbee4f56b8fb5b938d40468d",
     "seamRepo": "https://github.com/javexed/nanoclaw.git",
     "seamBranch": "pub/module-hooks",
-    "seamRef": "6d333797c912bd6c193b90493eecad6a362f1e01",
-    "seamH5Ref": "6d333797c912bd6c193b90493eecad6a362f1e01",
+    "seamRef": "ab02ac7741367bd2390d61dd00d2bcb9afa70527",
+    "seamH5Ref": "ab02ac7741367bd2390d61dd00d2bcb9afa70527",
     "forkRef": "3e55bebd6ff2a11a56d53923a38b3bda8ba30e11",
     "forkArchiveTag": "archive/channels-webchat-2026-07-28",
     "forkRefNote": "final channels-webchat tip (fork decommissioned 2026-07-28, preserved at forkArchiveTag). NOT a build input and no longer a guard reference — the only consumer is scripts/migrate-from-fork.sh, which resolves this SHA inside a user's own fork install to refuse migrating an install that is NEWER than the split. Keep it pinned for as long as fork installs may still migrate.",
     "seamNote": "pub/module-hooks: 13 upstream files, +188 -0 (insertions only). Hook registries live in src/seam/ and container/agent-runner/src/seam/; SEAM.md in the seam is the ledger."
   },
   "seamApiVersion": 4,
-  "status": "working — all adaptation passes complete (H5, H12, R3)"
+  "status": "working — carried to upstream 65b69ba1 (2026-09-16); adaptation pass complete, 108 patches apply clean"
 }

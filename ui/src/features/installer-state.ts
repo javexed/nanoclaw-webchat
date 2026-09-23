@@ -8,8 +8,15 @@
 // panel that owns it AND by the wizard that can start the same install.
 import { ref } from 'vue';
 
-export const codexInstallActive = ref(false);
-export const opencodeInstallActive = ref(false);
+/**
+ * One flag for the four harness installs (codex, opencode, pi, grok): each
+ * rebuilds the agent image and restarts the host, so two at once is never
+ * right. The two older names are the same ref — readers that gate a row on
+ * "is a harness installing?" keep working, and now mean it for all four.
+ */
+export const harnessInstallActive = ref(false);
+export const codexInstallActive = harnessInstallActive;
+export const opencodeInstallActive = harnessInstallActive;
 export const routingInstallActive = ref(false);
 export const sttInstallActive = ref(false);
 export const ttsInstallActive = ref(false);

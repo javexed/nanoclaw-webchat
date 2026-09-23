@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/poll-loop.ts b/container/agent-runner/src/poll-loop.ts
-index dd7c308a..42231a6c 100644
+index 7be3c182..e41b16b3 100644
 --- a/container/agent-runner/src/poll-loop.ts
 +++ b/container/agent-runner/src/poll-loop.ts
 @@ -1,4 +1,4 @@
@@ -8,19 +8,15 @@ index dd7c308a..42231a6c 100644
  import {
    getPendingMessages,
    markProcessing,
-@@ -7,9 +7,11 @@ import {
+@@ -7,6 +7,7 @@ import {
    type MessageInRow,
  } from './db/messages-in.js';
  import { getUndeliveredMessages, writeMessageOut } from './db/messages-out.js';
 +import { getMaxOutboundSeq } from './outbound-seq.js';
  import { clearStaleProcessingAcks } from './db/container-state.js';
+ import { resolveDestinationThread } from './db/session-routing.js';
  import { touchHeartbeat } from './heartbeat.js';
- import { getAgentMailbox } from './mailbox/index.js';
-+import { getInboundDb, getOutboundDb } from './mailbox/sqlite/connection.js';
- import {
-   clearContinuation,
-   clearCurrentInReplyTo,
-@@ -24,13 +26,16 @@ import {
+@@ -25,13 +26,16 @@ import {
    isClearCommand,
    isRunnerCommand,
    isSessionEcho,
@@ -37,7 +33,7 @@ index dd7c308a..42231a6c 100644
  
  const POLL_INTERVAL_MS = 1000;
  const ACTIVE_POLL_INTERVAL_MS = 500;
-@@ -38,11 +43,12 @@ const ACTIVE_POLL_INTERVAL_MS = 500;
+@@ -39,11 +43,12 @@ const ACTIVE_POLL_INTERVAL_MS = 500;
  import { notifyProviderExchange, notifyProviderMessage } from './providers/hooks.js';
  import {
    notifyTurnCompletion,
@@ -51,7 +47,7 @@ index dd7c308a..42231a6c 100644
  } from './runner-hooks.js';
  
  /** Consecutive driver-classified failures before a fresh runner is required. */
-@@ -70,14 +76,22 @@ export interface PollLoopConfig {
+@@ -71,14 +76,22 @@ export interface PollLoopConfig {
    systemContext?: {
      instructions?: string;
    };
@@ -74,7 +70,7 @@ index dd7c308a..42231a6c 100644
  /**
   * Main poll loop. Runs indefinitely until the process is killed.
   *
-@@ -132,7 +146,14 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -135,7 +148,14 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
    while (true) {
      if (config.signal?.aborted) return;
      // Skip system messages — they're responses for MCP tools (e.g., ask_user_question)
@@ -90,7 +86,7 @@ index dd7c308a..42231a6c 100644
      isFirstPoll = false;
      pollCount++;
  
-@@ -180,9 +201,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -183,9 +203,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
          await writeMessageOut({
            id: generateId(),
            kind: 'chat',
@@ -101,33 +97,21 @@ index dd7c308a..42231a6c 100644
            content: JSON.stringify({ text: 'Session cleared.' }),
          });
          commandIds.push(msg.id);
-@@ -267,31 +286,109 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -270,6 +288,10 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
  
      log(`Processing ${keep.length} message(s), kinds: ${[...new Set(keep.map((m) => m.kind))].join(',')}`);
  
--    const query = config.provider.query({
--      prompt,
--      continuation,
--      cwd: config.cwd,
--      systemContext: config.systemContext,
--    });
 +    // A real query runs from here — observers see the turn start (and the
 +    // matching turn_done after completion below).
 +    notifyProviderMessage({ kind: 'turn_start' });
 +
-     // Process the query while concurrently polling for new messages
-     const skippedSet = new Set(skipped.map((s) => s.id));
-     const processingIds = ids.filter((id) => !commandIds.includes(id) && !skippedSet.has(id));
-     // Publish the batch's in_reply_to so MCP tools (send_message, send_file)
-     // can stamp it on outbound rows — needed for a2a return-path routing.
-     setCurrentInReplyTo(routing.inReplyTo);
--    // Forward a loop stop to the ACTIVE query. The stream deliberately stays
--    // open between turns, so the loop can be parked inside processQuery when
--    // config.signal fires; without this, the "stopped" loop's query — and its
--    // 500ms follow-up poller — outlives the stop and keeps polling (and
--    // claiming) messages from whatever inbound DB the process points at. In
--    // tests that leaked one immortal poller per loop-driven test, which could
--    // steal a later test's follow-up message into a dead query.
+     const query = config.provider.query({
+       prompt,
+       continuation,
+@@ -284,6 +306,78 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+     // a2a return-path routing. Re-published at every turn boundary inside
+     // processQuery as later messages are answered.
+     publishReplyRoute(routing);
 +    // Rooms this batch came from — a reply defaults back here (origin guard in
 +    // dispatchResultText pins a misaddressed lone reply to the originating room).
 +    const originDests = resolveOriginDestinations(messages);
@@ -144,8 +128,6 @@ index dd7c308a..42231a6c 100644
 +     * catches those and re-emits them as `type:'error'` events, which become
 +     * a terminalError RESULT instead. That is now the common shape, so a
 +     * retry seam wired only to the catch path would essentially never fire.
-+     * Measured, not assumed: a probe driving runPollLoop with an error-event
-+     * provider saw zero handler calls, while a throwing one saw them.
 +     */
 +    const consultTurnRetry = async (failure: TurnFailure): Promise<QueryResult | null> =>
 +      (await runTurnRetryHandlers({
@@ -184,16 +166,15 @@ index dd7c308a..42231a6c 100644
 +              provider.onExchangeComplete?.bind(provider),
 +              prompt,
 +              undefined,
-+              // This is the escalation retry path. The retry runs the SAME
-+              // provider, so it carries the same delivery capability as the
-+              // call it is retrying — read through the legacy cast, since
-+              // upstream moved the flag onto the provider contract.
++              // The retry runs a DIFFERENT provider, so config.providerContract
++              // does not describe it; read its legacy flag the way upstream
++              // reads a contractless provider's, or inherit this turn's.
 +              ((provider as { emitsMidTurnText?: boolean }).emitsMidTurnText ?? false) ||
 +                midTurnCompleteDelivery,
++              config.signal,
 +              turnContext,
 +              originDests,
 +              config.lenientOutput ?? false,
-+              config.signal,
 +            );
 +          } catch (retryErr) {
 +            log(
@@ -203,19 +184,10 @@ index dd7c308a..42231a6c 100644
 +          }
 +        },
 +      })) as QueryResult | null;
-+
-+    const query = config.provider.query({
-+      prompt,
-+      continuation,
-+      cwd: config.cwd,
-+      systemContext: config.systemContext,
-+    });
-+    // Forward a loop stop to the ACTIVE query (upstream d9b0d024). The stream
-+    // deliberately stays open between turns, so the loop can be parked inside
-+    // processQuery when config.signal fires; without this, the "stopped" loop's
-+    // query — and its 500ms follow-up poller — outlives the stop and keeps
-+    // polling (and claiming) messages from whatever inbound DB the process
-+    // points at.
+     // Forward a loop stop to the ACTIVE query. The stream deliberately stays
+     // open between turns, so the loop can be parked inside processQuery when
+     // config.signal fires; without this, the "stopped" loop's query — and its
+@@ -294,9 +388,8 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
      const abortActiveQuery = () => query.abort();
      if (config.signal?.aborted) abortActiveQuery();
      else config.signal?.addEventListener('abort', abortActiveQuery, { once: true });
@@ -226,19 +198,19 @@ index dd7c308a..42231a6c 100644
          query,
          routing,
          processingIds,
-@@ -301,12 +398,92 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
-         continuation,
+@@ -307,11 +400,88 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
          midTurnCompleteDelivery,
+         config.signal,
          turnContext, // seam
 +        originDests,
 +        config.lenientOutput ?? false,
-+        config.signal,
        );
 +
-+      // Shutdown, not turn failure: the stop signal aborted the query
-+      // mid-turn. No error message and no empty-turn net — the host (or
-+      // test) tearing us down owns the messaging from here.
-+      if (config.signal?.aborted) return;
++      // Shutdown, not turn failure: when the stop signal aborted the query
++      // mid-turn, the fork adds no messaging of its own below (no terminal
++      // error surfacing, no empty-turn net) — upstream's completion and
++      // continuation handling still run, exactly as they do upstream.
++      const shuttingDown = config.signal?.aborted === true;
 +
 +      // Self-heal a dead/stale continuation. Unlike a thrown error (recovered
 +      // in the catch block below), an unusable resume id surfaces as a
@@ -264,10 +236,10 @@ index dd7c308a..42231a6c 100644
 +          prompt,
 +          undefined,
 +          midTurnCompleteDelivery,
++          config.signal,
 +          turnContext,
 +          originDests,
 +          config.lenientOutput ?? false,
-+          config.signal,
 +        );
 +      }
 +
@@ -280,7 +252,7 @@ index dd7c308a..42231a6c 100644
 +      // error result, or the SDK dying mid-stream): surface it to the user
 +      // instead of dropping the turn. The quota case writes its own message
 +      // inline, so it never reaches here.
-+      if (result.terminalError) {
++      if (result.terminalError && !shuttingDown) {
 +        // Offer the failure to the retry seam before surfacing it. A handler
 +        // that claims it AND produced output replaces the error entirely;
 +        // anything else (declined, retry failed, retry silent) falls through
@@ -304,7 +276,7 @@ index dd7c308a..42231a6c 100644
 +      // error message went out, and no terminal error was surfaced — true
 +      // silence, almost always a model/config problem the user must be told
 +      // about rather than left staring at nothing.
-+      if (!result.producedOutput && !result.terminalError) {
++      if (!result.producedOutput && !result.terminalError && !shuttingDown) {
 +        log('Turn produced no output and no error — writing empty-turn fallback');
 +        await writeUserText(
 +          routing,
@@ -313,13 +285,9 @@ index dd7c308a..42231a6c 100644
 +        );
 +      }
      } catch (err) {
-+      // Same shutdown guard as the result path — an abort-induced throw is
-+      // teardown, not a provider failure to report.
-+      if (config.signal?.aborted) return;
        const errMsg = err instanceof Error ? err.message : String(err);
        log(`Query error: ${errMsg}`);
- 
-@@ -319,28 +496,11 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -325,29 +495,11 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
          clearContinuation(config.providerName);
        }
  
@@ -342,6 +310,7 @@ index dd7c308a..42231a6c 100644
 -            // does not describe it. Read its legacy flag the way upstream reads
 -            // a contractless provider's (see the `legacy` cast in runPollLoop).
 -            ((provider as { emitsMidTurnText?: boolean }).emitsMidTurnText ?? false),
+-            config.signal, // seam: same abort as the first attempt
 -            turnContext,
 -          ),
 -      });
@@ -353,23 +322,7 @@ index dd7c308a..42231a6c 100644
        if (retried) {
          if (retried.continuation && retried.continuation !== continuation) {
            continuation = retried.continuation;
-@@ -353,14 +513,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
-       }
- 
-       // Write error response so the user knows something went wrong
--      await writeMessageOut({
--        id: generateId(),
--        kind: 'chat',
--        platform_id: routing.platformId,
--        channel_type: routing.channelType,
--        thread_id: routing.threadId,
--        content: JSON.stringify({ text: `Error: ${errMsg}` }),
--      });
-+      await writeUserText(routing, `Error: ${redactSecrets(errMsg)}`);
- 
-       // The batch is still acked completed below (no redelivery). Without
-       // this line the only log trace of the errored turn is "Query error"
-@@ -379,6 +532,37 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -379,6 +531,37 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
    }
  }
  
@@ -407,7 +360,7 @@ index dd7c308a..42231a6c 100644
  /**
   * Format messages, handling passthrough commands differently.
   * When the provider handles slash commands natively (Claude Code),
-@@ -417,8 +601,26 @@ function formatMessagesWithCommands(
+@@ -417,8 +600,26 @@ function formatMessagesWithCommands(
    return parts.join('\n\n');
  }
  
@@ -434,10 +387,10 @@ index dd7c308a..42231a6c 100644
  }
  
  export async function processQuery(
-@@ -439,7 +641,16 @@ export async function processQuery(
-    * delivery-inert and the final result stays the single delivery door.
+@@ -440,7 +641,15 @@ export async function processQuery(
     */
    midTurnCompleteDelivery = false,
+   signal?: AbortSignal,
 -  turnContext?: RunnerTurnContext, // seam: per-turn observers fire at each result event (hub queries stay open for hours)
 +  /**
 +   * Batch context for per-turn seam observers (runner-hooks.ts). When set,
@@ -448,14 +401,14 @@ index dd7c308a..42231a6c 100644
 +  turnContext?: RunnerTurnContext,
 +  originDests: DestinationEntry[] = [],
 +  lenient = false,
-+  signal?: AbortSignal,
  ): Promise<QueryResult> {
-   let queryContinuation: string | undefined;
-   let done = false;
-@@ -483,6 +694,15 @@ export async function processQuery(
-   // doesn't implement `onExchangeComplete`.
-   const archivePrompts: string[] = [initialPrompt];
- 
+   // adoptTurn mutates routing in place; keep the caller's batch route intact.
+   routing = { ...routing };
+@@ -484,6 +693,15 @@ export async function processQuery(
+   // oldest unanswered prompt. Retries append the original user prompt at
+   // their position in the provider input queue.
+   const archivePrompts: string[] = initialPrompt ? [initialPrompt] : [];
++
 +  // Capture the outbound high-water mark before the turn. Any write during the
 +  // turn (MCP send, dispatched result text, inline error message) advances it;
 +  // the delta after the turn tells us whether the agent produced ANY output.
@@ -464,11 +417,10 @@ index dd7c308a..42231a6c 100644
 +  const outboundSeqBefore = getMaxOutboundSeq();
 +
 +  let terminalError: TerminalError | undefined;
-+
-   // Concurrent polling: push follow-ups into the active query as they arrive.
-   // We do NOT force-end the stream on silence — keeping the query open avoids
-   // re-spawning the SDK subprocess (~few seconds) and re-loading the .jsonl
-@@ -496,6 +716,16 @@ export async function processQuery(
+   // Where replies go is a property of the TURN, not the query. The query
+   // stays open across turns (below), so a message pushed after the previous
+   // answer finished is a new turn and replies go to ITS thread; a message
+@@ -526,6 +744,16 @@ export async function processQuery(
    let endedForCommand = false;
    let mailboxFailureStreak = 0;
    const pollHandle = setInterval(() => {
@@ -485,7 +437,7 @@ index dd7c308a..42231a6c 100644
      if (done || pollInFlight || endedForCommand) return;
      pollInFlight = true;
  
-@@ -503,6 +733,24 @@ export async function processQuery(
+@@ -533,6 +761,24 @@ export async function processQuery(
        try {
          const pending = getPendingMessages();
  
@@ -510,7 +462,7 @@ index dd7c308a..42231a6c 100644
          // Slash commands need a fresh query: /clear resets the SDK's
          // resume id (fixed at sdkQuery() time); admin/passthrough commands
          // (/compact, /cost, …) only dispatch when they're the first input
-@@ -634,6 +882,32 @@ export async function processQuery(
+@@ -669,6 +915,32 @@ export async function processQuery(
            midTurnSent += scan.delivered;
            midTurnTail = scan.tail;
          }
@@ -543,7 +495,7 @@ index dd7c308a..42231a6c 100644
        } else if (event.type === 'result') {
          // A result — with or without text — means the turn is done. Mark
          // the initial batch completed now so the host sweep doesn't see
-@@ -658,6 +932,11 @@ export async function processQuery(
+@@ -695,6 +967,11 @@ export async function processQuery(
              // carries content, the wrap-nudge fires so the model re-sends
              // and the retry streams through the mid-turn door.
              turnDelivered: midTurnCompleteDelivery ? midTurnSent > 0 || chatRowWrittenSince(turnStartSeq) : undefined,
@@ -553,9 +505,9 @@ index dd7c308a..42231a6c 100644
 +            originDests,
 +            lenient,
            });
-           const willRetryTaskBlocks = shouldNudgeTaskBlocks(routing.taskRun, taskBlocks, taskBlockNudged);
-           // One-door task delivery: the final text becomes the run log entry
-@@ -746,7 +1025,13 @@ export async function processQuery(
+           // Completed partial output remains deliverable, but an explicit
+           // provider failure must keep its status and never trigger a retry.
+@@ -811,7 +1088,13 @@ export async function processQuery(
      clearInterval(pollHandle);
    }
  
@@ -570,15 +522,15 @@ index dd7c308a..42231a6c 100644
  }
  
  function notifyExchangeComplete(
-@@ -791,6 +1076,7 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
-  */
- async function deliverErrorResult(text: string, routing: RoutingContext): Promise<void> {
-   log('Error result with no <message> envelope — delivering to channel');
+@@ -850,6 +1133,7 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
+ /** Send the dedicated provider error or a generic failure notice. */
+ async function deliverErrorResult(routing: RoutingContext, text: string): Promise<void> {
+   log('Error result notice — delivering to channel');
 +  text = redactSecrets(text);
    await writeMessageOut({
      id: generateId(),
      in_reply_to: routing.inReplyTo,
-@@ -810,6 +1096,27 @@ async function deliverErrorResult(text: string, routing: RoutingContext): Promis
+@@ -869,6 +1153,27 @@ async function deliverErrorResult(routing: RoutingContext, text: string): Promis
   * The agent must always wrap output in <message to="name">...</message>
   * blocks, even with a single destination. Bare text is scratchpad only.
   */
@@ -606,7 +558,7 @@ index dd7c308a..42231a6c 100644
  export interface TaskMessageBlock {
    to: string;
    body: string;
-@@ -824,6 +1131,19 @@ export interface ResultDispatchOptions {
+@@ -883,6 +1188,19 @@ export interface ResultDispatchOptions {
     * undelivered reply.
     */
    midTurnSent?: number;
@@ -626,7 +578,7 @@ index dd7c308a..42231a6c 100644
    /**
     * Providers declaring `textDelivery: 'mid-turn-complete'`: the result door NEVER delivers
     * content. Mid-turn streaming (parse-time block delivery plus cross-
-@@ -1071,6 +1391,30 @@ export async function dispatchResultText(
+@@ -1130,6 +1448,30 @@ export async function dispatchResultText(
    text = text.replace(INTERNAL_SPAN_RE, '');
    const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
  
@@ -657,7 +609,7 @@ index dd7c308a..42231a6c 100644
    let match: RegExpExecArray | null;
    // Blocks delivered mid-turn count toward this turn's sent total — a final
    // text with no (new) blocks after a mid-turn delivery is scratchpad, not an
-@@ -1085,7 +1429,7 @@ export async function dispatchResultText(
+@@ -1140,7 +1482,7 @@ export async function dispatchResultText(
    const taskBlocks: TaskMessageBlock[] = [];
    let lastIndex = 0;
    const scratchpadParts: string[] = [];
@@ -666,15 +618,7 @@ index dd7c308a..42231a6c 100644
    while ((match = MESSAGE_RE.exec(text)) !== null) {
      if (match.index > lastIndex) {
        scratchpadParts.push(text.slice(lastIndex, match.index));
-@@ -1094,7 +1438,6 @@ export async function dispatchResultText(
-     const body = stripHarnessTagArtifacts(match[2].trim());
-     lastIndex = MESSAGE_RE.lastIndex;
-     resultBlocks++;
--
-     // One-door delivery in task sessions: only the send_message tool delivers.
-     // A final-text <message to> block here is either an echo of a tool send the
-     // agent already made (the double-delivery class) or a send down the wrong
-@@ -1107,7 +1450,7 @@ export async function dispatchResultText(
+@@ -1161,7 +1503,7 @@ export async function dispatchResultText(
        taskBlocks.push({ to: toName, body });
        continue;
      }
@@ -683,7 +627,7 @@ index dd7c308a..42231a6c 100644
      if (!dest) {
        log(`Unknown destination in <message to="${toName}">, dropping block`);
        scratchpadParts.push(`[dropped: unknown destination "${toName}"] ${body}`);
-@@ -1139,9 +1482,37 @@ export async function dispatchResultText(
+@@ -1193,9 +1535,37 @@ export async function dispatchResultText(
        }
        continue;
      }
@@ -721,7 +665,7 @@ index dd7c308a..42231a6c 100644
    if (lastIndex < text.length) {
      scratchpadParts.push(text.slice(lastIndex));
    }
-@@ -1158,7 +1529,31 @@ export async function dispatchResultText(
+@@ -1212,7 +1582,31 @@ export async function dispatchResultText(
    // turnDelivered (door deliveries + DB-visible sends like MCP send_message);
    // otherwise by this dispatch's own send count.
    const anythingDelivered = options?.suppressDelivery ? options.turnDelivered === true : sent > 0;

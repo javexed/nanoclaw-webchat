@@ -108,6 +108,25 @@ config problem.
 > `--max 500` for any audit; a truncated list has already produced one
 > confidently wrong inventory.
 
+## What the UI calls the scopes
+
+The panels name a secret by who it **reaches**, and a person's turns use the
+nearest scope per host:
+
+| UI words | Scope | Who sends it |
+| --- | --- | --- |
+| **Only you** | `user` | that person's own turns on that agent |
+| **Everyone on this agent** | `agent` | every member's turns on that agent |
+| **All agents** | `workspace` | every agent |
+
+The agent panel groups its list by those three (plus "Other people — only they
+can change these", read-only, so an admin can see who holds a key without being
+offered an action the server refuses), and opens with a "For you:" line that
+states, per host, which of the three the viewer's turns actually send — computed
+server-side from the same precedence the reconcile writes. Settings keeps the
+same words: **Secrets for all agents** is the workspace scope, **Secrets only
+you use** is the user scope, per agent.
+
 ## Who may manage credentials
 
 Authorisation follows the **scope**, not one blanket rule. Per-group actions use

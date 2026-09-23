@@ -1,5 +1,5 @@
 diff --git a/src/types.ts b/src/types.ts
-index 22bddfae..818fe9e6 100644
+index 2f287b44..9eab1d94 100644
 --- a/src/types.ts
 +++ b/src/types.ts
 @@ -1,5 +1,13 @@
@@ -28,8 +28,8 @@ index 22bddfae..818fe9e6 100644
 +  status?: AgentStatus;
  }
  
- /** Per-agent-group container runtime config. Source of truth in the DB;
-@@ -33,6 +47,8 @@ export interface ContainerConfigRow {
+ /**
+@@ -42,6 +56,8 @@ export interface ContainerConfigRow {
     * and `SELECT *` rows surface it here. Absent means the default tier.
     */
    runtime_tier?: string | null;

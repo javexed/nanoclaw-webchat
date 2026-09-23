@@ -438,7 +438,7 @@
           <div id="handle-creds" class="handle-creds" hidden>
             <div class="handle-creds-divider"></div>
             <div class="handle-creds-row">
-              <span id="handle-creds-status" class="handle-creds-status">User credentials</span>
+              <span id="handle-creds-status" class="handle-creds-status">Your own Claude/Codex account</span>
               <button id="handle-creds-action" type="button" class="btn btn-secondary">Connect</button>
             </div>
           </div>
@@ -662,9 +662,10 @@
                     <button type="button" id="agent-skills-save" class="btn btn-primary" disabled>Save skills</button>
                   </div>
                 </details>
-                <!-- Secrets scoped to this agent. Only meaningful once the agent
-                     is isolated: in the default `all` mode the gateway offers
-                     every vault secret to every agent, so scoping is a no-op. -->
+                <!-- Secrets this agent sends, grouped by who they reach: only you,
+                     everyone on this agent, all agents, other people's own. Only
+                     meaningful once the agent is isolated: in the default `all`
+                     mode the gateway offers every vault secret to every agent. -->
                 <details class="agent-accordion">
                   <summary class="agent-accordion-summary"><span class="form-label">Secrets</span><span class="agent-accordion-count" id="agent-secrets-count"></span></summary>
                   <div id="agent-secrets-section" class="agent-secrets-section">
@@ -672,7 +673,7 @@
                     <ul id="agent-secrets-list" class="skill-sources-list"></ul>
                     <div class="secret-form" id="agent-secret-form">
                       <label class="secret-field"><span class="form-label">Host</span>
-                        <input id="agent-secret-host" type="text" placeholder="dev.azure.com" autocomplete="off" spellcheck="false" />
+                        <input id="agent-secret-host" type="text" placeholder="dev.azure.com" autocomplete="off" autocapitalize="none" spellcheck="false" />
                       </label>
                       <label class="secret-field"><span class="form-label">Token or key</span>
                         <input id="agent-secret-value" type="password" autocomplete="new-password" spellcheck="false" />
@@ -686,10 +687,20 @@
                       <label class="secret-field secret-custom" id="agent-secret-custom-format-row" hidden><span class="form-label">Value template</span>
                         <input id="agent-secret-custom-format" type="text" placeholder="Bearer {value}" autocomplete="off" spellcheck="false" />
                       </label>
-                      <label class="secret-field secret-personal setting-toggle" id="agent-secret-personal-row">
-                        <span class="form-label">Personal</span>
-                        <input id="agent-secret-personal" type="checkbox" />
-                      </label>
+                      <!-- Who the secret reaches — the same three words the list
+                           files rows under. "Only me" is greyed until this person
+                           has connected their own login (a click says so);
+                           "All agents" appears only for someone who may manage
+                           the workspace scope. -->
+                      <div class="secret-field secret-reach">
+                        <span class="form-label">Who uses it</span>
+                        <div id="agent-secret-reach" class="setting-options" role="group" aria-label="Who uses this secret">
+                          <button class="setting-option" type="button" data-value="me">Only me</button>
+                          <button class="setting-option" type="button" data-value="agent">Everyone on this agent</button>
+                          <button class="setting-option" type="button" data-value="all" hidden>All agents</button>
+                        </div>
+                        <p class="cred-hint" id="agent-secret-reach-help"></p>
+                      </div>
                       <button id="agent-secret-save" class="btn btn-primary" type="button">Add secret</button>
                     </div>
                   </div>
@@ -930,7 +941,7 @@
                      workspace-admin-only in Settings and inherited by every room. -->
                 <div id="room-credential-mode-section" class="room-cred-section" hidden>
                   <div class="setting-group">
-                    <span class="setting-label">User credentials</span>
+                    <span class="setting-label">Members’ own AI accounts</span>
                     <div
                       id="room-credential-modes"
                       class="setting-options"
@@ -1901,11 +1912,11 @@
                 </div>
               </div>
               <div id="settings-secrets" class="settings-credentials" hidden>
-                <h3 class="settings-section-title">System secrets</h3>
+                <h3 class="settings-section-title">Secrets for all agents</h3>
                 <ul id="secrets-list" class="skill-sources-list"></ul>
                 <div class="secret-form">
                   <label class="secret-field"><span class="form-label">Host</span>
-                    <input id="secret-host" type="text" placeholder="dev.azure.com" autocomplete="off" spellcheck="false" />
+                    <input id="secret-host" type="text" placeholder="dev.azure.com" autocomplete="off" autocapitalize="none" spellcheck="false" />
                   </label>
                   <label class="secret-field"><span class="form-label">Token or key</span>
                     <input id="secret-value" type="password" autocomplete="new-password" spellcheck="false" />
@@ -1921,11 +1932,11 @@
                   </label>
                   <button id="secret-save" class="btn btn-primary" type="button">Add secret</button>
               <button class="feature-info-btn" type="button" aria-expanded="false"
-                    aria-controls="system-secrets-info" aria-label="About system secrets">
+                    aria-controls="system-secrets-info" aria-label="About secrets for all agents">
                 <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
               </button>
                 </div>
-                <p class="cred-hint feature-info" id="system-secrets-info" hidden>Available to every agent, injected at the proxy — never shown again, and never visible to the agent</p>
+                <p class="cred-hint feature-info" id="system-secrets-info" hidden>Every agent sends these, injected at the proxy — never shown again, never visible to the agent. A nearer secret wins.</p>
               </div>
               <div id="settings-credential-isolation" class="settings-feature" hidden>
                 <div class="setting-group install-row">
@@ -2401,7 +2412,8 @@
                  its owner is the one who enters it. Hidden entirely for people
                  who aren't enrolled in any agent, so it never nags. -->
             <div id="settings-my-credentials" class="settings-credentials" hidden>
-              <h3 class="settings-section-title">My credentials</h3>
+              <h3 class="settings-section-title">Secrets only you use</h3>
+              <p class="cred-hint">Your own turns only. Wins over the agent’s and all-agents ones.</p>
               <div id="my-credentials-list"></div>
             </div>
             <!-- Workspace credentials policy — owner only (shown when canEdit). -->
@@ -2728,7 +2740,7 @@
                       <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;OpenCode installed
                     </span>
                   </div>
-                  <p class="cred-hint" id="wizard-opencode-hint" hidden>Recommended</p>
+                  <p class="cred-hint" id="wizard-opencode-hint" hidden>Recommended: small local models follow tools far better on OpenCode. Rebuilds and restarts NanoClaw — a few minutes.</p>
                   <pre id="wizard-opencode-install-log" class="wizard-code" hidden></pre>
                   <div id="wizard-ollama-setup">
                   <div class="setting-group">

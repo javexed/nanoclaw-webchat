@@ -1,0 +1,27 @@
+diff --git a/scripts/skill-conformance.test.ts b/scripts/skill-conformance.test.ts
+index d70765fa..f2545a7f 100644
+--- a/scripts/skill-conformance.test.ts
++++ b/scripts/skill-conformance.test.ts
+@@ -120,6 +120,22 @@ function scratchRoot(): string {
+     join(root, 'setup/index.ts'),
+     ['const STEPS = {', '  // >>> nanoclaw:setup-steps', '  // <<< nanoclaw:setup-steps', '};', ''].join('\n'),
+   );
++  // container/Dockerfile carries the nanoclaw:image-layers region in this fork's
++  // trunk (patches/upstreamable/container__Dockerfile.patch), so a skill adds an
++  // image layer with `nc:append at:` instead of copying the whole recipe over the
++  // top of it. Seed it, or such an append finds no marker here and bounces to an
++  // agent — a failure of this fixture, not of the skill.
++  writeFileSync(
++    join(root, 'container/Dockerfile'),
++    [
++      'FROM node:22-slim',
++      '# >>> nanoclaw:image-layers',
++      '# <<< nanoclaw:image-layers',
++      'RUN find / -xdev -perm -4000 -type f -exec chmod u-s {} + || true',
++      'USER node',
++      '',
++    ].join('\n'),
++  );
+   writeFileSync(join(root, 'container/cli-tools.json'), '[]\n');
+   return root;
+ }

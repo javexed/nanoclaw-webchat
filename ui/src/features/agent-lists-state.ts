@@ -26,9 +26,24 @@ export const createAgentAnyExist = ref(false);
  * `scope` is carried through untouched — it is the argument removeToolSecret
  * needs, not something the template renders.
  */
+export type SecretReach = 'mine' | 'agent' | 'workspace' | 'other';
 export const agentSecretRows = ref<
-  Array<{ key: string; host: string; personal: boolean; ownerLabel: string; scope: unknown; sec: unknown }>
+  Array<{
+    key: string;
+    host: string;
+    /** Who the row reaches — the section it renders under. */
+    reach: SecretReach;
+    /** For another person's row: whose. */
+    ownerLabel: string;
+    /** Same host is served from a nearer scope for the viewer. */
+    note: string;
+    canRemove: boolean;
+    scope: unknown;
+    sec: unknown;
+  }>
 >([]);
+/** One line: what the viewer's own turns send, per host. */
+export const agentSecretEffective = ref('');
 
 /**
  * Deploy keys for the open agent, already shaped.
