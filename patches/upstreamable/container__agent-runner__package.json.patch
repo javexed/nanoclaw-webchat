@@ -1,9 +1,9 @@
 diff --git a/container/agent-runner/package.json b/container/agent-runner/package.json
-index dc8a32cc..9a94e697 100644
+index 7ee37ced..811bbde9 100644
 --- a/container/agent-runner/package.json
 +++ b/container/agent-runner/package.json
 @@ -9,7 +9,7 @@
-     "test": "bun test"
+     "test": "bun test --isolate"
    },
    "dependencies": {
 -    "@anthropic-ai/claude-agent-sdk": "^0.3.257",

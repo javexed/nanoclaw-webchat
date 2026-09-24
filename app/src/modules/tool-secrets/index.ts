@@ -110,6 +110,25 @@ async function providerSecretType(agentGroupId: string): Promise<'anthropic' | '
   return (await getContainerConfig(agentGroupId))?.provider === 'codex' ? 'openai' : 'anthropic';
 }
 
+/** Per host, the one secret a container sends and the scope it came from. */
+export interface EffectiveSecret {
+  hostPattern: string;
+  source: Scope['kind'];
+  secretId: string;
+}
+
+/** Nearest scope wins per host; `scopes` is given nearest-first. */
+async function winnersByHost(admin: OnecliAdmin, scopes: Scope[]): Promise<EffectiveSecret[]> {
+  const byHost = new Map<string, EffectiveSecret>();
+  for (const scope of scopes) {
+    for (const s of await listToolSecrets(admin, scope)) {
+      if (!byHost.has(s.hostPattern))
+        byHost.set(s.hostPattern, { hostPattern: s.hostPattern, source: scope.kind, secretId: s.id });
+    }
+  }
+  return [...byHost.values()];
+}
+
 /**
  * Desired secret assignment for ONE per-member agent, with precedence.
  *
@@ -129,17 +148,36 @@ async function desiredMemberSecrets(
   userId: string,
   modelCredId: string | null,
 ): Promise<string[]> {
-  const byHost = new Map<string, string>(); // host → winning secret id
-  const take = (secrets: ToolSecretInfo[]) => {
-    for (const s of secrets) if (!byHost.has(s.hostPattern)) byHost.set(s.hostPattern, s.id);
-  };
   // Order IS the precedence.
-  take(await listToolSecrets(admin, { kind: 'user', agentGroupId, userId }));
-  take(await listToolSecrets(admin, { kind: 'agent', agentGroupId }));
-  take(await listToolSecrets(admin, WORKSPACE));
-  const ids = [...byHost.values()];
+  const winners = await winnersByHost(admin, [
+    { kind: 'user', agentGroupId, userId },
+    { kind: 'agent', agentGroupId },
+    WORKSPACE,
+  ]);
+  const ids = winners.map((w) => w.secretId);
   if (modelCredId) ids.push(modelCredId);
   return Array.from(new Set(ids));
+}
+
+/**
+ * What ONE person's turns on ONE agent send, per host — the precedence the
+ * reconcile writes, read back so the UI can say it instead of leaving the
+ * operator to work out which of three same-host rows is theirs.
+ *
+ * Enrolled, the person runs on their own per-member agent: user > agent >
+ * workspace. Not enrolled, they run on the group's own agent, which has no user
+ * scope: agent > workspace. This describes the ASSIGNED precedence — what an
+ * isolated agent receives. A group still in `all` mode receives every matching
+ * vault secret regardless, which the panel already flags as "not private yet".
+ */
+export async function effectiveSecretsFor(
+  admin: OnecliAdmin,
+  agentGroupId: string,
+  userId: string,
+): Promise<EffectiveSecret[]> {
+  const enrolled = (await listGroupMemberEnrollments(agentGroupId)).some((r) => r.user_id === userId);
+  const own: Scope[] = enrolled ? [{ kind: 'user', agentGroupId, userId }] : [];
+  return winnersByHost(admin, [...own, { kind: 'agent', agentGroupId }, WORKSPACE]);
 }
 
 /** Re-apply precedence for one member agent (no-op if they aren't enrolled). */
@@ -406,10 +444,15 @@ export async function listToolSecrets(admin: OnecliAdmin, scope: Scope): Promise
 export async function createToolSecret(
   admin: OnecliAdmin,
   scope: Scope,
-  host: string,
+  rawHost: string,
   value: string,
   scheme?: AuthScheme,
 ): Promise<ToolSecretInfo> {
+  // Hostnames are case-insensitive; the gateway's pattern match is not. A phone
+  // keyboard capitalises the first letter of a field, and "Dev.azure.com" then
+  // never matches a request to dev.azure.com — a secret that exists and is
+  // never sent. Normalise once, here, so every scope stores the same form.
+  const host = rawHost.trim().toLowerCase();
   // The host IS the identity of the credential — one credential per host per
   // scope — so it doubles as the label and there is nothing extra to name.
   const label = host;

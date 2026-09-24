@@ -17,8 +17,20 @@
 #   scripts/regen-patches.sh <composed-tree> <file> ...
 
 
-## UPSTREAMABLE — candidate upstream PRs (68)
+## UPSTREAMABLE — candidate upstream PRs (73)
 
+setup/verify.ts
+    exports CHANNEL_ENV_KEYS so a test can neutralise exactly the credential
+    env vars that mark a channel configured. `has()` reads process.env before
+    the install's .env, so an ambient GITHUB_TOKEN — every Actions runner sets
+    one, as does any shell with `gh` — invents a github channel and fails five
+    tests in setup/verify-slack.test.ts. Carried from upstream PR #3757 (open,
+    all checks green, awaiting review). DELETE both this and the test patch
+    when it merges.
+setup/verify-slack.test.ts
+    the other half of #3757: stubs those keys empty in beforeEach and calls
+    vi.unstubAllEnvs() in afterEach, so the suite stops inheriting ambient env.
+    Replaced the GITHUB_TOKEN="" workaround the compose workflow used to set.
 CLAUDE.md
     operator docs for the above
 container/Dockerfile
@@ -103,7 +115,34 @@ setup/onecli.ts
 setup/service.test.ts
     tests for the PATH fix
 setup/service.ts
-    /snap/bin on the service PATH so snap CLIs (tailscale) resolve
+    two hunks. (1) /snap/bin on the service PATH so snap CLIs (tailscale)
+    resolve. (2) the stale-docker-group path: a minimal image (the Debian 13
+    LXC template) ships no `acl`, so the setfacl workaround silently did not
+    happen and the unit started straight into a crash loop — install the
+    package and retry; if the group is still stale, say what it is and what
+    fixes it BEFORE the unit starts, instead of leaving it to the journal;
+    and report linger from `loginctl show-user` rather than assuming an
+    unprivileged `enable-linger` took (it exits 1 without a polkit agent —
+    every headless SSH install — so sudo is tried too). Carried from the
+    web branch, where a Debian 13 CT install hit all three.
+src/drivers/docker-driver.ts
+    the other half of that: when the socket exists but is forbidden, the boot
+    banner names the docker group and the fix (`loginctl terminate-user`),
+    not "ensure Docker is installed and running" — which sends the operator
+    to check the one thing that already works in their shell. Conservative
+    match; anything unrecognised keeps the generic advice.
+src/drivers/docker-driver.test.ts
+    coverage for the above: permission-denied on an existing socket names the
+    group and not the daemon.
+.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode-config.ts
+    default OPENCODE_SMALL_MODEL to the main model. OpenCode runs side tasks
+    (session titles, summaries) on a small model and, with none configured,
+    asks its own catalogue for gpt-5.4-nano — which a local endpoint never
+    serves, so every auxiliary call failed ("model 'gpt-5.4-nano' not found"
+    in the session log, main reply unaffected). The main model is the one
+    model the endpoint is known to have. Webchat sets the env var itself since
+    the model-from-the-pick fix, so this is for a hand-applied skill; it is
+    upstream's payload, hence a patch on the skill directory.
 container/agent-runner/src/mailbox/registry.test.ts
     make the unreadable-context test uid-independent. It wrote the file with
     mode 0o000 so the read would fail; root (CI containers) bypasses that, read
@@ -194,7 +233,7 @@ src/templates/local-dir.ts
 src/types.ts
     agent-group lifecycle status type
 
-## PRODUCT — shrink via seam registries (26)
+## PRODUCT — shrink via seam registries (34)
 
 container/agent-runner/src/config.ts
     lenientOutput + learning config surface read by the runner
@@ -222,6 +261,10 @@ container/skills/onecli-gateway/SKILL.md
     secret intake points at the webchat Agents → Secrets UI, not the OneCLI dashboard
 eslint.config.js
     lint rules for the webchat PWA frontend
+scripts/skill-conformance.test.ts
+    seeds container/Dockerfile with the nanoclaw:image-layers region, so a skill
+    that adds an image layer with `nc:append at:` applies in the fixture root
+    instead of bouncing to an agent
 src/channels/adapter.ts
     senderAgentGroupId for a2a loop-back attribution
 src/channels/channel-registry.ts
@@ -245,10 +288,20 @@ src/modules/typing/index.test.ts
 src/modules/typing/index.ts
     agentName on the typing indicator (multi-agent rooms)
 
-## LOCAL — install-local, expected to persist (6)
+## LOCAL — install-local, expected to persist (7)
 
 .claude/skills/add-codex/SKILL.md
     points the codex payload at this fork's providers-codex branch
+setup/lib/restart-readiness.test.ts
+    skips TWO tests behind NANOCLAW_WEBCHAT_SKIP_RESTART_FALLBACK, which only
+    this repo's CI sets. Both exercise restart.sh's nohup fallback and hang the
+    full 30s on that one runner; they pass in 4.4s in the runner's OWN image
+    (catthehacker/ubuntu:act-22.04), as root, on Node 24, and down to 0.5 CPU,
+    and take an identical 63.7s alone as in the full suite — so not contention,
+    not the image, not root, Node or CPU. Unlike the rest of this folder it is
+    NOT expected to persist: delete it when the runner is fixed or replaced and
+    let a run prove it. If the fallback proves genuinely broken in some
+    environments, report it upstream instead of skipping.
 .claude/skills/add-karpathy-llm-wiki/llm-wiki.md
     OpenCode-removal reference sweep
 .claude/skills/add-mnemon/SKILL.md

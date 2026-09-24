@@ -1,5 +1,5 @@
 diff --git a/src/router.ts b/src/router.ts
-index 615409e7..f54151e9 100644
+index fdda9646..6fb97685 100644
 --- a/src/router.ts
 +++ b/src/router.ts
 @@ -383,6 +383,11 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
@@ -69,7 +69,7 @@ index 615409e7..f54151e9 100644
        } catch {
          // Bad regex: fail open so admin sees the agent responding + can fix.
          return true;
-@@ -697,6 +734,7 @@ async function deliverToAgent(
+@@ -683,6 +720,7 @@ async function deliverToAgent(
      startTypingRefresh(
        session.id,
        session.agent_group_id,

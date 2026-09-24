@@ -408,6 +408,8 @@ import {
   rWebchatTtsInstallPost,
   rWorkspaceProviderGet,
   rWorkspaceProviderPut,
+  rInstallGet,
+  rInstallPost,
 } from './server/routes-install.js';
 import { createServer as createHttpsServer } from 'https';
 import { createHash, randomUUID, randomBytes } from 'crypto';
@@ -492,14 +494,6 @@ import { getTailscaleServeState, enableTailscaleServe } from './tailscale-serve.
 import {
   deleteHostModel,
   getPullsSnapshot,
-  getOllamaLocalState,
-  startOllamaInstall,
-  getCodexInstallProgress,
-  startCodexInstall,
-  getOpencodeInstallProgress,
-  startOpencodeInstall,
-  getPiInstallProgress,
-  startPiInstall,
   getRosterRefreshState,
   dryClassify,
   getRouteSuggestions,
@@ -521,23 +515,10 @@ import {
   cancelPull,
   startPull,
   startRosterRefresh,
-  getRoutingInstallState,
-  getTtsInstallState,
-  startTtsInstall,
-  getTailscaleInstallState,
-  startTailscaleInstall,
-  getCloudflaredInstallState,
-  startCloudflaredInstall,
-  startCloudflaredConnect,
-  getSttInstallState,
-  startSttInstall,
-  startRoutingInstall,
-  getLitellmInstallState,
-  startLitellmInstall,
   deriveModelServerHosts,
-  upsertEnv,
   scheduleHostRestart,
 } from './ollama-manage.js';
+import { upsertEnv } from './env-write.js';
 import {
   approvalInboxForUser,
   archiveRoom,
@@ -744,6 +725,7 @@ import {
   refreshCredentialNote,
   resolveAuthScheme,
   type AuthScheme,
+  effectiveSecretsFor,
 } from '../../modules/tool-secrets/index.js';
 import {
   userHasConnectedCredential,
@@ -1493,7 +1475,7 @@ async function rCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void>
 async function rToolSecretsMine(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, url, method, userId } = ctx;
   const seen = new Set<string>();
-  const groups: { agentGroupId: string; name: string; secrets: unknown[] }[] = [];
+  const groups: { agentGroupId: string; name: string; secrets: unknown[]; effective: unknown[] }[] = [];
   for (const provider of ['claude', 'codex'] as const) {
     for (const row of await listEnrolledGroups(userId, provider)) {
       if (seen.has(row.agent_group_id)) continue;
@@ -1508,6 +1490,9 @@ async function rToolSecretsMine(ctx: RouteCtx, _m: RegExpMatchArray): Promise<vo
           agentGroupId: group.id,
           userId,
         }),
+        // What this person's turns send per host — theirs, the agent's, or the
+        // all-agents one — so the Settings view can say it too.
+        effective: await effectiveSecretsFor(realOnecliAdmin, group.id, userId),
       });
     }
   }
@@ -1571,10 +1556,18 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
               })),
             )
           : null;
+      // For an agent scope, two more things the panel needs to answer "whose
+      // is this?": what the CALLER's own turns actually send per host (the
+      // precedence, read back), and the all-agents rows — only for someone who
+      // may list the workspace scope; a scoped admin gets null and the panel
+      // simply omits that section.
+      const agentView = agentGroupId && !rawUser;
       return json(res, 200, {
         secrets: await listToolSecrets(realOnecliAdmin, scope),
         isolation: agentGroupId ? await getGroupIsolation(realOnecliAdmin, agentGroupId) : null,
         members,
+        effective: agentView ? await effectiveSecretsFor(realOnecliAdmin, agentGroupId, userId) : null,
+        workspace: agentView && isElevated ? await listToolSecrets(realOnecliAdmin, WORKSPACE) : null,
       });
     }
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
@@ -3153,6 +3146,15 @@ const API_ROUTES: ApiRoute[] = [
     path: '/api/ollama/install',
     guards: ['csrf', 'owner'],
     h: rOllamaInstallPost,
+    audit: 'provider.install',
+  },
+  // The generic pair; the per-feature paths below are the same handlers bound.
+  { method: 'GET', path: /^\/api\/install\/([a-z0-9-]+)$/, guards: ['owner'], h: rInstallGet },
+  {
+    method: 'POST',
+    path: /^\/api\/install\/([a-z0-9-]+)$/,
+    guards: ['csrf', 'owner'],
+    h: rInstallPost,
     audit: 'provider.install',
   },
   { method: 'GET', path: '/api/codex/install', guards: ['owner'], h: rCodexInstallGet },

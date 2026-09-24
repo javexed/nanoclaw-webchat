@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { envForModel } from './models.js';
+import { envForModel, openCodeBackendEnv } from './models.js';
 
 describe('envForModel — ollama base URL', () => {
   it('points ANTHROPIC_BASE_URL at the bare endpoint (no /v1 append)', async () => {
@@ -25,6 +25,43 @@ describe('envForModel — ollama base URL', () => {
   it('strips a trailing slash but still does not append /v1', async () => {
     const env = envForModel({ kind: 'ollama', endpoint: 'http://host:11434/', model_id: 'm' } as never);
     expect(env.ANTHROPIC_BASE_URL).toBe('http://host:11434');
+  });
+});
+
+/**
+ * openCodeBackendEnv: the install-wide keys upstream's OpenCode provider reads.
+ * The model is the one picked in webchat — never a fixed id — and the SMALL
+ * model is the same one, or OpenCode's side tasks ask a local endpoint for its
+ * built-in gpt-5.4-nano.
+ */
+describe('openCodeBackendEnv — the picked model reaches the harness', () => {
+  it('maps an Ollama model to the openai provider at /v1, reachable from the container', () => {
+    const b = openCodeBackendEnv({
+      kind: 'ollama',
+      endpoint: 'http://localhost:11434',
+      model_id: 'qwen3:8b',
+    } as never)!;
+    expect(b.env).toEqual({
+      OPENCODE_PROVIDER: 'openai',
+      OPENCODE_BASE_URL: 'http://host.docker.internal:11434/v1',
+      OPENCODE_MODEL: 'openai/qwen3:8b',
+      OPENCODE_SMALL_MODEL: 'openai/qwen3:8b',
+    });
+    expect(b.proxyHost).toBe('host.docker.internal');
+  });
+
+  it('does not double a /v1 the registry endpoint already carries', () => {
+    const b = openCodeBackendEnv({ kind: 'ollama', endpoint: 'http://192.0.2.9:11434/v1/', model_id: 'm' } as never)!;
+    expect(b.env.OPENCODE_BASE_URL).toBe('http://192.0.2.9:11434/v1');
+    expect(b.proxyHost).toBe('192.0.2.9');
+  });
+
+  it('is null for a non-Ollama kind or a model without an endpoint', () => {
+    expect(openCodeBackendEnv({ kind: 'anthropic', endpoint: null, model_id: 'claude' } as never)).toBeNull();
+    expect(
+      openCodeBackendEnv({ kind: 'openai-compatible', endpoint: 'http://r:4000/v1', model_id: 'm' } as never),
+    ).toBeNull();
+    expect(openCodeBackendEnv({ kind: 'ollama', endpoint: null, model_id: 'm' } as never)).toBeNull();
   });
 });
 

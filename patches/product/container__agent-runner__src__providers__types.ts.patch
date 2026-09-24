@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/providers/types.ts b/container/agent-runner/src/providers/types.ts
-index 3c7f14cc..7d8fd1fa 100644
+index c0296f04..6ff66dd8 100644
 --- a/container/agent-runner/src/providers/types.ts
 +++ b/container/agent-runner/src/providers/types.ts
 @@ -9,6 +9,38 @@ import type { MemorySessionHookRegistration } from '../memory/session-hook.js';

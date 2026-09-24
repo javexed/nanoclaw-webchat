@@ -1,0 +1,21 @@
+diff --git a/container/agent-runner/src/providers/claude.errors.test.ts b/container/agent-runner/src/providers/claude.errors.test.ts
+index e59dec6b..7185e16e 100644
+--- a/container/agent-runner/src/providers/claude.errors.test.ts
++++ b/container/agent-runner/src/providers/claude.errors.test.ts
+@@ -74,8 +74,15 @@ it.each([false, true])('delivers the Claude SDK billing error once, with prior r
+     claudeRuntimeContract.textDelivery === 'mid-turn-complete',
+   );
+ 
++  // Under the fork's contract (textDelivery: 'result') streamed text is
++  // delivery-inert and the result door is the single content door — so a
++  // partial <message> streamed before an ERROR result has no door to leave by
++  // and is not delivered. Upstream's mid-turn-complete contract delivers it as
++  // it streams. The assertion follows the active contract; the billing notice
++  // itself is delivered under both.
++  const partialDelivered = partialReply && claudeRuntimeContract.textDelivery === 'mid-turn-complete';
+   expect(getUndeliveredMessages().map((row) => JSON.parse(row.content).text)).toEqual([
+-    ...(partialReply ? ['Finished the first step.'] : []),
++    ...(partialDelivered ? ['Finished the first step.'] : []),
+     BILLING_ERROR,
+   ]);
+   expect(exchanges).toEqual([

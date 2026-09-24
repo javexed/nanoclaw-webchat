@@ -1,8 +1,8 @@
 diff --git a/src/host-sweep.ts b/src/host-sweep.ts
-index f86afacc..4c79827d 100644
+index b68c6182..91ebd56c 100644
 --- a/src/host-sweep.ts
 +++ b/src/host-sweep.ts
-@@ -26,6 +26,8 @@ export {
+@@ -27,6 +27,8 @@ export {
    CLAIM_STUCK_MS,
    _resetStuckProcessingRowsForTesting,
    decideStuckAction,

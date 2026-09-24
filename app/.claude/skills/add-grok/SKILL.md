@@ -29,13 +29,14 @@ Check whether the payload is already wired. All of these present means installed
 
 Fetch the **`providers-grok`** branch and copy the payload into all three trees (additive — overwrite each file, never merge the branch).
 
-> **Read this before applying.** Unlike `/add-codex`, this payload includes `container/Dockerfile` and `container/build.sh`, because the Grok CLI is a native binary and cannot go in the npm-shaped `container/cli-tools.json`. `nc:copy` **overwrites**. If this install carries local edits to either file, re-apply them after copying — or port just the `ARG GROK_VERSION` block by hand and drop those two lines from the copy list.
 
 ```nc:copy from-branch:providers-grok
 src/providers/grok.ts
 src/providers/grok-auth.ts
+src/providers/grok-reauth.ts
 src/providers/grok.test.ts
 src/providers/grok-auth.test.ts
+src/providers/grok-reauth.test.ts
 container/agent-runner/src/providers/grok.ts
 container/agent-runner/src/providers/grok-acp.ts
 container/agent-runner/src/providers/grok.test.ts
@@ -44,8 +45,37 @@ container/agent-runner/src/providers/grok-registration.test.ts
 setup/providers/grok.ts
 setup/providers/grok.test.ts
 container/grok-cli-pin.test.ts
-container/Dockerfile
-container/build.sh
+```
+
+The Grok CLI is a native binary, so it cannot ride `container/cli-tools.json` (that
+manifest installs through `pnpm install -g`). It goes into the image as a layer
+inserted into the Dockerfile's `nanoclaw:image-layers` region — never by copying the
+Dockerfile, which would roll back every change trunk has made to it since this
+payload was cut (rtk, the bun version, the pinned build frontend).
+
+Two rules the block below follows, because the engine enforces them bluntly:
+
+- Its first line is the install sentinel: re-apply skips the whole block when the
+  Dockerfile already has that line.
+- No blank lines, no `USER` lines, and no line that also appears elsewhere in the
+  Dockerfile. The engine's undo (`removeSkill`, the journal played backwards)
+  deletes every line matching one this skill added, anywhere in the file — a
+  `USER node` here would take trunk's with it.
+
+```nc:append to:container/Dockerfile at:nanoclaw:image-layers
+ARG GROK_VERSION=1.0.5
+# grok: native CLI for the grok provider, pinned (never `latest`). It installs under
+# grok: /usr/local/bin, never ~/.grok, which the provider mounts per group; the installer
+# grok: only symlinks, and reads GROK_BIN_DIR only when it is set on the bash side of the pipe.
+RUN curl -fsSL https://x.ai/cli/install.sh \
+      | GROK_BIN_DIR=/usr/local/bin bash -s "${GROK_VERSION}" && \
+    cp "$(readlink -f /usr/local/bin/grok)" /tmp/grok.bin && \
+    rm -f /usr/local/bin/grok /usr/local/bin/agent && \
+    mv /tmp/grok.bin /usr/local/bin/grok && \
+    chmod 0755 /usr/local/bin/grok && \
+    rm -rf /root/.grok && \
+    /usr/local/bin/grok --version && \
+    test ! -e /home/node/.grok/bin/grok
 ```
 
 ### 2. Wire the barrels
@@ -64,7 +94,11 @@ import './grok.js';
 
 ### 3. Build
 
-The image build installs the pinned Grok CLI. `ARG GROK_VERSION=1.0.5` in `container/Dockerfile` is the canonical pin — this SKILL.md and that ARG are the source of truth. Override per-install with `GROK_VERSION=` in `.env`.
+The image build installs the pinned Grok CLI from the layer this skill inserted. `ARG GROK_VERSION=1.0.5` in that layer is the pin, and the layer block above is its single source of truth. There is no `.env` override: `container/build.sh` is no longer part of this payload, so nothing passes a build arg.
+
+**To change the version,** edit the `ARG GROK_VERSION=` line in the layer block above and redeploy. An installer deploy recomposes `container/Dockerfile` from trunk — with the `nanoclaw:image-layers` region empty — before this skill is re-applied, so the result is exactly one layer at the new version.
+
+Re-applying onto a tree whose Dockerfile **already carries the layer** does not update it. The engine recognises an installed layer only by its first line, so a changed `ARG GROK_VERSION=` line reads as not installed and a second layer is inserted beside the old one: two `ARG`s, two installs. Delete the old layer from the region by hand first. There is no uninstall command that does this for you — the engine's undo replays a journal, and that journal exists only inside the process that applied the skill; nothing persists it.
 
 ```nc:run effect:build
 pnpm run build
@@ -114,7 +148,7 @@ Do **not** change `DEFAULT_AGENT_PROVIDER` — installed is not authenticated, a
 
 ## Notes and troubleshooting
 
-**"grok: not found" at spawn.** The image was built without the CLI, or the Dockerfile edit was lost. Check `ARG GROK_VERSION` is present in `container/Dockerfile` and rebuild.
+**"grok: not found" at spawn.** The image was built without the CLI, or the Dockerfile layer was lost. Check `ARG GROK_VERSION` is present in `container/Dockerfile`, inside the `nanoclaw:image-layers` region, and rebuild. If the region itself is missing, the webchat Dockerfile patch did not apply, and the layer has nowhere to land — re-apply will fail with `append marker "nanoclaw:image-layers" not found`.
 
 **Every room goes silent after switching.** Check credentials exist: `data/grok/credentials.json` should be present and `0600`. If missing, re-run the auth step.
 

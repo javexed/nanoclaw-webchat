@@ -4,6 +4,13 @@ dist/releases/
 
 # UI build deps (the BUNDLE at app/public/webchat/app.js is committed; deps are not)
 ui/node_modules/
+# Anywhere, not just ui/. A vitest cache (node_modules/.vite/…/results.json) was
+# committed under app/ and at the root in #339, and the app/ overlay copies it
+# into EVERY composed tree — creating a real node_modules/ there. That broke the
+# upstream sync, whose `ln -sfn <live>/node_modules node_modules` cannot replace
+# a real directory: the composed tree got no deps and every suite reported
+# "Command not found", which reads like an upstream break.
+node_modules/
 
 # codemod scratch — never track compiled python
 __pycache__/

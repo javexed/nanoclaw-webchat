@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/providers/claude.midturn-text.test.ts b/container/agent-runner/src/providers/claude.midturn-text.test.ts
-index 682e7cf5..fbe1c46a 100644
+index 153b3d84..ec02a67e 100644
 --- a/container/agent-runner/src/providers/claude.midturn-text.test.ts
 +++ b/container/agent-runner/src/providers/claude.midturn-text.test.ts
 @@ -41,8 +41,12 @@ afterEach(() => {

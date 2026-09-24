@@ -1,8 +1,8 @@
 diff --git a/container/agent-runner/src/provider-contracts/registry.test.ts b/container/agent-runner/src/provider-contracts/registry.test.ts
-index f9446067..54113748 100644
+index 37543921..3501b493 100644
 --- a/container/agent-runner/src/provider-contracts/registry.test.ts
 +++ b/container/agent-runner/src/provider-contracts/registry.test.ts
-@@ -76,7 +76,10 @@ describe('provider runtime contracts', () => {
+@@ -78,7 +78,10 @@ describe('provider runtime contracts', () => {
      expect(typeof contract?.lifecycle?.memorySessionHookRegistration).toBe('function');
      expect(typeof contract?.history?.readTrace).toBe('function');
      expect(contract?.history?.afterExchange).toBeUndefined();

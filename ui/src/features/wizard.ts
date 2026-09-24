@@ -37,9 +37,10 @@ import {
   runTtsInstall,
   runSttInstall,
   pollSttInstall,
-  runCodexInstall,
-  runOpencodeInstall,
+  runInstall,
+  CODEX_WIZARD_ELS,
   GROK_WIZARD_ELS,
+  installProgressLine,
 } from './installers.js';
 
 /**
@@ -100,6 +101,12 @@ let wizardCodexAvailable = false;
 
 let wizardCred: any = null; // last /api/workspace-credential snapshot — gates step-0 Next
 
+// A recommendation, not a gate: an Ollama model answers on the built-in harness
+// too (Ollama speaks the Anthropic API), it just follows tools worse. Same text
+// as the markup's initial hint; restored after the line has shown progress.
+const OPENCODE_RECOMMENDED =
+  'Recommended: small local models follow tools far better on OpenCode. Rebuilds and restarts NanoClaw — a few minutes.';
+
 export async function renderWizardOpencodeInstall() {
   const row = $('#wizard-opencode-install-row');
   const hint = $('#wizard-opencode-hint');
@@ -110,30 +117,98 @@ export async function renderWizardOpencodeInstall() {
     if (hint) hint.hidden = true;
     return;
   }
-  let installed = false;
-  let running = false;
+  let st: any = {};
   try {
-    const st = await (await authFetch('/api/opencode/install')).json();
-    installed = !!st.installed;
-    running = !!st.running;
+    st = await (await authFetch('/api/install/opencode')).json();
   } catch {
     /* endpoint absent on an older host → just show the install button */
   }
+  const installed = !!st.installed;
+  const running = !!st.running;
+  // Green, but the process answering is still the old one: its provider
+  // registry predates the install and the restart is scheduled, not done. Read
+  // as "not installed" this put the Install button back after a reload — and
+  // pressing it only asked the new process, which said "already installed".
+  // Bounded, so a restart that never lands stops looking like progress.
+  const restarting = !!st.restartPending && Date.now() - (st.startedAt ?? Date.now()) < 15 * 60 * 1000;
   const badge = $('#wizard-opencode-installed-badge');
-  const btn = $('#wizard-opencode-install')!;
+  const btn = $<HTMLButtonElement>('#wizard-opencode-install')!;
   row.hidden = false;
-  if (hint) hint.hidden = installed;
   if (badge) badge.hidden = !installed;
-  if (btn && !opencodeInstallActive.value) btn.hidden = installed;
+  // While this tab's runner owns the button it also owns its label and the log
+  // pane; only a tab that arrived mid-install (a reload) paints them from here.
+  if (btn && !opencodeInstallActive.value) {
+    btn.hidden = installed;
+    btn.disabled = running || restarting;
+    btn.textContent = restarting ? 'Restarting…' : running ? 'Installing…' : 'Install OpenCode harness…';
+  }
+  if (hint) {
+    hint.hidden = installed;
+    if (!opencodeInstallActive.value)
+      hint.textContent = running
+        ? installProgressLine(st)
+        : restarting
+          ? 'Installed — restarting to load it.'
+          : OPENCODE_RECOMMENDED;
+  }
   // Gate Next/Finish from server truth so a page reload mid-install can't slip
   // past the client flag; re-poll while it's still running so the gate lifts on
   // its own once the install + restart settle.
-  opencodeGateFromServer.value = running;
+  opencodeGateFromServer.value = running || restarting;
   refreshWizardNextGate();
-  if (running) {
+  if (running || restarting) {
     clearTimeout(opencodeGatePoll.value ?? undefined);
     opencodeGatePoll.value = setTimeout(renderWizardOpencodeInstall, 3000);
   }
+}
+
+// ── Resume across a reload ──────────────────────────────────────────────────
+// The OpenCode install ends in a host restart and a rebuilt client bundle; the
+// service worker then offers a reload, and an operator waiting through the gap
+// may press F5 anyway. Without this the wizard reopened at step one on the
+// Claude card, and the Ollama pick looked reset. sessionStorage: same tab only,
+// which is the only place a reload can land; an hour old means abandoned.
+const RESUME_KEY = 'nanoclaw-wizard-resume';
+const WIZARD_ENGINES = ['claude', 'codex', 'grok', 'ollama'];
+
+function saveResume(): void {
+  try {
+    sessionStorage.setItem(RESUME_KEY, JSON.stringify({ engine: wizardEngine, step: wizardStep, at: Date.now() }));
+  } catch {
+    /* storage unavailable — the wizard still works, it just does not resume */
+  }
+}
+
+function consumeResume(): { engine: string; step: number } | null {
+  try {
+    const raw = sessionStorage.getItem(RESUME_KEY);
+    if (!raw) return null;
+    const r = JSON.parse(raw) as { engine?: string; step?: number; at?: number };
+    if (!r.at || Date.now() - r.at > 60 * 60 * 1000) return null;
+    // The engine lands in a selector; only a known value may.
+    const engine = WIZARD_ENGINES.includes(r.engine ?? '') ? (r.engine as string) : 'claude';
+    return { engine, step: Number(r.step) || 0 };
+  } catch {
+    return null;
+  }
+}
+
+function clearResume(): void {
+  try {
+    sessionStorage.removeItem(RESUME_KEY);
+  } catch {
+    /* nothing to clear */
+  }
+}
+
+/** Make `engine` the step-0 choice: radio, body, and the Ollama probe it implies. */
+function selectWizardEngine(engine: string): void {
+  wizardEngine = engine;
+  const radio = document.querySelector<HTMLInputElement>(`input[name="wizard-engine"][value="${engine}"]`);
+  if (radio) radio.checked = true;
+  syncWizardEngineBodies();
+  if (engine === 'ollama') void wizardCheckLocalOllama();
+  saveResume();
 }
 
 function buildWizardDots() {
@@ -566,6 +641,7 @@ function showWizardStep(i?: any) {
   // fields); Skip closes without creating, for operators wiring agents their
   // own way.
   $('#wizard-next')!.textContent = isLast ? 'Finish' : 'Next';
+  saveResume();
   refreshWizardNextGate();
 }
 
@@ -588,13 +664,17 @@ export function refreshWizardNextGate() {
 async function openWizard() {
   wireWizard();
   buildWizardDots();
-  showWizardStep(0);
+  const resume = consumeResume();
+  if (resume) selectWizardEngine(resume.engine);
+  showWizardStep(resume?.step ?? 0);
   await refreshWizardCredState();
   $('#wizard-overlay')!.hidden = false;
 }
 
 function closeWizard() {
   $('#wizard-overlay')!.hidden = true;
+  // Closing is the point at which there is nothing left to resume.
+  clearResume();
 }
 
 async function finishWizard() {
@@ -1503,11 +1583,8 @@ function wireWizard() {
   // (wizardEngineConnected) and the readiness line narrates what's still needed.
   document.querySelectorAll('input[name="wizard-engine"]').forEach((radio) => {
     radio.addEventListener('change', () => {
-      wizardEngine = (radio as HTMLInputElement).value;
-      syncWizardEngineBodies();
-      if (wizardEngine === 'ollama') {
-        void wizardCheckLocalOllama();
-      } else {
+      selectWizardEngine((radio as HTMLInputElement).value);
+      if (wizardEngine !== 'ollama') {
         // Switching to a non-Ollama engine: drop any Ollama workspace default,
         // or claude-family agents keep falling back to that local model (running
         // on it, not the engine you just picked). Mirror of picking an Ollama
@@ -1520,8 +1597,8 @@ function wireWizard() {
   // Step 1 (claude panel) — browser mint for subscriptions, or paste either
   // credential shape (auto-detected).
   $('#wizard-claude-oauth')?.addEventListener('click', () => deps.openOauthMintModal('workspace'));
-  $('#wizard-codex-install')?.addEventListener('click', () => runCodexInstall());
-  $('#wizard-grok-install')?.addEventListener('click', () => runOpencodeInstall(GROK_WIZARD_ELS));
+  $('#wizard-codex-install')?.addEventListener('click', () => runInstall('codex', CODEX_WIZARD_ELS));
+  $('#wizard-grok-install')?.addEventListener('click', () => runInstall('grok', GROK_WIZARD_ELS));
   $('#wizard-codex-oauth')?.addEventListener('click', () => deps.openOauthMintModal('workspace-codex'));
   // Step 1 (codex panel) — paste an OpenAI API key as the workspace Codex default.
   $('#wizard-codex-save')?.addEventListener('click', async () => {

@@ -138,11 +138,34 @@ else
   say "Seam: fetching ${SEAM_REF:0:12} from $SEAM_REPO"
   git remote get-url nanoclaw-webchat-seam >/dev/null 2>&1 \
     || git remote add nanoclaw-webchat-seam "$SEAM_REPO"
-  # Fetch the branch (this server refuses raw-SHA wants once the pin is no
-  # longer the tip), then assert the pinned commit actually arrived.
+  # Fetch the branch first — the common case, and the cheapest.
   git fetch -q nanoclaw-webchat-seam "$SEAM_BRANCH"
+  # A pin is NOT required to be reachable from the branch tip. The seam is
+  # rebuilt and force-pushed on every upstream carry, so the moment a sync
+  # lands, every pin published before it — every open PR, and every RELEASE
+  # ever made — stops being an ancestor of the branch. Fetching only the branch
+  # therefore made those installs fail permanently, with an error that reads
+  # like a corrupt pin rather than "the branch moved": seen four times in one
+  # day on 2026-09-17/18.
+  #
+  # The old comment here claimed the server refuses raw-SHA wants once the pin
+  # is not the tip. That is not true of this host: fetching 266b84539314 and
+  # 7eb2e05e9f0b by SHA both succeed after the branch moved past them (probed
+  # 2026-09-18). Each carry is also tagged `seam/<date>`, and a tag off the
+  # branch's history is not followed by a branch fetch, so try that too.
+  #
+  # Order is deliberate: branch (cheap, usual) → raw SHA (works here) → tag
+  # (works even on a server that refuses SHA wants). Failure is only reported
+  # once all three have been tried, and says which pin and which branch.
+  if ! git cat-file -e "$SEAM_REF" 2>/dev/null; then
+    say "Seam: ${SEAM_REF:0:12} is not on $SEAM_BRANCH (the branch moved past it) — fetching the pin directly"
+    git fetch -q nanoclaw-webchat-seam "$SEAM_REF" 2>/dev/null || true
+  fi
+  if ! git cat-file -e "$SEAM_REF" 2>/dev/null; then
+    git fetch -q --tags nanoclaw-webchat-seam 2>/dev/null || true
+  fi
   git cat-file -e "$SEAM_REF" 2>/dev/null || {
-    echo "ERROR: pinned seamRef $SEAM_REF is not reachable from branch $SEAM_BRANCH" >&2; exit 1;
+    echo "ERROR: pinned seamRef $SEAM_REF could not be fetched from $SEAM_REPO — tried branch $SEAM_BRANCH, the SHA directly, and tags. The commit may have been garbage-collected, or the repo/branch in versions.json is wrong." >&2; exit 1;
   }
   # The seam branch is upstream + additive commits, so from the pinned base
   # this is a fast-forward; from a diverged base, a merge (conflicts abort).

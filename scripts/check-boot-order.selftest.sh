@@ -59,19 +59,37 @@ done
 check_against() { ( cd "$HERE/ui" && node boot-order.mjs check "http://127.0.0.1:$PORT/" "$1" ) >/dev/null 2>&1; }
 
 # Sanity: the real baseline must PASS, or the faults below prove nothing.
+#
+# Retried once, and ONLY this check. Seen 2026-09-17 on the CI runner while
+# another job held the box: this check failed, and the unsuppressed re-run
+# immediately below it passed against the same bundle and baseline, printing an
+# empty diff — the probe had raced the server's first paint, not found a real
+# mismatch. The curl loop above proves the port answers, which is weaker than
+# the page being ready to instrument.
+#
+# The retry cannot hide a genuine mismatch: that fails both attempts and still
+# lands in the failure path with its diff. A race that resolves is ANNOUNCED
+# rather than swallowed, so a probe that starts racing often stays visible
+# instead of quietly becoming "the check that always needs two tries".
 if ! check_against "$BASELINE"; then
-  echo "❌ selftest: the committed baseline already fails against this bundle." >&2
-  echo "   The diff follows. If this change did not mean to touch startup, the DIFF is the" >&2
-  echo "   finding — do not re-record to make it green. Re-record (scripts/check-boot-order.sh" >&2
-  echo "   --record) only when the change is intended." >&2
-  echo "   ---- boot-order diff (${BASELINE##*/}) ----" >&2
-  # Re-run unsuppressed. check_against() hides output so the fault cases below
-  # stay quiet, but on THIS path the output is the entire point: without it the
-  # step says only "re-record me", which is advice, not evidence — and it is
-  # exactly wrong whenever the baseline is right and the bundle is not. Cost is
-  # one extra trace on a path that is already failing.
-  ( cd "$HERE/ui" && node boot-order.mjs check "http://127.0.0.1:$PORT/" "$BASELINE" ) >&2 || true
-  exit 1
+  if check_against "$BASELINE"; then
+    echo "  ⚠ committed baseline: passed on RETRY — the first probe raced the server." >&2
+    echo "    Not a bundle change (the same baseline passes); if this recurs, the probe" >&2
+    echo "    needs a real readiness signal rather than a second attempt." >&2
+  else
+    echo "❌ selftest: the committed baseline already fails against this bundle." >&2
+    echo "   The diff follows. If this change did not mean to touch startup, the DIFF is the" >&2
+    echo "   finding — do not re-record to make it green. Re-record (scripts/check-boot-order.sh" >&2
+    echo "   --record) only when the change is intended." >&2
+    echo "   ---- boot-order diff (${BASELINE##*/}) ----" >&2
+    # Re-run unsuppressed. check_against() hides output so the fault cases below
+    # stay quiet, but on THIS path the output is the entire point: without it the
+    # step says only "re-record me", which is advice, not evidence — and it is
+    # exactly wrong whenever the baseline is right and the bundle is not. Cost is
+    # one extra trace on a path that is already failing.
+    ( cd "$HERE/ui" && node boot-order.mjs check "http://127.0.0.1:$PORT/" "$BASELINE" ) >&2 || true
+    exit 1
+  fi
 fi
 echo "  committed baseline: passes (as it must)"
 

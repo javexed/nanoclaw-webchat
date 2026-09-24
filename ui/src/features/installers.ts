@@ -1,20 +1,19 @@
 // ── Installers ───────────────────────────────────────────────────────────────
-// Every "install a thing and watch it happen" flow: the coding-agent CLIs
-// (Codex, OpenCode), the speech stacks (TTS, STT), the routing/LiteLLM stack,
-// and local model pulls. Each is the same shape — kick off a job, poll it,
-// render progress into a set of elements — which is why they belong together
-// even though the wizard and the settings panel both surface them.
+// Every "install a thing and watch it happen" flow: the four harnesses
+// (Codex, OpenCode, pi, Grok — one runner, see runInstall), the speech stacks
+// (TTS, STT), the routing/LiteLLM stack, and local model pulls. Each is the
+// same shape — kick off a job, poll it, render progress into a set of elements
+// — which is why they belong together even though the wizard and the settings
+// panel both surface them.
 //
-// The *_ELS constants are the element maps each flow renders into, moved here
-// with their runners. OPENCODE_WIZARD_ELS deliberately stays in legacy: it is
-// read by code outside this set too.
+// The *_ELS constants are the element maps each flow renders into.
 //
 // Injection, as in features/wizard: the install-active flags live in legacy and
 // are ASSIGNED here, so they arrive as getter/setter pairs. A getter alone
 // would compile and silently drop the write, leaving the re-entrancy guards
 // permanently unlatched.
 import { $, lucide, lucideEl, esc } from '../core/dom.js';
-import { codexInstallActive, ollamaPullPoller, opencodeInstallActive, routingInstallActive, sttInstallActive, ttsInstallActive } from './installer-state.js';
+import { harnessInstallActive, ollamaPullPoller, routingInstallActive, sttInstallActive, ttsInstallActive } from './installer-state.js';
 import { mmFmtGB } from './models.js';
 import { showToast, toastError } from '../core/toast.js';
 import { authFetch, apiJson } from '../core/api.js';
@@ -54,147 +53,63 @@ export function provideInstallerDeps(provided: Partial<InstallerDeps>): void {
   Object.assign(deps, provided);
 }
 
-const CODEX_WIZARD_ELS: Record<string, string> = {
+// ── Harness installs: one runner ────────────────────────────────────────────
+// Codex, OpenCode, pi and Grok share the server's install engine and the same
+// two-phase shape: the chain mutates the tree and rebuilds the agent image
+// (minutes), then RESTARTS the host — `installed` only flips once the new
+// process re-imports the provider barrel, so the poll rides through the
+// restart. The element maps say WHERE each surface renders; the feature name
+// says what to install. There used to be two copies of the loop, differing in
+// what they re-rendered afterwards and in whether "already installed" counted
+// as success; now there is one, and it does the union.
+
+export const CODEX_WIZARD_ELS: Record<string, string> = {
   btn: '#wizard-codex-install',
   log: '#wizard-codex-install-log',
   doneMsg: 'Codex loaded — connect your credentials below.',
 };
 
-// One-click Codex provider install from the wizard engine step OR Settings →
-// User credentials. Unlike Ollama/LiteLLM, this mutates the source tree, rebuilds
-// the agent image (minutes), and then RESTARTS the host — codexAvailable only
-// flips once the process re-imports the provider barrel. So the poll rides through
-// the restart: the connection drops, recovers, and by then `installed` is true.
-export async function runCodexInstall(els = CODEX_WIZARD_ELS) {
-  const btn = $(els.btn)!;
-  const log = $(els.log)!;
-  if (!btn || codexInstallActive.value) return;
-  codexInstallActive.value = true;
-  const progress = els.progress ? $(els.progress) : null;
-  if (progress) progress.hidden = false;
-  log.hidden = false;
-  log.textContent = 'Installing…';
-  let done = deps.wizardBusy(btn, 'Installing…');
-  const finish = () => {
-    log.textContent = els.doneMsg || 'Codex installed.';
-    showToast('Codex installed', { kind: 'success' });
-  };
-  try {
-    const res = await authFetch('/api/codex/install', { method: 'POST' });
-    if (!res.ok && res.status !== 202) {
-      const err = await res.json().catch(() => ({}));
-      log.textContent = 'Install failed: ' + (err.error || res.status);
-      showToast(err.error || 'Codex install failed', { kind: 'error' });
-      return;
-    }
-    // Phase 1 — build. Poll until the host fires its restart (green build → exit
-    // 0, not running), the build fails, or the connection drops (host going down).
-    let restarting = false;
-    for (;;) {
-      await new Promise((r) => setTimeout(r, 2500));
-      let st;
-      try {
-        st = await (await authFetch('/api/codex/install')).json();
-      } catch {
-        restarting = true; // host went down — the restart is underway
-        break;
-      }
-      if (Array.isArray(st.lines) && st.lines.length) log.textContent = st.lines.slice(-14).join('\n');
-      if (st.installed) {
-        finish();
-        return;
-      }
-      if (!st.running && st.exitCode === 0) {
-        restarting = true; // chain green → restart just fired
-        break;
-      }
-      // Non-zero exit, no restart → build failed; tree is unchanged-but-partial.
-      if (!st.running && st.exitCode != null && st.exitCode !== 0) {
-        log.textContent = 'Install failed — see log:\n' + (st.lines || []).slice(-14).join('\n');
-        showToast('Codex install failed — see log', { kind: 'error' });
-        return;
-      }
-    }
-    // Phase 2 — restart probe. The host is restarting to load the provider barrel;
-    // `installed` only flips once it re-imports at boot. Probe until it answers,
-    // or give up after the deadline and point at a manual restart (no infinite spin).
-    if (restarting) {
-      done();
-      done = deps.wizardBusy(btn, 'Restarting…');
-      log.textContent = 'Restarting…';
-      const deadline = Date.now() + 150000;
-      let sawResponsive = false;
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 2500));
-        let st = null;
-        try {
-          st = await (await authFetch('/api/codex/install')).json();
-          sawResponsive = true; // host is answering again
-        } catch {
-          st = null; // still down — keep probing
-        }
-        if (st?.installed) {
-          finish();
-          return;
-        }
-        if (Date.now() > deadline) {
-          // Two distinct end states: the host answered again but Codex still isn't
-          // registered → the restart didn't reload the provider (the auto-restart
-          // likely didn't take); a manual service restart fixes it. Never answered
-          // → it's still down. Both resolve with a restart, but say which happened.
-          log.textContent = sawResponsive
-            ? 'Codex didn’t load — restart the service, then reopen setup.'
-            : 'Server didn’t come back — restart it, then reopen setup.';
-          showToast('Codex built — restart the server to finish', { kind: 'error' });
-          return;
-        }
-      }
-    }
-  } catch (err: any) {
-    log.textContent = 'Install error: ' + err.message;
-    showToast('Codex install error', { kind: 'error' });
-  } finally {
-    done();
-    codexInstallActive.value = false;
-    // Re-render BOTH surfaces so whichever the operator is viewing flips
-    // Installing… → Installed (the active-guard means only one runner exists).
-    deps.refreshWizardCredState(); // wizard: installed → show connect controls
-    deps.renderCredentialsSettings(); // settings: installed → hide Install, enable pill
-  }
-}
-
-// One-click OpenCode stack install (wizard Ollama step or Settings). Same two-phase
-// build→restart shape as runCodexInstall: the chain mutates the tree, rebuilds the
-// agent image (minutes), restarts the host; opencodeAvailable only flips once the
-// process re-imports the provider barrel, so the poll rides through the restart.
-// Moved here in phase 1i. It was left in legacy in 1e on the reasoning that
-// legacy also read it — but this file's default parameter referenced it, so
-// runOpencodeInstall() with no argument threw ReferenceError. Unreachable in
-// practice (all three call sites pass one), and found only once check:refs
-// was widened to compile legacy.js alongside the modules.
 export const OPENCODE_WIZARD_ELS: Record<string, string> = {
   btn: '#wizard-opencode-install',
   log: '#wizard-opencode-install-log',
   doneMsg: 'OpenCode installed — your local agent can now use it (Agent → Harness).',
 };
 
-export const GROK_WIZARD_ELS = {
+export const GROK_WIZARD_ELS: Record<string, string> = {
   btn: '#wizard-grok-install',
   log: '#wizard-grok-install-log',
-  url: '/api/grok/install',
-  name: 'Grok',
   doneMsg: 'Grok installed — sign in with a device code below.',
-} as Record<string, string>;
+};
 
-export async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
-  // Shared harness-install runner: els.url + els.name parameterize it for any
-  // stack with the same GET/POST install contract (OpenCode, pi).
-  const url = els.url || '/api/opencode/install';
-  const name = els.name || 'OpenCode';
+const HARNESS_NAME: Record<string, string> = { codex: 'Codex', opencode: 'OpenCode', pi: 'pi', grok: 'Grok' };
+
+/**
+ * One line of progress for a chain install: which step, of how many, and for
+ * how long. The agent-image rebuild emits almost nothing for minutes — with
+ * only the last output line the pane stopped changing and read as hung. Built
+ * from the poll, so the elapsed time visibly moves on every re-render.
+ */
+export function installProgressLine(st: {
+  stepIndex?: number;
+  stepCount?: number;
+  stepLabel?: string | null;
+  startedAt?: number | null;
+}): string {
+  const step = st.stepCount ? `Step ${st.stepIndex} of ${st.stepCount}` : 'Installing';
+  const label = st.stepLabel ? ` — ${st.stepLabel}` : '';
+  const secs = st.startedAt ? Math.max(0, Math.round((Date.now() - st.startedAt) / 1000)) : 0;
+  const elapsed = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
+  return `${step}${label} · ${elapsed}`;
+}
+
+/** Install a harness through /api/install/:feature, rendering into `els`. */
+export async function runInstall(feature: string, els: Record<string, string>) {
+  const url = `/api/install/${feature}`;
+  const name = HARNESS_NAME[feature] ?? feature;
   const btn = $(els.btn)!;
   const log = $(els.log)!;
-  if (!btn || opencodeInstallActive.value) return;
-  opencodeInstallActive.value = true;
+  if (!btn || harnessInstallActive.value) return;
+  harnessInstallActive.value = true;
   deps.refreshWizardNextGate(); // hold Next/Finish for the duration of the install
   const progress = els.progress ? $(els.progress) : null;
   if (progress) progress.hidden = false;
@@ -238,7 +153,9 @@ export async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
         restarting = true; // host went down — the restart is underway
         break;
       }
-      if (Array.isArray(st.lines) && st.lines.length) log.textContent = st.lines.slice(-14).join('\n');
+      const tail: string[] = Array.isArray(st.lines) ? st.lines.slice(-14) : [];
+      if (st.running) log.textContent = [installProgressLine(st), ...tail].join('\n');
+      else if (tail.length) log.textContent = tail.join('\n');
       if (st.installed) {
         finish();
         return;
@@ -275,8 +192,11 @@ export async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
           return;
         }
         if (Date.now() > deadline) {
+          // Two end states: the host answered again but the provider still isn't
+          // registered → the restart didn't reload it; never answered → still
+          // down. Both resolve with a manual restart, but say which happened.
           log.textContent = sawResponsive
-            ? 'OpenCode didn’t load — restart the service, then reopen setup.'
+            ? name + ' didn’t load — restart the service, then reopen setup.'
             : 'Server didn’t come back — restart it, then reopen setup.';
           showToast(name + ' built — restart the server to finish', { kind: 'error' });
           return;
@@ -288,11 +208,16 @@ export async function runOpencodeInstall(els = OPENCODE_WIZARD_ELS) {
     showToast(name + ' install error', { kind: 'error' });
   } finally {
     done();
-    opencodeInstallActive.value = false;
-    deps.refreshWizardNextGate(); // install settled → release Next/Finish
-    deps.renderWizardOpencodeInstall(); // wizard: installed → badge
-    deps.renderCredentialsSettings(); // settings: installed → hide Install, show ✓ badge
-    deps.fetchAgents(); // an agent's Harness can now be set to OpenCode
+    harnessInstallActive.value = false;
+    // Re-render every surface a harness install can change, whichever the
+    // operator is looking at: the wizard's Next gate and its OpenCode row, the
+    // engine cards, the Settings credential rows, and the agents (their Harness
+    // control can now offer the new one).
+    deps.refreshWizardNextGate();
+    deps.renderWizardOpencodeInstall();
+    deps.refreshWizardCredState();
+    deps.renderCredentialsSettings();
+    deps.fetchAgents();
   }
 }
 

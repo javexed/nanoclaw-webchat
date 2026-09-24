@@ -1,8 +1,8 @@
 diff --git a/container/Dockerfile b/container/Dockerfile
-index f14bedfa..ee5c5094 100644
+index cee038e9..cc8f2532 100644
 --- a/container/Dockerfile
 +++ b/container/Dockerfile
-@@ -113,6 +113,24 @@ COPY cli-tools.json install-cli-tools.sh /tmp/
+@@ -119,6 +119,24 @@ COPY cli-tools.json install-cli-tools.sh /tmp/
  RUN --mount=type=cache,target=/root/.cache/pnpm \
      sh /tmp/install-cli-tools.sh /tmp/cli-tools.json
  
@@ -27,3 +27,18 @@ index f14bedfa..ee5c5094 100644
  # ---- ncl CLI wrapper ----------------------------------------------------------
  # Actual script lives in the mounted source at /app/src/cli/ncl.ts.
  RUN printf '#!/bin/sh\nexec bun /app/src/cli/ncl.ts "$@"\n' > /usr/local/bin/ncl && \
+@@ -133,6 +151,14 @@ RUN mkdir -p /workspace/group /workspace/extra && \
+     chown -R node:node /workspace && \
+     chmod 777 /home/node
+ 
++# >>> nanoclaw:image-layers
++# Skills insert extra image layers here with `nc:append at:nanoclaw:image-layers`
++# instead of replacing this file, so a skill payload can never roll back the
++# recipe above. Layers land as root, ahead of the setuid strip and the switch to
++# the unprivileged user below. Keep inserted lines unique: the engine's undo
++# deletes every line matching one a skill added, anywhere in this file.
++# <<< nanoclaw:image-layers
++
+ # Drop setuid-root from the binaries Debian ships (mount, su, passwd, ...). The
+ # agent runs unprivileged and needs none of them.
+ RUN find / -xdev -perm -4000 -type f -exec chmod u-s {} + || true

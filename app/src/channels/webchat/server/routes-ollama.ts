@@ -18,12 +18,12 @@ import { recommendForHost } from '../model-recommend.js';
 import {
   cancelPull,
   deleteHostModel,
-  getOllamaLocalState,
   getPullsSnapshot,
   listHostModels,
   parseConfiguredHosts,
   startPull,
 } from '../ollama-manage.js';
+import { installGet } from './routes-install.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -88,8 +88,7 @@ export async function rOllamaRecommendGet(ctx: RouteCtx, _m: RegExpMatchArray): 
 
 // Local Ollama for the wizard: status probe + one-click rootless install.
 export async function rOllamaLocalGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res } = ctx;
-  return json(res, 200, await getOllamaLocalState());
+  return installGet(ctx.res, 'ollama');
 }
 
 // Pre-pull check: what would this model mean for this machine, BEFORE any

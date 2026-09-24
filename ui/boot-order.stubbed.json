@@ -283,6 +283,7 @@
  "on:wizard-ollama-change:click",
  "on:wizard-ollama-install:click",
  "on:wizard-ollama-dl:click",
+ "sessionStorage.get:nanoclaw-wizard-resume",
  "fetch:/api/workspace-credential",
  "fetch:https://derp1.tailscale.com/generate_204",
  "fetch:https://www.gstatic.com/generate_204",

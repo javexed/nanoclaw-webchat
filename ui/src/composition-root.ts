@@ -561,8 +561,7 @@ import {
   pollTtsInstall,
   provideInstallerDeps,
   renderRoutingInstallProgress,
-  runCodexInstall,
-  runOpencodeInstall,
+  runInstall,
   runRoutingInstall,
   runSttInstall,
   runTtsInstall,
@@ -765,7 +764,7 @@ state.settings = loadSettings(); // state.js cannot call this yet
 // onboarding complete so it never re-nags.
 
 // Codex install DOM sets — the wizard engine step and Settings → User credentials
-// drive the SAME two-phase server install (/api/codex/install: build → host
+// drive the SAME two-phase server install (/api/install/codex: build → host
 // restart). Each surface passes its own element ids so one runner serves both.
 
 // The wizard OpenCode install-row: offered (prominently, one-click) once a local
@@ -773,7 +772,7 @@ state.settings = loadSettings(); // state.js cannot call this yet
 // built-in harness confuses small models. Not auto-run: installing rebuilds the
 // image and RESTARTS the host, which would yank the wizard session out from under
 // the operator, so it's a deliberate click (the restart-poll handles reconnect).
-$('#wizard-opencode-install')?.addEventListener('click', () => runOpencodeInstall(OPENCODE_WIZARD_ELS));
+$('#wizard-opencode-install')?.addEventListener('click', () => runInstall('opencode', OPENCODE_WIZARD_ELS));
 
 /**
  * Reflect live credential state on the engine list: connected engines swap

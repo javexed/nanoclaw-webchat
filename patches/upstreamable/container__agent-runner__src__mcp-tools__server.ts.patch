@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/mcp-tools/server.ts b/container/agent-runner/src/mcp-tools/server.ts
-index 0ae4fdf2..977f89e0 100644
+index 8057eb45..12240bad 100644
 --- a/container/agent-runner/src/mcp-tools/server.ts
 +++ b/container/agent-runner/src/mcp-tools/server.ts
 @@ -30,6 +30,15 @@ const toolMap = new Map<string, McpToolDefinition>();
@@ -18,8 +18,8 @@ index 0ae4fdf2..977f89e0 100644
      if (toolMap.has(t.tool.name)) {
        log(`Warning: tool "${t.tool.name}" already registered, skipping duplicate`);
        continue;
-@@ -122,6 +131,11 @@ export function extendTool(name: string, extension: ToolExtension): void {
-   }
+@@ -142,6 +151,11 @@ export function createMcpServer(
+   return server;
  }
  
 +/** Test/introspection accessor — the registry exactly as the server serves it. */

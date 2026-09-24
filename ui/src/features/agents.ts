@@ -18,6 +18,7 @@ import RoomWiredAgents from './RoomWiredAgents.vue';
 import { roomWiredRows } from './room-wired-state.js';
 import AgentList from './AgentList.vue';
 import { agentSortAz, selectedAgentId } from './agent-list-state.js';
+import { agentSecretEffective } from './agent-lists-state.js';
 import AgentWiredRooms from './AgentWiredRooms.vue';
 import AgentSessions from './AgentSessions.vue';
 import AddAgentPicker from './AddAgentPicker.vue';
@@ -1070,6 +1071,39 @@ async function renderAgentEnv(agentGroupId?: any) {
   }
 }
 
+// ── Who a new secret reaches ─────────────────────────────────────────────────
+// The one choice the form asks. Three answers, nearest first, in the words the
+// list uses for its sections — so what you pick here is what you will see it
+// filed under. "Only me" can only ever mean the person typing: letting an admin
+// pick someone else would require them to paste that person's token, which is
+// what per-user credentials exist to prevent.
+type SecretReachChoice = 'me' | 'agent' | 'all';
+const REACH_HELP: Record<SecretReachChoice, string> = {
+  me: 'Your turns only. Wins over the agent’s.',
+  agent: 'Every member’s turns, unless they have their own.',
+  all: 'Every agent, unless a nearer one exists.',
+};
+const REACH_ME_UNAVAILABLE = 'Only me needs your own Claude/Codex account — connect it from the @handle menu.';
+
+function reachChoice(): SecretReachChoice {
+  return ($('#agent-secrets-section')!.dataset.reach as SecretReachChoice) || 'agent';
+}
+
+function setReachChoice(choice: SecretReachChoice): void {
+  const section = $('#agent-secrets-section')!;
+  section.dataset.reach = choice;
+  document.querySelectorAll('#agent-secret-reach .setting-option').forEach((btn) => {
+    btn.classList.toggle('active', (btn as HTMLElement).dataset.value === choice);
+  });
+  // The reason Only me is greyed stays on the line whatever is picked — it
+  // answers the question a greyed option raises, before and after the click.
+  const why = section.dataset.meUnavailable === '1' ? ` ${REACH_ME_UNAVAILABLE}` : '';
+  $('#agent-secret-reach-help')!.textContent = REACH_HELP[choice] + why;
+}
+
+/** Source words for the "For you" line — the section titles, possessive. */
+const SOURCE_WORD: Record<string, string> = { user: 'yours', agent: 'this agent’s', workspace: 'all agents’' };
+
 export async function renderAgentSecrets(agentGroupId?: any) {
   const section = $('#agent-secrets-section');
   if (!section) return;
@@ -1077,11 +1111,19 @@ export async function renderAgentSecrets(agentGroupId?: any) {
     agentSecretsWired = true;
     $('#agent-secret-save')!.addEventListener('click', () => {
       const agentGroupId = $('#agent-secrets-section')!.dataset.agentId;
-      // "Personal" can only ever mean the person typing. Letting an admin pick
-      // someone else would require them to paste that person's token — which
-      // defeats the point of per-user credentials.
-      const personal = $<HTMLInputElement>('#agent-secret-personal')!.checked;
-      void saveToolSecret(personal ? { agentGroupId, userId: permsMyUserId.value } : agentGroupId, '#agent-secret');
+      const choice = reachChoice();
+      const scope = choice === 'me' ? { agentGroupId, userId: permsMyUserId.value } : choice === 'agent' ? agentGroupId : null;
+      void saveToolSecret(scope, '#agent-secret');
+    });
+    // Greyed-but-clickable when unavailable (same idiom as the credential
+    // providers); the reason is already on the help line, so a click just
+    // leaves the current choice — nothing else is needed to confirm it.
+    document.querySelectorAll('#agent-secret-reach .setting-option').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const el = btn as HTMLElement;
+        if (el.classList.contains('is-unavailable')) return;
+        setReachChoice(el.dataset.value as SecretReachChoice);
+      });
     });
     wireCustomScheme('#agent-secret');
   }
@@ -1090,6 +1132,8 @@ export async function renderAgentSecrets(agentGroupId?: any) {
   let isolation = null;
   let secrets = [];
   let members = [];
+  let effective: any[] = [];
+  let workspace: any[] | null = null;
   try {
     const r = await authFetch(toolSecretUrl(agentGroupId));
     if (r.ok) {
@@ -1097,6 +1141,8 @@ export async function renderAgentSecrets(agentGroupId?: any) {
       isolation = b.isolation;
       secrets = b.secrets || [];
       members = b.members || [];
+      effective = b.effective || [];
+      workspace = b.workspace ?? null;
     }
   } catch {}
 
@@ -1111,18 +1157,25 @@ export async function renderAgentSecrets(agentGroupId?: any) {
     !isolated && isolation?.available ? 'Not private yet — secrets added here would also reach other agents' : '';
   $('#agent-secret-form')!.hidden = false;
 
-  // Personal credentials attach to the caller's own per-member agent, which
-  // only exists once they have connected their credentials — so the option is
-  // offered only when it would actually work.
+  // "Only me" attaches to the caller's own per-member agent, which exists once
+  // they have connected their login — offered greyed until then, with the
+  // reason on click. "All agents" is the workspace scope: offered only to
+  // someone the server let list it. Default to the nearest reach that works —
+  // a pasted PAT is almost always the typist's own.
   const enrolled = members.some((m: any) => m.userId === permsMyUserId.value);
-  const personalBox = ($('#agent-secret-personal')!) as HTMLInputElement;
-  const personalRow = $('#agent-secret-personal-row')!;
-  personalRow.hidden = !enrolled;
-  if (!enrolled) personalBox.checked = false;
+  const meBtn = $('#agent-secret-reach [data-value="me"]');
+  const allBtn = $('#agent-secret-reach [data-value="all"]');
+  if (meBtn) meBtn.classList.toggle('is-unavailable', !enrolled);
+  if (allBtn) allBtn.hidden = workspace === null;
+  section.dataset.meUnavailable = enrolled ? '' : '1';
+  const current = reachChoice();
+  const usable = (c: SecretReachChoice) => (c === 'me' ? enrolled : c === 'all' ? workspace !== null : true);
+  setReachChoice(section.dataset.reach && usable(current) ? current : enrolled ? 'me' : 'agent');
 
-  renderAgentSecretList(agentGroupId, secrets, members);
-  const total = secrets.length + members.reduce((n: any, m: any) => n + m.secrets.length, 0);
-  $('#agent-secrets-count')!.textContent = total ? String(total) : '';
+  renderAgentSecretList(agentGroupId, secrets, members, workspace, effective);
+  const mine = members.find((m: any) => m.userId === permsMyUserId.value)?.secrets.length ?? 0;
+  const total = secrets.length + (workspace?.length ?? 0) + members.reduce((n: any, m: any) => n + m.secrets.length, 0);
+  $('#agent-secrets-count')!.textContent = total ? (mine ? `${total} · ${mine} only you` : String(total)) : '';
 }
 
 let agentSecretsApp: ReturnType<typeof createApp> | null = null;
@@ -1144,32 +1197,57 @@ function mountAgentSecretList(): void {
   agentSecretsApp.mount(host);
 }
 
-function renderAgentSecretList(agentGroupId?: any, secrets?: any, members?: any) {
+function renderAgentSecretList(agentGroupId?: any, secrets?: any, members?: any, workspace?: any, effective?: any) {
   agentSecretsGroupId = agentGroupId;
-  // Flattened here, because the DOM was always one flat <ul> — the two loops
-  // were an artifact of sharing a row() builder, not a structure the markup had.
-  // Only personal rows need to say WHOSE; "shared" already says everyone's.
+  // Precedence, read back from the server: for each host, which scope the
+  // VIEWER's turns are served from. A row a nearer one beats says so, so two
+  // same-host rows never read as a tie.
+  const servedFrom = new Map<string, string>((effective ?? []).map((e: any) => [e.hostPattern, e.source]));
+  const beatenNote = (host: string, own: 'agent' | 'workspace') => {
+    const src = servedFrom.get(host);
+    if (!src || src === own) return '';
+    return src === 'user' ? 'yours is used instead' : 'this agent’s is used instead';
+  };
   const rows = [
+    ...(members ?? []).flatMap((m: any) => {
+      const mine = m.userId === permsMyUserId.value;
+      return (m.secrets ?? []).map((s: any) => ({
+        key: `user:${m.userId}:${s.hostPattern}`,
+        host: s.hostPattern,
+        reach: mine ? ('mine' as const) : ('other' as const),
+        ownerLabel: mine ? '' : userDisplayName({ id: m.userId }),
+        note: '',
+        canRemove: mine,
+        scope: { agentGroupId, userId: m.userId },
+        sec: s,
+      }));
+    }),
     ...(secrets ?? []).map((s: any) => ({
-      key: `shared:${s.hostPattern}`,
+      key: `agent:${s.hostPattern}`,
       host: s.hostPattern,
-      personal: false,
+      reach: 'agent' as const,
       ownerLabel: '',
+      note: beatenNote(s.hostPattern, 'agent'),
+      canRemove: true,
       scope: agentGroupId,
       sec: s,
     })),
-    ...(members ?? []).flatMap((m: any) =>
-      (m.secrets ?? []).map((s: any) => ({
-        key: `user:${m.userId}:${s.hostPattern}`,
-        host: s.hostPattern,
-        personal: true,
-        ownerLabel: userDisplayName({ id: m.userId }),
-        scope: { agentGroupId, userId: m.userId },
-        sec: s,
-      })),
-    ),
+    // Present only for someone who may list (and so remove) the workspace scope.
+    ...(workspace ?? []).map((s: any) => ({
+      key: `workspace:${s.hostPattern}`,
+      host: s.hostPattern,
+      reach: 'workspace' as const,
+      ownerLabel: '',
+      note: beatenNote(s.hostPattern, 'workspace'),
+      canRemove: true,
+      scope: null,
+      sec: s,
+    })),
   ];
   agentSecretRows.value = rows;
+  // The direct answer, in one line: what goes out for YOU, per host.
+  const parts = (effective ?? []).map((e: any) => `${e.hostPattern} → ${SOURCE_WORD[e.source] ?? e.source}`);
+  agentSecretEffective.value = parts.length ? `For you: ${parts.join(' · ')}` : 'For you: no credential yet';
   mountAgentSecretList();
 }
 
@@ -2021,8 +2099,11 @@ export async function saveToolSecret(scope: any = null, p = '#secret') {
     if ($(`${p}-custom-header`)) $<HTMLInputElement>(`${p}-custom-header`)!.value = '';
     if ($(`${p}-custom-format`)) $<HTMLInputElement>(`${p}-custom-format`)!.value = '';
     showToast(`Added ${hostPattern}`);
-    if (scope) await renderAgentSecrets(typeof scope === 'object' ? scope.agentGroupId : scope);
-    else await loadToolSecretList(null, '#secrets-list');
+    // The agent panel's form can add at any reach, including all-agents — so
+    // it repaints by which FORM was used, not by the scope written.
+    if (p === '#agent-secret') await renderAgentSecrets($('#agent-secrets-section')!.dataset.agentId);
+    else if (scope) await renderAgentSecrets(typeof scope === 'object' ? scope.agentGroupId : scope);
+    if (!scope) await loadToolSecretList(null, '#secrets-list');
   } catch {
     showToast('Could not add secret', { kind: 'error' });
   } finally {
@@ -2050,6 +2131,8 @@ export async function removeToolSecret(scope: any, secret: any, listSel: string 
     showToast(`Removed ${secret.label}`);
     if (agentGroupId) await renderAgentSecrets(agentGroupId);
     else if (listSel) await loadToolSecretList(scope, listSel);
+    // A workspace row removed from the agent panel is also a Settings row.
+    if (scope === null && agentGroupId && $('#secrets-list')) await loadToolSecretList(null, '#secrets-list');
     // listSel === null: the caller owns its own re-render (My credentials).
   } catch {
     showToast('Could not remove secret', { kind: 'error' });

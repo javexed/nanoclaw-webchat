@@ -7,6 +7,7 @@ import { userCredsAgentIdentifier, WORKSPACE_DEFAULT_USER_ID } from '../user-cre
 import type { OnecliAdmin } from '../user-credentials/onecli-admin.js';
 import {
   WORKSPACE,
+  effectiveSecretsFor,
   listToolSecrets,
   createToolSecret,
   deleteToolSecret,
@@ -534,5 +535,68 @@ describe('wire format', () => {
     const stored = [...secrets.values()].find((x) => x.hostPattern === '192.168.0.10');
     expect(stored?.headerName).toBe('Authorization');
     expect(stored?.valueFormat).toBe('Bearer {value}');
+  });
+});
+
+describe('createToolSecret — host normalisation', () => {
+  it('stores the host lowercased, so a phone-capitalised entry still matches', async () => {
+    const { admin, injectedFor } = fakeAdmin();
+    const created = await createToolSecret(admin, WORKSPACE, 'Dev.azure.com', 'pat');
+    expect(created.hostPattern).toBe('dev.azure.com');
+    expect(created.label).toBe('dev.azure.com');
+    await seedGroupAgent(admin, 'ag-1');
+    expect(injectedFor('ag-1', 'dev.azure.com')).toContain(created.id);
+  });
+});
+
+describe('effectiveSecretsFor — the precedence, read back for display', () => {
+  it('names the scope each host is served from, nearest first', async () => {
+    const { admin, injectedFor } = fakeAdmin();
+    seedWorkspaceDefault();
+    // The workspace reconcile walks agent_groups, so the group must exist as a row.
+    await getDb().run(`INSERT INTO agent_groups (id,name,folder,created_at) VALUES (?,?,?,?)`, 'ag-1', 'a', 'a', '');
+    await seedGroupAgent(admin, 'ag-1');
+    const alice = await seedMember(admin, 'ag-1', 'webchat:alice');
+    await isolateGroup(admin, 'ag-1');
+    const mine = await createToolSecret(
+      admin,
+      { kind: 'user', agentGroupId: 'ag-1', userId: 'webchat:alice' },
+      'github.com',
+      'pat-a',
+    );
+    await createToolSecret(admin, { kind: 'agent', agentGroupId: 'ag-1' }, 'github.com', 'pat-group');
+    const groupAz = await createToolSecret(admin, { kind: 'agent', agentGroupId: 'ag-1' }, 'dev.azure.com', 'pat-az');
+    const ws = await createToolSecret(admin, WORKSPACE, 'api.openai.com', 'sk-ws');
+
+    const effective = await effectiveSecretsFor(admin, 'ag-1', 'webchat:alice');
+    expect(Object.fromEntries(effective.map((e) => [e.hostPattern, e.source]))).toEqual({
+      'github.com': 'user',
+      'dev.azure.com': 'agent',
+      'api.openai.com': 'workspace',
+    });
+    // Not a parallel implementation: what it says is what the vault sends.
+    for (const e of effective) expect(injectedFor(alice, e.hostPattern)).toEqual([e.secretId]);
+    expect(effective.find((e) => e.hostPattern === 'github.com')?.secretId).toBe(mine.id);
+    expect(effective.find((e) => e.hostPattern === 'dev.azure.com')?.secretId).toBe(groupAz.id);
+    expect(effective.find((e) => e.hostPattern === 'api.openai.com')?.secretId).toBe(ws.id);
+  });
+
+  it('has no user scope for someone who is not enrolled — they run on the group agent', async () => {
+    const { admin } = fakeAdmin();
+    seedWorkspaceDefault();
+    await seedGroupAgent(admin, 'ag-1');
+    await seedMember(admin, 'ag-1', 'webchat:alice');
+    await isolateGroup(admin, 'ag-1');
+    await createToolSecret(
+      admin,
+      { kind: 'user', agentGroupId: 'ag-1', userId: 'webchat:alice' },
+      'github.com',
+      'pat-a',
+    );
+    await createToolSecret(admin, { kind: 'agent', agentGroupId: 'ag-1' }, 'github.com', 'pat-group');
+
+    const bob = await effectiveSecretsFor(admin, 'ag-1', 'webchat:bob');
+    expect(bob).toHaveLength(1);
+    expect(bob[0]).toMatchObject({ hostPattern: 'github.com', source: 'agent' });
   });
 });

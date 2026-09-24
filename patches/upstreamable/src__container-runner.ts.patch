@@ -1,5 +1,5 @@
 diff --git a/src/container-runner.ts b/src/container-runner.ts
-index 20d7c8ce..0e6538fb 100644
+index 508ac53b..a42bd45e 100644
 --- a/src/container-runner.ts
 +++ b/src/container-runner.ts
 @@ -26,8 +26,10 @@ import {
@@ -113,7 +113,7 @@ index 20d7c8ce..0e6538fb 100644
    await writeSessionRouting(agentGroup.id, session.id);
    const mailboxKey = { agentGroupId: agentGroup.id, sessionId: session.id };
    const mailbox = getAgentMailbox();
-@@ -965,6 +1026,12 @@ export async function buildMounts(
+@@ -966,6 +1027,12 @@ export async function buildMounts(
        }
      }
    } else if (defaultSurfaces) {
@@ -126,7 +126,7 @@ index 20d7c8ce..0e6538fb 100644
      mounts.push({
        hostPath: claudeDir,
        containerPath: '/home/node/.claude',
-@@ -995,6 +1062,19 @@ export async function buildMounts(
+@@ -996,6 +1063,19 @@ export async function buildMounts(
        scope,
      });
    }
@@ -146,7 +146,7 @@ index 20d7c8ce..0e6538fb 100644
  
    // Additional mounts from container config — already vetted by the allowlist.
    if (containerConfig.additionalMounts && containerConfig.additionalMounts.length > 0) {
-@@ -1147,11 +1227,25 @@ export function composeSessionSpec(input: ComposeSessionSpecInput): SessionSpec
+@@ -1148,11 +1228,25 @@ export function composeSessionSpec(input: ComposeSessionSpecInput): SessionSpec
      // The gateway's auxiliary containers ride beside the agent; capability-
      // gated in the spawn path before composition ever runs.
      containers: [agent, ...(gateway.containers ?? [])],
@@ -174,7 +174,7 @@ index 20d7c8ce..0e6538fb 100644
        pidsLimit: parsePidsLimit(CONTAINER_PIDS_LIMIT),
        shmSizeMb: SHM_SIZE_MB,
      },
-@@ -1237,16 +1331,78 @@ export function syncSkillSymlinks(
+@@ -1238,16 +1332,78 @@ export function syncSkillSymlinks(
   */
  function selectedSkillNames(containerConfig: import('./container-config.js').ContainerConfig): string[] {
    if (containerConfig.skills !== 'all') return containerConfig.skills;

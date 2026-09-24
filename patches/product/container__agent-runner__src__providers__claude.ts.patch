@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/providers/claude.ts b/container/agent-runner/src/providers/claude.ts
-index a4238dba..0a5b2307 100644
+index a75b800a..839d16ac 100644
 --- a/container/agent-runner/src/providers/claude.ts
 +++ b/container/agent-runner/src/providers/claude.ts
 @@ -115,6 +115,27 @@ class MessageStream {
