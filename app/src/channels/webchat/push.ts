@@ -1,8 +1,10 @@
 /**
  * Web Push fan-out for webchat.
  *
- * Sends a push notification to every subscription that isn't the sender's
- * own (so the user who just typed doesn't get pinged for their own message).
+ * Sends a push notification to every subscriber who can open the room, except
+ * the sender (so the user who just typed doesn't get pinged for their own
+ * message). The room check matters: the payload carries the room name and the
+ * start of the message, and lands on a lock screen.
  * Endpoints are allow-listed against known push services to block authenticated
  * callers from pointing the host at internal IPs (SSRF via sendNotification).
  */
@@ -10,6 +12,7 @@ import webPush from 'web-push';
 
 import { getDb } from '../../db/connection.js';
 import { log } from '../../log.js';
+import { canAccessRoom } from './access.js';
 import { deleteWebchatPushSubscriptionByEndpoint, type WebchatPushSubscription } from './db.js';
 
 let webPushReady = false;
@@ -50,15 +53,23 @@ export interface BroadcastPushMsg {
   roomId: string;
   roomName: string;
   sender: string;
+  /** The sender's user id when the message came from a signed-in user. */
+  senderUserId?: string;
   content: string;
   messageId?: string;
 }
 
-async function getSubscriptionsExcludingIdentity(identity: string): Promise<WebchatPushSubscription[]> {
-  return (await getDb().all(
-    `SELECT * FROM webchat_push_subscriptions WHERE identity != ?`,
-    identity,
-  )) as WebchatPushSubscription[];
+/** Subscriptions whose owner can open the room, minus the sender's own. */
+async function getSubscriptionsForRoom(roomId: string, senderUserId?: string): Promise<WebchatPushSubscription[]> {
+  const all = (await getDb().all(`SELECT * FROM webchat_push_subscriptions`)) as WebchatPushSubscription[];
+  const access = new Map<string, boolean>();
+  const out: WebchatPushSubscription[] = [];
+  for (const sub of all) {
+    if (sub.identity === senderUserId) continue;
+    if (!access.has(sub.identity)) access.set(sub.identity, await canAccessRoom(sub.identity, roomId));
+    if (access.get(sub.identity)) out.push(sub);
+  }
+  return out;
 }
 
 export async function sendPushForMessage(m: BroadcastPushMsg): Promise<void> {
@@ -66,7 +77,7 @@ export async function sendPushForMessage(m: BroadcastPushMsg): Promise<void> {
     log.debug('Webchat push: skipped (not ready)', { sender: m.sender });
     return;
   }
-  const subs = await getSubscriptionsExcludingIdentity(m.sender);
+  const subs = await getSubscriptionsForRoom(m.roomId, m.senderUserId);
   if (subs.length === 0) return;
 
   const payload = JSON.stringify({

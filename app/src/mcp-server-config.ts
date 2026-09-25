@@ -14,7 +14,7 @@ export interface McpServerInput {
   args?: string[];
   env?: Record<string, string>;
   url?: string;
-  type?: string; // 'sse' | 'http'
+  type?: string; // 'http' (the retired 'sse' is refused)
   headers?: Record<string, string>;
   instructions?: string;
 }
@@ -41,8 +41,12 @@ export function buildMcpServerConfig(input: McpServerInput): McpServerConfig {
   if (!url && !command) throw new Error('a remote url or a stdio command is required');
 
   if (url) {
-    const type = input.type?.trim() || 'sse';
-    if (type !== 'sse' && type !== 'http') throw new Error('type must be sse or http');
+    // Streamable HTTP is the only remote transport: SSE is deprecated in the MCP
+    // spec, and upstream core rejects it, so an 'sse' entry would be dropped at
+    // spawn anyway. Refuse it here, where the operator can still act on it.
+    const type = input.type?.trim() || 'http';
+    if (type === 'sse') throw new Error("the SSE transport is retired; use the server's Streamable HTTP endpoint");
+    if (type !== 'http') throw new Error('type must be http');
     const cfg: McpServerConfig = { type, url, headers: input.headers ?? {} };
     if (input.instructions?.trim()) cfg.instructions = input.instructions.trim();
     return cfg;

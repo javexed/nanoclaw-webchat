@@ -64,21 +64,31 @@ const MAX_REASON_CHARS = 300;
 //     (in-memory promise) path that this dispatcher cannot drive.
 //   - install_packages   — supply chain: new code baked into the image.
 //   - add_mcp_server     — new tool/capability surface for the agent.
-// Payload patterns (matched against the RAW payload JSON, any action):
-//   - cli_scope changes  — container privilege level.
-//   - roles grant/revoke — user privilege.
-//   - groups config verbs — container config (packages, MCP servers).
+// Payload patterns (matched against the RAW payload JSON, any action). A
+// cli_command approval's payload is {"frame":{"command":"roles-grant",
+// "args":{"cli-scope":…}},…}, so each pattern takes the hyphenated command
+// name as well as the spaced form a person types:
+//   - cli-scope changes   — container privilege level.
+//   - roles / members / policies — who may do what.
+//   - groups config verbs — container config (packages, MCP servers, mounts).
 export const NEVER_AUTO_APPROVE_ACTIONS: ReadonlySet<string> = new Set([
   'onecli_credential',
   'install_packages',
   'add_mcp_server',
 ]);
 
-export const NEVER_AUTO_APPROVE_PATTERNS: readonly RegExp[] = [
-  /\bcli_scope\b/i,
-  /\broles\s+(grant|revoke)\b/i,
-  /\bconfig\s+(update|add-mcp-server|remove-mcp-server|add-package|remove-package)\b/i,
+/** Each never-list payload shape, with the triage flag it implies. */
+const NEVER_PAYLOAD_SHAPES: ReadonlyArray<{ re: RegExp; flag: TriageFlag }> = [
+  { re: /\bcli[_-]scope\b/i, flag: 'permissions' },
+  { re: /\broles[\s-]+(grant|revoke)\b/i, flag: 'permissions' },
+  { re: /\bmembers[\s-]+(add|remove)\b/i, flag: 'permissions' },
+  { re: /\bpolicies[\s-]+(set|remove)\b/i, flag: 'permissions' },
+  { re: /\bconfig[\s-]+(add|remove)-package\b/i, flag: 'install' },
+  { re: /\bconfig[\s-]+(add|remove)-(mcp-server|mount)\b/i, flag: 'capability' },
+  { re: /\bconfig[\s-]+update\b/i, flag: 'capability' },
 ];
+
+export const NEVER_AUTO_APPROVE_PATTERNS: readonly RegExp[] = NEVER_PAYLOAD_SHAPES.map((s) => s.re);
 
 export function isNeverAutoApprovable(action: string, payloadJson: string): boolean {
   if (NEVER_AUTO_APPROVE_ACTIONS.has(action)) return true;
@@ -137,19 +147,15 @@ export type TriageTier = 'unscreened' | 'heuristic' | 'model' | 'unavailable';
  * governs this request. Always trustworthy and always computed — so even an
  * unscreened card still shows what the never-list knows about it.
  *
- * Kept in step with NEVER_AUTO_APPROVE_* above: every entry there maps to a
- * flag here, and a test asserts the two never drift apart.
+ * Payload shapes come from the same table as the never-list, so the two cannot
+ * drift; a test asserts every never-list action has a flag too.
  */
 export function heuristicFlags(action: string, payloadJson: string): TriageFlag[] {
   const out = new Set<TriageFlag>();
   if (action === 'onecli_credential') out.add('credentials');
   if (action === 'install_packages') out.add('install');
   if (action === 'add_mcp_server') out.add('capability');
-  if (/\bcli_scope\b/i.test(payloadJson)) out.add('permissions');
-  if (/\broles\s+(grant|revoke)\b/i.test(payloadJson)) out.add('permissions');
-  if (/\bconfig\s+(add|remove)-package\b/i.test(payloadJson)) out.add('install');
-  if (/\bconfig\s+(add|remove)-mcp-server\b/i.test(payloadJson)) out.add('capability');
-  if (/\bconfig\s+update\b/i.test(payloadJson)) out.add('capability');
+  for (const { re, flag } of NEVER_PAYLOAD_SHAPES) if (re.test(payloadJson)) out.add(flag);
   return [...out];
 }
 
@@ -406,10 +412,10 @@ export async function prejudgeApproval(
 /** Extra injectable seams for the short-circuit wiring (tests). */
 export interface MaybePrejudgeDeps extends PrejudgeDeps {
   /** Persist the triage record the card reads. Injectable for tests. */
-  storeTriage?: (approvalId: string, triage: Parameters<typeof storeApprovalTriage>[1]) => void;
+  storeTriage?: (approvalId: string, triage: Parameters<typeof storeApprovalTriage>[1]) => void | Promise<void>;
   getApproval?: (approvalId: string) => PendingApproval | undefined;
   resolve?: (approval: PendingApproval, userId: string) => Promise<void>;
-  notify?: (session: Session, text: string) => void;
+  notify?: (session: Session, text: string) => void | Promise<void>;
 }
 
 /**
@@ -438,7 +444,7 @@ export async function maybePrejudgeApproval(
       // so it is recorded for the card as well. Best-effort: a triage write
       // must never be able to block the approval itself.
       try {
-        (deps.storeTriage ?? storeApprovalTriage)(approvalId, {
+        await (deps.storeTriage ?? storeApprovalTriage)(approvalId, {
           tier: result.tier,
           reason: result.reason,
           flags: result.flags,
@@ -468,7 +474,10 @@ export async function maybePrejudgeApproval(
       model: modelId,
       reason: result.reason,
     });
-    (deps.notify ?? notifyAgent)(session, `Auto-approved (pre-judge): ${result.reason}`);
+    // Informational only: the approval stands even if the agent never hears.
+    await Promise.resolve((deps.notify ?? notifyAgent)(session, `Auto-approved (pre-judge): ${result.reason}`)).catch(
+      (err) => log.warn('Pre-judge approval notice failed', { approvalId, err }),
+    );
     await (deps.resolve ?? resolveApprovalAsApproved)(approval, `prejudge:${modelId}`);
     return true;
     // eslint-disable-next-line no-catch-all/no-catch-all -- fail-safe contract: a pre-judge crash must fall through to normal human delivery

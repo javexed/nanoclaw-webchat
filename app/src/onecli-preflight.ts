@@ -22,7 +22,7 @@
  * still unreachable when the budget runs out. A 404 (gateway too old) and an
  * unset URL are reported immediately: no amount of waiting fixes either.
  */
-import { ONECLI_URL, ONECLI_API_KEY } from './config.js';
+import { onecliSettings } from './onecli-settings.js';
 import { log } from './log.js';
 
 const PROBE_TIMEOUT_MS = 5000;
@@ -135,6 +135,7 @@ export async function awaitGateway(
 
 /** One probe of `GET <ONECLI_URL>/v1/agents`. Never throws: a throw IS the unreachable signal. */
 async function probeGateway(): Promise<GatewayProbe> {
+  const { url: ONECLI_URL, apiKey: ONECLI_API_KEY } = onecliSettings();
   if (!ONECLI_URL) return 'unset';
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
@@ -165,6 +166,10 @@ const sleep = (ms: number): Promise<void> =>
  * the retry, when needed, runs detached.
  */
 export async function preflightOneCLI(): Promise<void> {
+  const { gateway, url: ONECLI_URL } = onecliSettings();
+  // A different gateway is selected: there is no OneCLI to probe, and warning
+  // about one would send the operator after a problem they do not have.
+  if (gateway !== 'onecli') return;
   const first = await probeGateway();
   if (!isTransientProbe(first)) {
     const verdict = classifyGatewayProbe(first, ONECLI_URL);

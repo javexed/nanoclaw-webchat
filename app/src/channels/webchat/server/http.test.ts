@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { json } from './http.js';
 
@@ -53,5 +53,18 @@ describe('json()', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(res.status).toBe(500);
     expect(res.body).toContain('Internal error');
+  });
+
+  it('resolves a promise-valued field too, and warns so the caller gets fixed', async () => {
+    // { handle: getHandle() } is the same slip one level down. tsc rejects it
+    // at the call site; this is the net for one that arrives typed as any.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const res = fakeRes();
+    const handle: any = Promise.resolve('ada'); // eslint-disable-line @typescript-eslint/no-explicit-any
+    json(res as never, 200, { ok: true, handle });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(res.body).toBe('{"ok":true,"handle":"ada"}');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('unawaited Promise'), 'handle');
+    warn.mockRestore();
   });
 });

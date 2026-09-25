@@ -11,6 +11,7 @@ describe('async array predicates', () => {
 
   it('filters on the RESOLVED value, unlike a native filter', async () => {
     // Documented for contrast: this is what the codebase was doing.
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- the bug, shown on purpose
     expect([1, 2, 3].filter((n) => even(n))).toEqual([1, 2, 3]);
   });
 

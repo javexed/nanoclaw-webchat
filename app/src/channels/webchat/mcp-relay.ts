@@ -211,6 +211,16 @@ function dockerBridgeHost(): string | null {
   return null;
 }
 
+/**
+ * Where central's own process should connect to reach this relay. A placed
+ * agent addresses it as `host.docker.internal:<port>` exactly as a local one
+ * does; the relay hop resolves that name to this address on central.
+ */
+export function mcpRelayTarget(): { host: string; port: number } {
+  const host = process.env.WEBCHAT_MCP_RELAY_HOST || dockerBridgeHost() || '127.0.0.1';
+  return { host, port: MCP_RELAY_PORT };
+}
+
 export function stopMcpRelay(): void {
   // close() alone waits for idle keep-alive sockets — a single lingering
   // client (an MCP connection, a stray probe) turns shutdown into a 90s

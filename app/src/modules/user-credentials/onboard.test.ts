@@ -20,6 +20,7 @@ import {
 } from './db.js';
 import { userCredsAgentIdentifier } from './identity.js';
 import type { OnecliAdmin } from './onecli-admin.js';
+import { getCredentialIsolation } from '../../channels/webchat/db.js';
 import { ensureContainerConfig, updateContainerConfigScalars } from '../../db/container-configs.js';
 
 /** Make `id` a Codex-provider agent group (parent row required by the FK). */
@@ -111,6 +112,14 @@ beforeEach(async () => {
 afterEach(() => closeDb());
 
 describe('storeUserCredential (connect once → user-level secret, no per-room work)', () => {
+  it("a member's own key turns credential isolation on; the workspace default does not", async () => {
+    const { admin } = fakeAdmin();
+    await storeUserCredential(admin, WORKSPACE_DEFAULT_USER_ID, 'claude', 'sk-ant-workspace', 'api_key');
+    expect(await getCredentialIsolation()).toBeNull();
+    await storeUserCredential(admin, 'webchat:alice', 'claude', 'sk-ant-alice', 'api_key');
+    expect(await getCredentialIsolation()).toBe(true);
+  });
+
   it('creates the vault secret + user-level row, but no per-member agent yet', async () => {
     const { admin, secrets, agents } = fakeAdmin();
     await storeUserCredential(admin, 'webchat:alice', 'claude', 'sk-ant-alice', 'api_key');

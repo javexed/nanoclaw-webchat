@@ -1,21 +1,23 @@
 diff --git a/setup/auto.ts b/setup/auto.ts
-index f8576c86..053a5052 100644
+index 6c0d7828..a4111751 100644
 --- a/setup/auto.ts
 +++ b/setup/auto.ts
-@@ -166,8 +166,11 @@ async function main(): Promise<void> {
+@@ -165,8 +165,13 @@ async function main(): Promise<void> {
    // Welcome menu — default path or open advanced overrides before any setup
    // work begins. Default lands on standard so Enter is the happy path.
    // On sg re-exec, the user already chose — skip straight to standard.
-+  // With no TTY (cloud-init, provisioners, CI) there's nothing to prompt —
-+  // take the standard path instead of aborting on stdin EOF. Advanced overrides
-+  // are still reachable headlessly via the NANOCLAW_* config env vars.
++  // Headless (cloud-init, provisioners, CI — the deploy scripts set
++  // NANOCLAW_HEADLESS=1) there's nothing to prompt: take the standard path
++  // instead of aborting on stdin EOF. Advanced overrides are still reachable
++  // via the NANOCLAW_* config env vars. Explicit rather than inferred from a
++  // missing TTY, so a caller that drives the prompts without one still gets them.
    let startChoice: 'default' | 'advanced' = 'default';
 -  if (process.env.NANOCLAW_REEXEC_SG !== '1') {
-+  if (process.env.NANOCLAW_REEXEC_SG !== '1' && Boolean(process.stdin.isTTY)) {
++  if (process.env.NANOCLAW_REEXEC_SG !== '1' && process.env.NANOCLAW_HEADLESS !== '1') {
      startChoice = ensureAnswer(
        await brightSelect<'default' | 'advanced'>({
          message: 'How would you like to begin?',
-@@ -1015,6 +1018,15 @@ function sendChatMessage(message: string): Promise<void> {
+@@ -958,6 +963,15 @@ function sendChatMessage(message: string): Promise<void> {
  
  // ─── auth step (select → branch) ────────────────────────────────────────
  

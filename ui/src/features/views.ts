@@ -6,7 +6,7 @@ import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
 import { closeDoc, loadDocs } from './docs.js';
 import { closeRouteDetail } from './routing.js';
 import { renderRoutingSetup } from './settings.js';
-import { adminActive, helpActive, manageActive, manageTab, matrixWired, topoData, viewStack } from './views-state.js';
+import { adminActive, signinActive, helpActive, manageActive, manageTab, matrixWired, topoData, viewStack } from './views-state.js';
 import { allModels, modelSortAz } from './model-list-state.js';
 import { routingAvailable } from './routing-state.js';
 import { agentFilter, agentSortAz } from './agent-list-state.js';
@@ -24,6 +24,8 @@ import {
   showDetail,
 } from './agents.js';
 import { closeMcpDetail, fetchMcpServers, openMcpDetail, renderMcpSources } from './mcp.js';
+import { closeRunnerDetail, fetchRunners } from './runners.js';
+import { fetchNetwork } from './network.js';
 import { showConfirmModal } from './modals.js';
 import { closeModelDetail, fetchModels, openModelDetail, renderModels } from './models.js';
 import { closeRoomDetail, openRoomDetail, roomColor } from './rooms.js';
@@ -116,6 +118,11 @@ export function switchManageTab(tab?: any) {
   $('#mtab-agents')!.hidden = tab !== 'agents';
   $('#mtab-models')!.hidden = tab !== 'models';
   $('#mtab-mcp')!.hidden = tab !== 'mcp';
+  const runnersPane = $('#mtab-runners');
+  if (runnersPane) runnersPane.hidden = tab !== 'runners';
+  if (tab !== 'runners') closeRunnerDetail();
+  const networkPane = $('#mtab-network');
+  if (networkPane) networkPane.hidden = tab !== 'network';
   $('#mtab-skills')!.hidden = tab !== 'skills';
   $('#mtab-routing')!.hidden = tab !== 'routing';
   if (typeof syncManageSortIcon === 'function') syncManageSortIcon(); // reflect the active tab's sort
@@ -134,6 +141,8 @@ export function switchManageTab(tab?: any) {
   }
   if (tab === 'agents') fetchAgents();
   else if (tab === 'models') fetchModels();
+  else if (tab === 'runners') void fetchRunners();
+  else if (tab === 'network') void fetchNetwork();
   else if (tab === 'mcp') {
     fetchMcpServers();
     // The catalog's registry source, global-admin only — self-hiding on 403.
@@ -169,6 +178,11 @@ export function hideOtherFullViews(keep?: any) {
   if (keep !== 'admin' && adminActive.value) {
     adminActive.value = false;
     $('#admin')!.hidden = true;
+    $('#overflow-btn')?.classList.remove('active');
+  }
+  if (keep !== 'signin' && signinActive.value) {
+    signinActive.value = false;
+    $('#signin-page')!.hidden = true;
     $('#overflow-btn')?.classList.remove('active');
   }
   if (keep !== 'permissions' && permsActive.value) {

@@ -20,7 +20,7 @@ import { writeMemberTranscript } from './fanout.js';
 import { log } from '../../log.js';
 import { getDb, hasTable } from '../../db/connection.js';
 import { getContainerConfig } from '../../db/container-configs.js';
-import { registerApprovalAgentGroupFallback } from '../approvals/onecli-approvals.js';
+import { registerApprovalAgentGroupFallback } from '../approvals/agent-identity.js';
 import { getEffectiveRoomMode, getCredentialsConfig } from '../../channels/webchat/db.js';
 import {
   userHasConnectedCredential,
@@ -147,7 +147,7 @@ registerTurnGate(async (mg, agentGroupId, userId) => {
       // (session id == agentGroupId) exists in no sessions row, so the notice
       // was written where nothing ever read it.
       const noticeSession = (await resolveSession(agentGroupId, mg.id, null, 'shared')).session;
-      writeOutboundDirect(agentGroupId, noticeSession.id, {
+      await writeOutboundDirect(agentGroupId, noticeSession.id, {
         id: `user-creds-block-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         kind: 'chat',
         platformId: mg.platform_id,

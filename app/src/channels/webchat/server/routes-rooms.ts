@@ -228,7 +228,7 @@ export async function rRoomCredModeGet(ctx: RouteCtx, m: RegExpMatchArray): Prom
   // The per-room OVERRIDE ('inherit' when unset); the effective mode is what the
   // room actually runs (override, else the global default).
   return json(res, 200, {
-    mode: getRoomModeOverride(roomId) ?? 'inherit',
+    mode: (await getRoomModeOverride(roomId)) ?? 'inherit',
     effectiveMode: await getEffectiveRoomMode(roomId),
     defaultMode: (await getCredentialsConfig()).defaultMode,
   });
@@ -560,7 +560,7 @@ export async function rRoomThreadPullPost(ctx: RouteCtx, m: RegExpMatchArray): P
   if (!(await getWebchatThread(roomId, threadId))) return json(res, 404, { error: 'Thread not found' });
   const copied =
     dir === 'pull'
-      ? syncThreadContext({
+      ? await syncThreadContext({
           roomId,
           srcThreadId: MAIN_THREAD,
           destThreadId: threadId,
@@ -569,7 +569,7 @@ export async function rRoomThreadPullPost(ctx: RouteCtx, m: RegExpMatchArray): P
           dividerText: 'Pulled from main chat',
           freshLimit: FRESH_SYNC_LIMIT,
         })
-      : syncThreadContext({
+      : await syncThreadContext({
           roomId,
           srcThreadId: threadId,
           destThreadId: MAIN_THREAD,
@@ -955,7 +955,7 @@ export async function createRoomHandler(req: IncomingMessage, res: ServerRespons
       wireIds.push(ref.id);
       continue;
     }
-    const result = createBareAgentGroup(ref.name, { instructions: ref.instructions });
+    const result = await createBareAgentGroup(ref.name, { instructions: ref.instructions });
     if ('error' in result) {
       await rollbackBareAgents(createdAgentIds);
       return json(res, result.status, { error: result.error });
@@ -1125,7 +1125,7 @@ export async function addAgentToRoomHandler(
     if (!(await isOwner(userId))) {
       return json(res, 403, { error: 'Owner only' });
     }
-    const result = createBareAgentGroup(parsed.name, { instructions: parsed.instructions });
+    const result = await createBareAgentGroup(parsed.name, { instructions: parsed.instructions });
     if ('error' in result) return json(res, result.status, { error: result.error });
     agentId = result.group.id;
     createdAgentId = result.group.id;
@@ -1191,11 +1191,11 @@ export async function setRoomPrimeHandler(res: ServerResponse, roomId: string, a
   return json(res, 200, { ok: true, primeAgentId: agentId });
 }
 
-export function clearRoomPrimeHandler(res: ServerResponse, roomId: string): void {
-  const room = getWebchatRoom(roomId);
+export async function clearRoomPrimeHandler(res: ServerResponse, roomId: string): Promise<void> {
+  const room = await getWebchatRoom(roomId);
   if (!room) return json(res, 404, { error: 'Room not found' });
-  clearPrimeAgentForWebchatRoom(roomId);
-  recomputeEngagePatterns(roomId);
-  broadcastRooms();
+  await clearPrimeAgentForWebchatRoom(roomId);
+  await recomputeEngagePatterns(roomId);
+  await broadcastRooms();
   return json(res, 200, { ok: true });
 }

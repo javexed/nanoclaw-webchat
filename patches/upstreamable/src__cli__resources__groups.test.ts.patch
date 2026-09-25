@@ -1,5 +1,5 @@
 diff --git a/src/cli/resources/groups.test.ts b/src/cli/resources/groups.test.ts
-index 62e836f3..4f44907d 100644
+index 62e836f3..3546d42a 100644
 --- a/src/cli/resources/groups.test.ts
 +++ b/src/cli/resources/groups.test.ts
 @@ -301,6 +301,90 @@ describe('groups CLI delete cascades dependent rows (#2525)', () => {
@@ -46,15 +46,15 @@ index 62e836f3..4f44907d 100644
 +  // http allowance; not a real host.
 +  const LAN_URL = 'http://100.100.1.2:8000/sse'; // leak-scan-allow
 +
-+  it('defaults a bare --url to http, and honours an explicit --type sse', async () => {
-+    // Upstream's parse infers url → http (the modern transport); the fork keeps
-+    // sse reachable behind an explicit --type for legacy servers.
++  it('defaults a bare --url to http, and refuses the retired sse transport', async () => {
++    // Upstream's parse infers url → http (the modern transport) and rejects
++    // sse, the deprecated one; the fork follows.
 +    const resp = await addMcp({ id: GID, name: 'windows', url: LAN_URL });
 +    expect(resp.ok).toBe(true);
 +    expect((await servers()).windows).toMatchObject({ type: 'http', url: LAN_URL });
 +    const sse = await addMcp({ id: GID, name: 'legacy', url: LAN_URL, type: 'sse' });
-+    expect(sse.ok).toBe(true);
-+    expect((await servers()).legacy).toMatchObject({ type: 'sse', url: LAN_URL });
++    expect(sse.ok).toBe(false);
++    expect((await servers()).legacy).toBeUndefined();
 +  });
 +
 +  it('honours --type http and --headers', async () => {

@@ -18,10 +18,10 @@ commits to the repo — `data/user-skills/` is a bind-mount, so a new skill is
 available to the next session. "Get Anthropic's official skills" is therefore
 an *import*, not a curation step in the repo.
 
-Resolution (`container-runner.ts`): `availableSkillNames()` unions both mounts;
-`skillContainerTarget()` picks the mount per skill — **shipped wins on a name
-collision** (a user skill can't shadow a builtin). `syncSkillSymlinks()` runs at
-spawn and repairs symlinks whose target mount changed.
+Resolution (`src/provider-contracts/realize.ts`): `availableSkillNames()` unions
+both mounts; `skillContainerTarget()` picks the mount per skill — **shipped wins
+on a name collision** (a user skill can't shadow a builtin). The skill-link sync
+runs at spawn and repairs symlinks whose target mount changed.
 
 ## Per-agent assignment
 
@@ -75,7 +75,7 @@ edits. Legacy user skills with no sidecar badge as "imported".
 ## Catalog sources (`webchat_skill_sources`, migration 120)
 
 The "well-known collections" browsable from the Skills tab. DB-backed and
-editable from Settings (global-admin writes; server verifies a new source
+editable on the Skills tab (global-admin writes; server verifies a new source
 actually lists skill folders before saving). Seeded:
 
 | id | Repo | `official` | Why |
@@ -98,7 +98,7 @@ accepts a folder URL (`…/tree/branch/dir`), a branch URL, or a **bare repo roo
 server names it after what it pulls in (`owner/repo`, so the Settings row and the
 pool badge match); the id derives from `owner-repo[-dir]`.
 
-The Settings list renders each collection's coloured origin badge (same as the
+The Skills tab list renders each collection's coloured origin badge (same as the
 pool). Below the editable GitHub collections it shows the **built-in
 marketplace** (`awesomeskill.ai`) — code-wired (`builtins` in the
 `/api/skills/sources` response, not a DB row), so nothing to edit, but
@@ -185,7 +185,7 @@ agent", above the shared-pool checkboxes.
 | List / import / edit / delete POOLED skills | admin (`isAdminView`) | owner/`isGlobalAdmin` for writes (install-wide fan-out) |
 | Assign a pooled skill to an agent | agent detail | `hasAdminPrivilege(agent)` |
 | Import / remove a SCOPED skill (one agent) | agent detail | `hasAdminPrivilege(agent)` — affects only that group |
-| Catalog source add/edit/remove | owner view (Settings) | `isGlobalAdmin` — install-wide trust decision |
+| Catalog source add/edit/remove | Skills tab | `isGlobalAdmin` — install-wide trust decision |
 
 ## Dependency stance
 

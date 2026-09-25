@@ -1,13 +1,20 @@
 diff --git a/src/modules/approvals/index.ts b/src/modules/approvals/index.ts
-index 4fe66135..da42a160 100644
+index 33ca726a..59656508 100644
 --- a/src/modules/approvals/index.ts
 +++ b/src/modules/approvals/index.ts
-@@ -27,6 +27,8 @@ import { onHostShutdown } from '../../host-lifecycle.js';
+@@ -21,9 +21,15 @@
+  */
  import { registerResponseHandler } from '../../response-registry.js';
  import { handleApprovalsResponse } from './response-handler.js';
- import { startOneCLIApprovalHandler, stopOneCLIApprovalHandler } from './onecli-approvals.js';
 +// Side effect: registers the approval-TTL expiry on the host-sweep seam (H7).
 +import './expiry.js';
  
  // Public API re-exports so consumers import from the module root.
  export { requestApproval, registerApprovalHandler, notifyAgent } from './primitive.js';
++// Lets a channel that can answer its caller refuse a click WITH a reason,
++// instead of accepting it and dropping it (the onAction hook returns void).
++export { checkApprovalClick } from './response-handler.js';
++export type { ApprovalClickCheck } from './response-handler.js';
+ export type { ApprovalHandler, ApprovalHandlerContext, RequestApprovalOptions } from './primitive.js';
+ // Host-sweep hook for ghosted "Reject with reason…" holds. The re-export also
+ // loads reason-capture.js, registering its message-interceptor on import.

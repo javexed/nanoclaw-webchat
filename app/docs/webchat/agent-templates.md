@@ -22,9 +22,9 @@ otherwise touch.
 Templates resolve from `NANOCLAW_TEMPLATES_DIR`, or `templates/` at the project
 root by default.
 
-**On a composed install, point it outside the git tree.** The deploy rsync ships
-`templates/` empty, so an in-tree library is deleted on every deploy. `data/` is
-excluded from that rsync, which makes `data/templates` the durable choice:
+**On a composed install, point it outside the git tree.** The project tree is
+code you re-compose or redeploy; `data/` is state no install step touches, which
+makes `data/templates` the durable choice:
 
 ```bash
 NANOCLAW_TEMPLATES_DIR=/path/to/nanoclaw/data/templates
@@ -99,5 +99,6 @@ that lint always accepts.
 ## What is deliberately not here
 
 Stamping refuses a template a group already carries (409, naming the agent and
-the CLI command) rather than quietly creating a duplicate — updating goes
+pointing at its Template → "Check for updates") rather than quietly creating a
+duplicate — updating goes
 through the plan above.

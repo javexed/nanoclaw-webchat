@@ -12,6 +12,8 @@
 // lifted later from a long-lived localStorage entry. The real exfil guards are
 // elsewhere: the token travels only in the Authorization header on same-origin
 // relative URLs and in the WS subprotocol — never in a URL.
+import { noteAuthHint } from './platform-token.js';
+
 let authToken: string = sessionStorage.getItem('nanoclaw-token') || '';
 
 export function getAuthToken(): string {
@@ -41,7 +43,11 @@ export function authFetch(url: string, opts: RequestInit = {}): Promise<Response
   // CSRF guard — server requires this on multipart/chunked upload endpoints so
   // cross-origin form-POSTs can't auto-attach credentials.
   headers['X-Webchat-CSRF'] = '1';
-  return fetch(url, { ...opts, headers });
+  return fetch(url, { ...opts, headers }).then((res) => {
+    // Every authenticated response may carry the platform-token hint.
+    noteAuthHint(res);
+    return res;
+  });
 }
 
 export interface ApiError extends Error {

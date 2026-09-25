@@ -34,6 +34,16 @@
       <symbol id="i-shield" viewBox="0 0 24 24">
         <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
       </symbol>
+      <symbol id="i-log-in" viewBox="0 0 24 24">
+        <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+        <polyline points="10 17 15 12 10 7" />
+        <line x1="15" x2="3" y1="12" y2="12" />
+      </symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+        <path d="M2 12h20" />
+      </symbol>
       <symbol id="i-key" viewBox="0 0 24 24">
         <path d="m15.5 7.5 2.3 2.3a1 1 0 0 0 1.4 0l2.1-2.1a1 1 0 0 0 0-1.4L21 4" />
         <path d="m21 2-9.6 9.6" />
@@ -112,6 +122,9 @@
         <path d="M20 9h2" />
         <path d="M9 2v2" />
         <path d="M9 20v2" />
+      </symbol>
+      <symbol id="i-laptop" viewBox="0 0 24 24">
+        <path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16" />
       </symbol>
       <symbol id="i-plug" viewBox="0 0 24 24">
         <path d="M12 22v-5" />
@@ -218,6 +231,8 @@
           <input id="login-token" type="password" placeholder="Access Token (paste here)" autocomplete="off" required />
           <button type="submit" class="btn btn-primary">Connect</button>
         </form>
+        <!-- Shown when the server offers its own Microsoft sign-in (WEBCHAT_OIDC_*). -->
+        <a id="login-microsoft" class="btn btn-secondary login-microsoft" href="/auth/oidc/login" hidden>Sign in</a>
         <p id="login-error" class="login-error" hidden></p>
       </div>
     </div>
@@ -264,6 +279,12 @@
                   <svg class="icon" aria-hidden="true"><use href="#i-book-open"></use></svg>&nbsp;&nbsp;Skills
                   <span id="learn-drafts-count" class="menu-count" hidden></span>
                 </button>
+                <button id="overflow-runners" class="overflow-item" data-action="runners" role="menuitem" hidden>
+                  <svg class="icon" aria-hidden="true"><use href="#i-laptop"></use></svg>&nbsp;&nbsp;Runners
+                </button>
+                <button id="overflow-network" class="overflow-item" data-action="network" role="menuitem" hidden>
+                  <svg class="icon" aria-hidden="true"><use href="#i-globe"></use></svg>&nbsp;&nbsp;Network
+                </button>
                 <button id="overflow-journey" class="overflow-item" data-action="journey" role="menuitem" hidden>
                   <svg class="icon" aria-hidden="true"><use href="#i-graduation-cap"></use></svg>&nbsp;&nbsp;Skills journey
                 </button>
@@ -281,6 +302,9 @@
                   hidden
                 >
                   <svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg>&nbsp;&nbsp;Permissions
+                </button>
+                <button id="overflow-signin" class="overflow-item" data-action="signin" role="menuitem" hidden>
+                  <svg class="icon" aria-hidden="true"><use href="#i-log-in"></use></svg>&nbsp;&nbsp;Sign-in
                 </button>
                 <button
                   id="overflow-admin"
@@ -473,6 +497,16 @@
             >
               <div id="messages">
                 <div id="empty-state" class="empty-state">Select a room from the sidebar to start chatting</div>
+              </div>
+              <!-- VS Code, first run (vscode-start.ts): shown while you have no rooms. -->
+              <div id="vscode-start" class="vscode-start" hidden>
+                <h3 class="settings-section-title">VS Code</h3>
+                <p class="cred-hint">Install the download in VS Code first.</p>
+                <div class="settings-vscode-actions">
+                  <button id="vscode-start-download" type="button" class="btn btn-secondary">1. Download</button>
+                  <button id="vscode-start-connect" type="button" class="btn btn-primary">2. Connect VS Code</button>
+                </div>
+                <p id="vscode-start-status" class="cred-hint" hidden></p>
               </div>
             </div>
             <div id="typing-indicator" class="typing-indicator" aria-hidden="true"></div>
@@ -720,17 +754,22 @@
                       </button>
                       <div id="agent-egress-control" class="setting-options" role="group" aria-label="Network egress">
                         <button type="button" class="setting-option" data-egress="open">Open</button>
-                        <button type="button" class="setting-option" data-egress="host-only">Locked down</button>
+                        <button type="button" class="setting-option" data-egress="host-only">Allowlist</button>
+                        <button type="button" class="setting-option" data-egress="none">Model only</button>
                       </div>
                     </div>
                     <p class="cred-hint feature-info" id="agent-egress-info" hidden>
-                      Locked down puts this agent on an internal network where the
-                      credential gateway is the only way out. Anything it reaches over
-                      HTTPS keeps working; anything direct stops — SSH and rsync, services
-                      on your LAN, and a model server running on this host. Applies the
-                      next time the agent starts.
+                      Next start.
                     </p>
                     <p class="cred-hint" id="agent-egress-note" hidden></p>
+                    <div id="agent-egress-hosts" class="agent-egress-hosts" hidden>
+                      <span class="form-label">Also allowed</span>
+                      <div class="secret-list" data-hosts></div>
+                      <div class="secret-form">
+                        <input data-host-input type="text" placeholder="pkgs.example.org" spellcheck="false" autocomplete="off" aria-label="Add a host for this agent" />
+                        <button data-host-add class="btn btn-primary" type="button">Add</button>
+                      </div>
+                    </div>
                   </div>
                 </details>
                 <details class="agent-accordion">
@@ -1239,6 +1278,34 @@
               </div>
             </div>
           </aside>
+          <aside id="runner-detail" class="agent-detail" hidden>
+            <div class="agent-detail-header">
+              <span id="runner-detail-badge" class="model-kind-badge"></span>
+              <span id="runner-detail-title">Machine</span>
+              <button id="runner-detail-close" class="members-close" aria-label="Close">
+                <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
+              </button>
+            </div>
+            <div class="agent-detail-form">
+              <p id="runner-detail-facts" class="room-prime-note"></p>
+              <p id="runner-detail-pending" class="room-prime-note" hidden>Awaiting approval.</p>
+              <div id="runner-placed-section" class="agent-mcp-section">
+                <span class="form-label">Placed agents</span>
+                <ul id="runner-placed-list" class="agent-mcp-list"></ul>
+                <p id="runner-placed-empty" class="agent-mcp-empty" hidden>None.</p>
+                <div id="runner-place-row" class="model-id-row">
+                  <select id="runner-place-select" aria-label="Agent to place"></select>
+                  <button type="button" id="runner-place-btn" class="btn btn-secondary">Place</button>
+                </div>
+              </div>
+              <div id="runner-approve-actions" class="agent-detail-actions">
+                <button type="button" id="runner-approve-btn" class="btn btn-primary">Approve</button>
+              </div>
+              <div id="runner-danger" class="agent-detail-danger">
+                <button type="button" id="runner-revoke-btn" class="btn btn-danger">Revoke</button>
+              </div>
+            </div>
+          </aside>
           <aside id="mcp-detail" class="agent-detail" hidden>
             <!-- Edit mode -->
             <div id="mcp-edit-view">
@@ -1332,7 +1399,7 @@
                       <input
                         id="mcp-probe-url"
                         type="text"
-                        placeholder="host:8000/sse, https://…/mcp (scheme optional)"
+                        placeholder="host:8000/mcp, https://…/mcp (scheme optional)"
                         autocomplete="off"
                       />
                       <button type="button" id="mcp-probe-btn" class="btn btn-secondary">Probe</button>
@@ -1381,14 +1448,13 @@
                     <label>
                       <span class="form-label">Transport</span>
                       <select id="mcp-create-transport">
-                        <option value="sse">Remote (SSE)</option>
                         <option value="http">Remote (HTTP)</option>
                         <option value="stdio">Local process (stdio)</option>
                       </select>
                     </label>
                     <label id="mcp-create-url-label">
                       <span class="form-label">URL</span>
-                      <input id="mcp-create-url" type="text" placeholder="http://host:8000/sse" autocomplete="off" />
+                      <input id="mcp-create-url" type="text" placeholder="http://host:8000/mcp" autocomplete="off" />
                     </label>
                     <label id="mcp-create-command-label" hidden>
                       <span class="form-label">Command</span>
@@ -1437,6 +1503,12 @@
             </button>
             <button class="manage-tab" data-mtab="models" role="tab" aria-selected="false" aria-controls="mtab-models" aria-label="Models" title="Models">
               <svg class="icon" aria-hidden="true"><use href="#i-cpu"></use></svg>
+            </button>
+            <button id="mtab-runners-btn" class="manage-tab" data-mtab="runners" role="tab" aria-selected="false" aria-controls="mtab-runners" aria-label="Runners" title="Runners" hidden>
+              <svg class="icon" aria-hidden="true"><use href="#i-laptop"></use></svg>
+            </button>
+            <button id="mtab-network-btn" class="manage-tab" data-mtab="network" role="tab" aria-selected="false" aria-controls="mtab-network" aria-label="Network" title="Network" hidden>
+              <svg class="icon" aria-hidden="true"><use href="#i-globe"></use></svg>
             </button>
             <button id="mtab-mcp-btn" class="manage-tab" data-mtab="mcp" role="tab" aria-selected="false" aria-controls="mtab-mcp" aria-label="MCP" title="MCP" hidden>
               <svg class="icon" aria-hidden="true"><use href="#i-plug"></use></svg>
@@ -1496,6 +1568,49 @@
               <div id="ollama-host-cards"></div>
             </div>
                       </div>
+          <div id="mtab-runners" class="manage-pane" role="tabpanel" hidden>
+            <ul id="runner-list"></ul>
+            <p id="runner-list-note" class="runners-note" hidden></p>
+            <h3 class="runners-h">Agent image</h3>
+            <form id="runner-image-form" class="runner-image">
+              <select id="runner-image-policy" aria-label="Where paired machines get the agent image">
+                <option value="machine">Machine decides</option>
+                <option value="pull">Pull</option>
+                <option value="build">Build</option>
+              </select>
+              <input id="runner-image-ref" type="text" spellcheck="false" autocomplete="off" aria-label="Image reference" />
+              <button class="btn btn-secondary btn-sm" type="submit">Save</button>
+            </form>
+            <p id="runner-image-note" class="runners-note"></p>
+            <h3 class="runners-h">Runner extension</h3>
+            <p id="runner-ext-current" class="runners-note"></p>
+            <label class="btn btn-secondary btn-sm" for="runner-ext-file">Publish…</label>
+            <input id="runner-ext-file" type="file" accept=".vsix" hidden />
+          </div>
+          <div id="mtab-network" class="manage-pane" role="tabpanel" hidden>
+            <h3 class="runners-h">Allowlist</h3>
+            <p class="runners-note">Every agent on Allowlist: <code>host</code>, <code>*.domain</code>, <code>:port</code> optional.</p>
+            <div id="runner-egress-hosts" class="runner-egress">
+              <div class="secret-list" data-hosts></div>
+              <div class="secret-form">
+                <input data-host-input type="text" placeholder="pkgs.example.org" spellcheck="false" autocomplete="off" aria-label="Add a host" />
+                <button data-host-add class="btn btn-primary btn-sm" type="button">Add</button>
+              </div>
+              <div class="runner-egress-actions">
+                <span id="runner-egress-presets" class="runner-egress-presets" aria-label="Add a preset">Add:
+                  <button type="button" class="btn btn-secondary btn-sm" data-preset="npm">npm</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-preset="pypi">PyPI</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-preset="nuget">NuGet</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-preset="github">GitHub</button>
+                  <button type="button" class="btn btn-secondary btn-sm" data-preset="msdocs">Microsoft docs</button>
+                </span>
+                <button class="btn btn-secondary btn-sm" type="button" id="runner-egress-reset">Reset to defaults</button>
+              </div>
+            </div>
+            <p id="runner-egress-note" class="runners-note"></p>
+            <h3 class="runners-h">Recently blocked</h3>
+            <ul id="runner-egress-blocked" class="runner-blocked"></ul>
+          </div>
           <div id="mtab-mcp" class="manage-pane" role="tabpanel" hidden>
             <ul id="mcp-list"></ul>
             <button id="create-mcp-btn" class="btn btn-secondary btn-list-footer">+ New server</button>
@@ -1785,6 +1900,90 @@
           </main>
         </div>
       </section>
+      <section id="signin-page" hidden>
+        <div class="dash-header">
+          <button id="signin-exit" class="mobile-back" aria-label="Back">
+            <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"></use></svg>
+          </button>
+          <span>Sign-in</span>
+        </div>
+        <div class="admin-body signin-body">
+          <div class="settings-credentials">
+            <div class="setting-group install-row">
+              <span class="setting-label">Tailscale</span>
+              <span class="signin-status" id="si-tailscale-status"></span>
+              <label class="setting-toggle"><input id="si-tailscale" type="checkbox" aria-label="Tailscale" /></label>
+            </div>
+            <div class="setting-group install-row">
+              <span class="setting-label">OIDC</span>
+              <span class="signin-status" id="si-oidc-status"></span>
+              <label class="setting-toggle"><input id="si-oidc" type="checkbox" aria-label="OIDC" /></label>
+            </div>
+            <form id="si-oidc-form" class="signin-form" hidden>
+              <div id="si-oidc-provider" class="setting-options" role="group" aria-label="Provider">
+                <button type="button" class="setting-option" data-value="microsoft">Microsoft</button>
+                <button type="button" class="setting-option" data-value="other">Other</button>
+              </div>
+              <label class="signin-field" data-for="microsoft"><span class="form-label">Tenant ID</span>
+                <input id="si-tenant" type="text" placeholder="GUID or domain" autocomplete="off" autocapitalize="none" spellcheck="false" />
+              </label>
+              <label class="signin-field" data-for="other"><span class="form-label">Issuer URL</span>
+                <input id="si-issuer" type="url" placeholder="https://" autocomplete="off" autocapitalize="none" spellcheck="false" />
+              </label>
+              <label class="signin-field" data-for="other"><span class="form-label">Name</span>
+                <input id="si-name" type="text" placeholder="SSO" autocomplete="off" maxlength="40" />
+              </label>
+              <label class="signin-field"><span class="form-label">Client ID</span>
+                <input id="si-client" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" />
+              </label>
+              <label class="signin-field"><span class="form-label">Client secret</span>
+                <input id="si-secret" type="password" placeholder="optional" autocomplete="new-password" spellcheck="false" />
+              </label>
+              <label class="signin-field" data-for="microsoft"><span class="form-label">VS Code App ID URI</span>
+                <input id="si-appiduri" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" />
+              </label>
+              <label class="signin-field" data-for="microsoft"><span class="form-label">VS Code client ID</span>
+                <input id="si-vscode-client" type="text" placeholder="optional" autocomplete="off" autocapitalize="none" spellcheck="false" />
+              </label>
+              <div class="signin-field"><span class="form-label">Redirect URI</span>
+                <div class="signin-copy"><code id="si-redirect"></code><button id="si-redirect-copy" type="button" class="btn btn-ghost btn-sm">Copy</button></div>
+              </div>
+              <div class="signin-actions"><button type="submit" class="btn btn-primary">Save</button></div>
+            </form>
+            <div class="setting-group install-row">
+              <span class="setting-label">Trusted proxy</span>
+              <span class="signin-status" id="si-proxy-status"></span>
+              <label class="setting-toggle"><input id="si-proxy" type="checkbox" aria-label="Trusted proxy" /></label>
+            </div>
+            <form id="si-proxy-form" class="signin-form" hidden>
+              <label class="signin-field"><span class="form-label">Proxy IPs</span>
+                <input id="si-proxy-ips" type="text" placeholder="10.0.0.5, 10.0.0.0/16" autocomplete="off" spellcheck="false" />
+              </label>
+              <label class="signin-field"><span class="form-label">Header</span>
+                <input id="si-proxy-header" type="text" placeholder="x-forwarded-user" autocomplete="off" autocapitalize="none" spellcheck="false" />
+              </label>
+              <div class="signin-actions"><button type="submit" class="btn btn-primary">Save</button></div>
+            </form>
+            <div id="si-token-row" class="setting-group install-row" hidden>
+              <span class="setting-label">Access token</span>
+              <span class="signin-status"></span>
+              <label class="setting-toggle"><input id="si-token" type="checkbox" aria-label="Access token" /></label>
+            </div>
+                <!-- HTTPS over Tailscale — runs `tailscale serve` so webchat is
+                     reachable at https://<node>.ts.net with a real cert (secure
+                     context → PWA install / push / voice). Shown only when
+                     tailscaled is detected up on the host. -->
+                <div id="access-https-row" class="setting-group install-row" hidden>
+                  <span class="setting-label">HTTPS over Tailscale</span>
+                  <button id="access-https-btn" class="btn btn-secondary" type="button"></button>
+                  <span id="access-https-badge" class="install-badge" hidden>
+                    <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;On
+                  </span>
+                </div>
+                <p class="cred-hint" id="access-https-hint" hidden></p>
+          </div>
+        </div>
+      </section>
       <section id="admin" hidden>
         <div class="dash-header">
           <button id="admin-exit" class="mobile-back" aria-label="Back">
@@ -1812,27 +2011,6 @@
             </div>
             <div class="admin-group">
               <div class="admin-group-title">Access &amp; credentials</div>
-              <div id="settings-access" class="settings-credentials" hidden>
-                <h3 class="settings-section-title">Access</h3>
-                <div class="setting-group install-row">
-                  <span class="setting-label">Bearer token</span>
-                  <button id="access-bearer-btn" class="btn btn-secondary" type="button" hidden></button>
-                  <span id="access-bearer-badge" class="install-badge" hidden></span>
-                </div>
-                <p class="cred-hint" id="access-bearer-hint" hidden></p>
-                <!-- HTTPS over Tailscale — runs `tailscale serve` so webchat is
-                     reachable at https://<node>.ts.net with a real cert (secure
-                     context → PWA install / push / voice). Shown only when
-                     tailscaled is detected up on the host. -->
-                <div id="access-https-row" class="setting-group install-row" hidden>
-                  <span class="setting-label">HTTPS over Tailscale</span>
-                  <button id="access-https-btn" class="btn btn-secondary" type="button"></button>
-                  <span id="access-https-badge" class="install-badge" hidden>
-                    <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;On
-                  </span>
-                </div>
-                <p class="cred-hint" id="access-https-hint" hidden></p>
-              </div>
               <div id="settings-credentials" class="settings-credentials" hidden>
                 <h3 class="settings-section-title">User credentials</h3>
                 <div class="setting-group">
@@ -2022,13 +2200,27 @@
                   <button id="audit-syslog-apply" class="btn btn-secondary" type="button">Apply</button>
                 </div>
                 <p class="cred-hint" id="audit-syslog-status" hidden></p>
+                <div class="setting-group install-row">
+                  <span class="setting-label">Keep</span>
+                  <select id="audit-keep-days" aria-label="Keep the audit log for">
+                    <option value="30">30 days</option>
+                    <option value="90">90 days</option>
+                    <option value="365">1 year</option>
+                    <option value="0">Forever</option>
+                  </select>
+                  <input id="audit-max-mb" type="number" min="10" step="10" inputmode="numeric" aria-label="Size cap in MB" />
+                  <span class="cred-hint">MB cap</span>
+                  <button id="audit-retention-apply" class="btn btn-secondary" type="button">Apply</button>
+                </div>
+                <p class="cred-hint" id="audit-usage" hidden></p>
                 <!-- Read-only viewer. There is no clear/delete control here and
                      no endpoint behind one: a log an operator can rewrite from
                      the UI is not an audit trail. -->
                 <div id="audit-log-view"></div>
                 <p class="cred-hint feature-info" id="audit-feature-info" hidden>
                   Security events (sign-ins, privileged actions, role grants) always append to logs/audit.jsonl
-                  on this machine. Forwarding sends a copy to a syslog collector as RFC 5424 — udp://host:514,
+                  on this machine. Each day rolls into a compressed file; Keep deletes days past it, and the
+                  cap deletes the oldest days early, even under Forever, so the disk cannot fill. Forwarding sends a copy to a syslog collector as RFC 5424 — udp://host:514,
                   tcp://host:601 or tls://host:6514 (TLS verifies the collector's certificate). Clear the field
                   and Apply to stop forwarding; the local file stays on either way, and changing this setting is
                   itself recorded — to both the old and the new collector.
@@ -2412,10 +2604,33 @@
                  everyone (not admin-gated): a per-user PAT is only meaningful if
                  its owner is the one who enters it. Hidden entirely for people
                  who aren't enrolled in any agent, so it never nags. -->
+            <!-- Sign-ins — how YOU sign in, and linking a second sign-in (Microsoft,
+                 or this device's Tailscale) to the same account. Hidden for the
+                 shared operator token and the localhost owner, which are not a person. -->
+            <div id="settings-signins" class="settings-credentials" hidden>
+              <h3 class="settings-section-title">Sign-ins</h3>
+              <ul id="signins-list" class="signins-list"></ul>
+              <div class="signins-actions">
+                <a id="signins-link-microsoft" class="btn btn-secondary" href="/auth/oidc/login?link=1" hidden>Link</a>
+                <button id="signins-link-tailscale" class="btn btn-secondary" type="button" hidden></button>
+                <button id="signins-signout" class="btn btn-ghost" type="button" hidden>Sign out</button>
+              </div>
+            </div>
             <div id="settings-my-credentials" class="settings-credentials" hidden>
               <h3 class="settings-section-title">Secrets only you use</h3>
               <p class="cred-hint">Your own turns only. Wins over the agent’s and all-agents ones.</p>
               <div id="my-credentials-list"></div>
+            </div>
+            <!-- VS Code — the runner extension, for everyone; hidden until one is published. -->
+            <div id="settings-vscode" class="settings-credentials" hidden>
+              <h3 class="settings-section-title">VS Code</h3>
+              <!-- Connect opens a vscode:// link, which only works once the extension is
+                   installed; VS Code otherwise looks it up in its marketplace and fails. -->
+              <p class="cred-hint">Install the download in VS Code first.</p>
+              <div class="settings-vscode-actions">
+                <button id="vscode-download" type="button" class="btn btn-secondary btn-sm">1. Download</button>
+                <button id="vscode-connect" type="button" class="btn btn-secondary btn-sm">2. Connect VS Code</button>
+              </div>
             </div>
             <!-- Workspace credentials policy — owner only (shown when canEdit). -->
             <!-- Access & security — owner/global-admin. The bearer-token opt-out

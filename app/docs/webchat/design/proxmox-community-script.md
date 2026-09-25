@@ -20,14 +20,13 @@ maintainer side: where the script lives, how its two modes work, and the plan
 
 `install/nanoclaw-install.sh` fetches NanoClaw one of two ways:
 
-- **Test mode (current)**: the public `channels-webchat` **branch tarball**
-  (`.../archive/refs/heads/channels-webchat.tar.gz`, override via
-  `NANOCLAW_SRC_ARCHIVE`) — carries unreleased fixes; a branch archive has no
-  `.git`, so the app's first-boot dev-pull tripwire stays quiet.
-- **Release mode (for upstream)**: swap that block for
-  `fetch_and_deploy_gh_release "nanoclaw" "javexed/nanoclaw" "tarball" "latest" "/opt/nanoclaw"`.
-  Requires a GitHub release to exist (see deploy/RELEASING.md); the catalog
-  logo pin must match the tag.
+- **Test mode (current)**: clone nanoclaw-webchat `main` and compose it with the
+  root `install.sh --dir /opt/nanoclaw` (`NANOCLAW_DIR` also sets the target).
+  The old `channels-webchat` branch tarball no longer exists, so a script still
+  pointing at it needs this change.
+- **Release mode (for upstream)**: the same compose from a nanoclaw-webchat
+  release tag instead of `main` (see deploy/RELEASING.md); the catalog logo pin
+  must match the tag.
 
 Either way the build/config/service work is delegated to the repo's own
 `deploy/webchat-deploy.sh` — the same script a clean-VM install runs, so the
@@ -77,6 +76,6 @@ a cold PR that can't tick "No Docker" invites a close-without-review.
 
 ## Release checklist interaction
 
-Cutting `vX.Y.Z` on javexed/nanoclaw (RELEASING.md) is what release mode
+Cutting `vX.Y.Z` on javexed/nanoclaw-webchat (RELEASING.md) is what release mode
 resolves; bump `json/nanoclaw.json`'s logo pin to the new tag in the same
 change.

@@ -1,0 +1,13 @@
+src/**
+out/**
+node_modules/**
+esbuild.mjs
+tsconfig.json
+**/*.map
+**/*.test.*
+pnpm-lock.yaml
+pnpm-workspace.yaml
+.gitignore
+harness/**
+.vscode-test/**
+logs/**

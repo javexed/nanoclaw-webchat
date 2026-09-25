@@ -26,3 +26,15 @@ export function upsertEnv(root: string, key: string, val: string): void {
     /* best-effort; non-fatal on platforms without chmod semantics */
   }
 }
+
+/** Remove KEY from .env (no-op when absent). */
+export function removeEnv(root: string, key: string): void {
+  const envFile = path.join(root, '.env');
+  if (!fs.existsSync(envFile)) return;
+  const raw = fs.readFileSync(envFile, 'utf8');
+  const next = raw
+    .split('\n')
+    .filter((l) => !l.startsWith(`${key}=`))
+    .join('\n');
+  if (next !== raw) fs.writeFileSync(envFile, next, { mode: 0o600 });
+}

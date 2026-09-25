@@ -102,7 +102,7 @@ const portOf = (wc: { http: { address: () => unknown } }): number => {
 };
 
 const now = '2026-07-21T00:00:00.000Z';
-function seed(db: import('../../db/driver.js').DbDriver): void {
+async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
   const user = async (id: string) =>
     await db.run(
       `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
@@ -128,11 +128,11 @@ function seed(db: import('../../db/driver.js').DbDriver): void {
       now,
     );
   };
-  group(AG_A);
-  group(AG_B);
-  role('webchat:owner', 'owner', null);
-  role('webchat:admina', 'admin', AG_A); // scoped admin of A only
-  role('webchat:adminb', 'admin', AG_B); // scoped admin of B only
+  await group(AG_A);
+  await group(AG_B);
+  await role('webchat:owner', 'owner', null);
+  await role('webchat:admina', 'admin', AG_A); // scoped admin of A only
+  await role('webchat:adminb', 'admin', AG_B); // scoped admin of B only
 }
 
 async function stageDraft(id: string, agentGroupId: string, name: string, desc: string): Promise<void> {
@@ -173,7 +173,7 @@ describe('POST /api/skill-drafts/:id/keep — async review', () => {
       WEBCHAT_TRUSTED_PROXY_HEADER: 'x-forwarded-user',
     });
     server = loaded.server;
-    seed(loaded.conn.getDb());
+    await seed(loaded.conn.getDb());
     await stageDraft(DRAFT, AG_A, 'zz-async-keep-test', 'unique async keep test skill zz');
     wc = await server.startWebchatServer(noopHooks);
     port = portOf(wc);

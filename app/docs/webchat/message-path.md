@@ -268,8 +268,8 @@ entry substituted at the proxy. See
 
 ## 6. Delivery, and liveness
 
-`src/delivery.ts` — `deliverSessionMessages()`. `src/host-sweep.ts` —
-`decideStuckAction()`.
+`src/delivery.ts` — `deliverSessionMessages()`. `src/reconcile-session.ts` —
+`decideStuckAction()` and the watchdog constants, called from `src/host-sweep.ts`.
 
 Two pollers run on the host: active sessions at 1 s, a sweep across everything
 else at 60 s. Delivery reads due rows from `outbound.db`, subtracts the
@@ -312,7 +312,7 @@ hang.
 | `src/router.ts` → `deliverToAgent` | session mode, key override, the inbound write |
 | `src/container-runner.ts` → `wakeContainer` | spawn, idempotent wake, spawn-failure notice |
 | `src/container-runner.ts` → `buildMounts` | what the container can see |
-| `src/host-sweep.ts` | the watchdog and its kill decisions |
+| `src/host-sweep.ts` / `src/reconcile-session.ts` | the watchdog sweep / its kill decisions and constants |
 | `src/delivery.ts` | draining `outbound.db` back to the adapter |
 | `src/gateway-providers/onecli.ts` | credential contribution, fail-closed |
 | `src/egress-lockdown.ts` | the internal network, and why the proxy is the only hop |

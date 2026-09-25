@@ -1,9 +1,9 @@
 # Webchat design language
 
-The webchat PWA (`index.html`, `app.js`, `style.css`) is partly built and
-extended by Claude agents working from this repo. The design language is only
-as consistent as what's written down for them to read — this file is that
-source of truth. When you add or change UI, conform to the contracts below.
+The webchat PWA (`index.html`, `style.css`, and `ui/src/`, which builds
+`app.js`) is partly built and extended by Claude agents working from this repo.
+The design language is only as consistent as what's written down for them to
+read — this file is that source of truth. When you add or change UI, conform to the contracts below.
 
 There is **one enforced token layer**: colors. Radius, type, and motion tokens
 were added later (see `style.css` `:root`) and existing code still uses literal
@@ -131,7 +131,7 @@ don't reintroduce a "quiet" delete variant.
 
 **Not part of this set** (bespoke components — leave as-is): the icon buttons
 `.lightbox-btn` (circular media-overlay), `.settings-btn`, `.file-picker-btn`;
-the `.agent-status-btn` segmented toggle; and `.btn-cancel` (the confirm-modal
+and `.btn-cancel` (the confirm-modal
 cancel). `.drafter-btn` is retained only as a JS hook + layout — its visual role
 is `.btn-ghost`.
 
@@ -236,12 +236,12 @@ no backdrop-tap or history entry yet — × and Escape only.
 
 ---
 
-## 5. Feedback channels — four, with a rule
+## 5. Feedback channels — five, with a rule
 
 | Channel | API | Fires for |
 |---------|-----|-----------|
-| Transcript bubble | `appendSystem()` (×18) | **conversation-domain events only** — agent joined, file shared, an in-room approval |
-| Toast | `showToast()` (×72) | **operation outcomes** — saved, copied, failed, status changed |
+| Transcript bubble | `appendSystem()` | **conversation-domain events only** — agent joined, file shared, an in-room approval |
+| Toast | `showToast()` | **operation outcomes** — saved, copied, failed, status changed |
 | Inline text | (login, perms) | **field validation** — bad token, missing name |
 | Persistent banner | `#connection-banner`, `#update-banner` | **standing states needing user action** — connection lost, a new version ready |
 | Inline spinner | `.btn-spinner` (+ `wizardBusy()`) | **in-progress** — the "doing something" signal, on the control/row that's working |
@@ -262,13 +262,11 @@ toast. One spinner primitive (`.btn-spinner`, a `currentColor` ring on the
 *outcomes*; a spinner is the *wait* — don't announce "Loading…" in a toast.
 
 Rule of thumb: if it isn't part of the *conversation*, it does not belong in the
-transcript. Notably, Web Push setup currently narrates `Push: fetching VAPID
-key…`, `Push: subscribing…`, etc. via `appendSystem` into whatever room you're
-in — that's operational telemetry in your message history. Move multi-step
-operational status to toasts or the settings panel.
+transcript. Multi-step operational status belongs in toasts or the settings
+panel.
 
 No native `confirm()` / `alert()` — use `showConfirmModal()` (already universal
-at all 8 destructive sites).
+at every destructive site).
 
 ---
 
@@ -379,9 +377,10 @@ labels that need different behavior must out-specify it explicitly.
 
 The PWA has one chat surface plus a set of **full-views** — full-screen sections
 (siblings of `#chat`) opened from the header **overflow menu** (⋯): **Manage**
-(Agents / Models), **Topology**, **Wiring**, **Permissions**, **Settings**, and
-**Help**. Each is a `<section id="…" hidden>` with a `.dash-header` (a
-`.mobile-back` chevron + title) and a scrollable `.dash-body`.
+(Agents / Models), **Topology**, **Wiring**, **Permissions**, **Admin**,
+**Dashboard**, **Journey**, **Settings**, and **Documentation**. Each is a
+`<section id="…" hidden>` with a `.dash-header` (a `.mobile-back` chevron +
+title) and a scrollable `.dash-body`.
 
 Open/close is uniform — copy an existing trio (e.g. `openMatrix` /
 `teardownMatrix` / `toggleMatrix`): `hideOtherFullViews('<name>')`, toggle the
@@ -459,7 +458,8 @@ badge appear only once the feature is toggled on. When adding a feature to the
 wizard: **toggle first, then the install-row, then the badge**, and share one
 install/poll path with the Settings surface (element-id sets + a re-render
 callback) so both stay in lockstep. An "installed" badge must reflect *reality*
-(probe the backend, not an env flag) — a stale flag lies (see `ttsBackendUp`).
+(probe the backend, not an env flag) — a stale flag lies (see `ttsBackendUp` in
+`src/channels/webchat/ollama-manage.ts`).
 
 No explainer paragraph — the feature's own surface is the explanation; a
 tooltip on the badge may point at it. The **only** standing hint is the

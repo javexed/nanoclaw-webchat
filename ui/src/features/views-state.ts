@@ -9,6 +9,8 @@ import { ref } from 'vue';
 
 /** Is the Admin view open? */
 export const adminActive = ref(false);
+/** Admin → Sign-in (signin-page.ts). */
+export const signinActive = ref(false);
 /** Is the help overlay open? */
 export const helpActive = ref(false);
 /** Is the Manage view open? */

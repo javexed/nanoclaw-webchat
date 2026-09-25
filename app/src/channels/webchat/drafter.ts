@@ -18,10 +18,9 @@
  * to lock down.
  */
 import fs from 'fs';
-import { OneCLI, OneCLIRequestError } from '@onecli-sh/sdk';
 import { ProxyAgent } from 'undici';
 
-import { ONECLI_API_KEY, ONECLI_URL } from '../../config.js';
+import { onecliSettings } from '../../onecli-settings.js';
 import { log } from '../../log.js';
 import { getDefaultModelId, getWebchatModel, type WebchatModel } from './db.js';
 import { safeFetch } from './models.js';
@@ -71,11 +70,33 @@ const MAX_PROMPT_LENGTH = 2000;
 const MAX_NAME_LENGTH = 64;
 const MAX_INSTRUCTIONS_LENGTH = 2048;
 
-// Single shared OneCLI client + lazy bootstrap promise — match the trunk
-// pattern in container-runner.ts:48. Pull URL + key from `config.ts` (which
-// uses `readEnvFile`) rather than `process.env` directly so service-managed
-// hosts that don't inherit `.env` still see the right gateway address.
-const onecli = new OneCLI({ url: ONECLI_URL, apiKey: ONECLI_API_KEY });
+// The OneCLI SDK arrives with the /add-onecli gateway skill, not with trunk.
+// Load it on first use, only when OneCLI is the selected gateway, through a
+// non-literal specifier — this module must typecheck and load on an install
+// that runs a different gateway. Settings come from onecliSettings(), which
+// reads .env as well, so a service that does not inherit it still sees them.
+interface OneCLIClient {
+  ensureAgent(input: { name: string; identifier: string }): Promise<unknown>;
+  getContainerConfig(input: {
+    agent: string;
+  }): Promise<{ env: Record<string, string | undefined>; caCertificate?: string }>;
+}
+const ONECLI_SDK = '@onecli-sh/sdk';
+let clientPromise: Promise<OneCLIClient> | null = null;
+function onecliClient(): Promise<OneCLIClient> {
+  const { gateway, url, apiKey } = onecliSettings();
+  if (gateway !== 'onecli') {
+    return Promise.reject(new DraftError(`Drafting needs the OneCLI gateway; this install uses ${gateway}`, 503));
+  }
+  clientPromise ??= import(ONECLI_SDK)
+    .then((m: { OneCLI: new (o: { url: string; apiKey: string }) => OneCLIClient }) => new m.OneCLI({ url, apiKey }))
+    .catch((err: unknown) => {
+      clientPromise = null;
+      log.warn('Webchat drafter: OneCLI SDK unavailable', { err });
+      throw new DraftError('OneCLI SDK not installed — run /add-onecli', 503);
+    });
+  return clientPromise;
+}
 
 let bootstrapPromise: Promise<void> | null = null;
 let bootstrapNextAttemptAfter = 0; // epoch ms; bootstrap calls before this short-circuit
@@ -128,8 +149,8 @@ function ensureDrafterIdentity(): Promise<void> {
   if (Date.now() < bootstrapNextAttemptAfter) {
     return Promise.reject(new DraftError('OneCLI gateway unreachable; retry in a few seconds', 503));
   }
-  bootstrapPromise = onecli
-    .ensureAgent({ name: DRAFTER_AGENT_NAME, identifier: DRAFTER_AGENT_ID })
+  bootstrapPromise = onecliClient()
+    .then((onecli) => onecli.ensureAgent({ name: DRAFTER_AGENT_NAME, identifier: DRAFTER_AGENT_ID }))
     .then(() => {
       log.info('Webchat drafter identity registered with OneCLI', { identifier: DRAFTER_AGENT_ID });
     })
@@ -172,7 +193,7 @@ async function buildDrafterTransport(): Promise<{
   if (cachedTransport && cachedTransport.expiresAt > Date.now()) {
     return { dispatcher: cachedTransport.dispatcher, authHeaders: cachedTransport.authHeaders };
   }
-  const cfg = await onecli.getContainerConfig({ agent: DRAFTER_AGENT_ID });
+  const cfg = await (await onecliClient()).getContainerConfig({ agent: DRAFTER_AGENT_ID });
   const rawProxy = cfg.env.HTTPS_PROXY ?? cfg.env.HTTP_PROXY;
   if (!rawProxy) throw new DraftError('OneCLI gateway returned no proxy URL', 503);
   // The OneCLI gateway returns `host.docker.internal:<port>` as the proxy
@@ -186,7 +207,7 @@ async function buildDrafterTransport(): Promise<{
   // once (e.g., a redirect query param).
   let onecliHost = '127.0.0.1';
   try {
-    onecliHost = new URL(ONECLI_URL).hostname || '127.0.0.1';
+    onecliHost = new URL(onecliSettings().url).hostname || '127.0.0.1';
   } catch {
     // Bad ONECLI_URL — fall through with the loopback default; surface in the
     // proxy attempt that follows so the operator gets a real error.
@@ -275,8 +296,9 @@ export async function anthropicMessagesViaOneCLI(call: AnthropicMessagesCall): P
     // error in `err.cause` — surface it so "fetch failed" isn't opaque.
     const cause = (err as { cause?: unknown }).cause;
     log.warn('Anthropic-via-OneCLI call: fetch threw', { err, cause });
-    if (err instanceof OneCLIRequestError) {
-      throw new DraftError('Anthropic call failed (OneCLI gateway error)', err.statusCode || 503);
+    const e = err as { name?: string; statusCode?: number };
+    if (e.name === 'OneCLIRequestError') {
+      throw new DraftError('Anthropic call failed (OneCLI gateway error)', e.statusCode || 503);
     }
     throw new DraftError('Anthropic call failed (see server logs)', 503);
   }

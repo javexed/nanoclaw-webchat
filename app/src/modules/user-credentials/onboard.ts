@@ -40,6 +40,7 @@ import {
 } from './db.js';
 import type { OnecliAdmin } from './onecli-admin.js';
 import { getAllAgentGroups } from '../../db/agent-groups.js';
+import { ensureFleetIsolation } from '../fleet-isolation/index.js';
 
 /**
  * The agent group's provider, mapped to the UserCreds-supported families.
@@ -157,6 +158,9 @@ export async function storeUserCredential(
   credential: string,
   credType: UserCredsCredType,
 ): Promise<void> {
+  // A member's own key sits in the vault beside everyone else's; any agent in
+  // `all` mode would be offered it. The workspace default is meant for all.
+  if (!isWorkspaceDefaultUser(userId)) await ensureFleetIsolation(admin);
   const prior = await getUserCredential(userId, provider);
   if (prior?.secret_id) {
     await unenrollGroups(admin, userId, provider);

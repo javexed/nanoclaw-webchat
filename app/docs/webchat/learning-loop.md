@@ -3,7 +3,7 @@
 Agents distill reusable skills from their own sessions. An agent that just
 debugged something non-obvious can propose a `SKILL.md` capturing the lesson; a
 human reviews it; if kept, it's wired to **that agent only**. Nothing the loop
-produces ever runs without a human approving it first.
+produces runs without a human approving it first, unless auto-keep is on.
 
 This is the *operator's guide to the shipped system*. The rationale and the
 prior art (Hermes Agent's skill generation) live in the design doc:
@@ -25,7 +25,7 @@ Four surfaces, one code path — every trigger just sends `/learn`:
 | Surface | Where | Notes |
 |---|---|---|
 | `/learn` | any channel | Trailing text steers the review: `/learn keep the rsync part even though it's well-known`. A leading URL or path makes it a source-directed review (§1a). In webchat it's in the slash menu. |
-| 🎓 button | webchat composer, beside send | Always visible, enabled whenever the input is. |
+| 🎓 button | webchat composer tools (under "+" on narrow screens) | Opens a menu: "Distill now" plus the per-agent auto toggles. Hidden when learning is off workspace-wide. |
 | Nudge chip | above the composer | *"✨ Worth keeping? Distill a skill"* — appears only after a turn with **≥ 5 tool calls** (counted off the thinking-feed status events; no new wire data). Dismiss hides it until the next qualifying turn; switching rooms clears it. Suppressed in rooms where a wired agent has **auto-trigger on** — nudging a human to press the button the machine already presses is noise. |
 | "Distill a skill…" | room settings → Skills | Same action, next to the room's proposals and learned skills. |
 
@@ -105,7 +105,10 @@ runs a **second, isolated query** at the idle point:
   `forkSession`) with the entire transcript in context and the fork's
   continuation discarded. A fresh container with an empty exchange log (e.g.
   `/learn` as its first message) also falls back to the replay path.
-- **One tool**: `allowedTools` drops to `mcp__nanoclaw__draft_skill`. No
+- **One tool**: the review gets no built-in tools (SDK `tools: []`) and runs
+  in `dontAsk` mode with `allowedTools` set to `mcp__nanoclaw__draft_skill`,
+  so any other call is denied. (`allowedTools` on its own only pre-approves;
+  under the provider's usual `bypassPermissions` it restricts nothing.) No
   destinations, no a2a, no self-mod, no shell. The review can propose a skill
   and say one sentence; it can do nothing else. (Source-directed reviews —
   §1a — add only the read-only tools needed to reach the source.)
@@ -280,7 +283,7 @@ Per-agent defaults (stored in `container_configs.learning`, API-only:
 |---|---|---|---|
 | `autoTrigger` | `true` | room (🎓) or per-agent API | Busy turns (≥5 tools) auto-run the review. |
 | `autoKeep` | `false` | room (🎓) or per-agent API | Apply drafts immediately, no human review. |
-| `cooldownMinutes` | `30` | per-agent admin (API only) | Minimum gap between auto reviews per container. Dry reviews stretch it (backoff, §1) up to 8×. |
+| `cooldownMinutes` | `30` | not exposed (set in `container_configs.learning` directly) | Minimum gap between auto reviews per container. Dry reviews stretch it (backoff, §1) up to 8×. |
 | `reviewModel` | (turn model) | per-agent admin (API only) | Model for the review pass. Wins over `NANOCLAW_LEARNING_MODEL`. |
 | `replayReview` | `false` | per-agent admin (API only) | Escape hatch: review on a full-transcript session fork instead of the bounded exchange digest. Costlier, maximally informed. |
 
@@ -296,21 +299,24 @@ Per-agent defaults (stored in `container_configs.learning`, API-only:
 | Revision history | `…/skills/.history/<name>/<ts>/` |
 | Curator marker | `data/learning/curator-last-run` |
 | Tool + authoring prompt | `container/agent-runner/src/mcp-tools/draft-skill.ts` |
-| `/learn` handling + review pass | `container/agent-runner/src/poll-loop.ts` |
+| `/learn` handling + review pass | `container/agent-runner/src/learning-loop.ts` |
 | Restricted/forked query | `container/agent-runner/src/providers/claude.ts` |
 | Staging handler + events | `src/modules/learning/` |
 | Curator | `src/modules/learning/curator.ts` (hooked from `src/host-sweep.ts`) |
-| Draft/keep/restore API + UI | `src/channels/webchat/server.ts`, `public/webchat/app.js` |
+| Draft/keep/restore API + UI | `src/channels/webchat/server.ts`, `ui/src/features/learn.ts` (built into `public/webchat/app.js`) |
 
 ## 8. Security properties
 
-- **Staged, not live** — nothing runs until an owner/admin keeps it.
+- **Staged, not live** — nothing runs until an owner/admin keeps it, unless
+  auto-keep is on.
 - **Scoped by default** — a kept skill lands on the learning agent only.
 - **The review can't act** — draft_skill is its only tool; it runs on a
   bounded digest (or a discarded fork in replay mode) and can't touch the
   main conversation.
-- **Gated cost** — no tokens spent unless a human triggers a review (the nudge
-  is a suggestion, not a trigger).
+- **Bounded cost** — while auto-trigger is on (the default), busy turns spend
+  tokens on a review, rate-limited by the cooldown and dry-streak backoff. With
+  it off, only a human trigger runs one (the nudge is a suggestion, not a
+  trigger).
 - **Provenance-badged** — `learned` skills stay visually distinct from vetted
   imports everywhere badges render, including the topology graph.
 - **Reversible** — discards delete only the draft; the curator archives and

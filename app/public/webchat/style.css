@@ -271,6 +271,60 @@ body {
 .login-error[hidden] {
   display: none;
 }
+/* "Sign in with Microsoft" under the token form (or on its own). */
+.login-microsoft {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  text-align: center;
+  text-decoration: none;
+}
+.login-microsoft[hidden] {
+  display: none;
+}
+
+/* Settings → Sign-ins */
+.signins-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.signins-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.signins-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.signins-label {
+  overflow-wrap: anywhere;
+}
+.signins-note {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+.signins-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.signins-actions > [hidden] {
+  display: none;
+}
+.signins-actions a.btn {
+  text-decoration: none;
+}
 
 #app {
   display: flex;
@@ -812,6 +866,7 @@ body {
   box-shadow: inset 0 0 8px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 #agent-list li:focus-visible,
+#runner-list li:focus-visible,
 #model-list li:focus-visible,
 #route-list li:focus-visible,
 #mcp-list li:focus-visible {
@@ -4834,6 +4889,7 @@ a.lightbox-btn {
 }
 
 /* Models + MCP tabs — list rows mirror agent list (shared row anatomy) */
+#runner-list,
 #model-list,
 #mcp-list {
   list-style: none;
@@ -5113,6 +5169,7 @@ a.skill-badge-origin:hover {
   justify-content: flex-end;
   gap: 8px;
 }
+#runner-list li,
 #model-list li,
 #route-list li,
 #mcp-list li {
@@ -5126,11 +5183,13 @@ a.skill-badge-origin:hover {
   gap: 6px;
   transition: background 0.15s;
 }
+#runner-list li:hover,
 #model-list li:hover,
 #route-list li:hover,
 #mcp-list li:hover {
   background: var(--surface2);
 }
+#runner-list li.active,
 #model-list li.active,
 #route-list li.active,
 #mcp-list li.active {
@@ -5165,6 +5224,7 @@ a.skill-badge-origin:hover {
   background: var(--agent);
   color: var(--bg);
 }
+#runner-list .model-row-name,
 #model-list .model-row-name,
 #route-list .model-row-name,
 #mcp-list .model-row-name {
@@ -5174,6 +5234,7 @@ a.skill-badge-origin:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+#runner-list .model-row-uses,
 #model-list .model-row-uses,
 #route-list .model-row-uses,
 #mcp-list .model-row-uses {
@@ -6001,6 +6062,18 @@ a.skill-badge-origin:hover {
   min-width: 0;
 }
 #admin[hidden] {
+  display: none;
+}
+/* Admin → Sign-in: a full view laid out like Admin. */
+#signin-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  min-height: 0;
+  min-width: 0;
+}
+#signin-page[hidden] {
   display: none;
 }
 .admin-body {
@@ -8031,7 +8104,9 @@ body {
    browser-default box among dark inputs. It shipped that way with the audit
    feature and was just as wrong in Settings; moving the block to Admin is
    only what finally put it somewhere it got looked at. */
-#settings-audit input[type='text'] {
+#settings-audit input[type='text'],
+#settings-audit input[type='number'],
+#settings-audit select {
   flex: 1;
   min-width: 130px;
   padding: 7px 10px;
@@ -9322,3 +9397,72 @@ button[data-draft-id] {
   align-items: center;
   gap: 8px;
 }
+
+/* ── Runners pane — machines list + detail; rows share #model-list styling ─── */
+#runner-list .model-kind-badge.kind-pending { background: color-mix(in srgb, var(--warning) 15%, transparent); color: var(--warning); }
+#runner-list .model-kind-badge.kind-approved { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+#runner-list .model-kind-badge.kind-revoked { background: color-mix(in srgb, var(--border) 60%, transparent); color: inherit; opacity: .7; }
+#runner-detail .agent-detail-header .model-kind-badge { margin-right: 8px; }
+.runner-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--border); margin-right: 6px; vertical-align: middle; }
+.runner-dot.on { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent); }
+.runners-note { font-size: var(--fs-sm); opacity: .75; margin: 8px 6px; }
+.runner-image { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 6px 0; }
+.runner-image input { flex: 1 1 300px; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-xs); }
+.runner-client { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 6px 0; }
+.runner-client input { flex: 1 1 220px; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-xs); }
+.settings-vscode-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.runner-egress { margin: 4px 6px 0; display: flex; flex-direction: column; gap: 8px; }
+/* Host lists (hostlist.ts): the install's in Manage → Network, and an agent's own in its Network section. */
+.runner-egress .secret-list, .agent-egress-hosts .secret-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+.runner-egress .secret-row code, .agent-egress-hosts .secret-row code { font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-egress-hosts { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.agent-egress-hosts[hidden] { display: none; }
+.runner-egress-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.runner-egress-presets { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; flex: 1 1 auto; font-size: var(--fs-sm); opacity: .85; }
+.runner-blocked { list-style: none; margin: 4px 6px 0; padding: 0; }
+.runner-blocked li { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: var(--fs-sm); }
+.runner-blocked .rb-host { font-family: var(--font-mono); flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runner-blocked .rb-meta { flex: 1 1 auto; opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runner-blocked li.empty { opacity: .6; border: 0; }
+
+
+/* Retention row: the cap is a short number, not a stretching text field. */
+#settings-audit #audit-max-mb { flex: 0 0 90px; min-width: 0; }
+
+/* Admin → Sign-in (signin-page.ts). One row per method: label, status, switch;
+   a method's fields open under its row. */
+#signin-page .signin-body { max-width: 720px; width: 100%; box-sizing: border-box; }
+/* Field labels one step below the row labels, so each method's name leads. */
+.signin-field .form-label { font-size: var(--fs-sm); color: var(--text-dim); }
+#signin-page .install-row { align-items: center; }
+.signin-status { flex: 1 1 auto; text-align: right; font-size: var(--fs-sm); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 10px; }
+.signin-form { display: grid; gap: 10px; margin: 2px 0 16px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.signin-form[hidden], .signin-field[hidden] { display: none; }
+.signin-field { display: flex; flex-direction: column; gap: 4px; }
+.signin-field input {
+  padding: 7px 10px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-input);
+}
+.signin-copy { display: flex; gap: 8px; align-items: center; }
+.signin-copy code { flex: 1 1 auto; min-width: 0; font-size: var(--fs-xs); overflow-wrap: anywhere; }
+.signin-actions { display: flex; justify-content: flex-end; }
+
+/* VS Code, first run: fills the empty chat for someone with no rooms yet. */
+.vscode-start {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  background: var(--bg);
+  text-align: center;
+}
+.vscode-start[hidden] { display: none; }
+.vscode-start .settings-vscode-actions { justify-content: center; }

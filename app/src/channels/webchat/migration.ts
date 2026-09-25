@@ -856,7 +856,7 @@ export const moduleWebchatThreadContextSync: Migration = {
  *   - 'stdio': command/args/env — a subprocess spawned inside the agent's
  *     container. Defined once here so the same server can be attached to
  *     multiple agents without re-entering it.
- *   - 'sse' | 'http': url/headers — a server reached over the network
+ *   - 'http': url/headers — a server reached over the network ('sse' rows predate its retirement)
  *     (e.g. a tool server on another machine). These are the transports the
  *     host-side probe (POST /api/mcp-servers/probe) can verify before save.
  * `args`/`env`/`headers` are stored as JSON text (sqlite has no array/object
@@ -1295,5 +1295,160 @@ export const moduleWebchatTemplateSources: Migration = {
       `INSERT OR IGNORE INTO webchat_template_sources (id, label, owner, repo, branch, official, created_at)
        VALUES ('nanoclaw-templates', 'NanoClaw templates', 'nanocoai', 'nanoclaw-templates', 'main', 1, ?)`,
     ).run(Date.now());
+  },
+};
+
+/**
+ * Runner machines + placements. A machine is a developer laptop that
+ * connected to /ws/runner as a signed-in person; it is `pending` until an owner/global admin approves the pairing card, and
+ * a pairing binds ONE user to ONE machine fingerprint. A placement assigns an
+ * agent group to an approved machine; the fleet driver consults it.
+ * `slots_json` holds the project directories a placed group may mount.
+ */
+export const moduleWebchatRunners: Migration = {
+  // Portable: plain DDL, no PRAGMA. The runner dedupes by name, so the
+  // IF NOT EXISTS guards are belt-and-braces rather than the mechanism.
+  version: 211,
+  name: 'webchat-runners',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS webchat_runner_machines (
+        fingerprint    TEXT PRIMARY KEY,
+        user_id        TEXT NOT NULL,
+        hostname       TEXT NOT NULL DEFAULT '',
+        os             TEXT NOT NULL DEFAULT '',
+        arch           TEXT NOT NULL DEFAULT '',
+        runner_version TEXT NOT NULL DEFAULT '',
+        status         TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'revoked')),
+        approval_id    TEXT,
+        approved_by    TEXT,
+        approved_at    INTEGER,
+        revoked_by     TEXT,
+        revoked_at     INTEGER,
+        first_seen     INTEGER NOT NULL,
+        last_seen      INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_webchat_runner_machines_user ON webchat_runner_machines(user_id);
+      CREATE TABLE IF NOT EXISTS webchat_runner_placements (
+        agent_group_id TEXT PRIMARY KEY,
+        fingerprint    TEXT NOT NULL REFERENCES webchat_runner_machines(fingerprint) ON DELETE CASCADE,
+        slots_json     TEXT NOT NULL DEFAULT '{}',
+        created_by     TEXT NOT NULL,
+        created_at     INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_webchat_runner_placements_fp ON webchat_runner_placements(fingerprint);
+    `);
+  },
+};
+
+/**
+ * Where agent images come from for sessions placed on paired runners
+ * (install-wide, `webchat_settings` singleton).
+ *
+ * `runner_image_policy` is the authority, not a hint: `pull` or `build` is a
+ * decision every paired machine must obey, and `machine` (the default, and
+ * what a missing row reads as) hands the choice back to each laptop's own
+ * setting. `runner_image_ref` NULL = the reference this install is pinned to
+ * in versions.json.
+ */
+export const moduleWebchatRunnerImage: Migration = {
+  // Portable: the column-exists guard duplicated what the runner already
+  // guarantees — schema_version dedupes by name, so this runs exactly once —
+  // and webchat-settings is created well before any module-file migration.
+  version: 212,
+  name: 'webchat-runner-image',
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_settings ADD COLUMN runner_image_ref TEXT;`);
+    await db.exec(`ALTER TABLE webchat_settings ADD COLUMN runner_image_policy TEXT;`);
+  },
+};
+
+/**
+ * Hosts agents placed on developer machines may reach (install-wide,
+ * `webchat_settings` singleton). JSON array of host patterns; NULL = the
+ * built-in default list (egress-policy.ts). Enforced by central's relay for
+ * groups whose network mode is 'host-only'.
+ */
+export const moduleWebchatRunnerEgress: Migration = {
+  version: 213,
+  name: 'webchat-runner-egress',
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_settings ADD COLUMN runner_egress_allowlist TEXT;`);
+  },
+};
+
+/**
+ * The VS Code extension's sign-in overrides, as set in Admin → Sign-in
+ * (install-wide, `webchat_settings` singleton). JSON object; NULL = derive
+ * everything from the install's OIDC settings (runner-client-config.ts).
+ */
+export const moduleWebchatRunnerClient: Migration = {
+  version: 215,
+  name: 'webchat-runner-client',
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_settings ADD COLUMN runner_client_config TEXT;`);
+  },
+};
+
+/**
+ * Sign-ins (signins.ts): browser sessions from "Sign in with Microsoft", and
+ * explicit links between one person's identities. A session row holds the
+ * SHA-256 of the cookie token, never the token, and the VERIFIED identity the
+ * sign-in produced (links are applied on each request, so an unlink is
+ * immediate). Version 216: 215 is taken by the runner client settings.
+ */
+export const moduleWebchatSignins: Migration = {
+  version: 216,
+  name: 'webchat-signins',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS webchat_signin_sessions (
+        token_hash    TEXT PRIMARY KEY,
+        user_id       TEXT NOT NULL,
+        display_name  TEXT NOT NULL DEFAULT '',
+        created_at    INTEGER NOT NULL,
+        expires_at    INTEGER NOT NULL,
+        last_used_at  INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_webchat_signin_sessions_user ON webchat_signin_sessions(user_id);
+      CREATE TABLE IF NOT EXISTS webchat_identity_links (
+        alias_user_id    TEXT PRIMARY KEY,
+        primary_user_id  TEXT NOT NULL,
+        created_at       INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_webchat_identity_links_primary ON webchat_identity_links(primary_user_id);
+    `);
+  },
+};
+
+/**
+ * Hosts one agent may reach on top of the install allowlist (egress-policy.ts):
+ * one row per agent, a JSON array of host patterns. No row = none of its own.
+ * Read only while the agent's mode is Allowlist.
+ */
+export const moduleWebchatAgentEgressHosts: Migration = {
+  version: 217,
+  name: 'webchat-agent-egress-hosts',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS webchat_agent_egress_hosts (
+        agent_group_id  TEXT PRIMARY KEY,
+        hosts           TEXT NOT NULL,
+        updated_at      INTEGER NOT NULL
+      );
+    `);
+  },
+};
+
+/**
+ * Audit log retention as set in Admin → Audit log (webchat_settings
+ * singleton). JSON {days, maxMb}; NULL = the environment's (src/audit.ts:
+ * NANOCLAW_AUDIT_KEEP_DAYS / NANOCLAW_AUDIT_MAX_MB, default 90 days / 200 MB).
+ */
+export const moduleWebchatAuditRetention: Migration = {
+  version: 218,
+  name: 'webchat-audit-retention',
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_settings ADD COLUMN audit_retention TEXT;`);
   },
 };

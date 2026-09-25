@@ -80,5 +80,7 @@ export function syncSessionContext(agentGroupId: string, sessionId: string, mess
   } finally {
     db.close();
   }
-  updateSession(sessionId, { last_active: new Date().toISOString() });
+  updateSession(sessionId, { last_active: new Date().toISOString() }).catch(() => {
+    /* last_active is advisory */
+  });
 }

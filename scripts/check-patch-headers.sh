@@ -82,7 +82,7 @@ if os.path.isdir(patches):
                     check(os.path.join(d, n), True)
 
 # Provider overlays: named for what they do, not for a file, so no name check.
-overlays = os.path.join(here, 'overlays')
+overlays = os.path.join(here, 'app', 'provider-overlays')
 if os.path.isdir(overlays):
     for n in sorted(os.listdir(overlays)):
         if n.endswith('.patch'):

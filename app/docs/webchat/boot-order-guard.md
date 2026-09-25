@@ -1,6 +1,6 @@
 # Boot-order guard
 
-Verifying a `legacy.js` extraction needs two different checks, because they
+Verifying a UI refactor that moves wiring or bootstrap code needs two different checks, because they
 catch different faults and neither subsumes the other.
 
 ## Why the listener-set diff is not enough
@@ -38,17 +38,12 @@ deterministic: the same bundle traced twice yields 283 identical events.
 
 ## Running it
 
-Needs the install serving on `127.0.0.1:3100` — this is a **local** harness, not
-a CI gate, because the compose job has no running server.
+It is a CI gate. `scripts/check-boot-order.sh` serves `app/public/webchat` with
+no backend (plus a stubbed first-run API) and compares against
+`ui/boot-order.baseline.json` and `ui/boot-order.stubbed.json`; `--record`
+accepts a deliberate change. `playwright` is pinned in `ui/package.json`.
 
-Playwright is deliberately NOT a devDependency. The `playwright` package
-downloads browsers in a postinstall, and CI never runs this harness, so pinning
-it would add a browser download to every compose run for no CI benefit. Install
-it when you need the trace:
-
-```bash
-pnpm --dir ui add -D playwright     # once; remove afterwards if you prefer
-```
+For an ad-hoc trace against a running install (default `127.0.0.1:3100`):
 
 ```bash
 # baseline: deploy main's bundle, then

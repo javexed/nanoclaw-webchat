@@ -3,7 +3,7 @@
 > **Built.** This is the design rationale; the operator guide to the shipped
 > system is [docs/webchat/learning-loop.md](../learning-loop.md).
 
-*Proposed design (not yet built) for auto-generating skills from experience.
+*Design for auto-generating skills from experience.
 The premise, validated by reading Nous Research's Hermes Agent
 ([`NousResearch/hermes-agent`](https://github.com/NousResearch/hermes-agent)):
 skill generation is not an ML pipeline — it's **"run the agent on its own
@@ -105,7 +105,7 @@ toolset gating instead of their `_persist_disabled` / `_session_db=None` flags.
 
 `draft_skill` writes a **`propose_skill` system action into `outbound.db`** — the
 same mechanism `schedule` and `approvals` already use (see
-[delivery.ts](../../../src/delivery.ts)). The host's delivery poll materializes it
+[delivery.ts](https://github.com/nanocoai/nanoclaw/blob/main/src/delivery.ts)). The host's delivery poll materializes it
 into a **`skill_drafts`** row plus `data/skill-drafts/<id>/SKILL.md`. Nothing is
 mounted into any agent until approved — this is Hermes'
 `~/.hermes/pending/skills/` + `/skills approve`, mapped onto nanoclaw's approval

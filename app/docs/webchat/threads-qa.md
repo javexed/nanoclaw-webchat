@@ -10,14 +10,14 @@ which can't be. Run on a **dev/throwaway instance**, not the live install.
 
 ## 1. No regression (thread-less room)
 1. Open the single-agent room. Send a message; get a reply.
-   - ✓ Works exactly as before. Sidebar shows the room with a `# main` thread under it. The agent remembers prior context (same session as before — no reset).
+   - ✓ Works exactly as before. The room row itself is the main thread (no separate `main` row). The agent remembers prior context (same session as before — no reset).
 
 ## 2. Create + switch + isolation
-1. In the multi-agent room, click **+ thread**, name it `Trip planning`.
+1. In the multi-agent room, click the **+** on the room row (or inside the last thread row), type `Trip planning` in the inline input, press Enter.
    - ✓ A `# Trip planning` row appears under the room; the view opens it (empty).
 2. Send "plan a 3-day trip to Lisbon"; wait for the reply.
    - ✓ Reply renders in this thread.
-3. Click `# main`.
+3. Click the room row (main).
    - ✓ View switches to main's history; the Trip planning messages are **not** shown.
 4. Back in `Trip planning`, ask "what city was that again?".
    - ✓ The agent answers Lisbon (thread has its own context).
@@ -25,7 +25,7 @@ which can't be. Run on a **dev/throwaway instance**, not the live install.
    - ✓ The agent does **not** know (separate session — this is the point of threads).
 
 ## 3. Reply routing + per-thread unread
-1. Open `main`. Have someone (or another browser/device) send into `Trip planning`, or trigger an agent reply there while you're viewing `main`.
+1. Open main (the room row). Have someone (or another browser/device) send into `Trip planning`, or trigger an agent reply there while you're viewing `main`.
    - ✓ A small **unread dot** appears on the `Trip planning` row; the message does **not** appear in your main view.
 2. Click `Trip planning`.
    - ✓ The dot clears; the new message is there.
@@ -33,9 +33,10 @@ which can't be. Run on a **dev/throwaway instance**, not the live install.
 ## 4. Rename + delete (owner)
 1. Hover a non-main thread → kebab (⋯) → **Rename** → new name.
    - ✓ The row title updates.
-2. Kebab → **Delete** → confirm.
-   - ✓ The thread disappears; if it was open, you land back on `main`. Its messages are gone.
-   - ✓ `# main` has **no** kebab (can't be renamed/deleted).
+2. Kebab → **Delete**.
+   - ✓ The row shows a 10-second **Undo** countdown; Undo restores it.
+   - ✓ When the countdown ends the thread disappears; if it was open, you land back on main. Its messages are gone.
+   - ✓ The room row (main) has no thread kebab (main can't be renamed/deleted).
 3. (Non-owner) Sign in as a non-owner member.
    - ✓ Create/rename are available; **Delete is absent**. (Server also rejects a forced delete with 403.)
 

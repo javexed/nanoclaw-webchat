@@ -76,6 +76,8 @@ export const threadUndo = ref<
 export const roomFilter = ref('');
 
 export const selectedRoomId = ref<string | null>(null);
+/** The server has sent the room list at least once: an empty list is then really empty. */
+export const roomsReceived = ref(false);
 /** Tool calls seen this turn — the learning nudge fires above a threshold. */
 export const learnTurnToolCount = ref(0);
 /** room id → auto-learn setting. Mutated in place as rooms answer, never

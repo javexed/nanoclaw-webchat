@@ -17,7 +17,7 @@
 #   scripts/regen-patches.sh <composed-tree> <file> ...
 
 
-## UPSTREAMABLE — candidate upstream PRs (73)
+## UPSTREAMABLE — candidate upstream PRs (69)
 
 setup/verify.ts
     exports CHANNEL_ENV_KEYS so a test can neutralise exactly the credential
@@ -97,21 +97,18 @@ src/guard/guard.ts
 vitest.config.ts
     setupFiles: audit-log redirection for tests (pairs with vitest.setup.ts)
 setup/auto.ts
-    headless no-TTY setup (cloud-init/CI) instead of aborting on stdin EOF
+    headless setup (NANOCLAW_HEADLESS=1: cloud-init/CI) instead of aborting on stdin EOF
 setup/index.ts
     provider-install step registration
+setup/providers/install.ts
+    resolve the remote that actually carries the provider branch being copied,
+    not whichever remote carries `channels`; falls back to the channels resolver
 setup/lib/skill-driver.test.ts
     scratch dirs removed in afterAll (leaked ~20 tmpdirs per run, cleaned none)
-setup/lib/skill-driver.ts
-    logCmd seam: prompted secrets never land in the raw setup log
 setup/channels/run-channel-skill.test.ts
     scratch dirs removed in afterAll
 setup/channels/whatsapp.test.ts
     engage-config scratch dir removed in afterAll
-setup/onecli.test.ts
-    tests for the bind-host persistence; its scratch dir removed in afterAll
-setup/onecli.ts
-    persist ONECLI_BIND_HOST so `docker compose up` cannot drop the gateway to loopback
 setup/service.test.ts
     tests for the PATH fix
 setup/service.ts
@@ -168,24 +165,23 @@ src/container-runner.test.ts
     tests for the container hardening policy
 src/container-runner.ts
     root-host chown, user-skills mount, memory cap default, bun cache, output-token ceiling, per-group egress
-src/container-runtime.test.ts
-    tests for the runtime helpers (which live in app/src/container-runtime-extras.ts — they were
-    a patch into upstream's container-runtime.ts until 2026-09-06; the seam no longer touches that
-    file and neither do we)
 src/db/agent-groups.ts
     lifecycle status setter with validation
 src/db/db-v2.test.ts
     test-row shape for the extended container config
 src/db/sessions.ts
     non-destructive pending-approval claim + TTL sweep feed
+src/egress-lockdown.test.ts
+    upstream's attach tests inverted: the gateway is kept off the locked network, re-detached on heal
 src/egress-lockdown.ts
-    per-group host-only egress alongside the install-wide flag
+    per-group lockdown (`force`) alongside the install-wide flag; the selected gateway kept OFF the network and its endpoint pointed at central's egress filter on the bridge
 src/group-init.ts
     rtk bash-output compression hook; upstream memory-reconcile coexistence
 src/host-sweep.test.ts
     tests for the sweep fixes
 src/host-sweep.ts
     bloated-continuation self-heal + sweep hygiene
+src/modules/agent-to-agent/agent-route.test.ts
     reproduction test for the a2a self-loop
 src/modules/agent-to-agent/agent-route.ts
     a2a self-loop guard (the production message-flood fix)
@@ -195,23 +191,17 @@ src/modules/agent-to-agent/write-destinations.test.ts
     tests for the destination projection
 src/modules/agent-to-agent/write-destinations.ts
     project destinations into running sessions (no restart needed)
-src/modules/approvals/onecli-approvals.ts
-    recover agent group from a non-group OneCLI external identifier
+src/modules/approvals/primitive.test.ts
+    tests: an unnamed fan-out leaves approver_user_id null; a policy-named approver is recorded
 src/modules/approvals/primitive.ts
-    approver fan-out: every eligible admin gets the card, first response wins
+    approver fan-out: every eligible admin gets the card, first response wins — approver_user_id records only a policy-named approver (it used to default to the first target, which made a fan-out an exclusive assignment); exports APPROVAL_OPTIONS for the session-less sibling
 src/modules/approvals/response-handler.test.ts
     tests for the double-fire guard
 src/modules/approvals/response-handler.ts
-    double-fire guard on the approve path (slow handler tempts a second click)
+    double-fire guard on the approve path (slow handler tempts a second click); session-less rows (runner pairing) routed to sessionless.ts
+    checkApprovalClick: a refusal carries a reason the channel can show; an owner may decide a card named for someone else (audited as approval.owner_override)
+src/modules/self-mod/apply.ts
     respawn ALL of a group's sessions after install/mcp change, not just one
-src/mailbox/model.ts
-    add the 'interrupt' inbound kind — the webchat stop button writes a control
-    row of that kind (trigger=false, never wakes a container) and the runner's
-    poll loop consumes it to abort a live turn. Without the kind in the union the
-    feature's own comparisons were dead code that failed the container typecheck.
-container/agent-runner/src/mailbox/model.generated.ts
-    the same change, byte-identical: `pnpm mailbox-model:check` cmp's the two
-    copies, so this patch must always mirror src/mailbox/model.ts exactly.
 src/reconcile-session.ts
     UTC-safe claim-timestamp parsing (SQLite stamps carry no zone, so Date.parse
     read them as local and the claim-stuck check killed fresh claims on a
@@ -221,6 +211,9 @@ src/reconcile-session.ts
     decision logic here.
 src/router.ts
     agent lifecycle gate (active/paused/archived) + prime negative-lookahead
+src/session-manager.attachments.test.ts
+    coverage: hostPath attachments (large uploads staged by the adapter) reach
+    the container inbox instead of being skipped silently
 src/session-manager.ts
     chown session dirs AFTER DB creation (root-host EACCES)
 src/templates/create-agent.test.ts
@@ -233,13 +226,49 @@ src/templates/local-dir.ts
 src/types.ts
     agent-group lifecycle status type
 
-## PRODUCT — shrink via seam registries (34)
+## PRODUCT — shrink via seam registries (37)
 
+src/mailbox/model.ts
+    add the 'interrupt' inbound kind — the webchat stop button writes a control
+    row of that kind (trigger=false, never wakes a container) and the runner's
+    poll loop consumes it to abort a live turn. Without the kind in the union the
+    feature's own comparisons were dead code that failed the container typecheck.
+container/agent-runner/src/mailbox/model.generated.ts
+    the same change, byte-identical: `pnpm mailbox-model:check` cmp's the two
+    copies, so this patch must always mirror src/mailbox/model.ts exactly.
+container/agent-runner/src/provider-contracts/claude.ts
+    keep Claude's textDelivery at the result door (upstream: mid-turn-complete)
+    so the single-reply misfire guard can see the turn's block count
+container/agent-runner/src/provider-contracts/registry.test.ts
+    asserts the result-door contract above
+container/agent-runner/src/providers/claude-config.ts
+    per-server MCP tool allowlist (`enabledTools`) → SDK `allowedTools`
+container/agent-runner/src/providers/claude.errors.test.ts
+    error-path assertion follows the active textDelivery contract
+container/agent-runner/src/providers/claude.midturn-text.test.ts
+    asserts the result-door contract
+src/db/migrations/portability.test.ts
+    grandfathers the webchat module's pre-async-driver migrations
+src/modules/cross-session-context/backfill.ts
+    skip per-member (`::`-keyed) sessions — they get context from their own
+    transcript sync
+src/provider-contracts/realize.ts
+    skill symlinks point at whichever mount holds the skill (shipped or
+    imported); dangling links for deleted skills are removed
+src/provider-surfaces.test.ts
+    expects the imported-user-skills mount
+.claude/skills/add-onecli/payload/src/gateway-providers/onecli.ts
+    map a derived agent identity (per-member credentials) to its agent group
+    before the ownership check and the core approval request
+.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
+    secret intake points at the webchat Agents → Secrets UI, not the OneCLI dashboard
 container/agent-runner/src/config.ts
     lenientOutput + learning config surface read by the runner
 container/agent-runner/src/index.ts
     module imports (status feed, learning, send-file hint); the prompt addendum
     is built after the provider so it can consult supportsMcpTools
+container/agent-runner/src/mailbox/sqlite/operations.ts
+    relay-sync support for agents placed on runners
 container/agent-runner/src/mcp-tools/cli.instructions.md
     agent-facing CLI instructions
 container/agent-runner/src/mcp-tools/core.instructions.md
@@ -248,17 +277,13 @@ container/agent-runner/src/poll-loop.test.ts
     coverage for the poll-loop product behaviour
 container/agent-runner/src/poll-loop.ts
     interrupt handling, lenient output, origin guard, terminal-error surfacing, empty-turn net
-container/agent-runner/src/plugin-mcp.ts
-    structural narrowing so the sse remote variant fits upstream's plugin resolve
-container/agent-runner/src/providers/cwd-shim.ts
-    structural narrowing for the sse remote variant
 container/agent-runner/src/providers/claude.ts
     thinking/reasoning stream taps, restricted-review support, rate-limit classification
 container/agent-runner/src/providers/types.ts
     provider capability flags (supportsRestrictedReview, memory scaffold, settings
     scopes, supportsMcpTools)
-container/skills/onecli-gateway/SKILL.md
-    secret intake points at the webchat Agents → Secrets UI, not the OneCLI dashboard
+docs/SECURITY.md
+    egress section points at the per-group filter (docs/webchat/security.md)
 eslint.config.js
     lint rules for the webchat PWA frontend
 scripts/skill-conformance.test.ts
@@ -269,29 +294,30 @@ src/channels/adapter.ts
     senderAgentGroupId for a2a loop-back attribution
 src/channels/channel-registry.ts
     thread the producing session/agent through the adapter
+src/config.ts
+    egress network named per install (installs sharing a daemon must not share a lockdown network); NANOCLAW_EGRESS_EXTRA_DEFAULTS for the allowlist
 src/container-config.ts
-    egress/learning/lenient config plumbing + MCP remote-transport union
+    egress/learning/lenient config plumbing + MCP tool allowlist and private-LAN http
 src/container-config.test.ts
     regression test: egress reaches container.json (it silently did not)
 src/db/container-configs.ts
     egress + learning columns
+src/drivers/installed.ts
+    append-only barrel import registering the `fleet` session driver (a seam registry for out-of-tree drivers would retire this)
+src/drivers/types.ts
+    slot mounts carry `exclude` globs and `propose` (runner placements)
 src/modules/approvals/index.ts
     approval-TTL expiry on the sweep seam
+    re-exports checkApprovalClick for channels that answer their caller
 src/modules/index.ts
     module barrel registrations
-src/modules/self-mod/request.ts
-    structural narrowing for the sse remote variant in the approval card path
-src/templates/mcp.ts
-    structural narrowing for the sse remote variant in plugin lint
 src/modules/typing/index.test.ts
     tests for the typing attribution
 src/modules/typing/index.ts
     agentName on the typing indicator (multi-agent rooms)
 
-## LOCAL — install-local, expected to persist (7)
+## LOCAL — install-local, expected to persist (6)
 
-.claude/skills/add-codex/SKILL.md
-    points the codex payload at this fork's providers-codex branch
 setup/lib/restart-readiness.test.ts
     skips TWO tests behind NANOCLAW_WEBCHAT_SKIP_RESTART_FALLBACK, which only
     this repo's CI sets. Both exercise restart.sh's nohup fallback and hang the

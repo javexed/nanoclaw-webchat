@@ -25,8 +25,8 @@ vi.mock('../../container-runner.js', () => ({
 
 const now = () => new Date().toISOString();
 
-function wire(roomId: string, agentId: string) {
-  createMessagingGroupAgent({
+async function wire(roomId: string, agentId: string) {
+  await createMessagingGroupAgent({
     id: randomUUID(),
     messaging_group_id: roomId,
     agent_group_id: agentId,
@@ -84,8 +84,8 @@ beforeEach(async () => {
     unknown_sender_policy: 'public',
     created_at: now(),
   });
-  wire('mg-shared', 'ag-gamma');
-  wire('mg-shared', 'ag-delta');
+  await wire('mg-shared', 'ag-gamma');
+  await wire('mg-shared', 'ag-delta');
 
   // A room only Gamma Agent is in (Lonely is not co-resident anywhere with green).
   await createMessagingGroup({
@@ -97,7 +97,7 @@ beforeEach(async () => {
     unknown_sender_policy: 'public',
     created_at: now(),
   });
-  wire('mg-solo', 'ag-gamma');
+  await wire('mg-solo', 'ag-gamma');
 });
 
 afterEach(async () => {

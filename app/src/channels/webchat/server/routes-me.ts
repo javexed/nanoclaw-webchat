@@ -11,7 +11,7 @@ import type { RouteCtx } from '../server.js';
 // ── Your @-mention handle (the slug others type to @-mention you) ──────
 export async function rMeHandleGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  return json(res, 200, { handle: getWebchatUserHandle(userId) ?? '' });
+  return json(res, 200, { handle: (await getWebchatUserHandle(userId)) ?? '' });
 }
 
 export async function rMeHandlePut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {

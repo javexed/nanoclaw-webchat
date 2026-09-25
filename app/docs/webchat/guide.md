@@ -19,10 +19,11 @@ surface: get it running, then a deep dive into each component.
 
 ## Getting started
 
-**You need** a working NanoClaw fork (Node + pnpm) with at least one connected
-model. Webchat is a **channel you add** to your fork — not a separate app.
+**You need** Node 22 + pnpm and Docker. Webchat is a **channel** composed onto
+NanoClaw — not a separate app. `install.sh` clones NanoClaw into `--dir`, or
+composes onto an existing checkout there.
 
-**Install** — from Claude Code in your fork:
+**Install:**
 
 ```bash
 git clone <nanoclaw-webchat repo> && cd nanoclaw-webchat
@@ -34,12 +35,12 @@ cd ~/nanoclaw && bash configure-webchat.sh   # auth, TLS, Web Push
 **First run.** Open `http://127.0.0.1:3100`. On localhost you're signed in as the
 **owner** automatically — no password. The left sidebar is your rooms; the top-left
 **⊞** and **⋯** open the operator surfaces (Agents, Models, MCP, Auto routing, Dashboard,
-Permissions, Wiring, Settings, Help).
+Permissions, Wiring, Settings, Documentation).
 
-**Not sure how the pieces fit?** The built-in **Help** page explains the model in
+**Not sure how the pieces fit?** The built-in **Documentation** page explains the model in
 plain language — rooms, agents, models, wiring, threads.
 
-![The in-app Help page — how the pieces fit together](./screenshots/help.png)
+![The in-app Documentation page — how the pieces fit together](./screenshots/help.png)
 
 Create an agent from the **Agents** tab (or draft one from a prompt), wire it to a
 room, and start chatting. Everything below is reachable from the same console.
@@ -138,7 +139,7 @@ device-auth URL + token, storing it in the vault like any other credential.
 Route each turn to the *right* model — send the simple ones to a small local model,
 keep a frontier model for the hard ones. The whole stack installs with **one click**:
 
-- **"Set up auto routing"** in Settings (see the shot above) pulls the **Arch-Router**
+- **Auto routing → Install** in Settings (see the shot above) pulls the **Arch-Router**
   classifier (with a progress bar), runs the installer, points the classifier at
   your Ollama, and **auto-binds** the default routes to your roster — no shell.
 - The **Auto routing tab** then appears, with **Rules / Models / Logs** sub-tabs: a routes
@@ -148,9 +149,9 @@ keep a frontier model for the hard ones. The whole stack installs with **one cli
 
 ![The Auto routing console — Rules sub-tab, classify bench, and capability routes](./screenshots/routing.png)
 
-It starts in **shadow mode** — every request is classified and logged, but nothing
-about routing changes — so you can calibrate risk-free, then flip it **live** from
-the tab. *(Or install via `/add-litellm` + `/add-routing` instead of the button.)*
+The button install goes **live** straight away. *(Or install via `/add-litellm` +
+`/add-routing` instead: that path starts in **shadow mode** — every request is
+classified and logged, nothing rerouted — until you flip it live from the tab.)*
 
 You can define **more than one routing profile** — a picker (New / Delete) at the top
 of the tab creates named routers (`auto`, `auto-vision`, `auto-cheap`, …), each with
@@ -175,6 +176,42 @@ co-existing with any servers added via `ncl`.
 *Try it in a minute:* a tiny sample server (`echo` / `add` / `current_time` /
 `roll_dice`) is one file — see [a minimal Streamable-HTTP MCP server](#a-minimal-sample-mcp-server)
 below — run it, register `http://127.0.0.1:8765/mcp` in the MCP tab, and probe.
+
+---
+
+## Runners
+
+Agents that run on a developer's own machine, driven from VS Code (the NanoClaw
+extension). Manage → **Runners** (owner / global admin):
+
+- **Machines** — a machine appears when its extension first connects and waits
+  for approval (a card in the owners' Approvals inbox, or **Approve** here).
+  Approving creates a dedicated agent for it; **Revoke** disconnects it.
+- **Placement** — which agents run on which machine; place or remove per agent.
+- **Agent image** — how machines get the agent image: **Build** (default: each
+  machine builds from what central ships), **Pull** (a published image; optional
+  reference), or **Machine decides** (each laptop's own setting).
+- **Runner extension** — **Publish…** a `nanoclaw-<version>.vsix`; connected
+  machines are offered it on their next keepalive.
+
+Reference: [runners.md](./runners.md).
+
+---
+
+## Network
+
+What agents may reach. Manage → **Network** (owner / global admin):
+
+- **Allowlist** — every agent on Allowlist: add a host (`host`, `*.domain`,
+  optional `:port`) or remove one; presets (npm, PyPI, NuGet, GitHub, Microsoft
+  docs) and Reset to defaults. Changes save at once.
+- **Recently blocked** — hosts an agent tried and was refused: **All agents**,
+  or **<agent> only**.
+
+Per agent, the settings panel's **Network** is Open, **Allowlist** (default) or
+Model only, and **Also allowed**: hosts that agent alone may reach on
+top of the install list (the agent's admins set them). Details:
+[security.md](./security.md#per-agent-group-egress).
 
 ---
 

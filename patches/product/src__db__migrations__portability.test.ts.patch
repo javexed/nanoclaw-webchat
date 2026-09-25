@@ -6,7 +6,7 @@ index 4a447695..9bf007c5 100644
    'wiring-threads-override',
    'container-config-timezone',
    'approval-question-render-metadata',
-+  // ── Webchat module (repo B): grandfathered for the same reason as the set
++  // ── Webchat module: grandfathered for the same reason as the set
 +  // above — written against better-sqlite3 BEFORE the async-driver boundary,
 +  // and already applied on live installs. The policy still binds: any NEW
 +  // migration must be portable, and adding to this list needs the same

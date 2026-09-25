@@ -34,10 +34,7 @@ pnpm --dir ui run dev                        # rebuild on save while working
 pnpm --dir ui run typecheck                  # ui/ is TypeScript
 ```
 
-Commit the regenerated bundle together with your source change. The migration
-out of the single-file era is in progress: `ui/src/legacy.js` is the original
-monolith, and modules are being carved out of it into `ui/src/core/…` — prefer
-adding new code as a module rather than growing `legacy.js`.
+Commit the regenerated bundle together with your source change.
 
 ## Before you push: install the hooks
 
@@ -59,7 +56,7 @@ That wires two gates:
 Verify the gate is really installed rather than assuming:
 
 ```bash
-bash scripts/leak-scan.sh --selftest    # 10/10
+bash scripts/leak-scan.sh --selftest    # 20 passed, 0 failed
 ```
 
 ## What CI requires
@@ -69,9 +66,10 @@ bash scripts/leak-scan.sh --selftest    # 10/10
 - **`leak-gate`** — the same scan as the hooks, plus a self-test. Unbypassable;
   `--no-verify` skips the hooks, not this.
 - **`compose`** — the real gate. It composes a full nanoclaw+webchat tree from
-  your branch against the pinned base + seam, then runs **both** suites in that
-  composed tree (1,900+ tests), the manifest integrity guard, and a
-  prettier-clean check on owned files.
+  your branch against the pinned base + seam, then runs the tests in that
+  composed tree, the manifest integrity guard, and a prettier-clean check on
+  owned files. A PR runs the host tests its change can reach (and the container
+  suite only when it touches the container); a push to `main` runs everything.
 
 Two failures that surprise people:
 

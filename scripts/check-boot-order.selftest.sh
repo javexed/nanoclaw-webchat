@@ -125,4 +125,28 @@ if check_against "$TMP/short.json"; then
 fi
 echo "  truncated baseline: rejected ✓"
 
+# The connectivity probe fires on a reconnect timer (ui/boot-order.mjs TIMED):
+# moved, it must still pass; missing, it must still fail. Skipped when this
+# baseline never drops the socket (no probe recorded).
+if grep -q 'generate_204' "$BASELINE"; then
+  python3 - "$BASELINE" "$TMP/probe-moved.json" "$TMP/probe-gone.json" <<'PY'
+import json, sys
+b = json.load(open(sys.argv[1]))
+probe = [e for e in b if e.endswith('/generate_204')]
+rest = [e for e in b if not e.endswith('/generate_204')]
+json.dump(probe + rest, open(sys.argv[2], 'w'))
+json.dump(rest + probe[1:], open(sys.argv[3], 'w'))
+PY
+  if ! check_against "$TMP/probe-moved.json"; then
+    echo "❌ selftest: the guard REJECTED a baseline whose timer-driven probe moved." >&2
+    exit 1
+  fi
+  echo "  probe moved: accepted ✓"
+  if check_against "$TMP/probe-gone.json"; then
+    echo "❌ selftest: the guard PASSED a baseline missing a probe fetch." >&2
+    exit 1
+  fi
+  echo "  probe missing: rejected ✓"
+fi
+
 echo "✅ boot-order guard is order-sensitive and set-sensitive ($SERVE)"

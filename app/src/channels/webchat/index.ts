@@ -55,6 +55,10 @@ import { classifierParamsForModel } from './models.js';
 import { registerChannelAdapter } from '../channel-registry.js';
 import type { ChannelAdapter, ChannelSetup, OutboundMessage } from '../adapter.js';
 import type { AgentActivityStatus } from '../../seam/index.js';
+import { startMailboxEndpoint } from './runner-mailbox-endpoint.js';
+import { pruneSigninSessions } from './signins.js';
+import { pruneAuditFiles } from '../../audit.js';
+import { RUNNER_ENABLED } from './runner-ws.js';
 import { redactSensitiveData } from './redact.js';
 import { startWebchatServer, stopWebchatServer, type WebchatServer } from './server.js';
 import { sweepMcpHealth } from './mcp-health.js';
@@ -125,17 +129,19 @@ function createAdapter(): ChannelAdapter {
     async setup(config: ChannelSetup): Promise<void> {
       adapterConfig = config;
       server = await startWebchatServer({
-        onInbound: async (roomId, message, threadId) => {
-          // Surface the room's display name to the router so messaging_groups
-          // gets a friendly label on first sight (mirrors discord/slack).
-          const room = await getWebchatRoom(roomId);
-          if (room) {
-            config.onMetadata(roomId, room.name, true);
-          }
-          // Standard inbound — userId resolution + access gating happens in
-          // the router/permissions module via the `senderId` field that the
-          // server attaches to message.content. threadId is the session key.
-          void config.onInbound(roomId, threadId, message);
+        onInbound: (roomId, message, threadId) => {
+          void (async () => {
+            // Surface the room's display name to the router so messaging_groups
+            // gets a friendly label on first sight (mirrors discord/slack).
+            const room = await getWebchatRoom(roomId);
+            if (room) {
+              config.onMetadata(roomId, room.name, true);
+            }
+            // Standard inbound — userId resolution + access gating happens in
+            // the router/permissions module via the `senderId` field that the
+            // server attaches to message.content. threadId is the session key.
+            await config.onInbound(roomId, threadId, message);
+          })().catch((err) => log.error('Webchat inbound failed', { roomId, err }));
         },
         onAction: (questionId, selectedOption, userId) => {
           config.onAction(questionId, selectedOption, userId);
@@ -152,6 +158,10 @@ function createAdapter(): ChannelAdapter {
       activityPruneTimer = setInterval(
         () => {
           pruneActivity().catch((err) => log.error('Activity-log prune failed', { err }));
+          pruneSigninSessions().catch((err) => log.error('Sign-in session prune failed', { err }));
+          // The audit log also prunes when it rolls over, but a quiet install may not
+          // write for days: age its day files out here too.
+          pruneAuditFiles();
         },
         24 * 60 * 60 * 1000,
       );
@@ -159,7 +169,7 @@ function createAdapter(): ChannelAdapter {
       draftExpiryTimer = setInterval(
         () => {
           try {
-            sweepExpiredSkillDrafts();
+            sweepExpiredSkillDrafts().catch((err) => log.error('Draft expiry sweep failed', { err }));
           } catch (err) {
             log.error('Draft expiry sweep failed', { err });
           }
@@ -170,6 +180,8 @@ function createAdapter(): ChannelAdapter {
       // Binds only if a server assignment already carries a relay token; an
       // install with no authed remote MCP server never opens the port.
       void startMcpRelayIfAssigned();
+      // Runner mailbox endpoint: placed agents sync their mailbox with central over the relay.
+      if (RUNNER_ENABLED) startMailboxEndpoint();
       mcpHealthTimer = setInterval(
         () => {
           sweepMcpHealth().catch((err) => log.error('MCP health sweep failed', { err }));
@@ -323,19 +335,21 @@ function createAdapter(): ChannelAdapter {
         // `sender` here would auto-create `webchat:<AgentName>` rows in the
         // users table on every loop-back, cluttering the permissions tab with
         // pseudo-users that have no roles or memberships.
-        adapterConfig.onInbound(roomId, threadId, {
-          id: loopbackId,
-          kind: 'chat',
-          content: {
-            text,
-            author: { fullName: senderName, userName: senderName },
+        void Promise.resolve(
+          adapterConfig.onInbound(roomId, threadId, {
+            id: loopbackId,
+            kind: 'chat',
+            content: {
+              text,
+              author: { fullName: senderName, userName: senderName },
+              senderAgentGroupId,
+            },
+            timestamp: new Date().toISOString(),
+            isMention: false,
+            isGroup: true,
             senderAgentGroupId,
-          },
-          timestamp: new Date().toISOString(),
-          isMention: false,
-          isGroup: true,
-          senderAgentGroupId,
-        });
+          }),
+        ).catch((err) => log.error('Webchat loop-back inbound failed', { roomId, err }));
       }
       return undefined;
     },
@@ -537,7 +551,9 @@ registerLearningClassifierResolver(async (agentGroupId) =>
 // watch the exchange. Registered on the a2a route seam (H11); the observer
 // wrapper isolates any failure from routing.
 registerA2aRouteObserver(({ fromAgentGroupId, toAgentGroupId, content }) => {
-  surfaceA2aMessage(fromAgentGroupId, toAgentGroupId, content);
+  surfaceA2aMessage(fromAgentGroupId, toAgentGroupId, content).catch((err) =>
+    log.warn('a2a surface failed', { err: String(err) }),
+  );
 });
 
 // Optional LLM approval pre-judge (Settings → approvals; off by default). May
@@ -569,31 +585,40 @@ registerApprovalResolvedHandler(async (event) => {
   if (indexed.length > 0) await deleteWebchatApprovalIndex(approvalId);
 });
 
+/** Seam listeners are called synchronously: run an async one and log its failure. */
+const asyncListener =
+  <E>(name: string, fn: (e: E) => Promise<void>) =>
+  (e: E): void => {
+    fn(e).catch((err) => log.error(`${name} listener failed`, { err }));
+  };
+
 // Surface an ACTIONABLE approval card into the requesting agent's own room (in
 // addition to the per-approver inboxes), so admins can act without hunting in
 // the Approvals inbox. The room is also indexed so the resolved-listener above
 // clears the card on first response. Best-effort; webchat rooms only.
-registerApprovalRequestedListener(async (e) => {
-  const mg = await (e.session.messaging_group_id ? getMessagingGroup(e.session.messaging_group_id) : null);
-  if (!mg || mg.channel_type !== 'webchat') return;
-  const roomId = mg.platform_id;
-  // Why is this in front of a human? The pre-judge already knows, and used to
-  // write it only to the log. An `unscreened` view (no stored row) is a real
-  // answer too, and is rendered as such — with chips on the card, showing
-  // nothing must never read as "screened, nothing found".
-  const approvalRow = await getPendingApproval(e.approvalId);
-  const card = await storeWebchatApprovalCard(roomId, e.agentName ?? 'agent', {
-    questionId: e.approvalId,
-    title: e.title,
-    question: e.question,
-    options: e.options,
-    action: e.action,
-    approvers: e.approvers,
-    triage: await buildApprovalTriageView(e.approvalId, e.action, approvalRow?.payload ?? ''),
-  });
-  await recordWebchatApproval(e.approvalId, roomId);
-  await broadcast(roomId, { type: 'message', ...(await card) });
-});
+registerApprovalRequestedListener(
+  asyncListener('approvalRequested', async (e) => {
+    const mg = await (e.session.messaging_group_id ? getMessagingGroup(e.session.messaging_group_id) : null);
+    if (!mg || mg.channel_type !== 'webchat') return;
+    const roomId = mg.platform_id;
+    // Why is this in front of a human? The pre-judge already knows, and used to
+    // write it only to the log. An `unscreened` view (no stored row) is a real
+    // answer too, and is rendered as such — with chips on the card, showing
+    // nothing must never read as "screened, nothing found".
+    const approvalRow = await getPendingApproval(e.approvalId);
+    const card = await storeWebchatApprovalCard(roomId, e.agentName ?? 'agent', {
+      questionId: e.approvalId,
+      title: e.title,
+      question: e.question,
+      options: e.options,
+      action: e.action,
+      approvers: e.approvers,
+      triage: await buildApprovalTriageView(e.approvalId, e.action, approvalRow?.payload ?? ''),
+    });
+    await recordWebchatApproval(e.approvalId, roomId);
+    await broadcast(roomId, { type: 'message', ...(await card) });
+  }),
+);
 
 // Learning loop: when an agent proposes a skill, drop an actionable card into
 // ITS OWN room — that's where the work happened, so that's where the operator

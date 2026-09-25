@@ -92,6 +92,7 @@ import {
   nameToFolder,
   newAgentGroupId,
   parseAgentLearning,
+  recomputeEngagePatterns,
   wireAgentToWebchatRoom,
 } from './agent-wiring.js';
 import { pendingAgentImports, spawnTar, spoolUploadToTmp, sweepPendingImports } from './archive.js';
@@ -113,6 +114,16 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import type { RouteCtx } from '../server.js';
+import { getPlacement } from '../runner-registry.js';
+import {
+  effectiveEgressMode,
+  forgetGroupEgressMode,
+  getAgentEgressHosts,
+  getRunnerEgressAllowlist,
+  modelHostsFor,
+  parseAllowlist,
+  setAgentEgressHosts,
+} from '../egress-policy.js';
 
 // ── Agents (= agent groups) ─────────────────────────────────────────────
 export async function rAgentsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
@@ -600,19 +611,18 @@ export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): 
 }
 
 /**
- * Per-agent network egress.
+ * Per-agent network egress (egress-policy.ts), one vocabulary for every agent:
  *
- * `open` — normal: the agent reaches the network directly.
- * `host-only` — the agent runs on an internal docker network with only the
- *   OneCLI gateway attached, so the credential proxy is the sole hop out.
+ * `open` — anything. Stored explicitly: an unset mode means the allowlist.
+ * `host-only` ("Allowlist") — the model, central's own services and the
+ *   install allowlist.
+ * `none` ("Model only") — the model and central's own services.
  *
- * `none` (no network at all) is intentionally NOT settable here. It leaves the
- * agent unable to reach ANY model API — Anthropic, or a host-local LiteLLM or
- * Ollama — so it cannot run at all. `ncl groups config update --egress none`
- * remains for a genuinely air-gapped container.
- *
- * Takes effect on the agent's next spawn; running containers keep the network
- * they started with.
+ * A runner agent's traffic is checked per connection by central's relay, so a
+ * change applies at once. A local agent in either filtered mode sits on the
+ * lockdown network behind central's egress filter: switching between those two
+ * applies at once too, but moving to or from Open changes the container's
+ * network and so waits for its next start.
  */
 export async function rAgentEgressPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
@@ -628,17 +638,58 @@ export async function rAgentEgressPut(ctx: RouteCtx, m: RegExpMatchArray): Promi
   } catch {
     return json(res, 400, { error: 'Invalid JSON' });
   }
-  if (body.egress !== 'open' && body.egress !== 'host-only')
-    return json(res, 400, { error: "egress must be 'open' or 'host-only'" });
+  if (body.egress !== 'open' && body.egress !== 'host-only' && body.egress !== 'none')
+    return json(res, 400, { error: "egress must be 'open', 'host-only' or 'none'" });
+  const egress = body.egress as 'open' | 'host-only' | 'none';
   // A group that has never spawned has no container_configs row, and the scalar
   // update is an UPDATE — it would match nothing and still report success.
   await ensureContainerConfig(group.id);
-  // 'open' is stored as NULL — the column's absent state IS open, and writing
-  // the string would make "never set" and "explicitly open" look different to
-  // every reader of the row for no gain.
-  await updateContainerConfigScalars(group.id, { egress: body.egress === 'open' ? null : 'host-only' });
-  log.info('Agent egress changed', { agentGroupId: group.id, egress: body.egress, by: userId });
-  return json(res, 200, { ok: true, egress: body.egress });
+  const before = effectiveEgressMode((await getContainerConfig(group.id))?.egress);
+  await updateContainerConfigScalars(group.id, { egress });
+  forgetGroupEgressMode(group.id);
+  const placed = !!(await getPlacement(group.id));
+  const appliesNow = placed || (before !== 'open' && egress !== 'open');
+  log.info('Agent egress changed', { agentGroupId: group.id, egress, by: userId, appliesNow });
+  return json(res, 200, { ok: true, egress, appliesNow });
+}
+
+/**
+ * One agent's own egress hosts, on top of the install allowlist: what it may
+ * reach while its mode is Allowlist. Same audience as the mode itself. The
+ * relay and the filter re-read it within their cache window (egress-policy.ts),
+ * so a change applies without a restart.
+ */
+export async function rAgentEgressHostsGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { res, userId } = ctx;
+  const group = await resolveAgent(decodeURIComponent(m[1]));
+  if (!group) return json(res, 404, { error: 'Agent not found' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  return json(res, 200, {
+    hosts: await getAgentEgressHosts(group.id),
+    install: await getRunnerEgressAllowlist(),
+    always: await modelHostsFor(group.id),
+  });
+}
+
+export async function rAgentEgressHostsPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { req, res, userId } = ctx;
+  const group = await resolveAgent(decodeURIComponent(m[1]));
+  if (!group) return json(res, 404, { error: 'Agent not found' });
+  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
+  const raw = await readJsonBody(req, res);
+  if (raw === null) return;
+  let body: { hosts?: unknown };
+  try {
+    body = JSON.parse(raw) as typeof body;
+  } catch {
+    return json(res, 400, { error: 'Invalid JSON' });
+  }
+  const parsed = parseAllowlist(body.hosts);
+  if (!parsed.ok) return json(res, 400, { error: parsed.error.replace(/^allowlist/, 'hosts') });
+  await setAgentEgressHosts(group.id, parsed.patterns);
+  log.info('Agent egress hosts changed', { agentGroupId: group.id, count: parsed.patterns.length, by: userId });
+  return json(res, 200, { hosts: parsed.patterns });
 }
 
 /**
@@ -747,12 +798,13 @@ export async function rAgentExportGet(ctx: RouteCtx, m: RegExpMatchArray): Promi
   const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
   const withConvos = url.searchParams.get('conversations') === '1';
+  const withSecrets = url.searchParams.get('secrets') === '1'; // deploy keys: explicit opt-in only
   // Session DBs are DELETE-mode journals — only safe to copy with the
   // agent's containers stopped. They respawn on the next message.
   if (withConvos) await restartAgentGroupContainers(group.id, 'Export with conversations');
   let stage: string;
   try {
-    stage = await stageAgentExport(group.id, withConvos);
+    stage = await stageAgentExport(group.id, withConvos, withSecrets);
   } catch (err) {
     return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
   }
@@ -761,7 +813,7 @@ export async function rAgentExportGet(ctx: RouteCtx, m: RegExpMatchArray): Promi
     'Content-Type': 'application/gzip',
     'Content-Disposition': `attachment; filename="${fname}"`,
   });
-  const tar = spawnTar(exportTarArgs(stage, await group, withConvos));
+  const tar = spawnTar(exportTarArgs(stage, await group, withConvos, withSecrets));
   tar.stdout?.pipe(res);
   let tarErr = '';
   tar.stderr?.on('data', (d: Buffer) => (tarErr += d));
@@ -949,12 +1001,16 @@ export async function provisionWebchatAgentWithRoom(
       await initGroupFilesystem(group, { instructions: opts.instructions });
       await wireAgentToWebchatRoom(name, folder, group.id);
       // Auto-prime the agent on its own 1:1 room. With a single wired
-      // agent the prime designation is a no-op for routing (engage_pattern
-      // stays '.'), but pre-priming means that when the operator wires a
+      // agent the prime designation matters for routing too (see the recompute
+      // below), and pre-priming means that when the operator wires a
       // second agent later, the original keeps responding by default —
       // matching the user-visible expectation "the first agent answers
       // until I say otherwise."
       await setPrimeAgentForWebchatRoom(folder, group.id);
+      // wireAgentToWebchatRoom recomputed patterns BEFORE the prime existed, which
+      // leaves the sole agent mention-only (`\B@<folder>\b`), not '.'. Recompute now
+      // that it is the prime so the room's agent answers every message.
+      await recomputeEngagePatterns(folder);
     });
   } catch (err) {
     // SQLite error messages can leak schema details ("UNIQUE constraint
@@ -1010,7 +1066,7 @@ export async function createAgentHandler(
   // PWA's "+ Add agent" inside an existing room). Pass `withRoom: true`
   // explicitly to opt into the legacy 1:1 agent-and-room provisioning.
   if (body.withRoom !== true) {
-    const result = createBareAgentGroup(name, {
+    const result = await createBareAgentGroup(name, {
       folder: typeof body.folder === 'string' ? body.folder : undefined,
       instructions: typeof body.instructions === 'string' ? body.instructions : undefined,
     });
@@ -1195,6 +1251,7 @@ export async function deleteAgentHandler(res: ServerResponse, id: string): Promi
         'pending_channel_approvals',
         'skill_drafts',
         'webchat_agent_mcp_servers',
+        'webchat_agent_egress_hosts', // no FK, but its hosts must not outlive the agent
       ]) {
         if (await hasTable(db, table)) {
           await db.run(`DELETE FROM ${table} WHERE agent_group_id = ?`, id);
@@ -1447,7 +1504,7 @@ export async function importScopedSkillHandler(
 
 // Remove a scoped skill (a real dir) from a group's .claude-shared/skills. Only
 // touches real directories — never a pooled-skill symlink.
-export function deleteScopedSkillHandler(res: ServerResponse, agentGroupId: string, name: string): void {
+export async function deleteScopedSkillHandler(res: ServerResponse, agentGroupId: string, name: string): Promise<void> {
   const clean = sanitizeSkillName(name);
   if (!clean) return json(res, 400, { error: 'Invalid skill name' });
   const dir = path.join(scopedSkillsDir(agentGroupId), clean);
@@ -1463,7 +1520,7 @@ export function deleteScopedSkillHandler(res: ServerResponse, agentGroupId: stri
   } catch (err) {
     return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
   }
-  const restarted = restartAgentGroupContainers(agentGroupId, 'Webchat scoped skill removed');
+  const restarted = await restartAgentGroupContainers(agentGroupId, 'Webchat scoped skill removed');
   return json(res, 200, { ok: true, restarted });
 }
 

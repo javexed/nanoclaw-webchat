@@ -8,11 +8,26 @@
 // two of them constants now in server/constants.ts.
 
 import { json, readJsonBody } from './http.js';
-import { audit, readAuditEvents, readAuditFacets } from '../../../audit.js';
+import {
+  audit,
+  auditRetention,
+  auditUsage,
+  readAuditEvents,
+  readAuditFacets,
+  setAuditRetention,
+} from '../../../audit.js';
+import {
+  defaultRetention,
+  fromRetention,
+  parseRetention,
+  readRetentionSetting,
+  toRetention,
+} from '../audit-retention.js';
 import { configureSyslog, getSyslogStatus, parseSyslogTarget } from '../audit-syslog.js';
 import { fleetIsolationEnabled } from '../../../modules/fleet-isolation/index.js';
 import {
   getAuditSyslogTarget,
+  setAuditRetentionRaw,
   setAuditSyslogTarget,
   getCredentialIsolation,
   getCredentialsConfig,
@@ -152,7 +167,7 @@ export async function rWebchatFeatures(ctx: RouteCtx, _m: RegExpMatchArray): Pro
     // null clears the override and returns the install to whatever .env says.
     if (body.credentialIsolation !== null && typeof body.credentialIsolation !== 'boolean')
       return json(res, 400, { error: 'credentialIsolation must be a boolean or null' });
-    setCredentialIsolation(body.credentialIsolation as boolean | null);
+    await setCredentialIsolation(body.credentialIsolation as boolean | null);
     // Takes effect on each group's NEXT spawn — the hook reads it per spawn, so
     // there is nothing to restart.
     if (body.marketplaceEnabled === undefined)
@@ -161,7 +176,7 @@ export async function rWebchatFeatures(ctx: RouteCtx, _m: RegExpMatchArray): Pro
   if (typeof body.marketplaceEnabled !== 'boolean') {
     return json(res, 400, { error: 'marketplaceEnabled must be a boolean' });
   }
-  setMarketplaceDisabled(!body.marketplaceEnabled);
+  await setMarketplaceDisabled(!body.marketplaceEnabled);
   // The choice cascades to the individual sources (wizard ask): a
   // "no marketplace" install starts with the skill marketplace and the MCP
   // registry REMOVED — not just hidden behind the flag. Re-enabling restores
@@ -178,7 +193,9 @@ export async function rWebchatFeatures(ctx: RouteCtx, _m: RegExpMatchArray): Pro
 // then the flag disarms itself.
 export async function rWebchatTailscaleOwner(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const canEdit = (await isOwner(userId)) || (await isGlobalAdmin(userId));
+  // Owner only: arming it makes the next Tailscale login an owner, so a global
+  // admin arming it could make themselves one.
+  const canEdit = await isOwner(userId);
   if (method === 'GET') {
     return json(res, 200, { armed: await getPromoteFirstTailscaleOwner(), canEdit });
   }
@@ -272,6 +289,44 @@ export async function rWebchatAuditSyslog(ctx: RouteCtx, _m: RegExpMatchArray): 
     detail: { from, to: target || null, phase: 'after-switch' },
   });
   return json(res, 200, { target: await getAuditSyslogTarget(), status: getSyslogStatus() });
+}
+
+/**
+ * How long the audit log is kept (src/audit.ts): days (0 = forever) and a size
+ * cap that holds even under forever. Owner / global admin, like forwarding.
+ * Shortening it deletes history, so the change is recorded BEFORE it applies —
+ * and a syslog collector, if one is set, keeps its own copy regardless.
+ */
+export async function rWebchatAuditRetention(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { req, res, method, userId } = ctx;
+  if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
+  const view = async () => ({
+    ...fromRetention(auditRetention()),
+    stored: (await readRetentionSetting()) !== null,
+    defaults: defaultRetention(),
+    usage: auditUsage(),
+  });
+  if (method === 'GET') return json(res, 200, await view());
+  if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
+  const raw = await readJsonBody(req, res);
+  if (raw === null) return;
+  let body: unknown;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    return json(res, 400, { error: 'Invalid JSON' });
+  }
+  const parsed = parseRetention(body);
+  if (!parsed.ok) return json(res, 400, { error: parsed.error });
+  audit({
+    type: 'audit.retention',
+    actor: `human:${userId}`,
+    effect: 'changed',
+    detail: { from: fromRetention(auditRetention()), to: parsed.value },
+  });
+  await setAuditRetentionRaw(JSON.stringify(parsed.value));
+  setAuditRetention(toRetention(parsed.value)); // prunes to the new window at once
+  return json(res, 200, await view());
 }
 
 // ── Enable HTTPS over Tailscale (`tailscale serve`) ─────────────────────────

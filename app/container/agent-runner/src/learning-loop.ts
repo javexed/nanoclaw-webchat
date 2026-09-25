@@ -14,7 +14,7 @@ import type { MessageInRow } from './db/messages-in.js';
 import { writeMessageOut } from './db/messages-out.js';
 import { getMaxOutboundSeq } from './outbound-seq.js';
 import { getOutboundDb } from './mailbox/sqlite/connection.js';
-import { appendStatusEvent, getTurnToolCount } from './status-feed.js';
+import { beginSideQueryFeed, getTurnToolCount } from './status-feed.js';
 import {
   registerProviderMessageObserver,
   registerProviderQueryOptionsContributor,
@@ -24,11 +24,7 @@ import { registerRunnerCommand, registerTurnCompletionObserver } from './runner-
 import type { ProviderExchange, QueryInput } from './providers/types.js';
 import type { RoutingContext } from './formatter.js';
 import { LEARNING_REVIEW_PROMPT } from './mcp-tools/draft-skill.js';
-import {
-  dispatchResultText,
-  resolveOriginDestinations,
-  type PollLoopConfig,
-} from './poll-loop.js';
+import { dispatchResultText, resolveOriginDestinations, type PollLoopConfig } from './poll-loop.js';
 
 // Log prefix stays "[poll-loop]" on purpose: these lines moved here verbatim
 // and operator log greps / dashboards keyed on the existing messages must not
@@ -224,9 +220,7 @@ export function resolveReviewModel(learning: LearningConfig | undefined): string
  * hint must START with the source token — so prose that merely mentions a URL
  * mid-sentence stays a plain steering hint, byte-identical to the old behavior.
  */
-export type LearnHint =
-  | { kind: 'text'; hint: string }
-  | { kind: 'url' | 'path'; source: string; focus: string };
+export type LearnHint = { kind: 'text'; hint: string } | { kind: 'url' | 'path'; source: string; focus: string };
 
 export function classifyLearnHint(text: string): LearnHint {
   const hint = text.replace(/^\s*\/learn\b/i, '').trim();
@@ -321,7 +315,8 @@ export interface LearnReview {
 export function buildLearnReview(text: string): LearnReview {
   const h = classifyLearnHint(text);
   if (h.kind === 'url') return { prompt: buildUrlReviewPrompt(h.source, h.focus), reviewTools: [...URL_REVIEW_TOOLS] };
-  if (h.kind === 'path') return { prompt: buildPathReviewPrompt(h.source, h.focus), reviewTools: [...PATH_REVIEW_TOOLS] };
+  if (h.kind === 'path')
+    return { prompt: buildPathReviewPrompt(h.source, h.focus), reviewTools: [...PATH_REVIEW_TOOLS] };
   return { prompt: buildLearnReviewPrompt(text) };
 }
 
@@ -575,7 +570,9 @@ export async function runLearningReview(
   const digest = resolved?.replayReview === true ? null : (opts.digest ?? null);
   const seqBefore = getMaxOutboundSeq();
   let sawError = false;
-  appendStatusEvent('start', null);
+  // The review is a side query, not a turn: its feed start must not zero the
+  // enclosing turn's tool count the auto-trigger reads.
+  const endFeed = beginSideQueryFeed();
   const originDests = resolveOriginDestinations(messages);
   const reviewInput = {
     prompt: digest !== null ? buildDigestReviewPrompt(reviewPrompt, digest) : reviewPrompt,
@@ -618,7 +615,7 @@ export async function runLearningReview(
             // unwrapped one-liner here is the normal shape, not scratchpad. (The
             // decline case hit exactly this: a correct "nothing worth keeping"
             // that the user never saw.)
-            writeMessageOut({
+            await writeMessageOut({
               id: generateId(),
               kind: 'chat',
               platform_id: routing.platformId,
@@ -633,20 +630,24 @@ export async function runLearningReview(
         // The fork's session id. NOT saved, on purpose: the next real turn must
         // resume the main conversation, unaware the review ever happened.
       } else if (event.type === 'error' && !event.retryable) {
-        // Say so in the room. Silently logging leaves the user a thinking bubble
-        // that ends in nothing — and a rate-limited review is worth retrying.
+        // A /learn someone typed says so in the room: silently logging leaves
+        // them a thinking bubble that ends in nothing, and a rate-limited review
+        // is worth retrying. An auto-triggered review stays silent — nobody
+        // asked for it, so its failure is a log line, not a room message.
         sawError = true;
         log(`Learning review failed: ${event.message}`);
-        writeMessageOut({
-          id: generateId(),
-          kind: 'chat',
-          platform_id: routing.platformId,
-          channel_type: routing.channelType,
-          thread_id: routing.threadId,
-          content: JSON.stringify({
-            text: `Couldn't run the skill review (${event.message}). Nothing was lost — send /learn again in a bit.`,
-          }),
-        });
+        if (announceDecline) {
+          await writeMessageOut({
+            id: generateId(),
+            kind: 'chat',
+            platform_id: routing.platformId,
+            channel_type: routing.channelType,
+            thread_id: routing.threadId,
+            content: JSON.stringify({
+              text: `Couldn't run the skill review (${event.message}). Nothing was lost — send /learn again in a bit.`,
+            }),
+          });
+        }
         break;
       }
     }
@@ -655,7 +656,7 @@ export async function runLearningReview(
     log(`Learning review error: ${err instanceof Error ? err.message : String(err)}`);
     query.abort();
   } finally {
-    appendStatusEvent('done', null);
+    endFeed();
   }
   // A draft outranks a late error: if propose_skill fired, the review was not
   // dry, whatever happened to the stream afterwards.
@@ -716,14 +717,44 @@ registerProviderMessageObserver((ev) => {
  * <url|path>) add the read-only tools needed to reach the source; plain
  * reviews stay single-tool. Exported so tests exercise the REGISTERED
  * function, not a copy.
+ *
+ * `allowedTools` alone restricts nothing: in the Claude SDK it only PRE-APPROVES
+ * tools, and the provider runs in bypassPermissions mode, where every tool is
+ * approved anyway. So the restriction is three keys, each doing one job:
+ *  - `tools` sets which built-in tools exist at all — the source tools, or
+ *    none — so Bash, Write, Edit and friends are not even in context;
+ *  - `permissionMode: 'dontAsk'` denies any call that isn't pre-approved,
+ *    which is what keeps MCP tools (send_message, self-mod, other servers)
+ *    out: `tools` only governs built-ins;
+ *  - `allowedTools` is then the real allowlist: draft_skill plus the source
+ *    tools.
+ * `disallowedTools` is deliberately not contributed — a contribution replaces
+ * the provider's value, and the provider's floor must stay in force.
+ *
+ * Only providers that advertise `supportsRestrictedReview` get a review query
+ * at all (the Claude provider applies these keys to the SDK query). Providers
+ * that can't enforce a toolset — pi, codex, opencode — leave it unset, and
+ * /learn falls back to an ordinary in-turn review there; auto-reviews never
+ * run on them.
  */
-export function learningReviewQueryOptions(
-  input: QueryInput,
-): { allowedTools: string[]; model?: string; forkSession?: boolean } | null {
-  const m = input.moduleInput as { learningReview?: boolean; reviewModel?: string; learningReviewTools?: string[] } | undefined;
+export interface LearningReviewQueryOptions {
+  tools: string[];
+  allowedTools: string[];
+  permissionMode: 'dontAsk';
+  model?: string;
+  forkSession?: boolean;
+}
+
+export function learningReviewQueryOptions(input: QueryInput): LearningReviewQueryOptions | null {
+  const m = input.moduleInput as
+    | { learningReview?: boolean; reviewModel?: string; learningReviewTools?: string[] }
+    | undefined;
   if (m?.learningReview !== true) return null;
+  const sourceTools = [...(m.learningReviewTools ?? [])];
   return {
-    allowedTools: ['mcp__nanoclaw__draft_skill', ...(m.learningReviewTools ?? [])],
+    tools: sourceTools,
+    allowedTools: ['mcp__nanoclaw__draft_skill', ...sourceTools],
+    permissionMode: 'dontAsk',
     model: m.reviewModel || process.env.NANOCLAW_LEARNING_MODEL || undefined,
     forkSession: input.continuation ? true : undefined,
   };
@@ -787,7 +818,7 @@ function rowSender(msg: MessageInRow | undefined): string | null {
 }
 
 registerRunnerCommand({
-  matches: (text) => /^\/learn\b/i.test(text) && !text.startsWith(ROUTED_PREFIX.trim()),
+  matches: (text) => /^\/learn\b/i.test(text) && !isRoutedCommandText(text),
   classify: (text, { provider }) => {
     if (provider.supportsRestrictedReview) {
       log('Learning review requested (/learn) — isolated restricted pass');
@@ -827,7 +858,7 @@ registerRunnerCommand({
     // gate. `charge` rides along so the host applies the right policy.
     if (invoker !== null && invoker !== ctx.routing.threadId) {
       log(`Learning review routed to the host for policy (chargeInvoker=${charge})`);
-      writeMessageOut({
+      await writeMessageOut({
         id: generateId(),
         kind: 'system',
         platform_id: ctx.routing.platformId,
@@ -855,13 +886,20 @@ registerRunnerCommand({
 
 // ── /learn-routed — the receiving end of charge-invoker routing ─────────────
 //
-// The host writes `/learn-routed <json>` into the target session (the
+// The host writes a `/learn-routed` row into the target session (the
 // invoker's member session, or the origin session for the privileged
-// workspace fallback). The payload carries the original /learn text, the
-// ORIGIN room's exchange digest, and the origin routing — the review runs
-// here (on this session's credential) but reviews the origin room's context
-// and addresses its one-sentence outcome back to that room.
-const ROUTED_PREFIX = '/learn-routed ';
+// workspace fallback). The row carries the original /learn text, the ORIGIN
+// room's exchange digest, and the origin routing — the review runs here (on
+// this session's credential) but reviews the origin room's context and
+// addresses its one-sentence outcome back to that room.
+//
+// The payload rides a `learning_route` content field, never the chat text.
+// Anyone can TYPE "/learn-routed …", and a typed one would skip the host's
+// membership gate and invoker charge; a content field is only ever set by the
+// host (inbound chat content is built from fixed fields — text, sender ids —
+// by the channel adapters). A row without it is consumed and dropped.
+const ROUTED_COMMAND = '/learn-routed';
+export const ROUTED_CONTENT_FIELD = 'learning_route';
 
 interface RoutedReviewPayload {
   text: string;
@@ -870,39 +908,71 @@ interface RoutedReviewPayload {
   requested_by: string | null;
 }
 
-function parseRoutedPayload(text: string): RoutedReviewPayload | null {
+function isRoutedCommandText(text: string): boolean {
+  return text === ROUTED_COMMAND || text.startsWith(`${ROUTED_COMMAND} `);
+}
+
+/** The host-set payload of a routed row, or null when the row isn't one. */
+export function routedReviewPayload(msg: MessageInRow): RoutedReviewPayload | null {
+  if (msg.kind !== 'chat' && msg.kind !== 'chat-sdk') return null;
   try {
-    const p = JSON.parse(text.slice(ROUTED_PREFIX.length)) as RoutedReviewPayload;
-    return typeof p.text === 'string' ? p : null;
+    const c = JSON.parse(msg.content) as Record<string, unknown>;
+    if (!isRoutedCommandText(String(c.text ?? '').trim())) return null;
+    // A routed row has no sender: the host wrote it, not a person.
+    if (c.senderId || (c.author as { userId?: unknown } | undefined)?.userId) return null;
+    const p = c[ROUTED_CONTENT_FIELD] as Partial<RoutedReviewPayload> | undefined;
+    if (!p || typeof p !== 'object' || typeof p.text !== 'string') return null;
+    return {
+      text: p.text,
+      digest: typeof p.digest === 'string' ? p.digest : null,
+      origin: {
+        channel_type: typeof p.origin?.channel_type === 'string' ? p.origin.channel_type : null,
+        platform_id: typeof p.origin?.platform_id === 'string' ? p.origin.platform_id : null,
+      },
+      requested_by: typeof p.requested_by === 'string' ? p.requested_by : null,
+    };
   } catch {
     return null;
   }
 }
 
+// Rows already run this container — two routed rows in one batch share the
+// same command text, so execute() must not pick the same row twice.
+const consumedRoutedRows = new WeakSet<MessageInRow>();
+
 registerRunnerCommand({
-  matches: (text) => text.startsWith(ROUTED_PREFIX),
-  classify: (text, { provider }) => {
-    if (provider.supportsRestrictedReview) return { action: 'defer' };
-    // Inline fallback: this session has none of the origin room's context, so
-    // the digest must ride the prompt (unlike plain /learn, where the live
-    // session context IS the material).
-    const p = parseRoutedPayload(text);
-    if (!p) return { action: 'defer' }; // malformed → execute() logs and drops
-    const { prompt } = buildLearnReview(p.text);
-    return { action: 'rewrite', text: p.digest ? buildDigestReviewPrompt(prompt, p.digest) : prompt };
-  },
-  execute: async (text, ctx) => {
-    const p = parseRoutedPayload(text);
+  matches: (text) => isRoutedCommandText(text),
+  // Always defer: the row's content (where the host marker lives) is only
+  // visible in execute(), so classify() can't tell a genuine routed row from
+  // typed text. Deferring consumes both; execute() runs only the genuine one.
+  classify: () => ({ action: 'defer' }),
+  execute: async (_text, ctx) => {
+    let p: RoutedReviewPayload | null = null;
+    for (const row of ctx.batchMessages) {
+      if (consumedRoutedRows.has(row)) continue;
+      const candidate = routedReviewPayload(row);
+      if (!candidate) continue;
+      consumedRoutedRows.add(row);
+      p = candidate;
+      break;
+    }
     if (!p) {
-      log('Routed learning review: malformed payload, dropping');
+      log('Routed learning review: no host-set payload (typed, not routed by the host) — dropping');
+      return;
+    }
+    // Routed reviews only ever target a session of the same agent group, so
+    // this holds unless the provider was switched between route and run. A
+    // provider that can't restrict must never get the review query.
+    if (!ctx.config.provider.supportsRestrictedReview) {
+      log('Routed learning review: provider cannot run a restricted review — dropping');
       return;
     }
     hadLearnCommand = true;
     autoReviewState.dryStreak = 0;
     const { prompt: reviewPrompt, reviewTools } = buildLearnReview(p.text);
     const originRouting: RoutingContext = {
-      platformId: p.origin.platform_id ?? null,
-      channelType: p.origin.channel_type ?? null,
+      platformId: p.origin.platform_id,
+      channelType: p.origin.channel_type,
       threadId: null,
       inReplyTo: null,
       taskRun: false,

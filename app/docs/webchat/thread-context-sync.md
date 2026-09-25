@@ -8,7 +8,7 @@ Implementation: db helpers (`getThreadSyncMarks`, `setThreadSyncMark`,
 table in `src/channels/webchat/db.ts`; `syncThreadContext` + the
 `POST /api/rooms/:id/threads/:tid/{pull,push}` endpoints in
 `src/channels/webchat/server.ts`; header controls + `context-divider` rendering
-in `public/webchat/{index.html,app.js,style.css}`. Tests:
+in `public/webchat/{index.html,style.css}` + `ui/src/`. Tests:
 `src/channels/webchat/context-sync.test.ts`.
 
 ## 1. Goal & model
@@ -43,8 +43,8 @@ A thread's messages split into:
 **Push appends only the native messages** — never the pulled-in prefix (those rows
 already exist in main; re-appending would duplicate). This is why copied messages
 are **origin-marked** (§3): push selects `origin IS NULL` (native) thread rows;
-pull likewise skips main rows that are `origin='pushed'` from this same thread (so
-a push→pull round-trip doesn't echo).
+pull likewise copies only native main rows, skipping every copied row (so a
+push→pull round-trip doesn't echo).
 
 ## 3. Data model
 
@@ -119,8 +119,8 @@ display-only — they are NOT written to agent sessions.
 - **Two header controls**, in the chat header **to the right of the room name**,
   shown **only when a thread is open** (`currentThread !== 'main'`) — pull/push are
   meaningless in the regular chat:
-  - **↓ from main** — pull.
-  - **↑ to main** — push.
+  - **↓** arrow icon, titled *"Pull main chat into this thread"* — pull.
+  - **↑** arrow icon, titled *"Push this thread into main chat"* — push.
 - **Confirm-first, title-only (no counts):** *"Pull main chat down"* /
   *"Push this thread up"* (reuse `showConfirmModal`). The message count is
   reported afterward in the result toast (*"Copied N messages"*), not in the

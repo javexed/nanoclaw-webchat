@@ -70,7 +70,7 @@ const portOf = (wc: { http: { address: () => unknown } }): number => {
 };
 
 const now = '2026-07-30T00:00:00.000Z';
-function seed(db: import('../../db/driver.js').DbDriver): void {
+async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
   const user = async (id: string) =>
     await db.run(
       `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
@@ -96,11 +96,11 @@ function seed(db: import('../../db/driver.js').DbDriver): void {
       now,
     );
   };
-  group('ag-net-a');
-  group('ag-net-b');
-  role('webchat:owner', 'owner', null);
-  role('webchat:admina', 'admin', 'ag-net-a');
-  user('webchat:nobody');
+  await group('ag-net-a');
+  await group('ag-net-b');
+  await role('webchat:owner', 'owner', null);
+  await role('webchat:admina', 'admin', 'ag-net-a');
+  await user('webchat:nobody');
 }
 
 describe('PUT /api/agents/:id/egress', () => {
@@ -119,7 +119,7 @@ describe('PUT /api/agents/:id/egress', () => {
     });
     server = loaded.server;
     conn = loaded.conn;
-    seed(conn.getDb());
+    await seed(conn.getDb());
     wc = await server.startWebchatServer(noopHooks);
     port = portOf(wc);
   });
@@ -144,11 +144,12 @@ describe('PUT /api/agents/:id/egress', () => {
     expect(await stored('ag-net-a')).toBe('host-only');
   });
 
-  it('open is stored as NULL, so it is indistinguishable from never-set', async () => {
+  // Unset now means the allowlist, so open has to be written out to mean open.
+  it("open is stored as 'open' — an unset mode is the allowlist", async () => {
     await put('ag-net-a', 'admina', 'host-only');
     const r = await put('ag-net-a', 'admina', 'open');
     expect(r.status).toBe(200);
-    expect(await stored('ag-net-a')).toBeNull();
+    expect(await stored('ag-net-a')).toBe('open');
   });
 
   it('a scoped admin is refused on an agent they do NOT administer', async () => {
@@ -167,13 +168,12 @@ describe('PUT /api/agents/:id/egress', () => {
     expect(r.status).toBe(200);
   });
 
-  // The whole point of not exposing it: 'none' leaves the agent unable to reach
-  // any model API, so it cannot run at all.
-  it("refuses 'none' — it is ncl-only, not a one-click dead agent", async () => {
+  // 'none' used to cut the network (and the model with it). It now means
+  // "model only", enforced by the egress filter, so it is safe to offer.
+  it("accepts 'none' — model only, the model stays reachable", async () => {
     const r = await put('ag-net-a', 'owner', 'none');
-    expect(r.status).toBe(400);
-    expect(r.body).toContain("'open' or 'host-only'");
-    expect(await stored('ag-net-a')).toBeNull();
+    expect(r.status).toBe(200);
+    expect(await stored('ag-net-a')).toBe('none');
   });
 
   it('refuses anything else, including near-misses', async () => {
@@ -199,5 +199,75 @@ describe('PUT /api/agents/:id/egress', () => {
   it('404s an unknown agent', async () => {
     const r = await put('ag-does-not-exist', 'owner', 'host-only');
     expect(r.status).toBe(404);
+  });
+});
+
+describe('/api/agents/:id/egress/hosts', () => {
+  let server: Awaited<ReturnType<typeof loadServerWithEnv>>['server'];
+  let wc: WebchatServer;
+  let port: number;
+  let conn: Awaited<ReturnType<typeof loadServerWithEnv>>['conn'];
+
+  beforeEach(async () => {
+    const loaded = await loadServerWithEnv({
+      WEBCHAT_HOST: '127.0.0.1',
+      WEBCHAT_PORT: '0',
+      WEBCHAT_TOKEN: '',
+      WEBCHAT_TRUSTED_PROXY_IPS: '127.0.0.1',
+      WEBCHAT_TRUSTED_PROXY_HEADER: 'x-forwarded-user',
+    });
+    server = loaded.server;
+    conn = loaded.conn;
+    await seed(conn.getDb());
+    wc = await server.startWebchatServer(noopHooks);
+    port = portOf(wc);
+  });
+
+  afterEach(async () => {
+    if (wc) await server.stopWebchatServer(wc);
+  });
+
+  const as = (n: string) => ({ 'x-forwarded-user': n, 'content-type': 'application/json', 'x-webchat-csrf': '1' });
+  const put = (agent: string, who: string, hosts: unknown) =>
+    httpRequest(port, 'PUT', `/api/agents/${agent}/egress/hosts`, as(who), JSON.stringify({ hosts }));
+  const get = (agent: string, who: string) => httpRequest(port, 'GET', `/api/agents/${agent}/egress/hosts`, as(who));
+
+  it("a scoped admin sets their agent's hosts, normalized; the agent's policy then includes them", async () => {
+    const r = await put('ag-net-a', 'admina', ['https://Pkgs.Example.org/x', '*.internal.example.org:8443']);
+    expect(r.status).toBe(200);
+    expect(JSON.parse(r.body).hosts).toEqual(['pkgs.example.org', '*.internal.example.org:8443']);
+    const g = JSON.parse((await get('ag-net-a', 'admina')).body);
+    expect(g.hosts).toEqual(['pkgs.example.org', '*.internal.example.org:8443']);
+    expect(g.install).toContain('registry.npmjs.org');
+    expect(g.always).toContain('api.anthropic.com');
+    const policy = await import('./egress-policy.js');
+    expect(await policy.allowlistFor('ag-net-a')).toContain('pkgs.example.org');
+    expect(await policy.allowlistFor('ag-net-b')).not.toContain('pkgs.example.org');
+  });
+
+  it('an empty list removes the row', async () => {
+    await put('ag-net-a', 'owner', ['pkgs.example.org']);
+    expect((await put('ag-net-a', 'owner', [])).status).toBe(200);
+    const row = await conn.getDb().get(`SELECT 1 FROM webchat_agent_egress_hosts WHERE agent_group_id = ?`, 'ag-net-a');
+    expect(row).toBeUndefined();
+  });
+
+  it('refuses another agent, no role, no CSRF header, and anything that is not a host list', async () => {
+    expect((await put('ag-net-b', 'admina', ['a.example.org'])).status).toBe(403);
+    expect((await get('ag-net-b', 'admina')).status).toBe(403);
+    expect((await put('ag-net-a', 'nobody', ['a.example.org'])).status).toBe(403);
+    const noCsrf = await httpRequest(
+      port,
+      'PUT',
+      '/api/agents/ag-net-a/egress/hosts',
+      { 'x-forwarded-user': 'admina', 'content-type': 'application/json' },
+      JSON.stringify({ hosts: ['a.example.org'] }),
+    );
+    expect(noCsrf.status).toBe(403);
+    for (const bad of ['a.example.org', ['localhost'], ['*'], [1]])
+      expect((await put('ag-net-a', 'owner', bad)).status).toBe(400);
+    expect((await put('ag-nope', 'owner', [])).status).toBe(404);
+    const row = await conn.getDb().get(`SELECT 1 FROM webchat_agent_egress_hosts`);
+    expect(row).toBeUndefined();
   });
 });

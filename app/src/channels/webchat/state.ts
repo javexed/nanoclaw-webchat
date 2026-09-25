@@ -133,11 +133,50 @@ export function getActiveTurns(roomId: string): string[] {
   return [...(activeTurns.get(roomId) ?? [])];
 }
 
+/** Anything that mirrors a room outside the PWA socket (a laptop's chat view over the runner link). Gets the REDACTED message. */
+const roomMessageSubscribers = new Set<(roomId: string, msg: Record<string, unknown>) => void>();
+export function onRoomMessage(cb: (roomId: string, msg: Record<string, unknown>) => void): () => void {
+  roomMessageSubscribers.add(cb);
+  return () => roomMessageSubscribers.delete(cb);
+}
+/** Hand an already-redacted room message to the mirrors. `broadcast` calls this; tests may too. */
+export function notifyRoomMessage(roomId: string, msg: Record<string, unknown>): void {
+  for (const cb of roomMessageSubscribers) {
+    try {
+      cb(roomId, msg);
+    } catch (err) {
+      log.warn('Webchat: room message subscriber threw', { roomId, err });
+    }
+  }
+}
+
+/**
+ * Agent activity (`status` frames: start / tool / progress / reasoning / done /
+ * stalled) for mirrors that are not websocket clients — the VS Code chat view.
+ * The frames are already redacted by the adapter that emits them.
+ */
+const roomStatusSubscribers = new Set<(roomId: string, msg: Record<string, unknown>) => void>();
+export function onRoomStatus(cb: (roomId: string, msg: Record<string, unknown>) => void): () => void {
+  roomStatusSubscribers.add(cb);
+  return () => roomStatusSubscribers.delete(cb);
+}
+export function notifyRoomStatus(roomId: string, msg: Record<string, unknown>): void {
+  for (const cb of roomStatusSubscribers) {
+    try {
+      cb(roomId, msg);
+    } catch (err) {
+      log.warn('Webchat: room status subscriber threw', { roomId, err });
+    }
+  }
+}
+
 export async function broadcast(roomId: string, msg: object, excludeId?: string): Promise<void> {
   const isMessage = (msg as { type?: string }).type === 'message';
+  if ((msg as { type?: string }).type === 'status') notifyRoomStatus(roomId, msg as Record<string, unknown>);
   const outgoing = isMessage
     ? { ...msg, content: redactSensitiveData((msg as { content?: string }).content || '') }
     : msg;
+  if (isMessage) notifyRoomMessage(roomId, outgoing as Record<string, unknown>);
   const payload = JSON.stringify(outgoing);
   const notifyPayload = isMessage ? JSON.stringify({ type: 'unread', room_id: roomId }) : '';
 
@@ -191,6 +230,8 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string)
       roomId,
       roomName: room?.name || roomId,
       sender: m.sender || 'unknown',
+      // Subscriptions are keyed by user id; `sender` is a display name.
+      senderUserId: excludeId ? clients.get(excludeId)?.userId : undefined,
       content: redactSensitiveData(m.content || ''),
       messageId: m.id,
     }).catch((err) => log.warn('sendPushForMessage failed', { err: err instanceof Error ? err.message : err }));
@@ -389,7 +430,9 @@ export async function broadcastRooms(): Promise<void> {
  * originating client (which already cleared its own dot locally) is skipped.
  */
 export function markRoomReadForUser(userId: string, roomId: string, ts: number, originClientId?: string): void {
-  markRoomRead(userId, roomId, ts);
+  markRoomRead(userId, roomId, ts).catch((err) =>
+    log.warn('markRoomRead failed', { userId, roomId, err: String(err) }),
+  );
   const payload = JSON.stringify({ type: 'read_cleared', room_id: roomId });
   for (const c of clients.values()) {
     if (c.userId !== userId || c.id === originClientId) continue;

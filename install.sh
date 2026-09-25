@@ -306,29 +306,10 @@ NODE_EOF
   rm -f "$TMPFILE2"
 fi
 
-# ── 7. Provider activity overlays (only when that provider is installed) ─────
-PROVIDER_OVERLAYS=(
-  "container/agent-runner/src/providers/codex.ts|codex-activity.patch|codex-activity.test.ts:container/agent-runner/src/providers/codex-activity.test.ts"
-)
-for entry in "${PROVIDER_OVERLAYS[@]}"; do
-  IFS='|' read -r marker patch extra <<< "$entry"
-  if [ ! -f "$marker" ]; then
-    echo "  = ${patch}: provider not installed — skip"
-    continue
-  fi
-  if git apply --reverse --check "$HERE/overlays/$patch" 2>/dev/null; then
-    echo "  = ${patch}: already applied (skip)"
-  elif git apply "$HERE/overlays/$patch" 2>/dev/null; then
-    echo "  → ${patch}: applied"
-  else
-    CONFLICTS+=("$patch")
-    echo "  !! ${patch}: does not apply — left unchanged" >&2
-  fi
-  if [ -n "${extra:-}" ]; then
-    IFS=':' read -r esrc edst <<< "$extra"
-    cp "$HERE/overlays/$esrc" "$edst" && echo "  → ${edst##*/}: installed"
-  fi
-done
+# ── 7. Provider overlays (only for providers already installed) ─────────────
+# The table and the logic live in the app tree (provider-overlays/apply.sh), so
+# the Settings install chain can run the same step after it installs a provider.
+bash provider-overlays/apply.sh || CONFLICTS+=("provider-overlays")
 
 if [ "$NO_BUILD" = 1 ]; then
   say "Compose complete (--skip-build) — deps/build/verify skipped."

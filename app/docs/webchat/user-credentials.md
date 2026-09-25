@@ -1,6 +1,6 @@
 # Design: Shared-room user credentials via per-member containers
 
-**Status:** shipping — the core architecture behind `/add-userCreds`.
+**Status:** shipped — built into the webchat (`src/modules/user-credentials/`).
 **Extended by:** [user-credentials-oauth.md](user-credentials-oauth.md) — the Claude **subscription** (OAuth) variant builds on everything here.
 
 ## 1. Goal
@@ -44,19 +44,17 @@ OneCLI injects that member's key based on the identity it already trusts at
 spawn. There is **no per-turn token and no shared secret** — nothing to replay
 or steal.
 
-- **Session keying** reuses the existing `per-thread` session mode with
-  `thread_id = userId`. No `sessions` schema change and no new mode: a
-  key-holder's message routes to a session keyed by their userId, so each member
-  gets their own session / container / inbound+outbound DBs per room.
-- **The override lives in `deliverToAgent`** (`src/router.ts`), where both the
-  userId and the messaging group are in scope. When the room is user credentials and the
-  sender has an active key, a registered key-override sets
-  `effectiveSessionMode = 'per-thread'` and `sessionThreadId = userId`; otherwise
-  routing is unchanged. (The webchat adapter can't do this itself — it sends
-  `threadId = null` and the sender is resolved later in the pipeline.)
-- **Core stays user-credentials-agnostic.** `src/container-runtime.ts` exposes
-  `registerAgentIdentityResolver` / `registerContainerEnvResolver` hooks; the
-  userCreds module registers the resolvers. At spawn, `src/container-runner.ts` calls
+- **Session keying** reuses the existing `per-thread` session mode with a
+  composite `thread_id = <userId>::<threadId|main>` (`memberSessionKey` in
+  `identity.ts`). No `sessions` schema change and no new mode: each member gets
+  their own session / container / inbound+outbound DBs per room thread.
+- **The override is a seam hook.** The module registers
+  `registerSessionKeyResolver` (per-member keying when the room uses user
+  credentials and the sender has an active credential; otherwise routing is
+  unchanged) and `registerTurnGate` (the no-key veto, §10).
+- **Core stays user-credentials-agnostic.** The hook registries live in
+  `src/seam/` (`registerAgentIdentityResolver`, `registerContainerEnvResolver`,
+  …); the user-credentials module registers the resolvers. At spawn, `src/container-runner.ts` calls
   `resolveAgentIdentity(agentGroup.id, session.thread_id)` — so the identity is
   derived from **trusted session state, never agent- or user-controllable
   input**.
@@ -75,25 +73,25 @@ returns `user-creds-<userSlug>-<sha256(agentGroupId|userId)[:12]>`:
 ## 6. Shared context via fan-out
 
 The agent must see the whole conversation even though turns run in separate
-per-member containers. `src/modules/user-credentials/fanout.ts` writes each room message into
-**every** member's session: `trigger = 1` (wake) only to the sender's session,
-`trigger = 0` (context) to the rest; the agent's reply is fanned into the
-non-producer sessions as `trigger = 0` too.
-
-**Invariant:** every fan-out write is `trigger = 0` except the sender's own — a
-stray `trigger = 1` would N-way amplify. Idle members catch up on the shared
-transcript the next time they speak.
+per-member containers. `src/modules/user-credentials/fanout.ts` pulls on wake:
+when a member's session wakes, it copies the last 60 room messages into **that
+session only** — the current message as the wake (`trigger = 1`), the rest as
+context (`trigger = 0`). Stable ids make the copy idempotent. Other members'
+sessions are not written; idle members catch up the next time they speak.
 
 ## 7. Data model
 
-- **`user_credential_members`** (migration `020-user-creds-credentials.ts`): PK
+- **`user_credentials`** (migration `module-user-credentials.ts`): one row per
+  `(user_id, provider)` with the member's vault `secret_id`.
+- **`user_credential_members`** (same migration): PK
   `(user_id, agent_group_id)`; `onecli_agent_id` (the per-member identity the
   container spawns under), `secret_id` (the member's OneCLI vault secret, reused
   across their agent-group rows), `status`, timestamps. An index on
   `onecli_agent_id` powers approval reversal (§9). **Stores only ids + status —
   never the key**, which lives in the OneCLI vault.
-- **`webchat_room_settings.credential_mode`**: `disabled` (default) | `optional`
-  | `required` (§10).
+- **Credential mode**: `disabled` | `optional` | `required` (§10). Effective
+  mode = `webchat_room_settings.credential_mode_override ??
+  webchat_settings.default_credential_mode` (default `disabled`).
 - The OAuth variant adds a `cred_type` discriminator only; the token lives in the
   OneCLI vault like an API key — see [user-credentials-oauth.md](user-credentials-oauth.md).
 
@@ -102,14 +100,15 @@ transcript the next time they speak.
 **Onboard** (member, own key only) — `POST /api/user-credentials/credential`
 (`src/channels/webchat/server.ts`): CSRF-guarded, room-access gated, and bound to
 the **authenticated** userId (never a body-supplied user). `onboard.ts` then
-creates/updates the member's vault secret via `onecli`, ensures the per-member
+creates the member's vault secret via `onecli` (`storeUserCredential`). At the
+first spawn in a group, `ensureGroupEnrollment` ensures the per-member
 agent (`userCredsAgentIdentifier`), sets it to `selective` secret mode, and calls
 `setSecrets` with the merged set `{ member secret } ∪ { group tool secrets }`
 (reconstructed each time, so siblings are never clobbered), and persists the
 mapping in `user_credential_members`. Keys are never logged; `onecli` exec errors are
 scrubbed of their argv (so a key can't leak via an error message).
 
-**Route + spawn** — `deliverToAgent` keys the session to the userId (§4);
+**Route + spawn** — the session-key resolver keys the session to the member (§4);
 `container-runner.ts` spawns the container under
 `resolveAgentIdentity(group, session.thread_id)` → the member's OneCLI agent →
 their key injected by the gateway.
@@ -124,7 +123,7 @@ A credentialed-action approval from a per-member container arrives with
 `externalId = user-creds-<slug>-<hash>` — not an agent-group id.
 `src/modules/approvals/onecli-approvals.ts` first tries `getAgentGroup(externalId)`;
 on a miss it calls a registered fallback (`registerApprovalAgentGroupFallback`,
-provided by the userCreds module) that reverses the identity via
+provided by the user-credentials module) that reverses the identity via
 `user_credential_members(onecli_agent_id → agent_group_id)`. Approver selection then
 proceeds normally (scoped admin → global admin → owner). This is **table-based
 reversal, not string-splitting** — robust to the identifier charset, and the only
@@ -132,7 +131,7 @@ thing keeping user credentials approvals routable (a missing fallback would auto
 
 ## 10. No-key handling
 
-Per the room's `credential_mode`:
+Per the room's effective credential mode (§7):
 
 - **`disabled`** — one shared agent for the room (default; unchanged behavior).
 - **`optional`** — key-holders run per-member; members without a key use the
@@ -152,18 +151,17 @@ Per the room's `credential_mode`:
 - **Adversarial review (2026-06):** per-member isolation, fan-out discipline,
   approval routing, and onboarding authz all held up. One credential-in-logs
   hygiene finding (an `onecli` exec error embedding the key in its argv) was
-  fixed at the `onecli()` chokepoint. Residual operational risks (onboarding
-  argv exposure, OneCLI as trust anchor) are catalogued in the `/add-userCreds`
-  SKILL.md "Security review & residual risks" section.
+  fixed at the `onecli()` chokepoint. Residual operational risks: onboarding
+  argv exposure, and OneCLI as the trust anchor.
 
 ## 12. Touch points
 
-- **user-credentials-owned:** `src/modules/user-credentials/` (identity, db, onboard, onecli-admin,
-  fanout, crypto, index), migrations `020-user-creds-credentials.ts` /
-  `module-user-credentials-oauth.ts`.
-- **Core hooks (additive):** `src/router.ts` (per-member keying + no-key drop),
-  `src/container-runtime.ts` (resolver registration), `src/container-runner.ts`
+- **user-credentials-owned:** `src/modules/user-credentials/` (identity, db,
+  onboard, onecli-admin, fanout, policy, index), migration
+  `module-user-credentials.ts`.
+- **Core hooks (additive):** `src/seam/` (session-key, turn-gate and resolver
+  registries), `src/router.ts` (calls them), `src/container-runner.ts`
   (spawn identity + env), `src/modules/approvals/onecli-approvals.ts` (approval
   fallback), `src/session-manager.ts`, `src/modules/index.ts`,
   `src/db/migrations/index.ts`, and the webchat `db.ts` / `server.ts` /
-  `migration.ts` + the PWA (`public/webchat/`).
+  `migration.ts` + the UI (`ui/src/`).

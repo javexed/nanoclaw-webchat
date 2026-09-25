@@ -10,6 +10,7 @@
  * Best-effort by contract: a write failure must never break the tool call it
  * observes (the seam's notify wrapper also guarantees that).
  */
+import { nudgeRelayMailboxSync } from './mailbox/relay-sync.js';
 import { getOutboundDb } from './mailbox/sqlite/connection.js';
 import { redactSecrets } from './formatter.js';
 import { registerProviderMessageObserver } from './providers/hooks.js';
@@ -133,6 +134,28 @@ export function getTurnToolCount(): number {
   return turnToolCount;
 }
 
+// Side queries (the learning review) drive the same feed but are not turns:
+// their 'start' must not zero the enclosing turn's count, and the tools they
+// call must not add to it. Tool events can't say which query they came from,
+// so while a side query is open NO tool is counted — an undercount of any
+// overlapping turn, which only makes the auto-trigger less eager.
+let sideQueryDepth = 0;
+
+/** Open the feed for a side query; call the returned function once it ends. */
+export function beginSideQueryFeed(): () => void {
+  const outer = turnToolCount;
+  sideQueryDepth++;
+  appendStatusEvent('start', null);
+  turnToolCount = outer;
+  let ended = false;
+  return () => {
+    if (ended) return;
+    ended = true;
+    sideQueryDepth--;
+    appendStatusEvent('done', null);
+  };
+}
+
 export function appendStatusEvent(kind: string, text: string | null, detail: string | null = null): void {
   // Redact HERE, not at each call site. This is the one choke point every
   // provider's events pass through on the way to something a person can read
@@ -142,7 +165,7 @@ export function appendStatusEvent(kind: string, text: string | null, detail: str
   if (text !== null) text = redactSecrets(text);
   if (detail !== null) detail = redactSecrets(detail);
   if (kind === 'start') turnToolCount = 0;
-  else if (kind === 'tool') turnToolCount++;
+  else if (kind === 'tool' && sideQueryDepth === 0) turnToolCount++;
   try {
     const db = getOutboundDb();
     ensureStatusTable(db);
@@ -156,6 +179,8 @@ export function appendStatusEvent(kind: string, text: string | null, detail: str
     db.prepare(`DELETE FROM status_events WHERE seq <= (SELECT MAX(seq) FROM status_events) - $cap`).run({
       $cap: STATUS_EVENTS_CAP,
     });
+    // A placed session carries this to central itself; send each step now, not on the next tick.
+    nudgeRelayMailboxSync();
   } catch {
     // Cosmetic feed — never let it disrupt the turn.
   }

@@ -1,5 +1,5 @@
 diff --git a/scripts/skill-apply.test.ts b/scripts/skill-apply.test.ts
-index 61aed68b..2bb9e949 100644
+index 61aed68b..2da29c7f 100644
 --- a/scripts/skill-apply.test.ts
 +++ b/scripts/skill-apply.test.ts
 @@ -1,4 +1,4 @@
@@ -71,7 +71,7 @@ index 61aed68b..2bb9e949 100644
      // container/skills/demo-formatting/ deliberately absent from root
  
      const { cmds, exec } = recordingExec();
-@@ -273,6 +299,43 @@ describe('from-branch copy apply path', () => {
+@@ -273,6 +299,71 @@ describe('from-branch copy apply path', () => {
      rmSync(fskill, { recursive: true, force: true });
      rmSync(froot, { recursive: true, force: true });
    });
@@ -112,10 +112,38 @@ index 61aed68b..2bb9e949 100644
 +    rmSync(fskill, { recursive: true, force: true });
 +    rmSync(froot, { recursive: true, force: true });
 +  });
++
++  it('gitless deploy: a branch the override lacks falls back to nanocoai', async () => {
++    const fskill = scratchDir('nc-skill-fb-');
++    const froot = scratchDir('nc-proj-fb-');
++    writeFileSync(join(fskill, 'SKILL.md'), FROM_BRANCH_SKILL);
++    writeFileSync(join(froot, '.env'), '');
++    writeFileSync(join(froot, 'package.json'), '{"name":"scratch"}');
++
++    // A fork mirror set for its own branches (e.g. providers-grok) does not
++    // carry this one; the fetch against it fails and nanocoai serves it.
++    const prev = process.env.NANOCLAW_CHANNELS_REMOTE_URL;
++    process.env.NANOCLAW_CHANNELS_REMOTE_URL = 'https://example.test/fork.git';
++    const cmds: string[] = [];
++    const exec = (c: string): void => {
++      cmds.push(c);
++      if (c.includes('fetch') && c.includes('example.test')) throw new Error("couldn't find remote ref channels");
++    };
++    const res = await applySkill(fskill, froot, { exec });
++    process.env.NANOCLAW_CHANNELS_REMOTE_URL = prev;
++
++    const fetches = cmds.filter((c) => / fetch --depth 1 /.test(c));
++    expect(fetches).toHaveLength(2);
++    expect(fetches[1]).toMatch(/"https:\/\/github\.com\/nanocoai\/nanoclaw\.git" channels$/);
++    expect(res.journal).toContainEqual({ op: 'wrote', path: 'container/skills/demo-formatting/SKILL.md' });
++
++    rmSync(fskill, { recursive: true, force: true });
++    rmSync(froot, { recursive: true, force: true });
++  });
  });
  
  // json-merge: push a body object into an array-of-objects JSON file, keyed.
-@@ -288,8 +351,8 @@ describe('json-merge directive', () => {
+@@ -288,8 +379,8 @@ describe('json-merge directive', () => {
    let jroot: string;
    let jskill: string;
    beforeEach(() => {
@@ -126,7 +154,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(jskill, 'SKILL.md'), JSON_MERGE_SKILL);
      mkdirSync(join(jroot, 'container'), { recursive: true });
      writeFileSync(join(jroot, 'container/cli-tools.json'), '[\n  { "name": "vercel", "version": "52.2.1" }\n]\n');
-@@ -382,8 +445,8 @@ describe('append at:<marker>', () => {
+@@ -382,8 +473,8 @@ describe('append at:<marker>', () => {
    let aroot: string;
    let askill: string;
    beforeEach(() => {
@@ -137,7 +165,7 @@ index 61aed68b..2bb9e949 100644
      mkdirSync(join(aroot, 'setup'), { recursive: true });
      writeFileSync(join(aroot, 'setup/index.ts'), MARKER_FILE);
    });
-@@ -448,8 +511,8 @@ describe('nc:run variable substitution', () => {
+@@ -448,8 +539,8 @@ describe('nc:run variable substitution', () => {
    let rroot: string;
    let rskill: string;
    beforeEach(() => {
@@ -148,7 +176,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(rskill, 'SKILL.md'), RUN_WIRE_SKILL);
      writeFileSync(join(rroot, 'package.json'), '{"name":"scratch"}');
    });
-@@ -510,8 +573,8 @@ describe('nc:run capture', () => {
+@@ -510,8 +601,8 @@ describe('nc:run capture', () => {
    let croot: string;
    let cskill: string;
    beforeEach(() => {
@@ -159,7 +187,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(cskill, 'SKILL.md'), CAPTURE_SKILL);
      writeFileSync(join(croot, 'package.json'), '{"name":"scratch"}');
    });
-@@ -571,8 +634,8 @@ describe('nc:run multi-field JSON capture + validate', () => {
+@@ -571,8 +662,8 @@ describe('nc:run multi-field JSON capture + validate', () => {
    let mroot: string;
    let mskill: string;
    beforeEach(() => {
@@ -170,7 +198,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(mroot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(mroot, '.env'), '');
    });
-@@ -640,8 +703,8 @@ describe('nc:operator', () => {
+@@ -640,8 +731,8 @@ describe('nc:operator', () => {
    let oroot: string;
    let oskill: string;
    beforeEach(() => {
@@ -181,7 +209,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(oroot, 'package.json'), '{"name":"scratch"}');
    });
  
-@@ -694,8 +757,8 @@ describe('programmatic apply via inputs', () => {
+@@ -694,8 +785,8 @@ describe('programmatic apply via inputs', () => {
    let proot: string;
    let pskill: string;
    beforeEach(() => {
@@ -192,7 +220,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(proot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(proot, '.env'), '');
    });
-@@ -807,8 +870,8 @@ IMESSAGE_LOCAL=true
+@@ -807,8 +898,8 @@ IMESSAGE_LOCAL=true
  `;
  
  function modeScratch(): { sdir: string; rdir: string } {
@@ -203,7 +231,7 @@ index 61aed68b..2bb9e949 100644
    writeFileSync(join(sdir, 'SKILL.md'), MODE_SKILL);
    writeFileSync(join(rdir, '.env'), '');
    writeFileSync(join(rdir, 'package.json'), '{"name":"scratch"}');
-@@ -866,8 +929,8 @@ DEMO_PLATFORM={{platform_id}}
+@@ -866,8 +957,8 @@ DEMO_PLATFORM={{platform_id}}
  `;
  
  function stepScratch(): { sdir: string; rdir: string } {
@@ -214,7 +242,7 @@ index 61aed68b..2bb9e949 100644
    writeFileSync(join(sdir, 'SKILL.md'), STEP_SKILL);
    writeFileSync(join(rdir, '.env'), '');
    writeFileSync(join(rdir, 'package.json'), '{"name":"scratch"}');
-@@ -951,8 +1014,8 @@ describe('run-health gate (a bounce blocks later side effects)', () => {
+@@ -951,8 +1042,8 @@ describe('run-health gate (a bounce blocks later side effects)', () => {
    let groot: string;
    let gskill: string;
    beforeEach(() => {
@@ -225,7 +253,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(groot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(groot, '.env'), '');
    });
-@@ -1096,8 +1159,8 @@ describe('nc:run effect:check (precondition gate)', () => {
+@@ -1096,8 +1187,8 @@ describe('nc:run effect:check (precondition gate)', () => {
    let chkSkill: string;
    let chkRoot: string;
    beforeEach(() => {
@@ -236,7 +264,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(chkRoot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(chkRoot, '.env'), '');
    });
-@@ -1174,8 +1237,8 @@ describe('onEvent (core event seam)', () => {
+@@ -1174,8 +1265,8 @@ describe('onEvent (core event seam)', () => {
    let eroot: string;
    let eskill: string;
    beforeEach(() => {
@@ -247,7 +275,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(eroot, '.env'), '');
      writeFileSync(join(eroot, 'package.json'), '{"name":"scratch"}');
    });
-@@ -1358,8 +1421,8 @@ describe('firstFailureHint', () => {
+@@ -1358,8 +1449,8 @@ describe('firstFailureHint', () => {
    let froot: string;
    let fskill: string;
    beforeEach(() => {
@@ -258,7 +286,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(froot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(froot, '.env'), '');
    });
-@@ -1404,8 +1467,8 @@ describe('nc:prompt normalize at bind + InputMeta declaration', () => {
+@@ -1404,8 +1495,8 @@ describe('nc:prompt normalize at bind + InputMeta declaration', () => {
    let nroot: string;
    let nskill: string;
    beforeEach(() => {
@@ -269,7 +297,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(nskill, 'SKILL.md'), NORMALIZE_SKILL);
      writeFileSync(join(nroot, '.env'), '');
      writeFileSync(join(nroot, 'package.json'), '{"name":"scratch"}');
-@@ -1462,8 +1525,8 @@ describe('resolveInput (core input seam)', () => {
+@@ -1462,8 +1553,8 @@ describe('resolveInput (core input seam)', () => {
    let iroot: string;
    let iskill: string;
    beforeEach(() => {
@@ -280,7 +308,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(iroot, '.env'), '');
      writeFileSync(join(iroot, 'package.json'), '{"name":"scratch"}');
    });
-@@ -1547,8 +1610,8 @@ describe('validate-at-bind (inputs + resolveInput answers)', () => {
+@@ -1547,8 +1638,8 @@ describe('validate-at-bind (inputs + resolveInput answers)', () => {
    let vroot: string;
    let vskill: string;
    beforeEach(() => {
@@ -291,7 +319,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(vskill, 'SKILL.md'), VALIDATE_BIND_SKILL);
      writeFileSync(join(vroot, '.env'), '');
      writeFileSync(join(vroot, 'package.json'), '{"name":"scratch"}');
-@@ -1720,8 +1783,8 @@ describe('referenceProse (reference-floor slice)', () => {
+@@ -1720,8 +1811,8 @@ describe('referenceProse (reference-floor slice)', () => {
    });
  
    it('is carried on ApplyResult.referenceProse through a real apply', async () => {
@@ -302,7 +330,7 @@ index 61aed68b..2bb9e949 100644
      writeFileSync(join(rdir, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(rdir, '.env'), '');
      writeFileSync(join(sdir, 'SKILL.md'), REFERENCE_SKILL);
-@@ -1731,3 +1794,20 @@ describe('referenceProse (reference-floor slice)', () => {
+@@ -1731,3 +1822,20 @@ describe('referenceProse (reference-floor slice)', () => {
      expect(res.referenceProse).not.toContain('## Apply');
    });
  });

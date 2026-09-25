@@ -41,7 +41,8 @@ const modalClass = computed(() => 'modal confirm-modal' + (props.body ? '' : ' c
 
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape') props.onPick(false);
-  else if (e.key === 'Enter') props.onConfirm();
+  // A focused button answers Enter with its own click: Cancel must cancel.
+  else if (e.key === 'Enter' && !(e.target instanceof HTMLButtonElement)) props.onConfirm();
 }
 
 onMounted(() => {

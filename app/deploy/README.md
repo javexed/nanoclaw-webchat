@@ -12,13 +12,25 @@ On a fresh **Debian/Ubuntu** host — a VM, a **Raspberry Pi**, bare metal, or a
 container guest:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/javexed/nanoclaw/channels-webchat/deploy/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/javexed/nanoclaw-webchat/main/app/deploy/install.sh | sudo bash
 ```
 
-A few minutes later (it builds the agent image) it prints the webchat **URL +
-bearer token**. Open the URL, paste the token, and the setup wizard walks you the
-rest of the way — pick Claude (sign in in-browser), or install a local model right
-there.
+The script clones nanoclaw-webchat `main` and composes it with the root
+`install.sh` into `NANOCLAW_DIR`. A few minutes later (it builds the agent image)
+it prints the webchat **URL + bearer token**. Open the URL, paste the token, and
+the setup wizard walks you the rest of the way — pick Claude (sign in
+in-browser), or install a local model right there.
+
+Node 22, pnpm and Docker already on the box? Compose directly from a checkout:
+
+```bash
+git clone https://github.com/javexed/nanoclaw-webchat && cd nanoclaw-webchat
+bash install.sh --dir /opt/nanoclaw           # compose + build only
+bash install.sh --dir ~/nanoclaw --local      # compose + start on 127.0.0.1
+```
+
+`--dir` defaults to `NANOCLAW_DIR`, else `/opt/nanoclaw` as root and
+`~/nanoclaw` otherwise.
 
 ## What it does
 
@@ -59,14 +71,16 @@ plain LAN + token setup is unaffected.
 | `NANOCLAW_USER` | `nanoclaw` | Service user |
 | `WEBCHAT_PORT` | `3100` | Webchat port |
 | `NANOCLAW_TZ` | host zone | IANA timezone for agent time-awareness |
-| `NANOCLAW_REPO_URL` / `NANOCLAW_REPO_BRANCH` | GitHub / `channels-webchat` | Source to clone |
+| `NANOCLAW_REPO_URL` / `NANOCLAW_REPO_BRANCH` | nanoclaw-webchat / `main` | Source to clone and compose |
+| `NANOCLAW_SRC_DIR` | `/opt/nanoclaw-webchat` | Where that source is cloned before composing |
 
 ## Updating
 
 Don't `git pull` in the install directory — NanoClaw's startup tripwire guards
-against unsanctioned updates and will refuse to start. Use the in-app
-`/update-nanoclaw` flow, which repairs the install and re-stamps the version
-marker.
+against unsanctioned updates and will refuse to start, and upstream's
+`/update-nanoclaw` doesn't re-apply the webchat overlay. Update the
+nanoclaw-webchat checkout and re-run `bash install.sh --dir <install-dir>`, then
+restart the service.
 
 ## Community-scripts (Proxmox catalog) version
 
@@ -80,8 +94,8 @@ invocation is in **[../docs/webchat/install.md](../docs/webchat/install.md)**.
 
 ### Updating a tarball (community-scripts) install
 
-That install extracts a release tarball — there's no `.git`, so the git-based
-`/update-nanoclaw` flow above doesn't apply. To pull the latest code, re-run the
+That install extracts a release tarball — there's no `.git`, so the re-compose
+flow above doesn't apply. To pull the latest code, re-run the
 same fetch + shared deploy the installer uses. The tarball contains only tracked
 source, so `data/`, `.env`, `groups/`, `logs/`, and `node_modules/` are left
 untouched — it's a safe overlay:

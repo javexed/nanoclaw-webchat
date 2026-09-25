@@ -99,7 +99,7 @@ describe('assertSafeOutboundUrl', () => {
     });
   });
 
-  it('does not throw on unresolvable hostnames (lets fetch fail naturally)', async () => {
+  it('refuses a hostname it cannot resolve (fails closed)', async () => {
     // `.invalid`, NOT `.invalid.example`. RFC 6761 reserves `.invalid` and says
     // resolvers should answer NXDOMAIN for it without forwarding upstream, so it
     // fails fast anywhere. `.invalid.example` carries no such guarantee: it gets
@@ -107,7 +107,40 @@ describe('assertSafeOutboundUrl', () => {
     // return EAI_AGAIN here — past the 5s limit, so this test failed on a
     // machine where nothing was wrong. Measured 2026-08-20: `.invalid` rejects
     // in 6ms, `.invalid.example` in 11601ms.
-    await expect(assertSafeOutboundUrl('http://this-host-does-not-exist.invalid/')).resolves.toBeUndefined();
+    await expect(assertSafeOutboundUrl('http://this-host-does-not-exist.invalid/')).rejects.toThrow(
+      /Could not resolve/,
+    );
+  });
+
+  describe('IPv6 literals', () => {
+    it('checks a bracketed literal instead of letting it past the resolver', async () => {
+      await expect(assertSafeOutboundUrl('http://[fe80::1]/')).rejects.toThrow(/fe80/);
+      await expect(assertSafeOutboundUrl('http://[::]/')).rejects.toThrow(/always-blocked/);
+    });
+
+    it('judges an embedded IPv4 address as the IPv4 host it reaches', async () => {
+      for (const u of [
+        'http://[::ffff:169.254.169.254]/', // IPv4-mapped, dotted
+        'http://[::ffff:a9fe:a9fe]/', // IPv4-mapped, hex
+        'http://[::169.254.169.254]/', // IPv4-compatible
+        'http://[64:ff9b::a9fe:a9fe]/', // NAT64
+        'http://[2002:a9fe:a9fe::1]/', // 6to4
+      ]) {
+        await expect(assertSafeOutboundUrl(u), u).rejects.toThrow(/169\.254/);
+      }
+    });
+
+    it('applies the private-range opt-in through the same unwrapping', async () => {
+      await expect(assertSafeOutboundUrl('http://[::ffff:7f00:1]/')).resolves.toBeUndefined();
+      process.env.WEBCHAT_BLOCK_PRIVATE_IPS = 'true';
+      await expect(assertSafeOutboundUrl('http://[::ffff:7f00:1]/')).rejects.toThrow(/127\.0\.0\.0\/8/);
+      await expect(assertSafeOutboundUrl('http://[::1]/')).rejects.toThrow(/::1/);
+      await expect(assertSafeOutboundUrl('http://[fd00::5]/')).rejects.toThrow(/fc00/);
+    });
+
+    it('accepts a public IPv6 literal', async () => {
+      await expect(assertSafeOutboundUrl('http://[2001:4860:4860::8888]/')).resolves.toBeUndefined();
+    });
   });
 });
 

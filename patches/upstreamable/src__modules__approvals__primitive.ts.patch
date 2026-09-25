@@ -1,8 +1,18 @@
 diff --git a/src/modules/approvals/primitive.ts b/src/modules/approvals/primitive.ts
-index 533e47d8..0fbc74d6 100644
+index 803af266..0606dc5a 100644
 --- a/src/modules/approvals/primitive.ts
 +++ b/src/modules/approvals/primitive.ts
-@@ -231,6 +231,28 @@ export interface RequestApprovalOptions {
+@@ -46,7 +46,8 @@ export const REJECT_WITH_REASON_VALUE = 'reject_with_reason';
+  * (create_agent, install_packages, add_mcp_server). Gateway approvals use the
+  * core gateway coordinator's two-button decision flow.
+  */
+-const APPROVAL_OPTIONS: RawOption[] = [
++/** Exported for the session-less sibling in sessionless.ts — one set of card options, not two. */
++export const APPROVAL_OPTIONS: RawOption[] = [
+   { label: 'Approve', selectedLabel: '✅ Approved', value: 'approve', style: 'primary' },
+   { label: 'Reject', selectedLabel: '❌ Rejected', value: 'reject', style: 'danger' },
+   { label: 'Reject with reason…', selectedLabel: '📝 Rejected (awaiting reason)', value: REJECT_WITH_REASON_VALUE },
+@@ -231,6 +232,28 @@ export interface RequestApprovalOptions {
   * caller's perspective — the admin's response kicks off the registered
   * approval handler for this action via the response dispatcher.
   */
@@ -31,7 +41,7 @@ index 533e47d8..0fbc74d6 100644
  export async function requestApproval(opts: RequestApprovalOptions): Promise<void> {
    const { session, action, payload, title, question, agentName, approverUserId } = opts;
  
-@@ -240,11 +262,8 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
+@@ -240,11 +263,8 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
      return;
    }
  
@@ -45,7 +55,7 @@ index 533e47d8..0fbc74d6 100644
      await notifyAgent(session, `${action} failed: no DM channel found for any eligible approver.`);
      return;
    }
-@@ -258,15 +277,22 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
+@@ -258,15 +278,31 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
      action,
      payload: JSON.stringify(payload),
      created_at: new Date().toISOString(),
@@ -65,14 +75,25 @@ index 533e47d8..0fbc74d6 100644
      title,
      question,
      options_json: JSON.stringify(normalizedOptions),
-     // The DM'd approver is the identity this card was routed to; recording it
-     // makes resolution exact — only that user may decide the row.
+-    // The DM'd approver is the identity this card was routed to; recording it
+-    // makes resolution exact — only that user may decide the row.
 -    approver_user_id: approverUserId ?? target.userId ?? null,
-+    approver_user_id: approverUserId ?? targets[0]?.userId ?? null,
++    // ONLY a policy-named approver goes here. This column makes resolution
++    // exclusive (isAuthorizedApprovalClick short-circuits on it), so it must
++    // record an intent, never an accident.
++    //
++    // It used to fall back to `targets[0]?.userId`. That silently turned every
++    // fan-out into an exclusive assignment: a card delivered to four admins
++    // was decidable only by whoever pickApprover happened to list first (group
++    // admins, then global admins, then owners), and the other three got live
++    // buttons that did nothing. Left null, isAuthorizedApprovalClick falls
++    // through to the role check — any eligible approver may decide, which is
++    // what fanning out to them meant.
++    approver_user_id: approverUserId ?? null,
    });
  
    // Seam: an intercept may resolve the hold outright; listeners mirror the card.
-@@ -284,31 +310,47 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
+@@ -284,31 +320,47 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
  
    const adapter = getDeliveryAdapter();
    if (adapter) {

@@ -18,7 +18,7 @@ export interface SkillDraftProposedEvent {
   session: Session;
 }
 
-type SkillDraftProposedListener = (e: SkillDraftProposedEvent) => void;
+type SkillDraftProposedListener = (e: SkillDraftProposedEvent) => void | Promise<void>;
 const listeners: SkillDraftProposedListener[] = [];
 
 export function registerSkillDraftProposedListener(cb: SkillDraftProposedListener): void {
@@ -28,7 +28,9 @@ export function registerSkillDraftProposedListener(cb: SkillDraftProposedListene
 export function notifySkillDraftProposed(e: SkillDraftProposedEvent): void {
   for (const cb of listeners) {
     try {
-      cb(e);
+      void Promise.resolve(cb(e)).catch((err) =>
+        log.error('skillDraftProposed listener failed', { draftId: e.draftId, err }),
+      );
     } catch (err) {
       log.error('skillDraftProposed listener threw', { draftId: e.draftId, err });
     }
@@ -42,7 +44,7 @@ export interface SkillDraftResolvedEvent {
   by: string;
 }
 
-type SkillDraftResolvedListener = (e: SkillDraftResolvedEvent) => void;
+type SkillDraftResolvedListener = (e: SkillDraftResolvedEvent) => void | Promise<void>;
 const resolvedListeners: SkillDraftResolvedListener[] = [];
 
 export function registerSkillDraftResolvedListener(cb: SkillDraftResolvedListener): void {
@@ -52,7 +54,9 @@ export function registerSkillDraftResolvedListener(cb: SkillDraftResolvedListene
 export function notifySkillDraftResolved(e: SkillDraftResolvedEvent): void {
   for (const cb of resolvedListeners) {
     try {
-      cb(e);
+      void Promise.resolve(cb(e)).catch((err) =>
+        log.error('skillDraftResolved listener failed', { draftId: e.draftId, err }),
+      );
     } catch (err) {
       log.error('skillDraftResolved listener threw', { draftId: e.draftId, err });
     }

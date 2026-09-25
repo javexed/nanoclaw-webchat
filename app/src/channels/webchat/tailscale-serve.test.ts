@@ -9,6 +9,8 @@ import os from 'os';
 import {
   getTailscaleServeState,
   enableTailscaleServe,
+  serveUrlForPort,
+  tailnetUrlForPort,
   type RunResult,
   type TailscaleRunner,
 } from './tailscale-serve.js';
@@ -141,5 +143,51 @@ describe('enableTailscaleServe', () => {
     );
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/not installed/i);
+  });
+});
+
+describe('the tailnet address of this install', () => {
+  // Two installs on one machine: 443 fronts another one, 8443 fronts ours.
+  const SERVE = JSON.stringify({
+    TCP: { '443': { HTTPS: true }, '8443': { HTTPS: true } },
+    Web: {
+      'node-1.example.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:3100' } } },
+      'node-1.example.ts.net:8443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:3101' } } },
+    },
+  });
+
+  it("finds the Serve mapping for THIS port, leaving another install's alone", () => {
+    expect(serveUrlForPort(SERVE, 3101)).toBe('https://node-1.example.ts.net:8443');
+    expect(serveUrlForPort(SERVE, 3100)).toBe('https://node-1.example.ts.net');
+    expect(serveUrlForPort(SERVE, 3999)).toBeNull();
+    expect(serveUrlForPort('not json', 3101)).toBeNull();
+  });
+
+  it('falls back to the node name on the tailnet when webchat itself listens there', async () => {
+    const runner: TailscaleRunner = async (args) =>
+      args[0] === 'serve'
+        ? { ok: true, notFound: false, stdout: '{}', stderr: '' }
+        : {
+            ok: true,
+            notFound: false,
+            stdout: JSON.stringify({ Self: { DNSName: 'node-1.example.ts.net.' } }),
+            stderr: '',
+          };
+    expect(await tailnetUrlForPort(3101, true, runner)).toBe('http://node-1.example.ts.net:3101');
+    // Bound to loopback only: the tailnet cannot reach it without Serve.
+    expect(await tailnetUrlForPort(3101, false, runner)).toBeNull();
+  });
+
+  it('prefers Serve (HTTPS) over the plain tailnet address', async () => {
+    const runner: TailscaleRunner = async (args) =>
+      args[0] === 'serve'
+        ? { ok: true, notFound: false, stdout: SERVE, stderr: '' }
+        : {
+            ok: true,
+            notFound: false,
+            stdout: JSON.stringify({ Self: { DNSName: 'node-1.example.ts.net.' } }),
+            stderr: '',
+          };
+    expect(await tailnetUrlForPort(3101, true, runner)).toBe('https://node-1.example.ts.net:8443');
   });
 });

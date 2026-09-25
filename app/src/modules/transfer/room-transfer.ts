@@ -97,11 +97,15 @@ export async function stageRoomExport(roomId: string): Promise<{ stage: string; 
   // Resolve first, THEN filter. The old chain filtered on the promise (always
   // truthy, so a missing agent group survived as undefined) and awaited each
   // element downstream.
-  const agents = (await Promise.all(wirings.map((w) => getAgentGroup(String(w.agent_group_id)))))
-    .filter((a): a is NonNullable<typeof a> => !!a)
-    .map((a) => ({ name: a.name, folder: a.folder }));
+  const groups = await Promise.all(wirings.map((w) => getAgentGroup(String(w.agent_group_id))));
+  const agents = groups.filter((a): a is NonNullable<typeof a> => !!a).map((a) => ({ name: a.name, folder: a.folder }));
   write('messaging_group.json', mg);
-  write('wirings.json', wirings);
+  // Each wiring carries its agent's folder: the import resolves it on the
+  // target install, and pairing by position broke when an agent was missing.
+  write(
+    'wirings.json',
+    wirings.map((w, i) => ({ ...w, agent_folder: groups[i]?.folder ?? null })),
+  );
 
   let learning: Record<string, unknown> | null = null;
   try {
@@ -146,10 +150,10 @@ export interface RoomImportPreview {
   agents: { name: string; folder: string; found: boolean }[];
 }
 
-const uniqueRoomId = (base: string): string => {
+const uniqueRoomId = async (base: string): Promise<string> => {
   let id = base;
   let i = 2;
-  while (getMessagingGroupByPlatform('webchat', id)) id = `${base}-${i++}`;
+  while (await getMessagingGroupByPlatform('webchat', id)) id = `${base}-${i++}`;
   return id;
 };
 
@@ -165,7 +169,7 @@ export async function previewRoomImport(bundleDir: string): Promise<RoomImportPr
       found: !!(await db.get(`SELECT 1 FROM agent_groups WHERE folder = ?`, a.folder)),
     })),
   );
-  return { manifest, suggestedRoomId: uniqueRoomId(manifest.entity.roomId), agents };
+  return { manifest, suggestedRoomId: await uniqueRoomId(manifest.entity.roomId), agents };
 }
 
 export interface RoomApplyResult {
@@ -226,17 +230,17 @@ export async function applyRoomImport(bundleDir: string): Promise<RoomApplyResul
       }
     }
 
-    // wirings[] and manifest.references.agents[] were built from the same
-    // list in the same order at export time — pair by index, resolve the
-    // folder on THIS install. Works same-install and cross-install alike.
-    wirings.forEach(async (w, i) => {
-      const folder = preview.agents[i]?.folder;
+    // Resolve each wiring's agent folder on THIS install. Current bundles carry
+    // the folder on the wiring; older ones pair wirings with
+    // manifest.references.agents[] by position.
+    for (const [i, w] of wirings.entries()) {
+      const folder = typeof w.agent_folder === 'string' ? w.agent_folder : preview.agents[i]?.folder;
       const target = folder
         ? ((await db.get(`SELECT id FROM agent_groups WHERE folder = ?`, folder)) as { id: string } | undefined)
         : undefined;
       if (!target) {
         if (folder) skippedAgents.push(folder);
-        return;
+        continue;
       }
       await insertWithSchemaIntersection('messaging_group_agents', {
         ...w,
@@ -245,7 +249,7 @@ export async function applyRoomImport(bundleDir: string): Promise<RoomApplyResul
         agent_group_id: target.id,
       });
       if (folder) wiredAgents.push(folder);
-    });
+    }
 
     if (learning) {
       try {

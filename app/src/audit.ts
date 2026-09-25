@@ -26,6 +26,16 @@
  * resource ids, approval ids) — enough to reconstruct WHO did WHAT to WHICH,
  * never the contents.
  *
+ * RETENTION. The live file rolls over daily (UTC) into
+ * audit-YYYY-MM-DD.jsonl.gz beside it, and day files older than the retention
+ * window are deleted (default 90 days; NANOCLAW_AUDIT_KEEP_DAYS, 0 = forever).
+ * A size cap backs that up (NANOCLAW_AUDIT_MAX_MB, default 200): past it the
+ * oldest day goes early, even under "forever", so a scanner or a runaway
+ * client can never fill the disk. The live file also rolls early at a quarter
+ * of the cap. Admin → Audit log sets both (webchat pushes them in with
+ * setAuditRetention — this module is a leaf and cannot read settings), and
+ * the change is itself audited before it takes effect.
+ *
  * Failure posture: auditing must never take the app down. A write failure
  * degrades to a log.warn (throttled so a full disk doesn't melt the app log)
  * and the caller proceeds. That is a deliberate availability-over-audit
@@ -34,6 +44,7 @@
  */
 import fs from 'fs';
 import path from 'path';
+import zlib from 'zlib';
 
 import { log } from './log.js';
 
@@ -71,6 +82,174 @@ export function auditFilePath(): string {
   return process.env.NANOCLAW_AUDIT_FILE || path.join(process.cwd(), 'logs', 'audit.jsonl');
 }
 
+const MB = 1024 * 1024;
+const DAY_MS = 24 * 3600 * 1000;
+
+export interface AuditRetention {
+  /** Days of history kept; 0 = forever (the size cap still applies). */
+  days: number;
+  /** Cap on the live file plus its day files, in bytes. */
+  maxBytes: number;
+}
+
+/** The starting values, from the environment: 90 days, 200 MB. */
+export function envAuditRetention(): AuditRetention {
+  const num = (k: string, dflt: number, ok: (n: number) => boolean) => {
+    const raw = process.env[k]?.trim();
+    const n = Number(raw);
+    return raw && Number.isFinite(n) && ok(n) ? n : dflt;
+  };
+  return {
+    days: Math.floor(num('NANOCLAW_AUDIT_KEEP_DAYS', 90, (n) => n >= 0)),
+    maxBytes: num('NANOCLAW_AUDIT_MAX_MB', 200, (n) => n >= 1) * MB,
+  };
+}
+
+let retention: AuditRetention | null = null;
+
+export function auditRetention(): AuditRetention {
+  return retention ?? envAuditRetention();
+}
+
+/** Apply retention from settings (null = back to the environment's) and prune at once. */
+export function setAuditRetention(next: AuditRetention | null): void {
+  retention = next;
+  pruneAuditFiles();
+}
+
+const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+/** audit.jsonl → "audit"; the day files are <stem>-YYYY-MM-DD[.N].jsonl[.gz]. */
+function stemOf(file: string): string {
+  return path.basename(file).replace(/\.jsonl$/, '');
+}
+
+interface DayFile {
+  path: string;
+  day: string;
+  n: number;
+  bytes: number;
+}
+
+/** The rolled-over day files beside `file`, oldest first. */
+export function auditDayFiles(file: string = auditFilePath()): DayFile[] {
+  const dir = path.dirname(file);
+  const stem = stemOf(file).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^${stem}-(\\d{4}-\\d{2}-\\d{2})(?:\\.(\\d+))?\\.jsonl(?:\\.gz)?$`);
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out: DayFile[] = [];
+  for (const name of names) {
+    const m = re.exec(name);
+    if (!m) continue;
+    const p = path.join(dir, name);
+    let bytes = 0;
+    try {
+      bytes = fs.statSync(p).size;
+    } catch {
+      continue;
+    }
+    out.push({ path: p, day: m[1], n: Number(m[2] ?? 1), bytes });
+  }
+  return out.sort((x, y) => (x.day === y.day ? x.n - y.n : x.day < y.day ? -1 : 1));
+}
+
+/** Bytes in the live file, tracked per path so a write costs no stat. */
+const liveBytes = new Map<string, number>();
+/** The UTC day the live file's events belong to. */
+const liveDay = new Map<string, string>();
+
+/**
+ * Move the live file aside as that day's file and compress it. Rename first,
+ * so the next event starts a fresh file even if compression then fails (the
+ * plain .jsonl day file stays, and still counts and ages out like the rest).
+ */
+export function rollAuditFile(file: string, day: string): void {
+  liveBytes.set(file, 0);
+  if (!fs.existsSync(file)) return;
+  const base = path.join(path.dirname(file), `${stemOf(file)}-${day}`);
+  let n = 1;
+  const name = (i: number) => (i === 1 ? base : `${base}.${i}`);
+  while (fs.existsSync(`${name(n)}.jsonl.gz`) || fs.existsSync(`${name(n)}.jsonl`)) n++;
+  const plain = `${name(n)}.jsonl`;
+  fs.renameSync(file, plain);
+  fs.writeFileSync(`${plain}.gz.tmp`, zlib.gzipSync(fs.readFileSync(plain)));
+  fs.renameSync(`${plain}.gz.tmp`, `${plain}.gz`);
+  fs.rmSync(plain, { force: true });
+}
+
+/** Delete day files past the window, then the oldest while over the cap. Never throws. */
+export function pruneAuditFiles(file: string = auditFilePath(), now: number = Date.now()): void {
+  try {
+    const { days, maxBytes } = auditRetention();
+    let files = auditDayFiles(file);
+    if (days > 0) {
+      const cutoff = utcDay(now - days * DAY_MS);
+      for (const f of files.filter((f) => f.day < cutoff)) fs.rmSync(f.path, { force: true });
+      files = files.filter((f) => f.day >= cutoff);
+    }
+    let live = 0;
+    try {
+      live = fs.statSync(file).size;
+    } catch {
+      live = 0;
+    }
+    let total = live + files.reduce((t, f) => t + f.bytes, 0);
+    while (total > maxBytes && files.length) {
+      const f = files.shift()!;
+      fs.rmSync(f.path, { force: true });
+      total -= f.bytes;
+    }
+  } catch (err) {
+    emitFailed(err);
+  }
+}
+
+/** What the Admin page shows: bytes on disk, and the oldest day still held. */
+export function auditUsage(file: string = auditFilePath()): { bytes: number; oldestDay: string | null } {
+  const files = auditDayFiles(file);
+  let live = 0;
+  let liveFrom: string | null = null;
+  try {
+    const st = fs.statSync(file);
+    live = st.size;
+    liveFrom = liveDay.get(file) ?? utcDay(st.mtimeMs);
+  } catch {
+    live = 0;
+  }
+  return { bytes: live + files.reduce((t, f) => t + f.bytes, 0), oldestDay: files[0]?.day ?? liveFrom };
+}
+
+/** Roll the live file over when the day changed, or when it passes a quarter of the cap. */
+function maybeRoll(file: string, now: number, adding: number): void {
+  const today = utcDay(now);
+  let day = liveDay.get(file);
+  if (day === undefined) {
+    // First write in this process: the file's last write says which day it holds.
+    try {
+      day = utcDay(fs.statSync(file).mtimeMs);
+      liveBytes.set(file, fs.statSync(file).size);
+    } catch {
+      day = today;
+      liveBytes.set(file, 0);
+    }
+  }
+  const size = (liveBytes.get(file) ?? 0) + adding;
+  if (day !== today) {
+    rollAuditFile(file, day);
+    liveDay.set(file, today);
+    pruneAuditFiles(file, now);
+  } else if (size >= auditRetention().maxBytes / 4) {
+    rollAuditFile(file, today);
+    pruneAuditFiles(file, now);
+  }
+  liveDay.set(file, today);
+}
+
 /**
  * Forwarding sinks — syslog and whatever comes later. Registered from
  * webchat-land rather than read from config HERE, because this module is a
@@ -100,7 +279,10 @@ export function audit(event: AuditEvent): void {
     // Sync append: audit events are low-frequency (auth transitions and
     // privileged actions, not message traffic), and a synchronous write can't
     // be lost to an exit between the decision and the flush.
+    const bytes = Buffer.byteLength(line) + 1;
+    maybeRoll(file, Date.now(), bytes);
     fs.appendFileSync(file, line + '\n');
+    liveBytes.set(file, (liveBytes.get(file) ?? 0) + bytes);
   } catch (err) {
     emitFailed(err);
     return;
@@ -187,7 +369,9 @@ export function readAuditEvents(query: AuditQuery = {}): AuditPage {
     const file = auditFilePath();
     const size = fs.statSync(file).size;
     const start = Math.max(0, size - READ_WINDOW_BYTES);
-    truncated = start > 0;
+    // Older days rolled into audit-YYYY-MM-DD.jsonl.gz are history too: "no
+    // more matches" then means none in the live file, not none ever.
+    truncated = start > 0 || auditDayFiles(file).length > 0;
     const fd = fs.openSync(file, 'r');
     try {
       const bytes = Buffer.alloc(size - start);

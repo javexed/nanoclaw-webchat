@@ -16,6 +16,7 @@ status=0
 ZERO=0000000000000000000000000000000000000000
 while read -r _lref lsha _rref rsha; do
   [ "$lsha" = "$ZERO" ] && continue                    # branch delete
+  PUSHED="${PUSHED:-} $lsha"
   # Scan exactly what THIS branch adds over main: merge-base(main)..lsha. This
   # is correct for new branches, updates, AND force-pushes after a rebase — the
   # stale remote-branch sha (rsha) would otherwise pull main's own commits into
@@ -26,6 +27,23 @@ while read -r _lref lsha _rref rsha; do
   bash "$ROOT/scripts/leak-scan.sh" --range "$range" || status=1
 done
 [ "$status" -eq 0 ] || { echo "pre-push: LEAK gate blocked the push." >&2; exit 1; }
+
+# Seam pin: a push that moves versions.json's seamRef must point at a seam the
+# seam repo already has, or every compose of it fails. Checked against the
+# repo CI uses: set `git config webchat.seamRepo <seam repo url>` to match
+# the NANOCLAW_SEAM_REPO repository variable (else versions.json's seamRepo).
+seam_of() { git show "$1:versions.json" 2>/dev/null | python3 -c "import json,sys;print(json.load(sys.stdin)['nanoclaw']['seamRef'])" 2>/dev/null; }
+MAIN_SEAM=$(seam_of "$REMOTE/main")
+for lsha in $PUSHED; do
+  pin=$(seam_of "$lsha")
+  [ -n "$pin" ] && [ "$pin" != "$MAIN_SEAM" ] || continue
+  NANOCLAW_SEAM_PIN="$pin" bash "$ROOT/scripts/check-seam-pin.sh"
+  case $? in
+    0) ;;
+    1) echo "pre-push: blocked — the pushed versions.json pins an unpublished seam." >&2; exit 1 ;;
+    *) echo "pre-push: could not check the seam pin (offline?) — push continues." >&2 ;;
+  esac
+done
 
 # Freshness preflight — ADVISORY since 2026-08-21. "Behind main" is worth a
 # heads-up, but blocking on it fought every legitimate push during history

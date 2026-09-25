@@ -1,0 +1,342 @@
+{
+  "name": "vscode",
+  "displayName": "NanoClaw",
+  "description": "Run NanoClaw agents on this machine and work with them from the editor.",
+  "version": "0.13.2",
+  "publisher": "nanoclaw",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onUri"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "nanoclaw.connect",
+        "title": "Connect",
+        "category": "NanoClaw"
+      },
+      {
+        "command": "nanoclaw.disconnect",
+        "title": "Disconnect",
+        "category": "NanoClaw"
+      },
+      {
+        "command": "nanoclaw.status",
+        "title": "Show Status",
+        "category": "NanoClaw"
+      },
+      {
+        "command": "nanoclaw.openChat",
+        "title": "Open Web Chat (browser)",
+        "category": "NanoClaw"
+      },
+      {
+        "command": "nanoclaw.sendSelection",
+        "title": "Send Selection to Agent",
+        "category": "NanoClaw"
+      },
+      {
+        "command": "nanoclaw.focusChat",
+        "title": "Open",
+        "category": "NanoClaw"
+      },
+      {
+        "command": "nanoclaw.checkForUpdates",
+        "title": "Check for Updates",
+        "category": "NanoClaw"
+      },
+      {
+        "command": "nanoclaw.installUpdate",
+        "title": "Install Offered Update",
+        "category": "NanoClaw"
+      },
+      {
+        "command": "nanoclaw.review.accept",
+        "title": "Accept change",
+        "category": "NanoClaw",
+        "enablement": "nanoclaw.reviewing"
+      },
+      {
+        "command": "nanoclaw.review.reject",
+        "title": "Reject change",
+        "category": "NanoClaw",
+        "enablement": "nanoclaw.reviewing"
+      },
+      {
+        "command": "nanoclaw.review.acceptAll",
+        "title": "Accept all changes in file",
+        "category": "NanoClaw",
+        "enablement": "nanoclaw.reviewing"
+      },
+      {
+        "command": "nanoclaw.review.rejectAll",
+        "title": "Reject all changes in file",
+        "category": "NanoClaw",
+        "enablement": "nanoclaw.reviewing"
+      },
+      {
+        "command": "nanoclaw.review.next",
+        "title": "Next change",
+        "category": "NanoClaw",
+        "enablement": "nanoclaw.reviewing"
+      }
+    ],
+    "configuration": {
+      "title": "NanoClaw",
+      "properties": {
+        "nanoclaw.serverUrl": {
+          "scope": "machine",
+          "type": "string",
+          "default": "",
+          "description": "Central NanoClaw origin, e.g. https://<app>.azurewebsites.net"
+        },
+        "nanoclaw.signIn": {
+          "scope": "machine",
+          "type": "string",
+          "enum": ["microsoft", "network"],
+          "enumDescriptions": [
+            "Sign in with Microsoft (Entra). For installs behind App Service authentication.",
+            "No sign-in: central knows you by your network identity (Tailscale, or an identity-aware proxy)."
+          ],
+          "default": "microsoft",
+          "description": "How this machine proves who you are to central. Central supplies it; set here to override."
+        },
+        "nanoclaw.appIdUri": {
+          "scope": "machine",
+          "type": "string",
+          "default": "",
+          "description": "Application ID URI of the App Service's Entra registration, e.g. api://<client-id>. The token's audience. Central supplies it; set here to override."
+        },
+        "nanoclaw.tenantId": {
+          "scope": "machine",
+          "type": "string",
+          "default": "",
+          "description": "Entra tenant ID (workforce tenant). Central supplies it; set here to override."
+        },
+        "nanoclaw.clientId": {
+          "scope": "machine",
+          "type": "string",
+          "default": "",
+          "description": "Optional: your own native app registration to sign in with (VSCODE_CLIENT_ID). Leave empty to use VS Code's Microsoft app. Central supplies it; set here to override."
+        },
+        "nanoclaw.autoConnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Connect on startup when signed in."
+        },
+        "nanoclaw.slots": {
+          "scope": "machine",
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Project slots: maps a container path central declares (e.g. `/workspace/project`) to a local directory. A slot that is not bound here is refused."
+        },
+        "nanoclaw.mountAllowlist": {
+          "scope": "machine",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "markdownDescription": "Directories a slot may resolve into (symlinks followed). Empty = the folders open in this window."
+        },
+        "nanoclaw.containerRuntime": {
+          "scope": "machine",
+          "type": "string",
+          "enum": [
+            "auto",
+            "docker",
+            "podman"
+          ],
+          "default": "auto",
+          "markdownDescription": "Container runtime for sessions placed on this machine. `auto` tries `docker` then `podman`. Docker Desktop or a Podman machine both work; the relay runs inside the container, so no host listener or WSL remote is needed."
+        },
+        "nanoclaw.runtimePath": {
+          "scope": "machine",
+          "type": "string",
+          "default": "",
+          "description": "Optional: full path of the docker/podman CLI when it is not on PATH."
+        },
+        "nanoclaw.agentImage": {
+          "scope": "machine",
+          "type": "string",
+          "enum": [
+            "build",
+            "pull"
+          ],
+          "default": "build",
+          "enumDescriptions": [
+            "Build the agent image on this machine from the context central sends. No registry needed; the first build takes several minutes and fetches from Docker Hub, apt, npm and GitHub.",
+            "Pull a prebuilt agent image and retag it to the name central expects. Uses the reference below, or central's pin when that is empty. Nothing is built here."
+          ],
+          "markdownDescription": "How this machine obtains the agent image for sessions placed on it. `pull` requires the runtime to be logged in to the registry already (`docker login` / `podman login`); a pulled image is rejected if it bakes a different agent-runner than central expects. Applies only when central's image source is \"Machine decides\"; by default central has every runner build the image."
+        },
+        "nanoclaw.agentImageRef": {
+          "scope": "machine",
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Image reference to pull when `#nanoclaw.agentImage#` is `pull` — a corporate mirror or any registry this machine can reach, e.g. `myregistry.azurecr.io/nanoclaw/agent@sha256:…`. Pin by digest. Empty means: use the reference central is pinned to. Applies only when central's image source is \"Machine decides\"; by default central has every runner build the image."
+        },
+        "nanoclaw.allowUnlabeledAgentImage": {
+          "scope": "machine",
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Accept a pulled image that carries no agent-runner lock label (a `save`/`load` or third-party image). Off by default: without the label the image's runtime cannot be checked against what central expects."
+        },
+        "nanoclaw.workspaceMount": {
+          "scope": "machine",
+          "type": "string",
+          "enum": [
+            "workspace",
+            "off"
+          ],
+          "default": "workspace",
+          "enumDescriptions": [
+            "Bind the first open workspace folder to /workspace/project when central declares that slot (read/write).",
+            "Never bind the workspace automatically; a declared /workspace/project slot must be set in nanoclaw.slots or the session is refused."
+          ],
+          "markdownDescription": "How the developer's project reaches an agent placed on this machine. Central declares the slot `/workspace/project`; this machine decides which folder fills it. An explicit `nanoclaw.slots` entry for that path always wins."
+        },
+        "nanoclaw.workspaceExcludes": {
+          "scope": "machine",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "secrets",
+            "secret",
+            ".secrets",
+            ".env",
+            ".env.*",
+            "*.pem",
+            "*.key",
+            "*.pfx",
+            "*.p12",
+            "*.jks",
+            "*.keystore",
+            "id_rsa",
+            "id_rsa.*",
+            "id_ed25519",
+            "id_ed25519.*",
+            ".ssh",
+            ".aws",
+            ".azure",
+            ".gnupg",
+            ".npmrc",
+            ".pypirc",
+            ".netrc",
+            ".git-credentials",
+            "credentials.json",
+            "service-account*.json",
+            "terraform.tfstate",
+            "terraform.tfstate.*"
+          ],
+          "markdownDescription": "Secret-like paths hidden from the agent inside a bound slot (an empty read-only mount covers each match). Patterns are relative to the slot root; a pattern without `/` matches a file or folder name anywhere; `*`, `?` and `**` are supported. Central may add patterns per placement; the union applies. Only paths that exist when the container is created are covered."
+        },
+        "nanoclaw.autoUpdate": {
+          "scope": "machine",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "auto",
+            "off"
+          ],
+          "default": "prompt",
+          "enumDescriptions": [
+            "Ask before installing a newer runner build that central serves.",
+            "Install a newer build as soon as central announces it, then offer a reload.",
+            "Never update from central."
+          ],
+          "markdownDescription": "How to handle a newer runner build that NanoClaw central serves. The package is downloaded over the same signed-in connection, its hash checked against what central announced, and installed through VS Code."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nanoclaw",
+          "title": "NanoClaw",
+          "icon": "media/nanoclaw.svg"
+        }
+      ]
+    },
+    "views": {
+      "nanoclaw": [
+        {
+          "type": "webview",
+          "id": "nanoclaw.chat",
+          "name": "NanoClaw",
+          "contextualTitle": "NanoClaw"
+        }
+      ]
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "nanoclaw.sendSelection",
+          "group": "navigation@9",
+          "when": "nanoclaw.connected"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "nanoclaw.review.accept",
+        "key": "ctrl+alt+enter",
+        "mac": "cmd+alt+enter",
+        "when": "editorTextFocus && nanoclaw.reviewing"
+      },
+      {
+        "command": "nanoclaw.review.reject",
+        "key": "ctrl+alt+backspace",
+        "mac": "cmd+alt+backspace",
+        "when": "editorTextFocus && nanoclaw.reviewing"
+      },
+      {
+        "command": "nanoclaw.review.next",
+        "key": "alt+f5",
+        "mac": "alt+f5",
+        "when": "editorTextFocus && nanoclaw.reviewing"
+      }
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --out nanoclaw-$npm_package_version.vsix",
+    "harness": "npm run build:core && node harness/runner-harness.mjs",
+    "build:core": "tsc -p tsconfig.json",
+    "harness:editor": "npm run build && npm run build:core && harness/editor-docker.sh"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.90.0",
+    "@types/ws": "^8.5.13",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.2.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "extensionKind": [
+    "workspace",
+    "ui"
+  ]
+}

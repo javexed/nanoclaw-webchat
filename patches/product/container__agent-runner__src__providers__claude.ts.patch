@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/providers/claude.ts b/container/agent-runner/src/providers/claude.ts
-index a75b800a..839d16ac 100644
+index f457394b..210c4c6c 100644
 --- a/container/agent-runner/src/providers/claude.ts
 +++ b/container/agent-runner/src/providers/claude.ts
 @@ -115,6 +115,27 @@ class MessageStream {
@@ -100,10 +100,10 @@ index a75b800a..839d16ac 100644
      this.mcp = configuration.mcpServers as ReturnType<typeof resolveClaudeMcpServers>;
      this.additionalDirectories = options.additionalDirectories;
      this.inference = configuration.inference as ReturnType<typeof resolveClaudeInference>;
-@@ -259,8 +335,16 @@ export class ClaudeProvider implements AgentProvider {
-         additionalDirectories: this.additionalDirectories,
-         resume: input.continuation,
-         pathToClaudeCodeExecutable: '/pnpm/claude',
+@@ -264,8 +340,16 @@ export class ClaudeProvider implements AgentProvider {
+         // session's first request and resends that record on every resume, so
+         // a resumed agent would keep its old name and destination list until
+         // compaction. snapshot: false renders it fresh each time.
 +        // Lenient prompt (weak/local models): drop the heavy `claude_code`
 +        // preset and use the persona/destinations addendum as the entire system
 +        // prompt. The full preset's agentic tool-protocol scaffolding overwhelms
@@ -111,23 +111,23 @@ index a75b800a..839d16ac 100644
 +        // the plain instructions keep identity + routing without the bloat. The
 +        // host sets lenientPrompt for ollama-backed agents (mirrors lenientOutput).
          systemPrompt: instructions
--          ? { type: 'preset' as const, preset: 'claude_code' as const, append: instructions }
+-          ? { type: 'preset' as const, preset: 'claude_code' as const, append: instructions, snapshot: false }
 +          ? this.lenientPrompt
 +            ? instructions
-+            : { type: 'preset' as const, preset: 'claude_code' as const, append: instructions }
++            : { type: 'preset' as const, preset: 'claude_code' as const, append: instructions, snapshot: false }
            : undefined,
          allowedTools: [...this.mcp.allowedTools],
          disallowedTools: [...this.executionPolicy.disallowedTools],
-@@ -270,7 +354,7 @@ export class ClaudeProvider implements AgentProvider {
+@@ -275,7 +359,7 @@ export class ClaudeProvider implements AgentProvider {
          effort: this.inference.effort as any,
          permissionMode: this.executionPolicy.permissionMode,
          allowDangerouslySkipPermissions: this.executionPolicy.allowDangerouslySkipPermissions,
 -        settingSources: ['project', 'user', 'local'],
 +        settingSources: this.settingSources,
-         // Only sent when enabled, so an install that never turns it on passes
-         // exactly the options it always did. `fastMode` is a Settings member
-         // rather than a query option, which is why it rides `settings`.
-@@ -318,9 +402,34 @@ export class ClaudeProvider implements AgentProvider {
+         // Flag-level settings: `fastMode` only when the install turns it on,
+         // then the execution policy's fixed keys, spread last so per-group
+         // input can never override them. Both are Settings members rather
+@@ -324,9 +408,34 @@ export class ClaudeProvider implements AgentProvider {
            // result reports. Blocks split across ASSISTANT MESSAGES (a tool
            // call between them) remain unparseable mid-turn by design; the
            // poll-loop's midTurnSent===0 fallback and wrap-nudge cover that.

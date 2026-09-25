@@ -1,0 +1,35 @@
+diff --git a/src/config.ts b/src/config.ts
+index 812e2e96..fe4e2220 100644
+--- a/src/config.ts
++++ b/src/config.ts
+@@ -18,6 +18,7 @@ const envConfig = readEnvFile([
+   'CONTAINER_PIDS_LIMIT',
+   'NANOCLAW_EGRESS_LOCKDOWN',
+   'NANOCLAW_EGRESS_NETWORK',
++  'NANOCLAW_EGRESS_EXTRA_DEFAULTS',
+   'WEBHOOK_PORT',
+ ]);
+ 
+@@ -104,8 +105,21 @@ export const CONTAINER_PIDS_LIMIT = process.env.CONTAINER_PIDS_LIMIT ?? envConfi
+ // Egress lockdown — force all agent traffic through the selected gateway on a
+ // no-internet Docker network. Off by default; consumed by src/egress-lockdown.ts.
+ export const EGRESS_LOCKDOWN = (process.env.NANOCLAW_EGRESS_LOCKDOWN || envConfig.NANOCLAW_EGRESS_LOCKDOWN) === 'true';
++// Per install by default: installs sharing one Docker daemon must not share a
++// lockdown network (each runs its own egress filter on its bridge address).
+ export const EGRESS_NETWORK =
+-  process.env.NANOCLAW_EGRESS_NETWORK || envConfig.NANOCLAW_EGRESS_NETWORK || 'nanoclaw-egress';
++  process.env.NANOCLAW_EGRESS_NETWORK || envConfig.NANOCLAW_EGRESS_NETWORK || `nanoclaw-egress-${INSTALL_SLUG}`;
++// Install-local additions to the built-in egress allowlist defaults (comma-
++// separated host patterns) — e.g. an organisation's own package feeds, kept out
++// of the repository. Consumed by src/channels/webchat/egress-policy.ts.
++export const EGRESS_EXTRA_DEFAULTS = (
++  process.env.NANOCLAW_EGRESS_EXTRA_DEFAULTS ||
++  envConfig.NANOCLAW_EGRESS_EXTRA_DEFAULTS ||
++  ''
++)
++  .split(',')
++  .map((s) => s.trim())
++  .filter(Boolean);
+ 
+ // Resolve when the listener starts so a late process override still wins.
+ export function getWebhookPort(): number {

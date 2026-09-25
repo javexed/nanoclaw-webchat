@@ -1,0 +1,54 @@
+diff --git a/src/modules/approvals/primitive.test.ts b/src/modules/approvals/primitive.test.ts
+index b6051f64..a5d770ee 100644
+--- a/src/modules/approvals/primitive.test.ts
++++ b/src/modules/approvals/primitive.test.ts
+@@ -153,4 +153,49 @@ describe('requestApproval delivery failure', () => {
+     expect(await getPendingApprovalsByAction('test_action')).toHaveLength(1);
+     expect(vi.mocked(writeSessionMessage)).not.toHaveBeenCalled();
+   });
++
++  it('leaves approver_user_id null when no policy named an approver', async () => {
++    // The column makes resolution EXCLUSIVE. Recording targets[0] here turned
++    // every fan-out into an assignment to whoever pickApprover listed first,
++    // leaving the rest of the recipients with buttons that did nothing.
++    setDeliveryAdapter({
++      async deliver() {
++        return 'pm-2';
++      },
++    });
++
++    await requestApproval({
++      session,
++      agentName: 'Agent',
++      action: 'unassigned_action',
++      payload: {},
++      title: 'Unassigned',
++      question: 'Approve the thing?',
++    });
++
++    const [row] = await getPendingApprovalsByAction('unassigned_action');
++    expect(row).toBeDefined();
++    expect(row.approver_user_id).toBeNull();
++  });
++
++  it('records approver_user_id when a policy DOES name one', async () => {
++    setDeliveryAdapter({
++      async deliver() {
++        return 'pm-3';
++      },
++    });
++
++    await requestApproval({
++      session,
++      agentName: 'Agent',
++      action: 'assigned_action',
++      payload: {},
++      title: 'Assigned',
++      question: 'Approve the thing?',
++      approverUserId: 'slack:admin-1',
++    });
++
++    const [row] = await getPendingApprovalsByAction('assigned_action');
++    expect(row.approver_user_id).toBe('slack:admin-1');
++  });
+ });

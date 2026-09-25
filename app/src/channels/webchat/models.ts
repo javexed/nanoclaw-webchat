@@ -17,6 +17,7 @@
 import fs from 'fs';
 import path from 'path';
 import dns from 'node:dns/promises';
+import net from 'node:net';
 
 import { DATA_DIR } from '../../config.js';
 import { ensureContainerConfig, getContainerConfig, updateContainerConfigScalars } from '../../db/container-configs.js';
@@ -111,7 +112,46 @@ const PRIVATE_RANGES: IpRange[] = [
   { cidr: 'fc00::/7', test: (ip) => /^f[cd]/.test(ip.toLowerCase()) },
 ];
 
+/** The eight 16-bit groups of an IPv6 address, or null if it isn't one. */
+function ipv6Groups(ip: string): number[] | null {
+  if (net.isIPv6(ip) === false) return null;
+  let s = ip.toLowerCase().split('%')[0];
+  const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(s);
+  if (dotted) {
+    const o = dotted[1].split('.').map(Number);
+    s = s.slice(0, -dotted[1].length) + `${((o[0] << 8) | o[1]).toString(16)}:${((o[2] << 8) | o[3]).toString(16)}`;
+  }
+  const [head, tail] = s.split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail !== undefined && tail ? tail.split(':') : [];
+  const fill = tail === undefined ? [] : new Array<string>(8 - h.length - t.length).fill('0');
+  const groups = [...h, ...fill, ...t].map((g) => parseInt(g, 16));
+  return groups.length === 8 && groups.every((g) => g >= 0 && g <= 0xffff) ? groups : null;
+}
+
+/**
+ * The IPv4 address an IPv6 one carries, if any: IPv4-mapped (::ffff:a.b.c.d),
+ * IPv4-compatible (::a.b.c.d), NAT64 (64:ff9b::a.b.c.d) and 6to4
+ * (2002:aabb:ccdd::). Each reaches the IPv4 host, so each is judged as it.
+ */
+function embeddedIpv4(ip: string): string | null {
+  const g = ipv6Groups(ip);
+  if (!g) return null;
+  const v4 = (hi: number, lo: number) => `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`;
+  const zero = (from: number, to: number) => g.slice(from, to).every((x) => x === 0);
+  if (zero(0, 5) && g[5] === 0xffff) return v4(g[6], g[7]);
+  if (zero(0, 6) && (g[6] !== 0 || g[7] > 1)) return v4(g[6], g[7]);
+  if (g[0] === 0x64 && g[1] === 0xff9b && zero(2, 6)) return v4(g[6], g[7]);
+  if (g[0] === 0x2002) return v4(g[1], g[2]);
+  return null;
+}
+
 function isBlockedIp(ip: string): { blocked: boolean; reason?: string } {
+  const inner = embeddedIpv4(ip);
+  if (inner) {
+    const check = isBlockedIp(inner);
+    return check.blocked ? { blocked: true, reason: `${check.reason} (inside ${ip})` } : check;
+  }
   for (const r of ALWAYS_BLOCKED_RANGES) {
     if (r.test(ip)) return { blocked: true, reason: `IP ${ip} is in always-blocked range ${r.cidr}` };
   }
@@ -147,7 +187,14 @@ export async function assertSafeOutboundUrl(rawUrl: string): Promise<void> {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
     throw new Error(`Only http/https URLs allowed; got ${url.protocol}`);
   }
-  const host = url.hostname.toLowerCase();
+  // An IPv6 literal keeps its brackets in URL.hostname, and dns.lookup can't
+  // resolve the bracketed form — strip them so the literal is checked.
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (net.isIP(host)) {
+    const check = isBlockedIp(host);
+    if (check.blocked) throw new Error(check.reason ?? `IP ${host} blocked`);
+    return;
+  }
   for (const suf of BLOCKED_HOSTNAME_SUFFIXES) {
     if (host === suf || host.endsWith('.' + suf)) {
       throw new Error(`Blocked hostname: ${host}`);
@@ -157,10 +204,9 @@ export async function assertSafeOutboundUrl(rawUrl: string): Promise<void> {
   let addrs: Array<{ address: string; family: number }>;
   try {
     addrs = await dns.lookup(host, { all: true });
-  } catch (_err) {
-    // Let the caller's fetch handle DNS failure with its own error message.
-    // Don't block on resolution failure — that's not a security issue.
-    return;
+  } catch (err) {
+    // Fail closed: a name this resolver can't vouch for is not fetched.
+    throw new Error(`Could not resolve ${host}`, { cause: err });
   }
   for (const a of addrs) {
     const check = isBlockedIp(a.address);

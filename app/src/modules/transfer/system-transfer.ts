@@ -26,7 +26,7 @@ import Database from 'better-sqlite3';
 import { DATA_DIR, GROUPS_DIR } from '../../config.js';
 import { getDb } from '../../db/connection.js';
 import { log } from '../../log.js';
-import { CONVERSATION_DIRS, EXCLUDE_ALWAYS } from './agent-transfer.js';
+import { CONVERSATION_DIRS, EXCLUDE_ALWAYS, WORKSPACE_SECRET_FILES } from './agent-transfer.js';
 
 export const SYSTEM_FORMAT = 'nanoclaw-system-export';
 export const SYSTEM_VERSION = 1;
@@ -34,16 +34,26 @@ export const SYSTEM_VERSION = 1;
 /** data/ subtrees that belong in a system bundle. Everything else stays home. */
 export const DATA_TREES = ['v2-sessions', 'user-skills', 'skill-drafts', 'learning', 'litellm', 'webchat'];
 
+/**
+ * Secrets a system bundle carries only when the operator opts in: LiteLLM's
+ * cloud API keys and master key (data/litellm), agents' deploy keys, and MCP
+ * servers' host-side tokens (webchat_mcp_servers.auth). Without them a restore
+ * keeps the running install's own copies (see carrySecretsForward).
+ */
+const LITELLM_SECRET_FILES = ['env', 'master.key'];
+
 export interface SystemExportManifest {
   format: typeof SYSTEM_FORMAT;
   version: number;
   createdAt: string;
   lean: boolean;
+  /** Secrets travelled. Absent in older bundles, which always carried them. */
+  secretsIncluded?: boolean;
   counts: { agents: number; rooms: number; models: number; mcpServers: number; skillDrafts: number };
   schemaVersion: number;
 }
 
-export async function buildSystemManifest(lean: boolean): Promise<SystemExportManifest> {
+export async function buildSystemManifest(lean: boolean, includeSecrets = false): Promise<SystemExportManifest> {
   const db = getDb();
   const count = async (sql: string): Promise<number> => {
     try {
@@ -57,6 +67,7 @@ export async function buildSystemManifest(lean: boolean): Promise<SystemExportMa
     version: SYSTEM_VERSION,
     createdAt: new Date().toISOString(),
     lean,
+    secretsIncluded: includeSecrets,
     counts: {
       agents: await count('SELECT COUNT(*) AS n FROM agent_groups'),
       rooms: await count(`SELECT COUNT(*) AS n FROM messaging_groups WHERE channel_type = 'webchat'`),
@@ -69,10 +80,13 @@ export async function buildSystemManifest(lean: boolean): Promise<SystemExportMa
 }
 
 /** Stage manifest + consistent DB snapshot; returns the stage dir. */
-export async function stageSystemExport(lean: boolean): Promise<string> {
+export async function stageSystemExport(lean: boolean, includeSecrets = false): Promise<string> {
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-sysexport-'));
   fs.mkdirSync(path.join(stage, 'db'), { recursive: true });
-  fs.writeFileSync(path.join(stage, 'manifest.json'), JSON.stringify(buildSystemManifest(lean), null, 2));
+  fs.writeFileSync(
+    path.join(stage, 'manifest.json'),
+    JSON.stringify(await buildSystemManifest(lean, includeSecrets), null, 2),
+  );
   // backup() is better-sqlite3's API, not the portable driver's — a system
   // export IS a sqlite file, so reaching for the raw handle here is honest
   // (the sqliteOnly migrations make the same call). Fail loudly on any other
@@ -82,12 +96,26 @@ export async function stageSystemExport(lean: boolean): Promise<string> {
   ).rawDatabase?.();
   if (!raw) throw new Error('system export requires the sqlite driver');
   await raw.backup(path.join(stage, 'db', 'v2.db'));
+  if (!includeSecrets) {
+    const snap = new Database(path.join(stage, 'db', 'v2.db'));
+    try {
+      snap.exec('UPDATE webchat_mcp_servers SET auth = NULL');
+    } catch {
+      /* no MCP registry on this install */
+    } finally {
+      snap.close();
+    }
+  }
   return stage;
 }
 
-export function systemTarArgs(stage: string, lean: boolean): string[] {
+export function systemTarArgs(stage: string, lean: boolean, includeSecrets = false): string[] {
   const args = ['-cz', '--warning=no-file-changed', '--ignore-failed-read'];
   for (const e of EXCLUDE_ALWAYS) args.push(`--exclude=${e}`);
+  if (!includeSecrets) {
+    for (const e of WORKSPACE_SECRET_FILES) args.push(`--exclude=${e}`);
+    for (const f of LITELLM_SECRET_FILES) args.push(`--exclude=litellm/${f}`);
+  }
   if (lean) {
     for (const d of CONVERSATION_DIRS) args.push(`--exclude=.claude-shared/${d}`);
     args.push('--exclude=v2-sessions/*/sess-*');
@@ -160,13 +188,66 @@ export async function previewSystemImport(bundleDir: string): Promise<SystemPrev
   };
 }
 
+function readManifest(bundleDir: string): SystemExportManifest | null {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(bundleDir, 'manifest.json'), 'utf8')) as SystemExportManifest;
+  } catch {
+    return null;
+  }
+}
+
+function copySecret(src: string, dest: string): void {
+  if (!fs.existsSync(src) || fs.existsSync(dest) || !fs.existsSync(path.dirname(dest))) return;
+  if (!fs.lstatSync(src).isFile()) return;
+  fs.copyFileSync(src, dest);
+  fs.chmodSync(dest, 0o600);
+}
+
+/**
+ * A bundle made without secrets would otherwise restore an install with none:
+ * the swap moved the running install's trees aside wholesale. Copy its secrets
+ * from those pre-restore copies into the restored state, never over anything
+ * the bundle itself brought.
+ */
+export function carrySecretsForward(ts: string, dataDir = DATA_DIR, groupsDir = GROUPS_DIR): void {
+  const oldLitellm = path.join(dataDir, `litellm.pre-restore-${ts}`);
+  for (const f of LITELLM_SECRET_FILES) copySecret(path.join(oldLitellm, f), path.join(dataDir, 'litellm', f));
+
+  const oldGroups = `${groupsDir}.pre-restore-${ts}`;
+  if (fs.existsSync(oldGroups)) {
+    for (const folder of fs.readdirSync(oldGroups)) {
+      const dir = path.join(oldGroups, folder);
+      if (!fs.lstatSync(dir).isDirectory()) continue;
+      for (const f of fs.readdirSync(dir)) {
+        if (f.startsWith('deploy_key_')) copySecret(path.join(dir, f), path.join(groupsDir, folder, f));
+      }
+    }
+  }
+
+  const oldDb = path.join(dataDir, `v2.db.pre-restore-${ts}`);
+  if (fs.existsSync(oldDb)) {
+    const db = new Database(path.join(dataDir, 'v2.db'));
+    try {
+      db.prepare('ATTACH DATABASE ? AS prev').run(oldDb);
+      db.exec(
+        `UPDATE webchat_mcp_servers SET auth = (SELECT p.auth FROM prev.webchat_mcp_servers p WHERE p.id = webchat_mcp_servers.id)
+         WHERE auth IS NULL`,
+      );
+    } catch (err) {
+      log.warn('System restore: could not carry MCP server tokens forward', { err: String(err) });
+    } finally {
+      db.close();
+    }
+  }
+}
+
 /**
  * The point of no return. Kills agent containers, moves current state aside
  * (kept as *.pre-restore-<ts> for manual rollback), moves the bundle's state
  * in — then EXITS so the service manager boots the host on the restored
  * data. The caller must have responded to the client before invoking.
  */
-export function executeSystemRestore(bundleDir: string, closeCentralDb: () => void): void {
+export function executeSystemRestore(bundleDir: string, closeCentralDb: () => void | Promise<void>): void {
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   // 1. Containers down — they hold session DB mounts inside the trees we swap.
   try {
@@ -176,9 +257,11 @@ export function executeSystemRestore(bundleDir: string, closeCentralDb: () => vo
     /* containers die with their mounts regardless */
   }
 
-  setTimeout(() => {
+  setTimeout(() => void applyRestore(), 800);
+  // The DB must be closed before its files are moved aside, not merely asked to.
+  async function applyRestore(): Promise<void> {
     try {
-      closeCentralDb();
+      await closeCentralDb();
       // 2. Central DB (+ sidecars) aside, bundle DB in.
       for (const suffix of ['', '-wal', '-shm']) {
         const p = path.join(DATA_DIR, `v2.db${suffix}`);
@@ -196,6 +279,7 @@ export function executeSystemRestore(bundleDir: string, closeCentralDb: () => vo
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.renameSync(src, dest);
       }
+      if (readManifest(bundleDir)?.secretsIncluded === false) carrySecretsForward(ts);
       log.info('System restore applied — exiting for a clean boot on restored data', { ts });
     } catch (err) {
       log.error('System restore failed mid-swap — pre-restore copies retained', { ts, err: String(err) });
@@ -203,5 +287,5 @@ export function executeSystemRestore(bundleDir: string, closeCentralDb: () => vo
       // Clean exit either way: a half-swapped process must not keep serving.
       process.exit(0);
     }
-  }, 800);
+  }
 }

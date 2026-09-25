@@ -582,16 +582,17 @@ export async function inspectAndConfirmImport(importBody?: any, displayName?: an
   });
 }
 
-export async function confirmWithToggle({ title, toggleLabel, note, confirmLabel }: any) {
+export async function confirmWithToggle({ title, toggleLabel, toggleLabels, note, confirmLabel }: any) {
   const el = document.createElement('div');
-  const s = reactive({ toggleLabel, note, el: null as HTMLInputElement | null });
+  const labels: string[] = toggleLabels ?? [toggleLabel];
+  const s = reactive({ labels, note, els: [] as (HTMLInputElement | null)[] });
   const app = createApp(ConfirmToggle);
   app.provide('confirmToggle', s);
   app.mount(el);
   const ok = await showConfirmModal({ title, body: el, confirmLabel });
-  const checked = !!s.el?.checked; // read before unmounting — the node goes with it
+  const checks = labels.map((_, i) => !!s.els[i]?.checked); // read before unmounting — the nodes go with it
   app.unmount();
-  return { ok, checked };
+  return { ok, checked: checks[0], checks };
 }
 
 // ── Panel wiring ─────────────────────────────────────────────────────────────

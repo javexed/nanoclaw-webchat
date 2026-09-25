@@ -85,6 +85,13 @@ export function effectiveTimeoutMs(caseMs: number | undefined, modelMs: number |
  */
 const DEFAULT_SETTLE_MS = 10_000;
 
+/**
+ * Budget for one HTTP call (model lookup, between-case clear). These are quick
+ * reads and one write; an install that stops answering must fail the case, not
+ * hang the suite with no timer running.
+ */
+const HTTP_TIMEOUT_MS = 30_000;
+
 interface CaseResult {
   name: string;
   passed: boolean;
@@ -104,6 +111,8 @@ interface StatusFrame {
   detail?: string | null;
   agent_name?: string | null;
   error?: string;
+  /** Present on a `message` frame echoing the sender's own prompt. */
+  client_id?: string;
 }
 
 function loadCases(dir: string, only?: string): EvalCase[] {
@@ -190,9 +199,10 @@ async function getJson<T>(o: RunOpts, pathname: string): Promise<T | null> {
   if (o.token) headers.Authorization = `Bearer ${o.token}`;
   return new Promise((resolve) => {
     const lib = url.startsWith('https:') ? https : http;
-    const req = lib.request(url, { method: 'GET', headers }, (res) => {
+    const req = lib.request(url, { method: 'GET', headers, signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) }, (res) => {
       let raw = '';
       res.on('data', (d) => (raw += d));
+      res.on('error', () => resolve(null));
       res.on('end', () => {
         if (res.statusCode !== 200) return resolve(null);
         try {
@@ -249,9 +259,10 @@ async function clearRoomSessions(o: RunOpts, room: string): Promise<number> {
 
   return new Promise((resolve, reject) => {
     const lib = url.startsWith('https:') ? https : http;
-    const req = lib.request(url, { method: 'POST', headers }, (res) => {
+    const req = lib.request(url, { method: 'POST', headers, signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) }, (res) => {
       let raw = '';
       res.on('data', (d) => (raw += d));
+      res.on('error', reject);
       res.on('end', () => {
         if (res.statusCode !== 200) {
           reject(new Error(`clear failed: HTTP ${res.statusCode} ${raw.slice(0, 200)}`));
@@ -279,6 +290,12 @@ function observeTurn(o: RunOpts, c: EvalCase): Promise<{ observed: ObservedCall[
     let sawStart = false;
     let settleTimer: NodeJS.Timeout | undefined;
     let done = false;
+    // Status frames carry no turn id, so a previous case's turn that is still
+    // winding down would be scored against this one. Nothing counts until the
+    // server echoes THIS prompt back (matched by client_id): the echo is sent
+    // once the message is routed, before the agent it wakes can emit anything.
+    const clientId = randomUUID();
+    let echoed = false;
 
     // `bearer.<token>` as a subprotocol, matching the PWA: it keeps the secret
     // out of the URL and therefore out of any proxy's access log.
@@ -307,7 +324,23 @@ function observeTurn(o: RunOpts, c: EvalCase): Promise<{ observed: ObservedCall[
       reject(err);
     };
 
-    const hardTimer = setTimeout(() => finish(true), effectiveTimeoutMs(c.timeoutMs, o.modelTimeoutMs));
+    // On timeout, stop the turn before leaving (the room's own "stop" control).
+    // Otherwise the agent keeps working and its frames land in the next case.
+    // Close once the frame is flushed, or after a short grace if it never is.
+    const stopThenFinish = (): void => {
+      if (done || ws.readyState !== WebSocket.OPEN) return finish(true);
+      const grace = setTimeout(() => finish(true), 2000);
+      const leave = (): void => {
+        clearTimeout(grace);
+        finish(true);
+      };
+      try {
+        ws.send(JSON.stringify({ type: 'interrupt', ...(c.agent ? { agent_name: c.agent } : {}) }), leave);
+      } catch {
+        leave();
+      }
+    };
+    const hardTimer = setTimeout(stopThenFinish, effectiveTimeoutMs(c.timeoutMs, o.modelTimeoutMs));
 
     const armSettle = (): void => {
       clearTimeout(settleTimer);
@@ -319,7 +352,7 @@ function observeTurn(o: RunOpts, c: EvalCase): Promise<{ observed: ObservedCall[
     ws.on('open', () => {
       ws.send(JSON.stringify({ type: 'auth' }));
       ws.send(JSON.stringify({ type: 'join', room_id: c.room }));
-      ws.send(JSON.stringify({ type: 'message', content: c.prompt, client_id: randomUUID() }));
+      ws.send(JSON.stringify({ type: 'message', content: c.prompt, client_id: clientId }));
     });
 
     ws.on('message', (raw) => {
@@ -336,7 +369,15 @@ function observeTurn(o: RunOpts, c: EvalCase): Promise<{ observed: ObservedCall[
         fail(new Error(f.error ?? 'websocket error frame'));
         return;
       }
+      if (f.type === 'message' && f.client_id === clientId) {
+        echoed = true;
+        return;
+      }
       if (f.type !== 'status') return;
+      if (!echoed) {
+        if (o.verbose) console.log(`      · (ignored, before this prompt) ${f.event} ${f.agent_name ?? ''}`.trimEnd());
+        return;
+      }
       // A case that fails for an invisible reason costs more than it saves.
       // `--verbose` prints the turn as it arrives, which is how the settle
       // window and the agent-name filter get diagnosed at all.
@@ -506,6 +547,16 @@ async function main(): Promise<void> {
 // the pure helpers does — must not start a suite. It did: the test passed
 // anyway, but only because vitest finished before main() got far enough to
 // matter, which is a flake rather than a pass.
-const invokedDirectly =
-  process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+//
+// Compared by real path: launched through a symlink (a linked checkout, a
+// /usr/local/bin shim), argv[1] names the link while import.meta.url names the
+// target, and a plain string compare exits 0 having run nothing.
+function sameFile(a: string, b: string): boolean {
+  try {
+    return fs.realpathSync(a) === fs.realpathSync(b);
+  } catch {
+    return path.resolve(a) === b;
+  }
+}
+const invokedDirectly = process.argv[1] !== undefined && sameFile(process.argv[1], fileURLToPath(import.meta.url));
 if (invokedDirectly) void main();

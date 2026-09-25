@@ -3,7 +3,8 @@
  *
  * The runner emits `route_learning_review` instead of running a review when a
  * shared session's `/learn` should bill the invoker. This handler makes the
- * enrollment/policy call and forwards the review as a `/learn-routed` message:
+ * enrollment/policy call and forwards the review as a `/learn-routed` message
+ * whose payload rides a host-only content field:
  *
  *   invoker has a connected credential → their per-member session (the
  *     container spawns under THEIR OneCLI identity — same predicate the
@@ -26,6 +27,13 @@ import { resolveSession, writeSessionMessage, writeOutboundDirect } from '../../
 import { wakeContainer } from '../../container-runner.js';
 import { log } from '../../log.js';
 import type { Session } from '../../types.js';
+
+/**
+ * Content field carrying a routed review's payload. Mirrors the runner's
+ * ROUTED_CONTENT_FIELD (container/agent-runner/src/learning-loop.ts); the two
+ * packages share no modules, so the tests on each side pin the name.
+ */
+export const ROUTED_CONTENT_FIELD = 'learning_route';
 
 function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -66,14 +74,14 @@ export async function handleRouteLearningReview(content: Record<string, unknown>
   // next to the routing decision, never throws out of the handler.
   const notice = (msg: string): void => {
     try {
-      writeOutboundDirect(agentGroupId, session.id, {
+      void writeOutboundDirect(agentGroupId, session.id, {
         id: generateId('learn-route-notice'),
         kind: 'chat',
         platformId: origin.platform_id ?? null,
         channelType: origin.channel_type ?? null,
         threadId: null,
         content: JSON.stringify({ text: msg }),
-      });
+      }).catch((err) => log.warn('Learn-route notice failed', { err: String(err) }));
     } catch {
       /* notice only */
     }
@@ -81,12 +89,9 @@ export async function handleRouteLearningReview(content: Record<string, unknown>
 
   /** Write `/learn-routed` into a session and wake it — the review runs there. */
   const forwardAsync = async (target: Session): Promise<void> => {
-    const payload = JSON.stringify({
-      text,
-      digest,
-      origin: { channel_type: origin.channel_type ?? null, platform_id: origin.platform_id ?? null },
-      requested_by: invoker,
-    });
+    // The payload rides a content field, not the chat text: the runner accepts
+    // a routed review only when this host-set field is present, so typing
+    // "/learn-routed …" in a room can't skip the gate above.
     await writeSessionMessage(agentGroupId, target.id, {
       id: generateId('learn-route'),
       kind: 'chat',
@@ -94,7 +99,15 @@ export async function handleRouteLearningReview(content: Record<string, unknown>
       platformId: origin.platform_id ?? null,
       channelType: origin.channel_type ?? null,
       threadId: null,
-      content: JSON.stringify({ text: `/learn-routed ${payload}` }),
+      content: JSON.stringify({
+        text: '/learn-routed',
+        [ROUTED_CONTENT_FIELD]: {
+          text,
+          digest,
+          origin: { channel_type: origin.channel_type ?? null, platform_id: origin.platform_id ?? null },
+          requested_by: invoker,
+        },
+      }),
     });
     log.info('route_learning_review: forwarded', {
       agentGroupId,

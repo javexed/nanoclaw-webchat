@@ -27,7 +27,6 @@ import { renderToolSecrets } from './agents.js';
 import { loadAuditLog } from './audit-log.js';
 import {
   renderAboutSettings,
-  renderAccessSettings,
   renderAuditSettings,
   renderBackupSettings,
   renderCredentialsSettings,
@@ -75,7 +74,6 @@ function openAdmin(): void {
     renderBackupSettings();
     void Promise.allSettled([
       renderSelfTest(),
-      renderAccessSettings(),
       renderToolSecrets(),
       renderAutoLearnSetting(),
       renderAuditSettings(),

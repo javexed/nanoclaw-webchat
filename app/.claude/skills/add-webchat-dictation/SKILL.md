@@ -26,9 +26,10 @@ Tailscale/remote access.
 
 ## Prerequisites
 
-1. **The webchat channel installed** (this repo's `channels-webchat`). The host
-   routes (`src/channels/webchat/stt.ts`) and the PWA mic ship with it; this
-   skill provisions the backend and flips the flag.
+1. **The webchat channel installed** (composed from nanoclaw-webchat `main` by
+   its root `install.sh`). The host routes (`src/channels/webchat/stt.ts`) and
+   the PWA mic ship with it; this skill provisions the backend and flips the
+   flag.
 2. **Docker** on the host — for the local backend only. Not needed for
    ElevenLabs or an external `--url` endpoint.
 

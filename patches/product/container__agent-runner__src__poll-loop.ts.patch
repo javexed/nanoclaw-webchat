@@ -328,7 +328,7 @@ index 7be3c182..e41b16b3 100644
  
 +/** Write a plain chat message to the batch's origin routing. */
 +async function writeUserText(routing: RoutingContext, text: string): Promise<void> {
-+  writeMessageOut({
++  await writeMessageOut({
 +    id: generateId(),
 +    kind: 'chat',
 +    platform_id: routing.platformId,
@@ -477,7 +477,7 @@ index 7be3c182..e41b16b3 100644
 +        const text = rateLimited
 +          ? `I've hit the API rate limit — it's temporary and resets on its own${resetDetail ? ` ${resetDetail}` : ''}. Send that again in a bit and I'll pick it up.`
 +          : "I've hit an API usage limit. You may have run out of credits on your Anthropic account — check console.anthropic.com/settings/billing.";
-+        writeMessageOut({
++        await writeMessageOut({
 +          id: generateId(),
 +          kind: 'chat',
 +          platform_id: routing.platformId,
@@ -691,7 +691,7 @@ index 7be3c182..e41b16b3 100644
 +  const lenientTarget = triggerOrigin ?? primaryOrigin;
 +  if (hasUnwrapped && lenient && !options?.suppressDelivery && !routing.taskRun && lenientTarget) {
 +    log(`Lenient output: no <message> envelope — delivering prose to origin "${lenientTarget.name}"`);
-+    sendToDestination(lenientTarget, scratchpad, routing);
++    await sendToDestination(lenientTarget, scratchpad, routing);
 +    sent++;
 +    hasUnwrapped = false;
 +  }

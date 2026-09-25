@@ -18,15 +18,17 @@ import { deleteSessionDbState, findSessionsByAgentGroup, findSessionsByMessaging
 
 const now = () => new Date().toISOString();
 
-function seed(opts: { sessionsPerRoom?: number } = {}): { agentGroupId: string; messagingGroupId: string } {
-  createAgentGroup({
+async function seed(
+  opts: { sessionsPerRoom?: number } = {},
+): Promise<{ agentGroupId: string; messagingGroupId: string }> {
+  await createAgentGroup({
     id: 'ag-1',
     name: 'Test Agent',
     folder: 'test-agent',
     agent_provider: null,
     created_at: now(),
   });
-  createMessagingGroup({
+  await createMessagingGroup({
     id: 'mg-1',
     channel_type: 'webchat',
     platform_id: 'room-1',
@@ -37,7 +39,7 @@ function seed(opts: { sessionsPerRoom?: number } = {}): { agentGroupId: string; 
   });
   const count = opts.sessionsPerRoom ?? 1;
   for (let i = 1; i <= count; i++) {
-    createSession({
+    await createSession({
       id: `sess-${i}`,
       agent_group_id: 'ag-1',
       messaging_group_id: 'mg-1',
@@ -63,7 +65,7 @@ afterEach(async () => {
 
 describe('findSessionsByMessagingGroup / findSessionsByAgentGroup', () => {
   it('returns every session linked to the messaging group', async () => {
-    seed({ sessionsPerRoom: 3 });
+    await seed({ sessionsPerRoom: 3 });
     const targets = await findSessionsByMessagingGroup('mg-1');
     expect(targets).toHaveLength(3);
     expect(targets.every((t) => t.agentGroupId === 'ag-1')).toBe(true);
@@ -71,7 +73,7 @@ describe('findSessionsByMessagingGroup / findSessionsByAgentGroup', () => {
   });
 
   it('returns every session linked to the agent group across rooms', async () => {
-    seed({ sessionsPerRoom: 1 });
+    await seed({ sessionsPerRoom: 1 });
     await createMessagingGroup({
       id: 'mg-2',
       channel_type: 'webchat',
@@ -104,13 +106,13 @@ describe('findSessionsByMessagingGroup / findSessionsByAgentGroup', () => {
 
 describe('deleteSessionDbState', () => {
   it('drops the session row', async () => {
-    seed();
+    await seed();
     await deleteSessionDbState('sess-1');
     expect(await getSession('sess-1')).toBeUndefined();
   });
 
   it('drops pending_questions and pending_approvals that FK to the session', async () => {
-    seed();
+    await seed();
     await createPendingQuestion({
       question_id: 'q-1',
       session_id: 'sess-1',
@@ -153,12 +155,12 @@ describe('FK behavior — the bug this primitive prevents', () => {
   });
 
   it('deleting an agent_group with an active session throws FOREIGN KEY', async () => {
-    seed();
+    await seed();
     await expect(deleteAgentGroup('ag-1')).rejects.toThrow(/FOREIGN KEY/);
   });
 
   it('the teardown + parent-delete sequence inside a transaction succeeds', async () => {
-    const { messagingGroupId } = seed({ sessionsPerRoom: 2 });
+    const { messagingGroupId } = await seed({ sessionsPerRoom: 2 });
     const targets = await findSessionsByMessagingGroup(messagingGroupId);
     expect(targets).toHaveLength(2);
 
@@ -177,7 +179,7 @@ describe('FK behavior — the bug this primitive prevents', () => {
   });
 
   it('a failing parent-delete inside a transaction rolls back the session teardown', async () => {
-    seed();
+    await seed();
     // Simulate a multi-step delete where the final step fails AFTER the
     // session was torn down. The transaction must roll back both, leaving
     // the session intact for a retry — no half-gutted state.

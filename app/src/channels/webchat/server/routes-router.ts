@@ -4,6 +4,7 @@
 
 import { json, readJsonBody } from './http.js';
 import { createWebchatModel, deleteWebchatModel, getAgentsAssignedToModel, listWebchatModels } from '../db.js';
+import { forgetModelHosts } from '../egress-policy.js';
 import {
   RoutesUpdate,
   addRouter,
@@ -69,6 +70,7 @@ export async function syncAutoRouterSelectable(live: boolean): Promise<void> {
         credential_ref: null,
         created_at: Date.now(),
       });
+      forgetModelHosts();
     }
   } else if (existing) {
     await deleteWebchatModel(existing.id);
@@ -136,6 +138,7 @@ export async function rRouterRoutersPost(ctx: RouteCtx, _m: RegExpMatchArray): P
         credential_ref: null,
         created_at: Date.now(),
       });
+      forgetModelHosts();
     }
     return json(res, 200, { ok: true, routers: listRouters(next), router: name });
   } catch (err) {

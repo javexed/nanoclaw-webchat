@@ -164,7 +164,7 @@ export const draftSkill: McpToolDefinition = {
       log(`draft_skill: "${name}" collides with an existing skill — treating as a patch`);
     }
 
-    writeMessageOut({
+    await writeMessageOut({
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       kind: 'system',
       content: JSON.stringify({

@@ -9,6 +9,8 @@ Capture at a consistent width (≈1280px), dark theme reads best.
 |------|-------|
 | `agent-settings.png` | The redesigned agent panel — Settings / Instructions sub-tabs, status pills, model picker, shared MCP/Rooms attach accordions. |
 | `routing.png` | The Auto routing console — Rules / Models / Logs sub-tabs, the classify test bench, and capability routes bound to a model. |
+| `permissions.png` | The **Permissions** view — a user with roles. |
+| `wiring.png` | The **Wiring** matrix (rooms × agents). |
 
 **Still to capture** (need a *populated* demo install — several agents, rooms, a DM, a pending approval):
 
@@ -18,8 +20,6 @@ Capture at a consistent width (≈1280px), dark theme reads best.
 | `dm.png` | A per-agent DM conversation. |
 | `models.png` | The **Models** tab with a few registered models + a per-agent assignment. |
 | `approvals.png` | An **approval card** in a room (approve/reject buttons). |
-| `permissions.png` | The **Permissions** view — a user with roles. |
-| `wiring.png` | The **Wiring** matrix (rooms × agents). |
 
 Tips:
 - Use placeholder/non-sensitive room and agent names.

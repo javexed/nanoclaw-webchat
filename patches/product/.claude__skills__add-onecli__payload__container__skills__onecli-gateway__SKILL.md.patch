@@ -1,0 +1,82 @@
+diff --git a/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md b/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
+index 2e77d450..ebcc2178 100644
+--- a/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
++++ b/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
+@@ -6,7 +6,8 @@ description: >-
+   read emails, check calendar, access GitHub repos, create issues, check
+   Stripe payments, or interact with ANY external service or API. Do NOT
+   use browser extensions or OAuth CLI tools. Make HTTP requests directly;
+-  the gateway injects credentials automatically.
++  the gateway injects credentials automatically. Also covers WHERE a
++  credential belongs when one is missing or a user offers you a key.
+ compatibility: Requires HTTPS_PROXY set in environment (automatic when launched via `onecli run`)
+ metadata:
+   author: onecli
+@@ -70,14 +71,65 @@ OneCLI dashboard and connect the service there.
+ retry once they have connected. When they confirm, retry the original
+ request. If the retry still fails, ask if they need help with the setup.
+ 
++## Where a Credential Belongs
++
++Two places can hold a credential for this agent. A room participant with admin
++rights on the agent can set either, and neither puts the value in a message.
++Pick by whether the gateway has somewhere to inject it.
++
++**Tier 1 — Agents → (this agent) → Secrets.** The vault, and the default
++answer. The value never enters this container: the gateway attaches it at the
++proxy boundary on outbound requests whose host matches. Fields: `Host` (e.g.
++`api.stripe.com`) and `Token or key`.
++
++Use it for anything that travels as a request header:
++
++- bearer tokens and `Authorization` headers
++- GitHub and Azure DevOps personal access tokens
++- Stripe-style `Bearer <key>` APIs
++
++**Tier 2 — Agents → (this agent) → Environment.** A per-agent environment
++variable. The value DOES live in this container's environment, which is why it
++is the second choice — but it is the only tier that works when there is no
++header for the gateway to inject into. Set as a name and a value; afterwards
++only the NAME reads back, so you will see `$SERVICE_API_KEY` and never its value.
++
++Use it for what the proxy cannot reach:
++
++- **query-parameter API keys** — a key that has to appear in the URL itself
++- **SSH passwords**
++- **an env var a local CLI or SDK reads** — a tool inside this container that
++  expects `$FOO_TOKEN` in its environment instead of making an outbound HTTPS
++  call the gateway can see
++
++The environment is fixed at container start, so a new variable applies at this
++agent's NEXT start, not immediately. When a user adds one, offer to restart
++(`ncl groups restart --message "…"`), then retry.
++
++**An SSH deploy key has its own place:** Agents → (this agent) → Deploy keys.
++Never put a private key in Environment or Secrets.
++
++If a credential fits neither tier — it has to exist as a file on disk, it
++rotates mid-session, or it belongs to one person rather than to this agent —
++say so plainly and stop. Do not invent somewhere to keep it, and never write
++it into a workspace file, a repo, or `container.json`.
++
+ ## Rules
+ 
+ - **Never** say "I don't have access to X" without first making the HTTP
+   request through the proxy.
+ - **Never** use browser extensions, gcloud, or manual auth flows. The
+   gateway handles credentials for you.
+-- **Never** ask the user for API keys or tokens directly. Direct them to
+-  connect the service in the OneCLI dashboard.
++- **Never** ask the user for API keys or tokens directly, and never accept one
++  pasted into chat — refuse it, and tell them it is now in that room's history
++  and should be rotated. Then send them to the tier that fits that credential
++  (see **Where a Credential Belongs**): **Agents → Secrets** for anything the
++  gateway can inject as a header, **Agents → Environment** for a
++  query-parameter key, an SSH password, or a variable a local tool reads.
++  Naming the wrong tier wastes their time — a query-parameter key put in
++  Secrets is never injected, because there is no header to put it in. The
++  OneCLI dashboard is the operator-level equivalent — do not send a room
++  participant there.
+ - **Never** suggest the user open Gmail/Calendar/GitHub in their browser
+   when they ask you to read or interact with those services. You have API
+   access. Use it.

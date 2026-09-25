@@ -77,10 +77,10 @@ async function wire(roomId: string, agentGroupId: string): Promise<void> {
 }
 
 /** A room wired to an agent group so the owner can access it (mirrors reads.test). */
-function accessibleRoom(roomId: string): void {
-  insertAgentGroup(`ag-${roomId}`);
-  insertRoom(roomId);
-  wire(roomId, `ag-${roomId}`);
+async function accessibleRoom(roomId: string): Promise<void> {
+  await insertAgentGroup(`ag-${roomId}`);
+  await insertRoom(roomId);
+  await wire(roomId, `ag-${roomId}`);
 }
 
 async function grantOwner(userId: string): Promise<void> {
@@ -176,8 +176,8 @@ describe('pin ordering (manual drag order)', () => {
   });
 
   it('surfaces pin_position via annotateRoomsForUser, sortable client-side', async () => {
-    accessibleRoom('room-1');
-    accessibleRoom('room-2');
+    await accessibleRoom('room-1');
+    await accessibleRoom('room-2');
     await grantOwner('webchat:owner');
     await pinRoomForUser('webchat:owner', 'room-1');
     await pinRoomForUser('webchat:owner', 'room-2');
@@ -186,7 +186,7 @@ describe('pin ordering (manual drag order)', () => {
     expect(rooms.find((r) => r.id === 'room-2')?.pin_position).toBe(0);
     expect(rooms.find((r) => r.id === 'room-1')?.pin_position).toBe(1);
     // Unpinned rooms report null.
-    accessibleRoom('room-3');
+    await accessibleRoom('room-3');
     expect((await annotateRoomsForUser('webchat:owner')).find((r) => r.id === 'room-3')?.pin_position).toBeNull();
   });
 });
@@ -205,7 +205,7 @@ describe('getRoomLastActivity', () => {
 
 describe('annotateRoomsForUser — pinned + last_activity', () => {
   it('surfaces the per-user pinned flag', async () => {
-    accessibleRoom('room-1');
+    await accessibleRoom('room-1');
     await grantOwner('webchat:owner');
     await pinRoomForUser('webchat:owner', 'room-1');
 
@@ -218,7 +218,7 @@ describe('annotateRoomsForUser — pinned + last_activity', () => {
   });
 
   it('reports last_activity as the newest message time', async () => {
-    accessibleRoom('room-1');
+    await accessibleRoom('room-1');
     await grantOwner('webchat:owner');
     await insertMessage('room-1', 5000);
 
@@ -227,7 +227,7 @@ describe('annotateRoomsForUser — pinned + last_activity', () => {
   });
 
   it('falls back to the room created_at when the room has no messages', async () => {
-    accessibleRoom('room-1');
+    await accessibleRoom('room-1');
     await grantOwner('webchat:owner');
 
     const room = (await annotateRoomsForUser('webchat:owner')).find((r) => r.id === 'room-1');

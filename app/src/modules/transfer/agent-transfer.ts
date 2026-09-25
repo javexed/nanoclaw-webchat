@@ -8,7 +8,9 @@
  *   - SECRETS NEVER EXPORT. No .env, no OneCLI material, no MCP headers or
  *     relay tokens; container_config.mcp_servers is emptied and re-derived on
  *     import from the target install's registry. The manifest names what the
- *     target must supply instead (requiredCredentials).
+ *     target must supply instead (requiredCredentials). The one exception is
+ *     the agent's deploy keys, which live in its workspace: they travel only
+ *     when the exporter opts in (includesSecrets).
  *   - Cross-entity links travel BY REFERENCE (room platform ids, MCP server
  *     names, model kind+endpoint+model_id) and re-link on import when the
  *     target has a match; misses are reported, never guessed.
@@ -39,6 +41,8 @@ export const EXPORT_VERSION = 1;
 export const EXCLUDE_ALWAYS = ['node_modules', '.git', '__pycache__', 'dist', '.venv'];
 /** Conversation state — only travels when the operator opts in. */
 export const CONVERSATION_DIRS = ['projects', 'sessions', 'shell-snapshots', 'backups', 'session-env'];
+/** Private keys kept in a workspace — only travel when the operator opts in. */
+export const WORKSPACE_SECRET_FILES = ['deploy_key_*'];
 
 export interface AgentExportManifest {
   format: typeof EXPORT_FORMAT;
@@ -46,6 +50,8 @@ export interface AgentExportManifest {
   createdAt: string;
   entity: { id: string; name: string; folder: string };
   includesConversations: boolean;
+  /** Deploy keys in the workspace travelled. Absent in older bundles. */
+  includesSecrets?: boolean;
   /** What the TARGET install must supply — secrets never travel. */
   requiredCredentials: string[];
   references: {
@@ -95,7 +101,11 @@ export async function insertWithSchemaIntersection(table: string, row: Record<st
 // ── Export ───────────────────────────────────────────────────────────────────
 
 /** Stage the small parts (manifest + DB slices) into a temp dir; return it. */
-export async function stageAgentExport(agentGroupId: string, includeConversations: boolean): Promise<string> {
+export async function stageAgentExport(
+  agentGroupId: string,
+  includeConversations: boolean,
+  includeSecrets = false,
+): Promise<string> {
   const db = getDb();
   const group = await getAgentGroup(agentGroupId);
   if (!group) throw new Error('Agent not found');
@@ -148,6 +158,7 @@ export async function stageAgentExport(agentGroupId: string, includeConversation
     createdAt: new Date().toISOString(),
     entity: { id: group.id, name: group.name, folder: group.folder },
     includesConversations: includeConversations,
+    includesSecrets: includeSecrets,
     requiredCredentials: required,
     references: {
       rooms: wirings.map((w) => ({
@@ -175,10 +186,12 @@ export function exportTarArgs(
   stage: string,
   group: { id: string; folder: string },
   includeConversations: boolean,
+  includeSecrets = false,
 ): string[] {
   const sessRoot = path.join(DATA_DIR, 'v2-sessions', group.id);
   const args = ['-cz', '--warning=no-file-changed'];
   for (const e of EXCLUDE_ALWAYS) args.push(`--exclude=${e}`);
+  if (!includeSecrets) for (const e of WORKSPACE_SECRET_FILES) args.push(`--exclude=${e}`);
   if (!includeConversations) {
     for (const d of CONVERSATION_DIRS) args.push(`--exclude=.claude-shared/${d}`);
   }

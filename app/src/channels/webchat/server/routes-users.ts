@@ -218,6 +218,9 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
     }
   } catch (err) {
     log.error('UserCreds onboard/revoke failed', { userId, roomId, err: err instanceof Error ? err.message : err });
+    const msg = err instanceof Error ? err.message : '';
+    if (/^(Credential isolation is off|Couldn't make every agent private)/.test(msg))
+      return json(res, 409, { error: msg });
     return json(res, 502, { error: 'Credential setup failed — check OneCLI is running.' });
   }
   return json(res, 200, { ok: true });

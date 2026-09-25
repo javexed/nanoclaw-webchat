@@ -88,6 +88,20 @@ describe('matchCalls — the stricter and looser modes', () => {
     expect(matchCalls(REAL_TURN, [{ tool: 'bash' }, { tool: 'write' }], 'subset').passed).toBe(true);
   });
 
+  it('subset finds an assignment when a loose expectation could steal a specific one’s call', async () => {
+    // First-fit gives `write a` to the loose `write(*)` and leaves `write(/a/)`
+    // with nothing; a maximum matching pairs loose→b and specific→a.
+    const observed = [call('write', '/tmp/a'), call('write', '/tmp/b')];
+    const expected = [{ tool: 'write' }, { tool: 'write', targetPattern: '/a$' }];
+    const r = matchCalls(observed, expected, 'subset');
+    expect(r.passed).toBe(true);
+    expect(r.missing).toEqual([]);
+    // Still one call per expectation: two specific asks, one matching call.
+    const short = matchCalls([call('write', '/tmp/a')], expected, 'subset');
+    expect(short.passed).toBe(false);
+    expect(short.matched).toBe(1);
+  });
+
   it('contains_any passes on one hit and fails on none', async () => {
     // For "did it use SOME search tool", where which one is not the point.
     expect(matchCalls(REAL_TURN, [{ tool: 'grep' }, { tool: 'bash' }], 'contains_any').passed).toBe(true);

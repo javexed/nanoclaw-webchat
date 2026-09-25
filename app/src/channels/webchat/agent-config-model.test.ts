@@ -81,7 +81,7 @@ const portOf = (wc: { http: { address: () => unknown } }): number => {
 };
 
 const now = '2026-07-31T00:00:00.000Z';
-function seed(db: import('../../db/driver.js').DbDriver): void {
+async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
   const user = async (id: string) =>
     await db.run(
       `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
@@ -107,11 +107,11 @@ function seed(db: import('../../db/driver.js').DbDriver): void {
       now,
     );
   };
-  group('ag-mdl-a');
-  group('ag-mdl-b');
-  role('webchat:owner', 'owner', null);
-  role('webchat:admina', 'admin', 'ag-mdl-a');
-  user('webchat:nobody');
+  await group('ag-mdl-a');
+  await group('ag-mdl-b');
+  await role('webchat:owner', 'owner', null);
+  await role('webchat:admina', 'admin', 'ag-mdl-a');
+  await user('webchat:nobody');
 }
 
 describe('PUT /api/agents/:id/config-model', () => {
@@ -130,7 +130,7 @@ describe('PUT /api/agents/:id/config-model', () => {
     });
     server = loaded.server;
     conn = loaded.conn;
-    seed(conn.getDb());
+    await seed(conn.getDb());
     wc = await server.startWebchatServer(noopHooks);
     port = portOf(wc);
   });
@@ -323,7 +323,7 @@ describe('GET /api/models/known', () => {
     });
     server = loaded.server;
     conn = loaded.conn;
-    seed(conn.getDb());
+    await seed(conn.getDb());
     wc = await server.startWebchatServer(noopHooks);
     port = portOf(wc);
   });

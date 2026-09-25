@@ -251,8 +251,9 @@ export async function listMcpServersForUI(): Promise<McpServerForUI[]> {
 export function parseMcpServerBody(body: Record<string, unknown>): WebchatMcpServerInput {
   const name = validateMcpServerName(body.name);
   const transport = body.transport;
-  if (transport !== 'stdio' && transport !== 'sse' && transport !== 'http') {
-    throw new Error('transport must be "stdio" | "sse" | "http"');
+  if (transport === 'sse') throw new Error("the SSE transport is retired; use the server's Streamable HTTP endpoint");
+  if (transport !== 'stdio' && transport !== 'http') {
+    throw new Error('transport must be "stdio" | "http"');
   }
   const input: WebchatMcpServerInput = { name, transport };
   if (transport === 'stdio') {
@@ -412,7 +413,7 @@ export interface McpCatalogRow {
   kind: 'remote' | 'package';
   runsCode: boolean;
   url?: string;
-  transport?: 'http' | 'sse';
+  transport?: 'http';
   command?: string;
   args?: string[];
   /** Where the operator can go to actually READ this thing before trusting it. */
@@ -496,16 +497,17 @@ export function normalizeMcpRegistry(payload: unknown): McpCatalogRow[] {
       websiteUrl: safeHttpUrl(s.websiteUrl),
     };
 
-    // Prefer the remote form when a server offers both — it's the safe one.
-    const remote = remotes.find((r) => r.url);
+    // Prefer the remote form when a server offers both — it's the safe one. Only
+    // Streamable HTTP remotes: SSE is retired, so an SSE-only remote is skipped
+    // and a package form (if any) is offered instead.
+    const remote = remotes.find((r) => r.url && r.type !== 'sse');
     if (remote?.url) {
       byName.set(name, {
         ...base,
         kind: 'remote',
         runsCode: false,
         url: remote.url,
-        // The registry says streamable-http / sse; our config takes http | sse.
-        transport: remote.type === 'sse' ? 'sse' : 'http',
+        transport: 'http',
       });
       continue;
     }

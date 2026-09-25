@@ -34,11 +34,32 @@ if [ -z "$remote" ]; then
   exit 0
 fi
 
-if ! PR_PREFLIGHT_BASE=main sh "$script" main HEAD; then
-  echo "" >&2
-  echo "  pre-push blocked: this branch is behind $remote/main." >&2
-  echo "    git fetch $remote main && git rebase $remote/main" >&2
-  echo "    (intentional WIP backup? SKIP_PR_PREFLIGHT=1 git push ...)" >&2
-  exit 1
+# Check what is being pushed, not HEAD: `git push origin topic` from another
+# branch, or several refs in one push, would otherwise test the wrong commit.
+# git feeds one line per ref on stdin:
+#   <local ref> <local sha> <remote ref> <remote sha>
+# Deletions (all-zero local sha) and non-branch refs (tags) carry nothing to
+# rebase and are skipped. With no stdin (run by hand) fall back to HEAD.
+refs=""
+if [ ! -t 0 ]; then
+  while read -r local_ref local_sha _remote_ref _remote_sha; do
+    [ -n "$local_sha" ] || continue
+    case "$local_sha" in *[!0]*) ;; *) continue ;; esac
+    case "$local_ref" in refs/heads/*) ;; *) continue ;; esac
+    refs="$refs $local_sha"
+  done
+else
+  refs="HEAD"
 fi
+[ "$refs" != "" ] || exit 0
+
+for sha in $refs; do
+  if ! PR_PREFLIGHT_REMOTE="$remote" PR_PREFLIGHT_BASE=main sh "$script" main "$sha"; then
+    echo "" >&2
+    echo "  pre-push blocked: $(git rev-parse --short "$sha" 2>/dev/null || echo "$sha") is behind $remote/main." >&2
+    echo "    git fetch $remote main && git rebase $remote/main" >&2
+    echo "    (intentional WIP backup? SKIP_PR_PREFLIGHT=1 git push ...)" >&2
+    exit 1
+  fi
+done
 exit 0
