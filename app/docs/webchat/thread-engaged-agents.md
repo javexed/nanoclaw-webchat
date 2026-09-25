@@ -1,12 +1,12 @@
 # Thread engaged agents (webchat)
 
 Status: **built but DORMANT.** The subsystem (the `webchat_thread_engaged` table,
-`resolveEngagedDecision`, the `/engaged` routes, the `setEngagedResolver` router
-hook) is implemented and unit-tested but shipped OFF: `setEngagedResolver` is
-never called, so the engaged set has no routing effect, and the `/engaged` HTTP
+`resolveInboundDeliveryPlan`, the `/engaged` routes, the
+`registerInboundDeliveryPlanResolver` router hook) is implemented and unit-tested
+but shipped OFF: `registerInboundDeliveryPlanResolver` is never called, so the engaged set has no routing effect, and the `/engaged` HTTP
 routes are gated behind `ENGAGED_AGENTS_ENABLED = false` (they fall through to
 404). Threads route mention-only, like the regular chat. To re-enable: flip
-`ENGAGED_AGENTS_ENABLED` AND add the `setEngagedResolver` wiring. The design
+`ENGAGED_AGENTS_ENABLED` AND add the `registerInboundDeliveryPlanResolver` wiring. The design
 below is the intended model for that future re-enable. Webchat-scoped, but the
 routing changes land in core host files that the webchat skill already hooks
 (see §13).
@@ -53,7 +53,7 @@ This mirrors `Artificer-Innovations/nanoclaw-webchat`'s "engaged agents" model.
   producer self-exclusion (router.ts:309). Peer fan-out = scoping this to the
   engaged set.
 - **Live updates**: `server.broadcast(roomId, {...})` (channels/webchat/state.ts)
-  + the client WS `switch(msg.type)` (app.js:1010) — add one event type.
+  + the client WS `switch(msg.type)` (`ui/src/core/ws.ts`) — add one event type.
 - **History sync** on engage: `syncSessionContext` (session-manager.ts:310).
 
 ## 3. Data model (built, dormant)
@@ -160,11 +160,11 @@ the existing `canAccessRoom`.
 ## 9. Chips UI (`public/webchat/`)
 
 - A chips row inserted as a sibling **immediately before `#message-form`**
-  (after `#file-preview`, index.html:324). One chip per engaged agent:
+  (after `#file-preview` in `index.html`). One chip per engaged agent:
   `«glyph name ×»`. Hidden when the engaged set is empty or in the regular chat.
-- `@mention` accept (`acceptMention`, app.js:3487) optimistically adds a chip +
+- `@mention` accept (`acceptMention`, `ui/src/features/composer.ts`) optimistically adds a chip +
   POSTs engage. `×` → DELETE + remove chip.
-- `engaged_set_changed` WS event (new `case` ~app.js:1177) re-renders chips.
+- `engaged_set_changed` WS event (new `case` in `ui/src/core/ws.ts`) re-renders chips.
 - Styling reuses the chip/token language; `×` follows the dismissal pattern.
 
 ## 10. Phase 2 — implicit mentions + auto-disengage

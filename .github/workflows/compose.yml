@@ -42,6 +42,16 @@ jobs:
           # so record it: "which Node did CI run" has been guesswork.
           { echo "node $(node -v)"; echo "image $(cat /etc/os-release 2>/dev/null | sed -n 's/^PRETTY_NAME=//p')"; } \
             > "$RUNNER_TEMP/ci-env" 2>/dev/null || true
+      # A pin to a seam the seam repo doesn't have fails every compose, and
+      # used to surface five minutes in as "could not be fetched". This says so
+      # in seconds, with the fix.
+      - name: Seam pin is published
+        env:
+          NANOCLAW_WEBCHAT_SEAM_REPO: ${{ vars.NANOCLAW_SEAM_REPO }}
+        run: |
+          echo "Seam pin is published" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-seam-pin.sh
+
       # ── Scope ──────────────────────────────────────────────────────────────
       # What does this change touch? A PR that never goes near ui/ used to pay
       # ~5 minutes for Chromium and the browser probes, and every PR ran all of
@@ -188,7 +198,19 @@ jobs:
         if: steps.scope.outputs.ui == 'true'
         run: |
           echo "UI — install Chromium (boot-order guard)" > "$RUNNER_TEMP/ci-step"
-          pnpm --dir ui exec playwright install --with-deps chromium
+          # The browser comes from the Playwright cache above. Its Linux
+          # libraries come with the runner's image (ci/runner-image) when that
+          # image was built for this Playwright version; otherwise — a bump, or
+          # a runner without the image — install them here as before.
+          want="$(node -p "require('./ui/package.json').devDependencies.playwright")"
+          have="$(cat /etc/nanoclaw-ci-playwright-deps 2>/dev/null || true)"
+          if [ -n "$have" ] && [ "$have" = "$want" ]; then
+            echo "Chromium's libraries are in the runner image (playwright $have): skipping --with-deps"
+            pnpm --dir ui exec playwright install chromium
+          else
+            echo "runner image has no libraries for playwright $want (have: ${have:-none}): installing them"
+            pnpm --dir ui exec playwright install --with-deps chromium
+          fi
 
       - name: UI — boot-order guard self-test (proves it still detects faults)
         if: steps.scope.outputs.ui == 'true'
@@ -314,15 +336,12 @@ jobs:
 
       - name: Compose (clone base + seam, overlay, patch, register, build)
         env:
-          # Optional seam override for runners that host a closer mirror of the
-          # seam. Left unset — the normal case — install.sh uses versions.json's
-          # seamRepo, the public seam. Set the NANOCLAW_SEAM_REPO repository
-          # variable to point somewhere else; no location is hardcoded here.
+          # Where the seam is fetched from: the NANOCLAW_SEAM_REPO repository
+          # variable if set (a fork's own seam repo), else versions.json's
+          # seamRepo. No location is hardcoded here.
           #
-          # Either way the gate depends on seamRef being reachable from the
-          # PUBLIC seam, which release.sh already required: it composes from the
-          # public pins, and a pin reachable only from a mirror fails the
-          # release with "not reachable from branch pub/module-hooks".
+          # Releases always compose from versions.json's seamRepo: release.sh
+          # refuses a pin that is not reachable from its pub/module-hooks.
           NANOCLAW_WEBCHAT_SEAM_REPO: ${{ vars.NANOCLAW_SEAM_REPO }}
           SKIP_CONTAINER_BUILD: '1'
           # The runner image ships Node 24; .nvmrc pins 22. That combination is
@@ -385,6 +404,19 @@ jobs:
           echo "Format (owned files are prettier-clean)" > "$RUNNER_TEMP/ci-step"
           bash scripts/check-format.sh "$RUNNER_TEMP/composed"
 
+      - name: Async self-test (proves it still detects faults)
+        run: |
+          echo "Async self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-async.selftest.sh "$RUNNER_TEMP/composed"
+
+      - name: Async (no dropped Promises in owned code)
+        # A missed await on the async DB driver fails silently: writes race
+        # their reads, rejections escape their try, a Promise serializes as {}.
+        # Scoped like Format: our files, and only the lines our patches add.
+        run: |
+          echo "Async (no dropped Promises in owned code)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-async.sh "$RUNNER_TEMP/composed"
+
       - name: Host tests (composed tree)
         working-directory: ${{ runner.temp }}/composed
         env:
@@ -437,8 +469,8 @@ jobs:
             export NODE_OPTIONS="--disable-warning=DEP0205${NODE_OPTIONS:+ $NODE_OPTIONS}"
           fi
 
-          # Tee to a file the failure reporter can quote. The log API 404s on
-          # this forge and artifacts do not work, so an un-captured failure is
+          # Tee to a file the failure reporter can quote. Some CI hosts serve no
+          # log API and no artifacts, so an un-captured failure is
           # a failure nobody can read: three separate investigations have ended
           # in inference because the only signal was a step name.
           set -o pipefail
@@ -484,7 +516,7 @@ jobs:
           MB=$(git merge-base "$BASE_SHA" HEAD 2>/dev/null) || decide true
           [ -n "$MB" ] || decide true
           CHANGED=$(git diff --name-only "$MB"..HEAD 2>/dev/null) || decide true
-          if printf '%s\n' "$CHANGED" | grep -qE '^(container/|app/container/|patches/|versions\.json)'; then
+          if printf '%s\n' "$CHANGED" | grep -qE '^(container/|app/container/|app/provider-overlays/|patches/|versions\.json)'; then
             decide true
           fi
           decide false

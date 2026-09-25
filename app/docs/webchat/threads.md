@@ -155,11 +155,10 @@ Threads render **nested under their room** in the left sidebar (matches the
 multi-thread scaling of the reference implementation), not as a top tab strip.
 
 ```
-▾ #eng                3   ← room row; number = total unread across its threads
-    # main
-    @ Sarah            2   ← per-thread unread badge
+▾ #eng                •   ← room row = the main thread (unread dot)
+    @ Sarah            •   ← per-thread unread dot
     @ Max
-    # Q3 planning      •   ← manual topic thread (unread dot)
+    # Q3 planning  +       ← "+" sits inside the last thread row
   ▸ #design
   DMs
     Sarah (dm)
@@ -167,13 +166,16 @@ multi-thread scaling of the reference implementation), not as a top tab strip.
 
 - Clicking a room expands/collapses its thread list; clicking a thread opens it
   and loads `GET /api/rooms/:id/messages?thread_id=…` (that thread only).
-- **Create** ("+ thread" at the bottom of a room's expanded list) → name prompt →
-  `POST …/threads` → opens the new (empty) topic thread.
+- **Create** ("+" inside the last thread row, or on the room row when it has no
+  threads yet) → inline name input → `POST …/threads` → opens the new (empty)
+  topic thread.
 - **Rename / delete** via the thread's row context menu (owner/member rules
   mirror room settings; reuse the room-rename pattern just shipped).
 - `agent:*` lane threads (created manually) appear with the agent glyph + name;
-  `main` is pinned first and not deletable; topic threads sort by last activity.
-- **Unread** is per-thread (`webchat_thread_reads`); the room row shows the sum.
+  `main` has no row of its own (the room row is main) and is not deletable;
+  topic threads sort by last activity.
+- **Unread** is per-thread (`webchat_thread_reads`), shown as dots; the room row
+  shows a dot, not a count.
 - Active-thread state persists per session (like `lastRoom`).
 
 Follows `public/webchat/DESIGN.md` — tokens, `showToast`, sentence-case microcopy.

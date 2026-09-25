@@ -7,7 +7,7 @@ console) over an embedded HTTP + WebSocket server. This doc diagrams the
 webchat-specific pieces; for the host/container/session model underneath it,
 see [message-path.md](message-path.md) (a message end to end: adapter, router,
 session container, turn, delivery) and the main [architecture
-diagram](../architecture-diagram.md). For the full prose reference, see
+diagram](https://github.com/nanocoai/nanoclaw/blob/main/docs/architecture-diagram.md). For the full prose reference, see
 [webchat.md](webchat.md).
 
 ## System overview
@@ -22,7 +22,7 @@ flowchart TB
     direction TB
     HTTP["server.ts<br/>HTTP + static serve + TLS/CORS/CSP"]
     WS["ws.ts / state.ts<br/>WebSocket + broadcast"]
-    Auth["auth.ts / access.ts / roles.ts<br/>4 auth methods, per-room access"]
+    Auth["auth.ts / access.ts / roles.ts<br/>5 auth methods, per-room access"]
     Adapter["index.ts<br/>ChannelAdapter: onInbound/deliver/setTyping/sendStatus<br/>loop-back fan-out, approval-card listeners"]
     Console["Operator console APIs<br/>agents, models, mcp-registry, ollama-manage,<br/>drafter, oauth-mint, push, redact"]
     Db[("db.ts / migration.ts<br/>~25 webchat tables in data/v2.db")]
@@ -116,7 +116,7 @@ flowchart LR
   IdA -. "bills A's own key / OAuth" .-> ProviderA["Anthropic / OpenAI"]
   IdB -. "bills B's own key / OAuth" .-> ProviderB["Anthropic / OpenAI"]
 
-  Note["Credential types: Anthropic API key (shipped) ·<br/>Claude subscription OAuth (tested) ·<br/>OpenAI key + Codex OAuth (inert until /add-codex)"]
+  Note["Credential types: Anthropic API key (shipped) ·<br/>Claude subscription OAuth (prototype mint flow) ·<br/>OpenAI key + Codex OAuth (inert until /add-codex)"]
 ```
 
 ## Operator console -> REST surface
@@ -137,7 +137,7 @@ flowchart TB
   Agents --> R1["/api/agents, /api/agents/draft,<br/>/:id/instructions|rooms|model|mcp-servers|status"]
   Models --> R2["/api/models, /discover /probe /bulk,<br/>/api/ollama/hosts|models|pulls"]
   MCP --> R3["/api/mcp-servers, /probe"]
-  Routing --> R4["/api/router/routes|classify|decisions|metrics|install,<br/>/api/litellm/roster-refresh"]
+  Routing --> R4["/api/router/routes|classify|decisions|metrics|install,<br/>/api/router/roster-refresh"]
   Approvals --> R5["/api/approvals/pending, /:id/respond"]
   Permissions --> R6["/api/users, /api/permissions/grant|revoke"]
   Topology --> R7["/api/topology, /api/rooms/:id/agents"]
@@ -148,18 +148,18 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-  Btn["'Set up routing' button<br/>(Settings)"] -->|"POST /api/router/install"| Install
+  Btn["Auto routing → Install<br/>(Settings)"] -->|"POST /api/router/install"| Install
 
-  subgraph Install["startRoutingInstall()"]
+  subgraph Install["router install"]
     Pull["Pull classifier model<br/>Arch-Router (Ollama)<br/>progress bar"]
     Script["install-routing.sh<br/>seed routes.json, LiteLLM container"]
     Host["configureClassifierHost()<br/>CLASSIFIER-HOST -> host.docker.internal"]
     Bind["bind-routes.mjs --apply<br/>bind capability routes to roster"]
   end
 
-  Install --> Routes[("routes.json<br/>shadow mode: live.enabled = false")]
-  Routes --> Tab["Routing tab appears<br/>Rules / Logs sub-tabs"]
-  Tab -->|"operator reviews decisions log"| Live["flip live from the tab"]
+  Install --> Routes[("routes.json")]
+  Routes -->|"UI PUTs live.enabled = true"| Live["live: 'auto' model assignable"]
+  Routes --> Tab["Auto routing tab appears<br/>Rules / Models / Logs sub-tabs"]
 ```
 
 ---
@@ -167,5 +167,5 @@ flowchart LR
 *Two-DB session split and central-DB model are unchanged by webchat — it's a
 consumer of them, not a new IO path. See
 [message-path.md](message-path.md) and
-[../architecture-diagram.md](../architecture-diagram.md) for that part of the
+[docs/architecture-diagram.md](https://github.com/nanocoai/nanoclaw/blob/main/docs/architecture-diagram.md) for that part of the
 picture.*

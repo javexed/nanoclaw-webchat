@@ -1,0 +1,16 @@
+diff --git a/docs/SECURITY.md b/docs/SECURITY.md
+index c047be8..f458a47 100644
+--- a/docs/SECURITY.md
++++ b/docs/SECURITY.md
+@@ -126,6 +126,11 @@ Each NanoClaw group gets its own OneCLI agent identity. This allows different cr
+ 
+ ### 5. Egress Lockdown (Forced Proxy)
+ 
++> **This install differs.** Egress is filtered per agent group and on by
++> default; central's egress filter decides which hosts each agent may reach.
++> See [webchat/security.md](webchat/security.md#per-agent-group-egress). The
++> rest of this section describes the upstream opt-in lockdown.
++
+ The `HTTPS_PROXY` env var only redirects *proxy-aware* clients — a tool that
+ ignores it (or a raw socket) could reach the internet directly and bypass
+ credential injection, approvals, and audit. Egress lockdown closes that hole at

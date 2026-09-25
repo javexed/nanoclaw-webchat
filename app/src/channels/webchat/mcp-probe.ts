@@ -3,10 +3,8 @@
  * list its tools, so the operator can verify a URL before saving it to the
  * registry (the MCP twin of models.ts's probeEndpoint).
  *
- * Transport detection: try Streamable HTTP first (the current spec transport),
- * fall back to SSE (legacy but still common — e.g. supergateway-wrapped stdio
- * servers). Whichever handshake completes wins and is reported back so the
- * create form can pre-select it.
+ * Transport: Streamable HTTP, the current spec transport and the only remote
+ * one core accepts. SSE is deprecated and no longer probed.
  *
  * Security: the URL is operator input — every attempt goes through the same
  * SSRF gate as the models probe (assertSafeOutboundUrl: blocks link-local/
@@ -14,14 +12,13 @@
  * CGNAT stay allowed by default: tailnet tool boxes are the primary use case.
  */
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 import { assertSafeOutboundUrl } from './models.js';
 
 export interface McpProbeResult {
   /** Transport that completed the handshake; null when nothing responded. */
-  transport: 'http' | 'sse' | null;
+  transport: 'http' | null;
   endpoint: string;
   serverName?: string;
   serverVersion?: string;
@@ -48,14 +45,11 @@ export function looksAuthGated(message: string): boolean {
 
 const PROBE_TIMEOUT_MS = 8000;
 
-async function probeOne(url: string, kind: 'http' | 'sse', headers: Record<string, string>): Promise<McpProbeResult> {
+async function probeOne(url: string, kind: 'http', headers: Record<string, string>): Promise<McpProbeResult> {
   const client = new Client({ name: 'nanoclaw-webchat-probe', version: '1.0.0' });
   const target = new URL(url);
   const requestInit = Object.keys(headers).length ? { headers } : undefined;
-  const transport =
-    kind === 'http'
-      ? new StreamableHTTPClientTransport(target, { requestInit })
-      : new SSEClientTransport(target, { requestInit });
+  const transport = new StreamableHTTPClientTransport(target, { requestInit });
   const timeout = new Promise<never>((_, reject) =>
     setTimeout(() => reject(new Error(`Timed out after ${PROBE_TIMEOUT_MS / 1000}s`)), PROBE_TIMEOUT_MS),
   );
@@ -77,15 +71,13 @@ async function probeOne(url: string, kind: 'http' | 'sse', headers: Record<strin
 }
 
 /**
- * Probe a URL as an MCP server. Tries Streamable HTTP then SSE, sequentially
- * (they hit the same endpoint; racing both doubles load on a maybe-slow box
- * for no latency win — the HTTP attempt fails fast on SSE-only servers).
+ * Probe a URL as an MCP server over Streamable HTTP.
  */
 export async function probeMcpEndpoint(rawUrl: string, headers: Record<string, string> = {}): Promise<McpProbeResult> {
   const url = rawUrl.trim().replace(/\/+$/, '');
   await assertSafeOutboundUrl(url);
   const reasons: string[] = [];
-  for (const kind of ['http', 'sse'] as const) {
+  for (const kind of ['http'] as const) {
     try {
       return await probeOne(url, kind, headers);
     } catch (err) {

@@ -1,18 +1,123 @@
 diff --git a/src/egress-lockdown.ts b/src/egress-lockdown.ts
-index 1e6f6ff2..ec341319 100644
+index 8277bd7a..733a32df 100644
 --- a/src/egress-lockdown.ts
 +++ b/src/egress-lockdown.ts
-@@ -59,8 +59,11 @@ function gatewayAttached(): boolean {
-  * EgressLockdownError when enabled but unestablishable — fail fast rather than
-  * spawn an agent with open egress.
+@@ -1,8 +1,11 @@
+ /**
+- * Egress lockdown — force all agent traffic through the selected gateway.
+- * Agents run on a Docker `--internal` network (no internet route) with the
+- * gateway attached as host.docker.internal, so the injected proxy is the only
+- * reachable hop. Non-root, no NET_ADMIN — the agent can't undo it.
++ * Egress lockdown — force ALL agent traffic through central's egress filter.
++ * Agents run on a Docker `--internal` network (no internet route) whose
++ * gateway endpoint (the proxy URL's host, e.g. host.docker.internal) resolves
++ * to the network's host-side address, where the filter listens; it applies the
++ * agent's policy and forwards to the selected gateway. The gateway itself is
++ * kept OFF the network — attached, it would be a second way out that reaches
++ * any host. Non-root, no NET_ADMIN — the agent can't undo it.
+  *
+  * Fail-fast: when the flag is on but the network/gateway can't be set up, throw
+  * rather than silently spawn an agent with open egress.
+@@ -52,19 +55,49 @@ function gatewayAttached(identity: string): boolean {
+   }
+ }
+ 
++/** The lockdown network's host-side address: where central's egress filter listens. */
++export function egressBridgeAddress(): string {
++  const out = execFileSync(
++    CONTAINER_RUNTIME_BIN,
++    ['network', 'inspect', EGRESS_NETWORK, '--format', '{{range .IPAM.Config}}{{.Gateway}} {{end}}'],
++    { stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf-8', timeout: 15000 },
++  );
++  const ip = out
++    .trim()
++    .split(/\s+/)
++    .find((x) => /^\d+\.\d+\.\d+\.\d+$/.test(x));
++  if (!ip)
++    throw new EgressLockdownError(`the "${EGRESS_NETWORK}" network has no IPv4 gateway address for the egress filter`);
++  return ip;
++}
++
+ /**
+- * Ensure the egress network exists with the selected gateway attached.
+- * Idempotent + self-healing. Returns false when lockdown
+- * is disabled (caller uses the host gateway), true when it's active. Throws
+- * EgressLockdownError when enabled but unestablishable — fail fast rather than
+- * spawn an agent with open egress.
++ * Ensure the internal lockdown network exists and the selected gateway is NOT
++ * on it. Upstream attaches the gateway (aliased as its endpoint), making it
++ * the only hop out — but a gateway forwards to any host, so a "locked down"
++ * agent still reached the whole internet over HTTPS. Here the agent's endpoint
++ * resolves to this network's host-side address instead, where central's egress
++ * filter applies the group's policy before forwarding to the gateway
++ * (channels/webchat/egress-filter.ts). Idempotent: the host sweep and the
++ * driver's reconcile call it too, and each call re-detaches.
++ *
++ * Returns false when neither the install flag nor `force` asks for it, or no
++ * gateway is selected; throws EgressLockdownError when it is asked for and
++ * cannot be established. A gateway that runs inside the session
++ * ('session-container') cannot have the filter in front of it, so that is
++ * refused rather than silently left unfiltered.
   */
--export function ensureEgressNetwork(): boolean {
+-export function ensureEgressNetwork(access = selectedAccess): boolean {
 -  if (!EGRESS_LOCKDOWN) return false;
-+export function ensureEgressNetwork(force = false): boolean {
++export function ensureEgressNetwork(access = selectedAccess, force = false): boolean {
 +  // Install-wide opt-in (NANOCLAW_EGRESS_LOCKDOWN) or a per-group
-+  // egress='host-only' (`force`) — same network, same gateway aliasing,
-+  // same fail-fast contract either way.
++  // group behind the egress filter (`force`) — same network, same gateway
++  // detachment, same fail-fast contract either way.
 +  if (!EGRESS_LOCKDOWN && !force) return false;
+   if (!access) return false;
+   selectedAccess = access;
+-  if (access.target.kind !== 'runtime') {
+-    throw new EgressLockdownError(`the selected gateway target '${access.target.kind}' cannot join a locked network`);
++  if (access.target.kind === 'session-container') {
++    throw new EgressLockdownError(
++      `the selected gateway runs inside the session ('${access.target.role}'), so the egress filter cannot stand in front of it`,
++    );
+   }
  
    if (
-     !dockerOk(['network', 'inspect', EGRESS_NETWORK]) &&
+@@ -74,26 +107,26 @@ export function ensureEgressNetwork(access = selectedAccess): boolean {
+     throw new EgressLockdownError(`the "${EGRESS_NETWORK}" internal network could not be created`);
+   }
+ 
+-  if (gatewayAttached(access.target.identity)) return true;
+-
+-  if (
+-    dockerOk(['network', 'connect', '--alias', access.endpoint, EGRESS_NETWORK, access.target.identity]) &&
+-    gatewayAttached(access.target.identity)
+-  ) {
+-    log.info('Egress lockdown: gateway attached', {
++  if (access.target.kind === 'runtime' && gatewayAttached(access.target.identity)) {
++    const identity = access.target.identity;
++    if (!dockerOk(['network', 'disconnect', EGRESS_NETWORK, identity]) || gatewayAttached(identity)) {
++      throw new EgressLockdownError(
++        `the gateway "${identity}" could not be detached from "${EGRESS_NETWORK}" — agents could go around the egress filter`,
++      );
++    }
++    log.info('Egress lockdown: gateway detached — the egress filter is the only way out', {
+       network: EGRESS_NETWORK,
+-      gateway: access.target.identity,
+-      endpoint: access.endpoint,
++      gateway: identity,
+     });
+-    return true;
+   }
+-
+-  throw new EgressLockdownError(
+-    `gateway target "${access.target.identity}" could not be attached to "${EGRESS_NETWORK}"`,
+-  );
++  return true;
+ }
+ 
+-/** CLI args placing a container on the locked-down egress network. */
+-export function egressNetworkArgs(): string[] {
+-  return ['--network', EGRESS_NETWORK];
++/**
++ * CLI args placing a container on the lockdown network, its gateway endpoint
++ * (the proxy URL's host) pointed at the egress filter on the bridge address.
++ */
++export function egressNetworkArgs(access = selectedAccess): string[] {
++  const endpoint = access?.endpoint || 'host.docker.internal';
++  return ['--network', EGRESS_NETWORK, `--add-host=${endpoint}:${egressBridgeAddress()}`];
+ }

@@ -2,12 +2,12 @@
 # pr-preflight.sh — verify a branch is built on the current base tip
 # before it becomes a PR. The failure mode this guards: opening a PR from a
 # stale base (this repo carries ~50 feature branches sitting 60–700 commits
-# behind channels-webchat). "At the top" means <remote>/<base> is an ancestor
+# behind the base). "At the top" means <remote>/<base> is an ancestor
 # of the ref — i.e. the branch already contains every base commit, so the PR
 # is a clean fast-forward-friendly delta.
 #
 # Usage:  scripts/pr-preflight.sh [BASE] [REF]
-#   BASE  base branch to check against           (default: channels-webchat,
+#   BASE  base branch to check against           (default: main,
 #         overridable via PR_PREFLIGHT_BASE)
 #   REF   commit/ref to evaluate                 (default: HEAD)
 #
@@ -15,7 +15,7 @@
 # Fetch failures (offline) warn and pass — never wedge work you can't verify.
 set -eu
 
-base="${1:-${PR_PREFLIGHT_BASE:-channels-webchat}}"
+base="${1:-${PR_PREFLIGHT_BASE:-main}}"
 ref="${2:-HEAD}"
 # Default to the first remote that is not the public mirror, so no instance
 # name is hardcoded in a published file. Override with PR_PREFLIGHT_REMOTE.

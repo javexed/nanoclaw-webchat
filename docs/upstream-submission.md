@@ -7,67 +7,49 @@ below).
 
 ## What is being submitted
 
-The `pub/module-hooks` branch of the seam repo — **20 commits (17 non-merge),
-+2,315/−23 across 23 files**, over upstream `879835bf8`, which is upstream HEAD
-as of 2026-07-29. The branch is **0 commits behind**, so it applies without a
-rebase.
+The `pub/module-hooks` branch of the seam repo at the pinned `seamRef` — **3
+commits, +2,664/−0 across 33 files** (insertions only), over the pinned
+`upstreamRef` (`b3970828`, see `versions.json`).
 
 | Commit | What |
 |---|---|
-| `847ce464` | Runner-side module seam: provider observers + per-query option contributors |
-| `c81694db` | Host-side module seams: spawn, delivery, sweep, a2a, approvals |
-| `4c9a397b` | Routing seams: delivery-plan resolver, turn gate, session-key override |
-| `f54fab61` | `setTyping` gains optional `agentName` for multi-agent attribution |
-| `02b6d500` | Outbound session-DB schema extensions |
-| `9583a748` | R3 — runner command registry + turn/exchange observers |
-| `4953469a` | `QueryInput.moduleInput` — typed extension bag for R2 markers |
-| `cc6c1b92` | Warn when a deferred runner command has no `execute()` |
-| `01b0959d` | H2 API consistency — container env resolvers compose |
-| `980eea0e` | H3 — agent identity resolvers become a first-non-null chain |
-| `ede1c9d7` | Decision hooks become chains; `system:%` guard on key overrides |
-| `37f31c61` | H7 ordering — module sweep tasks run after core duties |
-| `f95c4500` | Security rationale for R2 `allowedTools` + H12 outbound-only scoping |
-| `7d188bb8` | R5 — turn-retry handlers (provider escalation without patching core) |
-| `a4dfea53` | `SessionKeyResolver` carries the pre-override thread |
+| `d2d881cb` | Hook modules and their tests (the registries under `src/seam/` and `container/agent-runner/src/seam/`) |
+| `2c197260` | Hook insertion points in upstream files — 13 files, +190, no deletions |
+| `2bb3253a` | Fork-owned CI workflow outside `.github/` (drop before filing) |
 
-Plus `95c9314d` (prettier pass) and `badd4531` (`ci: retrigger for log
-capture` — an empty commit that should be dropped before filing; see below).
-
-**Before filing, re-check these numbers.** Every SHA in an earlier version of
-this table was stale: the branch was rewritten to strip merge trailers that
-carried an internal instance URL, so the old commits no longer exist. Regenerate
-with:
+**Before filing, re-check these numbers** — the seam is rebased onto each new
+upstream pin, so SHAs and counts move. Regenerate with:
 
 ```bash
 git fetch up main && git log --oneline --no-merges up/main..HEAD
 git diff --stat up/main..HEAD | tail -1
 ```
 
-## Registry review state (operator walkthrough)
+## Registry review state (maintainer walkthrough)
 
 - [x] `ProviderMessageObserver` — reviewed 2026-07-26 (context-free events by design; room resolution is host-side; agent-shared ambiguity handled by TurnCompletionObserver)
 - [x] `ProviderExchangeObserver` — reviewed 2026-07-26 (digest ring 12×4K/24K; observers-before-provider-hook ordering; digest is the portable context for routed reviews)
-- [x] `ProviderQueryOptionsContributor` — reviewed 2026-07-26; review produced seam PR #380 (QueryInput.moduleInput bag, SEAM_API_VERSION 3) deleting the QueryInput marker residue; replace-not-narrow semantics + import-order merge documented
-- [x] `RunnerCommand` — reviewed 2026-07-26; at-most-once defer semantics documented deliberate; stem-overlap matcher gotcha recorded (/learn vs /learn-routed); review produced seam PR #381 (warn on defer-without-execute)
+- [x] `ProviderQueryOptionsContributor` — reviewed 2026-07-26; review produced a seam change (QueryInput.moduleInput bag, SEAM_API_VERSION 3) deleting the QueryInput marker residue; replace-not-narrow semantics + import-order merge documented
+- [x] `RunnerCommand` — reviewed 2026-07-26; at-most-once defer semantics documented deliberate; stem-overlap matcher gotcha recorded (/learn vs /learn-routed); review produced a seam change (warn on defer-without-execute)
 - [x] `TurnCompletionObserver` — reviewed 2026-07-26; de-plumbed tool count (consumer derives) owned as a deliberate trade; config read-only by contract; batchMessages = original batch (follow-up quirk inherited from fork); lazy continuation drift is the feature
 - [x] `PromptSectionContributor` — reviewed 2026-07-26; boot-time-static semantics to be stated in docstring at submission; token-cost contract (short, conditional, instruction-shaped); provider-neutral for free
 - [x] `OutboundSchemaExtension` — reviewed 2026-07-26; idempotent-DDL contract; outbound-only scoping preserves one-writer-per-file (state in PR); reader-tolerates-absence convention; failed DDL = feature dark, turns fine. RUNNER SEVEN COMPLETE.
-- [x] `ContainerEnvResolver` — reviewed 2026-07-26; was the seam's only single-slot hook → seam PR #382 makes it compose (order, later-wins-per-key, isolated throw); module-env-outranks-gateway named for security notes; env-shapes-mode vs identity-shapes-scope split documented
+- [x] `ContainerEnvResolver` — reviewed 2026-07-26; was the seam's only single-slot hook → a seam change makes it compose (order, later-wins-per-key, isolated throw); module-env-outranks-gateway named for security notes; env-shapes-mode vs identity-shapes-scope split documented
 - [x] `ContainerConfigAugmentor` — reviewed 2026-07-26; shallow-merge is deliberate (learning-classifier resolver is the documented casualty → residue-shrink backlog); spawn-shaping override disclosure written
-- [x] `AgentIdentityResolver` — reviewed 2026-07-27; single-slot → first-non-null chain + identifier format check (seam PR #383); resolver-fails-open + turn-gate-fails-closed layering documented
+- [x] `AgentIdentityResolver` — reviewed 2026-07-27; single-slot → first-non-null chain + identifier format check (a seam change); resolver-fails-open + turn-gate-fails-closed layering documented
 - [x] `SessionPrepareHook` — reviewed 2026-07-27; zero code findings; prepare→identity→env spawn sequence to be stated as API contract; bounded-time + idempotency doc lines; three-layer failure posture (prepare/resolver fail open, turn gate fails closed)
 - [x] `ContainerExitObserver` — reviewed 2026-07-27; no code change; host-restart blind spot documented (exits observed only within the spawning process's lifetime — consumer stall-detection compensates); observers idempotent per session; Session-only payload is YAGNI holding (context param additive later). SPAWN CLUSTER COMPLETE.
-- [x] `InboundDeliveryPlanResolver` — reviewed 2026-07-27; plan filters-never-expands + self-exclusion-before-plan named as security properties; fail-open to wiring evaluation; single-slot → queued for the consolidated chain commit (PR #384)
-- [x] `SessionKeyResolver` — reviewed 2026-07-27; re-keys session but never reply address (named property); cannot cross groups/rooms (containment); #384 additions: chain shape + system:% namespace guard on override threadId + isolation-weakening disclosure
+- [x] `InboundDeliveryPlanResolver` — reviewed 2026-07-27; plan filters-never-expands + self-exclusion-before-plan named as security properties; fail-open to wiring evaluation; single-slot → queued for the consolidated chain commit
+- [x] `SessionKeyResolver` — reviewed 2026-07-27; re-keys session but never reply address (named property); cannot cross groups/rooms (containment); chain-commit additions: chain shape + system:% namespace guard on override threadId + isolation-weakening disclosure
 - [x] `TurnGate` — reviewed 2026-07-27; gate-throw posture resolved (skip-on-throw stays; fail-closed modules catch internally and veto — user-credentials now does); dead veto-notice found and fixed (was written to a never-polled session id); both fixes + tests in the turngate-fixes PR
-- [x] `SessionInboundWriter` — reviewed 2026-07-27; best-bounded hook (scope conditional on key-resolver claim); chain conversion landed in seam PR #384; true-asserts-wake-row + own-store assumption + deliveryAddr stamping documented
+- [x] `SessionInboundWriter` — reviewed 2026-07-27; best-bounded hook (scope conditional on key-resolver claim); chain conversion landed in the chain commit; true-asserts-wake-row + own-store assumption + deliveryAddr stamping documented
 - [x] `SessionDeliveryObserver` — reviewed 2026-07-27; it's a TICK not an event (1Hz/running-session cost model to docstring); observer latency = delivery latency; two-cadence coverage stated; INVENTORY FIX: onDeliveryAdapterReady folded under H1
 - [x] `SweepTask` — reviewed 2026-07-27; ordering improvement queued (module tasks should run AFTER core sweep duties — next seam PR); cadence/self-gate/shutdown-tolerance doc lines
 - [x] `ApprovalIntercept` — reviewed 2026-07-27; same-dispatch invariant + approve-only one-way valve are the security story; producers table added to docs/webchat/approval-prejudge.md
 - [x] `ApprovalRequestedListener` — reviewed 2026-07-27; fires after intercepts; mirror-only (act path re-authorizes centrally); additive-never-substitutive; completes upstream's own resolved-handler pair
 - [x] `A2aRouteObserver` — reviewed 2026-07-27; observation is post-authorization (never sees blocked routes); content in event → observer owns audience rule; single-choke-point contract noted
 
-**WALKTHROUGH COMPLETE — 21/21 reviewed 2026-07-26→27.** Outcomes: 5 seam changes (#380 moduleInput bag, #381 defer warning, #382 H2 compose, #383 H3 identity chain, #384 decision chains + namespace guard), 1 consumer-bug PR (repo B #1: dead veto notice + fail-closed gate), 1 queued seam change (sweep ordering: module tasks after core duties), the contract/security notes sections above, and the approval-prejudge producers doc.
+**WALKTHROUGH COMPLETE — 21/21 reviewed 2026-07-26→27.** Outcomes: 5 seam changes (moduleInput bag, defer warning, H2 compose, H3 identity chain, decision chains + namespace guard), 1 consumer-bug fix (dead veto notice + fail-closed gate), 1 queued seam change (sweep ordering: module tasks after core duties), the contract/security notes sections above, and the approval-prejudge producers doc.
 
 ## Design contract (the PR's promises)
 
@@ -144,11 +126,10 @@ and a wiring test that drives `runPollLoop` per failure shape.
 This isn't speculative API design — every registry is load-bearing for a real
 product. `nanoclaw-webchat` (PWA, multi-agent rooms/threads, learning loop,
 per-user credentials, approvals UI) now installs **nanoclaw as an unmodified
-dependency plus this seam**: clone upstream → apply seam → overlay 69
-module-owned files → 66 small residue patches (~3.1k diff lines, dominated by
+dependency plus this seam**: clone upstream → apply seam → overlay the
+module-owned app tree (126 manifest entries) → 112 residue patches (dominated by
 generic fixes we intend to upstream separately). The composed install passes
-1,888 host + 279 container tests — exact parity with the monolithic fork it
-replaced — re-proven by CI on every push.
+the host and container suites, re-proven by CI on every push.
 
 The residue patches are the *next* conversations (origin-guard, lenient
 output, interrupt handling, terminal-error surfacing — each a standalone
@@ -201,10 +182,5 @@ nanoclaw" maintainable.
    `pub/module-hooks` (the fork's established upstream-submission prefix — precedent: #3077 `pub/rate-limit-classification`, merged) — **tree-snapshot commits, javexed identity, per the
    publishing playbook** (kept privately, outside this repo).
 2. Open the PR via `gh` against `nanocoai/nanoclaw` main with the body above
-   (fill the repo link — decide whether nanoclaw-webchat gets a public GitHub
-   mirror first, or link the private instance).
-3. The linked-repo decision is the one open question: the evidence repo
-   (nanoclaw-webchat) currently lives only on a private instance.
-   Options: (a) mirror it to GitHub under javexed first (strongest PR), (b)
-   link nothing and describe the numbers (weakest), (c) attach the composed
-   tarball artifact to the PR text.
+   (link the evidence repo, public at
+   [javexed/nanoclaw-webchat](https://github.com/javexed/nanoclaw-webchat)).

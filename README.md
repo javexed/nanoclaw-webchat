@@ -44,6 +44,7 @@ from its env var:
 | Tailscale | `WEBCHAT_TAILSCALE=true` | your devices over your tailnet |
 | Bearer token | `WEBCHAT_TOKEN=…` (≥24 chars) | a shared secret |
 | SSO / proxy | `WEBCHAT_TRUSTED_PROXY_IPS=…` | Entra ID, Cloudflare Access… |
+| Entra ID tokens | `WEBCHAT_OIDC_ISSUER=…` + `WEBCHAT_OIDC_AUDIENCE=…` | verified sign-in, App Service or the VS Code extension |
 
 Localhost auto-owner switches off the moment any explicit method is configured.
 
@@ -68,8 +69,8 @@ sync. Optional "prime" catch-all agent per room.
 
 **Per-member credentials.** In a shared room each member can connect **their
 own** Anthropic key. Their turns run in a container bearing their own
-credential identity — nothing shared, nothing replayable. Keys go straight to
-the OneCLI vault, never through the host.
+credential identity — nothing shared, nothing replayable. Keys are stored in
+the OneCLI vault, never on the host.
 → [details](app/docs/webchat/user-credentials.md)
 
 **The learning loop.** `/learn` (or an automatic trigger on a busy turn) runs a
@@ -79,8 +80,9 @@ proposes a reusable skill from what just happened. You keep or discard it.
 
 **Local-model routing.** One button installs the whole stack (LiteLLM +
 Arch-Router classifier), then a console scores each turn and sends the easy
-ones to a local model while keeping a frontier model for the hard ones. Starts
-in shadow mode so you can watch before switching.
+ones to a local model while keeping a frontier model for the hard ones. The
+button install goes live at once; the `/add-routing` skill path starts in shadow
+mode.
 
 **Operator console.** Create and wire agents, register models with live
 discovery, pull Ollama models with progress, manage MCP servers, roles and
@@ -138,7 +140,6 @@ install.sh          composes an install from three pinned inputs (versions.json)
 |---|---|
 | `app/` | Webchat's source, laid out in nanoclaw's tree shape. **Everything here ships into an install** — including `app/docs/webchat/`, which operators and agents read in a running system. |
 | `patches/` | Edits to nanoclaw-owned files, sorted by destiny: `upstreamable/` (generic fixes bound for upstream), `product/` (features awaiting a seam registry), `local/`. See [INVENTORY.md](patches/INVENTORY.md). |
-| `overlays/` | Conditional patches applied only when a gated provider is installed (today: the Codex activity feed). |
 | `versions.json` | The three pins: upstream, seam, and the transitional fork reference. |
 | `docs/` | Documentation **about this repo** (contributor-facing) — as opposed to `app/docs/`, which ships. |
 | `scripts/` | Dev harness: compose a tree, regenerate patches, check coverage, migrate a fork install. |

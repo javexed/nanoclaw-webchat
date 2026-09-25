@@ -39,8 +39,8 @@ function fakeAdmin(opts: { failSetSecrets?: boolean } = {}) {
     async findAgentId(identifier) {
       return agents.get(identifier)?.uuid ?? null;
     },
-    // repo B's OnecliAdmin gained listAgents (the paginated admin surface from
-    // patch 3); the fork's mock predates it. Backed by the same in-memory map
+    // OnecliAdmin gained listAgents (the paginated admin surface); this mock
+    // predates it. Backed by the same in-memory map
     // so the fake stays self-consistent.
     async listAgents() {
       return [...agents.entries()].map(([identifier, a]) => ({
@@ -118,8 +118,8 @@ async function seedGroupAgent(admin: OnecliAdmin, agentGroupId: string) {
 }
 
 /** A workspace-default model credential — isolation refuses to run without one. */
-function seedWorkspaceDefault() {
-  upsertUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude', 'sec-model', 'oauth_token');
+async function seedWorkspaceDefault() {
+  await upsertUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude', 'sec-model', 'oauth_token');
 }
 
 async function seedMember(admin: OnecliAdmin, agentGroupId: string, userId: string) {
@@ -156,12 +156,22 @@ describe('workspace-scoped secrets', () => {
 
   it('still reaches an ISOLATED agent — system-wide must not mean "except the locked-down ones"', async () => {
     const { admin, injectedFor } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await getDb().run(`INSERT INTO agent_groups (id,name,folder,created_at) VALUES (?,?,?,?)`, 'ag-1', 'a', 'a', '');
     await seedGroupAgent(admin, 'ag-1');
     await isolateGroup(admin, 'ag-1');
     const shared = await createToolSecret(admin, WORKSPACE, 'dev.azure.com', 'v');
     expect(injectedFor('ag-1', 'dev.azure.com')).toContain(shared.id);
+  });
+
+  it('reaches an agent created and isolated AFTER it was saved', async () => {
+    const { admin, injectedFor } = fakeAdmin();
+    await seedWorkspaceDefault();
+    const shared = await createToolSecret(admin, WORKSPACE, 'dev.azure.com', 'v');
+    // The agent first appears now (its first spawn), and fleet isolation locks it down.
+    await seedGroupAgent(admin, 'ag-new');
+    await isolateGroup(admin, 'ag-new');
+    expect(injectedFor('ag-new', 'dev.azure.com')).toContain(shared.id);
   });
 
   it('does not appear in an agent-scoped listing', async () => {
@@ -175,7 +185,7 @@ describe('workspace-scoped secrets', () => {
 describe('agent-scoped secrets require isolation', () => {
   it('isolates an all-mode group on the fly rather than refusing', async () => {
     const { admin, agents, injectedFor } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     expect(agents.get('ag-1')!.mode).toBe('all');
     const created = await createToolSecret(admin, { kind: 'agent', agentGroupId: 'ag-1' }, 'dev.azure.com', 'v');
@@ -197,7 +207,7 @@ describe('agent-scoped secrets require isolation', () => {
 
   it('reaches the isolated agent it was created for', async () => {
     const { admin, injectedFor } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     await isolateGroup(admin, 'ag-1');
     const mine = await createToolSecret(admin, { kind: 'agent', agentGroupId: 'ag-1' }, 'dev.azure.com', 'v');
@@ -211,7 +221,7 @@ describe('agent-scoped secrets require isolation', () => {
   // requires every OTHER agent to be selective too (or separate projects).
   it('is STILL offered to other agents that remain in all mode', async () => {
     const { admin, injectedFor } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     await seedGroupAgent(admin, 'ag-2');
     await isolateGroup(admin, 'ag-1');
@@ -221,7 +231,7 @@ describe('agent-scoped secrets require isolation', () => {
 
   it('is hidden from another agent once THAT agent is isolated too', async () => {
     const { admin, injectedFor } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     await seedGroupAgent(admin, 'ag-2');
     await isolateGroup(admin, 'ag-1');
@@ -233,7 +243,7 @@ describe('agent-scoped secrets require isolation', () => {
 
   it('fans out to enrolled per-member agents', async () => {
     const { admin, injectedFor } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     const aliceIdent = await seedMember(admin, 'ag-1', 'webchat:alice');
     await isolateGroup(admin, 'ag-1');
@@ -243,7 +253,7 @@ describe('agent-scoped secrets require isolation', () => {
 
   it('deletes the secret if wiring fails, leaving no orphan credential', async () => {
     const { admin, secrets } = fakeAdmin({ failSetSecrets: true });
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     // isolate uses setSecrets too, so drive the failure at create time instead
     await admin.setSecretMode('uuid-ag-1', 'selective');
@@ -257,7 +267,7 @@ describe('agent-scoped secrets require isolation', () => {
 describe('isolateGroup', () => {
   it('pins the model credential BEFORE flipping mode, so the agent never 401s', async () => {
     const { admin, agents } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     await isolateGroup(admin, 'ag-1');
     const a = agents.get('ag-1')!;
@@ -279,7 +289,7 @@ describe('isolateGroup', () => {
 
   it('is idempotent', async () => {
     const { admin } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     await isolateGroup(admin, 'ag-1');
     await isolateGroup(admin, 'ag-1');
@@ -288,7 +298,7 @@ describe('isolateGroup', () => {
 
   it('un-isolating restores all-mode injection', async () => {
     const { admin, injectedFor } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     await seedGroupAgent(admin, 'ag-2');
     await isolateGroup(admin, 'ag-2');
@@ -309,7 +319,7 @@ describe('getGroupIsolation', () => {
 describe('deleteToolSecret', () => {
   it('unwires and deletes, including from member agents', async () => {
     const { admin, secrets, agents } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     const aliceIdent = await seedMember(admin, 'ag-1', 'webchat:alice');
     await isolateGroup(admin, 'ag-1');
@@ -321,7 +331,7 @@ describe('deleteToolSecret', () => {
 
   it('refuses a secret outside the scope, so one group cannot delete another’s', async () => {
     const { admin, secrets } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     await seedGroupAgent(admin, 'ag-2');
     await isolateGroup(admin, 'ag-2');
@@ -342,7 +352,7 @@ describe('deleteToolSecret', () => {
 describe('user-scoped secrets and precedence', () => {
   it('reaches only that person, not the group agent or another member', async () => {
     const { admin, injectedFor } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     const alice = await seedMember(admin, 'ag-1', 'webchat:alice');
     const bob = await seedMember(admin, 'ag-1', 'webchat:bob');
@@ -358,7 +368,7 @@ describe('user-scoped secrets and precedence', () => {
 
   it('Person A and Person B each push with their OWN PAT', async () => {
     const { admin, injectedFor } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     const alice = await seedMember(admin, 'ag-1', 'webchat:alice');
     const bob = await seedMember(admin, 'ag-1', 'webchat:bob');
@@ -380,7 +390,7 @@ describe('user-scoped secrets and precedence', () => {
 
   it("a member's own PAT WINS over the group's for the same host", async () => {
     const { admin, injectedFor } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     const alice = await seedMember(admin, 'ag-1', 'webchat:alice');
     await isolateGroup(admin, 'ag-1');
@@ -399,7 +409,7 @@ describe('user-scoped secrets and precedence', () => {
 
   it("falls back to the group's PAT when the member's is removed", async () => {
     const { admin, injectedFor } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     const alice = await seedMember(admin, 'ag-1', 'webchat:alice');
     await isolateGroup(admin, 'ag-1');
@@ -516,7 +526,7 @@ describe('wire format', () => {
 
   it('carries a stated scheme through createToolSecret to the stored spec', async () => {
     const { admin, secrets } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'g1');
     await createToolSecret(admin, { kind: 'agent', agentGroupId: 'g1' }, '192.168.0.10', 'k', {
       headerName: 'X-Api-Key',
@@ -529,7 +539,7 @@ describe('wire format', () => {
 
   it('without one, the same host would be sent the WRONG header', async () => {
     const { admin, secrets } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'g2');
     await createToolSecret(admin, { kind: 'agent', agentGroupId: 'g2' }, '192.168.0.10', 'k');
     const stored = [...secrets.values()].find((x) => x.hostPattern === '192.168.0.10');
@@ -552,7 +562,7 @@ describe('createToolSecret — host normalisation', () => {
 describe('effectiveSecretsFor — the precedence, read back for display', () => {
   it('names the scope each host is served from, nearest first', async () => {
     const { admin, injectedFor } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     // The workspace reconcile walks agent_groups, so the group must exist as a row.
     await getDb().run(`INSERT INTO agent_groups (id,name,folder,created_at) VALUES (?,?,?,?)`, 'ag-1', 'a', 'a', '');
     await seedGroupAgent(admin, 'ag-1');
@@ -583,7 +593,7 @@ describe('effectiveSecretsFor — the precedence, read back for display', () => 
 
   it('has no user scope for someone who is not enrolled — they run on the group agent', async () => {
     const { admin } = fakeAdmin();
-    seedWorkspaceDefault();
+    await seedWorkspaceDefault();
     await seedGroupAgent(admin, 'ag-1');
     await seedMember(admin, 'ag-1', 'webchat:alice');
     await isolateGroup(admin, 'ag-1');

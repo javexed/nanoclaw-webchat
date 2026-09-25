@@ -26,13 +26,16 @@ import { getDb } from '../../db/connection.js';
 import { log } from '../../log.js';
 import { openOutboundDb } from '../../session-db-access.js';
 
-import { storeWebchatFileMessage, storeWebchatMessage, type FileMeta } from './db.js';
+import { sessionKeyToThread, storeWebchatMessage } from './db.js';
 import type { WebchatServer } from './server.js';
 
 const RECONCILE_INTERVAL_MS = 7_000;
 const RECENT_WINDOW_MS = 60_000; // only scan messages from the last minute
 const GRACE_MS = 5_000; // give the regular delivery path this much time before we replay
 const SEEN_BOUND = 1000; // cap the dedup memory
+// Rows read per session per pass, newest first. Far more than a session writes
+// in RECENT_WINDOW_MS; the window itself is applied in JS (see reconcileOnce).
+const RECENT_ROWS = 200;
 
 const seen = new Set<string>();
 let timer: NodeJS.Timeout | null = null;
@@ -42,6 +45,8 @@ interface WebchatSessionRow {
   agent_group_id: string;
   agent_name: string;
   room_id: string;
+  /** Session key: null (main), a topic thread id, or a per-member `<user>::<thread>` key. */
+  thread_id: string | null;
 }
 
 interface OutboundRow {
@@ -77,7 +82,7 @@ export function stopReconcileLoop(): void {
 async function reconcileOnce(server: WebchatServer): Promise<void> {
   const sessions = await listWebchatSessions();
   const cutoff = Date.now() - RECENT_WINDOW_MS;
-  for (const sess of await sessions) {
+  for (const sess of sessions) {
     const outDbPath = path.join(DATA_DIR, 'v2-sessions', sess.agent_group_id, sess.session_id, 'outbound.db');
     if (!fs.existsSync(outDbPath)) continue;
 
@@ -88,23 +93,25 @@ async function reconcileOnce(server: WebchatServer): Promise<void> {
       continue;
     }
     try {
-      // Recent webchat-channel chat messages produced by the container.
-      const rows = outDb
-        .prepare(
-          `SELECT id, kind, channel_type, platform_id, content, timestamp
-           FROM messages_out
-           WHERE kind = 'chat'
-             AND channel_type = 'webchat'
-             AND timestamp > datetime(?, 'unixepoch')
-           ORDER BY timestamp ASC`,
-        )
-        .all(Math.floor(cutoff / 1000)) as OutboundRow[];
+      // Recent webchat-channel chat messages produced by the container. The
+      // window is applied in JS, not SQL: containers stamp ISO timestamps
+      // ('…T…Z') and a text comparison against datetime()'s '… …' form made
+      // every row of the same UTC day "recent" — which, with `seen` emptied
+      // by a restart, replayed the day's replies into the room on every boot.
+      const rows = recentOutbound(
+        outDb
+          .prepare(
+            `SELECT id, kind, channel_type, platform_id, content, timestamp
+             FROM messages_out
+             WHERE kind = 'chat' AND channel_type = 'webchat'
+             ORDER BY seq DESC LIMIT ?`,
+          )
+          .all(RECENT_ROWS) as OutboundRow[],
+        cutoff,
+      );
 
-      for (const msg of rows) {
+      for (const { row: msg, tsMs } of rows) {
         if (seen.has(msg.id)) continue;
-
-        const tsMs = Date.parse(msg.timestamp.endsWith('Z') ? msg.timestamp : msg.timestamp + 'Z');
-        if (Number.isNaN(tsMs)) continue;
         // Give regular delivery a head start before we second-guess it.
         if (Date.now() - tsMs < GRACE_MS) continue;
 
@@ -114,18 +121,17 @@ async function reconcileOnce(server: WebchatServer): Promise<void> {
         // Did the regular delivery path already store this in webchat_messages?
         // We match on (room, sender_type=agent, content prefix, timestamp band)
         // because webchat_messages doesn't carry the outbound message id.
+        //
+        // Text only. An outbound row's `files` is a list of names in the
+        // session's outbox; the bytes are the adapter's to deliver, so a lost
+        // attachment can't be rebuilt from this row.
         const text = parseTextFromContent(msg.content);
-        const fileMetas = parseFilesFromContent(msg.content);
-        const hasText = text !== null && text.length > 0;
-        const hasFiles = fileMetas.length > 0;
-        if (!hasText && !hasFiles) {
+        if (text === null || text.length === 0) {
           seen.add(msg.id);
           continue;
         }
 
-        const probe: WebchatMessageProbe | undefined = await (hasText
-          ? findStoredAgentMessage(roomId, text!, tsMs)
-          : findStoredAgentFile(roomId, fileMetas[0].filename, tsMs));
+        const probe = await findStoredAgentMessage(roomId, text, tsMs);
 
         if (probe) {
           // Regular delivery covered it — just remember we've seen it.
@@ -146,14 +152,11 @@ async function reconcileOnce(server: WebchatServer): Promise<void> {
         // skip the deliver-path's "most recently active" heuristic.
         const senderName = sess.agent_name || agentDisplayName();
         try {
-          if (hasText) {
-            const stored = await storeWebchatMessage(roomId, senderName, 'agent', text!);
-            server.broadcast(roomId, { type: 'message', ...(await stored) });
-          }
-          for (const fileMeta of fileMetas) {
-            const stored = await storeWebchatFileMessage(roomId, senderName, 'agent', fileMeta.filename, fileMeta);
-            server.broadcast(roomId, { type: 'message', ...(await stored) });
-          }
+          // Back into the thread the session answers in — a topic thread's
+          // reply stored without one would land in the room's main thread.
+          const threadId = await replayThread(sess, roomId);
+          const stored = await storeWebchatMessage(roomId, senderName, 'agent', text, threadId);
+          server.broadcast(roomId, { type: 'message', ...stored });
           markSeen(msg.id);
         } catch (err) {
           log.warn('Webchat reconcile: replay failed', {
@@ -168,10 +171,37 @@ async function reconcileOnce(server: WebchatServer): Promise<void> {
   }
 }
 
+/**
+ * Outbound timestamps are ISO ('2026-09-23T17:32:45.092Z') — the container
+ * stamps them from JS. The space form ('2026-09-23 17:32:45', read as UTC) is
+ * tolerated for rows an older runner may have left behind.
+ */
+export function parseOutboundTs(ts: string): number {
+  const iso = ts.includes('T') ? ts : ts.replace(' ', 'T');
+  return Date.parse(/([zZ]|[+-]\d\d:?\d\d)$/.test(iso) ? iso : `${iso}Z`);
+}
+
+/** Rows stamped at or after `cutoffMs`, oldest first. */
+export function recentOutbound<T extends { timestamp: string }>(
+  rows: T[],
+  cutoffMs: number,
+): Array<{ row: T; tsMs: number }> {
+  return rows
+    .map((row) => ({ row, tsMs: parseOutboundTs(row.timestamp) }))
+    .filter((r) => !Number.isNaN(r.tsMs) && r.tsMs >= cutoffMs)
+    .sort((a, b) => a.tsMs - b.tsMs);
+}
+
+/** The UI thread a session's replies belong in (see sessionKeyToThread). */
+export function replayThread(sess: Pick<WebchatSessionRow, 'thread_id'>, roomId: string): Promise<string> {
+  return sessionKeyToThread(sess.thread_id, roomId);
+}
+
 /** All webchat-channel sessions known to the central DB. */
 async function listWebchatSessions(): Promise<WebchatSessionRow[]> {
   return (await getDb()
-    .all(`SELECT s.id AS session_id, s.agent_group_id, ag.name AS agent_name, mg.platform_id AS room_id
+    .all(`SELECT s.id AS session_id, s.agent_group_id, ag.name AS agent_name, mg.platform_id AS room_id,
+              s.thread_id
        FROM sessions s
        JOIN agent_groups ag ON ag.id = s.agent_group_id
        JOIN messaging_groups mg ON mg.id = s.messaging_group_id
@@ -179,10 +209,11 @@ async function listWebchatSessions(): Promise<WebchatSessionRow[]> {
 }
 
 /**
- * Look for a recent agent-typed text row in webchat_messages whose content
- * matches the outbound text exactly. Time band is generous (±30s) because
- * outbound timestamps are SQL `datetime('now')` and webchat_messages uses
- * `Date.now()` ms — they can drift a bit.
+ * Look for an agent-typed text row in webchat_messages whose content matches
+ * the outbound text exactly, stored no earlier than 30 s before the agent
+ * wrote it (clock drift) and at any time since. The upper bound used to be
+ * +30 s, which read a reply delivered late — a session that synced after a
+ * pause — as lost, and replayed it.
  */
 async function findStoredAgentMessage(
   roomId: string,
@@ -190,7 +221,7 @@ async function findStoredAgentMessage(
   outboundTsMs: number,
 ): Promise<WebchatMessageProbe | undefined> {
   const lo = outboundTsMs - 30_000;
-  const hi = outboundTsMs + 30_000;
+  const hi = Date.now() + 60_000;
   return (await getDb().get(
     `SELECT id FROM webchat_messages
        WHERE room_id = ? AND sender_type = 'agent' AND message_type = 'text'
@@ -204,46 +235,12 @@ async function findStoredAgentMessage(
   )) as WebchatMessageProbe | undefined;
 }
 
-async function findStoredAgentFile(
-  roomId: string,
-  filename: string,
-  outboundTsMs: number,
-): Promise<WebchatMessageProbe | undefined> {
-  const lo = outboundTsMs - 30_000;
-  const hi = outboundTsMs + 30_000;
-  return (await getDb().get(
-    `SELECT id FROM webchat_messages
-       WHERE room_id = ? AND sender_type = 'agent' AND message_type = 'file'
-         AND file_meta LIKE ?
-         AND created_at BETWEEN ? AND ?
-       LIMIT 1`,
-    roomId,
-    `%"filename":"${filename.replace(/"/g, '\\"')}"%`,
-    lo,
-    hi,
-  )) as WebchatMessageProbe | undefined;
-}
-
 function parseTextFromContent(raw: string): string | null {
   try {
     const obj = JSON.parse(raw) as { text?: unknown };
     return typeof obj.text === 'string' ? obj.text : null;
   } catch {
     return null;
-  }
-}
-
-function parseFilesFromContent(raw: string): FileMeta[] {
-  try {
-    const obj = JSON.parse(raw) as { files?: unknown };
-    if (!Array.isArray(obj.files)) return [];
-    return (obj.files as unknown[]).filter((f): f is FileMeta => {
-      if (!f || typeof f !== 'object') return false;
-      const m = f as Record<string, unknown>;
-      return typeof m.filename === 'string' && typeof m.url === 'string';
-    });
-  } catch {
-    return [];
   }
 }
 

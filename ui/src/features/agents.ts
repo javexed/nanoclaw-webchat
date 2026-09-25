@@ -41,6 +41,7 @@ import { closeModelDetail, openModelPicker } from './models.js';
 import { confirmWithToggle, showConfirmModal, showInputModal } from './modals.js';
 import { showToast, toastError } from '../core/toast.js';
 import { authFetch, apiJson } from '../core/api.js';
+import { renderAgentEgressHosts, setAgentEgressHostsMode } from './network.js';
 import { state } from '../core/state.js';
 import type { Agent } from '../core/state.js';
 import { isAdminView } from '../core/state.js';
@@ -277,21 +278,30 @@ export function renderAgents(): void {
 }
 
 
-export function setAgentEgressControl(egress?: any) {
-  const mode = egress || 'open';
+/**
+ * Every agent has three network modes: Open, Allowlist (the default; the
+ * install list lives in Manage → Network, and the agent's own hosts below the
+ * control) and Model only. A runner agent's change applies at
+ * once (central checks each connection); a local agent's move to or from Open
+ * waits for its next start (it changes the container's network).
+ */
+export function setAgentEgressControl(egress?: any, placed = false) {
+  const mode = egress || 'host-only';
   const ctl = $('#agent-egress-control');
   if (!ctl) return;
-  ctl.querySelectorAll('.setting-option').forEach((b) => {
-    b.classList.toggle('active', (b as HTMLElement).dataset.egress === mode);
+  (ctl as HTMLElement).dataset.placed = placed ? '1' : '';
+  ctl.querySelectorAll<HTMLElement>('.setting-option').forEach((b) => {
+    b.classList.toggle('active', b.dataset.egress === mode);
   });
+  const info = $('#agent-egress-info');
+  if (info) {
+    info.textContent = placed ? 'Applies at once.' : 'Open ↔ the others: next start.';
+  }
   const badge = $('#agent-egress-badge');
-  if (badge) badge.textContent = mode === 'open' ? '' : mode === 'host-only' ? 'Locked down' : mode;
+  if (badge) badge.textContent = mode === 'open' ? 'Open' : mode === 'none' ? 'Model only' : '';
   const note = $('#agent-egress-note');
-  if (!note) return;
-  const cliOnly = mode !== 'open' && mode !== 'host-only';
-  note.hidden = !cliOnly;
-  if (cliOnly) note.textContent = `Set to "${mode}" with ncl — not changeable here`;
-  ctl.querySelectorAll('.setting-option').forEach((b) => ((b as HTMLInputElement).disabled = cliOnly));
+  if (note) note.hidden = true;
+  setAgentEgressHostsMode(mode);
 }
 
 export function setAgentStatusControl(status?: any) {
@@ -364,7 +374,8 @@ export async function openAgentDetail(id?: any) {
   // Template origin + update check. Fire-and-forget: it hides its own row when
   // the agent was not stamped, so it never blocks the rest of the detail view.
   void renderAgentTemplateRow(agent.id);
-  setAgentEgressControl(agent.egress);
+  setAgentEgressControl(agent.egress, !!agent.runner_placed);
+  void renderAgentEgressHosts(agent.id, agent.egress);
   void renderAgentEnv(id);
 
   // Load instructions (instructions.prepend.md — the provider-neutral standing
@@ -1498,24 +1509,23 @@ export function wireAgentsPanel(): void {
     if (!btn || btn.disabled || !selectedAgentId.value) return;
     const egress = btn.dataset.egress;
     const agent = state.allAgents.find((b) => b.id === selectedAgentId.value);
-    const current = (agent && agent.egress) || 'open';
+    const current = (agent && agent.egress) || 'host-only';
     if (current === egress) return;
 
-    if (egress === 'host-only') {
+    const placed = !!agent?.runner_placed;
+    if (egress === 'open') {
+      // Loosening is the direction that needs a second look: open egress leaves
+      // from central's address, past the organisation's own network controls.
       const ok = await showConfirmModal({
-        title: 'Lock down this agent?',
-        body:
-          'It will only reach the network through the credential gateway. Anything ' +
-          'it does over HTTPS keeps working. Direct connections stop — SSH and rsync, ' +
-          'services on your LAN, and a model server running on this host. ' +
-          'Applies the next time the agent starts.',
-        confirmLabel: 'Lock down',
+        title: 'Open network for this agent?',
+        body: 'Any host. ' + (placed ? 'Applies at once.' : 'Next start.'),
+        confirmLabel: 'Open',
         destructive: true,
       });
       if (!ok) return;
     }
 
-    setAgentEgressControl(egress); // optimistic
+    setAgentEgressControl(egress, placed); // optimistic
     try {
       const res = await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId.value)}/egress`, {
         method: 'PUT',
@@ -1524,11 +1534,13 @@ export function wireAgentsPanel(): void {
       });
       if (!res.ok) throw new Error('status ' + res.status);
       if (agent) agent.egress = egress;
-      showToast(egress === 'host-only' ? 'Locked down — applies when the agent restarts' : 'Open network');
+      const label = egress === 'open' ? 'Open' : egress === 'none' ? 'Model only' : 'Allowlist';
+      const now = (await res.json().catch(() => ({})))?.appliesNow;
+      showToast(`${label} — ${now ? 'applies now' : 'applies at next start'}`);
     } catch (err) {
       console.error('Failed to set agent egress:', err);
       showToast('Could not change network mode', { kind: 'error' });
-      setAgentEgressControl(current); // revert
+      setAgentEgressControl(current, placed); // revert
     }
   });
 
@@ -1705,15 +1717,21 @@ export function wireAgentDetail3(): void {
 export function wireAgentControls1(): void {
   $<HTMLButtonElement>('#agent-export-btn')?.addEventListener('click', async () => {
     if (!selectedAgentId.value) return;
-    const { ok, checked } = await confirmWithToggle({
+    const {
+      ok,
+      checks: [checked, withSecrets],
+    } = await confirmWithToggle({
       title: 'Export this agent?',
-      toggleLabel: 'Include conversations (larger; briefly stops this agent)',
-      note: 'Credentials never export — the bundle lists what to reconnect on import.',
+      toggleLabels: ['Include conversations (larger; briefly stops this agent)', 'Include deploy keys'],
+      note: 'Other credentials never export — the bundle lists what to reconnect on import.',
       confirmLabel: 'Export',
     });
     if (!ok) return;
+    const q = new URLSearchParams();
+    if (checked) q.set('conversations', '1');
+    if (withSecrets) q.set('secrets', '1');
     const a = document.createElement('a');
-    a.href = `/api/agents/${encodeURIComponent(selectedAgentId.value)}/export${checked ? '?conversations=1' : ''}`;
+    a.href = `/api/agents/${encodeURIComponent(selectedAgentId.value)}/export${q.toString() ? `?${q}` : ''}`;
     a.download = '';
     document.body.appendChild(a);
     a.click();
@@ -1873,7 +1891,7 @@ export function wireAgentCreate2(): void {
     const _el9 = $<HTMLInputElement>('#mcp-create-token');
       if (_el9) _el9.value = '';
     const _el10 = $<HTMLSelectElement>('#mcp-create-transport');
-      if (_el10) _el10.value = 'sse';
+      if (_el10) _el10.value = 'http';
     syncMcpCreateTransportFields();
     const el9 = $('#mcp-detail');
     if (el9) el9.hidden = false;

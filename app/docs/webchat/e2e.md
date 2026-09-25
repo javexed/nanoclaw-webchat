@@ -40,18 +40,18 @@ Three boot quirks the smoke spec depends on (all commented in the spec):
 ## Running
 
 ```bash
-pnpm run test:e2e          # build + full suite (alias: pnpm run e2e)
-pnpm exec playwright test --project smoke   # smoke tier only, no rebuild
+pnpm run build && pnpm exec playwright test   # specs import from dist/
+pnpm exec playwright test --project smoke     # smoke tier only, no rebuild
 ```
 
 Requires the dev-only toolchain — deliberately **not** installed by
 `install.sh` and not per-PR CI (the runner host is disk-constrained):
 
 ```bash
-pnpm add -D @playwright/test    # already in package.json on this branch
+pnpm add -D @playwright/test
 pnpm exec playwright install chromium
 ```
 
 The pre-publish gate auto-detects: with `@playwright/test` + chromium present
-it runs `pnpm run test:e2e` and fails the gate on failure; otherwise it prints
+it runs `pnpm exec playwright test` and fails the gate on failure; otherwise it prints
 a SKIP line and the gate proceeds.

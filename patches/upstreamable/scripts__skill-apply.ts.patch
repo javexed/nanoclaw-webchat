@@ -1,5 +1,5 @@
 diff --git a/scripts/skill-apply.ts b/scripts/skill-apply.ts
-index a4332813..8d721ec2 100644
+index a4332813..132c6ea6 100644
 --- a/scripts/skill-apply.ts
 +++ b/scripts/skill-apply.ts
 @@ -23,8 +23,18 @@
@@ -52,7 +52,7 @@ index a4332813..8d721ec2 100644
      execStream?: (c: string) => Promise<StepOutcome>;
      resolveRemote: (b: string) => string;
      resolveDependencyCommand?: (request: DependencyCommandRequest) => string;
-@@ -661,14 +685,45 @@ async function applyOne(
+@@ -661,14 +685,58 @@ async function applyOne(
        if (lines.length === 0) break;
        if (d.attrs['from-branch']) {
          const b = String(d.attrs['from-branch']);
@@ -80,12 +80,25 @@ index a4332813..8d721ec2 100644
 +          // IS present, so shallow-fetch the branch into a throwaway repo from a
 +          // source URL, extract the listed files, then discard it — no repo state
 +          // is added to the deploy. Override the source with
-+          // NANOCLAW_CHANNELS_REMOTE_URL (e.g. a fork or a private mirror).
-+          const url = process.env.NANOCLAW_CHANNELS_REMOTE_URL || 'https://github.com/nanocoai/nanoclaw.git';
++          // NANOCLAW_CHANNELS_REMOTE_URL (e.g. a fork or a private mirror). An
++          // override is set for the fork-only branches it carries; a branch it
++          // does not have still comes from nanocoai, so one setting serves both.
++          const DEFAULT_URL = 'https://github.com/nanocoai/nanoclaw.git';
++          const override = process.env.NANOCLAW_CHANNELS_REMOTE_URL;
++          const sources = override && override !== DEFAULT_URL ? [override, DEFAULT_URL] : [DEFAULT_URL];
++          let url = sources[0];
 +          const tmp = mkdtempSync(join(tmpdir(), 'nc-frombranch-'));
 +          try {
 +            await exec(`git init -q "${tmp}"`);
-+            await exec(`git -C "${tmp}" fetch --depth 1 "${url}" ${b}`);
++            for (const [i, source] of sources.entries()) {
++              try {
++                await exec(`git -C "${tmp}" fetch --depth 1 "${source}" ${b}`);
++                url = source;
++                break;
++              } catch (err) {
++                if (i === sources.length - 1) throw err;
++              }
++            }
 +            for (const l of lines) {
 +              mkdirSync(dirname(join(root, destOf(l))), { recursive: true });
 +              try {
@@ -106,7 +119,7 @@ index a4332813..8d721ec2 100644
          }
        } else {
          for (const l of lines) {
-@@ -774,7 +829,7 @@ async function applyOne(
+@@ -774,7 +842,7 @@ async function applyOne(
          // call `ncl ... {{owner_email}}` to wire from collected input. A command
          // with no {{...}} (build/test) is returned unchanged; an unresolved var
          // throws → caught → deferred (the prompt hasn't been answered yet).
@@ -115,7 +128,7 @@ index a4332813..8d721ec2 100644
          // Last command wins for capture (a capture run should be a single command).
          // bindCapture binds stdout-as-is OR a multi-field JSON spec, and enforces
          // validate:<re> — a mismatch / unparseable JSON throws → bounced to an agent.
-@@ -876,7 +931,23 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
+@@ -876,7 +944,23 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
      res.agentTasks.push({ kind: d.kind, line: d.line, reason, prose: proseFor(md, d.line) });
    };
  
@@ -139,7 +152,7 @@ index a4332813..8d721ec2 100644
      // Tracks an in-flight step so the catch can always close a matching
      // step-end (start/end stay balanced even when applyOne throws — a consumer's
      // spinner is never orphaned). Set only after step-start fires.
-@@ -1038,7 +1109,12 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
+@@ -1038,7 +1122,12 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
        }
        if (/unresolved \{\{/.test(msg))
          res.deferred.push(msg); // blocked on a prompt input

@@ -201,16 +201,30 @@ export function matchCalls(
     }
   } else {
     // subset / contains_any: position-free, but each observed call is still
-    // consumed once so two expectations cannot both claim the same call.
-    const taken = new Set<number>();
-    for (const e of expected) {
-      const at = observed.findIndex((o, i) => !taken.has(i) && callMatches(o, e));
-      if (at === -1) missing.push(e);
-      else {
-        matched += 1;
-        taken.add(at);
+    // consumed once so two expectations cannot both claim the same call. That
+    // is a bipartite matching, and first-fit is not enough: with `write(*)` then
+    // `write(/a/)` against [write a, write b], first-fit hands `write a` to the
+    // loose expectation and strands the specific one. Augmenting paths (Kuhn)
+    // find the maximum matching; case sizes are tiny, so O(E·V) is nothing.
+    const fits = expected.map((e) => observed.map((o) => callMatches(o, e)));
+    const owner: number[] = new Array(observed.length).fill(-1); // observed → expected
+    const augment = (ei: number, seen: boolean[]): boolean => {
+      for (let oi = 0; oi < observed.length; oi++) {
+        if (!fits[ei][oi] || seen[oi]) continue;
+        seen[oi] = true;
+        if (owner[oi] === -1 || augment(owner[oi], seen)) {
+          owner[oi] = ei;
+          return true;
+        }
       }
-    }
+      return false;
+    };
+    expected.forEach((_, ei) => augment(ei, new Array(observed.length).fill(false)));
+    const assigned = new Set(owner.filter((ei) => ei !== -1));
+    expected.forEach((e, ei) => {
+      if (assigned.has(ei)) matched += 1;
+      else missing.push(e);
+    });
   }
 
   const score = matched / total;

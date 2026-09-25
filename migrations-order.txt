@@ -37,3 +37,10 @@ moduleWebchatAuditSyslog
 moduleWebchatApprovalTriage
 moduleWebchatTemplateSources
 moduleWebchatActivityLog
+moduleWebchatRunners
+moduleWebchatRunnerImage
+moduleWebchatRunnerEgress
+moduleWebchatRunnerClient
+moduleWebchatSignins
+moduleWebchatAgentEgressHosts
+moduleWebchatAuditRetention

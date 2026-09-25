@@ -15,7 +15,7 @@ install it.
 | [../patches/INVENTORY.md](../patches/INVENTORY.md) | Every residue patch, what it does, and where it's headed (upstreamable / product / local) |
 | [../app/docs/webchat/upstream-drift.md](../app/docs/webchat/upstream-drift.md) | How the pins track upstream: the coverage guard, the sync cycle, residue shrink |
 | [../app/docs/webchat/design/](../app/docs/webchat/design/) | Design notes — learning loop, migration, routing, and the archived fork-era drift audit |
-| [../app/public/webchat/DESIGN.md](../app/public/webchat/DESIGN.md) | The frontend design-language contract (read before touching `app.js` / `style.css`) |
+| [../app/public/webchat/DESIGN.md](../app/public/webchat/DESIGN.md) | The frontend design-language contract (read before touching `ui/src/` / `style.css`) |
 | [../app/docs/webchat/e2e.md](../app/docs/webchat/e2e.md) | Playwright smoke suite |
 
 ## Repo conventions

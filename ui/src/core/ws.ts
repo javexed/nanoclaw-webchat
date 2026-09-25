@@ -14,13 +14,14 @@
 // things that simply became imports once their real owners existed. The order
 // was chosen from those numbers, not from taste.
 import { $, lucide, lucideEl, esc } from '../core/dom.js';
-import { learnTurnToolCount, roomAutoLearn } from '../features/room-list-state.js';
+import { learnTurnToolCount, roomAutoLearn, roomsReceived } from '../features/room-list-state.js';
 import { pushReasoning, setThinkingMilestone, updateThinkingBubble } from '../features/thinking.js';
 import { renderCredentialIsolation } from '../features/settings.js';
-import { isAdminView } from './state.js';
+import { isAdminView, isWorkspaceAdminView } from './state.js';
 import { permsMyUserId } from '../features/perms-list-state.js';
 import { joinRoom, renderRooms, updateUnreadDots } from '../features/rooms.js';
 import { renderHandleChip, renderMembers, userIsOwner } from '../features/members.js';
+import { userIsGlobalAdmin } from '../features/perms-user-info.js';
 import { hideLearnNudge, showLearnNudge, triggerLearn } from '../features/learn.js';
 import { fetchMentionablePeople, handleTypingEvent } from '../features/composer.js';
 import { beginAgentTurn, endAgentTurn, interruptAgent, markTurnActivity, refreshWiredAgentsForCurrentRoom } from '../features/agents.js';
@@ -146,6 +147,7 @@ export function connect() {
       case 'rooms':
         if (!state.lastRoomsList.length && msg.rooms.length) void refreshDraftBadge();
         state.lastRoomsList = msg.rooms;
+        roomsReceived.value = true;
         // Seed persistent unread badges from the server's per-user read markers
         // so messages that arrived while away surface on reconnect — not just
         // live ones. Never dot the open room (the join that follows reads it).
@@ -555,6 +557,9 @@ export async function probeIsOwner() {
       const list = await users.json().catch(() => []);
       const me = Array.isArray(list) ? list.find((u) => u.id === permsMyUserId.value) : null;
       state.isOwnerView = !!(me && userIsOwner(me));
+      // Sign-in: owner or global admin, the same audience its endpoint allows.
+      isWorkspaceAdminView.value = state.isOwnerView || !!(me && userIsGlobalAdmin(me));
+      $('#overflow-signin')!.hidden = !isWorkspaceAdminView.value;
       try {
         const fr = await authFetch('/api/webchat/features');
         const feats = fr.ok ? await fr.json() : {};
@@ -582,6 +587,13 @@ export async function probeIsOwner() {
         $('#overflow-mcp')?.removeAttribute('hidden');
         $('#mtab-mcp-btn')?.removeAttribute('hidden');
         $('#mtab-skills-btn')?.removeAttribute('hidden');
+        // Runners: paired developer machines. Owner/global-admin surface; the
+        // API 403s anyone else, so revealing on the owner view is enough here.
+        $('#mtab-runners-btn')?.removeAttribute('hidden');
+        // Network: the install's egress allowlist (every agent). Same audience.
+        $('#mtab-network-btn')?.removeAttribute('hidden');
+        $('#overflow-runners')?.removeAttribute('hidden');
+        $('#overflow-network')?.removeAttribute('hidden');
         $('#overflow-skills')?.removeAttribute('hidden');
       }
       return true;
@@ -589,6 +601,7 @@ export async function probeIsOwner() {
   } catch {}
   state.isOwnerView = false;
   isAdminView.value = false;
+  isWorkspaceAdminView.value = false;
   return false;
 }
 

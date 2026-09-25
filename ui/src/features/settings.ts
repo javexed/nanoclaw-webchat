@@ -13,12 +13,14 @@ import { preflightChecks, preflightMessage, preflightPhase } from './preflight-s
 import PrejudgeActions from './PrejudgeActions.vue';
 import MyCredentials from './MyCredentials.vue';
 import Preflight from './Preflight.vue';
-import { bearerConfirmTimer, sttChosenBackend } from './settings-state.js';
+import { sttChosenBackend } from './settings-state.js';
 import { codexInstallActive, opencodeInstallActive } from './installer-state.js';
 import { showToast, toastError } from '../core/toast.js';
+import { renderSignins } from './signins.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
 import { pollRoutingInstall, pollSttInstall, pollTtsInstall, renderRoutingInstallProgress, runInstall, runRoutingInstall, runSttInstall, runTtsInstall } from './installers.js';
+import { renderVsCodeSettings } from './vscode.js';
 import { sttPopulateModelSelect } from './models.js';
 import { cancelDictation, getSttConfig, getTtsReadAloudEnabled, isDictationActive, loadTtsConfig, setSttConfig, setTtsReadAloudEnabled, stopTts } from './voice.js';
 import { createApp, nextTick } from 'vue';
@@ -32,7 +34,6 @@ import { prejudgeModelOptions, prejudgeRows } from './prejudge-state.js';
  * function that has not been converted yet — not a decision to stop checking.
  */
 export interface SettingsDeps {
-  toggleBearerToken: (a0?: any) => any;
   updateUserCredsBanner: (a0?: any) => any;
 }
 
@@ -245,60 +246,7 @@ export async function renderCredentialsSettings() {
   });
 }
 
-let accessBearerWired = false;
-
 let accessHttpsWired = false;
-
-export async function renderAccessSettings() {
-  const section = $('#settings-access');
-  if (!section) return;
-  let info = null;
-  try {
-    const r = await authFetch('/api/webchat/auth');
-    if (r.ok) info = await r.json();
-  } catch {
-    info = null;
-  }
-  section.hidden = !info;
-  if (!info) return;
-
-  const btn = $('#access-bearer-btn')!;
-  if (!accessBearerWired) {
-    accessBearerWired = true;
-    btn?.addEventListener('click', () => deps.toggleBearerToken(btn.dataset.want === 'enable'));
-  }
-  // Reset any half-finished confirm from a previous open.
-  clearTimeout(bearerConfirmTimer.value ?? undefined);
-  btn.dataset.confirming = '';
-
-  // Install-row idiom (like Auto routing): state lives in the badge, the
-  // explanation in its tooltip — no standing prose.
-  const badge = $('#access-bearer-badge')!;
-  const setBadge = (text?: any, title?: any) => {
-    badge.hidden = false;
-    badge.textContent = text;
-    badge.title = title;
-  };
-  if (!info.bearerConfigured) {
-    btn!.hidden = true;
-    setBadge('Not set', 'No bearer token is configured — access is controlled by your other auth method.');
-  } else if (info.bearerActive && info.canDisableBearer) {
-    btn!.hidden = false;
-    btn.dataset.want = 'disable';
-    btn!.textContent = 'Disable';
-    setBadge('Active', 'You also have Tailscale or SSO, so the shared bearer token is no longer needed.');
-  } else if (info.bearerActive) {
-    btn!.hidden = true;
-    setBadge('Required', 'Required for access. Set up Tailscale or SSO to retire this shared token.');
-  } else {
-    btn!.hidden = false;
-    btn.dataset.want = 'enable';
-    btn!.textContent = 'Re-enable';
-    setBadge('Disabled', 'Access is via Tailscale or SSO. The token in .env is ignored until re-enabled.');
-  }
-
-  renderHttpsSettings();
-}
 
 export async function renderHttpsSettings() {
   const row = $<HTMLElement>('#access-https-row');
@@ -482,8 +430,26 @@ export async function renderAuditSettings(): Promise<void> {
     }
   }
 
+  void renderAuditRetention();
+
   if (auditWired) return;
   auditWired = true;
+  $<HTMLButtonElement>('#audit-retention-apply')?.addEventListener('click', async () => {
+    const days = Number($<HTMLSelectElement>('#audit-keep-days')?.value ?? '90');
+    const maxMb = Number($<HTMLInputElement>('#audit-max-mb')?.value ?? '');
+    const r = await authFetch('/api/webchat/audit-retention', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      body: JSON.stringify({ days, maxMb }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      showToast('Retention not changed: ' + (err.error || r.statusText), { kind: 'error' });
+      return;
+    }
+    showToast(days ? `Audit log kept ${keepLabel(days)}` : 'Audit log kept until the cap', { kind: 'success' });
+    void renderAuditRetention();
+  });
   $<HTMLButtonElement>('#audit-syslog-apply')?.addEventListener('click', async () => {
     const target = ($<HTMLInputElement>('#audit-syslog-target')?.value || '').trim();
     const r = await authFetch('/api/webchat/audit-syslog', {
@@ -501,6 +467,36 @@ export async function renderAuditSettings(): Promise<void> {
     });
     void renderAuditSettings(); // pick up the fresh status (incl. the config event's delivery)
   });
+}
+
+const keepLabel = (days: number) => (days === 365 ? '1 year' : `${days} days`);
+const mb = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
+
+/** Keep / cap, and what is on disk now. Same audience as forwarding (the endpoint 403s everyone else). */
+async function renderAuditRetention(): Promise<void> {
+  let info: any = null;
+  try {
+    const res = await authFetch('/api/webchat/audit-retention');
+    if (res.ok) info = await res.json();
+  } catch {
+    info = null;
+  }
+  if (!info) return;
+  const sel = $<HTMLSelectElement>('#audit-keep-days');
+  if (sel && document.activeElement !== sel) {
+    const v = String(info.days);
+    // A value set outside the presets (.env) still shows as itself.
+    if (![...sel.options].some((o) => o.value === v)) sel.add(new Option(keepLabel(info.days), v));
+    sel.value = v;
+  }
+  const cap = $<HTMLInputElement>('#audit-max-mb');
+  if (cap && document.activeElement !== cap) cap.value = String(info.maxMb);
+  const usage = $('#audit-usage');
+  if (usage) {
+    const u = info.usage || {};
+    usage.textContent = `${mb(u.bytes ?? 0)} on disk${u.oldestDay ? ` · since ${u.oldestDay}` : ''}`;
+    usage.hidden = false;
+  }
 }
 
 /**
@@ -550,6 +546,8 @@ export function openSettings() {
   renderSettingsModal();
   void Promise.allSettled([renderTtsSetupSettings(), renderSttSetupSettings()]).then(syncFeaturesColumn);
   void renderMyCredentials();
+  void renderVsCodeSettings();
+  void renderSignins();
   $('#settings-overlay')!.hidden = false;
   // Focus trap
   const modal = $('#settings-overlay .modal')!;

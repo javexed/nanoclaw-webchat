@@ -293,10 +293,10 @@ export function injectSessionCommand(agentGroupId: string, sessionId: string, co
  * wiring happens. Used by both POST /api/agents `withRoom: false` and the
  * room-first POST /api/rooms "create new agent inline" path.
  */
-export function createBareAgentGroup(
+export async function createBareAgentGroup(
   name: string,
   opts: { folder?: string; instructions?: string } = {},
-): { group: AgentGroup } | { error: string; status: number } {
+): Promise<{ group: AgentGroup } | { error: string; status: number }> {
   const folder = opts.folder && /^[a-z0-9_-]+$/i.test(opts.folder) ? opts.folder : nameToFolder(name);
   if (!folder) return { error: 'Could not derive folder from name', status: 400 };
   const group: AgentGroup = {
@@ -308,18 +308,18 @@ export function createBareAgentGroup(
     status: 'active',
   };
   try {
-    createAgentGroup(group);
+    await createAgentGroup(group);
   } catch (err) {
     return { error: `Could not create agent group: ${(err as Error).message}`, status: 409 };
   }
-  initGroupFilesystem(group, { instructions: opts.instructions });
+  await initGroupFilesystem(group, { instructions: opts.instructions });
   // Materialize the model env NOW: a group born AFTER the workspace default
   // model was set would otherwise have no settings.json until some later
   // model change — its first container would fall through to api.anthropic.com
   // (surfaced as a OneCLI 401 in the wizard's Ollama flow, where the default
   // is set one step before the first agent is created).
   try {
-    writeAgentSettingsForAssignedModel(group.id);
+    await writeAgentSettingsForAssignedModel(group.id);
   } catch (err) {
     log.warn('Webchat: settings.json write for new agent group failed', { agentGroupId: group.id, err });
   }

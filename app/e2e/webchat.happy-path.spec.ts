@@ -15,7 +15,7 @@ import type { AddressInfo } from 'net';
  * load-bearing coverage is the in-app loop: enter → create room → send → render
  * the user message → render an agent reply.
  *
- * Run via `pnpm run e2e` (builds dist first). Imports resolve against dist/.
+ * Run via `pnpm run build && pnpm exec playwright test`. Imports resolve against dist/.
  */
 
 // Bind loopback with NO token: the server treats loopback as authenticated (the

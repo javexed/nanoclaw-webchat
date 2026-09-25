@@ -108,7 +108,8 @@ One turn on the group, then check that the turn used the local endpoint and that
 tool calls round-trip:
 
 ```bash
-bin/ncl sessions logs --id <group-id> | tail -40
+bin/ncl sessions list                             # find the session id
+bin/ncl sessions history <session-id> --limit 40
 curl -s http://127.0.0.1:11434/api/ps          # the model is resident
 ```
 

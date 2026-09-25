@@ -12,7 +12,7 @@ interface MockedOneCLI {
 }
 
 let mockOneCLIInstance: MockedOneCLI;
-let fetchMock: ReturnType<typeof vi.fn>;
+let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
 
 /**
  * Minimal happy-path container config. Mirrors the shape returned by the
@@ -70,7 +70,7 @@ beforeEach(async () => {
       }
     },
   }));
-  fetchMock = vi.fn();
+  fetchMock = vi.fn<typeof fetch>();
   vi.stubGlobal('fetch', fetchMock);
 });
 
@@ -245,7 +245,7 @@ describe('draftAgent — env override', () => {
     fetchMock.mockResolvedValueOnce(anthropicResponse(jsonString('A', 'A')));
     const { draftAgent } = await importDrafter();
     await draftAgent('hello');
-    const callBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    const callBody = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
     expect(callBody.model).toBe('claude-sonnet-4-6');
   });
 });

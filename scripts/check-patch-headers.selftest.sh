@@ -6,7 +6,7 @@
 # A guard that has only ever been seen to pass is not evidence of anything.
 # This writes throwaway fixture patches — a clean one, one per real fault shape,
 # and the legitimate shapes that must NOT trip it — and asserts the guard's
-# verdict on each. It never touches the repo's own patches/ or overlays/.
+# verdict on each. It never touches the repo's own patches/ or app/provider-overlays/.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 GUARD="$HERE/scripts/check-patch-headers.sh"
@@ -139,7 +139,7 @@ P
 )
 expect 0 "a dotfile patch maps its name to its path" "$root" "patch headers OK"
 
-root=$(mk overlay overlays codex-activity.patch <<'P'
+root=$(mk overlay app/provider-overlays codex-activity.patch <<'P'
 diff --git a/container/agent-runner/src/providers/codex.ts b/container/agent-runner/src/providers/codex.ts
 index 1111111..2222222 100644
 --- a/container/agent-runner/src/providers/codex.ts

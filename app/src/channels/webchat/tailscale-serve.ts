@@ -155,3 +155,58 @@ export async function enableTailscaleServe(
   }
   return { ok: false, error: (run.stderr || run.stdout || 'tailscale serve failed').trim().slice(0, 400) };
 }
+
+/**
+ * The HTTPS address Tailscale Serve publishes THIS install at, read from
+ * `tailscale serve status --json`: the `host:port` whose root handler proxies to
+ * our local port. `:443` is left off. Null when Serve does not front this port
+ * (another install may own the default 443 mapping on the same machine).
+ */
+export function serveUrlForPort(serveStatusJson: string, port: number): string | null {
+  let cfg: { Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }> };
+  try {
+    cfg = JSON.parse(serveStatusJson);
+  } catch {
+    return null;
+  }
+  for (const [hostPort, web] of Object.entries(cfg.Web ?? {})) {
+    const proxy = web?.Handlers?.['/']?.Proxy ?? '';
+    let target: URL;
+    try {
+      target = new URL(proxy);
+    } catch {
+      continue;
+    }
+    const local = ['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname);
+    if (!local || Number(target.port || 80) !== port) continue;
+    const [host, p] = hostPort.split(':');
+    return p && p !== '443' ? `https://${host}:${p}` : `https://${host}`;
+  }
+  return null;
+}
+
+/**
+ * Where a browser should reach this install on the tailnet: Serve's HTTPS
+ * address when Serve fronts our port, else — when webchat itself listens
+ * beyond loopback — `http://<node>.ts.net:<port>`. Null when neither applies.
+ */
+export async function tailnetUrlForPort(
+  port: number,
+  listensBeyondLoopback: boolean,
+  runner: TailscaleRunner = defaultRunner,
+): Promise<string | null> {
+  const serve = await runner(['serve', 'status', '--json']);
+  if (serve.ok) {
+    const viaServe = serveUrlForPort(serve.stdout, port);
+    if (viaServe) return viaServe;
+  }
+  if (!listensBeyondLoopback) return null;
+  const status = await runner(['status', '--json']);
+  if (!status.ok) return null;
+  try {
+    const dns = (JSON.parse(status.stdout) as { Self?: { DNSName?: string } }).Self?.DNSName?.replace(/\.$/, '');
+    return dns ? `http://${dns}:${port}` : null;
+  } catch {
+    return null;
+  }
+}

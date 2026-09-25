@@ -11,8 +11,8 @@ import { createAgentGroup } from '../../db/agent-groups.js';
 import { createMessagingGroupAgent, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { createWebchatRoom, createWebchatModel, assignModelToAgent, getWebchatTopology } from './db.js';
 
-function seedAgent(id: string, name: string) {
-  createAgentGroup({ id, name, folder: id, agent_provider: null, created_at: 't' } as Parameters<
+async function seedAgent(id: string, name: string) {
+  await createAgentGroup({ id, name, folder: id, agent_provider: null, created_at: 't' } as Parameters<
     typeof createAgentGroup
   >[0]);
 }
@@ -48,10 +48,10 @@ const AGENTS = [
 beforeEach(async () => {
   await initTestDb();
   await runMigrations(getDb());
-  seedAgent('ag-research', 'Researcher');
-  seedAgent('ag-code', 'Coder');
-  seedAgent('ag-unused', 'Unused'); // accessible but wired to no room → orphan column
-  seedAgent('ag-elsewhere', 'Elsewhere'); // wired to an out-of-scope room AND not accessible
+  await seedAgent('ag-research', 'Researcher');
+  await seedAgent('ag-code', 'Coder');
+  await seedAgent('ag-unused', 'Unused'); // accessible but wired to no room → orphan column
+  await seedAgent('ag-elsewhere', 'Elsewhere'); // wired to an out-of-scope room AND not accessible
   await createWebchatRoom('Room A', 'room-a');
   await createWebchatRoom('Room B', 'room-b');
   await createWebchatRoom('Room C', 'room-c');

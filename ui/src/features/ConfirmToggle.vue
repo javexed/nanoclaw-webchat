@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * The checkbox showConfirmModal borrows as its body — sixty-fifth island.
+ * The toggle(s) showConfirmModal borrows as its body — sixty-fifth island.
  *
  * Same per-instance shape as ConfirmInput, and state arrives the same way, for
  * the same reason.
@@ -17,15 +17,15 @@ import { inject } from 'vue';
 
 const s = inject<any>('confirmToggle');
 
-function capture(el: any): void {
-  if (el) s.el = el;
+function capture(el: any, i: number | string): void {
+  if (el) s.els[Number(i)] = el;
 }
 </script>
 
 <template>
-  <label class="setting-toggle"
-    ><span>{{ s.toggleLabel }}</span
-    ><input type="checkbox" :ref="capture"
+  <label v-for="(label, i) in s.labels" :key="i" class="setting-toggle"
+    ><span>{{ label }}</span
+    ><input type="checkbox" :ref="(el) => capture(el, i)"
   /></label>
   <div v-if="s.note" class="import-note">{{ s.note }}</div>
 </template>

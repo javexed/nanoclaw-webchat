@@ -98,7 +98,7 @@ response.
   prefix matching, and `snippet()` highlighting; jumps to a match, paging history
   as needed.
 - **Notifications / PWA** — Web Push (VAPID) with an SSRF-allowlisted endpoint set;
-  a service worker (network-first shell, cache-first vendored libs, `/api` & `/ws`
+  a service worker (cache-first shell under a content-hashed cache name, cache-first vendored libs, `/api` & `/ws`
   bypass) for an installable, offline-capable app; IndexedDB unread app-badge.
 - **Themes** — dark / light / system, font scale, send-key preference; design
   tokens per [`public/webchat/DESIGN.md`](../../public/webchat/DESIGN.md).
@@ -107,7 +107,7 @@ response.
 
 - **Localhost-first binding** — default `127.0.0.1:3100`; refuses a non-loopback
   bind unless an explicit auth method is configured.
-- **Authentication** — four methods, each auto-enabled by the presence of its env
+- **Authentication** — five methods, each auto-enabled by the presence of its env
   var and tried in priority order (see table below). There is no mode selector;
   localhost auto-owner is disabled once any explicit method is configured.
 - **Roles** — owner / admin, global or scoped to an agent group; the first
@@ -169,7 +169,7 @@ preserved by fan-out (sender `trigger:1`, others `trigger:0`).
 - **Ollama host management** — list hosts, stream model **pulls** with progress,
   refresh the router roster.
 - **Local-model routing** — a console over a LiteLLM + Arch-Router classifier stack.
-  A **"Set up auto routing"** button in Settings installs and configures it in one flow
+  The **Auto routing → Install** button in Settings installs and configures it in one flow
   (`POST /api/router/install`: pulls the classifier model with a progress bar, runs
   the `add-routing` installer, points the classifier at `host.docker.internal`, and
   auto-binds routes to the roster) — no shell required; it can still be installed via
@@ -181,8 +181,8 @@ preserved by fan-out (sender `trigger:1`, others `trigger:0`).
   the installers and re-binds. A **router picker** (New / Delete) defines multiple
   named routing profiles (`auto`, `auto-vision`, …) sharing one classifier + roster;
   the sub-tabs operate on the selected profile, and an agent picks one by its assigned
-  virtual model. Starts in **shadow mode**; the operator flips it live
-  from the tab. Degrades cleanly to "not installed" when `data/litellm/*` is absent.
+  virtual model. The button install flips it **live** straight away; the
+  `/add-routing` skill path starts in **shadow mode**, flipped live from the tab. Degrades cleanly to "not installed" when `data/litellm/*` is absent.
 - **MCP registry** — register / probe (real MCP client, lists tools) / assign MCP
   servers to agents; syncs into `container_configs.mcp_servers`, co-existing with
   `ncl`-added servers.
@@ -195,15 +195,73 @@ preserved by fan-out (sender `trigger:1`, others `trigger:0`).
 
 ## Authentication methods
 
-No mode selector — each method auto-enables from its env var, tried in priority
-order. Localhost auto-pass is off once any explicit method is set.
+Each method is on when its env var is set, tried in priority order; **Admin →
+Sign-in** turns Tailscale, OIDC and the trusted proxy on and off (below).
+Localhost auto-pass is off once any explicit method is set.
 
 | Method | Env var(s) | Detection | Identity |
 |---|---|---|---|
 | Bearer | `WEBCHAT_TOKEN` (≥24) | `Authorization: Bearer` or WS subprotocol `bearer.<t>`; constant-time compare | `webchat:owner` |
-| Trusted-proxy / SSO | `WEBCHAT_TRUSTED_PROXY_IPS` (`auto`/`*`/CIDR list), `WEBCHAT_TRUSTED_PROXY_HEADER` | `auto`/`*` trusts Azure EasyAuth / Cloudflare Access paired headers (presence only) or the header from any IP; else source IP must match the allowlist | `webchat:<identity>` |
+| OIDC (Microsoft Entra ID or any provider) | `WEBCHAT_OIDC_ISSUER`, `WEBCHAT_OIDC_AUDIENCE`, and the endpoints from discovery (below) | A signed id token — the web app's own sign-in, App Service's `x-ms-token-aad-id-token`, or a JWT presented as `Authorization: Bearer` (the VS Code extension). RS256 or ES256, pinned to the key's type; signature, issuer, audience, expiry checked against the issuer's keys. A token that fails falls through to the methods below; an expired one adds `X-Webchat-Auth-Hint: token-stale` and the browser renews it via `/.auth/refresh` | Microsoft: `webchat:<preferred_username>`; other providers: `webchat:<email>`, only when `email_verified` |
+| Trusted-proxy / SSO | `WEBCHAT_TRUSTED_PROXY_IPS` (`auto`/`*`/CIDR list), `WEBCHAT_TRUSTED_PROXY_HEADER` | The mode is only an IP gate: `auto`/`*` accepts any source, a CIDR list requires the hop to match. Either way the same headers are read — Azure EasyAuth / Cloudflare Access paired headers first (presence only, unsigned), then `WEBCHAT_TRUSTED_PROXY_HEADER` | `webchat:<identity>` |
 | Tailscale | `WEBCHAT_TAILSCALE=true` | `tailscale whois --json <ip>` → `LoginName` | `webchat:tailscale:<email>` |
 | Localhost | _(none)_ | remote is loopback **and** no explicit method configured | `webchat:local-owner` |
+
+### Admin → Sign-in
+
+Owners and global admins turn each method on or off in **Admin → Sign-in**:
+Tailscale, OIDC, the trusted proxy, and the access token. Changes are written
+to `.env` and apply at once — no restart. The HTTPS-over-Tailscale switch sits
+on the same page.
+
+- **OIDC**: **Microsoft** takes the tenant (its GUID or a verified domain) and
+  the app registration's client ID; **Other** takes the issuer URL, the client
+  ID and a name for the login button. Either takes an optional client secret
+  (write-only). Saving reads the provider's OpenID configuration — Microsoft's
+  for the tenant, or `<issuer>/.well-known/openid-configuration`, whose
+  `issuer` must be exactly the one typed — and stores the issuer, keys and
+  endpoints from it; every endpoint must be https. A provider that takes the
+  secret only as HTTP Basic gets it that way. The page shows the **redirect
+  URI** to register with the provider: `<origin>/auth/oidc/callback`
+  (`/auth/microsoft/callback`, the first version's path, still works).
+  Microsoft also takes the VS Code extension's optional **App ID URI** and
+  **client ID**; the extension signs in with Microsoft only, so with another
+  provider it signs in over the network (Tailscale).
+- **Trusted proxy**: the proxy's IPv4 address(es) or CIDRs and the identity
+  header. `auto` / `*` (trust any source) is `.env`-only: it is safe only when
+  nothing but the proxy can reach the port, which the page cannot check.
+- **Lockout rules**: you cannot turn off, or re-point, the method you are
+  signed in with (sign in another way first), nor the last usable method on an
+  install reachable beyond this machine. Signed in as the localhost owner, only
+  Tailscale can be turned on — the first tailnet identity then becomes an
+  owner, as in the setup wizard.
+
+Audit: `auth.signin.set` (method, on/off, and for OIDC the provider, issuer and
+client id — never the secret).
+
+### The web app's OIDC sign-in, and linking sign-ins
+
+With OIDC on, the login screen offers **Sign in with <provider>** — the web
+app's own sign-in, no App Service or proxy needed. It is the OpenID Connect code
+flow with PKCE (most providers accept `http` redirect URIs only for
+`localhost`, so a tailnet install needs **HTTPS over Tailscale** first). The id
+token is verified like any OIDC token, plus the nonce minted for that attempt.
+A successful sign-in starts a 14-day session in an `HttpOnly`, `SameSite=Lax`
+cookie; only a SHA-256 of its token is stored (`webchat_signin_sessions`).
+Turning OIDC off ends every session.
+Each sign-in attempt is bound to the browser that started it (a short-lived
+`HttpOnly` state cookie the callback must match), so a callback link someone
+else started cannot sign you in as them. A WebSocket upgrade riding the session
+cookie must come from the same origin.
+
+**Settings → Sign-ins** links a second sign-in to the same account: **Link
+<provider>** (a round trip through the provider) or **Link Tailscale**
+(this device's tailnet identity). Linking needs both sign-ins in the person's
+hands at once; nothing takes an identity typed by hand. The **older** identity
+stays the account, so its roles, credentials and paired machines stay put; an
+identity that already holds a role, or has sign-ins of its own, cannot become
+a linked sign-in. Unlinking applies on the next request. Audit:
+`auth.signin`, `auth.link`, `auth.unlink`.
 
 ## Environment variables
 
@@ -219,6 +277,17 @@ Loaded from `.env` into `process.env` (if unset) by the adapter's `env-load.ts`
 | `WEBCHAT_TAILSCALE` | `=true` enables Tailscale-whois auth | off |
 | `WEBCHAT_TRUSTED_PROXY_IPS` | `auto`/`*` or CSV IP/CIDR allowlist → enables proxy/SSO auth | `''` |
 | `WEBCHAT_TRUSTED_PROXY_HEADER` | Header carrying the proxy identity | `x-forwarded-user` |
+| `WEBCHAT_OIDC_PROVIDER` | `microsoft` or `other` | `microsoft` for a login.microsoftonline.com issuer |
+| `WEBCHAT_OIDC_NAME` | The provider's name on the login button (other providers) | `SSO` |
+| `WEBCHAT_OIDC_ISSUER` | Exactly the `iss` the provider's tokens carry → enables OIDC (with the audience) | `''` |
+| `WEBCHAT_OIDC_AUDIENCE` | The client id (the token's `aud`) | `''` |
+| `WEBCHAT_OIDC_JWKS_URI` | Signing-key URL (from discovery; derived for Microsoft when blank) | derived |
+| `WEBCHAT_OIDC_AUTHORIZE_URL` / `_TOKEN_URL` | The sign-in flow's endpoints (from discovery; derived for Microsoft when blank) | derived |
+| `WEBCHAT_OIDC_TOKEN_AUTH` | `basic` sends the client secret as HTTP Basic instead of in the body | body |
+| `WEBCHAT_OIDC_CLIENT_SECRET` | For a confidential client (Microsoft: a **Web**-platform redirect URI); omit for a public client (PKCE) | `''` |
+| `WEBCHAT_OIDC_LOGIN` | `false` hides the sign-in button while keeping token checks | on with OIDC |
+| `WEBCHAT_PUBLIC_URL` | The origin users reach central at, when a proxy means the request's own Host is not it (builds the redirect URI) | from the request |
+| `WEBCHAT_ALLOWED_HOSTS` | Extra host names the server answers to (a tunnel or custom domain), comma-separated; `*` accepts any. IP addresses, `localhost`, this machine's name, its Tailscale name, `WEBCHAT_PUBLIC_URL` and requests through the trusted proxy are always accepted; anything else gets `421` | `''` |
 | `WEBCHAT_TLS_CERT` / `WEBCHAT_TLS_KEY` | Enable HTTPS (both required) | unset |
 | `WEBCHAT_PUBLIC_DIR` | PWA static dir | `public/webchat` |
 | `WEBCHAT_VAPID_PUBLIC_KEY` / `_PRIVATE_KEY` | Web-Push VAPID keys (push off if unset) | unset |
@@ -239,18 +308,18 @@ Loaded from `.env` into `process.env` (if unset) by the adapter's `env-load.ts`
   archive/hide/pin variants, `POST /api/rooms/pins/order`,
   `GET|PUT …/engage-mode`, `PUT …/name`.
 - **Threads** — `GET|POST /api/rooms/:id/threads`,
-  `GET|PUT|DELETE …/threads/:tid`, `PUT …/threads/:tid/read`,
+  `PATCH|DELETE …/threads/:tid`, `PUT …/threads/:tid/read`,
   `POST …/threads/:tid/pull|push` (dormant: `…/engaged` routes).
 - **User credentials** — `GET|PUT /api/webchat/credentials-config`,
   `GET|POST|DELETE /api/user-credentials/credential`,
-  `POST /api/userCreds/oauth/(start|code|cancel)`,
-  `POST /api/userCreds/codex/(start|finish|cancel)`,
+  `POST /api/user-credentials/oauth/(start|code|cancel)`,
+  `POST /api/user-credentials/codex/(start|finish|cancel)`,
   `GET|PUT /api/rooms/:id/credential-mode`, `GET|PUT /api/rooms/:id/oauth-allowed`.
 - **History / files / search** — `GET /api/rooms/:id/messages` (`?thread_id=`),
   `POST /api/rooms/:id/upload`, `POST /api/rooms/:id/upload/chunk`,
   `GET /api/files/:roomId/:fileId`, `GET /api/search`, `GET /api/topology`.
 - **Agents** — `GET|POST /api/agents`, `POST /api/agents/draft`,
-  `GET|PUT|DELETE /api/agents/:id`, `PUT …/instructions`, `GET|PUT …/rooms`,
+  `GET|PUT|DELETE /api/agents/:id`, `PUT …/instructions`, `GET …/rooms`,
   `PUT …/model`, `GET|PUT …/mcp-servers`, `PUT …/status`.
 - **MCP** — `GET|POST /api/mcp-servers`, `POST /api/mcp-servers/probe`,
   `PUT|DELETE /api/mcp-servers/:id`. Hardening: `POST …/:id/repin` (re-approve
@@ -267,7 +336,7 @@ Loaded from `.env` into `process.env` (if unset) by the adapter's `env-load.ts`
   `GET /api/ollama/hosts|models|pulls`, `POST /api/ollama/pull`,
   `GET|PUT /api/router/routes`, `POST /api/router/classify`,
   `GET /api/router/decisions|metrics|models`, `GET|POST /api/router/install`,
-  `GET|POST /api/litellm/roster-refresh`.
+  `GET|POST /api/router/roster-refresh`.
 - **Skills** — `GET /api/skills`, `POST /api/skills/import` (pool) +
   `POST /api/skills/inspect` (pre-import preview: inventory + lint, writes
   nothing), `GET /api/skills/updates` + `POST /api/skills/:name/update`
@@ -295,7 +364,7 @@ Adapter (`src/channels/webchat/`):
 | `index.ts` | Adapter registration; `onInbound` / `deliver` / `setTyping` / `sendStatus`; loop-back fan-out; approval-card listeners |
 | `server.ts` | The HTTP server: manual route dispatch, static serve, WS upgrade, TLS, CORS/CSP |
 | `ws.ts` / `state.ts` | WebSocket handling; `broadcast` + per-user approval push |
-| `auth.ts` / `access.ts` / `roles.ts` | The four auth methods; per-room access; owner/admin roles |
+| `auth.ts` / `access.ts` / `roles.ts` | The five auth methods; per-room access; owner/admin roles |
 | `db.ts` | All webchat table CRUD, thread/sync helpers, FTS search, approvals index, models/MCP |
 | `migration.ts` | The ~25 webchat tables |
 | `models.ts` / `ollama-manage.ts` | Model registry + SSRF policy + env injection; Ollama pull + router state |
@@ -303,12 +372,12 @@ Adapter (`src/channels/webchat/`):
 | `drafter.ts` / `oauth-mint.ts` | Host-side agent drafter; browser OAuth/Codex mint (prototype) |
 | `push.ts` / `redact.ts` / `reconcile.ts` / `env-load.ts` | Web Push + allowlist; secret masking; delivery-race recovery; `.env` shim |
 
-PWA (`public/webchat/`): `index.html` (all views/modals), `app.js` (behavior),
+PWA (`public/webchat/`): `index.html` (all views/modals), `app.js` (behavior; built from `ui/src/`),
 `style.css`, `sw.js`, `manifest.json`, `DESIGN.md` (design-language contract),
 vendored `marked.min.js` / `dompurify.min.js`, icons/logos.
 
 Cross-cutting: `src/modules/user-credentials/`, `src/modules/agent-status/`,
-migrations `src/db/migrations/020-024`.
+migrations `src/db/migrations/module-*.ts` + `src/channels/webchat/migration.ts`.
 
 ## How it ships
 
@@ -334,7 +403,7 @@ into NanoClaw core (too large a surface):
   mentions / pins / archive, **threads**, **thread context sync**, FTS5 search, Web
   Push / PWA, the approvals bridge, the models registry + discover/probe, Ollama
   pull, the MCP registry, permissions / topology / wiring, draft-from-prompt, all
-  four auth methods, SSRF / CSRF / redaction.
+  five auth methods, SSRF / CSRF / redaction.
 - **User credentials**: the **Anthropic API-key path ships**; the **OAuth / subscription +
   Codex minting flow is a prototype** (fragile PTY screen-scrape, no tests).
 - **Thread-engaged agents (chips)**: built but **dormant/removed** — the backend

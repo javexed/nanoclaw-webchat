@@ -64,19 +64,19 @@ afterEach(async () => {
 
 describe('mcp-registry CRUD', () => {
   it('creates, lists, fetches by id and name', async () => {
-    const s = await createWebchatMcpServer({ name: 'windows', transport: 'sse', url: 'http://box:8000/sse' });
+    const s = await createWebchatMcpServer({ name: 'windows', transport: 'http', url: 'http://box:8000/mcp' });
     expect((await listWebchatMcpServers()).map((r) => r.name)).toEqual(['windows']);
-    expect((await getWebchatMcpServer(s.id))?.url).toBe('http://box:8000/sse');
+    expect((await getWebchatMcpServer(s.id))?.url).toBe('http://box:8000/mcp');
     expect((await getWebchatMcpServerByName('windows'))?.id).toBe(s.id);
   });
 
   it('updates fields and preserves the rest', async () => {
-    const s = await createWebchatMcpServer({ name: 'w', transport: 'sse', url: 'http://a' });
+    const s = await createWebchatMcpServer({ name: 'w', transport: 'http', url: 'http://a' });
     await updateWebchatMcpServer(s.id, { url: 'http://b' });
     const after = await getWebchatMcpServer(s.id);
     expect(after?.url).toBe('http://b');
     expect(after?.name).toBe('w');
-    expect(after?.transport).toBe('sse');
+    expect(after?.transport).toBe('http');
   });
 
   it('delete cascades the assignment join', async () => {
@@ -100,7 +100,7 @@ describe('many-to-many assignment', () => {
       agent_provider: null,
       created_at: new Date().toISOString(),
     });
-    const a = await createWebchatMcpServer({ name: 'a', transport: 'sse', url: 'http://a' });
+    const a = await createWebchatMcpServer({ name: 'a', transport: 'http', url: 'http://a' });
     const b = await createWebchatMcpServer({ name: 'b', transport: 'stdio', command: 'mcp-b' });
     await assignMcpServerToAgent(GID, a.id);
     await assignMcpServerToAgent(GID, a.id); // idempotent — ON CONFLICT DO NOTHING
@@ -147,12 +147,12 @@ describe('syncAgentMcpConfig — incremental single-key writes', () => {
   it('adds and removes only its own key, preserving ncl-added servers', async () => {
     // Simulate a server added out-of-band via `ncl groups config add-mcp-server`.
     await seedAgentWithConfig({ nclthing: { command: 'ncl-added', args: [], env: {} } });
-    const s = await createWebchatMcpServer({ name: 'windows', transport: 'sse', url: 'http://box:8000/sse' });
+    const s = await createWebchatMcpServer({ name: 'windows', transport: 'http', url: 'http://box:8000/mcp' });
 
     expect(await syncAgentMcpConfig(GID, await s, true)).toBe(true);
     let servers = await configServers();
     expect(Object.keys(servers).sort()).toEqual(['nclthing', 'windows']);
-    expect(servers.windows).toEqual({ type: 'sse', url: 'http://box:8000/sse', headers: {} });
+    expect(servers.windows).toEqual({ type: 'http', url: 'http://box:8000/mcp', headers: {} });
 
     expect(await syncAgentMcpConfig(GID, await s, false)).toBe(true);
     servers = await configServers();
@@ -160,7 +160,7 @@ describe('syncAgentMcpConfig — incremental single-key writes', () => {
   });
 
   it('returns false when the group has no container config row', async () => {
-    const s = await createWebchatMcpServer({ name: 'w', transport: 'sse', url: 'http://x' });
+    const s = await createWebchatMcpServer({ name: 'w', transport: 'http', url: 'http://x' });
     expect(await syncAgentMcpConfig('no-such-group', await s, true)).toBe(false);
   });
 });

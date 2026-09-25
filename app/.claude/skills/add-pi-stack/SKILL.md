@@ -1,20 +1,19 @@
 ---
 name: add-pi-stack
-description: Install the pi coding-agent harness (@earendil-works/pi-coding-agent) as a NanoClaw agent provider wired to a LOCAL Ollama model. pi's harness is minimal by design — no 16k coding preamble, structured thinking events, one-shot JSON mode — so a small local model (8B via Ollama) sees ONLY NanoClaw's own instructions: the smallest prompt of any harness here. Use as an alternative to /add-opencode-stack when you want the leanest local harness; chat-first (no MCP tools in v1 — delivery is the <message to> envelope, same as the lean OpenCode path).
+description: Install the pi coding-agent harness (@earendil-works/pi-coding-agent) as a NanoClaw agent provider wired to a LOCAL Ollama model. pi's harness is minimal by design — no 16k coding preamble, structured thinking events, one-shot JSON mode — so a small local model (8B via Ollama) sees ONLY NanoClaw's own instructions: the smallest prompt of any harness here. Use as an alternative to /add-opencode-stack when you want the leanest local harness. Tools (read, write, edit, bash, and a bundled `message` extension for delivery) are on by default; no MCP.
 ---
 
 # pi + local Ollama stack
 
 The `pi` provider runs each turn through the pi coding agent in one-shot JSON
-mode (`pi -p --mode json --no-tools --system-prompt …`) against the agent's
-local Ollama model. Compared to OpenCode: no server process, no SDK dependency,
-no heavyweight system prompt to strip — pi accepts a full `--system-prompt`
-replacement, so the model gets NanoClaw's instructions and nothing else.
+mode (`pi -p --mode json --tools … --extension … --append-system-prompt …`)
+against the agent's local Ollama model. Compared to OpenCode: no server process,
+no SDK dependency, no heavyweight system prompt to strip. With `PI_TOOLS=none`
+the provider runs tool-less and passes `--no-tools --system-prompt` (a full
+replacement) instead.
 
-> **Scope (v1): chat-first.** pi has no built-in MCP; the provider runs
-> tool-less and delivers via the `<message to="…">` envelope — exactly how the
-> lean local OpenCode path already operates. Mid-turn MCP tools (send_message)
-> would need a pi extension; see Notes.
+> **Scope:** pi has no built-in MCP. Delivery goes through the bundled `message`
+> extension tool; NanoClaw's MCP tools are not available.
 
 ## Prerequisites
 
@@ -100,13 +99,13 @@ thinking_delta events); a reasoning-only stall auto-retries with `/no_think`
 
 ## Tuning: tools and thinking level
 
-Two knobs, both env vars. Precedence is code default → install `.env` →
-the agent's own Environment panel (per-agent env wins a collision), so a
-single agent can differ from the install without a code change.
+Two knobs, both env vars. Precedence is code default → per-model profile →
+install `.env` → the agent's own Environment panel (per-agent env wins a
+collision), so a single agent can differ from the install without a code change.
 
 | var | default | values |
 |---|---|---|
-| `PI_TOOLS` | `read,write,edit,bash` | comma-separated allowlist, or `none` for a chat-only agent |
+| `PI_TOOLS` | `read,write,edit,bash,message` | comma-separated allowlist, or `none` for a chat-only agent |
 | `PI_THINKING` | `high` | `off, minimal, low, medium, high, xhigh, max` |
 
 **Tools were off originally, and turning them on matters.** A toolless pi
@@ -141,7 +140,7 @@ blaming the harness.
   survive container respawns.
 - **models.json is host-written per spawn** from the agent's current local
   model, so switching the model in the webchat UI re-targets pi automatically.
-- **No MCP (v1).** For mid-turn tools, pi supports TypeScript extensions —
-  a future rev can bundle an extension bridging NanoClaw's MCP server.
+- **No MCP.** The bundled `message` extension covers delivery; bridging
+  NanoClaw's MCP server would need another pi extension.
 - **To remove:** switch the harness back (`--provider opencode` or default),
-  restart; delete the two provider files + barrel lines + the cli-tools entry.
+  restart; delete the three provider files + barrel lines + the cli-tools entry.

@@ -225,6 +225,15 @@ describe('Codex provider install', () => {
     }
   });
 
+  it('every provider chain applies the webchat overlays right after its skill, before any build', () => {
+    for (const steps of [codexInstallSteps, grokInstallSteps, opencodeInstallSteps, piInstallSteps]) {
+      const cmds = steps('/nonexistent-root').map((s) => ('run' in s ? s.run[1].join(' ') : ''));
+      const skill = cmds.findIndex((c) => c.includes('provider-install'));
+      expect(cmds[skill + 1]).toBe('provider-overlays/apply.sh');
+      expect(cmds.findIndex((c) => c.includes('run build'))).toBeGreaterThan(skill + 1);
+    }
+  });
+
   it('refuses (no spawn / no build) when the add-codex skill is absent', async () => {
     // A bogus root has no .claude/skills/add-codex/SKILL.md — so it must bail
     // out BEFORE spawning the source-mutating, image-rebuilding chain.

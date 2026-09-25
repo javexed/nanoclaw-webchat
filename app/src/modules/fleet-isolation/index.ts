@@ -36,10 +36,10 @@
  */
 import { registerSessionPrepareHook } from '../../seam/index.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
-import { isolateGroup, getGroupIsolation } from '../tool-secrets/index.js';
-import { realOnecliAdmin } from '../user-credentials/onecli-admin.js';
+import { isolateAllGroups, isolateGroup, getGroupIsolation } from '../tool-secrets/index.js';
+import { realOnecliAdmin, type OnecliAdmin } from '../user-credentials/onecli-admin.js';
 import { readEnvFile } from '../../env.js';
-import { getCredentialIsolation } from '../../channels/webchat/db.js';
+import { getCredentialIsolation, setCredentialIsolation } from '../../channels/webchat/db.js';
 import { log } from '../../log.js';
 
 const fromEnvFile = readEnvFile(['CREDENTIAL_ISOLATION']);
@@ -68,6 +68,34 @@ export async function fleetIsolationEnabled(): Promise<boolean> {
     // Settings table unavailable (early boot / fresh DB) — fall back to env.
   }
   return CREDENTIAL_ISOLATION === 'fleet';
+}
+
+/**
+ * Make every agent private now, and every agent created later. Called before
+ * a secret for one agent or one person is saved: any agent still in `all`
+ * mode would be offered that secret too.
+ *
+ * Turns isolation on unless an owner turned it off in Admin; that choice is
+ * refused rather than overridden. Throws, naming the agents, when one that
+ * exists can't be isolated, so the secret is never stored while it would leak.
+ */
+export async function ensureFleetIsolation(admin: OnecliAdmin = realOnecliAdmin): Promise<void> {
+  const chosen = await getCredentialIsolation();
+  if (chosen === false)
+    throw new Error('Credential isolation is off in Admin — turn it on to keep a secret to one agent or one person');
+  if (chosen !== true && CREDENTIAL_ISOLATION !== 'fleet') {
+    await setCredentialIsolation(true);
+    log.info('Credential isolation turned on: a secret was saved for one agent or one person');
+  }
+  const { skipped } = await isolateAllGroups(admin);
+  // A group with no OneCLI agent yet holds nothing and is isolated at its first spawn.
+  const blocking = skipped.filter((s) => s.reason !== 'no OneCLI agent yet');
+  if (blocking.length) {
+    const names = await Promise.all(
+      blocking.map(async (s) => `${(await getAgentGroup(s.id))?.name ?? s.id} (${s.reason})`),
+    );
+    throw new Error(`Couldn't make every agent private, so the secret was not saved: ${names.join('; ')}`);
+  }
 }
 
 registerSessionPrepareHook(async (agentGroupId): Promise<void> => {

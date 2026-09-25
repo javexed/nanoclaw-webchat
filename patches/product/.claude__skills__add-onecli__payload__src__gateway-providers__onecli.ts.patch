@@ -1,0 +1,45 @@
+diff --git a/.claude/skills/add-onecli/payload/src/gateway-providers/onecli.ts b/.claude/skills/add-onecli/payload/src/gateway-providers/onecli.ts
+index 264f4821..92be0088 100644
+--- a/.claude/skills/add-onecli/payload/src/gateway-providers/onecli.ts
++++ b/.claude/skills/add-onecli/payload/src/gateway-providers/onecli.ts
+@@ -15,6 +15,7 @@ import {
+   type GatewaySessionInput,
+   type GatewaySessionLease,
+ } from './gateway-provider-registry.js';
++import { resolveApprovalAgentGroup } from '../modules/approvals/agent-identity.js';
+ 
+ const env = readEnvFile([
+   'ONECLI_URL',
+@@ -166,12 +167,15 @@ async function subscribeApprovals(
+       // pinned SDK callback submits no decision and leaves the request pending.
+       // Keep this outside the deny-on-translation-error block, even for stale
+       // requests: this copy has no authority over another copy's requests.
+-      if (!(await scope.ownsAgentGroup(request.agent?.externalId ?? ''))) {
++      // A session may run under a derived identity (per-member credentials);
++      // map it to its agent group before asking whether this copy owns it.
++      const agentGroupId = await resolveApprovalAgentGroup(request.agent?.externalId ?? '');
++      if (!(await scope.ownsAgentGroup(agentGroupId))) {
+         throw new Error('OneCLI approval belongs to another installation');
+       }
+       if (signal.aborted || Date.parse(request.createdAt) < subscribedAt) return 'deny';
+       try {
+-        return await decide(toGatewayApprovalRequest(request));
++        return await decide(toGatewayApprovalRequest(request, agentGroupId));
+       } catch (err) {
+         log.error('OneCLI approval translation failed closed', { requestId: request.id, err });
+         return 'deny';
+@@ -183,12 +187,12 @@ async function subscribeApprovals(
+   }
+ }
+ 
+-function toGatewayApprovalRequest(request: ApprovalRequest): GatewayApprovalRequest {
++function toGatewayApprovalRequest(request: ApprovalRequest, agentGroupId: string): GatewayApprovalRequest {
+   return {
+     id: request.id,
+     trigger: 'policy',
+     destination: { host: request.host, method: request.method },
+-    agentGroupId: request.agent.externalId ?? '',
++    agentGroupId,
+     createdAt: request.createdAt,
+     expiresAt: request.expiresAt,
+     summary: normalizeGatewayApprovalSummary(

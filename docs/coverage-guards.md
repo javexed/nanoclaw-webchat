@@ -106,6 +106,6 @@ What does still hold:
   this repo's tree, so they exercise what actually ships.
 
 One consequence worth knowing: with the ledger role gone, the manifest's only
-*functional* job is migration registration — 12 of its 69 entries. The other 57
+*functional* job is migration registration — 12 of its 126 entries. The rest
 document ownership. Keeping them is fine; just don't mistake their presence for
 an enforced guarantee.

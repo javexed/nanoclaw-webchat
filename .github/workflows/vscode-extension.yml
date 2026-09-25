@@ -1,0 +1,70 @@
+name: VS Code extension
+
+# vscode-extension/ is its own package and never enters the composed tree, so
+# the Compose gate does not see it. This job installs it from its lockfile and
+# runs its typecheck, tests, build and format check.
+#
+# Trigger rules match compose.yml (no `branches:` filter on pull_request, so
+# stacked PRs get checked), narrowed to changes that touch the extension.
+
+on:
+  pull_request:
+    paths:
+      - 'vscode-extension/**'
+      - '.prettierrc'
+      - '.github/workflows/vscode-extension.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'vscode-extension/**'
+      - '.prettierrc'
+      - '.github/workflows/vscode-extension.yml'
+
+concurrency:
+  group: vscode-extension-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  extension:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode-extension
+    steps:
+      # Anonymous checkout, as in compose.yml: the per-job token is refused for
+      # repos under this owner, and the repo is public.
+      - name: checkout (anonymous)
+        working-directory: .
+        run: |
+          git init -q .
+          git remote add origin ${{ github.server_url }}/${{ github.repository }}.git
+          git fetch -q --depth 1 origin ${{ github.sha }}
+          git checkout -q FETCH_HEAD
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5 # the repo's pin (.mise.toml, compose.yml)
+
+      - name: Cache — pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-vscode-${{ hashFiles('vscode-extension/pnpm-lock.yaml') }}
+          restore-keys: pnpm-vscode-
+
+      - name: install
+        run: pnpm install --frozen-lockfile
+
+      - name: typecheck
+        run: pnpm run typecheck
+
+      - name: tests
+        run: pnpm test
+
+      - name: build
+        run: pnpm run build
+
+      # The same prettier the composed tree's format gate uses, with the repo's
+      # .prettierrc. Keep the version in step with the base's.
+      - name: format
+        run: pnpm dlx prettier@3.8.2 --check 'src/**/*.ts' 'harness/*.mjs' esbuild.mjs

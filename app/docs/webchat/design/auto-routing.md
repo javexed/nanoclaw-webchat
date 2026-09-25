@@ -4,7 +4,7 @@
 routing profiles are all live. This is the *implementation* reference; the
 design rationale and the wider provider vision live in
 [llm-router.md](llm-router.md) (esp. §16). Installed by the `/add-litellm` +
-`/add-routing` skills (or the webchat **"Set up routing"** button).
+`/add-routing` skills (or the webchat **Auto routing → Install** button).
 
 Auto routing sends each turn to the *right* local model by **classifying the
 prompt** against operator-defined capability routes, then rewriting the request
@@ -23,7 +23,7 @@ deployment is chosen. An agent opts in by being assigned the virtual model
 | **Decision log** | one JSONL line per classification (shadow and live) | `data/litellm/routing/routing-shadow.jsonl` |
 | **The binder** | scores the roster and (re)binds routes → models | `bind-routes.mjs` + `capabilities.json` |
 | **Recalibration** | nightly report + per-router timeout tuning + log rotation | `recalibrate.mjs` |
-| **The console** | the webchat **Auto routing** tab + `/api/router/*` | `src/channels/webchat/{server.ts,ollama-manage.ts}`, `public/webchat/app.js` |
+| **The console** | the webchat **Auto routing** tab + `/api/router/*` | `src/channels/webchat/{server.ts,ollama-manage.ts}`, `ui/src/` |
 
 The virtual model `auto` is **not** in LiteLLM's `model_list` — it exists only
 because the hook rewrites it per-prompt. A request naming a concrete roster
@@ -175,7 +175,7 @@ plus a **router picker** (New / Delete) when there's more than one profile.
 | `GET /suggestions` | roster models with a capability no route covers |
 | `GET /models` | the LiteLLM roster (`getRouterInfo`) |
 | `GET|POST /roster-refresh` | re-run the binder against the current roster |
-| `GET|POST /install` | one-click "Set up routing" (pulls classifier, runs installer) |
+| `GET|POST /install` | one-click Auto routing install (pulls classifier, runs installer) |
 
 The single-router GUI operates on the **primary** router (`auto`, else first) via
 `primaryRouter()`/`primaryRouterName()`, so the tab works against either config
@@ -188,11 +188,13 @@ shape; `listRouters`/`routerView`/`addRouter`/`deleteRouter` back the picker.
   `routes.example.json` **once** (`install-routing.sh` never overwrites an
   existing config), wires the hook into `config.yaml`, and installs the nightly
   recalibration timer (`install-recalibration.sh`).
-- The console's **"Set up routing"** button drives the same install over
-  `POST /api/router/install` with a progress bar — no shell.
+- The Settings **Auto routing → Install** button drives the same install over
+  `POST /api/router/install` with a progress bar — no shell — then PUTs
+  `live.enabled: true`.
 
-Starts in **shadow mode** (`live.enabled: false`); the operator flips it live
-from the tab after reviewing the log.
+The skill path starts in **shadow mode** (`live.enabled: false`); the operator
+flips it live from the tab after reviewing the log. The button path is live at
+once.
 
 ## 11. Failure posture / edge cases
 
@@ -213,7 +215,7 @@ from the tab after reviewing the log.
 |---|---|
 | Skill (`.claude/skills/add-routing/resources/`) | `router_hook.py`, `bind-routes.mjs`, `recalibrate.mjs`, `migrate-routes-multi.mjs`, `capabilities.json`, `install-routing.sh`, `install-recalibration.sh`, `routes.example.json`, `test_router_hook.py` |
 | Host — routing logic | `src/channels/webchat/ollama-manage.ts` (`readRoutesConfig`, `primaryRouter`, `listRouters`, `addRouter`, `deleteRouter`, `mergeRoutesUpdate`, `dryClassify`, `getRouterInfo`, `getRouterMetrics`, `getRouteSuggestions`, `computeRouteSuggestions`) |
-| Host — HTTP + UI | `src/channels/webchat/server.ts` (`/api/router/*`), `public/webchat/{index.html,app.js,style.css}` (the Auto routing tab + picker) |
+| Host — HTTP + UI | `src/channels/webchat/server.ts` (`/api/router/*`), `public/webchat/{index.html,style.css}` + `ui/src/` (the Auto routing tab + picker) |
 | Runtime data (operator-owned) | `data/litellm/routing/routes.json`, `…/routing-shadow.jsonl`, `data/litellm/config.yaml` |
 | Escalation seam | agent-runner `fallback_provider` (skill-delivered core-escalation payload; llm-router §16c) |
 
@@ -222,4 +224,4 @@ from the tab after reviewing the log.
   escalation (§16c), self-improvement (§16e), multi-router (§16g).
 - [add-litellm.md](add-litellm.md) — the proxy install.
 - `.claude/skills/add-routing/SKILL.md` — the operator-facing install + tuning
-  guide (canonical on the `skill/add-routing` branch).
+  guide.

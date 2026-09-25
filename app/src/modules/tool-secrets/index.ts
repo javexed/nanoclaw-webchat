@@ -210,11 +210,16 @@ async function reconcileGroupAgent(admin: OnecliAdmin, agentGroupId: string): Pr
     const t = typeById.get(id);
     return t !== undefined && t !== 'generic';
   });
+  await admin.setSecrets(agentId, Array.from(new Set([...keep, ...(await groupToolSecretIds(admin, agentGroupId))])));
+}
+
+/** The tool secrets a group's own agent should hold: its own, then workspace ones for other hosts. */
+async function groupToolSecretIds(admin: OnecliAdmin, agentGroupId: string): Promise<string[]> {
   const byHost = new Map<string, string>();
   for (const sec of await listToolSecrets(admin, { kind: 'agent', agentGroupId })) byHost.set(sec.hostPattern, sec.id);
   for (const sec of await listToolSecrets(admin, WORKSPACE))
     if (!byHost.has(sec.hostPattern)) byHost.set(sec.hostPattern, sec.id);
-  await admin.setSecrets(agentId, Array.from(new Set([...keep, ...byHost.values()])));
+  return [...byHost.values()];
 }
 
 /**
@@ -267,7 +272,11 @@ export async function isolateGroup(admin: OnecliAdmin, agentGroupId: string): Pr
   if (!modelCred)
     throw new Error('No model credential to pin — connect a workspace default first, or isolation would 401');
 
-  await admin.setSecrets(agentId, Array.from(new Set([...assigned, modelCred])));
+  // Workspace and agent secrets too: in `selective` mode an agent receives only
+  // what is assigned, and one created after a workspace secret was saved (or
+  // that had been receiving it implicitly in `all` mode) was never assigned it.
+  const tools = await groupToolSecretIds(admin, agentGroupId);
+  await admin.setSecrets(agentId, Array.from(new Set([...assigned, modelCred, ...tools])));
   await admin.setSecretMode(agentId, 'selective');
   log.info('Agent group credentials isolated', { agentGroupId });
 }

@@ -21,7 +21,7 @@ import { createSession, getSessionsByAgentGroup } from '../../db/sessions.js';
 import { initSessionFolder } from '../../session-manager.js';
 import { openInboundDb } from '../../session-db-access.js';
 import { upsertUserCredential } from '../user-credentials/db.js';
-import { handleRouteLearningReview } from './route-review.js';
+import { handleRouteLearningReview, ROUTED_CONTENT_FIELD } from './route-review.js';
 import type { Session } from '../../types.js';
 
 const AG = 'ag-learn-route';
@@ -109,6 +109,17 @@ function inboundTexts(sessionId: string): string[] {
   }
 }
 
+function inboundContents(sessionId: string): Array<Record<string, unknown>> {
+  const db = openInboundDb(AG, sessionId);
+  try {
+    return (db.prepare(`SELECT content FROM messages_in`).all() as { content: string }[]).map(
+      (r) => JSON.parse(r.content) as Record<string, unknown>,
+    );
+  } finally {
+    db.close();
+  }
+}
+
 function outboundTexts(sessionId: string): string[] {
   const dir = `/tmp/nanoclaw-test-learn-route/v2-sessions/${AG}/${sessionId}`;
   if (!fs.existsSync(`${dir}/outbound.db`)) return [];
@@ -148,8 +159,12 @@ describe('handleRouteLearningReview — enrollment and policy', () => {
     expect(member).toBeDefined();
     const texts = inboundTexts(member!.id);
     expect(texts).toHaveLength(1);
-    expect(texts[0].startsWith('/learn-routed ')).toBe(true);
-    const routed = JSON.parse(texts[0].slice('/learn-routed '.length)) as Record<string, unknown>;
+    // The chat text is the bare command; the payload rides the host-only field.
+    expect(texts[0]).toBe('/learn-routed');
+    const row = inboundContents(member!.id)[0];
+    expect(ROUTED_CONTENT_FIELD).toBe('learning_route'); // the runner reads this exact name
+    expect(row.senderId).toBeUndefined();
+    const routed = row[ROUTED_CONTENT_FIELD] as Record<string, unknown>;
     expect(routed.text).toBe('/learn focus');
     expect(routed.digest).toBe('<exchange>D</exchange>');
     expect(routed.origin).toEqual({ channel_type: 'webchat', platform_id: 'room-1' });
@@ -181,7 +196,7 @@ describe('handleRouteLearningReview — enrollment and policy', () => {
 
     const texts = inboundTexts(origin.id);
     expect(texts).toHaveLength(1);
-    expect(texts[0].startsWith('/learn-routed ')).toBe(true);
+    expect(texts[0]).toBe('/learn-routed');
     expect(wakes).toEqual([origin.id]);
   });
 
@@ -204,7 +219,7 @@ describe('handleRouteLearningReview — enrollment and policy', () => {
 
     const texts = inboundTexts(origin.id);
     expect(texts).toHaveLength(1);
-    expect(texts[0].startsWith('/learn-routed ')).toBe(true);
+    expect(texts[0]).toBe('/learn-routed');
     expect(wakes).toEqual([origin.id]);
   });
 

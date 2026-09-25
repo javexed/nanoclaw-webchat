@@ -8,6 +8,8 @@ releases.
 
 **Last reviewed:** 2026-07-16
 **Next review due:** 2026-10-16
+**Corrected 2026-09-24:** the Node minimum, pnpm and Docker rows below, after a
+clean Debian 13 install failed on them. The rest waits for the full review.
 **Cadence:** quarterly — and additionally whenever
 - a new Node LTS ships (even-numbered major, every October), or
 - a Node or Docker security advisory lands on the pinned line.
@@ -16,13 +18,13 @@ releases.
 
 | Thing | Pin | Where (grep the old value to find them all) |
 |-------|-----|---------------------------------------------|
-| Node (preferred) | **22** | `.nvmrc`; `container/Dockerfile` (`FROM node:22-slim`); `deploy/webchat-deploy.sh` (guard + docs); ProxmoxVED `install/nanoclaw-install.sh` (`NODE_VERSION=22`) |
-| Node (minimum) | **>= 20** | `package.json` → `engines.node` |
-| pnpm | **10.33.0** | `package.json` → `packageManager` (respect `minimumReleaseAge` in `pnpm-workspace.yaml`) |
-| Docker | **distro** (`docker.io`) | `deploy/webchat-deploy.sh --install-deps` (apt); Proxmox framework `setup_docker` |
+| Node (preferred) | **22** | `.nvmrc`; `container/Dockerfile` (`FROM node:22-slim`); `deploy/webchat-deploy.sh` (`NODE_MIN`, and NodeSource's `node_22.x` repo for `--install-deps`); ProxmoxVED `install/nanoclaw-install.sh` (`NODE_VERSION=22`) |
+| Node (minimum) | **>= 22** | `package.json` → `engines.node` (upstream's); `better-sqlite3` 13 needs it, and its prebuilt segfaults on 20. No Debian or Ubuntu apt ships 22, so `--install-deps` adds NodeSource |
+| pnpm | **10.34.5** | `package.json` → `packageManager` (respect `minimumReleaseAge` in `pnpm-workspace.yaml`) |
+| Docker | **distro** (`docker.io` + Compose: `docker-compose-v2` on Ubuntu, `docker-compose` on Debian) | `deploy/webchat-deploy.sh --install-deps` (apt); Proxmox framework `setup_docker`. The OneCLI gateway installer needs Compose |
 | Agent base image | **node:22-slim** + pinned global CLIs | `container/Dockerfile` |
 | Ollama model manifest | **Qwen3 0.6b–8b** (curated footprints + CPU tok/s) | `src/channels/webchat/model-recommend.ts` → `MODEL_MANIFEST` |
-| Agent CLIs | Codex **`@openai/codex` 0.138.0** (when installed); Dockerfile-pinned **agent-browser · claude-code · vercel** | Codex: `.claude/skills/add-codex/SKILL.md` (source of truth) + `container/cli-tools.json`; others: `container/Dockerfile` `ARG` pins |
+| Agent CLIs | Codex **`@openai/codex` 0.155.1** (when installed); **agent-browser · claude-code** in the base image (vercel only via `/add-vercel`) | Codex: `.claude/skills/add-codex/SKILL.md` (source of truth) + `container/cli-tools.json`; others: `container/cli-tools.json` |
 
 Note: the ProxmoxVED pin lives in a **separate repo** (the `ProxmoxVED`
 mirror, `install/nanoclaw-install.sh`) — bump it there too.

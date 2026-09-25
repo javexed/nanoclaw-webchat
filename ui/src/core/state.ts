@@ -53,6 +53,8 @@ export interface Thread {
  * Approval, ThinkingTurn and Room.
  */
 export interface Agent {
+  /** Placed on a developer's machine: Network offers Open / Allowlist / Model only. */
+  runner_placed?: boolean;
   id: string;
   name?: string;
   folder?: string;
@@ -263,3 +265,9 @@ export function isForcedScroll(): boolean {
  * they are two values and not one.
  */
 export const isAdminView = ref(false);
+
+/**
+ * Owner or global admin: the audience for install-wide settings that every
+ * agent shares (an MCP server's tools, OAuth and drift approval).
+ */
+export const isWorkspaceAdminView = ref(false);

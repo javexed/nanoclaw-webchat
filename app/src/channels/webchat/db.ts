@@ -684,7 +684,7 @@ function settingsGetter<T>(column: string, decode: (value: unknown) => T): () =>
   };
 }
 
-function settingsSetter<V>(column: string, encode: (value: V) => string | number | null): (value: V) => void {
+function settingsSetter<V>(column: string, encode: (value: V) => string | number | null): (value: V) => Promise<void> {
   return async (value) => {
     const cfg = await getCredentialsConfig();
     await getDb().run(
@@ -742,6 +742,55 @@ export const setCredentialIsolation = settingsSetter('credential_isolation', enc
  * dictation delivers the raw Whisper transcript. Missing row/column reads as NULL
  * so the feature degrades to raw rather than erroring.
  */
+/**
+ * Agent-image source for sessions placed on paired runners (install-wide).
+ *
+ * Unset reads as 'build': every runner builds the image itself from what
+ * central ships — no registry, and the same bytes everywhere. 'pull' and
+ * 'build' are binding on every paired machine; 'machine' (stored explicitly)
+ * hands the choice back to each laptop's own setting.
+ */
+export type RunnerImagePolicy = 'machine' | 'pull' | 'build';
+export const decodeRunnerImagePolicy = (v: unknown): RunnerImagePolicy =>
+  v === 'pull' || v === 'machine' ? v : 'build';
+export const getRunnerImagePolicy = settingsGetter('runner_image_policy', decodeRunnerImagePolicy);
+export const setRunnerImagePolicy = settingsSetter('runner_image_policy', (v: RunnerImagePolicy) => v);
+
+/** Image reference runners obtain. NULL = this install's versions.json pin. */
+export const getRunnerImageRef = settingsGetter('runner_image_ref', decodeNullableString);
+export const setRunnerImageRef = settingsSetter('runner_image_ref', encodeNullableString);
+
+/** Runner egress allowlist as stored: a JSON array of host patterns, or NULL for the built-in default. */
+export const getRunnerEgressAllowlistRaw = settingsGetter('runner_egress_allowlist', decodeNullableString);
+export const setRunnerEgressAllowlistRaw = settingsSetter('runner_egress_allowlist', encodeNullableString);
+/** One agent's own egress hosts (egress-policy.ts): the stored JSON array, or null for none. */
+export async function getAgentEgressHostsRaw(agentGroupId: string): Promise<string | null> {
+  if (!(await hasTable(getDb(), 'webchat_agent_egress_hosts'))) return null;
+  const row = (await getDb().get(
+    `SELECT hosts FROM webchat_agent_egress_hosts WHERE agent_group_id = ?`,
+    agentGroupId,
+  )) as { hosts: string } | undefined;
+  return row?.hosts ?? null;
+}
+
+/** Replace one agent's own egress hosts; an empty list removes the row. */
+export async function setAgentEgressHostsRaw(agentGroupId: string, json: string | null): Promise<void> {
+  if (json === null) {
+    await getDb().run(`DELETE FROM webchat_agent_egress_hosts WHERE agent_group_id = ?`, agentGroupId);
+    return;
+  }
+  await getDb().run(
+    `INSERT INTO webchat_agent_egress_hosts (agent_group_id, hosts, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(agent_group_id) DO UPDATE SET hosts = excluded.hosts, updated_at = excluded.updated_at`,
+    agentGroupId,
+    json,
+    Date.now(),
+  );
+}
+
+export const getRunnerClientConfigRaw = settingsGetter('runner_client_config', decodeNullableString);
+export const setRunnerClientConfigRaw = settingsSetter('runner_client_config', encodeNullableString);
+
 export const getSttCleanupModelId = settingsGetter('stt_cleanup_model_id', decodeNullableString);
 export const setSttCleanupModelId = settingsSetter('stt_cleanup_model_id', encodeNullableString);
 
@@ -794,6 +843,9 @@ export const setApprovalPrejudgeActions = settingsSetter('approval_prejudge_acti
 // Audit syslog forwarder target URL ('' = off). See audit-syslog.ts.
 const decodeStr = (v: unknown): string => (typeof v === 'string' ? v : '');
 export const getAuditSyslogTarget = settingsGetter('audit_syslog_target', decodeStr);
+// Audit retention ({days, maxMb} JSON, NULL = the environment's). See src/audit.ts.
+export const getAuditRetentionRaw = settingsGetter('audit_retention', decodeNullableString);
+export const setAuditRetentionRaw = settingsSetter('audit_retention', encodeNullableString);
 export const setAuditSyslogTarget = settingsSetter('audit_syslog_target', (v: string) => v || null);
 
 export const getPromoteFirstTailscaleOwner = settingsGetter('promote_first_tailscale_owner', decodeBool);

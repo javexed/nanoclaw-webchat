@@ -1,5 +1,5 @@
 diff --git a/src/container-config.test.ts b/src/container-config.test.ts
-index eb98b7b3..dd673864 100644
+index eb98b7b3..048d5265 100644
 --- a/src/container-config.test.ts
 +++ b/src/container-config.test.ts
 @@ -90,10 +90,29 @@ describe('resolveGroupTimezone', () => {
@@ -42,31 +42,16 @@ index eb98b7b3..dd673864 100644
      expect(parseMcpServerConfig({ type: 'stdio', command: 'server' })).toEqual({
        command: 'server',
        args: [],
-@@ -158,7 +177,6 @@ describe('parseMcpServerConfig', () => {
-   });
- 
-   it.each([
--    [{ type: 'sse', url: 'https://mcp.example.com/mcp' }, /unsupported transport "sse"/],
-     [{ type: 'websocket', url: 'https://mcp.example.com/mcp' }, /type must be/],
-     [{ type: 'stdio', url: 'https://mcp.example.com/mcp' }, /requires command/],
-     [{ type: 'http', command: 'server' }, /requires url/],
-@@ -166,7 +184,14 @@ describe('parseMcpServerConfig', () => {
+@@ -166,7 +185,7 @@ describe('parseMcpServerConfig', () => {
      expect(() => parseMcpServerConfig(input)).toThrow(message);
    });
  
 -  it('accepts headers on http entries and rejects them on stdio entries', () => {
-+  it('accepts a declared sse transport (fork: webchat still wires legacy SSE servers)', async () => {
-+    expect(parseMcpServerConfig({ type: 'sse', url: 'https://mcp.example.com/mcp' })).toEqual({
-+      type: 'sse',
-+      url: 'https://mcp.example.com/mcp',
-+    });
-+  });
-+
 +  it('accepts headers on http entries and rejects them on stdio entries', async () => {
      expect(parseMcpServerConfig({ url: 'https://mcp.example.com/mcp', headers: { 'X-Client': 'nanoclaw' } })).toEqual({
        type: 'http',
        url: 'https://mcp.example.com/mcp',
-@@ -201,7 +226,7 @@ describe('parseMcpServerConfig', () => {
+@@ -201,7 +220,7 @@ describe('parseMcpServerConfig', () => {
  });
  
  describe('sanitizeStoredMcpServers', () => {
@@ -75,7 +60,7 @@ index eb98b7b3..dd673864 100644
      const sanitized = sanitizeStoredMcpServers(
        {
          good: { command: 'server', args: [], env: {}, pluginRoot: `${CONTAINER_PLUGINS_DIR}/sdr` },
-@@ -218,7 +243,7 @@ describe('sanitizeStoredMcpServers', () => {
+@@ -218,7 +237,7 @@ describe('sanitizeStoredMcpServers', () => {
      expect(sanitized.badRoot).not.toHaveProperty('pluginRoot');
    });
  
@@ -84,7 +69,7 @@ index eb98b7b3..dd673864 100644
      const sanitized = sanitizeStoredMcpServers(
        {
          planted: { command: 'server', cwd: '${PLUGIN_DATA}/x' },
-@@ -230,13 +255,13 @@ describe('sanitizeStoredMcpServers', () => {
+@@ -230,13 +249,13 @@ describe('sanitizeStoredMcpServers', () => {
      expect(sanitized.plugin).toMatchObject({ cwd: '${PLUGIN_DATA}/x' });
    });
  
@@ -100,7 +85,7 @@ index eb98b7b3..dd673864 100644
      expect(() => validateMcpServerName('brave-search_2')).not.toThrow();
      // __proto__ matches the regex but would set the record's prototype
      // instead of an own key on assignment — rejected by name.
-@@ -252,7 +277,7 @@ describe('validateMcpServerName', () => {
+@@ -252,7 +271,7 @@ describe('validateMcpServerName', () => {
   * the copies byte-identical so drift fails a test instead of shipping.
   */
  describe('host/container validation parity', () => {

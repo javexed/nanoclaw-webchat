@@ -1,0 +1,19 @@
+diff --git a/src/drivers/types.ts b/src/drivers/types.ts
+index 712f58f9..a5f8b702 100644
+--- a/src/drivers/types.ts
++++ b/src/drivers/types.ts
+@@ -49,6 +49,14 @@ export interface MountSpec {
+   mode: 'rw' | 'ro';
+   /** Lets a realization — by admission or by in-code checks — pin group-state to the group subtree. */
+   groupScope: string;
++  /**
++   * Slot-only: secret-like paths (globs relative to the slot root) the realizing
++   * machine must hide from the agent. Central's list is added to the machine's
++   * own; neither can remove the other's. Ignored for every other mount class.
++   */
++  exclude?: string[];
++  /** Slot-only: bind a proposal copy of the developer's repository rather than the working tree itself. */
++  propose?: boolean;
+ }
+ 
+ export interface ContainerSpec {

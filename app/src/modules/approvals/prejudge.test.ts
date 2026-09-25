@@ -114,6 +114,33 @@ describe('never-list', () => {
     expect(isNeverAutoApprovable('cli_command', '{"command":"tasks create"}')).toBe(false);
   });
 
+  it('blocks the payloads the CLI dispatcher actually sends', async () => {
+    // src/cli/dispatch.ts: payload = { frame: { id, command, args }, callerContext }.
+    const real = (command: string, args: Record<string, unknown> = {}) =>
+      JSON.stringify({ frame: { id: 'req-1', command, args }, callerContext: { caller: 'agent' } });
+    for (const command of [
+      'roles-grant',
+      'roles-revoke',
+      'members-add',
+      'members-remove',
+      'policies-set',
+      'policies-remove',
+      'groups-config-update',
+      'groups-config-add-package',
+      'groups-config-remove-package',
+      'groups-config-add-mcp-server',
+      'groups-config-remove-mcp-server',
+      'groups-config-add-mount',
+      'groups-config-remove-mount',
+    ]) {
+      expect(isNeverAutoApprovable('cli_command', real(command)), command).toBe(true);
+      expect(heuristicFlags('cli_command', real(command)), command).not.toHaveLength(0);
+    }
+    expect(isNeverAutoApprovable('cli_command', real('groups-update', { 'cli-scope': 'global' }))).toBe(true);
+    expect(isNeverAutoApprovable('cli_command', real('tasks-create', { prompt: 'daily digest' }))).toBe(false);
+    expect(isNeverAutoApprovable('cli_command', real('destinations-add', { name: 'ops' }))).toBe(false);
+  });
+
   it('wins over an explicit opt-in', async () => {
     const fetchFn = vi.fn();
     const deps = { ...baseDeps(fetchFn), getActions: () => ['install_packages'] };
@@ -541,7 +568,9 @@ describe('maybePrejudgeApproval records the triage', () => {
         Promise.resolve(okResponse('{"verdict":"escalate","reason":"touches a secret","flags":["credentials"]}')),
       ),
       getApproval: () => makeApproval(),
-      storeTriage: (id, t) => stored.push({ id, tier: t.tier, reason: t.reason }),
+      storeTriage: (id, t) => {
+        stored.push({ id, tier: t.tier, reason: t.reason });
+      },
     });
     expect(ok).toBe(false);
     expect(stored).toEqual([{ id: 'appr-1', tier: 'model', reason: 'touches a secret' }]);

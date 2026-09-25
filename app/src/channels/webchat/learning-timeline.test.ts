@@ -96,7 +96,7 @@ const portOf = (wc: { http: { address: () => unknown } }): number => {
 };
 
 const now = '2026-07-22T00:00:00.000Z';
-function seed(db: import('../../db/driver.js').DbDriver): void {
+async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
   const user = async (id: string) =>
     await db.run(
       `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
@@ -121,10 +121,10 @@ function seed(db: import('../../db/driver.js').DbDriver): void {
       now,
     );
   };
-  group(AG_A, 'Alpha');
-  group(AG_B, 'Beta');
-  role('webchat:owner', 'owner', null);
-  role('webchat:admina', 'admin', AG_A); // scoped admin of A only
+  await group(AG_A, 'Alpha');
+  await group(AG_B, 'Beta');
+  await role('webchat:owner', 'owner', null);
+  await role('webchat:admina', 'admin', AG_A); // scoped admin of A only
 }
 
 function writeScopedLearnedSkill(agentGroupId: string, name: string, revisionTs?: number): void {
@@ -170,7 +170,7 @@ describe('GET /api/learning/timeline', () => {
     });
     server = loaded.server;
     const db = loaded.conn.getDb();
-    seed(db);
+    await seed(db);
 
     // A webchat room wired to agent A, so card events carry a room name.
     const wiring = await import('./server/agent-wiring.js');

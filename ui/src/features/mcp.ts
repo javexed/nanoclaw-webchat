@@ -290,7 +290,7 @@ async function useMcpCatalogEntry(s?: any) {
   $<HTMLInputElement>('#mcp-create-name')!.value = shortName;
   const transport = ($('#mcp-create-transport')!) as HTMLInputElement;
   if (s.kind === 'remote') {
-    transport.value = s.transport === 'sse' ? 'sse' : 'http';
+    transport.value = 'http';
     transport.dispatchEvent(new Event('change'));
     $<HTMLInputElement>('#mcp-create-url')!.value = s.url || '';
     // The probe field is the one that proves it works before anything is saved.
@@ -357,7 +357,12 @@ export function openMcpDetail(id?: any) {
   const remote = server.transport !== 'stdio';
   $('#mcp-url-label')!.hidden = !remote;
   $('#mcp-command-label')!.hidden = remote;
-  $('#mcp-token-label')!.hidden = !remote;
+  // Editing a server row is owner-only on the server; don't offer it to others.
+  const owner = state.isOwnerView;
+  $('#mcp-token-label')!.hidden = !remote || !owner;
+  for (const id of ['#mcp-name', '#mcp-url', '#mcp-command']) $<HTMLInputElement>(id)!.readOnly = !owner;
+  $('#mcp-detail-form button[type=submit]')!.hidden = !owner;
+  $('#mcp-delete')!.hidden = !owner;
   $<HTMLInputElement>('#mcp-token')!.value = ''; // stored tokens are never displayed; blank = keep
   if (remote) $<HTMLInputElement>('#mcp-url')!.value = server.target;
   else $<HTMLInputElement>('#mcp-command')!.value = server.target;
@@ -484,7 +489,7 @@ function mcpProbeAuthHeaders() {
 export async function runMcpProbe() {
   const url = $<HTMLInputElement>('#mcp-probe-url')!.value.trim();
   if (!url) {
-    showToast('Enter a server URL first (e.g. host:8000/sse).', { kind: 'error' });
+    showToast('Enter a server URL first (e.g. host:8000/mcp).', { kind: 'error' });
     return;
   }
   if (/\s|[<>]/.test(url)) {

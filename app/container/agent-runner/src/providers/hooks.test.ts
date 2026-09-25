@@ -85,6 +85,10 @@ describe('learningReviewQueryOptions — the R2 extraction, tested via its real 
       moduleInput: { learningReview: true, reviewModel: 'cheap-model' },
     } as QueryInput);
     expect(fresh?.allowedTools).toEqual(['mcp__nanoclaw__draft_skill']);
+    // allowedTools only pre-approves; these two are what actually restrict:
+    // no built-in tools at all, and anything not pre-approved is denied.
+    expect(fresh?.tools).toEqual([]);
+    expect(fresh?.permissionMode).toBe('dontAsk');
     expect(fresh?.model).toBe('cheap-model');
     expect(fresh?.forkSession).toBeUndefined();
 
@@ -95,6 +99,10 @@ describe('learningReviewQueryOptions — the R2 extraction, tested via its real 
       moduleInput: { learningReview: true, learningReviewTools: ['WebFetch'] },
     } as QueryInput);
     expect(replay?.allowedTools).toEqual(['mcp__nanoclaw__draft_skill', 'WebFetch']);
+    expect(replay?.tools).toEqual(['WebFetch']);
+    expect(replay?.permissionMode).toBe('dontAsk');
+    // The provider's disallowedTools floor is never replaced.
+    expect(replay).not.toHaveProperty('disallowedTools');
     expect(replay?.forkSession).toBe(true);
   });
 });

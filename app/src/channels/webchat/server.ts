@@ -103,6 +103,8 @@ import {
   rAgentProviderPut,
   rAgentConfigModelPut,
   rAgentEgressPut,
+  rAgentEgressHostsGet,
+  rAgentEgressHostsPut,
   rAgentEnv,
   rAgentMcp,
   rAgentSkills,
@@ -177,6 +179,8 @@ import {
   putUserSkillHandler,
   readSkillOrigin,
   sanitizeOrigin,
+  openScopedSkillFile,
+  readScopedSkillFile,
   sanitizeSkillName,
   scopedSkillsDir,
 } from './server/skills-store.js';
@@ -318,6 +322,7 @@ import {
   rWebchatFeatures,
   rWebchatAuditLog,
   rWebchatAuditSyslog,
+  rWebchatAuditRetention,
   rWebchatTailscaleOwner,
   rWebchatTailscaleHttps,
   rWebchatCloudflaredGet,
@@ -484,13 +489,14 @@ import {
   authenticateRequest,
   canonicalizeWebchatUserId,
   getAuthInfo,
+  loopbackVisitorWithoutSignIn,
   getAuthManagementInfo,
   hasExplicitAuth,
   probeTailscaleHealth,
   requiresExplicitAuth,
   warnIfAutoProxyTrust,
 } from './auth.js';
-import { getTailscaleServeState, enableTailscaleServe } from './tailscale-serve.js';
+import { getTailscaleServeState, enableTailscaleServe, tailnetUrlForPort } from './tailscale-serve.js';
 import {
   deleteHostModel,
   getPullsSnapshot,
@@ -642,7 +648,10 @@ import {
   NEVER_AUTO_APPROVE_ACTIONS,
   NEVER_AUTO_APPROVE_PATTERNS,
 } from '../../modules/approvals/prejudge.js';
+import { checkApprovalClick } from '../../modules/approvals/index.js';
+import { RUNNER_ENABLED, RUNNER_WS_PATHS, setupRunnerWebSocket } from './runner-ws.js';
 import { listRegisteredApprovalActions } from '../../seam/index.js';
+import { hostAllowed } from './request-guard.js';
 import { maybeHandleTts, ttsEndpoint } from './tts.js';
 import {
   DEFAULT_CLEANUP_PROMPT,
@@ -658,6 +667,7 @@ import { canAccessRoom, canArchiveRoom, filterRoomsForUser } from './access.js';
 import { canAccessAgentGroup } from '../../modules/permissions/access.js';
 import { audit, auditActor } from '../../audit.js';
 import { configureSyslog } from './audit-syslog.js';
+import { applyStoredRetention } from './audit-retention.js';
 import {
   getRoomOauthAllowed,
   setRoomOauthAllowed,
@@ -699,7 +709,7 @@ import {
   MAX_ACTIVE_MINTS,
 } from './oauth-mint.js';
 import { realOnecliAdmin } from '../../modules/user-credentials/onecli-admin.js';
-import { fleetIsolationEnabled } from '../../modules/fleet-isolation/index.js';
+import { ensureFleetIsolation, fleetIsolationEnabled } from '../../modules/fleet-isolation/index.js';
 import {
   listAgentEnvNames,
   setAgentEnv,
@@ -814,6 +824,25 @@ import {
 } from '../../modules/transfer/room-transfer.js';
 import { spawn } from 'child_process';
 import Busboy from 'busboy';
+import {
+  rEgressGet,
+  rEgressPut,
+  rRunnerClientConfigGet,
+  rRunnerMineGet,
+  rRunnerClientConfigPut,
+  rRunnerExtensionDownload,
+  rRunnerExtensionGet,
+  rRunnerExtensionPost,
+  rRunnerImageSourcePut,
+  rRunnerLogsGet,
+  rRunnerMachineApprovePost,
+  rRunnerMachineRevokePost,
+  rRunnerPlacementDelete,
+  rRunnerPlacementPut,
+  rRunnersGet,
+} from './server/routes-runners.js';
+import { handleAccountRoutes, handlePreAuthSignin } from './server/routes-signin.js';
+import { handleSigninSettings } from './server/routes-signin-settings.js';
 
 const DEFAULT_HOST = '127.0.0.1';
 
@@ -883,6 +912,8 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
   // does not silently turn forwarding off. Invalid persisted value → off, and
   // the health status says so; it cannot brick boot.
   configureSyslog(await getAuditSyslogTarget());
+  // Same for how long the audit log is kept; this also prunes to it at boot.
+  await applyStoredRetention();
   await convergeAgentProviders();
   // Background probe — finishes before any client can hit /api/auth/info in
   // practice (boot completes synchronously to listen()), and the endpoint
@@ -926,6 +957,14 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
     return { userId: auth.userId, displayName: auth.displayName };
   });
 
+  // Laptop runners connect on their own path over this same server (see
+  // runner-ws.ts). Off unless WEBCHAT_RUNNER_ENABLED=true; when off the path is
+  // destroyed like any other unknown upgrade.
+  if (RUNNER_ENABLED) {
+    setupRunnerWebSocket({ chatInbound: hooks.onInbound });
+    log.info('Webchat runner endpoint enabled', { paths: RUNNER_WS_PATHS });
+  }
+
   await new Promise<void>((resolve, reject) => {
     httpServer.once('error', (err: NodeJS.ErrnoException) => {
       // EADDRINUSE on this port is almost always "another nanoclaw host is
@@ -956,7 +995,7 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
     http: httpServer,
     wss,
     broadcast: (roomId, payload) => {
-      broadcast(roomId, payload as object);
+      broadcast(roomId, payload as object).catch((err) => log.warn('Broadcast failed', { roomId, err: String(err) }));
     },
     persistOutboundFile: (roomId, file) => persistOutboundFile(roomId, file),
   };
@@ -982,12 +1021,35 @@ export async function stopWebchatServer(server: WebchatServer): Promise<void> {
 
 // ── HTTP request handler ─────────────────────────────────────────────────
 
+// Where this install is reached on the tailnet (Serve's HTTPS address, else
+// http://<node>.ts.net:<port>). Asked of tailscaled at most once a minute.
+let tailnetUrlCache: { at: number; port: number; url: string | null } | null = null;
+async function tailnetUrlFor(req: IncomingMessage): Promise<string | null> {
+  const port = req.socket.localPort ?? Number(process.env.WEBCHAT_PORT || 3100);
+  if (tailnetUrlCache && tailnetUrlCache.port === port && Date.now() - tailnetUrlCache.at < 60_000)
+    return tailnetUrlCache.url;
+  const url = await tailnetUrlForPort(port, requiresExplicitAuth(process.env.WEBCHAT_HOST || '127.0.0.1')).catch(
+    () => null,
+  );
+  tailnetUrlCache = { at: Date.now(), port, url };
+  return url;
+}
+
 async function handleHttp(
   req: IncomingMessage,
   res: ServerResponse,
   hooks: WebchatServerHooks,
   publicDir: string,
 ): Promise<void> {
+  // Before anything else: a request addressed to a name that isn't this
+  // server's is a rebound DNS name (request-guard.ts). /health stays open for
+  // load balancers that probe by address.
+  if (!(req.url ?? '').startsWith('/health') && !(await hostAllowed(req))) {
+    res.writeHead(421, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('This server does not answer to that host name. Add it to WEBCHAT_ALLOWED_HOSTS.\n');
+    return;
+  }
+
   // Same-origin-only CORS: echo Origin only when its host matches our Host.
   const origin = req.headers.origin;
   if (origin && req.headers.host) {
@@ -1048,8 +1110,33 @@ async function handleHttp(
   // tailscale-on-server health flag; no tokens, IPs, or detailed failure
   // reasons. See `getAuthInfo` for why this is safe to expose.
   if (url.pathname === '/api/auth/info' && method === 'GET') {
-    return json(res, 200, await getAuthInfo());
+    // A browser on this machine that cannot be signed in here is told where it
+    // can be — the only caller who gets the tailnet address, and it is local.
+    const tailnetUrl = (await loopbackVisitorWithoutSignIn(req)) ? await tailnetUrlFor(req) : null;
+    return json(res, 200, { ...(await getAuthInfo()), ...(tailnetUrl ? { tailnetUrl } : {}) });
   }
+  // localhost → the tailnet address. With Tailscale sign-in on, a page loaded
+  // at http://localhost:<port> is refused (loopback is not trusted once an
+  // explicit method exists) and used to sit behind a "server unreachable"
+  // banner. Send the page load where the same person is signed in. Page loads
+  // only: an API call or a WebSocket gets its 401, a redirect would confuse it.
+  // Serve's own requests also arrive from loopback but carry its identity
+  // header, so they are never redirected (no loop).
+  if (
+    method === 'GET' &&
+    (url.pathname === '/' || url.pathname === '/index.html') &&
+    (await loopbackVisitorWithoutSignIn(req))
+  ) {
+    const target = await tailnetUrlFor(req);
+    if (target) {
+      res.writeHead(302, { Location: `${target}${url.pathname}${url.search}`, 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
+  }
+  // "Sign in with Microsoft" and sign-out (server/routes-signin.ts): reached
+  // before any sign-in exists, so they sit ahead of the auth gate.
+  if (await handlePreAuthSignin(req, res, url, method)) return;
 
   // Static PWA assets — the app shell that CONTAINS the login screen — must be
   // reachable BEFORE auth. Otherwise a token-only deployment (no localhost
@@ -1065,11 +1152,44 @@ async function handleHttp(
   }
   const userId = auth.userId;
   const senderIdentity = auth.displayName;
+  // A plain GET on the runner WebSocket path means a proxy hop dropped the
+  // Upgrade/Connection headers (nginx forwards them per-location, so a path
+  // that worked for /ws can silently fail for this one). Say so in the log:
+  // from the laptop the App Service reports the failed handshake as a bare 500.
+  if (RUNNER_ENABLED && method === 'GET' && RUNNER_WS_PATHS.includes((req.url ?? '').split('?')[0])) {
+    log.warn('Runner path reached over plain HTTP — proxy did not forward the WebSocket Upgrade header', {
+      userId,
+      upgrade: req.headers.upgrade ?? null,
+      connection: req.headers.connection ?? null,
+    });
+    return json(res, 426, {
+      error: 'Upgrade required',
+      hint: 'WebSocket-only path; the reverse proxy must forward the Upgrade and Connection headers for it.',
+    });
+  }
+  // A signed token was presented but had expired; a weaker method carried the
+  // request. Tell the client so it can refresh the platform's token store and
+  // get back onto the verified path. A header, not a status: the request
+  // succeeded, and availability is the fallback's whole point.
+  if (auth.hint) res.setHeader('X-Webchat-Auth-Hint', auth.hint);
 
   // ── Auth check ────────────────────────────────────────────────────────
   if (url.pathname === '/api/auth/check' && method === 'GET') {
-    return json(res, 200, { ok: true, userId, identity: senderIdentity });
+    return json(res, 200, {
+      ok: true,
+      userId,
+      identity: senderIdentity,
+      source: auth.source,
+      ...(auth.hint ? { hint: auth.hint } : {}),
+      ...(auth.signedInAs ? { signedInAs: auth.signedInAs } : {}),
+      ...(auth.viaSession ? { viaSession: true } : {}),
+    });
   }
+  // The account's sign-ins and linking (server/routes-signin.ts); inline for
+  // the same reason as the auth routes below — they read the auth object.
+  if (await handleAccountRoutes(req, res, url, method, auth)) return;
+  // Admin → Sign-in (server/routes-signin-settings.ts).
+  if (await handleSigninSettings(req, res, url, method, auth)) return;
 
   // ── Text-to-speech (config probe + synthesis proxy) ───────────────────
   // Authenticated like every other /api/* route; the module owns its own
@@ -1140,7 +1260,9 @@ async function handleHttp(
   // Refuses if one already exists (retire it first).
   if (url.pathname === '/api/webchat/auth/bearer/generate' && method === 'POST') {
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-    if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
+    // Owner only: the new token's identity is granted owner (below), so a
+    // global admin generating one would be granting themselves owner.
+    if (!(await isOwner(userId))) return json(res, 403, { error: 'Owner only' });
     if ((await getAuthManagementInfo()).bearerConfigured) {
       return json(res, 400, { error: 'A bearer token is already set. Retire it first to replace it.' });
     }
@@ -1197,6 +1319,8 @@ async function handleHttp(
       if (g === 'csrf' && req.headers['x-webchat-csrf'] !== '1')
         return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
       if (g === 'owner' && !(await isOwner(userId))) return json(res, 403, { error: 'Owner only' });
+      if (g === 'globalAdmin' && !(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
+        return json(res, 403, { error: 'Forbidden' });
       if (g === 'anyAdmin' && !(await isAnyAdmin(userId))) return json(res, 403, { error: 'Admin privilege required' });
     }
     if (!r.audit) return r.h({ req, res, url, method, userId, senderIdentity, hooks }, m);
@@ -1305,7 +1429,7 @@ export interface RouteCtx {
   hooks: WebchatServerHooks;
 }
 
-type RouteGuard = 'csrf' | 'owner' | 'anyAdmin';
+type RouteGuard = 'csrf' | 'owner' | 'globalAdmin' | 'anyAdmin';
 
 interface ApiRoute {
   method: string | string[];
@@ -1379,6 +1503,7 @@ const RE_AGENT_MODEL = /^\/api\/agents\/([^/]+)\/model$/;
 const RE_AGENT_CONFIG_MODEL = /^\/api\/agents\/([^/]+)\/config-model$/;
 const RE_AGENT_PROVIDER = /^\/api\/agents\/([^/]+)\/provider$/;
 const RE_AGENT_EGRESS = /^\/api\/agents\/([^/]+)\/egress$/;
+const RE_AGENT_EGRESS_HOSTS = /^\/api\/agents\/([^/]+)\/egress\/hosts$/;
 const RE_AGENT_ENV = /^\/api\/agents\/([^/]+)\/env$/;
 const RE_MCP_SOURCE = /^\/api\/mcp-sources\/([^/]+)$/;
 const RE_MCP_OAUTH_START = /^\/api\/mcp-servers\/([^/]+)\/oauth\/start$/;
@@ -1607,6 +1732,9 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
     // heart, and one credential per host is the sane model. The exception is a
     // self-hosted service on an IP, which no host rule can identify; there the
     // operator names the service and the table still supplies the header.
+    // A secret for one agent or one person is private only while no agent is
+    // in `all` mode, so the whole fleet is isolated first.
+    if (scope.kind !== 'workspace') await ensureFleetIsolation(realOnecliAdmin);
     const created = await createToolSecret(realOnecliAdmin, scope, hostPattern, value, scheme);
     return json(res, 200, { ok: true, secret: created });
   } catch (err) {
@@ -1616,7 +1744,7 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
     log.error('Tool secret request failed', { agentGroupId, method, err });
     const msg = err instanceof Error ? err.message : '';
     const safe =
-      /^(No OneCLI agent|Could not (create|isolate)|No model credential|This person has not|A credential for)/.test(
+      /^(No OneCLI agent|Could not (create|isolate)|No model credential|This person has not|A credential for|Credential isolation is off|Couldn't make every agent private)/.test(
         msg,
       );
     return json(res, safe ? 409 : 500, { error: safe ? msg : 'Vault operation failed — check host logs' });
@@ -1643,6 +1771,10 @@ async function rToolSecretsIsolation(ctx: RouteCtx, _m: RegExpMatchArray): Promi
     const raw = await readJsonBody(req, res);
     if (raw === null) return;
     const isolated = !!(JSON.parse(raw) as { isolated?: boolean }).isolated;
+    // With isolation on for every agent, one agent back in `all` mode would be
+    // offered every other agent's and person's secrets.
+    if (!isolated && (await fleetIsolationEnabled()))
+      return json(res, 409, { error: 'Credential isolation is on for every agent (Admin)' });
     if (isolated) await isolateGroup(realOnecliAdmin, agentGroupId);
     else await unisolateGroup(realOnecliAdmin, agentGroupId);
     return json(res, 200, { ok: true, isolation: await getGroupIsolation(realOnecliAdmin, agentGroupId) });
@@ -1684,8 +1816,8 @@ async function rDeployKeys(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
     // Re-stamping an existing key's target must not regenerate it — anything
     // already trusting the public half would break.
     const key = (await listDeployKeys(agentGroupId)).some((k) => k.name === name)
-      ? setDeployKeyTarget(agentGroupId, name, target ?? '')
-      : createDeployKey(agentGroupId, name, target);
+      ? await setDeployKeyTarget(agentGroupId, name, target ?? '')
+      : await createDeployKey(agentGroupId, name, target);
     await refreshCredentialNote(realOnecliAdmin, agentGroupId);
     return json(res, 200, { ok: true, key });
   } catch (err) {
@@ -1943,9 +2075,9 @@ async function rWorkspaceModelPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
     if (model.kind !== 'ollama')
       return json(res, 400, { error: 'The workspace default model must be an ollama roster model' });
     if (!model.endpoint) return json(res, 400, { error: 'That model has no endpoint to call' });
-    setDefaultModelId(model.id);
+    await setDefaultModelId(model.id);
   } else {
-    setDefaultModelId(null);
+    await setDefaultModelId(null);
   }
   await refreshUnassignedGroupsForDefaultModel('Workspace default model changed');
   return json(res, 200, { ok: true, defaultModelId: await getDefaultModelId() });
@@ -2261,9 +2393,11 @@ async function rSystemVersionsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
 async function rSystemExportGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, url } = ctx;
   const lean = url.searchParams.get('lean') === '1';
+  // Secrets (model API keys, deploy keys, MCP tokens) only on explicit opt-in.
+  const withSecrets = url.searchParams.get('secrets') === '1';
   let stage: string;
   try {
-    stage = await stageSystemExport(lean);
+    stage = await stageSystemExport(lean, withSecrets);
   } catch (err) {
     return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
   }
@@ -2272,7 +2406,7 @@ async function rSystemExportGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<vo
     'Content-Type': 'application/gzip',
     'Content-Disposition': `attachment; filename="${fname}"`,
   });
-  const tar = spawnTar(systemTarArgs(stage, lean));
+  const tar = spawnTar(systemTarArgs(stage, lean, withSecrets));
   tar.stdout?.pipe(res);
   let tarErr = '';
   tar.stderr?.on('data', (d: Buffer) => (tarErr += d));
@@ -2687,7 +2821,7 @@ async function rTtsConfigPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void>
     return json(res, 200, { ok: true, voice: body.voice });
   }
   if (typeof body.readAloud !== 'boolean') return json(res, 400, { error: 'readAloud must be a boolean' });
-  setReadAloudEnabled(body.readAloud);
+  await setReadAloudEnabled(body.readAloud);
   return json(res, 200, { ok: true, readAloud: body.readAloud });
 }
 
@@ -2739,11 +2873,11 @@ async function rSttConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
     const trimmed = typeof body.cleanupPrompt === 'string' ? body.cleanupPrompt.trim() : '';
     if (trimmed.length > 4000) return json(res, 413, { error: 'Prompt too long (4000 chars max)' });
     const stored = trimmed && trimmed !== DEFAULT_CLEANUP_PROMPT ? trimmed : null;
-    setSttCleanupPrompt(stored);
+    await setSttCleanupPrompt(stored);
     return json(res, 200, { ok: true, cleanupPrompt: stored });
   }
   if (body.cleanupModelId === null) {
-    setSttCleanupModelId(null);
+    await setSttCleanupModelId(null);
     return json(res, 200, { ok: true, cleanupModelId: null });
   }
   if (typeof body.cleanupModelId !== 'string' || !body.cleanupModelId.trim())
@@ -2753,7 +2887,7 @@ async function rSttConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   if (model.kind !== 'ollama' && model.kind !== 'openai-compatible')
     return json(res, 400, { error: 'Cleanup model must be an ollama or openai-compatible roster model' });
   if (!model.endpoint) return json(res, 400, { error: 'That model has no endpoint to call' });
-  setSttCleanupModelId(model.id);
+  await setSttCleanupModelId(model.id);
   return json(res, 200, { ok: true, cleanupModelId: model.id });
 }
 
@@ -2871,8 +3005,8 @@ async function rApprovalPrejudgePut(ctx: RouteCtx, _m: RegExpMatchArray): Promis
     }
   }
 
-  if ('modelId' in body) setApprovalPrejudgeModelId((body.modelId as string | null) ?? null);
-  if (actions !== undefined) setApprovalPrejudgeActions(actions);
+  if ('modelId' in body) await setApprovalPrejudgeModelId((body.modelId as string | null) ?? null);
+  if (actions !== undefined) await setApprovalPrejudgeActions(actions);
   return json(res, 200, { ok: true, ...(await prejudgeConfigView()) });
 }
 
@@ -2923,6 +3057,21 @@ async function rApprovePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   if (value !== 'approve' && value !== 'reject') {
     return json(res, 400, { error: 'value must be "approve" or "reject"' });
   }
+  // Ask the approvals module whether this click will actually be accepted,
+  // BEFORE handing off. onAction is fire-and-forget (void through three
+  // layers), so once we reply 200 the client can never learn that the
+  // handler refused — which is exactly how an unauthorized click came to
+  // look like a dead button.
+  const check = await checkApprovalClick({
+    questionId: approvalId,
+    value,
+    userId,
+    channelType: 'webchat',
+    platformId: expectedPlatformId,
+    threadId: null,
+  });
+  if (!check.ok) return json(res, 403, { error: check.reason ?? 'Not authorized to decide this request' });
+
   // Hand off to the existing approvals plumbing — onAction → response
   // handler → registered approval handler. We don't update the row here;
   // handleApprovalsResponse owns the lifecycle (status update + delete).
@@ -2951,6 +3100,8 @@ async function rPushUnsubscribePost(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   const { req, res, userId } = ctx;
   return pushUnsubscribe(req, res, userId);
 }
+
+const RE_RUNNER_PLACEMENT = /^\/api\/runners\/placements\/([^/]+)$/;
 
 const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/me/handle', h: rMeHandleGet },
@@ -2991,6 +3142,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: '/api/models/context-variant', guards: ['csrf', 'owner'], h: rModelsContextVariantPost },
   { method: ['GET', 'PUT'], path: '/api/webchat/tailscale-owner', h: rWebchatTailscaleOwner },
   { method: ['GET', 'PUT'], path: '/api/webchat/audit-syslog', h: rWebchatAuditSyslog },
+  { method: ['GET', 'PUT'], path: '/api/webchat/audit-retention', h: rWebchatAuditRetention },
   { method: 'GET', path: '/api/webchat/audit-log', h: rWebchatAuditLog },
   { method: ['GET', 'POST'], path: '/api/webchat/tailscale-https', h: rWebchatTailscaleHttps },
   { method: 'GET', path: '/api/webchat/cloudflared', h: rWebchatCloudflaredGet },
@@ -3052,6 +3204,8 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'PUT', path: RE_AGENT_CONFIG_MODEL, h: rAgentConfigModelPut },
   { method: 'PUT', path: RE_AGENT_PROVIDER, h: rAgentProviderPut },
   { method: 'PUT', path: RE_AGENT_EGRESS, h: rAgentEgressPut },
+  { method: 'GET', path: RE_AGENT_EGRESS_HOSTS, h: rAgentEgressHostsGet },
+  { method: 'PUT', path: RE_AGENT_EGRESS_HOSTS, h: rAgentEgressHostsPut, audit: 'agent.egress.hosts.set' },
   { method: ['GET', 'PUT', 'DELETE'], path: RE_AGENT_ENV, h: rAgentEnv },
   { method: 'GET', path: '/api/mcp-servers', guards: ['anyAdmin'], h: rMcpServersGet },
   { method: 'POST', path: '/api/mcp-servers', guards: ['csrf', 'anyAdmin'], h: rMcpServersPost, audit: 'mcp.create' },
@@ -3062,9 +3216,9 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/mcp-catalog', guards: ['anyAdmin'], h: rMcpCatalogGet },
   { method: 'POST', path: '/api/mcp-servers/probe', guards: ['csrf', 'anyAdmin'], h: rMcpServersProbePost },
   { method: 'GET', path: '/api/mcp-servers/oauth/callback', h: rMcpServersOauthCallbackGet },
-  { method: 'POST', path: RE_MCP_OAUTH_START, guards: ['anyAdmin', 'csrf'], h: rMcpOauthStartPost },
-  { method: 'POST', path: RE_MCP_REPIN, guards: ['anyAdmin', 'csrf'], h: rMcpRepinPost },
-  { method: 'PUT', path: RE_MCP_TOOLS, guards: ['anyAdmin', 'csrf'], h: rMcpToolsPut },
+  { method: 'POST', path: RE_MCP_OAUTH_START, guards: ['globalAdmin', 'csrf'], h: rMcpOauthStartPost },
+  { method: 'POST', path: RE_MCP_REPIN, guards: ['globalAdmin', 'csrf'], h: rMcpRepinPost },
+  { method: 'PUT', path: RE_MCP_TOOLS, guards: ['globalAdmin', 'csrf'], h: rMcpToolsPut },
   { method: 'PUT', path: RE_MCP_AUTH, h: rMcpAuthPut },
   { method: 'PUT', path: RE_MCP_SERVER_ID, guards: ['owner', 'csrf'], h: rMcpServerIdPut, audit: 'mcp.update' },
   { method: 'DELETE', path: RE_MCP_SERVER_ID, guards: ['owner', 'csrf'], h: rMcpServerIdDelete, audit: 'mcp.delete' },
@@ -3242,6 +3396,64 @@ const API_ROUTES: ApiRoute[] = [
   },
   { method: 'POST', path: RE_APPROVE, guards: ['csrf'], h: rApprovePost },
   { method: 'GET', path: '/api/users', h: rUsersGet },
+  // Runner fleet + egress (server/routes-runners.ts).
+  { method: 'GET', path: '/api/runners', guards: ['globalAdmin'], h: rRunnersGet },
+  { method: 'GET', path: '/api/runners/logs', guards: ['globalAdmin'], h: rRunnerLogsGet },
+  { method: 'GET', path: '/api/runners/extension', h: rRunnerExtensionGet },
+  { method: 'GET', path: '/api/runners/extension/download', h: rRunnerExtensionDownload },
+  { method: 'GET', path: '/api/runners/client-config', h: rRunnerClientConfigGet },
+  { method: 'GET', path: '/api/runners/mine', h: rRunnerMineGet },
+  {
+    method: 'PUT',
+    path: '/api/runners/client-config',
+    guards: ['csrf', 'globalAdmin'],
+    h: rRunnerClientConfigPut,
+    audit: 'runner.client.set',
+  },
+  {
+    method: 'POST',
+    path: '/api/runners/extension',
+    guards: ['csrf', 'globalAdmin'],
+    h: rRunnerExtensionPost,
+    audit: 'runner.extension.publish',
+  },
+  { method: 'GET', path: '/api/egress', guards: ['globalAdmin'], h: rEgressGet },
+  { method: 'PUT', path: '/api/egress', guards: ['csrf', 'globalAdmin'], h: rEgressPut, audit: 'egress.allowlist.set' },
+  {
+    method: 'PUT',
+    path: '/api/runners/image-source',
+    guards: ['csrf', 'globalAdmin'],
+    h: rRunnerImageSourcePut,
+    audit: 'runner.image.set',
+  },
+  {
+    method: 'POST',
+    path: /^\/api\/runners\/machines\/([0-9a-f]{16,128})\/approve$/,
+    guards: ['csrf', 'globalAdmin'],
+    h: rRunnerMachineApprovePost,
+    audit: 'runner.machine.approve',
+  },
+  {
+    method: 'POST',
+    path: /^\/api\/runners\/machines\/([0-9a-f]{16,128})\/revoke$/,
+    guards: ['csrf', 'globalAdmin'],
+    h: rRunnerMachineRevokePost,
+    audit: 'runner.machine.revoke',
+  },
+  {
+    method: 'PUT',
+    path: RE_RUNNER_PLACEMENT,
+    guards: ['csrf', 'globalAdmin'],
+    h: rRunnerPlacementPut,
+    audit: 'runner.placement.set',
+  },
+  {
+    method: 'DELETE',
+    path: RE_RUNNER_PLACEMENT,
+    guards: ['csrf', 'globalAdmin'],
+    h: rRunnerPlacementDelete,
+    audit: 'runner.placement.delete',
+  },
   { method: 'DELETE', path: RE_USER_ID, guards: ['csrf', 'owner'], h: rUserIdDelete, audit: 'user.delete' },
   { method: 'POST', path: '/api/permissions/grant', guards: ['csrf'], h: rPermissionsGrantPost },
   { method: 'POST', path: '/api/permissions/revoke', guards: ['csrf'], h: rPermissionsRevokePost },
@@ -3762,10 +3974,9 @@ function readSkillBody(agentGroupId: string, skillName: string): string {
 // Return the SKILL.md of a skill scoped to one agent. Caller auth (per-group
 // admin) is checked at the route. Scoped skills are always user-editable.
 function getScopedSkillContentHandler(res: ServerResponse, agentGroupId: string, name: string): void {
-  const file = path.join(scopedSkillsDir(agentGroupId), name, 'SKILL.md');
   let body: string;
   try {
-    body = fs.readFileSync(file, 'utf8');
+    body = readScopedSkillFile(agentGroupId, name);
   } catch {
     return json(res, 404, { error: 'Skill not found' });
   }
@@ -3796,16 +4007,23 @@ async function putScopedSkillContentHandler(
     return json(res, 400, { error: 'Body must be a SKILL.md with YAML front-matter including a description' });
   }
   const dir = scopedSkillsDir(agentGroupId);
-  const skillDir = path.join(dir, name);
-  if (!fs.existsSync(path.join(skillDir, 'SKILL.md'))) {
+  let fd: number;
+  try {
+    fd = openScopedSkillFile(agentGroupId, name, fs.constants.O_WRONLY);
+  } catch {
     return json(res, 404, { error: 'Skill not found' });
   }
   try {
-    snapshotRevision(dir, name);
-  } catch {
-    /* best-effort history; never block the save */
+    try {
+      snapshotRevision(dir, name);
+    } catch {
+      /* best-effort history; never block the save */
+    }
+    fs.ftruncateSync(fd, 0);
+    fs.writeSync(fd, content, 0, 'utf8');
+  } finally {
+    fs.closeSync(fd);
   }
-  fs.writeFileSync(path.join(skillDir, 'SKILL.md'), content, 'utf8');
   const restarted = await restartAgentGroupContainers(agentGroupId, `Scoped skill ${name} edited`);
   return json(res, 200, { ok: true, name, restarted });
 }

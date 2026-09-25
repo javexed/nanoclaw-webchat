@@ -7,6 +7,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { json, readJsonBody } from './http.js';
 import { getAgentGroup } from '../../../db/agent-groups.js';
 import { log } from '../../../log.js';
+import { forgetModelHosts } from '../egress-policy.js';
 import {
   createWebchatModel,
   deleteWebchatModel,
@@ -150,9 +151,10 @@ export async function rModelsContextVariantPost(ctx: RouteCtx, _m: RegExpMatchAr
         credential_ref: null,
         created_at: Date.now(),
       });
+      forgetModelHosts();
     }
     if (body.makeDefault === true) {
-      setDefaultModelId(id);
+      await setDefaultModelId(id);
       await refreshUnassignedGroupsForDefaultModel('Workspace default model changed (context variant)');
     }
     return json(res, 200, { ok: true, tag: variantTag, modelId: id, madeDefault: body.makeDefault === true });
@@ -228,6 +230,7 @@ export async function createModelHandler(req: IncomingMessage, res: ServerRespon
     created_at: Date.now(),
   };
   await createWebchatModel(m);
+  forgetModelHosts();
   // Preflight: does an agent CONTAINER reach this endpoint? (self-skips fast
   // for hosted/LAN endpoints; only spins a probe container for loopback ones.)
   const reachability = await probeContainerReachability(endpoint);
@@ -263,6 +266,7 @@ export async function updateModelHandler(req: IncomingMessage, res: ServerRespon
   if (validationError) return json(res, 400, { error: validationError });
 
   await updateWebchatModel(id, patch);
+  forgetModelHosts();
   // Endpoint or model_id change → re-emit env and respawn for every agent that
   // uses it, so live containers pick up the edited endpoint/model immediately.
   for (const agentGroupId of await getAgentsAssignedToModel(id)) {
@@ -436,6 +440,7 @@ export async function bulkCreateModelsHandler(req: IncomingMessage, res: ServerR
     };
     try {
       await createWebchatModel(m);
+      forgetModelHosts();
       created.push(m);
     } catch (err) {
       failed.push({ index: i, error: err instanceof Error ? err.message : 'create failed' });

@@ -10,8 +10,9 @@
 # Everything is derived at runtime — nothing is hardcoded per install:
 #   cert/key paths  ← WEBCHAT_TLS_CERT/KEY in the repo's .env
 #   hostname        ← the cert's own subject CN (what was originally minted)
-#   service unit    ← the repo path's install slug (src/install-slug.ts:
-#                     sha1(projectRoot)[:8])
+#   service unit    ← the install slug (src/install-slug.ts): NANOCLAW_INSTALL_ID
+#                     from the environment or the repo's .env when set, else
+#                     sha1(projectRoot)[:8]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -32,7 +33,19 @@ if [ -z "$HOST" ]; then
 fi
 [ -n "$HOST" ] || { echo "cannot determine cert hostname (no cert, no tailscale DNSName)" >&2; exit 1; }
 
-SLUG=$(printf %s "$ROOT" | sha1sum | cut -c1-8)
+# Same resolution as src/install-slug.ts: an explicit install id wins over the
+# path-derived slug. The timer's environment rarely carries it, so .env is
+# consulted too. The path hash uses the physical path, as process.cwd() does.
+INSTALL_ID="${NANOCLAW_INSTALL_ID:-$(grep -E '^NANOCLAW_INSTALL_ID=' "$ROOT/.env" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '"'"'"' ' || true)}"
+if [ -n "$INSTALL_ID" ]; then
+  if ! printf %s "$INSTALL_ID" | grep -qE '^[a-z0-9][a-z0-9_-]{0,31}$'; then
+    echo "NANOCLAW_INSTALL_ID must be 1-32 chars of [a-z0-9_-] starting alphanumeric (got '$INSTALL_ID')" >&2
+    exit 1
+  fi
+  SLUG="$INSTALL_ID"
+else
+  SLUG=$(printf %s "$(cd "$ROOT" && pwd -P)" | sha1sum | cut -c1-8)
+fi
 UNIT="nanoclaw-v2-$SLUG"
 
 fingerprint() { openssl x509 -in "$CERT" -noout -fingerprint 2>/dev/null || echo none; }

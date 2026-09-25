@@ -26,6 +26,7 @@ import { closeRoomDetail, joinRoom } from './features/rooms.js';
 import { closeAgentDetail } from './features/agents.js';
 import { closeMcpDetail } from './features/mcp.js';
 import { closeModelDetail } from './features/models.js';
+import { refreshPlatformTokenIfHinted } from './core/platform-token.js';
 
 /**
  * On returning to a visible tab: reconnect if the socket dropped, otherwise
@@ -34,6 +35,9 @@ import { closeModelDetail } from './features/models.js';
 export function wireVisibilityRefresh(): void {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
+    // If the server said our platform token had gone stale, renew it now — before
+    // the first action of this session goes out on the weaker fallback path.
+    refreshPlatformTokenIfHinted();
     if (state.ws && state.ws.readyState !== WebSocket.OPEN) {
       connect();
     } else {

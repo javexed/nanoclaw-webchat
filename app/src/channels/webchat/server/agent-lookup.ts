@@ -13,6 +13,8 @@
  */
 import { getAgentGroup, getAllAgentGroups } from '../../../db/agent-groups.js';
 import { getContainerConfig } from '../../../db/container-configs.js';
+import { effectiveEgressMode } from '../egress-policy.js';
+import { getPlacement } from '../runner-registry.js';
 import type { AgentGroup } from '../../../types.js';
 import { getAssignedModelForAgent, getEffectiveModelForAgent, getWebchatRoom } from '../db.js';
 import { hasAdminPrivilege, isOwner } from '../roles.js';
@@ -20,6 +22,8 @@ import { filterAsync } from '../async-array.js';
 
 export interface AgentForUI extends AgentGroup {
   room_id: string | null;
+  /** Placed on a developer's machine (network enforced by central's relay). */
+  runner_placed: boolean;
   assigned_model_id: string | null;
   /**
    * When no webchat model is assigned, a label derived from the agent's actual
@@ -80,7 +84,11 @@ export async function toAgentForUI(g: AgentGroup): Promise<AgentForUI> {
     ...g,
     room_id: room ? room.id : null,
     assigned_model_id: assigned ? assigned.id : null,
-    egress: (await getContainerConfig(g.id))?.egress ?? 'open',
+    // The effective network mode (unset means the allowlist), so the UI shows
+    // what is enforced. A runner agent's applies per connection at once; a
+    // local agent's Open ↔ filtered switch needs its next start.
+    runner_placed: !!(await getPlacement(g.id)),
+    egress: effectiveEgressMode((await getContainerConfig(g.id))?.egress),
     effective_model_label: assigned ? null : await deriveEffectiveModelLabel(g.id),
     config_model: (await getContainerConfig(g.id))?.model ?? null,
     // Which agent harness the group runs: 'claude' (built-in) or 'opencode'.

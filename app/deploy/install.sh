@@ -7,10 +7,11 @@
 # done by the operator in that browser wizard — this script never touches auth
 # and needs no API key.
 #
-#   sudo bash install.sh
-#   # or piped:  curl -fsSL <raw-url>/deploy/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/javexed/nanoclaw-webchat/main/app/deploy/install.sh | sudo bash
 #
-# It leans on the repo's own non-interactive setup driver (`pnpm run setup:auto`)
+# It clones this repo (nanoclaw-webchat), composes the install with the repo's
+# root install.sh (which fetches the pinned NanoClaw and layers webchat on
+# top), then leans on NanoClaw's own non-interactive setup driver (`pnpm run setup:auto`)
 # for the deps/Docker/OneCLI/agent-image/service steps — the interactive ones
 # (auth, channel, first-chat, cli-agent, timezone) are skipped because the wizard
 # owns them. Only the webchat .env + bearer token are seeded here.
@@ -26,10 +27,17 @@ set -euo pipefail
 export LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 # ── Config (env-overridable) ────────────────────────────────────────────────
-REPO_URL="${NANOCLAW_REPO_URL:-https://github.com/javexed/nanoclaw.git}"
-REPO_BRANCH="${NANOCLAW_REPO_BRANCH:-channels-webchat}" # where webchat + wizard live (not trunk)
-INSTALL_DIR="${NANOCLAW_DIR:-/opt/nanoclaw}"
+# REPO_URL/REPO_BRANCH name THIS repo (the webchat overlay), not NanoClaw: the
+# NanoClaw version it composes onto is pinned in the repo's versions.json.
+REPO_URL="${NANOCLAW_REPO_URL:-https://github.com/javexed/nanoclaw-webchat.git}"
+REPO_BRANCH="${NANOCLAW_REPO_BRANCH:-main}"
+SRC_DIR="${NANOCLAW_SRC_DIR:-/opt/nanoclaw-webchat}" # the overlay checkout (compose input)
+INSTALL_DIR="${NANOCLAW_DIR:-/opt/nanoclaw}"         # the composed, running install
 RUN_USER="${NANOCLAW_USER:-nanoclaw}"
+# An explicitly exported WEBCHAT_PORT replaces the port on a re-run; the
+# default only applies to a fresh .env.
+WEBCHAT_PORT_SET=0
+[ -n "${WEBCHAT_PORT:-}" ] && WEBCHAT_PORT_SET=1
 WEBCHAT_PORT="${WEBCHAT_PORT:-3100}"
 DISPLAY_NAME="${NANOCLAW_DISPLAY_NAME:-operator}"
 
@@ -159,39 +167,78 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 
-# ── 5. Clone + build ────────────────────────────────────────────────────────
-if [ ! -d "$INSTALL_DIR/.git" ]; then
-  log "cloning $REPO_URL ($REPO_BRANCH)…"
-  git clone --branch "$REPO_BRANCH" --depth 1 "$REPO_URL" "$INSTALL_DIR"
-  chown -R "$RUN_USER:$RUN_USER" "$INSTALL_DIR"
-fi
-
-log "installing deps + building (this pulls the agent image — several minutes)…"
+# ── 5. Fetch this repo + compose ────────────────────────────────────────────
+# Everything below runs as the service user, so the trees are theirs and git
+# never trips over "dubious ownership" on a re-run.
 # XDG_RUNTIME_DIR lets setup:auto's `service` step reach the per-user systemd
 # manager (systemctl --user) from this non-login sudo shell — without it the
 # service never installs and the whole run silently no-ops.
-run_as() { sudo -u "$RUN_USER" -H XDG_RUNTIME_DIR="/run/user/${RUN_UID}" bash -lc "cd '$INSTALL_DIR' && $*"; }
-run_as "corepack prepare --activate >/dev/null 2>&1 || true"
-run_as "pnpm install --frozen-lockfile"
-run_as "pnpm run build"
+# COREPACK_ENABLE_DOWNLOAD_PROMPT=0: the first pnpm call fetches the pinned
+# pnpm, and nobody is there to answer corepack's prompt.
+run_in() {
+  local dir="$1"
+  shift
+  sudo -u "$RUN_USER" -H XDG_RUNTIME_DIR="/run/user/${RUN_UID}" COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+    bash -lc "cd '$dir' && $*"
+}
+run_as() { run_in "$INSTALL_DIR" "$@"; }
+for d in "$SRC_DIR" "$INSTALL_DIR"; do
+  [ -d "$d" ] || install -d -o "$RUN_USER" -g "$RUN_USER" "$d"
+done
+
+if [ ! -d "$SRC_DIR/.git" ]; then
+  log "cloning $REPO_URL ($REPO_BRANCH)…"
+  run_in "$SRC_DIR" "git clone --quiet --branch '$REPO_BRANCH' --depth 1 '$REPO_URL' ."
+else
+  log "updating $SRC_DIR to $REPO_URL ($REPO_BRANCH)…"
+  run_in "$SRC_DIR" "git fetch --quiet --depth 1 '$REPO_URL' '$REPO_BRANCH' && git checkout --quiet --force FETCH_HEAD"
+fi
+
+# A checkout at INSTALL_DIR that this repo's installer did not compose (an
+# install from the retired single-branch fork, say) must not be composed over:
+# the patches would land on the wrong base. The seam remote is the first thing
+# a compose adds, so its absence marks a foreign tree.
+if [ -d "$INSTALL_DIR/.git" ] && ! run_as "git remote get-url nanoclaw-webchat-seam >/dev/null 2>&1"; then
+  die "$INSTALL_DIR holds a checkout this installer did not compose. Move it aside, or migrate it: bash $SRC_DIR/scripts/migrate-from-fork.sh $INSTALL_DIR"
+fi
+
+log "composing NanoClaw + webchat into $INSTALL_DIR (deps + build — several minutes)…"
+# The agent image is left to setup:auto below, so it is built once, not twice.
+# Compose-source overrides (a mirror of NanoClaw or of the seam) pass through.
+COMPOSE_ENV="SKIP_CONTAINER_BUILD=1"
+for v in NANOCLAW_WEBCHAT_BASE_REPO NANOCLAW_WEBCHAT_SEAM_REPO NANOCLAW_WEBCHAT_SEAM_BRANCH NANOCLAW_ALLOW_NODE_MISMATCH; do
+  [ -n "${!v:-}" ] && COMPOSE_ENV="$COMPOSE_ENV $v='${!v}'"
+done
+run_in "$SRC_DIR" "$COMPOSE_ENV bash ./install.sh --dir '$INSTALL_DIR' </dev/null" \
+  || die "compose failed — see the output above"
 
 # ── 6. setup:auto — deps/OneCLI/agent-image/service, NO interactive steps ────
 # Skips: auth (wizard mints creds), channel + first-chat (wizard makes the first
 # agent), cli-agent (no terminal agent on a headless box), timezone (UTC default;
 # clack's confirm needs a TTY cloud-init doesn't have).
+# The portal offers (Echo's hardened image, Slack) are browser questions a
+# headless run cannot answer: the prompt cancels on /dev/null and setup:auto
+# exits 0 part-way, before the service step. Settle the image as the local
+# build unless the operator already chose, and skip both offers.
+install -m 600 -o "$RUN_USER" -g "$RUN_USER" /dev/null "$INSTALL_DIR/.env.tmp"
+[ -f "$INSTALL_DIR/.env" ] && cat "$INSTALL_DIR/.env" >"$INSTALL_DIR/.env.tmp"
+grep -q '^NANOCLAW_HARDENED_IMAGE=' "$INSTALL_DIR/.env.tmp" || echo 'NANOCLAW_HARDENED_IMAGE=false' >>"$INSTALL_DIR/.env.tmp"
+mv "$INSTALL_DIR/.env.tmp" "$INSTALL_DIR/.env"
 log "running setup:auto (deps, OneCLI, agent image, service)…"
 run_as "NANOCLAW_BOOTSTRAPPED=1 \
         NANOCLAW_DISPLAY_NAME='$DISPLAY_NAME' \
-        NANOCLAW_SKIP='auth,channel,first-chat,cli-agent,timezone' \
-        pnpm run setup:auto </dev/null" \
+        NANOCLAW_SKIP='auth,channel,first-chat,cli-agent,timezone,echo-reminder,slack-reminder' \
+        NANOCLAW_HEADLESS=1 pnpm run setup:auto </dev/null" \
   || die "setup:auto failed — see the guest logs (logs/setup.log). If it hung on a prompt, that's the headless-TTY risk noted in the README."
 
 # ── 7. Seed the webchat .env (the wizard entry point) ───────────────────────
 # 0.0.0.0 so it's reachable from the LAN; a bearer token because a LAN-exposed
 # assistant must not be open. First browser login auto-becomes owner.
+#
+# Re-runs keep what is there. Rotating the token would lock out every existing
+# login, and host/Tailscale may have been changed in Settings since, so on an
+# existing .env those are only filled in when missing.
 ENV_FILE="$INSTALL_DIR/.env"
-TOKEN="$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)"
-log "enabling webchat with a bearer token…"
 set_env() {
   local key="$1" val="$2"
   if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
@@ -200,19 +247,31 @@ set_env() {
     echo "${key}=${val}" >>"$ENV_FILE"
   fi
 }
+get_env() { grep "^$1=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true; }
+default_env() { grep -q "^$1=" "$ENV_FILE" 2>/dev/null || echo "$1=$2" >>"$ENV_FILE"; }
 touch "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+FIRST_RUN=1
+grep -q '^WEBCHAT_ENABLED=' "$ENV_FILE" && FIRST_RUN=0
+log "enabling webchat…"
 set_env WEBCHAT_ENABLED true
-set_env WEBCHAT_HOST 0.0.0.0
-set_env WEBCHAT_PORT "$WEBCHAT_PORT"
-set_env WEBCHAT_TOKEN "$TOKEN"
+default_env WEBCHAT_HOST 0.0.0.0
+if [ "$WEBCHAT_PORT_SET" = 1 ]; then set_env WEBCHAT_PORT "$WEBCHAT_PORT"; else default_env WEBCHAT_PORT "$WEBCHAT_PORT"; fi
 # Enable Tailscale identity auth up front so the tailnet flow needs no config:
 # reach this over your tailnet and the first Tailscale login becomes owner (the
 # wizard's "I'll use Tailscale" opt-in also promotes it if you signed in with the
 # token first), after which the bearer token can be retired from Settings.
 # Harmless when Tailscale isn't used — the bearer token is checked first, so
 # token/LAN access is unaffected; it only logs one boot notice until Tailscale is
-# present.
-set_env WEBCHAT_TAILSCALE true
+# present. First run only: a later run must not undo turning it off.
+[ "$FIRST_RUN" = 1 ] && default_env WEBCHAT_TAILSCALE true
+# A token only when there is none — and, on a re-run, only when nothing else
+# authenticates (a token retired in favour of Tailscale stays retired).
+if [ -z "$(get_env WEBCHAT_TOKEN)" ]; then
+  if [ "$FIRST_RUN" = 1 ] || { [ "$(get_env WEBCHAT_TAILSCALE)" != true ] && [ -z "$(get_env WEBCHAT_TRUSTED_PROXY_IPS)" ]; }; then
+    set_env WEBCHAT_TOKEN "$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)"
+  fi
+fi
 
 # Timezone for agent time-awareness. The host reads TZ from .env and sets it on
 # the agent container, so `TZ=<iana>` here is all that's needed — this is the
@@ -225,7 +284,8 @@ if [ -z "$TZ_VALUE" ]; then
   case "$sys_tz" in "" | UTC | Etc/UTC) : ;; *) TZ_VALUE="$sys_tz" ;; esac
 fi
 if [ -n "$TZ_VALUE" ] && [ -f "/usr/share/zoneinfo/$TZ_VALUE" ]; then
-  set_env TZ "$TZ_VALUE"
+  # An explicit NANOCLAW_TZ replaces the value; the guest's zone only fills a gap.
+  if [ -n "${NANOCLAW_TZ:-}" ]; then set_env TZ "$TZ_VALUE"; else default_env TZ "$TZ_VALUE"; fi
   # Match the guest system zone too, so logs/cron read local.
   timedatectl set-timezone "$TZ_VALUE" 2>/dev/null ||
     { ln -sf "/usr/share/zoneinfo/$TZ_VALUE" /etc/localtime && echo "$TZ_VALUE" >/etc/timezone; } 2>/dev/null || true
@@ -245,22 +305,37 @@ chmod 600 "$ENV_FILE"
 log "starting the service…"
 UNIT="$(run_as "systemctl --user list-unit-files --no-legend 'nanoclaw-v2-*.service' 2>/dev/null | grep -oE 'nanoclaw-v2-[^ ]+\.service' | head -n1")"
 UNIT="${UNIT//[$'\r\n ']/}"
-if [ -n "$UNIT" ]; then
-  run_as "systemctl --user restart '$UNIT'" \
-    || log "warn: could not start $UNIT — inspect: sudo -u $RUN_USER XDG_RUNTIME_DIR=/run/user/$RUN_UID systemctl --user status '$UNIT'"
-else
-  log "warn: no nanoclaw-v2-*.service unit found — setup:auto's service step may not have run"
+[ -n "$UNIT" ] || die "no nanoclaw-v2-*.service unit — setup:auto stopped before its service step. See $INSTALL_DIR/logs/setup.log"
+run_as "systemctl --user restart '$UNIT'" \
+  || die "could not start $UNIT — inspect: sudo -u $RUN_USER XDG_RUNTIME_DIR=/run/user/$RUN_UID systemctl --user status '$UNIT'"
+
+# Print the URL only once the server answers. The unit may first wait up to
+# 60s for the OneCLI gateway, hence the budget.
+PORT_OUT="$(get_env WEBCHAT_PORT)"
+log "waiting for /health on :${PORT_OUT:-$WEBCHAT_PORT}…"
+if ! node -e '
+  const url = process.argv[1], until = Date.now() + 150_000;
+  (async () => {
+    while (Date.now() < until) {
+      try { if ((await fetch(url)).ok) process.exit(0); } catch {}
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    process.exit(1);
+  })();' "http://127.0.0.1:${PORT_OUT:-$WEBCHAT_PORT}/health"; then
+  run_as "journalctl --user -u '$UNIT' -n 30 --no-pager" >&2 || true
+  die "NanoClaw did not come up (no answer on :${PORT_OUT:-$WEBCHAT_PORT}/health)"
 fi
 
 # ── 9. Done — print the URL + token ─────────────────────────────────────────
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+TOKEN_OUT="$(get_env WEBCHAT_TOKEN)"
 cat <<EOF
 
 ================================================================
  NanoClaw is up. Finish setup in your browser:
 
-   URL:    http://${IP:-<guest-ip>}:${WEBCHAT_PORT}
-   Token:  ${TOKEN}
+   URL:    http://${IP:-<guest-ip>}:${PORT_OUT:-$WEBCHAT_PORT}
+   Token:  ${TOKEN_OUT:-(none — sign in with Tailscale)}
 
  First login becomes the owner and the setup wizard opens automatically —
  pick Claude (sign in), or install a local model right there. No terminal

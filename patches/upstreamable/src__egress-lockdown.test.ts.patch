@@ -1,0 +1,87 @@
+diff --git a/src/egress-lockdown.test.ts b/src/egress-lockdown.test.ts
+index 41641fec..5d37dc3c 100644
+--- a/src/egress-lockdown.test.ts
++++ b/src/egress-lockdown.test.ts
+@@ -25,48 +25,60 @@ vi.mock('./log.js', () => ({
+ 
+ import { ensureEgressNetwork } from './egress-lockdown.js';
+ 
+-describe('gateway egress attachment', () => {
++// The fork inverts upstream's topology: the gateway is kept OFF the locked
++// network and central's egress filter (on the bridge address) is the only way
++// out, because a gateway forwards to any host. See egress-lockdown.ts.
++const mockDocker = (): void => {
++  state.execFileSync.mockReset().mockImplementation((_bin: string, args: string[]) => {
++    if (args[0] === 'network' && args[1] === 'connect') state.attached = true;
++    if (args[0] === 'network' && args[1] === 'disconnect') state.attached = false;
++    if (args.includes('--format')) return state.attached ? 'fixture-gateway ' : '';
++    return '';
++  });
++};
++const called = (verb: string): boolean =>
++  state.execFileSync.mock.calls.some(
++    ([, args]) => (args as string[])[0] === 'network' && (args as string[])[1] === verb,
++  );
++
++describe('gateway egress detachment', () => {
+   beforeEach(() => {
+-    state.attached = false;
++    state.attached = true;
+     state.access = { endpoint: 'gateway.internal', target: { kind: 'runtime', identity: 'fixture-gateway' } };
+-    state.execFileSync.mockReset().mockImplementation((_bin: string, args: string[]) => {
+-      if (args[0] === 'network' && args[1] === 'connect') state.attached = true;
+-      if (args.includes('--format')) return state.attached ? 'fixture-gateway ' : '';
+-      return '';
+-    });
++    mockDocker();
+   });
+ 
+-  it('attaches the selected provider target under its declared endpoint', () => {
++  it('keeps the selected provider target off the locked network', () => {
+     expect(ensureEgressNetwork(state.access)).toBe(true);
+     expect(state.execFileSync).toHaveBeenCalledWith(
+       'docker',
+-      ['network', 'connect', '--alias', 'gateway.internal', 'fixture-egress', 'fixture-gateway'],
++      ['network', 'disconnect', 'fixture-egress', 'fixture-gateway'],
+       expect.objectContaining({ timeout: 15000 }),
+     );
++    expect(called('connect')).toBe(false);
++    expect(state.attached).toBe(false);
+   });
+ 
+-  it('fails closed when the selected target cannot join the locked network', () => {
+-    expect(() => ensureEgressNetwork({ endpoint: 'gateway.internal', target: { kind: 'host' } })).toThrow(
+-      "target 'host' cannot join",
+-    );
+-    expect(state.execFileSync).not.toHaveBeenCalled();
++  it('refuses a gateway that runs inside the session, and needs nothing from one on the host', () => {
++    expect(() =>
++      ensureEgressNetwork({ endpoint: 'egress-proxy', target: { kind: 'session-container', role: 'egress-proxy' } }),
++    ).toThrow('runs inside the session');
++    state.execFileSync.mockClear();
++    expect(ensureEgressNetwork({ endpoint: 'gateway.internal', target: { kind: 'host' } })).toBe(true);
++    expect(called('connect') || called('disconnect')).toBe(false);
+   });
+ });
+ 
+-it('heals a recreated gateway after restoring the adopted session network intent', () => {
+-  state.execFileSync.mockImplementation((_bin: string, args: string[]) => {
+-    if (args[0] === 'network' && args[1] === 'connect') state.attached = true;
+-    if (args.includes('--format')) return state.attached ? 'fixture-gateway ' : '';
+-    return '';
+-  });
++it('re-detaches a gateway something reattached, using the remembered access', () => {
++  mockDocker();
+   state.attached = false;
+   ensureEgressNetwork(state.access);
+-  state.attached = false;
++  state.attached = true; // e.g. `docker compose up` on the gateway's stack
+   state.execFileSync.mockClear();
+   expect(ensureEgressNetwork()).toBe(true);
+   expect(state.execFileSync).toHaveBeenCalledWith(
+     'docker',
+-    ['network', 'connect', '--alias', 'gateway.internal', 'fixture-egress', 'fixture-gateway'],
++    ['network', 'disconnect', 'fixture-egress', 'fixture-gateway'],
+     expect.anything(),
+   );
+ });

@@ -1,4 +1,4 @@
-// Repo B's container-runtime helpers. These used to be patched INTO upstream's
+// The webchat module's container-runtime helpers. These used to be patched INTO upstream's
 // container-runtime.ts; they are the fork's own and live in the fork's own file.
 import { execSync } from 'child_process';
 import fs from 'fs';

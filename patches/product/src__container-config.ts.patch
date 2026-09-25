@@ -1,5 +1,5 @@
 diff --git a/src/container-config.ts b/src/container-config.ts
-index 9b272196..0d37566d 100644
+index f9b0d100..4557094e 100644
 --- a/src/container-config.ts
 +++ b/src/container-config.ts
 @@ -14,6 +14,9 @@ import { resolveContainerConfigAugmentation } from './seam/spawn-hooks.js';
@@ -12,15 +12,7 @@ index 9b272196..0d37566d 100644
  import { getAgentGroup } from './db/agent-groups.js';
  import { isValidTimezone } from './timezone.js';
  import { log } from './log.js';
-@@ -63,12 +66,24 @@ export interface McpStdioServerConfig {
- }
- 
- export interface McpHttpServerConfig {
--  type: 'http';
-+  /** 'sse' kept by the fork: the webchat probe/UI still wires legacy SSE servers. */
-+  type: 'http' | 'sse';
-   url: string;
-   headers?: Record<string, string>;
+@@ -69,6 +72,17 @@ export interface McpHttpServerConfig {
    /** See McpStdioServerConfig.plugin — same ownership marker. */
    plugin?: string;
    instructions?: string;
@@ -29,7 +21,7 @@ index 9b272196..0d37566d 100644
 +}
 +
 +export interface McpRemoteServerConfig {
-+  type: 'sse' | 'http';
++  type: 'http';
 +  url: string;
 +  headers?: Record<string, string>;
 +  instructions?: string;
@@ -38,18 +30,6 @@ index 9b272196..0d37566d 100644
  }
  
  export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
-@@ -132,9 +147,8 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
-   // (url → http, command → stdio). "streamable-http" is the Agent Plugins
-   // spelling of the internal "http".
-   const type = input.type === 'streamable-http' ? 'http' : input.type;
--  if (type === 'sse') throw new Error('unsupported transport "sse"');
--  if (type !== undefined && type !== 'stdio' && type !== 'http') {
--    throw new Error('type must be "stdio", "http", or "streamable-http"');
-+  if (type !== undefined && type !== 'stdio' && type !== 'http' && type !== 'sse') {
-+    throw new Error('type must be "stdio", "http", "sse", or "streamable-http"');
-   }
-   if (type === 'stdio' && !command) throw new Error('type "stdio" requires command');
-   if (type === 'http' && !url) throw new Error('type "http" requires url');
 @@ -156,8 +170,19 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
        throw new Error('url must be a valid HTTP(S) URL', { cause: err });
      }
@@ -71,16 +51,7 @@ index 9b272196..0d37566d 100644
 +      );
      }
      if (parsed.username || parsed.password || parsed.hash) {
-       throw new Error('url must not contain credentials or fragments; use OneCLI for authentication');
-@@ -169,7 +194,7 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
-     }
-     const headers = parseStringRecord(input.headers, 'headers');
-     return {
--      type: 'http',
-+      type: type === 'sse' ? 'sse' : 'http',
-       url,
-       ...(headers === undefined ? {} : { headers }),
-       ...(instructions === undefined ? {} : { instructions }),
+       throw new Error('url must not contain credentials or fragments; use the credential gateway');
 @@ -260,6 +285,42 @@ export interface ContainerConfig {
    timezone?: string;
    /** Session isolation tier for the group's containers; absent = the composer's default ('container'). */
@@ -124,24 +95,7 @@ index 9b272196..0d37566d 100644
  }
  
  /**
-@@ -293,14 +354,10 @@ export function sanitizeStoredMcpServers(raw: unknown, groupName: string): Recor
-       validateMcpServerName(name);
-       const server = parseMcpServerConfig(entry as Record<string, unknown>);
-       const pluginRoot = (entry as Record<string, unknown>).pluginRoot;
--      if (
--        server.type !== 'http' &&
--        typeof pluginRoot === 'string' &&
--        pluginRoot.startsWith(`${CONTAINER_PLUGINS_DIR}/`)
--      ) {
-+      if (!('url' in server) && typeof pluginRoot === 'string' && pluginRoot.startsWith(`${CONTAINER_PLUGINS_DIR}/`)) {
-         server.pluginRoot = pluginRoot;
-       }
--      if (server.type !== 'http' && server.cwd && !server.pluginRoot) {
-+      if (!('url' in server) && server.cwd && !server.pluginRoot) {
-         // cwd resolves against a plugin root; without provenance nothing can
-         // resolve it. This strip is the ONLY layer (the runtime passes
-         // provenance-less servers through untouched), and the breadcrumb
-@@ -384,6 +441,10 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
+@@ -384,6 +445,10 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
      ...speedFields(parseContainerSpeed(row.speed) ?? (FAST_MODE ? 'fast' : undefined)),
      timezone: row.timezone && isValidTimezone(row.timezone) ? row.timezone : undefined,
      runtimeTier: parseRuntimeTier(row.runtime_tier, group.name),
@@ -152,7 +106,7 @@ index 9b272196..0d37566d 100644
    };
  }
  
-@@ -417,6 +478,34 @@ export async function materializeContainerJson(agentGroupId: string): Promise<Co
+@@ -417,6 +482,34 @@ export async function materializeContainerJson(agentGroupId: string): Promise<Co
    const config = configFromDb(row, group);
    Object.assign(config, resolveContainerConfigAugmentation(agentGroupId)); // seam: module-contributed fields win
  

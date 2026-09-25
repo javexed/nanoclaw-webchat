@@ -1,6 +1,7 @@
 # LLM routing & providers (two-plane design)
 
-Status: **design / plan** — not built. Scopes how NanoClaw supports many model
+Status: **design / plan**; §16 (routing & fallback) is built — see
+[auto-routing.md](auto-routing.md). Scopes how NanoClaw supports many model
 backends at once: local (localhost + LAN), self-hosted GPU, cloud-by-API-key, and
 **subscription agents over OAuth** (Claude Code now; Codex on a **separate track**).
 

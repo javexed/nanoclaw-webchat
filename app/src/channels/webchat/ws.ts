@@ -15,6 +15,7 @@
  *     the permissions module's senderResolver upserts the correct users row.
  */
 import http from 'http';
+import type { Duplex } from 'stream';
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'crypto';
 
@@ -42,6 +43,7 @@ import {
   markThreadRead,
   resolveBoundedThread,
 } from './db.js';
+import { hostAllowed, originAllowed } from './request-guard.js';
 import { canAccessRoom } from './access.js';
 import { redactSensitiveData } from './redact.js';
 import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
@@ -126,6 +128,22 @@ export function claimClientId(id: string, now: number = Date.now()): boolean {
   return true;
 }
 
+// ── Upgrade-path registry ─────────────────────────────────────────────────
+// The HTTP server has exactly ONE 'upgrade' listener: the one below. Another
+// WebSocket endpoint must register its path here rather than add a listener of
+// its own — a listener that does not recognise a path destroys the socket, so
+// two listeners on one server can never coexist safely.
+export type UpgradeHandler = (req: http.IncomingMessage, socket: Duplex, head: Buffer) => void;
+const upgradeHandlers = new Map<string, UpgradeHandler>();
+
+export function registerUpgradeHandler(pathname: string, handler: UpgradeHandler): void {
+  if (upgradeHandlers.has(pathname)) throw new Error(`Upgrade handler already registered for ${pathname}`);
+  upgradeHandlers.set(pathname, handler);
+}
+export function __resetUpgradeHandlersForTest(): void {
+  upgradeHandlers.clear();
+}
+
 export function setupWebSocket(
   server: http.Server,
   hooks: WSHooks,
@@ -148,13 +166,22 @@ export function setupWebSocket(
   wss.on('close', () => clearInterval(pingTimer));
 
   server.on('upgrade', (req, socket, head) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    if (url.pathname !== '/ws') {
-      socket.destroy();
-      return;
-    }
-
     void (async () => {
+      // Every WebSocket path: a cross-site page must not open one with the
+      // visitor's ambient identity, nor reach us under a rebound host name.
+      if (!originAllowed(req) || !(await hostAllowed(req))) {
+        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      const url = new URL(req.url ?? '/', 'http://localhost');
+      if (url.pathname !== '/ws') {
+        const other = upgradeHandlers.get(url.pathname);
+        if (other) other(req, socket, head);
+        else socket.destroy();
+        return;
+      }
+
       const auth = await authenticate(req);
       if (!auth) {
         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
@@ -182,7 +209,9 @@ export function setupWebSocket(
     // Make this user @-mentionable right away: ensure a handle exists (defaults
     // to a slug of the display name, suffixed on collision). Idempotent.
     try {
-      ensureWebchatUserHandle(userId, displayName);
+      ensureWebchatUserHandle(userId, displayName).catch((err) =>
+        log.warn('ensureWebchatUserHandle failed', { userId, err: err instanceof Error ? err.message : err }),
+      );
     } catch (err) {
       log.warn('ensureWebchatUserHandle failed', { userId, err: err instanceof Error ? err.message : err });
     }

@@ -56,4 +56,9 @@ describe('exportTarArgs', () => {
     const withConvos = exportTarArgs('/tmp/stage', group, true);
     for (const d of CONVERSATION_DIRS) expect(withConvos).not.toContain(`--exclude=.claude-shared/${d}`);
   });
+
+  it('leaves deploy keys out unless the exporter opts in', async () => {
+    expect(exportTarArgs('/tmp/stage', group, false)).toContain('--exclude=deploy_key_*');
+    expect(exportTarArgs('/tmp/stage', group, false, true)).not.toContain('--exclude=deploy_key_*');
+  });
 });

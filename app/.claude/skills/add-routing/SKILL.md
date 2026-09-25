@@ -178,9 +178,7 @@ one). Live behavior when a prompt classifies there:
 The `fallback_provider` seam is **not part of trunk** — this skill delivers
 it as reversible core-file surgery (same contract as the webchat installer's
 hook patches: reverse-check → `git apply --3way` → conflict-restore; new
-files copied in). Patch preimages are generated against the composed tree, so
-a current install applies them without conflict. Install, then restart the
-host so the migration runs:
+files copied in). Install, then restart the host so the migration runs:
 
 ```bash
 bash .claude/skills/add-routing/resources/core-escalation/install-core-escalation.sh

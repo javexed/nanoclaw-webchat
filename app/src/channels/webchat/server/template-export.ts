@@ -167,8 +167,11 @@ export async function exportAgentAsTemplate(
     );
 
     // ── persona + extra context
+    // The group folder is the agent's workspace: anything in it may be a link
+    // the agent planted, so only regular files are copied, and never through a link.
+    const isRegularFile = (p: string): boolean => fs.lstatSync(p, { throwIfNoEntry: false })?.isFile() ?? false;
     const personaSrc = path.join(groupDir, 'instructions.prepend.md');
-    const persona = fs.existsSync(personaSrc);
+    const persona = isRegularFile(personaSrc);
     if (persona) fs.copyFileSync(personaSrc, path.join(staging, EXT, 'context', 'instructions.md'));
 
     const contextFiles: string[] = [];
@@ -192,8 +195,11 @@ export async function exportAgentAsTemplate(
         // would produce a template upstream's reader rejects outright.
         if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
         const from = path.join(skillsSrc, entry.name);
-        if (!fs.existsSync(path.join(from, 'SKILL.md'))) continue;
-        fs.cpSync(from, path.join(staging, 'skills', entry.name), { recursive: true, dereference: true });
+        if (!isRegularFile(path.join(from, 'SKILL.md'))) continue;
+        fs.cpSync(from, path.join(staging, 'skills', entry.name), {
+          recursive: true,
+          filter: (src) => !fs.lstatSync(src).isSymbolicLink(),
+        });
         skills.push(entry.name);
       }
     }

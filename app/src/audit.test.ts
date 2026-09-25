@@ -8,7 +8,20 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { audit, auditActor, auditFilePath, readAuditEvents } from './audit.js';
+import zlib from 'zlib';
+
+import {
+  audit,
+  auditActor,
+  auditDayFiles,
+  auditFilePath,
+  auditUsage,
+  envAuditRetention,
+  pruneAuditFiles,
+  readAuditEvents,
+  rollAuditFile,
+  setAuditRetention,
+} from './audit.js';
 
 /** Scratch dirs this file makes, removed when it finishes. */
 const SCRATCH: string[] = [];
@@ -139,5 +152,87 @@ describe('readAuditEvents', () => {
   it('is an empty page when the file does not exist', async () => {
     vi.stubEnv('NANOCLAW_AUDIT_FILE', path.join(scratchDir(), 'nope', 'audit.jsonl'));
     expect(readAuditEvents()).toEqual({ events: [], hasMore: false, truncated: false });
+  });
+});
+
+describe('retention', () => {
+  const MB = 1024 * 1024;
+  const DAY = 24 * 3600 * 1000;
+  const dir = () => path.dirname(file);
+  const dayFile = (day: string) => path.join(dir(), `audit-${day}.jsonl.gz`);
+  afterEach(() => setAuditRetention(null));
+
+  it('starts from 90 days and 200 MB; the environment overrides; nonsense falls back', () => {
+    expect(envAuditRetention()).toEqual({ days: 90, maxBytes: 200 * MB });
+    vi.stubEnv('NANOCLAW_AUDIT_KEEP_DAYS', '0');
+    vi.stubEnv('NANOCLAW_AUDIT_MAX_MB', '50');
+    expect(envAuditRetention()).toEqual({ days: 0, maxBytes: 50 * MB });
+    vi.stubEnv('NANOCLAW_AUDIT_KEEP_DAYS', '-3');
+    vi.stubEnv('NANOCLAW_AUDIT_MAX_MB', 'lots');
+    expect(envAuditRetention()).toEqual({ days: 90, maxBytes: 200 * MB });
+  });
+
+  it("a new day rolls yesterday's file into a compressed day file, nothing lost", () => {
+    audit({ type: 'auth.session', detail: { n: 1 } });
+    // Make the live file look like yesterday's, as after a restart the next morning.
+    const y = new Date(Date.now() - DAY);
+    fs.utimesSync(file, y, y);
+    vi.resetModules(); // fresh module state: the first write learns the day from the file
+    return import('./audit.js').then((m) => {
+      m.audit({ type: 'auth.session', detail: { n: 2 } });
+      const yday = y.toISOString().slice(0, 10);
+      const rolled = zlib.gunzipSync(fs.readFileSync(dayFile(yday))).toString('utf8');
+      expect(JSON.parse(rolled.trim()).detail.n).toBe(1);
+      expect(JSON.parse(fs.readFileSync(file, 'utf8').trim()).detail.n).toBe(2);
+      expect(m.readAuditEvents().truncated).toBe(true);
+    });
+  });
+
+  it('deletes day files past the window, keeps the rest; forever keeps them all', () => {
+    fs.mkdirSync(dir(), { recursive: true });
+    const now = Date.parse('2026-09-24T12:00:00Z');
+    // Set first: setAuditRetention prunes at once, against the real clock.
+    setAuditRetention({ days: 0, maxBytes: 200 * MB });
+    for (const d of ['2026-06-01', '2026-06-26', '2026-06-27', '2026-09-23']) fs.writeFileSync(dayFile(d), 'x');
+    fs.writeFileSync(path.join(dir(), 'unrelated.jsonl.gz'), 'x');
+    pruneAuditFiles(file, now);
+    expect(auditDayFiles(file)).toHaveLength(4);
+    vi.stubEnv('NANOCLAW_AUDIT_KEEP_DAYS', '90');
+    setAuditRetention(null); // the environment's 90 days; re-seed after its real-clock prune
+    for (const d of ['2026-06-01', '2026-06-26', '2026-06-27', '2026-09-23']) fs.writeFileSync(dayFile(d), 'x');
+    pruneAuditFiles(file, now);
+    // 90 days before 2026-09-24 is 2026-06-26: that day stays, earlier ones go.
+    expect(auditDayFiles(file).map((f) => f.day)).toEqual(['2026-06-26', '2026-06-27', '2026-09-23']);
+    expect(fs.existsSync(path.join(dir(), 'unrelated.jsonl.gz'))).toBe(true);
+    expect(auditUsage(file).oldestDay).toBe('2026-06-26');
+  });
+
+  it('the cap deletes the oldest days early, even under forever', () => {
+    fs.mkdirSync(dir(), { recursive: true });
+    for (const d of ['2026-09-20', '2026-09-21', '2026-09-22']) fs.writeFileSync(dayFile(d), Buffer.alloc(400 * 1024));
+    fs.writeFileSync(file, Buffer.alloc(100 * 1024));
+    setAuditRetention({ days: 0, maxBytes: 1 * MB });
+    // 3 × 400 KB + 100 KB live is over 1 MB: the oldest day goes, then it fits.
+    expect(auditDayFiles(file).map((f) => f.day)).toEqual(['2026-09-21', '2026-09-22']);
+  });
+
+  it('a runaway day rolls early at a quarter of the cap, with numbered files for the same day', () => {
+    setAuditRetention({ days: 90, maxBytes: 1 * MB });
+    const big = 'x'.repeat(20 * 1024);
+    for (let i = 0; i < 40; i++) audit({ type: 'auth.denied', detail: { big, i } });
+    const files = auditDayFiles(file);
+    expect(files.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(files.map((f) => f.day)).size).toBe(1);
+    expect(files.map((f) => f.n)).toEqual(files.map((_, i) => i + 1));
+    expect(fs.statSync(file).size).toBeLessThan(MB / 4 + 30 * 1024);
+  });
+
+  it('a roll that is interrupted after the rename leaves a plain day file that still counts', () => {
+    fs.mkdirSync(dir(), { recursive: true });
+    fs.writeFileSync(file, 'line\n');
+    rollAuditFile(file, '2026-09-23');
+    expect(fs.existsSync(dayFile('2026-09-23'))).toBe(true);
+    fs.writeFileSync(path.join(dir(), 'audit-2026-09-22.jsonl'), 'plain');
+    expect(auditDayFiles(file).map((f) => f.day)).toEqual(['2026-09-22', '2026-09-23']);
   });
 });

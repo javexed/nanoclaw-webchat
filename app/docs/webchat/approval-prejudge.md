@@ -84,7 +84,7 @@ The PUT endpoint also refuses to opt in a never-listed action outright.
 
 ## Enabling it (owner-only)
 
-**UI:** Settings → Approval pre-judge (owner-only). Pick a judge model
+**UI:** Admin → Policy → Approval pre-judge (owner-only). Pick a judge model
 (Off = feature off), then switch on the actions to pre-judge; never-listed
 actions render disabled.
 
@@ -97,7 +97,7 @@ curl -s https://<host>/api/approvals/prejudge -H "Authorization: Bearer $TOKEN"
 # Pick a roster model (webchat_models.id) and opt in an action
 curl -s -X PUT https://<host>/api/approvals/prejudge \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -H "X-Requested-With: XMLHttpRequest" \
+  -H "X-Webchat-CSRF: 1" \
   -d '{"modelId":"<roster-model-id>","actions":["cli_command"]}'
 
 # Turn it off again

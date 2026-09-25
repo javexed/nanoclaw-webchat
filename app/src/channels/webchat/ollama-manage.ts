@@ -1090,6 +1090,17 @@ export function scheduleHostRestart(): void {
 }
 
 /**
+ * Webchat's changes to a provider's own files (provider-overlays/apply.sh in
+ * the install root), applied right after the skill copies those files in.
+ * install.sh runs the same script at compose time; without this step a
+ * provider installed from Settings ran without them (the Codex activity feed).
+ */
+export const providerOverlaysStep: InstallStep = {
+  run: ['bash', ['provider-overlays/apply.sh']],
+  label: 'Applying webchat provider overlays',
+};
+
+/**
  * The Grok install chain. Same shape as Codex with one difference that matters:
  * the image build is NOT optional here. Grok ships as a native binary installed
  * by an ARG in the Dockerfile (it cannot go in the npm-shaped cli-tools.json), so
@@ -1106,6 +1117,7 @@ export function grokInstallSteps(root: string): InstallStep[] {
       run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', 'grok']],
       label: 'Applying the Grok skill',
     },
+    providerOverlaysStep,
     { run: ['pnpm', ['run', 'build']], label: 'Rebuilding NanoClaw' },
     ...(canTypecheckContainer
       ? [
@@ -1140,6 +1152,7 @@ export function codexInstallSteps(root: string): InstallStep[] {
       run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', 'codex']],
       label: 'Applying the Codex skill',
     },
+    providerOverlaysStep,
     { run: ['pnpm', ['run', 'build']], label: 'Rebuilding NanoClaw' },
     ...(canTypecheckContainer
       ? [
@@ -1166,6 +1179,7 @@ export function opencodeInstallSteps(root: string): InstallStep[] {
       run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', 'opencode']],
       label: 'Applying the OpenCode skill',
     },
+    providerOverlaysStep,
     // @opencode-ai/sdk is an agent-runner BUN dep (not the root pnpm tree), so it
     // can't ride the directive engine — add it here, before the image build.
     {
@@ -1197,6 +1211,7 @@ export function piInstallSteps(root: string): InstallStep[] {
       run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', 'pi']],
       label: 'Applying the pi skill',
     },
+    providerOverlaysStep,
     { run: ['pnpm', ['run', 'build']], label: 'Rebuilding NanoClaw' },
     ...(canTypecheckContainer
       ? [

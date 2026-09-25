@@ -34,11 +34,27 @@ describe('normalizeMcpRegistry', () => {
     expect(row.publisher).toBe('ac.tandem');
   });
 
-  it('maps sse remotes to the sse transport', async () => {
-    const [row] = normalizeMcpRegistry(
+  it('skips an sse-only remote (the transport is retired)', async () => {
+    const rows = normalizeMcpRegistry(
       payload([{ name: 'x/y', version: '1.0.0', remotes: [{ type: 'sse', url: 'https://e.x/sse' }] }]),
     );
-    expect(row.transport).toBe('sse');
+    expect(rows).toEqual([]);
+  });
+
+  it('takes the Streamable HTTP remote when a server also offers sse', async () => {
+    const [row] = normalizeMcpRegistry(
+      payload([
+        {
+          name: 'x/z',
+          version: '1.0.0',
+          remotes: [
+            { type: 'sse', url: 'https://e.x/sse' },
+            { type: 'streamable-http', url: 'https://e.x/mcp' },
+          ],
+        },
+      ]),
+    );
+    expect(row).toMatchObject({ kind: 'remote', transport: 'http', url: 'https://e.x/mcp' });
   });
 
   it('flags npm/pypi packages as running code in the container', async () => {

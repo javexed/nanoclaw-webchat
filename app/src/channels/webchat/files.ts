@@ -2,8 +2,8 @@
  * File upload + serve for webchat.
  *
  * Two upload paths:
- *   - Multipart (PUT/POST /api/files/:roomId)        small/medium files
- *   - Chunked   (POST /api/files/:roomId/chunk)     resumable, large files
+ *   - Multipart (POST /api/rooms/:roomId/upload)       small/medium files
+ *   - Chunked   (POST /api/rooms/:roomId/upload/chunk) resumable, large files
  *
  * Files land under data/webchat/uploads/<roomId>/<uuid><.ext>. Simplification
  * vs v1: we no longer write into the agent's group folder (mounted at
@@ -634,7 +634,8 @@ export function handleFileServe(res: http.ServerResponse, roomId: string, filena
     'Content-Type': mime,
     'Content-Length': stat.size,
     'Content-Disposition': `inline; filename="${safeName}"`,
-    'Cache-Control': 'public, max-age=31536000, immutable',
+    // private: uploads are per-room data, never for a shared proxy cache.
+    'Cache-Control': 'private, max-age=31536000, immutable',
     // Sandbox the response into an opaque origin so HTML/SVG uploads cannot
     // read the PWA's localStorage token. nosniff stops MIME sniffing.
     'Content-Security-Policy': 'sandbox',

@@ -72,16 +72,26 @@ async function trace() {
   return out;
 }
 
-const got = await trace();
+const raw = await trace();
 
 if (mode === 'record') {
-  console.log(JSON.stringify(got, null, 1));
+  console.log(JSON.stringify(raw, null, 1));
   process.exit(0);
 }
 
-const want = JSON.parse(fs.readFileSync(baselinePath, 'utf8'));
-if (JSON.stringify(got) === JSON.stringify(want)) {
-  console.log(`boot order OK: ${got.length} events match the baseline`);
+const baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf8'));
+
+// The connectivity probe (core/ws.ts probeInternet) fires when the socket
+// drops — on a reconnect TIMER, not in boot order — so where it lands among
+// the wizard's wiring varies run to run (main went red on it, 2026-09-23, with
+// "same events, REORDERED"). Those two fetches are checked as PRESENT, not by
+// position; every other event keeps its exact place.
+const TIMED = /^fetch:https:\/\/(derp1\.tailscale\.com|www\.gstatic\.com)\/generate_204$/;
+const timed = (xs) => xs.filter((e) => TIMED.test(e)).sort();
+const got = raw.filter((e) => !TIMED.test(e));
+const want = baseline.filter((e) => !TIMED.test(e));
+if (JSON.stringify(got) === JSON.stringify(want) && JSON.stringify(timed(raw)) === JSON.stringify(timed(baseline))) {
+  console.log(`boot order OK: ${raw.length} events match the baseline`);
   process.exit(0);
 }
 
@@ -97,9 +107,9 @@ for (let i = 0; i < n; i++) {
     break;
   }
 }
-console.error(`\n   baseline ${want.length} events · this run ${got.length}`);
-const lost = want.filter((e) => !got.includes(e));
-const gained = got.filter((e) => !want.includes(e));
+console.error(`\n   baseline ${baseline.length} events · this run ${raw.length}`);
+const lost = baseline.filter((e) => !raw.includes(e));
+const gained = raw.filter((e) => !baseline.includes(e));
 if (lost.length) console.error(`   only in baseline: ${lost.slice(0, 8).join(', ')}`);
 if (gained.length) console.error(`   only in this run: ${gained.slice(0, 8).join(', ')}`);
 if (!lost.length && !gained.length) {

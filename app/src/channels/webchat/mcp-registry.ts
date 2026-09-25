@@ -17,7 +17,7 @@ import type { McpServerConfig } from '../../container-config.js';
 import { getContainerConfig, updateContainerConfigJson } from '../../db/container-configs.js';
 import { getDb } from '../../db/connection.js';
 
-export type WebchatMcpTransport = 'stdio' | 'sse' | 'http';
+export type WebchatMcpTransport = 'stdio' | 'http';
 
 export interface WebchatMcpServer {
   id: string;

@@ -127,6 +127,14 @@ function formatTime(ts?: any) {
  * gone with the DOM — pagination prepends by unshifting instead.
  */
 export function appendMessage(msg?: any, statusText?: any, prepend?: boolean): MsgRow | undefined {
+  // One row per server message. A live broadcast and a reconnect catch-up
+  // (or a read-sync refetch) can deliver the same message twice; the second
+  // arrival must not become a second row. Optimistic rows have no id yet and
+  // are upgraded in place by the ws handler, so they are unaffected.
+  if (msg?.id) {
+    const existing = messages.value.find((r) => r.id === msg.id);
+    if (existing) return existing;
+  }
   if (msg.type === 'system') return appendSystem(msg.message);
   if (msg.message_type === 'approval' || msg.message_type === 'approval_resolved') {
     return pushRow(approvalRow(msg), prepend);

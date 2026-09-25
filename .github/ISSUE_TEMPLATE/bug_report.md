@@ -15,5 +15,8 @@ labels: bug
 - Model: cloud or local (which)?
 
 **Logs**
-<!-- Host: `journalctl --user -u nanoclaw`. Agent: `docker logs <container>`.
+<!-- Host: `journalctl --user -u nanoclaw` (--local installs),
+     `journalctl -u nanoclaw` (root/system installs), or
+     `journalctl --user -u 'nanoclaw-v2-*'` (deploy/install.sh).
+     Agent: `docker logs <container>`.
      Redact tokens — an install's .env holds WEBCHAT_TOKEN. -->

@@ -31,7 +31,7 @@
 
 import { marked } from '/marked.min.js';
 import { journeyFilter } from './features/journey-state.js';
-import { bearerConfirmTimer, sttChosenBackend } from './features/settings-state.js';
+import { sttChosenBackend } from './features/settings-state.js';
 import { lightboxOpen } from './features/modals-state.js';
 import { attachPickerCfg, pendingFiles } from './features/attach-picker-state.js';
 import { helpActive, manageActive, manageTab, matrixWired, topoData, viewStack } from './features/views-state.js';
@@ -142,6 +142,7 @@ import {
 } from './features/routing.js';
 
 import { toggleAdmin } from './features/admin.js';
+import { toggleSigninPage } from './features/signin-page.js';
 import {
   grantPerm,
   permsCreateComposedId,
@@ -212,9 +213,9 @@ import {
   enterAuthedApp,
   provideAuthDeps,
   reprobeAuthWhenOnline,
-  toggleBearerToken,
   wireAuthPanel,
 } from './features/auth.js';
+import { consumeSigninResult } from './features/signins.js';
 
 // The full-view stack now lives in features/views.ts.
 import {
@@ -307,9 +308,7 @@ import {
   loadSettings,
   openSettings,
   provideSettingsDeps,
-  renderAccessSettings,
   renderCredentialsSettings,
-  renderHttpsSettings,
   renderRoutingSetup,
   renderSettingsModal,
   renderSttSetupSettings,
@@ -665,7 +664,7 @@ import {
 // shared bearer token is still active, and it's safe to drop (an alternative
 // method works). That's the natural moment — e.g. right after the first
 // Tailscale login is promoted to owner — so the operator doesn't have to hunt
-// through Settings. Dismissible; the same control lives in Settings → Access.
+// through Settings. Dismissible; the same control lives in Admin → Sign-in.
 
 async function initApp() {
   const verdict = await checkAuth();
@@ -719,6 +718,8 @@ async function initApp() {
  */
 
 wireAuthPanel();
+// A Microsoft sign-in lands back on /?signin=… — show the outcome once, then drop it.
+consumeSigninResult();
 
 // ── Settings ──────────────────────────────────────────────────────────────
 
@@ -896,6 +897,8 @@ $('#overflow-menu')?.addEventListener('click', (e) => {
   else if (action === 'models') openManage('models');
   else if (action === 'mcp') openManage('mcp');
   else if (action === 'skills') openManage('skills');
+  else if (action === 'runners') openManage('runners');
+  else if (action === 'network') openManage('network');
   else if (action === 'routing') openManage('routing');
   else if (action === 'journey') toggleJourney();
   else if (action === 'topology') toggleTopology();
@@ -903,6 +906,7 @@ $('#overflow-menu')?.addEventListener('click', (e) => {
   else if (action === 'dashboard') toggleDashboard();
   else if (action === 'permissions') togglePermissions();
   else if (action === 'admin') toggleAdmin();
+  else if (action === 'signin') toggleSigninPage();
   else if (action === 'settings') openSettings();
   else if (action === 'help') toggleHelp();
 });
@@ -1410,6 +1414,7 @@ $('#perms-user-search')?.addEventListener('input', (e) => {
 // Wiring
 $('#perms-exit')!.addEventListener('click', togglePermissions);
 $('#admin-exit')!.addEventListener('click', toggleAdmin);
+$('#signin-exit')!.addEventListener('click', toggleSigninPage);
 $('#perms-refresh')!.addEventListener('click', refreshPermissions);
 wirePermsNew();
 $('#perms-detail-back')!.addEventListener('click', permsShowList);
@@ -1521,10 +1526,13 @@ $('#import-room-file')?.addEventListener('change', async (e) => {
 
 // ── System backup (Phase 2) ──
 $('#system-export-btn')?.addEventListener('click', async () => {
-  const { ok, checked } = await confirmWithToggle({
+  const {
+    ok,
+    checks: [checked, withSecrets],
+  } = await confirmWithToggle({
     title: 'Download system backup?',
-    toggleLabel: 'Lean (skip conversation history — much smaller)',
-    note: 'Secrets and host identity never travel; a restored install keeps its own credentials.',
+    toggleLabels: ['Lean (skip conversation history — much smaller)', 'Include secrets (API keys, deploy keys, MCP tokens)'],
+    note: 'Without secrets, a restore keeps this install’s own. Host identity never travels.',
     confirmLabel: 'Download',
   });
   if (!ok) return;
@@ -1536,7 +1544,10 @@ $('#system-export-btn')?.addEventListener('click', async () => {
   showToast('Preparing backup — this can take a while for large installs', { kind: 'info' });
   let blob: Blob;
   try {
-    const res = await authFetch(`/api/system/export${checked ? '?lean=1' : ''}`);
+    const q = new URLSearchParams();
+    if (checked) q.set('lean', '1');
+    if (withSecrets) q.set('secrets', '1');
+    const res = await authFetch(`/api/system/export${q.toString() ? `?${q}` : ''}`);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}) as { error?: string });
       showToast('Backup failed: ' + (err.error || res.statusText), { kind: 'error' });
@@ -2203,7 +2214,6 @@ provideSettingsDeps({
   // dodge a settings→agents cycle. Both blocks live on the Admin view now, and
   // admin.ts imports them directly — nothing imports admin.ts, so there is no
   // cycle to dodge.
-  toggleBearerToken,
   updateUserCredsBanner,
 });
 

@@ -7,23 +7,46 @@
 // graph acyclic — the same reason core/dom came out first in the UI split.
 import type { IncomingMessage, ServerResponse } from 'http';
 
-export function json(res: ServerResponse, status: number, data: unknown): void {
+/**
+ * A top-level field holding a Promise serializes as {} — a missing await that
+ * tsc can't see through an `unknown` parameter. Mapping such a field to `never`
+ * makes it a compile error at the call site.
+ */
+type NoPromiseFields<T> = T & { [K in keyof T]: T[K] extends PromiseLike<unknown> ? never : unknown };
+
+const isThenable = (v: unknown): v is PromiseLike<unknown> =>
+  !!v && typeof (v as { then?: unknown }).then === 'function';
+
+export function json<T>(res: ServerResponse, status: number, data: NoPromiseFields<T>): void {
+  sendJson(res, status, data);
+}
+
+function sendJson(res: ServerResponse, status: number, data: unknown): void {
   // A Promise handed here serializes as {} — json()'s `unknown` parameter means
   // tsc never flags a missing await, and the async-DB migration proved the
   // failure is invisible until a client chokes on the shape (/api/agents took
   // the room UI down exactly this way). Resolve it instead of guessing: send
   // the awaited value, and surface a rejection as the 500 it is.
-  if (data && typeof (data as { then?: unknown }).then === 'function') {
-    (data as Promise<unknown>).then(
+  // The same slip one level down ({ handle: getHandle() }) can still arrive
+  // typed as `any`: resolve those fields too, and log it so it gets fixed.
+  if (data && typeof data === 'object' && !Array.isArray(data) && !isThenable(data)) {
+    const pending = Object.entries(data).filter(([, v]) => isThenable(v));
+    if (pending.length > 0) {
+      console.warn('[webchat] json(): unawaited Promise in response field(s)', pending.map(([k]) => k).join(', '));
+      data = Promise.all(Object.entries(data).map(async ([k, v]) => [k, await v] as const)).then(Object.fromEntries);
+    }
+  }
+  if (isThenable(data)) {
+    data.then(
       (v) => {
         // The continuation runs OUTSIDE the request's catch chain — a throw
         // here (headers already sent, unserializable value) would otherwise
         // become an unhandled rejection and a response that hangs to timeout.
         try {
-          json(res, status, v);
+          sendJson(res, status, v);
         } catch (err) {
           console.error('[webchat] json(): serialization failed after resolve', err);
-          if (!res.headersSent) json(res, 500, { error: 'Internal error' });
+          if (!res.headersSent) sendJson(res, 500, { error: 'Internal error' });
           else res.end();
         }
       },

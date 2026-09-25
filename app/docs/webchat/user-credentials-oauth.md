@@ -1,13 +1,13 @@
 # Design: OAuth (subscription) user credentials via per-member containers
 
-**Status:** prototype (`proto/user-creds-oauth-onecli`) — reworked from the original
-host-encrypted design to **vault-only** (OneCLI carries the token). Core transport
-**validated end-to-end** (2026-06-22, see §8.1).
+**Status:** shipped — reworked from the original host-encrypted design to
+**vault-only** (OneCLI carries the token). Core transport **validated end-to-end**
+(2026-06-22, see §8.1).
 **Extends:** [user-credentials.md](user-credentials.md) — the per-member-session architecture (session keying, identity derivation, fan-out, approval routing) is defined there; this doc covers only the OAuth/subscription delta.
 
-**Resolved decisions (owner sign-off):**
-- §2 gating — **both**: a per-room owner/admin toggle (`oauth_allowed`, default
-  off) *and* a per-member own-use acknowledgment. OAuth onboarding requires both.
+**Gating:** one workspace-wide switch per provider
+(`webchat_settings.allow_{claude,codex,grok}_oauth`, set on the Credentials page).
+OAuth onboarding is refused unless it is on for the room's provider.
 
 > **Design revision (this branch).** The original design stored each member's
 > OAuth token **host-side, encrypted** (`crypto.ts` + `data/user-creds-oauth.key`) and
@@ -43,8 +43,9 @@ identity/system prompt. OneCLI swaps only the bearer *value* on the wire; it doe
 **not** fake the Claude Code identity or downgrade the request to API-key mode.
 The honest OAuth request shape is preserved end to end.
 
-The schema keys credentials per `(user_id, agent_group_id)`, so one token can
-never be attached to multiple members.
+The schema keys credentials per `(user_id, provider)` (`user_credentials`), so
+one token can never be attached to multiple members; per-agent-group enrollment
+rows (`user_credential_members`) only reference that member's secret.
 
 ## 3. What changes vs. API-key user credentials
 
@@ -88,40 +89,33 @@ custody** — OneCLI holds one long-lived value; re-prompt when it eventually ex
 
 ## 5. Data model
 
-`user_credential_members` (migration `020` adds the table). Migration `021` adds only the
-discriminator — **no encrypted-token columns** (the token lives in the vault):
-
-```
-ALTER TABLE user_credential_members ADD COLUMN cred_type TEXT NOT NULL DEFAULT 'api_key';
-                                                   -- 'api_key' | 'oauth_token'
-```
+`user_credentials` (one row per user + provider) and `user_credential_members`
+(per user + agent group), both from `module-user-credentials.ts`. `cred_type`
+(`'api_key' | 'oauth_token'`) is the only OAuth-specific column — **no
+encrypted-token columns** (the token lives in the vault).
 
 - Both `api_key` and `oauth_token` rows carry `secret_id` (the OneCLI vault
   secret) and `onecli_agent_id` (the per-member agent). The host stores no token.
 - `cred_type` drives only (a) presentation and (b) whether the per-member
   container is spawned in OAuth mode (the sentinel env var).
 
-**Per-room toggle** — on `webchat_room_settings` (alongside `credential_mode`):
-
-```
-ALTER TABLE webchat_room_settings ADD COLUMN oauth_allowed INTEGER NOT NULL DEFAULT 0;
-```
-
-Orthogonal to `credential_mode`. OAuth onboard rejects unless `oauth_allowed = 1`.
+**Workspace switch** — `webchat_settings.allow_*_oauth`, one per provider.
+Orthogonal to `credential_mode`. OAuth onboard rejects unless it is on for the
+room's provider. (A legacy per-room `oauth_allowed` column still exists but does
+not gate onboarding.)
 
 ## 6. Flow
 
 ### Onboard (member, own key only — reuses existing authz)
 1. Member runs `claude setup-token` locally → copies `sk-ant-oat…`.
-2. In-room banner → "Connect a Claude **subscription** (OAuth)" → paste token +
-   tick the own-use acknowledgment.
-3. `POST /api/user-credentials/credential` with `{type:'oauth_token', token, acknowledged:true}`:
-   - reject unless the room's `oauth_allowed = 1` (gate 1);
-   - reject unless `acknowledged === true` (gate 2);
+2. In-room banner → "Connect a Claude **subscription** (OAuth)" → paste token.
+3. `POST /api/user-credentials/credential` with `{roomId, type:'oauth_token', token}`:
+   - reject unless the workspace allows this provider's OAuth;
    - validate format (`^sk-ant-oat`), reject otherwise;
-   - `onboarduser credentialsOauth` → store the token as the member's Anthropic vault secret,
-     assign it (+ the group's tool secrets) to the per-member agent, mark
-     `cred_type='oauth_token'`. **Never log the token.**
+   - `storeUserCredential` → store the token as the member's vault secret and
+     mark `cred_type='oauth_token'`. Enrollment (assigning it + the group's tool
+     secrets to the per-member agent) happens lazily at first spawn.
+     **Never log the token.**
 
 ### Spawn (`container-runner.ts`, user credentials session)
 The per-member session spawns under the member's OneCLI agent (identity resolver,
@@ -135,17 +129,18 @@ revoked — identical for both credential kinds.
 
 ## 7. Touch points
 
-- `src/db/migrations/module-user-credentials-oauth.ts` — `cred_type` column only.
-- `src/modules/user-credentials/db.ts` — `cred_type` + `userHasActiveOauth()`; one unified
-  `upsertuser credentialsCredential(…, credType)`. **No crypto, no token columns.**
-- `src/modules/user-credentials/onboard.ts` — `onboarduser credentialsOauth` shares the API-key path
-  (`onboardSecret`), differing only in `cred_type`.
+- `src/db/migrations/module-user-credentials.ts` — `cred_type` column.
+- `src/modules/user-credentials/db.ts` — `cred_type` + `userHasActiveOauth()`;
+  `upsertUserCredential(…, credType)` / `upsertUserCredsCredential(…)`. **No
+  crypto, no token columns.**
+- `src/modules/user-credentials/onboard.ts` — `storeUserCredential` shares the
+  API-key path, differing only in `cred_type`.
 - `src/modules/user-credentials/index.ts` — container-env resolver injects the sentinel for
   OAuth members; **no `NO_PROXY`, no real token**.
 - `~~src/modules/user-credentials/crypto.ts~~` — **deleted** (no host-side at-rest token).
-- `src/channels/webchat/migration.ts` + `db.ts` — `oauth_allowed` column +
-  get/set; credential endpoint; room toggle.
-- `public/webchat/{app.js,index.html}` — room OAuth toggle + connect mode.
+- `src/channels/webchat/db.ts` + `server/routes-users.ts` — `allow_*_oauth`
+  settings; credential endpoint.
+- `ui/src/` — connect mode.
 
 No agent-runner change → **no container rebuild**. No new npm deps.
 
@@ -196,6 +191,6 @@ Make OAuth user credentials **vault-only**, identical in posture to API-key user
 the OneCLI bearer-swap already proven in the drafter and operator-subscription
 paths. This deletes the host-side encrypted store and removes the in-container
 token exposure. The §8.1/8.2 transport re-validation is **done** (2026-06-22) — the
-sentinel + gateway-swap path is exactly OneCLI's own `run claude` mechanism. Ready
-to fold into `skill/userCreds`; a follow-up could drop the now-redundant env-resolver
+sentinel + gateway-swap path is exactly OneCLI's own `run claude` mechanism. Shipped;
+a follow-up could drop the now-redundant env-resolver
 sentinel (OneCLI injects it) and add a spawn-args unit test.

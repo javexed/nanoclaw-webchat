@@ -2,7 +2,6 @@
 // The login screen, the bearer-token path, and the first-run onboarding gate
 // that decides whether the wizard opens.
 import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
-import { bearerConfirmTimer } from './settings-state.js';
 import { permsCreateChannelTouched } from './perms-list-state.js';
 import { showToast, toastError } from '../core/toast.js';
 import { apiJson, authFetch, getAuthToken, setAuthToken } from '../core/api.js';
@@ -10,7 +9,8 @@ import { state } from '../core/state.js';
 import { connect } from '../core/ws.js';
 import { loadLearningMaster } from './learn.js';
 import { rememberServerAuthHint } from './members.js';
-import { enableWebPush, renderAccessSettings } from './settings.js';
+import { enableWebPush } from './settings.js';
+import { initVsCodeStart } from './vscode-start.js';
 import { initSttFeature, loadTtsConfig } from './voice.js';
 import { maybeAutoOpenWizard } from './wizard.js';
 
@@ -32,10 +32,10 @@ export function provideAuthDeps(provided: Partial<AuthDeps>): void {
 }
 
 export async function checkAuth() {
-  // Localhost doesn't need auth
-  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
-    return 'ok';
-  }
+  // Always ask, localhost included. The server signs loopback in only when no
+  // other sign-in method is configured; assuming it here opened the app on an
+  // install that refuses localhost, and every request then failed behind a
+  // "server unreachable" banner.
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const headers = getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {};
@@ -79,6 +79,8 @@ export function enterAuthedApp() {
   if (state.settings?.notifications && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
     enableWebPush();
   }
+  // No rooms yet: the VS Code steps where the chat would be.
+  initVsCodeStart();
   // First-run: owner/global-admin sees the setup wizard once until finished.
   void maybeAutoOpenWizard();
   // Nudge to retire the shared bearer token once a stronger identity is live.
@@ -173,6 +175,27 @@ export async function applyLoginHint() {
     $('#login-form')!.hidden = true;
   }
 
+  // Reached at localhost on an install that signs people in over Tailscale:
+  // point at the address where this person IS signed in. (A page load is
+  // redirected there already; this covers the rest.)
+  if (typeof info.tailnetUrl === 'string' && /^https?:\/\//.test(info.tailnetUrl)) {
+    subtitle.textContent = 'This install signs you in over Tailscale. Open it at ';
+    const a = document.createElement('a');
+    a.href = info.tailnetUrl;
+    a.textContent = info.tailnetUrl.replace(/^https?:\/\//, '');
+    subtitle.append(a, '.');
+    $('#login-form')!.hidden = true;
+    return;
+  }
+  // The server's own OIDC sign-in (Admin → Sign-in): a button alongside
+  // whatever else is offered.
+  const sso = $('#login-microsoft')!;
+  sso.hidden = !m.oidcLogin;
+  sso.textContent = `Sign in with ${info.oidcName || 'SSO'}`;
+  if (m.oidcLogin && !m.bearer && !(m.tailscale && info.tailscaleHealthy)) {
+    subtitle.textContent = 'Sign in with your work account.';
+    return;
+  }
   if (m.tailscale && info.tailscaleHealthy) {
     // The common case: tailscale is set up on the server; the user just
     // needs Tailscale running on the device they're reading this on.
@@ -191,49 +214,6 @@ export async function applyLoginHint() {
   } else {
     subtitle.textContent = "This server isn't ready to sign anyone in yet. Whoever installed it needs to finish setup.";
     $('#login-form')!.hidden = true;
-  }
-}
-
-export async function toggleBearerToken(wantActive?: any) {
-  const btn = ($('#access-bearer-btn')!) as HTMLInputElement;
-  const hint = $('#access-bearer-hint')!;
-  // Two-step confirm for the destructive direction (disabling auth).
-  if (!wantActive && btn.dataset.confirming !== '1') {
-    btn.dataset.confirming = '1';
-    const restore = btn.textContent;
-    btn.textContent = 'Click again to disable';
-    bearerConfirmTimer.value = setTimeout(() => {
-      btn.dataset.confirming = '';
-      btn.textContent = restore;
-    }, 4000);
-    return;
-  }
-  clearTimeout(bearerConfirmTimer.value ?? undefined);
-  btn.dataset.confirming = '';
-  (btn as HTMLInputElement).disabled = true;
-  try {
-    const r = await authFetch('/api/webchat/auth/bearer', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-      body: JSON.stringify({ active: wantActive }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) {
-      showToast(data.error || 'Could not change the bearer setting', { kind: 'error', timeout: 8000 });
-      if (data.error) {
-        hint.hidden = false;
-        hint.textContent = data.error;
-      }
-    } else {
-      showToast(wantActive ? 'Bearer token re-enabled' : 'Bearer token disabled — access is via Tailscale/SSO', {
-        kind: 'success',
-      });
-    }
-  } catch {
-    showToast('Connection failed', { kind: 'error' });
-  } finally {
-    btn.disabled = false;
-    renderAccessSettings();
   }
 }
 

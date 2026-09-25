@@ -1,20 +1,26 @@
 # Installing NanoClaw
 
-Three ways in, depending on where you're starting. All land on the same thing: a
-running NanoClaw with the webchat setup wizard at `http://<host>:3100` — open it,
-and the browser walks you through Claude/Codex sign-in or a local model. No API
-key on the command line, no `claude` login on the box.
+Three ways in, depending on where you're starting. Each ends at NanoClaw with the
+webchat setup wizard on port 3100 — open it, and the browser walks you through
+Claude/Codex sign-in or a local model. No API key on the command line, no
+`claude` login on the box.
 
 ## 1. Fresh Debian/Ubuntu host — one command
 
 A VM, a Raspberry Pi, bare metal, or a container guest:
 
 ```bash
-git clone <this repo> nanoclaw-webchat && cd nanoclaw-webchat && bash install.sh --dir /opt/nanoclaw
+git clone <this repo> nanoclaw-webchat && cd nanoclaw-webchat && bash install.sh --dir ~/nanoclaw --local
 ```
 
-A few minutes later (it builds the agent image) it prints the webchat **URL +
-bearer token**. Details, env overrides, and the update flow:
+`--local` composes, builds, installs the OneCLI vault and starts a `--user`
+service on `http://127.0.0.1:3100` (localhost signs you in as owner). Without
+`--local`, `install.sh` only composes and builds; enable the webchat with
+`bash configure-webchat.sh` in the install dir. Needs Node 22, pnpm and Docker
+already present.
+
+For a LAN-reachable host that prints a **URL + bearer token**, use the fresh-host
+provisioner instead — details, env overrides, and the update flow:
 **[../../deploy/README.md](../../deploy/README.md)**.
 
 ## 2. Proxmox VE — LXC helper script _(in testing)_
@@ -53,8 +59,8 @@ walkthrough:
 - **x86_64 with AVX2** preferred — the Claude Code CLI is a native x86 binary that
   hangs without it (on a Proxmox VM set the CPU type to `host`). **arm64**
   (Raspberry Pi) works for the Claude/API path; local models want an x86 box.
-- **Docker** — each agent session runs in its own sandbox; the installers set it
-  up for you.
+- **Docker** — each agent session runs in its own sandbox. `deploy/install.sh`
+  and the Proxmox script install it; the root `install.sh` does not.
 
 Reach it over your LAN or [Tailscale](webchat.md#authentication-methods); the
 first Tailscale login becomes owner, after which you can enable HTTPS and retire

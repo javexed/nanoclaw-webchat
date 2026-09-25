@@ -15,6 +15,7 @@
  * a ref instead, and getting it subtly wrong silently pins the surface.
  */
 import { computed } from 'vue';
+import { isWorkspaceAdminView } from '../core/state.js';
 import { hardeningServer, oauthBusy } from './mcp-panel-state.js';
 
 const props = defineProps<{ onApprove: () => void; onSaveTools: () => void; onOauth: () => void }>();
@@ -69,18 +70,30 @@ const authNote = computed(() =>
     <div v-if="s.drift" class="mcp-drift-banner">
       <div :style="BOLD">{{ DRIFT_HEAD }}</div>
       <div>{{ driftParts.join(' · ') }}</div>
-      <button type="button" class="btn btn-secondary" @click="props.onApprove()">{{ APPROVE }}</button>
+      <button v-if="isWorkspaceAdminView" type="button" class="btn btn-secondary" @click="props.onApprove()">
+        {{ APPROVE }}
+      </button>
     </div>
     <div v-if="tools">
       <span class="form-label">Tools ({{ tools.length }})</span>
       <div class="mcp-tools-list">
         <label v-for="t in tools" :key="t.name" class="mcp-tool-row">
-          <input type="checkbox" :checked="t.checked" :data-tool="t.name" /><span :title="t.desc">{{ t.name }}</span>
+          <input type="checkbox" :checked="t.checked" :data-tool="t.name" :disabled="!isWorkspaceAdminView || undefined" /><span :title="t.desc">{{ t.name }}</span>
         </label>
       </div>
-      <button type="button" class="btn btn-secondary" @click="props.onSaveTools()">{{ SAVE_TOOLS }}</button>
+      <button v-if="isWorkspaceAdminView" type="button" class="btn btn-secondary" @click="props.onSaveTools()">
+        {{ SAVE_TOOLS }}
+      </button>
     </div>
-    <button type="button" class="btn btn-ghost" :disabled="oauthBusy || undefined" @click="props.onOauth()">{{ oauthLabel }}</button>
+    <button
+      v-if="isWorkspaceAdminView"
+      type="button"
+      class="btn btn-ghost"
+      :disabled="oauthBusy || undefined"
+      @click="props.onOauth()"
+    >
+      {{ oauthLabel }}
+    </button>
     <p v-if="s.auth" class="room-prime-note">{{ authNote }}</p>
   </template>
 </template>

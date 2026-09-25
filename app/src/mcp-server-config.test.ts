@@ -27,12 +27,15 @@ describe('buildMcpServerConfig', () => {
       env: { A: '1' },
     });
   });
-  it('builds a remote server, defaulting type to sse', async () => {
-    expect(buildMcpServerConfig({ url: 'http://h:8000/sse' })).toEqual({
-      type: 'sse',
-      url: 'http://h:8000/sse',
+  it('builds a remote server, defaulting type to http', async () => {
+    expect(buildMcpServerConfig({ url: 'http://h:8000/mcp' })).toEqual({
+      type: 'http',
+      url: 'http://h:8000/mcp',
       headers: {},
     });
+  });
+  it('refuses the retired sse transport', async () => {
+    expect(() => buildMcpServerConfig({ url: 'http://h:8000/sse', type: 'sse' })).toThrow(/SSE transport is retired/);
   });
   it('honours type http + headers', async () => {
     expect(
@@ -50,6 +53,6 @@ describe('buildMcpServerConfig', () => {
     expect(() => buildMcpServerConfig({})).toThrow(/required/);
   });
   it('rejects an invalid remote type', async () => {
-    expect(() => buildMcpServerConfig({ url: 'http://h', type: 'ws' })).toThrow(/sse or http/);
+    expect(() => buildMcpServerConfig({ url: 'http://h', type: 'ws' })).toThrow(/type must be http/);
   });
 });

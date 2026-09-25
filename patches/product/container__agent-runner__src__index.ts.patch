@@ -1,8 +1,16 @@
 diff --git a/container/agent-runner/src/index.ts b/container/agent-runner/src/index.ts
-index 02676af8..ad250e07 100644
+index 02676af8..8c37957c 100644
 --- a/container/agent-runner/src/index.ts
 +++ b/container/agent-runner/src/index.ts
-@@ -38,6 +38,13 @@ import './providers/index.js';
+@@ -31,6 +31,7 @@ import { MEMORY_SESSION_HOOK } from './memory/session-hook.js';
+ // Module barrel — loads registration modules, including the singular mailbox slot.
+ import './modules/index.js';
+ import { getAgentMailbox, readMailboxContext } from './mailbox/index.js';
++import { startRelayMailboxSync, stopRelayMailboxSync } from './mailbox/relay-sync.js';
+ // Providers barrel — each enabled provider self-registers on import.
+ // Provider skills append imports to providers/index.ts.
+ import './providers/index.js';
+@@ -38,6 +39,13 @@ import './providers/index.js';
  // registration on import. Provider skills append imports to
  // provider-contracts/index.ts alongside the providers barrel line.
  import './provider-contracts/index.js';
@@ -16,7 +24,18 @@ index 02676af8..ad250e07 100644
  import { createProvider } from './providers/factory.js';
  import { getProviderRuntimeContract, requireProviderName } from './providers/provider-registry.js';
  import { resolvePluginServer } from './plugin-mcp.js';
-@@ -63,17 +70,7 @@ async function main(): Promise<void> {
+@@ -57,23 +65,18 @@ async function main(): Promise<void> {
+   const mailbox = getAgentMailbox();
+   await mailbox.start(await readMailboxContext());
+ 
++  // A session placed on a developer's machine syncs its own mailbox with
++  // central over the relay; a local session has no mailbox URL and this is a
++  // no-op, leaving the host's delivery path exactly as it was.
++  startRelayMailboxSync();
++
+   log(`Starting v2 agent-runner (provider: ${providerName})`);
+ 
+   // Every provider shares one persistent memory tree. Legacy imports are an
    // operator-run migration and never happen in this normal startup path.
    ensureMemoryScaffold();
  
@@ -34,7 +53,7 @@ index 02676af8..ad250e07 100644
  
    // Discover additional directories mounted at /workspace/extra/*
    const additionalDirectories: string[] = [];
-@@ -107,11 +104,8 @@ async function main(): Promise<void> {
+@@ -107,11 +110,8 @@ async function main(): Promise<void> {
      // Plugin-shipped servers get ${PLUGIN_ROOT}/${PLUGIN_DATA} expansion and
      // the two injected env vars; everything else passes through untouched.
      mcpServers[name] = resolvePluginServer(serverConfig);
@@ -48,7 +67,7 @@ index 02676af8..ad250e07 100644
    }
  
    const provider = createProvider(providerName, {
-@@ -122,9 +116,28 @@ async function main(): Promise<void> {
+@@ -122,9 +122,28 @@ async function main(): Promise<void> {
      model: config.model,
      effort: config.effort,
      speed: config.speed,
@@ -77,7 +96,7 @@ index 02676af8..ad250e07 100644
    try {
      await runPollLoop({
        provider,
-@@ -132,6 +145,8 @@ async function main(): Promise<void> {
+@@ -132,8 +151,12 @@ async function main(): Promise<void> {
        providerName,
        cwd: CWD,
        systemContext: { instructions },
@@ -85,4 +104,8 @@ index 02676af8..ad250e07 100644
 +      learning: config.learning,
      });
    } finally {
++    // Flush any answer written in the last moments before the mailbox closes.
++    await stopRelayMailboxSync();
      await mailbox.stop();
+   }
+ }

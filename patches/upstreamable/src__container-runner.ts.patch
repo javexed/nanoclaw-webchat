@@ -1,5 +1,5 @@
 diff --git a/src/container-runner.ts b/src/container-runner.ts
-index 508ac53b..a42bd45e 100644
+index 703a19a9..e74a352a 100644
 --- a/src/container-runner.ts
 +++ b/src/container-runner.ts
 @@ -26,8 +26,10 @@ import {
@@ -23,7 +23,7 @@ index 508ac53b..a42bd45e 100644
  import { getAgentGroup } from './db/agent-groups.js';
  import {
    getLiveHostInstance,
-@@ -87,7 +91,9 @@ import {
+@@ -95,7 +99,9 @@ import {
    sessionDir,
    writeSessionContext,
    writeSessionRouting,
@@ -33,7 +33,7 @@ index 508ac53b..a42bd45e 100644
  import type { AgentGroup, Session } from './types.js';
  
  /**
-@@ -279,9 +285,13 @@ export function wakeContainer(session: Session): Promise<boolean> {
+@@ -344,9 +350,13 @@ export function wakeContainer(session: Session): Promise<boolean> {
      return existing;
    }
    const promise = spawnContainer(session)
@@ -44,11 +44,11 @@ index 508ac53b..a42bd45e 100644
 +    })
      .catch((err) => {
        log.warn('wakeContainer failed — host-sweep will retry', { sessionId: session.id, err });
-+      noteSpawnFailure(session);
++      void noteSpawnFailure(session, err); // never rejects: its body is one try/catch
        return false;
      })
      .finally(() => {
-@@ -291,6 +301,50 @@ export function wakeContainer(session: Session): Promise<boolean> {
+@@ -356,6 +366,66 @@ export function wakeContainer(session: Session): Promise<boolean> {
    return promise;
  }
  
@@ -68,24 +68,20 @@ index 508ac53b..a42bd45e 100644
 + * knows to look. Reset on the next successful spawn (re-arms the notice for a
 + * future outage). Best-effort — never throws into the wake path.
 + */
-+async function noteSpawnFailure(session: Session): Promise<void> {
++async function noteSpawnFailure(session: Session, err?: unknown): Promise<void> {
 +  const n = (spawnFailures.get(session.id) ?? 0) + 1;
 +  spawnFailures.set(session.id, n);
 +  if (n !== SPAWN_FAILURE_NOTICE_AT) return; // fire exactly once per outage
 +  try {
 +    const mg = await (session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined);
 +    if (!mg || !mg.platform_id) return; // nowhere to post (e.g. agent-only session)
-+    writeOutboundDirect(session.agent_group_id, session.id, {
++    await writeOutboundDirect(session.agent_group_id, session.id, {
 +      id: `spawn-fail-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
 +      kind: 'chat',
 +      platformId: mg.platform_id,
 +      channelType: mg.channel_type,
 +      threadId: session.thread_id ?? null,
-+      content: JSON.stringify({
-+        text:
-+          "⚠️ I couldn't start to handle that — this usually means the credential gateway (OneCLI) is " +
-+          'unreachable or misconfigured. An admin may need to check it; I’ll keep retrying and reply once it’s back.',
-+      }),
++      content: JSON.stringify({ text: spawnFailureNotice(err) }),
 +    });
 +    log.warn('Posted spawn-failure notice to room after repeated failures', {
 +      sessionId: session.id,
@@ -96,10 +92,30 @@ index 508ac53b..a42bd45e 100644
 +  }
 +}
 +
++/**
++ * The room notice for a spawn that keeps failing. "Runtime unavailable" is
++ * the machine the agent runs on not answering — for a session placed on a
++ * developer's laptop, that laptop being asleep or offline — and blaming the
++ * credential gateway for it sent people looking in the wrong place.
++ */
++export function spawnFailureNotice(err: unknown): string {
++  const kind = (err as { kind?: unknown } | null | undefined)?.kind;
++  if (kind === 'runtime-unavailable') {
++    return (
++      "⚠️ I couldn't start to handle that — the machine I run on isn't reachable right now (if I run on a " +
++      'developer’s laptop, it may be asleep or offline). I’ll start as soon as it’s back.'
++    );
++  }
++  return (
++    "⚠️ I couldn't start to handle that — this usually means the credential gateway is " +
++    'unreachable or misconfigured. An admin may need to check it; I’ll keep retrying and reply once it’s back.'
++  );
++}
++
  async function spawnContainer(session: Session): Promise<void> {
    if (pendingAdoptions.has(session.id)) {
      // A running container is waiting to be re-fenced after a failed adoption
-@@ -311,6 +365,13 @@ async function spawnContainer(session: Session): Promise<void> {
+@@ -376,6 +446,13 @@ async function spawnContainer(session: Session): Promise<void> {
      const { writeDestinations } = await import('./modules/agent-to-agent/write-destinations.js');
      await writeDestinations(agentGroup.id, session.id);
    }
@@ -113,7 +129,7 @@ index 508ac53b..a42bd45e 100644
    await writeSessionRouting(agentGroup.id, session.id);
    const mailboxKey = { agentGroupId: agentGroup.id, sessionId: session.id };
    const mailbox = getAgentMailbox();
-@@ -966,6 +1027,12 @@ export async function buildMounts(
+@@ -1155,6 +1232,12 @@ export async function buildMounts(
        }
      }
    } else if (defaultSurfaces) {
@@ -126,7 +142,7 @@ index 508ac53b..a42bd45e 100644
      mounts.push({
        hostPath: claudeDir,
        containerPath: '/home/node/.claude',
-@@ -996,6 +1063,19 @@ export async function buildMounts(
+@@ -1185,6 +1268,19 @@ export async function buildMounts(
        scope,
      });
    }
@@ -146,7 +162,7 @@ index 508ac53b..a42bd45e 100644
  
    // Additional mounts from container config — already vetted by the allowlist.
    if (containerConfig.additionalMounts && containerConfig.additionalMounts.length > 0) {
-@@ -1148,11 +1228,25 @@ export function composeSessionSpec(input: ComposeSessionSpecInput): SessionSpec
+@@ -1337,12 +1433,23 @@ export function composeSessionSpec(input: ComposeSessionSpecInput): SessionSpec
      // The gateway's auxiliary containers ride beside the agent; capability-
      // gated in the spawn path before composition ever runs.
      containers: [agent, ...(gateway.containers ?? [])],
@@ -155,12 +171,10 @@ index 508ac53b..a42bd45e 100644
 +    // argv flag: the driver realizes it (networkPolicy: 'topology' on Docker,
 +    // declaratively elsewhere). The install-wide lockdown is already the
 +    // driver's own default path — see dockerNetworkArgs — so only the per-group
-+    // opt-out has to travel with the spec.
-+    //
-+    // GAP: containerConfig.egress === 'host-only' has no spec representation
-+    // yet (SessionSpec.network is 'shared-private' | 'none'), so a group set to
-+    // host-only currently composes as shared-private. Tracked for the seam.
++    // opt-out has to travel with the spec. `host-only` is realized by the
++    // container-egress module through the network-policy seam.
 +    network: containerConfig.egress === 'none' ? 'none' : 'shared-private',
+     networkAccess: gateway.networkAccess,
      hardening: 'standard',
      resources: {
        cpus: CONTAINER_CPU_LIMIT || undefined,
@@ -174,12 +188,12 @@ index 508ac53b..a42bd45e 100644
        pidsLimit: parsePidsLimit(CONTAINER_PIDS_LIMIT),
        shmSizeMb: SHM_SIZE_MB,
      },
-@@ -1238,16 +1332,78 @@ export function syncSkillSymlinks(
+@@ -1429,20 +1536,83 @@ export function syncSkillSymlinks(
+  * from `container/skills/` so newly-added upstream skills appear automatically.
   */
  function selectedSkillNames(containerConfig: import('./container-config.js').ContainerConfig): string[] {
-   if (containerConfig.skills !== 'all') return containerConfig.skills;
 -  const sharedSkillsDir = path.join(process.cwd(), 'container', 'skills');
--  return fs.existsSync(sharedSkillsDir)
+-  const available = fs.existsSync(sharedSkillsDir)
 -    ? fs.readdirSync(sharedSkillsDir).filter((e) => {
 -        try {
 -          return fs.statSync(path.join(sharedSkillsDir, e)).isDirectory();
@@ -188,9 +202,12 @@ index 508ac53b..a42bd45e 100644
 -        }
 -      })
 -    : [];
-+  return availableSkillNames();
-+}
-+
++  // Shipped skills plus the operator's user-skills mount (availableSkillNames).
++  const available = availableSkillNames();
+   const selected = containerConfig.skills === 'all' ? available : containerConfig.skills;
+   return selectGatewayAgentSkills(selected);
+ }
+ 
 +/**
 + * Output-token ceiling for the Claude agent SDK, or null if we cannot tell.
 + *
@@ -260,6 +277,8 @@ index 508ac53b..a42bd45e 100644
 +    '--pids-limit',
 +    pids,
 +  ];
- }
- 
++}
++
  const execAsync = promisify(exec);
+ 
+ /** Build a per-agent-group Docker image with custom packages. */

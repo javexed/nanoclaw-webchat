@@ -21,7 +21,7 @@ export function registerModuleSweep(name: string, fn: () => Promise<void>, inter
       log.warn('Module sweep failed', { task: name, err: String(err) });
     }
   };
-  const t = setInterval(run, intervalMs);
+  const t = setInterval(() => void run(), intervalMs);
   t.unref?.();
   timers.add(t);
 }

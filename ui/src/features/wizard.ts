@@ -1336,7 +1336,8 @@ async function renderWizardAccess() {
   const bearerGenRow = $('#wizard-bearer-gen-row');
   // Keep the generate row hidden once a token's been generated this session
   // (the result panel is showing instead).
-  if (bearerGenRow && !wizardBearerPendingRestart) bearerGenRow.hidden = !bearerUnset;
+  // Generating one grants owner to the token's identity, so only an owner may.
+  if (bearerGenRow && !wizardBearerPendingRestart) bearerGenRow.hidden = !bearerUnset || !state.isOwnerView;
 
   if (stateEl) {
     if (!info) {
@@ -1768,7 +1769,8 @@ async function wizardCreateAndFinish() {
   }
   // Arm the one-shot "first Tailscale login becomes owner" if the operator opted
   // in — so their real (tailnet) identity gets owner, not just the bearer boot id.
-  try {
+  // It grants owner, so only an owner may arm it.
+  if (state.isOwnerView) try {
     await authFetch('/api/webchat/tailscale-owner', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },

@@ -1,8 +1,8 @@
 # Migrating a live fork-era install to the split app — design note
 
-Status: ACCEPTED 2026-07-27 (all four open decisions per recommendation); implemented as `scripts/migrate-from-fork.sh`. Nothing here is built yet except the manual
-procedure, which has been executed twice in production (2026-07-26 cutover,
-2026-07-27 refresh) on the reference install.
+Status: ACCEPTED 2026-07-27 (all four open decisions per recommendation); implemented as `scripts/migrate-from-fork.sh`. The manual procedure it
+automates was executed twice in production (2026-07-26 cutover, 2026-07-27
+refresh) on the reference install.
 
 ## The shape of the problem
 

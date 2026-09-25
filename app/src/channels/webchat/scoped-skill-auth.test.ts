@@ -75,7 +75,7 @@ const portOf = (wc: { http: { address: () => unknown } }): number => {
 };
 
 const now = '2026-07-14T00:00:00.000Z';
-function seed(db: import('../../db/driver.js').DbDriver): void {
+async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
   const user = async (id: string) =>
     await db.run(
       `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
@@ -101,12 +101,12 @@ function seed(db: import('../../db/driver.js').DbDriver): void {
       now,
     );
   };
-  group('ag-test-a');
-  group('ag-test-b');
+  await group('ag-test-a');
+  await group('ag-test-b');
   // Pre-seed an owner so the first authenticated request doesn't auto-claim it.
-  role('webchat:owner', 'owner', null);
-  role('webchat:admina', 'admin', 'ag-test-a'); // scoped admin of A only
-  user('webchat:nobody'); // known user, but no role anywhere
+  await role('webchat:owner', 'owner', null);
+  await role('webchat:admina', 'admin', 'ag-test-a'); // scoped admin of A only
+  await user('webchat:nobody'); // known user, but no role anywhere
 }
 
 const SCOPED = (g: string) => `/api/agents/${g}/skills/scoped/nonexistent-skill/content`;
@@ -125,7 +125,7 @@ describe('scoped-skill content endpoints — authorization', () => {
       WEBCHAT_TRUSTED_PROXY_HEADER: 'x-forwarded-user',
     });
     server = loaded.server;
-    seed(loaded.conn.getDb());
+    await seed(loaded.conn.getDb());
     wc = await server.startWebchatServer(noopHooks);
     port = portOf(wc);
   });

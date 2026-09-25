@@ -139,6 +139,40 @@ export function scopedSkillsDir(agentGroupId: string): string {
   return path.join(DATA_DIR, 'v2-sessions', agentGroupId, '.claude-shared', 'skills');
 }
 
+/**
+ * Open `<skill>/SKILL.md` in an agent's scoped skills without following a
+ * symlink anywhere on the way. The agent writes that tree (it is its
+ * ~/.claude), so a link it planted must not turn an admin's read or save
+ * into one of a host file. Throws when the file is missing or leads out.
+ */
+export function openScopedSkillFile(agentGroupId: string, name: string, flags: number): number {
+  const root = fs.realpathSync(scopedSkillsDir(agentGroupId));
+  const skillDir = path.join(root, name);
+  const st = fs.lstatSync(skillDir);
+  if (!st.isDirectory()) throw new Error('not a skill directory');
+  const fd = fs.openSync(path.join(skillDir, 'SKILL.md'), flags | fs.constants.O_NOFOLLOW);
+  let real: string;
+  try {
+    real = fs.realpathSync(`/proc/self/fd/${fd}`);
+  } catch {
+    real = fs.realpathSync(path.join(skillDir, 'SKILL.md'));
+  }
+  if (real !== path.join(skillDir, 'SKILL.md')) {
+    fs.closeSync(fd);
+    throw new Error('skill file leads outside the skills directory');
+  }
+  return fd;
+}
+
+export function readScopedSkillFile(agentGroupId: string, name: string): string {
+  const fd = openScopedSkillFile(agentGroupId, name, fs.constants.O_RDONLY);
+  try {
+    return fs.readFileSync(fd, 'utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export function listScopedSkills(
   agentGroupId: string,
 ): Array<{ name: string; description: string; origin: SkillOrigin | null; invocations: number; hasHistory: boolean }> {
@@ -160,7 +194,7 @@ export function listScopedSkills(
     try {
       const p = path.join(dir, entry);
       if (!fs.lstatSync(p).isDirectory()) continue; // lstat: skip pooled symlinks, keep real dirs
-      const text = fs.readFileSync(path.join(p, 'SKILL.md'), 'utf8');
+      const text = readScopedSkillFile(agentGroupId, entry);
       const fm = text.match(/^---\s*\n([\s\S]*?)\n---/);
       let invocations = 0;
       try {

@@ -5,8 +5,8 @@ This repo never forks nanoclaw. It composes two pinned build inputs
 
 | Pin | What | Moves when |
 |---|---|---|
-| `upstreamRef` | `nanocoai/nanoclaw` main | upstream releases (nightly sync finds it) |
-| `seamRef` / `seamBranch` | `pub/module-hooks` — the hook-seam branch (upstream + 13 additive commits) | a seam PR merges, or upstream moves and the seam rebases |
+| `upstreamRef` | `nanocoai/nanoclaw` main | upstream releases |
+| `seamRef` / `seamBranch` | `pub/module-hooks` — the hook-seam branch (upstream + 3 additive commits) | a seam PR merges, or upstream moves and the seam rebases |
 
 A third pin, `forkRef`, is **not a build input**. It records the final
 `channels-webchat` tip (fork decommissioned 2026-07-28, preserved as
@@ -43,13 +43,12 @@ commit arrived (`install.sh` does this).
 
 Exercised end-to-end when upstream absorbed container hardening (#2748):
 
-1. **Nightly sync** (`webchat-split-sync.sh`) finds the new upstream tip and
-   opens a pin-bump PR here. It replaced the fork-era sync that merged upstream
+1. **Nightly sync** finds the new upstream tip and opens a pin-bump PR here. It replaced the fork-era sync that merged upstream
    into `channels-webchat`, retired with the fork on 2026-07-28.
 2. **Seam rebase** onto the new upstream tip. Evidence so far: all seam
    commits rebase with zero conflicts — registries attach at stable points;
    only patch residue collides.
-3. **Repo B**: re-merge conflicting patches onto the new upstream shape,
+3. **This repo**: re-merge conflicting patches onto the new upstream shape,
    retire anything upstream absorbed, bump pins (guard first), PR, compose
    CI green.
 4. **Live refresh** when convenient: commit the composed tree, fetch it
@@ -66,10 +65,9 @@ for which are bound upstream, which await a seam registry, and which are local.
 
 ## Caveats
 
-- PRs based on the seam branch always show a red environmental check
-  (upstream's `ci.yml` uses `setup-node`, broken on some Actions runners; the
-  seam carries no private-runner workflow by design). Verification = local
-  battery; the machine gate is the pin-bump PR's compose CI.
+- The seam carries its own CI workflow in a separate workflows directory, so
+  upstream's `.github/` stays untouched. The final gate is still the pin-bump
+  PR's compose CI here.
 - `forkRef` is no longer a guard reference or a build input — it survives only
   as the migration baseline for fork installs that have not moved across yet.
   The fork itself is preserved at the tag named by `forkArchiveTag`.

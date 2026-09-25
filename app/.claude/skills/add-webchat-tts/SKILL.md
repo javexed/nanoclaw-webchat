@@ -24,9 +24,10 @@ Design + integration map: [docs/webchat/design/add-webchat-tts.md](../../../docs
 
 ## Prerequisites
 
-1. **The webchat channel installed** (this repo's `channels-webchat`). The
-   host route (`src/channels/webchat/tts.ts`) and the PWA control ship with it;
-   this skill provisions the backend and flips the flag.
+1. **The webchat channel installed** (composed from nanoclaw-webchat `main` by
+   its root `install.sh`). The host route (`src/channels/webchat/tts.ts`) and
+   the PWA control ship with it; this skill provisions the backend and flips the
+   flag.
 2. **Docker** on the host (for the Kokoro backend). Not needed if you only want
    the Web Speech fallback — see "Fallback only" below.
 

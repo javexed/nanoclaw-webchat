@@ -1,5 +1,5 @@
 diff --git a/src/modules/approvals/response-handler.test.ts b/src/modules/approvals/response-handler.test.ts
-index 07622d3d..fd2ed67f 100644
+index 07622d3d..b3c48bde 100644
 --- a/src/modules/approvals/response-handler.test.ts
 +++ b/src/modules/approvals/response-handler.test.ts
 @@ -164,6 +164,7 @@ describe('approval response authorization', () => {
@@ -68,7 +68,7 @@ index 07622d3d..fd2ed67f 100644
    it('allows global admins to resolve approvals without a session-scoped agent group', async () => {
      await upsertUser({
        id: 'telegram:global-admin',
-@@ -262,4 +314,59 @@ describe('approval response authorization', () => {
+@@ -262,4 +314,193 @@ describe('approval response authorization', () => {
      expect(handler).toHaveBeenCalledTimes(1);
      expect(await getPendingApproval('appr-4')).toBeUndefined();
    });
@@ -126,5 +126,139 @@ index 07622d3d..fd2ed67f 100644
 +
 +    expect(handler).toHaveBeenCalledTimes(1);
 +    expect(await getPendingApproval('appr-dup')).toBeUndefined();
++  });
++  it('checkApprovalClick refuses with a reason naming the assignee', async () => {
++    const { checkApprovalClick } = await import('./response-handler.js');
++
++    await createPendingApproval({
++      approval_id: 'appr-reason',
++      session_id: 'sess-1',
++      request_id: 'appr-reason',
++      action: 'reason_action',
++      payload: JSON.stringify({}),
++      created_at: now(),
++      title: 'Assigned elsewhere',
++      options_json: JSON.stringify([]),
++      approver_user_id: 'telegram:dana',
++    });
++
++    const refused = await checkApprovalClick({
++      questionId: 'appr-reason',
++      value: 'approve',
++      userId: 'stranger',
++      channelType: 'telegram',
++      platformId: 'dm-stranger',
++      threadId: null,
++    });
++    expect(refused.ok).toBe(false);
++    expect(refused.reason).toContain('telegram:dana');
++
++    const allowed = await checkApprovalClick({
++      questionId: 'appr-reason',
++      value: 'approve',
++      userId: 'dana',
++      channelType: 'telegram',
++      platformId: 'dm-dana',
++      threadId: null,
++    });
++    expect(allowed.ok).toBe(true);
++  });
++
++  it('checkApprovalClick reports a vanished approval rather than a permission problem', async () => {
++    const { checkApprovalClick } = await import('./response-handler.js');
++    const gone = await checkApprovalClick({
++      questionId: 'appr-does-not-exist',
++      value: 'approve',
++      userId: 'dana',
++      channelType: 'telegram',
++      platformId: 'dm-dana',
++      threadId: null,
++    });
++    expect(gone.ok).toBe(false);
++    expect(gone.reason).toMatch(/no longer awaiting/i);
++  });
++
++  it('an owner can override a named approver, and the override is audited', async () => {
++    const { registerApprovalHandler } = await import('./primitive.js');
++    const { handleApprovalsResponse } = await import('./response-handler.js');
++    const handler = vi.fn().mockResolvedValue(undefined);
++    registerApprovalHandler('override_action', handler);
++
++    await upsertUser({ id: 'telegram:boss', kind: 'telegram', display_name: 'Boss', created_at: now() });
++    await grantRole({
++      user_id: 'telegram:boss',
++      role: 'owner',
++      agent_group_id: null,
++      granted_by: null,
++      granted_at: now(),
++    });
++
++    await createPendingApproval({
++      approval_id: 'appr-override',
++      session_id: 'sess-1',
++      request_id: 'appr-override',
++      action: 'override_action',
++      payload: JSON.stringify({}),
++      created_at: now(),
++      title: 'Assigned elsewhere',
++      options_json: JSON.stringify([]),
++      // Named approver is someone else entirely.
++      approver_user_id: 'telegram:dana',
++    });
++
++    await handleApprovalsResponse({
++      questionId: 'appr-override',
++      value: 'approve',
++      userId: 'boss',
++      channelType: 'telegram',
++      platformId: 'dm-boss',
++      threadId: null,
++    });
++
++    expect(handler).toHaveBeenCalledTimes(1);
++    expect(await getPendingApproval('appr-override')).toBeUndefined();
++  });
++
++  it('a global admin who is not the named approver still cannot override', async () => {
++    const { registerApprovalHandler } = await import('./primitive.js');
++    const { handleApprovalsResponse } = await import('./response-handler.js');
++    const handler = vi.fn().mockResolvedValue(undefined);
++    registerApprovalHandler('override_denied_action', handler);
++
++    // A global admin, NOT an owner. The override is deliberately owner-only:
++    // elsewhere in this file the two are treated as one tier, so pin the
++    // narrower rule down explicitly rather than leaving it to inference.
++    await upsertUser({ id: 'telegram:ga2', kind: 'telegram', display_name: 'GA', created_at: now() });
++    await grantRole({
++      user_id: 'telegram:ga2',
++      role: 'admin',
++      agent_group_id: null,
++      granted_by: null,
++      granted_at: now(),
++    });
++
++    await createPendingApproval({
++      approval_id: 'appr-override-2',
++      session_id: 'sess-1',
++      request_id: 'appr-override-2',
++      action: 'override_denied_action',
++      payload: JSON.stringify({}),
++      created_at: now(),
++      title: 'Assigned elsewhere',
++      options_json: JSON.stringify([]),
++      approver_user_id: 'telegram:dana',
++    });
++
++    await handleApprovalsResponse({
++      questionId: 'appr-override-2',
++      value: 'approve',
++      userId: 'ga2',
++      channelType: 'telegram',
++      platformId: 'dm-ga2',
++      threadId: null,
++    });
++
++    expect(handler).not.toHaveBeenCalled();
++    expect(await getPendingApproval('appr-override-2')).toBeDefined();
 +  });
  });

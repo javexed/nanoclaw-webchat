@@ -1,11 +1,21 @@
 diff --git a/src/modules/approvals/response-handler.ts b/src/modules/approvals/response-handler.ts
-index 483ee3eb..ae1fedf2 100644
+index 066eb02e..d35a8e7c 100644
 --- a/src/modules/approvals/response-handler.ts
 +++ b/src/modules/approvals/response-handler.ts
-@@ -32,6 +32,35 @@ import { ONECLI_ACTION, resolveOneCLIApproval } from './onecli-approvals.js';
+@@ -21,6 +21,7 @@ import {
+   transitionPendingApprovalStatus,
+ } from '../../db/sessions.js';
+ import type { ResponsePayload } from '../../response-registry.js';
++import { audit } from '../../audit.js';
+ import { log } from '../../log.js';
+ import { writeSessionMessage } from '../../session-manager.js';
+ import type { PendingApproval } from '../../types.js';
+@@ -28,6 +29,39 @@ import { hasAdminPrivilege, isGlobalAdmin, isOwner } from '../permissions/db/use
+ import { finalizeReject } from './finalize.js';
  import { getApprovalHandler, notifyApprovalResolved, REJECT_WITH_REASON_VALUE } from './primitive.js';
  import { armReasonCapture } from './reason-capture.js';
- 
++import { resolveSessionlessApproval } from './sessionless.js';
++
 +// Double-fire guard for the approve path. A slow handler (install_packages runs
 +// buildAgentGroupImage, ~30s) tempts an admin to click Approve again while
 +// nothing visibly happens, delivering the response twice; two concurrent
@@ -30,15 +40,28 @@ index 483ee3eb..ae1fedf2 100644
 +}
 +
 +/** Delete the resolved row and clear the in-flight claim — call AFTER the handler. */
-+function releaseApproval(approvalId: string): void {
-+  deletePendingApproval(approvalId);
-+  inFlightApprovals.delete(approvalId);
++async function releaseApproval(approvalId: string): Promise<void> {
++  try {
++    await deletePendingApproval(approvalId);
++  } finally {
++    inFlightApprovals.delete(approvalId);
++  }
 +}
-+
+ 
  export async function handleApprovalsResponse(payload: ResponsePayload): Promise<boolean> {
    const approval = await getPendingApproval(payload.questionId);
-   if (!approval) return false;
-@@ -92,6 +121,12 @@ async function handleRegisteredApproval(
+@@ -53,6 +87,10 @@ async function handleRegisteredApproval(
+   userId: string,
+ ): Promise<void> {
+   if (!approval.session_id) {
++    // Session-less rows (runner pairing) belong to the sibling primitive in
++    // sessionless.ts — same card, same approvers, no agent session behind it.
++    // Rows no module claims are dropped exactly as before.
++    if (await resolveSessionlessApproval(approval, selectedOption, userId)) return;
+     await deletePendingApproval(approval.approval_id);
+     return;
+   }
+@@ -79,6 +117,12 @@ async function handleRegisteredApproval(
    if (!(await transitionPendingApprovalStatus(approval.approval_id, 'pending', 'approved'))) return;
  
    // Approved — dispatch to the module that registered for this action.
@@ -51,7 +74,7 @@ index 483ee3eb..ae1fedf2 100644
    const notify = (text: string): Promise<void> =>
      writeSessionMessage(session.agent_group_id, session.id, {
        id: `appr-note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-@@ -110,7 +145,7 @@ async function handleRegisteredApproval(
+@@ -97,7 +141,7 @@ async function handleRegisteredApproval(
        action: approval.action,
      });
      await notify(`Your ${approval.action} was approved, but no handler is installed to apply it.`);
@@ -60,14 +83,14 @@ index 483ee3eb..ae1fedf2 100644
      await notifyApprovalResolved({ approval, session, outcome: 'approve', userId });
      await requestWake(session, 'approval-response');
      return;
-@@ -125,13 +160,26 @@ async function handleRegisteredApproval(
+@@ -112,25 +156,88 @@ async function handleRegisteredApproval(
      await notify(
        `Your ${approval.action} was approved, but applying it failed: ${err instanceof Error ? err.message : String(err)}.`,
      );
 +  } finally {
 +    // Delete AFTER the handler so the approved replay's guard liveness check
 +    // (getPendingApproval) saw the row while it ran — see the claimApproval note.
-+    releaseApproval(approval.approval_id);
++    await releaseApproval(approval.approval_id);
    }
  
 -  await deletePendingApproval(approval.approval_id);
@@ -85,6 +108,70 @@ index 483ee3eb..ae1fedf2 100644
 +  await handleRegisteredApproval(approval, 'approve', userId);
 +}
 +
- function namespacedUserId(payload: ResponsePayload): string | null {
+ export function namespacedUserId(payload: ResponsePayload): string | null {
    if (!payload.userId) return null;
    return payload.userId.includes(':') ? payload.userId : `${payload.channelType}:${payload.userId}`;
+ }
+ 
++export interface ApprovalClickCheck {
++  ok: boolean;
++  /** Human-readable refusal, safe to show the clicker. Absent when ok. */
++  reason?: string;
++}
++
++/**
++ * Would this click be accepted? Same rule handleApprovalsResponse enforces,
++ * exposed so a channel that can answer its caller (the webchat route returns
++ * HTTP) can refuse with a REASON instead of accepting the request and
++ * discarding it.
++ *
++ * handleApprovalsResponse is reached through the fire-and-forget
++ * `onAction` hook, which returns void through three layers — by the time it
++ * decides, the route has already replied 200. That is why an unauthorized
++ * click used to do nothing at all, visibly: the refusal existed only as a
++ * server log line.
++ */
++export async function checkApprovalClick(payload: ResponsePayload): Promise<ApprovalClickCheck> {
++  const approval = await getPendingApproval(payload.questionId);
++  if (!approval) return { ok: false, reason: 'This request is no longer awaiting a decision.' };
++  if (await isAuthorizedApprovalClick(approval, payload)) return { ok: true };
++  return {
++    ok: false,
++    reason: approval.approver_user_id
++      ? `This request is assigned to ${approval.approver_user_id}. Only they, or an owner, can decide it.`
++      : 'You do not have permission to decide this request.',
++  };
++}
++
+ export async function isAuthorizedApprovalClick(approval: PendingApproval, payload: ResponsePayload): Promise<boolean> {
+   const userId = namespacedUserId(payload);
+   if (!userId) return false;
+ 
+-  // An approval may name a specific approver; only that exact user may resolve it.
++  // An approval may name a specific approver. That user may always resolve it —
++  // and so may an owner, who is the escalation path when the named approver is
++  // unavailable.
++  //
++  // The override is deliberately narrow: owner only, not global_admin, and it
++  // is audited, because bypassing a named approver is a privileged act that a
++  // reviewer must be able to find after the fact.
+   if (approval.approver_user_id) {
+-    return userId === approval.approver_user_id;
++    if (userId === approval.approver_user_id) return true;
++    if (await isOwner(userId)) {
++      audit({
++        type: 'approval.owner_override',
++        actor: `human:${userId}`,
++        effect: 'allow',
++        detail: {
++          approvalId: approval.approval_id,
++          action: approval.action,
++          namedApprover: approval.approver_user_id,
++        },
++      });
++      return true;
++    }
++    return false;
+   }
+ 
+   const agentGroupId =
