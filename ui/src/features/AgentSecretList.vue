@@ -1,14 +1,9 @@
 <script setup lang="ts">
 /**
- * An agent's tool secrets — eighteenth island.
- *
- * Mounted into <ul id="agent-secrets-list">, exclusively owned by this module.
- *
- * Grouped by REACH, nearest scope first, because "whose is this?" was the
- * question the flat list could not answer: yours, everyone on this agent's, the
- * all-agents ones, and other people's own — which are listed so an admin can
- * see who holds a key here, but carry no Remove: only their owner may touch
- * them, and a button the server refuses is worse than none.
+ * An agent's tool secrets, mounted into <ul id="agent-secrets-list">, grouped by REACH,
+ * nearest first: yours, this agent's shared, all-agents, then other people's own. Those
+ * last are listed so an admin can see who holds a key, but carry no Remove — only their
+ * owner may touch them, and a button the server refuses is worse than none.
  */
 import { computed } from 'vue';
 

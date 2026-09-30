@@ -1,5 +1,5 @@
 // ── Usage settings state ────────────────────────────────────────────────────
-// Bridge refs for the three usage islands. settings.ts still fetches and shapes;
+// Bridge refs for the three usage islands. settings.ts fetches and shapes;
 // the totals line, the range buttons and the table/empty hidden flags stay
 // imperative because they live outside the three mount points.
 import { ref } from 'vue';

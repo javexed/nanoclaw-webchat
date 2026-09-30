@@ -1,13 +1,8 @@
 /**
  * First-use capability probe for a local model the profile table does not know.
- *
- * WHAT IT MEASURES, and why that one thing. Across every failure worth fixing
- * in this harness, one behaviour predicted the rest: whether a model reaches
- * for a tool to answer a question it already knows. qwen3.5:4b did — it ran
- * `echo 4` for "what is 2 + 2", read its own stdout back as proof it had
- * replied, and looped. ornith-1.5:9b did not, and passed everything the other
- * failed. So the probe asks exactly that question, with one tool in reach, and
- * watches whether the model uses it.
+ * One behaviour predicted every other failure in this harness: whether a model
+ * reaches for a tool to answer a question it already knows. So the probe asks
+ * exactly that, with one tool in reach, and watches whether the model uses it.
  *
  * It talks to the model's OpenAI-compatible endpoint directly instead of
  * driving the full agent stack. A probe that needed a container, a session and
@@ -35,9 +30,8 @@ export interface ProbeVerdict {
 }
 
 /**
- * Majority vote over rounds. A single round is not enough: the behaviour was
- * measured as intermittent, roughly one run in three, so one sample would
- * mis-profile a model about as often as it profiled it correctly.
+ * Majority vote over rounds: the behaviour is intermittent (roughly one run in
+ * three), so a single sample would often mis-profile a model.
  */
 export function classifyRounds(rounds: ProbeRound[]): ProbeVerdict | null {
   if (rounds.length === 0) return null;
@@ -50,17 +44,8 @@ export function classifyRounds(rounds: ProbeRound[]): ProbeVerdict | null {
 }
 
 /**
- * Settings implied by a verdict.
- *
- * Only ONE thing is switched here, and deliberately so. The three-model sweep
- * showed the models differing in capability and latency, not in what harness
- * knobs they wanted: nothing justified changing `tools`, `thinking`, or whether
- * the message tool exists. The single decision with evidence behind it is how
- * quickly to cut off a loop, because exactly one model was observed to loop and
- * the default let two duplicate messages reach a person first.
- *
- * Everything else stays at the documented default. A probe that flipped knobs
- * it had not measured would be guessing with more ceremony.
+ * Settings implied by a verdict. Only the loop cutoff is switched — the one
+ * knob with evidence behind it; everything else stays at the default.
  */
 export function profileFromVerdict(verdict: ProbeVerdict): ModelProfile {
   return {

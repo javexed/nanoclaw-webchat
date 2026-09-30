@@ -1,8 +1,7 @@
 /**
  * Keep-time overlap review — the heuristic layer's invariants:
- *   - the REAL twin pair this install produced (branded-pdf-deliverables vs
- *     branded-pdf-documents, staged 84 minutes apart) must clear the flag
- *     threshold — that's the incident this feature exists for;
+ *   - a real twin pair (branded-pdf-deliverables vs branded-pdf-documents)
+ *     must clear the flag threshold;
  *   - unrelated skills must NOT flag (the gate cries wolf → gets force-clicked
  *     into irrelevance);
  *   - candidates come from scoped skills AND the pool; a patch's own target

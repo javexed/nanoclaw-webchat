@@ -1,10 +1,6 @@
 /**
- * Tests for the per-room `engage_default` setting (mention-only mode).
- *
- * Verifies that recomputeEngagePatterns honors the setting when no prime
- * is configured. With a prime set, the prime branch takes over and
- * engage_default is ignored — that's tested separately by the existing
- * prime behavior; we only assert it here as a guardrail.
+ * Tests for the per-room `engage_default` setting: un-primed wirings are always
+ * mention-only (a stored 'broadcast' is coerced away), and a prime overrides it.
  */
 import { randomUUID } from 'crypto';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -101,11 +97,8 @@ describe('engage_default setting', () => {
   });
 
   it('mention-only is ignored when a prime is configured (prime branch wins)', async () => {
-    // With a prime set, the existing prime logic produces:
-    //   prime  → negative-lookahead pattern excluding other folders
-    //   others → \B@<folder>\b
-    // The engage_default setting must NOT change this — it only controls
-    // the no-prime fallback.
+    // With a prime: prime → negative lookahead excluding the other folders,
+    // others → \B@<folder>\b, whatever engage_default says.
     await setRoomEngageDefault('room-1', 'mention-only');
     await setPrimeAgentForWebchatRoom('room-1', 'ag-a');
     await recomputeEngagePatterns('room-1');

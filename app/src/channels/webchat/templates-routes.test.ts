@@ -21,29 +21,18 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import type { WebchatServer } from './server.js';
-
-const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
+import type { DbDriver } from '../../db/driver.js';
+import { httpRequest, PROXY_ENV, resetServerModules, seeder, startServer } from './test-server.js';
 
 let libDir = '';
 
-beforeEach(async () => {
-  vi.resetModules();
-});
-
 afterEach(async () => {
-  vi.unstubAllEnvs();
-  try {
-    const conn = await import('../../db/connection.js');
-    await conn.closeDb();
-  } catch {
-    // ignore
-  }
+  await resetServerModules();
   if (libDir) fs.rmSync(libDir, { recursive: true, force: true });
   libDir = '';
-  vi.resetModules();
 });
 
 /** A minimal conformant plugin: only plugin.json is required by the spec. */
@@ -63,71 +52,9 @@ function makeLibrary(): string {
   return dir;
 }
 
-async function loadServerWithEnv(env: Record<string, string | undefined>) {
-  for (const [k, v] of Object.entries(env)) {
-    if (v === undefined) vi.stubEnv(k, '');
-    else vi.stubEnv(k, v);
-  }
-  vi.resetModules();
-  const conn = await import('../../db/connection.js');
-  await conn.initTestDb();
-  const migrations = await import('../../db/migrations/index.js');
-  await migrations.runMigrations(conn.getDb());
-  return { server: await import('./server.js'), conn };
-}
-
-async function httpRequest(
-  port: number,
-  method: string,
-  reqPath: string,
-  headers: Record<string, string> = {},
-  body?: string,
-): Promise<{ status: number; body: string }> {
-  const http = await import('http');
-  return new Promise((resolve, reject) => {
-    const r = http.request({ host: '127.0.0.1', port, path: reqPath, method, headers }, (res) => {
-      let buf = '';
-      res.on('data', (c) => (buf += c));
-      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: buf }));
-    });
-    r.on('error', reject);
-    if (body) r.write(body);
-    r.end();
-  });
-}
-
-const portOf = (wc: { http: { address: () => unknown } }): number => {
-  const a = wc.http.address();
-  return typeof a === 'object' && a ? (a as { port: number }).port : 0;
-};
-
 const now = '2026-08-17T00:00:00.000Z';
-async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
-  const user = async (id: string) =>
-    await db.run(
-      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
-      id,
-      now,
-    );
-  const group = async (id: string) =>
-    await db.run(
-      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      id,
-      id,
-      id,
-      now,
-    );
-  const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
-    await user(uid);
-    if (g) await group(g);
-    await db.run(
-      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
-      uid,
-      r,
-      g,
-      now,
-    );
-  };
+async function seed(db: DbDriver): Promise<void> {
+  const { user, group, role } = seeder(db, now);
   await group('ag-test-a');
   await role('webchat:owner', 'owner', null);
   await role('webchat:admina', 'admin', 'ag-test-a'); // scoped admin only
@@ -135,24 +62,13 @@ async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
 }
 
 describe('agent-template endpoints', () => {
-  let server: Awaited<ReturnType<typeof loadServerWithEnv>>['server'];
+  let server: typeof import('./server.js');
   let wc: WebchatServer;
   let port: number;
 
   beforeEach(async () => {
     libDir = makeLibrary();
-    const loaded = await loadServerWithEnv({
-      WEBCHAT_HOST: '127.0.0.1',
-      WEBCHAT_PORT: '0',
-      WEBCHAT_TOKEN: '',
-      WEBCHAT_TRUSTED_PROXY_IPS: '127.0.0.1',
-      WEBCHAT_TRUSTED_PROXY_HEADER: 'x-forwarded-user',
-      NANOCLAW_TEMPLATES_DIR: libDir,
-    });
-    server = loaded.server;
-    await seed(loaded.conn.getDb());
-    wc = await server.startWebchatServer(noopHooks);
-    port = portOf(wc);
+    ({ server, wc, port } = await startServer({ ...PROXY_ENV, NANOCLAW_TEMPLATES_DIR: libDir }, seed));
   });
 
   afterEach(async () => {

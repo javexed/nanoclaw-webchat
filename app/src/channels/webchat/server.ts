@@ -1,64 +1,8 @@
 /**
  * Webchat HTTP server — routes, auth, static PWA serve, WS upgrade.
  *
- * Endpoints:
- *   GET  /health                            health check, no auth
- *   GET  /api/auth/check                    verify token
- *   GET  /api/overview                      dashboard snapshot (owner: full,
- *                                             admin: graceful degrade)
- *   GET  /api/rooms                              list rooms
- *   POST /api/rooms                              create room + wire 1+ agents  [owner]
- *   DELETE /api/rooms/:id                        delete room + wirings (agents preserved)  [owner]
- *   GET  /api/rooms/:id/agents                   list agents wired to a room (incl. is_prime flag)
- *   GET  /api/rooms/:id/reasoning                full reasoning traces (durable, 30d)
- *   POST /api/rooms/:id/agents                   wire an agent (existing or new)  [owner]
- *   DELETE /api/rooms/:id/agents/:agentId        unwire an agent (refuses last)  [owner]
- *   PUT  /api/rooms/:id/prime                    set { agentId } as the room's prime  [owner]
- *   DELETE /api/rooms/:id/prime                  clear the room's prime designation  [owner]
- *   GET  /api/rooms/:id/engage-mode              read room's engage default ('mention-only')
- *   PUT  /api/rooms/:id/engage-mode              set { mode } for the room  [owner]
- *   PUT  /api/rooms/:id/name                     rename the room (set { name })  [owner]
- *   GET  /api/rooms/:id/threads                  list threads (+ per-thread unread)
- *   POST /api/rooms/:id/threads                  create a topic thread ({ title })  [member]
- *   PATCH /api/rooms/:id/threads/:tid            rename a thread ({ title })  [member]
- *   DELETE /api/rooms/:id/threads/:tid           delete a thread + its session  [owner]
- *   PUT  /api/rooms/:id/threads/:tid/read        mark a thread read  [member]
- *   GET  /api/rooms/:id/messages                 history (?after_id= catch-up, ?before_id= scroll-back, ?thread_id=)
- *   POST /api/rooms/:id/archive                  mark room archived (owner + admin) — global
- *   POST /api/rooms/:id/unarchive                clear global archive (owner + admin)
- *   POST /api/rooms/:id/hide                     hide room from this user's sidebar — per-user
- *   POST /api/rooms/:id/unhide                   un-hide for this user
- *   POST /api/rooms/:id/upload                   multipart upload
- *   POST /api/rooms/:id/upload/chunk             chunked upload
- *   GET  /api/files/:roomId/:filename            serve uploaded file
- *   GET  /api/agents                             list agent groups (filtered by caller's roles, incl. assigned_model_id)
- *   POST /api/agents                             create agent group + (optionally) wire a room  [owner]
- *   POST /api/agents/draft                       draft { name, instructions } from a freeform prompt  [owner]
- *   PUT  /api/agents/:id                         update agent group  [admin-of]
- *   DELETE /api/agents/:id                       delete agent group + filesystem  [admin-of]
- *   GET  /api/agents/:id/instructions            read instructions.prepend.md
- *   PUT  /api/agents/:id/instructions            write instructions.prepend.md  [admin-of]
- *   PUT  /api/agents/:id/model                   set { modelId } (or null to unassign) [owner]
- *   GET  /api/models                             list registered models
- *   POST /api/models                             register a new model (anthropic|ollama|openai-compatible)  [owner]
- *   POST /api/models/discover                    list models served by an endpoint (Ollama: /api/tags)  [owner]
- *   POST /api/models/probe                       paste a base URL, classify provider + list models  [owner]
- *   POST /api/models/bulk                        bulk-register many models in one call  [owner]
- *   PUT  /api/models/:id                         update a model  [owner]
- *   DELETE /api/models/:id                       delete a model (refuses if assigned; use ?force=1 to cascade-unassign)  [owner]
- *   GET  /api/push/vapid-public             VAPID public key
- *   POST /api/push/subscribe                add push subscription
- *   POST /api/push/unsubscribe              remove push subscription
- *   WS   /ws                                WebSocket chat (handled in ws.ts)
- *   GET  /*                                 PWA static files
- *
- * Cut from v1 for the v2 PR scope (referenced by their original v1 paths):
- *   - /api/agents (v1 token endpoint)   tokens are gone in v2; agents push via outbound.db
- *   - /api/routes                        v1 message_routes (v2 has agent_destinations)
- *   - /api/tasks                         scheduling lives in modules/scheduling
- *   - /api/bots/create-from-chat         v1 main-room flow; replaced by direct POST /api/agents
- *
- * Replaces v1's /api/stats: see /api/overview (re-shaped to v2 data model).
+ * The route table is `API_ROUTES` below; handlers live here and in `./server/`.
+ * The WebSocket side (`/ws`) is handled in ws.ts.
  */
 import {
   createServer as createHttpServer,
@@ -66,7 +10,8 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from 'http';
-import { json, safeParseJson, readBody, readJsonBody, BodyTooLargeError, MAX_JSON_BODY_BYTES } from './server/http.js';
+import { json, safeParseJson, readJsonBody, readJsonObject } from './server/http.js';
+import { requireAgentAdmin } from './server/route-guards.js';
 import {
   rOllamaDeletePost,
   rOllamaHostsGet,
@@ -116,21 +61,6 @@ import {
   rAgentScopedSkillDelete,
   rAgentStatusPut,
   rAgentSessionsGet,
-  provisionWebchatAgentWithRoom,
-  createAgentHandler,
-  grantCreatorAdmin,
-  updateAgentHandler,
-  draftAgentHandler,
-  importAgentUploadHandler,
-  importAgentApplyHandler,
-  deleteAgentHandler,
-  setAgentStatusHandler,
-  assignAgentModelHandler,
-  setAgentSkillsHandler,
-  importScopedSkillHandler,
-  deleteScopedSkillHandler,
-  listAgentMcpHandler,
-  setAgentMcpHandler,
 } from './server/routes-agents.js';
 import {
   rSkillsGet,
@@ -148,59 +78,18 @@ import {
   rSkillRevertPost,
   rSkillRestorePost,
   rSkillDraftsGet,
-  catalogCache,
-  SKILL_DISCOVERY_SOURCE,
-  fetchMarketplace,
-  PoolSkill,
-  catalogPoolHandler,
-  putSkillSourceHandler,
-  SKILL_SYNONYMS,
-  SUGGEST_STOPWORDS,
-  suggestTokens,
-  suggestSkillsHandler,
-  importSkillHandler,
-  inspectSkillHandler,
-  skillUpdatesHandler,
-  applySkillUpdateHandler,
-  deleteUserSkillHandler,
-  getSkillContentHandler,
 } from './server/routes-skills.js';
 import {
-  AvailableSkill,
-  ScopedSkillForList,
-  SkillOrigin,
-  SkillOriginRef,
   USER_SKILLS_DIR,
   draftSourceRoom,
-  frontMatterDescription,
-  listAvailableSkills,
   listScopedSkills,
-  listScopedSkillsForUser,
-  putUserSkillHandler,
   readSkillOrigin,
-  sanitizeOrigin,
   openScopedSkillFile,
   readScopedSkillFile,
   sanitizeSkillName,
   scopedSkillsDir,
 } from './server/skills-store.js';
-import {
-  SKILL_DISCOVERY_URL,
-  fetchGithubDir,
-  githubFetch,
-  latestCommitSha,
-  parseGithubDirUrl,
-  resolveDiscoveredSkillUrl,
-  resolveSourceUrl,
-  shaCache,
-} from './server/skill-sources.js';
-import {
-  AgentForUI,
-  deriveEffectiveModelLabel,
-  listAgentsForUser,
-  resolveAgent,
-  toAgentForUI,
-} from './server/agent-lookup.js';
+import { listAgentsForUser, resolveAgent } from './server/agent-lookup.js';
 import { rDocAssetGet, rDocGet, rDocsGet } from './server/routes-docs.js';
 import { rMeHandleGet, rMeHandlePut } from './server/routes-me.js';
 import {
@@ -210,24 +99,13 @@ import {
   rModelsDiscoverPost,
   rModelsProbePost,
   rModelsReachabilityPost,
-  reachabilityHandler,
   rModelsBulkPost,
   rModelIdPut,
   rModelIdDelete,
-  manageEndpoint,
   rModelsManageGet,
   rModelsContextVariantPost,
-  ModelForUI,
-  listModelsForUI,
-  createModelHandler,
-  updateModelHandler,
-  routesBoundToModel,
-  deleteModelHandler,
-  probeModelsHandler,
-  bulkCreateModelsHandler,
-  discoverModelsHandler,
 } from './server/routes-models.js';
-import { refreshUnassignedGroupsForDefaultModel, reloadAgentModelEnv } from './server/model-wiring.js';
+import { refreshUnassignedGroupsForDefaultModel } from './server/model-wiring.js';
 import {
   rRoomsGet,
   rRoomsPost,
@@ -261,50 +139,10 @@ import {
   rRoomsImportPost,
   rRoomsImportApplyPost,
   rRoomBroadcastPost,
-  FRESH_SYNC_LIMIT,
-  sessionsForThreadKey,
-  syncThreadContext,
-  importRoomUploadHandler,
-  importRoomApplyHandler,
-  AgentRef,
-  createRoomHandler,
-  rollbackBareAgents,
-  deleteRoomHandler,
-  deleteThreadHandler,
-  addAgentToRoomHandler,
-  removeAgentFromRoomHandler,
-  setRoomPrimeHandler,
-  clearRoomPrimeHandler,
 } from './server/routes-rooms.js';
+import { injectSessionCommand } from './server/agent-wiring.js';
+import { pendingAgentImports, spawnTar, spoolUploadToTmp, sweepPendingImports } from './server/archive.js';
 import {
-  SESSION_COMMANDS,
-  ciFolderToken,
-  createBareAgentGroup,
-  ensureA2aDestination,
-  injectSessionCommand,
-  nameToFolder,
-  newAgentGroupId,
-  parseAgentLearning,
-  recomputeEngagePatterns,
-  wireAgentToWebchatRoom,
-} from './server/agent-wiring.js';
-import {
-  IMPORT_TTL_MS,
-  pendingAgentImports,
-  spawnTar,
-  spoolUploadToTmp,
-  sweepPendingImports,
-} from './server/archive.js';
-import {
-  GrantBody,
-  MembershipEntry,
-  RoleEntry,
-  UserWithPermissions,
-  checkMemberGrantAuth,
-  deleteUserHandler,
-  deriveUserKind,
-  grantPermissionHandler,
-  listUsersWithPermissions,
   rGrokMemberLoginRoute,
   rPermissionsGrantPost,
   rPermissionsRevokePost,
@@ -312,10 +150,8 @@ import {
   rUserCredsMintPost,
   rUserIdDelete,
   rUsersGet,
-  revokePermissionHandler,
-  validateGrantBody,
 } from './server/routes-users.js';
-import { USER_CREDS_MIN_INTERVAL_MS, userCredsActionAt, userCredsRateLimited } from './server/rate-limit.js';
+import { userCredsRateLimited } from './server/rate-limit.js';
 import {
   rWebchatCredentialsConfig,
   rWebchatOnboarding,
@@ -333,7 +169,7 @@ import {
   rWebchatTailscaleInstallPost,
   rWebchatUsageGet,
 } from './server/routes-webchat.js';
-import { DEFAULT_PORT, MARKETPLACE_ID } from './server/constants.js';
+import { DEFAULT_PORT } from './server/constants.js';
 import {
   rMcpServersGet,
   rMcpServersPost,
@@ -350,34 +186,9 @@ import {
   rMcpAuthPut,
   rMcpServerIdPut,
   rMcpServerIdDelete,
-  listMcpServersForUI,
-  parseMcpServerBody,
-  createMcpServerHandler,
-  updateMcpServerHandler,
-  deleteMcpServerHandler,
-  MCP_REGISTRY_URL,
-  MCP_REGISTRY_SOURCE,
-  McpCatalogRow,
-  mcpCatalogCache,
-  MCP_CATALOG_TTL_MS,
-  versionGreater,
-  packageCommand,
-  safeHttpUrl,
-  normalizeMcpRegistry,
-  mcpCatalogHandler,
-  probeMcpServerHandler,
-  escapeHtml,
 } from './server/routes-mcp.js';
 import {
-  MCP_REGISTRY_ID,
-  mcpRegistryRemovedKey,
-  mcpServerForUI,
-  reloadAgentMcpServers,
-} from './server/mcp-registry.js';
-import type { McpServerForUI } from './server/mcp-registry.js';
-import {
   rRouterRoutesGet,
-  syncAutoRouterSelectable,
   rRouterRoutesPut,
   rRouterRoutersPost,
   rRouterDelDelete,
@@ -393,7 +204,7 @@ import {
   rRouterLitellmInstallGet,
   rRouterLitellmInstallPost,
 } from './server/routes-router.js';
-import { codexAvailable, opencodeAvailable, piAvailable } from './server/providers.js';
+import { codexAvailable } from './server/providers.js';
 import { grokStatus } from './server/grok-status.js';
 import {
   rCodexInstallGet,
@@ -419,75 +230,21 @@ import {
 import { createServer as createHttpsServer } from 'https';
 import { createHash, randomUUID, randomBytes } from 'crypto';
 import zlib from 'node:zlib';
-import { execFile, execFileSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
 import { DATA_DIR, GROUPS_DIR } from '../../config.js';
-import { getDb, hasTable } from '../../db/connection.js';
+import { getDb } from '../../db/connection.js';
 import { log } from '../../log.js';
-import {
-  deleteSessionDbState,
-  findSessionsByAgentGroup,
-  findSessionsByMessagingGroup,
-  findSessionsByMessagingGroupThread,
-  teardownSessionResources,
-  type TeardownTarget,
-} from '../../session-teardown.js';
-import type { AgentGroup, MessagingGroup } from '../../types.js';
-import type { InboundDeliveryPlan } from '../../seam/index.js';
-import {
-  createAgentGroup,
-  deleteAgentGroup,
-  getAgentGroup,
-  getAllAgentGroups,
-  setAgentStatus,
-  updateAgentGroup,
-} from '../../db/agent-groups.js';
-import {
-  createMessagingGroupAgent,
-  getMessagingGroup,
-  getMessagingGroupAgents,
-  getMessagingGroupByPlatform,
-} from '../../db/messaging-groups.js';
-import { syncSessionContext, type ContextMessage } from '../../session-db-access.js';
-import { getPendingApproval, getSession, getSessionsByAgentGroup } from '../../db/sessions.js';
-import { insertMessage } from '../../mailbox/sqlite/session-db.js';
-import { openInboundDb } from '../../session-db-access.js';
+import { getAgentGroup, getAllAgentGroups } from '../../db/agent-groups.js';
+import { getPendingApproval, getSession } from '../../db/sessions.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
-import { initGroupFilesystem } from '../../group-init.js';
-import {
-  addMember as permsAddMember,
-  removeMember as permsRemoveMember,
-  getMembers as permsGetMembers,
-} from '../../modules/permissions/db/agent-group-members.js';
-import {
-  deleteUser as permsDeleteUser,
-  getAllUsers as permsGetAllUsers,
-  getUser as permsGetUser,
-  upsertUser as permsUpsertUser,
-} from '../../modules/permissions/db/users.js';
-import {
-  getOwners as permsGetOwners,
-  getUserRoles as permsGetUserRoles,
-  grantRole as permsGrantRole,
-  revokeRole as permsRevokeRole,
-} from '../../modules/permissions/db/user-roles.js';
-// Used by the symmetric "create destination on wire" step in
-// wireAgentToWebchatRoom — see comment there.
-import {
-  createDestination,
-  getDestinationByName,
-  getDestinationByTarget,
-  normalizeName,
-} from '../../modules/agent-to-agent/db/agent-destinations.js';
-import { projectDestinationsToActiveSessions } from '../../modules/agent-to-agent/write-destinations.js';
 import type { InboundMessage, OutboundFile } from '../adapter.js';
 import {
   assertBearerTokenStrength,
   authenticateRequest,
-  canonicalizeWebchatUserId,
   getAuthInfo,
   loopbackVisitorWithoutSignIn,
   getAuthManagementInfo,
@@ -496,110 +253,24 @@ import {
   requiresExplicitAuth,
   warnIfAutoProxyTrust,
 } from './auth.js';
-import { getTailscaleServeState, enableTailscaleServe, tailnetUrlForPort } from './tailscale-serve.js';
-import {
-  deleteHostModel,
-  getPullsSnapshot,
-  getRosterRefreshState,
-  dryClassify,
-  getRouteSuggestions,
-  getRouterInfo,
-  getRouterMetrics,
-  listHostModels,
-  mergeRoutesUpdate,
-  primaryRouter,
-  readRoutesConfig,
-  removeRouteFromConfig,
-  recentDecisions,
-  type RoutesUpdate,
-  writeRoutesConfig,
-  listRouters,
-  routerView,
-  addRouter,
-  deleteRouter,
-  parseConfiguredHosts,
-  cancelPull,
-  startPull,
-  startRosterRefresh,
-  deriveModelServerHosts,
-  scheduleHostRestart,
-} from './ollama-manage.js';
+import { tailnetUrlForPort } from './tailscale-serve.js';
+import { scheduleHostRestart } from './ollama-manage.js';
 import { upsertEnv } from './env-write.js';
 import {
   approvalInboxForUser,
-  archiveRoom,
-  assignModelToAgent,
-  clearPrimeAgentForWebchatRoom,
-  countAgentsForWebchatRoom,
-  createWebchatModel,
-  createWebchatRoom,
-  deleteWebchatModel,
-  deleteWebchatRoom,
-  getAgentsAssignedToModel,
   getAgentsForWebchatRoom,
-  getWebchatRoomsForAgent,
   getAllWebchatRooms,
-  getArchivedRoomIds,
-  getHiddenRoomIdsForUser,
-  getAssignedModelForAgent,
-  getEffectiveModelForAgent,
-  getPrimeAgentForWebchatRoom,
-  getRoomEngageDefault,
-  setRoomEngageDefault,
   isWebchatApprovalIndexedFor,
   getWebchatMessages,
   getWebchatMessagesAfterId,
   getWebchatMessagesBeforeId,
   searchWebchatMessages,
-  ensureMainThread,
-  listWebchatThreads,
-  createWebchatThread,
-  getWebchatThread,
-  renameWebchatThread,
-  deleteWebchatThread,
-  MAIN_THREAD,
-  threadToSessionKey,
-  getThreadSyncMarks,
-  setThreadSyncMark,
-  getSyncDelta,
-  insertSyncedMessages,
-  engageAgent,
-  disengageAgent,
-  getEngagedAgents,
-  getUnreadThreadIdsForRoom,
-  markThreadRead,
-  sanitizeThreadTitle,
   getWebchatTopology,
   getWebchatModel,
   getWebchatPendingApprovalsForUser,
-  getWebchatHandleUsers,
   getWebchatRoom,
-  getWebchatUserHandle,
-  sanitizeRoomName,
-  updateWebchatRoomName,
-  hideRoomForUser,
-  listWebchatModels,
-  pinRoomForUser,
-  setPrimeAgentForWebchatRoom,
-  setWebchatUserHandle,
   storeWebchatFileMessage,
-  unarchiveRoom,
-  unhideRoomForUser,
-  unpinRoomForUser,
-  setPinnedOrderForUser,
-  unassignModelFromAgent,
-  unwireAgentFromWebchatRoom,
-  updateWebchatModel,
-  listSkillSources,
-  upsertSkillSource,
-  deleteSkillSource,
-  isSourceDisabled,
-  setSourceDisabled,
   type FileMeta,
-  type WebchatModel,
-  type WebchatModelKind,
-  type WebchatRoomAgent,
-  type WebchatSkillSource,
   getSttCleanupModelId,
   setSttCleanupModelId,
   getSttCleanupPrompt,
@@ -610,22 +281,8 @@ import {
   getApprovalPrejudgeActions,
   setApprovalPrejudgeActions,
 } from './db.js';
-import { DraftError, draftAgent } from './drafter.js';
 import { PERSONA_PREPEND_FILE, readGroupPersona } from '../../group-persona.js';
-import { recommendForHost } from './model-recommend.js';
-import { probeContainerReachability } from './reachability.js';
-import { runPreflight } from './preflight.js';
-import {
-  KNOWN_ANTHROPIC_MODELS,
-  isPlausibleAnthropicModelId,
-  discoverOllamaModels,
-  probeEndpoint,
-  validateModel,
-  writeAgentSettingsForAssignedModel,
-  syncAgentProviderForAssignedModel,
-  writeLocalModelForAgent,
-  classifierParamsForModel,
-} from './models.js';
+import { syncAgentProviderForAssignedModel, classifierParamsForModel } from './models.js';
 import { handleChunkedUpload, handleFileServe, handleMultipartUpload } from './files.js';
 import { initWebPush, isValidPushEndpoint } from './push.js';
 import { redactSensitiveData } from './redact.js';
@@ -649,7 +306,6 @@ import {
   NEVER_AUTO_APPROVE_PATTERNS,
 } from '../../modules/approvals/prejudge.js';
 import { checkApprovalClick } from '../../modules/approvals/index.js';
-import { RUNNER_ENABLED, RUNNER_WS_PATHS, setupRunnerWebSocket } from './runner-ws.js';
 import { listRegisteredApprovalActions } from '../../seam/index.js';
 import { hostAllowed } from './request-guard.js';
 import { maybeHandleTts, ttsEndpoint } from './tts.js';
@@ -663,35 +319,18 @@ import {
   sttProvider,
   transcribeSegment,
 } from './stt.js';
-import { canAccessRoom, canArchiveRoom, filterRoomsForUser } from './access.js';
-import { canAccessAgentGroup } from '../../modules/permissions/access.js';
+import { canAccessRoom, filterRoomsForUser } from './access.js';
 import { audit, auditActor } from '../../audit.js';
 import { configureSyslog } from './audit-syslog.js';
 import { applyStoredRetention } from './audit-retention.js';
 import {
-  getRoomOauthAllowed,
-  setRoomOauthAllowed,
-  getEffectiveRoomMode,
-  getRoomModeOverride,
-  setRoomModeOverride,
   getCredentialsConfig,
-  setCredentialsConfig,
   getAuditSyslogTarget,
-  getOnboardingComplete,
-  setOnboardingComplete,
   setBearerTokenDisabled,
   getMarketplaceDisabled,
-  setMarketplaceDisabled,
-  getCredentialIsolation,
-  setCredentialIsolation,
-  getPromoteFirstTailscaleOwner,
-  setPromoteFirstTailscaleOwner,
   getDefaultModelId,
   setDefaultModelId,
-  type CredentialsConfig,
-  type CredentialMode,
 } from './db.js';
-import { listProviderContainerConfigNames } from '../../providers/provider-container-registry.js';
 
 import {
   storeUserCredential,
@@ -710,13 +349,7 @@ import {
 } from './oauth-mint.js';
 import { realOnecliAdmin } from '../../modules/user-credentials/onecli-admin.js';
 import { ensureFleetIsolation, fleetIsolationEnabled } from '../../modules/fleet-isolation/index.js';
-import {
-  listAgentEnvNames,
-  setAgentEnv,
-  deleteAgentEnv,
-  isValidEnvName,
-  validateEnvValue,
-} from '../../modules/agent-env/store.js';
+import { extensionRoutes, runServerStart } from './extensions.js';
 import {
   listDeployKeys,
   createDeployKey,
@@ -734,22 +367,17 @@ import {
   unisolateGroup,
   refreshCredentialNote,
   resolveAuthScheme,
+  resolveBasicCredential,
   type AuthScheme,
   effectiveSecretsFor,
 } from '../../modules/tool-secrets/index.js';
 import {
-  userHasConnectedCredential,
   getUserCredential,
   listEnrolledGroups,
   listAllTrackedSecretIds,
   listGroupMemberEnrollments,
 } from '../../modules/user-credentials/db.js';
-import {
-  getContainerConfig,
-  updateContainerConfigJson,
-  ensureContainerConfig,
-  updateContainerConfigScalars,
-} from '../../db/container-configs.js';
+import { getContainerConfig } from '../../db/container-configs.js';
 import {
   listSkillDrafts,
   getSkillDraft,
@@ -758,55 +386,14 @@ import {
   restoreSkillDraft,
   updateSkillDraftBody,
 } from '../../db/skill-drafts.js';
-import type { SkillDraft } from '../../db/skill-drafts.js';
 import { listSkillDraftCards, markRoomSkillDraftResolved, skillDraftCardPosition } from './db.js';
-import { computeUsageRollup } from './usage.js';
-import { createContextVariant, gatherModelInventory, prepullEstimate } from './model-manage.js';
-import type { McpServerConfig } from '../../container-config.js';
-import { validateMcpServerName } from '../../mcp-server-config.js';
-import {
-  assignMcpServerToAgent,
-  createWebchatMcpServer,
-  deleteWebchatMcpServer,
-  getAgentsAssignedToMcpServer,
-  getMcpServersForAgent,
-  getWebchatMcpServer,
-  getWebchatMcpServerByName,
-  listWebchatMcpServers,
-  pinMcpToolSurface,
-  setMcpServerAuth,
-  setMcpServerDrift,
-  setMcpServerEnabledTools,
-  syncAgentMcpConfig,
-  unassignMcpServerFromAgent,
-  updateWebchatMcpServer,
-  type WebchatMcpServer,
-  type WebchatMcpTransport,
-  type WebchatMcpServerInput,
-} from './mcp-registry.js';
-import { probeMcpEndpoint } from './mcp-probe.js';
-import { checkMcpServer } from './mcp-health.js';
-import { finishOAuthFlow, parseMcpAuth, startOAuthFlow } from './mcp-auth.js';
-import { broadcast, broadcastRooms, pushToUser } from './state.js';
+import { broadcast, pushToUser } from './state.js';
 import { setupWebSocket } from './ws.js';
-import {
-  findDuplicateScopedSkills,
-  listArchivedSkills,
-  promoteScopedSkill,
-  restoreArchivedSkill,
-} from '../../modules/learning/curator.js';
-import { listRevisions, revertLastRevision, snapshotRevision } from '../../modules/learning/apply.js';
-import { inspectSkillFiles } from '../../modules/skills/inspect.js';
+import { listArchivedSkills } from '../../modules/learning/curator.js';
+import { listRevisions, snapshotRevision } from '../../modules/learning/apply.js';
 import { applySkillDraft } from '../../modules/learning/apply.js';
 import { findKeepOverlaps } from '../../modules/learning/overlap.js';
-import { getRoomLearning, setRoomLearning } from '../../modules/learning/room-settings.js';
-import {
-  applyImport,
-  exportTarArgs,
-  extractBundle,
-  previewImport,
-  stageAgentExport,
-} from '../../modules/transfer/agent-transfer.js';
+import { nonPlainTarMembers } from '../../modules/transfer/agent-transfer.js';
 import {
   executeSystemRestore,
   isSafeSystemEntry,
@@ -815,32 +402,7 @@ import {
   systemTarArgs,
 } from '../../modules/transfer/system-transfer.js';
 import { closeDb } from '../../db/connection.js';
-import {
-  applyRoomImport,
-  isSafeRoomEntry,
-  previewRoomImport,
-  roomTarArgs,
-  stageRoomExport,
-} from '../../modules/transfer/room-transfer.js';
-import { spawn } from 'child_process';
-import Busboy from 'busboy';
-import {
-  rEgressGet,
-  rEgressPut,
-  rRunnerClientConfigGet,
-  rRunnerMineGet,
-  rRunnerClientConfigPut,
-  rRunnerExtensionDownload,
-  rRunnerExtensionGet,
-  rRunnerExtensionPost,
-  rRunnerImageSourcePut,
-  rRunnerLogsGet,
-  rRunnerMachineApprovePost,
-  rRunnerMachineRevokePost,
-  rRunnerPlacementDelete,
-  rRunnerPlacementPut,
-  rRunnersGet,
-} from './server/routes-runners.js';
+import { rEgressGet, rEgressPut } from './server/routes-egress.js';
 import { handleAccountRoutes, handlePreAuthSignin } from './server/routes-signin.js';
 import { handleSigninSettings } from './server/routes-signin-settings.js';
 
@@ -957,13 +519,9 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
     return { userId: auth.userId, displayName: auth.displayName };
   });
 
-  // Laptop runners connect on their own path over this same server (see
-  // runner-ws.ts). Off unless WEBCHAT_RUNNER_ENABLED=true; when off the path is
-  // destroyed like any other unknown upgrade.
-  if (RUNNER_ENABLED) {
-    setupRunnerWebSocket({ chatInbound: hooks.onInbound });
-    log.info('Webchat runner endpoint enabled', { paths: RUNNER_WS_PATHS });
-  }
+  // Installed extensions (./extensions-installed.ts) attach their own
+  // WebSocket paths and services here, before the server listens.
+  runServerStart({ chatInbound: hooks.onInbound });
 
   await new Promise<void>((resolve, reject) => {
     httpServer.once('error', (err: NodeJS.ErrnoException) => {
@@ -1002,14 +560,10 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
 }
 
 export async function stopWebchatServer(server: WebchatServer): Promise<void> {
-  // close() waits for every open socket — and a webchat server ALWAYS has
-  // open sockets (connected PWAs, WebSocket upgrades, keep-alive API calls).
-  // Without force-closing, shutdown hangs until systemd's 90s SIGKILL, which
-  // marks the run "unclean" and inflates the crash circuit breaker on every
-  // routine restart.
-  // closeAllConnections() EXCLUDES upgraded sockets by design — the open
-  // WebSocket clients (every connected PWA) are exactly what held close()
-  // until systemd's 90s SIGKILL. Terminate them first, then the rest.
+  // close() waits for every open socket, and a webchat server always has some;
+  // without force-closing, shutdown hangs until systemd's SIGKILL (an "unclean"
+  // run that trips the crash circuit breaker). closeAllConnections() excludes
+  // upgraded sockets, so terminate the WebSocket clients first, then the rest.
   for (const client of server.wss.clients) client.terminate();
   server.wss.close();
   server.http.closeAllConnections?.();
@@ -1115,13 +669,10 @@ async function handleHttp(
     const tailnetUrl = (await loopbackVisitorWithoutSignIn(req)) ? await tailnetUrlFor(req) : null;
     return json(res, 200, { ...(await getAuthInfo()), ...(tailnetUrl ? { tailnetUrl } : {}) });
   }
-  // localhost → the tailnet address. With Tailscale sign-in on, a page loaded
-  // at http://localhost:<port> is refused (loopback is not trusted once an
-  // explicit method exists) and used to sit behind a "server unreachable"
-  // banner. Send the page load where the same person is signed in. Page loads
-  // only: an API call or a WebSocket gets its 401, a redirect would confuse it.
-  // Serve's own requests also arrive from loopback but carry its identity
-  // header, so they are never redirected (no loop).
+  // localhost → the tailnet address. With Tailscale sign-in on, loopback is not
+  // trusted, so send the page load where the same person is signed in. Page
+  // loads only: an API call or a WebSocket gets its 401. Serve's own requests
+  // also arrive from loopback but carry its identity header, so never loop.
   if (
     method === 'GET' &&
     (url.pathname === '/' || url.pathname === '/index.html') &&
@@ -1152,21 +703,6 @@ async function handleHttp(
   }
   const userId = auth.userId;
   const senderIdentity = auth.displayName;
-  // A plain GET on the runner WebSocket path means a proxy hop dropped the
-  // Upgrade/Connection headers (nginx forwards them per-location, so a path
-  // that worked for /ws can silently fail for this one). Say so in the log:
-  // from the laptop the App Service reports the failed handshake as a bare 500.
-  if (RUNNER_ENABLED && method === 'GET' && RUNNER_WS_PATHS.includes((req.url ?? '').split('?')[0])) {
-    log.warn('Runner path reached over plain HTTP — proxy did not forward the WebSocket Upgrade header', {
-      userId,
-      upgrade: req.headers.upgrade ?? null,
-      connection: req.headers.connection ?? null,
-    });
-    return json(res, 426, {
-      error: 'Upgrade required',
-      hint: 'WebSocket-only path; the reverse proxy must forward the Upgrade and Connection headers for it.',
-    });
-  }
   // A signed token was presented but had expired; a weaker method carried the
   // request. Tell the client so it can refresh the platform's token store and
   // get back onto the verified path. A header, not a status: the request
@@ -1196,10 +732,8 @@ async function handleHttp(
   // enabled-gating and backend proxying. See tts.ts + /add-webchat-tts skill.
   if (await maybeHandleTts(req, res, url, method)) return;
 
-  // These two routes stay inline (not in API_ROUTES): they read `auth.source`,
-  // which only exists in this scope — RouteCtx deliberately carries the
-  // resolved identity, not the auth object. Their paths collide with no
-  // table entry, so position relative to the table is immaterial.
+  // The next two routes stay inline (not in API_ROUTES): they read `auth.source`,
+  // which RouteCtx deliberately does not carry.
 
   // ── Access & security: retire the bearer token ──────────────────────────────
   // Owner/global-admin only. GET reports the auth-method picture so Settings can
@@ -1219,14 +753,8 @@ async function handleHttp(
   if (url.pathname === '/api/webchat/auth/bearer' && method === 'PUT') {
     if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
     if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
-    const raw = await readJsonBody(req, res);
-    if (raw === null) return;
-    let body: { active?: unknown };
-    try {
-      body = JSON.parse(raw) as typeof body;
-    } catch {
-      return json(res, 400, { error: 'Invalid JSON' });
-    }
+    const body = await readJsonObject<{ active?: unknown }>(req, res);
+    if (body === undefined) return;
     if (typeof body.active !== 'boolean') return json(res, 400, { error: 'active must be a boolean' });
     const info = await getAuthManagementInfo();
     if (!info.bearerConfigured) {
@@ -1288,10 +816,6 @@ async function handleHttp(
     return json(res, 202, { restarting: true });
   }
 
-  // This prefix gate ran mid-chain in the old dispatcher; it now runs before
-  // the table dispatch (its guarded routes live in API_ROUTES). No route
-  // above it in the original order matched these prefixes, so hoisting it is
-  // behavior-neutral.
   // MCP + skills marketplace can be turned off workspace-wide (hardened installs
   // — both are code-execution surfaces). Gate every management endpoint at the
   // server, not just the UI, per the admin-surface rule (DOM hide + server 403).
@@ -1305,7 +829,7 @@ async function handleHttp(
     return json(res, 403, { error: 'MCP and the skills marketplace are disabled by the workspace owner.' });
   }
 
-  for (const r of API_ROUTES) {
+  for (const r of [...API_ROUTES, ...extensionRoutes()]) {
     const methods = Array.isArray(r.method) ? r.method : [r.method];
     if (!methods.includes(method)) continue;
     const m =
@@ -1346,78 +870,14 @@ async function handleHttp(
     return;
   }
 
-  // The engaged-agents routes stay inline (not in API_ROUTES): while the
-  // flag below is off they must fall through to the default 404, which a
-  // table entry cannot do (matching consumes the request). No table entry
-  // matches their paths, so they are checked here, after the table.
-
-  // ── Engaged agents (per-thread set) — DORMANT ──
-  // The engaged-agents routing model is disabled (see the dormancy note in
-  // index.ts): nothing registers the inbound delivery-plan resolver, so the stored set has no
-  // routing effect and no client calls these routes. They are gated OFF behind
-  // ENGAGED_AGENTS_ENABLED rather than left live-but-inert — a write that does
-  // nothing is a footgun. When off, the routes fall through to the default 404.
-  // To bring the subsystem back: flip this flag AND add the registerInboundDeliveryPlanResolver
-  // wiring. GET lists, POST engages, DELETE disengages; the 'main' thread can
-  // never engage. See docs/webchat/thread-engaged-agents.md.
-  const ENGAGED_AGENTS_ENABLED: boolean = false;
-  const roomThreadEngagedMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/threads\/([^/]+)\/engaged$/);
-  if (ENGAGED_AGENTS_ENABLED && roomThreadEngagedMatch && method === 'GET') {
-    const roomId = decodeURIComponent(roomThreadEngagedMatch[1]);
-    const threadId = decodeURIComponent(roomThreadEngagedMatch[2]);
-    if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-    if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-    return json(res, 200, await engagedAgentsForThread(roomId, threadId));
-  }
-  if (ENGAGED_AGENTS_ENABLED && roomThreadEngagedMatch && method === 'POST') {
-    if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-    const roomId = decodeURIComponent(roomThreadEngagedMatch[1]);
-    const threadId = decodeURIComponent(roomThreadEngagedMatch[2]);
-    if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-    if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-    if (threadId === 'main') return json(res, 400, { error: 'The regular chat cannot engage agents' });
-    if (!(await getWebchatThread(roomId, threadId))) return json(res, 404, { error: 'Thread not found' });
-    const raw = await readJsonBody(req, res);
-    if (raw === null) return;
-    let body: { agentGroupId?: unknown };
-    try {
-      body = JSON.parse(raw) as typeof body;
-    } catch {
-      return json(res, 400, { error: 'Invalid JSON' });
-    }
-    const agentGroupId = typeof body.agentGroupId === 'string' ? body.agentGroupId : '';
-    // Only agents actually wired to this room can be engaged.
-    if (!(await getAgentsForWebchatRoom(roomId)).some((a) => a.id === agentGroupId)) {
-      return json(res, 400, { error: 'Agent is not wired to this room' });
-    }
-    await engageAgent(roomId, threadId, agentGroupId);
-    broadcastEngagedSet(roomId, threadId);
-    return json(res, 200, { ok: true, engaged: await engagedAgentsForThread(roomId, threadId) });
-  }
-  const roomThreadDisengageMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/threads\/([^/]+)\/engaged\/([^/]+)$/);
-  if (ENGAGED_AGENTS_ENABLED && roomThreadDisengageMatch && method === 'DELETE') {
-    if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-    const roomId = decodeURIComponent(roomThreadDisengageMatch[1]);
-    const threadId = decodeURIComponent(roomThreadDisengageMatch[2]);
-    const agentGroupId = decodeURIComponent(roomThreadDisengageMatch[3]);
-    if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-    if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-    await disengageAgent(roomId, threadId, agentGroupId);
-    broadcastEngagedSet(roomId, threadId);
-    return json(res, 200, { ok: true, engaged: await engagedAgentsForThread(roomId, threadId) });
-  }
-
   // Static PWA is served pre-auth (see the servePwa call above the auth gate).
   return json(res, 404, { error: 'Not found' });
 }
 
 // ── Declarative API route table ──────────────────────────────────────────
-// One entry per converted branch of the old hand-rolled dispatcher.
-// ORDER IS LOAD-BEARING: entries are tried top to bottom in exactly the
-// order the original if-chain checked them (literal paths before the
-// overlapping :id regexes, e.g. /api/agents/draft before /api/agents/:id).
-// Guards run IN ORDER before the handler and reproduce the exact original
-// responses; any auth beyond the three uniform checks stays in the handler.
+// ORDER IS LOAD-BEARING: entries are tried top to bottom (literal paths before
+// the overlapping :id regexes, e.g. /api/agents/draft before /api/agents/:id).
+// Guards run in order before the handler; any other auth stays in the handler.
 
 export interface RouteCtx {
   req: IncomingMessage;
@@ -1437,19 +897,10 @@ interface ApiRoute {
   guards?: RouteGuard[]; // applied IN ORDER before the handler
   h: (ctx: RouteCtx, m: RegExpMatchArray) => void | Promise<void>;
   /**
-   * Record this route in the audit log under this dotted kind.
-   *
-   * Declared on the ROUTE rather than called from inside each handler. Twelve
-   * scattered audit() calls would be twelve chances to forget one, to record a
-   * different shape, or to emit before knowing whether the thing succeeded —
-   * and a handler that quietly stops emitting is exactly the failure an audit
-   * trail cannot afford. Here it is one line per route, and the dispatcher
-   * below reports the real outcome because it emits after the handler has run.
-   *
-   * Not every privileged route is listed. The bar is audit.ts's own: would
-   * this line answer a "who did what" question during an incident? Probes,
-   * discovery and progress polls are privileged but say nothing after the
-   * fact, and burying the twelve that matter under them helps nobody.
+   * Record this route in the audit log under this dotted kind. Declared on the
+   * route, not called in each handler, so none can be forgotten and the
+   * dispatcher records the real outcome after the handler runs. Only routes
+   * that answer "who did what" are listed — not probes or progress polls.
    */
   audit?: string;
 }
@@ -1551,14 +1002,8 @@ async function rOverviewGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
 // gates as the Claude mint: room access + the room's OAuth opt-in.
 async function rCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { roomId?: unknown; sessionId?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ roomId?: unknown; sessionId?: unknown }>(req, res);
+  if (body === undefined) return;
   const step = m[1];
   if (step === 'cancel') {
     if (typeof body.sessionId === 'string') cancelMint(userId, body.sessionId);
@@ -1598,7 +1043,7 @@ async function rCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void>
 // manage their own without an admin in the loop. Returns only the caller's
 // own credentials, for the agents they are actually enrolled in.
 async function rToolSecretsMine(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { req, res, url, method, userId } = ctx;
+  const { res, userId } = ctx;
   const seen = new Set<string>();
   const groups: { agentGroupId: string; name: string; secrets: unknown[]; effective: unknown[] }[] = [];
   for (const provider of ['claude', 'codex'] as const) {
@@ -1646,10 +1091,8 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
       : { kind: 'agent', agentGroupId };
   // Authorisation follows the scope, not one blanket rule:
   //  - workspace: install-wide, so owner / global admin only.
-  //  - agent: whoever ADMINISTERS that agent, which includes scoped admins —
-  //    matching hasAdminPrivilege as used everywhere else for per-group
-  //    actions. (Gating this on owner-only locked scoped admins out of the
-  //    agents they run.)
+  //  - agent: whoever ADMINISTERS that agent, scoped admins included —
+  //    hasAdminPrivilege, as for every other per-group action.
   //  - user (self): anyone. A personal credential must be entered by its
   //    owner; an admin doing it for them would have to handle that person's
   //    token, which is what per-user credentials exist to prevent.
@@ -1705,8 +1148,18 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
     }
     const raw = await readJsonBody(req, res);
     if (raw === null) return;
-    const body = JSON.parse(raw) as { value?: string; hostPattern?: string; scheme?: unknown };
-    const value = body.value ?? '';
+    const body = JSON.parse(raw) as { value?: string; hostPattern?: string; scheme?: unknown; basic?: unknown };
+    let value = body.value ?? '';
+    let basicScheme: AuthScheme | undefined;
+    // Username + password: the server does the base64 so nobody encodes a
+    // password by hand. It replaces both the value and the scheme.
+    if (body.basic !== undefined) {
+      if (body.value !== undefined || body.scheme !== undefined)
+        return json(res, 400, { error: 'Send basic on its own, without value or scheme' });
+      const basic = resolveBasicCredential(body.basic);
+      if ('error' in basic) return json(res, 400, { error: basic.error });
+      ({ value, scheme: basicScheme } = basic);
+    }
     const hostPattern = (body.hostPattern ?? '').trim();
     if (!value || !hostPattern) return json(res, 400, { error: 'host and value are required' });
     // Optional: how the credential goes on the wire, for a host that cannot say
@@ -1715,7 +1168,7 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
     // token charset, forbidden request-control headers, exactly one {value},
     // printable single-line template — so a crafted request cannot smuggle a
     // header or split the request.
-    let scheme: AuthScheme | undefined;
+    let scheme: AuthScheme | undefined = basicScheme;
     if (body.scheme !== undefined) {
       const resolved = resolveAuthScheme(body.scheme);
       if ('error' in resolved) return json(res, 400, { error: resolved.error });
@@ -1756,12 +1209,10 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
 // assigned). Per-agent secrets are meaningless without this — see
 // modules/tool-secrets.
 async function rToolSecretsIsolation(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { req, res, url, method, userId } = ctx;
+  const { req, res, url, userId } = ctx;
   // CSRF stays the outermost gate so a cross-site POST cannot probe which agent
-  // group ids exist. Authorisation then follows the scope, as in rToolSecrets:
-  // this toggle is per-agent, so whoever ADMINISTERS that agent may flip it —
-  // gating it on owner-only left scoped admins able to assign per-agent secrets
-  // but unable to turn on the isolation that makes them mean anything.
+  // group ids exist. Then, as in rToolSecrets, whoever ADMINISTERS the agent may
+  // flip it — the same people who may assign its per-agent secrets.
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const agentGroupId = url.searchParams.get('agentGroupId') ?? '';
   if (!(await getAgentGroup(agentGroupId))) return json(res, 400, { error: 'Unknown agent group' });
@@ -1869,7 +1320,7 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
     return { connected: external, credType: null, external };
   };
   if (method === 'GET') {
-    // Flat claude fields (the original shape) + a codex block + the workspace
+    // Flat claude fields + a codex block + the workspace
     // default MODEL (the Ollama-engine analogue of the default credential).
     const defaultModelId = await getDefaultModelId();
     const defaultModel = defaultModelId ? await getWebchatModel(defaultModelId) : undefined;
@@ -1901,14 +1352,11 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       await restartGroupsForWorkspaceCredChange(provider, priorOauth, false);
       return json(res, 200, { ok: true });
     }
-    const raw = await readJsonBody(req, res);
-    if (raw === null) return;
-    let body: { provider?: unknown; type?: unknown; apiKey?: unknown; token?: unknown };
-    try {
-      body = JSON.parse(raw) as typeof body;
-    } catch {
-      return json(res, 400, { error: 'Invalid JSON' });
-    }
+    const body = await readJsonObject<{ provider?: unknown; type?: unknown; apiKey?: unknown; token?: unknown }>(
+      req,
+      res,
+    );
+    if (body === undefined) return;
     const provider = body.provider === 'codex' ? 'codex' : 'claude';
     if (provider === 'codex' && !codexAvailable())
       return json(res, 400, { error: 'Codex support isn’t installed yet — add it with /add-codex first.' });
@@ -1968,14 +1416,8 @@ async function rWsCredMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void
   const { req, res, userId } = ctx;
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { sessionId?: unknown; code?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ sessionId?: unknown; code?: unknown }>(req, res);
+  if (body === undefined) return;
   const step = m[1];
   if (step === 'cancel') {
     if (typeof body.sessionId === 'string') cancelMint(userId, body.sessionId);
@@ -2013,14 +1455,8 @@ async function rWsCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<voi
   const { req, res, userId } = ctx;
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { sessionId?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ sessionId?: unknown }>(req, res);
+  if (body === undefined) return;
   const step = m[1];
   if (step === 'cancel') {
     if (typeof body.sessionId === 'string') cancelMint(userId, body.sessionId);
@@ -2059,14 +1495,8 @@ async function rWorkspaceModelPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
   const { req, res, userId } = ctx;
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { modelId?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ modelId?: unknown }>(req, res);
+  if (body === undefined) return;
   if (body.modelId !== null) {
     if (typeof body.modelId !== 'string' || !body.modelId.trim())
       return json(res, 400, { error: 'modelId must be a string or null' });
@@ -2143,10 +1573,8 @@ async function rHistGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   if (!(await canAccessRoom(userId, room.id))) return json(res, 403, { error: 'Access denied' });
   const afterId = url.searchParams.get('after_id');
   const beforeId = url.searchParams.get('before_id');
-  // Optional thread filter — absent = the whole room (back-compat).
+  // Optional thread filter — absent = the whole room.
   const threadId = url.searchParams.get('thread_id') || undefined;
-  // `await afterId ? …` awaited the CONDITION (a string), so the whole chain
-  // stayed un-awaited. Parenthesise the ternary and await its result.
   const msgs = await (afterId
     ? getWebchatMessagesAfterId(room.id, afterId, 200, threadId)
     : beforeId
@@ -2224,29 +1652,18 @@ async function rFileGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
 }
 
 async function rInstrGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   return readInstructions(res, group.id);
 }
 
 async function rInstrPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { req, res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   return writeInstructions(req, res, group.id);
 }
-
-// ── MCP servers (registry + per-agent assignment) ──────────────────────
-// A registry of MCP tool servers (webchat_mcp_servers) mirroring the models
-// registry: define a server once (owner-gated CRUD + a probe that connects
-// as a real MCP client and lists the server's tools), then attach it to any
-// number of agents. Assignment syncs container_configs.mcp_servers — the
-// same field `ncl groups config add-mcp-server` writes and the container
-// reads — and restarts the group's containers. List responses never include
-// env/headers (they may hold credentials).
 
 // Read / edit the SKILL.md of a skill scoped to ONE agent (its own
 // .claude-shared/skills — where a learned-and-kept or per-agent import lives).
@@ -2255,10 +1672,9 @@ async function rInstrPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
 // skills fan out install-wide and stay owner/global-admin via /api/skills/:name.)
 // The /content suffix keeps this distinct from the scoped wire/unwire routes.
 async function rScopedSkillContent(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, method, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { req, res, method } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   const name = sanitizeSkillName(decodeURIComponent(m[2]));
   if (!name) return json(res, 400, { error: 'Invalid skill name' });
   if (method === 'GET') return getScopedSkillContentHandler(res, group.id, name);
@@ -2267,37 +1683,11 @@ async function rScopedSkillContent(ctx: RouteCtx, m: RegExpMatchArray): Promise<
 }
 
 /**
- * What is this install running?
- *
- * Nothing answered that before: an operator could read the nanoclaw version off
- * package.json by hand, and had NO way to tell which webchat overlay was
- * layered on top of it — this repo's versions.json is a build input and is
- * never copied in, and the install's own versions.json is nanoclaw's (onecli +
- * agent-image pins), a different file that happens to share a name.
- *
- * Read-only and deliberately so. Updating either component is a git operation
- * against a customised tree (see the /update-nanoclaw skill and install.sh);
- * this reports state, it does not change it.
- *
- * Every field is independently optional. A tarball install has no git, an
- * install composed before the provenance stamp existed has no stamp, and a
- * partial answer is far more useful than a 500.
- */
-/**
- * Compare the payload on disk against the fingerprint install.sh stamped.
- *
- * Answers the question the old `dirty` flag only appeared to: has anything in
- * this install changed since it was composed? Hand-copying a single file into
- * a running tree is a real and easy thing to do — it is how you ship a fix
- * ahead of a merge — and the failure mode is that the install quietly stops
- * being any released version, with nothing on screen saying so.
- *
- * Reports the count checked alongside the drift so "nothing changed" and
- * "nothing was checked" cannot be confused: a missing stamp returns null and
- * About says the install predates the check, rather than claiming it is clean.
- *
- * Cost is bounded by the payload (the overlay plus patch targets, a few
- * hundred small files), not the tree, and it runs only when About is opened.
+ * Compare the payload on disk against the fingerprint install.sh stamped: has
+ * anything changed since the install was composed (e.g. a hand-copied fix)?
+ * Returns the count checked alongside the drift so "nothing changed" and
+ * "nothing was checked" cannot be confused; a missing stamp returns null.
+ * Cost is bounded by the payload, and it runs only when About is opened.
  */
 export function checkComposition(root: string): { checked: number; drifted: string[]; matches: boolean } | null {
   let stamp: { files?: Record<string, string> };
@@ -2326,6 +1716,11 @@ export function checkComposition(root: string): { checked: number; drifted: stri
   return { checked, drifted, matches: drifted.length === 0 };
 }
 
+/**
+ * What this install is running (read-only). Every field is independently
+ * optional — a tarball install has no git, an older one no provenance stamp —
+ * because a partial answer beats a 500.
+ */
 export function collectVersions(root = process.cwd()): {
   nanoclaw: { version: string | null; commit: string | null };
   /** Does the payload on disk still match what the composition wrote? */
@@ -2348,9 +1743,8 @@ export function collectVersions(root = process.cwd()): {
   };
   const pkg = readJson('package.json');
   const prov = readJson('.webchat-provenance.json');
-  // nanoclaw's own versions.json — onecli + agent image. Named the same as this
-  // repo's build-input file and unrelated to it; that collision is why the
-  // comment above exists.
+  // nanoclaw's own versions.json (onecli + agent image) — not the webchat
+  // overlay's build-input file of the same name, which is never copied in.
   const comps = readJson('versions.json') ?? {};
 
   let commit: string | null = null;
@@ -2359,11 +1753,8 @@ export function collectVersions(root = process.cwd()): {
   } catch {
     /* not a git checkout, or git is absent — both fine */
   }
-  // `git status` used to ride along here as `dirty`. It was true on every
-  // install that ever worked — the composed tree carries the overlay and every
-  // patch, so it is modified by construction — which made it a constant
-  // wearing a warning's clothes. What an operator actually wants to know is
-  // whether the payload still matches the release, and that is below.
+  // No `git status`: a composed tree is modified by construction; drift is
+  // measured against the payload stamp instead (checkComposition).
 
   const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
   const components: Record<string, string> = {};
@@ -2389,7 +1780,7 @@ async function rSystemVersionsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
   return json(ctx.res, 200, collectVersions());
 }
 
-// ── System backup (Phase 2): export streams; restore swaps + reboots ──
+// ── System backup: export streams; restore swaps + reboots ──
 async function rSystemExportGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, url } = ctx;
   const lean = url.searchParams.get('lean') === '1';
@@ -2759,22 +2150,16 @@ async function rLearningConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<voi
     const base = { enabled: await getLearningMasterEnabled() };
     return json(
       res,
-      (await canEdit) ? 200 : 200,
-      (await canEdit)
+      200,
+      canEdit
         ? { ...base, canEdit: true, classifierModelId: (await getLearningClassifier()).modelId }
         : { ...base, canEdit: false },
     );
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (!canEdit) return json(res, 403, { error: 'Owner only' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { enabled?: unknown; classifierModelId?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ enabled?: unknown; classifierModelId?: unknown }>(req, res);
+  if (body === undefined) return;
   // Classifier model pick — resolve the roster model to CONTAINER-REACHABLE
   // call params so the agent-runner (a Docker container) can reach it.
   if ('classifierModelId' in body) {
@@ -2803,14 +2188,8 @@ async function rLearningConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<voi
 // half lives in tts.ts's public config probe).
 async function rTtsConfigPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { readAloud?: unknown; voice?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ readAloud?: unknown; voice?: unknown }>(req, res);
+  if (body === undefined) return;
   // Voice change — persisted to .env and activated in-process (no restart).
   // Strict shape: Kokoro voice ids / blends only, since this lands in .env.
   if ('voice' in body) {
@@ -2835,7 +2214,7 @@ async function rSttConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
     return json(
       res,
       200,
-      (await canEdit)
+      canEdit
         ? {
             ...base,
             provider: sttProvider(),
@@ -2849,14 +2228,8 @@ async function rSttConfig(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (!canEdit) return json(res, 403, { error: 'Forbidden' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { cleanupModelId?: unknown; cleanupPrompt?: unknown; enabled?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ cleanupModelId?: unknown; cleanupPrompt?: unknown; enabled?: unknown }>(req, res);
+  if (body === undefined) return;
   // Workspace toggle — mirrors Read aloud: the owner flips the mic for
   // everyone. Env-backed (WEBCHAT_STT_ENABLED already gates every STT
   // surface), persisted + activated in-process.
@@ -2929,21 +2302,14 @@ async function rSttTranscribePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<
 
 async function rSttCleanupPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { text?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ text?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.text !== 'string') return json(res, 400, { error: 'text required' });
   if (body.text.length > MAX_CLEANUP_CHARS) return json(res, 413, { error: 'Text too long to clean up' });
   const result = await cleanupTranscript(body.text);
   return json(res, 200, result);
 }
 
-// ── Approvals inbox (per-user) ────────────────────────────────────────
 // ── Approval pre-judge config (owner-only; Settings → Approval pre-judge) ──
 // See src/modules/approvals/prejudge.ts and docs/webchat/approval-prejudge.md.
 
@@ -2967,14 +2333,8 @@ async function rApprovalPrejudgeGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
 
 async function rApprovalPrejudgePut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { modelId?: unknown; actions?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ modelId?: unknown; actions?: unknown }>(req, res);
+  if (body === undefined) return;
 
   if ('modelId' in body) {
     if (body.modelId !== null && typeof body.modelId !== 'string') {
@@ -3045,23 +2405,15 @@ async function rApprovePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   if (!expectedPlatformId || !(await isWebchatApprovalIndexedFor(approvalId, expectedPlatformId))) {
     return json(res, 403, { error: 'Not the intended approver for this request' });
   }
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { value?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ value?: unknown }>(req, res);
+  if (body === undefined) return;
   const value = typeof body.value === 'string' ? body.value : '';
   if (value !== 'approve' && value !== 'reject') {
     return json(res, 400, { error: 'value must be "approve" or "reject"' });
   }
-  // Ask the approvals module whether this click will actually be accepted,
-  // BEFORE handing off. onAction is fire-and-forget (void through three
-  // layers), so once we reply 200 the client can never learn that the
-  // handler refused — which is exactly how an unauthorized click came to
-  // look like a dead button.
+  // Ask the approvals module whether this click will be accepted BEFORE handing
+  // off: onAction is fire-and-forget, so after a 200 the client could never
+  // learn that the handler refused (an unauthorized click looks like a dead button).
   const check = await checkApprovalClick({
     questionId: approvalId,
     value,
@@ -3090,8 +2442,7 @@ async function rPushVapidPublicGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise
 async function rPushSubscribePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   // CSRF: with ambient auth (localhost auto-pass / tailscale whois) a
-  // cross-site simple POST is the one vector that skips the preflight —
-  // these two were the only mutating POSTs without the header check.
+  // cross-site simple POST is the one vector that skips the preflight.
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return pushSubscribe(req, res, userId);
 }
@@ -3100,8 +2451,6 @@ async function rPushUnsubscribePost(ctx: RouteCtx, _m: RegExpMatchArray): Promis
   const { req, res, userId } = ctx;
   return pushUnsubscribe(req, res, userId);
 }
-
-const RE_RUNNER_PLACEMENT = /^\/api\/runners\/placements\/([^/]+)$/;
 
 const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/me/handle', h: rMeHandleGet },
@@ -3241,9 +2590,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: RE_AGENT_SKILL_IMPORT, h: rAgentSkillImportPost },
   { method: ['GET', 'PUT'], path: RE_SCOPED_SKILL_CONTENT, h: rScopedSkillContent },
   { method: ['GET', 'PUT'], path: RE_ROOM_LEARNING, h: rRoomLearning },
-  // Read-only, but owner/global-admin gated: exact component versions are
-  // reconnaissance, and this install now hides every other owner-only surface
-  // from non-owners. Consistency beats a marginal convenience here.
+  // Read-only, but admin-gated: exact component versions are reconnaissance.
   { method: 'GET', path: '/api/system/versions', guards: ['anyAdmin'], h: rSystemVersionsGet },
   { method: 'GET', path: '/api/system/export', guards: ['owner'], h: rSystemExportGet, audit: 'system.export' },
   {
@@ -3396,64 +2743,9 @@ const API_ROUTES: ApiRoute[] = [
   },
   { method: 'POST', path: RE_APPROVE, guards: ['csrf'], h: rApprovePost },
   { method: 'GET', path: '/api/users', h: rUsersGet },
-  // Runner fleet + egress (server/routes-runners.ts).
-  { method: 'GET', path: '/api/runners', guards: ['globalAdmin'], h: rRunnersGet },
-  { method: 'GET', path: '/api/runners/logs', guards: ['globalAdmin'], h: rRunnerLogsGet },
-  { method: 'GET', path: '/api/runners/extension', h: rRunnerExtensionGet },
-  { method: 'GET', path: '/api/runners/extension/download', h: rRunnerExtensionDownload },
-  { method: 'GET', path: '/api/runners/client-config', h: rRunnerClientConfigGet },
-  { method: 'GET', path: '/api/runners/mine', h: rRunnerMineGet },
-  {
-    method: 'PUT',
-    path: '/api/runners/client-config',
-    guards: ['csrf', 'globalAdmin'],
-    h: rRunnerClientConfigPut,
-    audit: 'runner.client.set',
-  },
-  {
-    method: 'POST',
-    path: '/api/runners/extension',
-    guards: ['csrf', 'globalAdmin'],
-    h: rRunnerExtensionPost,
-    audit: 'runner.extension.publish',
-  },
+  // Install-wide egress allowlist (server/routes-egress.ts).
   { method: 'GET', path: '/api/egress', guards: ['globalAdmin'], h: rEgressGet },
   { method: 'PUT', path: '/api/egress', guards: ['csrf', 'globalAdmin'], h: rEgressPut, audit: 'egress.allowlist.set' },
-  {
-    method: 'PUT',
-    path: '/api/runners/image-source',
-    guards: ['csrf', 'globalAdmin'],
-    h: rRunnerImageSourcePut,
-    audit: 'runner.image.set',
-  },
-  {
-    method: 'POST',
-    path: /^\/api\/runners\/machines\/([0-9a-f]{16,128})\/approve$/,
-    guards: ['csrf', 'globalAdmin'],
-    h: rRunnerMachineApprovePost,
-    audit: 'runner.machine.approve',
-  },
-  {
-    method: 'POST',
-    path: /^\/api\/runners\/machines\/([0-9a-f]{16,128})\/revoke$/,
-    guards: ['csrf', 'globalAdmin'],
-    h: rRunnerMachineRevokePost,
-    audit: 'runner.machine.revoke',
-  },
-  {
-    method: 'PUT',
-    path: RE_RUNNER_PLACEMENT,
-    guards: ['csrf', 'globalAdmin'],
-    h: rRunnerPlacementPut,
-    audit: 'runner.placement.set',
-  },
-  {
-    method: 'DELETE',
-    path: RE_RUNNER_PLACEMENT,
-    guards: ['csrf', 'globalAdmin'],
-    h: rRunnerPlacementDelete,
-    audit: 'runner.placement.delete',
-  },
   { method: 'DELETE', path: RE_USER_ID, guards: ['csrf', 'owner'], h: rUserIdDelete, audit: 'user.delete' },
   { method: 'POST', path: '/api/permissions/grant', guards: ['csrf'], h: rPermissionsGrantPost },
   { method: 'POST', path: '/api/permissions/revoke', guards: ['csrf'], h: rPermissionsRevokePost },
@@ -3465,11 +2757,9 @@ const API_ROUTES: ApiRoute[] = [
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 // Derive the service-worker cache name from a hash of every served asset
-// (except sw.js itself), so the cache busts exactly when an asset changes —
-// replacing the old hand-bumped `nanoclaw-chat-vNNN` constant that conflicted
-// on every webchat branch. Sorted for determinism; recomputed per sw.js fetch,
-// which is an infrequent request, so no memoization is needed (and none can go
-// stale). Returns a stable fallback if the directory can't be read.
+// (except sw.js itself), so the cache busts exactly when an asset changes.
+// Recomputed per sw.js fetch (infrequent), so nothing can go stale. Returns a
+// stable fallback if the directory can't be read.
 export function computeSwCacheVersion(publicDir: string): string {
   let entries: string[];
   try {
@@ -3604,113 +2894,6 @@ function persistOutboundFile(roomId: string, file: OutboundFile): string {
   return `/api/files/${encodeURIComponent(safeRoom)}/${filename}`;
 }
 
-// ── Agents (agent groups) ──
-
-/**
- * Recompute `messaging_group_agents.engage_pattern` for every wiring on a
- * room based on the current prime designation.
- *
- *   - No prime configured  → all wirings get '.' (default: every agent
- *     engages on every message — current behavior pre-prime).
- *   - Prime configured     → prime gets a negative-lookahead pattern that
- *     matches text NOT mentioning any other wired agent's folder; each
- *     non-prime agent gets a positive `\B@<folder>\b` pattern.
- *
- * Match key is the agent's `folder` (already slugified to `[a-z0-9-]+` by
- * `nameToFolder`, no regex special chars to escape). Word-boundary on the
- * left is `\B@` so `@alice` matches at start-of-string and after spaces but
- * not inside an email like `foo@alice.com`.
- *
- * Idempotent and cheap (one row per wiring, single UPDATE each). Called from
- * every wiring-change path: wireAgentToWebchatRoom, unwireAgentFromWebchatRoom,
- * and the prime PUT/DELETE handlers.
- */
-
-/** Engaged agents in a thread, resolved to {id, name, folder} for the UI. */
-async function engagedAgentsForThread(
-  roomId: string,
-  threadId: string,
-): Promise<Array<{ id: string; name: string; folder: string }>> {
-  const ids = new Set(await getEngagedAgents(roomId, threadId));
-  if (ids.size === 0) return [];
-  return (await getAgentsForWebchatRoom(roomId))
-    .filter((a) => ids.has(a.id))
-    .map((a) => ({ id: a.id, name: a.name, folder: a.folder }));
-}
-
-/** Push the current engaged set for a thread to all room clients (live chips). */
-function broadcastEngagedSet(roomId: string, threadId: string): void {
-  // Resolve first, then broadcast — an embedded promise serializes as {}.
-  void engagedAgentsForThread(roomId, threadId).then((engaged) =>
-    broadcast(roomId, { type: 'engaged_set_changed', room_id: roomId, thread_id: threadId, engaged }),
-  );
-}
-
-const ENGAGE_FOLDER_ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
-
-/**
- * Engaged-thread routing decision for the host router (registered via
- * registerInboundDeliveryPlanResolver). Auto-engages @mentioned wired agents, then classifies each
- * engaged agent as 'expected' (addressed, or the sole engaged agent on an
- * un-addressed message → a one-agent thread keeps replying without re-mention) or
- * 'defer' (engaged but someone else was addressed → receives context, no reply).
- * Returns null when engagement doesn't apply so the router falls back to normal
- * mention-only routing. See docs/webchat/thread-engaged-agents.md.
- */
-export async function resolveInboundDeliveryPlan(
-  mg: MessagingGroup,
-  threadId: string | null,
-  messageText: string,
-  senderAgentGroupId: string | undefined,
-): Promise<InboundDeliveryPlan | null> {
-  if (mg.channel_type !== 'webchat') return null;
-  if (threadId === null || threadId === 'main') return null;
-  const roomId = mg.platform_id;
-  const wired = await getAgentsForWebchatRoom(roomId);
-  if (wired.length === 0) return null;
-  const wiredIds = new Set(wired.map((a) => a.id));
-
-  // Peer fan-out: an engaged agent's own reply is delivered to the OTHER engaged
-  // agents as silent context (isPeerReply, trigger=0) so they stay in sync but
-  // never reply to a peer (no cascades). The producer is excluded.
-  if (senderAgentGroupId) {
-    const allEngaged = [...(await getEngagedAgents(roomId, threadId))].filter((id) => wiredIds.has(id));
-    const recipients = allEngaged.filter((id) => id !== senderAgentGroupId);
-    if (recipients.length === 0) return null;
-    const perAgent = new Map<string, 'expected' | 'defer'>();
-    for (const id of recipients) perAgent.set(id, 'defer');
-    return { participants: allEngaged, perAgent, isPeerReply: true };
-  }
-
-  // Which wired agents are explicitly @mentioned (case-insensitive, word-boundary).
-  const mentioned = new Set<string>();
-  for (const a of wired) {
-    const re = new RegExp(`\\B@${a.folder.replace(ENGAGE_FOLDER_ESCAPE_RE, '\\$&')}\\b`, 'i');
-    if (re.test(messageText)) mentioned.add(a.id);
-  }
-
-  // Auto-engage any newly-mentioned wired agent (broadcast the chip change once).
-  const engaged = new Set([...(await getEngagedAgents(roomId, threadId))].filter((id) => wiredIds.has(id)));
-  let changed = false;
-  for (const id of mentioned) {
-    if (!engaged.has(id)) {
-      await engageAgent(roomId, threadId, id);
-      engaged.add(id);
-      changed = true;
-    }
-  }
-  if (changed) broadcastEngagedSet(roomId, threadId);
-  if (engaged.size === 0) return null; // nothing engaged → normal mention-only routing
-
-  const soleEngaged = engaged.size === 1;
-  const perAgent = new Map<string, 'expected' | 'defer'>();
-  for (const id of engaged) {
-    const addressed = mentioned.has(id) || (mentioned.size === 0 && soleEngaged);
-    perAgent.set(id, addressed ? 'expected' : 'defer');
-  }
-  return { participants: [...engaged], perAgent };
-}
-
 // Staged bundles can be GBs — sweep on a timer, not only on the next upload
 // (an abandoned preview would otherwise squat /tmp for the process lifetime).
 setInterval(sweepPendingImports, 5 * 60 * 1000).unref();
@@ -3736,6 +2919,8 @@ async function importSystemUploadHandler(req: IncomingMessage, res: ServerRespon
       .filter(Boolean)
       .filter((e) => !isSafeSystemEntry(e));
     if (bad.length > 0) throw new Error(`Bundle contains unsafe paths: ${bad.slice(0, 3).join(', ')}`);
+    const links = await nonPlainTarMembers(tmpFile!);
+    if (links.length > 0) throw new Error(`Bundle contains links or special files: ${links.slice(0, 3).join(', ')}`);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-sysimport-'));
     await new Promise<void>((resolve, reject) => {
       const p = spawnTar(['-xzf', tmpFile!, '-C', dir, '--no-same-owner']);
@@ -3757,14 +2942,8 @@ async function importSystemUploadHandler(req: IncomingMessage, res: ServerRespon
 }
 
 async function importSystemApplyHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { token?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ token?: unknown }>(req, res);
+  if (body === undefined) return;
   const staged = pendingAgentImports.get(String(body.token || ''));
   if (!staged) return json(res, 410, { error: 'Import expired — upload the bundle again' });
   let preview: Awaited<ReturnType<typeof previewSystemImport>>;
@@ -3786,17 +2965,10 @@ async function importSystemApplyHandler(req: IncomingMessage, res: ServerRespons
 }
 
 /**
- * Standing instructions live in `instructions.prepend.md` — the file
- * claude-md-compose reads via readGroupPersona() and emits as the persona
- * fragment of every provider's composed CLAUDE.md.
- *
- * This editor used to read and write `CLAUDE.local.md`, which nanoclaw stopped
- * composing. That file is still picked up by the Claude harness (settingSources
- * includes 'local'), so edits appeared to work — but they were provider-local:
- * nothing written here reached a Codex-backed group, and a provider switch
- * silently dropped them. `legacy` below reports a non-empty CLAUDE.local.md so
- * the UI can say where that content went instead of showing an empty box for a
- * group that plainly has instructions.
+ * Standing instructions live in `instructions.prepend.md`, which
+ * claude-md-compose emits as the persona fragment of every provider's composed
+ * CLAUDE.md. `legacy` reports a non-empty CLAUDE.local.md (read only by the
+ * Claude harness, so provider-local) so the UI can say where that content is.
  */
 async function readInstructions(res: ServerResponse, id: string): Promise<void> {
   const group = await getAgentGroup(id);
@@ -3808,7 +2980,7 @@ async function readInstructions(res: ServerResponse, id: string): Promise<void> 
     const st = fs.lstatSync(path.join(dir, 'CLAUDE.local.md'));
     if (st.isFile()) legacy = st.size;
   } catch {
-    /* absent — the normal case for a group created after the cutover */
+    /* absent — the normal case */
   }
   return json(res, 200, { content, legacyBytes: legacy });
 }
@@ -3816,14 +2988,8 @@ async function readInstructions(res: ServerResponse, id: string): Promise<void> 
 async function writeInstructions(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
   const group = await getAgentGroup(id);
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { content?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ content?: unknown }>(req, res);
+  if (body === undefined) return;
   const dir = path.resolve(GROUPS_DIR, group.folder);
   fs.mkdirSync(dir, { recursive: true });
   const text = typeof body.content === 'string' ? body.content : '';
@@ -3849,15 +3015,6 @@ async function writeInstructions(req: IncomingMessage, res: ServerResponse, id: 
   }
   return json(res, 200, { ok: true });
 }
-
-// ── Room handlers ──
-
-// ── Models ──
-//
-// CRUD for webchat_models + per-agent model assignment. The "discover"
-// endpoint is the cheap UX win — it lets the PWA populate the model_id
-// dropdown from a live Ollama endpoint instead of asking the user to
-// paste tag names.
 
 /**
  * Respawn containers after a workspace-default credential MODE change (key ↔
@@ -3900,8 +3057,6 @@ async function afterWorkspaceCredentialSet(
 ): Promise<void> {
   // The default model is always an ollama-kind (claude-family) model, so it only
   // conflicts with a claude engine — a codex credential leaves it untouched.
-  // (Pre-review this compared the PROMISE to null — always true — so the claude
-  // path unconditionally cleared the model and the restart branch never ran.)
   const clearModel = provider === 'claude' && (await getDefaultModelId()) !== null;
   if (clearModel) {
     await setDefaultModelId(null);
@@ -3918,7 +3073,7 @@ async function afterWorkspaceCredentialSet(
  * with its effective model. This is what makes "install OpenCode, restart, done"
  * flip existing local-model groups onto the harness — the install's restart
  * re-enters startWebchatServer with OpenCode now registered, and this loop flips
- * the unassigned local-default groups + (re)writes each OpenCode group's model
+ * the unassigned local-default groups + (re)writes each pi group's model
  * file. Codex-safe (sync leaves explicit non-managed providers alone) and
  * non-restarting: containers pick up the change on their next spawn. Per-group
  * failures are logged, never fatal to boot.
@@ -3933,19 +3088,12 @@ async function convergeAgentProviders(): Promise<void> {
   }
 }
 
-// ── MCP server registry handlers ──
-//
-// The registry mirrors the models registry: owner-gated CRUD + probe, with a
-// per-agent assignment surface. Secrets discipline: env/headers are accepted
-// on create/update but NEVER returned by any list/read response.
-
 /**
  * Read a skill's current SKILL.md as the AGENT sees it: its own scoped copy wins,
  * otherwise the shared pool (shipped skills, then the user pool). Used to show a
  * patch draft against the version it would actually replace. Empty string when the
  * target can't be resolved — the caller renders that as "new file".
  */
-
 function readSkillBody(agentGroupId: string, skillName: string): string {
   const name = sanitizeSkillName(skillName);
   if (!name) return '';
@@ -3964,13 +3112,6 @@ function readSkillBody(agentGroupId: string, skillName: string): string {
   return '';
 }
 
-/**
- * Pre-import preview: resolve the same body /api/skills/import takes, fetch the
- * files, inspect — write NOTHING. The client shows this before the user
- * confirms; a failed preview falls back to the old text-only confirm.
- */
-
-// Read a skill's SKILL.md (either source) for the viewer/editor.
 // Return the SKILL.md of a skill scoped to one agent. Caller auth (per-group
 // admin) is checked at the route. Scoped skills are always user-editable.
 function getScopedSkillContentHandler(res: ServerResponse, agentGroupId: string, name: string): void {
@@ -4121,9 +3262,7 @@ async function runKeepReview(draft: KeepDraftMeta, group: { id: string; name: st
     // force) between the 202 and the job actually running.
     const fresh = await getSkillDraft(draft.id);
     if (!fresh || fresh.status !== 'pending') {
-      // Both bail-outs below log. They report 'error' to the pressing user's
-      // tab, and until now did so with nothing server-side — so an operator
-      // (or a failing test) saw only the outcome, never the reason.
+      // Both bail-outs below log: the tab only sees 'error', never the reason.
       log.warn('Keep review: draft no longer pending', {
         draftId: draft.id,
         status: fresh?.status ?? '(row gone)',
@@ -4139,8 +3278,7 @@ async function runKeepReview(draft: KeepDraftMeta, group: { id: string; name: st
     try {
       overlaps = await findKeepOverlaps(fresh);
     } catch (err) {
-      // Same posture as the old sync path: the review is advisory — its
-      // failure never blocks a keep.
+      // The review is advisory — its failure never blocks a keep.
       log.warn('Keep overlap review failed — keeping without it', { draftId: draft.id, err: String(err) });
     }
     if (overlaps.length > 0) {
@@ -4213,14 +3351,8 @@ async function keepSkillDraftHandler(
 
 async function pushSubscribe(req: IncomingMessage, res: ServerResponse, userId: string): Promise<void> {
   const db = getDb();
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } }>(req, res);
+  if (body === undefined) return;
   const endpoint = typeof body.endpoint === 'string' ? body.endpoint : '';
   const p256dh = typeof body.keys?.p256dh === 'string' ? body.keys.p256dh : '';
   const auth = typeof body.keys?.auth === 'string' ? body.keys.auth : '';
@@ -4254,14 +3386,8 @@ async function pushSubscribe(req: IncomingMessage, res: ServerResponse, userId: 
 }
 
 async function pushUnsubscribe(req: IncomingMessage, res: ServerResponse, userId: string): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { endpoint?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ endpoint?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.endpoint !== 'string') return json(res, 400, { error: 'Missing endpoint' });
   // Only allow deleting your own subscription.
   await getDb().run(

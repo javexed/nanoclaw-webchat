@@ -1,14 +1,8 @@
 <script setup lang="ts">
 /**
- * Staged-file thumbnails above the composer.
- *
- * Mounted into <div id="file-preview">. Rows arrive with thumbUrl already
- * resolved — files.ts owns the pendingThumbUrls map and revokes those URLs on
- * clear, so minting them here would leak one per re-render.
- *
- * Non-image rows show the paperclip icon and the remove button shows the x
- * icon; both are lucide() SVG strings, bound with v-html as the imperative
- * version assigned them into an innerHTML blob.
+ * Staged-file thumbnails above the composer, mounted into <div id="file-preview">. Rows
+ * arrive with thumbUrl resolved: files.ts owns pendingThumbUrls and revokes them on clear,
+ * so minting URLs here would leak one per re-render. Icons are lucide() SVG strings.
  */
 import { lucide } from '../core/dom.js';
 import { previewRows } from './file-preview-state.js';

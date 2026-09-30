@@ -1,57 +1,18 @@
 <script setup lang="ts">
 /**
- * One approval card — the <li> form, shared by the panel list and the
- * in-transcript card.
- *
- * NOT the toast form. renderApprovalCard() still builds that imperatively: a
- * toast is a transient element appended by the toast layer, it drops the
- * payload block, and it has no container to claim. Keeping one component for
- * two of the three callers is the honest split; forcing the third through it
- * would mean a `toast` prop that changes the element's tag.
- *
- * :class, NOT a conditional v-bind. This is the inverse of the usual case: the
- * imperative version assigned btn.className unconditionally, so an option that
- * is neither approve nor reject emits class="" — and Vue's :class emits the
- * empty attribute too. Omitting it would be the difference here.
- *
- * The busy and error state comes from module refs, not props. respondToApproval
- * used to reach into this card's DOM — disabling its buttons through
- * querySelectorAll and appending a .approval-error div to it — which is an
- * imperative writer on Vue-owned nodes. Keyed by questionId because one
- * approval can be on screen twice (the panel and the transcript).
- *
- * `disabled` reflects to an attribute, so binding it reproduces the imperative
- * assignment exactly (measured in #244) — the diff shows disabled="" on both
- * sides while a response is in flight.
- *
- * The error's v-if leaves an anchor comment when there is no error, the same
- * accepted difference as #246. It vanishes in the state that matters: with an
- * error present both sides render the div and the markup is byte-identical,
- * which is also the proof that appending it imperatively and rendering it
- * declaratively produce the same DOM.
- *
- * The default option pair is Approve/Reject. It is a fallback, not a default
- * argument — a request that supplies options replaces both, and one that
- * supplies an empty array still gets the pair.
+ * One approval card — the <li> form shared by the panel list and the in-transcript
+ * card (the toast form is built by renderApprovalCard). Busy and error state come from
+ * module refs keyed by questionId, because one approval can be on screen twice. A
+ * request with no options, or an empty array, falls back to Approve/Reject.
  */
 import { approvalBusy, approvalErrors } from './approvals-state.js';
 
 /**
- * Triage — why this request is in front of a human.
- *
- * Chips are checkable CLAIMS about the request, not a self-assessment: no risk
- * level, no confidence score. The design already refuses to let the triage
- * model withhold a review (there is no auto-deny), so asking the reader to
- * trust the same model to reassure them would be the same trust with no
- * fail-safe behind it — and the payload is right there to check a claim
- * against.
- *
- * Never-list chips are marked authoritative because they are deterministic.
- * Model chips render alongside them rather than merged, so a disagreement
- * (never-list says credentials, the model never mentioned it) stays visible.
- *
- * The note exists to make ABSENCE legible: with chips on the card, "no chips"
- * must never be mistaken for "screened, nothing found".
+ * Triage — why this request is in front of a human. Chips are checkable CLAIMS, never
+ * a risk level or confidence score: the triage model cannot withhold a review, so it
+ * must not be trusted to reassure either. Never-list chips are authoritative
+ * (deterministic) and render beside model chips so a disagreement stays visible. The
+ * note makes ABSENCE legible: "no chips" must never read as "screened, nothing found".
  */
 const TIER_NOTE: Record<string, string> = {
   unscreened: 'Not screened',

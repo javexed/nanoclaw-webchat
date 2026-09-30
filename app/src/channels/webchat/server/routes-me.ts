@@ -1,10 +1,7 @@
 // ── Current-user routes ──────────────────────────────────────────────────────
-// What the signed-in user can ask about themselves. Two handlers, no helpers
-// and nothing shared beyond RouteCtx — the smallest cluster in server.ts, and
-// the only one that came out with no shared layer at all.
-import type { IncomingMessage, ServerResponse } from 'http';
+// What the signed-in user can ask about themselves.
 
-import { json, readJsonBody } from './http.js';
+import { json, readJsonObject } from './http.js';
 import { getWebchatUserHandle, setWebchatUserHandle } from '../db.js';
 import type { RouteCtx } from '../server.js';
 
@@ -16,14 +13,8 @@ export async function rMeHandleGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise
 
 export async function rMeHandlePut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { handle?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ handle?: unknown }>(req, res);
+  if (body === undefined) return;
   const handle = typeof body.handle === 'string' ? body.handle.trim().toLowerCase() : '';
   const result = await setWebchatUserHandle(userId, handle);
   if (!result.ok) {

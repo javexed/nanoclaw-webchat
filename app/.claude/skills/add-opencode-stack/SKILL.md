@@ -70,11 +70,9 @@ Easy to get wrong:
 - **Leave `OPENCODE_AUTH_MODE` unset.** It exists for the ChatGPT stub; local
   endpoints use the API-key path with the placeholder.
 
-**Per-group models stay per-group.** The old forked payload read a per-agent
-`local-model.json`; upstream's provider reads the group's configured model
-instead, which webchat writes from the same pick, so two groups can still run
-different local models. Pi reads the file. Do not re-fork the provider to change
-any of this.
+**Per-group models stay per-group.** Upstream's provider reads the group's
+configured model, which webchat writes from the model pick, so two groups can
+run different local models. Do not re-fork the provider to change any of this.
 
 ## 3. Let the container reach the host directly
 

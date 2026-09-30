@@ -16,4 +16,26 @@ describe('spawn failure notice', () => {
     expect(spawnFailureNotice(new Error('401 from the gateway'))).toMatch(/credential gateway is unreachable/);
     expect(spawnFailureNotice(undefined)).toMatch(/credential gateway is unreachable/);
   });
+
+  it('says a start was refused and in what category, but keeps the reason itself (local paths) out of the room', () => {
+    const refused = spawnFailureNotice(
+      Object.assign(new Error('session realization failed: denied-by-policy'), {
+        kind: 'denied-by-policy',
+        retryable: false,
+        detail: 'slot /workspace/project: propose mode could not copy c:\\proj: EPERM\nstack…',
+      }),
+    );
+    expect(refused).toMatch(/my start was refused \(policy\)/);
+    expect(refused).not.toMatch(/credential gateway|stack|workspace|proj|EPERM/);
+    expect(
+      spawnFailureNotice(
+        Object.assign(new Error('x'), { kind: 'spec-invalid', retryable: false, detail: '/home/u/x' }),
+      ),
+    ).toMatch(/refused \(invalid session setup\)/);
+    const image = spawnFailureNotice(
+      Object.assign(new Error('x'), { kind: 'image-unavailable', retryable: true, detail: 'pulling /var/lib/x' }),
+    );
+    expect(image).toMatch(/agent image isn't ready on the machine I run on yet\./);
+    expect(image).not.toMatch(/var\/lib/);
+  });
 });

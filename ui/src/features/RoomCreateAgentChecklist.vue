@@ -1,21 +1,10 @@
 <script setup lang="ts">
 /**
- * The room-create form's "which existing agents" checklist — seventeenth
- * island.
- *
- * Mounted into <ul id="room-create-existing-agents">, exclusively owned by this
- * module.
- *
- * Same contract as AddAgentPicker: the ticks live in the DOM because the submit
- * handler reads them with querySelectorAll. These rows carry no change
- * listener at all — the imperative version attached none either, so this island
- * adds no listeners to the boot set.
- *
- * Two things copied rather than harmonised, both because changing them would be
- * a behaviour change this phase does not make:
- *   - the label is agent.name with a '' fallback, not `name || id`
- *   - the empty note keys off whether ANY agent exists, not off the filtered
- *     list, so every-agent-archived renders an empty <ul> with no note
+ * The room-create form's "which existing agents" checklist, mounted into
+ * <ul id="room-create-existing-agents">. The ticks live in the DOM because the submit
+ * handler reads them there (as in AddAgentPicker); rows carry no change listener. The
+ * label is agent.name with a '' fallback, and the empty note keys off whether ANY agent
+ * exists, so an all-archived list renders an empty <ul> with no note.
  */
 import { computed } from 'vue';
 import { createAgentAnyExist, createAgentCandidates } from './agent-lists-state.js';

@@ -1,26 +1,11 @@
 /**
- * The local-model wiring file, and the rename that gave it its name.
+ * The local-model wiring file (`local-model.json`, legacy `opencode-model.json`)
+ * that `writeLocalModelForAgent` writes for pi groups only. Two-sided contract:
  *
- * `writeLocalModelForAgent` bridges the webchat model registry to whichever
- * LOCAL harness a group runs on. The file used to be `opencode-model.json`,
- * from when OpenCode was its only reader; pi then inherited the name, and a
- * third harness would have inherited the misnomer too.
- *
- * The rename is only safe because of a two-sided contract, and both sides are
- * asserted here:
- *
- *   - the WRITER emits only the new name and REMOVES the legacy one, so a
- *     reader's fallback can never serve wiring this function has since changed;
+ *   - the WRITER emits only the new name and REMOVES the legacy one — the
+ *     clearing path too, or the readers' fallback serves stale wiring;
  *   - the READERS (skill payloads, tested by their own shape) accept either
- *     name, new first, so a file written before the rename still resolves.
- *
- * OpenCode is no longer one of those readers: upstream's add-opencode owns that
- * provider now and reads the model from OPENCODE_MODEL instead, so pi is the
- * only reader left.
- *
- * The clearing path is the sharp edge: it has to remove BOTH names. Clearing
- * only the new one would leave a stale legacy file that the readers' fallback
- * happily picks up — wiring that outlives the reason it existed.
+ *     name, new first.
  */
 import fs from 'fs';
 import os from 'os';
@@ -131,6 +116,20 @@ describe('local-model wiring file', () => {
     });
   });
 
+  it('writes nothing for an OpenCode group — its provider reads container_configs.model', async () => {
+    const models = await seed('ollama', 'opencode');
+    const dir = await sharedDir();
+    fs.writeFileSync(path.join(dir, 'local-model.json'), '{"provider":"ollama"}');
+
+    await models.writeLocalModelForAgent(GROUP);
+
+    expect(fs.existsSync(path.join(dir, 'local-model.json'))).toBe(false);
+    fs.rmSync(path.join((await import('../../config.js')).DATA_DIR, 'v2-sessions', GROUP), {
+      recursive: true,
+      force: true,
+    });
+  });
+
   it('exports both names, so the readers and the writer cannot drift apart', async () => {
     const models = await import('./models.js');
     expect(models.LOCAL_MODEL_FILE).toBe('local-model.json');
@@ -151,15 +150,9 @@ describe('the skill payloads read BOTH names, new first', () => {
     },
   );
 
-  // OpenCode used to be the second reader, from a forked host provider this
-  // repo shipped as a skill payload. Upstream's own add-opencode now owns the
-  // provider and takes the model from the group's container config, else
-  // OPENCODE_MODEL in .env (both written by syncAgentProviderForAssignedModel),
-  // so there is no opencode reader of this file any more — see the note on
-  // writeLocalModelForAgent. Asserting the payload is GONE keeps the fork from
-  // creeping back: a `files/` directory here means someone re-forked the
-  // provider, and would silently shadow upstream's payload at install time
-  // (nc:copy skips a destination that already exists).
+  // Upstream's add-opencode owns the provider. A `files/` directory here would
+  // be a re-forked provider silently shadowing upstream's payload at install
+  // time (nc:copy skips a destination that already exists).
   it('add-opencode-stack ships no forked payload — upstream owns the provider', () => {
     const dir = path.join(process.cwd(), '.claude/skills/add-opencode-stack/files');
     expect(fs.existsSync(dir), `${dir} must not exist — upstream's add-opencode owns the provider`).toBe(false);

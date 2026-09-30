@@ -1,11 +1,9 @@
 /**
  * GET /api/skills — agent-scoped skills in the registry list.
  *
- * The pool endpoints only listed shipped + user-pool skills, so a skill wired
- * to ONE agent (learned-and-kept, or a per-agent import) never appeared on the
- * Skills page. The route now appends every scoped skill across the agents the
- * caller administers, each carrying agentGroupId + agentName + the webchat
- * rooms that agent is wired to (so the UI can pill it with a location).
+ * Besides shipped + user-pool skills, the route lists every scoped skill (wired
+ * to ONE agent) across the agents the caller administers, each with
+ * agentGroupId + agentName + that agent's webchat rooms.
  *
  * Visibility mirrors the topology / skill-drafts rule (listAgentsForUser:
  * owner → all agents, otherwise hasAdminPrivilege per group): a scoped admin
@@ -17,28 +15,17 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import type { WebchatServer } from './server.js';
-
-const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
+import type { DbDriver } from '../../db/driver.js';
+import { httpRequest, loadServer, noopHooks, portOf, PROXY_ENV, resetServerModules, seeder } from './test-server.js';
 
 const AG_A = 'ag-slist-a';
 const AG_B = 'ag-slist-b';
 
-beforeEach(async () => {
-  vi.resetModules();
-});
-
 afterEach(async () => {
-  vi.unstubAllEnvs();
-  try {
-    const conn = await import('../../db/connection.js');
-    await conn.closeDb();
-  } catch {
-    // ignore
-  }
-  vi.resetModules();
+  await resetServerModules();
   // Scoped-skill fixtures land under the real DATA_DIR (cwd/data) — remove
   // exactly what these tests can create.
   for (const g of [AG_A, AG_B]) {
@@ -46,68 +33,9 @@ afterEach(async () => {
   }
 });
 
-async function loadServerWithEnv(env: Record<string, string | undefined>) {
-  for (const [k, v] of Object.entries(env)) {
-    if (v === undefined) vi.stubEnv(k, '');
-    else vi.stubEnv(k, v);
-  }
-  vi.resetModules();
-  const conn = await import('../../db/connection.js');
-  await conn.initTestDb();
-  const migrations = await import('../../db/migrations/index.js');
-  await migrations.runMigrations(conn.getDb());
-  return { server: await import('./server.js'), conn };
-}
-
-async function httpRequest(
-  port: number,
-  method: string,
-  path_: string,
-  headers: Record<string, string> = {},
-): Promise<{ status: number; body: string }> {
-  const http = await import('http');
-  return new Promise((resolve, reject) => {
-    const r = http.request({ host: '127.0.0.1', port, path: path_, method, headers }, (res) => {
-      let buf = '';
-      res.on('data', (c) => (buf += c));
-      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: buf }));
-    });
-    r.on('error', reject);
-    r.end();
-  });
-}
-
-const portOf = (wc: { http: { address: () => unknown } }): number => {
-  const a = wc.http.address();
-  return typeof a === 'object' && a ? (a as { port: number }).port : 0;
-};
-
 const now = '2026-07-21T00:00:00.000Z';
-async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
-  const user = async (id: string) =>
-    await db.run(
-      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
-      id,
-      now,
-    );
-  const group = async (id: string, name: string) =>
-    await db.run(
-      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      id,
-      name,
-      id,
-      now,
-    );
-  const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
-    await user(uid);
-    await db.run(
-      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
-      uid,
-      r,
-      g,
-      now,
-    );
-  };
+async function seed(db: DbDriver): Promise<void> {
+  const { group, role } = seeder(db, now);
   // Fresh DBs ship with the MCP/skills marketplace disabled (migration 131);
   // the /api/skills prefix gate would 403 everything otherwise.
   await db.exec(`UPDATE webchat_settings SET marketplace_disabled = 0`);
@@ -146,18 +74,12 @@ type SkillEntry = {
 };
 
 describe('GET /api/skills — scoped-skill aggregation', () => {
-  let server: Awaited<ReturnType<typeof loadServerWithEnv>>['server'];
+  let server: typeof import('./server.js');
   let wc: WebchatServer;
   let port: number;
 
   beforeEach(async () => {
-    const loaded = await loadServerWithEnv({
-      WEBCHAT_HOST: '127.0.0.1',
-      WEBCHAT_PORT: '0',
-      WEBCHAT_TOKEN: '',
-      WEBCHAT_TRUSTED_PROXY_IPS: '127.0.0.1',
-      WEBCHAT_TRUSTED_PROXY_HEADER: 'x-forwarded-user',
-    });
+    const loaded = await loadServer(PROXY_ENV);
     server = loaded.server;
     await seed(loaded.conn.getDb());
     writeScopedSkill(AG_A, 'slist-scoped-a', 'Scoped to Alpha');

@@ -1,26 +1,18 @@
 // ── Threads ──────────────────────────────────────────────────────────────────
 // Per-room threads: the room list disclosure, the thread switcher, and the
-// create / rename / delete / sync lifecycle. Second-loosest cluster in
-// legacy.js by measured coupling.
-//
-// Injection for the legacy helpers it still reaches back to, as in the
-// earlier phases; these become ordinary imports once transcript comes out.
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+// create / rename / delete / sync lifecycle.
+import { $, cssEscape } from '../core/dom.js';
 import { beginTranscriptSwitch } from './transcript.js';
 import { UNDO_SECONDS } from '../core/constants.js';
 import { state } from '../core/state.js';
-import { showToast, toastError } from '../core/toast.js';
-import { authFetch, apiJson } from '../core/api.js';
+import { showToast } from '../core/toast.js';
+import { apiJson } from '../core/api.js';
 import { createApp } from 'vue';
 import ThreadSwitcher from './ThreadSwitcher.vue';
 import { openThreadMenuId, threadUndo } from './room-list-state.js';
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideThreadsDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
+/** Supplied by provideThreadsDeps in composition-root.ts. `any` marks a signature not
+ *  yet typed, not an opt-out of checking. */
 export interface ThreadsDeps {
   hideOtherFullViews: () => any;
   joinRoom: (a0?: any, a1?: any, a2?: any, a3?: any) => any;
@@ -31,7 +23,7 @@ export interface ThreadsDeps {
 
 const deps = {} as ThreadsDeps;
 
-/** Wire the legacy helpers this module calls. Call once at startup. */
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 export function provideThreadsDeps(provided: Partial<ThreadsDeps>): void {
   Object.assign(deps, provided);
 }
@@ -59,46 +51,29 @@ export function toggleRoomThreads(roomId?: any) {
 
 export async function loadRoomThreads(roomId?: any) {
   try {
-    const r = await authFetch(`/api/rooms/${encodeURIComponent(roomId!)}/threads`);
-    state.threadCache.set(roomId, r.ok ? ((await r.json()) ?? []) : []);
+    state.threadCache.set(roomId, (await apiJson(`/api/rooms/${encodeURIComponent(roomId!)}/threads`)) ?? []);
   } catch {
     state.threadCache.set(roomId, []);
   }
 }
 
-// Render an expanded non-active room's thread rows into its .thread-list host.
-// Tapping a row enters that room AND the thread in a single clean join.
-
 export async function loadThreadList(roomId?: any) {
   try {
-    const r = await authFetch(`/api/rooms/${encodeURIComponent(roomId!)}/threads`);
+    const threads = await apiJson(`/api/rooms/${encodeURIComponent(roomId!)}/threads`);
     if (roomId !== state.currentRoom) return; // raced past a room switch
-    if (!r.ok) {
-      state.threadCache.set(roomId, []);
-      // 404 = the room is gone (e.g. deleted in another tab / this session).
-      // That's stale client state, not a failure — stay quiet; the room list
-      // refresh will drop it. Only real errors get a toast.
-      if (r.status !== 404) showToast('Could not load threads', { kind: 'error' });
-      return;
-    }
-    const threads = await r.json();
     const list = Array.isArray(threads) ? threads : [];
     state.threadCache.set(roomId, list);
     for (const t of list) if (t.unread && t.thread_id !== state.currentThread) state.threadUnread.add(t.thread_id);
     updateThreadSyncControls(); // refresh the breadcrumb title (covers rename + late load)
-  } catch {
+  } catch (err: any) {
     if (roomId !== state.currentRoom) return;
     state.threadCache.set(roomId, []);
-    showToast('Could not load threads', { kind: 'error' });
+    // 404 = the room is gone (e.g. deleted in another tab / this session).
+    // That's stale client state, not a failure — stay quiet; the room list
+    // refresh will drop it. Only real errors get a toast.
+    if (err?.status !== 404) showToast('Could not load threads', { kind: 'error' });
   }
 }
-
-function threadGlyph(kind?: any) {
-  return kind === 'agent' ? '@' : '#';
-}
-
-// Render the thread tree under the active room's sidebar row. Called from
-// renderRooms (so it survives room-list re-renders) and on thread changes.
 
 function openThread(threadId?: any) {
   if (!state.currentRoom || threadId === state.currentThread) return;
@@ -126,7 +101,7 @@ function openThread(threadId?: any) {
 
 // The breadcrumb + pull/push/delete controls only make sense inside a topic
 // thread — the main chat ('main') is the trunk both directions sync against, so
-// it has nothing of its own to pull/push. See thread-context-sync.md.
+// it has nothing of its own to pull/push. See docs/webchat/threads.md §8.
 export function updateThreadSyncControls() {
   const inThread = !!(state.currentRoom && state.currentThread && state.currentThread !== 'main');
   // The header thread switcher shows whenever a room is open (CSS gates it to
@@ -163,8 +138,8 @@ export async function createThread(title?: any, roomId = state.currentRoom) {
       body: { title },
     });
     // Create AND enter the new (blank) thread — but cleanly, via a SINGLE WS
-    // join, so main's transcript can't bleed in (the old joinRoom+openThread
-    // double-join race). Same room → openThread (one join into the thread);
+    // join, so main's transcript can't bleed in (a joinRoom+openThread double
+    // join races). Same room → openThread (one join into the thread);
     // another room → joinRoom straight into the thread.
     if (roomId === state.currentRoom) {
       await loadThreadList(roomId); // so the tree shows it as active
@@ -176,22 +151,6 @@ export async function createThread(title?: any, roomId = state.currentRoom) {
   } catch (err) {
     showToast('Could not create thread: ' + ((err as any)?.message || err), { kind: 'error' });
   }
-}
-
-// Inline "new thread" input on a NON-active room's row — dropped onto its own
-// full-width line via the reused .thread-list wrap, so it's reachable from the
-// room list on both desktop and mobile. Submit creates the thread in that room
-// and switches into it.
-// Shared inline thread-name input (create + rename). Builds the styled input and
-// wires the common behavior — Enter=submit, Escape=cancel, click-stop, blur, and
-// autofocus — so the four call sites only supply value/aria + their onSubmit /
-// onCancel. `blurSubmits` commits on blur (the switcher) instead of cancelling;
-// `selectAll` pre-selects the text (rename). An empty or unchanged value cancels.
-
-
-
-function closeThreadMenus() {
-  document.querySelectorAll('.thread-menu').forEach((m) => m.remove());
 }
 
 // In-room thread switcher (the chat-header '#' button). The sidebar thread tree
@@ -244,14 +203,6 @@ export function openThreadSwitcher() {
   setTimeout(() => document.addEventListener('click', closeThreadSwitcher, { once: true }), 0);
 }
 
-// Open the inline rename input on a thread row (no native prompt() — DESIGN.md §4).
-function startThreadRename(thread?: any) {
-  state.threadRenaming = thread.thread_id;
-  state.threadCreating = false;
-}
-
-// Build a thread row showing an inline rename input, mirroring the create input.
-
 async function submitThreadRename(threadId?: any, title?: any) {
   try {
     await apiJson(`/api/rooms/${encodeURIComponent(state.currentRoom!)}/threads/${encodeURIComponent(threadId)}`, {
@@ -267,8 +218,8 @@ async function submitThreadRename(threadId?: any, title?: any) {
 // Thread removal uses the same sliding-undo pattern as draft Keep/Discard: the
 // row swaps to a countdown; the DELETE only fires when the bar drains. Undo
 // restores the row untouched, and a tab closed mid-countdown deletes nothing —
-// the safe default. Falls back to the old confirm modal when no row is on
-// screen to host the countdown.
+// the safe default. Falls back to a confirm modal when no row is on screen to
+// host the countdown.
 export async function deleteThreadConfirm(thread?: any, rowEl?: any) {
   const commit = async () => {
     try {
@@ -294,9 +245,8 @@ export async function deleteThreadConfirm(thread?: any, rowEl?: any) {
     if (confirmed) await commit();
     return;
   }
-  // Measured BEFORE the swap, as armUndo did — after would read the timer's own
-  // width. The .deleting class and the restore-on-Undo both come from the row
-  // rendering the armed branch now, so neither is applied by hand.
+  // Measured BEFORE the swap — after would read the timer's own width. The
+  // .deleting class and restore-on-Undo come from the row's armed branch.
   const width = (row as HTMLElement).getBoundingClientRect().width;
   const id = thread.thread_id;
   threadUndo.value = {
@@ -312,7 +262,7 @@ export async function deleteThreadConfirm(thread?: any, rowEl?: any) {
   };
 }
 
-/** The countdown length, read through the dep threads.ts already owns. */
+/** The countdown length (UNDO_SECONDS). */
 export function getUndoSeconds(): number {
   return UNDO_SECONDS;
 }
@@ -336,12 +286,10 @@ export async function syncThread(direction?: any) {
   });
   if (!ok) return;
   try {
-    const r = await authFetch(
+    const { copied = 0 } = await apiJson(
       `/api/rooms/${encodeURIComponent(room)}/threads/${encodeURIComponent(thread)}/${direction}`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+      { method: 'POST' },
     );
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
-    const { copied = 0 } = await r.json();
     if (copied === 0) showToast(isPull ? 'Nothing new to pull' : 'Nothing new to push', { kind: 'info' });
     else showToast(`Copied ${copied} message${copied === 1 ? '' : 's'}`, { kind: 'success' });
   } catch (err) {
@@ -349,65 +297,9 @@ export async function syncThread(direction?: any) {
   }
 }
 
-// Moved in with the switcher: nothing outside threads called it.
-// Replace the "+ New thread" row with an inline name input (no native prompt).
-
-function makeThreadNameInput({
-  value = '',
-  placeholder = 'Thread name…',
-  ariaLabel,
-  selectAll = false,
-  blurSubmits = false,
-  onSubmit,
-  onCancel,
-}: any) {
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'thread-add-input';
-  input.maxLength = 80;
-  if (value) input.value = value;
-  else input.placeholder = placeholder;
-  if (ariaLabel) input.setAttribute('aria-label', ariaLabel);
-  let settled = false;
-  const cancel = () => {
-    if (settled) return;
-    settled = true;
-    onCancel?.();
-  };
-  const submit = () => {
-    if (settled) return;
-    const title = input.value.trim();
-    if (!title || title === value) return cancel(); // empty or unchanged → cancel
-    settled = true;
-    onSubmit(title);
-  };
-  input.addEventListener('click', (e) => e.stopPropagation());
-  input.addEventListener('keydown', (e) => {
-    e.stopPropagation();
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      submit();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      cancel();
-    }
-  });
-  input.addEventListener('blur', blurSubmits ? submit : cancel);
-  setTimeout(() => {
-    input.focus();
-    if (selectAll) input.select();
-  }, 0);
-  return input;
-}
-
 /**
- * The thread actions the RoomList island calls. Bundled as one object because
- * the island takes them as a single `thread` prop — twelve separate props for
- * one cohesive surface reads worse and drifts more easily.
- *
- * renderThreadList/renderRoomThreads used to be the re-render trigger after
- * each of these; the island re-renders from state instead, so the calls that
- * only existed to repaint are gone.
+ * The thread actions the RoomList island calls, bundled as its single `thread`
+ * prop. The island re-renders from state, so none of these repaint by hand.
  */
 export const threadActions = {
   open: (threadId: string) => openThread(threadId),

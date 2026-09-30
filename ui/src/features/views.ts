@@ -2,7 +2,8 @@
 // The full-screen surfaces and the stack that manages them: Manage, Dashboard,
 // Topology, Journey and the wiring Matrix, plus openView/closeView and the
 // hide-the-others plumbing every panel calls when it takes over the screen.
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { $, lucide, esc } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { closeDoc, loadDocs } from './docs.js';
 import { closeRouteDetail } from './routing.js';
 import { renderRoutingSetup } from './settings.js';
@@ -12,7 +13,7 @@ import { routingAvailable } from './routing-state.js';
 import { agentFilter, agentSortAz } from './agent-list-state.js';
 import { permsActive } from './perms-list-state.js';
 import { showToast, toastError } from '../core/toast.js';
-import { wizardBusy } from './wizard.js';
+import './wizard.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
 import {
@@ -40,16 +41,10 @@ import { matrixAgents, matrixEdges, matrixRooms } from './matrix-state.js';
 import JourneyList from './JourneyList.vue';
 import { journeyEvents, journeyFilter, journeyPhase } from './journey-state.js';
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideViewsDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
+/** Supplied by provideViewsDeps in composition-root.ts. `any` marks a signature not
+ *  yet typed, not an opt-out of checking. */
 export interface ViewsDeps {
-  /** Still in legacy: walks the topology graph from a focus node. */
   closeAllDetailDrawers: () => any;
-  getAfterDetailClose: () => any;
   getDetailRouterOpen: () => any;
   loadRoutingTab: () => any;
   probeRoutingAvailability: () => any;
@@ -59,11 +54,17 @@ export interface ViewsDeps {
 
 const deps = {} as ViewsDeps;
 
-/** Wire the legacy helpers this module calls. Call once at startup. */
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 export function provideViewsDeps(provided: Partial<ViewsDeps>): void {
   Object.assign(deps, provided);
 }
 
+// ── View router ────────────────────────────────────────────────────────────
+// Overlay surfaces (dashboard, permissions, …) stacked above the base
+// rooms/chat view. Opening a surface pushes a history entry so the OS/browser
+// back gesture closes it instead of exiting the PWA; the popstate handler below
+// unwinds the stack. Programmatic closes (X buttons, in-app back) go through
+// closeView() so the stack and history stay in sync.
 export function openView(name?: any, teardown?: any) {
   viewStack.push({ name, teardown });
   history.pushState({ viewDepth: viewStack.length }, '');
@@ -75,6 +76,11 @@ export function closeView(name?: any) {
   history.go(-(viewStack.length - idx)); // drives popstate, which runs teardown
 }
 
+// Open a full-screen view. If a detail drawer is open it owns the top of the view
+// stack, so close it FIRST and defer opening the full view until the drawer's
+// ASYNC router teardown finishes. Otherwise the two happen in one tick: the view
+// is pushed, then the drawer's history.go unwinds it too — so the first click
+// just closed the drawer and you had to click again. No drawer open → immediate.
 export function openFullView(fn?: any) {
   if (deps.getDetailRouterOpen()) {
     deps.setAfterDetailClose(fn);
@@ -159,8 +165,18 @@ export function switchManageTab(tab?: any) {
   }
 }
 
+// ── Dashboard ─────────────────────────────────────────────────────────────
+// On-open + manual refresh only — no background polling. The dashboard
+// surfaces a snapshot of webchat-internal state (rooms, sessions, agents,
+// 24h messages) plus host-level system metrics for owner-only callers.
+// Non-owner admins see a graceful-degrade view: their visible agents,
+// session count, channel breakdown — no system info or busiest-rooms.
 let dashboardActive = false;
 
+// The full-width surfaces (dashboard/permissions/topology/matrix) are flex
+// siblings of #chat — only one may be visible at a time, or they'd split the
+// pane. Each opener hides its peers synchronously (the router stack still
+// unwinds normally on back).
 export function hideOtherFullViews(keep?: any) {
   // `manage` (the Agents/Models pane) is a full surface like the rest — it must
   // close when another view opens, or it lingers on top with the new view
@@ -261,6 +277,16 @@ export function toggleTopology() {
   else openTopology();
 }
 
+// ── Journey (learning timeline) ─────────────────────────────────────────────
+// A day-grouped, newest-first feed of what each agent learned: proposed /
+// kept / discarded / revised / archived. Data: GET /api/learning/timeline
+// (admin-scoped server-side, cursor-paged). Kept and revised rows open the
+// existing scoped SKILL.md editor; the newest revision of a live skill offers
+// Revert through the existing revert endpoint. Everything else is a record.
+// Client-side visibility filters over the loaded events (same posture as the
+// Skills search — no refetch). Transient view state: reset on every open, not
+// persisted. `preset` (agentGroupId/agentName/skill) is the 'View history'
+// deep-link — views aren't URL-routed, so it travels as in-memory args.
 let journeyActive = false;
 
 const journeyAgents = new Map(); // agentGroupId → agentName, from loaded events
@@ -331,8 +357,7 @@ export async function refreshJourney(reset?: any) {
     const events = data.events || [];
     noteJourneyAgents(events);
     // Append, never replace: 'Load more' pages in older events, and the day
-    // headers are derived from the accumulated list rather than remembered
-    // across calls the way journeyLastDay had to be.
+    // headers are derived from the accumulated list.
     journeyEvents.value = reset ? events : [...journeyEvents.value, ...events];
     journeyCursor = data.nextBefore || null;
     if (more) more.hidden = !journeyCursor;
@@ -366,34 +391,32 @@ function journeyMeta(ev?: any) {
 let journeyApp: ReturnType<typeof createApp> | null = null;
 
 function mountJourney(): void {
-  if (journeyApp) return;
-  const host = $('#journey-list');
-  if (!host) return;
-  journeyApp = createApp(JourneyList, {
-    verbs: JOURNEY_VERBS,
-    meta: journeyMeta,
-    onOpen: (ev: any) => openScopedSkillEditor(ev.agentGroupId, ev.skillName),
-    onRevert: async (ev: any) => {
-      const ok = await showConfirmModal({
-        title: `Revert ${ev.skillName}?`,
-        body: 'Restores the previous version. The current version is kept in history.',
-        confirmLabel: 'Revert',
-        destructive: true,
-      });
-      if (!ok) return;
-      try {
-        await apiJson(
-          `/api/agents/${encodeURIComponent(ev.agentGroupId)}/skills/scoped/${encodeURIComponent(ev.skillName)}/revert`,
-          { method: 'POST' },
-        );
-        showToast(`Reverted ${ev.skillName}`, { kind: 'success' });
-        void refreshJourney(true);
-      } catch (err) {
-        toastError(err, 'Revert failed');
-      }
-    },
-  });
-  journeyApp.mount(host);
+  journeyApp ??= mountIsland('#journey-list', () =>
+    createApp(JourneyList, {
+      verbs: JOURNEY_VERBS,
+      meta: journeyMeta,
+      onOpen: (ev: any) => openScopedSkillEditor(ev.agentGroupId, ev.skillName),
+      onRevert: async (ev: any) => {
+        const ok = await showConfirmModal({
+          title: `Revert ${ev.skillName}?`,
+          body: 'Restores the previous version. The current version is kept in history.',
+          confirmLabel: 'Revert',
+          destructive: true,
+        });
+        if (!ok) return;
+        try {
+          await apiJson(
+            `/api/agents/${encodeURIComponent(ev.agentGroupId)}/skills/scoped/${encodeURIComponent(ev.skillName)}/revert`,
+            { method: 'POST' },
+          );
+          showToast(`Reverted ${ev.skillName}`, { kind: 'success' });
+          void refreshJourney(true);
+        } catch (err) {
+          toastError(err, 'Revert failed');
+        }
+      },
+    }),
+  );
 }
 
 /** Record the agents seen in a page, for the filter dropdown. */
@@ -405,6 +428,9 @@ function noteJourneyAgents(events: any[]) {
   }
 }
 
+// ── Journey filters ─────────────────────────────────────────────────────────
+// Agent select options come from the loaded feed (plus a deep-linked agent),
+// so no extra endpoint is needed; they grow as 'Load more' pages in.
 export function renderJourneyFilterControls() {
   const sel = $('#journey-agent-filter') as HTMLInputElement;
   if (sel) {
@@ -430,8 +456,8 @@ export function renderJourneyFilterControls() {
 
 export function applyJourneyFilters() {
   const f = journeyFilter.value;
-  // A NEW object, not the same one: legacy mutates its filter in place, and Vue
-  // tracks the ref assignment rather than a mutation behind it.
+  // A NEW object, not the same one: the filter controls mutate it in place, and
+  // the island tracks the ref assignment rather than a mutation behind it.
   journeyFilter.value = { agent: f.agent || '', kind: f.kind || '', skill: f.skill || '' };
   // #journey-no-match sits outside the mount point, so the counts are derived
   // here rather than read back off the rendered rows.
@@ -451,12 +477,7 @@ export async function refreshTopology() {
   if (!canvas) return;
   canvas.textContent = 'Loading…';
   try {
-    const r = await authFetch('/api/topology');
-    if (!r.ok) {
-      canvas.textContent = 'Could not load topology.';
-      return;
-    }
-    renderTopology(await r.json());
+    renderTopology(await apiJson('/api/topology'));
   } catch {
     canvas.textContent = 'Could not load topology.';
   }
@@ -664,6 +685,10 @@ function renderTopology(data?: any) {
   canvas.appendChild(svg);
 }
 
+// Open the settings drawer for a clicked topology node. The detail drawers are
+// fixed overlays (z-index 110), so they layer over the graph and closing one
+// returns here. fetchAgents/fetchModels are lazy so the lookup data exists even
+// when the user jumped straight to the topology view.
 async function openTopologyItem(kind?: any, id?: any) {
   try {
     if (kind === 'room') {
@@ -720,22 +745,16 @@ export function toggleMatrix() {
 export async function refreshMatrix() {
   const canvas = $('#matrix-canvas');
   if (!canvas) return;
-  // `#matrix-canvas` is BOTH the placeholder target and the island's mount
-  // host, so writing textContent into it destroys the mounted app's DOM — and
-  // mountMatrix() refuses to rebuild while matrixApp is set. Painting the
-  // placeholder unconditionally therefore left "Loading…" on screen forever
-  // from the second render on (reopen the view, or press Refresh). Only paint
-  // it when nothing is mounted; tear the island down first on the paths that
-  // must replace it with text.
+  // `#matrix-canvas` is BOTH the placeholder target and the island's mount host,
+  // and mountMatrix() will not rebuild while matrixApp is set — so paint the
+  // placeholder only when nothing is mounted, and unmount first on text paths.
   if (!matrixApp) canvas.textContent = 'Loading…';
   const fail = () => {
     unmountMatrix();
     canvas.textContent = 'Could not load wiring.';
   };
   try {
-    const r = await authFetch('/api/topology');
-    if (!r.ok) return fail();
-    renderMatrix(await r.json());
+    renderMatrix(await apiJson('/api/topology'));
   } catch {
     fail();
   }
@@ -744,20 +763,11 @@ export async function refreshMatrix() {
 let matrixApp: ReturnType<typeof createApp> | null = null;
 
 function mountMatrix(): void {
-  if (matrixApp) return;
-  const host = $('#matrix-canvas');
-  if (!host) return;
-  matrixApp = createApp(WiringMatrix);
-  matrixApp.mount(host);
+  matrixApp ??= mountIsland('#matrix-canvas', () => createApp(WiringMatrix));
 }
 
-/**
- * Drop the island so the next open mounts a fresh one.
- *
- * Load-bearing: without it, `matrixApp` stayed set for the life of the page
- * while the host's DOM got wiped by the placeholder, and the mount guard then
- * refused to rebuild — the view never recovered short of a reload.
- */
+/** Drop the island so the next open mounts a fresh one; the mount guard will
+ *  not rebuild while `matrixApp` is set. */
 function unmountMatrix(): void {
   if (!matrixApp) return;
   matrixApp.unmount();
@@ -771,19 +781,18 @@ function renderMatrix(data?: any) {
   matrixWired.value = new Set((data.edges || []).map((e: any) => `${e.room}|${e.agent}`));
   matrixRooms.value = rooms;
   matrixAgents.value = agents;
-  // A COPY, not the same Set: legacy mutates matrixWired.value in place when a cell
-  // toggles, and a shared reference would leave the island unaware — Vue tracks
-  // the ref assignment, not a mutation behind it. refreshMatrixCells() below
-  // re-syncs after every toggle.
+  // A COPY, not the same Set: the cell handler mutates matrixWired in place, which
+  // the island would not see. refreshMatrixCells() re-syncs after every toggle.
   matrixEdges.value = new Set(matrixWired.value);
   mountMatrix();
 }
 
-/** Re-read the edge set after legacy toggles a cell. */
+/** Re-read the edge set after a cell toggles. */
 export function refreshMatrixCells(): void {
   matrixEdges.value = new Set(matrixWired.value);
 }
 
+// ── Token usage (Dashboard, owner-only) ──
 let usageRangeDays = 7;
 
 let usageWired = false;
@@ -806,24 +815,14 @@ function mountUsage(): void {
   }
 }
 
-/**
- * Token usage — a DASHBOARD panel now, not a Settings section. Usage is a
- * thing you check, not a thing you configure; it sat in Settings because
- * that was the only owner-gated surface at the time. The endpoint stays
- * owner-only and a 403 hides the whole panel, so the move changes surface,
- * not audience.
- */
+/** Token usage — a DASHBOARD panel: something you check, not configure.
+ *  Owner-only endpoint; a 403 hides the whole panel. */
 export async function renderUsagePanel() {
   const section = $('#dash-usage-section');
   if (!section) return;
   let data = null;
   try {
-    const r = await authFetch('/api/webchat/usage?days=' + usageRangeDays);
-    if (!r.ok) {
-      section.hidden = true; // 403 for non-owners → hide the whole section
-      return;
-    }
-    data = await r.json();
+    data = await apiJson('/api/webchat/usage?days=' + usageRangeDays); // 403 for non-owners → hide the whole section
   } catch {
     section.hidden = true;
     return;
@@ -922,11 +921,7 @@ export function syncManageSortIcon() {
 
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // The full-view stack: opening, closing and the back affordance.
-//
-// A function rather than module-scope code: legacy.js runs its blocks in source
-// order around initApp(), so relocating them to another module's top level would
-// silently re-order them. legacy calls wireViewsPanel() at the exact line the
-// first block occupied, so execution order is unchanged.
+// Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
 export function wireViewsPanel(): void {
   $<HTMLButtonElement>('#journey-more')?.addEventListener('click', () => void refreshJourney(false));
@@ -960,16 +955,16 @@ export function wireViewsPanel(): void {
     cell.classList.add('pending');
     cell.classList.toggle('on', wantWired); // optimistic
     try {
-      const r = wantWired
-        ? await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/agents`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ kind: 'existing', id: agentId }),
-          })
-        : await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/agents/${encodeURIComponent(agentId)}`, {
-            method: 'DELETE',
-          });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+      if (wantWired) {
+        await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/agents`, {
+          method: 'POST',
+          body: { kind: 'existing', id: agentId },
+        });
+      } else {
+        await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/agents/${encodeURIComponent(agentId)}`, {
+          method: 'DELETE',
+        });
+      }
       matrixWired.value[wantWired ? 'add' : 'delete'](`${roomId}|${agentId}`);
       // Make the island's copy authoritative again. The optimistic classList
       // toggle above is still what the user sees during the request — Vue only
@@ -982,21 +977,11 @@ export function wireViewsPanel(): void {
       cell.classList.remove('pending');
     }
   });
-
-  // ── Permissions section (owner-only) ──────────────────────────────────────
-  // List + detail pattern (mirrors the Agents tab). Header button is hidden
-  // by default and revealed by probeIsOwner() once /api/users succeeds. The
-  // detail pane has two views — selected user (chips + add-role form) and
-  // new-user form — plus an empty-state shown when nothing is selected.
 }
 
 // ── Panel wiring ───────────────────────────────────────────────────────────
 // Remaining full-view chrome: the dashboard and topology controls.
-//
-// One function per GROUP of blocks, each called from the line its group
-// started on. Blocks with an executing statement between them cannot share a
-// function: a single call at the first block moves the later ones ahead of
-// whatever ran in between, which the boot-order trace catches.
+// One function per run of boot statements: a call cannot span an executing statement without reordering boot.
 
 export function wireViewChrome1(): void {
   $<HTMLButtonElement>('#dash-btn')?.addEventListener('click', toggleDashboard); // ▦ quick-toggle, left of the ⋯ menu
@@ -1004,23 +989,11 @@ export function wireViewChrome1(): void {
   $<HTMLButtonElement>('#dash-refresh')?.addEventListener('click', refreshDashboard);
 
   // ── Topology (room → agent → model explore graph) ──────────────────────────
-  // Full-width SVG view (no graph library): fixed three columns, barycenter
+  // Full-width SVG view (no graph library): fixed columns, barycenter
   // ordering to minimize edge crossings. Fan-in = load; a node with no lines is
   // unused. Data: GET /api/topology (access-scoped server-side).
   $<HTMLButtonElement>('#topology-back')?.addEventListener('click', toggleTopology);
   $<HTMLButtonElement>('#topology-refresh')?.addEventListener('click', refreshTopology);
-
-
-  // ── Journey (learning timeline) ─────────────────────────────────────────────
-  // A day-grouped, newest-first feed of what each agent learned: proposed /
-  // kept / discarded / revised / archived. Data: GET /api/learning/timeline
-  // (admin-scoped server-side, cursor-paged). Kept and revised rows open the
-  // existing scoped SKILL.md editor; the newest revision of a live skill offers
-  // Revert through the existing revert endpoint. Everything else is a record.
-  // Client-side visibility filters over the loaded events (same posture as the
-  // Skills search — no refetch). Transient view state: reset on every open, not
-  // persisted. `preset` (agentGroupId/agentName/skill) is the 'View history'
-  // deep-link — views aren't URL-routed, so it travels as in-memory args.
 }
 
 export function wireViewChrome2(): void {
@@ -1139,8 +1112,6 @@ export function renderHealthStrip(snap: any) {
     .join('');
 }
 
-// { kind, id, name } or null
-
 export function computeTopoFocus(data: any, kind: string, id: string) {
   const agents = data?.agents || [];
   const edges = data?.edges || [];
@@ -1219,8 +1190,6 @@ export function computeTopoFocus(data: any, kind: string, id: string) {
   }
   return { rooms, agents: ags, models, mcps, skills: skls };
 }
-
-// routing skill isn't installed or the viewer isn't the owner.
 
 export function renderMetrics(snap: any) {
   const el = $('#dash-graph');
@@ -1361,15 +1330,14 @@ export function hideDetail() {
 }
 
 export async function showMessagesDetail() {
-  // Aggregate recent messages across rooms — same approach as v1.
+  // Aggregate recent messages across rooms.
   const rooms = await authFetch('/api/rooms')
     .then((r: any) => r.json())
     .catch(() => []);
   const since = Date.now() - 86400000;
   const perRoom = await Promise.all(
     rooms.map((room: any) =>
-      authFetch(`/api/rooms/${encodeURIComponent(room.id)}/messages`)
-        .then((r: any) => r.json())
+      apiJson(`/api/rooms/${encodeURIComponent(room.id)}/messages`)
         .then((msgs) => msgs.filter((m: any) => m.created_at > since).map((m: any) => ({ ...m, roomId: room.id })))
         .catch(() => []),
     ),

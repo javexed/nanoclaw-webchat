@@ -42,8 +42,8 @@ LiteLLM :4000 ── async_pre_call_hook(data)  [router_hook.py: class ShadowRou
       │
       ├─ LIVE  (cfg.live.enabled AND data.model ∈ cfg.routers):
       │     route  = classify(prompt) against THIS router's routes   _classify
-      │     ├─ escalate route  → raise 400 no_adequate_model  (→ fallback_provider)
-      │     └─ else            → data["model"] = binding(route) or default_binding
+      │     data["model"] = binding(route) or default_binding
+      │     context guard: reroute or reject if the prompt can't fit (§6)
       │                                                          _route_live
       │
       └─ SHADOW (otherwise): create_task(classify + log); request proceeds UNTOUCHED
@@ -59,7 +59,7 @@ LiteLLM picks the deployment for the (possibly rewritten) model → generates
   then rewrites `data["model"]`. **Failure posture:** any classifier problem
   (host asleep, timeout, bad JSON, unknown route, route `other`) falls back to
   the router's `default_route` binding — a routed request never fails *because
-  of routing*. The one exception is an affirmative `escalate` match (§5).
+  of routing*. The one exception is a prompt no local binding can fit (§6).
 
 ## 3. `routes.json` — config shape
 
@@ -75,9 +75,9 @@ LiteLLM picks the deployment for the (possibly rewritten) model → generates
 }
 ```
 
-Each **route** is `{ name, description, model }`, or `{ name, description,
-escalate: true }` (no local binding — §5), or `{ …, pinned: true }` (the binder
-never touches it). The **`description` is the whole game** — it's the only thing
+Each **route** is `{ name, description, model }`, optionally with
+`pinned: true` (the binder never touches it); a route with no `model` routes
+like `other`, to the default binding. The **`description` is the whole game** — it's the only thing
 the classifier matches against.
 
 **A fresh install is single-router** — the seed (`routes.example.json`) is the
@@ -111,21 +111,21 @@ Several named routers can coexist in `routers`, all sharing the one classifier
 and the one roster; they differ only in routes and bindings. An agent selects a
 profile by **which virtual model it's assigned** (`auto`, `auto-vision`,
 `auto-cheap`, …). The hook keys `data["model"]` against the map and classifies
-against *that* router's routes; escalation, the decision log (`router` field),
-the binder, and recalibration are all per-router. Full design: llm-router §16g.
+against *that* router's routes; the decision log (`router` field), the binder,
+and recalibration are all per-router. Full design: llm-router §16g.
 
-## 6. Escalation — the confidence floor as a route
+## 6. Context guard
 
-A route with `"escalate": true` has no local binding. A live match raises a
-`400` with a greppable `no_adequate_model:` marker *before any generation*;
-NanoClaw's per-agent-group **`fallback_provider`** re-runs the turn on a stronger
-provider (Claude). Only an *affirmative* classification escalates — classifier
-errors fall back to the local default, never to the (quota-costing) fallback.
-Mechanics + rationale: [llm-router.md](llm-router.md) §16c.
+After classification the hook estimates the request's tokens and, when the
+chosen binding's `max_prompt_tokens` (stamped by the binder, §7) can't fit it,
+reroutes to the bound route with the largest sufficient window. When nothing
+local fits it raises a `400` with a `no_adequate_model:` marker *before any
+generation* — Ollama would otherwise silently truncate the prompt. Inert when
+the annotations are absent.
 
 ## 7. Capability binding (`bind-routes.mjs`)
 
-Auto-binds unpinned, non-escalate routes to the best roster model:
+Auto-binds unpinned routes to the best roster model:
 
 ```
 score(model, route) = catalog quality[route] − size_penalty
@@ -150,8 +150,7 @@ on its own. Operators pin a route (`"pinned": true`) to freeze its binding.
 
 Each `routing-shadow.jsonl` line: `{ ts, mode: shadow|live, router,
 requested_model, prompt_head, route, ms, bound_model|final_model, error? }`.
-Sentinels: `route:"__error__"` (classify failed), `*_model:"__escalate__"`
-(escalated). The console's metrics + the report both read this file; a logging
+Sentinel: `route:"__error__"` (classify failed). The console's metrics + the report both read this file; a logging
 failure is swallowed and never surfaces to the request.
 
 ## 9. The webchat console
@@ -217,11 +216,10 @@ once.
 | Host — routing logic | `src/channels/webchat/ollama-manage.ts` (`readRoutesConfig`, `primaryRouter`, `listRouters`, `addRouter`, `deleteRouter`, `mergeRoutesUpdate`, `dryClassify`, `getRouterInfo`, `getRouterMetrics`, `getRouteSuggestions`, `computeRouteSuggestions`) |
 | Host — HTTP + UI | `src/channels/webchat/server.ts` (`/api/router/*`), `public/webchat/{index.html,style.css}` + `ui/src/` (the Auto routing tab + picker) |
 | Runtime data (operator-owned) | `data/litellm/routing/routes.json`, `…/routing-shadow.jsonl`, `data/litellm/config.yaml` |
-| Escalation seam | agent-runner `fallback_provider` (skill-delivered core-escalation payload; llm-router §16c) |
 
 ## See also
 - [llm-router.md](llm-router.md) — design rationale, the two credential planes,
-  escalation (§16c), self-improvement (§16e), multi-router (§16g).
-- [add-litellm.md](add-litellm.md) — the proxy install.
+  self-improvement (§16e), multi-router (§16g).
+- [`/add-litellm`](../../../.claude/skills/add-litellm/SKILL.md) — the proxy install.
 - `.claude/skills/add-routing/SKILL.md` — the operator-facing install + tuning
   guide.

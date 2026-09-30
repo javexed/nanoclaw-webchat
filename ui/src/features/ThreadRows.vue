@@ -1,19 +1,9 @@
 <script setup lang="ts">
 /**
- * The thread tree nested under a room row.
- *
- * Replaces BOTH renderRoomThreads (a non-active room's tree) and renderThreadList
- * (the active room's, with rename, kebab and the inline "+"). They rendered the
- * same container class from two different functions with different feature sets;
- * `active` selects which.
- *
- * The "+" placement rule is copied exactly, because it is not obvious:
- *   - creating          → the input replaces it
- *   - no threads yet    → "+" goes on the ROOM row's actions group (rendered by
- *                         RoomList, not here — the empty .thread-list collapses
- *                         via :empty, so a "+" here would cost a line)
- *   - has threads       → "+" sits INSIDE the last thread row, right of its name
- * Only the third case belongs to this component.
+ * The thread tree nested under a room row; `active` selects the active room's variant
+ * (rename, kebab, inline "+"). The "+" is replaced by the input while creating, sits on
+ * the ROOM row's actions when there are no threads (RoomList renders it; an empty
+ * .thread-list collapses via :empty), and inside the last thread row otherwise.
  */
 import { computed } from 'vue';
 import { state } from '../core/state.js';
@@ -52,23 +42,14 @@ const PLUS = '+';
 /** Only non-main threads render as rows — the room row IS the main thread. */
 const rows = computed(() => {
   const all = state.threadCache.get(props.roomId);
-  // Not an array = not fetched yet. renderRoomThreads showed a Loading… line
-  // for that; renderThreadList could not reach it, since the active room's
-  // threads are always loaded before its tree renders.
+  // Not an array = not fetched yet.
   if (!Array.isArray(all)) return null;
   return all.filter((t: any) => t.kind !== 'main');
 });
 
 const glyph = (kind?: string) => (kind === 'agent' ? '@' : '#');
 
-/**
- * Only the Undo BUTTON stops the click, not the whole timer.
- *
- * armUndo's caller bound stopPropagation to the button alone, so a click on the
- * label or the bar still reached the row and opened the thread. Listening on the
- * component root and filtering by target reproduces that without adding an
- * element to wrap it in.
- */
+/** Only the Undo BUTTON stops the click; elsewhere on the bar a click still opens the thread. */
 function stopUndoClick(e: MouseEvent): void {
   if ((e.target as Element | null)?.closest('button')) e.stopPropagation();
 }

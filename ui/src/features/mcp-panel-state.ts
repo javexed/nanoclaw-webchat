@@ -1,6 +1,6 @@
 // ── MCP panel view state ────────────────────────────────────────────────────
 // Bridge refs for the MCP sources list and the probe-results tool list. Both
-// are fed by mcp.ts, which still owns the fetches.
+// are fed by mcp.ts, which owns the fetches.
 import { ref } from 'vue';
 
 /** /api/mcp-sources rows — the built-in registry entries and their on/off state. */

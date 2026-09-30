@@ -74,9 +74,7 @@ describe('turn-gate veto notice — must land in a delivery-polled session', () 
     const veto = await consultTurnGates(webchatMg('room-1'), AG, 'webchat:bob');
     expect(veto?.reason).toBe('user-creds-required-no-key');
 
-    // The regression this guards: the notice used to target session id ==
-    // agent group id, which no sessions row contains — written where no
-    // delivery poll would ever read it.
+    // The notice must land in a real sessions row, where a delivery poll reads it.
     const sessions = await getSessionsByAgentGroup(AG);
     expect(sessions).toHaveLength(1);
     const texts = outboundTexts(sessions[0].id);

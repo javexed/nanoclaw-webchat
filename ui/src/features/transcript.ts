@@ -3,23 +3,17 @@
 // mention decoration, the older-messages pager, jump-to-message, and the whole
 // scroll-follow discipline (near-bottom detection, forced scrolls, the missed-
 // message counter).
-//
-// This is the module connect() depends on. Measuring that dependency is what
-// set the order: extracting core/ws first would have needed 56 injected names,
-// almost all of them from here. With transcript out, ws becomes tractable.
-//
-// pendingFollowScroll / roomSwitchDimTimer / suppressScrollRestore move in —
-// nothing outside the transcript ever read them.
 import { marked } from '/marked.min.js';
 import { respondToApproval } from './approvals.js';
 import DOMPurify from '/dompurify.min.js';
 import { createApp } from 'vue';
 import Transcript from './Transcript.vue';
 import CodeToolbar from './CodeToolbar.vue';
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { $ } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { state } from '../core/state.js';
-import { showToast, toastError } from '../core/toast.js';
-import { authFetch, apiJson } from '../core/api.js';
+import { showToast } from '../core/toast.js';
+import { apiJson } from '../core/api.js';
 import {
   messages,
   nextKey,
@@ -28,12 +22,8 @@ import {
 } from './transcript-state.js';
 import type { MsgRow } from './transcript-state.js';
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideTranscriptDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
+/** Supplied by provideTranscriptDeps in composition-root.ts. `any` marks a signature not
+ *  yet typed, not an opt-out of checking. */
 export interface TranscriptDeps {
   agentColor: (a0?: any) => any;
   skillDraftRow: (a0?: any) => any;
@@ -46,22 +36,15 @@ export interface TranscriptDeps {
 
 const deps = {} as TranscriptDeps;
 
-/** Wire the legacy helpers the transcript calls. Call once at startup. */
+/** Wire the composition-root helpers the transcript calls. Call once at startup. */
 export function provideTranscriptDeps(provided: Partial<TranscriptDeps>): void {
   Object.assign(deps, provided);
 }
 
 /**
- * Give every fenced block a Wrap / Copy strip.
- *
- * Not a builder any more: it inserts the toolbar element and mounts CodeToolbar
- * into it, so the markup and the button feedback are the component's. The
- * has-code-toolbar guard is what keeps it idempotent — this runs again whenever
- * a bubble re-renders its markdown.
- *
- * The apps are not tracked for unmount, deliberately: a toolbar lives exactly
- * as long as the <pre> inside the v-html subtree that owns it, and that subtree
- * is replaced wholesale or not at all.
+ * Give every fenced block a Wrap / Copy strip by mounting CodeToolbar. The
+ * has-code-toolbar guard keeps it idempotent across markdown re-renders. Apps
+ * are not tracked for unmount: each lives exactly as long as its v-html <pre>.
  */
 function decorateCodeBlocks(container?: any) {
   container.querySelectorAll('pre').forEach((pre: any) => {
@@ -79,12 +62,19 @@ function decorateCodeBlocks(container?: any) {
   });
 }
 
+// True when `text` contains an @-mention of the current user's handle. Mirrors
+// the token boundary used by decorateMentions so highlight + notify agree.
 export function messageMentionsMe(text?: any) {
   if (!state.myHandle || typeof text !== 'string') return false;
   const re = new RegExp('(?:^|[^a-z0-9_-])@' + state.myHandle + '(?![a-z0-9-])', 'i');
   return re.test(text);
 }
 
+// Smooth room/thread switches: instead of blanking the transcript to a
+// "Loading…" flash (a jarring gap while the async `history` message is in
+// flight), keep the previous messages visible but dimmed until the new history
+// arrives and swaps them in (the 'history' handler calls endTranscriptSwitch).
+// A fallback un-dims if history never lands (e.g. a socket hiccup).
 let roomSwitchDimTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function beginTranscriptSwitch() {
@@ -119,12 +109,8 @@ function formatTime(ts?: any) {
 }
 
 /**
- * Turn a server message into a transcript ROW.
- *
- * Everything this decides is decided ONCE, here, because it reads state that is
- * gone by the next render: whether the sender was me, which agent's reasoning
- * log to fold onto the reply, what the a2a payload parsed to. `beforeNode` is
- * gone with the DOM — pagination prepends by unshifting instead.
+ * Turn a server message into a transcript ROW. Decided ONCE, here, because it
+ * reads state gone by the next render (see transcript-state.ts).
  */
 export function appendMessage(msg?: any, statusText?: any, prepend?: boolean): MsgRow | undefined {
   // One row per server message. A live broadcast and a reconnect catch-up
@@ -143,7 +129,7 @@ export function appendMessage(msg?: any, statusText?: any, prepend?: boolean): M
     return pushRow(deps.skillDraftRow(msg), prepend);
   }
   // Context-sync divider: a labelled rule marking where pulled/pushed messages
-  // begin. See docs/webchat/thread-context-sync.md.
+  // begin. See docs/webchat/threads.md §8.
   if (msg.message_type === 'context-divider') {
     return pushRow({ key: nextKey(), kind: 'divider', text: msg.content || 'Synced context' }, prepend);
   }
@@ -163,7 +149,7 @@ export function appendMessage(msg?: any, statusText?: any, prepend?: boolean): M
       a2aTo = parsed.to ?? null;
       a2aText = typeof parsed.text === 'string' ? parsed.text : msg.content;
     } catch {
-      /* legacy/plain content — render as-is */
+      /* plain (non-JSON) content — render as-is */
     }
   }
 
@@ -246,15 +232,12 @@ export function appendMessage(msg?: any, statusText?: any, prepend?: boolean): M
   return pushRow(row, prepend);
 }
 
-/** Append, or PREPEND for older-message pagination — which is what beforeNode
- *  expressed when the transcript was a node list. */
+/** Append, or PREPEND for older-message pagination. */
 function pushRow(row: MsgRow, prepend?: boolean): MsgRow {
   // A row whose key is already in the list REPLACES it rather than appending a
   // second copy. Only rows with a stable identity can collide: message rows
   // carry nextKey() counters, while a skill-draft card is keyed `draft:<id>`
   // precisely so the server's resolve re-broadcast updates the card in place.
-  // Appending instead left the original card sitting above the outcome still
-  // offering Keep — two rows for one draft, disagreeing.
   const at = messages.value.findIndex((r) => r.key === row.key);
   if (at !== -1) {
     const next = [...messages.value];
@@ -304,6 +287,9 @@ export function appendSystem(text?: any): MsgRow {
   return pushRow({ key: nextKey(), kind: 'system', text }, false);
 }
 
+// During a search-jump we page older history in a tight loop; suppress
+// loadOlderMessages' per-page scroll re-pin so the viewport doesn't bounce —
+// jumpToMessage does one clean scroll at the end instead.
 let suppressScrollRestore = false;
 
 export async function loadOlderMessages() {
@@ -317,11 +303,9 @@ export async function loadOlderMessages() {
   const prevDocHeight = document.documentElement.scrollHeight;
   const prevWinY = window.scrollY;
   try {
-    const r = await authFetch(
+    const older = await apiJson(
       `/api/rooms/${encodeURIComponent(state.currentRoom)}/messages?before_id=${encodeURIComponent(state.oldestMessageId)}`,
     );
-    if (!r.ok) return;
-    const older = await r.json();
     if (!Array.isArray(older) || older.length === 0) {
       state.noMoreOlder = true;
       return;
@@ -355,6 +339,10 @@ export async function loadOlderMessages() {
   }
 }
 
+// Center + briefly flash a specific message (used by search-result clicks). If
+// the target isn't in the loaded window, page older history in until it appears
+// (or we run out / hit a safety cap), then scroll to it. Reuses the same
+// ?before_id= pagination as scroll-back, so no backend change is needed.
 export async function jumpToMessage(messageId?: any) {
   if (!messageId) return;
   const find = () => $('#messages')!.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
@@ -403,6 +391,8 @@ export function isNearBottom() {
   return elNear && winNear;
 }
 
+// Coalesce multiple image-load re-scroll requests into a single rAF call so
+// many simultaneous loads don't queue up overlapping scrollTo invocations.
 let pendingFollowScroll = false;
 
 export function scheduleFollowScroll() {
@@ -432,6 +422,12 @@ export function incrementMissedMessages() {
   }
 }
 
+/**
+ * Walk a rendered bubble's text nodes and wrap `@<slug>` tokens in a styled
+ * span. Cosmetic only — even if the token doesn't match a wired agent, the
+ * styling tells the user "this looks like a mention." Server-side matching
+ * is what actually decides routing.
+ */
 export function decorateMentions(bubble?: any) {
   const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
@@ -485,40 +481,31 @@ export function decorateMentions(bubble?: any) {
 
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // The transcript surface: scroll-follow and the jump-to-latest control.
-//
-// A function rather than module-scope code: legacy.js runs its blocks in source
-// order around initApp(), so relocating them to another module's top level would
-// silently re-order them. legacy calls wireTranscriptPanel() at the exact line the
-// first block occupied, so execution order is unchanged.
+// Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
 let transcriptApp: any = null;
 
 /**
- * Mount the transcript into <div id="messages">, once.
- *
- * The container itself keeps its imperative flags — .room-switching for the
- * switch dim, .drag-over for file drops — because Vue owns an element's
- * CHILDREN, not the element. Same split every island in this phase used.
+ * Mount the transcript into <div id="messages">, once. The container keeps its
+ * imperative flags (.room-switching, .drag-over): Vue owns its CHILDREN only.
  */
 export function mountTranscript(): void {
-  if (transcriptApp) return;
-  const host = $('#messages');
-  if (!host) return;
-  transcriptApp = createApp(Transcript, {
-    // decorateCodeBlocks and decorateMentions post-process the sanitised
-    // markdown, which Vue holds as an opaque v-html subtree — so they are
-    // decorating a black box, not competing to render it.
-    decorate: (bubble: HTMLElement) => {
-      decorateCodeBlocks(bubble);
-      decorateMentions(bubble);
-    },
-    clampA2a: (bubble: HTMLElement, container: HTMLElement) => applyA2aClamp(bubble, container),
-    onApprovalRespond: (questionId: string, value: string) => respondToApproval(questionId, value),
-    onOpenLightbox: (url: string, filename: string) => deps.openLightbox(url, filename),
-    onStopAgent: (name: string) => deps.interruptAgent(name),
-    onToggleTurn: (name: string) => deps.toggleThinkingExpanded(name),
-  });
-  transcriptApp.mount(host);
+  transcriptApp ??= mountIsland('#messages', () =>
+    createApp(Transcript, {
+      // decorateCodeBlocks and decorateMentions post-process the sanitised
+      // markdown, which Vue holds as an opaque v-html subtree — so they are
+      // decorating a black box, not competing to render it.
+      decorate: (bubble: HTMLElement) => {
+        decorateCodeBlocks(bubble);
+        decorateMentions(bubble);
+      },
+      clampA2a: (bubble: HTMLElement, container: HTMLElement) => applyA2aClamp(bubble, container),
+      onApprovalRespond: (questionId: string, value: string) => respondToApproval(questionId, value),
+      onOpenLightbox: (url: string, filename: string) => deps.openLightbox(url, filename),
+      onStopAgent: (name: string) => deps.interruptAgent(name),
+      onToggleTurn: (name: string) => deps.toggleThinkingExpanded(name),
+    }),
+  );
 }
 
 export function wireTranscriptPanel(): void {
@@ -534,12 +521,8 @@ export function wireTranscriptPanel(): void {
     scrollToBottom();
   });
 
-  // Catch images that load after the 200ms re-scroll window expires (slow
-  // network, large attachments). This was one listener per <img> on the element
-  // appendMessage returned; with no element to walk it is one CAPTURE-phase
-  // listener on the container — `load` does not bubble, so capture is the only
-  // way to hear it from here. Multiple images still coalesce into a single rAF
-  // re-scroll inside scheduleFollowScroll.
+  // Catch images that load after the 200ms re-scroll window expires. CAPTURE
+  // phase because `load` does not bubble; scheduleFollowScroll coalesces them.
   $('#messages')?.addEventListener(
     'load',
     (e) => {
@@ -551,20 +534,8 @@ export function wireTranscriptPanel(): void {
 
 // ── Scroll tracking ──────────────────────────────────────────────────────────
 // The user-scroll markers and the follow/unfollow logic behind scrollToBottom,
-// which this module already exports. Owned here rather than injected.
-//
-// This deletes the accessor pairs added in 4.1i. Those existed because the
-// jump-to-latest handler moved here while the state stayed in legacy.js —
-// getLastUserScrollAt/setLastUserScrollAt and the momentumUntil pair were a
-// bridge across a boundary that no longer exists now the state has followed.
-// Four interface entries and four supplies go with them.
-//
-// Declarations at module scope, executing statements in wireScrollTracking(),
-// called from the line the FIRST statement occupied — anchoring on the earliest
-// declaration instead is what registered the lightbox listeners ~84 lines early
-// in 4.1n. markUserScroll is passed by reference to addEventListener, which
-// reads it at wire time; that is safe only because it moved with the cluster
-// and is a direct reference, not a dep.
+// Declarations are module scope; executing statements run in
+// wireScrollTracking(), whose call site fixes their place in boot order.
 
 // Show/hide scroll-to-bottom button; detect user scrolling away.
 //
@@ -586,11 +557,7 @@ let momentumUntil = 0;
 /**
  * Clear the user-scroll markers so an imminent PROGRAMMATIC scroll is not
  * mistaken for a user-driven one by a stale wheel/touch from moments earlier.
- *
- * Exported because legacy.js's send path needs the same thing before its
- * scrollToBottom(). That is one named operation crossing the boundary rather
- * than two setters exposing the markers themselves — which is what the 4.1i
- * bridge accessors did, and what this slice removes.
+ * Also used by composer.ts's send path.
  */
 export function clearUserScrollMarkers(): void {
   lastUserScrollAt = 0;
@@ -653,9 +620,7 @@ export function wireScrollTracking(): void {
   );
   window.addEventListener('keydown', (e) => {
     // Skip when the user is typing into an input — space, arrows, home/end
-    // are all editing keys there, not scroll intent. Without this gate, every
-    // space typed in the message textarea would mark scroll-intent and trip
-    // the very bug this whole module exists to prevent.
+    // are all editing keys there, not scroll intent.
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
     if (

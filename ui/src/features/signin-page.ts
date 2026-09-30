@@ -4,7 +4,7 @@
 // switch. A switch that needs settings reveals its fields; Save applies them.
 // Everything applies at once (routes-signin-settings.ts), and the server
 // refuses a change that would lock you out, so this page only shows and asks.
-import { apiJson, authFetch } from '../core/api.js';
+import { apiJson } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { showToast, toastError } from '../core/toast.js';
 import { showConfirmModal } from './modals.js';
@@ -40,8 +40,7 @@ const toggle = (sel: string) => $<HTMLInputElement>(sel)!;
 
 async function load(): Promise<void> {
   try {
-    const r = await authFetch('/api/webchat/signin');
-    view = r.ok ? ((await r.json()) as SigninView) : null;
+    view = (await apiJson('/api/webchat/signin')) as SigninView;
   } catch {
     view = null;
   }

@@ -6,7 +6,7 @@ import net from 'net';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { parseProxyHead, serveProxyClient, type EgressFilterDeps } from './egress-filter.js';
+import { parseProxyHead, serveModelPort, serveProxyClient, type EgressFilterDeps } from './egress-filter.js';
 import { __resetRunnerEgressForTest, __setRunnerEgressForTest, allowlistFor, listBlocked } from './egress-policy.js';
 
 let gateway: net.Server;
@@ -148,5 +148,51 @@ describe('egress filter', () => {
     expect(parseProxyHead(smuggled)).toHaveProperty('error');
     expect(parseProxyHead(smuggled)).not.toHaveProperty('kind');
     expect(parseProxyHead('GET http://a_b!c/ HTTP/1.1')).toMatchObject({ status: '400 Bad Request' });
+  });
+});
+
+describe('a host-local model port', () => {
+  // A stand-in model server on the host, reached through the bridge listener.
+  async function throughModelPort(d: EgressFilterDeps): Promise<string> {
+    const model = net.createServer((sock) => sock.end('model-says-hi'));
+    const mPort = await new Promise<number>((r) =>
+      model.listen(0, '127.0.0.1', () => r((model.address() as net.AddressInfo).port)),
+    );
+    const bridge = net.createServer((sock) => void serveModelPort(sock, 11434, { host: '127.0.0.1', port: mPort }, d));
+    const bPort = await new Promise<number>((r) =>
+      bridge.listen(0, '127.0.0.1', () => r((bridge.address() as net.AddressInfo).port)),
+    );
+    try {
+      return await new Promise<string>((resolve) => {
+        let got = '';
+        const c = net.connect(bPort, '127.0.0.1');
+        c.on('data', (x) => (got += x.toString()));
+        c.on('close', () => resolve(got));
+        c.on('error', () => resolve(got));
+      });
+    } finally {
+      bridge.close();
+      model.close();
+    }
+  }
+
+  it("reaches the agent's own model", async () => {
+    const d = {
+      ...deps,
+      mode: async () => 'none' as const,
+      always: async () => ['api.anthropic.com', 'host.docker.internal:11434'],
+    };
+    expect(await throughModelPort(d)).toBe('model-says-hi');
+  });
+
+  it('is refused to an agent whose model it is not, and recorded', async () => {
+    const d = { ...deps, mode: async () => 'none' as const, always: async () => ['api.anthropic.com'] };
+    expect(await throughModelPort(d)).toBe('');
+    expect(listBlocked().map((b) => [b.host, b.port])).toEqual([['host.docker.internal', 11434]]);
+  });
+
+  it('is refused to a caller the filter cannot identify', async () => {
+    const d = { ...deps, identify: async () => null, always: async () => ['host.docker.internal:11434'] };
+    expect(await throughModelPort(d)).toBe('');
   });
 });

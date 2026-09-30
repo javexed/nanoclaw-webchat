@@ -3,7 +3,7 @@
  * composite key resolves to the SAME credential identity as the bare user id.
  *
  * Why that property and not just "the codec round-trips": if a seam consumer
- * fails to decode, it looks up a credential for `webchat:mark::main`, finds
+ * fails to decode, it looks up a credential for `webchat:alice::main`, finds
  * none, and the container silently falls back to the workspace-default
  * credential. Nothing throws. The agent keeps answering — on the wrong
  * identity, with someone else's key. These tests pin the identity, not the

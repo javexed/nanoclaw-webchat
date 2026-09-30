@@ -1,25 +1,9 @@
 <script setup lang="ts">
 /**
- * The user's own per-agent credentials — fifty-eighth island.
- *
- * Mounted into <div id="my-credentials-list">, exclusively owned by this module.
- * #settings-my-credentials keeps its hidden flag: with no connected credentials
- * anywhere the whole section disappears rather than explaining itself.
- *
- * ONE add-form per agent, not a shared form with an agent picker — that would
- * just be the "Used by" dropdown again, and this list is short by construction.
- *
- * These are the same rows the agent panel files under "Only you"; the badge and
- * the "For you" line use that panel's words so the two views read as one.
- *
- * The two fields are UNCONTROLLED and read at click time, exactly as the
- * imperative version read hostField.input.value. v-model would have been the
- * obvious Vue idiom and is wrong here: it attaches an input listener to every
- * field, which the original never had and which the listener-set guard counts.
- *
- * fieldEl() is absorbed; it was used only here. The password field keeps
- * autocomplete="new-password" — so browsers do not offer the user's saved
- * login for a token box — and spellcheck off.
+ * The user's own per-agent credentials, mounted into <div id="my-credentials-list">; the
+ * section hides when nothing is connected. One add-form per agent, worded like the agent
+ * panel's "Only you" rows. Fields are uncontrolled and read at click time. The token field
+ * uses autocomplete="new-password" so browsers do not offer a saved login.
  */
 import { myCredGroups, myCredSaving } from './my-credentials-state.js';
 

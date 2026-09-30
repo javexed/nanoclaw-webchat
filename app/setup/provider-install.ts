@@ -15,10 +15,10 @@ import { applyProviderSkill } from './providers/install.js';
 // a directive-engine apply of their SKILL.md (not a drift-prone add-<name>.sh).
 const INSTALL_SKILLS: Record<string, string> = {
   codex: '.claude/skills/add-codex',
-  // The OpenCode stack: bundled pre-patched provider files + barrels + CLI pin,
-  // applied via the skill's nc: directives. The SDK dep + image build are run by
-  // the install chain (startOpencodeInstall), not this copy/wire half.
-  opencode: '.claude/skills/add-opencode-stack',
+  // OpenCode: upstream's add-opencode skill installs the whole provider — its
+  // payload, barrels, CLI pin and its own pinned SDK (nc:dep). add-opencode-stack
+  // only points an installed OpenCode at a local backend, and installs nothing.
+  opencode: '.claude/skills/add-opencode',
   // The pi stack: same directive-apply shape, no SDK dep (CLI-only harness).
   pi: '.claude/skills/add-pi-stack',
   // Grok: same directive-apply shape. Its payload lives on the providers-grok

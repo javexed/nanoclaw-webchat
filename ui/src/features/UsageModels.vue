@@ -1,9 +1,7 @@
 <script setup lang="ts">
 /**
- * Model-breakdown chips — forty-fourth island.
- *
- * Mounted into <div id="usage-models">. Attribution is via each room's agent's
- * CURRENT model, so the chips describe where tokens went, not what was in
+ * Model-breakdown chips, mounted into <div id="usage-models">. Attribution uses each
+ * room's agent's CURRENT model, so chips describe where tokens went, not what was in
  * effect at the time.
  */
 import { usageModels } from './usage-state.js';

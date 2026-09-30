@@ -1,30 +1,20 @@
 /**
- * Webchat reconcile loop — recovers from a known race where the host's
- * delivery dispatcher logs "No adapter for channel type" for an instant,
- * marks an outbound chat message delivered, and the message never reaches
- * the WS broadcast or `webchat_messages` table.
- *
- * Symptom: PWA shows "agent thinking" indefinitely, the response is in the
- * agent's `outbound.db` and the inbound `delivered` table — but no row in
- * `webchat_messages`, no WS broadcast.
- *
- * The bug is in trunk (`src/index.ts`'s deliveryAdapter wrapper marks
- * messages delivered even when `getChannelAdapter()` returns undefined),
- * so a clean fix requires a trunk change. This watchdog is the skill-only
- * workaround: every RECONCILE_INTERVAL_MS, scan recent outbound messages
- * across all webchat sessions and replay any that have no corresponding
- * `webchat_messages` row.
- *
- * Idempotency: an in-memory Set tracks outbound message ids we've already
- * replayed (or seen the regular delivery cover). Bounded to ~1000 entries.
+ * Webchat reconcile loop. Trunk's deliveryAdapter wrapper can mark an outbound
+ * message delivered while `getChannelAdapter()` transiently returns undefined,
+ * so the reply never reaches `webchat_messages` or the WS and the PWA "thinks"
+ * forever. Every RECONCILE_INTERVAL_MS this replays recent webchat outbound
+ * messages that have no stored row. A bounded (~1000) in-memory Set of handled
+ * ids keeps it idempotent.
  */
 import fs from 'fs';
 import path from 'path';
 
+import type Database from 'better-sqlite3';
+
 import { DATA_DIR } from '../../config.js';
 import { getDb } from '../../db/connection.js';
 import { log } from '../../log.js';
-import { openOutboundDb } from '../../session-db-access.js';
+import { openInboundDb, openOutboundDb } from '../../session-db-access.js';
 
 import { sessionKeyToThread, storeWebchatMessage } from './db.js';
 import type { WebchatServer } from './server.js';
@@ -93,11 +83,8 @@ async function reconcileOnce(server: WebchatServer): Promise<void> {
       continue;
     }
     try {
-      // Recent webchat-channel chat messages produced by the container. The
-      // window is applied in JS, not SQL: containers stamp ISO timestamps
-      // ('…T…Z') and a text comparison against datetime()'s '… …' form made
-      // every row of the same UTC day "recent" — which, with `seen` emptied
-      // by a restart, replayed the day's replies into the room on every boot.
+      // The window is applied in JS, not SQL: ISO stamps ('…T…Z') don't compare
+      // as text against datetime()'s '… …' form.
       const rows = recentOutbound(
         outDb
           .prepare(
@@ -110,21 +97,25 @@ async function reconcileOnce(server: WebchatServer): Promise<void> {
         cutoff,
       );
 
+      const settled = settledDeliveries(
+        sess,
+        rows.map((r) => r.row.id),
+      );
+
       for (const { row: msg, tsMs } of rows) {
         if (seen.has(msg.id)) continue;
         // Give regular delivery a head start before we second-guess it.
         if (Date.now() - tsMs < GRACE_MS) continue;
+        // Only second-guess a delivery trunk has finished. One still pending
+        // or between retries — or in a deliver() slower than the grace period —
+        // stores its own row; replaying it here would post the reply twice.
+        if (!settled.has(msg.id)) continue;
 
         const roomId = msg.platform_id ?? sess.room_id;
         if (!roomId) continue;
 
-        // Did the regular delivery path already store this in webchat_messages?
-        // We match on (room, sender_type=agent, content prefix, timestamp band)
-        // because webchat_messages doesn't carry the outbound message id.
-        //
-        // Text only. An outbound row's `files` is a list of names in the
-        // session's outbox; the bytes are the adapter's to deliver, so a lost
-        // attachment can't be rebuilt from this row.
+        // Stored already? Matched on content + time band, as webchat_messages
+        // has no outbound id. Text only: a lost attachment can't be rebuilt here.
         const text = parseTextFromContent(msg.content);
         if (text === null || text.length === 0) {
           seen.add(msg.id);
@@ -147,9 +138,7 @@ async function reconcileOnce(server: WebchatServer): Promise<void> {
           sessionId: sess.session_id,
           agent: sess.agent_name,
         });
-        // Use the session's actual agent name as the sender — reconcile
-        // has the unambiguous mapping (one session = one agent), so we
-        // skip the deliver-path's "most recently active" heuristic.
+        // One session = one agent, so no "most recently active" heuristic.
         const senderName = sess.agent_name || agentDisplayName();
         try {
           // Back into the thread the session answers in — a topic thread's
@@ -171,11 +160,7 @@ async function reconcileOnce(server: WebchatServer): Promise<void> {
   }
 }
 
-/**
- * Outbound timestamps are ISO ('2026-09-23T17:32:45.092Z') — the container
- * stamps them from JS. The space form ('2026-09-23 17:32:45', read as UTC) is
- * tolerated for rows an older runner may have left behind.
- */
+/** Outbound timestamps are ISO; the space form (read as UTC) is also accepted. */
 export function parseOutboundTs(ts: string): number {
   const iso = ts.includes('T') ? ts : ts.replace(' ', 'T');
   return Date.parse(/([zZ]|[+-]\d\d:?\d\d)$/.test(iso) ? iso : `${iso}Z`);
@@ -197,6 +182,37 @@ export function replayThread(sess: Pick<WebchatSessionRow, 'thread_id'>, roomId:
   return sessionKeyToThread(sess.thread_id, roomId);
 }
 
+/** The outbound ids trunk has marked delivered in this session's inbound.db. */
+function settledDeliveries(sess: WebchatSessionRow, ids: string[]): Set<string> {
+  if (ids.length === 0) return new Set();
+  if (!fs.existsSync(path.join(DATA_DIR, 'v2-sessions', sess.agent_group_id, sess.session_id, 'inbound.db'))) {
+    return new Set();
+  }
+  let db;
+  try {
+    db = openInboundDb(sess.agent_group_id, sess.session_id);
+  } catch {
+    return new Set();
+  }
+  try {
+    return deliveredIds(db, ids);
+  } finally {
+    db.close();
+  }
+}
+
+/** Of `ids`, those with a `delivered` row in status 'delivered' (not failed). */
+export function deliveredIds(db: Pick<Database.Database, 'prepare'>, ids: string[]): Set<string> {
+  if (ids.length === 0) return new Set();
+  const rows = db
+    .prepare(
+      `SELECT message_out_id FROM delivered
+        WHERE status = 'delivered' AND message_out_id IN (${ids.map(() => '?').join(',')})`,
+    )
+    .all(...ids) as { message_out_id: string }[];
+  return new Set(rows.map((r) => r.message_out_id));
+}
+
 /** All webchat-channel sessions known to the central DB. */
 async function listWebchatSessions(): Promise<WebchatSessionRow[]> {
   return (await getDb()
@@ -209,11 +225,9 @@ async function listWebchatSessions(): Promise<WebchatSessionRow[]> {
 }
 
 /**
- * Look for an agent-typed text row in webchat_messages whose content matches
- * the outbound text exactly, stored no earlier than 30 s before the agent
- * wrote it (clock drift) and at any time since. The upper bound used to be
- * +30 s, which read a reply delivered late — a session that synced after a
- * pause — as lost, and replayed it.
+ * An agent text row matching the outbound text exactly, stored no earlier
+ * than 30 s before the agent wrote it (clock drift) and with no upper bound,
+ * so a late delivery isn't mistaken for a lost one.
  */
 async function findStoredAgentMessage(
   roomId: string,

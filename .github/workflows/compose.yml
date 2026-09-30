@@ -199,17 +199,15 @@ jobs:
         run: |
           echo "UI — install Chromium (boot-order guard)" > "$RUNNER_TEMP/ci-step"
           # The browser comes from the Playwright cache above. Its Linux
-          # libraries come with the runner's image (ci/runner-image) when that
-          # image was built for this Playwright version; otherwise — a bump, or
-          # a runner without the image — install them here as before.
-          want="$(node -p "require('./ui/package.json').devDependencies.playwright")"
-          have="$(cat /etc/nanoclaw-ci-playwright-deps 2>/dev/null || true)"
-          if [ -n "$have" ] && [ "$have" = "$want" ]; then
-            echo "Chromium's libraries are in the runner image (playwright $have): skipping --with-deps"
-            pnpm --dir ui exec playwright install chromium
+          # libraries may already be on the runner (a prepared image or host —
+          # ci/image, or `playwright install-deps` run there once). Probe with a
+          # headless launch; install them (apt) only if Chromium cannot start.
+          pnpm --dir ui exec playwright install chromium
+          if (cd ui && node -e "require('playwright').chromium.launch().then((b) => b.close())") >/dev/null 2>&1; then
+            echo "Chromium starts: its libraries are already on this runner, skipping apt"
           else
-            echo "runner image has no libraries for playwright $want (have: ${have:-none}): installing them"
-            pnpm --dir ui exec playwright install --with-deps chromium
+            echo "Chromium cannot start yet: installing its libraries"
+            pnpm --dir ui exec playwright install-deps chromium
           fi
 
       - name: UI — boot-order guard self-test (proves it still detects faults)
@@ -417,6 +415,31 @@ jobs:
           echo "Async (no dropped Promises in owned code)" > "$RUNNER_TEMP/ci-step"
           bash scripts/check-async.sh "$RUNNER_TEMP/composed"
 
+      - name: Unused self-test (proves it still detects faults)
+        run: |
+          echo "Unused self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-unused.selftest.sh "$RUNNER_TEMP/composed"
+
+      - name: Unused (no dead imports or locals in owned code)
+        # Nothing ran the unused-vars rule on our files; 300-odd unused imports
+        # piled up in one module. Same scope as Async: our files, our patch lines.
+        run: |
+          echo "Unused (no dead imports or locals in owned code)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-unused.sh "$RUNNER_TEMP/composed"
+
+      - name: Setup prompts self-test (proves it still detects faults)
+        run: |
+          echo "Setup prompts self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-setup-prompts.selftest.sh "$RUNNER_TEMP/composed"
+
+      - name: Setup prompts (headless installers cover upstream's questions)
+        # The installers run setup:auto without a TTY; a question they cannot
+        # answer cancels and setup exits 0 part-way. Fails on a new upstream
+        # step or prompt until it has been reviewed (ci/setup-prompts.txt).
+        run: |
+          echo "Setup prompts (headless installers cover upstream's questions)" > "$RUNNER_TEMP/ci-step"
+          node scripts/check-setup-prompts.mjs "$RUNNER_TEMP/composed"
+
       - name: Host tests (composed tree)
         working-directory: ${{ runner.temp }}/composed
         env:
@@ -623,6 +646,31 @@ jobs:
       # died. `uses:` steps (the setup and cache actions) are not instrumented,
       # so a failure inside one of those reports the previous run step; the
       # wording below says "at or after" rather than pretending otherwise.
+      - name: VS Code runner skill (applies, builds, its tests pass)
+        # The runner ships as a skill (app/.claude/skills/add-vscode-runner), so
+        # the host tests above ran without it. Install it the way an operator
+        # would and run its own validation. After the tarball is packed: the
+        # shipped tree stays without it.
+        working-directory: ${{ runner.temp }}/composed
+        run: |
+          echo "VS Code runner skill (applies, builds, its tests pass)" > "$RUNNER_TEMP/ci-step"
+          pnpm exec tsx - <<'TS'
+          import { applySkill, fullyApplied } from './scripts/skill-apply.js';
+          import { execSync } from 'node:child_process';
+          const res = await applySkill('.claude/skills/add-vscode-runner', process.cwd(), {
+            exec: (c) => execSync(c, { stdio: 'inherit' }),
+            emit: () => {},
+          });
+          if (!fullyApplied(res)) {
+            console.error('add-vscode-runner did not fully apply', res);
+            process.exit(1);
+          }
+          TS
+          # Its code is ours: hold it to the same no-dropped-Promise gate, now
+          # that it sits at its installed paths.
+          bash "$GITHUB_WORKSPACE/scripts/check-async.sh" "$RUNNER_TEMP/composed"
+          bash "$GITHUB_WORKSPACE/scripts/check-unused.sh" "$RUNNER_TEMP/composed"
+
       - name: Name the failing step in a PR comment
         if: failure() && github.event_name == 'pull_request'
         # Never let the reporter change the build's verdict: the job has already

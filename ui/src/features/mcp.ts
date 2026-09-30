@@ -1,35 +1,27 @@
 // ── MCP servers ──────────────────────────────────────────────────────────────
-// The MCP surface: the server registry (where servers are DEFINED), the detail
-// pane, and the per-agent enable/disable wiring. The agent panel only chooses
-// from what the registry holds — it never defines a server — which is why this
-// comes out as one module rather than splitting along the two views.
-//
-// Next by measurement after skills: 642 lines at 2.8 external references per
-// 100, the loosest-coupled cluster remaining.
+// The server registry (where servers are DEFINED), the detail pane, and the
+// per-agent enable/disable wiring. One module because the agent panel only
+// chooses from what the registry holds; it never defines a server.
 import { createApp } from 'vue';
 import { manageActive, manageTab } from './views-state.js';
 import AgentMcpList from './AgentMcpList.vue';
 import { agentMcpRows } from './agent-mcp-state.js';
 import McpList from './McpList.vue';
 import { agentMcpServers, allMcpServers, lastMcpProbe, lastMcpProbeToken, mcpAddInProgress, mcpAgentForAdd, mcpServers, selectedMcpId } from './mcp-list-state.js';
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { $ } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { showConfirmModal } from './modals.js';
 import { showToast, toastError } from '../core/toast.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
-import { originBadgeEl } from './origin-badge.js';
 import McpSources from './McpSources.vue';
 import McpProbeTools from './McpProbeTools.vue';
 import McpHardening from './McpHardening.vue';
 import McpCatalog from './McpCatalog.vue';
 import { hardeningServer, mcpCatalog, mcpCatalogPhase, mcpCatalogQuery, mcpSources, oauthBusy, probeTools } from './mcp-panel-state.js';
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideMcpDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
+/** Supplied by provideMcpDeps in composition-root.ts. `any` marks a signature not
+ *  yet typed, not an opt-out of checking. */
 export interface McpDeps {
   closeAgentDetail: () => any;
   closeModelDetail: () => any;
@@ -40,7 +32,7 @@ export interface McpDeps {
 
 const deps = {} as McpDeps;
 
-/** Wire the legacy helpers this module calls. Call once at startup. */
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 export function provideMcpDeps(provided: Partial<McpDeps>): void {
   Object.assign(deps, provided);
 }
@@ -48,16 +40,14 @@ export function provideMcpDeps(provided: Partial<McpDeps>): void {
 let agentMcpApp: ReturnType<typeof createApp> | null = null;
 
 function mountAgentMcpList(agentId: any): void {
-  if (agentMcpApp) return;
-  const host = $('#agent-mcp-list');
-  if (!host) return;
-  agentMcpApp = createApp(AgentMcpList, {
-    // agentId is read from the closure at DETACH time, not captured per row:
-    // the island outlives any single agent, so the row must not remember which
-    // agent it was rendered for.
-    onDetach: (s: any) => detachAgentMcp(currentAgentMcpId, s),
-  });
-  agentMcpApp.mount(host);
+  agentMcpApp ??= mountIsland('#agent-mcp-list', () =>
+    createApp(AgentMcpList, {
+      // agentId is read from the closure at DETACH time, not captured per row:
+      // the island outlives any single agent, so the row must not remember which
+      // agent it was rendered for.
+      onDetach: (s: any) => detachAgentMcp(currentAgentMcpId, s),
+    }),
+  );
 }
 
 let currentAgentMcpId: any = null;
@@ -66,8 +56,7 @@ export async function renderAgentMcp(agentId?: any): Promise<void> {
   currentAgentMcpId = agentId;
   agentMcpServers.value = [];
   try {
-    const res = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/mcp-servers`);
-    if (res.ok) agentMcpServers.value = (await res.json()).servers || [];
+    agentMcpServers.value = (await apiJson(`/api/agents/${encodeURIComponent(agentId)}/mcp-servers`)).servers || [];
   } catch (err: any) {
     console.error('Failed to load MCP servers:', err);
   }
@@ -78,7 +67,6 @@ export async function renderAgentMcp(agentId?: any): Promise<void> {
   agentMcpRows.value = rows;
   mountAgentMcpList(agentId);
 }
-
 
 export async function setAgentMcp(agentId?: any, body?: any, okMsg?: any) {
   await apiJson(`/api/agents/${encodeURIComponent(agentId)}/mcp-servers`, { method: 'PUT', body });
@@ -118,16 +106,8 @@ export async function maybeAttachAfterMcpAdd(newId?: any, name?: any) {
 export async function fetchMcpServers() {
   try {
     const res = await authFetch('/api/mcp-servers');
-    // res.ok, and then the SHAPE. A 403 returns {error: '…'} with a perfectly
-    // good JSON body, so `await res.json()` resolves and the old code stored an
-    // OBJECT where every reader expects an array. `.length === 0` on an object
-    // is `undefined === 0` — false — so the guard fell through to
-    // `[...allMcpServers]`, which throws "not iterable" and takes the whole
-    // render with it.
-    //
-    // The array check is not belt-and-braces on top of res.ok: a 200 whose body
-    // is not an array would land in exactly the same place, and this is a value
-    // handed to spread operators in six call sites.
+    // Check res.ok AND the shape: a 403 has a JSON {error} body, and a non-array
+    // (from any status) would throw "not iterable" in the spread call sites.
     const body = res.ok ? await res.json().catch(() => null) : null;
     if (!Array.isArray(body)) {
       // Leave the list EMPTY rather than stale. A stale list here reads as "you
@@ -145,6 +125,18 @@ export async function fetchMcpServers() {
   }
 }
 
+// ── MCP catalog ─────────────────────────────────────────────────────────────
+// Discovery only: choosing a row prefills the add form; the server is still
+// probed and added like a hand-entered one. The remote/package split is the
+// security line: a PACKAGE server is npm/pypi code that runs INSIDE the agent
+// container next to its credentials, so picking one costs an explicit confirm
+// naming the exact command — browsing is never one click from running it.
+
+/**
+ * The MCP registry is a switchable source, exactly like a skill collection: the
+ * same webchat_disabled_sources row, surfaced in Settings the same way. Off means
+ * off server-side too — the catalog block disappears and no request is made.
+ */
 let mcpRegistryDisabled = false;
 
 export async function renderMcpSources() {
@@ -153,20 +145,14 @@ export async function renderMcpSources() {
   if (!list || !section) return;
   let sources = [];
   try {
-    const res = await authFetch('/api/mcp-sources');
-    if (!res.ok) {
-      section.hidden = true; // not a global admin — don't tease a control they can't use
-      return;
-    }
-    sources = (await res.json()).sources || [];
+    // Not a global admin throws: don't tease a control they can't use.
+    sources = (await apiJson('/api/mcp-sources')).sources || [];
   } catch {
     section.hidden = true;
     return;
   }
   section.hidden = false;
-  // mcpRegistryDisabled ends up holding the LAST source's state — that is what
-  // the loop did, and applyMcpCatalogVisibility reads it. Preserved exactly;
-  // with one built-in source it is unambiguous either way.
+  // Holds the LAST source's state; with one built-in source that is unambiguous.
   for (const src of sources) mcpRegistryDisabled = !!(src.removed || src.disabled);
   mcpSources.value = sources;
   mountMcpSources();
@@ -176,24 +162,22 @@ export async function renderMcpSources() {
 let mcpSourcesApp: ReturnType<typeof createApp> | null = null;
 
 function mountMcpSources(): void {
-  if (mcpSourcesApp) return;
-  const host = $('#mcp-sources-list');
-  if (!host) return;
-  mcpSourcesApp = createApp(McpSources, {
-    onToggle: async (id: string, off: boolean) => {
-      try {
-        const res = await authFetch(`/api/mcp-sources/${encodeURIComponent(id)}`, { method: off ? 'POST' : 'DELETE' });
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed');
-        void renderMcpSources();
-        applyMcpCatalogVisibility();
-      } catch (err: any) {
-        toastError(err, 'Could not update the source');
-      }
-    },
-  });
-  mcpSourcesApp.mount(host);
+  mcpSourcesApp ??= mountIsland('#mcp-sources-list', () =>
+    createApp(McpSources, {
+      onToggle: async (id: string, off: boolean) => {
+        try {
+          await apiJson(`/api/mcp-sources/${encodeURIComponent(id)}`, { method: off ? 'POST' : 'DELETE' });
+          void renderMcpSources();
+          applyMcpCatalogVisibility();
+        } catch (err: any) {
+          toastError(err, 'Could not update the source');
+        }
+      },
+    }),
+  );
 }
 
+/** Hide the catalog entirely when its source is switched off. */
 function applyMcpCatalogVisibility() {
   const block = $('#mcp-catalog-block');
   if (block) block.hidden = mcpRegistryDisabled;
@@ -202,11 +186,9 @@ function applyMcpCatalogVisibility() {
 let mcpCatalogApp: ReturnType<typeof createApp> | null = null;
 
 function mountMcpCatalog(): void {
-  if (mcpCatalogApp) return;
-  const host = $('#mcp-catalog-list');
-  if (!host) return;
-  mcpCatalogApp = createApp(McpCatalog, { onUse: (raw: any) => useMcpCatalogEntry(raw) });
-  mcpCatalogApp.mount(host);
+  mcpCatalogApp ??= mountIsland('#mcp-catalog-list', () =>
+    createApp(McpCatalog, { onUse: (raw: any) => useMcpCatalogEntry(raw) }),
+  );
 }
 
 export async function loadMcpCatalog(q = '') {
@@ -264,6 +246,7 @@ export async function loadMcpCatalog(q = '') {
   mcpCatalogPhase.value = 'ready';
 }
 
+/** Prefill the add form from a catalog row. Package servers gate on an explicit confirm. */
 async function useMcpCatalogEntry(s?: any) {
   if (s.runsCode) {
     // DESIGN.md §5: no native confirm() — and this is the destructive-weight one,
@@ -314,27 +297,22 @@ let mcpListApp: ReturnType<typeof createApp> | null = null;
 
 /** Mount the McpList island into <ul id="mcp-list">, once. */
 function mountMcpList(): void {
-  if (mcpListApp) return;
-  const host = $('#mcp-list');
-  if (!host) return;
-  mcpListApp = createApp(McpList, {
-    onPick: (id: string) => {
-      const detail = $('#mcp-detail');
-      if (selectedMcpId.value === id && detail && !detail.hidden) closeMcpDetail();
-      else openMcpDetail(id);
-    },
-  });
-  mcpListApp.mount(host);
+  mcpListApp ??= mountIsland('#mcp-list', () =>
+    createApp(McpList, {
+      onPick: (id: string) => {
+        const detail = $('#mcp-detail');
+        if (selectedMcpId.value === id && detail && !detail.hidden) closeMcpDetail();
+        else openMcpDetail(id);
+      },
+    }),
+  );
 }
 
 export function renderMcpServers(): void {
-  // Mount-once, then sync. Both the rows and the selection are legacy module
-  // state, so both are pushed into refs here — the agent list only needed the
-  // selection, because its rows live in the reactive `state` object.
+  // Mount-once, then sync the rows and the selection into the island's refs.
   mcpServers.value = allMcpServers.value ?? [];
   mountMcpList();
 }
-
 
 export function openMcpDetail(id?: any) {
   const server = allMcpServers.value.find((s: any) => s.id === id);
@@ -381,84 +359,80 @@ export function openMcpDetail(id?: any) {
 let hardeningApp: ReturnType<typeof createApp> | null = null;
 
 function mountMcpHardening(): void {
-  if (hardeningApp) return;
-  const host = $('#mcp-hardening');
-  if (!host) return;
-  hardeningApp = createApp(McpHardening, {
-    // Drift: the rug-pull alarm. Loud until a human re-approves.
-    onApprove: async () => {
-      const server = hardeningServer.value;
-      const d = server?.drift;
-      const parts: string[] = [];
-      if (d?.added?.length) parts.push(`new: ${d.added.join(', ')}`);
-      if (d?.removed?.length) parts.push(`removed: ${d.removed.join(', ')}`);
-      if (d?.changed?.length) parts.push(`descriptions changed: ${d.changed.join(', ')}`);
-      const ok = await deps.showConfirmModal({
-        title: `Approve ${server.name}'s new tools?`,
-        body: parts.join('\n') || 'The tool surface changed.',
-        confirmLabel: 'Approve current tools',
-      });
-      if (!ok) return;
-      try {
-        await apiJson(`/api/mcp-servers/${encodeURIComponent(server.id)}/repin`, { method: 'POST' });
-        showToast('Tool surface re-approved', { kind: 'success' });
-        await fetchMcpServers();
-        openMcpDetail(server.id);
-      } catch (err: any) {
-        showToast('Re-approve failed: ' + (err.message || err), { kind: 'error' });
-      }
-    },
-    // All checked = no restriction, stored as null so future tools flow through
-    // automatically. The comparison is against the checkbox COUNT, read back
-    // from the DOM exactly as before.
-    onSaveTools: async () => {
-      const server = hardeningServer.value;
-      const listEl = $('#mcp-hardening .mcp-tools-list');
-      if (!server || !listEl) return;
-      const boxes = [...listEl.querySelectorAll('input[type=checkbox]')] as HTMLInputElement[];
-      const chosen = boxes.filter((b) => b.checked).map((b) => b.dataset.tool);
-      const body = { enabled: chosen.length === boxes.length ? null : chosen };
-      try {
-        await apiJson(`/api/mcp-servers/${encodeURIComponent(server.id)}/tools`, { method: 'PUT', body });
-        showToast(body.enabled ? `${chosen.length} of ${boxes.length} tools enabled` : 'All tools enabled', {
-          kind: 'success',
+  hardeningApp ??= mountIsland('#mcp-hardening', () =>
+    createApp(McpHardening, {
+      // Drift: the rug-pull alarm. Loud until a human re-approves.
+      onApprove: async () => {
+        const server = hardeningServer.value;
+        const d = server?.drift;
+        const parts: string[] = [];
+        if (d?.added?.length) parts.push(`new: ${d.added.join(', ')}`);
+        if (d?.removed?.length) parts.push(`removed: ${d.removed.join(', ')}`);
+        if (d?.changed?.length) parts.push(`descriptions changed: ${d.changed.join(', ')}`);
+        const ok = await deps.showConfirmModal({
+          title: `Approve ${server.name}'s new tools?`,
+          body: parts.join('\n') || 'The tool surface changed.',
+          confirmLabel: 'Approve current tools',
         });
-        await fetchMcpServers();
-      } catch (err: any) {
-        showToast('Save failed: ' + (err.message || err), { kind: 'error' });
-      }
-    },
-    // Opens the authorization server in a new tab.
-    onOauth: async () => {
-      const server = hardeningServer.value;
-      if (!server) return;
-      oauthBusy.value = true;
-      try {
-        const res = await authFetch(`/api/mcp-servers/${encodeURIComponent(server.id)}/oauth/start`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: '{}',
-        });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body.error || res.statusText);
-        // authorizeUrl originates from a third-party MCP server's OAuth
-        // metadata, relayed by our backend — treat the scheme as untrusted.
-        // Same gate as originBadgeProps (origin-badge.ts): https? or nothing.
-        if (!/^https?:\/\//i.test(body.authorizeUrl || '')) {
-          throw new Error('Server returned an invalid authorization URL');
+        if (!ok) return;
+        try {
+          await apiJson(`/api/mcp-servers/${encodeURIComponent(server.id)}/repin`, { method: 'POST' });
+          showToast('Tool surface re-approved', { kind: 'success' });
+          await fetchMcpServers();
+          openMcpDetail(server.id);
+        } catch (err: any) {
+          showToast('Re-approve failed: ' + (err.message || err), { kind: 'error' });
         }
-        window.open(body.authorizeUrl, '_blank', 'noopener');
-        showToast('Finish authorizing in the new tab, then come back', { kind: 'info' });
-      } catch (err: any) {
-        showToast('OAuth failed: ' + (err.message || err), { kind: 'error' });
-      } finally {
-        oauthBusy.value = false;
-      }
-    },
-  });
-  hardeningApp.mount(host);
+      },
+      // All checked = no restriction, stored as null so future tools flow through
+      // automatically. Compared against the checkbox count read from the DOM.
+      onSaveTools: async () => {
+        const server = hardeningServer.value;
+        const listEl = $('#mcp-hardening .mcp-tools-list');
+        if (!server || !listEl) return;
+        const boxes = [...listEl.querySelectorAll('input[type=checkbox]')] as HTMLInputElement[];
+        const chosen = boxes.filter((b) => b.checked).map((b) => b.dataset.tool);
+        const body = { enabled: chosen.length === boxes.length ? null : chosen };
+        try {
+          await apiJson(`/api/mcp-servers/${encodeURIComponent(server.id)}/tools`, { method: 'PUT', body });
+          showToast(body.enabled ? `${chosen.length} of ${boxes.length} tools enabled` : 'All tools enabled', {
+            kind: 'success',
+          });
+          await fetchMcpServers();
+        } catch (err: any) {
+          showToast('Save failed: ' + (err.message || err), { kind: 'error' });
+        }
+      },
+      // Opens the authorization server in a new tab.
+      onOauth: async () => {
+        const server = hardeningServer.value;
+        if (!server) return;
+        oauthBusy.value = true;
+        try {
+          const body = await apiJson(`/api/mcp-servers/${encodeURIComponent(server.id)}/oauth/start`, {
+            method: 'POST',
+            body: {},
+          });
+          // authorizeUrl originates from a third-party MCP server's OAuth
+          // metadata, relayed by our backend — treat the scheme as untrusted.
+          // Same gate as originBadgeProps (origin-badge.ts): https? or nothing.
+          if (!/^https?:\/\//i.test(body.authorizeUrl || '')) {
+            throw new Error('Server returned an invalid authorization URL');
+          }
+          window.open(body.authorizeUrl, '_blank', 'noopener');
+          showToast('Finish authorizing in the new tab, then come back', { kind: 'info' });
+        } catch (err: any) {
+          showToast('OAuth failed: ' + (err.message || err), { kind: 'error' });
+        } finally {
+          oauthBusy.value = false;
+        }
+      },
+    }),
+  );
 }
 
+// Health, drift re-approval, tool allowlist, OAuth connect — the hardening
+// surface of one server's detail panel (remote servers only).
 function renderMcpHardening(server?: any) {
   if (!$('#mcp-hardening')) return;
   hardeningServer.value = server ?? null;
@@ -549,11 +523,7 @@ export async function runMcpProbe() {
 let mcpProbeToolsApp: ReturnType<typeof createApp> | null = null;
 
 function mountMcpProbeTools(): void {
-  if (mcpProbeToolsApp) return;
-  const host = $('#mcp-probe-tools');
-  if (!host) return;
-  mcpProbeToolsApp = createApp(McpProbeTools);
-  mcpProbeToolsApp.mount(host);
+  mcpProbeToolsApp ??= mountIsland('#mcp-probe-tools', () => createApp(McpProbeTools));
 }
 
 function renderMcpProbeResults(probe?: any) {
@@ -589,18 +559,13 @@ export async function createMcpServer(body?: any, btn?: any) {
   }
 }
 
-
 // Debounce for the catalog search box; module scope because it holds state
 // across keystrokes.
 let mcpCatalogTimer: ReturnType<typeof setTimeout> | undefined;
 
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // The MCP panel: server add/edit, the catalog list and the reachability probe.
-//
-// A function rather than module-scope code: legacy.js runs its blocks in source
-// order around initApp(), so relocating them to another module's top level would
-// silently re-order them. legacy calls wireMcpPanel() at the exact line the
-// first block occupied, so execution order is unchanged.
+// Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
 export function wireMcpPanel(): void {
   $<HTMLButtonElement>('#mcp-probe-btn')?.addEventListener('click', runMcpProbe);
@@ -651,7 +616,6 @@ export function wireMcpPanel(): void {
     await createMcpServer(body, $('#mcp-create-form button.btn-primary'));
   });
 
-
   // Save (rename / retarget) from the edit view.
   $<HTMLFormElement>('#mcp-detail-form')?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -669,7 +633,10 @@ export function wireMcpPanel(): void {
     try {
       await apiJson(`/api/mcp-servers/${encodeURIComponent(selectedMcpId.value)}`, { method: 'PUT', body });
       if (token) {
-        await apiJson(`/api/mcp-servers/${encodeURIComponent(selectedMcpId.value)}/auth`, { method: 'PUT', body: { token } });
+        await apiJson(`/api/mcp-servers/${encodeURIComponent(selectedMcpId.value)}/auth`, {
+          method: 'PUT',
+          body: { token },
+        });
       }
       showToast('Saved', { kind: 'success' });
       closeMcpDetail();
@@ -685,10 +652,11 @@ export function wireMcpPanel(): void {
     const server = allMcpServers.value.find((s: any) => s.id === selectedMcpId.value);
     if (!server) return;
     try {
-      const res = await authFetch(`/api/mcp-servers/${encodeURIComponent(selectedMcpId.value)}`, { method: 'DELETE' });
-      if (res.status === 409) {
-        const impact = await res.json();
-        const n = (impact.assigned_agent_group_ids || []).length;
+      try {
+        await apiJson(`/api/mcp-servers/${encodeURIComponent(selectedMcpId.value)}`, { method: 'DELETE' });
+      } catch (err: any) {
+        if (err.status !== 409) throw err;
+        const n = (err.body.assigned_agent_group_ids || []).length;
         const confirmed = await showConfirmModal({
           title: 'Delete MCP server',
           body: `"${server.name}" is attached to ${n} agent${n === 1 ? '' : 's'}. They lose its tools on their next message.`,
@@ -696,18 +664,7 @@ export function wireMcpPanel(): void {
           destructive: true,
         });
         if (!confirmed) return;
-        const force = await authFetch(`/api/mcp-servers/${encodeURIComponent(selectedMcpId.value)}?force=1`, {
-          method: 'DELETE',
-        });
-        if (!force.ok) {
-          const err = await force.json().catch(() => ({}));
-          showToast(`Failed to delete: ${err.error || force.statusText}`, { kind: 'error' });
-          return;
-        }
-      } else if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        showToast(`Failed to delete: ${err.error || res.statusText}`, { kind: 'error' });
-        return;
+        await apiJson(`/api/mcp-servers/${encodeURIComponent(selectedMcpId.value)}?force=1`, { method: 'DELETE' });
       }
       showToast(`Deleted "${server.name}".`, { kind: 'success' });
       closeMcpDetail();
@@ -716,26 +673,7 @@ export function wireMcpPanel(): void {
       showToast(`Failed to delete: ${err.message}`, { kind: 'error' });
     }
   });
-
-  // ── Agent → Model assignment ──────────────────────────────────────────────
-  //
-  // The Model dropdown in the agent edit form. Populated from /api/models on
-  // every openAgentDetail (cheap; a handful of rows). Saved alongside the
-  // other agent fields when the user clicks Save.
-
-
-  /**
-   * Update the picker trigger button's labels to reflect the currently-
-   * assigned model. Two-line layout: name on top, kind+model_id+host underneath.
-   * No selection → "Default" / "Built-in Anthropic".
-   */
-
 }
-
-// ── Panel wiring ───────────────────────────────────────────────────────────
-// Blocks whose SUBJECT element this module already owns. The ownership census
-// reported them as multi-owner, which was the union of every id they touch
-// rather than what they are for.
 
 /** The MCP catalog block: search, expand and add-from-catalog. */
 export function wireMcpCatalog(): void {
@@ -753,35 +691,4 @@ export function wireMcpCatalog(): void {
     clearTimeout(mcpCatalogTimer);
     mcpCatalogTimer = setTimeout(() => void loadMcpCatalog(search.value.trim()), 300);
   });
-}
-
-// Make a list <li> behave as a button for both pointer and keyboard users:
-// role + tabindex + click + Enter/Space. The manage-tab list rows (route /
-// model / mcp) are non-<button> elements, so without the keydown a keyboard or
-// screen-reader user can focus a row but can't open it (WCAG 2.1.1). One
-// helper so all three lists stay accessible and consistent.
-export function makeRowActivatable(li: any, activate: () => void) {
-  li.setAttribute('role', 'button');
-  li.setAttribute('tabindex', '0');
-  li.addEventListener('click', activate);
-  li.addEventListener('keydown', (e: KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      activate();
-    }
-  });
-}
-
-// Open a full-screen view. If a detail drawer is open it owns the top of the view
-// stack, so close it FIRST and defer opening the full view until the drawer's
-// ASYNC router teardown finishes. Otherwise the two happen in one tick: the view
-// is pushed, then the drawer's history.go unwinds it too — so the first click
-// just closed the drawer and you had to click again. No drawer open → immediate.
-/**
- * The one loading primitive (DESIGN.md §5): a list that's fetching shows an inline
- * ring as its FIRST ROW — never a blank pane, never a toast. Toasts are outcomes;
- * a spinner is the wait.
- */
-export function loadingRow(label: string) {
-  return `<li class="skills-empty"><span class="btn-spinner" aria-hidden="true"></span>${label}</li>`;
 }

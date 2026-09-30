@@ -2,12 +2,9 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { json } from './http.js';
 
-// The async-DB migration left seven handlers passing an un-awaited promise to
-// json() — the `unknown` parameter means tsc never flags it, and the client
-// receives `{}` for what should be an array (took every room in the live UI
-// down via /api/agents). These tests pin the guard that makes that class
-// impossible: json() resolves a thenable before serializing, and turns a
-// rejection into the 500 it is instead of a silent empty object.
+// json()'s `unknown` parameter hides a missing await from tsc, so json()
+// resolves a thenable before serializing and turns a rejection into a 500
+// instead of a silent `{}`. These tests pin that guard.
 
 function fakeRes() {
   const chunks: string[] = [];

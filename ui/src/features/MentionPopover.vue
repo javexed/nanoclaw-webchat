@@ -1,16 +1,9 @@
 <script setup lang="ts">
 /**
- * The @-mention autocomplete popover — thirty-seventh island.
- *
- * Mounted into the popover element ensureMentionPopover() creates, which is
- * appended next to the composer once and reused.
- *
- * mousedown and touchstart, NOT click. The composer's blur dismisses the
- * popover, and blur fires before click — so a click handler would never run.
- * touchstart is there for iOS, where the synthesized mouse events can land
- * after the blur-dismiss timer. preventDefault keeps the input focused.
- *
- * Placement is pure CSS (absolute above the composer) — nothing to compute.
+ * The @-mention autocomplete popover, mounted into the element ensureMentionPopover()
+ * creates. mousedown and touchstart, NOT click: the composer's blur dismisses the popover
+ * before click fires, and on iOS synthesized mouse events can land after the dismiss
+ * timer. preventDefault keeps the input focused. Placement is pure CSS.
  */
 import { mentionMatches, mentionSelectedIndex } from './mention-popover-state.js';
 
@@ -18,10 +11,7 @@ const props = defineProps<{ onPick: (index: number) => void }>();
 
 const PERSON = 'person';
 const DEFAULT_AGENT = 'default';
-/**
- * Bound, with its LEADING SPACE. The imperative version set textContent to
- * ' — ' + name; as template text the space becomes a newline plus indentation.
- */
+/** Bound, with its LEADING SPACE; as template text the space would become a newline plus indentation. */
 const nameLabel = (a: any) => ` — ${a.name}`;
 
 function pick(e: Event, i: number) {

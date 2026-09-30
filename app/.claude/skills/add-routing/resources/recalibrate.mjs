@@ -56,7 +56,6 @@ export function computeMetrics(entries) {
     byRoute: {},
     errors: 0,
     timeouts: 0,
-    escalations: 0,
     other: 0,
     liveTotal: 0,
     latency: { p50: null, p95: null, max: null, samples: 0 },
@@ -74,7 +73,6 @@ export function computeMetrics(entries) {
     } else {
       if (typeof e.ms === 'number') okLatencies.push(e.ms);
       if (route === 'other') m.other += 1;
-      if (e.final_model === '__escalate__' || e.bound_model === '__escalate__') m.escalations += 1;
     }
   }
   okLatencies.sort((a, b) => a - b);
@@ -121,7 +119,6 @@ export function renderReport({ metrics, rec, days, currentTimeout, generatedAt }
     '',
     `- classifier errors: ${metrics.errors} (${pct(metrics.errors, metrics.total)}) — of which timeouts: ${metrics.timeouts}`,
     `- \`other\` (no route matched): ${metrics.other} (${pct(metrics.other, metrics.total)})`,
-    `- escalations: ${metrics.escalations} (${pct(metrics.escalations, metrics.liveTotal)} of live traffic)`,
     `- classify latency (successful): p50 ${metrics.latency.p50 ?? 'n/a'}ms · p95 ${metrics.latency.p95 ?? 'n/a'}ms · max ${metrics.latency.max ?? 'n/a'}ms (${metrics.latency.samples} samples)`,
     `- live.timeout_ms: ${currentTimeout ?? 'unset'}${rec ? ` → **recommend ${rec.recommended}** (${rec.reason})` : ' — no change recommended'}`,
     '',
@@ -138,10 +135,6 @@ export function renderReport({ metrics, rec, days, currentTimeout, generatedAt }
     if (metrics.other / metrics.total > 0.15)
       lines.push(
         `- ⚠ \`other\` rate ${pct(metrics.other, metrics.total)} — route descriptions don't cover real traffic; add or reword routes (SKILL.md "Tuning").`,
-      );
-    if (metrics.liveTotal > 0 && metrics.escalations / metrics.liveTotal > 0.3)
-      lines.push(
-        `- ⚠ escalation rate ${pct(metrics.escalations, metrics.liveTotal)} of live traffic — the escalate route may be over-matching (fallback quota burn); narrow its description.`,
       );
     if (lines.at(-1) === '') lines.push('- all rates within normal bands.');
   }

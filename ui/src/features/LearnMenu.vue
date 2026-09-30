@@ -1,23 +1,9 @@
 <script setup lang="ts">
 /**
- * The 🎓 learn menu — forty-first island.
- *
- * Mounted into <div id="learn-menu">, exclusively owned by this module. The
- * #learn-btn trigger and its aria-expanded stay imperative — outside the mount
- * point.
- *
- * Three fixed actions, then ONE pair of room-scoped toggles. One pair, not one
- * per agent: the room layer overrides the wired agents' defaults, so many
- * agents never means many switches.
- *
- * aria-checked binds the BOOLEAN. Vue renders aria-* false as the string
- * "false" rather than dropping the attribute, which is what the imperative
- * setAttribute(…, String(!!on)) produced — verified in the diff, not assumed.
- *
- * The toggles are menuitemcheckbox rows whose state text doubles as the value —
- * the imperative version read `state.textContent !== 'on'` to decide the next
- * value. That is a ref here, but the optimistic rule is preserved exactly: the
- * row only flips once the write comes back true.
+ * The learn menu, mounted into <div id="learn-menu">: three fixed actions, then ONE pair
+ * of room-scoped toggles (the room layer overrides wired agents' defaults). aria-checked
+ * binds the boolean, which Vue renders as "true"/"false". A toggle flips only once the
+ * write comes back true.
  */
 import { learnAutoKeep, learnAutoTrigger, learnTogglesVisible } from './learn-menu-state.js';
 

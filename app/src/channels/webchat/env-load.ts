@@ -1,23 +1,12 @@
 /**
  * Webchat env preload — side-effect module.
  *
- * The webchat adapter reads its config via `process.env.WEBCHAT_*` at
- * module-init time (top-level `const X = process.env.X || ...`). v2 trunk's
- * service runners (systemd unit, launchd plist) deliberately do NOT load
- * `.env` into process.env — `src/env.ts` keeps secrets out of the inherited
- * environment by reading on demand via `readEnvFile`.
- *
- * That means a service-managed host has `WEBCHAT_ENABLED` unset and the
- * factory returns null ("Channel credentials missing, skipping").
- *
- * This shim bridges the two: at import time it reads the webchat-relevant
- * keys from `.env` and sets them on `process.env` ONLY if not already set
- * (so an explicit Environment= line in the unit still wins). Importing it
- * first in `webchat/index.ts` guarantees it runs before any transitive
- * import (server.ts, auth.ts, etc.) evaluates its module-level constants.
- *
- * Only webchat-specific keys are populated — nothing leaks for other
- * channels.
+ * Webchat reads `process.env.WEBCHAT_*` at module init, but trunk's service
+ * units deliberately do not load `.env` into process.env (src/env.ts keeps
+ * secrets out of the inherited environment). At import time this copies the
+ * listed keys from `.env` into process.env ONLY where unset (an explicit
+ * Environment= still wins). Imported first in index.ts so it runs before any
+ * module-level constant is evaluated. Only the keys below are populated.
  */
 import { readEnvFile } from '../../env.js';
 
@@ -45,8 +34,9 @@ const WEBCHAT_ENV_KEYS = [
   'WEBCHAT_TLS_KEY',
   'WEBCHAT_PUBLIC_DIR',
   'WEBCHAT_RUNNER_ENABLED',
-  'WEBCHAT_RUNNER_MAILBOX_PORT',
   'WEBCHAT_RUNNER_AUTO_GROUP',
+  'WEBCHAT_RUNNER_ORIGINS',
+  'WEBCHAT_EXEC_RELAY',
   'WEBCHAT_VAPID_PUBLIC_KEY',
   'WEBCHAT_VAPID_PRIVATE_KEY',
   'WEBCHAT_VAPID_SUBJECT',
@@ -64,12 +54,9 @@ const WEBCHAT_ENV_KEYS = [
   'WEBCHAT_STT_API_KEY',
   'OLLAMA_HOST',
   'AGENT_DISPLAY_NAME',
-  // Not webchat-specific, but the webchat Settings "install <channel/provider>"
-  // flow runs the skill engine IN THIS HOST PROCESS, and the engine reads
-  // NANOCLAW_CHANNELS_REMOTE_URL from process.env to resolve a `from-branch`
-  // payload's source repo (e.g. a fork or private mirror carrying `providers-grok`). A
-  // service-managed host never inherits .env, so without loading it here the
-  // engine falls back to the nanocoai default and can't find fork-only branches.
+  // Not webchat-specific: Settings' install flow runs the skill engine in this
+  // process, and it reads this to resolve a `from-branch` payload's repo (a
+  // fork or mirror); without it the engine falls back to the default remote.
   'NANOCLAW_CHANNELS_REMOTE_URL',
   // Audit retention's starting values (src/audit.ts); Admin → Audit log overrides them.
   'NANOCLAW_AUDIT_KEEP_DAYS',

@@ -1,6 +1,6 @@
 // ── Route list state ────────────────────────────────────────────────────────
-// Bridge refs for the RouteList island. legacy.js still owns routingDraft and
-// the detail pane; these mirror what the list renders.
+// Bridge refs for the RouteList island; routing.ts owns the detail pane and
+// syncs these from routingDraft.
 import { ref } from 'vue';
 
 /** Routes in draft order — the order IS the match order. */
@@ -12,10 +12,5 @@ export const routeSelectedIdx = ref(-1);
 
 /** Capabilities the router offers to route but that no route covers yet. */
 export const routeSuggestions = ref<any[]>([]);
-/**
- * Capabilities whose Create is in flight.
- *
- * The imperative version disabled the button element directly and re-enabled it
- * on failure; a save that succeeds re-fetches and the row disappears on its own.
- */
+/** Capabilities whose Create is in flight; on success the re-fetch drops the row. */
 export const routeSuggestBusy = ref<Set<string>>(new Set());

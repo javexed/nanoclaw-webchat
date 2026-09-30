@@ -1,6 +1,5 @@
 /**
- * Approval pre-judge (fork-owned) — an OPTIONAL LLM triage tier in front of
- * human approvals.
+ * Approval pre-judge — an OPTIONAL LLM triage tier in front of human approvals.
  *
  * When an approval hold is created, `maybePrejudgeApproval` (called from
  * `requestApproval`, see primitive.ts) can consult a locally-hosted roster
@@ -11,7 +10,7 @@
  * notified with an "Auto-approved (pre-judge)" marker, and an audit line is
  * logged. On ANYTHING else — model off, action not opted in, never-list hit,
  * timeout, non-200, unparseable output, or a non-approve verdict — the flow
- * falls through to normal human delivery, exactly as today.
+ * falls through to normal human delivery.
  *
  * Conservative by construction:
  *   - OFF twice over by default: no model configured AND an empty opt-in
@@ -98,17 +97,10 @@ export function isNeverAutoApprovable(action: string, payloadJson: string): bool
 // ── Triage flags ──
 //
 // A CLOSED vocabulary of checkable claims ABOUT the request — deliberately not
-// a self-assessment. This design already refuses to let the model withhold a
-// human review (there is no auto-deny, see the header); a "risk: low /
-// confidence: 0.92" chip would ask the approver to trust that same model to
-// REASSURE them instead, with no fail-safe behind it. Self-reported confidence
-// is also poorly calibrated — especially in the small local models this feature
-// targets — and a precise-looking number invites clicking through the one card
-// whose entire purpose is to make a human look.
-//
-// A claim like "touches credentials" is different in kind: the payload renders
-// directly beneath it, so a wrong claim is visibly wrong. Wrong claims are
-// self-correcting; a wrong confidence score is not.
+// a self-assessment. A risk/confidence chip would ask the approver to trust the
+// model to REASSURE them (poorly calibrated, and it invites clicking through);
+// a claim like "touches credentials" renders above the payload, so a wrong one
+// is visibly wrong.
 //
 // CLOSED because these land in stored rows and are compared across requests.
 // Values outside the vocabulary are DROPPED, never rendered — a model inventing
@@ -421,7 +413,7 @@ export interface MaybePrejudgeDeps extends PrejudgeDeps {
 /**
  * The requestApproval hook. Returns `true` when the approval was auto-
  * approved and fully resolved (caller must skip card delivery), `false` in
- * every other case (caller proceeds exactly as today). Never throws.
+ * every other case. Never throws.
  */
 export async function maybePrejudgeApproval(
   approvalId: string,
@@ -439,10 +431,8 @@ export async function maybePrejudgeApproval(
 
     const result = await prejudgeApproval(approval, question, deps);
     if (result.verdict !== 'approve') {
-      // The reason used to live only in this log line. It is the single most
-      // useful thing the approver could know — why this is in front of them —
-      // so it is recorded for the card as well. Best-effort: a triage write
-      // must never be able to block the approval itself.
+      // The reason is recorded for the card too (why this is in front of the
+      // approver). Best-effort: a triage write must never block the approval.
       try {
         await (deps.storeTriage ?? storeApprovalTriage)(approvalId, {
           tier: result.tier,
@@ -499,19 +489,11 @@ export interface ApprovalTriageView {
 }
 
 /**
- * Assemble the triage a card should show.
- *
- * The heuristic flags are recomputed here rather than read back from the row.
- * They are a pure function of (action, payload), so this is always available —
- * including for an approval raised while the feature was off, or before the
- * feature existed at all. The stored `heuristic_flags` column is kept as an
- * audit record of what the never-list said AT DECISION TIME, which is a
- * different question and can legitimately diverge if the never-list changes.
- *
- * No stored row means no judgment was made: that renders as `unscreened`, which
- * is the honest reading for both a feature-off approval and a legacy one. This
- * is why absence is a valid state rather than a gap to paper over — with chips
- * on the card, "nothing shown" must never be mistaken for "screened, clean".
+ * Assemble the triage a card should show. Heuristic flags are recomputed (a
+ * pure function of action + payload, so always available); the stored
+ * `heuristic_flags` column is the audit record of what the never-list said AT
+ * DECISION TIME. No stored row renders as `unscreened`, so "nothing shown" is
+ * never mistaken for "screened, clean".
  */
 export async function buildApprovalTriageView(
   approvalId: string,

@@ -1,12 +1,5 @@
 // ── MCP list view state ──────────────────────────────────────────────────────
-// Bridge refs for the McpList island. Unlike the agent list — whose data is
-// state.allAgents and already reactive — the MCP server list lives in legacy.js
-// module state, so BOTH the rows and the selection are mirrored here and synced
-// by renderMcpServers() on every call.
-//
-// Same bridge shape as agent-list-state.ts, and the same intent: when
-// allMcpServers and selectedMcpId leave legacy.js this file becomes their
-// declaration and the sync disappears.
+// Refs for the McpList island; renderMcpServers() in mcp.ts syncs the rows and selection.
 import { ref } from 'vue';
 
 export const mcpServers = ref<any[]>([]);
@@ -16,9 +9,11 @@ export const selectedMcpId = ref<string | null>(null);
 export const agentMcpServers = ref<any[]>([]);
 /** Every registered MCP server. */
 export const allMcpServers = ref<any[]>([]);
-/** Last successful probe result, and the bearer token that made it work —
- *  carried into the add body so the registered server keeps working. */
+/** Last successful probe result (the server response). */
 export const lastMcpProbe = ref<any>(null);
+
+// Bearer token of the last successful probe, carried into the add body. Kept out
+// of lastMcpProbe so logging that object cannot leak it.
 export const lastMcpProbeToken = ref('');
 /** Re-entry guard while an add is in flight. */
 export const mcpAddInProgress = ref(false);

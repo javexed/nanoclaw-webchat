@@ -1,17 +1,8 @@
 <script setup lang="ts">
 /**
- * The toggle(s) showConfirmModal borrows as its body — sixty-fifth island.
- *
- * Same per-instance shape as ConfirmInput, and state arrives the same way, for
- * the same reason.
- *
- * The checkbox is UNCONTROLLED and its state is read at confirm time from the
- * captured element. `checked` does not reflect to an attribute (measured in
- * #244), so :checked would emit one the imperative `cb.checked` read never
- * produced — and there is nothing here that re-renders, so binding buys
- * nothing anyway.
- *
- * The note is optional and comes AFTER the label, matching the append order.
+ * The toggle(s) showConfirmModal borrows as its body; per-instance and provide()-injected
+ * like ConfirmInput. The checkbox is uncontrolled and read from the captured element at
+ * confirm time (nothing here re-renders). The optional note comes after the label.
  */
 import { inject } from 'vue';
 

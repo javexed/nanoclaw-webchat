@@ -13,11 +13,11 @@ describe('userSetting', () => {
   it('takes the user value and never a workspace or folder one', () => {
     const c = source({
       serverUrl: { globalValue: 'https://central.example', workspaceValue: 'https://evil.example' },
-      runtimePath: { workspaceValue: '/tmp/evil', workspaceFolderValue: '/tmp/evil2' },
+      releaseSigningKey: { workspaceValue: 'ed25519:evil', workspaceFolderValue: 'ed25519:evil2' },
       slots: { workspaceValue: { '/workspace/project': '/home/dev' } },
     });
     expect(userSetting(c, 'serverUrl', '')).toBe('https://central.example');
-    expect(userSetting(c, 'runtimePath', '')).toBe('');
+    expect(userSetting(c, 'releaseSigningKey', '')).toBe('');
     expect(userSetting<Record<string, string>>(c, 'slots', {})).toEqual({});
     expect(userSetting(c, 'unknown', 'prompt')).toBe('prompt');
   });
@@ -26,13 +26,27 @@ describe('userSetting', () => {
     const c = source({
       mountAllowlist: { globalValue: '/home' },
       slots: { globalValue: ['/home'] },
-      allowUnlabeledAgentImage: { globalValue: 'yes' },
+      proposeIncludeIgnored: { globalValue: 'yes' },
       workspaceExcludes: { globalValue: ['.env'] },
     });
     expect(userSetting<string[]>(c, 'mountAllowlist', [])).toEqual([]);
     expect(userSetting<Record<string, string>>(c, 'slots', {})).toEqual({});
-    expect(userSetting(c, 'allowUnlabeledAgentImage', false)).toBe(false);
+    expect(userSetting(c, 'proposeIncludeIgnored', false)).toBe(false);
     expect(userSetting<string[]>(c, 'workspaceExcludes', ['x'])).toEqual(['.env']);
+  });
+});
+
+describe('setting reads', () => {
+  it('go through userSetting, so a workspace cannot answer them (autoConnect is the one exception)', () => {
+    const src = path.join(__dirname);
+    const direct: string[] = [];
+    for (const f of fs.readdirSync(src)) {
+      if (!f.endsWith('.ts') || f.endsWith('.test.ts')) continue;
+      const text = fs.readFileSync(path.join(src, f), 'utf8');
+      for (const m of text.matchAll(/(?:getConfiguration\('nanoclaw'\)|\bc|\bcfg)\s*\.get(?:<[^>]+>)?\('([\w.]+)'/g))
+        direct.push(`${f}: ${m[1]}`);
+    }
+    expect(direct).toEqual(['extension.ts: autoConnect']);
   });
 });
 

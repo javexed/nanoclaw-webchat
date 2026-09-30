@@ -1,12 +1,11 @@
 /**
- * MCP health + drift sweep (items 3+4 of the MCP hardening review).
+ * MCP health + drift sweep.
  *
  * Hourly (timer in index.ts), for every REMOTE server assigned to at least one
  * agent: re-probe as a real MCP client and record health; re-hash the tool
  * surface against the pin taken at attach time and flag drift — the "rug pull"
- * a server performs by mutating tool descriptions after approval. No shipped
- * first-party client does this; the reference implementation is mcp-scan's
- * hash pinning, which we mirror server-side.
+ * a server performs by mutating tool descriptions after approval (mcp-scan's
+ * hash pinning, done server-side).
  *
  * Drift NEVER auto-detaches: agents keep working (the operator may well want
  * the updated tools) — but the surface change is loud in the MCP tab until a

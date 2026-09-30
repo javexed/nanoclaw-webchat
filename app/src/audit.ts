@@ -5,9 +5,7 @@
  * and how, which privileged actions were attempted and what the guard decided,
  * who gained a role. NOT application logging — log.ts is for that. The test
  * for inclusion is "would this line answer a 'who did what' question during an
- * incident?". The concrete incident that motivated this: a fresh install's
- * one-shot owner grant was consumed by an unnoticed loopback request, and
- * nothing on disk could say by whom.
+ * incident?".
  *
  * WHY A LEAF. guard.ts is constrained to leaf imports only (see
  * src/guard/types.ts) — it may import log and shared types, never
@@ -308,11 +306,7 @@ export function auditActor(actor: { kind: string; userId?: string; agentGroupId?
   return actor.kind; // host | system
 }
 
-// ── Reading it back ─────────────────────────────────────────────────────────
-// The write path above is the contract; this is the read path the Admin viewer
-// uses. It lives here because the file format is this module's business and
-// nothing else should be teaching itself to parse these lines. Still a leaf:
-// fs and path, nothing more.
+// ── Reading it back (the Admin viewer) — the file format is this module's business
 
 /** One stored event, as parsed back off disk. */
 export interface StoredAuditEvent extends AuditEvent {
@@ -346,13 +340,8 @@ export interface AuditPage {
 }
 
 /**
- * How much of the tail to scan per request.
- *
- * The file is append-only and the viewer wants the NEWEST entries, so reading
- * the tail is both the cheap answer and the right one. A budget rather than
- * the whole file because this is a log that only grows, and an operator with a
- * year of history should not hand the event loop a 200MB parse to render fifty
- * rows.
+ * How much of the tail to scan per request: the viewer wants the NEWEST
+ * entries, and a log that only grows must not cost a whole-file parse.
  */
 const READ_WINDOW_BYTES = 2 * 1024 * 1024;
 

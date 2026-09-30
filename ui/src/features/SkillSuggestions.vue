@@ -1,16 +1,9 @@
 <script setup lang="ts">
 /**
- * Suggested skills on the agent-create form — thirty-first island.
- *
- * Mounted into <ul id="agent-create-skills-list">, exclusively owned by this
- * module. The #agent-create-skills block's hidden flag is outside the mount
- * point and stays imperative — it hides the heading too, not just the list.
- *
- * The checkboxes keep their state in the DOM and carry data-url/data-name,
- * because the create-agent submit reads them with querySelectorAll and pulls
- * both off the dataset. Same contract as the two agent pickers: modelling the
- * selection as a ref would mean changing a reader elsewhere, and the failure
- * mode is silent — an agent created with none of the skills you ticked.
+ * Suggested skills on the agent-create form, mounted into <ul id="agent-create-skills-list">.
+ * The checkboxes keep their state in the DOM and carry data-url/data-name because the
+ * create-agent submit reads them there; a missed reader would fail silently (an agent
+ * created without the skills you ticked).
  */
 import { skillSuggestions } from './skills-panel-state.js';
 

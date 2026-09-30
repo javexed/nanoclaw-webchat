@@ -1,50 +1,23 @@
 /**
  * Webchat channel — embedded HTTP + WebSocket chat server with PWA frontend.
  *
- * Disabled by default. Enable with `WEBCHAT_ENABLED=true` in .env. The server
- * binds to `WEBCHAT_HOST` (default 127.0.0.1) on `WEBCHAT_PORT` (default 3100).
- *
- * Auth methods — there is no mode switch: each enables itself from its own env
- * var, and localhost auto-owner switches off the moment any of them is set
- * (see auth.ts, which owns the resolution order):
- *   - localhost      single-machine, no auth (default while bound to loopback)
- *   - bearer         shared token in `WEBCHAT_TOKEN` (>=24 chars)
- *   - tailscale      `WEBCHAT_TAILSCALE=true`; tailnet whois -> login is the identity
- *   - proxy-header   `WEBCHAT_TRUSTED_PROXY_IPS` ('auto' | '*' | CIDR list); the
- *                    identity header is `WEBCHAT_TRUSTED_PROXY_HEADER`
- *
- * Identity → user_id mapping (used by permissions module if installed):
- *   - localhost      → "webchat:local-owner"
- *   - bearer         → "webchat:owner"  (one shared identity per token)
- *   - tailscale      → "webchat:tailscale:<login>"
- *   - proxy-header   → "webchat:<identity>"
- *   Both are normalized (lowercased, anything outside [a-z0-9._@+-] → '-').
- *
- * Privilege model:
- *   - First identity to log in is auto-granted role='owner' (when permissions
- *     module is installed). Subsequent identities have no role until granted.
- *   - Admin operations (create/delete/wire agents) gated on hasAdminPrivilege().
- *   - Without the permissions module, the gate degrades to "single trusted
- *     operator" — anyone with bearer/proxy access has full control.
- *
- * Schema lives in central DB (see migration.ts):
- *   - webchat_rooms        room metadata (id, name, created_at)
- *   - webchat_messages     full message log for PWA history view
- *   - webchat_push_subscriptions  Web Push endpoints
- *
- * The adapter mirrors agent traffic into webchat_messages so the PWA has a
- * unified history view; routing/delivery still flows through v2's session
- * DBs (inbound.db / outbound.db) like every other channel.
+ * Disabled by default (`WEBCHAT_ENABLED=true` in .env); binds `WEBCHAT_HOST`
+ * (default 127.0.0.1) : `WEBCHAT_PORT` (default 3100). Auth methods and their
+ * resolution order live in auth.ts. The adapter mirrors agent traffic into
+ * webchat_messages for the PWA's history; routing/delivery still flows through
+ * the session DBs like every other channel.
  */
 // Side-effect import — must run before any transitive webchat import that
 // reads `process.env.WEBCHAT_*` at module load (auth.ts, server.ts, push.ts,
 // drafter.ts). See env-load.ts for the rationale.
 import './env-load.js';
+// Side-effect import — an installed tree whose data dir is gone refuses to
+// boot before main() would create a fresh, empty database (data-guard.ts).
+import './data-guard.js';
 
 import { randomUUID } from 'crypto';
 
 import { log } from '../../log.js';
-import { readEnvFile } from '../../env.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { createMessagingGroup, getMessagingGroup, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { getPendingApproval } from '../../db/sessions.js';
@@ -55,10 +28,12 @@ import { classifierParamsForModel } from './models.js';
 import { registerChannelAdapter } from '../channel-registry.js';
 import type { ChannelAdapter, ChannelSetup, OutboundMessage } from '../adapter.js';
 import type { AgentActivityStatus } from '../../seam/index.js';
-import { startMailboxEndpoint } from './runner-mailbox-endpoint.js';
+import { runChannelStart } from './extensions.js';
+import { isOllamaLenient, primeOllamaLenient, refreshOllamaLenient } from './ollama-lenient.js';
+// Registers every installed extension before the server starts.
+import './extensions-installed.js';
 import { pruneSigninSessions } from './signins.js';
 import { pruneAuditFiles } from '../../audit.js';
-import { RUNNER_ENABLED } from './runner-ws.js';
 import { redactSensitiveData } from './redact.js';
 import { startWebchatServer, stopWebchatServer, type WebchatServer } from './server.js';
 import { sweepMcpHealth } from './mcp-health.js';
@@ -67,7 +42,6 @@ import {
   APPROVAL_INBOX_PREFIX,
   deleteWebchatApprovalIndex,
   findActiveAgentForWebchatRoom,
-  getAssignedModelForAgent,
   getEffectiveModelForAgent,
   getWebchatApprovalInboxes,
   getWebchatRoom,
@@ -78,11 +52,8 @@ import {
   recordWebchatApproval,
   storeWebchatApprovalCard,
   storeWebchatSkillDraftCard,
-  storeWebchatMessage,
-  storeWebchatFileMessage,
   sessionKeyToThread,
   userForApprovalInbox,
-  type FileMeta,
   type WebchatRoomAgent,
   recordActivity,
   pruneActivity,
@@ -99,6 +70,7 @@ import { registerApprovalResolvedHandler } from '../../modules/approvals/primiti
 import { registerApprovalIntercept, registerApprovalRequestedListener } from '../../seam/index.js';
 import { buildApprovalTriageView, maybePrejudgeApproval } from '../../modules/approvals/prejudge.js';
 import { startReconcileLoop, stopReconcileLoop } from './reconcile.js';
+import { deliveryKey, storeAgentDelivery } from './agent-delivery.js';
 import {
   registerSkillDraftProposedListener,
   registerSkillDraftResolvedListener,
@@ -120,9 +92,7 @@ function createAdapter(): ChannelAdapter {
   const adapter: ChannelAdapter = {
     name: 'webchat',
     channelType: CHANNEL_TYPE,
-    // Threads on: the router keys a per-thread session per (room, thread). A
-    // null/main thread keys the legacy null-thread session, so thread-less rooms
-    // are unchanged until the client sends a real thread id. See
+    // A session per (room, thread); main keys the null-thread session. See
     // docs/webchat/threads.md and threadToSessionKey().
     supportsThreads: true,
 
@@ -148,10 +118,7 @@ function createAdapter(): ChannelAdapter {
         },
       });
       log.info('Webchat channel listening', { host: server.host, port: server.port, tls: server.tls });
-      // Reconcile loop — recovers messages lost to a known race where
-      // trunk's deliveryAdapter wrapper can transiently log "No adapter
-      // for channel type webchat" and mark a message delivered without
-      // actually delivering. See reconcile.ts for details.
+      // Recovers messages marked delivered but never delivered (see reconcile.ts).
       startReconcileLoop(server);
       // Prune the durable activity log past its 30-day window. Daily is ample —
       // it is a retention floor, not a size cap, and the volume is modest.
@@ -180,8 +147,10 @@ function createAdapter(): ChannelAdapter {
       // Binds only if a server assignment already carries a relay token; an
       // install with no authed remote MCP server never opens the port.
       void startMcpRelayIfAssigned();
-      // Runner mailbox endpoint: placed agents sync their mailbox with central over the relay.
-      if (RUNNER_ENABLED) startMailboxEndpoint();
+      // Before any spawn reads it: which groups run on a local Ollama model.
+      primeOllamaLenient().catch((err) => log.warn('Ollama lenient-mode prime failed', { err }));
+      // Installed extensions' own background services (./extensions.ts).
+      runChannelStart();
       mcpHealthTimer = setInterval(
         () => {
           sweepMcpHealth().catch((err) => log.error('MCP health sweep failed', { err }));
@@ -192,10 +161,8 @@ function createAdapter(): ChannelAdapter {
       setTimeout(() => {
         sweepMcpHealth().catch((err) => log.error('MCP health sweep failed', { err }));
       }, 30_000).unref?.();
-      // Agents spawned outside the PWA (e.g. via a2a's `create_agent` MCP
-      // tool) intentionally have no webchat wiring. The operator wires
-      // them into rooms on demand — agents are entities, rooms are
-      // conversation spaces, and we don't conflate the two.
+      // Agents spawned outside the PWA (e.g. a2a `create_agent`) are not wired
+      // to a room; the operator wires them on demand.
     },
 
     async teardown(): Promise<void> {
@@ -251,12 +218,8 @@ function createAdapter(): ChannelAdapter {
         const approverUserId = `webchat:${handle}`;
         const content = message.content as Record<string, unknown> | string | undefined;
         if (content && typeof content === 'object' && content.type === 'ask_question') {
-          // Stamp the approval into the webchat-side index so the PWA's
-          // /api/approvals/pending query can find it later. We do this in
-          // the deliver() path rather than relying on trunk's
-          // requestApproval to populate pending_approvals.platform_id.
-          // (The questionId field on the ask_question card IS the
-          // pending_approvals.approval_id.)
+          // Index it for /api/approvals/pending (trunk leaves
+          // pending_approvals.platform_id unset). questionId IS the approval_id.
           const approvalId = (content as { questionId?: unknown }).questionId;
           if (typeof approvalId === 'string' && approvalId.length > 0) {
             await recordWebchatApproval(approvalId, platformId);
@@ -281,12 +244,8 @@ function createAdapter(): ChannelAdapter {
         log.warn('Webchat deliver: unknown room', { roomId });
         return undefined;
       }
-      // Resolve the producing agent. Prefer the agent_group_id threaded
-      // through `message.senderAgentGroupId` from delivery.ts — that's the
-      // ground truth (we know exactly which session emitted the message
-      // because we polled its outbound.db). Fall back to the heuristic only
-      // for legacy paths that don't set the field (defensive — should be
-      // populated for all real deliveries after the threading change).
+      // The producing agent: delivery.ts's senderAgentGroupId is ground truth
+      // (it polled that session's outbound.db); the heuristic is a fallback.
       let producer = await (message.senderAgentGroupId ? lookupAgentForMessage(message.senderAgentGroupId) : null);
       if (!producer) producer = await findActiveAgentForWebchatRoom(roomId);
       const senderName = producer?.name ?? agentDisplayName();
@@ -296,26 +255,14 @@ function createAdapter(): ChannelAdapter {
       // roomId lets this reject a per-member session key masquerading as a
       // thread id (see sessionKeyToThread) instead of minting a phantom thread.
       const storeThread = await sessionKeyToThread(threadId, roomId);
-      let storedMessageId: string | null = null;
-      if (text !== null && text.length > 0) {
-        const stored = await storeWebchatMessage(roomId, senderName, 'agent', text, storeThread);
-        server.broadcast(roomId, { type: 'message', ...stored });
-        storedMessageId = stored.id;
-      }
-      // File attachments: stored as separate file messages so the PWA renders
-      // them inline. Each file gets its own message_type='file' row.
-      if (message.files && message.files.length > 0) {
-        for (const file of message.files) {
-          const meta: FileMeta = {
-            url: server.persistOutboundFile(roomId, file),
-            filename: file.filename,
-            mime: guessMime(file.filename),
-            size: file.data.length,
-          };
-          const stored = await storeWebchatFileMessage(roomId, senderName, 'agent', file.filename, meta, storeThread);
-          server.broadcast(roomId, { type: 'message', ...(await stored) });
-        }
-      }
+      const storedMessageId = await storeAgentDelivery(server, {
+        key: deliveryKey(message.senderSessionId, roomId, storeThread, message.content),
+        roomId,
+        senderName,
+        text,
+        files: message.files,
+        thread: storeThread,
+      });
       // Loop-back fan-out: re-enter the router so other wired agents in this
       // room can react to the producer's text (matches the "agents talk in
       // the room" mental model). Guarded by:
@@ -328,13 +275,9 @@ function createAdapter(): ChannelAdapter {
         const senderAgentGroupId = producer.id;
         const loopbackId =
           storedMessageId ?? `webchat-loopback-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        // Display attribution goes through `author.fullName` / `author.userName`
-        // — fields the container-side formatter reads for sender labels but
-        // which the permissions senderResolver ignores for identity (no
-        // `author.userId` set → no fallback user row created). Using a plain
-        // `sender` here would auto-create `webchat:<AgentName>` rows in the
-        // users table on every loop-back, cluttering the permissions tab with
-        // pseudo-users that have no roles or memberships.
+        // Attribution via `author.fullName`/`userName`, which the senderResolver
+        // ignores for identity: a plain `sender` would create a
+        // `webchat:<AgentName>` pseudo-user row on every loop-back.
         void Promise.resolve(
           adapterConfig.onInbound(roomId, threadId, {
             id: loopbackId,
@@ -404,12 +347,9 @@ function createAdapter(): ChannelAdapter {
   return adapter;
 }
 
-// Per-room sliding-window rate limiter for agent-authored loop-back events.
-// Circuit breaker for pathological chains that escape self-exclusion and
-// prime-skip (e.g. two agents @-mentioning each other in their replies).
-// 30 events / 60s per room — generous enough that legitimate "FOMC posts,
-// Advisor replies, Executor confirms" multi-hop conversations sail through;
-// tight enough that an infinite ping-pong gets clipped quickly.
+// Per-room circuit breaker for loop-back chains that escape self-exclusion and
+// prime-skip (two agents @-mentioning each other): 30 events / 60s per room
+// lets multi-hop conversations through and clips infinite ping-pong.
 const LOOPBACK_WINDOW_MS = 60_000;
 const LOOPBACK_MAX_PER_WINDOW = 30;
 const loopbackHistory = new Map<string, number[]>();
@@ -432,13 +372,7 @@ function shouldLoopBack(roomId: string): boolean {
   return true;
 }
 
-/**
- * Exact lookup of an agent by id, returning the WebchatRoomAgent shape.
- * Used when delivery.ts threads the producing agent's id through; no
- * heuristic, no most-recently-active race. Returns null if the agent
- * vanished between produce-time and deliver-time (shouldn't happen in
- * practice — agents don't disappear mid-flight).
- */
+/** Exact lookup of the producing agent by id; null if it vanished before delivery. */
 async function lookupAgentForMessage(agentGroupId: string): Promise<WebchatRoomAgent | null> {
   const ag = await getAgentGroup(agentGroupId);
   return ag ? { id: ag.id, name: ag.name, folder: ag.folder } : null;
@@ -458,84 +392,24 @@ function agentDisplayName(): string {
 }
 
 /**
- * Resolve the agent display name for a webchat room, preferring the actual
- * agent_groups.name over the generic env-default fallback. Single-agent
- * rooms get an exact answer; multi-agent rooms pick the most-recently-
- * active session (the producer of the in-flight response). Falls back to
- * the AGENT_DISPLAY_NAME env (or 'Agent') if no wired agents are found —
- * shouldn't happen in normal operation but keeps the deliver path safe.
+ * The agent display name for a room (findActiveAgentForWebchatRoom), else
+ * AGENT_DISPLAY_NAME or 'Agent'.
  */
 async function senderForRoom(roomId: string): Promise<string> {
   const agent = await findActiveAgentForWebchatRoom(roomId);
   return agent?.name || agentDisplayName();
 }
 
-function guessMime(filename: string): string {
-  const ext = filename.toLowerCase().split('.').pop() || '';
-  const map: Record<string, string> = {
-    png: 'image/png',
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    gif: 'image/gif',
-    webp: 'image/webp',
-    svg: 'image/svg+xml',
-    pdf: 'application/pdf',
-    txt: 'text/plain',
-    md: 'text/markdown',
-    json: 'application/json',
-  };
-  return map[ext] ?? 'application/octet-stream';
-}
-
 registerChannelAdapter('webchat', {
   factory: () => (isEnabled() ? createAdapter() : null),
 });
 
-// Engaged-agents routing is DISABLED for now: the per-thread engaged set + the
-// chips UI were removed (the model didn't fit the "separate conversations per
-// thread" goal). Threads route like the regular chat — mention an agent to talk
-// to it. The backend (resolveEngagedDecision, webchat_thread_engaged table,
-// /engaged endpoints) is left dormant; re-wire it via registerInboundDeliveryPlanResolver to turn
-// it back on, or remove it when the future "separate conversations" model lands.
-// See docs/webchat/thread-engaged-agents.md.
-
-// An agent is "Ollama-backed" if its webchat effective model is ollama-kind OR
-// — when it has no webchat model at all — the install's global .env
-// ANTHROPIC_BASE_URL points at Ollama (:11434). The latter covers claude-provider
-// agents that hit a local model purely via the global base URL (no per-agent
-// assignment), which is otherwise invisible to webchat. Kept conservative
-// (port match) so a cloud proxy or the LiteLLM router (:4000) is never mistaken
-// for a weak local model, and a per-agent CLOUD assignment still wins (its kind
-// isn't ollama, so no relaxation).
-function isGlobalOllamaBaseUrl(): boolean {
-  const base = readEnvFile(['ANTHROPIC_BASE_URL']).ANTHROPIC_BASE_URL ?? '';
-  return /:11434(\b|\/)/.test(base);
-}
-async function isOllamaBackedAgent(agentGroupId: string): Promise<boolean> {
-  const model = await getEffectiveModelForAgent(agentGroupId);
-  return model ? model.kind === 'ollama' : isGlobalOllamaBaseUrl();
-}
-
-// Lenient output + prompt for ollama-backed groups. A small local model (a) rarely
-// emits the <message to="..."> envelope the runner requires — so lenientOutput
-// delivers its unwrapped prose to the origin room instead of dropping it as
-// scratchpad — and (b) drowns in the Claude provider's heavy `claude_code` system
-// prompt, hallucinating tool calls and identities — so lenientPrompt swaps that
-// preset for the plain persona/destinations instructions. Claude/anthropic groups
-// are unaffected (strict protocol + full preset preserved).
-// The augmentor contract is SYNC (the spawn path calls it mid-composition).
-// Same split as the other spawn seams: an async prepare hook stages the
-// answer, the augmentor reads the cache.
-const ollamaLenient = new Map<string, boolean>();
-registerSessionPrepareHook(async (agentGroupId) => {
-  try {
-    ollamaLenient.set(agentGroupId, await isOllamaBackedAgent(agentGroupId));
-  } catch {
-    /* keep the previous answer — a read failure must not flip harness mode */
-  }
-});
+// Lenient output + prompt for Ollama-backed groups (see ./ollama-lenient.ts).
+// The prepare hook is a safety net; the cache is primed at boot and refreshed
+// on every model write, because the augmentor runs before prepare hooks.
+registerSessionPrepareHook((agentGroupId) => refreshOllamaLenient(agentGroupId));
 registerContainerConfigAugmentor((agentGroupId) =>
-  ollamaLenient.get(agentGroupId) ? { lenientOutput: true, lenientPrompt: true } : {},
+  isOllamaLenient(agentGroupId) ? { lenientOutput: true, lenientPrompt: true } : {},
 );
 
 // Auto-default the learning classifier to the agent's OWN model when it runs on
@@ -546,27 +420,20 @@ registerLearningClassifierResolver(async (agentGroupId) =>
   classifierParamsForModel(await getEffectiveModelForAgent(agentGroupId)),
 );
 
-// Side-channel a2a visibility: if both agents are wired to the same webchat
-// room, surface a read-only copy of each routed message there so humans can
-// watch the exchange. Registered on the a2a route seam (H11); the observer
-// wrapper isolates any failure from routing.
+// Side-channel a2a visibility: a read-only copy of each routed message in every
+// room both agents share. The observer wrapper isolates failures from routing.
 registerA2aRouteObserver(({ fromAgentGroupId, toAgentGroupId, content }) => {
   surfaceA2aMessage(fromAgentGroupId, toAgentGroupId, content).catch((err) =>
     log.warn('a2a surface failed', { err: String(err) }),
   );
 });
 
-// Optional LLM approval pre-judge (Settings → approvals; off by default). May
-// auto-approve an opted-in low-stakes action through the same dispatch a human
-// Approve takes. Registered on the approval-intercept seam (H6): returning
-// true skips card delivery; anything else falls through to a human.
+// Optional LLM approval pre-judge (off by default): may auto-approve an opted-in
+// low-stakes action via the human Approve path. Returning true skips the card.
 registerApprovalIntercept((approvalId, session, question) => maybePrejudgeApproval(approvalId, session, question));
 
-// Fan-out cleanup: when an approval resolves (first responder approves/rejects),
-// push an `approval_resolved` event to every other admin whose inbox got a copy
-// of the card so their PWA hides the stale card in real time, then drop the
-// index rows (dead pointers once the pending row is gone). Offline admins
-// refetch on reconnect, so this is purely the live clear.
+// Fan-out cleanup: on resolve, push `approval_resolved` to every inbox that got
+// the card (the live clear; offline admins refetch), then drop the index rows.
 registerApprovalResolvedHandler(async (event) => {
   const approvalId = event.approval.approval_id;
   const resolvedByUserId = event.userId;
@@ -601,10 +468,8 @@ registerApprovalRequestedListener(
     const mg = await (e.session.messaging_group_id ? getMessagingGroup(e.session.messaging_group_id) : null);
     if (!mg || mg.channel_type !== 'webchat') return;
     const roomId = mg.platform_id;
-    // Why is this in front of a human? The pre-judge already knows, and used to
-    // write it only to the log. An `unscreened` view (no stored row) is a real
-    // answer too, and is rendered as such — with chips on the card, showing
-    // nothing must never read as "screened, nothing found".
+    // The pre-judge's reasoning for the card. No stored row renders as
+    // `unscreened`, never as "screened, nothing found".
     const approvalRow = await getPendingApproval(e.approvalId);
     const card = await storeWebchatApprovalCard(roomId, e.agentName ?? 'agent', {
       questionId: e.approvalId,
@@ -640,10 +505,7 @@ registerSkillDraftProposedListener(async (e) => {
       agentGroupId: e.agentGroupId,
       agentName: e.agentName,
     },
-    // Translate the SESSION key to a UI thread. Passing session.thread_id raw
-    // wrote per-member composite keys straight into webchat_messages, creating
-    // threads nothing could open — this listener bypassed the translation that
-    // the normal reply path already did.
+    // Session key → UI thread, as the reply path does (no phantom threads).
     await sessionKeyToThread(e.session.thread_id, roomId),
   );
   await broadcast(roomId, { type: 'message', ...(await card) });

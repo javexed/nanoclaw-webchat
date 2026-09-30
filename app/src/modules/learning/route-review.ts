@@ -22,7 +22,9 @@
 import { getContainerConfig } from '../../db/container-configs.js';
 import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { canAccessAgentGroup } from '../../modules/permissions/access.js';
-import { userHasConnectedCredential, type UserCredsProvider } from '../user-credentials/db.js';
+import { userHasConnectedCredential } from '../user-credentials/db.js';
+import { memberSessionKey, memberThreadFromKey } from '../user-credentials/identity.js';
+import { userCredsProviderForGroup } from '../user-credentials/onboard.js';
 import { resolveSession, writeSessionMessage, writeOutboundDirect } from '../../session-manager.js';
 import { wakeContainer } from '../../container-runner.js';
 import { log } from '../../log.js';
@@ -37,11 +39,6 @@ export const ROUTED_CONTENT_FIELD = 'learning_route';
 
 function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-/** The group's provider mapped to the UserCreds families (mirrors user-credentials). */
-async function groupProvider(agentGroupId: string): Promise<UserCredsProvider> {
-  return (await getContainerConfig(agentGroupId))?.provider === 'codex' ? 'codex' : 'claude';
 }
 
 export async function handleRouteLearningReview(content: Record<string, unknown>, session: Session): Promise<void> {
@@ -117,16 +114,14 @@ export async function handleRouteLearningReview(content: Record<string, unknown>
     });
     await wakeContainer(target);
   };
-  // Awaited now, not fire-and-forget: pre-async the body's writes completed
-  // synchronously before the void promise parked at wakeContainer, so callers
-  // observed the forward as done. With every DB write async, the floated chain
-  // may not even have WRITTEN the inbound row when the handler returns — the
-  // caller (an MCP tool responding to the agent) would report success first.
+  // Awaited, not fire-and-forget: otherwise the handler can return (and the
+  // MCP tool report success) before the inbound row is even written.
   const forward = async (target: Session): Promise<void> => {
     await forwardAsync(target);
   };
 
-  const enrolled = invoker !== null && (await userHasConnectedCredential(invoker, await groupProvider(agentGroupId)));
+  const enrolled =
+    invoker !== null && (await userHasConnectedCredential(invoker, await userCredsProviderForGroup(agentGroupId)));
   // Access decides who may spend at all. Owner / global admin / scoped admin
   // are "privileged"; a plain member may spend only in 'off' mode (where the
   // operator has explicitly accepted shared-credential spend); a non-member
@@ -161,9 +156,12 @@ export async function handleRouteLearningReview(content: Record<string, unknown>
       notice('Could not route the review — the originating room was not found.');
       return;
     }
-    // Member-session thread_id IS the user id — spawning it puts the review
-    // under the invoker's OneCLI identity (their key pays).
-    target = (await resolveSession(agentGroupId, mg.id, invoker, 'per-thread')).session;
+    // The invoker's per-member session for the origin's thread — the same
+    // `user::thread` key the router gives their own messages there. Spawning
+    // it puts the review under the invoker's OneCLI identity (their key pays).
+    const originThread = memberThreadFromKey(session.thread_id) ?? session.thread_id;
+    const key = memberSessionKey(invoker, originThread);
+    target = (await resolveSession(agentGroupId, mg.id, key, 'per-thread')).session;
   } else if (mode === 'require') {
     notice('/learn here runs on your own credential — connect one for this workspace, then try again.');
     return;

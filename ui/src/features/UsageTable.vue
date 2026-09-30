@@ -1,14 +1,8 @@
 <script setup lang="ts">
 /**
- * Per-user token usage rows — forty-second island.
- *
- * Mounted into <tbody id="usage-tbody">. The table's own hidden flag and
- * #usage-empty are outside it and stay imperative — they swap the whole table
- * for an empty note, which is a decision about the section, not the rows.
- *
- * Every cell but the first carries .usage-num (right-aligned numerics); the
- * first is the user handle. Shaped upstream so the component holds no
- * formatting rules.
+ * Per-user token usage rows, mounted into <tbody id="usage-tbody">; the table/empty-note
+ * swap stays with the renderer. Every cell but the first (the handle) carries .usage-num.
+ * Rows are shaped upstream, so no formatting rules live here.
  */
 import { usageRows } from './usage-state.js';
 </script>

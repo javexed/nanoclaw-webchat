@@ -1,20 +1,9 @@
 <script setup lang="ts">
 /**
- * The in-room thread switcher — forty-ninth island.
- *
- * Per-instance: openThreadSwitcher creates the popover and mounts an app into
- * it, next to the chat header's '#' button. The sidebar thread tree is hidden on
- * mobile while a room is open, so this is the mobile way to switch threads and
- * create one without backing out.
- *
- * switcherCreate() is absorbed. It did addBtn.replaceWith(input) — replacing a
- * node Vue would own — so the swap is a `creating` ref, and the input is the
- * ThreadNameInput component the room list already uses. blurSubmits stays true:
- * clicking away COMMITS here, which is the prior switcher behaviour and the
- * opposite of the sidebar's inline input.
- *
- * Main chat is always the first row and is never tinted; topic threads carry a
- * dot in their identity colour.
+ * The in-room thread switcher, one app per popover next to the chat header's '#'
+ * button — the mobile way to switch or create threads, since the sidebar tree is hidden
+ * there while a room is open. Uses ThreadNameInput with blurSubmits: clicking away
+ * COMMITS here, unlike the sidebar's inline input. Main chat is always first and untinted.
  */
 import { ref } from 'vue';
 import ThreadNameInput from './ThreadNameInput.vue';

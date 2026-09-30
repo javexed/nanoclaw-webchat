@@ -1,8 +1,8 @@
 // ── Router routes ────────────────────────────────────────────────────────────
 // The model-router surface: profiles, the model roster, classification,
-// decisions, metrics and suggestions. The route table stays in server.ts.
+// decisions, metrics and suggestions.
 
-import { json, readJsonBody } from './http.js';
+import { json, readJsonObject } from './http.js';
 import { createWebchatModel, deleteWebchatModel, getAgentsAssignedToModel, listWebchatModels } from '../db.js';
 import { forgetModelHosts } from '../egress-policy.js';
 import {
@@ -79,14 +79,8 @@ export async function syncAutoRouterSelectable(live: boolean): Promise<void> {
 
 export async function rRouterRoutesPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, url } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let update: RoutesUpdate;
-  try {
-    update = JSON.parse(raw) as RoutesUpdate;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const update = await readJsonObject<RoutesUpdate>(req, res);
+  if (update === undefined) return;
   const cfg = readRoutesConfig();
   if (!cfg) return json(res, 404, { error: 'Routing not installed' });
   try {
@@ -111,14 +105,8 @@ export async function rRouterRoutesPut(ctx: RouteCtx, _m: RegExpMatchArray): Pro
 
 export async function rRouterRoutersPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { name?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ name?: unknown }>(req, res);
+  if (body === undefined) return;
   const name = typeof body.name === 'string' ? body.name.trim() : '';
   const cfg = readRoutesConfig();
   if (!cfg) return json(res, 404, { error: 'Routing not installed' });
@@ -173,14 +161,8 @@ export async function rRouterDelDelete(ctx: RouteCtx, m: RegExpMatchArray): Prom
 
 export async function rRouterClassifyPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { prompt?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ prompt?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.prompt !== 'string' || !body.prompt.trim()) return json(res, 400, { error: 'prompt required' });
   try {
     return json(res, 200, await dryClassify(body.prompt.trim()));

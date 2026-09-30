@@ -1,9 +1,6 @@
-// marked and DOMPurify are loaded from /marked.min.js and /dompurify.min.js at
-// runtime and are listed as `external` in vite.config.ts, so the bundler leaves
-// those imports alone. Nothing exists on disk for TypeScript to resolve, hence
-// these ambient declarations. Wildcard patterns because a leading-slash module
-// specifier is not matched by an exact `declare module` under bundler
-// resolution.
+// marked and DOMPurify load at runtime from /marked.min.js and /dompurify.min.js
+// (`external` in vite.config.ts), so TypeScript needs ambient declarations.
+// Wildcards: a leading-slash specifier does not match an exact `declare module`.
 declare module '*marked.min.js' {
   export const marked: {
     setOptions(o: Record<string, unknown>): void;

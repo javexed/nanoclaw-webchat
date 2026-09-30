@@ -1,6 +1,6 @@
 /**
  * draft_skill MCP tool — the learning loop's authoring surface
- * (see docs/webchat/design/learning-loop.md).
+ * (see docs/webchat/learning-loop.md).
  *
  * When you've just worked out a reusable, non-obvious procedure, call this to
  * DRAFT a skill from it. Fire-and-forget: it writes a `propose_skill` system
@@ -9,15 +9,9 @@
  *
  * This is authoring only — it can't wire, install, or run anything.
  *
- * UPDATE BEFORE CREATE. A learning loop that only ever *creates* fills the
- * library with near-duplicates: the same lesson, re-learned and re-filed under a
- * slightly different name every time it comes up. The guard is showing the agent
- * what it already has. The tool description below is built at registration time
- * from the skills actually mounted for this session, so the model can match
- * against real names instead of being told to "prefer a patch" over skills it
- * cannot see. The handler then enforces the hierarchy rather than trusting it:
- * a 'create' whose name collides with an existing skill is coerced to a patch,
- * and a 'patch' at a target that doesn't exist is rejected with the valid list.
+ * UPDATE BEFORE CREATE: the tool description is built at registration time from
+ * the skills actually mounted for this session, so the model can match real
+ * names; resolveDraftKind then enforces the hierarchy rather than trusting it.
  */
 import fs from 'fs';
 import path from 'path';
@@ -187,21 +181,10 @@ export const draftSkill: McpToolDefinition = {
 registerTools([draftSkill]);
 
 /**
- * The authoring prompt for a learning review (docs/webchat/design/learning-loop.md §2).
- *
- * Shape copied from Hermes' _SKILL_REVIEW_PROMPT, because the two quality-critical
- * parts are what stop the library filling with noise:
- *
- *   - the DENYLIST — what not to learn (environment-specific breakage, transient
- *     errors that resolved, one-off narratives). Without it every session produces
- *     a "skill".
- *   - the PREFER-EDIT hierarchy — update what exists before creating anything. The
- *     draft_skill tool enforces this (it is shown the agent's real skills and
- *     coerces a colliding 'create' into a patch), but the prompt has to ask for it
- *     too, or the model never reaches for the target.
- *
- * Written as an instruction to the agent that just did the work, in the same
- * session — so the transcript is already in context and there's no cold start.
+ * The authoring prompt for a learning review (docs/webchat/learning-loop.md §2).
+ * The two quality-critical parts: the DENYLIST (what not to learn — without it
+ * every session produces a "skill") and the PREFER-EDIT hierarchy (draft_skill
+ * enforces it, but the prompt must ask too or the model never picks a target).
  */
 export const LEARNING_REVIEW_PROMPT = `Review THIS session and decide whether it taught you something worth keeping.
 

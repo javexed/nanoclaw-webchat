@@ -15,7 +15,7 @@ called.
 
 ## Running
 
-Needs a live install with the room wired to an agent.
+Needs a running install with the room wired to an agent.
 
 ```bash
 pnpm exec tsx scripts/eval/run-evals.ts --room <room-id>

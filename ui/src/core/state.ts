@@ -4,27 +4,11 @@ import { ref, shallowReactive } from 'vue';
 // The mutable state the whole console reads: the socket, who I am, which room
 // and thread are open, the unread/mention bookkeeping, pager cursors and the
 // scroll-follow counters.
-//
-// A single exported OBJECT rather than getter/setter pairs, deliberately.
-// Every module that needed this state was being handed accessor functions by
-// legacy.js — 138 call sites across ten modules — and each pair had to be
-// hand-written and kept in step. Worse, converting a variable to accessors
-// rewrites `x = 1` into `setX(1)` and `x++` into something that does not
-// parse, which is exactly where the phase 1g regressions came from.
-//
-// With an object, `state.x = 1`, `state.x++` and `state.x === y` are all just
-// themselves. The transformation is a rename, not a restructure, and anything
-// it gets wrong (shorthand `{ ws }`, destructuring, a shadowed parameter) is a
-// syntax error rather than a silent behaviour change.
-//
-// `settings` is initialised by legacy at startup instead of here: it comes from
-// loadSettings(), which has not been extracted yet.
-/**
- * A room as the sidebar sees it. Built from every property the room list,
- * thread tree and ws dispatcher actually read — the same way Approval and
- * ThinkingTurn were, and for the same reason: field names alone have been
- * wrong every time this phase guessed from them.
- */
+// One exported OBJECT rather than getter/setter pairs, so `state.x = 1` and
+// `state.x++` work from any module. `settings` is set by composition-root.ts
+// at startup (loadSettings lives in features/settings.ts, which imports this).
+/** A room as the sidebar sees it: every property the room list, thread tree and
+ *  ws dispatcher actually read. */
 export interface Room {
   id: string;
   name?: string;
@@ -46,12 +30,8 @@ export interface Thread {
   unread?: boolean;
 }
 
-/**
- * An agent as the console sees it. Built from every property the agents list,
- * detail pane, room wiring and ws dispatcher actually read — the fourth type
- * this phase has derived from use rather than from a field name, after
- * Approval, ThinkingTurn and Room.
- */
+/** An agent as the console sees it: every property the agents list, detail pane,
+ *  room wiring and ws dispatcher actually read. */
 export interface Agent {
   /** Placed on a developer's machine: Network offers Open / Allowlist / Model only. */
   runner_placed?: boolean;
@@ -85,16 +65,8 @@ export interface Diagnosis {
   offer?: boolean;
 }
 
-/**
- * The console's shared mutable state.
- *
- * Typed honestly rather than conveniently: fields whose payload shape is not
- * yet pinned down are `unknown` inside their container, not `any`. Consumers
- * are still .js and therefore unchecked, so this costs nothing today — but as
- * each module converts to TypeScript it gets checked against THIS declaration,
- * which is the point of doing state first. Widening one of these to `any` later
- * would silently switch that checking off again.
- */
+/** The console's shared mutable state. Payloads whose shape is not pinned down
+ *  are `unknown`, not `any`: widening one would silently switch off checking. */
 export interface AppState {
   /** Workspace master (owner-set) — gates ALL learning UI + behaviour. */
   learningMasterEnabled: boolean;
@@ -106,9 +78,8 @@ export interface AppState {
   currentRoom: string | null;
   myIdentity: string;
   myHandle: string;
-  /** client-generated id → the optimistic ROW awaiting server echo. Was the
-   *  bubble ELEMENT until the transcript became Vue-rendered; handing a node to
-   *  the WS layer is what made it a second writer. */
+  /** client-generated id → the optimistic ROW awaiting server echo (a row, not a
+   *  node, so the WS layer is never a second DOM writer). */
   pendingMessages: Map<string, any>;
   /** identity → typing-indicator timer state */
   typingUsers: Map<string, unknown>;
@@ -135,9 +106,8 @@ export interface AppState {
   /** room id → its loaded thread list */
   threadCache: Map<string, Thread[]>;
   pendingJumpMessageId: string | null;
-  /** A slash command to send once the join completes, or null. Typed from its
-   *  one producer (skills.ts sets '/learn <source>'); it was `unknown`, which
-   *  only held because every consumer reached it through an `any` dep. */
+  /** A slash command to send once the join completes, or null (skills.ts sets
+   *  '/learn <source>'). */
   pendingSendAfterJoin: string | null;
   oldestMessageId: string | null;
   loadingOlder: boolean;
@@ -155,54 +125,20 @@ export interface AppState {
 }
 
 /**
- * shallowReactive, NOT reactive — and not a plain object any more either.
- *
- * Vue islands re-render when what they read changes, so this object has to be a
- * reactivity root. It is a one-line change only because of the phase-1h
- * decision above: every one of the ~138 call sites already writes `state.x = 1`
- * and `state.x++` against this single binding, so wrapping the literal makes all
- * of them reactive without touching any of them. Accessor pairs would have
- * needed all 138 rewritten.
- *
- * Shallow, for three reasons — none of them correctness. Deep `reactive()` is
- * SAFE here: it refuses to proxy anything outside Object/Array/Map/Set, so the
- * `WebSocket` and the `HTMLElement` values in pendingMessages come back raw
- * either way, and every identity comparison in this codebase is against a
- * string (`state.currentRoom`, `state.myIdentity`) which proxying cannot touch.
- * The reasons are:
- *
- *  1. Cost. lastRoomsList, allAgents and threadCache are iterated constantly by
- *     the room list and transcript. Deep reactivity allocates a proxy per
- *     element per read; shallow allocates none.
- *  2. pendingMessages maps ids to DOM nodes — imperative render bookkeeping,
- *     not view state. Deep reactivity would track every set() and wake effects
- *     for something no island ever reads.
- *  3. It makes an existing contract explicit for the ARRAYS. They are assigned
- *     wholesale (`state.lastRoomsList = msg.rooms`), never pushed into.
- *
- * The consequence to know: `state.rooms.push(r)` will NOT trigger a re-render.
- * `state.rooms = [...state.rooms, r]` will. That is already how this code is
- * written; island code has to keep it that way.
- *
- * Reason 3 was stated here as holding for EVERY collection, and that was wrong.
- * The five Set/Map fields below are mutated in place at twenty-five call sites
- * and never assigned wholesale — .add(), .delete(), .set(), .clear(). Under a
- * plain shallowReactive parent those mutations notify nothing, so an island
- * reading them re-rendered only when something ELSE happened to change.
- *
- * That shipped as a visible bug: clicking a room's thread-tree chevron recorded
- * the expansion and drew nothing, because renderRooms syncs three unrelated
- * refs and none of them changed. The tree appeared on the next unrelated
- * render — a rooms broadcast, a sort toggle — which is why it looked
- * intermittent rather than broken.
- *
- * So the five are individually shallowReactive. That instruments the COLLECTION
- * (add/delete/set/clear notify, has/get track) while still returning raw values
- * on read — reason 1's cost argument survives intact, which a deep reactive()
- * on threadCache would not have allowed.
+ * shallowReactive, NOT reactive: the room list and transcript iterate the big
+ * arrays constantly, and deep reactivity would allocate a proxy per element read.
+ * INVARIANT: arrays are assigned wholesale — `state.rooms.push(r)` does NOT
+ * re-render, `state.rooms = [...state.rooms, r]` does.
+ * The Set/Map fields below are mutated in place (.add/.delete/.set/.clear), so
+ * each is itself shallowReactive; under a plain shallow parent those mutations
+ * would notify nothing and islands reading them would render late.
  */
 export const state: AppState = shallowReactive({
   learningMasterEnabled: true, // workspace master (owner-set) — gates ALL learning UI + behavior
+
+  // Whether this server uses Tailscale auth. Cached from /api/auth/info and
+  // persisted to localStorage so the connection-lost banner can suggest starting
+  // Tailscale even when the device is currently offline (cold start, no network).
   serverUsesTailscale: (() => {
       try {
         return localStorage.getItem('webchat-server-tailscale') === '1';
@@ -246,15 +182,8 @@ export const state: AppState = shallowReactive({
   allAgents: [],
 });
 
-/**
- * Is the transcript being force-followed right now?
- *
- * forceScrollCount is set on send so the agent's reply scrolls into view, and
- * userScrolledAway cancels it the moment the reader takes over. Both live here,
- * so the derivation does too — it reached the thinking bubble through an
- * isForcedScroll() entry on the Thinking bridge, which existed only because the
- * expression sat in legacy.js.
- */
+/** Is the transcript being force-followed right now? forceScrollCount is set on
+ *  send so the reply scrolls into view; userScrolledAway cancels it. */
 export function isForcedScroll(): boolean {
   return state.forceScrollCount > 0 && !state.userScrolledAway;
 }

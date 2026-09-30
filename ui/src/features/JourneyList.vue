@@ -1,20 +1,10 @@
 <script setup lang="ts">
 /**
- * The learning-journey timeline — fortieth island.
- *
- * Mounted into <div id="journey-list">, exclusively owned by this module. The
- * filter CONTROLS (#journey-agent-filter, the kind buttons, #journey-skill-chip)
- * live outside it and stay imperative; only the list itself converts.
- *
- * Day headers were emitted inline while appending, using a journeyLastDay
- * variable that persisted across pagination calls. Derived from the full event
- * list here instead — which is why 'Load more' can append to a ref rather than
- * having to remember where the previous page stopped.
- *
- * Visibility is `hidden`, not v-if, exactly as applyJourneyFilters set it: rows
- * stay in the DOM and a day header hides only when every row under it is
- * hidden. #journey-no-match is outside the mount point and driven by the same
- * derived counts.
+ * The learning-journey timeline, mounted into <div id="journey-list">; the filter
+ * controls live outside it. Day headers are derived from the full event list, so 'Load
+ * more' just appends to a ref. Visibility is `hidden`, not v-if: rows stay in the DOM, a
+ * day header hides only when every row under it does, and #journey-no-match reads the
+ * same derived counts.
  */
 import { computed } from 'vue';
 import { journeyEvents, journeyFilter, journeyPhase } from './journey-state.js';

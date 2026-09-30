@@ -52,6 +52,11 @@ Add `--seam preinstalled` if that checkout already carries the hook seam. Full
 walkthrough:
 **[guide.md](guide.md)**.
 
+Re-running the installer on an install upgrades it in place. Installed gateway
+skills (such as `add-onecli`) get their own files refreshed from the new
+payload; the skill's first install never overwrites them, so without this an
+upgrade would keep the old copies.
+
 ## What it needs
 
 - **Debian or Ubuntu** (apt + systemd). Non-apt distros use path 3 on an existing

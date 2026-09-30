@@ -1,9 +1,9 @@
-# Screenshots to capture (from a live install)
+# Screenshots to capture (from a running install)
 
 Drop PNGs here with these names; the root README and guide.md reference them.
 Capture at a consistent width (≈1280px), dark theme reads best.
 
-**Captured** (already in this dir, from a live install):
+**Captured** (already in this dir, from a running install):
 
 | File | Shows |
 |------|-------|

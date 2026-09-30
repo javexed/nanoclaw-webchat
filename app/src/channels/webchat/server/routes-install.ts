@@ -2,12 +2,10 @@
 // The GET/POST pairs that drive every optional stack's install: the coding-agent
 // harnesses (Codex, OpenCode, pi), local models (Ollama) and the speech stacks
 // (TTS, STT). Each is the same contract — GET reports status, POST starts the
-// job — which is why they come out as one module.
-//
-// The route TABLE stays in server.ts; only the handlers live here.
+// job. The route table is in server.ts.
 import type { ServerResponse } from 'http';
 
-import { json, readJsonBody } from './http.js';
+import { json, readJsonObject } from './http.js';
 import { defaultProviderChanges, readDefaultProvider } from './default-provider.js';
 import { cancelGrokLogin, getGrokLoginProgress, startGrokLogin } from './grok-auth-flow.js';
 import { grokStatus } from './grok-status.js';
@@ -74,14 +72,8 @@ export async function rWebchatSttInstallGet(ctx: RouteCtx, _m: RegExpMatchArray)
 
 export async function rWebchatSttInstallPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { provider?: unknown; model?: unknown; apiKey?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ provider?: unknown; model?: unknown; apiKey?: unknown }>(req, res);
+  if (body === undefined) return;
   return installPost(res, 'stt', {
     provider: body.provider === 'elevenlabs' ? 'elevenlabs' : 'local',
     model: typeof body.model === 'string' ? body.model : undefined,
@@ -128,14 +120,8 @@ export async function rWorkspaceProviderGet(ctx: RouteCtx, _m: RegExpMatchArray)
 
 export async function rWorkspaceProviderPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { provider?: unknown };
-  try {
-    body = JSON.parse(raw) as { provider?: unknown };
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ provider?: unknown }>(req, res);
+  if (body === undefined) return;
 
   const provider = String(body.provider ?? '').toLowerCase();
   // 'claude' is always valid — it is the built-in default and the way back.

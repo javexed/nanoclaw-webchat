@@ -2,20 +2,16 @@
 // Turning a skill source into something fetchable, and the GitHub reads behind
 // it: the discovery endpoint, URL resolution for a configured or a discovered
 // source, a directory listing and the head commit of one.
-//
-// Shared rather than moved. The skill routes drive the catalog, but import,
-// update checks and the discovery source resolve and fetch through the same
-// helpers from outside the cluster.
+
+import { SkillOriginRef, sanitizeSkillName } from './skills-store.js';
+
+export const shaCache = new Map<string, { at: number; sha: string | null }>();
 
 /**
  * Latest commit SHA touching a path — the freshness probe for update checks
  * and the pin recorded at import. Best-effort: null on any failure (an import
  * must never fail because a SHA lookup did). Cached like the catalogs.
  */
-import { SkillOriginRef, sanitizeSkillName } from './skills-store.js';
-
-export const shaCache = new Map<string, { at: number; sha: string | null }>();
-
 export async function latestCommitSha(ref: SkillOriginRef, maxAgeMs = 3600_000): Promise<string | null> {
   const key = `${ref.owner}/${ref.repo}@${ref.branch}:${ref.dir}`;
   const hit = shaCache.get(key);
@@ -72,8 +68,7 @@ export async function fetchGithubDir(
   const MAX_BYTES = 8 * 1024 * 1024;
   const base = dirPath.replace(/\/+$/, '');
   // Walk the tree first (serial — each level needs its parent listing), then
-  // download contents in parallel: script-heavy skills (xlsx: 54 files) took
-  // ~10s serial, ~2s parallel.
+  // download contents in parallel (script-heavy skills have dozens of files).
   const files: Array<{ rel: string; download_url: string }> = [];
   let totalBytes = 0;
   async function walk(p: string): Promise<void> {

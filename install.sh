@@ -310,6 +310,9 @@ fi
 # The table and the logic live in the app tree (provider-overlays/apply.sh), so
 # the Settings install chain can run the same step after it installs a provider.
 bash provider-overlays/apply.sh || CONFLICTS+=("provider-overlays")
+# Installed gateway skills (add-onecli …): refresh their own files from the new
+# payload, which their first install never overwrites (provider-overlays/refresh-gateways.sh).
+bash provider-overlays/refresh-gateways.sh || CONFLICTS+=("gateway-refresh")
 
 if [ "$NO_BUILD" = 1 ]; then
   say "Compose complete (--skip-build) — deps/build/verify skipped."

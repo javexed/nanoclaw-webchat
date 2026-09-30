@@ -4,21 +4,16 @@
  *   POST            /api/tool-secrets/isolation
  *   GET/POST/DELETE /api/deploy-keys
  *
- * These were all gated on owner-or-global-admin, which locked a scoped admin
- * out of the very agents they administer. Authorisation now follows the SCOPE:
+ * Authorisation follows the SCOPE:
  *
  *   workspace     — install-wide, so owner / global admin only
  *   agent         — whoever administers THAT agent, scoped admins included
  *   user (self)   — anyone; a personal credential must be entered by its owner
  *   user (other)  — nobody, at any privilege level (owner included)
  *
- * That last row is the subtle one: an owner USED to be able to manage someone
- * else's personal credential and deliberately no longer can, so it is asserted
- * explicitly rather than left to drift back.
- *
- * The isolation toggle matters as much as the secrets themselves — per-agent
- * secrets do nothing until the agent is flipped to `selective`, so leaving that
- * endpoint owner-only would have made the rest of the fix inert.
+ * That last row is asserted explicitly, owner included. The isolation toggle
+ * follows the agent scope too: per-agent secrets do nothing until the agent is
+ * `selective`.
  *
  * Tests lean on the 403-vs-anything-else split:
  *   403 = authorization refused (never reached the handler)
@@ -28,92 +23,17 @@
  * Identity is supplied per-request via a trusted proxy header. Same boot and
  * teardown pattern as scoped-skill-auth.test.ts.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import type { WebchatServer } from './server.js';
+import type { DbDriver } from '../../db/driver.js';
+import { httpRequest, PROXY_ENV, resetServerModules, seeder, startServer } from './test-server.js';
 
-const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
-
-beforeEach(async () => {
-  vi.resetModules();
-});
-
-afterEach(async () => {
-  vi.unstubAllEnvs();
-  try {
-    const conn = await import('../../db/connection.js');
-    await conn.closeDb();
-  } catch {
-    // ignore
-  }
-  vi.resetModules();
-});
-
-async function loadServerWithEnv(env: Record<string, string | undefined>) {
-  for (const [k, v] of Object.entries(env)) {
-    if (v === undefined) vi.stubEnv(k, '');
-    else vi.stubEnv(k, v);
-  }
-  vi.resetModules();
-  const conn = await import('../../db/connection.js');
-  await conn.initTestDb();
-  const migrations = await import('../../db/migrations/index.js');
-  await migrations.runMigrations(conn.getDb());
-  return { server: await import('./server.js'), conn };
-}
-
-async function httpRequest(
-  port: number,
-  method: string,
-  path: string,
-  headers: Record<string, string> = {},
-  body?: string,
-): Promise<{ status: number; body: string }> {
-  const http = await import('http');
-  return new Promise((resolve, reject) => {
-    const r = http.request({ host: '127.0.0.1', port, path, method, headers }, (res) => {
-      let buf = '';
-      res.on('data', (c) => (buf += c));
-      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: buf }));
-    });
-    r.on('error', reject);
-    if (body) r.write(body);
-    r.end();
-  });
-}
-
-const portOf = (wc: { http: { address: () => unknown } }): number => {
-  const a = wc.http.address();
-  return typeof a === 'object' && a ? (a as { port: number }).port : 0;
-};
+afterEach(resetServerModules);
 
 const now = '2026-07-30T00:00:00.000Z';
-async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
-  const user = async (id: string) =>
-    await db.run(
-      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
-      id,
-      now,
-    );
-  const group = async (id: string) =>
-    await db.run(
-      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      id,
-      id,
-      id,
-      now,
-    );
-  const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
-    await user(uid);
-    if (g) await group(g);
-    await db.run(
-      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
-      uid,
-      r,
-      g,
-      now,
-    );
-  };
+async function seed(db: DbDriver): Promise<void> {
+  const { user, group, role } = seeder(db, now);
   await group('ag-test-a');
   await group('ag-test-b');
   // Pre-seed an owner so the first authenticated request doesn't auto-claim it.
@@ -123,22 +43,12 @@ async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
 }
 
 describe('credential endpoints — scope-based authorization', () => {
-  let server: Awaited<ReturnType<typeof loadServerWithEnv>>['server'];
+  let server: typeof import('./server.js');
   let wc: WebchatServer;
   let port: number;
 
   beforeEach(async () => {
-    const loaded = await loadServerWithEnv({
-      WEBCHAT_HOST: '127.0.0.1',
-      WEBCHAT_PORT: '0',
-      WEBCHAT_TOKEN: '',
-      WEBCHAT_TRUSTED_PROXY_IPS: '127.0.0.1',
-      WEBCHAT_TRUSTED_PROXY_HEADER: 'x-forwarded-user',
-    });
-    server = loaded.server;
-    await seed(loaded.conn.getDb());
-    wc = await server.startWebchatServer(noopHooks);
-    port = portOf(wc);
+    ({ server, wc, port } = await startServer(PROXY_ENV, seed));
   });
 
   afterEach(async () => {
@@ -207,8 +117,7 @@ describe('credential endpoints — scope-based authorization', () => {
       expect(r.body).toContain('your own credentials');
     });
 
-    // Regression lock: an owner USED to pass this gate. Personal credentials are
-    // deliberately self-only at every privilege level — an admin acting on
+    // Personal credentials are self-only at every privilege level — an admin acting on
     // someone's behalf would have to handle that person's token, which is the
     // exact thing per-user credentials exist to prevent.
     it("an OWNER may NOT manage someone else's personal credential either", async () => {
@@ -220,6 +129,48 @@ describe('credential endpoints — scope-based authorization', () => {
       );
       expect(r.status).toBe(403);
       expect(r.body).toContain('your own credentials');
+    });
+  });
+
+  // ── /api/tool-secrets — username + password body ──────────────────────────
+  describe('tool-secrets, username + password', () => {
+    const post = (body: unknown) =>
+      httpRequest(port, 'POST', '/api/tool-secrets?agentGroupId=ag-test-a', csrf('owner'), JSON.stringify(body));
+
+    it('refuses an invalid pair without echoing either field', async () => {
+      const r = await post({ hostPattern: 'caldav.icloud.com', basic: { username: 'who:ami', password: 'hunter2' } });
+      expect(r.status).toBe(400);
+      expect(r.body).toContain('colon');
+      expect(r.body).not.toMatch(/who|ami|hunter2/);
+    });
+
+    // One POST per test: tool-secret writes are rate-limited per user.
+    it('refuses basic mixed with a raw value', async () => {
+      const r = await post({
+        hostPattern: 'caldav.icloud.com',
+        basic: { username: 'me', password: 'hunter2' },
+        value: 'x',
+      });
+      expect(r.status).toBe(400);
+      expect(r.body).not.toContain('hunter2');
+    });
+
+    it('refuses basic mixed with a scheme', async () => {
+      const scheme = { headerName: 'X-Api-Key', valueFormat: '{value}' };
+      const r = await post({
+        hostPattern: 'caldav.icloud.com',
+        basic: { username: 'me', password: 'hunter2' },
+        scheme,
+      });
+      expect(r.status).toBe(400);
+      expect(r.body).not.toContain('hunter2');
+    });
+
+    // A valid pair stands in for the value, so the next check is the host.
+    it('a valid pair still needs a host', async () => {
+      const r = await post({ basic: { username: 'me', password: 'hunter2' } });
+      expect(r.status).toBe(400);
+      expect(r.body).toContain('host and value are required');
     });
   });
 

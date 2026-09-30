@@ -1,15 +1,8 @@
 <script setup lang="ts">
 /**
- * Agents wired into the open room, with the prime (★) toggle and remove.
- *
- * Mounted into <ul id="room-wired-agents">. The reply-mode info button lives on
- * the label line OUTSIDE this list, so it stays in renderRoomWiredAgents() —
- * an island owns one container, not everything a render function happened to
- * touch.
- *
- * lucide() returns an SVG string, so the two icon buttons bind it with v-html
- * exactly as the imperative version assigned innerHTML. The star has two
- * variants, so it is computed per row rather than hoisted.
+ * Agents wired into the open room, with the prime (★) toggle and remove; mounted into
+ * <ul id="room-wired-agents">. The reply-mode info button sits outside this list and stays
+ * in renderRoomWiredAgents(). Icons are lucide() SVG strings bound with v-html.
  */
 import { lucide } from '../core/dom.js';
 import { roomWiredRows } from './room-wired-state.js';

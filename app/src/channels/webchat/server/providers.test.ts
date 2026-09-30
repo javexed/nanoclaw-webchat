@@ -5,8 +5,7 @@
  * container config?" — which is the signal that its install skill has run. The
  * probe is what gates the harness picker AND the server-side allowlist, so a
  * provider that installs correctly but is missing here is invisible in the UI
- * with no error to explain why. That is exactly how Grok shipped without
- * appearing in the picker.
+ * with no error to explain why.
  */
 import { describe, expect, it, vi } from 'vitest';
 

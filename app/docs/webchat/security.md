@@ -8,7 +8,7 @@ webchat fork adds or changes.
 ## Per-agent-group egress
 
 Replaces upstream **§5 Egress Lockdown (Forced Proxy)**. One policy for every
-agent, local or runner (`src/channels/webchat/egress-policy.ts`), stored in
+agent (`src/channels/webchat/egress-policy.ts`), stored in
 `container_configs.egress`:
 
 | Mode | UI | Reaches |
@@ -29,15 +29,20 @@ effective model when it has an endpoint (Ollama, LiteLLM, any OpenAI-compatible
 server) — so "Model only" really reaches the model. Adding a model does not
 touch the install allowlist: each agent reaches its own model's host and no
 other. A model on the host itself (`localhost` / `host.docker.internal`) is dialled
-directly by the container, not through the proxy, so the egress filter passes
-that port straight through to the host. Central's own services (MCP relay,
-runner mailbox) are routed before the check.
+directly by the container, not through the proxy, so the egress filter listens
+on that port too and forwards to the host — per connection, held to the
+caller's policy (its own model, the allowlist, or Open); a port no model uses
+any more is closed at the next spawn. Central's own services (the MCP relay)
+are routed before the check.
 
 **Groups that existed before this policy keep open egress.** An unset mode
 used to mean open; migration `webchat-egress-existing-open` stamps `'open'`
 on every group present at upgrade time (creating a config row where none
 was). Only groups created afterwards start on the allowlist. Change a group's
-mode in its agent panel.
+mode in its agent panel. (An install that ran an earlier build of this
+migration, which skipped the stamping where `webchat-runner-egress` had been
+applied at an earlier boot, may have groups on Allowlist that were Open:
+those are set by hand.)
 
 A model endpoint that is neither on the host nor a public hostname (say an
 Ollama box on the LAN) is still dialled directly by the container (`NO_PROXY`),
@@ -55,12 +60,11 @@ filter's ports.
 
 **Enforcement:**
 
-- **Runner agents** — central's relay checks every relayed destination
-  (`src/channels/webchat/runner-relay.ts`). A change applies within seconds.
-- **Local agents** — both filtered modes run on the lockdown network behind
-  central's egress filter (`src/channels/webchat/egress-filter.ts`). Switching
-  between Allowlist and Model only applies at once; moving to or from Open
-  changes the container's network and applies at the next start.
+- Both filtered modes run on the lockdown network (or, with the exec relay,
+  no network at all) behind central's egress filter
+  (`src/channels/webchat/egress-filter.ts`). Switching between Allowlist and
+  Model only applies at once; moving to or from Open changes the container's
+  network and applies at the next start.
 - Refusals: `403` naming the host (the agent can report it), audit
   `runner.egress.blocked`, and Manage → Network → Recently blocked.
 - Fail-closed: an agent that cannot be put behind the filter starts with
@@ -74,7 +78,10 @@ the proxy URL. The filter identifies the caller by source address (container
 → session → agent group), applies the group's mode, and forwards what it
 allows to the gateway with the container's own proxy credential, so OneCLI's
 injection, approvals and rules still apply. The host-sweep re-ensures the
-network each tick.
+network each tick. Identifying callers by source address relies on the
+container hardening (no `NET_RAW` / `NET_ADMIN`, so an agent cannot spoof
+another's address), which every agent container gets; there is no switch to
+turn it off.
 
 **Which gateway (upstream 2.4.0+):** the credential gateway is a skill now
 (`/add-onecli`, `/add-iron-proxy`), and each declares where agents reach it.
@@ -87,7 +94,13 @@ what is pointed at the bridge.
 | OneCLI (container, `host.docker.internal`) | Yes. The filter forwards to it on the host (`ONECLI_URL`'s address, else loopback). |
 | A gateway on the host | Yes, on loopback. |
 | iron-proxy (container, reached as `iron-proxy`) | Not yet: central cannot reach that name from the host, so a filtered agent's requests get `502`. Use Open for its groups until the filter learns its published port. |
-| A gateway inside the session (sidecar) | No: upstream's driver hands such sessions their own network before any per-group policy is consulted. The sidecar confines the session; the allowlist does not apply. |
+| A gateway inside the session (sidecar) | No: upstream's driver hands such sessions their own network before any per-group policy is consulted. An agent the egress filter would hold is therefore refused at spawn as `denied-by-policy` (`patches/product/src__drivers__index.ts.patch`), and so is one whose mode cannot be determined; only Open starts, and under `NANOCLAW_EGRESS_LOCKDOWN` not even Open. No shipped gateway is a sidecar today. |
+
+**Known limitation (to do): sidecar gateways.** Refusing is the fail-safe
+choice while nothing uses one. When a sidecar gateway arrives, decide between
+starting such agents with a logged warning and saying on Manage → Network that
+the sidecar, not the allowlist, governs their egress — or feeding the
+allowlist into the sidecar so the modes mean the same thing there.
 
 | Env | Default | Meaning |
 | --- | --- | --- |
@@ -247,6 +260,15 @@ and never works. So the operator may state the pair instead
   splitting, and the template is the one operator-supplied string that reaches
   a header verbatim
 
+For HTTP Basic (e.g. CalDAV with an app-specific password) the form's
+**Username + password** type posts `{hostPattern, basic: {username, password}}`
+instead of a value. The server encodes base64 of the UTF-8 `username:password`
+and stores it as `Authorization: Basic {value}`, so nobody base64-encodes a
+password by hand. The username must be non-empty, contain no `:` (RFC 7617) or
+control characters, and both fields are capped at 256 characters. `basic` is
+refused alongside `value` or `scheme`, errors never quote either field, and like
+every tool secret it is write-only.
+
 Deliberately not a table of named services: every scheme is the same shape, so
 per-service entries would add a release cycle to every integration and bake one
 deployment's stack into the product.
@@ -314,7 +336,7 @@ override defeats the image's tini, leaving bun as PID 1 with no signal handler,
 and Linux discards default-action signals to PID 1 — without docker-init every
 stop ends in SIGKILL after the full grace period.
 
-Verified against a live container (2026-07-30): `CapDrop=[ALL]`, `CapAdd=[]`,
+A running container inspects as `CapDrop=[ALL]`, `CapAdd=[]`,
 `PidsLimit=2048`, `SecurityOpt=[no-new-privileges]`.
 
 Note the honest limit, stated in `container-runner.ts`: `cap-drop` and
@@ -331,6 +353,34 @@ control. The real boundary is the user mapping plus the mount set.
 
 On a swapless host `--memory` is a hard cap and a runaway is OOM-killed at the
 limit.
+
+## Runner releases
+
+With the VS Code runner (`/add-vscode-runner`), central serves the extension
+package to every paired laptop. HTTPS proves only that the bytes came from
+central; a compromised central could ship its own. Releases are therefore
+signed with an operator Ed25519 key kept off central
+(`scripts/sign-runner-release.ts` in the overlay repo), and the extension
+verifies against a key pinned per install origin before installing an update.
+Central stores and serves signatures and checks uploads against the install's
+release key, but cannot make one. The first pin (and any key change) is a modal
+confirmation showing the fingerprint — trust on first use; declining it refuses
+that install's releases; `nanoclaw.releaseSigningKey` pins out of band.
+Details: [runners.md](./runners.md#signed-releases).
+
+## Runner machine identity
+
+A runner connection authenticates twice: as a person (Entra token, Tailscale
+or trusted-proxy identity) and as a machine. The machine proves an Ed25519
+key held in VS Code's secret storage by signing a fresh challenge bound to its
+fingerprint and to the origin it dialled, checked against the addresses
+central is configured with (never the request's own headers, which a relaying
+server controls); the registry binds the key on first
+sight and never replaces it (`webchat_runner_machines.public_key`, cleared by
+revoke). A new machine without a key is refused, and so is one revoked and
+approved again; machines paired before keys existed are admitted keyless and
+audited until they bind one. Protocol and
+cases: [runners.md](./runners.md#pairing-and-placement).
 
 ## Approval TTL
 

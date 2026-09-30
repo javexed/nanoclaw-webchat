@@ -6,9 +6,6 @@
     "seamBranch": "pub/module-hooks",
     "seamRef": "2bb3253a2be9697bb9c8d44b2c686e672d2d5ead",
     "seamH5Ref": "2bb3253a2be9697bb9c8d44b2c686e672d2d5ead",
-    "forkRef": "3e55bebd6ff2a11a56d53923a38b3bda8ba30e11",
-    "forkArchiveTag": "archive/channels-webchat-2026-07-28",
-    "forkRefNote": "final channels-webchat tip (fork decommissioned 2026-07-28, preserved at forkArchiveTag). NOT a build input and no longer a guard reference — the only consumer is scripts/migrate-from-fork.sh, which resolves this SHA inside a user's own fork install to refuse migrating an install that is NEWER than the split. Keep it pinned for as long as fork installs may still migrate.",
     "seamNote": "pub/module-hooks: 13 upstream files, +188 -0 (insertions only). Hook registries live in src/seam/ and container/agent-runner/src/seam/; SEAM.md in the seam is the ledger."
   },
   "seamApiVersion": 4,

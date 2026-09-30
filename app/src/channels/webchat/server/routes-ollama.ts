@@ -9,9 +9,6 @@
 // handlers are the HTTP shape around it: parse, delegate, format. Authorization
 // is the route table's job (these are registered owner-only), which is why no
 // handler re-checks it.
-//
-// Lifted out of server.ts unchanged: the block closed over nothing in that
-// file's module scope, which is what made it movable without a deps seam.
 import { listWebchatModels } from '../db.js';
 import { prepullEstimate } from '../model-manage.js';
 import { recommendForHost } from '../model-recommend.js';
@@ -28,7 +25,7 @@ import fs from 'fs';
 import path from 'path';
 
 import type { RouteCtx } from '../server.js';
-import { json, readJsonBody } from './http.js';
+import { json, readJsonObject } from './http.js';
 
 export async function rOllamaHostsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res } = ctx;
@@ -104,14 +101,8 @@ export async function rOllamaPrepullGet(ctx: RouteCtx, _m: RegExpMatchArray): Pr
 // the same posture as the pull that created them.
 export async function rOllamaDeletePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { host?: unknown; model?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ host?: unknown; model?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.host !== 'string' || !body.host.trim()) return json(res, 400, { error: 'host required' });
   if (typeof body.model !== 'string' || !body.model.trim()) return json(res, 400, { error: 'model required' });
   try {
@@ -124,14 +115,8 @@ export async function rOllamaDeletePost(ctx: RouteCtx, _m: RegExpMatchArray): Pr
 
 export async function rOllamaPullPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { host?: unknown; model?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ host?: unknown; model?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.host !== 'string' || !body.host.trim()) return json(res, 400, { error: 'host required' });
   if (typeof body.model !== 'string' || !body.model.trim()) return json(res, 400, { error: 'model required' });
   try {
@@ -146,14 +131,8 @@ export async function rOllamaPullPost(ctx: RouteCtx, _m: RegExpMatchArray): Prom
 // begin a multi-gigabyte download may also call it off.
 export async function rOllamaPullCancelPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { host?: unknown; model?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ host?: unknown; model?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.host !== 'string' || !body.host.trim()) return json(res, 400, { error: 'host required' });
   if (typeof body.model !== 'string' || !body.model.trim()) return json(res, 400, { error: 'model required' });
   // 404, not 200: "there was no such pull running" is a different fact from

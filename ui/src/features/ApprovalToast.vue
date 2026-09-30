@@ -1,19 +1,9 @@
 <script setup lang="ts">
 /**
- * The transient approval toast.
- *
- * Deliberately NOT ApprovalCard: a toast is a <div class="approval-toast">, it
- * drops the payload block, and the toast layer owns where it goes. The two
- * shared a builder before and the difference was a `toast` flag that changed
- * the element's tag — one component for both would need the same flag back.
- *
- * Mounted into the toast element itself, one app per toast, so the host carries
- * the class and data-question-id the toast layer and respondToApproval select
- * on, and the component supplies its children.
- *
- * Busy state is shared with the card via approvalBusy, keyed by questionId —
- * the same approval can be on screen as a toast AND in the panel, and clicking
- * either should disable both.
+ * The transient approval toast, deliberately not ApprovalCard: a <div> without the payload
+ * block, placed by the toast layer. Mounted into the toast element itself, which carries
+ * the class and data-question-id that respondToApproval selects on. Busy state is shared
+ * with the card via approvalBusy, so clicking either disables both.
  */
 import { approvalBusy } from './approvals-state.js';
 

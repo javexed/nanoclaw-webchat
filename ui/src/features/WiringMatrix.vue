@@ -1,18 +1,8 @@
 <script setup lang="ts">
 /**
- * The room ↔ agent wiring matrix — thirty-ninth island.
- *
- * Mounted into <div id="matrix-canvas">, exclusively owned by this module.
- *
- * The cells carry data-room and data-agent and are NOT wired here. A delegated
- * click handler on the canvas reads those attributes and toggles the edge —
- * one listener for a grid that can be rooms × agents cells, which is why it was
- * delegated in the first place. Putting @click on every cell would multiply the
- * listener count by the grid size, and the listener-set guard would be right to
- * flag it.
- *
- * The empty state replaces the whole table, as before: a matrix with no rooms
- * or no agents has nothing to render, not an empty grid.
+ * The room ↔ agent wiring matrix, mounted into <div id="matrix-canvas">. Cells carry
+ * data-room/data-agent and have no listeners: one delegated handler on the canvas toggles
+ * edges for the whole grid. With no rooms or no agents, the empty state replaces the table.
  */
 import { computed } from 'vue';
 import { matrixAgents, matrixEdges, matrixRooms } from './matrix-state.js';

@@ -4,10 +4,7 @@ import { summarizeToolTarget } from './status-feed.js';
 
 /**
  * pi runs its OWN tools, with lowercase names and its own argument keys, so
- * every case written for the Claude SDK's vocabulary misses them. Before this,
- * a pi agent's feed showed a bare verb — "write" with no hint of what was
- * written — and only after the provider started emitting tool_use at all
- * (previously it emitted nothing, so the feed read as idle mid-turn).
+ * every case written for the Claude SDK's vocabulary misses them.
  */
 describe('summarizeToolTarget — pi built-ins', () => {
   it('names the file for read/write/edit', () => {

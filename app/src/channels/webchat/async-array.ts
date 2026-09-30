@@ -8,18 +8,11 @@
  *     rooms.filter((r) => canAccessRoom(userId, r.id))   // keeps EVERY room
  *     agents.some((a) => hasAdminPrivilege(userId, a.id)) // always true
  *
- * Nothing fails. No exception, no type error: `Promise<boolean>` is a perfectly
- * good truthy value as far as `filter`'s signature is concerned, so tsc says
- * nothing. When upstream's database went async, every one of these predicates
- * became a promise and every authorization filter in the webchat UI silently
- * stopped filtering.
+ * and tsc says nothing: for an authorization filter that means it silently
+ * stops filtering.
  *
- * These helpers are sequential ON PURPOSE. The predicates here hit the same
- * small set of rows (roles, memberships) and a Promise.all fan-out would
- * multiply the queries for no wall-clock gain on lists this size; sequential
- * also keeps the DB access pattern predictable under the driver's connection
- * scoping. Reach for Promise.all when the predicate is genuinely independent
- * and slow, not by default.
+ * Sequential ON PURPOSE: the predicates hit the same few rows, so a Promise.all
+ * fan-out multiplies queries for no gain and makes DB access less predictable.
  */
 
 /** `filter`, awaiting each predicate. */

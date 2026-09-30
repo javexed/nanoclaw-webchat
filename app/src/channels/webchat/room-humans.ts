@@ -1,23 +1,14 @@
 /**
  * Room humans -> session DB, so an agent can reach a PERSON.
  *
- * Why this exists: an agent knows its `destinations` (channels and other
- * agents) and nothing else, so when it needs a human it addresses the nearest
- * thing that looks like one. That happened in production — an agent with a
- * real bug to report sent it to another agent, which replied "I'm not a human,
- * route this to the actual admin", and the report died there for ~15 hours
- * until the user mentioned it in person.
+ * An agent knows only its `destinations`, so asked for a human it addresses
+ * the nearest agent instead. Webchat already turns `@handle` mentions on every
+ * message, agent-authored ones included, into a badge + push (broadcast() in
+ * state.ts); this writes the room's handles into inbound.db at spawn, like
+ * `destinations`, and the runner renders them into the prompt.
  *
- * Webchat already resolves `@handle` mentions on EVERY message including
- * agent-authored ones (see broadcast() in state.ts), giving the mentioned
- * person a distinct room badge and a push. The capability was there; the agent
- * simply had no way to know the handles. This materializes them into the
- * session's inbound.db at spawn — the same path `destinations` already takes —
- * and the runner renders them into the prompt.
- *
- * Scope is deliberately the ROOM, not the user table: everyone listed can
- * already read that room's messages, so naming them to the room's agent leaks
- * nothing new. A global list would.
+ * Scoped to the ROOM, not the user table: everyone listed can already read the
+ * room, so naming them to its agent leaks nothing new. A global list would.
  */
 import fs from 'fs';
 

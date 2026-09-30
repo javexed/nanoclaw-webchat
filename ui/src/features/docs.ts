@@ -1,11 +1,8 @@
 // ── Documentation viewer ─────────────────────────────────────────────────────
 // Renders the docs that ship with the install (`docs/webchat/*.md`, served by
 // server/routes-docs.ts) inside the app, so an operator never needs a shell or
-// the repo to answer "how do threads work".
-//
-// It shares the Help view: the hand-written cards stay as the landing page —
-// they answer "how do the pieces fit together", which no reference doc does —
-// and the doc list sits under them.
+// the repo to answer "how do threads work". Shares the Help view: the
+// hand-written cards stay the landing page, with the doc list under them.
 import { marked } from '/marked.min.js';
 import DOMPurify from '/dompurify.min.js';
 
@@ -27,13 +24,8 @@ let loaded = false;
  *
  *   ![alt](./screenshots/x.png)  → the asset route
  *   [text](other.md#anchor)      → in-app navigation, when `other` is served;
- *                                  otherwise the link is flattened to its text,
- *                                  because a dead link reads as a bug and the
- *                                  reader cannot tell that the target simply
- *                                  isn't published in-app.
- *
- * Done on the markdown rather than the DOM: marked emits the anchors already
- * resolved, and rewriting text is far less fiddly than walking nodes.
+ *                                  otherwise flattened to its text (a dead
+ *                                  link reads as a bug).
  */
 export function rewriteDocLinks(md: string, known: ReadonlySet<string>): string {
   const withImages = md.replace(/!\[([^\]]*)\]\(\.?\/?screenshots\/([a-z0-9-]+\.(?:png|gif))\)/g, (_m, alt, file) => {
@@ -124,10 +116,8 @@ async function renderMermaid(article: Element, fences: Element[]): Promise<void>
   const mermaid = await loadMermaid();
   if (!mermaid) return; // labelled source stands
   if (!mermaidReady) {
-    // securityLevel 'strict' escapes labels. The diagram text comes from the
-    // install's own doc files (an allowlist on the server), not from anything
-    // a user typed, so this is defence in depth rather than the load-bearing
-    // control.
+    // securityLevel 'strict' escapes labels: defence in depth, since diagram
+    // text comes from the server's doc allowlist, never from user input.
     mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: mermaidTheme() });
     mermaidReady = true;
   }
@@ -186,9 +176,8 @@ export async function openDoc(slug: string, hash = ''): Promise<void> {
 
   article.innerHTML = `<p><a class="docs-back" href="#docs">← All documentation</a></p>${html}`;
 
-  // Mermaid fences become diagrams. Until the bundle loads (or if it fails to)
-  // they stay as labelled source, which is a readable fallback rather than a
-  // wall of unexplained syntax where a picture obviously belongs.
+  // Mermaid fences become diagrams; until the bundle loads (or if it fails)
+  // they stay as labelled source.
   const fences = Array.from(article.querySelectorAll('pre > code.language-mermaid'));
   for (const code of fences) {
     code.parentElement?.classList.add('docs-mermaid');

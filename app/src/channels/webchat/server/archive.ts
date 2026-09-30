@@ -1,14 +1,7 @@
 // ── Archive spool ────────────────────────────────────────────────────────────
 // The plumbing under every export and import: one spawn point for tar, the
 // upload spool, the in-flight import registry and its sweep.
-//
-// Shared rather than moved. Room import drives all of it, but so do system
-// export, agent export and system import, none of which are in the room
-// cluster. The registry is module state, so it moves with the functions that
-// read it — two copies of it would each see half the in-flight imports.
 
-// Staged agent imports awaiting apply: token → extracted bundle dir. 15-min
-// TTL; apply or expiry removes the dir.
 import Busboy from 'busboy';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
@@ -17,6 +10,8 @@ import type { IncomingMessage } from 'http';
 import os from 'os';
 import path from 'path';
 
+// Staged agent imports awaiting apply: token → extracted bundle dir. 15-min
+// TTL; apply or expiry removes the dir.
 export const pendingAgentImports = new Map<string, { dir: string; at: number }>();
 
 export const IMPORT_TTL_MS = 15 * 60 * 1000;

@@ -2,21 +2,12 @@
  * Regression tests for the wizard's "first Tailscale login becomes owner"
  * one-shot (auth.ts finalize → roles.ts grantOwnerRole).
  *
- * WHY THIS FILE EXISTS SEPARATELY FROM auth.test.ts. That suite calls
- * `await initTestDb()` without `runMigrations`, so `user_roles` does not exist and
- * every role helper degrades to a no-op by design — it is testing the
- * "permissions module not installed" posture. The consequence is that the
- * grant itself has never been exercised against a real schema, and the real
- * schema is where it was broken: `user_roles.granted_by` is
- * `REFERENCES users(id)` under `foreign_keys = ON`, while the promotion passes
- * the sentinel 'webchat:first-tailscale-owner' — a reason, not a user. Every
- * grant threw the FK constraint, the catch swallowed it, and the caller
- * disarmed the one-shot regardless. Observed on a live install: the tailnet
- * identity authenticated, the flag read back `armed:false`, and `user_roles`
- * had no row for it.
- *
- * So these run WITH migrations. The point is the FK, and a test that can't
- * violate it proves nothing.
+ * Separate from auth.test.ts, which runs without migrations (the "permissions
+ * module not installed" posture, where role helpers are no-ops). These run WITH
+ * migrations because the grant must hold against the real schema:
+ * `user_roles.granted_by` REFERENCES users(id) under `foreign_keys = ON`, while
+ * the promotion passes the sentinel 'webchat:first-tailscale-owner'. A failed
+ * grant must not disarm the one-shot.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 

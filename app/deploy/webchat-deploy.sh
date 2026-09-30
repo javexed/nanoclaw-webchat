@@ -7,6 +7,8 @@
 # optional Tailscale), and install a systemd service. Called by BOTH the Proxmox
 # community-script (install/nanoclaw-install.sh) AND a clean-VM install, so any
 # change to the deploy flow lives here — never duplicated per installer.
+# deploy/install.sh sources it for the shared steps below (setup:auto, the
+# webchat .env, the health wait) and keeps its own service-user flow.
 #
 # Assumes node, pnpm, and docker are already present, and the app is already
 # checked out / extracted at --dir. Works on a gitless tree (a release tarball).
@@ -44,6 +46,120 @@
 # the new .env takes effect.
 set -euo pipefail
 
+# ── Shared steps (deploy/install.sh sources this file for these) ────────────
+# Each works on the tree in the current directory.
+say() { echo "→ $*"; }
+
+# setup:auto with stdin at /dev/null. It skips the steps a headless run cannot
+# finish (the browser wizard owns them), plus any passed as ",step,…".
+# The hardened (pre-built) image is offered through a sign-in portal, which a
+# headless run cannot answer: the prompt cancels on /dev/null and setup exits 0
+# part-way. Settle it as the local build unless the operator already chose.
+setup_auto_headless() { # <display-name> [,extra-skips]
+  [ -f .env ] || touch .env
+  chmod 600 .env # holds the bearer token and other secrets
+  grep -q '^NANOCLAW_HARDENED_IMAGE=' .env || echo 'NANOCLAW_HARDENED_IMAGE=false' >> .env
+  NANOCLAW_BOOTSTRAPPED=1 NANOCLAW_DISPLAY_NAME="$1" \
+    NANOCLAW_SKIP='auth,channel,first-chat,cli-agent,timezone,echo-reminder,slack-reminder'"${2:-}" \
+    NANOCLAW_HEADLESS=1 pnpm run setup:auto </dev/null
+}
+# Exit 0 from setup:auto proves nothing (see above): its own step records in
+# logs/setup.log, after the line count taken before it ran, are the proof.
+setup_log_mark() { if [ -f logs/setup.log ]; then wc -l <logs/setup.log; else echo 0; fi; }
+# Succeeds when one of the steps is not finished, setting UNFINISHED_STEP and
+# LAST_STEP (the last step this run recorded, empty for none).
+setup_unfinished() { # <mark> <step>…
+  local steps step
+  steps=$(tail -n +"$(($1 + 1))" logs/setup.log 2>/dev/null | grep -E '^=== \[[^]]*\] [a-z-]+ \[[^]]*\] → [a-z]+ ===$' || true)
+  shift
+  for step in "$@"; do
+    grep -qE "\] $step \[[^]]*\] → (success|skipped) ===\$" <<<"$steps" && continue
+    # shellcheck disable=SC2034 # read by install.sh
+    UNFINISHED_STEP=$step
+    LAST_STEP=$(tail -n1 <<<"$steps" | sed -E 's/^=== \[[^]]*\] //; s/ \[[^]]*\] → / → /; s/ ===$//')
+    return 0
+  done
+  return 1
+}
+
+env_has() { grep -q "^$1=" .env; }
+env_get() { grep "^$1=" .env | tail -n1 | cut -d= -f2- || true; }
+# Add-if-missing: a default never overwrites what an operator already has.
+env_set() { env_has "$1" || printf '%s=%s\n' "$1" "$2" >> .env; }
+# Overwrite: for values passed explicitly on this run. awk, not sed, so a
+# value holding / | & or \ is written verbatim.
+# The rewrite goes through a umask-077 temp file and back into .env in place,
+# so the secrets are never world-readable and .env keeps its mode.
+env_put() {
+  if env_has "$1"; then
+    (umask 077 && K="$1" V="$2" awk 'BEGIN { k = ENVIRON["K"] "=" } index($0, k) == 1 { print k ENVIRON["V"]; next } { print }' \
+      .env > .env.tmp) && cat .env.tmp > .env && rm -f .env.tmp
+  else
+    printf '%s=%s\n' "$1" "$2" >> .env
+  fi
+}
+env_del() {
+  env_has "$1" || return 0
+  (umask 077 && { grep -v "^$1=" .env > .env.tmp || true; }) && cat .env.tmp > .env && rm -f .env.tmp
+}
+# explicit flag → overwrite; otherwise → fill only if missing.
+env_apply() { if [ "$1" = 1 ]; then env_put "$2" "$3"; else env_set "$2" "$3"; fi; }
+
+# The webchat keys: enabled, bind, auth. Reads HOST PORT TOKEN TAILSCALE and
+# their *_SET flags (1 = passed explicitly), and LOCALHOST.
+seed_webchat_env() {
+  [ -f .env ] || touch .env
+  chmod 600 .env
+  # A first deploy is one whose .env has never enabled webchat. Only then do the
+  # auth defaults (Tailscale on, a fresh token) apply: on a re-run, an operator
+  # who turned Tailscale off or retired the token in Settings keeps that choice.
+  local first=1
+  env_has WEBCHAT_ENABLED && first=0
+  env_set WEBCHAT_ENABLED true
+  env_apply "$HOST_SET" WEBCHAT_HOST "$HOST"
+  env_apply "$PORT_SET" WEBCHAT_PORT "$PORT"
+  # Tailscale identity up front: reach this over the tailnet and the first Tailscale
+  # login becomes owner. Harmless when unused — the bearer token is checked first.
+  if [ "$TAILSCALE_SET" = 1 ] && [ "$TAILSCALE" = 0 ]; then
+    env_del WEBCHAT_TAILSCALE
+  elif [ "$TAILSCALE" = 1 ] && [ "$first" = 1 ]; then
+    env_set WEBCHAT_TAILSCALE true
+  fi
+  # Bearer token: LAN-exposed, so the server needs one; the first browser login
+  # becomes owner. Preserve any existing token (rotating it locks out current
+  # logins); --token replaces it; else generate one when nothing else
+  # authenticates (first deploy, or no Tailscale / trusted proxy configured).
+  # Localhost mode is the exception: NO token — 127.0.0.1 is trusted and the
+  # localhost auto-owner signs you in, which any explicit auth method would
+  # switch off, so --localhost drops a token left by a networked deploy.
+  if [ "$TOKEN_SET" = 1 ]; then
+    env_put WEBCHAT_TOKEN "$TOKEN"
+  elif [ "$LOCALHOST" = 1 ]; then
+    env_has WEBCHAT_TOKEN && say "Removing the bearer token (--localhost signs you in automatically)"
+    env_del WEBCHAT_TOKEN
+  elif ! env_has WEBCHAT_TOKEN; then
+    if [ "$first" = 1 ] || { [ "$(env_get WEBCHAT_TAILSCALE)" != true ] && [ -z "$(env_get WEBCHAT_TRUSTED_PROXY_IPS)" ]; }; then
+      env_put WEBCHAT_TOKEN "$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)"
+    fi
+  fi
+}
+
+# Polls for up to 150s; fails if the server never answers.
+wait_for_health() { # <url>
+  node -e '
+    const url = process.argv[1], until = Date.now() + 150_000;
+    (async () => {
+      while (Date.now() < until) {
+        try { if ((await fetch(url)).ok) process.exit(0); } catch {}
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      process.exit(1);
+    })();' "$1"
+}
+
+# Sourced: only the functions above.
+[ "${BASH_SOURCE[0]}" = "$0" ] || return 0
+
 DIR=""; PORT=3100; HOST=0.0.0.0; TOKEN=""; TZ_VAL=""; ONECLI_URL=""
 TAILSCALE=1; SERVICE=1; DISPLAY_NAME=operator; INSTALL_DEPS=0; LOCALHOST=0
 # Which settings were passed explicitly. Those overwrite .env on a re-run;
@@ -73,7 +189,6 @@ done
 # `bash deploy/webchat-deploy.sh` from a checkout just works.
 [ -n "$DIR" ] || DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$DIR" || { echo "webchat-deploy: cannot cd to $DIR" >&2; exit 1; }
-say() { echo "→ $*"; }
 
 # ── 0. Prerequisites (opt-in) ────────────────────────────────────────────────
 # Turn a bare Debian/Ubuntu VM into a ready host, using DISTRO packages only —
@@ -136,77 +251,20 @@ pnpm run build
 # owns them), and so is its systemd --user service — a root system service is
 # installed below instead.
 say "Running the non-interactive setup driver…"
-# The hardened (pre-built) image is offered through a sign-in portal, which a
-# headless run cannot answer: the prompt cancels on /dev/null and setup exits 0
-# part-way. Settle it as the local build unless the operator already chose.
-[ -f .env ] || touch .env
-chmod 600 .env # holds the bearer token and other secrets
-grep -q '^NANOCLAW_HARDENED_IMAGE=' .env || echo 'NANOCLAW_HARDENED_IMAGE=false' >> .env
-NANOCLAW_BOOTSTRAPPED=1 NANOCLAW_DISPLAY_NAME="$DISPLAY_NAME" \
-  NANOCLAW_SKIP='auth,channel,first-chat,cli-agent,timezone,service,echo-reminder,slack-reminder' \
-  NANOCLAW_HEADLESS=1 pnpm run setup:auto </dev/null
+mark=$(setup_log_mark)
+setup_auto_headless "$DISPLAY_NAME" ,service
+if setup_unfinished "$mark" container; then
+  echo "webchat-deploy: setup exited 0 without finishing its container step (last step it recorded: ${LAST_STEP:-none})." >&2
+  echo "A prompt it could not answer headless is the usual cause — see logs/setup.log" >&2
+  exit 1
+fi
 # Stamp the upgrade marker: a fetched tree carries none, so the first-boot
 # dev-pull tripwire would otherwise refuse to start and crash-loop. This deploy
 # IS the sanctioned path, so record it.
 pnpm exec tsx scripts/upgrade-state.ts set
 
 # ── 2. Configure .env ───────────────────────────────────────────────────────
-[ -f .env ] || touch .env
-chmod 600 .env
-env_has() { grep -q "^$1=" .env; }
-env_get() { grep "^$1=" .env | tail -n1 | cut -d= -f2- || true; }
-# Add-if-missing: a default never overwrites what an operator already has.
-env_set() { env_has "$1" || printf '%s=%s\n' "$1" "$2" >> .env; }
-# Overwrite: for values passed explicitly on this run. awk, not sed, so a
-# value holding / | & or \ is written verbatim.
-# The rewrite goes through a umask-077 temp file and back into .env in place,
-# so the secrets are never world-readable and .env keeps its mode.
-env_put() {
-  if env_has "$1"; then
-    (umask 077 && K="$1" V="$2" awk 'BEGIN { k = ENVIRON["K"] "=" } index($0, k) == 1 { print k ENVIRON["V"]; next } { print }' \
-      .env > .env.tmp) && cat .env.tmp > .env && rm -f .env.tmp
-  else
-    printf '%s=%s\n' "$1" "$2" >> .env
-  fi
-}
-env_del() {
-  env_has "$1" || return 0
-  (umask 077 && { grep -v "^$1=" .env > .env.tmp || true; }) && cat .env.tmp > .env && rm -f .env.tmp
-}
-# explicit flag → overwrite; otherwise → fill only if missing.
-env_apply() { if [ "$1" = 1 ]; then env_put "$2" "$3"; else env_set "$2" "$3"; fi; }
-# A first deploy is one whose .env has never enabled webchat. Only then do the
-# auth defaults (Tailscale on, a fresh token) apply: on a re-run, an operator
-# who turned Tailscale off or retired the token in Settings keeps that choice.
-FIRST_DEPLOY=1; env_has WEBCHAT_ENABLED && FIRST_DEPLOY=0
-
-env_set WEBCHAT_ENABLED true
-env_apply "$HOST_SET" WEBCHAT_HOST "$HOST"
-env_apply "$PORT_SET" WEBCHAT_PORT "$PORT"
-# Tailscale identity up front: reach this over the tailnet and the first Tailscale
-# login becomes owner. Harmless when unused — the bearer token is checked first.
-if [ "$TAILSCALE_SET" = 1 ] && [ "$TAILSCALE" = 0 ]; then
-  env_del WEBCHAT_TAILSCALE
-elif [ "$TAILSCALE" = 1 ] && [ "$FIRST_DEPLOY" = 1 ]; then
-  env_set WEBCHAT_TAILSCALE true
-fi
-# Bearer token: LAN-exposed, so the server needs one; the first browser login
-# becomes owner. Preserve any existing token (rotating it locks out current
-# logins); --token replaces it; else generate one when nothing else
-# authenticates (first deploy, or no Tailscale / trusted proxy configured).
-# Localhost mode is the exception: NO token — 127.0.0.1 is trusted and the
-# localhost auto-owner signs you in, which any explicit auth method would
-# switch off, so --localhost drops a token left by a networked deploy.
-if [ "$TOKEN_SET" = 1 ]; then
-  env_put WEBCHAT_TOKEN "$TOKEN"
-elif [ "$LOCALHOST" = 1 ]; then
-  env_has WEBCHAT_TOKEN && say "Removing the bearer token (--localhost signs you in automatically)"
-  env_del WEBCHAT_TOKEN
-elif ! env_has WEBCHAT_TOKEN; then
-  if [ "$FIRST_DEPLOY" = 1 ] || { [ "$(env_get WEBCHAT_TAILSCALE)" != true ] && [ -z "$(env_get WEBCHAT_TRUSTED_PROXY_IPS)" ]; }; then
-    env_put WEBCHAT_TOKEN "$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)"
-  fi
-fi
+seed_webchat_env
 # The OneCLI gateway (started by setup:auto) binds the docker bridge, not
 # loopback. The host needs its URL to hand credentials to agent containers.
 # `|| true`: without docker0 the pipeline fails, and under pipefail that would
@@ -312,15 +370,7 @@ fi
 if [ -n "${STARTED:-}" ]; then
   case "$HOST" in 0.0.0.0|""|"::") HEALTH_HOST=127.0.0.1 ;; *) HEALTH_HOST="$HOST" ;; esac
   say "Waiting for http://${HEALTH_HOST}:${PORT}/health …"
-  if ! node -e '
-    const url = process.argv[1], until = Date.now() + 150_000;
-    (async () => {
-      while (Date.now() < until) {
-        try { if ((await fetch(url)).ok) process.exit(0); } catch {}
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-      process.exit(1);
-    })();' "http://${HEALTH_HOST}:${PORT}/health"; then
+  if ! wait_for_health "http://${HEALTH_HOST}:${PORT}/health"; then
     echo "" >&2
     echo "webchat-deploy: NanoClaw did not come up (no answer on :${PORT}/health)." >&2
     if [ "$STARTED" = user ]; then

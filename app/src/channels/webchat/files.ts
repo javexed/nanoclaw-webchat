@@ -1,16 +1,7 @@
 /**
- * File upload + serve for webchat.
- *
- * Two upload paths:
- *   - Multipart (POST /api/rooms/:roomId/upload)       small/medium files
- *   - Chunked   (POST /api/rooms/:roomId/upload/chunk) resumable, large files
- *
- * Files land under data/webchat/uploads/<roomId>/<uuid><.ext>. Simplification
- * vs v1: we no longer write into the agent's group folder (mounted at
- * /workspace/group inside the container). v2 supports multi-agent fan-out, so
- * a single room may not have a single canonical "group folder" — the fan-out
- * mount could happen in a follow-up. For now the agent fetches the file via
- * the served URL when it needs the bytes.
+ * File upload (multipart, or chunked for large/resumable files) + serve for
+ * webchat. Files land under data/webchat/uploads/<roomId>/<uuid><.ext>, not a
+ * group folder: a multi-agent room has no single one.
  */
 import http from 'http';
 import os from 'os';
@@ -74,18 +65,13 @@ const pendingChunkedUploads = new Map<
   }
 >();
 
-// Cap concurrent open uploads per user. Without this, a single authenticated
-// user can spin up thousands of pending uploads (each holds a temp dir +
-// a 5-minute timeout). At 5/user, an attacker would need 5 pending
-// uploads' worth of disk to DoS, and each request still has the per-upload
-// MAX_UPLOAD_SIZE cap below.
+// Cap concurrent open uploads per user: each holds a temp dir + a 5-minute
+// timeout, so an uncapped user could pin thousands (disk/memory DoS).
 const MAX_OPEN_UPLOADS_PER_USER = 5;
 const userActiveUploads = new Map<string, Set<string>>();
 
-// Per-uploadId async lock. Two parallel chunks for the same uploadId would
-// otherwise both pass the size check, both write, and exceed the cap. The
-// lock serialises chunk handling per upload so the disk-stat-sum check
-// inside is authoritative.
+// Per-uploadId lock: parallel chunks would both pass the size check and exceed
+// the cap; serialised, the disk-stat-sum check inside is authoritative.
 const uploadLocks = new Map<string, Promise<unknown>>();
 async function withUploadLock<T>(uploadId: string, fn: () => Promise<T>): Promise<T> {
   const prev = uploadLocks.get(uploadId) ?? Promise.resolve();
@@ -150,9 +136,7 @@ function json(res: http.ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
-// Cap on the JSON envelope for a single chunked-upload request. PWA chunks
-// default to 512 KB; base64-encoded plus JSON wrapping ≈ 700 KB, so 2 MB is
-// generous headroom while still bounding worst-case memory growth.
+// JSON envelope cap per chunk request (a 512 KB chunk is ≈ 700 KB base64 + JSON).
 const MAX_CHUNK_BODY_BYTES = 2 * 1024 * 1024;
 
 class BodyTooLargeError extends Error {
@@ -179,13 +163,9 @@ function readBody(req: http.IncomingMessage, maxBytes = MAX_CHUNK_BODY_BYTES): P
   });
 }
 
-// Files at or below this size are inlined into the inbound message as a
-// base64 `attachments[].data` blob, which `extractAttachmentFiles` in the
-// host's session-manager will then stage to `<sessionDir>/inbox/<msgId>/`.
-// Above the threshold we pass a `hostPath` attachment (no base64 encoding)
-// so session-manager copies the file directly — avoids constructing a URL
-// that containers can't resolve (Docker containers can't reach webchat's
-// bound address by hostname).
+// At or below: inlined as base64 `attachments[].data`, which session-manager
+// stages to `<sessionDir>/inbox/<msgId>/`. Above: a `hostPath` attachment it
+// copies directly (containers can't reach webchat's address for a URL).
 const INLINE_ATTACHMENT_THRESHOLD = 25 * 1024 * 1024;
 
 function inboundForFile(
@@ -232,11 +212,8 @@ function inboundForFile(
     };
   }
 
-  // With an attachment, the formatter renders a `[image: name — saved to
-  // /workspace/inbox/<msgId>/name]` line that the agent can Read directly,
-  // so the caption is enough text — no need to duplicate the URL marker.
-  // Without an attachment (read error on small file), fall back to the URL
-  // hint so the agent at least knows the file exists and where to fetch it.
+  // With an attachment the formatter already tells the agent where the file was
+  // saved; without one (read error) the URL hint says it exists.
   const text = attachment
     ? caption
     : caption
@@ -297,11 +274,8 @@ export async function handleMultipartUpload(
   } | null = null;
   let limitHit = false;
   let caption = '';
-  // Promise that resolves once the disk write is fully flushed. `stream.on('end')`
-  // / `busboy.on('finish')` fire when the *read* side ends — the WriteStream
-  // may still be flushing bytes to disk. Reading the file before this resolves
-  // returned an empty buffer for small uploads, which is why JSON paste-ins
-  // were arriving at the agent as 0-byte attachments.
+  // Resolves when the disk write is flushed: 'end'/'finish' fire when the READ
+  // side ends, and reading earlier yields an empty buffer for small files.
   let writeDone: Promise<void> = Promise.resolve();
 
   busboy.on('field', (name, value) => {
@@ -460,19 +434,13 @@ export async function handleChunkedUpload(
     return json(res, 404, { error: 'Room not found' });
   }
 
-  // Per-uploadId lock — without this, two concurrent chunks for the same
-  // uploadId can interleave past the size check and exceed cap on disk.
-  // The lock holds for the entire chunk-handling flow including the final
-  // reassemble; that's fine because reassemble only happens on the final
-  // chunk and the single-chunk path is fast.
+  // Held for the whole chunk flow, including the final reassemble.
   const result = await withUploadLock(
     uploadId,
     async (): Promise<{ status: number; body: unknown } | { kind: 'reassemble' }> => {
       let upload = pendingChunkedUploads.get(uploadId);
       if (!upload) {
-        // First chunk for this uploadId — reserve a per-user slot. Without
-        // this cap, a single user can hold thousands of pending uploads
-        // (each with a temp dir + 5min timeout = real disk + memory pressure).
+        // First chunk: reserve a per-user slot (MAX_OPEN_UPLOADS_PER_USER).
         if (!reserveUploadSlot(senderUserId, uploadId)) {
           return {
             status: 429,
@@ -502,10 +470,7 @@ export async function handleChunkedUpload(
 
       const chunkBuf = Buffer.from(data, 'base64');
 
-      // Authoritative size check: stat-sum the temp dir + the new chunk.
-      // The earlier in-memory `cumulativeSize` was racy under concurrent
-      // chunks for the same uploadId (two requests both saw the pre-write
-      // value). Re-summing from disk + adding the buffer-to-be-written is
+      // Authoritative size check: stat-sum of the temp dir + the new chunk,
       // exact under the per-uploadId lock.
       let onDisk = 0;
       for (const idx of upload.receivedChunks) {

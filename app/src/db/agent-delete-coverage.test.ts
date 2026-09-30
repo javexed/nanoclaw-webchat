@@ -1,9 +1,5 @@
 /**
- * Delete-cascade coverage — the regression class this guards:
- * "delete X, leave Y dangling". Three real instances in two days:
- *   - webchat agent delete vs container_configs/user_roles/… (FK abort),
- *   - ncl groups delete vs skill_drafts / agent_message_policies,
- *   - model delete vs routing rules (different store, same failure).
+ * Delete-cascade coverage — guards "delete X, leave Y dangling".
  *
  * The durable check is structural: enumerate every table whose SCHEMA
  * references agent_groups (from a freshly migrated DB — the single source of

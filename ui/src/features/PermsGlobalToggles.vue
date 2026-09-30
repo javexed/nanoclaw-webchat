@@ -1,21 +1,8 @@
 <script setup lang="ts">
 /**
- * The Owner / Global-admin switches — twelfth island.
- *
- * Mounted into <div id="perms-global-toggles">, exclusively owned by this
- * module.
- *
- * This one absorbs a legacy function rather than calling it. buildToggleRow()
- * lived in legacy.js and built these rows imperatively; it was used by nothing
- * except renderPermsDetail, and it is pure markup plus one click handler. A
- * component that received DOM nodes from a legacy builder would be a component
- * in name only — so the markup moved into this template and the legacy function
- * is deleted in the same commit, along with its dep entry.
- *
- * The audit metadata is deliberately rendered twice over: the label carries
- * "(Granted by …)" as visible text, exactly as the imperative row did. It is
- * not a title attribute here — that is the matrix, which is a different island
- * and a different affordance.
+ * The Owner / Global-admin switches, mounted into <div id="perms-global-toggles">. The
+ * audit metadata is visible label text ("(Granted by …)"), not a title attribute — the
+ * title tooltip is the matrix's affordance.
  */
 import { computed } from 'vue';
 import { permsDetailUser } from './perms-list-state.js';

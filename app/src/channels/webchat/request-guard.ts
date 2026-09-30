@@ -75,6 +75,12 @@ export async function hostAllowed(req: IncomingMessage, env: NodeJS.ProcessEnv =
   return tailnet?.names.includes(host) ?? false;
 }
 
+/** This machine's Tailscale Serve names (full and short), refreshed every ten minutes. */
+export async function tailnetHostNames(): Promise<string[]> {
+  if (!tailnet || Date.now() - tailnet.at > TAILNET_REFRESH_MS) await loadTailnetNames();
+  return tailnet?.names ?? [];
+}
+
 /** No Origin (not a browser), or one whose host is the host the request was sent to. */
 export function originAllowed(req: IncomingMessage): boolean {
   const origin = req.headers.origin;

@@ -14,8 +14,8 @@
  * removes incidental exposure, not access. Anything the container must never see
  * belongs in the vault.
  *
- * STORED AS 0600 FILES, NOT IN THE DB, for a measured reason: data/v2.db is 0644 on a
- * real install, so the database is the wrong place for a secret. Encrypting into it
+ * STORED AS 0600 FILES, NOT IN THE DB: data/v2.db is 0644 on a real install, so the
+ * database is the wrong place for a secret. Encrypting into it
  * would need a key beside the ciphertext, which buys nothing. File permissions are the
  * boundary the host already relies on for .env.
  */

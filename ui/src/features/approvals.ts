@@ -1,39 +1,24 @@
 // ── Approvals ────────────────────────────────────────────────────────────────
 // The approval cards an agent raises mid-turn ("may I run this?"), their list
-// view, the resolve round-trip, and the live events that mutate both. Chosen as
-// the next extraction by measurement, not feel: 196 lines with 3 external
-// references, the loosest-coupled cluster left in legacy.js.
-//
-// No injection: after core/state this module reaches back into legacy for
-// nothing at all. It is the first extracted feature with no legacy edge.
-import { $, lucide, lucideEl, esc } from '../core/dom.js';
+// view, the resolve round-trip, and the live events that mutate both. Needs no
+// injected deps from the composition root.
+import { $ } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { state } from '../core/state.js';
-import { showToast, toastError } from '../core/toast.js';
-import { authFetch, apiJson } from '../core/api.js';
+import '../core/toast.js';
+import { authFetch } from '../core/api.js';
 import { createApp } from 'vue';
 import ApprovalsList from './ApprovalsList.vue';
-import ApprovalCard from './ApprovalCard.vue';
 import ApprovalToast from './ApprovalToast.vue';
 import { approvalBusy, approvalErrors, approvalRows } from './approvals-state.js';
 
-// Owned here: legacy never touches it. Injecting state one module writes and
-// nobody else reads would be pure ceremony.
-// Pending approvals (install_packages, add_mcp_server, etc.) surface as an
-// inline banner above the active sidebar tab — only when count > 0, so
-// users with no pending items see nothing. The banner expands to reveal
-// the cards in place; click Approve/Reject directly without leaving the
-// current tab. Live arrival also fires a top-right toast.
-/**
- * An approval an agent raised mid-turn. The field list comes from the comment
- * that sat on the old `let pendingApprovals = []` plus every property this
- * module actually reads — not from guesswork.
- */
 /** One button on an approval card. `label` falls back to `value` when absent. */
 export interface ApprovalOption {
   label?: string;
   value: string;
 }
 
+/** An approval an agent raised mid-turn: every field this module reads. */
 export interface Approval {
   questionId: string;
   action?: string;
@@ -58,55 +43,14 @@ export interface ApprovalMessage {
   resolvedBy?: string;
 }
 
+// Owned here: nothing else reads or writes it.
 let pendingApprovals: Approval[] = [];
 
-export function appendApprovalCard(msg: ApprovalMessage, beforeNode?: Node | null) {
-  let data: Partial<Approval> = {};
-  try {
-    data = JSON.parse(msg.content ?? '{}') || {};
-  } catch {
-    data = {};
-  }
-  const wrap = document.createElement('div');
-  wrap.className = 'msg approval-msg';
-  wrap.dataset.questionId = data.questionId || msg.id || '';
-  const resolved = msg.message_type === 'approval_resolved' || !!data.resolvedBy;
-  const eligible = Array.isArray(data.approvers) && data.approvers.includes(state.myIdentity);
-  if (resolved) {
-    const who = data.resolvedBy ? ' by ' + (String(data.resolvedBy).split(':').pop() ?? '').split('@')[0] : '';
-    const note = document.createElement('div');
-    note.className = 'approval-inroom-note resolved';
-    note.textContent = `🔒 ${data.title || 'Approval'} — resolved${who}`;
-    wrap.appendChild(note);
-  } else if (eligible) {
-    // Per-message island. This card is INTERACTIVE — its buttons disable while
-    // the response is in flight and it grows an inline error when one fails —
-    // which is what distinguishes it from the static builders (renderFileBubble,
-    // buildThoughtsDisclosure) that stay imperative on purpose.
-    const app = createApp(ApprovalCard, {
-      approval: {
-        questionId: data.questionId || msg.id || '',
-        title: data.title,
-        payload: data.question,
-        options: data.options,
-      },
-      onRespond: (questionId: string, value: string) => respondToApproval(questionId, value, null),
-    });
-    app.mount(wrap);
-  } else {
-    const note = document.createElement('div');
-    note.className = 'approval-inroom-note';
-    note.textContent = `🔒 ${data.title || 'Approval requested'} — awaiting an admin`;
-    wrap.appendChild(note);
-  }
-  const tb = $('#messages .thinking-bubble');
-  const msgs = $('#messages');
-  if (!msgs) return;
-  if (beforeNode) msgs.insertBefore(wrap, beforeNode);
-  else if (tb) msgs.insertBefore(wrap, tb);
-  else msgs.appendChild(wrap);
-}
-
+// Pending approvals (install_packages, add_mcp_server, etc.) surface as an
+// inline banner above the active sidebar tab — only when count > 0, so
+// users with no pending items see nothing. The banner expands to reveal
+// the cards in place; click Approve/Reject directly without leaving the
+// current tab. Live arrival also fires a top-right toast.
 function setApprovalsBanner(count: number): void {
   const banner = $<HTMLElement>('#approvals-banner');
   // Defensive: if the cached HTML doesn't include the banner element yet,
@@ -125,9 +69,7 @@ function setApprovalsBanner(count: number): void {
   }
   banner.hidden = false;
   countEl.textContent = String(count);
-  // Pluralize the trailing word: "1 approval pending" / "2 approvals pending".
-  // The number itself stays inside #approvals-count; we just rewrite the
-  // sibling text node around it.
+  // Pluralize the trailing word; the number stays inside #approvals-count.
   const noun = count === 1 ? 'approval' : 'approvals';
   // Reset textEl content but keep the count span: rebuild it.
   textEl.innerHTML = '';
@@ -138,13 +80,11 @@ function setApprovalsBanner(count: number): void {
 let approvalsApp: ReturnType<typeof createApp> | null = null;
 
 function mountApprovalsList(): void {
-  if (approvalsApp) return;
-  const host = $('#approval-list');
-  if (!host) return;
-  approvalsApp = createApp(ApprovalsList, {
-    onRespond: (questionId: string, value: string) => respondToApproval(questionId, value, null),
-  });
-  approvalsApp.mount(host);
+  approvalsApp ??= mountIsland('#approval-list', () =>
+    createApp(ApprovalsList, {
+      onRespond: (questionId: string, value: string) => respondToApproval(questionId, value, null),
+    }),
+  );
 }
 
 function renderApprovalsList(): void {
@@ -213,9 +153,8 @@ export function handleApprovalResolvedEvent(msg: ApprovalMessage): void {
 }
 
 export function handleApprovalEvent(msg: ApprovalMessage & Approval): void {
-  // msg shape: { type: 'approval', questionId, title, question, options, ... }
-  // We re-fetch the canonical list so we don't drift if multiple events
-  // arrive close together; the toast is purely for live visibility.
+  // Re-fetch the canonical list so close-together events cannot drift it; the
+  // toast is purely for live visibility.
   showApprovalToast(msg);
   fetchApprovals();
   // Desktop notification when state.settings allow + tab not focused.
@@ -232,9 +171,8 @@ export function handleApprovalEvent(msg: ApprovalMessage & Approval): void {
 }
 
 export async function respondToApproval(questionId: string, value: string, cardEl?: HTMLElement | null): Promise<void> {
-  // Card feedback is STATE now — both the panel list and the in-transcript card
-  // are ApprovalCard instances, and disabling their buttons or appending an
-  // error to them by hand writes into Vue-owned DOM.
+  // Card feedback is state: both the panel and the in-transcript card are
+  // ApprovalCard instances, whose DOM Vue owns.
   const setBusy = (on: boolean) => {
     const next = new Set(approvalBusy.value);
     if (on) next.add(questionId);
@@ -249,9 +187,8 @@ export async function respondToApproval(questionId: string, value: string, cardE
   };
   setBusy(true);
   setError(null);
-  // The TOAST is still built imperatively, so it still gets a DOM write — and
-  // is selected as a toast specifically, rather than by question id, which
-  // would match the card first.
+  // The toast is built imperatively, so it gets a DOM write — selected as a
+  // toast specifically, since the bare question id would match the card first.
   const toastEl =
     cardEl ?? document.querySelector<HTMLElement>(`.approval-toast[data-question-id="${questionId}"]`);
   toastEl?.querySelectorAll('button').forEach((b) => (b.disabled = true));
@@ -282,19 +219,13 @@ export async function respondToApproval(questionId: string, value: string, cardE
   }
 }
 
-
-// Banner toggle: expand/collapse the inline approvals list. Guarded with
-// an existence check so a stale cached HTML (without the banner element)
-// can't kill the rest of the script with a null.addEventListener throw.
+// Banner toggle. Null-checked so a stale cached HTML without the banner cannot
+// throw and kill the rest of boot.
 const approvalsBannerToggle = $('#approvals-banner-toggle');
 
 // ── Panel wiring ─────────────────────────────────────────────────────────────
-// The approvals strip: allow / deny and the expiry affordance.
-//
-// A function rather than module-scope code: legacy.js runs its blocks in source
-// order around initApp(), so relocating them to another module's top level would
-// silently re-order them. legacy calls wireApprovalsPanel() at the exact line the
-// first block occupied, so execution order is unchanged.
+// The approvals banner's expand/collapse toggle.
+// Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
 export function wireApprovalsPanel(): void {
   if (approvalsBannerToggle) {

@@ -13,11 +13,8 @@ import { createMessagingGroup, deleteMessagingGroup, getMessagingGroupByPlatform
 import { getMcpServersForAgent } from './mcp-registry.js';
 
 /**
- * "Webchat room" is a UI-level alias for `messaging_groups WHERE channel_type='webchat'`.
- * The room id surfaces as `messaging_groups.platform_id`. Two layers describing
- * one concept were collapsed by the `webchat-drop-rooms` migration; this
- * interface keeps the simpler shape for callers that don't care about the
- * generic platform schema.
+ * A `messaging_groups WHERE channel_type='webchat'` row in a simpler shape;
+ * `id` is its `platform_id`.
  */
 export interface WebchatRoom {
   id: string;
@@ -50,7 +47,7 @@ export interface WebchatMessage {
   file_meta?: FileMeta | null;
   created_at: number;
   /** Provenance for thread context sync: null=native, 'pulled' (from main),
-   *  'pushed' (up from a thread). See docs/webchat/thread-context-sync.md. */
+   *  'pushed' (up from a thread). See docs/webchat/threads.md §8. */
   origin?: 'pulled' | 'pushed' | null;
 }
 
@@ -74,9 +71,6 @@ export interface WebchatPushSubscription {
 }
 
 // ── Rooms ──
-// All four helpers route through `messaging_groups WHERE channel_type='webchat'`.
-// The legacy `webchat_rooms` table was dropped by the `webchat-drop-rooms`
-// migration; `id` here is `messaging_groups.platform_id`.
 
 function rowToRoom(row: { platform_id: string; name: string | null; created_at: string }): WebchatRoom {
   return {
@@ -126,12 +120,9 @@ export async function getWebchatRoom(id: string): Promise<WebchatRoom | undefine
 }
 
 /**
- * Synthetic platform_id prefix for per-user approval inboxes. The webchat
- * adapter exposes openDM() returning this shape so requestApproval() can
- * resolve a delivery target for webchat users; the row exists in
- * messaging_groups so MessagingGroup-shaped APIs work, but it does not
- * represent a real chat room — it's an approver inbox keyed on the user's
- * handle. Hidden from the room list so it never surfaces in the sidebar.
+ * platform_id prefix of per-user approval inboxes: what openDM() returns so
+ * requestApproval() can reach a webchat user. A messaging_groups row, but not a
+ * room — hidden from the room list.
  */
 export const APPROVAL_INBOX_PREFIX = 'approvals:';
 
@@ -159,14 +150,9 @@ export interface PendingApprovalRow {
 }
 
 /**
- * Record an approval delivered to a webchat approval-inbox. Called from
- * the adapter's deliver() the moment we route an `ask_question` payload
- * to a `approvals:` platform_id. Idempotent — `INSERT OR IGNORE`.
- *
- * This is the skill-only alternative to having trunk's `requestApproval`
- * stamp `channel_type`/`platform_id` on the `pending_approvals` row at
- * insert time. We record the mapping here, on our side, and join against
- * it in the read path below.
+ * Record an approval delivered to an `approvals:` inbox (from deliver()).
+ * Idempotent. Trunk leaves `pending_approvals.channel_type`/`platform_id`
+ * unset, so the read paths join against this index instead.
  */
 export async function recordWebchatApproval(approvalId: string, platformId: string): Promise<void> {
   await getDb().run(
@@ -179,12 +165,8 @@ export async function recordWebchatApproval(approvalId: string, platformId: stri
 }
 
 /**
- * Whether an approval was indexed against the given platform_id (approval
- * inbox). The respond endpoint uses this to authorize the responder. A single
- * approval may be indexed against multiple inboxes under fan-out delivery
- * (every eligible admin gets a card); any of those inboxes is a valid
- * responder. We can't authorize against `pending_approvals.channel_type/
- * platform_id` because trunk's `requestApproval` doesn't populate those.
+ * Whether an approval was indexed against this inbox — how the respond endpoint
+ * authorizes a responder. Under fan-out any indexed inbox may respond.
  */
 export async function isWebchatApprovalIndexedFor(approvalId: string, platformId: string): Promise<boolean> {
   const row = (await getDb().get(
@@ -222,14 +204,7 @@ export function userForApprovalInbox(platformId: string): string | null {
   return `webchat:${platformId.slice(APPROVAL_INBOX_PREFIX.length)}`;
 }
 
-/**
- * Pending approvals destined for this webchat user's inbox.
- *
- * We can't filter on `pending_approvals.channel_type`/`platform_id`
- * because trunk's `requestApproval` doesn't populate those columns.
- * Instead we JOIN against the skill-owned `webchat_approvals_index`,
- * which webchat's deliver() populates on the way through.
- */
+/** Pending approvals destined for this webchat user's inbox (via webchat_approvals_index). */
 export async function getWebchatPendingApprovalsForUser(userId: string): Promise<PendingApprovalRow[]> {
   const platformId = approvalInboxForUser(userId);
   if (!platformId) return [];
@@ -275,10 +250,9 @@ export async function updateWebchatRoomName(id: string, name: string): Promise<v
 }
 
 /**
- * Delete a webchat room and everything that hangs off it: messages (cascade
- * is gone with the FK, so explicit), the wiring rows, dangling agent_destinations
- * pointing at this room, the prime designation, and the messaging_group itself.
- * Idempotent — no-op if the room doesn't exist.
+ * Delete a webchat room and everything that hangs off it (no FKs, so every
+ * cascade is explicit), including dangling agent_destinations and the
+ * messaging_group itself. Idempotent.
  */
 export async function deleteWebchatRoom(id: string): Promise<void> {
   const mg = await getMessagingGroupByPlatform('webchat', id);
@@ -297,9 +271,6 @@ export async function deleteWebchatRoom(id: string): Promise<void> {
     await db.run(`DELETE FROM webchat_thread_reads WHERE room_id = ?`, id);
     await db.run(`DELETE FROM webchat_threads WHERE room_id = ?`, id);
   }
-  if (await hasTable(db, 'webchat_thread_engaged')) {
-    await db.run(`DELETE FROM webchat_thread_engaged WHERE room_id = ?`, id);
-  }
   if (await hasTable(db, 'webchat_thread_sync')) {
     await db.run(`DELETE FROM webchat_thread_sync WHERE room_id = ?`, id);
   }
@@ -308,11 +279,8 @@ export async function deleteWebchatRoom(id: string): Promise<void> {
   if (await hasTable(db, 'agent_destinations')) {
     await db.run(`DELETE FROM agent_destinations WHERE target_type = 'channel' AND target_id = ?`, mg.id);
   }
-  // sessions.messaging_group_id has an FK to messaging_groups(id) and is NOT
-  // NULL; any active session for this room would otherwise block the
-  // deleteMessagingGroup below with an FK error. Running containers are
-  // reaped by the host sweep on its next stale-heartbeat tick once the
-  // session row is gone.
+  // sessions.messaging_group_id is a NOT NULL FK, so a live session would block
+  // deleteMessagingGroup. Its container is reaped by the host sweep's next tick.
   await db.run(`DELETE FROM sessions WHERE messaging_group_id = ?`, mg.id);
   await deleteMessagingGroup(mg.id);
 }
@@ -343,12 +311,8 @@ export async function getAgentsForWebchatRoom(roomId: string): Promise<WebchatRo
 }
 
 /**
- * Remove a single (room, agent) wiring. Returns true if a row was deleted.
- * The agent_group itself is left intact — caller's responsibility to decide
- * whether the bare agent should also be deleted.
- *
- * Also drops the matching agent_destinations row so the agent's session
- * doesn't keep a destination pointing at a chat it can no longer write to.
+ * Remove one (room, agent) wiring and its agent_destinations row; the agent
+ * group itself is left intact. Returns true if a wiring was deleted.
  */
 export async function unwireAgentFromWebchatRoom(roomId: string, agentGroupId: string): Promise<boolean> {
   const mg = await getMessagingGroupByPlatform('webchat', roomId);
@@ -378,13 +342,7 @@ export interface AgentWebchatRoom {
   agent_count: number;
 }
 
-/**
- * List the webchat rooms a given agent is wired to. The agent-centric mirror of
- * getAgentsForWebchatRoom. Excludes approval inboxes (they aren't real rooms).
- * `is_prime` reflects whether this agent is the room's prime; `agent_count`
- * lets the UI enforce the same "can't unwire the last agent" guard the
- * room-detail panel uses.
- */
+/** The webchat rooms an agent is wired to (approval inboxes excluded). */
 export async function getWebchatRoomsForAgent(agentGroupId: string): Promise<AgentWebchatRoom[]> {
   const rows = (await getDb().all(
     `SELECT mg.platform_id AS id, mg.name AS name
@@ -394,10 +352,7 @@ export async function getWebchatRoomsForAgent(agentGroupId: string): Promise<Age
        ORDER BY mg.name`,
     agentGroupId,
   )) as { id: string; name: string | null }[];
-  // Promise.all, not an awaited .map: each row needs two DB reads now, and a
-  // bare `await` inside the callback would make .map return promises rather
-  // than values — `is_prime` would be a Promise compared to a string, which is
-  // the always-false bug this is fixing, moved one level out.
+  // Promise.all: each row needs two DB reads, and an async .map yields promises.
   return Promise.all(
     rows
       .filter((r) => !isApprovalInbox(r.id))
@@ -411,22 +366,11 @@ export async function getWebchatRoomsForAgent(agentGroupId: string): Promise<Age
 }
 
 /**
- * Look up the agent most likely to have produced an outbound message for
- * this room. Used by the webchat adapter's `deliver()` (and the reconcile
- * loop) to attach the actual agent's display name to stored messages
- * instead of the generic "Agent" placeholder.
- *
- * Heuristic:
- *   - Exactly one wired agent → that's the producer.
- *   - Multiple wired agents → pick the session whose `last_active` is
- *     most recent. The container's poll loop bumps `last_active` when it
- *     picks up an inbound message, immediately before writing the
- *     response; by the time `deliver()` fires, the responding session is
- *     reliably the most recently active one.
- *
- * Returns `null` if no wired agent is found (orphan room or stale state).
- * Falls back to the first wired agent if `last_active` is null on every
- * session (fresh container, no traffic yet).
+ * The agent most likely to have produced an outbound message for this room
+ * (deliver() and reconcile name stored messages with it): the only wired
+ * agent, else the most recently active running session's (the poll loop bumps
+ * `last_active` just before replying), else the first wired agent. Null when
+ * nothing is wired.
  */
 export async function findActiveAgentForWebchatRoom(roomId: string): Promise<WebchatRoomAgent | null> {
   const agents = await getAgentsForWebchatRoom(roomId);
@@ -434,15 +378,9 @@ export async function findActiveAgentForWebchatRoom(roomId: string): Promise<Web
   if (agents.length === 1) return agents[0];
   const mg = await getMessagingGroupByPlatform('webchat', roomId);
   if (!mg) return agents[0];
-  // Filter to sessions whose container is actually running. Without this,
-  // `writeSessionMessage` bumps `last_active` even for accumulate writes
-  // (router stores message context without waking the container), so an
-  // accumulate-only session can win the "most recent" race against the
-  // session that actually produced the message. That mis-attributes the
-  // sender name in the UI AND — load-bearing — feeds the wrong
-  // `senderAgentGroupId` into the Pattern C loop-back, breaking router
-  // self-exclusion. Container-status filtering identifies the actual
-  // producer because only true wakes spawn/run a container.
+  // Running containers only: accumulate writes bump `last_active` without a
+  // wake, and a wrong winner here feeds the wrong `senderAgentGroupId` into the
+  // Pattern C loop-back, breaking router self-exclusion.
   const row = (await getDb().get(
     `SELECT ag.id, ag.name, ag.folder
        FROM sessions s
@@ -472,16 +410,8 @@ export async function countAgentsForWebchatRoom(roomId: string): Promise<number>
 }
 
 // ── Prime agent designation ──
-//
-// A room opts in to "prime" routing by designating one wired agent as prime.
-// The prime answers every message that doesn't @-mention another wired agent
-// (matched by folder name). Implementation rewrites
-// messaging_group_agents.engage_pattern via recomputeEngagePatterns() in
-// server.ts — no router-side change needed.
-//
-// Storage: webchat_room_primes(room_id PK, agent_group_id, created_at).
-// Stale rows can exist transiently (an unwired prime, a deleted agent's row);
-// the wiring-change paths in server.ts clear them when they notice.
+// Enforced by recomputeEngagePatterns (server/agent-wiring.ts). Rows can go
+// stale transiently (unwired prime, deleted agent); the wiring paths there clear them.
 
 export async function getPrimeAgentForWebchatRoom(roomId: string): Promise<string | null> {
   const row = (await getDb().get(`SELECT agent_group_id FROM webchat_room_primes WHERE room_id = ?`, roomId)) as
@@ -510,13 +440,8 @@ export async function clearPrimeAgentForWebchatRoom(roomId: string): Promise<voi
 export type EngageDefault = 'mention-only';
 
 /**
- * Per-room engagement default used when no prime is configured. Un-primed
- * wirings are rewritten by `recomputeEngagePatterns` to `\B@<folder>\b` —
- * agents reply only when explicitly @-mentioned.
- *
- * The legacy 'broadcast' mode (every wired agent answers every message) has
- * been retired: it is no longer offered, and any legacy stored 'broadcast'
- * value (or a room with no settings row) now reads as 'mention-only'.
+ * Always 'mention-only': un-primed wirings are `\B@<folder>\b`, and a stored
+ * 'broadcast' (or no settings row) reads as mention-only.
  */
 export function getRoomEngageDefault(_roomId: string): EngageDefault {
   return 'mention-only';
@@ -628,9 +553,7 @@ export async function getCredentialsConfig(): Promise<CredentialsConfig> {
       allowClaudeOauth: row.allow_claude_oauth === 1,
       allowOpenaiKey: row.allow_openai_key === 1,
       allowCodexOauth: row.allow_codex_oauth === 1,
-      // `?? 0` rather than a bare compare: a row written before this column
-      // existed reads back undefined, and undefined === 1 is false anyway — but
-      // saying so keeps the intent legible next to its siblings.
+      // A row written before this column existed reads back undefined.
       allowGrokOauth: (row.allow_grok_oauth ?? 0) === 1,
     };
   } catch {
@@ -639,8 +562,7 @@ export async function getCredentialsConfig(): Promise<CredentialsConfig> {
 }
 
 export async function setCredentialsConfig(patch: Partial<CredentialsConfig>): Promise<void> {
-  // Await before spreading: spreading a PROMISE contributes zero keys, so
-  // `next` silently became just the patch and every other column went NULL.
+  // Await before spreading: a spread Promise contributes no keys.
   const next = { ...(await getCredentialsConfig()), ...patch };
   await getDb().run(
     `INSERT INTO webchat_settings
@@ -665,11 +587,9 @@ export async function setCredentialsConfig(patch: Partial<CredentialsConfig>): P
 }
 
 // ── Settings-singleton column factory ──
-// Every simple webchat_settings column is exposed as a (get, set) pair over the
-// singleton row (id = 1). The getter tolerates a missing row/table/column and
-// returns the decoded default (decode(undefined)); the setter seeds the
-// NOT NULL credential columns from current config so the row can be created if
-// it doesn't exist yet, then flips only its own column on conflict.
+// (get, set) pairs over webchat_settings id=1. The getter decodes undefined on a
+// missing row/table/column; the setter seeds the NOT NULL credential columns so
+// it can create the row, and updates only its own column on conflict.
 
 function settingsGetter<T>(column: string, decode: (value: unknown) => T): () => Promise<T> {
   return async () => {
@@ -718,47 +638,21 @@ const encodeNullableString = (v: string | null): string | null => v;
 export const getOnboardingComplete = settingsGetter('onboarding_complete', decodeBool);
 export const setOnboardingComplete = settingsSetter('onboarding_complete', encodeBool);
 
-// Bearer-token opt-out: true = WEBCHAT_TOKEN is ignored by auth.ts (the owner
-// retired it in favour of Tailscale/SSO). Default false so the seeded token
-// keeps working until explicitly disabled. See moduleWebchatBearerAuth.
+// Bearer-token opt-out: true = auth.ts ignores WEBCHAT_TOKEN. See moduleWebchatBearerAuth.
 export const getBearerTokenDisabled = settingsGetter('bearer_token_disabled', decodeBool);
 export const setBearerTokenDisabled = settingsSetter('bearer_token_disabled', encodeBool);
 
-// MCP + skills-marketplace opt-out: true = both features are turned off (tabs
-// hidden + endpoints 403). Default false (enabled). See moduleWebchatMarketplaceToggle.
+// MCP + skills-marketplace switch: true = both features are turned off (tabs
+// hidden + endpoints 403). A fresh install starts disabled; see moduleWebchatMarketplaceToggle.
 export const getMarketplaceDisabled = settingsGetter('marketplace_disabled', decodeBool);
 export const setMarketplaceDisabled = settingsSetter('marketplace_disabled', encodeBool);
 
-// Fleet credential isolation. NULL = defer to CREDENTIAL_ISOLATION in .env;
-// true/false = an explicit choice in Settings, which wins. Nullable so "never
-// chosen" stays distinct from "chosen off" — see moduleWebchatCredentialIsolation.
+// Fleet credential isolation: NULL = defer to CREDENTIAL_ISOLATION in .env.
+// See moduleWebchatCredentialIsolation for why it is nullable.
 const decodeNullableBool = (v: unknown): boolean | null => (v === null || v === undefined ? null : Boolean(v));
 const encodeNullableBool = (v: boolean | null): number | null => (v === null ? null : v ? 1 : 0);
 export const getCredentialIsolation = settingsGetter('credential_isolation', decodeNullableBool);
 export const setCredentialIsolation = settingsSetter('credential_isolation', encodeNullableBool);
-
-/**
- * Voice-dictation cleanup model (webchat_settings singleton). NULL = no cleanup —
- * dictation delivers the raw Whisper transcript. Missing row/column reads as NULL
- * so the feature degrades to raw rather than erroring.
- */
-/**
- * Agent-image source for sessions placed on paired runners (install-wide).
- *
- * Unset reads as 'build': every runner builds the image itself from what
- * central ships — no registry, and the same bytes everywhere. 'pull' and
- * 'build' are binding on every paired machine; 'machine' (stored explicitly)
- * hands the choice back to each laptop's own setting.
- */
-export type RunnerImagePolicy = 'machine' | 'pull' | 'build';
-export const decodeRunnerImagePolicy = (v: unknown): RunnerImagePolicy =>
-  v === 'pull' || v === 'machine' ? v : 'build';
-export const getRunnerImagePolicy = settingsGetter('runner_image_policy', decodeRunnerImagePolicy);
-export const setRunnerImagePolicy = settingsSetter('runner_image_policy', (v: RunnerImagePolicy) => v);
-
-/** Image reference runners obtain. NULL = this install's versions.json pin. */
-export const getRunnerImageRef = settingsGetter('runner_image_ref', decodeNullableString);
-export const setRunnerImageRef = settingsSetter('runner_image_ref', encodeNullableString);
 
 /** Runner egress allowlist as stored: a JSON array of host patterns, or NULL for the built-in default. */
 export const getRunnerEgressAllowlistRaw = settingsGetter('runner_egress_allowlist', decodeNullableString);
@@ -791,30 +685,23 @@ export async function setAgentEgressHostsRaw(agentGroupId: string, json: string 
 export const getRunnerClientConfigRaw = settingsGetter('runner_client_config', decodeNullableString);
 export const setRunnerClientConfigRaw = settingsSetter('runner_client_config', encodeNullableString);
 
+/** Voice-dictation cleanup model. NULL (also a missing row/column) = raw transcript. */
 export const getSttCleanupModelId = settingsGetter('stt_cleanup_model_id', decodeNullableString);
 export const setSttCleanupModelId = settingsSetter('stt_cleanup_model_id', encodeNullableString);
 
-/**
- * Custom cleanup prompt (webchat_settings singleton). NULL = the built-in
- * default in stt.ts. Same degrade-to-default read as the cleanup model;
- * blank/whitespace-only values also read as NULL.
- */
+/** Custom cleanup prompt. NULL (also blank) = the built-in default in stt.ts. */
 export const getSttCleanupPrompt = settingsGetter('stt_cleanup_prompt', (v) =>
   typeof v === 'string' && v.trim() ? v : null,
 );
 export const setSttCleanupPrompt = settingsSetter('stt_cleanup_prompt', encodeNullableString);
 
-// Workspace-level Read aloud: true = every authed user gets the speaker
-// control on agent replies. Owner-set from Settings → Features (was a
-// per-device switch — confusing in shared rooms). See moduleWebchatReadAloud.
+// Workspace-level Read aloud: true = every authed user gets the speaker control.
 export const getReadAloudEnabled = settingsGetter('read_aloud_enabled', decodeBool);
 export const setReadAloudEnabled = settingsSetter('read_aloud_enabled', encodeBool);
 
 /**
- * Approval pre-judge model (webchat_settings singleton). The roster model
- * (webchat_models.id, ollama / openai-compatible kind) that triages opted-in
- * approval holds before a human sees them. NULL = feature OFF (the default).
- * See src/modules/approvals/prejudge.ts and docs/webchat/approval-prejudge.md.
+ * Approval pre-judge model (webchat_models.id) that triages opted-in holds
+ * before a human sees them. NULL = off (default). See docs/webchat/approval-prejudge.md.
  */
 export const getApprovalPrejudgeModelId = settingsGetter('approval_prejudge_model_id', decodeNullableString);
 export const setApprovalPrejudgeModelId = settingsSetter('approval_prejudge_model_id', encodeNullableString);
@@ -837,9 +724,6 @@ export const setApprovalPrejudgeActions = settingsSetter('approval_prejudge_acti
   JSON.stringify(v),
 );
 
-// One-shot "first Tailscale login becomes owner" arm flag (wizard opt-in).
-// true = the next tailscale identity to authenticate is granted owner, then the
-// flag clears. See moduleWebchatTailscaleOwner + auth.ts finalize().
 // Audit syslog forwarder target URL ('' = off). See audit-syslog.ts.
 const decodeStr = (v: unknown): string => (typeof v === 'string' ? v : '');
 export const getAuditSyslogTarget = settingsGetter('audit_syslog_target', decodeStr);
@@ -848,6 +732,8 @@ export const getAuditRetentionRaw = settingsGetter('audit_retention', decodeNull
 export const setAuditRetentionRaw = settingsSetter('audit_retention', encodeNullableString);
 export const setAuditSyslogTarget = settingsSetter('audit_syslog_target', (v: string) => v || null);
 
+// One-shot: the next tailscale identity to authenticate becomes owner, then the
+// flag clears. See moduleWebchatTailscaleOwner + auth.ts finalize().
 export const getPromoteFirstTailscaleOwner = settingsGetter('promote_first_tailscale_owner', decodeBool);
 export const setPromoteFirstTailscaleOwner = settingsSetter('promote_first_tailscale_owner', encodeBool);
 
@@ -1102,12 +988,9 @@ export async function markRoomSkillDraftResolved(
 }
 
 /**
- * Skill-draft cards as a read-only history feed (learning timeline). The card
- * rows are the ONLY durable record of a draft's outcome — resolveSkillDraft
- * deletes the skill_drafts row, but the in-room card persists with
- * `status` ('pending' | 'kept' | 'discarded') and `resolvedBy` folded into its
- * content JSON. `createdAt` is the PROPOSAL time; resolution time is not
- * stored anywhere, so timeline consumers date resolutions by proposal.
+ * Skill-draft cards as the learning timeline's feed: the ONLY durable record of
+ * a draft's outcome (resolveSkillDraft deletes the skill_drafts row).
+ * `createdAt` is the PROPOSAL time; resolution time is not stored.
  */
 export interface SkillDraftCardRow {
   draftId: string;
@@ -1268,12 +1151,12 @@ export async function getWebchatMessages(roomId: string, limit = 200, threadId?:
   const rows = (
     threadId === undefined
       ? await getDb().all(
-          `SELECT * FROM webchat_messages WHERE room_id = ? ORDER BY created_at DESC LIMIT ?`,
+          `SELECT * FROM webchat_messages WHERE room_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
           roomId,
           limit,
         )
       : await getDb().all(
-          `SELECT * FROM webchat_messages WHERE room_id = ? AND thread_id = ? ORDER BY created_at DESC LIMIT ?`,
+          `SELECT * FROM webchat_messages WHERE room_id = ? AND thread_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`,
           roomId,
           threadId,
           limit,
@@ -1314,36 +1197,34 @@ export async function getWebchatMessagesAfterId(
     | { created_at: number }
     | undefined;
   if (!anchor) return [];
+  // (created_at, id) is the page order everywhere: messages stored in the same
+  // millisecond (a reply and its attachment) would otherwise tie with the
+  // anchor and fall out of the page.
   const rows = (
     threadId === undefined
       ? await getDb().all(
           `SELECT * FROM webchat_messages
-             WHERE room_id = ? AND created_at > ?
-             ORDER BY created_at LIMIT ?`,
+             WHERE room_id = ? AND (created_at, id) > (?, ?)
+             ORDER BY created_at, id LIMIT ?`,
           roomId,
           anchor.created_at,
+          afterId,
           limit,
         )
       : await getDb().all(
           `SELECT * FROM webchat_messages
-             WHERE room_id = ? AND thread_id = ? AND created_at > ?
-             ORDER BY created_at LIMIT ?`,
+             WHERE room_id = ? AND thread_id = ? AND (created_at, id) > (?, ?)
+             ORDER BY created_at, id LIMIT ?`,
           roomId,
           threadId,
           anchor.created_at,
+          afterId,
           limit,
         )
   ) as WebchatMessageRow[];
   return rows.map(rowToMessage);
 }
 
-/**
- * Older-message pagination (scroll-back). Returns up to `limit` messages
- * immediately BEFORE `beforeId`, oldest-to-newest so the client can prepend
- * them as one ascending block. An empty/short result means the start of
- * history has been reached. Mirrors getWebchatMessagesAfterId's created_at
- * anchoring.
- */
 export interface WebchatSearchResult {
   id: string;
   room_id: string;
@@ -1390,6 +1271,10 @@ export async function searchWebchatMessages(
   )) as WebchatSearchResult[];
 }
 
+/**
+ * Scroll-back: up to `limit` messages immediately BEFORE `beforeId`,
+ * oldest-to-newest; a short result means the start of history.
+ */
 export async function getWebchatMessagesBeforeId(
   roomId: string,
   beforeId: string,
@@ -1404,19 +1289,21 @@ export async function getWebchatMessagesBeforeId(
     threadId === undefined
       ? await getDb().all(
           `SELECT * FROM webchat_messages
-             WHERE room_id = ? AND created_at < ?
-             ORDER BY created_at DESC LIMIT ?`,
+             WHERE room_id = ? AND (created_at, id) < (?, ?)
+             ORDER BY created_at DESC, id DESC LIMIT ?`,
           roomId,
           anchor.created_at,
+          beforeId,
           limit,
         )
       : await getDb().all(
           `SELECT * FROM webchat_messages
-             WHERE room_id = ? AND thread_id = ? AND created_at < ?
-             ORDER BY created_at DESC LIMIT ?`,
+             WHERE room_id = ? AND thread_id = ? AND (created_at, id) < (?, ?)
+             ORDER BY created_at DESC, id DESC LIMIT ?`,
           roomId,
           threadId,
           anchor.created_at,
+          beforeId,
           limit,
         )
   ) as WebchatMessageRow[];
@@ -1443,40 +1330,19 @@ export function threadToSessionKey(threadId: string | null | undefined): string 
 /**
  * Inverse: a session's thread_id → the stored/UI thread ('main' when absent).
  *
- * This is only a true inverse of threadToSessionKey while a session's thread_id
- * is either null or a real UI thread. The per-member credential override breaks
- * that: it re-keys the session by USER, so thread_id becomes a user id. Passing
- * that straight through stored agent replies under a thread_id with no
- * webchat_threads row — a phantom thread the UI cannot list or open, so the
- * replies simply vanished. Twelve of one member's replies were lost that way.
- *
- * With a roomId we can tell the two apart: a key that names no thread in this
- * room is a session key, and its replies belong in main. Without one the old
- * pass-through stands, so callers that never see per-member sessions are
- * unaffected.
- *
- * NOTE: a per-member session is keyed by user, not by (user, thread), so it
- * cannot say WHICH thread a reply belongs to — main is the only safe answer.
- * Per-member rooms therefore collapse threads for that member. That is a
- * property of the credential feature, not of this function.
+ * Per-member credential sessions are keyed by USER, not by thread; passing such
+ * a key through would store replies under a phantom thread the UI cannot open.
+ * With a roomId, a key that names no thread in the room maps to main; without
+ * one it passes through.
  */
 export async function sessionKeyToThread(threadId: string | null | undefined, roomId?: string): Promise<string> {
   if (!threadId) return MAIN_THREAD;
-  // A per-member session key is `<userId>::<thread>` and therefore KNOWS its
-  // thread — decode it rather than guessing. This supersedes the roomId
-  // heuristic below for those keys: the heuristic could only answer "not a
-  // real thread → main", which put a topic thread's replies in the room.
-  //
-  // Shape mirrors memberSessionKey/memberThreadFromKey in
-  // modules/user-credentials/identity.ts (the source of truth). Parsed here
-  // rather than imported to keep the channel free of a module dependency;
-  // threads.test.ts cross-checks the two so they cannot drift apart.
+  // A per-member key `<userId>::<thread>` names its thread: decode it. Mirrors
+  // memberSessionKey/memberThreadFromKey (modules/user-credentials/identity.ts),
+  // parsed here to keep the channel module-free; threads.test.ts cross-checks.
   const sep = threadId.lastIndexOf('::');
   if (sep > 0) return threadId.slice(sep + 2);
-  // Legacy bare-user key (pre-composite) carries no thread at all, so main is
-  // the only defensible answer.
-  // Await BEFORE negating: `!promise` is always false, which re-opened the
-  // phantom-thread reply loss this function exists to prevent.
+  // A bare-user key carries no thread, so main is the only defensible answer.
   if (roomId && !(await getWebchatThread(roomId, threadId))) return MAIN_THREAD;
   return threadId;
 }
@@ -1630,14 +1496,13 @@ export async function deleteWebchatThread(roomId: string, threadId: string): Pro
   const db = getDb();
   await db.run(`DELETE FROM webchat_messages WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
   await db.run(`DELETE FROM webchat_thread_reads WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
-  await db.run(`DELETE FROM webchat_thread_engaged WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
   await db.run(`DELETE FROM webchat_thread_sync WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
   await db.run(`DELETE FROM webchat_threads WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
 }
 
 // ── Thread context sync (pull / push) ──
 // High-water marks + verbatim copy helpers for moving conversation between a
-// thread and main. See docs/webchat/thread-context-sync.md.
+// thread and main. See docs/webchat/threads.md §8.
 
 export interface ThreadSyncMarks {
   pulled: number; // newest main created_at pulled into this thread
@@ -1778,64 +1643,6 @@ export async function insertSyncedMessages(
   return out;
 }
 
-// ── Per-thread engaged agents ──
-// A row = agent_group_id is engaged in (room_id, thread_id): it receives every
-// message in that thread and replies when addressed. Never the 'main' thread —
-// the regular chat stays mention-only. See docs/webchat/thread-engaged-agents.md.
-
-/** Engage an agent in a thread (idempotent). No-op for the 'main' thread. */
-export async function engageAgent(
-  roomId: string,
-  threadId: string,
-  agentGroupId: string,
-  ts: number = Date.now(),
-): Promise<void> {
-  if (threadId === MAIN_THREAD) return;
-  await getDb().run(
-    `INSERT INTO webchat_thread_engaged (room_id, thread_id, agent_group_id, engaged_at)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(room_id, thread_id, agent_group_id) DO NOTHING`,
-    roomId,
-    threadId,
-    agentGroupId,
-    ts,
-  );
-}
-
-/** Disengage an agent from a thread (the × on a chip). No-op if not engaged. */
-export async function disengageAgent(roomId: string, threadId: string, agentGroupId: string): Promise<void> {
-  await getDb().run(
-    `DELETE FROM webchat_thread_engaged WHERE room_id = ? AND thread_id = ? AND agent_group_id = ?`,
-    roomId,
-    threadId,
-    agentGroupId,
-  );
-}
-
-/** Agent group ids currently engaged in a thread. Empty for 'main'/regular chat. */
-export async function getEngagedAgents(roomId: string, threadId: string): Promise<string[]> {
-  if (threadId === MAIN_THREAD) return [];
-  const rows = (await getDb().all(
-    `SELECT agent_group_id FROM webchat_thread_engaged WHERE room_id = ? AND thread_id = ? ORDER BY engaged_at`,
-    roomId,
-    threadId,
-  )) as { agent_group_id: string }[];
-  return rows.map((r) => r.agent_group_id);
-}
-
-/** True if the agent is engaged in the thread. */
-export async function isAgentEngaged(roomId: string, threadId: string, agentGroupId: string): Promise<boolean> {
-  if (threadId === MAIN_THREAD) return false;
-  return (
-    (await getDb().get(
-      `SELECT 1 FROM webchat_thread_engaged WHERE room_id = ? AND thread_id = ? AND agent_group_id = ?`,
-      roomId,
-      threadId,
-      agentGroupId,
-    )) !== undefined
-  );
-}
-
 /** Mark a thread read for a user (monotonic high-water mark). */
 export async function markThreadRead(
   userId: string,
@@ -1878,17 +1685,7 @@ export async function deleteWebchatPushSubscriptionByEndpoint(endpoint: string):
   await getDb().run(`DELETE FROM webchat_push_subscriptions WHERE endpoint = ?`, endpoint);
 }
 
-// ── Models ──
-//
-// LLM endpoint registry. The MVP supports two kinds:
-//   - 'anthropic': pin an agent to a specific Anthropic model_id (the
-//     existing OneCLI-managed credential is reused — no per-model key).
-//   - 'ollama': route at a local Ollama endpoint (Ollama speaks the
-//     Anthropic API natively at <endpoint>/v1/messages).
-//
-// `webchat_agent_models` is the assignment join. PK on agent_group_id keeps
-// it 1:1. No FK to webchat_models so the delete-model handler can do
-// cascade-with-confirmation in JS.
+// ── Models ── (schema: moduleWebchatModels)
 
 // 'openai-compatible' covers OpenRouter, LM Studio, vLLM, Llama.cpp, and any
 // /v1/{models,chat/completions} endpoint. Agents consume these through the
@@ -1972,22 +1769,16 @@ export interface WebchatTopology {
 }
 
 /**
- * Assemble the room → agent → model topology from the given (already
- * access-filtered) rooms AND agents. ALL accessible agents appear as nodes —
- * including ones wired to no in-scope room (they surface as orphans in the graph
- * and as empty columns in the wiring matrix, so a brand-new agent can be wired
- * straight from the matrix). Edges are the room↔agent wirings among these rooms
- * and agents only — so nothing outside the caller's visible set leaks. Each
- * agent carries its assigned model; models are deduped. Powers GET /api/topology.
+ * Room → agent → model topology over the given (already access-filtered) rooms
+ * and agents. Every agent is a node, wired or not, so a new agent can be wired
+ * from the matrix; edges stay within the given sets, so nothing outside the
+ * caller's view leaks.
  */
 export async function getWebchatTopology(
   rooms: { id: string; name: string }[],
   agents: { id: string; name: string }[],
 ): Promise<WebchatTopology> {
-  // Resolved HERE, once. Leaving this as an array of promises made
-  // `new Set(agentNodes.map(async …))` a Set of PROMISES, so `ids.has(a.id)`
-  // never matched and the topology rendered with no edges at all — a graph of
-  // disconnected nodes, with nothing failing to say so.
+  // Resolved once here, so the id Set below holds ids, not promises.
   const agentNodes = await Promise.all(
     agents.map(async (a) => {
       const m = await getAssignedModelForAgent(a.id);
@@ -2045,11 +1836,7 @@ export async function getAssignedModelForAgent(agentGroupId: string): Promise<We
   return (await getWebchatModel(row.model_id)) ?? null;
 }
 
-/**
- * Workspace DEFAULT model (webchat_settings singleton) — the ollama-kind
- * roster model every claude-family agent WITHOUT its own assignment falls
- * back to. The model analogue of the workspace default credential.
- */
+/** Workspace DEFAULT model; see moduleWebchatDefaultModel. */
 export const getDefaultModelId = settingsGetter('default_model_id', decodeNullableString);
 export const setDefaultModelId = settingsSetter('default_model_id', encodeNullableString);
 
@@ -2081,20 +1868,7 @@ export async function unassignModelFromAgent(agentGroupId: string): Promise<void
   await getDb().run(`DELETE FROM webchat_agent_models WHERE agent_group_id = ?`, agentGroupId);
 }
 
-// ── Room state: global archive + per-user hide ──
-//
-// `archive` is now a GLOBAL room state — settable by owners/admins,
-// visible to every user with access. The room still routes messages
-// normally; archive is presentation only ("closed-to-active-work" hint).
-//
-// `hide` is a PER-USER sidebar preference (renamed from the previous
-// "archive for user X"). Affects only that user's view; doesn't change
-// anything for other users.
-//
-// `room_id` is `messaging_groups.platform_id` (consistent with
-// webchat_room_primes etc.). Both tables intentionally have no FK
-// to `messaging_groups` — cascade-on-room-delete is handled in app code
-// (clearArchiveForRoom / clearHidesForRoom called from deleteWebchatRoom).
+// ── Room state: global archive (presentation only) + per-user hide ──
 
 // ── Global archive (settable by owners + admins) ──
 
@@ -2128,12 +1902,7 @@ export async function clearArchiveForRoom(roomId: string): Promise<void> {
 }
 
 // ── Per-user room-flag table factory (hides / reads / pins) ──
-// All three tables are keyed on (user_id, room_id) with the trusted webchat
-// user_id, so a flag follows the user across devices. The factory covers the
-// shared shapes — per-user un-flag, per-user room-id set, per-room cascade
-// clear. Each table's divergent pieces (the hide insert's legacy archived_at
-// column, the monotonic read marker + unread join, pin positions/ordering)
-// stay hand-written below.
+// The shared (user_id, room_id) shapes; each table's divergent pieces are below.
 
 function userRoomFlagTable(table: string) {
   return {
@@ -2173,15 +1942,8 @@ export const unhideRoomForUser = roomHides.removeForUser;
 export const getHiddenRoomIdsForUser = roomHides.roomIdsForUser;
 export const clearHidesForRoom = roomHides.clearForRoom;
 
-// ── Per-user read markers (unread badge persistence) ──
-//
-// `last_read_at` is a per-(user, room) high-water mark of the newest message
-// `created_at` the user has seen. A room is unread for the user when its newest
-// message is newer than the marker (or there's no marker and the room has any
-// messages). The marker is server-side and keyed on the trusted webchat
-// user_id, so the unread badge is shared across all of that user's devices:
-// reading on one device clears it on the others (live via a `read_cleared`
-// push; on reconnect via the `unread` flag in the rooms payload).
+// ── Per-user read markers (see moduleWebchatRoomReads) ──
+// Other devices learn of a read live via `read_cleared`, on reconnect via `unread`.
 
 /**
  * Advance a user's read marker for a room to `ts` (defaults to now). Idempotent
@@ -2200,12 +1962,8 @@ export async function markRoomRead(userId: string, roomId: string, ts: number = 
 }
 
 /**
- * The set of room ids that have unread messages for this user: rooms whose
- * newest message is newer than the user's read marker (rooms with no marker
- * yet count as unread if they contain any message). The `idx_webchat_messages_room`
- * index makes the per-room MAX(created_at) cheap. Approval/a2a side-channel
- * rows count the same as in the live `unread` path — any new activity lights
- * the dot.
+ * Room ids with a message newer than this user's read marker (no marker: any
+ * message). Approval/a2a rows count, as in the live `unread` path.
  */
 export async function getUnreadRoomIdsForUser(userId: string): Promise<Set<string>> {
   const rows = (await getDb().all(
@@ -2224,8 +1982,6 @@ export async function getUnreadRoomIdsForUser(userId: string): Promise<Set<strin
 export const clearReadsForRoom = roomReads.clearForRoom;
 
 // ── Per-user room pins (sticky group at the top of the sidebar) ──
-// Pins are per-(user, room), keyed on the trusted webchat user_id, so a pin
-// follows the user across devices (same model as read markers/hides).
 
 /**
  * Pin a room for a user. Idempotent — re-pinning keeps the original pinned_at.
@@ -2270,10 +2026,8 @@ export async function getPinnedPositionsForUser(userId: string): Promise<Map<str
  */
 export async function setPinnedOrderForUser(userId: string, orderedRoomIds: string[]): Promise<void> {
   const db = getDb();
-  // better-sqlite3's transaction() returned a callable taking the rows; the
-  // driver's takes the work itself, so the ids are closed over rather than
-  // passed. Sequential await, not forEach — a forEach callback cannot await and
-  // would fire every UPDATE outside the transaction it is meant to be inside.
+  // Sequential await, not forEach: a forEach callback would fire every UPDATE
+  // outside the transaction.
   await db.transaction(async () => {
     for (const [i, roomId] of orderedRoomIds.entries()) {
       await db.run(`UPDATE webchat_room_pins SET position = ? WHERE user_id = ? AND room_id = ?`, i, userId, roomId);
@@ -2284,12 +2038,7 @@ export async function setPinnedOrderForUser(userId: string, orderedRoomIds: stri
 /** Drop a room's pins — called from deleteWebchatRoom's cascade. */
 export const clearPinsForRoom = roomPins.clearForRoom;
 
-/**
- * Newest message `created_at` per room — the sort key for the "Recent" sidebar
- * order. Rooms with no messages are absent; the view falls back to the room's
- * own `created_at`. The `idx_webchat_messages_room` index makes the per-room MAX
- * cheap.
- */
+/** Newest message `created_at` per room (the "Recent" sort key); empty rooms are absent. */
 export async function getRoomLastActivity(): Promise<Map<string, number>> {
   const rows = (await getDb().all(
     `SELECT room_id, MAX(created_at) AS last_at FROM webchat_messages GROUP BY room_id`,
@@ -2297,9 +2046,7 @@ export async function getRoomLastActivity(): Promise<Map<string, number>> {
   return new Map(rows.map((r) => [r.room_id, r.last_at]));
 }
 
-// ── User @-mention handles ──────────────────────────────────────────────────
-// Per-user slug others type to @-mention them. Lowercase [a-z0-9-]; UNIQUE so a
-// handle resolves to exactly one user. Defaults to a slug of the display name.
+// ── User @-mention handles (see moduleWebchatUserHandles) ───────────────────
 
 /** Slugify a display name into a candidate handle: lowercase, [a-z0-9-] only. */
 export function slugifyHandle(name: string): string {
@@ -2357,18 +2104,24 @@ export async function ensureWebchatUserHandle(userId: string, displayName: strin
   const existing = await getWebchatUserHandle(userId);
   if (existing) return existing;
   const base = slugifyHandle(displayName);
-  let candidate = base;
-  // Await in the CONDITION: the un-awaited promise was always !== null, so
-  // this looped forever appending suffixes until the heap died.
-  for (let n = 2; (await userIdForHandle(candidate)) !== null; n++) candidate = `${base}-${n}`;
-  await getDb().run(
-    `INSERT OR IGNORE INTO webchat_user_handles (user_id, handle, created_at) VALUES (?, ?, ?)`,
-    userId,
-    candidate,
-    Date.now(),
-  );
-  // Re-read in case a concurrent connect won the INSERT for this user_id.
-  return (await getWebchatUserHandle(userId)) ?? candidate;
+  // The free-check and the INSERT aren't atomic: another user can take the
+  // candidate in between, and INSERT OR IGNORE then silently stores nothing.
+  // So re-read what this user actually owns after each attempt, and move on to
+  // the next suffix when the insert lost.
+  for (let n = 1; n <= 1000; n++) {
+    const candidate = n === 1 ? base : `${base}-${n}`;
+    if ((await userIdForHandle(candidate)) !== null) continue;
+    await getDb().run(
+      `INSERT OR IGNORE INTO webchat_user_handles (user_id, handle, created_at) VALUES (?, ?, ?)`,
+      userId,
+      candidate,
+      Date.now(),
+    );
+    // Ours, or a concurrent connect of this same user won the INSERT.
+    const mine = await getWebchatUserHandle(userId);
+    if (mine) return mine;
+  }
+  throw new Error(`No free handle for ${userId}`);
 }
 
 /**
@@ -2397,27 +2150,33 @@ export async function resolveHandlesToUserIds(handles: string[]): Promise<string
 }
 
 /**
- * Rooms with an unread message that @-mentions this user's handle (latest such
- * message is newer than their last read marker) — for the durable mention badge
- * on load. The live `mention` WS signal is exact; this load-time query uses a
- * substring LIKE on the handle, so it's approximate (may include `@handle-2`
- * style near-matches) — acceptable for a badge. Empty when handle is blank.
+ * Rooms with an unread message that @-mentions this user's handle (a mention
+ * newer than their last read marker) — for the durable mention badge on load.
+ * LIKE narrows to candidate unread rows; the match itself is the client's
+ * (messageMentionsMe), so `@al` doesn't badge for `@alice` or `x@al.example`.
+ * Empty when handle is blank.
  */
 export async function getMentionedRoomIdsForUser(userId: string, handle: string): Promise<Set<string>> {
   const h = (handle || '').toLowerCase();
   if (!h) return new Set();
   const rows = (await getDb().all(
-    `SELECT m.room_id AS room_id
+    `SELECT m.room_id AS room_id, m.content AS content
          FROM webchat_messages m
          LEFT JOIN webchat_room_reads r
            ON r.room_id = m.room_id AND r.user_id = ?
         WHERE m.content LIKE '%@' || ? || '%'
-        GROUP BY m.room_id
-       HAVING MAX(m.created_at) > COALESCE(MAX(r.last_read_at), 0)`,
+          AND m.created_at > COALESCE(r.last_read_at, 0)`,
     userId,
     h,
-  )) as { room_id: string }[];
-  return new Set(rows.map((r) => r.room_id));
+  )) as { room_id: string; content: string }[];
+  const re = mentionPattern(h);
+  return new Set(rows.filter((r) => re.test(r.content)).map((r) => r.room_id));
+}
+
+/** `@handle` as a whole mention: not inside a word or an email, not a longer handle's prefix. */
+export function mentionPattern(handle: string): RegExp {
+  const h = handle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z0-9_-])@${h}(?![a-z0-9-])`, 'i');
 }
 
 // ── Template sources (webchat_template_sources) ─────────────────────────────
@@ -2515,10 +2274,7 @@ export async function setSourceDisabled(id: string, disabled: boolean): Promise<
   else await getDb().run('DELETE FROM webchat_disabled_sources WHERE id = ?', id);
 }
 
-// ── Agent activity log (durable thinking-bubble feed) ───────────────────────
-// The container's per-session status_events is wiped each turn; this is where
-// the feed survives. Every frame is already redacted twice before it lands
-// here (container choke point + sendStatus). 30-day retention.
+// ── Agent activity log (durable thinking-bubble feed; see moduleWebchatActivityLog) ──
 
 const ACTIVITY_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 

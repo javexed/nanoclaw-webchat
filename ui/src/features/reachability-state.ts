@@ -1,6 +1,6 @@
 // ── Reachability state ──────────────────────────────────────────────────────
-// Bridge refs for the Reachability island. legacy.js still runs the probe and
-// owns the panel element; this is the verdict it paints.
+// Bridge refs for the Reachability island; models.ts runs the probe and owns
+// the panel element.
 import { ref } from 'vue';
 
 /** 'checking' while the probe runs, then 'error' or 'outcome'. */

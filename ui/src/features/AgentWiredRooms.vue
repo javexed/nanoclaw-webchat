@@ -1,17 +1,8 @@
 <script setup lang="ts">
 /**
- * The rooms an agent is wired to — fourteenth island.
- *
- * Mounted into <ul id="agent-wired-rooms">, exclusively owned by this module.
- *
- * #agent-rooms-count and #agent-add-room-toggle are NOT part of this island.
- * They live outside the mount point and agents.ts still sets them imperatively,
- * which is the rule the islands have followed throughout: a component owns the
- * subtree it is mounted on and nothing else.
- *
- * The remove button's icon goes through v-html because lucide() returns SVG
- * markup, exactly as `removeBtn.innerHTML = lucide('x')` did. It is a constant
- * from our own icon set, not user data.
+ * The rooms an agent is wired to, mounted into <ul id="agent-wired-rooms">. The remove
+ * icon goes through v-html because lucide() returns SVG markup — a constant from our own
+ * icon set, never user data.
  */
 import { computed } from 'vue';
 import { lucide } from '../core/dom.js';

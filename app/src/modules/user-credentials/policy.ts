@@ -1,12 +1,7 @@
 /**
- * What a workspace accepts from a member, per provider.
- *
- * ONE definition, because this mapping had been re-derived at every call site
- * and the copies disagreed. The failure mode is quiet and specific: a Grok room
- * consulted `allowClaudeOauth`, so enabling member credentials for Grok did
- * nothing while enabling them for Claude silently switched Grok on. A provider
- * that reads another provider's flag is not a missing feature — it is the wrong
- * answer, delivered confidently.
+ * What a workspace accepts from a member, per provider. ONE definition: copies
+ * drift, and a provider that reads another provider's flag gets a confidently
+ * wrong answer.
  */
 import type { CredentialsConfig } from '../../channels/webchat/db.js';
 

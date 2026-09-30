@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import {
   DEFAULT_WORKSPACE_EXCLUDES,
+  UNTRACKED_SECRET_EXCLUDES,
   WORKSPACE_SLOT,
   effectiveSlots,
-  findExcluded,
   matchesExclude,
   pickWorkspaceFolder,
 } from './policy.js';
@@ -61,34 +60,46 @@ describe('workspace excludes', () => {
     expect(matchesExclude('infra/dev/vars.yml', ['infra/prod/**'])).toBe(false);
     expect(matchesExclude('deploy/config.local.json', ['*.local.json'])).toBe(true);
     expect(matchesExclude('a\\b\\secrets', DEFAULT_WORKSPACE_EXCLUDES)).toBe(true); // Windows separators
+    // Windows and macOS do not care about case; neither does the list.
+    for (const p of ['.ENV', 'Config/Secrets', 'certs/SERVER.PEM', 'ID_RSA', '.Docker/Config.json'])
+      expect(matchesExclude(p, DEFAULT_WORKSPACE_EXCLUDES), p).toBe(true);
+    for (const p of [
+      'prod.env',
+      '.envrc',
+      '.kube/config',
+      'kubeconfig',
+      'home/id_ecdsa',
+      'id_dsa',
+      'putty.ppk',
+      '.docker/config.json',
+      'ci/.docker/config.json',
+      '.pgpass',
+      'public/.htpasswd',
+      '.vault-token',
+      'infra/prod.tfstate',
+      'infra/prod.tfstate.backup',
+      'gcloud/application_default_credentials.json',
+      'web/sites/default/settings.local.php',
+      'wp-config.php',
+      'vault.kdbx',
+    ])
+      expect(matchesExclude(p, DEFAULT_WORKSPACE_EXCLUDES), p).toBe(true);
+    // Ordinary project files when tracked: only the snapshot's untracked list names them.
+    for (const p of ['locales/en/auth.json', '.yarnrc.yml', 'env/prod.tfvars', 'dump.sql', 'test/fixture.db'])
+      expect(matchesExclude(p, DEFAULT_WORKSPACE_EXCLUDES), p).toBe(false);
+    for (const p of ['auth.json', '.yarnrc.yml', 'prod.tfvars', 'backup/dump.sql', 'data.sqlite3', 'app.db'])
+      expect(matchesExclude(p, UNTRACKED_SECRET_EXCLUDES), p).toBe(true);
+    expect(matchesExclude('src/db.ts', UNTRACKED_SECRET_EXCLUDES)).toBe(false);
   });
+});
 
-  it('walks a tree, hides matched dirs whole, does not follow symlinks, skips .git/node_modules, and bounds itself', () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-excl-'));
-    const mk = (rel: string, content = 'x') => {
-      fs.mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-      fs.writeFileSync(path.join(root, rel), content);
-    };
-    mk('src/app.ts');
-    mk('secrets/password.txt');
-    mk('secrets/nested/deeper.txt');
-    mk('.env');
-    mk('svc/.env.prod');
-    mk('certs/server.pem');
-    mk('node_modules/pkg/.env'); // skipped: not descended
-    mk('.git/config');
-    fs.symlinkSync('/etc', path.join(root, 'id_rsa')); // a link named like a secret
-    const { excluded, truncated } = findExcluded(root, DEFAULT_WORKSPACE_EXCLUDES, fs);
-    const rels = excluded.map((e) => `${e.kind}:${e.rel}`).sort();
-    expect(rels).toEqual(['dir:secrets', 'file:.env', 'file:certs/server.pem', 'file:id_rsa', 'file:svc/.env.prod']);
-    expect(truncated).toBe(false);
-    // bounded
-    const many = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-excl-many-'));
-    for (let i = 0; i < 30; i++) fs.writeFileSync(path.join(many, `k${i}.pem`), 'x');
-    const r = findExcluded(many, ['*.pem'], fs, { maxMatches: 10 });
-    expect(r.truncated).toBe(true);
-    expect(r.excluded.length).toBeLessThanOrEqual(10);
-    fs.rmSync(root, { recursive: true, force: true });
-    fs.rmSync(many, { recursive: true, force: true });
+describe('the workspaceExcludes setting', () => {
+  it("defaults to exactly the code's list (VS Code hands back the manifest default, not the code's)", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+    const c = pkg.contributes.configuration;
+    const props = Array.isArray(c)
+      ? Object.assign({}, ...c.map((x: { properties: object }) => x.properties))
+      : c.properties;
+    expect(props['nanoclaw.workspaceExcludes'].default).toEqual([...DEFAULT_WORKSPACE_EXCLUDES]);
   });
 });

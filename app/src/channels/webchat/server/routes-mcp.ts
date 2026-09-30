@@ -1,13 +1,11 @@
 // ── MCP server routes ────────────────────────────────────────────────────────
 // Every handler behind the MCP panel: the built-in registry source, CRUD over
 // user-added servers, catalog listing and the reachability probe, plus the
-// catalog cache and body parser only these handlers use.
-//
-// The symbols the agent-side handlers in server.ts also touch live in
-// server/mcp-registry.ts — see the note there.
+// catalog cache and body parser only these handlers use (shared symbols are in
+// server/mcp-registry.ts).
 import type { IncomingMessage, ServerResponse } from 'http';
 
-import { json, readJsonBody } from './http.js';
+import { json, readJsonBody, readJsonObject } from './http.js';
 import { getDb } from '../../../db/connection.js';
 import { validateMcpServerName } from '../../../mcp-server-config.js';
 import { isSourceDisabled, setSourceDisabled } from '../db.js';
@@ -119,12 +117,12 @@ export async function rMcpServersProbePost(ctx: RouteCtx, _m: RegExpMatchArray):
 // OAuth callback: the admin's browser lands here from the authorization
 // server. Auth = whois like everything else, plus the single-use state.
 export async function rMcpServersOauthCallbackGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
-  const { res, url } = ctx;
+  const { res, url, userId } = ctx;
   const code = url.searchParams.get('code') || '';
   const state = url.searchParams.get('state') || '';
   if (!code || !state) return json(res, 400, { error: 'Missing code/state' });
   try {
-    const { serverId } = await finishOAuthFlow(state, code);
+    const { serverId } = await finishOAuthFlow(state, code, userId);
     const server = await getWebchatMcpServer(serverId);
     if (server) {
       // Re-sync every assigned agent onto the relay URL now that auth exists.
@@ -163,7 +161,7 @@ export async function rMcpOauthStartPost(ctx: RouteCtx, m: RegExpMatchArray): Pr
   if (!host) return json(res, 400, { error: 'Missing Host header' });
   const redirectUri = `https://${host}/api/mcp-servers/oauth/callback`;
   try {
-    const authorizeUrl = await startOAuthFlow(decodeURIComponent(m[1]), redirectUri, staticClient);
+    const authorizeUrl = await startOAuthFlow(decodeURIComponent(m[1]), redirectUri, staticClient, ctx.userId);
     return json(res, 200, { authorizeUrl });
   } catch (err) {
     return json(res, 422, { error: err instanceof Error ? err.message : String(err) });
@@ -271,14 +269,8 @@ export function parseMcpServerBody(body: Record<string, unknown>): WebchatMcpSer
 }
 
 export async function createMcpServerHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: Record<string, unknown>;
-  try {
-    body = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<Record<string, unknown>>(req, res);
+  if (body === undefined) return;
   let input: WebchatMcpServerInput;
   try {
     input = parseMcpServerBody(body);
@@ -311,14 +303,8 @@ export async function createMcpServerHandler(req: IncomingMessage, res: ServerRe
 export async function updateMcpServerHandler(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
   const existing = await getWebchatMcpServer(id);
   if (!existing) return json(res, 404, { error: 'MCP server not found' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: Record<string, unknown>;
-  try {
-    body = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<Record<string, unknown>>(req, res);
+  if (body === undefined) return;
   let input: WebchatMcpServerInput;
   try {
     // Merge onto the existing row so a partial body (e.g. rename only) works.
@@ -542,14 +528,8 @@ export async function mcpCatalogHandler(res: ServerResponse, q: string): Promise
 }
 
 export async function probeMcpServerHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { url?: unknown; headers?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ url?: unknown; headers?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.url !== 'string' || !body.url.trim()) return json(res, 400, { error: 'url required' });
   const url = body.url.trim();
   if (/\s|[<>]/.test(url)) return json(res, 400, { error: 'url contains invalid characters' });

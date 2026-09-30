@@ -2,20 +2,10 @@
  * Agent drafter — turn a freeform prompt into a suggested
  * { name, instructions } pair for a new agent.
  *
- * Host-side LLM call routed through the OneCLI gateway. Containers do the
- * exact same routing (HTTPS_PROXY pointing at OneCLI, OneCLI injects the
- * Anthropic auth at request time); we re-use that mechanism so the host
- * never holds the raw API key in usable form. The drafter is registered
- * with OneCLI as its own agent identifier so its proxy slot is auditable
- * separately from any other host activity.
- *
- * Why host-side instead of container-side: a previous iteration spawned
- * a dedicated drafter container, which needed a per-agent tool-denylist
- * (otherwise the agent SDK happily calls `mcp__nanoclaw__create_agent`
- * to instantiate the agent it was just asked to draft). The denylist
- * required a trunk change. Host-side has no agent-SDK in the loop —
- * it's just a plain HTTP call with a fixed prompt — so there's nothing
- * to lock down.
+ * A plain host-side HTTP call through the OneCLI gateway, as containers route
+ * (OneCLI injects the Anthropic auth), so the host never holds the raw key.
+ * Its own OneCLI identifier keeps its proxy slot auditable. Host-side on
+ * purpose: no agent SDK in the loop means no tools (e.g. `create_agent`) to lock down.
  */
 import fs from 'fs';
 import { ProxyAgent } from 'undici';
@@ -25,27 +15,20 @@ import { log } from '../../log.js';
 import { getDefaultModelId, getWebchatModel, type WebchatModel } from './db.js';
 import { safeFetch } from './models.js';
 
-// Reserved agent identifier registered with OneCLI on first draft request.
-// `[a-z][a-z0-9-]{0,49}` per OneCLI's identifier regex — same gotcha that
-// bit us with random UUIDs in the prior drafter container attempt.
+// Registered with OneCLI on first draft; must match `[a-z][a-z0-9-]{0,49}`.
 const DRAFTER_AGENT_ID = 'webchat-drafter';
 const DRAFTER_AGENT_NAME = 'Agent Drafter';
 
-// Haiku — fast + cheap, more than capable of producing a one-shot JSON
-// agent definition. Drafter latency matters more than model nuance here.
-// Env-overridable so an operator can shift to a different model when this
-// one is deprecated, without waiting for a code release.
+// Fast + cheap is enough for a one-shot JSON definition; env-overridable for
+// when this model is deprecated.
 const DRAFTER_MODEL = process.env.WEBCHAT_DRAFTER_MODEL || 'claude-haiku-4-5';
 const DRAFTER_MAX_TOKENS = 2048;
 
-// Cap response size *before* JSON.parse — Anthropic's max_tokens already
-// caps it server-side, but a misbehaving proxy or upstream could in
-// principle return more. 16 KB is far above any honest 2048-token reply.
+// Cap response size before JSON.parse, against a misbehaving proxy/upstream;
+// 16 KB is far above any honest reply.
 const MAX_RESPONSE_BYTES = 16 * 1024;
 
-// Cache the OneCLI-derived transport so a busy operator clicking ✨ many
-// times doesn't page the gateway on every request. 5 minutes matches the
-// PWA's typical session interval.
+// Cache the OneCLI-derived transport so repeated drafts don't hit the gateway each time.
 const TRANSPORT_CACHE_MS = 5 * 60 * 1000;
 // Throttle bootstrap retries when OneCLI is consistently unreachable so
 // repeated drafts don't fan out to OneCLI as fast as the user can click.
@@ -61,6 +44,7 @@ Rules:
 - Never ask clarifying questions. The caller is a programmatic request.
 - "name" should read like a recognizable label — Title Case is fine (e.g., "Code Reviewer", "Recipe Helper").
 - "instructions" should read like a CLAUDE.md system prompt: define purpose, tone, and scope. No framing prose like "Here is your assistant:" — just the prompt itself.
+- Describe the role, not capability limits. Never state that the assistant cannot access, modify, or connect to a service. If the role involves an external service (calendar, email, an API), say what to do with it, and that access is set up by the operator in the agent's Secrets settings.
 - Do NOT include placeholder text like "<your instructions here>".
 - Properly escape quotes and newlines inside the JSON string values.
 - Output the JSON object now. Begin with { and end with }. No other characters.`;
@@ -125,22 +109,14 @@ export interface DraftedAgent {
 }
 
 /**
- * Idempotently register the drafter identifier with OneCLI on first use.
- * Subsequent calls share the in-flight promise.
+ * Idempotently register the drafter identifier with OneCLI on first use
+ * (callers share the in-flight promise).
  *
- * This agent must stay in `all` secret mode. It is not a per-group agent, so
- * nothing assigns it a secret; in `selective` mode it would have none and 401.
- * Verified 2026-07-30 against gateway 1.37: a freshly created identifier
- * defaults to `all`, so no manual step is needed on a clean install. (An
- * earlier version of this comment claimed fresh identifiers start `selective`
- * and required a one-time
- *   onecli agents set-secret-mode --id webchat-drafter --mode all
- * — that was wrong.) If this agent is ever flipped to `selective`, that
- * command restores it.
- *
- * Note for credential-isolation sweeps: an orphan scan keyed on
- * "identifier not in agent_groups" WILL flag `webchat-drafter`. It is live —
- * do not delete it, and do not include it in an `all` → `selective` rollout.
+ * It must stay in `all` secret mode: nothing assigns it a secret, so in
+ * `selective` it would 401. Fresh identifiers default to `all`; if it is ever
+ * flipped, `onecli agents set-secret-mode --id webchat-drafter --mode all`
+ * restores it. An orphan scan ("identifier not in agent_groups") will flag it:
+ * it is live — do not delete it or include it in an `all` → `selective` rollout.
  */
 function ensureDrafterIdentity(): Promise<void> {
   if (bootstrapPromise) return bootstrapPromise;
@@ -166,25 +142,12 @@ function ensureDrafterIdentity(): Promise<void> {
  * Build an undici dispatcher + auth headers for an Anthropic call routed
  * through the OneCLI proxy.
  *
- * OneCLI's auth model (worked out empirically):
- *   - `getContainerConfig(identifier)` returns a per-agent proxy URL with
- *     an `aoc_*` token in userinfo, plus a CA cert.
- *   - The proxy expects requests to carry an `Authorization: Bearer <env>`
- *     header where `<env>` is the literal value of CLAUDE_CODE_OAUTH_TOKEN
- *     (which is just the placeholder string). The proxy swaps the
- *     placeholder for the real token before forwarding to Anthropic.
- *   - The `anthropic-beta: oauth-2025-04-20` header is required for the
- *     OAuth-style auth path to be accepted.
- *
- * Inside containers `cfg.env.HTTPS_PROXY` points at `host.docker.internal`;
- * on the host that doesn't resolve. The proxy listens on whatever host
- * OneCLI is bound to — same as the API endpoint we already know from
- * ONECLI_URL — so we substitute that hostname. macOS Docker Desktop
- * typically binds to 127.0.0.1; Linux Docker binds to the bridge IP
- * (172.17.0.1) and not loopback, which is why hardcoding 127.0.0.1 here
- * broke on Linux. The `NODE_EXTRA_CA_CERTS` env path likewise points at
- * the in-container path (`/tmp/onecli-gateway-ca.pem`), so we use the
- * inline `cfg.caCertificate` string instead.
+ * `getContainerConfig(identifier)` returns a per-agent proxy URL (an `aoc_*`
+ * token in userinfo) and a CA cert. The proxy swaps the placeholder
+ * `Authorization: Bearer <CLAUDE_CODE_OAUTH_TOKEN>` for the real token, and
+ * needs `anthropic-beta: oauth-2025-04-20` for that path. The proxy host and CA
+ * path in the config are container-side, so the host uses ONECLI_URL's host and
+ * the inline `cfg.caCertificate`.
  */
 async function buildDrafterTransport(): Promise<{
   dispatcher: ProxyAgent;
@@ -196,15 +159,9 @@ async function buildDrafterTransport(): Promise<{
   const cfg = await (await onecliClient()).getContainerConfig({ agent: DRAFTER_AGENT_ID });
   const rawProxy = cfg.env.HTTPS_PROXY ?? cfg.env.HTTP_PROXY;
   if (!rawProxy) throw new DraftError('OneCLI gateway returned no proxy URL', 503);
-  // The OneCLI gateway returns `host.docker.internal:<port>` as the proxy
-  // URL because that hostname only resolves inside containers (via
-  // `--add-host=host.docker.internal:host-gateway`). The host process can't
-  // reach it under that name. We rewrite to whatever host portion ONECLI_URL
-  // uses, which by construction is reachable from the host:
-  //   macOS (Docker Desktop): ONECLI_URL=http://127.0.0.1:10254     → rewrite to 127.0.0.1
-  //   Linux (Docker daemon):  ONECLI_URL=http://172.17.0.1:10254    → rewrite to 172.17.0.1
-  // replaceAll handles the (rare) case where the hostname appears more than
-  // once (e.g., a redirect query param).
+  // `host.docker.internal` resolves only inside containers; ONECLI_URL's host is
+  // host-reachable by construction (127.0.0.1 on macOS, the bridge IP such as
+  // 172.17.0.1 on Linux). replaceAll: the name can recur (e.g. a query param).
   let onecliHost = '127.0.0.1';
   try {
     onecliHost = new URL(onecliSettings().url).hostname || '127.0.0.1';
@@ -240,18 +197,6 @@ function invalidateTransportCache(): void {
   cachedTransport = null;
 }
 
-/**
- * One Anthropic Messages call routed through the OneCLI proxy — the shared
- * host-side credentialed path (the host never holds a raw Anthropic key).
- * Used by the drafter below and by the approval pre-judge
- * (src/modules/approvals/prejudge.ts) for anthropic-kind judge models.
- * Reuses the drafter's OneCLI identity + transport cache; throws DraftError
- * on any failure (callers either surface it or fail safe). Returns the
- * response's joined text content.
- *
- * Deliberately no sampling params: current Claude models (Sonnet 5,
- * Opus 4.7+) reject non-default `temperature` with a 400.
- */
 export interface AnthropicMessagesCall {
   model: string;
   system: string;
@@ -260,6 +205,12 @@ export interface AnthropicMessagesCall {
   timeoutMs: number;
 }
 
+/**
+ * One Anthropic Messages call through the OneCLI proxy — the shared host-side
+ * credentialed path, also used by the approval pre-judge. Reuses the drafter's
+ * identity + transport cache; returns the joined text, throws DraftError.
+ * No sampling params: current Claude models 400 on a non-default `temperature`.
+ */
 export async function anthropicMessagesViaOneCLI(call: AnthropicMessagesCall): Promise<string> {
   await ensureDrafterIdentity();
   const { dispatcher, authHeaders } = await buildDrafterTransport();
@@ -282,18 +233,13 @@ export async function anthropicMessagesViaOneCLI(call: AnthropicMessagesCall): P
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(call.timeoutMs),
-      // Type cast: undici's dispatcher option isn't in the standard fetch
-      // typings, but Node's global fetch accepts it at runtime. Cast through
-      // `unknown` — undici 7.29's Dispatcher/ResponseData types no longer
-      // structurally overlap the transitive undici-types@6.x (from @types/node),
-      // so a direct assertion trips TS2352.
+      // Not in the fetch typings but accepted by Node's fetch. Cast via `unknown`:
+      // undici's types don't overlap @types/node's undici-types (TS2352).
       dispatcher,
     } as unknown as RequestInit & { dispatcher: ProxyAgent });
   } catch (err) {
-    // Log full detail server-side so an operator can debug; surface a
-    // generic message to the caller so internal IPs / proxy URLs don't
-    // leak through the error response. undici wraps the real network
-    // error in `err.cause` — surface it so "fetch failed" isn't opaque.
+    // Full detail (incl. undici's `err.cause`) to the log only; the caller gets
+    // a generic message so internal IPs / proxy URLs don't leak.
     const cause = (err as { cause?: unknown }).cause;
     log.warn('Anthropic-via-OneCLI call: fetch threw', { err, cause });
     const e = err as { name?: string; statusCode?: number };
@@ -317,9 +263,7 @@ export async function anthropicMessagesViaOneCLI(call: AnthropicMessagesCall): P
     throw new DraftError(`Anthropic upstream returned ${res.status}`, 502);
   }
 
-  // Read response as text first so we can size-cap before JSON.parse.
-  // 16 KB is far above what these small max_tokens budgets can produce,
-  // but caps a misbehaving upstream from filling memory if it ever happens.
+  // Text first, so the size cap applies before JSON.parse.
   const rawResponseText = await res.text();
   if (rawResponseText.length > MAX_RESPONSE_BYTES) {
     throw new DraftError('Anthropic upstream returned an oversized response', 502);
@@ -360,12 +304,9 @@ export async function draftAgent(prompt: string): Promise<DraftedAgent> {
 }
 
 async function runDraft(prompt: string): Promise<DraftedAgent> {
-  // Engine-agnostic: when the workspace default is a local model (the wizard's
-  // Ollama engine — kind ollama/openai-compatible), draft through THAT model's
-  // OpenAI-compatible endpoint. The Anthropic-via-OneCLI path below needs an
-  // Anthropic credential, which a local-model-only install doesn't have (that's
-  // the "generate draft didn't work" under a qwen3 default). Claude/Codex
-  // defaults have no default MODEL set, so they fall through to the OneCLI path.
+  // A local workspace default model (ollama/openai-compatible) drafts through
+  // its own endpoint: a local-only install has no Anthropic credential for the
+  // OneCLI path. Claude/Codex defaults set no default model and fall through.
   const defaultId = await getDefaultModelId();
   const defaultModel = defaultId ? await getWebchatModel(defaultId) : undefined;
   if (defaultModel?.endpoint && (defaultModel.kind === 'ollama' || defaultModel.kind === 'openai-compatible')) {
@@ -383,16 +324,14 @@ async function runDraft(prompt: string): Promise<DraftedAgent> {
   return parseDraftResponse(text);
 }
 
-/**
- * Draft via the workspace default local model's OpenAI-compatible endpoint
- * (Ollama or an openai-compatible server). No credential needed — these run
- * locally. safeFetch handles the host-reachable rewrite + SSRF gate. A longer
- * timeout than the OneCLI/Anthropic path: a thinking model on CPU can take
- * minutes to produce the JSON. Thinking traces (<think>…</think>) are stripped
- * before parsing so a reasoning model's output still yields clean JSON.
- */
+// Long: a thinking model on CPU can take minutes to produce the JSON.
 const MODEL_REQUEST_TIMEOUT_MS = 180_000;
 
+/**
+ * Draft via the workspace default local model's OpenAI-compatible endpoint (no
+ * credential; safeFetch does the host rewrite + SSRF gate). <think> traces are
+ * stripped before parsing.
+ */
 async function runDraftViaModel(prompt: string, model: WebchatModel): Promise<DraftedAgent> {
   let res: Response;
   try {
@@ -407,12 +346,9 @@ async function runDraftViaModel(prompt: string, model: WebchatModel): Promise<Dr
           { role: 'system', content: DRAFTER_SYSTEM_PROMPT },
           { role: 'user', content: prompt },
         ],
-        // Disable reasoning for the draft: it needs a short JSON blob, and a
-        // thinking model (Qwen3 etc.) otherwise spends its whole token budget
-        // in the `reasoning` field and returns EMPTY content (finish_reason:
-        // length). Verified against Ollama's /v1/chat/completions: only
-        // `reasoning_effort:none` is honored there — `think:false` is silently
-        // ignored by the OpenAI-compat adapter. Ignored by non-reasoning models.
+        // Else a thinking model spends the whole budget reasoning and returns
+        // empty content. Ollama's OpenAI-compat endpoint honours only this
+        // (`think:false` is ignored); non-reasoning models ignore it.
         reasoning_effort: 'none',
       }),
       signal: AbortSignal.timeout(MODEL_REQUEST_TIMEOUT_MS),
@@ -455,10 +391,8 @@ function parseDraftResponse(rawText: string): DraftedAgent {
   if (typeof obj.name !== 'string' || typeof obj.instructions !== 'string') {
     throw new DraftError('Drafter response missing name or instructions', 502);
   }
-  // Strip control characters (TAB and LF survive — the LLM might use them
-  // legitimately inside instructions). Names get a stricter pass: no
-  // newlines or other control chars at all so they can't break log
-  // formats / flat outputs / URL paths.
+  // Instructions keep newlines; names get none, so they can't break logs,
+  // flat outputs or URL paths.
   const name = stripControlChars(obj.name, { allowNewlines: false }).trim();
   const instructions = stripControlChars(obj.instructions, { allowNewlines: true }).trim();
   if (!name) throw new DraftError('Drafter returned empty name', 502);
@@ -473,9 +407,7 @@ function parseDraftResponse(rawText: string): DraftedAgent {
 }
 
 function stripControlChars(s: string, opts: { allowNewlines: boolean }): string {
-  // Strip ASCII control characters (U+0000-U+001F + U+007F DEL). When
-  // allowNewlines is set, preserve LF (U+000A) and CR (U+000D) so a
-  // multi-line `instructions` value survives intact.
+  // U+0000-U+001F + DEL; allowNewlines keeps LF and CR.
   // eslint-disable-next-line no-control-regex
   const allControl = /[\x00-\x1f\x7f]/g;
   // eslint-disable-next-line no-control-regex

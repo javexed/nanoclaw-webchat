@@ -1,19 +1,11 @@
 <script setup lang="ts">
 /**
- * Learned-skill drafts awaiting review — twenty-ninth island.
- *
- * Mounted into <ul id="skill-drafts-list">, exclusively owned by this module.
- * The #skill-drafts wrapper's hidden flag and the nav badge are outside the
- * mount point and stay imperative.
- *
- * The Keep/Discard actions are replaced by an UndoTimer while a countdown runs.
- * armUndo did that by swapping the actions element's children and restoring
- * them; here the row simply renders one or the other, so a re-render mid-
- * countdown is harmless — which is what armUndo's width-freezing was working
- * around.
+ * Learned-skill drafts awaiting review, mounted into <ul id="skill-drafts-list">; the
+ * #skill-drafts wrapper's hidden flag and the nav badge stay with the renderer. A row
+ * renders either its Keep/Discard actions or an UndoTimer, so a re-render mid-countdown
+ * is harmless.
  */
 import { computed } from 'vue';
-import { state } from '../core/state.js';
 import UndoTimer from './UndoTimer.vue';
 import { draftUndo, draftsReviewing, skillDrafts } from './skills-panel-state.js';
 
@@ -30,11 +22,7 @@ const KEEP = 'Keep';
 const DISCARD = 'Discard';
 const REVIEWING = 'Checking for overlaps…';
 const SOURCE = 'from this conversation →';
-/**
- * The separator is BOUND, not a literal space in the template: the imperative
- * version did `desc.append(' ', src)`, an explicit text node, and Vue's compiler
- * condenses whitespace between an interpolation and an element.
- */
+/** Bound, not a literal space: the compiler condenses whitespace between an interpolation and an element. */
 const SPACE = ' ';
 /** Amber "learned" — a fixed hue, not derived from the label like OriginBadge. */
 const LEARNED_HUE = { '--badge-hue': '48' };

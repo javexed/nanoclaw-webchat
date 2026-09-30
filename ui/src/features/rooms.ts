@@ -4,7 +4,8 @@
 import { createApp, watchEffect } from 'vue';
 import SearchResults from './SearchResults.vue';
 import { searchRows } from './search-results-state.js';
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { $, esc } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { updateUserCredsBanner } from './members.js';
 import { showToast, toastError } from '../core/toast.js';
 import { authFetch, apiJson } from '../core/api.js';
@@ -13,16 +14,12 @@ import { closeAgentDetail, endAllAgentTurns, fetchAgents, refreshRoomWiredAgents
 import { closeMcpDetail } from './mcp.js';
 import { clearThreadUndo, createThread, getUndoSeconds, loadThreadList, threadActions, toggleRoomThreads, updateThreadSyncControls } from './threads.js';
 import RoomList from './RoomList.vue';
-import { learnTurnToolCount, roomAutoLearn, roomFilter, roomSortAz, selectedRoomId, showArchived, showHidden } from './room-list-state.js';
+import { learnTurnToolCount, roomAutoLearn, roomFilter, selectedRoomId, showArchived, showHidden } from './room-list-state.js';
 import { transcriptEmpty } from './transcript-state.js';
 import { beginTranscriptSwitch } from './transcript.js';
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideRoomsDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
+/** Supplied by provideRoomsDeps in composition-root.ts. `any` marks a signature not
+ *  yet typed, not an opt-out of checking. */
 export interface RoomsDeps {
   closeModelDetail: () => any;
   fetchMentionablePeople: () => any;
@@ -36,7 +33,7 @@ export interface RoomsDeps {
 
 const deps = {} as RoomsDeps;
 
-/** Wire the legacy helpers this module calls. Call once at startup. */
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 export function provideRoomsDeps(provided: Partial<RoomsDeps>): void {
   Object.assign(deps, provided);
 }
@@ -56,20 +53,14 @@ export function snapshotRoomImages() {
   return Array.from(imgs).map((el) => ({ url: (el as HTMLImageElement).src, alt: (el as HTMLImageElement).alt || '' }));
 }
 
-const ROOM_DIVIDER = Symbol('room-divider');
-
-let renderRoomsRetryTimer: any = null;
-
 let roomListApp: ReturnType<typeof createApp> | null = null;
 
 function mountRoomList(): void {
   if (roomListApp) return;
   const host = $('#room-list');
   if (!host) return;
-  // Drag-to-pin: the LIST is the drop target, and these listeners live on the
-  // mount point itself rather than in the component. Vue replaces the host's
-  // children, never the host, so they survive every render — which is what the
-  // old `dataset.dropWired` one-shot guard was for.
+  // Drag-to-pin: the LIST is the drop target, so these listeners live on the
+  // mount point, which Vue never replaces — they survive every render.
   host.addEventListener('dragover', (e) => {
     if (!host.classList.contains('room-list-dragging')) return;
     e.preventDefault();
@@ -109,16 +100,9 @@ function mountRoomList(): void {
   });
   roomListApp.mount(host);
 
-  // Creating a room is owner-only (`POST /api/rooms` carries guards:['owner']),
-  // so for anyone else this button existed only to return 403.
-  //
-  // A watcher, NOT a one-shot write inside renderRooms — that was the first
-  // attempt and it was wrong in the direction that matters. The rooms broadcast
-  // lands BEFORE probeIsOwner resolves, and on an install with zero rooms
-  // renderRooms never runs again, so the owner who most needs this button was
-  // the one who never got it. Caught by posing as an owner in a browser, not by
-  // reading the code. `state` is shallowReactive, so this top-level flag is
-  // tracked and the button follows any later role change without a reload.
+  // Creating a room is owner-only (`POST /api/rooms` carries guards:['owner']).
+  // A watcher, not a write in renderRooms: the rooms broadcast lands before
+  // probeIsOwner resolves, and with zero rooms renderRooms never runs again.
   watchEffect(() => {
     const btn = $('#create-room-btn');
     if (btn) btn.hidden = !state.isOwnerView;
@@ -126,12 +110,8 @@ function mountRoomList(): void {
 }
 
 /**
- * Sync the toggles the island reads, and mount it.
- *
- * The rows themselves come from state.lastRoomsList, which is already reactive,
- * so this does NOT need calling for every change — but every existing caller
- * still works, and the two count-bearing buttons outside the list are updated
- * here because they are outside the mount point.
+ * Sync the toggles the island reads, and mount it. Rows come from the reactive
+ * state.lastRoomsList; this also updates the two count buttons outside the mount.
  */
 export function renderRooms(rooms?: any) {
   const all = rooms ?? state.lastRoomsList ?? [];
@@ -163,11 +143,7 @@ export async function toggleRoomArchive(roomId?: any, archive?: any) {
   if (target) target.archived = archive;
   renderRooms(state.lastRoomsList);
   try {
-    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/${archive ? 'archive' : 'unarchive'}`, {
-      method: 'POST',
-      headers: { 'X-Webchat-CSRF': '1' },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/${archive ? 'archive' : 'unarchive'}`, { method: 'POST' });
   } catch (err) {
     console.error('toggleRoomArchive failed:', err);
     if (target) target.archived = !archive; // roll back
@@ -175,8 +151,9 @@ export async function toggleRoomArchive(roomId?: any, archive?: any) {
   }
 }
 
-let draggedPinId: any = null;
-
+// Move a pinned room before/after another within the pinned group and persist
+// the new order. Optimistic: reindex pin_position locally and re-render, then
+// POST; the server's broadcastRooms re-syncs authoritative order to every device.
 export async function reorderPinnedRoom(movedId?: any, targetId?: any, after?: any) {
   const order = state.lastRoomsList
     .filter((r) => r.pinned && !r.archived)
@@ -197,12 +174,7 @@ export async function reorderPinnedRoom(movedId?: any, targetId?: any, after?: a
   renderRooms(state.lastRoomsList);
 
   try {
-    const res = await authFetch('/api/rooms/pins/order', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-      body: JSON.stringify({ order }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await apiJson('/api/rooms/pins/order', { method: 'POST', body: { order } });
   } catch (err) {
     console.error('reorderPinnedRoom failed:', err);
     // The next authoritative `rooms` broadcast (or a manual refresh) restores
@@ -210,6 +182,10 @@ export async function reorderPinnedRoom(movedId?: any, targetId?: any, after?: a
   }
 }
 
+// Touch-friendly pinned-room reorder: drag is mouse-only (native HTML5 DnD
+// doesn't fire from touch), so the kebab's Move up / Move down call this to swap
+// a pinned room with its neighbour. Same optimistic reindex + persist as
+// reorderPinnedRoom. `dir` is -1 (up) or +1 (down).
 async function movePinnedRoom(roomId?: any, dir?: any) {
   const order = state.lastRoomsList
     .filter((r) => r.pinned && !r.archived)
@@ -225,12 +201,7 @@ async function movePinnedRoom(roomId?: any, dir?: any) {
   });
   renderRooms(state.lastRoomsList);
   try {
-    const res = await authFetch('/api/rooms/pins/order', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-      body: JSON.stringify({ order }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await apiJson('/api/rooms/pins/order', { method: 'POST', body: { order } });
   } catch (err) {
     console.error('movePinnedRoom failed:', err);
     // The next authoritative `rooms` broadcast restores order; no rollback needed.
@@ -245,11 +216,7 @@ async function toggleRoomPin(roomId?: any, pin?: any) {
   if (target) target.pinned = pin;
   renderRooms(state.lastRoomsList);
   try {
-    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/${pin ? 'pin' : 'unpin'}`, {
-      method: 'POST',
-      headers: { 'X-Webchat-CSRF': '1' },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/${pin ? 'pin' : 'unpin'}`, { method: 'POST' });
   } catch (err) {
     console.error('toggleRoomPin failed:', err);
     if (target) target.pinned = !pin; // roll back
@@ -265,11 +232,7 @@ async function toggleRoomHide(roomId?: any, hide?: any) {
   if (target) target.hidden = hide;
   renderRooms(state.lastRoomsList);
   try {
-    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/${hide ? 'hide' : 'unhide'}`, {
-      method: 'POST',
-      headers: { 'X-Webchat-CSRF': '1' },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/${hide ? 'hide' : 'unhide'}`, { method: 'POST' });
   } catch (err) {
     console.error('toggleRoomHide failed:', err);
     if (target) target.hidden = !hide; // roll back
@@ -320,12 +283,9 @@ export function joinRoom(roomId?: any, roomName?: any, jumpMessageId?: any, init
   $('#members-overlay')!.classList.remove('visible');
   deps.renderMembers([]);
   beginTranscriptSwitch();
-  // No "Main" thread row — the room itself IS the regular chat. Entering a room
-  // always lands in that regular chat ('main' keys the room's shared session);
-  // threads are opened explicitly from the sidebar.
-  // Normally land in the regular chat ('main'); `initialThread` lets a caller
-  // (e.g. just-created a thread) enter that thread directly in a SINGLE join —
-  // avoiding the join('main')+join(thread) race that bled main's transcript in.
+  // Land in the regular chat ('main' keys the room's shared session) unless
+  // `initialThread` enters a thread directly in a SINGLE join — a separate
+  // join('main')+join(thread) races and bleeds main's transcript in.
   state.currentThread = initialThread || 'main';
   // Persist in localStorage (NOT sessionStorage, which iOS wipes when the PWA is
   // fully closed) so reopening resumes the same room AND thread.
@@ -333,20 +293,9 @@ export function joinRoom(roomId?: any, roomName?: any, jumpMessageId?: any, init
   state.threadUnread.clear();
   state.threadCache.delete(roomId); // clear this room's cached threads; loadThreadList refills
   updateThreadSyncControls();
-  // `?.` guards a NULL socket, not a CONNECTING one — and send() on a socket
-  // that is still negotiating THROWS. That throw used to land here, in the
-  // middle of the function, so everything below (room name, enabled composer,
-  // thread list, lastRoom) silently never ran: the room half-opened. It was
-  // reachable on resume, not on a cold load — rooms are painted from the WS
-  // `rooms` message, so a cold load has nothing to click until the socket is
-  // already open, whereas returning to a backgrounded tab calls connect() while
-  // the previous session's rows are still on screen. Tapping a room in that
-  // window did nothing; tapping a different room once the socket had opened,
-  // then tapping back, "fixed" it — which is exactly how it was reported.
-  //
-  // Skipping the join is safe: the auth-success handler in ws.ts re-joins
-  // state.currentRoom (which is set above) the moment the socket authenticates,
-  // so the room still lands — it just lands a beat later.
+  // Only send on an OPEN socket: send() while CONNECTING throws, which would
+  // abort the rest of this function (reachable on resume from background).
+  // Skipping is safe: ws.ts re-joins state.currentRoom on auth success.
   if (state.ws && state.ws.readyState === WebSocket.OPEN) {
     state.ws.send(JSON.stringify({ type: 'join', room_id: roomId, thread_id: state.currentThread }));
   }
@@ -465,13 +414,8 @@ export async function openRoomDetail(roomId?: any) {
         .forEach((b) => b.classList.remove('active'));
       const hintEl = $('#room-cred-default-hint');
       if (hintEl) hintEl.textContent = '';
-      authFetch(`/api/rooms/${encodeURIComponent(roomId)}/credential-mode`)
-        .then((r) => (r.ok ? r.json() : null))
+      apiJson(`/api/rooms/${encodeURIComponent(roomId)}/credential-mode`)
         .then((d) => {
-          if (!d) {
-            if (hintEl) hintEl.textContent = '(couldn’t load — try reopening)';
-            return;
-          }
           // No explicit override → the room follows the workspace default: highlight
           // that value. An explicit pick highlights itself.
           const effective = d.mode === 'inherit' ? d.defaultMode : d.mode;
@@ -500,6 +444,9 @@ export function closeRoomDetail() {
   selectedRoomId.value = null;
 }
 
+// Rename the selected room. Owner-only (the field is hidden otherwise, and the
+// server re-checks). The server's broadcastRooms() pushes the new name, so the
+// sidebar + panel title update via the 'rooms' handler — no manual refresh.
 export async function saveRoomName() {
   const id = selectedRoomId.value;
   if (!id) return;
@@ -529,12 +476,7 @@ export async function deleteCurrentRoom() {
   if (!confirmed) return;
   const roomToClose = selectedRoomId.value;
   try {
-    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomToClose)}`, { method: 'DELETE' });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      showToast('Failed to delete room: ' + (err.error || res.statusText), { kind: 'error' });
-      return;
-    }
+    await apiJson(`/api/rooms/${encodeURIComponent(roomToClose)}`, { method: 'DELETE' });
     showToast(`Deleted room "${label}".`, { kind: 'success' });
     closeRoomDetail();
     if (state.currentRoom === roomToClose) {
@@ -575,9 +517,7 @@ export async function openRoomCreate() {
 
 async function refreshRoomAutoLearn(roomId?: any) {
   try {
-    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/learning`);
-    if (!res.ok) return;
-    const cfg = await res.json();
+    const cfg = await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/learning`);
     roomAutoLearn.set(roomId, cfg.autoTrigger === true);
   } catch {
     /* keep whatever we knew */
@@ -586,12 +526,7 @@ async function refreshRoomAutoLearn(roomId?: any) {
 
 export async function putRoomLearning(patch?: any) {
   try {
-    const res = await authFetch(`/api/rooms/${encodeURIComponent(state.currentRoom!)}/learning`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed');
+    await apiJson(`/api/rooms/${encodeURIComponent(state.currentRoom!)}/learning`, { method: 'PUT', body: patch });
     showToast('Learning settings saved for this room');
     void refreshRoomAutoLearn(state.currentRoom);
     return true;
@@ -601,7 +536,6 @@ export async function putRoomLearning(patch?: any) {
   }
 }
 
-
 // The room-search debounce timer lives at MODULE scope, not inside the wiring
 // function: it holds state across separate input events, so nesting it would
 // start a fresh timer per call and debounce nothing.
@@ -610,11 +544,7 @@ let searchDebounce: ReturnType<typeof setTimeout> | undefined;
 let searchResultsApp: ReturnType<typeof createApp> | null = null;
 
 function mountSearchResults(): void {
-  if (searchResultsApp) return;
-  const host = $('#search-results');
-  if (!host) return;
-  searchResultsApp = createApp(SearchResults);
-  searchResultsApp.mount(host);
+  searchResultsApp ??= mountIsland('#search-results', () => createApp(SearchResults));
 }
 
 function renderSearchResults(results: any[]): void {
@@ -636,14 +566,10 @@ function renderSearchResults(results: any[]): void {
         .replace(/»/g, '</mark>'),
   }));
   list.hidden = false;
-  // The room list STAYS. It is filtered to the same query, so the pane reads
-  // "here are your matching rooms, and here is where that text appears in
-  // messages" — one box, two answers. Hiding it was right when the box only
-  // did message search; it is not right now.
+  // The room list STAYS, filtered to the same query: one box, two answers.
   const sortBtn = $('#room-sort-az');
   if (sortBtn) sortBtn.hidden = true; // close button takes the slot while searching
 }
-
 
 function relativeTime(ts: number | string) {
   const diff = Date.now() - (typeof ts === 'number' ? ts : new Date(ts).getTime());
@@ -656,18 +582,13 @@ function relativeTime(ts: number | string) {
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // The room list and room detail panel: drag-to-reorder, create, archive and
 // the wired-agents controls.
-//
-// A function rather than module-scope code: legacy.js runs its blocks in source
-// order around initApp(), so relocating them to another module's top level would
-// silently re-order them. legacy calls wireRoomsPanel() at the exact line the
-// first block occupied, so execution order is unchanged.
+// Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
 export function wireRoomsPanel(): void {
   $<HTMLInputElement>('#room-search')?.addEventListener('input', (e) => {
     const q = (e.target as HTMLInputElement).value.trim();
-    // Narrow the room list on THIS keystroke. The names are already in memory,
-    // so making it wait for the message-search debounce would be latency we
-    // invented. The box does two jobs at two speeds.
+    // Narrow the room list on THIS keystroke; names are already in memory, so
+    // only the message search waits for the debounce.
     roomFilter.value = q;
     // Show the close/back affordance whenever a query is active (immediate, not
     // debounced) so the dismissal control is there the moment search begins.
@@ -680,9 +601,8 @@ export function wireRoomsPanel(): void {
     }
     searchDebounce = setTimeout(async () => {
       try {
-        const r = await authFetch(`/api/search?q=${encodeURIComponent(q)}`);
-        if (!r.ok) return renderSearchResults([]); // e.g. backend without the route yet
-        const body = await r.json();
+        // A backend without the route yet throws into the empty render below.
+        const body = await apiJson(`/api/search?q=${encodeURIComponent(q)}`);
         renderSearchResults(body.results || []);
       } catch {
         renderSearchResults([]);
@@ -690,9 +610,8 @@ export function wireRoomsPanel(): void {
     }, 250);
   });
 
-  // Close/back button — the visible dismissal affordance the search pane lacked.
-  // Mobile has no Escape key and the native search clear is unreliable, so this is
-  // the tap target that returns you to the room list (same effect as Escape).
+  // Close/back button: mobile has no Escape key and the native search clear is
+  // unreliable, so this is the tap target back to the room list.
   $<HTMLButtonElement>('#room-search-close')?.addEventListener('click', () => {
     const input = $<HTMLInputElement>('#room-search');
     if (input) input.value = '';
@@ -722,17 +641,12 @@ export function wireRoomsPanel(): void {
     clearRoomSearch();
   });
 
-  // ── Messages ──────────────────────────────────────────────────────────────
   $('#room-name')?.addEventListener('click', toggleRoomSettings);
 }
 
 // ── Panel wiring ───────────────────────────────────────────────────────────
 // Remaining room-detail wiring: prime, archive and the wired-agent controls.
-//
-// One function per GROUP of blocks, each called from the line its group
-// started on. Blocks with an executing statement between them cannot share a
-// function: a single call at the first block moves the later ones ahead of
-// whatever ran in between, which the boot-order trace catches.
+// One function per run of boot statements: a call cannot span an executing statement without reordering boot.
 
 export function wireRoomDetail1(): void {
   $('#room-name')?.addEventListener('keydown', (e) => {
@@ -809,11 +723,6 @@ export function wireRoomDetail5(): void {
   });
 }
 
-// ── Panel wiring ───────────────────────────────────────────────────────────
-// Blocks whose SUBJECT element this module already owns. The ownership census
-// reported them as multi-owner, which was the union of every id they touch
-// rather than what they are for.
-
 /** The room-create form: name, instructions and agent selection. */
 export function wireRoomCreate(): void {
   $<HTMLFormElement>('#room-create-form')?.addEventListener('submit', async (e) => {
@@ -839,17 +748,7 @@ export function wireRoomCreate(): void {
       return;
     }
     try {
-      const res = await authFetch('/api/rooms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, agents: refs }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        showToast('Failed to create room: ' + (err.error || res.statusText), { kind: 'error' });
-        return;
-      }
-      const body = await res.json();
+      const body = await apiJson('/api/rooms', { method: 'POST', body: { name, agents: refs } });
       closeRoomDetail();
       await fetchAgents();
       // The broadcastRooms() server-side will push the updated list via WS,
@@ -865,7 +764,6 @@ export function updateUnreadDots() {
   if (state.lastRoomsList.length) renderRooms(state.lastRoomsList);
 }
 
-// ── Rooms ─────────────────────────────────────────────────────────────────
 // ── Room ordering ─────────────────────────────────────────────────────────
 // Live last-activity overrides keyed by room id. The rooms payload carries a
 // server-computed `last_activity`; as messages arrive while the app is open we

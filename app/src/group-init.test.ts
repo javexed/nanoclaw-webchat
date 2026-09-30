@@ -1,8 +1,7 @@
 /**
  * rtk hook wiring — the install promises every agent group's settings.json
- * carries the PreToolUse rtk hook (the binary rides the agent image). Two
- * legs: the default template new groups are seeded with, and the patcher
- * that backfills pre-existing groups on init. If either wiring is deleted
+ * carries the PreToolUse rtk hook (the binary rides the agent image). The
+ * patcher backfills pre-existing groups on init; if that wiring is deleted
  * or drifts, these go red.
  */
 import fs from 'fs';
@@ -11,7 +10,10 @@ import path from 'path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { DEFAULT_SETTINGS_JSON, ensureRtkHook } from './group-init.js';
+import { ensureHook, RTK_HOOK } from './group-init.js';
+
+const ensureRtkHook = (f: string, initialized: string[]): void =>
+  ensureHook(f, initialized, 'PreToolUse', RTK_HOOK, 'rtk hook');
 
 const tmpFiles: string[] = [];
 const tmpSettings = (content: object): string => {
@@ -23,15 +25,6 @@ const tmpSettings = (content: object): string => {
 
 afterEach(async () => {
   for (const d of tmpFiles.splice(0)) fs.rmSync(d, { recursive: true, force: true });
-});
-
-describe('default settings template', () => {
-  it('seeds new groups with the rtk PreToolUse hook alongside PreCompact', async () => {
-    const settings = JSON.parse(DEFAULT_SETTINGS_JSON);
-    expect(JSON.stringify(settings.hooks.PreToolUse)).toContain('rtk hook claude');
-    expect(settings.hooks.PreToolUse[0].matcher).toBe('Bash');
-    expect(JSON.stringify(settings.hooks.PreCompact)).toContain('compact-instructions');
-  });
 });
 
 describe('ensureRtkHook (backfill for pre-existing groups)', () => {

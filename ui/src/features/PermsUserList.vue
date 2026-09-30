@@ -1,23 +1,8 @@
 <script setup lang="ts">
 /**
- * The permissions user list — eleventh island.
- *
- * Mounted into <ul id="perms-user-list">, exclusively owned by this module.
- *
- * Sorting and filtering stay HERE rather than being shaped at the mount site
- * like ModelList and SearchResults. Those two shape upstream because their row
- * data needs something the component must not have (a module cycle, an escaping
- * order). This one needs neither: the inputs are the raw user records plus two
- * scalars, and the derivations are pure. Keeping them in a computed means the
- * A–Z toggle and the search box re-sort by touching a ref, instead of by
- * calling a render function that rebuilds the DOM.
- *
- * Rendering rules from the earlier islands, all load-bearing here:
- *   - text is BOUND, never written as template text (template text carries the
- *     surrounding newlines, which textContent did not have)
- *   - no comments in the template; Vue renders them as DOM comment nodes
- *   - v-bind an object for a conditional class; :class="{active:false}" emits
- *     class="" where the imperative version had no class attribute at all
+ * The permissions user list, mounted into <ul id="perms-user-list">. Sorting and
+ * filtering are computeds over the raw records plus two scalars, so the A–Z toggle and
+ * the search box re-sort by touching a ref.
  */
 import { computed } from 'vue';
 import { permsUsers, permsUserFilter, permsSortAz, permsSelectedUserId, permsMyUserId, usersError } from './perms-list-state.js';
@@ -62,13 +47,7 @@ function activate(u: any) {
   props.onSelect(u.id);
 }
 
-/**
- * One keydown handler, not @keydown.enter plus @keydown.space. Two modifier
- * bindings on the same event compile to an array the invoker walks, which is
- * still a single addEventListener — but it is a detail of the compiler, and the
- * listener-set guard compares (id, type) pairs. Writing the original's single
- * handler keeps the comparison honest instead of relying on that.
- */
+/** One keydown handler, not .enter plus .space modifiers: one listener per (id, type). */
 function onKey(e: KeyboardEvent, u: any) {
   if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault();

@@ -1,10 +1,11 @@
 // ── Composer ─────────────────────────────────────────────────────────────────
 // The message composer: send, the @-mention autocomplete, and the typing
 // indicator round-trip.
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { $, esc } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { pendingFiles } from './attach-picker-state.js';
-import { showToast, toastError } from '../core/toast.js';
-import { authFetch, apiJson } from '../core/api.js';
+import { showToast } from '../core/toast.js';
+import { apiJson } from '../core/api.js';
 import { isAdminView, state } from '../core/state.js';
 import { dismissMentionPopover, renderMentionPopover, showConfirmModal } from './modals.js';
 import { ensureTurn, removeTurn } from './thinking.js';
@@ -15,24 +16,11 @@ import { createApp } from 'vue';
 import SlashMenu from './SlashMenu.vue';
 import { slashActiveIndex, slashRows } from './slash-menu-state.js';
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideComposerDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
-export interface ComposerDeps {
-}
-
-const deps = {} as ComposerDeps;
-
-/** Wire the legacy helpers this module calls. Call once at startup. */
-export function provideComposerDeps(provided: Partial<ComposerDeps>): void {
-  Object.assign(deps, provided);
-}
-
 let roomMentionPeople: any[] = []; // current room's human members as @ autocomplete candidates
 
+// People you can @-mention here: anyone with a handle who can access the room,
+// online or not (mentions notify on return) — so sourced from the server, NOT
+// the connected-members list.
 export async function fetchMentionablePeople() {
   const roomId = state.currentRoom;
   if (!roomId) {
@@ -40,9 +28,8 @@ export async function fetchMentionablePeople() {
     return;
   }
   try {
-    const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId ?? "")}/mentionable`);
-    if (!res.ok) return; // leave stale on error rather than blanking
-    const people = await res.json();
+    // Throws on error: leave stale rather than blanking.
+    const people = await apiJson(`/api/rooms/${encodeURIComponent(roomId ?? "")}/mentionable`);
     if (state.currentRoom === roomId) {
       roomMentionPeople = people.map((p: any) => ({ folder: p.handle, name: p.name, isUser: true }));
     }
@@ -118,6 +105,7 @@ export function acceptMention(input: any) {
   input.dispatchEvent(new Event('input'));
 }
 
+// ── Typing indicators ─────────────────────────────────────────────────────
 export function handleTypingEvent(msg: any) {
   if (msg.room_id !== state.currentRoom) return;
   const { identity, identity_type, is_typing } = msg;
@@ -146,12 +134,9 @@ export function renderTypingIndicator() {
   const userTypers = entries.filter(([, v]: [string, any]) => v.identity_type !== 'agent');
   const typingAgents = entries.filter(([, v]: [string, any]) => v.identity_type === 'agent').map(([n]) => n);
 
-  // Per-agent thinking bubbles persist while EITHER an authoritative status turn
-  // owns them (data-statusLive, cleared by removal on 'done') OR the heartbeat
-  // typing signal says that agent is working (covers pre-status warm containers).
-  // So a quiet typing stretch never drops a live turn's bubble. Ensure a bubble
-  // for each typing agent; remove only bubbles that are neither status-live nor
-  // currently typing.
+  // A thinking bubble persists while EITHER a status turn owns it (statusLive,
+  // cleared on 'done') OR typing says that agent is working (pre-status warm
+  // containers), so a quiet typing stretch never drops a live turn's bubble.
   for (const name of typingAgents) ensureTurn(name);
   for (const t of [...thinkingTurns.value]) {
     if (t.statusLive) continue;
@@ -160,9 +145,8 @@ export function renderTypingIndicator() {
   }
 
   if (userTypers.length > 0) {
-    // esc() each name: the display name is an IdP/tailnet/proxy-supplied string
-    // (NOT the validated [a-z0-9-] handle), so it can contain markup — this is an
-    // innerHTML sink. Escape before interpolating.
+    // esc() each name: display names are IdP/tailnet/proxy-supplied (NOT the
+    // validated handle) and this is an innerHTML sink.
     const names = userTypers.map(([n]) => esc(n));
     const label =
       names.length === 1
@@ -178,22 +162,9 @@ export function renderTypingIndicator() {
 }
 
 // ── Slash-command menu ───────────────────────────────────────────────────────
-// The /-command autocomplete under the composer: the command tables, the match
-// state, the menu renderer, selection, and the keydown handler that consumes
-// nav/select/dismiss keys before the composer sees them.
-//
-// A contiguous 105-line cluster in legacy.js with nothing foreign inside it, and
-// only two entry points used from outside — updateSlashMenu (from the composer
-// input handler) and slashKeydown (from the composer keydown handler). Both are
-// exported; the rest of the cluster stays private to this module, which is what
-// made it separable from the rest of the composer.
-
-// ── Slash-command autocomplete (/clear, /compact, …) ──────────────────────────
-//
-// The agent-runner handles these admin commands directly (formatter.ts). Webchat
-// already passes the raw text through, so this is pure discoverability: type "/"
-// to see the set, pick one, send it. Per-session — resets/compacts the session
-// you're in, not background a2a sessions (use the agent's Sessions panel for those).
+// The /-command autocomplete under the composer. The agent-runner handles these
+// commands itself, so this is pure discoverability. Per-session: it acts on the
+// session you're in, not background a2a sessions (see the agent's Sessions panel).
 const SLASH_COMMANDS = [
   { cmd: '/clear', desc: 'Reset this session — drop context, start fresh' },
   { cmd: '/clear all', desc: "Reset ALL of this agent's sessions (incl. background a2a)" },
@@ -213,11 +184,7 @@ let slashActive = 0;
 let slashApp: ReturnType<typeof createApp> | null = null;
 
 function mountSlashMenu(): void {
-  if (slashApp) return;
-  const host = $('#slash-menu');
-  if (!host) return;
-  slashApp = createApp(SlashMenu, { onPick: (i: number) => pickSlash(i) });
-  slashApp.mount(host);
+  slashApp ??= mountIsland('#slash-menu', () => createApp(SlashMenu, { onPick: (i: number) => pickSlash(i) }));
 }
 
 export function updateSlashMenu() {
@@ -300,19 +267,9 @@ export function slashKeydown(e: KeyboardEvent): boolean {
 }
 
 // ── Send path and mentions ───────────────────────────────────────────────────
-// The rest of the composer: the send path (client message ids, the outbound
-// send, bulk session commands) and the @-mention menu with its state.
-//
-// The slash menu landed here first because it was separable — 105 lines, two
-// entry points. The mention state was not: wiredAgentsForCurrentRoom,
-// mentionStart, mentionMatches and mentionSelectedIndex are all read through
-// provide*Deps by other modules. They are owned here now, and legacy relays
-// them from the accessors below — the same shape as the detail-overlay state.
-//
-// broadcastSessionCommand was added as a DEP one slice ago, when the slash menu
-// moved and its caller stayed behind. Its caller is now in this module, so the
-// dep is deleted rather than kept: an injection that exists only because a move
-// was half-finished should not outlive the move.
+// The send path (client message ids, the outbound send, bulk session commands)
+// and the @-mention menu. Other modules read the mention state through the
+// accessors below, relayed by composition-root.ts.
 
 let clientMsgSeq = 0;
 
@@ -349,7 +306,6 @@ export function sendCurrentMessage() {
     setTimeout(() => broadcastSessionCommand(bulk), 0);
     return;
   }
-  // Don't send into a non-open socket — like the read/typing/interrupt sends.
   // ws.send on a CONNECTING/CLOSING socket throws or silently drops; bail and
   // keep the input so the user can resend once reconnected.
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
@@ -359,8 +315,7 @@ export function sendCurrentMessage() {
   const clientId = `local-${++clientMsgSeq}-${Date.now()}`;
   state.ws.send(JSON.stringify({ type: 'message', content: text, client_id: clientId, thread_id: state.currentThread }));
   // The optimistic echo hands the WS layer a ROW, not a DOM node: the echo
-  // upgrades it in place (status ✓→✓✓, the server id, the delete button) and a
-  // node it does not own is exactly what it must not be given now.
+  // upgrades it in place (status ✓→✓✓, the server id, the delete button).
   const row = appendMessage({ sender: state.myIdentity, sender_type: 'user', content: text }, '✓');
   if (row) {
     // Stamp where this was sent. The history handler carries still-pending rows
@@ -394,55 +349,26 @@ export async function broadcastSessionCommand(command: string): Promise<void> {
   });
   if (!ok) return;
   try {
-    const res = await authFetch(`/api/rooms/${encodeURIComponent(state.currentRoom)}/sessions/broadcast`, {
+    const body = await apiJson(`/api/rooms/${encodeURIComponent(state.currentRoom)}/sessions/broadcast`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command }),
+      body: { command },
     });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error || res.status);
     showToast(`${verb} queued for ${body.count} session(s)`, { kind: 'success' });
   } catch (err: any) {
     showToast(`${verb} all failed: ${err.message}`, { kind: 'error' });
   }
 }
 
-
-  // Slash-command menu (when open) consumes nav/select/dismiss keys first.
-  // If mention popover is showing, let it consume Enter/Tab before send fires.
-
-
 // ── Mention autocomplete (@<folder>) + chip rendering ─────────────────────────
-//
-// The router engages an agent when a wired-room message matches the agent's
-// engage_pattern (`\B@<folder>\b`, case-insensitive — see ciFolderToken in
-// server.ts). The autocomplete here is purely UX — it lets the user pick from
-// wired agents instead of remembering folder slugs. The chip styling is
-// purely cosmetic — confirmation that the @ token will be matched.
-//
-// Cache is refreshed on join + on the same broadcastRooms event the room list
-// listens for, so adds/removes/prime-changes stay current without polling.
+// Purely UX: the router engages on the agent's engage_pattern (`\B@<folder>\b`,
+// see ciFolderToken in server/agent-wiring.ts). The cache refreshes on join and
+// on broadcastRooms, so wiring changes stay current without polling.
 
 let wiredAgentsForCurrentRoom: any[] = []; // [{ id, name, folder, is_prime }]
-
-
-// People you can @-mention here: anyone with a handle who can access the room,
-// online or not (mentions notify on return). Sourced from the server, NOT the
-// connected-members list — so you can mention offline teammates and the list
-// isn't empty just because you're the only one currently in the room.
 
 let mentionStart = -1;
 let mentionMatches: any[] = [];
 let mentionSelectedIndex = 0;
-
-
-
-
-
-
-    // Defer so a click on a popover item registers before we tear down.
-  // Capture phase so we intercept Enter/Tab before the send-message handler
-  // fires. Only intercept when the popover is actually showing.
 
 /** The composer's own wiring: form submit, keydown, and the mention menu. */
 export function wireComposer(): void {
@@ -451,7 +377,10 @@ export function wireComposer(): void {
     sendCurrentMessage();
   });
   $<HTMLTextAreaElement>('#message-input')?.addEventListener('keydown', (e) => {
+    // Slash-command menu (when open) consumes nav/select/dismiss keys first.
     if (slashKeydown(e)) return;
+
+    // If mention popover is showing, let it consume Enter/Tab before send fires.
     if (mentionMatches.length > 0 && (e.key === 'Enter' || e.key === 'Tab')) return;
     if (e.key !== 'Enter') return;
     if (state.settings?.sendKey === 'enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
@@ -471,8 +400,12 @@ export function wireComposer(): void {
     if (!input) return;
     input.addEventListener('input', () => tryActivateMention(input));
     input.addEventListener('blur', () => {
+      // Defer so a click on a popover item registers before we tear down.
       setTimeout(dismissMentionPopover, 120);
     });
+
+    // Capture phase so we intercept Enter/Tab before the send-message handler
+    // fires. Only intercept when the popover is actually showing.
     input.addEventListener(
       'keydown',
       (e) => {

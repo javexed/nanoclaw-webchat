@@ -57,11 +57,9 @@ export function userCredsAgentIdentifier(agentGroupId: string, userId: string): 
 /**
  * Per-member SESSION KEY codec: (user, thread) -> the session's thread_id.
  *
- * A per-member session used to be keyed by user ALONE, which collapsed every
- * thread in a room into one session. That is not cosmetic: one member's queue
- * ended up holding 89 main-thread rows and 60 topic-thread rows, and the agent
- * answered a message posted in the room into the topic thread instead. Keying
- * by (user, thread) keeps each thread its own session and its own history.
+ * Keyed by (user, thread), not user alone, so each thread keeps its own session
+ * and history — one per-user queue lets the agent answer a room message into a
+ * topic thread.
  *
  * Separator is `::` because user ids already contain single colons
  * (`webchat:tailscale:a@x.com`) while thread ids are UUIDs or `main` — neither
@@ -81,8 +79,7 @@ export function memberSessionKey(userId: string, threadId: string | null | undef
 /**
  * The user half of a per-member session key, or null when this is not one.
  *
- * Null for a BARE user id — the pre-composite shape still in the sessions table.
- * Callers therefore read `memberUserFromKey(x) ?? x`, which keeps existing
+ * Null for a BARE user id (older sessions rows use that shape). Callers read `memberUserFromKey(x) ?? x`, which keeps existing
  * per-member sessions resolving to the right credential identity instead of
  * silently falling back to the workspace default (a container would keep
  * running, on the wrong identity — the failure this codec exists to prevent).

@@ -3,9 +3,7 @@
 // spaces, commas or new lines). Every change saves at once; the server
 // normalizes and validates, and what it stored is what the list shows. Used by
 // the install allowlist (Manage → Network) and each agent's own hosts.
-//
-// Markup inside `root`: [data-hosts] (the rows), input[data-host-input] and
-// button[data-host-add].
+// Markup inside `root`: [data-hosts], input[data-host-input], button[data-host-add].
 import { esc } from '../core/dom.js';
 
 export interface HostListEditor {

@@ -1,5 +1,5 @@
 // ── Model assignee state ────────────────────────────────────────────────────
-// Bridge ref for the ModelUsage island. models.ts still opens the detail pane;
+// Bridge ref for the ModelUsage island. models.ts opens the detail pane;
 // this is only the "assigned to" line.
 import { ref } from 'vue';
 

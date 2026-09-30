@@ -1,9 +1,6 @@
 // ── Auth token + fetch helpers ───────────────────────────────────────────────
-// First module carved out of legacy.js. It owns the auth token rather than
-// exporting the variable: an ES import binding cannot be assigned from another
-// module, and the token IS reassigned (on login, and after a token mint). So
-// the token is private here and reached through accessors — the pattern every
-// later extraction that owns mutable state will follow.
+// The token is private and reached through accessors: an ES import binding
+// cannot be reassigned by an importer, and the token changes on login and mint.
 
 // sessionStorage (not localStorage). Precision matters here: sessionStorage is
 // fully readable by ANY script running in this page, so it does NOT protect the

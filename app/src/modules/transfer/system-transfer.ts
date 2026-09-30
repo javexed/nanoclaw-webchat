@@ -1,5 +1,5 @@
 /**
- * System export/restore (Phase 2 of backup/import) — the whole install as one
+ * System export/restore — the whole install as one
  * streamable .tgz: a consistent central-DB snapshot plus every data tree that
  * isn't secret or rebuildable.
  *
@@ -26,7 +26,7 @@ import Database from 'better-sqlite3';
 import { DATA_DIR, GROUPS_DIR } from '../../config.js';
 import { getDb } from '../../db/connection.js';
 import { log } from '../../log.js';
-import { CONVERSATION_DIRS, EXCLUDE_ALWAYS, WORKSPACE_SECRET_FILES } from './agent-transfer.js';
+import { CONVERSATION_DIRS, EXCLUDE_ALWAYS, renameTopTransform, WORKSPACE_SECRET_FILES } from './agent-transfer.js';
 
 export const SYSTEM_FORMAT = 'nanoclaw-system-export';
 export const SYSTEM_VERSION = 1;
@@ -123,14 +123,14 @@ export function systemTarArgs(stage: string, lean: boolean, includeSecrets = fal
   }
   args.push('-C', stage, 'manifest.json', 'db');
   args.push(
-    `--transform=s|^${path.basename(GROUPS_DIR)}|files/groups|`,
+    renameTopTransform(path.basename(GROUPS_DIR), 'files/groups'),
     '-C',
     path.dirname(GROUPS_DIR),
     path.basename(GROUPS_DIR),
   );
   for (const tree of DATA_TREES) {
     if (fs.existsSync(path.join(DATA_DIR, tree))) {
-      args.push(`--transform=s|^${tree}|files/data/${tree}|`, '-C', DATA_DIR, tree);
+      args.push(renameTopTransform(tree, `files/data/${tree}`), '-C', DATA_DIR, tree);
     }
   }
   return args;

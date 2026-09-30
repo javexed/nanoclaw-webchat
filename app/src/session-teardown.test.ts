@@ -1,11 +1,6 @@
 /**
- * Tests for session teardown primitives.
- *
- * Locks in the contract that motivated extracting these helpers: every
- * parent-delete path that holds an FK to `sessions` must use them, or the
- * SQLite FK check rejects the parent delete with "FOREIGN KEY constraint
- * failed". Regressions here would resurface as cryptic "Internal error"
- * responses in channel skills.
+ * Session teardown primitives: every parent-delete path that holds an FK to
+ * `sessions` must use them, or SQLite rejects the parent delete.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
@@ -148,9 +143,7 @@ describe('deleteSessionDbState', () => {
 describe('FK behavior — the bug this primitive prevents', () => {
   it('deleting a messaging_group with an active session throws FOREIGN KEY', async () => {
     await seed();
-    // Without teardown, SQLite rejects the parent delete. This is the
-    // exact scenario that surfaced as "Failed to delete room: Internal
-    // error" in the webchat UI.
+    // Without teardown, SQLite rejects the parent delete.
     await expect(deleteMessagingGroup('mg-1')).rejects.toThrow(/FOREIGN KEY/);
   });
 

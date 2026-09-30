@@ -45,7 +45,7 @@ beforeEach(async () => {
   const db = await initTestDb();
   await runMigrations(await db);
 
-  // Three-agent room mirroring the user's `floor` setup:
+  // Three-agent room:
   //   News    — prime (negative-lookahead pattern, ignores @-mentions to others)
   //   FOMC    — \B@fomc\b
   //   Advisor — \B@advisor\b

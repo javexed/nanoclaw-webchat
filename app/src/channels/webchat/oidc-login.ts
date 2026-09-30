@@ -20,8 +20,8 @@
  *                                means the request's own Host is not it
  *
  * The redirect URI is <origin>/auth/oidc/callback and must be registered with
- * the provider (Admin → Sign-in shows it). The first version used
- * /auth/microsoft/*; those paths still work. Most providers accept http only
+ * the provider (Admin → Sign-in shows it); the legacy /auth/microsoft/* paths
+ * still work. Most providers accept http only
  * for localhost, so a tailnet install needs HTTPS first.
  */
 import { createHash, randomBytes } from 'crypto';
@@ -237,9 +237,4 @@ export function loginErrorMessage(reason: string, detail?: string): string {
     default:
       return 'Sign-in failed. Try again.';
   }
-}
-
-/** Tests only. */
-export function __resetLoginAttemptsForTest(): void {
-  attempts.clear();
 }

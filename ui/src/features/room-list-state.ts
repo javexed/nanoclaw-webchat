@@ -1,24 +1,14 @@
 // ── Room list view state ────────────────────────────────────────────────────
-// The sidebar's own state. Most of what the room list renders already lives in
-// core/state.ts and is reactive there — rooms, threads, unread/mention sets,
-// expanded rooms, the thread being renamed. This module holds only what legacy
-// still owned as module-scope variables.
+// The sidebar's own state. Rooms, threads, unread/mention sets and the like
+// live in core/state.ts; this holds the rest.
 import { ref } from 'vue';
 
-/** A–Z toggle: alphabetical by the displayed `#id` when on, activity when off. */
-/** Restored from the session — the sessionStorage read was the `let`'s
- *  initialiser in legacy.js, and dropping it turns a remembered preference
- *  into a per-reload default. */
+/** A–Z toggle: alphabetical by the displayed `#id` when on, activity when off.
+ *  Restored from the session so the preference survives a reload. */
 export const roomSortAz = ref(sessionStorage.getItem('webchat:roomSortAz') === '1');
-/** Per-user "hide" reveal toggle. */
-/** Restored from the session — the sessionStorage read was the `let`'s
- *  initialiser in legacy.js, and dropping it turns a remembered preference
- *  into a per-reload default. */
+/** Per-user "hide" reveal toggle, restored from the session. */
 export const showHidden = ref(sessionStorage.getItem('webchat:showHidden') === '1');
-/** Archived section reveal toggle. */
-/** Restored from the session — the sessionStorage read was the `let`'s
- *  initialiser in legacy.js, and dropping it turns a remembered preference
- *  into a per-reload default. */
+/** Archived section reveal toggle, restored from the session. */
 export const showArchived = ref(sessionStorage.getItem('webchat:showArchived') === '1');
 
 /**
@@ -31,14 +21,8 @@ export const showArchived = ref(sessionStorage.getItem('webchat:showArchived') =
  */
 export const draggedPinId = ref<string | null>(null);
 
-/**
- * Which row's kebab menu is open, or null. At most one across the list.
- *
- * This is why renderRooms had a retry timer: the menu was a DOM node inside the
- * list, so any background re-render tore it down mid-click and the code
- * deferred the update by 400ms instead. As state the menu survives a re-render,
- * and the retry is gone with it.
- */
+/** Which row's kebab menu is open, or null. At most one across the list; held
+ *  as state so a background re-render does not tear the menu down mid-click. */
 export const openMenuRoomId = ref<string | null>(null);
 
 /** Which thread's kebab menu is open, or null. */
@@ -48,30 +32,19 @@ export const openThreadMenuId = ref<string | null>(null);
 export const dropMarker = ref<Record<string, 'before' | 'after'>>({});
 
 /**
- * Threads with a delete countdown armed, keyed by thread_id.
- *
- * This replaces armUndo()'s DOM swap. armUndo was handed the ROW — not an
- * actions strip — captured its childNodes, replaced them with the timer and
- * re-appended them on Undo. ThreadRows renders those children, so that was an
- * imperative writer reinserting vnode-managed nodes behind Vue's back: the last
- * two-writers case in the codebase and the reason armUndo could not be deleted
- * with the rest of legacy.js.
- *
- * `width` is measured BEFORE the swap and pinned on the row, exactly as armUndo
- * did — measuring after would read the timer's own width and defeat the point.
+ * Threads with a delete countdown armed, keyed by thread_id. ThreadRows renders
+ * the timer from this rather than anything swapping its vnode-managed children.
+ * `width` is measured BEFORE the swap and pinned on the row: measuring after
+ * would read the timer's own width.
  */
 export const threadUndo = ref<
   Record<string, { label: string; width: string; commit: () => void }>
 >({});
 
-/** The room whose detail pane is open, or null. */
 /**
- * Live room-name filter, driven by the sidebar search box as you type.
- *
- * Deliberately NOT debounced and never sent anywhere: matching a name the
- * client already holds costs nothing, so the list narrows on the keystroke
- * while the MESSAGE search under it still waits out its 250ms. One box, two
- * speeds — the fast half should not be held back by the slow one.
+ * Live room-name filter, driven by the sidebar search box. Deliberately NOT
+ * debounced and never sent anywhere: names are client-side, so the list narrows
+ * on the keystroke while the message search under it waits out its 250ms.
  */
 export const roomFilter = ref('');
 

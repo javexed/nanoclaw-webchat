@@ -3,7 +3,7 @@
 // install's single sign-on (a round trip through the provider), or this device's
 // Tailscale identity. The server decides what is offered (can.*) and which
 // identity stays the account (the older one); this only shows it.
-import { authFetch } from '../core/api.js';
+import { apiJson, authFetch } from '../core/api.js';
 import { $, esc } from '../core/dom.js';
 import { showToast, toastError } from '../core/toast.js';
 import { showConfirmModal } from './modals.js';
@@ -30,8 +30,7 @@ export async function renderSignins(): Promise<void> {
   if (!section) return;
   let view: SigninsView | null = null;
   try {
-    const r = await authFetch('/api/account/sign-ins');
-    if (r.ok) view = (await r.json()) as SigninsView;
+    view = (await apiJson('/api/account/sign-ins')) as SigninsView;
   } catch {
     view = null;
   }
@@ -75,9 +74,7 @@ function wire(): void {
 
 async function linkTailscale(): Promise<void> {
   try {
-    const r = await authFetch('/api/account/link/tailscale', { method: 'POST', headers: { 'X-Webchat-CSRF': '1' } });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+    await apiJson('/api/account/link/tailscale', { method: 'POST', headers: { 'X-Webchat-CSRF': '1' } });
     showToast('Sign-in linked', { kind: 'success' });
   } catch (err) {
     toastError(err, 'Could not link');
@@ -94,12 +91,10 @@ async function unlink(alias: string): Promise<void> {
   });
   if (!ok) return;
   try {
-    const r = await authFetch(`/api/account/links/${encodeURIComponent(alias)}`, {
+    await apiJson(`/api/account/links/${encodeURIComponent(alias)}`, {
       method: 'DELETE',
       headers: { 'X-Webchat-CSRF': '1' },
     });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
   } catch (err) {
     toastError(err, 'Could not unlink');
   }

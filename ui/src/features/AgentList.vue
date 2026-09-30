@@ -1,19 +1,8 @@
 <script setup lang="ts">
 /**
- * The agent list — the first Vue island.
- *
- * Mounted into <ul id="agent-list">, which no other module writes to. That
- * exclusivity is why this panel went first: an island and an imperative
- * renderer sharing a container would fight, and the whole of phase 4.1 was
- * about producing containers that one owner controls.
- *
- * It reads state.allAgents directly — that object became shallowReactive in
- * phase 4.0, so pushing a new array into it re-renders this list with no
- * explicit call. The two values that are NOT reactive (the A–Z toggle and the
- * selected agent) are legacy module state; renderAgents() syncs them into refs
- * on each call, which is exactly when the imperative version re-rendered. That
- * keeps renderAgents()'s contract identical for its eight call sites while the
- * implementation stops touching the DOM.
+ * The agent list, mounted into <ul id="agent-list">. Reads state.allAgents
+ * (shallowReactive) directly, so a new array re-renders it; filter, A–Z and selection
+ * come from agent-list-state.
  */
 import { computed } from 'vue';
 import { state } from '../core/state.js';

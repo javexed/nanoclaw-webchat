@@ -11,10 +11,30 @@ server(s) serve**. Ollama is the default backend; any keyless
 OpenAI-compatible server (vLLM, LM Studio, llama.cpp server, TGI, …) works
 the same way — hosts are probed and their rosters discovered automatically.
 Keyed cloud backends are an explicit opt-in (below). Deliberately minimal —
-no classifier, no routing policy. Dependent skills (classifier routing,
-escalation) layer on top of this.
+no classifier, no routing policy. Dependent skills (classifier routing) layer
+on top of this.
 
-Design: [docs/webchat/design/add-litellm.md](../../../docs/webchat/design/add-litellm.md).
+## Why it looks like this
+
+- **Scope.** One job: the base endpoint. Classifier routing, fallback chains
+  between different models, budgets, virtual keys and
+  Postgres belong to dependent skills (`/add-routing`); this skill stops at one
+  master key and knows nothing about them. It does not manage the model
+  servers either.
+- **Keyless by default.** With only discovered local backends there is no
+  `master_key` and no request auth. That is safe only because the router is
+  never publicly reachable: it binds `127.0.0.1` and the docker bridge IP, so
+  binding is the perimeter. TLS is owed before the endpoint leaves the machine.
+- **Proxy auth arms itself** the moment a keyed backend exists — an
+  unauthenticated endpoint in front of a paid key would be a free credential
+  proxy (see *Keyed backends*).
+- **Agent → router credentials go through OneCLI**, like every other agent
+  credential; the keyless local path is the sanctioned plaintext `NO_PROXY`
+  case. On webchat installs `webchat_models.credential_ref` is reserved but
+  unimplemented — OneCLI injection is the only wired credential path.
+- **Pinned image.** `ghcr.io/berriai/litellm` sits outside the pnpm
+  supply-chain gate, so the installer's exact-version pin is the only version
+  control it gets; `latest` is rejected.
 
 ## Prerequisites
 

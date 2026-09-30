@@ -2,16 +2,13 @@
  * Where an agent may connect: one policy for every agent, enforced wherever
  * its traffic leaves.
  *
- * - A runner agent's container has no network; every connection rides the
- *   relay to central (runner-relay.ts), which checks here before terminating
- *   it at the OneCLI gateway as that agent.
- * - A local agent set to anything but Open runs on the internal lockdown
- *   network, where its proxy resolves to central's egress filter
+ * - An agent set to anything but Open runs without a way out of its own: on
+ *   the internal lockdown network, or with no network at all under the exec
+ *   relay (exec-relay.ts). Its proxy resolves to central's egress filter
  *   (egress-filter.ts), which checks here before forwarding to the gateway.
  *
- * Without this the gateway goes anywhere: measured 2026-09-23, example.com,
- * npm, PyPI and GitHub all answered — for "Locked down" local agents too, since
- * lockdown only removed direct routes, never the gateway's.
+ * Without this the gateway forwards anywhere, for locked-down local agents too:
+ * lockdown removes direct routes, never the gateway's.
  *
  * The group's network mode chooses the rule:
  *   'open'       anything — only when chosen (stored as 'open')

@@ -1,18 +1,10 @@
 /**
- * Cold-spawn warmer — primes the host page cache for the agent image.
- *
- * Why: the first container spawn after a host restart / image rebuild pays a
- * cold-disk penalty that dwarfs the code path itself. Measured on a live
- * install (see docs/webchat/design/cold-spawn.md): `claude --version` inside
- * the image is ~1.8s with a cold page cache vs ~0.1s warm; the Claude SDK
- * subprocess start goes from 2.6–8.7s cold/loaded to 0.8–1.9s warm. The
- * overlayfs layers are ordinary host files, so the kernel page cache is
- * shared across every container of the image — one throwaway warm run at
- * service start moves that entire penalty off the first user message.
- *
- * The warmer is strictly off the critical path: fire-and-forget at host
- * startup, `--network none`, hard caps, never throws, and a failure only
- * means the first spawn is as slow as it always was.
+ * Cold-spawn warmer — primes the host page cache for the agent image
+ * (docs/webchat/design/cold-spawn.md). The first spawn after a restart or
+ * rebuild pays a cold-disk penalty; overlayfs layers are ordinary host files,
+ * so one throwaway warm run at service start moves it off the first message.
+ * Strictly off the critical path: fire-and-forget, `--network none`, hard
+ * caps, never throws.
  */
 import { spawn } from 'child_process';
 import path from 'path';

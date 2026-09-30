@@ -1,12 +1,11 @@
 /**
  * Learning loop — host side of the `propose_skill` system action
- * (see docs/webchat/design/learning-loop.md).
+ * (see docs/webchat/learning-loop.md).
  *
  * A container agent's `draft_skill` MCP tool emits a `propose_skill` action to
  * outbound.db. This stages it as a DRAFT (never live) for review in the webchat
  * "Proposed skills" surface. Approval → wire is a separate, admin-gated step.
  */
-import type Database from 'better-sqlite3';
 import { log } from '../../log.js';
 import type { Session } from '../../types.js';
 import { createSkillDraft } from '../../db/skill-drafts.js';

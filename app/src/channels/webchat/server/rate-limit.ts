@@ -1,12 +1,7 @@
 // ── Per-user action rate limit ───────────────────────────────────────────────
-// One debounce shared by every user-credential action: OAuth connect, token
-// mint, tool secrets, deploy keys — and the user/permission routes now in
-// server/routes-users.ts.
-//
-// The three move together because the Map is the limiter's state. Splitting the
-// function from its store would give each importer its own window and silently
-// stop limiting anything; keeping the Map module-private here is what makes
-// that impossible. Nothing outside this file touches it.
+// One debounce shared by every user-credential action (OAuth connect, token
+// mint, tool secrets, deploy keys, user/permission routes). The Map is the
+// limiter's state, so one module owns it: a copy per importer would limit nothing.
 
 // Cheap in-process guard against UserCreds abuse: a per-identity min-interval on
 // credential connects + mint starts (prevents rapid reconnect / spawn churn).

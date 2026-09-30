@@ -1,18 +1,9 @@
 <script setup lang="ts">
 /**
- * An MCP server's hardening panel — thirty-fifth island.
- *
- * Mounted into <div id="mcp-hardening">, exclusively owned by this module.
- *
- * Four independent blocks, each conditional, rendered in a fixed order: health,
- * drift, the tool allowlist, then OAuth. stdio servers render nothing at all —
- * there is no transport to harden.
- *
- * The tool checkboxes keep their state in the DOM. Save reads them back with
- * querySelectorAll and compares the checked COUNT to the total, because "all
- * checked" is stored as null — no restriction, so future tools flow through
- * automatically. Modelling the ticks as state would mean that comparison reads
- * a ref instead, and getting it subtly wrong silently pins the surface.
+ * An MCP server's hardening panel, mounted into <div id="mcp-hardening">: health, drift,
+ * tool allowlist, OAuth, in that order; stdio servers render nothing. Tool checkboxes keep
+ * their state in the DOM: Save compares the checked COUNT to the total because "all
+ * checked" is stored as null (no restriction, so future tools flow through).
  */
 import { computed } from 'vue';
 import { isWorkspaceAdminView } from '../core/state.js';
@@ -38,7 +29,7 @@ const healthText = computed(() => {
   return `● Tool surface changed (checked ${when})`;
 });
 
-/** The drift summary, in the order the original built it. */
+/** The drift summary, in display order. */
 const driftParts = computed(() => {
   const d = s.value?.drift;
   if (!d) return [];

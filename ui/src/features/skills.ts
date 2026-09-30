@@ -2,17 +2,8 @@
 // The skills surface: catalog and sources, trust tiers, the editor and its
 // draft lifecycle, the review / keep / discard flow for agent-proposed drafts,
 // the distill action and the suggestion box.
-//
-// Scoped by measurement. `skill*` alone is 38 functions at 2.0 external
-// references per 100 lines; folding in `draft*` and `distill*` — the same
-// feature under different nouns — adds 116 lines for NO extra coupling, at 1.8.
-//
-// skillEditorDraft is OWNED here rather than injected. Legacy reads it exactly
-// once, so the dependency runs the sensible way round: the module owns its own
-// editor state and exposes a getter, instead of legacy holding it and handing
-// down an accessor pair.
 import { createApp } from 'vue';
-import { loadingRow } from './mcp.js';
+import './mcp.js';
 import { confirmTemplatePlan, resetTemplatePick, selectedTemplateRef, stampTemplate } from './agent-templates.js';
 import { showConfirmModal } from './modals.js';
 import { viewStack } from './views-state.js';
@@ -21,7 +12,8 @@ import { roomDetailWiredAgents } from './agent-detail-state.js';
 import { selectedAgentId } from './agent-list-state.js';
 import AgentSkillsList from './AgentSkillsList.vue';
 import { agentSkillRows, agentSkillsEnabled } from './agent-skills-state.js';
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { $ } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { closeAgentDetail, fetchAgents } from './agents.js';
 import { joinRoom } from './rooms.js';
 import { closeView } from './views.js';
@@ -30,7 +22,6 @@ import { showToast, toastError } from '../core/toast.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { UNDO_SECONDS } from '../core/constants.js';
 import { state } from '../core/state.js';
-import { originBadgeEl } from './origin-badge.js';
 import SkillDuplicates from './SkillDuplicates.vue';
 import AgentScopedSkills from './AgentScopedSkills.vue';
 import SkillSources from './SkillSources.vue';
@@ -68,10 +59,9 @@ import {
 import { messages } from './transcript-state.js';
 
 /**
- * A skill in the catalog. Derived from every property this module reads —
- * fifth type built this way after Approval, ThinkingTurn, Room and Agent.
- * Broad because the catalog merges several sources (built-in, repo, agent
- * -scoped) that carry different subsets.
+ * A skill in the catalog, typed from every property this module reads. Broad
+ * because the catalog merges sources (built-in, repo, agent-scoped) that carry
+ * different subsets.
  */
 export interface Skill {
   id?: string;
@@ -117,12 +107,8 @@ export interface SkillDraft {
   agents?: unknown[];
 }
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideSkillsDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
+/** Supplied by provideSkillsDeps in composition-root.ts. `any` marks a signature not
+ *  yet typed, not an opt-out of checking. */
 export interface SkillsDeps {
   closeRoomDetail: (...args: any[]) => any;
   closeView: (...args: any[]) => any;
@@ -137,7 +123,7 @@ export interface SkillsDeps {
 
 const deps = {} as SkillsDeps;
 
-/** Wire the legacy helpers this module calls. Call once at startup. */
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 export function provideSkillsDeps(provided: Partial<SkillsDeps>): void {
   Object.assign(deps, provided);
 }
@@ -148,14 +134,9 @@ export function getSkillEditorDraft() {
 }
 
 /**
- * Per-card Vue apps, keyed by draft id.
- *
- * Every other island mounts once into a container from index.html. These mount
- * into a wrapper created here and appended to #messages, which the transcript
- * owns — so each card is its own app, and each has to be unmounted when its
- * card is replaced or the transcript is cleared. Nothing else does that, which
- * is exactly why it is tracked rather than left to garbage collection: a live
- * app on a detached node keeps its reactive effects subscribed.
+ * Per-card Vue apps, keyed by draft id. Each card mounts into a wrapper in the
+ * transcript's #messages, so it must be unmounted when replaced or cleared: a
+ * live app on a detached node keeps its reactive effects subscribed.
  */
 const draftCardApps = new Map<string, ReturnType<typeof createApp>>();
 
@@ -193,28 +174,27 @@ export function skillDraftRow(msg?: any): any {
     undoSeconds: UNDO_SECONDS,
     draftId: id,
     onView: () => openSkillDraft(d.draftId),
-    // Keep commits immediately: the undo it used to wait out now lives AFTER
-    // the write, where it can also cover the auto-keep path. Discard keeps its
-    // pre-commit window — it deletes the draft body, so there is no after.
+    // Keep commits immediately; its undo lives AFTER the write, where it also
+    // covers auto-keep. Discard keeps its pre-commit window (it deletes the body).
     onKeep: () => void keepSkillDraft(draft),
     onDiscard: () => void discardDraftFromCard(id, draft),
     onUndoKeep: () => void undoKeptSkill(id, draft),
     onUndoDiscard: () => void restoreDiscardedDraft(id, draft),
     onOverlapChoice: (decision: OverlapDecision) => void resolveOverlap(id, draft, decision),
   };
-  // Keyed by DRAFT ID, not a fresh counter. Resolving re-broadcasts the same
-  // card, and pushRow replaces a row whose key it already holds — so the card
-  // updates in place instead of appending a second, contradictory copy below
-  // the first. This is what the comment here always claimed happened.
+  // Keyed by DRAFT ID, not a fresh counter: resolving re-broadcasts the same
+  // card, and pushRow replaces a row whose key it holds, updating in place.
   return { key: `draft:${id}`, kind: 'draft', id, payload: props };
 }
 
+// Pending-drafts badge (learning loop): a count on the ⋯ menu so staged drafts
+// aren't invisible until someone happens to open Skills. Non-admins get a 403
+// from the endpoint → count 0 → badge hidden, correct for who can act on them.
 export async function refreshDraftBadge(known?: any) {
   let n = known;
   if (typeof n !== 'number') {
     try {
-      const res = await authFetch('/api/skill-drafts');
-      n = res.ok ? ((await res.json()).drafts || []).length : 0;
+      n = ((await apiJson('/api/skill-drafts')).drafts || []).length;
     } catch {
       n = 0;
     }
@@ -231,29 +211,26 @@ export async function refreshDraftBadge(known?: any) {
 let draftsApp: ReturnType<typeof createApp> | null = null;
 
 function mountSkillDrafts(): void {
-  if (draftsApp) return;
-  const host = $('#skill-drafts-list');
-  if (!host) return;
-  draftsApp = createApp(SkillDrafts, {
-    undoSeconds: UNDO_SECONDS,
-    onOpen: (id: string) => openSkillDraft(id),
-    // The draft is a claim about a conversation — one click back to the
-    // evidence beats trusting the description.
-    onSource: (roomId: string) => {
-      const room = state.lastRoomsList.find((r: any) => r.id === roomId);
-      deps.joinRoom(roomId, room ? room.name : roomId);
-    },
-    onKeep: (r: any) => void keepSkillDraft(r.raw),
-    onDiscard: (r: any) => armDraftUndo(r.id, `Discarding ${r.raw.skillName}…`, () => discardSkillDraft(r.id)),
-    onUndo: (id: string) => clearDraftUndo(id),
-  });
-  draftsApp.mount(host);
+  draftsApp ??= mountIsland('#skill-drafts-list', () =>
+    createApp(SkillDrafts, {
+      undoSeconds: UNDO_SECONDS,
+      onOpen: (id: string) => openSkillDraft(id),
+      // The draft is a claim about a conversation — one click back to the
+      // evidence beats trusting the description.
+      onSource: (roomId: string) => {
+        const room = state.lastRoomsList.find((r: any) => r.id === roomId);
+        deps.joinRoom(roomId, room ? room.name : roomId);
+      },
+      onKeep: (r: any) => void keepSkillDraft(r.raw),
+      onDiscard: (r: any) => armDraftUndo(r.id, `Discarding ${r.raw.skillName}…`, () => discardSkillDraft(r.id)),
+      onUndo: (id: string) => clearDraftUndo(id),
+    }),
+  );
 }
 
 function armDraftUndo(id: string, label: string, commit: () => unknown) {
-  // Freeze the actions' current width before swapping in the timer, so the row
-  // does not jump. armUndo did the same with getBoundingClientRect(); measuring
-  // AFTER the swap would read the timer's width and defeat the point.
+  // Freeze the actions' width before swapping in the timer so the row does not
+  // jump; measuring AFTER the swap would read the timer's width.
   const el = document.querySelector(`#skill-drafts-list li[data-draft-id="${CSS.escape(id)}"] .skill-draft-actions`);
   const w = el ? (el as HTMLElement).getBoundingClientRect().width : 0;
   draftUndo.value = {
@@ -275,13 +252,14 @@ function clearDraftUndo(id: string) {
   draftUndo.value = next;
 }
 
+// Learning loop: skills the agents proposed, staged for review (keep + wire, or
+// discard). See docs/webchat/learning-loop.md.
 async function renderSkillDrafts() {
   const wrap = $('#skill-drafts');
   if (!wrap || !$('#skill-drafts-list')) return;
   let drafts = [];
   try {
-    const res = await authFetch('/api/skill-drafts');
-    if (res.ok) drafts = (await res.json()).drafts || [];
+    drafts = (await apiJson('/api/skill-drafts')).drafts || [];
   } catch {}
   wrap.hidden = drafts.length === 0;
   void refreshDraftBadge(drafts.length);
@@ -293,14 +271,20 @@ async function renderSkillDrafts() {
   mountSkillDrafts();
 }
 
+// Draft-editor state. Non-null while the SKILL.md editor is showing a DRAFT
+// (as opposed to an installed skill) — saveSkillEditor branches on it.
 let skillEditorDraft: any = null;
 
+// A self-contained SKILL.md viewer/editor modal that overlays the CURRENT view
+// (opened from the agent page, so you never leave it). onSave(content) returns a
+// promise; a thrown error keeps the modal open and surfaces the message.
+// `actions` (optional): [{ label, onClick }] — low-emphasis buttons rendered
+// before Cancel/Close; clicking one closes the modal, then runs onClick (e.g.
+// the scoped editor's 'History' jump into Journey).
 function openSkillEditorModal({ name, body, editable, badgeText, onSave, actions = [] }: any) {
-  // Per-instance, like the draft cards: nothing owns document.body, so the
-  // overlay is created here and the app is mounted INTO it. Not into a child —
-  // the original structure is overlay > modal, and a wrapper div would break any
-  // `.modal-overlay > .modal` rule. Vue replaces the host's children and never
-  // the host, so the overlay keeps its own click-outside listener.
+  // Per-instance: the app mounts INTO the overlay (not a child) so
+  // `.modal-overlay > .modal` rules hold, and the overlay, which Vue never
+  // replaces, keeps its own click-outside listener.
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   document.body.appendChild(overlay);
@@ -338,6 +322,9 @@ function openSkillEditorModal({ name, body, editable, badgeText, onSave, actions
   });
 }
 
+// View/edit a skill scoped to ONE agent (its own .claude-shared/skills — where a
+// learned-and-kept skill lives). Opens the in-place modal. Scoped skills only
+// affect that agent, so a per-group admin may edit; the server re-checks.
 export async function openScopedSkillEditor(agentId?: any, name?: any) {
   let data = null;
   try {
@@ -365,6 +352,8 @@ export async function openScopedSkillEditor(agentId?: any, name?: any) {
   });
 }
 
+// View a shared-pool skill from the agent page, in-place. User-pool skills are
+// editable (server enforces owner/global-admin on save); built-ins are read-only.
 async function openPoolSkillFromAgent(name?: any) {
   let data = null;
   try {
@@ -420,6 +409,7 @@ async function openSkillDraft(id?: any) {
   }
 }
 
+/** Paint the editor from skillEditorDraft (diff-review or edit mode). */
 export function renderDraftEditor() {
   const d = skillEditorDraft;
   if (!d) return;
@@ -464,13 +454,8 @@ const reviewingDrafts = new Set<string>();
 export type OverlapDecision = { action: 'update'; target: string } | { action: 'keep-new' } | { action: 'discard' };
 
 /**
- * The keep flow's ONE writer.
- *
- * Everything a card shows about a keep — in flight, checking, overlapping,
- * kept, undone, failed — is this phase, so there is no second place for the
- * truth to rot. The imperative button writes this replaced (btn.textContent =
- * 'Keeping…' / markDraftReviewing) could not be reverted by anything reactive:
- * Vue owns those labels, so a card that entered a state never left it.
+ * The keep flow's ONE writer: everything a card shows about a keep (in flight,
+ * checking, overlapping, kept, undone, failed) is this phase.
  */
 function setPhase(id: string, phase: DraftPhase | null): void {
   const next = { ...draftAction.value };
@@ -494,6 +479,11 @@ function hasDraftCard(id: string): boolean {
   return messages.value.some((r: any) => r.key === `draft:${id}`);
 }
 
+// Async keep-review outcome, pushed by the server after a 202-queued Keep.
+// kept → success toast + list refresh; overlaps → the overlap-choice modal
+// (re-drives keep with force/updateTarget); error → toast. Fires on every
+// open tab of the pressing user, so the outcome lands as a toast even after
+// navigating away from the Skills view.
 export function handleSkillDraftReview(msg?: any) {
   const id = msg.draftId;
   if (msg.outcome === 'kept') {
@@ -526,9 +516,8 @@ export function handleSkillDraftReview(msg?: any) {
 }
 
 /**
- * Keep + wire a draft. Commits immediately: the pre-commit countdown is gone,
- * and the undo it used to wait out now sits on the kept card, where it also
- * covers keeps this click never made (auto-keep, another operator).
+ * Keep + wire a draft. Commits immediately; the undo sits on the kept card,
+ * where it also covers keeps this click never made (auto-keep, another operator).
  */
 export async function keepSkillDraft(d?: any, force?: any, updateTarget?: any) {
   const id = d.id;
@@ -573,13 +562,9 @@ async function resolveOverlap(id: string, d: any, decision: OverlapDecision): Pr
 }
 
 /**
- * Discard from a card: immediate, then undoable.
- *
- * The server soft-discards — the row flips to 'discarded' and the staged body
- * stays on disk — so the card can offer Undo afterwards rather than making the
- * operator wait out a countdown before anything happens. The list surfaces keep
- * their pre-commit window instead: a discarded draft leaves those lists (they
- * filter to pending), so there is nowhere for an Undo to live.
+ * Discard from a card: immediate, then undoable (the server soft-discards and
+ * keeps the staged body). The list surfaces keep a pre-commit window instead:
+ * they filter to pending, so there is nowhere for an Undo to live.
  */
 async function discardDraftFromCard(id: string, d: any): Promise<void> {
   setPhase(id, { phase: 'discarding' });
@@ -636,6 +621,8 @@ async function undoKeptSkill(id: string, d: any): Promise<void> {
   }
 }
 
+// No confirm modal here: every caller arms the 10s undo timer first — the
+// countdown IS the confirmation, and stacking a modal on top of it double-asks.
 export async function discardSkillDraft(id?: any) {
   try {
     await apiJson(`/api/skill-drafts/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -646,14 +633,16 @@ export async function discardSkillDraft(id?: any) {
   }
 }
 
+// Learning loop: the same skill learned independently on 2+ agents → offer to
+// promote ONE copy to the shared pool. Owner-gated server-side; the section
+// simply stays hidden for everyone else (403 → empty).
 async function renderSkillDuplicates() {
   const wrap = $('#skill-duplicates');
   const list = $('#skill-duplicates-list')!;
   if (!wrap || !list) return;
   let dups = [];
   try {
-    const res = await authFetch('/api/skills/duplicates');
-    if (res.ok) dups = (await res.json()).duplicates || [];
+    dups = (await apiJson('/api/skills/duplicates')).duplicates || [];
   } catch {}
   wrap.hidden = dups.length === 0;
   skillDuplicates.value = dups;
@@ -663,18 +652,13 @@ async function renderSkillDuplicates() {
 let skillDuplicatesApp: ReturnType<typeof createApp> | null = null;
 
 function mountSkillDuplicates(): void {
-  if (skillDuplicatesApp) return;
-  const host = $('#skill-duplicates-list');
-  if (!host) return;
-  skillDuplicatesApp = createApp(SkillDuplicates, { onPromote: (name: string) => void promoteSkill(name) });
-  skillDuplicatesApp.mount(host);
+  skillDuplicatesApp ??= mountIsland('#skill-duplicates-list', () =>
+    createApp(SkillDuplicates, { onPromote: (name: string) => void promoteSkill(name) }),
+  );
 }
 
-/**
- * The disable-on-click that used to live on the button element. Keyed by name
- * in a pending set, because the row is a vnode now and there is no element to
- * hold — but the guard itself matters: without it a double-click promotes twice.
- */
+/** Promote one copy to the shared pool. The pending set (keyed by name) keeps a
+ *  double-click from promoting twice. */
 async function promoteSkill(name: string) {
   const ok = await deps.showConfirmModal({
     title: `Promote ${name} to the shared pool?`,
@@ -690,13 +674,15 @@ async function promoteSkill(name: string) {
   } catch (err) {
     showToast('Promote failed: ' + ((err as any)?.message || err), { kind: 'error' });
   } finally {
-    // The imperative version re-enabled only on failure — on success the row was
-    // about to be replaced by renderSkillsRegistry. Clearing unconditionally is
-    // equivalent and does not depend on that replacement happening.
+    // Cleared on both paths, so it never depends on a re-render replacing the row.
     promotingSkills.value.delete(name);
   }
 }
 
+// ── Skills page sections: 'Workspace' (the shared pool) first, then one
+// section per agent that carries scoped skills. Collapse state is remembered
+// per section (same idiom as the Ollama server cards): Workspace defaults
+// open, agent sections default closed.
 function skillsSectionOpen(key?: any) {
   const v = localStorage.getItem('skillsSectionOpen:' + key);
   return v === null ? key === 'pool' : v === '1';
@@ -710,35 +696,32 @@ function skillsFilterQuery() {
   return ($<HTMLInputElement>('#skills-filter')?.value || '').trim().toLowerCase();
 }
 
-
-
 let registryApp: ReturnType<typeof createApp> | null = null;
 
 function mountSkillsRegistry(): void {
-  if (registryApp) return;
-  const host = $('#skills-list');
-  if (!host) return;
-  registryApp = createApp(SkillsRegistry, {
-    // Click the row to open the SKILL.md viewer/editor (user skills editable).
-    // Scoped rows open the agent's own copy via the scoped content endpoint.
-    onOpen: (r: any) => (r.source === 'scoped' ? openScopedSkillEditor(r.agentGroupId, r.name) : openSkillEditor(r.name)),
-    onToggleSection: (key: string) => {
-      if (skillsFilter.value) return; // an active filter owns expansion
-      const next = new Set(skillsOpenSections.value);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      skillsOpenSections.value = next;
-      setSkillsSectionOpen(key, next.has(key));
-    },
-    onDelete: (r: any) =>
-      r.source === 'scoped'
-        ? removeAgentScopedSkill(r.agentGroupId, r.name, null, renderSkillsRegistry)
-        : deleteSkill(r.name),
-    // 'View history': jump to Journey pre-filtered to this skill.
-    onHistory: (r: any) => deps.openJourney({ agentGroupId: r.agentGroupId, agentName: r.agentName, skill: r.name }),
-    onUpdate: (name: string) => void updateSkillFromSource(name),
-  });
-  registryApp.mount(host);
+  registryApp ??= mountIsland('#skills-list', () =>
+    createApp(SkillsRegistry, {
+      // Click the row to open the SKILL.md viewer/editor (user skills editable).
+      // Scoped rows open the agent's own copy via the scoped content endpoint.
+      onOpen: (r: any) =>
+        r.source === 'scoped' ? openScopedSkillEditor(r.agentGroupId, r.name) : openSkillEditor(r.name),
+      onToggleSection: (key: string) => {
+        if (skillsFilter.value) return; // an active filter owns expansion
+        const next = new Set(skillsOpenSections.value);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        skillsOpenSections.value = next;
+        setSkillsSectionOpen(key, next.has(key));
+      },
+      onDelete: (r: any) =>
+        r.source === 'scoped'
+          ? removeAgentScopedSkill(r.agentGroupId, r.name, null, renderSkillsRegistry)
+          : deleteSkill(r.name),
+      // 'View history': jump to Journey pre-filtered to this skill.
+      onHistory: (r: any) => deps.openJourney({ agentGroupId: r.agentGroupId, agentName: r.agentName, skill: r.name }),
+      onUpdate: (name: string) => void updateSkillFromSource(name),
+    }),
+  );
 }
 
 async function updateSkillFromSource(name: string) {
@@ -763,25 +746,16 @@ async function updateSkillFromSource(name: string) {
   }
 }
 
-/**
- * Re-apply the filter. The island derives visibility from skillsFilter, so this
- * only has to copy the box's value in — the DOM walk applySkillsSections did is
- * gone with it.
- */
+/** Re-apply the filter: the island derives visibility from skillsFilter. */
 export function applySkillsSections() {
   skillsFilter.value = skillsFilterQuery();
 }
 
-/**
- * Which skills have newer commits upstream. Was markSkillUpdates(), which
- * queried already-rendered rows and injected a button into each — an async pass
- * reaching into rendered DOM, which is precisely what an island forbids.
- */
+/** Which skills have newer commits upstream. */
 async function loadSkillUpdates() {
   let updates = [];
   try {
-    const res = await authFetch('/api/skills/updates');
-    if (res.ok) updates = (await res.json()).updates || [];
+    updates = (await apiJson('/api/skills/updates')).updates || [];
   } catch {}
   const map: Record<string, boolean> = {};
   for (const u of updates) if (u.hasUpdate) map[u.name] = true;
@@ -802,8 +776,7 @@ export async function renderSkillsRegistry() {
   mountSkillsRegistry();
   let skills = [];
   try {
-    const res = await authFetch('/api/skills');
-    if (res.ok) skills = (await res.json()).skills || [];
+    skills = (await apiJson('/api/skills')).skills || [];
   } catch (err) {
     console.error('Failed to load skills:', err);
   }
@@ -831,7 +804,7 @@ export async function renderSkillsRegistry() {
     name: s.name ?? '',
     desc: s.description || '',
     // Provenance: shipped skills are "built-in"; imported ones show their
-    // origin; legacy imports with no recorded origin fall back to "imported".
+    // origin; imports with no recorded origin fall back to "imported".
     // Scoped skills get a scope pill instead — the room's name when the agent
     // serves exactly one room, otherwise the agent's name (a room name would be
     // ambiguous, a count says nothing) — plus their origin badge when recorded.
@@ -866,8 +839,8 @@ export async function renderSkillsRegistry() {
   void loadSkillUpdates();
 }
 
-
-
+// ── SKILL.md editor — view any skill; create/edit user skills (the upload +
+// manual-edit path). Built-ins are read-only (repo files).
 const SKILL_TEMPLATE = `---
 name: my-skill
 description: One line saying what this skill is for and when to use it.
@@ -878,18 +851,24 @@ description: One line saying what this skill is for and when to use it.
 Instructions the agent follows when this skill applies.
 `;
 
+// Three sub-views: browse (the list), add (catalog + URL import), editor.
 function showSkillsView(view?: any) {
   $('#skills-browse')!.hidden = view !== 'browse';
   $('#skills-add')!.hidden = view !== 'add';
   $('#skills-editor')!.hidden = view !== 'editor';
 }
 
+// Leaving the editor always drops draft mode — the next opener (an installed
+// skill, or "write your own") starts from a clean slate.
 function resetSkillEditorState() {
   skillEditorDraft = null;
   const m = $('#skill-editor-mode');
   if (m) m.hidden = true;
 }
 
+// Guards against a second closeView('skill-editor') firing before the first
+// history.go settles (e.g. saveSkillEditor closes, then re-renders the list,
+// which closes again) — two go() calls would over-pop and close Manage.
 let skillEditorClosing = false;
 
 export function showSkillEditor(show?: any) {
@@ -924,12 +903,10 @@ export function showSkillEditor(show?: any) {
   showSkillsView('browse');
 }
 
-function skillsLoadingRow(label?: any) {
-  // Thin alias over loadingRow() — DESIGN.md §5 wants ONE wait primitive, so every
-  // fetching list shows the same ring rather than growing its own variant.
-  return loadingRow(label);
-}
-
+// ── Add view: browse well-known collections + import by URL ────────────────
+// Trust is a deliberate top-level mode (Official vs Community), not something
+// that mutates as you flip a mixed source dropdown. The source picker only ever
+// lists one tier's collections, so switching sources never changes trust chrome.
 let skillTrust = 'official';
 
 let poolSeq = 0;
@@ -940,6 +917,8 @@ export async function openSkillsAdd() {
   await setSkillTrust('official');
 }
 
+// Switch trust tier: toggle the segment, gate the search box to Community (the
+// persistent community warning too), then load that tier's merged pool.
 export async function setSkillTrust(mode?: any) {
   skillTrust = mode;
   const official = mode === 'official';
@@ -957,16 +936,18 @@ export async function setSkillTrust(mode?: any) {
 let poolApp: ReturnType<typeof createApp> | null = null;
 
 function mountSkillPool(): void {
-  if (poolApp) return;
-  const host = $('#skills-catalog-list');
-  if (!host) return;
-  poolApp = createApp(SkillPool, {
-    onAdd: (s: any) =>
-      deps.openWireToAgentsPicker({ ...s.ref, origin: s.origin }, s.name, { community: skillPoolCommunity.value }),
-  });
-  poolApp.mount(host);
+  poolApp ??= mountIsland('#skills-catalog-list', () =>
+    createApp(SkillPool, {
+      onAdd: (s: any) =>
+        deps.openWireToAgentsPicker({ ...s.ref, origin: s.origin }, s.name, { community: skillPoolCommunity.value }),
+    }),
+  );
 }
 
+// Render ONE merged, badged pool for the current tier. Community pools every
+// collection + the awesomeskill.ai marketplace equally; the search box filters
+// it. No per-source picker — each row's origin badge carries (and links to) its
+// provenance.
 export async function renderSkillPool() {
   if (!$('#skills-catalog-list')) return;
   const tier = skillTrust;
@@ -979,8 +960,7 @@ export async function renderSkillPool() {
   mountSkillPool();
   let data = null;
   try {
-    const res = await authFetch(`/api/skills/catalog?tier=${tier}&q=${encodeURIComponent(q)}`);
-    if (res.ok) data = await res.json();
+    data = await apiJson(`/api/skills/catalog?tier=${tier}&q=${encodeURIComponent(q)}`);
   } catch {}
   if (seq !== poolSeq) return; // superseded by a newer tier switch / keystroke
   if (!data) {
@@ -1004,8 +984,7 @@ export async function openSkillEditor(name?: any) {
   if (name) {
     let data = null;
     try {
-      const res = await authFetch(`/api/skills/${encodeURIComponent(name)}`);
-      if (res.ok) data = await res.json();
+      data = await apiJson(`/api/skills/${encodeURIComponent(name)}`);
     } catch {}
     if (!data) return showToast('Couldn’t load skill', { kind: 'error' });
     nameInput.value = data.name;
@@ -1066,39 +1045,41 @@ export async function saveSkillEditor() {
   }
 }
 
+// ── Settings: skill-collections registry (global admin) ────────────────────
+// Owners/global admins manage the Skills tab's catalog sources: label + a
+// GitHub folder URL per collection. Server verifies the folder actually lists
+// skills before saving.
 let skillSourcesApp: ReturnType<typeof createApp> | null = null;
 
 function mountSkillSources(): void {
-  if (skillSourcesApp) return;
-  const host = $('#skill-sources-list');
-  if (!host) return;
-  skillSourcesApp = createApp(SkillSources, {
-    onEdit: (r: any) => {
-      const s = r.raw;
-      $<HTMLInputElement>('#skill-source-url')!.value =
-        `https://github.com/${s.owner}/${s.repo}/tree/${s.branch}/${s.dir}`;
-      const save = $('#skill-source-save')!;
-      save.textContent = 'Save';
-      save.dataset.editId = s.id;
-    },
-    onRemove: async (r: any) => {
-      const ok = await deps.showConfirmModal({
-        title: `Remove ${r.origin.label}?`,
-        body: 'The collection disappears from the Skills catalog. Already-imported skills are unaffected.',
-        confirmLabel: 'Remove',
-        destructive: true,
-      });
-      if (!ok) return;
-      try {
-        await apiJson(`/api/skills/sources/${encodeURIComponent(r.raw.id)}`, { method: 'DELETE' });
-        renderSkillSources();
-      } catch (err) {
-        showToast('Remove failed: ' + ((err as any)?.message || err), { kind: 'error' });
-      }
-    },
-    onToggleBuiltin: (r: any) => toggleBuiltinSource(r.raw.id, r.disabled),
-  });
-  skillSourcesApp.mount(host);
+  skillSourcesApp ??= mountIsland('#skill-sources-list', () =>
+    createApp(SkillSources, {
+      onEdit: (r: any) => {
+        const s = r.raw;
+        $<HTMLInputElement>('#skill-source-url')!.value =
+          `https://github.com/${s.owner}/${s.repo}/tree/${s.branch}/${s.dir}`;
+        const save = $('#skill-source-save')!;
+        save.textContent = 'Save';
+        save.dataset.editId = s.id;
+      },
+      onRemove: async (r: any) => {
+        const ok = await deps.showConfirmModal({
+          title: `Remove ${r.origin.label}?`,
+          body: 'The collection disappears from the Skills catalog. Already-imported skills are unaffected.',
+          confirmLabel: 'Remove',
+          destructive: true,
+        });
+        if (!ok) return;
+        try {
+          await apiJson(`/api/skills/sources/${encodeURIComponent(r.raw.id)}`, { method: 'DELETE' });
+          renderSkillSources();
+        } catch (err) {
+          showToast('Remove failed: ' + ((err as any)?.message || err), { kind: 'error' });
+        }
+      },
+      onToggleBuiltin: (r: any) => toggleBuiltinSource(r.raw.id, r.disabled),
+    }),
+  );
 }
 
 /** The catalog's sources — rendered on the Skills TAB, beside what they feed. */
@@ -1110,12 +1091,9 @@ export async function renderSkillSources() {
   let sources = [];
   let builtins = [];
   try {
-    const res = await authFetch('/api/skills/sources');
-    if (res.ok) {
-      const b = await res.json();
-      sources = b.sources || [];
-      builtins = b.builtins || [];
-    }
+    const b = await apiJson('/api/skills/sources');
+    sources = b.sources || [];
+    builtins = b.builtins || [];
   } catch {}
   skillSources.value = [
     ...sources.map((s: any) => ({
@@ -1150,6 +1128,7 @@ export async function renderSkillSources() {
   mountSkillSources();
 }
 
+// Import-by-URL asks which agents up front (same picker as the catalog rows).
 export function importSkill() {
   const input = ($('#skill-import-url')!) as HTMLInputElement;
   const url = (input.value || '').trim();
@@ -1180,26 +1159,26 @@ let agentSkillsApp: ReturnType<typeof createApp> | null = null;
 let currentAgentSkillsId: any = null;
 
 function mountAgentSkillsList(): void {
-  if (agentSkillsApp) return;
-  const host = $('#agent-skills-list');
-  if (!host) return;
-  agentSkillsApp = createApp(AgentSkillsList, {
-    onView: (name: string) => openPoolSkillFromAgent(name),
-    onDirty: () => {
-      const saveBtn = $<HTMLInputElement>('#agent-skills-save');
-      if (saveBtn) saveBtn.disabled = false;
-    },
-  });
-  agentSkillsApp.mount(host);
+  agentSkillsApp ??= mountIsland('#agent-skills-list', () =>
+    createApp(AgentSkillsList, {
+      onView: (name: string) => openPoolSkillFromAgent(name),
+      onDirty: () => {
+        const saveBtn = $<HTMLInputElement>('#agent-skills-save');
+        if (saveBtn) saveBtn.disabled = false;
+      },
+    }),
+  );
 }
 
+// Per-agent skills: list every available skill with a toggle reflecting whether
+// this agent loads it. Changes batch behind Save (one PUT → one respawn) rather
+// than restarting the agent on every toggle.
 export async function renderAgentSkills(agentId?: any): Promise<void> {
   currentAgentSkillsId = agentId;
   const saveBtn = $<HTMLInputElement>('#agent-skills-save');
   let data: any = { available: [], enabled: [] };
   try {
-    const res = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/skills`);
-    if (res.ok) data = await res.json();
+    data = await apiJson(`/api/agents/${encodeURIComponent(agentId)}/skills`);
   } catch (err) {
     console.error('Failed to load skills:', err);
   }
@@ -1215,7 +1194,7 @@ export async function renderAgentSkills(agentId?: any): Promise<void> {
   if (saveBtn) saveBtn.onclick = () => saveAgentSkills(currentAgentSkillsId);
 }
 
-
+// Skills wired to this one agent (imported into its own dir) + the import row.
 function renderAgentScopedSkills(agentId?: any, scoped?: any) {
   const list = $('#agent-scoped-list')!;
   const addBtn = $('#agent-scoped-add');
@@ -1235,15 +1214,13 @@ let agentScopedApp: ReturnType<typeof createApp> | null = null;
 let scopedSkillsAgentId: any = null;
 
 function mountAgentScopedSkills(): void {
-  if (agentScopedApp) return;
-  const host = $('#agent-scoped-list');
-  if (!host) return;
-  agentScopedApp = createApp(AgentScopedSkills, {
-    // Click the info to view/edit this agent's own copy of the skill.
-    onOpen: (name: string) => openScopedSkillEditor(scopedSkillsAgentId, name),
-    onRemove: (name: string, el: HTMLElement) => removeAgentScopedSkill(scopedSkillsAgentId, name, el),
-  });
-  agentScopedApp.mount(host);
+  agentScopedApp ??= mountIsland('#agent-scoped-list', () =>
+    createApp(AgentScopedSkills, {
+      // Click the info to view/edit this agent's own copy of the skill.
+      onOpen: (name: string) => openScopedSkillEditor(scopedSkillsAgentId, name),
+      onRemove: (name: string, el: HTMLElement) => removeAgentScopedSkill(scopedSkillsAgentId, name, el),
+    }),
+  );
 }
 
 async function importAgentScopedSkill(agentId?: any, btn?: any, urlInput?: any) {
@@ -1316,11 +1293,7 @@ export function scheduleSkillSuggest() {
 let suggestApp: ReturnType<typeof createApp> | null = null;
 
 function mountSkillSuggestions(): void {
-  if (suggestApp) return;
-  const host = $('#agent-create-skills-list');
-  if (!host) return;
-  suggestApp = createApp(SkillSuggestions);
-  suggestApp.mount(host);
+  suggestApp ??= mountIsland('#agent-create-skills-list', () => createApp(SkillSuggestions));
 }
 
 async function refreshSkillSuggestions() {
@@ -1335,8 +1308,8 @@ async function refreshSkillSuggestions() {
   const seq = ++suggestSeq;
   let suggestions = [];
   try {
-    const res = await authFetch(`/api/skills/suggest?text=${encodeURIComponent(text.slice(0, 2000))}`);
-    if (res.ok) suggestions = (await res.json()).suggestions || [];
+    suggestions =
+      (await apiJson(`/api/skills/suggest?text=${encodeURIComponent(text.slice(0, 2000))}`)).suggestions || [];
   } catch {}
   if (seq !== suggestSeq) return; // a newer request superseded this one
   if (!suggestions.length) {
@@ -1386,16 +1359,7 @@ export async function draftFor(btn?: any) {
   // wizardBusy's textContent) because this button carries an SVG icon.
   btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span> Drafting…';
   try {
-    const res = await authFetch('/api/agents/draft', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt }),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      showToast('Drafter failed: ' + (body.error || res.statusText), { kind: 'error' });
-      return;
-    }
+    const body = await apiJson('/api/agents/draft', { method: 'POST', body: { prompt } });
     if (nameEl) nameEl.value = body.name || '';
     if (instructionsEl) instructionsEl.value = body.instructions || '';
     nameEl?.focus();
@@ -1411,82 +1375,77 @@ export async function draftFor(btn?: any) {
 let roomSkillsApp: ReturnType<typeof createApp> | null = null;
 
 function mountRoomSkills(): void {
-  if (roomSkillsApp) return;
-  const host = $('#room-skills-list');
-  if (!host) return;
-  roomSkillsApp = createApp(RoomSkills, {
-    undoSeconds: UNDO_SECONDS,
-    onView: (id: string) => openSkillDraft(id),
-    onKeep: (r: any) => {
-      void keepSkillDraft({ id: r.id, agentGroupId: r.agentGroupId, agentName: r.agentName }).then(() =>
-        renderRoomSkills(),
-      );
-    },
-    onDiscard: (r: any) =>
-      armRoomSkillUndo(r.id, `Discarding ${r.skillName}…`, async () => {
-        await discardSkillDraft(r.id);
-        void renderRoomSkills();
-      }),
-    onUndo: (id: string) => clearRoomSkillUndo(id),
-    onRevert: async (r: any) => {
-      const ok = await deps.showConfirmModal({
-        title: `Revert ${r.name}?`,
-        body: 'Back to the previous revision. The current version stays in history — a revert can itself be reverted.',
-        confirmLabel: 'Revert',
-      });
-      if (!ok) return;
-      try {
-        const res = await authFetch(
-          `/api/agents/${encodeURIComponent(r.agentId)}/skills/scoped/${encodeURIComponent(r.name)}/revert`,
-          { method: 'POST' },
+  roomSkillsApp ??= mountIsland('#room-skills-list', () =>
+    createApp(RoomSkills, {
+      undoSeconds: UNDO_SECONDS,
+      onView: (id: string) => openSkillDraft(id),
+      onKeep: (r: any) => {
+        void keepSkillDraft({ id: r.id, agentGroupId: r.agentGroupId, agentName: r.agentName }).then(() =>
+          renderRoomSkills(),
         );
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed');
-        showToast(`Reverted ${r.name}`);
-        void renderRoomSkills();
-      } catch (err) {
-        toastError(err, 'Could not revert');
-      }
-    },
-    onRemove: async (r: any) => {
-      // DESIGN.md §5: no native confirm() — destructive actions use the modal.
-      const ok = await deps.showConfirmModal({
-        title: `Remove ${r.name}?`,
-        body: `It will no longer be available to ${r.agentLabel}.`,
-        confirmLabel: 'Remove',
-        destructive: true,
-      });
-      if (!ok) return;
-      try {
-        const res = await authFetch(
-          `/api/agents/${encodeURIComponent(r.agentId)}/skills/scoped/${encodeURIComponent(r.name)}`,
-          { method: 'DELETE' },
-        );
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed');
-        showToast(`Removed ${r.name}`);
-        void renderRoomSkills();
-      } catch (err) {
-        toastError(err, 'Failed to remove skill');
-      }
-    },
-    onRestore: async (r: any) => {
-      try {
-        const res = await authFetch(
-          `/api/agents/${encodeURIComponent(r.agentId)}/skills/archived/${encodeURIComponent(r.name)}/restore`,
-          { method: 'POST' },
-        );
-        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Failed');
-        showToast(`Restored ${r.name}`);
-        void renderRoomSkills();
-      } catch (err) {
-        toastError(err, 'Could not restore');
-      }
-    },
-  });
-  roomSkillsApp.mount(host);
+      },
+      onDiscard: (r: any) =>
+        armRoomSkillUndo(r.id, `Discarding ${r.skillName}…`, async () => {
+          await discardSkillDraft(r.id);
+          void renderRoomSkills();
+        }),
+      onUndo: (id: string) => clearRoomSkillUndo(id),
+      onRevert: async (r: any) => {
+        const ok = await deps.showConfirmModal({
+          title: `Revert ${r.name}?`,
+          body: 'Back to the previous revision. The current version stays in history — a revert can itself be reverted.',
+          confirmLabel: 'Revert',
+        });
+        if (!ok) return;
+        try {
+          await apiJson(
+            `/api/agents/${encodeURIComponent(r.agentId)}/skills/scoped/${encodeURIComponent(r.name)}/revert`,
+            { method: 'POST' },
+          );
+          showToast(`Reverted ${r.name}`);
+          void renderRoomSkills();
+        } catch (err) {
+          toastError(err, 'Could not revert');
+        }
+      },
+      onRemove: async (r: any) => {
+        // DESIGN.md §5: no native confirm() — destructive actions use the modal.
+        const ok = await deps.showConfirmModal({
+          title: `Remove ${r.name}?`,
+          body: `It will no longer be available to ${r.agentLabel}.`,
+          confirmLabel: 'Remove',
+          destructive: true,
+        });
+        if (!ok) return;
+        try {
+          await apiJson(
+            `/api/agents/${encodeURIComponent(r.agentId)}/skills/scoped/${encodeURIComponent(r.name)}`,
+            { method: 'DELETE' },
+          );
+          showToast(`Removed ${r.name}`);
+          void renderRoomSkills();
+        } catch (err) {
+          toastError(err, 'Failed to remove skill');
+        }
+      },
+      onRestore: async (r: any) => {
+        try {
+          await apiJson(
+            `/api/agents/${encodeURIComponent(r.agentId)}/skills/archived/${encodeURIComponent(r.name)}/restore`,
+            { method: 'POST' },
+          );
+          showToast(`Restored ${r.name}`);
+          void renderRoomSkills();
+        } catch (err) {
+          toastError(err, 'Could not restore');
+        }
+      },
+    }),
+  );
 }
 
 function armRoomSkillUndo(id: string, label: string, commit: () => unknown) {
-  // Measured BEFORE the swap, like armUndo did — after would read the timer.
+  // Measured BEFORE the swap — after would read the timer's own width.
   const el = document.querySelector(`#room-skills-list li[data-draft-id="${CSS.escape(id)}"] .room-skill-actions`)
     ?? document.querySelector(`#room-skills-list .room-skill-actions`);
   const w = el ? (el as HTMLElement).getBoundingClientRect().width : 0;
@@ -1502,6 +1461,12 @@ function clearRoomSkillUndo(id: string) {
   roomSkillUndo.value = next;
 }
 
+/**
+ * Learning loop, room-level view: what this room's agents have proposed and what
+ * they've learned — in the room, rather than buried in the global Skills page.
+ * Pending proposals first (they need a decision); learned skills below, removable.
+ * Purely a view over existing endpoints — no new backend.
+ */
 export async function renderRoomSkills() {
   const section = $('#room-skills-section');
   if (!section || !$('#room-skills-list')) return;
@@ -1581,6 +1546,15 @@ export async function renderRoomSkills() {
   mountRoomSkills();
 }
 
+/**
+ * The learning loop's explicit trigger (docs/webchat/learning-loop.md §1): reviews
+ * THIS session and drafts a skill only if it taught something. It just sends
+ * `/learn` — one path, the same one the slash command takes, so there's no second
+ * implementation to keep in step.
+ *
+ * Only offered for the room you're actually in: `/learn` reviews the session, and
+ * the session is the one you have open.
+ */
 function renderDistillButton(agents?: any) {
   const host = $('#room-skills-section .form-label-row');
   const existing = $('#room-distill-btn');
@@ -1599,19 +1573,13 @@ function renderDistillButton(agents?: any) {
   host.appendChild(btn);
 }
 
-
 // ── Panel wiring ─────────────────────────────────────────────────────────────
-// The listener registrations that used to sit at legacy.js module scope. They
-// are a FUNCTION, not module-scope code here, on purpose: legacy.js runs its
-// blocks in source order around initApp(), so moving this to another module's
-// top level would silently re-order it against everything else. legacy calls
-// wireSkillsPanel() at the exact line the first block occupied, which keeps the
-// order identical and makes the change reviewable as a move.
-//
-// When the skills panel becomes a Vue island this function is what disappears:
-// the listeners become template bindings and the timers become refs.
+// Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
 let poolSearchTimer: ReturnType<typeof setTimeout> | undefined;
+
+// Filter-as-you-type over the rendered sections — a pure visibility pass, so
+// a light debounce is plenty even with a large registry.
 let skillsFilterTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function wireSkillsPanel(): void {
@@ -1698,11 +1666,7 @@ export function wireSkillsPanel(): void {
 
 // ── Panel wiring ───────────────────────────────────────────────────────────
 // The skills registry list and its filter controls.
-//
-// One function per GROUP of blocks, each called from the line its group
-// started on. Blocks with an executing statement between them cannot share a
-// function: a single call at the first block moves the later ones ahead of
-// whatever ran in between, which the boot-order trace catches.
+// One function per run of boot statements: a call cannot span an executing statement without reordering boot.
 
 export function wireSkillsRegistry(): void {
   $<HTMLFormElement>('#agent-create-form')?.addEventListener('submit', async (e) => {
@@ -1741,16 +1705,7 @@ export function wireSkillsRegistry(): void {
     }
 
     try {
-      const res = await authFetch('/api/agents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, instructions: instructions || undefined }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        showToast('Failed to create agent: ' + (err.error || res.statusText), { kind: 'error' });
-        return;
-      }
+      await apiJson('/api/agents', { method: 'POST', body: { name, instructions: instructions || undefined } });
       // Import any checked suggested skills — new agents default to "all skills",
       // so imports attach automatically on the agent's first spawn.
       const checked = [...document.querySelectorAll<HTMLElement>('#agent-create-skills-list .agent-create-skill-check:checked')];
@@ -1823,6 +1778,12 @@ export async function showOverlapChoice(d: any, overlaps: any) {
   }
 }
 
+/**
+ * Minimal LCS line diff. A revision is only reviewable if you can see what
+ * CHANGED — showing the whole new file and asking someone to spot the edit is not
+ * review, it's proofreading. Skills are small, so O(m×n) is fine and beats pulling
+ * in a diff dependency.
+ */
 export function lineDiff(oldText: any, newText: any) {
   const a = String(oldText).split('\n');
   const b = String(newText).split('\n');
@@ -1857,11 +1818,10 @@ export function lineDiff(oldText: any, newText: any) {
 // PUT switches it back on — reversible, so no destructive confirm.
 export async function toggleBuiltinSource(id: string, wasDisabled: any) {
   try {
-    const res = await authFetch(`/api/skills/sources/${encodeURIComponent(id)}`, {
+    await apiJson(`/api/skills/sources/${encodeURIComponent(id)}`, {
       method: wasDisabled ? 'PUT' : 'DELETE',
-      ...(wasDisabled ? { headers: { 'Content-Type': 'application/json' }, body: '{}' } : {}),
+      body: wasDisabled ? {} : undefined,
     });
-    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
     showToast(wasDisabled ? 'Marketplace added back to the pool' : 'Marketplace removed from the pool', { kind: 'success' });
     renderSkillSources();
   } catch (err) {

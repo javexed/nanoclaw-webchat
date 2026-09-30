@@ -1,7 +1,7 @@
 /**
- * Slice 0 — per-room threads storage layer: the migration (thread tables +
+ * Per-room threads storage layer: the migration (thread tables +
  * thread_id column), thread CRUD, thread-partitioned message read/write, and
- * per-thread read markers. See docs/webchat/threads.md §3,§9.
+ * per-thread read markers. See docs/webchat/threads.md §3.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
@@ -57,10 +57,8 @@ describe('session-key mapping (slice 1)', () => {
     expect(await sessionKeyToThread(undefined)).toBe(MAIN_THREAD);
     expect(await sessionKeyToThread('agent:sarah')).toBe('agent:sarah');
   });
-  // REGRESSION: the per-member credential override re-keys a session by USER, so
-  // its thread_id is a user id, not a thread. Passed through, agent replies were
-  // stored under a thread_id with no webchat_threads row — a phantom thread the
-  // UI cannot list or open. Twelve of one member's replies vanished into one.
+  // A per-member credential session is keyed by USER; passed through, its replies
+  // would land in a phantom thread the UI cannot open.
   it('sends a session key that names no thread in the room to main', async () => {
     const room = 'room-phantom';
     await createWebchatRoom(room, 'Phantom');

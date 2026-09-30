@@ -12,13 +12,7 @@
  * Channels with no status surface simply don't implement `sendStatus`, so the
  * forward is a no-op for them. Redaction of the forwarded text is the channel's
  * responsibility (webchat scrubs before broadcasting to clients).
- *
- * Module status:
- *   - Loaded via the modules barrel (src/modules/index.ts); self-registers at
- *     import time on the delivery/lifecycle seams: onDeliveryAdapterReady (the
- *     adapter), registerSessionDeliveryObserver (the per-poll forward), and
- *     registerContainerExitObserver (mid-turn death notice).
- *   - Removing = dropping the barrel import; core call-sites are inert.
+ * Self-registers on the delivery/lifecycle seams at import (modules barrel).
  */
 import type { Session } from '../../types.js';
 import type { AgentActivityStatus } from '../../seam/index.js';
@@ -168,10 +162,7 @@ export async function forwardSessionStatus(session: Session): Promise<void> {
       }
     }
 
-    // Clear a stuck "thinking" bubble: a turn that ended without 'done' and has
-    // no live container left an orphaned bubble (a host restart wipes the
-    // in-memory tracking above; ungraceful deaths never write 'done'). Runs
-    // every tick so it also recovers bubbles orphaned across a restart.
+    // Every tick, so it also recovers bubbles orphaned across a restart.
     await reconcileStaleBubble(session, outDb, agentName, mg);
   } catch {
     // Cosmetic — ignore.
@@ -224,18 +215,14 @@ export function stopSessionStatus(sessionId: string): void {
   cleared.delete(sessionId);
 }
 
-// ── Seam registrations ───────────────────────────────────────────────────────
-// Self-register at import time (the modules barrel loads this file). Core's
-// call-sites are inert without these; nothing else references this module from
-// the delivery/lifecycle paths.
+// ── Seam registrations (at import; core call-sites are inert without them) ──
 onDeliveryAdapterReady((a) => setStatusAdapter(a));
 registerSessionDeliveryObserver(forwardSessionStatus);
 registerContainerExitObserver((session) => notifySessionStopped(session));
 
 // ── status_events readers ────────────────────────────────────────────────────
-// The table is module-owned (declared container-side via the outbound schema
-// extension seam), so its readers live here too. All tolerate an absent table
-// — a session whose container hasn't opened its DB yet simply has no feed.
+// The table is created container-side on first write (status-feed.ts). All
+// readers tolerate its absence — such a session simply has no feed.
 export interface StatusEvent {
   seq: number;
   kind: string;

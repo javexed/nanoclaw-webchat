@@ -2,55 +2,16 @@
 // The live "what is the agent doing" surface: the bubble with a verb, target
 // and milestone lines, the streaming reasoning feed, and the collapsed
 // "Thoughts (N)" disclosure folded onto the finished reply.
-//
-// DEPENDENCY INJECTION, not imports, for the five transcript helpers this needs
-// (bubbleFor, interruptAgent, isNearBottom, renderFullTrace, scrollToBottom).
-// They still live in legacy.js, which imports THIS module — importing back
-// would form a cycle through a 19k-line module with top-level side effects, and
-// the evaluation order of that is not something to rely on. legacy calls
-// provideThinkingDeps() once at startup instead. When transcript/ is extracted
-// these become ordinary imports and the injection goes away.
-import { $, lucideEl } from '../core/dom.js';
+import { $ } from '../core/dom.js';
 import { isAdminView, isForcedScroll, state } from '../core/state.js';
-// Injected until phase 1g. transcript owns these now, so they are real edges.
-// The reverse edge (buildThoughtsDisclosure) is INJECTED into transcript rather
+// The reverse edge (toggleThinkingExpanded) is INJECTED into transcript rather
 // than imported, so the dependency stays one-way and no cycle forms.
 import { isNearBottom, scrollToBottom } from './transcript.js';
 import { nextKey, thinkingTurns, turnFor } from './transcript-state.js';
 import type { ThinkingTurn } from './transcript-state.js';
 
-/**
- * What features/thinking needs that it does not own. interruptAgent still lives
- * in legacy; isForcedScroll is a read-only view onto legacy's scroll counters.
- * Everything else it once needed became a real import from features/transcript
- * in phase 1g.
- */
-// The per-turn state that used to hang off the bubble ELEMENT as `_turn`, and
-// the feed line's `_fadeTimer` with it, now live in transcript-state.ts — a
-// turn outlives no DOM node, so there is nothing to hang them on.
-
-export interface ThinkingDeps {
-  interruptAgent: (name: string) => void;
-}
-
-const deps = {} as ThinkingDeps;
-
-/** Wire the transcript helpers this module calls. Call once, before any turn. */
-export function provideThinkingDeps(provided: Partial<ThinkingDeps>): void {
-  Object.assign(deps, provided);
-}
-
-// Collapsible "Thoughts" disclosure folded onto an agent reply — the full
-// reasoning trace captured during the turn. Collapsed by default, but the summary
-// carries a muted preview of the latest line so there's visible detail without
-// expanding (CSS hides the preview once the disclosure is open).
 const THINKING_DETAIL_MAX = 64; // truncate the target line (file/command/query)
 const REASONING_LOG_MAX = 500; // cap a single agent's retained reasoning lines
-// Ensure the thinking bubble exists and is laid out with: a verb in the sender
-// line, a target line (the file/command/query), a milestone line (latest
-// progress), and the animated dots. Shared with the heartbeat typing path —
-// both create-or-reuse the single `.thinking-bubble`, so activity persists
-// through the turn and clears when the agent's message lands.
 /**
  * Create-or-reuse the turn for one agent. Shared with the heartbeat typing
  * path, so activity persists through the turn and clears when the reply lands.
@@ -94,8 +55,7 @@ function toggleThinkingExpanded(name: string) {
 function updateThinkingBubble(name: string, label: string, detail?: string) {
   const turn = ensureTurn(name);
   turn.verb = label;
-  // The target line keeps its LAST text when detail is absent: the imperative
-  // version only flipped `hidden`, it never cleared textContent.
+  // The target line keeps its LAST text when detail is absent (only hidden flips).
   if (detail) {
     turn.detail =
       detail.length > THINKING_DETAIL_MAX ? `${detail.slice(0, THINKING_DETAIL_MAX - 1)}…` : detail;
@@ -126,8 +86,8 @@ function pushReasoning(name: string, text: string, full?: string) {
 
   // The untruncated block rides `detail` on the FIRST line of each thinking
   // block (see claude.ts). It is what click-to-expand shows: reasoningLog is
-  // capped at 8 lines x 200 chars per block by summarizeThinking, so expanding
-  // it only ever showed the same clipped text the feed already scrolled past.
+  // capped at 8 lines x 200 chars per block by summarizeThinking, so it would
+  // only repeat the clipped text the feed already showed.
   if (full) {
     turn.fullTrace.push(full);
     if (turn.fullTrace.length > REASONING_LOG_MAX) turn.fullTrace.shift();
@@ -163,9 +123,8 @@ function pushReasoning(name: string, text: string, full?: string) {
   if (shouldScroll) scrollToBottom();
 }
 
-/** Per-line fade timers, keyed by feed-line key. These hung off the DOM node as
- *  `_fadeTimer`; a row has nowhere to hang them, and they must still be
- *  cancellable when the buffer trims a line early. */
+/** Per-line fade timers, keyed by feed-line key — cancellable when the buffer
+ *  trims a line early. */
 const feedTimers = new Map<number, ReturnType<typeof setTimeout>>();
 
 /** Drop a finished turn — its bubble and elapsed timer go with it. */
@@ -181,6 +140,7 @@ export function removeTurn(name: string): void {
 
 export { ensureTurn, updateThinkingBubble, setThinkingMilestone, pushReasoning, toggleThinkingExpanded };
 
+// Show/hide the MCP + Skills nav for the current session (admin AND enabled).
 export function applyMarketplaceNav() {
   const show = state.marketplaceEnabled && isAdminView.value;
   for (const id of ['#overflow-mcp', '#mtab-mcp-btn', '#mtab-skills-btn', '#overflow-skills']) {

@@ -1,78 +1,45 @@
 # Per-room threads (webchat)
 
-Status: **built** — shipped; delivered by the app overlay like the
-rest of webchat. Decisions taken:
-**sidebar-nested** thread UI, and **manual-only** thread creation via an inline
-"+" affordance (auto-spawn was cut from v1 — see §5). The sections below are the
-design; where the implementation differs it is noted inline (notably §5, and
-inbound thread_id is bounded — only 'main', a wired-agent lane, or an existing
-topic thread routes; an unknown id falls back to main rather than spawning).
+Status: **built.** Threads are **nested in the sidebar** and created **manually
+only**, via an inline "+". Inbound `thread_id` is bounded: only `main`, a
+wired-agent lane, or an existing topic thread routes; an unknown id falls back
+to `main` rather than creating a thread.
 
 A thread starts with no context (its own session). To move conversation between
-a thread and the room's regular chat, see
-**[thread-context-sync.md](thread-context-sync.md)** (verbatim,
-additive pull ↓ / push ↑ with per-thread high-water marks).
+a thread and the room's regular chat, see **context sync** (§8).
 
 ## 1. Goal & model
 
-Let one webchat room hold several **independent conversations** with its agent(s),
-each with its own context — instead of every message collapsing into one
-ever-growing session.
+Let one webchat room hold several **independent conversations** with its
+agent(s), each with its own context, instead of every message collapsing into
+one ever-growing session.
 
 The load-bearing idea: in NanoClaw, **a thread is an agent session.** `thread_id`
 is already part of the session key — `resolveSession(agentGroup, messagingGroup,
 threadId, 'per-thread')` returns **one session per (room, thread)**, and each
 session has its own container context, its own continuation (the Claude
 transcript), its own `inbound.db`/`outbound.db`, and its own heartbeat. So a
-thread is a real, isolated conversation:
+thread gives topic isolation, a smaller per-turn context, and parallel topics
+with one agent — and, by design, **no cross-thread awareness**: the agent
+answering in thread A cannot see thread B. The UI states this plainly.
 
-- ✅ topic isolation — no context bleed between unrelated threads
-- ✅ smaller per-turn context → cheaper + faster
-- ✅ parallel topics with one agent
-- ⚠️ **no cross-thread awareness** by design — the agent answering in thread A
-  cannot see thread B (different session). This is the point of threads, but it
-  must be stated plainly in the UI.
+Threads as a pure UI grouping over one shared session were rejected: that
+reintroduces the context bleed threads exist to remove and fights the session
+model.
 
-The rejected alternative — threads as a pure UI grouping over one shared session
-— reintroduces the context bleed threads exist to remove and fights the session
-model. Not pursued.
+## 2. Where `thread_id` flows
 
-## 2. What already exists vs. net-new
-
-**Already there (the spine — reused, not built):**
-- `thread_id` columns on `sessions`, `messages_in`, `messages_out`,
-  `pending_questions`.
-- `per-thread` session mode + `resolveSession` keying (`src/session-manager.ts`,
-  `src/db/sessions.ts`).
-- Router session resolution reads `event.threadId`; `evaluateEngage(...)` already
-  receives `threadId` (`src/router.ts`).
-- The adapter contract already carries threadId both ways:
-  `onInbound(platformId, threadId, message)` and
-  `deliver(platformId, threadId, message)` (`src/channels/adapter.ts`).
-- The agent's reply is auto-stamped with its session's `thread_id` on every
-  outbound row (`writeSessionRouting`, `src/session-manager.ts`).
-- `pending_questions.thread_id` — approvals/`ask_user_question` already
-  thread-aware.
-
-**The gap we closed — before this feature the webchat skill severed the thread
-at both ends** (now fixed; kept here as design motivation):
-- The adapter declared `supportsThreads: false` and nulled out the threadId on
-  `onInbound`, so every room message collapsed into one `shared` session. Now
-  `supportsThreads: true` and inbound carries the real threadId (`index.ts`).
-- `deliver` ignored the threadId on the way back. Now it honors it (`index.ts`).
-- `webchat_messages` was a flat `(room_id, created_at)` log — **no thread
-  column**. Now it has `thread_id` (§3).
-- The client had no thread concept; it sent `{type:'message', content}` with no
-  thread. Now every frame carries `thread_id` (`app.js`).
-
-So the work is: **stop nulling the thread, store it, route replies back to it,
-and give the client a sidebar thread tree.** The routing layer already knows what
-to do with a `thread_id` once it is present.
+Core already carries it end to end: `thread_id` columns on `sessions`,
+`messages_in`, `messages_out` and `pending_questions`; `per-thread` session
+keying; the adapter contract (`onInbound(platformId, threadId, message)` /
+`deliver(platformId, threadId, message)`); and outbound rows are stamped with
+their session's `thread_id` automatically. The webchat adapter declares
+`supportsThreads: true`, stores `thread_id` on every message, and every client
+frame carries one.
 
 ## 3. Data model
 
-Three additions (one new table, one column, one widened key) via a webchat
-migration (idempotent, additive):
+Webchat migrations (idempotent, additive):
 
 ```sql
 -- Thread registry. thread_id becomes session.thread_id for this room.
@@ -90,7 +57,7 @@ CREATE TABLE webchat_threads (
 ALTER TABLE webchat_messages ADD COLUMN thread_id TEXT NOT NULL DEFAULT 'main';
 CREATE INDEX idx_webchat_messages_thread ON webchat_messages(room_id, thread_id, created_at);
 
--- Per-thread read markers (widen the existing (user_id, room_id) PK to include thread).
+-- Per-thread read markers (widens the (user_id, room_id) PK to include thread).
 -- New table + copy, since SQLite can't alter a PK in place.
 CREATE TABLE webchat_thread_reads (
   user_id      TEXT NOT NULL,
@@ -102,10 +69,11 @@ CREATE TABLE webchat_thread_reads (
 ```
 
 `thread_id` namespacing:
-- **`main`** — every room's implicit default thread (see §7). Created lazily.
+- **`main`** — every room's implicit default thread (see §6). Created lazily.
 - **`agent:<folder>`** — a per-agent lane. Deterministic id so repeated use of
-  the same agent reuses the same thread/session. This id shape still exists and
-  can be created/used; it just isn't auto-suggested (auto-spawn was cut — §5).
+  the same agent reuses the same thread/session. Can be created by hand; it is
+  never suggested automatically (a dormant `auto_thread` column is all that
+  remains of auto-spawn).
 - **`<uuid>`** — a manually-created topic thread.
 
 ## 4. Routing flow (the round trip)
@@ -113,9 +81,8 @@ CREATE TABLE webchat_thread_reads (
 **Inbound** (client → agent), example: you send "draft the Q3 roadmap" with the
 *Q3 planning* thread selected (`thread_id = u_a1b2`):
 
-1. Client sends `{type:'message', content, thread_id:'u_a1b2'}` (new field).
-2. `ws.ts` resolves it and the adapter calls
-   `onInbound(roomId, 'u_a1b2', message)` — **passing the thread** instead of null.
+1. Client sends `{type:'message', content, thread_id:'u_a1b2'}`.
+2. `ws.ts` resolves it and the adapter calls `onInbound(roomId, 'u_a1b2', message)`.
 3. Router `resolveSession(group, room, 'u_a1b2', 'per-thread')` → session **S1**,
    keyed to that thread. Message lands in **S1's** `inbound.db`; container spawns.
 4. `webchat_messages` row stored with `thread_id='u_a1b2'`.
@@ -124,35 +91,19 @@ CREATE TABLE webchat_thread_reads (
 
 5. The agent answers in S1; its outbound rows are stamped `thread_id='u_a1b2'`
    automatically (session routing).
-6. Delivery calls `deliver(roomId, 'u_a1b2', msg)`; the adapter now **broadcasts
-   the threadId** in the WS payload (today dropped).
+6. Delivery calls `deliver(roomId, 'u_a1b2', msg)`; the adapter broadcasts the
+   threadId in the WS payload.
 7. Client renders the reply **inside the Q3 planning thread** and bumps the
    per-thread unread badge for anyone not viewing it.
 
-A second thread (*Incident #4821*, `thread_id=u_c3d4`) keys a **different**
-session S2 with zero knowledge of S1 — the agent works both in parallel, each
-reply routed to its own thread.
+A second thread (`thread_id=u_c3d4`) keys a **different** session S2 with zero
+knowledge of S1 — the agent works both in parallel, each reply routed to its own
+thread.
 
-## 5. Auto-spawn — REMOVED (deferred)
+## 5. Sidebar-nested UI
 
-Auto-spawn (per-agent lanes via a confirm-first suggestion) was **cut from v1**.
-It does **not** ship.
-
-What was removed: the frontend suggestion banner ("Continue with @X in its own
-thread?"), the `thread_suggestion` WS emit, the `suggestAgentThread` /
-`getRoomAutoThread` / `setRoomAutoThread` backend, and the
-`GET/PUT /api/rooms/:id/auto-thread` endpoints. The only residue is a **dormant
-`auto_thread` column** left in the migration — additive, unused, harmless.
-
-Threads are created **manually only** — via the inline "+" affordance in the
-sidebar (§6). The `agent:<folder>` thread *id shape* still exists and a lane can
-be created and used by hand; it just isn't auto-suggested. Auto-spawn may be
-revisited in a later release.
-
-## 6. Sidebar-nested UI (decision)
-
-Threads render **nested under their room** in the left sidebar (matches the
-multi-thread scaling of the reference implementation), not as a top tab strip.
+Threads render **nested under their room** in the left sidebar, not as a top
+tab strip.
 
 ```
 ▾ #eng                •   ← room row = the main thread (unread dot)
@@ -170,90 +121,111 @@ multi-thread scaling of the reference implementation), not as a top tab strip.
   threads yet) → inline name input → `POST …/threads` → opens the new (empty)
   topic thread.
 - **Rename / delete** via the thread's row context menu (owner/member rules
-  mirror room settings; reuse the room-rename pattern just shipped).
-- `agent:*` lane threads (created manually) appear with the agent glyph + name;
-  `main` has no row of its own (the room row is main) and is not deletable;
-  topic threads sort by last activity.
+  mirror room settings).
+- `agent:*` lane threads appear with the agent glyph + name; `main` has no row
+  of its own (the room row is main) and is not deletable; topic threads sort by
+  last activity.
 - **Unread** is per-thread (`webchat_thread_reads`), shown as dots; the room row
   shows a dot, not a count.
 - Active-thread state persists per session (like `lastRoom`).
 
-Follows `public/webchat/DESIGN.md` — tokens, `showToast`, sentence-case microcopy.
-
-## 7. The `main` thread + migration
+## 6. The `main` thread + migration
 
 - Every room has an implicit **`main`** thread (`kind=main`), created lazily on
-  first use. A brand-new room with no threads behaves exactly as today — `main`
-  is just the room.
+  first use. A room with no threads behaves as a plain room — `main` is just
+  the room.
 - Migration backfills `webchat_messages.thread_id='main'` (column default), so
-  **all existing history lands in `main`** with no data loss and no visible
-  change until someone creates a thread.
+  **all existing history lands in `main`** with no data loss.
 - Existing `webchat_room_reads` rows copy into `webchat_thread_reads` as
   `(user_id, room_id, 'main', last_read_at)`.
 
-## 8. Edge cases & decisions
+## 7. Edge cases
 
 - **DMs** (`dm:<folder>` rooms): single agent, so they stay single-threaded by
-  default. Manual topic threads still allowed if wanted.
-- **Engage / mention-sticky** is unchanged — it resolves *within the thread's
-  session*, so an engaged agent stays engaged **in that thread**, not across the
-  room (matches the reference's per-thread engaged state).
-- **Approvals / `ask_user_question`**: `pending_questions.thread_id` already
-  exists, so a question from S1 surfaces in its thread and the answer routes
-  back to S1. No new work.
-- **Delete a thread**: remove the `webchat_threads` row + its `webchat_messages`
-  + its `webchat_thread_reads`, and tear down its session dir
+  default. Manual topic threads are still allowed.
+- **Engage / mention-sticky** resolves *within the thread's session*, so an
+  engaged agent stays engaged **in that thread**, not across the room.
+- **Approvals / `ask_user_question`**: `pending_questions.thread_id` routes a
+  question from S1 to its thread and the answer back to S1.
+- **Delete a thread**: removes the `webchat_threads` row, its
+  `webchat_messages` and `webchat_thread_reads`, and tears down its session dir
   (`data/v2-sessions/<group>/<S>/`). Room + other threads untouched. `main` is
   not deletable.
-- **What the agent sees**: only its thread's history. If a user expects
-  cross-thread memory, the UI states threads are separate conversations.
 - **a2a / loop-back**: agent-authored fan-out keeps its existing self-exclusion;
   it inherits the thread of the session that produced it.
+- **Session sprawl**: many threads mean many sessions, but idle teardown
+  applies per session, so cold threads cost nothing while idle.
 
-## 9. Build phases (each ends green: typecheck + tests)
+## 8. Context sync (pull / push)
 
-0. **Schema + storage** — migration (`webchat_threads`, `thread_id` column,
-   `webchat_thread_reads`), thread CRUD helpers in `db.ts`, message read/write
-   filtered by thread, read-marker helpers. Backfill `main`. Unit-tested.
-1. **Adapter plumbing** — stop nulling threadId on inbound; honor threadId in
-   `deliver` + broadcast; drive per-thread session mode for webchat rooms.
-   Tests: a message with `thread_id=X` keys a session at X; two threads → two
-   sessions; reply routes back to its thread.
-2. **Server endpoints** — `GET/POST/PATCH/DELETE /api/rooms/:id/threads`;
-   `?thread_id=` on the messages endpoint; per-thread read endpoint; thread
-   teardown on delete (owner/member-gated, CSRF, mirroring room routes). Tests.
-3. ~~**Auto-spawn**~~ — **cut from v1 (see §5)**; only the dormant `auto_thread`
-   column remains. Left here for history: it would have redirected a
-   single-mention `main` message to an `agent:<folder>` lane.
-4. **Sidebar UI** — nested thread tree, create/rename/delete, per-thread history
-   load, send-with-thread, route inbound to the right thread, per-thread unread,
-   active-thread persistence.
-5. **Packaging** — new files ride `app-manifest.txt` + the migrations
-   registration step; the coverage guard proves nothing is dropped.
+A new thread starts with **no context** — an empty transcript and an empty agent
+memory. Two operations move context between a thread and its room's `main`:
 
-## 10. Test plan (highlights)
+- **Pull (↓ from main):** bring main's recent conversation into the thread.
+- **Push (↑ to main):** bring the thread's own conversation back into main.
 
-- **Isolation invariant**: messages to thread A and thread B resolve to distinct
-  sessions; A's context never appears in B.
-- **Round trip**: inbound `thread_id` → session key → outbound stamped → delivery
-  threadId → client renders in-thread.
-- **History filter**: `?thread_id=` returns only that thread; `main` holds
-  migrated history.
-- **Unread**: per-thread marker monotonic; room row = sum; cascades on delete.
-- **Migration**: existing rooms/messages/reads land in `main` unchanged.
-- **Round-trip compose** on a fresh composed install.
+Both are **verbatim**, **additive**, **demarcated**, and **incremental** (a
+high-water mark per direction). **Neither ever overwrites or reorders** the
+destination; they only append. "Context" is both the visible **transcript**
+(`webchat_messages`) and the destination agent's **session memory**, written as
+silent `trigger:0` inbound via `syncSessionContext`.
 
-## 11. Open questions / risks
+### What gets copied
 
-- **Client is the riskiest slice** — correctly routing *live* WS messages into
-  the right thread node + per-thread unread, without leaking a turn's bubbles
-  across threads (reuse `endAllAgentTurns` per-thread).
-- **Session sprawl** — many threads = many sessions/containers. Existing idle
-  teardown applies per session, so cold threads cost nothing while idle; worth
-  watching on busy multi-agent rooms.
+A thread's messages split into a pulled-in prefix (copied from main) and its
+native messages. Copied rows are **origin-marked** so neither direction ever
+echoes: **push copies only native thread rows** (`origin IS NULL`) — the pulled
+prefix already exists in main — and **pull copies only native main rows**, so a
+push→pull round-trip doesn't duplicate.
 
-## Effort
+```sql
+ALTER TABLE webchat_messages ADD COLUMN origin TEXT; -- NULL=native | 'pulled' | 'pushed'
 
-~1–2 weeks. Almost entirely additive; no change to non-webchat behavior. The
-backend is mostly *using* tested machinery; the UI (slice 4) is the bulk of the
-new code. Riskiest: live-message routing in the client.
+CREATE TABLE webchat_thread_sync (
+  room_id            TEXT NOT NULL,
+  thread_id          TEXT NOT NULL,
+  last_pulled_src_ts INTEGER NOT NULL DEFAULT 0, -- newest main created_at pulled in
+  last_pushed_src_ts INTEGER NOT NULL DEFAULT 0, -- newest native thread created_at pushed up
+  PRIMARY KEY (room_id, thread_id)
+);
+```
+
+Copies are **new** rows in the destination (new ids, `created_at` = now so they
+land at the destination's current end); the originals are untouched. Marks track
+the **source** timestamp last synced, so the next sync selects
+`src.created_at > mark`, and cascade-delete with the thread.
+
+### Pull and push
+
+```
+src = source messages WHERE created_at > <direction's mark> AND origin IS NULL
+      (a fresh pull is also capped to main's recent slice)
+if src empty → no-op toast ("Nothing new to pull/push")
+insert a divider row + copies of src into the destination (origin='pulled'|'pushed')
+syncSessionContext(destination session, src)   -- agent memory, trigger:0
+<direction's mark> = max(src.created_at)
+broadcast the new messages to the room's clients
+```
+
+A fresh thread's first pull has mark `0`, so it brings main's recent slice — the
+"snapshot on create". Every later sync in either direction brings only the delta.
+
+Each copied block is preceded by a `context-divider` message (*"Pulled from main
+chat"* / *"Pushed from thread"*) that the client renders as a labelled rule, so
+imported content is never confused with native conversation. Dividers are
+display-only and never written to agent sessions.
+
+### UI and API
+
+- Two header controls, shown **only when a thread is open**: **↓** *"Pull main
+  chat into this thread"* and **↑** *"Push this thread into main chat"*. Each
+  confirms first (title only); the result toast reports *"Copied N messages"*.
+- `POST /api/rooms/:id/threads/:tid/pull` and `…/push` → `{ copied: n }`.
+  Room access checks apply and the requests carry `X-Webchat-CSRF`.
+- A summary mode (one LLM turn condensing the delta) is a possible later
+  addition; copies are verbatim today.
+
+Implementation: `src/channels/webchat/db.ts` (`getThreadSyncMarks`,
+`setThreadSyncMark`, `getSyncDelta`, `insertSyncedMessages`),
+`server/routes-rooms.ts` (the endpoints), `ui/src/` (controls and divider
+rendering); tests in `context-sync.test.ts`.

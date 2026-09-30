@@ -1,5 +1,5 @@
 // ── Router roster view state ────────────────────────────────────────────────
-// Bridge refs for the RouterRoster island. routing.ts still owns the fetch and
+// Bridge refs for the RouterRoster island. routing.ts owns the fetch and
 // the classifier split; this holds only what the list renders.
 import { ref } from 'vue';
 

@@ -144,6 +144,16 @@ describe('ensureWebchatUserHandle', () => {
     expect(await ensureWebchatUserHandle('webchat:b', 'Sam')).toBe('sam-2');
     expect(await ensureWebchatUserHandle('webchat:c', 'Sam')).toBe('sam-3');
   });
+
+  it('two users racing for the same name each get the handle they actually own', async () => {
+    const [a, b] = await Promise.all([
+      ensureWebchatUserHandle('webchat:a', 'Sam'),
+      ensureWebchatUserHandle('webchat:b', 'Sam'),
+    ]);
+    expect(a).not.toBe(b);
+    expect(await getWebchatUserHandle('webchat:a')).toBe(a);
+    expect(await getWebchatUserHandle('webchat:b')).toBe(b);
+  });
 });
 
 describe('setWebchatUserHandle', () => {
@@ -259,6 +269,16 @@ describe('getMentionedRoomIdsForUser', () => {
   it('ignores rooms that mention someone else', async () => {
     await insertMessage('room-1', 'hey @bob', 1000);
     expect((await getMentionedRoomIdsForUser('webchat:alice', 'alice')).has('room-1')).toBe(false);
+  });
+
+  it('does not fire on a longer handle or an email that starts with it', async () => {
+    await setWebchatUserHandle('webchat:al', 'al');
+    await insertMessage('room-1', 'thanks @alice', 1000);
+    await insertMessage('room-2', 'write to x@al.example', 1000);
+    await insertMessage('room-3', 'cc @al-team', 1000);
+    await insertMessage('room-4', 'ok (@al), done', 1000);
+    const rooms = await getMentionedRoomIdsForUser('webchat:al', 'al');
+    expect([...rooms]).toEqual(['room-4']);
   });
 
   it('is empty for a blank handle', async () => {

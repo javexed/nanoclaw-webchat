@@ -1,8 +1,8 @@
 /**
  * Provider seam (hooks.ts) — the contracts every hookified touchpoint relies
  * on: inert-by-default, contribution merge order, throw isolation, and the
- * learning loop's registered contributor producing the exact options the
- * claude provider used to hardcode (the R2 extraction's regression guard).
+ * learning loop's registered contributor producing the exact restricted-review
+ * options.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 

@@ -1,18 +1,10 @@
 // ── Transcript state ────────────────────────────────────────────────────────
 // The message list the transcript renders, and the live thinking turns beneath
-// it.
+// it. Vue owns #messages' children, so nothing else may write into it.
 //
-// This is the one surface in the conversion that could not be sliced. Every
-// other island owned a container nothing else wrote to; #messages had ten
-// writers across six modules, and the moment a component mounts on it Vue owns
-// its children — so a partial conversion IS the two-writers bug. They moved
-// together, which is why this module carries more than a bridge ref.
-//
-// Rows are VIEW MODELS built once at append time, not raw server messages.
-// That is deliberate: appendMessage decided several things from transient state
-// that is gone by the time a re-render happens — whether the sender was me,
-// which reasoning log to fold onto the reply, what the a2a payload parsed to.
-// Deciding again later would give a different answer.
+// Rows are VIEW MODELS built once at append time, not raw server messages:
+// appendMessage decides from transient state (whether the sender was me, which
+// reasoning log to fold on, the parsed a2a payload) that a re-render no longer has.
 import { ref } from 'vue';
 
 /** Monotonic row key. Server ids are absent on the optimistic echo and on
@@ -94,7 +86,7 @@ export function readdRow(row: MsgRow): MsgRow {
 export const transcriptEmpty = ref<string | null>(null);
 
 export interface ThinkingTurn {
-  /** Agent name — one bubble per agent, as dataset.agent was. */
+  /** Agent name — one bubble per agent. */
   name: string;
   startedAt: number;
   lastActivityAt: number;
@@ -113,13 +105,12 @@ export interface ThinkingTurn {
   expanded: boolean;
   elapsed: string;
   /** Owned by an active status stream, so the typing heartbeat must not clear
-   *  it during a quiet stretch. Was dataset.statusLive on the bubble. */
+   *  it during a quiet stretch. */
   statusLive: boolean;
 }
 
 /** Live thinking bubbles, keyed by agent name. Rendered AFTER the message list,
- *  which is what made messages "insert before the thinking bubble" fall out for
- *  free instead of needing an anchor. */
+ *  so new messages land above them with no anchor. */
 export const thinkingTurns = ref<ThinkingTurn[]>([]);
 
 export const turnFor = (name: string): ThinkingTurn | undefined =>

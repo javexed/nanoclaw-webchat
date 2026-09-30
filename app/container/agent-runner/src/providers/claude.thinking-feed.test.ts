@@ -3,10 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-// Claude's thinking blocks ride the same assistant `content` array as text.
-// Nothing consumed them, so `summarizeThinking` sat exported with no caller and
-// the live reasoning feed was empty for every Claude-backed agent while pi's
-// worked — the bubble looked broken for the provider most agents run.
+// Claude's thinking blocks ride the assistant `content` array; they must reach the reasoning feed.
 
 const sdkMessages: unknown[] = [];
 

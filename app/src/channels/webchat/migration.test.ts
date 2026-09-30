@@ -60,7 +60,6 @@ describe('moduleWebchat migration', () => {
       'webchat_signin_sessions',
       'webchat_skill_sources',
       'webchat_template_sources',
-      'webchat_thread_engaged',
       'webchat_thread_reads',
       'webchat_thread_sync',
       'webchat_threads',
@@ -80,7 +79,6 @@ describe('moduleWebchat migration', () => {
         'idx_webchat_agent_mcp_servers_server',
         'idx_webchat_agent_models_model',
         'idx_webchat_approvals_platform',
-        'idx_webchat_engaged_thread',
         'idx_webchat_messages_room',
         'idx_webchat_messages_thread',
         'idx_webchat_push_identity',
@@ -117,6 +115,7 @@ describe('moduleWebchat migration', () => {
       'webchat-default-model',
       'webchat-disabled-builtins',
       'webchat-drop-rooms',
+      'webchat-drop-thread-engaged',
       'webchat-egress-existing-open',
       'webchat-initial',
       'webchat-marketplace-toggle',
@@ -136,6 +135,9 @@ describe('moduleWebchat migration', () => {
       'webchat-runner-client',
       'webchat-runner-egress',
       'webchat-runner-image',
+      'webchat-runner-keyless-allowed',
+      'webchat-runner-machine-key',
+      'webchat-runner-placement-mode',
       'webchat-runners',
       'webchat-signins',
       'webchat-skill-sources',
@@ -150,6 +152,65 @@ describe('moduleWebchat migration', () => {
       'webchat-user-archives',
       'webchat-user-handles',
     ]);
+  });
+
+  it('webchat-runner-keyless-allowed lets only machines paired before keys connect without one', async () => {
+    const db = getDb();
+    await runMigrations(db);
+    // The state before it: no column, and a machine of each kind.
+    await db.exec(`ALTER TABLE webchat_runner_machines DROP COLUMN keyless_allowed`);
+    const add = (fp: string, status: string, key: string | null) =>
+      db.run(
+        `INSERT INTO webchat_runner_machines (fingerprint, user_id, status, first_seen, last_seen, public_key)
+         VALUES (?, 'u', ?, 1, 1, ?)`,
+        fp,
+        status,
+        key,
+      );
+    await add('legacy', 'approved', null);
+    await add('legacy-pending', 'pending', null);
+    await add('keyed', 'approved', 'k');
+    await add('revoked', 'revoked', null); // its key, if it had one, was cleared by the revoke
+    await db.run(`DELETE FROM schema_version WHERE name = 'webchat-runner-keyless-allowed'`);
+
+    await runMigrations(db);
+
+    const rows = (await db.all(
+      `SELECT fingerprint, keyless_allowed FROM webchat_runner_machines ORDER BY fingerprint`,
+    )) as Array<{ fingerprint: string; keyless_allowed: number }>;
+    expect(Object.fromEntries(rows.map((r) => [r.fingerprint, r.keyless_allowed]))).toEqual({
+      keyed: 0,
+      legacy: 1,
+      'legacy-pending': 1,
+      revoked: 0,
+    });
+  });
+
+  it('webchat-drop-thread-engaged removes the retired table on an upgraded install', async () => {
+    const db = getDb();
+    await runMigrations(db);
+    // Recreate the pre-drop state: the table (with a row) and no record of the drop.
+    await db.exec(`
+      CREATE TABLE webchat_thread_engaged (
+        room_id TEXT NOT NULL, thread_id TEXT NOT NULL, agent_group_id TEXT NOT NULL,
+        engaged_at INTEGER NOT NULL, PRIMARY KEY (room_id, thread_id, agent_group_id)
+      );
+      CREATE INDEX idx_webchat_engaged_thread ON webchat_thread_engaged(room_id, thread_id);
+    `);
+    await db.run(`INSERT INTO webchat_thread_engaged VALUES ('room-1', 't1', 'ag-a', 1)`);
+    await db.run(`DELETE FROM schema_version WHERE name = 'webchat-drop-thread-engaged'`);
+
+    await runMigrations(db);
+
+    const left = await db.all(
+      `SELECT name FROM sqlite_master WHERE name IN ('webchat_thread_engaged', 'idx_webchat_engaged_thread')`,
+    );
+    expect(left).toEqual([]);
+    // Room and thread deletion no longer touch the dropped table.
+    const { createWebchatThread, deleteWebchatThread, deleteWebchatRoom } = await import('./db.js');
+    const t = await createWebchatThread('room-1', 'Topic');
+    await expect(deleteWebchatThread('room-1', t.thread_id)).resolves.toBeUndefined();
+    await expect(deleteWebchatRoom('room-1')).resolves.toBeUndefined();
   });
 
   it('is a no-op on re-run (name-based dedupe)', async () => {

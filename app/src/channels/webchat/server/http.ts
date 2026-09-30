@@ -1,10 +1,5 @@
 // ── HTTP + request-body helpers, shared by every route module ────────────────
-// json() alone is called 870 times across server.ts, readJsonBody 83.
-//
-// Extracting these FIRST is what makes the route-module split possible: a
-// routes-*.ts importing them from server.ts would form a cycle, because
-// server.ts imports the handlers back. Both sides importing this file keeps the
-// graph acyclic — the same reason core/dom came out first in the UI split.
+// A leaf module so route modules never import server.ts (which imports them).
 import type { IncomingMessage, ServerResponse } from 'http';
 
 /**
@@ -22,13 +17,10 @@ export function json<T>(res: ServerResponse, status: number, data: NoPromiseFiel
 }
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
-  // A Promise handed here serializes as {} — json()'s `unknown` parameter means
-  // tsc never flags a missing await, and the async-DB migration proved the
-  // failure is invisible until a client chokes on the shape (/api/agents took
-  // the room UI down exactly this way). Resolve it instead of guessing: send
-  // the awaited value, and surface a rejection as the 500 it is.
-  // The same slip one level down ({ handle: getHandle() }) can still arrive
-  // typed as `any`: resolve those fields too, and log it so it gets fixed.
+  // A Promise handed here would serialize as {} (tsc can't flag a missing await
+  // through `unknown`): send the awaited value, and a rejection as a 500. The
+  // same slip one level down ({ handle: getHandle() }) can still arrive typed
+  // as `any`: resolve those fields too, and log it so it gets fixed.
   if (data && typeof data === 'object' && !Array.isArray(data) && !isThenable(data)) {
     const pending = Object.entries(data).filter(([, v]) => isThenable(v));
     if (pending.length > 0) {
@@ -107,5 +99,20 @@ export async function readJsonBody(req: IncomingMessage, res: ServerResponse): P
       return null;
     }
     throw err;
+  }
+}
+
+/**
+ * readJsonBody + JSON.parse. `undefined` means the error response (413, or 400
+ * 'Invalid JSON') is already sent. A body of `null` is returned as-is.
+ */
+export async function readJsonObject<T>(req: IncomingMessage, res: ServerResponse): Promise<T | undefined> {
+  const raw = await readJsonBody(req, res);
+  if (raw === null) return undefined;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    json(res, 400, { error: 'Invalid JSON' });
+    return undefined;
   }
 }

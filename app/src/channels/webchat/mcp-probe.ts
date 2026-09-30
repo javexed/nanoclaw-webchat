@@ -4,7 +4,7 @@
  * registry (the MCP twin of models.ts's probeEndpoint).
  *
  * Transport: Streamable HTTP, the current spec transport and the only remote
- * one core accepts. SSE is deprecated and no longer probed.
+ * one core accepts (SSE is deprecated).
  *
  * Security: the URL is operator input — every attempt goes through the same
  * SSRF gate as the models probe (assertSafeOutboundUrl: blocks link-local/

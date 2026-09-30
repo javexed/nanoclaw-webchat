@@ -1,15 +1,13 @@
 // ── Ollama host card state ──────────────────────────────────────────────────
-// Everything the OllamaHostCards island renders. Three renderers used to write
-// into one card subtree; they are three slices of this object now, which is the
-// whole point of the conversion — the card, its model list and its pull line
-// can no longer overwrite each other.
+// Everything the OllamaHostCards island renders: the card, its model list and
+// its pull line are separate slices so they cannot overwrite each other.
 import { ref } from 'vue';
 
 /** Configured hosts, in the order /api/ollama/hosts returned them. */
 export const hosts = ref<string[]>([]);
 
 export interface HostModels {
-  /** loading is the state a freshly-built card starts in, as it always was. */
+  /** loading is the state a freshly-built card starts in. */
   phase: 'loading' | 'ready' | 'error';
   selectable: any[];
   system: any[];
@@ -34,12 +32,8 @@ export interface HostPull {
 export const hostPulls = ref<Record<string, HostPull>>({});
 
 export interface PullPreview {
-  /**
-   * The ref this preview describes. Kept so a slow response can be DISCARDED
-   * when it lands after the operator has typed something else — otherwise the
-   * line under the box reports the size of a model they already moved on from,
-   * which is worse than showing nothing.
-   */
+  /** The ref this preview describes, so a slow response for a ref the
+   *  operator has since changed is discarded rather than shown. */
   model: string;
   text: string;
   /** Drives the warning colour: the estimate says this will not fit in VRAM. */
@@ -54,12 +48,8 @@ export interface PullPreview {
 export const hostPullPreview = ref<Record<string, PullPreview | null>>({});
 
 /**
- * Which cards are expanded.
- *
- * Backed by localStorage under `serverCardOpen:<host>`, the same keys the
- * imperative accordion used — an operator's expanded cards survive this
- * conversion. Held as a Set rather than read from storage during render so the
- * template does not touch localStorage on every patch.
+ * Which cards are expanded. Backed by localStorage under `serverCardOpen:<host>`;
+ * held as a Set so the template does not touch localStorage on every patch.
  */
 export const openCards = ref<Set<string>>(new Set());
 

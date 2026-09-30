@@ -14,7 +14,8 @@
 # top), then leans on NanoClaw's own non-interactive setup driver (`pnpm run setup:auto`)
 # for the deps/Docker/OneCLI/agent-image/service steps — the interactive ones
 # (auth, channel, first-chat, cli-agent, timezone) are skipped because the wizard
-# owns them. Only the webchat .env + bearer token are seeded here.
+# owns them. Only the webchat .env + bearer token are seeded here. Those steps
+# come from the composed tree's deploy/webchat-deploy.sh, shared with that script.
 #
 # Works on x86_64 and arm64 (Raspberry Pi). On a Pi the Claude/API path is the
 # sweet spot; local models (Ollama) want an x86 box with more RAM.
@@ -46,8 +47,65 @@ die() {
   echo -e "\033[1;31m[nanoclaw] ERROR:\033[0m $*" >&2
   exit 1
 }
+
+# ── Result record ───────────────────────────────────────────────────────────
+# RESULT_FILE says what this run installed and how far it got: the exact
+# webchat, upstream and seam commits, the phase reached, the exit code. It
+# reads "running" from the start, so a killed run can never leave an earlier
+# "success" behind, and "success" only once /health has answered. Commits and
+# timings only; never a token.
+RESULT_FILE="${NANOCLAW_RESULT_FILE:-/var/log/nanoclaw-install.json}"
+STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+RESULT_STATUS=running
+PHASE=preflight
+HEALTH_URL=""
+INSTALLER_SHA=""
+[ -f "${BASH_SOURCE[0]:-}" ] && INSTALLER_SHA="$(sha256sum "${BASH_SOURCE[0]}" | cut -d' ' -f1)"
+
+json_str() { # a JSON string, or null for an empty value
+  [ -n "$1" ] || { printf 'null'; return; }
+  local v=${1//\\/\\\\}
+  printf '"%s"' "${v//\"/\\\"}"
+}
+pin() { # versions.json key → value, from the checkout being installed
+  grep -o "\"$1\": *\"[^\"]*\"" "$SRC_DIR/versions.json" 2>/dev/null | head -1 | sed 's/.*: *"//; s/"$//'
+}
+write_result() { # [exit code]
+  local tmp commit
+  tmp="$(mktemp "$RESULT_FILE.XXXXXX" 2>/dev/null)" || return 0
+  commit="$(git -c safe.directory='*' -C "$SRC_DIR" rev-parse HEAD 2>/dev/null || true)"
+  cat >"$tmp" <<JSON
+{
+  "status": $(json_str "$RESULT_STATUS"),
+  "phase": $(json_str "$PHASE"),
+  "exit_code": ${1:-null},
+  "started_at": $(json_str "$STARTED_AT"),
+  "finished_at": $(json_str "$([ "$RESULT_STATUS" = running ] || date -u +%Y-%m-%dT%H:%M:%SZ)"),
+  "webchat": { "repo": $(json_str "$REPO_URL"), "branch": $(json_str "$REPO_BRANCH"), "commit": $(json_str "$commit") },
+  "upstream_ref": $(json_str "$(pin upstreamRef)"),
+  "seam_ref": $(json_str "$(pin seamRef)"),
+  "install_dir": $(json_str "$INSTALL_DIR"),
+  "health_url": $(json_str "$HEALTH_URL"),
+  "installer_sha256": $(json_str "$INSTALLER_SHA")
+}
+JSON
+  chmod 644 "$tmp" && mv -f "$tmp" "$RESULT_FILE"
+}
+phase() { # enter a phase; the record shows it while the run is in progress
+  PHASE=$1
+  write_result
+}
+on_exit() {
+  local rc=$?
+  [ "$RESULT_STATUS" = success ] && return
+  RESULT_STATUS=failed
+  write_result "$rc"
+  echo "[nanoclaw] result: failed during '$PHASE' — $RESULT_FILE" >&2
+}
 [ "$(id -u)" -eq 0 ] || die "run as root (sudo bash install.sh)"
 command -v apt-get >/dev/null || die "this provisioner targets Debian/Ubuntu (apt)"
+trap on_exit EXIT
+write_result
 
 # ── CPU capability preflight (x86 only) ─────────────────────────────────────
 # The Claude Code CLI is a native x86 binary that needs AVX2/SSE4.2. On an x86 VM
@@ -85,6 +143,7 @@ if command -v fuser >/dev/null 2>&1; then
 fi
 
 # ── 1. OS deps ──────────────────────────────────────────────────────────────
+phase os-deps
 # git/curl to fetch; build-essential+python3 for better-sqlite3's native build;
 # zstd for the wizard's Ollama tarball; ca-certificates for TLS fetches.
 # -o DPkg::Lock::Timeout=300: belt-and-braces — if something still holds the
@@ -96,6 +155,7 @@ apt-get $APT_OPTS update -qq
 apt-get $APT_OPTS install -y -qq git curl ca-certificates gnupg build-essential python3 zstd sudo >/dev/null
 
 # ── 2. Service user ─────────────────────────────────────────────────────────
+phase service-user
 if ! id "$RUN_USER" >/dev/null 2>&1; then
   log "creating service user '$RUN_USER'…"
   useradd --create-home --shell /bin/bash "$RUN_USER"
@@ -108,6 +168,7 @@ RUN_UID="$(id -u "$RUN_USER")"
 loginctl enable-linger "$RUN_USER" || log "warn: could not enable linger (systemctl --user may need a manual re-enable)"
 
 # ── 3. Node 22 (nodesource) + pnpm ──────────────────────────────────────────
+phase node
 # setup:auto is `tsx setup/auto.ts`, so Node + the repo deps must exist FIRST —
 # chicken/egg the `environment` step can't solve. Reuse the repo's own idempotent
 # installer once the repo is cloned; bootstrap Node here so the clone can build.
@@ -128,6 +189,7 @@ fi
 corepack enable >/dev/null 2>&1 || npm install -g corepack >/dev/null 2>&1 || true
 
 # ── 4. Docker (agent containers) ────────────────────────────────────────────
+phase docker
 if ! command -v docker >/dev/null 2>&1; then
   log "installing Docker…"
   # Add Docker's official apt repo via a pinned keyring instead of piping
@@ -168,6 +230,7 @@ for _ in $(seq 1 30); do
 done
 
 # ── 5. Fetch this repo + compose ────────────────────────────────────────────
+phase compose
 # Everything below runs as the service user, so the trees are theirs and git
 # never trips over "dubious ownership" on a re-run.
 # XDG_RUNTIME_DIR lets setup:auto's `service` step reach the per-user systemd
@@ -194,12 +257,11 @@ else
   run_in "$SRC_DIR" "git fetch --quiet --depth 1 '$REPO_URL' '$REPO_BRANCH' && git checkout --quiet --force FETCH_HEAD"
 fi
 
-# A checkout at INSTALL_DIR that this repo's installer did not compose (an
-# install from the retired single-branch fork, say) must not be composed over:
-# the patches would land on the wrong base. The seam remote is the first thing
-# a compose adds, so its absence marks a foreign tree.
+# A checkout at INSTALL_DIR that this repo's installer did not compose must not
+# be composed over: the patches would land on the wrong base. The seam remote is
+# the first thing a compose adds, so its absence marks a foreign tree.
 if [ -d "$INSTALL_DIR/.git" ] && ! run_as "git remote get-url nanoclaw-webchat-seam >/dev/null 2>&1"; then
-  die "$INSTALL_DIR holds a checkout this installer did not compose. Move it aside, or migrate it: bash $SRC_DIR/scripts/migrate-from-fork.sh $INSTALL_DIR"
+  die "$INSTALL_DIR holds a checkout this installer did not compose. Move it aside."
 fi
 
 log "composing NanoClaw + webchat into $INSTALL_DIR (deps + build — several minutes)…"
@@ -212,66 +274,46 @@ done
 run_in "$SRC_DIR" "$COMPOSE_ENV bash ./install.sh --dir '$INSTALL_DIR' </dev/null" \
   || die "compose failed — see the output above"
 
+# The shared deploy steps (setup:auto, the webchat .env, the health wait), from
+# the tree just composed. They work on the current directory.
+cd "$INSTALL_DIR"
+# shellcheck source=webchat-deploy.sh
+. "$INSTALL_DIR/deploy/webchat-deploy.sh" || die "$INSTALL_DIR/deploy/webchat-deploy.sh missing — the compose is incomplete"
+
 # ── 6. setup:auto — deps/OneCLI/agent-image/service, NO interactive steps ────
-# Skips: auth (wizard mints creds), channel + first-chat (wizard makes the first
-# agent), cli-agent (no terminal agent on a headless box), timezone (UTC default;
-# clack's confirm needs a TTY cloud-init doesn't have).
-# The portal offers (Echo's hardened image, Slack) are browser questions a
-# headless run cannot answer: the prompt cancels on /dev/null and setup:auto
-# exits 0 part-way, before the service step. Settle the image as the local
-# build unless the operator already chose, and skip both offers.
-install -m 600 -o "$RUN_USER" -g "$RUN_USER" /dev/null "$INSTALL_DIR/.env.tmp"
-[ -f "$INSTALL_DIR/.env" ] && cat "$INSTALL_DIR/.env" >"$INSTALL_DIR/.env.tmp"
-grep -q '^NANOCLAW_HARDENED_IMAGE=' "$INSTALL_DIR/.env.tmp" || echo 'NANOCLAW_HARDENED_IMAGE=false' >>"$INSTALL_DIR/.env.tmp"
-mv "$INSTALL_DIR/.env.tmp" "$INSTALL_DIR/.env"
+phase setup-auto
+# setup_auto_headless skips auth (wizard mints creds), channel + first-chat
+# (wizard makes the first agent), cli-agent (no terminal agent on a headless
+# box), timezone (UTC default; clack's confirm needs a TTY cloud-init doesn't
+# have) and the portal offers. Unlike webchat-deploy.sh it keeps setup:auto's
+# own service step: the systemctl --user unit this installer runs under.
+# It runs as the service user, so the .env it settles must be theirs.
+[ -f .env ] || install -m 600 -o "$RUN_USER" -g "$RUN_USER" /dev/null .env
+chown "$RUN_USER:$RUN_USER" .env
+SETUP_LOG="$INSTALL_DIR/logs/setup.log"
+SETUP_LOG_MARK=$(setup_log_mark)
 log "running setup:auto (deps, OneCLI, agent image, service)…"
-run_as "NANOCLAW_BOOTSTRAPPED=1 \
-        NANOCLAW_DISPLAY_NAME='$DISPLAY_NAME' \
-        NANOCLAW_SKIP='auth,channel,first-chat,cli-agent,timezone,echo-reminder,slack-reminder' \
-        NANOCLAW_HEADLESS=1 pnpm run setup:auto </dev/null" \
+run_as ". deploy/webchat-deploy.sh && setup_auto_headless '$DISPLAY_NAME'" \
   || die "setup:auto failed — see the guest logs (logs/setup.log). If it hung on a prompt, that's the headless-TTY risk noted in the README."
+if setup_unfinished "$SETUP_LOG_MARK" container service; then
+  die "setup:auto exited 0 without finishing its $UNFINISHED_STEP step (last step it recorded: ${LAST_STEP:-none}). A prompt it could not answer headless is the usual cause — see $SETUP_LOG"
+fi
 
 # ── 7. Seed the webchat .env (the wizard entry point) ───────────────────────
+phase env
 # 0.0.0.0 so it's reachable from the LAN; a bearer token because a LAN-exposed
-# assistant must not be open. First browser login auto-becomes owner.
+# assistant must not be open. First browser login auto-becomes owner. Tailscale
+# identity auth is on from the first run, so the tailnet flow needs no config
+# (the wizard's "I'll use Tailscale" opt-in also promotes a token login).
 #
-# Re-runs keep what is there. Rotating the token would lock out every existing
-# login, and host/Tailscale may have been changed in Settings since, so on an
-# existing .env those are only filled in when missing.
-ENV_FILE="$INSTALL_DIR/.env"
-set_env() {
-  local key="$1" val="$2"
-  if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
-    sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
-  else
-    echo "${key}=${val}" >>"$ENV_FILE"
-  fi
-}
-get_env() { grep "^$1=" "$ENV_FILE" 2>/dev/null | tail -n1 | cut -d= -f2- || true; }
-default_env() { grep -q "^$1=" "$ENV_FILE" 2>/dev/null || echo "$1=$2" >>"$ENV_FILE"; }
-touch "$ENV_FILE"
-chmod 600 "$ENV_FILE"
-FIRST_RUN=1
-grep -q '^WEBCHAT_ENABLED=' "$ENV_FILE" && FIRST_RUN=0
+# Re-runs keep what is there: the token (rotating it would lock out every
+# login), host and Tailscale. An exported WEBCHAT_PORT replaces the port.
+# An empty token line counts as no token here.
+[ -n "$(env_get WEBCHAT_TOKEN)" ] || env_del WEBCHAT_TOKEN
 log "enabling webchat…"
-set_env WEBCHAT_ENABLED true
-default_env WEBCHAT_HOST 0.0.0.0
-if [ "$WEBCHAT_PORT_SET" = 1 ]; then set_env WEBCHAT_PORT "$WEBCHAT_PORT"; else default_env WEBCHAT_PORT "$WEBCHAT_PORT"; fi
-# Enable Tailscale identity auth up front so the tailnet flow needs no config:
-# reach this over your tailnet and the first Tailscale login becomes owner (the
-# wizard's "I'll use Tailscale" opt-in also promotes it if you signed in with the
-# token first), after which the bearer token can be retired from Settings.
-# Harmless when Tailscale isn't used — the bearer token is checked first, so
-# token/LAN access is unaffected; it only logs one boot notice until Tailscale is
-# present. First run only: a later run must not undo turning it off.
-[ "$FIRST_RUN" = 1 ] && default_env WEBCHAT_TAILSCALE true
-# A token only when there is none — and, on a re-run, only when nothing else
-# authenticates (a token retired in favour of Tailscale stays retired).
-if [ -z "$(get_env WEBCHAT_TOKEN)" ]; then
-  if [ "$FIRST_RUN" = 1 ] || { [ "$(get_env WEBCHAT_TAILSCALE)" != true ] && [ -z "$(get_env WEBCHAT_TRUSTED_PROXY_IPS)" ]; }; then
-    set_env WEBCHAT_TOKEN "$(head -c 24 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9' | head -c 32)"
-  fi
-fi
+HOST=0.0.0.0 HOST_SET=0 PORT="$WEBCHAT_PORT" PORT_SET="$WEBCHAT_PORT_SET" TAILSCALE=1 TAILSCALE_SET=0 \
+  TOKEN="" TOKEN_SET=0 LOCALHOST=0 seed_webchat_env
+env_put WEBCHAT_ENABLED true # re-enable a webchat turned off by hand
 
 # Timezone for agent time-awareness. The host reads TZ from .env and sets it on
 # the agent container, so `TZ=<iana>` here is all that's needed — this is the
@@ -285,7 +327,7 @@ if [ -z "$TZ_VALUE" ]; then
 fi
 if [ -n "$TZ_VALUE" ] && [ -f "/usr/share/zoneinfo/$TZ_VALUE" ]; then
   # An explicit NANOCLAW_TZ replaces the value; the guest's zone only fills a gap.
-  if [ -n "${NANOCLAW_TZ:-}" ]; then set_env TZ "$TZ_VALUE"; else default_env TZ "$TZ_VALUE"; fi
+  if [ -n "${NANOCLAW_TZ:-}" ]; then env_put TZ "$TZ_VALUE"; else env_set TZ "$TZ_VALUE"; fi
   # Match the guest system zone too, so logs/cron read local.
   timedatectl set-timezone "$TZ_VALUE" 2>/dev/null ||
     { ln -sf "/usr/share/zoneinfo/$TZ_VALUE" /etc/localtime && echo "$TZ_VALUE" >/etc/timezone; } 2>/dev/null || true
@@ -294,10 +336,11 @@ elif [ -n "$TZ_VALUE" ]; then
   log "warn: ignoring unknown timezone '$TZ_VALUE' — agent will default to UTC"
 fi
 
-chown "$RUN_USER:$RUN_USER" "$ENV_FILE"
-chmod 600 "$ENV_FILE"
+chown "$RUN_USER:$RUN_USER" .env
+chmod 600 .env
 
 # ── 8. Start the service so the webchat env takes effect ────────────────────
+phase service
 # setup:auto installed + enabled a per-user unit named nanoclaw-v2-<slug> (the
 # slug is install-path-derived, so we can't hardcode it). Discover it and
 # (re)start it so it picks up the webchat .env just written — `restart` also
@@ -311,24 +354,21 @@ run_as "systemctl --user restart '$UNIT'" \
 
 # Print the URL only once the server answers. The unit may first wait up to
 # 60s for the OneCLI gateway, hence the budget.
-PORT_OUT="$(get_env WEBCHAT_PORT)"
+PORT_OUT="$(env_get WEBCHAT_PORT)"
+phase health
+HEALTH_URL="http://127.0.0.1:${PORT_OUT:-$WEBCHAT_PORT}/health"
 log "waiting for /health on :${PORT_OUT:-$WEBCHAT_PORT}…"
-if ! node -e '
-  const url = process.argv[1], until = Date.now() + 150_000;
-  (async () => {
-    while (Date.now() < until) {
-      try { if ((await fetch(url)).ok) process.exit(0); } catch {}
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    process.exit(1);
-  })();' "http://127.0.0.1:${PORT_OUT:-$WEBCHAT_PORT}/health"; then
+if ! wait_for_health "$HEALTH_URL"; then
   run_as "journalctl --user -u '$UNIT' -n 30 --no-pager" >&2 || true
   die "NanoClaw did not come up (no answer on :${PORT_OUT:-$WEBCHAT_PORT}/health)"
 fi
 
 # ── 9. Done — print the URL + token ─────────────────────────────────────────
+PHASE=done
+RESULT_STATUS=success
+write_result 0
 IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-TOKEN_OUT="$(get_env WEBCHAT_TOKEN)"
+TOKEN_OUT="$(env_get WEBCHAT_TOKEN)"
 cat <<EOF
 
 ================================================================
@@ -340,5 +380,7 @@ cat <<EOF
  First login becomes the owner and the setup wizard opens automatically —
  pick Claude (sign in), or install a local model right there. No terminal
  auth needed.
+
+ Result: $RESULT_FILE
 ================================================================
 EOF

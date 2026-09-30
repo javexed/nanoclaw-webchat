@@ -3,6 +3,7 @@
 // connect link itself, and from GET /api/runners/client-config on every
 // connect. A value the user set in their own settings always wins.
 import { secureOrigin, type SignIn } from './protocol.js';
+import { parsePublicKey } from './release-signing.js';
 
 export interface ClientConfig {
   signIn?: SignIn;
@@ -13,7 +14,11 @@ export interface ClientConfig {
 export const CLIENT_KEYS = ['signIn', 'tenantId', 'appIdUri', 'clientId'] as const;
 
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const APP_ID_URI = /^(api|https):\/\/[^\s?#]{1,200}$/;
+// Only an app's own `api://` URI. An https one also names Microsoft's own
+// APIs (https://management.azure.com): a link or a server that could set it
+// would get the developer a token for those, sent to a server of its choosing.
+// A verified-domain https URI still works as the user's own setting.
+const APP_ID_URI = /^api:\/\/[^\s?#]{1,200}$/;
 
 /** Only well-formed values survive: a bad link or response can't plant anything else. */
 export function sanitizeClientConfig(raw: unknown): ClientConfig {
@@ -26,8 +31,14 @@ export function sanitizeClientConfig(raw: unknown): ClientConfig {
   return out;
 }
 
-/** `vscode://nanoclaw.vscode/connect?server=…&tenantId=…`: the server, plus whatever sign-in settings it carries. */
-export function parseConnectQuery(query: string): { serverUrl: string; config: ClientConfig } | { error: string } {
+/**
+ * `vscode://<extension id>/connect?server=…&tenantId=…`: the server, plus
+ * whatever sign-in settings and release signing key it carries (an offer
+ * only: the key is pinned on the developer's confirmation).
+ */
+export function parseConnectQuery(
+  query: string,
+): { serverUrl: string; config: ClientConfig; releaseKey?: string } | { error: string } {
   const q = new URLSearchParams(query);
   let u: URL;
   try {
@@ -35,9 +46,12 @@ export function parseConnectQuery(query: string): { serverUrl: string; config: C
   } catch {
     return { error: 'the link names no server' };
   }
-  const serverUrl = `${u.origin}${u.pathname}`.replace(/\/+$/, '');
+  // The origin only: central is reached there whatever the path (chat-render.ts
+  // apiUrl), and a path would give release pins a second name to miss by.
+  const serverUrl = u.origin;
   if (!secureOrigin(serverUrl)) return { error: `${serverUrl} is not https` };
-  return { serverUrl, config: sanitizeClientConfig(Object.fromEntries(q)) };
+  const releaseKey = parsePublicKey(q.get('releaseKey'));
+  return { serverUrl, config: sanitizeClientConfig(Object.fromEntries(q)), ...(releaseKey ? { releaseKey } : {}) };
 }
 
 /** Per key: the user's own setting, else central's, else the built-in default. */
@@ -51,4 +65,10 @@ export function resolveClientConfig(
     appIdUri: own.appIdUri ?? central.appIdUri ?? '',
     clientId: own.clientId ?? central.clientId ?? '',
   };
+}
+
+/** Which sign-in settings central changed from what was remembered for it (a first answer changes nothing). */
+export function signInChanges(prev: ClientConfig | null, next: ClientConfig): Array<(typeof CLIENT_KEYS)[number]> {
+  if (!prev) return [];
+  return CLIENT_KEYS.filter((k) => (prev[k] ?? '') !== (next[k] ?? ''));
 }

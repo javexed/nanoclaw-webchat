@@ -1,17 +1,9 @@
 <script setup lang="ts">
 /**
- * The agent's model picker — fifty-fourth island.
- *
- * Mounted into <ul id="model-picker-list">, exclusively owned by this module.
- *
- * The Default row is pinned at the top and is NEVER filtered out, even with a
- * search query — the user may be searching precisely to confirm that nothing
- * matches and the fallback is what they want. It is shaped upstream and enters
- * the list like any other row.
- *
- * The empty note can appear ALONGSIDE the Default row: "no matches" is about
- * the registered models, not about the list being empty. That is why it renders
- * between Default and the matches rather than replacing everything.
+ * The agent's model picker, mounted into <ul id="model-picker-list">. The Default row is
+ * pinned at the top and NEVER filtered out — the user may be searching to confirm that
+ * nothing matches. The empty note renders between Default and the matches, because "no
+ * matches" is about the registered models.
  */
 import { pickerEmptyNote, pickerRows, pickerSelected } from './model-picker-state.js';
 

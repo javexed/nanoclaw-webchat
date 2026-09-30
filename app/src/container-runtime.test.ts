@@ -5,12 +5,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeContainerWritable } from './container-runtime-extras.js';
 import { registerContainerConfigAugmentor, resolveContainerConfigAugmentation } from './seam/index.js';
 
-// This file was a PATCH against upstream's own container-runtime.test.ts until
-// upstream gutted container-runtime.ts (the runtime logic moved behind the
-// driver seam) and deleted the test with it. The seam surfaces it covers are
-// still here and still ours, so it becomes a payload file rather than a patch
-// against something that no longer exists.
-
 describe('container config augmentors', () => {
   it('returns {} when no augmentor is registered (core default)', async () => {
     // Note: other suites may register augmentors; assert our key specifically.

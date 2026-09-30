@@ -1,20 +1,8 @@
 <script setup lang="ts">
 /**
- * The Codex device pairing code — forty-seventh island.
- *
- * Mounted into <p id="user-creds-oauth-codex-code">. Its hidden flag stays
- * imperative: the line is shown only for Codex flows, which is a decision the
- * mint modal makes about the whole step.
- *
- * The copy button exists because the operator has to TYPE this code at the
- * ChatGPT sign-in page — copy beats retyping a device code. On success the
- * icon swaps to a check for 1500ms; the swap is state here rather than
- * setAttribute on a <use> href, but the same 1500ms and the same two icons.
- *
- * Only the rest of openOauthMintModal is left imperative, and deliberately: it
- * APPLIES STATE to static markup (hidden flags, textContent, href) rather than
- * building DOM. Converting that would mean claiming a whole modal to set six
- * properties.
+ * The Codex device pairing code, mounted into <p id="user-creds-oauth-codex-code">; the
+ * mint modal owns its hidden flag. Copy exists because the operator must TYPE this code at
+ * the ChatGPT sign-in page; on success the icon shows a check for 1500ms.
  */
 import { onUnmounted, ref } from 'vue';
 import { codexActive, codexUserCode } from './codex-code-state.js';

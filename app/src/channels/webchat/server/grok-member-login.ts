@@ -11,10 +11,7 @@
  * CLI's human-facing output, and converting its auth.json — imported from
  * grok-auth-flow rather than written twice.
  *
- * WHY THIS EXISTS AT ALL. Members could already have per-member credentials
- * stored, refreshed and injected; what they could not do was PRODUCE one. The
- * only way to mint a Grok credential was a terminal, which is not available to
- * someone reading a room on their phone — the exact case that prompted this.
+ * Lets a member mint their own credential without a terminal (e.g. from a phone).
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';

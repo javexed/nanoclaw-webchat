@@ -2,13 +2,10 @@
 // Everything addressed at an agent group: create, update, delete, status, the
 // model assigned to it, its MCP servers and skills, the scoped-skill import and
 // delete, drafts, and agent import (upload, then apply).
-//
-// The last cluster out of server.ts, and the only one that needed no shared
-// layer of its own — agent-lookup, agent-wiring, model-wiring, archive and
-// skills-store had already absorbed everything it shares with the rest.
 import type { IncomingMessage, ServerResponse } from 'http';
 
-import { json, readJsonBody } from './http.js';
+import { json, readJsonObject } from './http.js';
+import { requireAgentAdmin } from './route-guards.js';
 import { GROUPS_DIR } from '../../../config.js';
 import { restartAgentGroupContainers } from '../../../container-restart.js';
 import {
@@ -30,6 +27,7 @@ import { injectSessionCommand } from './agent-wiring.js';
 import { listSkillDrafts } from '../../../db/skill-drafts.js';
 import { initGroupFilesystem } from '../../../group-init.js';
 import { log } from '../../../log.js';
+import { assertPlainDir, removeNoFollow, writeNoFollow } from '../../../no-follow-fs.js';
 import {
   deleteAgentEnv,
   isValidEnvName,
@@ -114,7 +112,7 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import type { RouteCtx } from '../server.js';
-import { getPlacement } from '../runner-registry.js';
+import { isRemotelyPlaced } from '../extensions.js';
 import {
   effectiveEgressMode,
   forgetGroupEgressMode,
@@ -132,9 +130,6 @@ export async function rAgentsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<v
   return json(res, 200, await listAgentsForUser(userId, includeArchived));
 }
 
-// POST /api/agents/draft must come BEFORE the /api/agents/:id pattern
-// (which would otherwise match 'draft' as an id) AND before the bare
-// /api/agents POST so the literal-path handlers stay distinct.
 export async function rAgentsDraftPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   if (!(await isAnyAdmin(userId))) return json(res, 403, { error: 'Admin only' });
@@ -182,28 +177,17 @@ export async function rAgentsFromTemplatePost(ctx: RouteCtx, _m: RegExpMatchArra
   const { req, res, userId } = ctx;
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
     return json(res, 403, { error: 'Global admin required' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { ref?: unknown; name?: unknown; timezone?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ ref?: unknown; name?: unknown; timezone?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.ref !== 'string' || !body.ref.trim()) return json(res, 400, { error: 'ref required' });
   const ref = body.ref.trim();
 
   // Both calls below RESOLVE the ref, so both can throw on a bad one — the
-  // carrier lookup included. It lives inside the try for that reason: outside
-  // it, an escaping ref threw past the handler and surfaced as a 500 instead
-  // of the 400 it is (caught by the containment tests).
+  // carrier lookup included, so it sits inside the try (a 400, not a 500).
   try {
     // Stamping a plugin a group already carries would silently create a second
-    // agent from it. Updating in place is the right move instead — and it now
-    // HAS a UI (agent detail → Template → "Check for updates", which shows the
-    // dry-run plan before applying). This message used to say the update was
-    // CLI-only, which shipped in the same change as that button and sent people
-    // to a terminal for something already on screen.
+    // agent from it; point at updating in place (agent detail → Template →
+    // "Check for updates") instead.
     const carriers = await groupsCarryingPlugin(ref);
     if (carriers.length > 0) {
       return json(res, 409, {
@@ -244,14 +228,14 @@ export async function rTemplateSourcesGet(ctx: RouteCtx, _m: RegExpMatchArray): 
 export async function rTemplateSourcePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { id?: unknown; label?: unknown; owner?: unknown; repo?: unknown; branch?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{
+    id?: unknown;
+    label?: unknown;
+    owner?: unknown;
+    repo?: unknown;
+    branch?: unknown;
+  }>(req, res);
+  if (body === undefined) return;
   const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
   const owner = str(body.owner);
   const repo = str(body.repo);
@@ -297,14 +281,8 @@ export async function rTemplateSourceBrowseGet(ctx: RouteCtx, m: RegExpMatchArra
 export async function rTemplateFetchPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { source?: unknown; ref?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ source?: unknown; ref?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.source !== 'string' || typeof body.ref !== 'string' || !body.ref.trim()) {
     return json(res, 400, { error: 'source and ref required' });
   }
@@ -352,9 +330,6 @@ export async function rTemplateDelete(ctx: RouteCtx, _m: RegExpMatchArray): Prom
 // those surfaces and leaves everything else alone. The dry-run plan is the
 // whole point of doing this in a UI: it names every surface that changes and
 // flags the ones whose live copy was edited locally, which apply would discard.
-// Upstream's own docs note that an agent-requested restamp shows the approver
-// only a command line and tells them to run the dry run themselves — this is
-// that dry run, rendered.
 
 /** Which library template, if any, this agent was stamped from. */
 function stampedRefFor(group: { folder: string }): string | null {
@@ -430,14 +405,14 @@ export async function rAgentExportTemplatePost(ctx: RouteCtx, m: RegExpMatchArra
   if (!(await ownerOnly(userId))) return json(res, 403, { error: 'Global admin required' });
   const group = await resolveAgent(decodeURIComponent(m[1]));
   if (!group) return json(res, 404, { error: 'Agent not found' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { name?: unknown; ref?: unknown; version?: unknown; description?: unknown; agentName?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{
+    name?: unknown;
+    ref?: unknown;
+    version?: unknown;
+    description?: unknown;
+    agentName?: unknown;
+  }>(req, res);
+  if (body === undefined) return;
   const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
   const name = str(body.name);
   if (!name) return json(res, 400, { error: 'name required' });
@@ -457,18 +432,16 @@ export async function rAgentExportTemplatePost(ctx: RouteCtx, m: RegExpMatchArra
 }
 
 export async function rAgentPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { req, res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   return updateAgentHandler(req, res, group.id);
 }
 
 export async function rAgentDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   return deleteAgentHandler(res, group.id);
 }
 
@@ -476,19 +449,17 @@ export async function rAgentDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<
 // GET /api/rooms/:id/agents). Read-only; writes go through the existing
 // owner-only POST/DELETE /api/rooms/:roomId/agents endpoints.
 export async function rAgentRoomsGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   return json(res, 200, await getWebchatRoomsForAgent(group.id));
 }
 
 // ── Per-agent model assignment ─────────────────────────────────────────
 export async function rAgentModelPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { req, res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   return assignAgentModelHandler(req, res, group.id);
 }
 
@@ -498,18 +469,11 @@ export async function rAgentModelPut(ctx: RouteCtx, m: RegExpMatchArray): Promis
 // stack being installed. An explicit choice survives model (re)assignment (see
 // syncAgentProviderForAssignedModel).
 export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { provider?: unknown };
-  try {
-    body = JSON.parse(raw) as { provider?: unknown };
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const { req, res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
+  const body = await readJsonObject<{ provider?: unknown }>(req, res);
+  if (body === undefined) return;
   const provider = String(body.provider ?? 'claude');
   const allowed = new Set(['claude']);
   if (opencodeAvailable()) allowed.add('opencode');
@@ -529,7 +493,7 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
   await ensureContainerConfig(group.id);
   await updateContainerConfigScalars(group.id, { provider: provider === 'claude' ? null : provider });
   // (Re)write the local-model wiring for the NEW harness before the respawn —
-  // opencode/pi read it at spawn; without this the switch only takes effect
+  // pi reads it at spawn; without this the switch only takes effect
   // after the next boot convergence or model change.
   try {
     await writeLocalModelForAgent(group.id);
@@ -543,46 +507,23 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
 /**
  * PUT /api/agents/:id/config-model — pin the Anthropic model this agent runs on.
  *
- * Writes `container_configs.model`, which the container runner materializes into
- * `container.json` and the agent-runner passes to the Claude Agent SDK as its
- * `model` option. This is the SAME lever as
- * `ncl groups config update --model <id>`, and it is the ONLY one the runner
- * actually reads for the built-in Claude harness — which is why webchat needed
- * it: before this route there was no UI path to it at all, and an agent pinned
- * by ncl still rendered as "Default / Built-in Anthropic".
- *
- * Empty body value clears the pin (back to the SDK's own default).
+ * Writes `container_configs.model` (the same lever as `ncl groups config update
+ * --model`), which the agent-runner passes to the Claude Agent SDK as `model`.
+ * An empty value clears the pin.
  *
  * Refuses when an `anthropic`-kind webchat model is EFFECTIVE for the group —
- * assigned to it, or inherited from the workspace default. Either way that model
- * sets ANTHROPIC_MODEL in the group's settings.json env, and the SDK's explicit
- * `model` option overrides the env var, so accepting a pin would silently ignore
- * the model the operator can see in the UI. Better to make them pick one lever.
- *
- * The inherited case was the gap (#112 follow-up): the check read the ASSIGNED
- * model only, so an UNASSIGNED agent running on an anthropic-kind workspace
- * default accepted a pin and then quietly ignored it. Same precedence bug, one
- * layer up — and the harder one to notice, because nothing on the agent names
- * the model it inherited.
- *
- * The two cases get different messages because the fix differs: an assignment is
- * unassigned on the agent, a default is changed for the whole workspace (or
- * overridden by assigning this agent its own model).
+ * assigned, or inherited from the workspace default: that model sets
+ * ANTHROPIC_MODEL in settings.json, which the SDK's explicit `model` overrides,
+ * so a pin would silently ignore the model shown in the UI. The two cases get
+ * different messages because the fix differs (unassign vs change the default).
  */
 export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { req, res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { model?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ model?: unknown }>(req, res);
+  if (body === undefined) return;
   const model = typeof body.model === 'string' ? body.model.trim() : '';
   if (model && !isPlausibleAnthropicModelId(model)) {
     return json(res, 400, { error: 'That does not look like a model id (letters, digits, . _ - only).' });
@@ -626,18 +567,11 @@ export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): 
  */
 export async function rAgentEgressPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { egress?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ egress?: unknown }>(req, res);
+  if (body === undefined) return;
   if (body.egress !== 'open' && body.egress !== 'host-only' && body.egress !== 'none')
     return json(res, 400, { error: "egress must be 'open', 'host-only' or 'none'" });
   const egress = body.egress as 'open' | 'host-only' | 'none';
@@ -647,7 +581,7 @@ export async function rAgentEgressPut(ctx: RouteCtx, m: RegExpMatchArray): Promi
   const before = effectiveEgressMode((await getContainerConfig(group.id))?.egress);
   await updateContainerConfigScalars(group.id, { egress });
   forgetGroupEgressMode(group.id);
-  const placed = !!(await getPlacement(group.id));
+  const placed = await isRemotelyPlaced(group.id);
   const appliesNow = placed || (before !== 'open' && egress !== 'open');
   log.info('Agent egress changed', { agentGroupId: group.id, egress, by: userId, appliesNow });
   return json(res, 200, { ok: true, egress, appliesNow });
@@ -660,10 +594,9 @@ export async function rAgentEgressPut(ctx: RouteCtx, m: RegExpMatchArray): Promi
  * so a change applies without a restart.
  */
 export async function rAgentEgressHostsGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   return json(res, 200, {
     hosts: await getAgentEgressHosts(group.id),
     install: await getRunnerEgressAllowlist(),
@@ -673,18 +606,11 @@ export async function rAgentEgressHostsGet(ctx: RouteCtx, m: RegExpMatchArray): 
 
 export async function rAgentEgressHostsPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { hosts?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ hosts?: unknown }>(req, res);
+  if (body === undefined) return;
   const parsed = parseAllowlist(body.hosts);
   if (!parsed.ok) return json(res, 400, { error: parsed.error.replace(/^allowlist/, 'hosts') });
   await setAgentEgressHosts(group.id, parsed.patterns);
@@ -708,9 +634,8 @@ export async function rAgentEgressHostsPut(ctx: RouteCtx, m: RegExpMatchArray): 
  */
 export async function rAgentEnv(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, url, method, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   if (method === 'GET') return json(res, 200, { names: listAgentEnvNames(group.id) });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (method === 'DELETE') {
@@ -719,14 +644,8 @@ export async function rAgentEnv(ctx: RouteCtx, m: RegExpMatchArray): Promise<voi
       ? json(res, 200, { ok: true, names: listAgentEnvNames(group.id) })
       : json(res, 404, { error: 'No such variable' });
   }
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { name?: unknown; value?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ name?: unknown; value?: unknown }>(req, res);
+  if (body === undefined) return;
   if (!isValidEnvName(body.name))
     return json(res, 400, { error: 'name must be UPPER_SNAKE_CASE, starting with a letter or underscore' });
   const bad = validateEnvValue(body.value);
@@ -738,20 +657,18 @@ export async function rAgentEnv(ctx: RouteCtx, m: RegExpMatchArray): Promise<voi
 }
 
 export async function rAgentMcp(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, method, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { req, res, method } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   if (method === 'GET') return listAgentMcpHandler(res, group.id);
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return setAgentMcpHandler(req, res, group.id);
 }
 
 export async function rAgentSkills(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, method, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { req, res, method } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   if (method === 'GET') {
     const available = listAvailableSkills();
     // getContainerConfig returns the raw row — skills is a JSON string ("all"
@@ -782,15 +699,14 @@ export async function rAgentSkills(ctx: RouteCtx, m: RegExpMatchArray): Promise<
 // reaches only that group — never the shared pool / other 'all' agents.
 // Per-group admin is sufficient: it can't affect any other group.
 export async function rAgentSkillImportPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { req, res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return importScopedSkillHandler(req, res, group.id);
 }
 
-// ── Agent export/import (backup Phase 1) ──────────────────────────────
+// ── Agent export/import ───────────────────────────────────────────────
 export async function rAgentExportGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, url, userId } = ctx;
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
@@ -848,9 +764,8 @@ export async function rAgentsImportApplyPost(ctx: RouteCtx, _m: RegExpMatchArray
 
 export async function rAgentLearning(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   const current = await parseAgentLearning(group.id);
   // Auto-keep is admin-tier like the manual Keep it automates: a scoped admin
   // can already keep any draft for their agent with a tap, so gating the
@@ -868,29 +783,21 @@ export async function rAgentLearning(ctx: RouteCtx, m: RegExpMatchArray): Promis
     });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: {
+  const body = await readJsonObject<{
     autoTrigger?: unknown;
     autoKeep?: unknown;
     reviewModel?: unknown;
     replayReview?: unknown;
     chargeInvoker?: unknown;
-  };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  }>(req, res);
+  if (body === undefined) return;
   const next = { ...current };
   if (typeof body.autoTrigger === 'boolean') next.autoTrigger = body.autoTrigger;
   if (typeof body.autoKeep === 'boolean') {
     if (!canAutoKeep) return json(res, 403, { error: 'Admin privilege required for auto-keep' });
     next.autoKeep = body.autoKeep;
   }
-  // Review-model / review-input keys ride the same learning JSON. On this
-  // branch they round-trip dormant — the container-side digest review
-  // (PR #353) is what consumes them; until it merges nothing reads them.
+  // Keys not handled here (e.g. reviewModel) round-trip via the spread above.
   if ('chargeInvoker' in body) {
     const ci = body.chargeInvoker;
     if (ci !== 'off' && ci !== 'auto' && ci !== 'require') {
@@ -931,20 +838,18 @@ export async function rAgentLearning(ctx: RouteCtx, m: RegExpMatchArray): Promis
 }
 
 export async function rAgentScopedSkillDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { req, res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   return deleteScopedSkillHandler(res, group.id, decodeURIComponent(m[2]));
 }
 
 // ── Lifecycle status (active | paused | archived) ──────────────────────
 export async function rAgentStatusPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { req, res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   return setAgentStatusHandler(req, res, group.id);
 }
 
@@ -952,10 +857,9 @@ export async function rAgentStatusPut(ctx: RouteCtx, m: RegExpMatchArray): Promi
 // Lets an admin reach an agent's sessions — including background a2a
 // sessions no room-typed /clear can target — and reset one (inject /clear).
 export async function rAgentSessionsGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   const sessions = (await getSessionsByAgentGroup(group.id))
     .filter((s) => s.status === 'active')
     .map((s) => ({
@@ -1041,20 +945,14 @@ export async function createAgentHandler(
   res: ServerResponse,
   creatorUserId: string,
 ): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: {
+  const body = await readJsonObject<{
     name?: unknown;
     folder?: unknown;
     instructions?: unknown;
     withRoom?: unknown;
     roomName?: unknown;
-  };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  }>(req, res);
+  if (body === undefined) return;
   if (typeof body.name !== 'string' || !body.name.trim()) {
     return json(res, 400, { error: 'name required' });
   }
@@ -1064,7 +962,7 @@ export async function createAgentHandler(
   // spaces. Creating an agent does not implicitly publish it to a chat
   // surface — wire it into a room afterwards (`POST /api/rooms` or the
   // PWA's "+ Add agent" inside an existing room). Pass `withRoom: true`
-  // explicitly to opt into the legacy 1:1 agent-and-room provisioning.
+  // explicitly to opt into 1:1 agent-and-room provisioning.
   if (body.withRoom !== true) {
     const result = await createBareAgentGroup(name, {
       folder: typeof body.folder === 'string' ? body.folder : undefined,
@@ -1126,14 +1024,8 @@ export async function grantCreatorAdmin(creatorUserId: string, agentGroupId: str
 export async function updateAgentHandler(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
   const existing = await getAgentGroup(id);
   if (!existing) return json(res, 404, { error: 'Agent not found' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { name?: unknown; agent_provider?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ name?: unknown; agent_provider?: unknown }>(req, res);
+  if (body === undefined) return;
   const updates: { name?: string; agent_provider?: string | null } = {};
   if (typeof body.name === 'string' && body.name.trim()) updates.name = body.name.trim();
   if (typeof body.agent_provider === 'string') updates.agent_provider = body.agent_provider;
@@ -1143,14 +1035,8 @@ export async function updateAgentHandler(req: IncomingMessage, res: ServerRespon
 }
 
 export async function draftAgentHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { prompt?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ prompt?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.prompt !== 'string') {
     return json(res, 400, { error: 'prompt required' });
   }
@@ -1182,14 +1068,8 @@ export async function importAgentUploadHandler(req: IncomingMessage, res: Server
 }
 
 export async function importAgentApplyHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { token?: unknown; name?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ token?: unknown; name?: unknown }>(req, res);
+  if (body === undefined) return;
   const staged = pendingAgentImports.get(String(body.token || ''));
   if (!staged) return json(res, 410, { error: 'Import expired — upload the bundle again' });
   try {
@@ -1238,9 +1118,7 @@ export async function deleteAgentHandler(res: ServerResponse, id: string): Promi
       // Drop EVERY row that FK-references agent_groups.id — any one of them
       // aborts deleteAgentGroup with "FOREIGN KEY constraint failed". This
       // list mirrors the schema's referencing tables (guarded per table:
-      // module tables may be absent on a given install). container_configs
-      // is the one every modern agent has (learning/model writes ensure it),
-      // which is how a "clean-looking" unwired agent still refused deletion.
+      // module tables may be absent on a given install).
       for (const table of [
         'agent_destinations',
         'container_configs',
@@ -1302,14 +1180,8 @@ export async function setAgentStatusHandler(
   res: ServerResponse,
   agentGroupId: string,
 ): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { status?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ status?: unknown }>(req, res);
+  if (body === undefined) return;
   const status = body.status;
   if (status !== 'active' && status !== 'paused' && status !== 'archived') {
     return json(res, 400, { error: "status must be 'active', 'paused', or 'archived'" });
@@ -1324,14 +1196,8 @@ export async function assignAgentModelHandler(
   res: ServerResponse,
   agentGroupId: string,
 ): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { modelId?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ modelId?: unknown }>(req, res);
+  if (body === undefined) return;
   // Captured BEFORE the write so the clear below fires on a real change only —
   // re-selecting the same model must not throw away a conversation.
   const priorModelId = (await getAssignedModelForAgent(agentGroupId))?.id ?? null;
@@ -1361,12 +1227,6 @@ export async function assignAgentModelHandler(
  * of those and the incoming model reads the previous model's replies as its own
  * few-shot examples — it imitates their shape instead of following the wire
  * protocol.
- *
- * Observed on pi/ornith 2026-08-21: carrying a previous model's transcript, the
- * reply to "which model are you running" was an invented
- * `<personation name="pi sox" />` wrapped in a made-up `<delivered>` element,
- * reading like an opening turn rather than an answer. Same model, same question
- * shape, after a clear: a correct one-word answer.
  *
  * Claude is deliberately NOT here — it resumes server-side by id rather than by
  * replaying a local transcript, so it does not inherit another model's voice.
@@ -1404,14 +1264,8 @@ export async function setAgentSkillsHandler(
   res: ServerResponse,
   agentGroupId: string,
 ): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { skills?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ skills?: unknown }>(req, res);
+  if (body === undefined) return;
   if (!Array.isArray(body.skills)) return json(res, 400, { error: 'skills array required' });
   const available = new Set(listAvailableSkills().map((s) => s.name));
   const skills = [...new Set(body.skills.map(String).filter((s) => available.has(s)))];
@@ -1430,14 +1284,8 @@ export async function importScopedSkillHandler(
   res: ServerResponse,
   agentGroupId: string,
 ): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { url?: unknown; repo?: unknown; name?: unknown; origin?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ url?: unknown; repo?: unknown; name?: unknown; origin?: unknown }>(req, res);
+  if (body === undefined) return;
   let url = String(body.url || '').trim();
   // Marketplace items arrive as {repo, name} — resolve to a folder URL first.
   if (!url && body.repo) {
@@ -1481,20 +1329,28 @@ export async function importScopedSkillHandler(
   const dir0 = scopedSkillsDir(agentGroupId);
   const dest = path.join(dir0, skillName);
   const staging = `${dest}.importing`;
+  // dir0 is inside the agent's writable ~/.claude, so nothing below follows a
+  // link the agent may have planted there (no-follow-fs).
+  const stagingRel = path.basename(staging);
   try {
+    assertPlainDir(dir0);
     fs.mkdirSync(dir0, { recursive: true });
-    fs.rmSync(staging, { recursive: true, force: true });
+    removeNoFollow(dir0, stagingRel);
+    fs.mkdirSync(staging);
     for (const f of files) {
       const target = path.join(staging, f.rel);
       if (target !== staging && !target.startsWith(staging + path.sep)) continue; // no traversal
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, f.content);
+      writeNoFollow(dir0, path.join(stagingRel, f.rel), f.content);
     }
-    fs.writeFileSync(path.join(staging, '.origin.json'), JSON.stringify(origin));
-    fs.rmSync(dest, { recursive: true, force: true });
+    writeNoFollow(dir0, path.join(stagingRel, '.origin.json'), JSON.stringify(origin));
+    removeNoFollow(dir0, skillName);
     fs.renameSync(staging, dest);
   } catch (err) {
-    fs.rmSync(staging, { recursive: true, force: true });
+    try {
+      removeNoFollow(dir0, stagingRel);
+    } catch {
+      /* dir0 itself refused — nothing was staged */
+    }
     return json(res, 500, { error: 'Write failed: ' + (err instanceof Error ? err.message : String(err)) });
   }
   const restarted = await restartAgentGroupContainers(agentGroupId, 'Webchat scoped skill added');
@@ -1535,21 +1391,13 @@ export async function setAgentMcpHandler(
   res: ServerResponse,
   agentGroupId: string,
 ): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { add?: unknown; remove?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ add?: unknown; remove?: unknown }>(req, res);
+  if (body === undefined) return;
   const add = Array.isArray(body.add) ? body.add.map(String) : [];
   const remove = Array.isArray(body.remove) ? body.remove.map(String) : [];
   if (add.length === 0 && remove.length === 0) return json(res, 400, { error: 'add or remove required' });
   let changed = 0;
   for (const id of add) {
-    // Await BEFORE the guard: un-awaited, `server` was a promise — truthy — so
-    // the 404 for an unknown id never fired and a bad id got "assigned".
     const server = await getWebchatMcpServer(id);
     if (!server) return json(res, 404, { error: `MCP server not found: ${id}` });
     await assignMcpServerToAgent(agentGroupId, id);

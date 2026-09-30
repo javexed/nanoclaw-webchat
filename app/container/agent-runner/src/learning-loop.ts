@@ -1,11 +1,10 @@
 /**
- * Learning loop — fork-owned module (docs/webchat/learning-loop.md).
+ * Learning loop (docs/webchat/learning-loop.md).
  *
- * Everything the learning loop layers onto the poll loop lives here: the
- * isolated review pass, the per-turn auto-trigger and its pure decision,
- * per-room overrides, and the classifier gate. poll-loop.ts keeps only thin
- * call sites (the /learn command path and the post-turn hook), so that file's
- * upstream-merge surface stays small.
+ * Everything the learning loop adds to a turn lives here: the isolated review
+ * pass, the per-turn auto-trigger and its pure decision, per-room overrides,
+ * and the classifier gate. It attaches through the runner seam
+ * (runner-hooks.ts / providers/hooks.ts); the poll loop has no learning code.
  */
 import fs from 'fs';
 import path from 'path';
@@ -21,14 +20,12 @@ import {
   registerProviderExchangeObserver,
 } from './providers/hooks.js';
 import { registerRunnerCommand, registerTurnCompletionObserver } from './runner-hooks.js';
-import type { ProviderExchange, QueryInput } from './providers/types.js';
+import type { QueryInput } from './providers/types.js';
 import type { RoutingContext } from './formatter.js';
 import { LEARNING_REVIEW_PROMPT } from './mcp-tools/draft-skill.js';
 import { dispatchResultText, resolveOriginDestinations, type PollLoopConfig } from './poll-loop.js';
 
-// Log prefix stays "[poll-loop]" on purpose: these lines moved here verbatim
-// and operator log greps / dashboards keyed on the existing messages must not
-// notice the extraction.
+// Log prefix stays "[poll-loop]" so log greps keyed on these messages keep matching.
 function log(msg: string): void {
   console.error(`[poll-loop] ${msg}`);
 }
@@ -92,19 +89,12 @@ export function buildLearnReviewPrompt(text: string): string {
 }
 
 /**
- * Exchange log + review digest (docs/webchat/learning-loop.md §2).
- *
- * Hermes-inspired cost cut: instead of FORKING the live session (which replays
- * the entire transcript at full main-model price), the review reads a bounded
- * digest of the recent exchanges and runs as a FRESH query. The log is fed by
- * wrapping the provider's onExchangeComplete seam in processQuery — the same
- * prompt/result pairs a provider-side archiver would see — so it works for
- * every provider, including ones (like Claude) that only archive their own
- * transcript on rotation/compaction.
- *
- * Container-scoped and in-memory, like AutoReviewState: a respawned container
- * starts with an empty log, and the review then falls back to the old
- * fork-the-continuation replay (bounded, and exactly yesterday's behavior).
+ * Exchange log + review digest (docs/webchat/learning-loop.md §2). Instead of
+ * forking the live session (replaying the whole transcript at main-model
+ * price), the review reads a bounded digest of recent exchanges as a FRESH
+ * query. Fed from the provider's onExchangeComplete seam, so it works for
+ * every provider. Container-scoped and in-memory: a respawned container starts
+ * empty and the review falls back to the fork-the-continuation replay.
  */
 export interface ExchangeRecord {
   prompt: string;
@@ -131,22 +121,6 @@ export function createExchangeLog(): ExchangeLog {
 export function recordExchange(log: ExchangeLog, exchange: { prompt: string; result: string | null }): void {
   log.entries.push({ prompt: exchange.prompt, result: exchange.result });
   if (log.entries.length > DIGEST_MAX_EXCHANGES) log.entries.splice(0, log.entries.length - DIGEST_MAX_EXCHANGES);
-}
-
-/**
- * Wrap the provider's per-exchange hook so every completed exchange also lands
- * in the learning loop's log. The record happens FIRST — a throwing provider
- * hook (already tolerated by notifyExchangeComplete's catch) must not cost the
- * digest its entry.
- */
-export function wrapExchangeHook(
-  log: ExchangeLog,
-  inner: ((exchange: ProviderExchange) => void) | undefined,
-): (exchange: ProviderExchange) => void {
-  return (exchange: ProviderExchange): void => {
-    recordExchange(log, exchange);
-    if (inner) inner(exchange);
-  };
 }
 
 /** Head+tail truncation: keep the opening and the ending, cut the middle. */
@@ -218,7 +192,7 @@ export function resolveReviewModel(learning: LearningConfig | undefined): string
  * (`/learn https://…`) or a path reachable inside the container (`/learn
  * /workspace/foo`, `./x`, `~/notes`). Detection is deliberately narrow — the
  * hint must START with the source token — so prose that merely mentions a URL
- * mid-sentence stays a plain steering hint, byte-identical to the old behavior.
+ * mid-sentence stays a plain steering hint.
  */
 export type LearnHint = { kind: 'text'; hint: string } | { kind: 'url' | 'path'; source: string; focus: string };
 
@@ -302,9 +276,7 @@ ${SOURCE_AUTHORING_RULES}${SOURCE_FOCUS(focus)}`;
 /**
  * The one /learn entry point: prompt + (for source modes) the extra read-only
  * tools the restricted pass needs. Plain hints route through
- * buildLearnReviewPrompt unchanged — same bytes as before source support —
- * and get NO extra tools. Classification happens here so the poll-loop
- * call-site stays a single call either way.
+ * buildLearnReviewPrompt unchanged and get NO extra tools.
  */
 export interface LearnReview {
   prompt: string;
@@ -459,13 +431,10 @@ export function createAutoReviewState(): AutoReviewState {
  * query for hours, so a post-query hook would never fire. Fire-and-forget with
  * an in-flight guard: the event drain never stalls, and reviews never stack.
  *
- * The parameters are exactly the poll-loop locals the original closure
- * captured: `state` is container-scoped (cooldown window + in-flight guard
- * survive across turns); `routing`, `messages`, and `hadLearnCommand` are
- * per-batch snapshots that are never mutated after the hook is built;
- * `continuation` is read LAZILY through an accessor because the poll loop
- * reassigns it when a turn's result lands — the review must fork the session
- * as it exists when the review actually starts, not when the hook was built.
+ * `state` is container-scoped (cooldown + in-flight guard survive across
+ * turns); `routing`, `messages` and `hadLearnCommand` are per-batch snapshots.
+ * `continuation` is read LAZILY: the poll loop reassigns it when a turn's
+ * result lands, and the review must fork the session as it is when it starts.
  */
 export function createAutoReviewHook(args: {
   state: AutoReviewState;
@@ -537,22 +506,19 @@ export function hasSkillProposalSince(seq: number): boolean {
 }
 
 /**
- * The isolated learning review (docs/webchat/design/learning-loop.md §2).
+ * The isolated learning review (docs/webchat/learning-loop.md §2).
  *
  * A second provider query at the idle point with the toolset dropped to
  * draft_skill alone — the review can propose a skill and say one sentence,
- * and can do nothing else to anything. This is Hermes' spawn_background_review,
- * expressed as provider options instead of their _persist_disabled/
- * _session_db=None flags.
+ * and can do nothing else to anything.
  *
  * Context comes from one of two places:
  *  - DEFAULT — `opts.digest` (the bounded recent-exchange digest): the review
  *    runs as a FRESH query, so nothing is replayed and the review costs a few
  *    thousand tokens instead of the whole transcript at main-model price.
  *  - REPLAY — `learning.replayReview: true`, or no digest recorded yet (fresh
- *    container): fork the live continuation as before; the full transcript is
- *    in context and the fork's continuation is discarded. A fresh session with
- *    no continuation simply starts blank, exactly as it always did.
+ *    container): fork the live continuation; the full transcript is in
+ *    context and the fork's continuation is discarded.
  *
  * `learning.reviewModel` (or NANOCLAW_LEARNING_MODEL) routes the pass to a
  * cheaper model; absent, the provider's turn model serves it.
@@ -603,18 +569,13 @@ export async function runLearningReview(
             query.end();
             continue;
           }
-          // dispatchResultText became async upstream (the mailbox write it makes
-          // is a promise now); without the await `sent` reads undefined off a
-          // Promise and the decline-notice branch below never fires.
           const { sent } = await dispatchResultText(event.text, routing, {
             originDests,
             lenient: config.lenientOutput ?? false,
           });
           if (sent === 0) {
             // A review's outcome is ALWAYS for the room that pressed /learn — an
-            // unwrapped one-liner here is the normal shape, not scratchpad. (The
-            // decline case hit exactly this: a correct "nothing worth keeping"
-            // that the user never saw.)
+            // unwrapped one-liner here is the normal shape, not scratchpad.
             await writeMessageOut({
               id: generateId(),
               kind: 'chat',
@@ -664,10 +625,7 @@ export async function runLearningReview(
   return sawError ? 'error' : 'declined';
 }
 
-// ── Seam registrations (providers/hooks.ts) ─────────────────────────────────
-// The learning loop's two provider touchpoints, registered at import time so
-// provider files stay unpatched: skill-use telemetry (curator ages skills by
-// USE, design §6) and the review query's restricted options (R2).
+// ── Provider seam registrations (providers/hooks.ts), at import time ────────
 
 /**
  * Last-invoked telemetry for the curator. When the SDK loads a skill, stamp
@@ -707,16 +665,10 @@ registerProviderMessageObserver((ev) => {
 });
 
 /**
- * The review query's restricted options (seam R2). A learning review runs
- * with draft_skill as its only tool, either as a FRESH query over a digest
- * (no continuation — the default, cheap path) or as a FORK of the session
- * (replay mode: transcript in context, main conversation untouched). A
- * cheaper model may serve it via the per-query override (learning.reviewModel
- * → input.model) or NANOCLAW_LEARNING_MODEL — authoring a SKILL.md needs less
- * model than producing the transcript did. Source-directed reviews (/learn
- * <url|path>) add the read-only tools needed to reach the source; plain
- * reviews stay single-tool. Exported so tests exercise the REGISTERED
- * function, not a copy.
+ * The review query's restricted options: draft_skill as the only tool (plus
+ * the read-only source tools for /learn <url|path>), optionally on a cheaper
+ * model (learning.reviewModel → input.model, or NANOCLAW_LEARNING_MODEL).
+ * Exported so tests exercise the REGISTERED function, not a copy.
  *
  * `allowedTools` alone restricts nothing: in the Claude SDK it only PRE-APPROVES
  * tools, and the provider runs in bypassPermissions mode, where every tool is
@@ -761,27 +713,11 @@ export function learningReviewQueryOptions(input: QueryInput): LearningReviewQue
 }
 registerProviderQueryOptionsContributor(learningReviewQueryOptions);
 
-// ── R3 wiring — /learn, the exchange digest, and the auto-trigger ───────────
-//
-// The poll loop knows nothing about learning: the /learn command, the
-// exchange-log feed, and the per-turn auto-trigger all attach through the
-// runner seam (runner-hooks.ts / providers/hooks.ts). State that used to be
-// runPollLoop locals is module-scoped here — one runner process per
-// container, same lifetime.
+// ── /learn, the exchange digest, and the auto-trigger ───────────────────────
+// All attach through the runner seam; state is module-scoped (one runner
+// process per container, same lifetime as the poll loop).
 
-/** Narrow check for /learn — the learning loop's explicit trigger. */
-export function isLearnCommand(msg: MessageInRow): boolean {
-  if (msg.kind !== 'chat' && msg.kind !== 'chat-sdk') return false;
-  let text = '';
-  try {
-    text = String((JSON.parse(msg.content) as Record<string, unknown>).text ?? '');
-  } catch {
-    return false;
-  }
-  return /^\/learn\b/i.test(text.trim());
-}
-
-// Auto-trigger state — container-scoped (was a runPollLoop local).
+// Auto-trigger state — container-scoped.
 const autoReviewState = createAutoReviewState();
 // Bounded in-memory record of recent prompt/result pairs; the review digests
 // this instead of replaying the whole session.
@@ -789,7 +725,7 @@ const exchangeLog = createExchangeLog();
 
 // Every completed exchange lands in the digest log. Seam observers run BEFORE
 // the provider's own onExchangeComplete, so a throwing provider hook can't
-// cost the digest its entry — the ordering wrapExchangeHook used to enforce.
+// cost the digest its entry.
 registerProviderExchangeObserver((exchange) => recordExchange(exchangeLog, exchange));
 
 // Suppresses the auto-trigger for a batch that itself contained /learn.
@@ -800,9 +736,6 @@ registerProviderMessageObserver((ev) => {
   if (ev.kind === 'batch_start') hadLearnCommand = false;
 });
 
-// `/learn` — the explicit trigger: isolated restricted review where the
-// provider supports it (defer → execute at the batch idle point), ordinary
-// full-toolset turn on the review prompt otherwise (rewrite).
 /** Namespaced sender of a batch row (mirrors the formatter's extraction). */
 function rowSender(msg: MessageInRow | undefined): string | null {
   if (!msg) return null;
@@ -817,6 +750,9 @@ function rowSender(msg: MessageInRow | undefined): string | null {
   }
 }
 
+// `/learn` — the explicit trigger: isolated restricted review where the
+// provider supports it (defer → execute at the batch idle point), ordinary
+// full-toolset turn on the review prompt otherwise (rewrite).
 registerRunnerCommand({
   matches: (text) => /^\/learn\b/i.test(text) && !isRoutedCommandText(text),
   classify: (text, { provider }) => {
@@ -984,17 +920,9 @@ registerRunnerCommand({
   },
 });
 
-// Per-turn auto-trigger (docs/webchat/learning-loop.md §1) — fires from
-// INSIDE the open query at each result via the seam's turn notification.
-// Rebuilt per notify from the batch context; behaviorally identical to the
-// per-batch closure this used to be. Tool count comes from the status feed —
-// read here, synchronously inside the result handler, before any follow-up
-// push can re-seed the turn and zero it.
 /**
- * Test-only: clear the module-scoped state. In production one runner process
- * serves one poll loop, so module scope IS loop scope — but bun runs every
- * test file in a single process, and tests that drive the loop need the
- * fresh-per-loop state the fork's runPollLoop locals used to give them.
+ * Test-only: clear the module-scoped state. Module scope is loop scope in
+ * production, but bun runs every test file in one process.
  */
 export function __resetLearningStateForTest(): void {
   autoReviewState.lastAutoReviewAt = null;
@@ -1004,6 +932,9 @@ export function __resetLearningStateForTest(): void {
   hadLearnCommand = false;
 }
 
+// Per-turn auto-trigger (docs/webchat/learning-loop.md §1) — fires from
+// INSIDE the open query at each result via the seam's turn notification.
+// Tool count is read synchronously here, before a follow-up push can zero it.
 registerTurnCompletionObserver((ctx) => {
   createAutoReviewHook({
     state: autoReviewState,

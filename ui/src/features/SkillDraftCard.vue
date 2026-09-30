@@ -1,20 +1,10 @@
 <script setup lang="ts">
 /**
- * An in-transcript skill-draft card.
- *
- * Everything about a keep in progress — in flight, checking, overlapping,
- * kept, undone, failed — comes from ONE store keyed by draft id (draftAction),
- * not from props and not from imperative writes to the buttons. A root app's
- * props are read once, so a prop would freeze at mount; and the labels this
- * used to get written directly onto its buttons ('Keeping…', 'Reviewing…')
- * could never be reverted, because Vue owns them.
- *
- * Both decisions commit immediately and the card then offers Undo, which
- * reverses what happened rather than cancelling a countdown: a keep is undone
- * by deleting/reverting the skill, a discard by restoring the draft (the
- * server soft-discards, so the body is still there). No pre-commit timer
- * remains on this surface — the list surfaces keep theirs, because a
- * discarded draft leaves those lists and an Undo would have nowhere to live.
+ * An in-transcript skill-draft card. Keep progress (in flight, checking, overlapping,
+ * kept, undone, failed) comes from ONE store keyed by draft id (draftAction), because a
+ * root app's props are read once. Both decisions commit immediately and Undo reverses
+ * them (discards are soft on the server). The list surfaces keep a pre-commit timer: a
+ * discarded draft leaves those lists, so an Undo would have nowhere to live.
  */
 import { computed } from 'vue';
 import OriginBadge from './OriginBadge.vue';

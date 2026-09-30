@@ -12,15 +12,11 @@
  * may recover, non-OneCLI work may still function, and crash-looping the host on
  * a transient blip is worse than a warning.
  *
- * Deliberately PATIENT about *unreachable*, and only unreachable. Docker starts
- * the onecli containers and systemd starts the host, with nothing ordering the
- * two: on a reboot the first probe routinely loses that race by a second or so
- * and printed a permanent-looking UNREACHABLE error at every boot of a perfectly
- * healthy install — the operator's most alarming log line was also its least
- * true one. So an unreachable gateway is retried in the BACKGROUND (boot is
- * never delayed, per this hook's contract) and the error is only logged if it is
- * still unreachable when the budget runs out. A 404 (gateway too old) and an
- * unset URL are reported immediately: no amount of waiting fixes either.
+ * Deliberately PATIENT about *unreachable*, and only unreachable: nothing orders
+ * the onecli containers before the host at boot, so the first probe can lose
+ * that race. An unreachable gateway is retried in the BACKGROUND (boot is never
+ * delayed) and logged only if still unreachable when the budget runs out. A 404
+ * (gateway too old) and an unset URL are reported immediately.
  */
 import { onecliSettings } from './onecli-settings.js';
 import { log } from './log.js';
@@ -106,11 +102,8 @@ export type GatewayWait = {
 };
 
 /**
- * Re-probe until the gateway answers or the budget is spent.
- *
- * `probe` and `sleep` are injected so this is testable without real time or a
- * real socket — the retry policy is the part worth pinning, and a test that
- * actually waited 60s would never be run.
+ * Re-probe until the gateway answers or the budget is spent. `probe` and
+ * `sleep` are injected so the retry policy is testable without real time.
  */
 export async function awaitGateway(
   probe: () => Promise<GatewayProbe>,

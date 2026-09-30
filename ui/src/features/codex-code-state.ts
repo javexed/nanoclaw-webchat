@@ -1,5 +1,5 @@
 // ── Codex pairing code state ────────────────────────────────────────────────
-// Bridge refs for the CodexPairingCode island. modals.ts still drives the OAuth
+// Bridge refs for the CodexPairingCode island. modals.ts drives the OAuth
 // mint flow; this is only what the pairing-code line shows.
 import { ref } from 'vue';
 

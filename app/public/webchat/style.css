@@ -11,19 +11,8 @@
  * USER-AGENT rule, so ANY author rule that sets `display` beats it — and this
  * file sets `display` on nearly everything. An element can therefore carry the
  * attribute and still render, which makes `el.hidden = true` silently do
- * nothing.
- *
- * That is not theoretical. `.settings-credentials { display: flex }` defeated
- * the owner-only gate on TWELVE Settings sections at once: the JS set `hidden`
- * correctly on every one of them, the CSS ignored it, and members were shown
- * the setup wizard, self-test, secrets, backup and the rest — controls whose
- * endpoints answer them 403.
- *
- * This file already carried ~87 mentions of `[hidden]`, most of them
- * per-selector patches for exactly this trap, two of them with comments
- * explaining it. Patching one selector at a time loses: the next author to
- * write `display:` on a gated element reintroduces the bug, invisibly. One
- * global rule ends it.
+ * nothing — and role gates (owner-only sections) rely on `hidden`. One global
+ * rule, rather than per-selector patches the next `display:` silently defeats.
  *
  * `!important` is load-bearing here, not laziness — it is what lets this beat
  * author `display` declarations regardless of specificity or source order.
@@ -43,7 +32,7 @@
   --accent: #4fc3f7;
   --accent2: #69f0ae;
   --text: #e0e0e0;
-  /* Bumped from #888 → #999 so #888-on-surface (4.21:1) clears AA. */
+  /* #999, not #888: #888-on-surface (4.21:1) fails AA. */
   --text-dim: #999;
   --agent: #ffd54f;
   --border: #2a2a4a;
@@ -57,11 +46,10 @@
      Brighter than the base accents so 30%-tint chips/cells clear AA. */
   --accent-strong: #7fd6ff;
   --accent2-strong: #8ff8c0;
-  --agent-strong: #ffe082;
   --delete-strong: #ff8a80;
   --danger: var(--delete-color);
-  /* Semantic status — was hardcoded (#2ea043 / #ffd54f) at call sites. The
-     -strong variants are the readable-on-tint foreground (cf. accent-strong). */
+  /* Semantic status. The -strong variants are the readable-on-tint foreground
+     (cf. accent-strong). */
   --success: #3fb950;
   --success-strong: #56d364;
   --warning: #e3b341;
@@ -93,7 +81,6 @@
      the mid-yellow agent which needs a darker shade for legibility. */
   --accent-strong: var(--accent);
   --accent2-strong: var(--accent2);
-  --agent-strong: #b87900;
   --delete-strong: var(--delete-color);
   --danger: var(--delete-color);
   /* Darker on white for AA (cf. the GH-light status palette). */
@@ -126,7 +113,6 @@
     --delete-color: #d32f2f;
     --accent-strong: var(--accent);
     --accent2-strong: var(--accent2);
-    --agent-strong: #b87900;
     --delete-strong: var(--delete-color);
     --danger: var(--delete-color);
     --success: #1a7f37;
@@ -180,9 +166,8 @@
      token extends the fix to every other text input, select and textarea.
      Not part of the visual scale — do not use it for non-form text. */
   --fs-input: 1.067rem;
-  /* One monospace stack. ui-monospace hits the native mono on every modern
-     platform; the old 'SF Mono','Fira Code' variant fell through to the
-     generic mono everywhere but macOS-with-Fira. */
+  /* One monospace stack; ui-monospace hits the native mono on every modern
+     platform. */
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   /* Motion — one standard duration/easing; 0.15s already dominates. */
@@ -209,9 +194,6 @@ body {
   align-items: center;
   justify-content: center;
   z-index: 300;
-}
-.login-screen[hidden] {
-  display: none;
 }
 .login-card {
   background: var(--surface);
@@ -268,9 +250,6 @@ body {
   font-size: var(--fs-sm);
   margin-top: 8px;
 }
-.login-error[hidden] {
-  display: none;
-}
 /* "Sign in with Microsoft" under the token form (or on its own). */
 .login-microsoft {
   display: block;
@@ -278,9 +257,6 @@ body {
   margin-top: 10px;
   text-align: center;
   text-decoration: none;
-}
-.login-microsoft[hidden] {
-  display: none;
 }
 
 /* Settings → Sign-ins */
@@ -318,9 +294,6 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-.signins-actions > [hidden] {
-  display: none;
 }
 .signins-actions a.btn {
   text-decoration: none;
@@ -445,9 +418,6 @@ body {
   color: var(--text);
   background: var(--surface);
 }
-.room-search-close[hidden] {
-  display: none;
-}
 @media (pointer: coarse) {
   .room-search-close {
     width: 36px;
@@ -461,9 +431,6 @@ body {
   flex: 1;
   overflow-y: auto;
   border-bottom: 1px solid var(--border);
-}
-.search-results[hidden] {
-  display: none;
 }
 .search-result {
   padding: 8px 12px;
@@ -528,10 +495,6 @@ body {
   margin: 2px 6px;
   transition: background 0.15s;
   border-left: 3px solid transparent;
-}
-/* [hidden] must beat display:flex so search filtering works without !important. */
-#room-list li[hidden] {
-  display: none;
 }
 #room-list li:hover {
   background: var(--surface2);
@@ -813,8 +776,8 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* Empty room list. Reachable for a non-owner now that "+ New room" is hidden
-   for them — without this the sidebar is simply blank. */
+/* Empty room list. "+ New room" is owner-only, so without this a non-owner's
+   sidebar is simply blank. */
 #room-list li.room-list-empty {
   padding: 14px 12px;
   color: var(--text-dim);
@@ -853,10 +816,6 @@ body {
   align-items: center;
   gap: 8px;
   border-left: 3px solid transparent;
-}
-/* [hidden] must beat display:flex so search filtering works. */
-#agent-list li[hidden] {
-  display: none;
 }
 #agent-list li:hover {
   background: var(--surface2);
@@ -1253,9 +1212,6 @@ body {
   color: var(--accent);
   border-color: var(--accent);
 }
-.scroll-bottom[hidden] {
-  display: none;
-}
 .scroll-bottom .unread-count {
   position: absolute;
   top: -6px;
@@ -1414,9 +1370,6 @@ button:focus-visible {
   border-bottom: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   color: var(--text);
 }
-.bearer-retire-banner[hidden] {
-  display: none;
-}
 .bearer-retire-text {
   flex: 1;
   min-width: 0;
@@ -1436,9 +1389,6 @@ button:focus-visible {
   background: var(--surface2);
   color: var(--text);
   border: 1px solid var(--border);
-}
-.user-creds-banner[hidden] {
-  display: none;
 }
 .user-creds-banner input {
   flex: 1;
@@ -1469,9 +1419,6 @@ button:focus-visible {
   gap: 8px;
   padding-top: 6px;
 }
-.user-creds-oauth-form[hidden] {
-  display: none;
-}
 .user-creds-oauth-actions {
   display: flex;
   gap: 8px;
@@ -1481,9 +1428,6 @@ button:focus-visible {
   flex-direction: column;
   gap: 8px;
 }
-#user-creds-oauth-step2[hidden] {
-  display: none;
-}
 .user-creds-oauth-open {
   text-decoration: none;
 }
@@ -1491,18 +1435,12 @@ button:focus-visible {
   font-size: var(--fs-xs);
   color: var(--text-dim);
 }
-.user-creds-oauth-code-label[hidden] {
-  display: none;
-}
 #user-creds-oauth-code {
   font-family: var(--font-mono);
 }
 .user-creds-oauth-status {
   font-size: var(--fs-xs);
   color: var(--text-dim);
-}
-.user-creds-oauth-status[hidden] {
-  display: none;
 }
 .user-creds-oauth-status.error {
   color: var(--danger);
@@ -1517,9 +1455,6 @@ button:focus-visible {
   animation: lightbox-spin 0.8s linear infinite;
   align-self: center;
   margin: 8px auto;
-}
-.spinner[hidden] {
-  display: none;
 }
 .user-creds-banner button.secondary {
   background: var(--surface2);
@@ -1567,8 +1502,7 @@ button:focus-visible {
   /* min-height:0 on every #app-column child is LOAD-BEARING: without it the
      flex item grows to its content (a long room made #chat ~17,000px tall),
      its inner scroller never overflows, and — with the document shell locked
-     (html/body overflow:hidden) — NOTHING scrolls: the app reads as frozen.
-     Pre-lock this failure was masked by the page itself scrolling. */
+     (html/body overflow:hidden) — NOTHING scrolls: the app reads as frozen. */
   #app.in-room #chat {
     display: flex;
     flex: 1;
@@ -1737,9 +1671,6 @@ button:focus-visible {
   flex-direction: column;
   gap: 6px;
 }
-.file-preview[hidden] {
-  display: none;
-}
 .file-preview-content {
   display: flex;
   align-items: center;
@@ -1827,9 +1758,6 @@ button:focus-visible {
   overflow: hidden;
   touch-action: none;
   animation: lightbox-fade-in 0.15s ease-out;
-}
-.lightbox[hidden] {
-  display: none;
 }
 .lightbox.closing {
   animation: lightbox-fade-out 0.15s ease-in forwards;
@@ -1933,9 +1861,6 @@ a.lightbox-btn {
   background: rgba(0, 0, 0, 0.75);
   outline: none;
 }
-.lightbox-nav[hidden] {
-  display: none;
-}
 /* Loading spinner — shown until the image's load/error fires. */
 .lightbox-spinner {
   position: absolute;
@@ -1947,9 +1872,6 @@ a.lightbox-btn {
   animation: lightbox-spin 0.8s linear infinite;
   z-index: 1;
   pointer-events: none;
-}
-.lightbox-spinner[hidden] {
-  display: none;
 }
 @keyframes lightbox-spin {
   to {
@@ -2198,7 +2120,7 @@ a.lightbox-btn {
   opacity: 1;
 }
 .tts-btn:hover {
-  background: var(--surface3, var(--surface2));
+  background: var(--surface2);
   color: var(--text);
 }
 .tts-btn.tts-playing {
@@ -2379,11 +2301,6 @@ a.lightbox-btn {
   text-overflow: ellipsis;
   max-width: 100%;
 }
-.thinking-bubble .thinking-milestone[hidden],
-.thinking-bubble .thinking-target[hidden],
-.thinking-bubble .thinking-feed[hidden] {
-  display: none;
-}
 /* Reasoning feed: a fixed-height window that auto-scrolls to the newest line.
    Longer reasoning scrolls upward and fades out under the top gradient mask;
    each line also self-fades when reasoning pauses (see app.js). */
@@ -2471,9 +2388,6 @@ a.lightbox-btn {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
-.thread-switch[hidden] {
-  display: none;
-}
 /* Popup listing Main + topic threads (tap to switch) with a "+ New thread" row,
    dropped under the title group. */
 .thread-switcher {
@@ -2542,9 +2456,6 @@ a.lightbox-btn {
   gap: 4px;
   min-width: 0;
 }
-.thread-crumb[hidden] {
-  display: none;
-}
 .thread-crumb-sep {
   color: var(--text-dim);
   flex: none;
@@ -2564,9 +2475,6 @@ a.lightbox-btn {
   align-items: center;
   gap: 4px;
   margin-left: 8px;
-}
-.thread-sync[hidden] {
-  display: none;
 }
 .thread-sync-btn {
   display: inline-flex;
@@ -2659,9 +2567,6 @@ a.lightbox-btn {
   background: var(--border);
   color: var(--text);
 }
-.members-toggle[hidden] {
-  display: none;
-}
 .members-toggle::before {
   content: '';
   display: inline-block;
@@ -2685,9 +2590,6 @@ a.lightbox-btn {
   flex-direction: column;
   flex-shrink: 0;
   overflow-y: auto;
-}
-.members-panel[hidden] {
-  display: none;
 }
 .members-header {
   padding: 12px 14px;
@@ -2776,9 +2678,6 @@ a.lightbox-btn {
   overflow-y: auto;
   overscroll-behavior: contain;
 }
-.agent-detail[hidden] {
-  display: none;
-}
 /* Desktop only: the agent + model + MCP editors are opened FROM the Manage
    drawer, so they slide in as a right-side drawer aligned over the list (z
    above .manage's 60), giving a tidy master→detail in the right column with
@@ -2859,9 +2758,6 @@ a.lightbox-btn {
   flex-direction: column;
   gap: 12px;
 }
-.agent-subtab-panel[hidden] {
-  display: none;
-}
 .agent-detail-form label {
   display: flex;
   flex-direction: column;
@@ -2888,12 +2784,6 @@ a.lightbox-btn {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-/* The label display:flex above beats the `hidden` attribute's UA display:none
-   — an author display always does — so transport-dependent fields (URL vs
-   Command vs token) stayed visible when toggled off. */
-.agent-detail-form label[hidden] {
-  display: none;
-}
 .agent-detail-form input.readonly {
   color: var(--text-dim);
   cursor: default;
@@ -2910,9 +2800,6 @@ a.lightbox-btn {
   gap: 8px;
   padding: 12px 0;
   border-top: 1px solid var(--border);
-}
-.room-cred-section[hidden] {
-  display: none;
 }
 /* ── Buttons — role-based set: .btn base + four role modifiers. See DESIGN.md §2.
    Icon buttons (.lightbox-btn, .settings-btn, .file-picker-btn) and the
@@ -3045,9 +2932,6 @@ a.lightbox-btn {
   flex-direction: column;
   height: 100%;
 }
-#agent-create-view[hidden] {
-  display: none;
-}
 
 /* Room detail / create panel — shares layout with #agent-detail */
 #room-edit-view,
@@ -3055,10 +2939,6 @@ a.lightbox-btn {
   display: flex;
   flex-direction: column;
   height: 100%;
-}
-#room-edit-view[hidden],
-#room-create-view[hidden] {
-  display: none;
 }
 
 .room-wired-agents {
@@ -3211,7 +3091,7 @@ a.lightbox-btn {
 .room-wired-agents .room-wired-remove {
   background: none;
   border: none;
-  color: var(--text-secondary, var(--text));
+  color: var(--text);
   font-size: var(--fs-lg);
   cursor: pointer;
   padding: 0 4px;
@@ -3227,7 +3107,7 @@ a.lightbox-btn {
 .room-wired-agents .room-wired-prime {
   background: none;
   border: none;
-  color: var(--text-secondary, var(--text));
+  color: var(--text);
   font-size: var(--fs-base);
   cursor: pointer;
   padding: 0 4px;
@@ -3271,7 +3151,7 @@ a.lightbox-btn {
 .room-prime-note {
   margin: 4px 0 10px;
   font-size: var(--fs-xs);
-  color: var(--text-secondary, var(--text));
+  color: var(--text);
   opacity: 0.75;
   line-height: 1.4;
 }
@@ -3363,9 +3243,6 @@ a.lightbox-btn {
   flex-direction: column;
   gap: 6px;
 }
-.room-agent-picker-pane[hidden] {
-  display: none;
-}
 .room-agent-picker-pane select,
 .room-agent-picker-pane input,
 .room-agent-picker-pane textarea {
@@ -3398,16 +3275,13 @@ a.lightbox-btn {
   border-radius: 4px;
   font-size: var(--fs-sm);
 }
-.room-create-agent-checklist li[hidden] {
-  display: none;
-}
 .room-create-agent-checklist li:empty {
   display: none;
 }
 .room-create-agent-checklist .empty-note {
   background: none;
   border: 1px dashed var(--border);
-  color: var(--text-secondary, var(--text));
+  color: var(--text);
   font-style: italic;
   justify-content: center;
 }
@@ -3480,9 +3354,6 @@ a.lightbox-btn {
   display: flex;
   flex-direction: column;
 }
-.overflow-menu[hidden] {
-  display: none;
-}
 .overflow-item {
   background: none;
   border: none;
@@ -3496,9 +3367,6 @@ a.lightbox-btn {
 }
 .overflow-item:hover {
   background: var(--surface2);
-}
-.overflow-item[hidden] {
-  display: none;
 }
 
 /* Manage section — full-screen surface for Agents/Models, reached from the ⋯
@@ -3529,9 +3397,6 @@ a.lightbox-btn {
     border-left: none;
     box-shadow: none;
   }
-}
-.manage[hidden] {
-  display: none;
 }
 .manage-tabs {
   display: flex;
@@ -3590,9 +3455,6 @@ a.lightbox-btn {
   display: flex;
   flex-direction: column;
 }
-.manage-pane[hidden] {
-  display: none;
-}
 /* The list scrolls; the "+ New …" button stays pinned at the bottom. */
 .manage-pane > ul {
   flex: 1;
@@ -3613,9 +3475,6 @@ a.lightbox-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-}
-.modal-overlay[hidden] {
-  display: none;
 }
 /* Host-restart monitor: centered spinner + status over the standard dimmer. */
 .restart-modal {
@@ -3692,11 +3551,6 @@ a.lightbox-btn {
   flex-direction: column;
   gap: 8px;
 }
-/* `display: flex` above beats the [hidden] UA rule, so a hidden group would
-   still show — restore it (e.g. the routing "Set up" button once installed). */
-.setting-group[hidden] {
-  display: none;
-}
 .setting-label {
   font-size: var(--fs-sm);
   color: var(--text-dim);
@@ -3770,7 +3624,7 @@ a.lightbox-btn {
   width: 38px;
   height: 22px;
   border-radius: var(--radius-pill);
-  background: var(--surface3, var(--border));
+  background: var(--border);
   border: 1px solid var(--border);
   cursor: pointer;
   transition: background var(--transition);
@@ -3804,14 +3658,10 @@ a.lightbox-btn {
 }
 
 @media (max-width: 600px) {
-  /* .agent-detail (= room-detail, agent-detail, model-detail) was sized for
-     desktop (320px panel pinned to left of #chat-body). On phones that gave
-     a partly-overlapping opaque panel with a tiny × at ~x=300 that users
-     couldn't find — and no backdrop tap-to-close fallback. Promote it to a
-     full-screen modal on mobile so the close button lands at the screen
-     edge and respect iOS safe-area insets so the header isn't behind the
-     status bar / dynamic island. z-index sits ABOVE the members panel
-     (which uses 99/100) so the two can't ambiguously layer. */
+  /* .agent-detail (room/agent/model detail) is a full-screen modal on phones, so
+     the close button lands at the screen edge; safe-area insets keep the header
+     clear of the status bar. z-index sits ABOVE the members panel (99/100) so the
+     two can't ambiguously layer. */
   .agent-detail {
     position: fixed;
     inset: 0;
@@ -3830,9 +3680,6 @@ a.lightbox-btn {
     inset: 0;
     background: rgba(0, 0, 0, 0.5);
     z-index: 109;
-  }
-  .detail-overlay[hidden] {
-    display: none;
   }
   /* The × close button (also used by members-panel + agent/room/model
      details). Default tap target is ~22×18px — too small on mobile and
@@ -3874,9 +3721,6 @@ a.lightbox-btn {
   flex-direction: column;
   min-width: 0;
 }
-#dashboard[hidden] {
-  display: none;
-}
 
 /* Topology — fixed three-column SVG (no graph lib). Scrolls horizontally on
    narrow screens so it degrades gracefully on mobile. */
@@ -3899,9 +3743,6 @@ a.lightbox-btn {
   #topology {
     transition: margin-right var(--transition);
   }
-}
-#topology[hidden] {
-  display: none;
 }
 .topology-body {
   flex: 1;
@@ -3969,7 +3810,7 @@ a.lightbox-btn {
   transition: var(--transition);
 }
 .topo-focus-pill:hover {
-  background: var(--surface3, var(--surface2));
+  background: var(--surface2);
   border-color: var(--accent);
 }
 .topo-node circle {
@@ -4004,7 +3845,7 @@ a.lightbox-btn {
 }
 .topo-node:hover circle,
 .topo-node:focus-visible circle {
-  fill: var(--surface3, var(--surface2));
+  fill: var(--surface2);
   stroke-width: 3;
 }
 .topo-node:hover .topo-label,
@@ -4023,9 +3864,6 @@ a.lightbox-btn {
   flex-direction: column;
   min-width: 0;
 }
-#matrix[hidden] {
-  display: none;
-}
 /* Journey — the learning timeline: a vertical, day-grouped feed of what each
    agent learned (proposed / kept / discarded / revised / archived). */
 #journey {
@@ -4033,9 +3871,6 @@ a.lightbox-btn {
   display: flex;
   flex-direction: column;
   min-width: 0;
-}
-#journey[hidden] {
-  display: none;
 }
 .journey-body {
   flex: 1;
@@ -4101,12 +3936,6 @@ a.lightbox-btn {
   font-size: var(--fs-sm);
   padding: 8px;
 }
-/* Client-side filters (agent select + kind segmented + skill chip). Rows and
-   day headers set display, so hidden-attr filtering needs the restate. */
-.journey-row[hidden],
-.journey-day[hidden] {
-  display: none;
-}
 .journey-filters {
   display: flex;
   align-items: center;
@@ -4141,17 +3970,11 @@ a.lightbox-btn {
 .journey-skill-chip:hover {
   border-color: var(--text-dim);
 }
-.journey-skill-chip[hidden] {
-  display: none;
-}
 #help {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
-}
-#help[hidden] {
-  display: none;
 }
 /* Help reads as a stack of topic cards — the app's surface-card language (same
    as agent/model rows) so it feels native, not like a pasted-in doc. */
@@ -4630,9 +4453,6 @@ a.lightbox-btn {
   border-radius: 8px;
   margin-top: 12px;
 }
-.dash-detail[hidden] {
-  display: none;
-}
 .dash-detail-header {
   display: flex;
   justify-content: space-between;
@@ -4758,9 +4578,6 @@ a.lightbox-btn {
   padding: 4px 0;
   font-size: var(--fs-sm);
 }
-.mention-popover[hidden] {
-  display: none;
-}
 .mention-popover-item {
   display: flex;
   align-items: baseline;
@@ -4828,9 +4645,6 @@ a.lightbox-btn {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: 0 8px 24px var(--shadow);
-}
-.handle-popover[hidden] {
-  display: none;
 }
 .handle-popover-header {
   display: flex;
@@ -4967,9 +4781,6 @@ a.lightbox-btn {
   border-radius: var(--radius-md);
   font-size: var(--fs-sm);
 }
-#skills-filter[hidden] {
-  display: none;
-}
 /* Filter + 'Add from link…' share one toolbar row above the sections. */
 .skills-toolbar {
   display: flex;
@@ -4984,11 +4795,6 @@ a.lightbox-btn {
 }
 .skills-toolbar .btn {
   flex-shrink: 0;
-}
-/* .skill-row / .skills-section-head set display:flex, which outranks the UA's
-   [hidden] rule — collapse and filtering hide via the hidden attribute. */
-#skills-list li[hidden] {
-  display: none;
 }
 .skill-row {
   display: flex;
@@ -5114,18 +4920,12 @@ a.skill-badge-origin:hover {
   min-height: 0;
   flex: 1;
 }
-#skills-browse[hidden] {
-  display: none; /* display:flex beats the UA [hidden] rule — re-assert it */
-}
 #skills-editor {
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-height: 0;
   flex: 1;
-}
-#skills-editor[hidden] {
-  display: none;
 }
 .skills-editor-head {
   display: flex;
@@ -5994,17 +5794,11 @@ a.skill-badge-origin:hover {
   color: var(--danger);
   font-size: var(--fs-xs);
 }
-.confirm-input-error[hidden] {
-  display: none;
-}
 /* Agent (+ room) pick for 'Add from link…' — stacked selects in the modal. */
 .learn-target-picker {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-.learn-target-picker select[hidden] {
-  display: none;
 }
 .confirm-actions {
   display: flex;
@@ -6044,9 +5838,6 @@ a.skill-badge-origin:hover {
   background: var(--bg);
   min-height: 0;
 }
-#permissions[hidden] {
-  display: none;
-}
 /* Admin — settings for the installation, as a full view like Permissions. */
 #admin {
   flex: 1;
@@ -6057,12 +5848,9 @@ a.skill-badge-origin:hover {
   /* min-width, not just min-height: this is a flex item on a ROW axis, so its
      automatic minimum size is its content's min-content width — which the card
      grid below reports as (columns × 430px). Without this the pane refuses to
-     shrink and renders WIDER than the window: measured 1250px inside a 900px
-     viewport, pushing the whole app into a horizontal scroll. */
+     shrink and renders WIDER than the window, pushing the whole app into a
+     horizontal scroll. */
   min-width: 0;
-}
-#admin[hidden] {
-  display: none;
 }
 /* Admin → Sign-in: a full view laid out like Admin. */
 #signin-page {
@@ -6072,9 +5860,6 @@ a.skill-badge-origin:hover {
   background: var(--bg);
   min-height: 0;
   min-width: 0;
-}
-#signin-page[hidden] {
-  display: none;
 }
 .admin-body {
   flex: 1;
@@ -6088,11 +5873,8 @@ a.skill-badge-origin:hover {
 }
 /* Cards pack into as many columns as the window can hold.
  *
- * COLUMNS, NOT GRID. A grid was the first attempt and it wasted more space
- * than it saved: grid rows align, so a 230px Setup card beside a 740px
- * Access card left ~500px of nothing beneath it before the next row began.
- * Multi-column packs by height instead, which is what a stack of unrelated
- * cards actually wants.
+ * COLUMNS, NOT GRID: grid rows align, leaving empty space under a short card
+ * beside a tall one. Multi-column packs by height instead.
  *
  * The wrapper exists for a reason. .admin-body is the scroll container and
  * therefore has a definite height; a multicol box with a definite height
@@ -6131,11 +5913,6 @@ a.skill-badge-origin:hover {
   background: var(--pre-bg);
   padding: 12px 14px 14px;
 }
-/* Hidden by syncAdminGroups when every block inside hid itself, so a scoped
-   admin never sees a heading over empty space. */
-.admin-group[hidden] {
-  display: none;
-}
 .admin-group-title {
   font-size: var(--fs-xs);
   text-transform: uppercase;
@@ -6155,11 +5932,9 @@ a.skill-badge-origin:hover {
 .admin-group > .settings-credentials > .settings-section-title {
   margin-top: 0;
 }
-/* Sibling blocks inside a card need the divider they never needed in the
-   modal, where each was its own visually separate strip. Without it Access,
-   User credentials, System secrets and Credential isolation read as one
-   continuous run of controls. .settings-section-title already draws this rule
-   between headings WITHIN a block; this is the same rule between blocks. */
+/* A divider between sibling blocks inside a card, so they don't read as one
+   continuous run of controls — the same rule .settings-section-title draws
+   between headings WITHIN a block. */
 .admin-group > .settings-credentials + .settings-credentials,
 .admin-group > .settings-credentials + .settings-feature,
 .admin-group > .settings-feature + .settings-credentials,
@@ -6167,9 +5942,8 @@ a.skill-badge-origin:hover {
   border-top: 1px solid var(--border);
   padding-top: 12px;
 }
-/* Actions size to their label. In the 1080px-wide Settings modal these were
-   already full-bleed; on a page a 760px "Run self-test" reads as a banner
-   rather than a button. Scoped to direct .btn children so the row and grid
+/* Actions size to their label: on a page a full-bleed "Run self-test" reads as
+   a banner rather than a button. Scoped to direct .btn children so the row and grid
    layouts inside these blocks (provider pills, the add-secret form) keep the
    stretch they rely on. */
 .admin-body .setting-group > .btn {
@@ -6278,9 +6052,6 @@ a.skill-badge-origin:hover {
   text-align: center;
   gap: 8px;
 }
-.perms-empty-state[hidden] {
-  display: none;
-}
 .perms-empty-state code {
   font-size: var(--fs-xs);
   background: var(--surface2);
@@ -6292,9 +6063,6 @@ a.skill-badge-origin:hover {
   display: flex;
   flex-direction: column;
   min-height: 0;
-}
-.perms-detail-view[hidden] {
-  display: none;
 }
 .perms-detail-body {
   flex: 1;
@@ -6540,9 +6308,6 @@ a.skill-badge-origin:hover {
    Mirrors .room-create-agent-checklist li but with two-line content
    (name primary, folder subtitle) and a bigger tap target so mobile users
    can hit a row reliably. */
-.room-add-agent-row[hidden] {
-  display: none;
-}
 .room-add-agent-row {
   display: flex;
   align-items: center;
@@ -6799,9 +6564,8 @@ a.skill-badge-origin:hover {
 }
 
 /* Settings → User credentials (workspace policy, owner only). */
-/* Same column layout + gap as .modal-body so its items are spaced consistently
-   with the Preferences section above (the wrapper otherwise had no gap, leaving
-   its items cramped). */
+/* Same column layout + gap as .modal-body, so its items space like the
+   Preferences section above. */
 .settings-credentials {
   display: flex;
   flex-direction: column;
@@ -6810,61 +6574,6 @@ a.skill-badge-origin:hover {
 .settings-credentials .settings-section-title {
   margin-top: 8px;
 }
-/* ── Model management (Settings → Models) ── */
-.mm-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 10px 12px;
-  margin: 8px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.mm-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.mm-name {
-  font-weight: 600;
-}
-.mm-spec {
-  margin-left: auto;
-  color: var(--text-dim);
-  font-size: var(--fs-sm);
-}
-.mm-fit {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.mm-badge {
-  font-size: var(--fs-sm);
-  border-radius: var(--radius-sm, 6px);
-  padding: 1px 8px;
-  background: var(--surface-2, var(--border));
-  color: var(--text-dim);
-}
-.mm-badge.ok {
-  color: var(--success);
-}
-.mm-badge.warn {
-  color: var(--warning, #d97706);
-}
-.mm-actions {
-  display: flex;
-  gap: 8px;
-}
-#mm-pull-row {
-  display: flex;
-  flex-direction: row;
-  gap: 8px;
-}
-#mm-pull-row input {
-  flex: 1;
-}
-
 /* ── Token usage panel (Settings → Token usage) ── */
 .usage-controls {
   display: flex;
@@ -6917,7 +6626,7 @@ a.skill-badge-origin:hover {
 .usage-model-chip {
   font-size: var(--fs-sm);
   color: var(--text-dim);
-  background: var(--surface-2, var(--border));
+  background: var(--border);
   border-radius: var(--radius-sm, 6px);
   padding: 2px 8px;
 }
@@ -6928,10 +6637,8 @@ a.skill-badge-origin:hover {
   letter-spacing: 0;
   font-size: var(--fs-xs);
 }
-/* Links inside hint text (wizard Access page, etc.) had no themed color, so they
-   fell back to the browser default blue/purple — near-invisible on the dark theme
-   and clashing with the dim hint copy. Use the brighter accent + underline so they
-   stand out against the dim text. */
+/* Links inside hint text: the brighter accent + underline, so they stand out
+   against the dim copy (the browser default is near-invisible on the dark theme). */
 .cred-hint a {
   color: var(--accent-strong);
   text-decoration: underline;
@@ -6977,17 +6684,15 @@ a.skill-badge-origin:hover {
   display: flex;
   flex-direction: column;
   gap: 0;
-  /* No bottom margin. The host row's padding already closes the block, and
-     stacking both put 13px under the last thread against 4px above the first —
-     lopsided inside one row, and far off the ~1px rhythm between plain rooms,
-     which is what read as a gap before the next room. */
+  /* No bottom margin: the host row's padding already closes the block, and
+     stacking both reads as a gap before the next room. */
   margin: 4px 0 0 0.55rem;
   padding-left: 0;
 }
 
 /* A row hosting threads closes tighter: the 10px bottom padding is breathing
    room under a room NAME, and with threads it lands under the thread block,
-   which supplies its own. Measured: 13px below → 5px, against 4px above. */
+   which supplies its own. */
 #room-list li.has-threads {
   padding-bottom: 4px;
 }
@@ -7428,7 +7133,7 @@ a.skill-badge-origin:hover {
 .preflight-fix {
   font-size: var(--fs-xs);
   color: var(--text);
-  background: var(--surface-2, var(--surface));
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 6px 8px;
@@ -7454,7 +7159,7 @@ a.skill-badge-origin:hover {
 .model-reachability-fix {
   font-size: var(--fs-xs);
   color: var(--text);
-  background: var(--surface-2, var(--surface));
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   padding: 6px 8px;
@@ -7857,9 +7562,6 @@ a.skill-badge-origin:hover {
   padding: 4px 0;
   font-size: var(--fs-sm);
 }
-.slash-menu[hidden] {
-  display: none;
-}
 .slash-item {
   display: flex;
   align-items: baseline;
@@ -7990,7 +7692,7 @@ body {
   transition: var(--transition);
 }
 .update-banner:hover {
-  background: var(--surface3, var(--surface2));
+  background: var(--surface2);
 }
 
 /* ── Skills add view (catalog + URL import) ─────────────────────────────── */
@@ -8000,9 +7702,6 @@ body {
   gap: 10px;
   min-height: 0;
   flex: 1;
-}
-#skills-add[hidden] {
-  display: none;
 }
 #skills-catalog-list {
   list-style: none;
@@ -8076,16 +7775,7 @@ body {
 #skill-source-url {
   flex: 2 1 220px;
 }
-/* Tool secrets — the add form mirrors .skill-source-form, plus a shared
-   select style (the settings modal had no select rule of its own). */
-.setting-select {
-  background: var(--surface);
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 7px 10px;
-  font-size: var(--fs-input);
-}
+/* Tool secrets — the add form mirrors .skill-source-form. */
 .secret-form {
   display: flex;
   gap: 6px;
@@ -8100,10 +7790,7 @@ body {
 }
 .secret-form input,
 .secret-form select,
-/* The audit syslog target matched NO rule at all and rendered as a white
-   browser-default box among dark inputs. It shipped that way with the audit
-   feature and was just as wrong in Settings; moving the block to Admin is
-   only what finally put it somewhere it got looked at. */
+/* The audit syslog target shares the form-input styling. */
 #settings-audit input[type='text'],
 #settings-audit input[type='number'],
 #settings-audit select {
@@ -8127,9 +7814,7 @@ body {
   display: block;
   margin-bottom: 6px;
 }
-/* Same labelled-column shape as the text fields, so the three headers align;
-   only the control differs. Sized to its label rather than growing. */
-/* Secrets grouped by reach. The heading is a list item so the island keeps
+/* Secrets grouped by reach. The heading is a list item so the component keeps
    owning one flat <ul>; it reads as a section label, not a row. */
 .secret-section-head {
   font-size: var(--fs-xs);
@@ -8154,14 +7839,15 @@ body {
 /* "For you: host → yours · host → this agent’s" — the direct answer, one line. */
 .secret-effective {
   font-size: var(--fs-xs);
-  color: var(--text-secondary, var(--text));
+  color: var(--text);
   opacity: 0.85;
   line-height: 1.4;
   margin: 0 0 4px;
 }
-/* The reach control takes the form's full width: three options do not fit
-   beside two text fields, and the help line wants the room. */
-.secret-reach {
+/* The reach and type controls take the form's full width: three options do
+   not fit beside two text fields, and the help line wants the room. */
+.secret-reach,
+.secret-kind {
   flex: 1 0 100%;
 }
 .secret-reach .cred-hint {
@@ -8226,14 +7912,6 @@ body {
 .wizard-list label:has(input:checked) {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface));
-}
-/* display:flex on these beats the UA's [hidden]{display:none} — restate it,
-   or the accordion/steps/cards never actually collapse (same fix as .spinner). */
-.wizard-step[hidden],
-.wizard-engine-body[hidden],
-.wizard-connected[hidden],
-.wizard-footer .btn[hidden] {
-  display: none;
 }
 .wizard-engines {
   display: flex;
@@ -8356,12 +8034,10 @@ body {
 .cred-hint.err {
   color: var(--danger);
 }
-/* Text inputs in the wizard + the Settings default-login pane. */
+/* Text inputs in the wizard. */
 .wizard-step input[type='text'],
 .wizard-step input[type='url'],
-.wizard-step input[type='password'],
-#workspace-cred-key,
-#workspace-codex-key {
+.wizard-step input[type='password'] {
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -8444,12 +8120,6 @@ body {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   font-size: var(--fs-sm);
-}
-#skill-discover-search[hidden] {
-  display: none;
-}
-#skills-catalog[hidden] {
-  display: none;
 }
 #skills-catalog {
   display: flex;
@@ -8698,10 +8368,6 @@ body {
   margin: 0 10px 6px;
   align-self: flex-start;
 }
-/* display:flex beats the UA [hidden] rule — the recurring trap (DESIGN.md). */
-.learn-nudge[hidden] {
-  display: none;
-}
 .learn-nudge-go {
   display: inline-flex;
   align-items: center;
@@ -8756,9 +8422,6 @@ body {
   font-size: var(--fs-sm);
   z-index: 30;
   overflow: hidden;
-}
-.learn-menu[hidden] {
-  display: none;
 }
 .learn-menu-item {
   display: flex;
@@ -8886,7 +8549,7 @@ button[data-draft-id] {
   margin-top: 6px;
 }
 .import-note {
-  color: var(--text-secondary);
+  color: var(--text-dim);
   font-size: var(--fs-sm);
   margin-top: 6px;
 }
@@ -9077,8 +8740,7 @@ button[data-draft-id] {
 }
 /* ONE scroll context in the skills browse view: the VIEW scrolls, the inner
    list doesn't. An inner-scrolling #skills-list collapses to an unusable
-   sliver whenever proposed drafts sit above it (measured: 78px on a 580px
-   viewport with five drafts). */
+   sliver whenever proposed drafts sit above it. */
 #skills-browse #skills-list {
   flex: 0 0 auto;
   overflow-y: visible;
@@ -9406,17 +9068,12 @@ button[data-draft-id] {
 .runner-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--border); margin-right: 6px; vertical-align: middle; }
 .runner-dot.on { background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent); }
 .runners-note { font-size: var(--fs-sm); opacity: .75; margin: 8px 6px; }
-.runner-image { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 6px 0; }
-.runner-image input { flex: 1 1 300px; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-xs); }
-.runner-client { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 6px 0; }
-.runner-client input { flex: 1 1 220px; min-width: 0; font-family: var(--font-mono); font-size: var(--fs-xs); }
 .settings-vscode-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .runner-egress { margin: 4px 6px 0; display: flex; flex-direction: column; gap: 8px; }
 /* Host lists (hostlist.ts): the install's in Manage → Network, and an agent's own in its Network section. */
 .runner-egress .secret-list, .agent-egress-hosts .secret-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
 .runner-egress .secret-row code, .agent-egress-hosts .secret-row code { font-size: var(--fs-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-egress-hosts { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
-.agent-egress-hosts[hidden] { display: none; }
 .runner-egress-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .runner-egress-presets { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; flex: 1 1 auto; font-size: var(--fs-sm); opacity: .85; }
 .runner-blocked { list-style: none; margin: 4px 6px 0; padding: 0; }
@@ -9437,7 +9094,6 @@ button[data-draft-id] {
 #signin-page .install-row { align-items: center; }
 .signin-status { flex: 1 1 auto; text-align: right; font-size: var(--fs-sm); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 0 10px; }
 .signin-form { display: grid; gap: 10px; margin: 2px 0 16px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-md); }
-.signin-form[hidden], .signin-field[hidden] { display: none; }
 .signin-field { display: flex; flex-direction: column; gap: 4px; }
 .signin-field input {
   padding: 7px 10px;
@@ -9464,5 +9120,4 @@ button[data-draft-id] {
   background: var(--bg);
   text-align: center;
 }
-.vscode-start[hidden] { display: none; }
 .vscode-start .settings-vscode-actions { justify-content: center; }

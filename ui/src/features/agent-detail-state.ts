@@ -12,11 +12,8 @@ export const canManageRooms = ref(false);
 /** One row of /api/agents/:id/sessions. */
 export const sessions = ref<any[]>([]);
 /**
- * The session list is asynchronous and has three non-row states — loading, a
- * fetch failure, and genuinely empty. The imperative version distinguished them
- * by writing three different innerHTML strings; as a ref it is one field the
- * template switches on, which is also what stops a stale "Loading…" row from
- * surviving a failed fetch.
+ * The session list's non-row states. One field the template switches on, so a
+ * stale "Loading…" row cannot survive a failed fetch; empty is `ready` with no rows.
  */
 export const sessionsPhase = ref<'loading' | 'error' | 'ready'>('loading');
 /** Message for the error phase — already plain text, escaped by the binding. */

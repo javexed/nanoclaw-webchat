@@ -1,24 +1,40 @@
-import { arch, hostname, platform, userInfo } from 'node:os';
+import { arch, hostname, platform } from 'node:os';
 import { createHash } from 'node:crypto';
 import * as vscode from 'vscode';
 import fs from 'node:fs';
 import path from 'node:path';
-import { RunnerAgent, type AgentPolicy, type ImagePolicy } from './agent.js';
-import { realCli, type Cli } from './docker.js';
+import type { Proposal } from './git-changes.js';
+import { RunnerAgent, recoverLaptopToolsProposal, type AgentPolicy } from './agent.js';
 import { DEFAULT_WORKSPACE_EXCLUDES, effectiveSlots, type WorkspaceMount } from './policy.js';
 import { planUpdate, type AutoUpdate, type UpdateOffer } from './update.js';
 import { userSetting } from './settings.js';
 import { apiUrl } from './chat-render.js';
 import { ReviewController } from './review-controller.js';
-import { ChatViewProvider } from './chat-view.js';
-import type { Runtime } from './realize.js';
+import { ProposalScm } from './proposal-scm.js';
+import { ConflictTracker } from './conflicts.js';
+import { ChatViewProvider, proposedReviewable } from './chat-view.js';
+import { adoptLegacyStorage, legacyExtensionId } from './legacy.js';
 import { RunnerLink, parseOffer, type LinkState } from './link.js';
+import {
+  decidePin,
+  decodeSignatureHeader,
+  keyFingerprint,
+  parsePublicKey,
+  pinFor,
+  releaseOrigin,
+  releaseTrust,
+  verifyRelease,
+  type ReleaseKind,
+} from './release-signing.js';
+import { loadOrCreateMachineKey, type MachineKey } from './machine-key.js';
+import { activityLogFile, initActivityLog, recordActivity } from './activity-log.js';
 import { scopesFor, secureOrigin, type Machine, authHeader } from './protocol.js';
 import {
   CLIENT_KEYS,
   parseConnectQuery,
   resolveClientConfig,
   sanitizeClientConfig,
+  signInChanges,
   type ClientConfig,
 } from './client-config.js';
 
@@ -26,12 +42,30 @@ const AUTH_PROVIDER = 'microsoft';
 let link: RunnerLink | null = null;
 let chat: ChatViewProvider | null = null;
 let agent: RunnerAgent | null = null;
+/** The laptop-tools proposal found on disk at startup, until the runner binds one itself. */
+let recoveredProposal: Proposal | null = null;
 let storageRoot = '';
 let lastState: LinkState = 'disconnected';
 let status: vscode.StatusBarItem;
 let out: vscode.OutputChannel;
+/** The files the secret scan last left out, as the developer was last told. */
+let lastLeftOut = '';
 let globalState: vscode.Memento | undefined;
 const CENTRAL_CONFIG = 'nanoclaw.centralClientConfig';
+/** Release signing keys the developer confirmed, per server origin (per URL before 0.16). */
+const RELEASE_KEYS = 'nanoclaw.releaseKeys';
+/** Keys a server offered that the developer declined, per origin: its releases are refused. */
+const RELEASE_KEYS_DECLINED = 'nanoclaw.releaseKeysDeclined';
+/** Servers already told that their releases are unsigned. */
+const UNSIGNED_NOTED = 'nanoclaw.unsignedReleasesNoted';
+/** Folders the developer allowed the agent to work on, per server origin. */
+const ALLOWED_FOLDERS = 'nanoclaw.allowedFolders';
+/** Set by Stop all, on this machine: nothing is served until the developer resumes. */
+const HALTED = 'nanoclaw.halted';
+/** A Stop all central has not been told of yet (it was out of reach): sent on the next connect. */
+let unreportedStop = false;
+/** This machine's key (machine-key.ts), loaded at activation; null when secret storage is unavailable. */
+let machineKey: Promise<MachineKey | null> = Promise.resolve(null);
 
 function log(line: string): void {
   out.appendLine(`[${new Date().toISOString()}] ${line}`);
@@ -47,8 +81,11 @@ function ownClientConfig(c: vscode.WorkspaceConfiguration): ClientConfig {
 }
 /** Central's sign-in settings, remembered for the server they came from. */
 function centralClientConfig(serverUrl: string): ClientConfig {
+  return savedCentralConfig(serverUrl) ?? {};
+}
+function savedCentralConfig(serverUrl: string): ClientConfig | null {
   const saved = globalState?.get<{ serverUrl: string; config: ClientConfig }>(CENTRAL_CONFIG);
-  return saved?.serverUrl === serverUrl ? saved.config : {};
+  return saved?.serverUrl === serverUrl ? saved.config : null;
 }
 function cfg() {
   const c = vscode.workspace.getConfiguration('nanoclaw');
@@ -58,23 +95,27 @@ function cfg() {
     serverUrl,
     ...resolveClientConfig(ownClientConfig(c), centralClientConfig(serverUrl)),
     autoConnect: c.get<boolean>('autoConnect') ?? true,
-    containerRuntime: userSetting(c, 'containerRuntime', 'auto') as 'auto' | Runtime,
-    runtimePath: userSetting(c, 'runtimePath', '').trim(),
-    agentImage: userSetting(c, 'agentImage', 'build') as ImagePolicy['source'],
-    agentImageRef: userSetting(c, 'agentImageRef', '').trim(),
-    allowUnlabeledAgentImage: userSetting(c, 'allowUnlabeledAgentImage', false),
     slots: userSetting<Record<string, string>>(c, 'slots', {}),
     mountAllowlist: userSetting<string[]>(c, 'mountAllowlist', []),
     workspaceMount: userSetting(c, 'workspaceMount', 'workspace') as WorkspaceMount,
     workspaceExcludes: userSetting<string[]>(c, 'workspaceExcludes', [...DEFAULT_WORKSPACE_EXCLUDES]),
     autoUpdate: userSetting(c, 'autoUpdate', 'prompt') as AutoUpdate,
+    releaseSigningKey: parsePublicKey(userSetting(c, 'releaseSigningKey', '')),
   };
 }
-function machine(): Machine {
+function machine(key?: MachineKey | null): Machine {
   // vscode.env.machineId is stable per VS Code installation — a far better
-  // machine identity than hostname alone; hostname stays for humans.
+  // machine identity than hostname alone; hostname stays for humans. It names
+  // the machine; the key proves it.
   const fp = createHash('sha256').update(`${vscode.env.machineId}|${hostname()}|${platform()}|${arch()}`).digest('hex');
-  return { fingerprint: fp, hostname: hostname(), os: platform(), arch: arch(), runner: `vscode-${ownVersion()}` };
+  return {
+    fingerprint: fp,
+    hostname: hostname(),
+    os: platform(),
+    arch: arch(),
+    runner: `vscode-${ownVersion()}`,
+    ...(key ? { publicKey: key.publicKey } : {}),
+  };
 }
 /** Why a token or an update may not travel to this server, or null when it may. */
 function insecureOrigin(serverUrl: string, what: string): string | null {
@@ -136,53 +177,29 @@ function policy(): AgentPolicy {
     excludes: c.workspaceExcludes,
   };
 }
-/** Which runtime answers on this machine. Explicit setting wins; auto tries docker, then podman. */
-async function detectRuntime(): Promise<{ runtime: Runtime; cli: Cli }> {
-  const c = cfg();
-  const candidates: Runtime[] = c.containerRuntime === 'auto' ? ['docker', 'podman'] : [c.containerRuntime];
-  const errors: string[] = [];
-  for (const runtime of candidates) {
-    const cli = realCli(c.runtimePath || runtime);
-    try {
-      await cli.run(['version', '--format', '{{.Server.Version}}'], { timeoutMs: 15_000 });
-      return { runtime, cli };
-    } catch (e) {
-      errors.push(`${runtime}: ${(e as Error).message}`);
-    }
-  }
-  throw new Error(
-    `no container runtime answered (${errors.join('; ')}). Install Docker Desktop or Podman Desktop (or set nanoclaw.runtimePath to its CLI), then set nanoclaw.containerRuntime.`,
-  );
-}
-function localUser(): { uid: number; gid: number } | undefined {
-  if (platform() === 'win32') return undefined;
-  const u = userInfo();
-  return u.uid >= 0 ? { uid: u.uid, gid: u.gid } : undefined;
-}
-async function ensureAgent(): Promise<RunnerAgent> {
-  if (agent) return agent;
-  const { runtime, cli } = await detectRuntime();
-  log(`container runtime: ${runtime}${localUser() ? ` (uid ${localUser()!.uid})` : ''}`);
-  agent = new RunnerAgent({
-    cli,
-    runtime,
-    localUser: localUser(),
+function ensureAgent(): RunnerAgent {
+  agent ??= new RunnerAgent({
     storageRoot,
     policy,
-    imagePolicy: () => {
-      const c = cfg();
-      return { source: c.agentImage, ref: c.agentImageRef, allowUnlabeled: c.allowUnlabeledAgentImage };
-    },
-    send: (frame) => {
-      link?.send(frame);
-    },
     proposalChanged: () => chat?.refresh(),
+    secretsLeftOut: (paths) => {
+      for (const p of paths) out.appendLine(`secret found, left out of the agent's copy: ${p}`);
+      // Once per distinct list: each agent start re-takes the same snapshot.
+      const key = paths.join('\0');
+      if (key === lastLeftOut) return;
+      lastLeftOut = key;
+      const n = paths.length;
+      void vscode.window
+        .showWarningMessage(`${n} file${n === 1 ? '' : 's'} with secrets left out`, 'Show')
+        .then((pick) => pick && out.show(true));
+    },
+    installSlug: () => link?.welcome?.installSlug,
+    halted: () => globalState?.get<{ reason: string }>(HALTED)?.reason ?? null,
+    approveFolder,
     log: (l) => {
       log(l);
-      // Lifecycle lines go to central's log so an operator can see what a
-      // laptop did; per-line build/pull progress would flood it, and a failure
-      // carries its own tail in the refusal.
-      if (!/^(build|pull): /.test(l)) link?.send({ type: 'log', level: 'info', message: l });
+      // Central's log too, so an operator can see what a laptop did.
+      link?.send({ type: 'log', level: 'info', message: l });
     },
   });
   return agent;
@@ -194,20 +211,22 @@ async function connect(interactive: boolean): Promise<void> {
     if (interactive) void vscode.window.showErrorMessage('NanoClaw: set nanoclaw.serverUrl in settings.');
     return;
   }
+  const key = await machineKey;
   link?.stop();
   link = new RunnerLink({
     serverUrl: c.serverUrl,
-    machine: machine(),
+    machine: machine(key),
+    ...(key ? { signChallenge: key.signChallenge } : {}),
     getToken: () => getToken(interactive),
-    onRequest: async (op, payload) => (await ensureAgent()).handle(op, payload),
-    onFrame: (frame) => (chat?.handleFrame(frame) ?? false) || (agent?.handleFrame(frame) ?? false),
+    onRequest: (op, payload) => ensureAgent().handle(op, payload),
+    onFrame: (frame) => chat?.handleFrame(frame) ?? false,
     events: {
       state: (s, d) => {
         lastState = s;
         render(s, d);
         chat?.setConnected(s === 'connected', d);
         if (s === 'connected') {
-          agent?.centralReconnected();
+          reportStop();
           void considerUpdate();
           void refreshCentralConfig();
         }
@@ -218,9 +237,159 @@ async function connect(interactive: boolean): Promise<void> {
       update: () => {
         void considerUpdate();
       },
+      // A machine cut off serves nothing more.
+      revoked: () => void stopAll('machine revoked', false),
     },
   });
   link.start();
+}
+
+/** How releases from `serverUrl` are held (release-signing.ts releaseTrust). */
+function trustFor(serverUrl: string): ReturnType<typeof releaseTrust> {
+  return releaseTrust({
+    own: cfg().releaseSigningKey,
+    pins: globalState?.get<Record<string, string>>(RELEASE_KEYS) ?? {},
+    declined: globalState?.get<Record<string, string>>(RELEASE_KEYS_DECLINED) ?? {},
+    serverUrl,
+  });
+}
+
+/**
+ * A key central or its Connect link offers: pinned only on a modal
+ * confirmation showing its fingerprint, the first time and on any change
+ * (the same rule as a changed sign-in audience). Asked once per session per key.
+ */
+const askedReleaseKeys = new Set<string>();
+async function considerReleaseKey(serverUrl: string, offered: string | null): Promise<void> {
+  if (cfg().releaseSigningKey) return;
+  const origin = releaseOrigin(serverUrl);
+  if (!origin) return;
+  const stored = globalState?.get<Record<string, string>>(RELEASE_KEYS) ?? {};
+  const decision = decidePin(pinFor(stored, origin), offered);
+  if (decision.action === 'none') return;
+  const key = decision.action === 'confirm-first' ? decision.key : decision.to;
+  if (askedReleaseKeys.has(`${origin}|${key}`)) return;
+  askedReleaseKeys.add(`${origin}|${key}`);
+  const pick =
+    decision.action === 'confirm-first'
+      ? await vscode.window.showInformationMessage(
+          `Trust NanoClaw at ${origin} to sign its releases with this key?`,
+          { modal: true, detail: keyFingerprint(key) },
+          'Trust',
+        )
+      : await vscode.window.showWarningMessage(
+          `NanoClaw at ${origin} changed its release signing key. Trust the new key?`,
+          { modal: true, detail: `Pinned: ${keyFingerprint(decision.from)}\nNew: ${keyFingerprint(key)}` },
+          'Trust',
+        );
+  log(`release signing key ${keyFingerprint(key)} offered by ${origin}: ${pick === 'Trust' ? 'pinned' : 'declined'}`);
+  const declined = globalState?.get<Record<string, string>>(RELEASE_KEYS_DECLINED) ?? {};
+  if (pick !== 'Trust') {
+    // A first key declined refuses that server's releases; a declined change
+    // keeps the old pin, which the new key's releases then fail.
+    if (decision.action === 'confirm-first')
+      await globalState?.update(RELEASE_KEYS_DECLINED, { ...declined, [origin]: key });
+    return;
+  }
+  await globalState?.update(RELEASE_KEYS, { ...stored, [origin]: key });
+  const { [origin]: _dropped, ...rest } = declined;
+  await globalState?.update(RELEASE_KEYS_DECLINED, rest);
+}
+
+/**
+ * Null when a release may be installed or loaded; else the one-line reason it
+ * is refused. With no key pinned, releases pass as before, and the developer
+ * is told once per server that they are unsigned.
+ */
+function checkRelease(kind: ReleaseKind, subject: string, sha256: string, signature: unknown): string | null {
+  const { serverUrl } = cfg();
+  const origin = releaseOrigin(serverUrl) ?? serverUrl;
+  const trust = trustFor(serverUrl);
+  if ('verifyWith' in trust)
+    return verifyRelease(signature, { kind, server: origin, subject, sha256 }, trust.verifyWith);
+  if ('refuse' in trust) return trust.refuse;
+  const noted = globalState?.get<string[]>(UNSIGNED_NOTED) ?? [];
+  if (!noted.includes(origin)) {
+    void globalState?.update(UNSIGNED_NOTED, [...noted, origin]);
+    void vscode.window.showInformationMessage(`NanoClaw: releases from ${origin} are unsigned.`);
+  }
+  return null;
+}
+
+/** The install a request names, wherever central put it. */
+/**
+ * A folder is served to a server's agents only once the developer allowed it:
+ * the tools follow the folder in front of them, and opening a sensitive
+ * repository must not hand it over unasked. Asked once per folder and server;
+ * concurrent requests share one question.
+ */
+const folderQuestions = new Map<string, Promise<boolean>>();
+async function approveFolder(folder: string): Promise<boolean> {
+  const origin = releaseOrigin(cfg().serverUrl) ?? cfg().serverUrl;
+  const all = globalState?.get<Record<string, string[]>>(ALLOWED_FOLDERS) ?? {};
+  if (all[origin]?.includes(folder)) return true;
+  const key = `${origin}\n${folder}`;
+  let q = folderQuestions.get(key);
+  if (!q) {
+    q = (async () => {
+      const pick = await vscode.window.showWarningMessage(
+        `Let NanoClaw's agent work on ${path.basename(folder)}?`,
+        {
+          modal: true,
+          detail: `${folder}\nThe agent on ${origin} can read it (secret-like files left out) and propose changes you review.`,
+        },
+        'Allow',
+      );
+      if (pick !== 'Allow') return false;
+      const now = globalState?.get<Record<string, string[]>>(ALLOWED_FOLDERS) ?? {};
+      await globalState?.update(ALLOWED_FOLDERS, { ...now, [origin]: [...(now[origin] ?? []), folder] });
+      recordActivity('folder.allow', { folder, server: origin });
+      return true;
+    })().finally(() => folderQuestions.delete(key));
+    folderQuestions.set(key, q);
+  }
+  return q;
+}
+
+/**
+ * The kill switch: this machine serves the agent nothing more — no file read,
+ * no change — until the developer resumes, and central is told so it stops
+ * the agents placed here. Central out of reach: told on the next connect.
+ */
+async function stopAll(reason: string, tellCentral = true): Promise<void> {
+  await globalState?.update(HALTED, { reason, at: new Date().toISOString() });
+  recordActivity('stop-all', { reason });
+  log(`stop all (${reason}): this machine serves the agent nothing until resumed`);
+  if (tellCentral) {
+    unreportedStop = true;
+    reportStop();
+  }
+  const pick = await vscode.window.showInformationMessage('NanoClaw: agents stopped on this machine.', 'Resume');
+  if (pick === 'Resume') await resumeAgents();
+}
+/** The developer lets agents use this machine again. */
+async function resumeAgents(): Promise<void> {
+  if (!globalState?.get(HALTED)) return;
+  await globalState.update(HALTED, undefined);
+  recordActivity('resume', {});
+  log('agents may use this machine again');
+}
+
+function reportStop(): void {
+  if (!unreportedStop || !link?.welcome || link.welcome.pairing === 'revoked') return;
+  if (link.send({ type: 'stopAll', sessions: [] })) unreportedStop = false;
+}
+
+async function showActivityLog(): Promise<void> {
+  const file = activityLogFile();
+  if (!file) return;
+  if (!fs.existsSync(file)) {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, '', { mode: 0o600 });
+  }
+  await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(file)), {
+    preview: false,
+  });
 }
 
 /** Pick up sign-in settings central changed since the last connect. */
@@ -231,13 +400,28 @@ async function refreshCentralConfig(): Promise<void> {
       headers: authHeader(await getToken(false)),
     });
     if (!res.ok) return;
-    await globalState?.update(CENTRAL_CONFIG, { serverUrl, config: sanitizeClientConfig(await res.json()) });
+    const body = (await res.json()) as Record<string, unknown>;
+    await considerReleaseKey(serverUrl, parsePublicKey(body?.releaseKey));
+    const next = sanitizeClientConfig(body);
+    // The audience decides which API a token is for. A server that changes it
+    // after the developer chose it does not get that silently.
+    const changed = signInChanges(savedCentralConfig(serverUrl), next);
+    if (changed.length) {
+      const what = changed.map((k) => `${k}: ${next[k] ?? 'unset'}`).join(', ');
+      log(`central changed its sign-in settings (${what}); asking before using them`);
+      const pick = await vscode.window.showWarningMessage(
+        `NanoClaw at ${serverUrl} changed its sign-in settings (${what}). Use them?`,
+        'Use them',
+      );
+      if (pick !== 'Use them') return;
+    }
+    await globalState?.update(CENTRAL_CONFIG, { serverUrl, config: next });
   } catch (err) {
     log(`could not refresh sign-in settings from central: ${String((err as Error).message)}`);
   }
 }
 
-/** vscode://nanoclaw.vscode/connect?server=…: webchat's "Connect VS Code" button. Asks before trusting it. */
+/** vscode://<this extension's id>/connect?server=…: webchat's "Connect VS Code" button. Asks before trusting it. */
 async function handleConnectUri(uri: vscode.Uri): Promise<void> {
   if (uri.path !== '/connect') return;
   const parsed = parseConnectQuery(uri.query);
@@ -245,22 +429,44 @@ async function handleConnectUri(uri: vscode.Uri): Promise<void> {
     void vscode.window.showErrorMessage(`NanoClaw: ${parsed.error}.`);
     return;
   }
-  const { serverUrl, config } = parsed;
+  const { serverUrl, config, releaseKey } = parsed;
+  // Say what the sign-in will actually be — own settings win per key, so a
+  // link to a different server may still sign in for the old one's audience.
+  const c = vscode.workspace.getConfiguration('nanoclaw');
+  const own = ownClientConfig(c);
+  const eff = resolveClientConfig(own, config);
+  const ownKeys = CLIENT_KEYS.filter((k) => own[k] !== undefined);
+  const newServer = serverUrl !== cfg().serverUrl;
+  const detail = [
+    eff.signIn === 'microsoft' ? `Token for: ${eff.appIdUri || '(server default)'}` : 'Sign-in: network',
+    eff.tenantId ? `Tenant: ${eff.tenantId}` : '',
+    newServer && ownKeys.length ? `Your own ${ownKeys.map((k) => `nanoclaw.${k}`).join(', ')} still apply.` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const useLink = 'Connect, drop my own';
   const pick = await vscode.window.showInformationMessage(
     `Connect to NanoClaw at ${serverUrl}?`,
-    { modal: true, detail: config.tenantId ? `Microsoft tenant ${config.tenantId}` : undefined },
+    { modal: true, detail: `${detail}\nIts agents can ask to work on the folders you open here.` },
     'Connect',
+    ...(newServer && ownKeys.length ? [useLink] : []),
   );
-  if (pick !== 'Connect') return;
+  if (pick !== 'Connect' && pick !== useLink) return;
+  if (pick === useLink) {
+    for (const k of ownKeys) await c.update(k, undefined, vscode.ConfigurationTarget.Global);
+  }
   await globalState?.update(CENTRAL_CONFIG, { serverUrl, config });
   await vscode.workspace.getConfiguration('nanoclaw').update('serverUrl', serverUrl, vscode.ConfigurationTarget.Global);
+  await considerReleaseKey(serverUrl, releaseKey ?? null);
   await connect(true);
 }
 
 const offeredUpdates = new Set<string>();
 let updateStorage = '';
+/** This build, as VS Code loaded it — whatever id it was packaged under (scripts/package.mjs). */
+let self: vscode.Extension<unknown> | null = null;
 function ownVersion(): string {
-  return String(vscode.extensions.getExtension('nanoclaw.vscode')?.packageJSON.version ?? '0.0.0');
+  return String(self?.packageJSON.version ?? '0.0.0');
 }
 /** Central named a newer runner build in its welcome: offer it, or install it, per nanoclaw.autoUpdate. */
 let updateItem: vscode.StatusBarItem | null = null;
@@ -341,6 +547,13 @@ async function installUpdate(offer: UpdateOffer): Promise<void> {
   const bytes = Buffer.from(await res.arrayBuffer());
   const sha = createHash('sha256').update(bytes).digest('hex');
   if (sha !== offer.sha256) throw new Error('package hash does not match what central announced');
+  const refused = checkRelease(
+    'vsix',
+    offer.version,
+    sha,
+    decodeSignatureHeader(res.headers.get('x-nanoclaw-signature')),
+  );
+  if (refused) throw new Error(`the package is refused: ${refused}`);
   const dir = updateStorage;
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `nanoclaw-${offer.version}.vsix`);
@@ -355,26 +568,101 @@ async function installUpdate(offer: UpdateOffer): Promise<void> {
   if (pick === 'Reload window') void vscode.commands.executeCommand('workbench.action.reloadWindow');
 }
 
-/** Returns the inline-review controller: the editor harness drives it without a chat panel. */
-export function activate(ctx: vscode.ExtensionContext): { review: ReviewController } {
+/**
+ * Move the old build's proposals and agent state into this build's storage.
+ * Only once the old build is gone: while it is installed it may be running,
+ * and its files are not ours to move.
+ */
+function takeOverStorage(globalStorageDir: string, legacyId: string): void {
+  try {
+    const adopted = adoptLegacyStorage(globalStorageDir, legacyId);
+    if (adopted !== 'none') log(`Took over the storage of the ${legacyId} build (${adopted}).`);
+  } catch (err) {
+    log(`Could not take over the storage of the ${legacyId} build: ${String((err as Error).message)}`);
+  }
+}
+
+/**
+ * The switch from the old build, on the developer's click: remove it, reload.
+ * Its storage is taken over at the next start, when it no longer runs. Never
+ * done unasked — uninstalling another extension is the developer's call.
+ */
+let finishItem: vscode.StatusBarItem | null = null;
+async function offerSwitch(legacyId: string): Promise<void> {
+  // A dismissed prompt must not leave the developer stuck on the old build:
+  // this stays in the status bar, and reopens the prompt, until the switch is done.
+  if (!finishItem) {
+    finishItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
+    finishItem.text = '$(warning) NanoClaw: finish update';
+    finishItem.tooltip = 'The older NanoClaw extension is still installed. Click to remove it and reload.';
+    finishItem.command = 'nanoclaw.finishUpdate';
+    finishItem.show();
+  }
+  const pick = await vscode.window.showInformationMessage(
+    'NanoClaw was updated; the older extension is still installed.',
+    'Remove it and reload',
+  );
+  if (pick !== 'Remove it and reload') return;
+  try {
+    await vscode.commands.executeCommand('workbench.extensions.uninstallExtension', legacyId);
+  } catch (err) {
+    log(`Could not remove ${legacyId}: ${String((err as Error).message)}`);
+    void vscode.window.showWarningMessage(`NanoClaw: uninstall "${legacyId}" in the Extensions view, then reload.`);
+    return;
+  }
+  void vscode.commands.executeCommand('workbench.action.reloadWindow');
+}
+
+/** Returns the inline-review controller and the conflict list: the editor harness drives them without a chat panel. */
+export function activate(ctx: vscode.ExtensionContext): { review: ReviewController; conflicts?: ConflictTracker } {
   out = vscode.window.createOutputChannel('NanoClaw');
   globalState = ctx.globalState;
+  self = ctx.extension;
+  // The predecessor's id, when the package step named one (package.mjs); none
+  // (or this build's own id: an install that kept the old id) means there is
+  // nothing to take over and nothing to remove.
+  const legacyId = legacyExtensionId(ctx.extension.packageJSON, ctx.extension.id);
+  // The old build still installed beside this one (it just installed this
+  // update): stay inactive — both register the same commands and view, and
+  // both would claim this machine — and offer the switch as one click.
+  if (legacyId && vscode.extensions.getExtension(legacyId)) {
+    ctx.subscriptions.push(vscode.commands.registerCommand('nanoclaw.finishUpdate', () => offerSwitch(legacyId)));
+    void offerSwitch(legacyId);
+    return { review: new ReviewController(log) };
+  }
+  // The old build is gone (removed on the prompt's click, or some other way):
+  // nothing of it runs any more, so its storage can move.
+  if (legacyId) takeOverStorage(ctx.globalStorageUri.fsPath, legacyId);
+  machineKey = loadOrCreateMachineKey(ctx.secrets).catch((err: unknown) => {
+    log(`machine key unavailable (secret storage): ${String((err as Error).message)}`);
+    return null;
+  });
+  initActivityLog(ctx.globalStorageUri.fsPath);
   storageRoot = vscode.Uri.joinPath(ctx.globalStorageUri, 'runner').fsPath;
   updateStorage = vscode.Uri.joinPath(ctx.globalStorageUri, 'updates').fsPath;
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = 'nanoclaw.status';
   render('disconnected');
-  const review = new ReviewController(log);
+  const review = new ReviewController(log, ctx.workspaceState);
   ctx.subscriptions.push(review);
+  let scm: ProposalScm | null = null;
+  const conflicts = new ConflictTracker(ctx.workspaceState);
   chat = new ChatViewProvider({
-    send: (f) => link?.send(f) ?? false,
+    conflicts,
+    send: (f) => {
+      // Writing to the agent is the developer acting: agents may start again (as central treats it).
+      if (f.type === 'chat.send') void resumeAgents();
+      return link?.send(f) ?? false;
+    },
     log,
-    // The Changes section reviews the folder bound as the agent's workspace.
+    // Attachments are picked from, and saved to, the folder bound as the agent's workspace.
     workspaceRoot: () => policy().slots['/workspace/project'] ?? vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
     storageRoot: () => storageRoot,
-    proposal: () => agent?.currentProposal() ?? null,
+    proposal: () => agent?.currentProposal() ?? recoveredProposal,
     // Same origin, same bearer the runner socket uses; writes carry the CSRF header central's routes expect.
     review,
+    proposedChanged: (repoRoot, files) =>
+      scm?.update(repoRoot, files, proposedReviewable, repoRoot ? conflicts.under(repoRoot) : []),
     api: async (apiPath, init = {}) => {
       const headers = new Headers(init.headers);
       for (const [k, v] of Object.entries(authHeader(await getToken(false)))) headers.set(k, v);
@@ -382,7 +670,23 @@ export function activate(ctx: vscode.ExtensionContext): { review: ReviewControll
       return fetch(apiUrl(cfg().serverUrl, apiPath), { ...init, headers });
     },
   });
+  const panel = chat;
+  scm = new ProposalScm({
+    diff: (rel) => panel.openDiff(rel),
+    review: (rel) => panel.reviewFile(rel),
+    reviewAll: () => panel.reviewNext(),
+    act: (what, rels) => panel.proposalAct(what, rels),
+    refresh: () => panel.refreshChanges(),
+    openConflict: (rel) => panel.openConflict(rel),
+  });
+  conflicts.onChange(() => void panel.refreshChanges());
+  void recoverLaptopToolsProposal(storageRoot, policy()).then((p) => {
+    recoveredProposal = p;
+    if (p) chat?.refresh();
+  });
   ctx.subscriptions.push(
+    conflicts,
+    scm,
     out,
     status,
     chat,
@@ -401,7 +705,16 @@ export function activate(ctx: vscode.ExtensionContext): { review: ReviewControll
     vscode.commands.registerCommand('nanoclaw.focusChat', () => {
       chat?.reveal();
     }),
+    vscode.commands.registerCommand('nanoclaw.review.nextFile', () => chat?.reviewNextFile()),
     vscode.commands.registerCommand('nanoclaw.connect', () => connect(true)),
+    vscode.commands.registerCommand('nanoclaw.stopAllAgents', () => stopAll('stop all agents')),
+    vscode.commands.registerCommand('nanoclaw.forgetAllowedFolders', async () => {
+      await globalState?.update(ALLOWED_FOLDERS, undefined);
+      recordActivity('folder.forget-all', {});
+      void vscode.window.showInformationMessage('NanoClaw: the agent will ask before working on any folder again.');
+    }),
+    vscode.commands.registerCommand('nanoclaw.resumeAgents', () => resumeAgents()),
+    vscode.commands.registerCommand('nanoclaw.showActivityLog', () => showActivityLog()),
     vscode.window.registerUriHandler({ handleUri: (uri) => void handleConnectUri(uri) }),
     vscode.commands.registerCommand('nanoclaw.disconnect', () => {
       // VS Code owns the account; we can only drop our link and point at Accounts.
@@ -446,11 +759,10 @@ export function activate(ctx: vscode.ExtensionContext): { review: ReviewControll
     }),
   );
   if (cfg().autoConnect && cfg().serverUrl) void connect(false); // silent: only if already signed in
-  return { review };
+  return { review, conflicts };
 }
 export function deactivate(): void {
   link?.stop();
   link = null;
-  agent?.dispose();
   agent = null;
 }

@@ -7,11 +7,9 @@ import { moduleUserCredentials } from './module-user-credentials.js';
 // sqliteOnly, so its up() takes the raw better-sqlite3 handle.
 const up = moduleUserCredentials.up as (db: Database.Database) => void;
 
-// The squash replaced a five-step chain whose tracking names live forever in
-// old installs' schema_version. Its whole safety argument is "converges every
-// starting state" — so every state gets a test, because the states the squash
-// meets in the wild (fresh, legacy, migrated) can never be reproduced by
-// running the repo's own migrations again.
+// The migration's safety argument is "converges every starting state", so each
+// state (fresh, legacy, migrated) is hand-built here: the repo's own migrations
+// can't reproduce them.
 
 const finalTables = (db: Database.Database) =>
   db
@@ -38,9 +36,8 @@ describe('moduleUserCredentials (squashed)', () => {
 
   it('legacy byok tables: renames, patches columns, backfills, drops the old index', async () => {
     const db = new Database(':memory:');
-    // The state migration 020 alone left behind: members table without
-    // cred_type/provider, byok index, no user-level table. (An install that
-    // crashed mid-chain — the state the old rename migration could NOT fix.)
+    // An install that stopped mid-chain: members table without
+    // cred_type/provider, byok index, no user-level table.
     db.exec(`
       CREATE TABLE byok_credentials (
         user_id TEXT NOT NULL, agent_group_id TEXT NOT NULL, onecli_agent_id TEXT NOT NULL,

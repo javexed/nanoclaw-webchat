@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 
 import type { Migration } from './index.js';
+import { addColumnIfMissing } from '../add-column-if-missing.js';
 
 /**
  * Learning-loop classifier gate. The auto-review trigger's default is a bare
@@ -17,17 +18,8 @@ export const moduleLearningClassifier: Migration = {
   version: 206,
   name: 'learning-classifier',
   up(db: Database.Database) {
-    const cols = (db.prepare("PRAGMA table_info('learning_master')").all() as Array<{ name: string }>).map(
-      (c) => c.name,
-    );
-    if (!cols.includes('classifier_model_id')) {
-      db.exec(`ALTER TABLE learning_master ADD COLUMN classifier_model_id TEXT`);
-    }
-    if (!cols.includes('classifier_url')) {
-      db.exec(`ALTER TABLE learning_master ADD COLUMN classifier_url TEXT`);
-    }
-    if (!cols.includes('classifier_model')) {
-      db.exec(`ALTER TABLE learning_master ADD COLUMN classifier_model TEXT`);
-    }
+    addColumnIfMissing(db, 'learning_master', `classifier_model_id TEXT`);
+    addColumnIfMissing(db, 'learning_master', `classifier_url TEXT`);
+    addColumnIfMissing(db, 'learning_master', `classifier_model TEXT`);
   },
 };

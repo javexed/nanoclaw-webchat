@@ -4,7 +4,7 @@
 // reachability against a configured endpoint.
 import type { IncomingMessage, ServerResponse } from 'http';
 
-import { json, readJsonBody } from './http.js';
+import { json, readJsonObject } from './http.js';
 import { getAgentGroup } from '../../../db/agent-groups.js';
 import { log } from '../../../log.js';
 import { forgetModelHosts } from '../egress-policy.js';
@@ -78,14 +78,8 @@ export async function rModelsReachabilityPost(ctx: RouteCtx, _m: RegExpMatchArra
 // the host reaches becomes host.docker.internal in the container — a path a
 // firewall or loopback-only bind can silently drop. Returns a verdict + fix.
 export async function reachabilityHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { endpoint?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ endpoint?: unknown }>(req, res);
+  if (body === undefined) return;
   const endpoint = typeof body.endpoint === 'string' ? body.endpoint.trim() : '';
   if (!endpoint) return json(res, 400, { error: 'endpoint required' });
   if (/\s|[<>]/.test(endpoint)) return json(res, 400, { error: 'endpoint contains invalid characters' });
@@ -197,14 +191,14 @@ export async function listModelsForUI(includeSensitive: boolean): Promise<ModelF
 }
 
 export async function createModelHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { name?: unknown; kind?: unknown; endpoint?: unknown; model_id?: unknown; credential_ref?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{
+    name?: unknown;
+    kind?: unknown;
+    endpoint?: unknown;
+    model_id?: unknown;
+    credential_ref?: unknown;
+  }>(req, res);
+  if (body === undefined) return;
   if (typeof body.name !== 'string' || !body.name.trim()) return json(res, 400, { error: 'name required' });
   if (body.kind !== 'anthropic' && body.kind !== 'ollama' && body.kind !== 'openai-compatible') {
     return json(res, 400, { error: 'kind must be "anthropic" | "ollama" | "openai-compatible"' });
@@ -240,14 +234,13 @@ export async function createModelHandler(req: IncomingMessage, res: ServerRespon
 export async function updateModelHandler(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
   const existing = await getWebchatModel(id);
   if (!existing) return json(res, 404, { error: 'Model not found' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { name?: unknown; endpoint?: unknown; model_id?: unknown; credential_ref?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{
+    name?: unknown;
+    endpoint?: unknown;
+    model_id?: unknown;
+    credential_ref?: unknown;
+  }>(req, res);
+  if (body === undefined) return;
   const patch: { name?: string; endpoint?: string | null; model_id?: string; credential_ref?: string | null } = {};
   if (typeof body.name === 'string' && body.name.trim()) patch.name = body.name.trim();
   if (body.endpoint === null) patch.endpoint = null;
@@ -289,7 +282,7 @@ export function routesBoundToModel(
   for (const rname of listRouters(cfg)) {
     const view = routerView(cfg, rname);
     for (const r of view.routes) {
-      if (!r.escalate && r.model === modelId) out.push({ router: view.name, route: r.name });
+      if (r.model === modelId) out.push({ router: view.name, route: r.name });
     }
   }
   return out;
@@ -353,14 +346,8 @@ export async function deleteModelHandler(res: ServerResponse, id: string, force:
 }
 
 export async function probeModelsHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { url?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ url?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.url !== 'string' || !body.url.trim()) {
     return json(res, 400, { error: 'url required' });
   }
@@ -383,14 +370,8 @@ export async function probeModelsHandler(req: IncomingMessage, res: ServerRespon
 }
 
 export async function bulkCreateModelsHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { models?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ models?: unknown }>(req, res);
+  if (body === undefined) return;
   if (!Array.isArray(body.models) || body.models.length === 0) {
     return json(res, 400, { error: 'models[] required' });
   }
@@ -450,14 +431,8 @@ export async function bulkCreateModelsHandler(req: IncomingMessage, res: ServerR
 }
 
 export async function discoverModelsHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { kind?: unknown; endpoint?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ kind?: unknown; endpoint?: unknown }>(req, res);
+  if (body === undefined) return;
   if (body.kind === 'anthropic') {
     return json(res, 200, { models: KNOWN_ANTHROPIC_MODELS });
   }

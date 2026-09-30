@@ -101,6 +101,15 @@ describe('draftAgent — happy path', () => {
     expect(mockOneCLIInstance.getContainerConfig).toHaveBeenCalledTimes(1);
   });
 
+  it('asks for the role, not capability limits, and points access at Secrets', async () => {
+    fetchMock.mockResolvedValueOnce(anthropicResponse(jsonString('Calendar Helper', 'You manage the calendar.')));
+    const { draftAgent } = await importDrafter();
+    await draftAgent('a calendar assistant');
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { system: string };
+    expect(body.system).toContain('Never state that the assistant cannot access');
+    expect(body.system).toContain('Secrets settings');
+  });
+
   it('strips ```json fences before parsing', async () => {
     const fenced = '```json\n' + jsonString('Recipe Helper', 'You suggest recipes.') + '\n```';
     fetchMock.mockResolvedValueOnce(anthropicResponse(fenced));

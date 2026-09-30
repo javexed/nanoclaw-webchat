@@ -346,11 +346,10 @@ describe('Codex provider install', () => {
 describe('computeRouterMetrics', () => {
   const NOW = 1_783_200_000_000;
   const line = (o: object) => JSON.stringify(o);
-  it('counts per served model, splits live/shadow, excludes escalations from model counts', async () => {
+  it('counts per served model and splits live/shadow', async () => {
     const { computeRouterMetrics } = await import('./ollama-manage.js');
     const text = [
       line({ ts: NOW, mode: 'live', route: 'code', final_model: 'ornith:latest' }),
-      line({ ts: NOW, mode: 'live', route: 'escalate', final_model: '__escalate__' }),
       line({ ts: NOW, mode: 'shadow', route: 'general', requested_model: 'gemma4:latest' }),
       line({ ts: NOW, route: 'general', requested_model: 'gemma4:latest' }), // legacy, no mode
       line({ ts: NOW, mode: 'live', route: '__error__', final_model: 'gemma4:latest', error: 'ReadTimeout' }),
@@ -358,13 +357,11 @@ describe('computeRouterMetrics', () => {
       '{torn',
     ].join('\n');
     const m = computeRouterMetrics(text, 7, NOW + 1000);
-    expect(m.total).toBe(5);
-    expect(m.live).toBe(3);
+    expect(m.total).toBe(4);
+    expect(m.live).toBe(2);
     expect(m.errors).toBe(1);
-    expect(m.escalations).toBe(1);
     expect(m.byModel.find((x) => x.model === 'gemma4:latest')!.count).toBe(3);
     expect(m.byModel.find((x) => x.model === 'ornith:latest')!.count).toBe(1);
-    expect(m.byModel.some((x) => x.model === '__escalate__')).toBe(false);
     expect(m.byRoute[0].count).toBeGreaterThan(0);
   });
 });
@@ -386,7 +383,6 @@ describe('mergeRoutesUpdate / parseClassifierRoute', () => {
           model: 'gemma4:latest',
           pinned: true,
         },
-        { name: 'escalate', description: 'too hard for local models here', escalate: true },
       ],
       default_route: 'general',
       live: { enabled: false },
@@ -407,11 +403,9 @@ describe('mergeRoutesUpdate / parseClassifierRoute', () => {
     expect(() => mergeRoutesUpdate(existing, { routes: [{ name: 'a', description: 'short', model: 'm' }] })).toThrow(
       /description/,
     );
-    expect(() =>
-      mergeRoutesUpdate(existing, {
-        routes: [{ name: 'a', description: 'long enough desc', escalate: true, model: 'm' }],
-      }),
-    ).toThrow(/must not have a model/);
+    expect(() => mergeRoutesUpdate(existing, { routes: [{ name: 'a', description: 'long enough desc' }] })).toThrow(
+      /needs a model binding/,
+    );
     expect(() =>
       mergeRoutesUpdate(existing, {
         routes: [{ name: 'a', description: 'long enough desc', model: 'm' }],

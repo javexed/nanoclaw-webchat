@@ -1,27 +1,9 @@
 <script setup lang="ts">
 /**
- * The skills registry — twenty-eighth island.
- *
- * Mounted into <ul id="skills-list">, exclusively owned by this module.
- *
- * Five functions wrote into this list: renderSkillsRegistry built it,
- * buildSkillsSectionHead made the section headers, appendSkillRow made the rows,
- * applySkillsSections hid and showed them by filter and expansion, and
- * markSkillUpdates injected an Update button into rows AFTER the fact by
- * querying for data-skill. That last one is why the updates are state here:
- * an async pass that reaches into already-rendered rows is exactly what an
- * island cannot allow.
- *
- * The Update button precedes Remove because markSkillUpdates used
- * `insertBefore(btn, li.querySelector('.skill-delete'))`, not appendChild — the
- * kind of detail that reads as arbitrary until the DOM diff disagrees with you.
- *
- * Visibility is `hidden`, not v-if. applySkillsSections set the hidden PROPERTY
- * on rows that stay in the DOM, and the filter counts matches by reading them —
- * v-if would remove the rows and change what "no matching skills" means.
- *
- * An active filter OWNS expansion: sections ignore their open state while one is
- * typed, and a section with no matches hides its header entirely.
+ * The skills registry, mounted into <ul id="skills-list">. Available updates are state,
+ * never buttons injected after render; Update precedes Remove. Visibility is `hidden`, not
+ * v-if, because the filter counts matches from rows that stay in the DOM. An active filter
+ * owns expansion, and a section with no matches hides its header.
  */
 import { computed } from 'vue';
 import OriginBadge from './OriginBadge.vue';

@@ -1,5 +1,5 @@
 diff --git a/src/db/migrations/portability.test.ts b/src/db/migrations/portability.test.ts
-index 4a447695..9bf007c5 100644
+index 4a447695..8a49fa11 100644
 --- a/src/db/migrations/portability.test.ts
 +++ b/src/db/migrations/portability.test.ts
 @@ -23,6 +23,60 @@ const FROZEN_SQLITE_ONLY = new Set([
@@ -63,27 +63,3 @@ index 4a447695..9bf007c5 100644
  ]);
  
  const BANNED_PORTABLE_SQL = [
-@@ -36,12 +90,12 @@ const BANNED_PORTABLE_SQL = [
- ];
- 
- describe('central migration portability policy', () => {
--  it('freezes SQLite-only status to the pre-boundary migration set', () => {
-+  it('freezes SQLite-only status to the pre-boundary migration set', async () => {
-     const actual = migrations.filter((migration) => migration.sqliteOnly).map((migration) => migration.name);
-     expect(new Set(actual)).toEqual(FROZEN_SQLITE_ONLY);
-   });
- 
--  it('requires every post-boundary migration to be async and portable', () => {
-+  it('requires every post-boundary migration to be async and portable', async () => {
-     for (const migration of migrations.filter((candidate) => !candidate.sqliteOnly)) {
-       expect(migration.up.constructor.name, migration.name).toBe('AsyncFunction');
-       const source = String(migration.up);
-@@ -49,7 +103,7 @@ describe('central migration portability policy', () => {
-     }
-   });
- 
--  it('preserves the skill-edit migration anchors byte-for-byte', () => {
-+  it('preserves the skill-edit migration anchors byte-for-byte', async () => {
-     const source = fs.readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-     expect(source).toContain("import { migration019 } from './019-wiring-threads.js';");
-     expect(source).toContain('\n  migration019,\n');

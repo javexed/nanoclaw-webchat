@@ -1,29 +1,17 @@
 diff --git a/src/container-runner.ts b/src/container-runner.ts
-index 703a19a9..e74a352a 100644
+index 703a19a9..b7b445f7 100644
 --- a/src/container-runner.ts
 +++ b/src/container-runner.ts
-@@ -26,8 +26,10 @@ import {
- } from './config.js';
- import { CONTAINER_PLUGINS_DIR, materializeContainerJson } from './container-config.js';
+@@ -28,6 +28,8 @@ import { CONTAINER_PLUGINS_DIR, materializeContainerJson } from './container-con
  import { getContainerConfig } from './db/container-configs.js';
--import { updateContainerConfigScalars } from './db/container-configs.js';
-+import { updateContainerConfigScalars, updateContainerConfigJson } from './db/container-configs.js';
+ import { updateContainerConfigScalars } from './db/container-configs.js';
  import { CONTAINER_RUNTIME_BIN } from './container-runtime.js';
-+import { hostGatewayArgs, makeContainerWritable, readonlyMountArgs } from './container-runtime-extras.js';
++import { makeContainerWritable } from './container-runtime-extras.js';
 +import { availableSkillNames } from './provider-contracts/realize.js';
  import {
    notifyContainerExit,
    resolveContainerEnv,
-@@ -35,6 +37,8 @@ import {
-   seamGatewayKey,
- } from './seam/spawn-hooks.js';
- import { composeGroupProjectDoc, DEFAULT_PROJECT_DOC } from './project-doc-compose.js';
-+import { EGRESS_NETWORK, egressNetworkArgs, ensureEgressNetwork } from './egress-lockdown.js';
-+import { EGRESS_LOCKDOWN } from './config.js';
- import { getAgentGroup } from './db/agent-groups.js';
- import {
-   getLiveHostInstance,
-@@ -95,7 +99,9 @@ import {
+@@ -95,7 +97,9 @@ import {
    sessionDir,
    writeSessionContext,
    writeSessionRouting,
@@ -33,7 +21,7 @@ index 703a19a9..e74a352a 100644
  import type { AgentGroup, Session } from './types.js';
  
  /**
-@@ -344,9 +350,13 @@ export function wakeContainer(session: Session): Promise<boolean> {
+@@ -344,9 +348,13 @@ export function wakeContainer(session: Session): Promise<boolean> {
      return existing;
    }
    const promise = spawnContainer(session)
@@ -48,7 +36,7 @@ index 703a19a9..e74a352a 100644
        return false;
      })
      .finally(() => {
-@@ -356,6 +366,66 @@ export function wakeContainer(session: Session): Promise<boolean> {
+@@ -356,6 +364,81 @@ export function wakeContainer(session: Session): Promise<boolean> {
    return promise;
  }
  
@@ -83,9 +71,14 @@ index 703a19a9..e74a352a 100644
 +      threadId: session.thread_id ?? null,
 +      content: JSON.stringify({ text: spawnFailureNotice(err) }),
 +    });
++    // The room gets a category; the full reason (it can name local paths) stays here.
++    const detail = (err as { detail?: unknown } | null | undefined)?.detail;
 +    log.warn('Posted spawn-failure notice to room after repeated failures', {
 +      sessionId: session.id,
 +      failures: n,
++      kind: (err as { kind?: unknown } | null | undefined)?.kind,
++      detail: typeof detail === 'string' ? detail : undefined,
++      err: err instanceof Error ? err.message : undefined,
 +    });
 +  } catch (err) {
 +    log.warn('Failed to post spawn-failure notice', { sessionId: session.id, err });
@@ -100,6 +93,16 @@ index 703a19a9..e74a352a 100644
 + */
 +export function spawnFailureNotice(err: unknown): string {
 +  const kind = (err as { kind?: unknown } | null | undefined)?.kind;
++  // A refusal carries its reason, but that reason can name paths on the
++  // machine that refused; every room member reads this line. So the room gets
++  // a short category, and the full reason goes to the log (noteSpawnFailure).
++  if (kind === 'image-unavailable') {
++    return `⚠️ I couldn't start to handle that — the agent image isn't ready on the machine I run on yet. I'll start once it is.`;
++  }
++  if (kind === 'denied-by-policy' || kind === 'spec-invalid') {
++    const category = kind === 'denied-by-policy' ? 'policy' : 'invalid session setup';
++    return `⚠️ I couldn't start to handle that — my start was refused (${category}). An admin can find the reason in the logs; I'll keep retrying.`;
++  }
 +  if (kind === 'runtime-unavailable') {
 +    return (
 +      "⚠️ I couldn't start to handle that — the machine I run on isn't reachable right now (if I run on a " +
@@ -115,7 +118,7 @@ index 703a19a9..e74a352a 100644
  async function spawnContainer(session: Session): Promise<void> {
    if (pendingAdoptions.has(session.id)) {
      // A running container is waiting to be re-fenced after a failed adoption
-@@ -376,6 +446,13 @@ async function spawnContainer(session: Session): Promise<void> {
+@@ -376,6 +459,13 @@ async function spawnContainer(session: Session): Promise<void> {
      const { writeDestinations } = await import('./modules/agent-to-agent/write-destinations.js');
      await writeDestinations(agentGroup.id, session.id);
    }
@@ -129,7 +132,7 @@ index 703a19a9..e74a352a 100644
    await writeSessionRouting(agentGroup.id, session.id);
    const mailboxKey = { agentGroupId: agentGroup.id, sessionId: session.id };
    const mailbox = getAgentMailbox();
-@@ -1155,6 +1232,12 @@ export async function buildMounts(
+@@ -1155,6 +1245,12 @@ export async function buildMounts(
        }
      }
    } else if (defaultSurfaces) {
@@ -142,7 +145,7 @@ index 703a19a9..e74a352a 100644
      mounts.push({
        hostPath: claudeDir,
        containerPath: '/home/node/.claude',
-@@ -1185,6 +1268,19 @@ export async function buildMounts(
+@@ -1185,6 +1281,19 @@ export async function buildMounts(
        scope,
      });
    }
@@ -162,7 +165,7 @@ index 703a19a9..e74a352a 100644
  
    // Additional mounts from container config — already vetted by the allowlist.
    if (containerConfig.additionalMounts && containerConfig.additionalMounts.length > 0) {
-@@ -1337,12 +1433,23 @@ export function composeSessionSpec(input: ComposeSessionSpecInput): SessionSpec
+@@ -1337,12 +1446,23 @@ export function composeSessionSpec(input: ComposeSessionSpecInput): SessionSpec
      // The gateway's auxiliary containers ride beside the agent; capability-
      // gated in the spawn path before composition ever runs.
      containers: [agent, ...(gateway.containers ?? [])],
@@ -188,7 +191,7 @@ index 703a19a9..e74a352a 100644
        pidsLimit: parsePidsLimit(CONTAINER_PIDS_LIMIT),
        shmSizeMb: SHM_SIZE_MB,
      },
-@@ -1429,20 +1536,83 @@ export function syncSkillSymlinks(
+@@ -1429,16 +1549,8 @@ export function syncSkillSymlinks(
   * from `container/skills/` so newly-added upstream skills appear automatically.
   */
  function selectedSkillNames(containerConfig: import('./container-config.js').ContainerConfig): string[] {
@@ -207,78 +210,3 @@ index 703a19a9..e74a352a 100644
    const selected = containerConfig.skills === 'all' ? available : containerConfig.skills;
    return selectGatewayAgentSkills(selected);
  }
- 
-+/**
-+ * Output-token ceiling for the Claude agent SDK, or null if we cannot tell.
-+ *
-+ * Left unset, the SDK caps a turn at 32000 output tokens and kills it with
-+ * "Claude's response exceeded the 32000 output token maximum" — which killed real
-+ * turns (a long CAD/OpenSCAD answer). Current models allow far more, so there is
-+ * no reason to leave that headroom unused.
-+ *
-+ * Anything unrecognised returns null and the caller leaves the variable UNSET, so
-+ * the SDK keeps its own default. Guessing high is NOT a safe failure: overshooting
-+ * a model's real ceiling is a 400, and older models sit far below these numbers
-+ * (Claude 3 Opus is 4096). A substring match on "opus" also catches
-+ * claude-3-opus-20240229 and would hand it 128000 — reintroducing exactly the
-+ * killed-turn failure this function exists to prevent. Matching is therefore on
-+ * family AND version, never on family alone.
-+ *
-+ * Override with NANOCLAW_MAX_OUTPUT_TOKENS. This is a ceiling, not a target:
-+ * raising it costs nothing unless a turn actually needs the room.
-+ */
-+const MAX_OUTPUT_TOKENS_BY_MODEL: { re: RegExp; max: number }[] = [
-+  // Version-anchored on purpose — see the note about claude-3-opus above.
-+  { re: /claude-haiku-4[.-]5/, max: 64_000 },
-+  { re: /claude-(opus|sonnet)-(4[.-][6-9]|[5-9])/, max: 128_000 },
-+  { re: /claude-fable-[5-9]/, max: 128_000 },
-+];
-+
-+/**
-+ * No model configured means the provider default, which is an Opus-class model.
-+ * Named rather than inlined so the assumption is visible: if the default ever
-+ * becomes a smaller model, this is the line that has to change.
-+ */
-+const DEFAULT_MODEL_MAX_OUTPUT_TOKENS = 128_000;
-+
-+export function maxOutputTokensFor(model: string | null | undefined): number | null {
-+  const override = Number(process.env.NANOCLAW_MAX_OUTPUT_TOKENS);
-+  if (Number.isFinite(override) && override > 0) return Math.floor(override);
-+  const m = (model ?? '').trim().toLowerCase();
-+  if (!m) return DEFAULT_MODEL_MAX_OUTPUT_TOKENS;
-+  return MAX_OUTPUT_TOKENS_BY_MODEL.find((e) => e.re.test(m))?.max ?? null;
-+}
-+
-+/**
-+ * Container hardening flags (security model §container-isolation). Always on
-+ * unless NANOCLAW_CONTAINER_NO_HARDEN=1 (the escape hatch for a workload a
-+ * dropped capability genuinely breaks — report it, don't live there).
-+ *
-+ * The image runs as `node` under tini and never escalates, so the drop-ALL
-+ * baseline needs only the file-ownership caps package managers and unzip-ish
-+ * tools use. no-new-privileges blocks setuid escalation outright; pids-limit
-+ * turns a fork bomb into a contained failure (default 512, override via
-+ * NANOCLAW_CONTAINER_PIDS_LIMIT).
-+ */
-+export function containerHardeningArgs(env: NodeJS.ProcessEnv = process.env): string[] {
-+  if (env.NANOCLAW_CONTAINER_NO_HARDEN === '1') return [];
-+  const pids = env.NANOCLAW_CONTAINER_PIDS_LIMIT || '512';
-+  return [
-+    '--cap-drop',
-+    'ALL',
-+    '--cap-add',
-+    'CHOWN',
-+    '--cap-add',
-+    'DAC_OVERRIDE',
-+    '--cap-add',
-+    'FOWNER',
-+    '--security-opt',
-+    'no-new-privileges',
-+    '--pids-limit',
-+    pids,
-+  ];
-+}
-+
- const execAsync = promisify(exec);
- 
- /** Build a per-agent-group Docker image with custom packages. */

@@ -1,17 +1,11 @@
 // ── Modals, overlays and popovers ────────────────────────────────────────────
 // The blocking surfaces: the confirm and input modals, the OAuth mint modal,
 // the image lightbox, and the two popovers (handle, @-mention).
-//
-// First extraction of phase 3 — the per-panel split of the wiring layer — and
-// the first module born as TypeScript rather than converted. Modals go first
-// because showConfirmModal is called from nearly every other panel: extracting
-// it now means the panels that follow IMPORT it instead of being handed it
-// through provide*Deps.
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { $ } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import {
   getMentionMatches,
   getMentionSelectedIndex,
-  getMentionStart,
   setMentionMatches,
   setMentionSelectedIndex,
   setMentionStart,
@@ -26,8 +20,8 @@ import {
 } from './user-creds-state.js';
 import { refreshWizardCredState } from './wizard.js';
 import { applySettings } from './settings.js';
-import { showToast, toastError } from '../core/toast.js';
-import { authFetch, apiJson } from '../core/api.js';
+import { showToast } from '../core/toast.js';
+import { apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
 import { snapshotRoomImages } from './rooms.js';
 import { updateUserCredsBanner } from './members.js';
@@ -40,23 +34,17 @@ import CodexPairingCode from './CodexPairingCode.vue';
 import { codexActive, codexUserCode } from './codex-code-state.js';
 import { mentionMatches, mentionSelectedIndex } from './mention-popover-state.js';
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideModalsDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
+/** Supplied by provideModalsDeps in composition-root.ts. `any` marks a signature not
+ *  yet typed, not an opt-out of checking. */
 export interface ModalsDeps {
   acceptMention: (...args: any[]) => any;
   copyTextToClipboard: (...args: any[]) => any;
-  getUserCredsOauthStatus: () => any;
-  getUserCredsWords: (a0?: any) => any;
   updateHandleCreds: (...args: any[]) => any;
 }
 
 const deps = {} as ModalsDeps;
 
-/** Wire the legacy helpers this module calls. Call once at startup. */
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 export function provideModalsDeps(provided: Partial<ModalsDeps>): void {
   Object.assign(deps, provided);
 }
@@ -187,6 +175,10 @@ export function navigateLightbox(delta?: any) {
   setLightboxImage(next);
 }
 
+// True when a modal / popover / menu is open that should consume Escape before a
+// full-screen view does. These each have their own ESC handler (bubble phase);
+// the view-close handler below runs in the CAPTURE phase, so it sees the overlay
+// still open and yields to it — one Escape closes exactly one layer.
 export function blockingOverlayOpen() {
   // `.modal-overlay` covers the settings, user-creds, and (dynamically mounted)
   // confirm modals; the rest are listed explicitly. Visible = present and not
@@ -241,22 +233,15 @@ async function openGrokMintModal(modal: HTMLElement): Promise<void> {
   $('#user-creds-oauth-close')?.focus();
   status('Starting sign-in…');
 
-  const poll = async () => {
-    const r = await authFetch('/api/user-credentials/grok/status');
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.error || r.statusText);
-    return d;
-  };
+  const poll = () => apiJson('/api/user-credentials/grok/status');
   const wait = (ms: number) => new Promise((res) => setTimeout(res, ms));
 
   try {
-    const r = await authFetch('/api/user-credentials/grok/start', {
+    const started = await apiJson('/api/user-credentials/grok/start', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-      body: JSON.stringify({ roomId: state.currentRoom }),
+      headers: { 'X-Webchat-CSRF': '1' },
+      body: { roomId: state.currentRoom },
     });
-    const started = await r.json();
-    if (!r.ok) throw new Error(started.error || r.statusText);
 
     // Phase 1 — wait for the URL and code.
     let d = started;
@@ -307,6 +292,10 @@ async function openGrokMintModal(modal: HTMLElement): Promise<void> {
   }
 }
 
+// ── UserCreds OAuth: connect a Claude subscription token ────────────────────────
+// Browser-mint OAuth: no terminal. Opening the form starts a server-side mint
+// (a throwaway container runs `claude setup-token`), surfaces the sign-in URL,
+// takes the pasted code, and onboards the resulting token per-member.
 export async function openOauthMintModal(target?: any) {
   userCredsOauthTarget.value = target;
   const modal = $('#user-creds-oauth-modal');
@@ -340,13 +329,11 @@ export async function openOauthMintModal(target?: any) {
       : isCodex
         ? '/api/user-credentials/codex/start'
         : '/api/user-credentials/oauth/start';
-    const r = await authFetch(startUrl, {
+    const data = await apiJson(startUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-      body: JSON.stringify(isWorkspace ? {} : { roomId: state.currentRoom }),
+      headers: { 'X-Webchat-CSRF': '1' },
+      body: isWorkspace ? {} : { roomId: state.currentRoom },
     });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.error || r.statusText);
     userCredsOauthSessionId.value = data.sessionId;
     const link = $('#user-creds-oauth-link') as HTMLElement;
     if (link) {
@@ -361,8 +348,8 @@ export async function openOauthMintModal(target?: any) {
     if (codeLabel) codeLabel.hidden = isCodex;
     if (codexCode) {
       codexCode.hidden = !isCodex;
-      // The pairing-code line is an island now. Only the hidden flag stays
-      // here — it is a decision about the whole Codex step, not the line.
+      // The pairing-code line is an island; only the hidden flag stays here —
+      // it is a decision about the whole Codex step, not the line.
       codexActive.value = isCodex;
       codexUserCode.value = isCodex ? data.userCode || '' : '';
       mountCodexCode();
@@ -380,6 +367,19 @@ export async function openOauthMintModal(target?: any) {
   }
 }
 
+/**
+ * Promise-based confirmation modal. Resolves true on confirm, false on
+ * cancel / backdrop / Escape. `body` may be a string or an HTMLElement (use an
+ * element when the message contains user-supplied text, so it stays escaped).
+ * `destructive` styles the confirm button as a delete action and focuses
+ * Cancel by default.
+ */
+// `extraActions` (optional): buttons rendered between Cancel and the primary
+// Confirm, each `{ label, value, className? }`. Clicking one resolves the promise
+// with its `value` (Confirm still resolves `true`, Cancel/Escape `false`), so a
+// caller can offer more than a yes/no without a bespoke modal.
+// `beforeConfirm` (optional): runs on every confirm attempt (button or Enter);
+// returning false keeps the modal open — the inline-validation hook.
 export function showConfirmModal({
   title,
   body,
@@ -432,6 +432,12 @@ export function showConfirmModal({
   });
 }
 
+/** Single-line text prompt in the app's modal chrome — replaces native prompt()
+ * (unstylable, ESC-inconsistent, blocked in some PWA contexts). Returns the
+ * trimmed value, or null on cancel/empty.
+ * `validate(trimmedValue)` (optional): return an error string to keep the modal
+ * open with that message inline (DESIGN §5 — field validation is inline text),
+ * or null/undefined to accept. */
 export async function showInputModal({
   title,
   placeholder = '',
@@ -484,10 +490,8 @@ function ensureMentionPopover() {
   el.className = 'mention-popover';
   el.hidden = true;
   // Anchor INSIDE the composer (absolute, bottom:100% — see CSS), not
-  // body+fixed: iOS shifts the visual viewport when the on-screen keyboard
-  // opens while fixed elements stay pinned to the layout viewport, which
-  // painted the popover off-screen on iPhone PWAs. In-layout anchoring rides
-  // with the input under every keyboard state, with no JS positioning math.
+  // body+fixed: iOS keeps fixed elements on the layout viewport while the
+  // keyboard shifts the visual one, painting the popover off-screen.
   $('#message-form')!.appendChild(el);
   mentionPopover = el;
   return el;
@@ -502,13 +506,11 @@ export function dismissMentionPopover() {
 let codexCodeApp: ReturnType<typeof createApp> | null = null;
 
 function mountCodexCode(): void {
-  if (codexCodeApp) return;
-  const host = $('#user-creds-oauth-codex-code');
-  if (!host) return;
-  codexCodeApp = createApp(CodexPairingCode, {
-    onCopy: (code: string) => deps.copyTextToClipboard(code),
-  });
-  codexCodeApp.mount(host);
+  codexCodeApp ??= mountIsland('#user-creds-oauth-codex-code', () =>
+    createApp(CodexPairingCode, {
+      onCopy: (code: string) => deps.copyTextToClipboard(code),
+    }),
+  );
 }
 
 let mentionApp: ReturnType<typeof createApp> | null = null;
@@ -534,15 +536,14 @@ export function renderMentionPopover(input?: any) {
   el.hidden = false;
 }
 
+// The pre-import gate: fetch the skill's contents (nothing is written) and show
+// what's inside — files, scripts, size, external links, lint findings — before
+// the user commits. Falls back to a text-only confirm if inspection fails, so a
+// GitHub hiccup can't brick importing.
 export async function inspectAndConfirmImport(importBody?: any, displayName?: any, community?: any) {
   let insp: any = null;
   try {
-    const res = await authFetch('/api/skills/inspect', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...importBody, official: !community }),
-    });
-    if (res.ok) insp = await res.json();
+    insp = await apiJson('/api/skills/inspect', { method: 'POST', body: { ...importBody, official: !community } });
   } catch {}
   if (!insp) {
     return showConfirmModal({
@@ -582,6 +583,8 @@ export async function inspectAndConfirmImport(importBody?: any, displayName?: an
   });
 }
 
+/** Confirm modal with one switch option — the modal twin of .setting-toggle
+ * (DESIGN.md §2b: binary choices are switches, never raw checkboxes). */
 export async function confirmWithToggle({ title, toggleLabel, toggleLabels, note, confirmLabel }: any) {
   const el = document.createElement('div');
   const labels: string[] = toggleLabels ?? [toggleLabel];
@@ -597,11 +600,7 @@ export async function confirmWithToggle({ title, toggleLabel, toggleLabels, note
 
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // Shared modal chrome: backdrop dismissal, escape handling and the lightbox.
-//
-// A function rather than module-scope code: legacy.js runs its blocks in source
-// order around initApp(), so relocating them to another module's top level would
-// silently re-order them. legacy calls wireModalsPanel() at the exact line the
-// first block occupied, so execution order is unchanged.
+// Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
 export function wireModalsPanel(): void {
   $<HTMLButtonElement>('#handle-chip')?.addEventListener('click', (e) => {
@@ -625,14 +624,6 @@ export function wireModalsPanel(): void {
   // Apply on load
   applySettings();
 
-  // Personal credentials panel (Settings → My credentials). "patchset C" (b5fc2ab)
-  // shipped the openSettings() call below and the #settings-my-credentials markup,
-  // but NOT this renderer — so opening Settings threw `ReferenceError:
-  // renderMyCredentials is not defined`, which aborted the whole modal open. Until
-  // the panel is fully wired (against /api/user-credentials/credential), keep it
-  // hidden rather than crash Settings.
-  // Settings modal open/close
-
   // ── Settings → Features → ⓘ info toggles ────────────────────────────────────
   // Each .feature-info-btn opens/closes the description named by aria-controls.
   document.addEventListener('click', (e) => {
@@ -646,12 +637,9 @@ export function wireModalsPanel(): void {
     btn.setAttribute('aria-expanded', String(open));
   });
 
-  // ── Settings → Features → Read aloud (one-click Kokoro install) ─────────────
-  // Owner-only endpoint; non-owners still see the block (hidden install row —
-  // the per-device toggle works for everyone via Web Speech). Same install-row
-  // + progress-log pattern as Auto routing; the health-check phase covers the
-  // ~330MB first-boot model download, and the final step activates the .env
-  // flags in-process, so no host restart.
+  // Image lightbox — opened from file-bubble image clicks. Closes via ×, backdrop tap,
+  // ESC, or device back gesture. pushState lets the OS back gesture / Android back
+  // button dismiss the viewer instead of leaving the app.
   $<HTMLButtonElement>('#lightbox-close')?.addEventListener('click', () => closeLightbox());
   $<HTMLButtonElement>('#lightbox-prev')?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -672,28 +660,12 @@ export function wireModalsPanel(): void {
     else if (e.key === 'ArrowLeft') navigateLightbox(-1);
     else if (e.key === 'ArrowRight') navigateLightbox(1);
   });
-  // ── View router ────────────────────────────────────────────────────────────
-  // Overlay surfaces (dashboard, permissions, …) stacked above the base
-  // rooms/chat view. Opening a surface pushes a history entry so the OS/browser
-  // back gesture closes it instead of exiting the PWA; the popstate handler below
-  // unwinds the stack. Programmatic closes (X buttons, in-app back) go through
-  // closeView() so the stack and history stay in sync.
 }
 
 // ── Lightbox ─────────────────────────────────────────────────────────────────
-// Pinch-zoom and drag-to-pan state for the image lightbox, owned here rather
-// than injected. This module already exports openLightbox, closeLightbox and
-// applyLightboxTransform, and was reaching the transform through
-// lightboxXf at five sites — the state sat in legacy.js only because
-// that is where it was declared, not because anything else read it. Owning it
-// deletes the accessor on both sides.
-//
-// State and the element lookup are module scope; only the LISTENERS are
-// deferred into wireLightbox(), which legacy calls from the line the listeners
-// occupied — NOT from the line the state was declared on. Anchoring on the
-// declaration registered them ~84 lines early, ahead of window:popstate and
-// document:keydown. The listener SET was identical either way; only the
-// boot-order trace saw it (docs/webchat/boot-order-guard.md).
+// State is module scope; only the listeners are deferred into wireLightbox(),
+// whose call site in composition-root.ts fixes their boot order relative to
+// popstate and keydown (docs/webchat/boot-order-guard.md).
 
 // Transform state for pinch-zoom + pan.
 const lightboxXf = { scale: 1, x: 0, y: 0 };
@@ -770,11 +742,6 @@ export function wireLightbox(): void {
   });
 }
 
-// ── Panel wiring ───────────────────────────────────────────────────────────
-// Blocks whose SUBJECT element this module already owns. The ownership census
-// reported them as multi-owner, which was the union of every id they touch
-// rather than what they are for.
-
 /** The OAuth mint modal: code submission, spinner and step transitions. */
 export function wireUserCredsOauth(): void {
   $<HTMLButtonElement>('#user-creds-oauth-submit')?.addEventListener('click', async () => {
@@ -809,19 +776,13 @@ export function wireUserCredsOauth(): void {
         : isCodex
           ? { roomId: state.currentRoom, sessionId: userCredsOauthSessionId.value }
           : { roomId: state.currentRoom, sessionId: userCredsOauthSessionId.value, code };
-      const r = await authFetch(finishUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-        body: JSON.stringify(body),
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || r.statusText);
+      await apiJson(finishUrl, { method: 'POST', headers: { 'X-Webchat-CSRF': '1' }, body });
       userCredsOauthSessionId.value = null;
       if (isWorkspace) {
         showToast(`Workspace default ${isCodex ? 'ChatGPT' : 'Claude'} subscription connected.`, { kind: 'success' });
         modal.hidden = true;
         // Refresh the wizard engine list (controls swap to the ✓ connected card
-        // + chip). The default login lives only in the wizard now.
+        // + chip). The default login lives only in the wizard.
         refreshWizardCredState();
       } else {
         showToast(`Connected your ${subWord}.`, { kind: 'success' });
@@ -838,11 +799,7 @@ export function wireUserCredsOauth(): void {
   });
 }
 
-/**
- * The OAuth modal's status line. It writes #user-creds-oauth-status, which is
- * this modal's own markup — it sat in members.ts and was handed back through a
- * bridge entry, which is the shape of a function filed under the wrong owner.
- */
+/** The OAuth modal's status line (#user-creds-oauth-status). */
 export function userCredsOauthStatus(msg?: any, kind?: any) {
   const el = $('#user-creds-oauth-status');
   if (!el) return;

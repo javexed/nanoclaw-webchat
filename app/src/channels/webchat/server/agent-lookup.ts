@@ -2,24 +2,21 @@
 // Resolving an agent group by id and listing the ones a user may see. Read-only
 // and used almost everywhere: the agent routes, the skill routes, and the
 // permission-scoped listings.
-//
-// Extracted ahead of the agent routes because the skill routes need it and
-// neither cluster owns it.
+
+import { getAgentGroup, getAllAgentGroups } from '../../../db/agent-groups.js';
+import { getContainerConfig } from '../../../db/container-configs.js';
+import { effectiveEgressMode } from '../egress-policy.js';
+import { isRemotelyPlaced } from '../extensions.js';
+import type { AgentGroup } from '../../../types.js';
+import { getAssignedModelForAgent, getEffectiveModelForAgent, getWebchatRoom } from '../db.js';
+import { hasAdminPrivilege, isOwner } from '../roles.js';
+import { filterAsync } from '../async-array.js';
 
 /**
  * Agent list shape returned to the PWA. Adds `room_id` (the wired webchat
  * room id, if any) so the PWA can map agents to rooms without baking in v1's
  * `chat:<folder>` jid convention.
  */
-import { getAgentGroup, getAllAgentGroups } from '../../../db/agent-groups.js';
-import { getContainerConfig } from '../../../db/container-configs.js';
-import { effectiveEgressMode } from '../egress-policy.js';
-import { getPlacement } from '../runner-registry.js';
-import type { AgentGroup } from '../../../types.js';
-import { getAssignedModelForAgent, getEffectiveModelForAgent, getWebchatRoom } from '../db.js';
-import { hasAdminPrivilege, isOwner } from '../roles.js';
-import { filterAsync } from '../async-array.js';
-
 export interface AgentForUI extends AgentGroup {
   room_id: string | null;
   /** Placed on a developer's machine (network enforced by central's relay). */
@@ -67,9 +64,7 @@ export async function deriveEffectiveModelLabel(agentGroupId: string): Promise<s
   const effective = await getEffectiveModelForAgent(agentGroupId);
   if (effective) return `${effective.model_id} (workspace default)`;
   // A model pinned in container_configs (webchat's own field, or `ncl groups
-  // config update --model`) is what the SDK is actually handed. Showing the
-  // generic Anthropic default for it was the visible half of this bug: an agent
-  // explicitly pinned to claude-opus-5 still read as "Built-in Anthropic".
+  // config update --model`) is what the SDK is actually handed.
   if (cfg?.model) return `${cfg.model} (pinned)`;
   return null;
 }
@@ -87,7 +82,7 @@ export async function toAgentForUI(g: AgentGroup): Promise<AgentForUI> {
     // The effective network mode (unset means the allowlist), so the UI shows
     // what is enforced. A runner agent's applies per connection at once; a
     // local agent's Open ↔ filtered switch needs its next start.
-    runner_placed: !!(await getPlacement(g.id)),
+    runner_placed: await isRemotelyPlaced(g.id),
     egress: effectiveEgressMode((await getContainerConfig(g.id))?.egress),
     effective_model_label: assigned ? null : await deriveEffectiveModelLabel(g.id),
     config_model: (await getContainerConfig(g.id))?.model ?? null,

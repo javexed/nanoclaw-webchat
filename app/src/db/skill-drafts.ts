@@ -1,6 +1,6 @@
 /**
  * skill_drafts CRUD — staged proposals from the learning loop
- * (see docs/webchat/design/learning-loop.md). The SKILL.md body lives on disk at
+ * (see docs/webchat/learning-loop.md). The SKILL.md body lives on disk at
  * data/skill-drafts/<id>/SKILL.md; this table holds the metadata + status.
  */
 import fs from 'node:fs';
@@ -81,16 +81,10 @@ export function readSkillDraftBody(id: string): string | null {
 
 /**
  * Discard REVERSIBLY: flip the row to 'discarded' and leave the staged body on
- * disk, so restoreSkillDraft can put it back. Every listing already filters
- * status = 'pending' (listSkillDrafts), so a discarded draft leaves every
- * surface and the badge count without being erased — which is what lets the
- * in-room card offer Undo after the fact instead of before.
- *
- * resolveSkillDraft's hard delete cited the agent_groups FK: a resolved row
- * pinning it would block agent deletion. It does not — the agent delete path
- * clears the table for the group explicitly (cli/resources/groups.ts) — so the
- * row can outlive the decision. Automatic paths (supersede, bulk cleanup) keep
- * using resolveSkillDraft; only a human discard is reversible.
+ * disk, so restoreSkillDraft can put it back (the in-room card's Undo). Every
+ * listing filters status = 'pending', so it still leaves every surface. The row
+ * cannot block agent deletion: that path clears the table for the group
+ * explicitly. Automatic paths (supersede, cleanup) use resolveSkillDraft.
  */
 export async function discardSkillDraftSoft(id: string): Promise<boolean> {
   const r = await getDb().run("UPDATE skill_drafts SET status = 'discarded' WHERE id = ? AND status = 'pending'", id);
@@ -105,8 +99,7 @@ export async function restoreSkillDraft(id: string): Promise<boolean> {
 
 /**
  * Resolve a draft (kept or discarded): a terminal state carries no value, so we
- * DELETE the row + its staged files. (Keeping a resolved row around would also
- * pin the agent_groups FK, blocking agent deletion.)
+ * DELETE the row + its staged files.
  */
 export async function resolveSkillDraft(id: string, _status: 'kept' | 'discarded'): Promise<boolean> {
   const changed = (await getDb().run('DELETE FROM skill_drafts WHERE id = ?', id)).changes > 0;

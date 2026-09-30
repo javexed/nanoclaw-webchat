@@ -1,21 +1,14 @@
 <script setup lang="ts">
 /**
- * The model list — fourth island, and the first with a nested interactive
- * control (the − remove button) inside each row.
- *
- * Mounted into <ul id="model-list">, exclusively owned by this module.
- *
- * The remove button disables itself through the event target, exactly as the
- * imperative version did, rather than through per-row reactive state: the
- * disabled flag is transient UI feedback for one in-flight request, not
- * application state, and routing it through a ref would outlive the request.
+ * The model list, mounted into <ul id="model-list">. The − remove button disables itself
+ * through the event target, not per-row state: it is feedback for one in-flight request.
  */
 import { modelRows } from './model-list-state.js';
 
 const emit = defineEmits<{ (e: 'pick', id: string): void; (e: 'remove', id: string, btn: HTMLButtonElement): void }>();
 
-// Bound, not template text: prettier wraps a bare glyph onto its own line and
-// Vue then renders the surrounding whitespace, which textContent never did.
+// Bound, not template text: prettier wraps a bare glyph onto its own line and Vue then
+// renders the surrounding whitespace.
 const REMOVE_GLYPH = '\u2212';
 
 const EMPTY = 'No models selected yet — use + on a server below, or “Add model endpoint…” for anything else.';

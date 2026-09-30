@@ -1,3 +1,9 @@
+/**
+ * The live bubble only ever holds the CURRENT turn — the container wipes
+ * status_events each turn — so click-to-expand on an older turn needs this
+ * route for the untruncated block, and the room guard is why the client can't
+ * read the table directly.
+ */
 import { ServerResponse } from 'http';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -7,13 +13,6 @@ import { runMigrations } from '../../db/migrations/index.js';
 import { createWebchatRoom, recordActivity } from './db.js';
 import { rRoomReasoningGet } from './server/routes-rooms.js';
 import type { RouteCtx } from './server.js';
-
-/**
- * The live bubble only ever holds the CURRENT turn — the container wipes
- * status_events each turn — so click-to-expand on an older turn had nothing to
- * show. This route is what gives it the untruncated block back, and the room
- * guard is the reason it can't just read the table directly from the client.
- */
 
 let status = 0;
 let body: unknown;

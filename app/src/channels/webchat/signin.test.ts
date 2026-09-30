@@ -305,7 +305,7 @@ describe('Explicit identity linking', () => {
   });
 
   it('a Microsoft sign-in completed while linking joins the account that started it', async () => {
-    const { login, signins, db } = await load();
+    const { login, db } = await load();
     await seedUser(db, 'webchat:tailscale:jane@example.com', '2026-01-01T00:00:00Z');
     const { result } = await roundTrip(login, 'Jane.Doe@Example.com', 'webchat:tailscale:jane@example.com');
     expect(result).toMatchObject({ ok: true, linkFrom: 'webchat:tailscale:jane@example.com' });

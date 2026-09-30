@@ -138,15 +138,6 @@ def _bindings(router):
     return {r["name"]: r.get("model") for r in router.get("routes", []) if r.get("model")}
 
 
-def _escalate_routes(router):
-    """Routes with `"escalate": true` have no local binding — a live match
-    rejects the request with a no_adequate_model marker so NanoClaw's
-    per-group fallback_provider re-runs the turn on a stronger provider
-    (llm-router §16c). The confidence floor, realized as a route: describe
-    what's beyond the local roster and let Arch-Router match it."""
-    return {r["name"] for r in router.get("routes", []) if r.get("escalate")}
-
-
 def _default_binding(router):
     return _bindings(router).get(router.get("default_route"))
 
@@ -169,14 +160,14 @@ def _fit_override(router, target, est_tokens):
     """Context guard (deterministic — no classifier involvement): if the chosen
     binding's model can't FIT the request (est_tokens > its max_prompt_tokens,
     annotated by bind-routes from the model's configured num_ctx), pick the
-    bound, non-escalate route with the LARGEST sufficient capacity instead.
+    bound route with the LARGEST sufficient capacity instead.
 
     Returns (new_target, reason):
       (target, None)     — fits, or no capacity metadata (guard inert)
       (other_model, "…") — rerouted to a binding with enough window
-      (None, "…")        — nothing local fits → caller escalates
+      (None, "…")        — nothing local fits → caller rejects the request
     Ollama silently truncates an over-length prompt (the model then works from
-    a shredded instruction set), so escalating beats delivering to a model
+    a shredded instruction set), so an error beats delivering to a model
     that cannot see the request."""
     caps = {r.get("model"): r.get("max_prompt_tokens") for r in router.get("routes", []) if r.get("model")}
     cap = caps.get(target)
@@ -249,10 +240,7 @@ async def _classify_and_log(requested_model, prompt_text):
         entry["router"] = name
         route = await _classify(cfg, router, prompt_text)
         entry["route"] = route
-        if route in _escalate_routes(router):
-            entry["bound_model"] = "__escalate__"
-        else:
-            entry["bound_model"] = _bindings(router).get(route) or _default_binding(router)
+        entry["bound_model"] = _bindings(router).get(route) or _default_binding(router)
     except Exception as e:  # classifier host asleep, timeout, parse failure — log and move on
         entry["error"] = f"{type(e).__name__}: {e}"[:200]
     entry["ms"] = int((time.time() - t0) * 1000)
@@ -277,29 +265,13 @@ async def _route_live(cfg, router, router_name, data, prompt_text):
         timeout_ms = router.get("timeout_ms") or (cfg.get("live") or {}).get("timeout_ms", 5000)
         route = await _classify(cfg, router, prompt_text, timeout_ms=timeout_ms)
         entry["route"] = route
-        if route in _escalate_routes(router):
-            # No adequate local model (§16c). Reject fast — before any
-            # generation — with a greppable marker; the agent-runner's
-            # fallback_provider seam re-runs the turn on a stronger provider.
-            # Only an AFFIRMATIVE classification escalates: classifier errors
-            # below fall back to the local default binding, never to the
-            # (quota-costing) fallback provider.
-            entry["final_model"] = "__escalate__"
-            entry["ms"] = int((time.time() - t0) * 1000)
-            _append_log(entry)
-            raise HTTPException(
-                status_code=400,
-                detail=f"no_adequate_model: prompt classified to route '{route}' — no local binding, escalate",
-            )
-        # Unknown route or "other" → default binding, same as an error.
+        # Unknown, unbound or "other" route → default binding, same as an error.
         target = _bindings(router).get(route) or target
-    except HTTPException:
-        raise
     except Exception as e:
         entry["error"] = f"{type(e).__name__}: {e}"[:200]
     # Context guard — deterministic, AFTER intent classification: never deliver
     # to a binding whose window the request has outgrown (Ollama would silently
-    # truncate). Reroute to a binding with capacity, else escalate. Guard
+    # truncate). Reroute to a binding with capacity, else reject. Guard
     # failure posture: any internal error leaves the classified target alone.
     try:
         est = _est_tokens(data.get("messages"))
@@ -308,12 +280,12 @@ async def _route_live(cfg, router, router_name, data, prompt_text):
         if reason:
             entry["ctx_guard"] = reason
         if guarded is None:
-            entry["final_model"] = "__escalate__"
+            entry["final_model"] = None
             entry["ms"] = int((time.time() - t0) * 1000)
             _append_log(entry)
             raise HTTPException(
                 status_code=400,
-                detail=f"no_adequate_model: {reason} — no local binding fits, escalate",
+                detail=f"no_adequate_model: {reason} — no local binding fits",
             )
         target = guarded
     except HTTPException:

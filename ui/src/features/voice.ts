@@ -1,30 +1,26 @@
 // ── Voice: text-to-speech playback + speech-to-text dictation ────────────────
-// First FEATURE module out of legacy.js (the earlier three were leaves). Two
-// halves that share nothing but their place in the composer UI:
+// Two halves that share nothing but their place in the composer UI:
 //   TTS — "read aloud" on an agent message, server voices via /api/tts or the
 //         browser's SpeechSynthesis as a fallback.
 //   STT — mic capture → 16k WAV segments → /api/stt/transcribe → composer.
 //
-// Three pieces of state are read or written by the Settings panels, which are
-// still in legacy.js. They are exposed as accessors, not bindings, for the same
-// reason core/api.ts does it: an imported binding cannot be assigned. When the
-// settings panels become modules, those call sites move with them.
+// State the Settings panels write is exposed through accessors: an imported
+// binding cannot be assigned.
 import { ref } from 'vue';
-import { $, lucide } from '../core/dom.js';
+import { $ } from '../core/dom.js';
 import { showToast } from '../core/toast.js';
-import { authFetch } from '../core/api.js';
+import { apiJson, authFetch } from '../core/api.js';
 
+// ── Text-to-speech ─────────────────────────────────────────────────────────
+// Agent replies get a "read aloud" control. Two backends, one affordance:
+// server-side synthesis (Kokoro / any OpenAI-compatible endpoint) when the host
+// has WEBCHAT_TTS_ENABLED, else the browser's built-in Web Speech API (device
+// voices, no backend). See src/channels/webchat/tts.ts and /add-webchat-tts.
 let ttsServerEnabled = false; // set by loadTtsConfig from /api/tts/config
 let ttsReadAloudEnabled = false; // workspace-level (owner-set) — gates the speaker
 let ttsCurrentAudio: HTMLAudioElement | null = null; // the Audio element currently playing (server mode)
-/**
- * Which message is playing, and how far along.
- *
- * This was the button ELEMENT (ttsCurrentBtn) — identity comparisons all the way
- * through speak(), so a later click could supersede an in-flight fetch. The row
- * key does the same job while the button is rendered by TtsButton rather than
- * built by hand, which it has to be now that messages are Vue-owned.
- */
+/** Which message is playing, and how far along. The row key is compared through
+ *  speak(), so a later click supersedes an in-flight fetch. */
 export const ttsActiveKey = ref<string | number | null>(null);
 export const ttsPhase = ref<'loading' | 'playing' | null>(null);
 async function loadTtsConfig() {
@@ -164,6 +160,9 @@ const STT_RMS_FLOOR = 0.012; // below this a frame counts as silence
 const STT_AUTOSTOP_MS = 12000; // this much continuous silence ends dictation
 let sttElapsedTimer: any = null;
 let sttStartedAt = 0;
+
+/** Recording chrome: mic ⇄ red pulsing stop square + elapsed chip (the
+ *  standard voice-recorder idiom, so state is unmistakable at a glance). */
 function sttSetRecordingChrome(on?: any) {
   const mic = $('#mic-btn');
   const chip = $('#stt-elapsed');
@@ -192,6 +191,8 @@ function sttAnnounce(text?: any) {
   const el = $('#stt-status');
   if (el) el.textContent = text;
 }
+
+/** Wrap accumulated PCM16 frames in a minimal 16 kHz mono WAV container. */
 function sttBuildWav(frames?: any) {
   let samples = 0;
   for (const f of frames) samples += f.length;
@@ -226,6 +227,8 @@ function sttRenderInput() {
   input.value = sttBeforeText + sep + sttCommitted + (sttPending > 0 ? ' …' : '');
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
+
+/** Close the current segment and ship it for transcription (if it held speech). */
 function sttCutSegment() {
   const frames = sttSegments;
   const hadSpeech = sttSpeechInSegment;
@@ -262,6 +265,8 @@ function sttCutSegment() {
     });
   sttInFlight.push(p);
 }
+
+/** Per-frame handler: RMS gate → segment bookkeeping → cut on pause/length. */
 function sttOnFrame(int16?: any) {
   if (!sttActive) return;
   let sum = 0;
@@ -285,7 +290,7 @@ function sttOnFrame(int16?: any) {
     sttCutSegment();
   }
   // Long total silence = the user walked away — stop as if the mic was tapped.
-  // Stopping only inserts text; it NEVER sends (F3).
+  // Stopping only inserts text; it NEVER sends.
   if (sttNoSpeechMs >= STT_AUTOSTOP_MS && !sttStopping) {
     stopDictation();
   }
@@ -352,6 +357,8 @@ function sttResetMicButton() {
   mic?.setAttribute('aria-pressed', 'false');
   sttSetRecordingChrome(false);
 }
+
+/** Stop capture, flush the tail segment, wait for transcripts, then tidy. */
 async function stopDictation() {
   if (!sttActive || sttStopping) return;
   sttStopping = true;
@@ -366,6 +373,8 @@ async function stopDictation() {
   sttStopping = false;
   sttAnnounce('');
 }
+
+/** Esc = cancel: discard everything dictated, restore the prior composer text. */
 function cancelDictation() {
   if (!sttActive) return;
   sttActive = false;
@@ -381,6 +390,12 @@ function cancelDictation() {
   }
   sttAnnounce('Dictation cancelled');
 }
+
+/**
+ * Tidy the dictated span via the server's cleanup model. The replacement goes
+ * through execCommand('insertText') over a selection of just the dictated
+ * text, so the native undo stack (Ctrl/Cmd+Z) restores the raw transcript.
+ */
 async function sttCleanupPass() {
   if (!sttConfig?.cleanup || !sttCommitted.trim()) return;
   const input = ($('#message-input')) as HTMLElement;
@@ -389,13 +404,8 @@ async function sttCleanupPass() {
   const mic = $('#mic-btn');
   mic?.classList.add('tidying');
   try {
-    const r = await authFetch('/api/stt/cleanup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: raw }),
-    });
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok || !body.cleaned || typeof body.text !== 'string') return;
+    const body = await apiJson('/api/stt/cleanup', { method: 'POST', body: { text: raw } });
+    if (!body.cleaned || typeof body.text !== 'string') return;
     // The composer may have been edited while we waited — only swap if the
     // dictated span is still exactly where we left it.
     const sep = sttBeforeText && raw ? ' ' : '';
@@ -417,17 +427,17 @@ async function sttCleanupPass() {
     mic?.classList.remove('tidying');
   }
 }
+
+/** Post-auth: reveal the mic when the server has an STT backend configured. */
 async function initSttFeature() {
   try {
-    const r = await authFetch('/api/stt/config');
-    if (!r.ok) return;
-    sttConfig = await r.json();
+    sttConfig = await apiJson('/api/stt/config');
     $('#mic-btn')!.hidden = !sttConfig.enabled;
   } catch {
     /* feature stays hidden */
   }
 }
-// ── Accessors for state the Settings panels still touch ──────────────────────
+// ── Accessors for state the Settings panels touch ──────────────────────────────
 export function getTtsReadAloudEnabled() {
   return ttsReadAloudEnabled;
 }

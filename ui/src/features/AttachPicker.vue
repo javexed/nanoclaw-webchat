@@ -1,16 +1,9 @@
 <script setup lang="ts">
 /**
- * The attach picker's row list — used by several panels through a config
- * object (items / searchText / name / meta / isAttached / onToggle).
- *
- * Mounted into <ul id="attach-picker-list">. The rows arrive PRE-SHAPED:
- * resolving the config belongs to the caller that supplied it, not to a
- * component that would then need to know every panel's item type.
- *
- * The imperative version disabled a row mid-flight with
- * `li.style.pointerEvents = 'none'` and then re-rendered itself. Here the row
- * emits and the caller re-syncs the refs — a re-render is a data change, not a
- * function call.
+ * The attach picker's row list, used by several panels through a config object (items /
+ * searchText / name / meta / isAttached / onToggle); mounted into <ul id="attach-picker-list">.
+ * Rows arrive PRE-SHAPED by the caller, so this component knows no panel's item type; a
+ * toggle emits and the caller re-syncs the refs.
  */
 import { attachRows, attachEmptyText } from './attach-picker-state.js';
 

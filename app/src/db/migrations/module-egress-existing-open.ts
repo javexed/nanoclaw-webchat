@@ -1,12 +1,11 @@
 import type { Migration } from './index.js';
 
 /**
- * An UNSET network mode now means the allowlist (channels/webchat/egress-policy.ts),
- * where it used to mean open. A group that exists today was set up under the
- * old meaning — its model server, package feeds and MCP hosts were reachable —
- * so it keeps that: 'open', stored explicitly. Groups created from here on
- * start on the allowlist. A group with no container_configs row yet gets one
- * (upstream's boot backfill would otherwise create it unset, i.e. filtered).
+ * An UNSET network mode means the allowlist (channels/webchat/egress-policy.ts).
+ * Groups that exist when this runs were set up with open egress, so every one
+ * with an unset mode is stamped 'open' explicitly; new groups start on the
+ * allowlist. A group with no container_configs row yet gets one (upstream's
+ * boot backfill would otherwise create it unset, i.e. filtered).
  *
  * Registered after module-container-egress (app-manifest.txt order), which
  * adds the column this writes. Portable: plain SQL, the timestamp comes from

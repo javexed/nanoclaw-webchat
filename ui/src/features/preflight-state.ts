@@ -1,6 +1,5 @@
 // ── Preflight self-test state ───────────────────────────────────────────────
-// Bridge refs for the Preflight island. legacy.js still runs the probe; the
-// element it used to write into is now rendered from these.
+// Bridge refs for the Preflight island; settings.ts runs the probe.
 import { ref } from 'vue';
 
 /** 'running' | 'message' | 'checks' — the three things this element ever shows. */

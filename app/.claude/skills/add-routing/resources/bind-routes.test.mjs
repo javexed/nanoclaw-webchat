@@ -21,7 +21,6 @@ const ROUTES = {
     { name: 'code', description: 'd', model: 'qwen3.5:4b' },
     { name: 'general', description: 'd', model: 'gemma4:latest' },
     { name: 'reasoning', description: 'd', model: 'gemma4:latest', pinned: true },
-    { name: 'escalate', description: 'd', escalate: true },
   ],
 };
 
@@ -43,7 +42,7 @@ test('unknown models and capability-less entries never score', () => {
   assert.equal(scoreModel('hf.co/katanemo/Arch-Router-1.5B.gguf:Q4_K_M', 'code', CATALOG), null);
 });
 
-test('chooseBindings rebinds code to ornith, respects pins and escalate', () => {
+test('chooseBindings rebinds code to ornith, respects pins', () => {
   const roster = ['qwen3.5:4b', 'gemma4:latest', 'ornith:latest', 'qwen3-coder:30b', 'arch-router-1.5b'];
   const { decisions, unknown } = chooseBindings(structuredClone(ROUTES), roster, CATALOG);
   const by = Object.fromEntries(decisions.map((d) => [d.route, d]));
@@ -52,7 +51,6 @@ test('chooseBindings rebinds code to ornith, respects pins and escalate', () => 
   assert.equal(by.general.chosen, 'gemma4:latest');
   assert.equal(by.general.changed, false);
   assert.equal(by.reasoning.pinned, true);
-  assert.equal(by.escalate.pinned, true);
   assert.deepEqual(unknown, []);
 });
 
@@ -122,12 +120,11 @@ test('usablePromptTokens halves the window (Ollama reserves ~half for generation
   assert.equal(usablePromptTokens(4096), 2048);
 });
 
-test('annotateContext stamps bound routes, skips escalate/unbound, counts changes', () => {
+test('annotateContext stamps bound routes, skips unbound, counts changes', () => {
   const router = {
     routes: [
       { name: 'general', model: 'qwen3-8b-16k:latest' },
       { name: 'code', model: 'qwen3:8b' },
-      { name: 'escalate', escalate: true },
       { name: 'unbound' },
     ],
   };
@@ -136,7 +133,6 @@ test('annotateContext stamps bound routes, skips escalate/unbound, counts change
   assert.equal(router.routes[0].max_prompt_tokens, 8192);
   assert.equal(router.routes[1].max_prompt_tokens, 2048);
   assert.equal(router.routes[2].max_prompt_tokens, undefined);
-  assert.equal(router.routes[3].max_prompt_tokens, undefined);
 });
 
 test('annotateContext leaves models missing from the ctx map alone (probe failure ≠ guard off)', () => {

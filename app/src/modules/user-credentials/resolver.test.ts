@@ -1,5 +1,5 @@
 /**
- * Phase 1: the session-key resolver. In a UserCreds room a member who has CONNECTED a
+ * The session-key resolver. In a UserCreds room a member who has CONNECTED a
  * credential (user-level, applies to every same-provider room) gets a per-member
  * session keyed by userId; everyone else / every other room is unchanged
  * (null → shared session). Enrollment in a given room is then lazy.
@@ -29,9 +29,8 @@ beforeEach(async () => {
 afterEach(() => closeDb());
 
 describe('userCreds session-key resolver', () => {
-  // THE POINT OF THE CHANGE: two threads must not share one session. Keyed by
-  // user alone they did, so one member's queue held 89 main-thread rows and 60
-  // topic-thread rows and the agent answered a room message into the thread.
+  // Two threads must not share one session, or the agent answers a room
+  // message into a topic thread.
   it('gives each thread its own per-member session key', async () => {
     await setRoomModeOverride('room-1', 'required');
     await upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');

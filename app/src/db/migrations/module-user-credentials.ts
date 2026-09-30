@@ -4,13 +4,8 @@ import type { Migration } from './index.js';
 /**
  * User credentials — the consolidated migration.
  *
- * Squashes the five historical migrations that built this schema in steps
- * (recorded on old installs as `byok-credentials`, `byok-oauth-credentials`,
- * `byok-provider`, `byok-user-credentials`, `rename-user-credentials` — names
- * from the era the feature was called BYOK). The squash exists so those frozen
- * names no longer appear anywhere in the repo; installs that already ran the
- * chain keep them as inert rows in their own schema_version, which nothing
- * reads back.
+ * Squashes the earlier step-by-step migrations; installs that ran them keep
+ * their names as inert schema_version rows, which nothing reads back.
  *
  * Written to converge EVERY starting state onto the final schema, so no
  * version fence is needed:

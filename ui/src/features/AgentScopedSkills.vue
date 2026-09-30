@@ -1,18 +1,7 @@
 <script setup lang="ts">
 /**
- * An agent's own scoped skills — twenty-second island.
- *
- * Mounted into <ul id="agent-scoped-list">, exclusively owned by this module.
- * #agent-scoped-add and #agent-scoped-url are outside the mount point; skills.ts
- * still wires those.
- *
- * First island to render an OriginBadge for a REAL origin object (the MCP
- * sources one builds its own literal), so this is where the component meets the
- * shape skills.ts actually stores. The badge appears only when origin.label is
- * truthy — origin itself can be present but empty.
- *
- * The info column keeps its inline cursor:pointer. It belongs in style.css, but
- * moving it would be a CSS change riding in a conversion commit.
+ * An agent's own scoped skills, mounted into <ul id="agent-scoped-list">. The badge
+ * renders only when origin.label is truthy — origin can be present but empty.
  */
 import { computed } from 'vue';
 import OriginBadge from './OriginBadge.vue';

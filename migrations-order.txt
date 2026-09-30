@@ -44,3 +44,7 @@ moduleWebchatRunnerClient
 moduleWebchatSignins
 moduleWebchatAgentEgressHosts
 moduleWebchatAuditRetention
+moduleWebchatRunnerMachineKey
+moduleWebchatRunnerKeylessAllowed
+moduleWebchatRunnerPlacementMode
+moduleWebchatDropThreadEngaged

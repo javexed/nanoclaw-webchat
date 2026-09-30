@@ -1,33 +1,12 @@
 <script setup lang="ts">
 /**
- * The transcript — the conversion this whole phase was building toward.
- *
- * Mounted into <div id="messages">, which had TWELVE writers across nine
- * modules. Every other island in this phase owned a container nothing else
- * wrote to; this one could not be sliced, because the moment Vue owns
- * #messages' children every remaining imperative append is a second writer.
- * So appendMessage, appendSystem, the context divider, the thinking bubbles,
- * the file bubble, the thoughts disclosure, the delete button and the TTS
- * button all moved in one change.
- *
- * Rows are VIEW MODELS decided at append time, not raw messages — see
- * transcript-state.ts for why re-deciding later gives different answers.
- *
- * Thinking bubbles render AFTER the list, which is how "insert before the
- * thinking bubble" survives without an anchor: the imperative version had to
- * find the bubble and insertBefore it, and ordering here is just position.
- *
- * Markdown bodies go through v-html. Vue treats that subtree as opaque and
- * never diffs inside it, so decorateCodeBlocks and decorateMentions mutating
- * the rendered HTML is NOT the two-writers problem — they are decorating a
- * black box, and Vue only ever replaces it wholesale when the string changes.
- * That is why those two stay imperative and run from a ref callback.
- *
- * applyA2aClamp also runs from the ref: it measures, so it needs the element
- * attached, which is what the imperative version's post-insert call was for.
+ * The transcript, mounted into <div id="messages"> and the only writer of its children.
+ * Rows are view models decided at append time (see transcript-state.ts). Thinking bubbles
+ * render after the list, so "insert before the bubble" is just position. Markdown goes
+ * through v-html, an opaque subtree, so decorateCodeBlocks/decorateMentions and
+ * applyA2aClamp (which measures) run from a ref callback without being a second writer.
  */
 import { messages, thinkingTurns, transcriptEmpty } from './transcript-state.js';
-import type { MsgRow } from './transcript-state.js';
 import ThinkingBubble from './ThinkingBubble.vue';
 import MessageBubble from './MessageBubble.vue';
 import MsgDeleteButton from './MsgDeleteButton.vue';
@@ -53,15 +32,8 @@ const thoughtsPreview = (lines: string[]) => {
 
 <template>
   <!--
-    The empty state and the transcript are mutually exclusive, so this guard
-    decides whether content renders AT ALL — it is not just a placeholder.
-    `transcriptEmpty` is set when you join a room whose history came back empty,
-    and nothing clears it when a live message arrives: every row after that was
-    pushed into `messages` and then rendered by the branch not taken. A brand
-    new room swallowed your first message and the agent's reply, silently and
-    without an error, until you left and came back and history refetched.
-    Deriving the guard from the rows themselves makes that unrepresentable — an
-    empty state can no longer hide content it is contradicted by.
+    Derived from the rows as well as transcriptEmpty, which nothing clears when a live
+    message arrives: an empty state must never hide content that contradicts it.
   -->
   <div v-if="transcriptEmpty && !messages.length && !thinkingTurns.length" class="empty-state">{{ transcriptEmpty }}</div>
   <template v-else>
@@ -81,10 +53,8 @@ const thoughtsPreview = (lines: string[]) => {
       </div>
 
       <!--
-        Skill-draft card. Keyed `draft:<id>` by skillDraftRow, so the resolve
-        re-broadcast REPLACES this row rather than appending a second card
-        below it. The wrapper mirrors the approval branch's .approval-msg +
-        data-question-id so the row stays addressable by draft id.
+        Skill-draft card. Keyed `draft:<id>` so the resolve re-broadcast replaces this
+        row; the wrapper mirrors the approval branch so it stays addressable by draft id.
       -->
       <div v-else-if="row.kind === 'draft'" class="msg skill-draft-msg" :data-draft-id="row.id || ''">
         <SkillDraftCard v-bind="row.payload" />

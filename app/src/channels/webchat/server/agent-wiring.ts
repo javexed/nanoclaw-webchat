@@ -4,15 +4,8 @@
 // it to a room, the folder-name derivation both depend on, pushing a control
 // command into a live session, reading a group's learning config, and
 // recomputing engage patterns after a wiring change.
-//
-// Shared rather than moved. The room routes drive all of it, but so do the
-// agent-create route, the session-reset route, the agent-learning route and
-// provisionWebchatAgentWithRoom — none of them in the room cluster.
-// SESSION_COMMANDS and ciFolderToken travel with the single function each
-// belongs to: an allowlist and a pattern fragment, private by construction.
 
 /** Slugify an agent/room name into a safe folder + platform_id. */
-import { DATA_DIR } from '../../../config.js';
 import { createAgentGroup } from '../../../db/agent-groups.js';
 import { getDb, hasTable } from '../../../db/connection.js';
 import { getContainerConfig } from '../../../db/container-configs.js';
@@ -33,7 +26,6 @@ import { createWebchatRoom, getPrimeAgentForWebchatRoom } from '../db.js';
 import { writeAgentSettingsForAssignedModel } from '../models.js';
 import { randomUUID } from 'crypto';
 import fs from 'fs';
-import path from 'path';
 
 export function nameToFolder(name: string): string {
   return name
@@ -106,8 +98,8 @@ export async function wireAgentToWebchatRoom(
   // local_name uses normalizeName(platformId) — a UUID — to guarantee
   // uniqueness within the agent's namespace (PK is agent_group_id, local_name).
   // Using the room's display name would be friendlier but collides if two
-  // rooms share a name; backfill (`module-agent-to-agent-destinations.ts`)
-  // handles that case with -2/-3 suffixes — worth aligning in a follow-up.
+  // rooms share a name (backfill in `module-agent-to-agent-destinations.ts`
+  // handles that with -2/-3 suffixes).
   if (await hasTable(getDb(), 'agent_destinations')) {
     const existing = await getDestinationByTarget(agentGroupId, 'channel', mg.id);
     if (!existing) {
@@ -151,8 +143,7 @@ export async function wireAgentToWebchatRoom(
     // and gets "Unknown destination" trying to reply, until its next respawn.
     for (const id of touched) await projectDestinationsToActiveSessions(id);
   }
-  // Wirings changed — recompute engage patterns in case this room has a
-  // prime configured. No-op when no prime is set (leaves the default '.').
+  // Wirings changed — recompute engage patterns.
   await recomputeEngagePatterns(platformId);
 }
 
@@ -192,6 +183,18 @@ export async function ensureA2aDestination(
   });
 }
 
+/**
+ * Recompute `messaging_group_agents.engage_pattern` for every wiring on a room
+ * from its prime designation:
+ *
+ *   - No prime → every agent is mention-only (`\B@<folder>\b`).
+ *   - Prime    → the prime matches any message that does NOT @-mention another
+ *                wired agent; every other agent stays mention-only.
+ *
+ * Matched on the agent's `folder` (slugified by `nameToFolder`). `\B@` matches
+ * `@alice` at the start or after a space, never inside `foo@alice.com`.
+ * Idempotent; called from every wiring change (wire, unwire, prime PUT/DELETE).
+ */
 export async function recomputeEngagePatterns(roomId: string): Promise<void> {
   const mg = await getMessagingGroupByPlatform('webchat', roomId);
   if (!mg) return;
@@ -211,9 +214,8 @@ export async function recomputeEngagePatterns(roomId: string): Promise<void> {
   const UPDATE_PATTERN = `UPDATE messaging_group_agents SET engage_pattern = ? WHERE id = ?`;
 
   if (!validPrime) {
-    // No prime — un-primed agents reply only when explicitly @-mentioned. The
-    // legacy 'broadcast' fallback (every agent answers every message) has been
-    // retired; a shared room stays quiet until an agent is addressed.
+    // No prime — agents reply only when explicitly @-mentioned; a shared room
+    // stays quiet until an agent is addressed.
     for (const w of wirings) await getDb().run(UPDATE_PATTERN, `\\B@${ciFolderToken(w.folder)}\\b`, w.id);
     return;
   }
@@ -316,8 +318,7 @@ export async function createBareAgentGroup(
   // Materialize the model env NOW: a group born AFTER the workspace default
   // model was set would otherwise have no settings.json until some later
   // model change — its first container would fall through to api.anthropic.com
-  // (surfaced as a OneCLI 401 in the wizard's Ollama flow, where the default
-  // is set one step before the first agent is created).
+  // (a OneCLI 401 in the wizard's Ollama flow).
   try {
     await writeAgentSettingsForAssignedModel(group.id);
   } catch (err) {

@@ -12,40 +12,31 @@ import { reachError, reachOutcome, reachPhase } from './reachability-state.js';
 import { routingAvailable, routingClassifierModel } from './routing-state.js';
 import ModelList from './ModelList.vue';
 import { allModels, lastProbeResult, modelRows, modelSortAz, selectedModelId } from './model-list-state.js';
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { $ } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { showConfirmModal } from './modals.js';
-import { showToast, toastError } from '../core/toast.js';
-import { authFetch, apiJson } from '../core/api.js';
+import { showToast } from '../core/toast.js';
+import { apiJson, authFetch } from '../core/api.js';
 import { state } from '../core/state.js';
 import { closeAgentDetail, endpointHost, fetchAgents, openAgentDetail, refreshAgentModelTrigger, refreshAgentSaveDirty } from './agents.js';
 import { closeMcpDetail } from './mcp.js';
 import { closeRoomDetail, openRoomDetail } from './rooms.js';
-import { buildSelectToggle } from './select-toggle.js';
+import './select-toggle.js';
 import ModelUsage from './ModelUsage.vue';
 import { modelAssignees } from './model-usage-state.js';
 import { loadOllamaHosts } from './ollama-cards.js';
 import { hostModels } from './ollama-cards-state.js';
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideModelsDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
+/** Supplied by provideModelsDeps in composition-root.ts. `any` marks a signature not
+ *  yet typed, not an opt-out of checking. */
 export interface ModelsDeps {
   closeRouteDetail: () => any;
-  makeRowActivatable: (...args: any[]) => any;
   switchManageTab: (a0?: any) => any;
-}
-
-/** A model card, with the cached summary node hung on it. */
-interface ModelCard extends HTMLElement {
-  _summary?: HTMLElement;
 }
 
 const deps = {} as ModelsDeps;
 
-/** Wire the legacy helpers this module calls. Call once at startup. */
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 export function provideModelsDeps(provided: Partial<ModelsDeps>): void {
   Object.assign(deps, provided);
 }
@@ -64,6 +55,8 @@ export function sttPopulateModelSelect(st?: any) {
   select.value = st.model || st.suggestedModel || st.models[0];
 }
 
+// Known Anthropic model ids for the "Anthropic model" datalist. Fetched once per
+// page load; a failure is silent because the field is free text either way.
 let knownModelOptions: any = null;
 
 export async function populateKnownModelOptions() {
@@ -71,8 +64,7 @@ export async function populateKnownModelOptions() {
   if (!list) return;
   if (knownModelOptions === null) {
     try {
-      const res = await authFetch('/api/models/known');
-      knownModelOptions = res.ok ? (await res.json()).models || [] : [];
+      knownModelOptions = (await apiJson('/api/models/known')).models || [];
     } catch {
       knownModelOptions = [];
     }
@@ -99,9 +91,7 @@ export async function fetchModels() {
 
 export async function loadOllamaHostModels(host?: any) {
   try {
-    const res = await authFetch('/api/ollama/models?host=' + encodeURIComponent(host));
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error || res.status);
+    const body = await apiJson('/api/ollama/models?host=' + encodeURIComponent(host));
     // The routing classifier is a model on the host but not an agent model — list
     // it in a separate, non-selectable "System" group rather than offering a "+"
     // that would register infrastructure as a selectable chat model.
@@ -117,16 +107,28 @@ export async function loadOllamaHostModels(host?: any) {
   }
 }
 
+// Display label for a model kind. The STORED kind stays 'openai-compatible'
+// (it names the endpoint's protocol — what the probe detects); the UI says
+// "openai" for brevity. All kinds run the default Claude provider — LiteLLM
+// fronts openai-compatible models through its Anthropic-spec /v1/messages.
 export function modelKindLabel(kind?: any) {
   return kind === 'openai-compatible' ? 'openai' : kind;
 }
 
+// A model registered as an openai-compatible endpoint pointing at the LiteLLM
+// router (:4000) is an auto-routing BACKEND, not a standalone selectable — it is
+// added/removed in Auto routing → Models. Hide it from the main Models list so
+// it doesn't clutter it with a misleading "openai" badge. The virtual 'auto'
+// model (also :4000) is the exception: it IS the selectable routing entry.
 export function isRouterBackendModel(m?: any) {
   if (m.kind !== 'openai-compatible' || m.model_id === 'auto') return false;
   const host = (m.endpoint || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
   return /:4000(\/v1)?$/.test(host);
 }
 
+// One identity convention everywhere (list rows, detail header, host cards):
+// kind badge + bare model name + dim host meta. A "host · " prefix in the stored
+// name is stripped for DISPLAY when it matches the endpoint.
 function modelDisplayParts(model?: any) {
   const host = model.endpoint ? model.endpoint.replace(/^https?:\/\//, '').replace(/\/+$/, '') : null;
   let title = model.name;
@@ -135,9 +137,8 @@ function modelDisplayParts(model?: any) {
 }
 
 function modelKindExplainer(kind?: any) {
-  // Local/compat endpoints need no prose \u2014 the kind badge already says it, and
-  // reachability is now shown live below. Keep only the anthropic note, which
-  // conveys the distinct per-request credential model.
+  // Local/compat endpoints need no prose \u2014 the kind badge and the live
+  // reachability panel say it. Only the anthropic credential model needs a note.
   if (kind === 'anthropic') return 'Anthropic model \u2014 credentials injected per request by the OneCLI gateway.';
   return '';
 }
@@ -224,15 +225,10 @@ export function renderModels(): void {
   mountModelList();
 }
 
-
 let modelUsageApp: ReturnType<typeof createApp> | null = null;
 
 function mountModelUsage(): void {
-  if (modelUsageApp) return;
-  const host = $('#model-detail-usage');
-  if (!host) return;
-  modelUsageApp = createApp(ModelUsage);
-  modelUsageApp.mount(host);
+  modelUsageApp ??= mountIsland('#model-detail-usage', () => createApp(ModelUsage));
 }
 
 export async function openModelDetail(id?: any) {
@@ -269,11 +265,9 @@ export async function openModelDetail(id?: any) {
   loadModelLiveFacts(model);
   renderReachabilityPanel(model);
 
-  // The assignee line is an island; everything above only SETS values on static
-  // markup, which is why only this block converts.
+  // The assignee line is an island; the fields above are static markup.
   modelAssignees.value = (model.agents || []).map((a: any) => a.name);
   mountModelUsage();
-
 
   // Rooms this model reaches (via its assigned agents) — click one to open its
   // settings. Hidden entirely when the model isn't wired into any room.
@@ -299,15 +293,17 @@ export async function openModelDetail(id?: any) {
   $('#members-panel')!.hidden = true;
 }
 
+// Live facts for ollama-kind models: is the model actually installed on its
+// endpoint, how big is it, is it in memory right now — the same facts the
+// host cards below show, so the two surfaces agree.
 async function loadModelLiveFacts(model?: any) {
   const el = $('#model-live-facts')!;
   el!.hidden = true;
   el!.classList.remove('warn');
   if (model.kind !== 'ollama' || !model.endpoint) return;
   try {
-    const res = await authFetch('/api/ollama/models?host=' + encodeURIComponent(model.endpoint));
-    if (!res.ok) return; // non-owner or unreachable — facts are best-effort
-    const { models } = await res.json();
+    // Throws for non-owner or unreachable — facts are best-effort.
+    const { models } = await apiJson('/api/ollama/models?host=' + encodeURIComponent(model.endpoint));
     if (selectedModelId.value !== model.id) return; // panel moved on
     const hit = models.find((m: any) => m.name === model.model_id);
     if (!hit) {
@@ -335,13 +331,7 @@ export function closeModelDetail() {
 
 export async function discoverModels(kind?: any, endpoint?: any) {
   const body = kind === 'anthropic' ? { kind } : { kind, endpoint };
-  const res = await authFetch('/api/models/discover', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const out = await res.json();
-  if (!res.ok) throw new Error(out.error || 'discover failed');
+  const out = await apiJson('/api/models/discover', { method: 'POST', body });
   return out.models || [];
 }
 
@@ -368,7 +358,6 @@ export function closeModelPicker() {
     picker.hidden = true;
   }, 220);
 }
-
 
 export function bindDiscover(
   buttonId: string,
@@ -421,11 +410,7 @@ export function bindDiscover(
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // The model roster panel: add/edit form, endpoint controls, discovery and the
 // reachability probe.
-//
-// A function rather than module-scope code: legacy.js runs its blocks in source
-// order around initApp(), so relocating them to another module's top level would
-// silently re-order them. legacy calls wireModelsPanel() at the exact line the
-// first block occupied, so execution order is unchanged.
+// Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
 export function wireModelsPanel(): void {
   bindDiscover(
@@ -451,16 +436,7 @@ export function wireModelsPanel(): void {
       return;
     }
     try {
-      const res = await authFetch('/api/models', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const out = await res.json();
-      if (!res.ok) {
-        showToast('Failed to create model: ' + (out.error || res.statusText), { kind: 'error' });
-        return;
-      }
+      const out = await apiJson('/api/models', { method: 'POST', body });
       warnIfUnreachable(out.reachability);
       await fetchModels();
       closeModelDetail();
@@ -489,18 +465,7 @@ export function wireModelsPanel(): void {
       endpoint: ($<HTMLInputElement>('#model-endpoint')?.value ?? '').trim() || null,
     };
     try {
-      const res = await authFetch(`/api/models/${encodeURIComponent(selectedModelId.value)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      });
-      const out = await res.json();
-      if (!res.ok) {
-        showToast('Failed to save model: ' + (out.error || res.statusText), { kind: 'error' });
-        btn!.textContent = original;
-        btn!.disabled = false;
-        return;
-      }
+      await apiJson(`/api/models/${encodeURIComponent(selectedModelId.value)}`, { method: 'PUT', body: patch });
       await fetchModels();
       btn!.textContent = '✓ Saved';
       btn!.classList.add('success');
@@ -551,12 +516,7 @@ export function wireModelsPanel(): void {
           destructive: true,
         });
         if (!confirmed) return;
-        const force = await authFetch(`/api/models/${encodeURIComponent(selectedModelId.value)}?force=1`, { method: 'DELETE' });
-        if (!force.ok) {
-          const err = await force.json().catch(() => ({}));
-          showToast(`Failed to delete: ${err.error || force.statusText}`, { kind: 'error' });
-          return;
-        }
+        await apiJson(`/api/models/${encodeURIComponent(selectedModelId.value)}?force=1`, { method: 'DELETE' });
       } else if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         showToast(`Failed to delete: ${err.error || res.statusText}`, { kind: 'error' });
@@ -571,19 +531,7 @@ export function wireModelsPanel(): void {
       showToast(`Failed to delete: ${(err as any)?.message}`, { kind: 'error' });
     }
   });
-
-  // ── MCP server registry (the MCP tab) ───────────────────────────────────────
-  //
-  // Mirrors the models registry: a list pane, a detail/create aside, and a probe
-  // that connects to a URL as a real MCP client and lists the server's tools
-  // before saving. Servers defined here are attached to agents from the agent
-  // panel (many-to-many, unlike a model's 1:1 assignment).
-
 }
-
-// ── Panel wiring ───────────────────────────────────────────────────────────
-// Blocks the census read as multi-owner: the union of every id they touch spans
-// several modules, but the element each one WIRES belongs here.
 
 export function wireModelCreate(): void {
   $<HTMLButtonElement>('#create-model-btn')?.addEventListener('click', () => {
@@ -633,17 +581,8 @@ export function syncCreateFormToKind() {
   $<HTMLInputElement>('#model-create-model-id')!.placeholder = placeholders[kind] || '';
 }
 
-export function mmBadge(text: string, kind: string) {
-  const b = document.createElement('span');
-  b.className = 'mm-badge ' + (kind || '');
-  b.textContent = text;
-  return b;
-}
-
 // ── Model management (Settings → Models, owner-only) ──
 // Space before the unit, matching the model rows on the same card ("5.2 GB").
-// The two sat side by side reading "5.2 GB" and "9.3GB" once the pull preview
-// moved under the input.
 export function mmFmtGB(bytes: number) {
   return bytes == null ? '?' : (bytes / 1e9).toFixed(1) + ' GB';
 }
@@ -742,26 +681,19 @@ export async function renderReachabilityPanel(model: any) {
   }
 }
 
-//
-// Bottom-sheet (mobile) / centered popover (desktop) for assigning a model
-// to the open agent. Default is always pinned at the top. Search filters by
-// name + model_id + endpoint host. "+ Add new model" delegates to the
-// existing model-detail create flow with a flag set so we auto-assign on
-// success.
+// ── Model picker ────────────────────────────────────────────────────────────
+// Assigns a model to the open agent. "+ Add new model" runs the model-detail
+// create flow with a flag set so the new model is auto-assigned on success.
 
 export let pickerAddInProgress = false;
 export let pickerAgentForAdd : any = null;
 
-
-
 let modelPickerApp : any = null;
 
 export function mountModelPicker() {
-  if (modelPickerApp) return;
-  const host = $('#model-picker-list');
-  if (!host) return;
-  modelPickerApp = createApp(ModelPicker, { onPick: (id: string) => selectFromPicker(id) });
-  modelPickerApp.mount(host);
+  modelPickerApp ??= mountIsland('#model-picker-list', () =>
+    createApp(ModelPicker, { onPick: (id: string) => selectFromPicker(id) }),
+  );
 }
 
 export function renderPickerList(filterText?: string) {
@@ -820,16 +752,13 @@ export function renderPickerList(filterText?: string) {
   mountModelPicker();
 }
 
-
 export function selectFromPicker(modelId: string) {
   $<HTMLInputElement>('#agent-model')!.value = modelId;
   refreshAgentModelTrigger();
   refreshAgentSaveDirty(); // a model change is a savable edit
   closeModelPicker();
-  // Note: we don't auto-persist on select. Existing flow waits for the
-  // agent-detail Save button, matching the pre-picker behavior.
+  // Not persisted on select: the agent-detail Save button commits it.
 }
-
 
 /**
  * Called from both the manual create and the probe bulk-add success paths.
@@ -849,12 +778,11 @@ export async function maybeAssignAfterPickerAdd(createdIds: any) {
   // new model.
   if (createdIds.length === 1) {
     try {
-      const mRes = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/model`, {
+      const out = await apiJson(`/api/agents/${encodeURIComponent(agentId)}/model`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ modelId: createdIds[0] }),
+        body: { modelId: createdIds[0] },
       });
-      if (mRes.ok) warnIfUnreachable((await mRes.json()).reachability);
+      warnIfUnreachable(out.reachability);
     } catch (err) {
       console.error('Auto-assign new model failed:', err);
     }
@@ -868,7 +796,7 @@ export async function maybeAssignAfterPickerAdd(createdIds: any) {
   return true;
 }
 
-/** The picker's "+ Add new model" flow sets these from legacy's wiring block,
+/** The picker's "+ Add new model" flow sets these from the composition root's wiring block,
  *  which cannot assign an imported binding — so it goes through a setter. */
 export function setPickerAdd(inProgress: boolean, agentId: any): void {
   pickerAddInProgress = inProgress;
@@ -878,11 +806,7 @@ export function setPickerAdd(inProgress: boolean, agentId: any): void {
 let probeResultsApp: any = null;
 
 export function mountProbeResults() {
-  if (probeResultsApp) return;
-  const host = $('#model-probe-list');
-  if (!host) return;
-  probeResultsApp = createApp(ProbeResults);
-  probeResultsApp.mount(host);
+  probeResultsApp ??= mountIsland('#model-probe-list', () => createApp(ProbeResults));
 }
 
 export function renderProbeResults(probe: any) {
@@ -935,16 +859,7 @@ export async function addSelectedFromProbe() {
   btn!.disabled = true;
   btn!.textContent = `Adding ${items.length}…`;
   try {
-    const res = await authFetch('/api/models/bulk', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ models: items }),
-    });
-    const out = await res.json();
-    if (!res.ok) {
-      showToast('Bulk add failed: ' + (out.error || res.statusText), { kind: 'error' });
-      return;
-    }
+    const out = await apiJson('/api/models/bulk', { method: 'POST', body: { models: items } });
     if (out.failed && out.failed.length > 0) {
       const lines = out.failed.map((f: any) => `  • ${items[f.index].model_id}: ${f.error}`).join('\n');
       showToast(`Added ${out.created_count}, ${out.failed.length} failed:\n${lines}`, { kind: 'error' });

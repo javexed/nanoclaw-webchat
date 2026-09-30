@@ -1,5 +1,5 @@
 /**
- * Agent export/import (Phase 1 of backup/import) — a portable, selective
+ * Agent export/import — a portable, selective
  * .tgz of ONE agent: identity, container config, instructions, workspace,
  * memory, scoped skills, wiring/attachments BY REFERENCE, and (opt-in) the
  * conversation state.
@@ -43,6 +43,18 @@ export const EXCLUDE_ALWAYS = ['node_modules', '.git', '__pycache__', 'dist', '.
 export const CONVERSATION_DIRS = ['projects', 'sessions', 'shell-snapshots', 'backups', 'session-env'];
 /** Private keys kept in a workspace — only travel when the operator opts in. */
 export const WORKSPACE_SECRET_FILES = ['deploy_key_*'];
+
+/**
+ * A tar `--transform` that renames the top-level member `from` (and everything
+ * under it) to `to`. GNU tar applies every transform to every member, so the
+ * pattern must match the whole first path component: an unanchored `^d` would
+ * also rewrite `db/…`. Both sides are escaped for the extended-regex expression.
+ */
+export function renameTopTransform(from: string, to: string): string {
+  const re = from.replace(/[.[\]{}()*+?^$|\\]/g, '\\$&');
+  const rep = to.replace(/[\\&|]/g, '\\$&');
+  return `--transform=s|^${re}(/.*)?$|${rep}\\1|x`;
+}
 
 export interface AgentExportManifest {
   format: typeof EXPORT_FORMAT;
@@ -197,15 +209,15 @@ export function exportTarArgs(
   }
   args.push('-C', stage, 'manifest.json', 'db');
   if (fs.existsSync(path.join(GROUPS_DIR, group.folder))) {
-    args.push(`--transform=s|^${group.folder}|files/workspace|`, '-C', GROUPS_DIR, group.folder);
+    args.push(renameTopTransform(group.folder, 'files/workspace'), '-C', GROUPS_DIR, group.folder);
   }
   if (fs.existsSync(path.join(sessRoot, '.claude-shared'))) {
-    args.push('--transform=s|^\\.claude-shared|files/claude-shared|', '-C', sessRoot, '.claude-shared');
+    args.push(renameTopTransform('.claude-shared', 'files/claude-shared'), '-C', sessRoot, '.claude-shared');
   }
   if (includeConversations && fs.existsSync(sessRoot)) {
     for (const entry of fs.readdirSync(sessRoot)) {
       if (entry.startsWith('sess-')) {
-        args.push(`--transform=s|^${entry}|files/session-dbs/${entry}|`, '-C', sessRoot, entry);
+        args.push(renameTopTransform(entry, `files/session-dbs/${entry}`), '-C', sessRoot, entry);
       }
     }
   }
@@ -427,6 +439,29 @@ export async function applyImport(bundleDir: string, opts: { name?: string } = {
   };
 }
 
+/**
+ * Members that are neither a regular file nor a directory — symlinks, hard
+ * links, devices, fifos. A bundle is copied into an agent's writable tree after
+ * extraction, so a link in one would point that tree (and every later host
+ * read or write through it) at a host path. `tar -tv` shows each member's type
+ * as the first character of its mode.
+ */
+export async function nonPlainTarMembers(tgzPath: string): Promise<string[]> {
+  const listing = await new Promise<string>((resolve, reject) => {
+    const p = spawn('tar', ['-tvzf', tgzPath]);
+    let out = '';
+    let err = '';
+    p.stdout.on('data', (d) => (out += d));
+    p.stderr.on('data', (d) => (err += d));
+    p.on('close', (code) => (code === 0 ? resolve(out) : reject(new Error(`tar -tv failed: ${err.slice(0, 200)}`))));
+  });
+  return listing
+    .split('\n')
+    .filter(Boolean)
+    .filter((line) => line[0] !== '-' && line[0] !== 'd')
+    .map((line) => line.trim().split(/\s+/).slice(5).join(' '));
+}
+
 /** Extract an uploaded bundle safely: list first, reject bad members, then extract. */
 export async function extractBundle(tgzPath: string): Promise<string> {
   const listing = await new Promise<string>((resolve, reject) => {
@@ -442,6 +477,8 @@ export async function extractBundle(tgzPath: string): Promise<string> {
     .filter(Boolean)
     .filter((e) => !isSafeTarEntry(e));
   if (bad.length > 0) throw new Error(`Bundle contains unsafe paths: ${bad.slice(0, 3).join(', ')}`);
+  const links = await nonPlainTarMembers(tgzPath);
+  if (links.length > 0) throw new Error(`Bundle contains links or special files: ${links.slice(0, 3).join(', ')}`);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-import-'));
   await new Promise<void>((resolve, reject) => {
     const p = spawn('tar', ['-xzf', tgzPath, '-C', dir, '--no-same-owner']);

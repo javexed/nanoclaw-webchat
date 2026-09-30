@@ -1,11 +1,6 @@
-// The webchat module's container-runtime helpers. These used to be patched INTO upstream's
-// container-runtime.ts; they are the fork's own and live in the fork's own file.
-import { execSync } from 'child_process';
+// The webchat module's container-runtime helpers.
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
-import { CONTAINER_RUNTIME_BIN } from './container-runtime.js';
-import { log } from './log.js';
 /**
  * Learning-classifier resolver contributed by an installed module (webchat). The
  * classifier gates the learning review with a small model; a module that knows
@@ -40,13 +35,9 @@ const CONTAINER_UID = Number(process.env.NANOCLAW_CONTAINER_UID ?? 1000);
  * Make a host directory that's bind-mounted RW into the agent container writable
  * by the container's non-root user.
  *
- * Only matters when the HOST process runs as root (e.g. a Proxmox LXC where the
- * systemd unit has no `User=`): it creates group/session dirs owned `root:root`,
- * and the container's UID-1000 `node` user then can't write them — the agent
- * dies with `EACCES: mkdir '/workspace/agent/memory'` and never replies. Chown
- * the tree to the container UID so root-running hosts work, without weakening the
- * container's non-root user. No-op when the host isn't root (UIDs already match,
- * and a non-root host can't chown to another owner anyway). Best-effort — a
+ * Only matters when the HOST process runs as root: it creates dirs owned
+ * `root:root`, which the container's UID-1000 `node` user can't write (EACCES,
+ * and the agent never replies). No-op when the host isn't root. Best-effort — a
  * chown failure must never break spawning.
  */
 export function makeContainerWritable(target: string, recursive = false): void {
@@ -84,51 +75,5 @@ function symlinkOrNonDir(p: string): boolean {
     return !fs.lstatSync(p).isDirectory();
   } catch {
     return true;
-  }
-}
-
-/** CLI args needed for the container to resolve the host gateway. */
-export function hostGatewayArgs(): string[] {
-  // On Linux, host.docker.internal isn't built-in — add it explicitly
-  if (os.platform() === 'linux') {
-    return ['--add-host=host.docker.internal:host-gateway'];
-  }
-  return [];
-}
-
-/** Returns CLI args for a readonly bind mount. */
-export function readonlyMountArgs(hostPath: string, containerPath: string): string[] {
-  return ['-v', `${hostPath}:${containerPath}:ro`];
-}
-
-/** Stop a container by name. Uses execFileSync to avoid shell injection. */
-export function stopContainer(name: string): void {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(name)) {
-    throw new Error(`Invalid container name: ${name}`);
-  }
-  execSync(`${CONTAINER_RUNTIME_BIN} stop -t 1 ${name}`, { stdio: 'pipe' });
-}
-
-/** Ensure the container runtime is running, starting it if needed. */
-export function ensureContainerRuntimeRunning(): void {
-  try {
-    execSync(`${CONTAINER_RUNTIME_BIN} info`, {
-      stdio: 'pipe',
-      timeout: 10000,
-    });
-    log.debug('Container runtime already running');
-  } catch (err) {
-    log.error('Failed to reach container runtime', { err });
-    console.error('\n╔════════════════════════════════════════════════════════════════╗');
-    console.error('║  FATAL: Container runtime failed to start                      ║');
-    console.error('║                                                                ║');
-    console.error('║  Agents cannot run without a container runtime. To fix:        ║');
-    console.error('║  1. Ensure Docker is installed and running                     ║');
-    console.error('║  2. Run: docker info                                           ║');
-    console.error('║  3. Restart NanoClaw                                           ║');
-    console.error('╚════════════════════════════════════════════════════════════════╝\n');
-    throw new Error('Container runtime is required but failed to start', {
-      cause: err,
-    });
   }
 }

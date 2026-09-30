@@ -1,6 +1,6 @@
 <!--
   Feature guide for the standalone webchat showcase repo.
-  Screenshots live in ./screenshots/ (captured from a live install).
+  Screenshots live in ./screenshots/ (captured from a running install).
   Some shots (lobby/DM/approvals) come from a populated demo — see CAPTURE.md.
 -->
 
@@ -181,16 +181,14 @@ below — run it, register `http://127.0.0.1:8765/mcp` in the MCP tab, and probe
 
 ## Runners
 
-Agents that run on a developer's own machine, driven from VS Code (the NanoClaw
-extension). Manage → **Runners** (owner / global admin):
+Agents that work on the project open in a developer's VS Code (the NanoClaw
+extension). The agent runs here; the extension gives it the project's files,
+in a copy the developer reviews. Manage → **Runners** (owner / global admin):
 
 - **Machines** — a machine appears when its extension first connects and waits
   for approval (a card in the owners' Approvals inbox, or **Approve** here).
   Approving creates a dedicated agent for it; **Revoke** disconnects it.
-- **Placement** — which agents run on which machine; place or remove per agent.
-- **Agent image** — how machines get the agent image: **Build** (default: each
-  machine builds from what central ships), **Pull** (a published image; optional
-  reference), or **Machine decides** (each laptop's own setting).
+- **Placement** — which agents work on which machine's project; place or remove per agent.
 - **Runner extension** — **Publish…** a `nanoclaw-<version>.vsix`; connected
   machines are offered it on their next keepalive.
 

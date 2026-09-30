@@ -1,48 +1,23 @@
 /**
  * Pins the user-credentials OAuth-mint route paths against what app.js actually
- * calls. These two route tables were renamed out of lockstep once already (server
- * kept the pre-rename `/api/userCreds/...` prefix while the client moved to
- * `/api/user-credentials/...`), which 404'd "connect to claude"/"connect to
- * ChatGPT" for every user until caught manually. Extracting the URLs straight out
- * of app.js (rather than hardcoding a second copy here) means any future rename
- * on either side — client or server — turns this test red instead of silently
- * drifting again.
+ * calls. The URLs are extracted from app.js rather than hardcoded, so a rename
+ * on either side — client or server — turns this red instead of 404ing
+ * "connect to Claude/ChatGPT" for every user.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
+import { loadServer, LOOPBACK_ENV, noopHooks, portOf, resetServerModules } from './test-server.js';
+
 const LOCAL_OWNER = 'webchat:local-owner';
 
-beforeEach(async () => {
-  vi.resetModules();
-});
-
-afterEach(async () => {
-  vi.unstubAllEnvs();
-  try {
-    const conn = await import('../../db/connection.js');
-    await conn.closeDb();
-  } catch {
-    // ignore
-  }
-  vi.resetModules();
-});
+afterEach(resetServerModules);
 
 async function boot() {
-  vi.stubEnv('WEBCHAT_HOST', '127.0.0.1');
-  vi.stubEnv('WEBCHAT_PORT', '0');
-  vi.stubEnv('WEBCHAT_TOKEN', '');
-  vi.stubEnv('WEBCHAT_TAILSCALE', '');
-  vi.stubEnv('WEBCHAT_TRUSTED_PROXY_IPS', '');
-  vi.resetModules();
-  const conn = await import('../../db/connection.js');
-  await conn.initTestDb();
-  const migrations = await import('../../db/migrations/index.js');
-  await migrations.runMigrations(conn.getDb());
+  const { server, conn } = await loadServer(LOOPBACK_ENV);
 
   const dbh = conn.getDb();
   const now = new Date().toISOString();
@@ -77,15 +52,8 @@ async function boot() {
     now,
   );
 
-  const server = await import('./server.js');
   const wc = await server.startWebchatServer(noopHooks);
   return { server, wc };
-}
-
-function port(wc: { http: { address: () => unknown } }): number {
-  const addr = wc.http.address() as { port: number } | null;
-  if (!addr) throw new Error('server has no address');
-  return addr.port;
 }
 
 const CSRF = { 'content-type': 'application/json', 'x-webchat-csrf': '1' };
@@ -99,12 +67,9 @@ const appJs = fs.readFileSync(appJsPath, 'utf8');
  * Assert the shipped bundle really references this route, and hand it back so
  * the parity tests below hit the exact same string the client does.
  *
- * Matches the ROUTE LITERAL, not `const <name> = …`. app.js is built by Vite
- * now, and a bundler is entitled to inline a single-use const, rename locals
- * and normalise quotes — it does all three, which broke the old name-based
- * extraction while the routes themselves were perfectly intact. The contract
- * this guard exists for is "the client calls this path", so pin the path; the
- * variable it was briefly held in is incidental.
+ * Matches the ROUTE LITERAL, not `const <name> = …`: app.js is bundled, and
+ * the bundler inlines single-use consts, renames locals and normalises quotes.
+ * The contract is "the client calls this path", so pin the path.
  */
 function clientCalls(route: string): string {
   const literal = new RegExp(`['"\`]${route.replace(/[/-]/g, '\\$&')}['"\`]`);
@@ -128,7 +93,7 @@ describe('user-credentials OAuth-mint routes — client/server path parity', () 
   it('server recognizes the Claude oauth/start path (not a 404 fall-through)', async () => {
     const { server, wc } = await boot();
     try {
-      const res = await fetch(`http://127.0.0.1:${port(wc)}${claudeStartUrl}`, {
+      const res = await fetch(`http://127.0.0.1:${portOf(wc)}${claudeStartUrl}`, {
         method: 'POST',
         headers: CSRF,
         body: JSON.stringify({ roomId: 'room-1' }),
@@ -146,7 +111,7 @@ describe('user-credentials OAuth-mint routes — client/server path parity', () 
   it('server recognizes the Codex oauth/start path (not a 404 fall-through)', async () => {
     const { server, wc } = await boot();
     try {
-      const res = await fetch(`http://127.0.0.1:${port(wc)}/api/user-credentials/codex/start`, {
+      const res = await fetch(`http://127.0.0.1:${portOf(wc)}/api/user-credentials/codex/start`, {
         method: 'POST',
         headers: CSRF,
         body: JSON.stringify({ roomId: 'room-1' }),
@@ -162,7 +127,7 @@ describe('user-credentials OAuth-mint routes — client/server path parity', () 
   it('the stale pre-rename /api/userCreds/* prefix is gone (would silently un-fix this bug)', async () => {
     const { server, wc } = await boot();
     try {
-      const res = await fetch(`http://127.0.0.1:${port(wc)}/api/userCreds/oauth/start`, {
+      const res = await fetch(`http://127.0.0.1:${portOf(wc)}/api/userCreds/oauth/start`, {
         method: 'POST',
         headers: CSRF,
         body: JSON.stringify({ roomId: 'room-1' }),

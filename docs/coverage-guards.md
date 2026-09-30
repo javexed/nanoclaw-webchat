@@ -5,9 +5,8 @@ One guard protects the property that nothing we own silently fails to ship:
 reference, so it cannot decay.
 
 A second guard, `check-coverage.sh`, compared the composed tree against the
-pre-split fork. **It was retired on 2026-07-28 when `channels-webchat` was
-decommissioned** — see [below](#why-the-fork-guard-was-retired) for why, and
-what that leaves uncovered.
+pre-split fork; it retired with the fork (see
+[below](#why-the-fork-guard-was-retired), and for what that leaves uncovered).
 
 ## What the manifest actually governs
 
@@ -24,9 +23,8 @@ the tree:
    entry is copied into the install and never registered — it ships and never
    runs. Nothing else catches this: the suite is green and the schema is simply
    missing at runtime. A covering *directory* entry does not help; the match is
-   line-by-line. This is the highest-severity check in the script, and it is
-   live: the `byok-*` → `module-user-credentials-*` rename touched five of these
-   files, and a missed entry would have silently disabled them.
+   line-by-line. This is the highest-severity check in the script: a rename
+   that misses one entry silently disables that migration.
 2. **The dev tree.** `compose-dev.sh` symlinks manifest paths only. A file with
    no covering entry is present in a real install but absent from the dev
    compose tree — so the tree you run tests in diverges from the tree you ship.
@@ -50,41 +48,13 @@ observed to pass is not evidence that it works.
 
 ## Why the fork guard was retired
 
-`check-coverage.sh` diffed the composed tree against `forkRef`
-(`channels-webchat`) and required every differing file to be accounted for by
-the manifest, a patch, an exclusion, or a recorded removal. It earned its keep
-during extraction — it caught two real silent drops on day one (seam-consumer
-files, `persistOnecliBindHost`) and two later content drifts.
+`check-coverage.sh` diffed the composed tree against the fork and required
+every difference to be accounted for. Both its passes assumed a fork that still
+changed; against a frozen fork, every legitimate app-tree change becomes a new
+exception, so it would eventually have flagged everything.
 
-Both of its passes assumed a **live** fork:
-
-- **Name pass** — "does the split still carry everything the fork carries?"
-  With the fork frozen, this asks about a product that stopped changing.
-- **Content parity** — "did a fix land fork-side and miss the app tree?" That
-  hazard exists only while two copies are maintained in parallel. With one
-  copy it cannot happen.
-
-Content parity would also have *decayed*, measurably. Every legitimate change
-to the app tree diverges from a frozen reference, so `app-adapted.txt` grew
-monotonically — 31 entries at freeze time, and it would have grown with every
-normal week. A check that eventually flags everything flags nothing. Freezing
-the reference was considered and rejected for exactly this reason.
-
-Removed with it: `scripts/check-coverage.sh`, `app-adapted.txt`,
-`coverage-exclusions.txt`. All recoverable from git history if ever needed.
-
-### `forkRef` was kept
-
-`forkRef` stays in `versions.json` despite the guard going away, because the
-guard was not its only consumer: `scripts/migrate-from-fork.sh` resolves that
-SHA **inside a user's own fork install** to refuse migrating an install that is
-newer than the split (which would silently drop their changes). It needs no
-remote — the commit is already in their history. Keep it pinned as long as fork
-installs may still migrate.
-
-The fork's final tip is preserved as the tag
-`archive/channels-webchat-2026-07-28`, recorded in `versions.json` as
-`forkArchiveTag`.
+The fork's final tip is preserved at the tag
+`archive/channels-webchat-2026-07-28`.
 
 ## What is left uncovered
 
@@ -102,10 +72,10 @@ What does still hold:
   and seam. A stale patch fails the build, not the release.
 - **Manifest integrity** proves the manifest and the tree agree, so migrations
   register and the dev tree matches installs.
-- **Both suites** (1,900+ tests) run inside the composed artifact rather than
+- **Both suites** run inside the composed artifact rather than
   this repo's tree, so they exercise what actually ships.
 
 One consequence worth knowing: with the ledger role gone, the manifest's only
-*functional* job is migration registration — 12 of its 126 entries. The rest
-document ownership. Keeping them is fine; just don't mistake their presence for
+*functional* job is migration registration; the rest of its entries document
+ownership. Keeping them is fine; just don't mistake their presence for
 an enforced guarantee.

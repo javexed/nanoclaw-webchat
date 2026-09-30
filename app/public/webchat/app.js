@@ -1,22 +1,6 @@
 import { marked } from "/marked.min.js";
 import { Fragment, Teleport, computed, createApp, createBlock, createCommentVNode, createElementBlock, createElementVNode, createTextVNode, createVNode, defineComponent, guardReactiveProps, inject, isRef, mergeProps, nextTick, normalizeClass, normalizeProps, normalizeStyle, onMounted, onUnmounted, openBlock, reactive, ref, renderList, resolveDynamicComponent, shallowReactive, toDisplayString, toHandlers, unref, useTemplateRef, vModelSelect, watch, watchEffect, withCtx, withDirectives, withKeys, withModifiers } from "/vue.runtime.min.js";
 import DOMPurify from "/dompurify.min.js";
-//#region src/features/journey-state.ts
-/** Every event loaded so far, oldest page first — 'Load more' appends. */
-var journeyEvents = ref([]);
-/** 'loading' | 'error' | 'empty' | 'ready'. */
-var journeyPhase = ref("loading");
-/** The active journey filter. Reassigned wholesale so the island re-derives. */
-var journeyFilter = ref({
-	agent: "",
-	kind: "",
-	skill: ""
-});
-//#endregion
-//#region src/features/settings-state.ts
-/** Which speech backend the operator picked in the STT installer: 'local' | … */
-var sttChosenBackend = ref("local");
-//#endregion
 //#region src/features/modals-state.ts
 /** Is the image lightbox open? Gates the global key handlers it installs. */
 var lightboxOpen = ref(false);
@@ -42,14 +26,8 @@ var manageActive = ref(false);
 var manageTab = ref("agents");
 /** Last topology payload, or null before the first fetch. */
 var topoData = ref(null);
-/**
-* "roomId|agentId" for currently-wired pairs.
-*
-* A ref, not a bare Set: refreshMatrix REPLACES it wholesale from the topology
-* payload, and an imported const cannot be reassigned. It is also mutated in
-* place when a single cell toggles — both patterns are real, which is why my
-* first pass called it in-place-only and the compiler disagreed.
-*/
+/** "roomId|agentId" for currently-wired pairs. A ref: refreshMatrix REPLACES it
+*  wholesale, while a single cell toggle mutates it in place. */
 var matrixWired = ref(/* @__PURE__ */ new Set());
 /** The open full views, innermost last: [{ name, teardown }]. Pushed and popped,
 *  never replaced, so closing one runs exactly its own teardown. */
@@ -63,49 +41,14 @@ var allModels = ref([]);
 var lastProbeResult = ref(null);
 /** The model whose detail pane is open, or null. */
 var selectedModelId = ref(null);
-/** A–Z toggle, restored from the session — the read was the `let`'s
-*  initialiser, and dropping it makes the preference per-reload. */
+/** A–Z toggle, restored from the session; without the read the preference is per-reload. */
 var modelSortAz = ref(sessionStorage.getItem("webchat:modelSortAz") === "1");
-//#endregion
-//#region src/features/agent-detail-state.ts
-/** Rooms this agent is assigned to, as /api/agents/:id/rooms returns them. */
-var wiredRooms = ref([]);
-/** Whether the caller may unassign rooms — hides the per-row remove button. */
-var canManageRooms = ref(false);
-/** One row of /api/agents/:id/sessions. */
-var sessions = ref([]);
-/**
-* The session list is asynchronous and has three non-row states — loading, a
-* fetch failure, and genuinely empty. The imperative version distinguished them
-* by writing three different innerHTML strings; as a ref it is one field the
-* template switches on, which is also what stops a stale "Loading…" row from
-* surviving a failed fetch.
-*/
-var sessionsPhase = ref("loading");
-/** Message for the error phase — already plain text, escaped by the binding. */
-var sessionsError = ref("");
-/** Snapshot of the detail form when it opened — Save stays disabled until an
-*  edit actually diverges from this. */
-var agentDetailBaseline = ref(null);
-/** Rooms the open agent is wired to. */
-var agentDetailRooms = ref([]);
-/** Agents wired to the open ROOM — the room detail's mirror of the above. */
-var roomDetailWiredAgents = ref([]);
-/** Include archived agents in the list? Pickers and the map never do. */
-var showArchivedAgents = ref(false);
-/** How many archived agents exist — drives the toggle's count + visibility. */
-var archivedAgentsCount = ref(0);
-/** setInterval handle ticking the thinking bubbles' elapsed labels, else null.
-*  An interval here, unlike the installers' re-arming timeouts. */
-var turnElapsedTimer = ref(null);
 //#endregion
 //#region src/features/routing-state.ts
 /**
 * The classifier model id, or null before the routing probe has answered.
-*
-* Infrastructure, never selectable: the models list and the Ollama host cards
-* both section it under "System" rather than offering it as a choice, and both
-* need it before they render or it flashes as selectable first.
+* Infrastructure: the models list and host cards section it under "System",
+* and need it before rendering or it flashes as selectable.
 */
 var routingClassifierModel = ref(null);
 /** Is the routing skill installed and reachable? Gates the whole panel. */
@@ -119,67 +62,13 @@ var routingRouterInfo = ref(null);
 /** Open route's index, or -1 for "new route being drafted" — see openRouteDetail. */
 var selectedRouteIdx = ref(null);
 //#endregion
-//#region src/features/installer-state.ts
-/**
-* One flag for the four harness installs (codex, opencode, pi, grok): each
-* rebuilds the agent image and restarts the host, so two at once is never
-* right. The two older names are the same ref — readers that gate a row on
-* "is a harness installing?" keep working, and now mean it for all four.
-*/
-var harnessInstallActive = ref(false);
-var codexInstallActive = harnessInstallActive;
-var opencodeInstallActive = harnessInstallActive;
-var routingInstallActive = ref(false);
-var sttInstallActive = ref(false);
-var ttsInstallActive = ref(false);
-var tailscaleInstallActive = ref(false);
-var cloudflaredInstallActive = ref(false);
-/**
-* Pending setTimeout handles while a poll is in flight, else null.
-*
-* setTimeout, not setInterval: both poll by re-arming after each response, so a
-* slow server cannot stack overlapping requests the way a fixed interval would.
-* Typing them as interval handles compiled but was wrong about the mechanism.
-*/
-var ollamaPullPoller = ref(null);
-var opencodeGatePoll = ref(null);
-/**
-* The gate as the SERVER reports it ('running'), rather than as this tab
-* remembers it — which is what makes it survive a page reload.
-*/
-var opencodeGateFromServer = ref(false);
-//#endregion
-//#region src/features/mcp-list-state.ts
-var mcpServers = ref([]);
-var selectedMcpId = ref(null);
-/** MCP servers attached to the currently open agent. */
-var agentMcpServers = ref([]);
-/** Every registered MCP server. */
-var allMcpServers = ref([]);
-/** Last successful probe result, and the bearer token that made it work —
-*  carried into the add body so the registered server keeps working. */
-var lastMcpProbe = ref(null);
-var lastMcpProbeToken = ref("");
-/** Re-entry guard while an add is in flight. */
-var mcpAddInProgress = ref(false);
-/** Agent the add flow should attach to on success, or null for unattached. */
-var mcpAgentForAdd = ref(null);
-//#endregion
 //#region src/features/room-list-state.ts
-/** A–Z toggle: alphabetical by the displayed `#id` when on, activity when off. */
-/** Restored from the session — the sessionStorage read was the `let`'s
-*  initialiser in legacy.js, and dropping it turns a remembered preference
-*  into a per-reload default. */
+/** A–Z toggle: alphabetical by the displayed `#id` when on, activity when off.
+*  Restored from the session so the preference survives a reload. */
 var roomSortAz = ref(sessionStorage.getItem("webchat:roomSortAz") === "1");
-/** Per-user "hide" reveal toggle. */
-/** Restored from the session — the sessionStorage read was the `let`'s
-*  initialiser in legacy.js, and dropping it turns a remembered preference
-*  into a per-reload default. */
+/** Per-user "hide" reveal toggle, restored from the session. */
 var showHidden = ref(sessionStorage.getItem("webchat:showHidden") === "1");
-/** Archived section reveal toggle. */
-/** Restored from the session — the sessionStorage read was the `let`'s
-*  initialiser in legacy.js, and dropping it turns a remembered preference
-*  into a per-reload default. */
+/** Archived section reveal toggle, restored from the session. */
 var showArchived = ref(sessionStorage.getItem("webchat:showArchived") === "1");
 /**
 * The pinned room currently being dragged, or null.
@@ -190,41 +79,24 @@ var showArchived = ref(sessionStorage.getItem("webchat:showArchived") === "1");
 * .room-list-reordering plus this id).
 */
 var draggedPinId = ref(null);
-/**
-* Which row's kebab menu is open, or null. At most one across the list.
-*
-* This is why renderRooms had a retry timer: the menu was a DOM node inside the
-* list, so any background re-render tore it down mid-click and the code
-* deferred the update by 400ms instead. As state the menu survives a re-render,
-* and the retry is gone with it.
-*/
+/** Which row's kebab menu is open, or null. At most one across the list; held
+*  as state so a background re-render does not tear the menu down mid-click. */
 var openMenuRoomId = ref(null);
 /** Which thread's kebab menu is open, or null. */
 var openThreadMenuId = ref(null);
 /** Row showing a drop-marker during a pinned reorder: id → 'before' | 'after'. */
 var dropMarker = ref({});
 /**
-* Threads with a delete countdown armed, keyed by thread_id.
-*
-* This replaces armUndo()'s DOM swap. armUndo was handed the ROW — not an
-* actions strip — captured its childNodes, replaced them with the timer and
-* re-appended them on Undo. ThreadRows renders those children, so that was an
-* imperative writer reinserting vnode-managed nodes behind Vue's back: the last
-* two-writers case in the codebase and the reason armUndo could not be deleted
-* with the rest of legacy.js.
-*
-* `width` is measured BEFORE the swap and pinned on the row, exactly as armUndo
-* did — measuring after would read the timer's own width and defeat the point.
+* Threads with a delete countdown armed, keyed by thread_id. ThreadRows renders
+* the timer from this rather than anything swapping its vnode-managed children.
+* `width` is measured BEFORE the swap and pinned on the row: measuring after
+* would read the timer's own width.
 */
 var threadUndo = ref({});
-/** The room whose detail pane is open, or null. */
 /**
-* Live room-name filter, driven by the sidebar search box as you type.
-*
-* Deliberately NOT debounced and never sent anywhere: matching a name the
-* client already holds costs nothing, so the list narrows on the keystroke
-* while the MESSAGE search under it still waits out its 250ms. One box, two
-* speeds — the fast half should not be held back by the slow one.
+* Live room-name filter, driven by the sidebar search box. Deliberately NOT
+* debounced and never sent anywhere: names are client-side, so the list narrows
+* on the keystroke while the message search under it waits out its 250ms.
 */
 var roomFilter = ref("");
 var selectedRoomId = ref(null);
@@ -237,25 +109,17 @@ var learnTurnToolCount = ref(0);
 var roomAutoLearn = /* @__PURE__ */ new Map();
 //#endregion
 //#region src/features/agent-list-state.ts
-/** Restored from the session — the sessionStorage read was the `let`'s
-*  initialiser in legacy.js, and dropping it turns a remembered preference
-*  into a per-reload default. */
 /** Live agent-name filter, driven by the Manage toolbar's filter box. */
 var agentFilter = ref("");
+/** Restored from the session, so the A–Z preference survives a reload. */
 var agentSortAz = ref(sessionStorage.getItem("webchat:agentSortAz") === "1");
 var selectedAgentId = ref(null);
 //#endregion
 //#region src/features/members-list-state.ts
 var members = ref([]);
 var membersFilter = ref("");
-/**
-* A–Z toggle for the members roster, restored from the session.
-*
-* The sessionStorage read is the POINT, not decoration: it was the `let`'s
-* initialiser in legacy.js, and dropping it silently turned a remembered
-* preference into a per-reload default. The boot-order guard caught it as a
-* missing storage read at event 39.
-*/
+/** A–Z toggle for the members roster, restored from the session. The storage
+*  read is part of boot order (check-boot-order.sh), not decoration. */
 var usersSortAz = ref(sessionStorage.getItem("webchat:usersSortAz") === "1");
 //#endregion
 //#region src/core/dom.ts
@@ -267,9 +131,7 @@ function lucide(name, cls = "") {
 	return `<svg class="icon${cls ? " " + cls : ""}" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 }
 /** HTML-escape for the few places that still build markup as a string.
-* `'` is escaped too: every current attribute interpolation is double-quoted,
-* but nothing enforces that, and a future single-quoted attribute built with
-* esc() would otherwise be a breakout. Cheap insurance, not a fix for a bug. */
+* `'` is escaped too, so a single-quoted attribute built with esc() cannot break out. */
 function esc(s) {
 	return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
@@ -280,51 +142,13 @@ function cssEscape(s) {
 //#endregion
 //#region src/core/state.ts
 /**
-* shallowReactive, NOT reactive — and not a plain object any more either.
-*
-* Vue islands re-render when what they read changes, so this object has to be a
-* reactivity root. It is a one-line change only because of the phase-1h
-* decision above: every one of the ~138 call sites already writes `state.x = 1`
-* and `state.x++` against this single binding, so wrapping the literal makes all
-* of them reactive without touching any of them. Accessor pairs would have
-* needed all 138 rewritten.
-*
-* Shallow, for three reasons — none of them correctness. Deep `reactive()` is
-* SAFE here: it refuses to proxy anything outside Object/Array/Map/Set, so the
-* `WebSocket` and the `HTMLElement` values in pendingMessages come back raw
-* either way, and every identity comparison in this codebase is against a
-* string (`state.currentRoom`, `state.myIdentity`) which proxying cannot touch.
-* The reasons are:
-*
-*  1. Cost. lastRoomsList, allAgents and threadCache are iterated constantly by
-*     the room list and transcript. Deep reactivity allocates a proxy per
-*     element per read; shallow allocates none.
-*  2. pendingMessages maps ids to DOM nodes — imperative render bookkeeping,
-*     not view state. Deep reactivity would track every set() and wake effects
-*     for something no island ever reads.
-*  3. It makes an existing contract explicit for the ARRAYS. They are assigned
-*     wholesale (`state.lastRoomsList = msg.rooms`), never pushed into.
-*
-* The consequence to know: `state.rooms.push(r)` will NOT trigger a re-render.
-* `state.rooms = [...state.rooms, r]` will. That is already how this code is
-* written; island code has to keep it that way.
-*
-* Reason 3 was stated here as holding for EVERY collection, and that was wrong.
-* The five Set/Map fields below are mutated in place at twenty-five call sites
-* and never assigned wholesale — .add(), .delete(), .set(), .clear(). Under a
-* plain shallowReactive parent those mutations notify nothing, so an island
-* reading them re-rendered only when something ELSE happened to change.
-*
-* That shipped as a visible bug: clicking a room's thread-tree chevron recorded
-* the expansion and drew nothing, because renderRooms syncs three unrelated
-* refs and none of them changed. The tree appeared on the next unrelated
-* render — a rooms broadcast, a sort toggle — which is why it looked
-* intermittent rather than broken.
-*
-* So the five are individually shallowReactive. That instruments the COLLECTION
-* (add/delete/set/clear notify, has/get track) while still returning raw values
-* on read — reason 1's cost argument survives intact, which a deep reactive()
-* on threadCache would not have allowed.
+* shallowReactive, NOT reactive: the room list and transcript iterate the big
+* arrays constantly, and deep reactivity would allocate a proxy per element read.
+* INVARIANT: arrays are assigned wholesale — `state.rooms.push(r)` does NOT
+* re-render, `state.rooms = [...state.rooms, r]` does.
+* The Set/Map fields below are mutated in place (.add/.delete/.set/.clear), so
+* each is itself shallowReactive; under a plain shallow parent those mutations
+* would notify nothing and islands reading them would render late.
 */
 var state = shallowReactive({
 	learningMasterEnabled: true,
@@ -370,15 +194,8 @@ var state = shallowReactive({
 	marketplaceEnabled: false,
 	allAgents: []
 });
-/**
-* Is the transcript being force-followed right now?
-*
-* forceScrollCount is set on send so the agent's reply scrolls into view, and
-* userScrolledAway cancels it the moment the reader takes over. Both live here,
-* so the derivation does too — it reached the thinking bubble through an
-* isForcedScroll() entry on the Thinking bridge, which existed only because the
-* expression sat in legacy.js.
-*/
+/** Is the transcript being force-followed right now? forceScrollCount is set on
+*  send so the reply scrolls into view; userScrolledAway cancels it. */
 function isForcedScroll() {
 	return state.forceScrollCount > 0 && !state.userScrolledAway;
 }
@@ -394,7 +211,23 @@ var isAdminView = ref(false);
 */
 var isWorkspaceAdminView = ref(false);
 //#endregion
+//#region src/core/island.ts
+/** Mount a Vue island into the element at `sel`, or return null when the host
+* is absent. Pair with `??=` so a mounted island is never created twice. */
+function mountIsland(sel, create) {
+	const host = $(sel);
+	if (!host) return null;
+	const app = create();
+	app.mount(host);
+	return app;
+}
+//#endregion
 //#region src/core/toast.ts
+/**
+* Transient corner notification. `kind` is 'info' (default), 'success', or
+* 'error'. Errors linger longer and must be dismissed-or-time-out; all toasts
+* are click-to-dismiss. Returns the element so callers can remove it early.
+*/
 function showToast(message, { kind = "info", timeout } = {}) {
 	const container = $("#toasts");
 	if (!container) return null;
@@ -510,12 +343,7 @@ async function apiJson(url, { method = "GET", body, headers } = {}) {
 var approvalRows = ref([]);
 /**
 * Question ids whose respond call is in flight, and the inline error left by
-* one that failed.
-*
-* These were DOM writes: respondToApproval took the card element, disabled its
-* buttons through querySelectorAll and appended a .approval-error div to it.
-* The panel's cards are rendered by ApprovalCard, so those writes were landing
-* on Vue-owned nodes — the two-writers shape, reached from the imperative side.
+* one that failed. State rather than DOM writes: ApprovalCard owns the card's nodes.
 */
 var approvalBusy = ref(/* @__PURE__ */ new Set());
 var approvalErrors = ref({});
@@ -537,7 +365,7 @@ var _hoisted_6$31 = {
 	class: "approval-payload"
 };
 var _hoisted_7$22 = { class: "approval-actions" };
-var _hoisted_8$18 = ["disabled", "onClick"];
+var _hoisted_8$17 = ["disabled", "onClick"];
 var _hoisted_9$13 = {
 	key: 2,
 	class: "approval-error"
@@ -552,39 +380,10 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* One approval card — the <li> form, shared by the panel list and the
-		* in-transcript card.
-		*
-		* NOT the toast form. renderApprovalCard() still builds that imperatively: a
-		* toast is a transient element appended by the toast layer, it drops the
-		* payload block, and it has no container to claim. Keeping one component for
-		* two of the three callers is the honest split; forcing the third through it
-		* would mean a `toast` prop that changes the element's tag.
-		*
-		* :class, NOT a conditional v-bind. This is the inverse of the usual case: the
-		* imperative version assigned btn.className unconditionally, so an option that
-		* is neither approve nor reject emits class="" — and Vue's :class emits the
-		* empty attribute too. Omitting it would be the difference here.
-		*
-		* The busy and error state comes from module refs, not props. respondToApproval
-		* used to reach into this card's DOM — disabling its buttons through
-		* querySelectorAll and appending a .approval-error div to it — which is an
-		* imperative writer on Vue-owned nodes. Keyed by questionId because one
-		* approval can be on screen twice (the panel and the transcript).
-		*
-		* `disabled` reflects to an attribute, so binding it reproduces the imperative
-		* assignment exactly (measured in #244) — the diff shows disabled="" on both
-		* sides while a response is in flight.
-		*
-		* The error's v-if leaves an anchor comment when there is no error, the same
-		* accepted difference as #246. It vanishes in the state that matters: with an
-		* error present both sides render the div and the markup is byte-identical,
-		* which is also the proof that appending it imperatively and rendering it
-		* declaratively produce the same DOM.
-		*
-		* The default option pair is Approve/Reject. It is a fallback, not a default
-		* argument — a request that supplies options replaces both, and one that
-		* supplies an empty array still gets the pair.
+		* One approval card — the <li> form shared by the panel list and the in-transcript
+		* card (the toast form is built by renderApprovalCard). Busy and error state come from
+		* module refs keyed by questionId, because one approval can be on screen twice. A
+		* request with no options, or an empty array, falls back to Approve/Reject.
 		*/
 		const TIER_NOTE = {
 			unscreened: "Not screened",
@@ -645,7 +444,7 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 						class: normalizeClass(btnClass(o.value)),
 						disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
 						onClick: ($event) => props.onRespond(__props.approval.questionId, o.value)
-					}, toDisplayString(o.label || o.value), 11, _hoisted_8$18);
+					}, toDisplayString(o.label || o.value), 11, _hoisted_8$17);
 				}), 128))]),
 				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_9$13, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
 			], 8, _hoisted_1$71);
@@ -659,10 +458,7 @@ var ApprovalsList_default = /* @__PURE__ */ defineComponent({
 	props: { onRespond: { type: Function } },
 	setup(__props) {
 		/**
-		* The pending-approvals panel list — forty-fifth island.
-		*
-		* Mounted into <ul id="approval-list">, exclusively owned by this module. The
-		* banner count is set outside it and stays imperative.
+		* The pending-approvals panel list, mounted into <ul id="approval-list">.
 		*/
 		const props = __props;
 		return (_ctx, _cache) => {
@@ -691,20 +487,10 @@ var ApprovalToast_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The transient approval toast.
-		*
-		* Deliberately NOT ApprovalCard: a toast is a <div class="approval-toast">, it
-		* drops the payload block, and the toast layer owns where it goes. The two
-		* shared a builder before and the difference was a `toast` flag that changed
-		* the element's tag — one component for both would need the same flag back.
-		*
-		* Mounted into the toast element itself, one app per toast, so the host carries
-		* the class and data-question-id the toast layer and respondToApproval select
-		* on, and the component supplies its children.
-		*
-		* Busy state is shared with the card via approvalBusy, keyed by questionId —
-		* the same approval can be on screen as a toast AND in the panel, and clicking
-		* either should disable both.
+		* The transient approval toast, deliberately not ApprovalCard: a <div> without the payload
+		* block, placed by the toast layer. Mounted into the toast element itself, which carries
+		* the class and data-question-id that respondToApproval selects on. Busy state is shared
+		* with the card via approvalBusy, so clicking either disables both.
 		*/
 		const props = __props;
 		const FALLBACK = [{
@@ -754,11 +540,7 @@ function setApprovalsBanner(count) {
 }
 var approvalsApp = null;
 function mountApprovalsList() {
-	if (approvalsApp) return;
-	const host = $("#approval-list");
-	if (!host) return;
-	approvalsApp = createApp(ApprovalsList_default, { onRespond: (questionId, value) => respondToApproval(questionId, value, null) });
-	approvalsApp.mount(host);
+	approvalsApp ??= mountIsland("#approval-list", () => createApp(ApprovalsList_default, { onRespond: (questionId, value) => respondToApproval(questionId, value, null) }));
 }
 function renderApprovalsList() {
 	if ($("#approval-list")) {
@@ -902,8 +684,7 @@ function readdRow(row) {
 /** Empty-state line shown instead of the list. Two callers set it. */
 var transcriptEmpty = ref(null);
 /** Live thinking bubbles, keyed by agent name. Rendered AFTER the message list,
-*  which is what made messages "insert before the thinking bubble" fall out for
-*  free instead of needing an anchor. */
+*  so new messages land above them with no anchor. */
 var thinkingTurns = ref([]);
 var turnFor = (name) => thinkingTurns.value.find((t) => t.name === name);
 //#endregion
@@ -915,7 +696,7 @@ var _hoisted_4$46 = { class: "thinking-elapsed" };
 var _hoisted_5$36 = { class: "bubble" };
 var _hoisted_6$30 = ["hidden"];
 var _hoisted_7$21 = ["hidden"];
-var _hoisted_8$17 = ["hidden"];
+var _hoisted_8$16 = ["hidden"];
 var _hoisted_9$12 = {
 	ref: "trace",
 	class: "thinking-fulltrace"
@@ -934,44 +715,21 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* One agent's live thinking bubble.
-		*
-		* Reproduces ensureThinkingBubble's markup exactly, including the four content
-		* divs that were written as one innerHTML string and then addressed
-		* individually by four different functions — the verb and target by
-		* updateThinkingBubble, the milestone by setThinkingMilestone, the feed by
-		* pushReasoning, the fulltrace by renderFullTrace. Those four were the reason
-		* this could not be converted on its own: each held a querySelector into a
-		* bubble that a component would own.
-		*
-		* The feed is a BOUNDED TAIL with per-line fade state, not a slice of
-		* reasoningLog. pushReasoning kept both — the full log for the expanded trace
-		* and the reply's disclosure, and a trimmed DOM buffer for the fading window —
-		* and collapsing them would change what the expanded view shows.
-		*
-		* data-status-live is still rendered even though nothing reads it from the DOM
-		* any more — the typing heartbeat reads turn.statusLive now. It stays because
-		* the attribute was there before and dropping it would be a markup change
-		* smuggled in under a conversion.
-		*
-		* Feed scroll-follow stays imperative on purpose: it is a scrollTop write on an
-		* element Vue owns, which is not a second WRITER (it renders nothing), and
-		* there is no declarative way to say "keep the newest line in view".
+		* One agent's live thinking bubble. The feed is a bounded tail with per-line fade
+		* state, separate from reasoningLog, which the expanded trace and the reply's disclosure
+		* show in full. data-status-live is kept for markup stability (the typing heartbeat reads
+		* turn.statusLive). Feed scroll-follow is an imperative scrollTop write; it renders nothing.
 		*/
 		const props = __props;
 		const feedEl = useTemplateRef("feed");
 		const traceEl = useTemplateRef("trace");
-		/** Follow the newest line inside the feed's own scroll viewport, and keep the
-		*  expanded trace pinned to the bottom — both were scrollTop writes after the
-		*  append that produced them. */
+		/** Follow the newest line in the feed's viewport; keep the expanded trace pinned to the bottom. */
 		watch(() => props.turn.feed.length, () => void nextTick(() => {
 			if (feedEl.value) feedEl.value.scrollTop = feedEl.value.scrollHeight;
 		}));
 		watch([() => props.turn.reasoningLog.length, () => props.turn.expanded], () => void nextTick(() => {
 			if (traceEl.value) traceEl.value.scrollTop = traceEl.value.scrollHeight;
 		}));
-		/** renderFullTrace only ran on expand, so a collapsed bubble's trace div stayed
-		*  EMPTY — not merely hidden. Both derivations reproduce that. */
 		const traceRows = computed(() => props.turn.expanded ? props.turn.fullTrace.length ? props.turn.fullTrace : props.turn.reasoningLog : []);
 		const traceEmpty = computed(() => props.turn.expanded && !props.turn.fullTrace.length && !props.turn.reasoningLog.length ? NO_TRACE : "");
 		function onClick(e) {
@@ -1022,7 +780,7 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 						key: l.key,
 						class: normalizeClass(l.fading ? "thinking-feed-line fading" : "thinking-feed-line")
 					}, toDisplayString(l.text), 3);
-				}), 128))], 8, _hoisted_8$17),
+				}), 128))], 8, _hoisted_8$16),
 				createElementVNode("div", _hoisted_9$12, [createTextVNode(toDisplayString(traceEmpty.value), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(traceRows.value, (l, i) => {
 					return openBlock(), createElementBlock("div", {
 						key: i,
@@ -1043,14 +801,8 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 var ttsServerEnabled = false;
 var ttsReadAloudEnabled = false;
 var ttsCurrentAudio = null;
-/**
-* Which message is playing, and how far along.
-*
-* This was the button ELEMENT (ttsCurrentBtn) — identity comparisons all the way
-* through speak(), so a later click could supersede an in-flight fetch. The row
-* key does the same job while the button is rendered by TtsButton rather than
-* built by hand, which it has to be now that messages are Vue-owned.
-*/
+/** Which message is playing, and how far along. The row key is compared through
+*  speak(), so a later click supersedes an in-flight fetch. */
 var ttsActiveKey = ref(null);
 var ttsPhase = ref(null);
 async function loadTtsConfig() {
@@ -1165,6 +917,8 @@ var STT_RMS_FLOOR = .012;
 var STT_AUTOSTOP_MS = 12e3;
 var sttElapsedTimer = null;
 var sttStartedAt = 0;
+/** Recording chrome: mic ⇄ red pulsing stop square + elapsed chip (the
+*  standard voice-recorder idiom, so state is unmistakable at a glance). */
 function sttSetRecordingChrome(on) {
 	const mic = $("#mic-btn");
 	const chip = $("#stt-elapsed");
@@ -1193,6 +947,7 @@ function sttAnnounce(text) {
 	const el = $("#stt-status");
 	if (el) el.textContent = text;
 }
+/** Wrap accumulated PCM16 frames in a minimal 16 kHz mono WAV container. */
 function sttBuildWav(frames) {
 	let samples = 0;
 	for (const f of frames) samples += f.length;
@@ -1224,6 +979,7 @@ function sttRenderInput() {
 	input.value = sttBeforeText + (sttBeforeText && sttCommitted ? " " : "") + sttCommitted + (sttPending > 0 ? " …" : "");
 	input.dispatchEvent(new Event("input", { bubbles: true }));
 }
+/** Close the current segment and ship it for transcription (if it held speech). */
 function sttCutSegment() {
 	const frames = sttSegments;
 	const hadSpeech = sttSpeechInSegment;
@@ -1255,6 +1011,7 @@ function sttCutSegment() {
 	});
 	sttInFlight.push(p);
 }
+/** Per-frame handler: RMS gate → segment bookkeeping → cut on pause/length. */
 function sttOnFrame(int16) {
 	if (!sttActive) return;
 	let sum = 0;
@@ -1337,6 +1094,7 @@ function sttResetMicButton() {
 	mic?.setAttribute("aria-pressed", "false");
 	sttSetRecordingChrome(false);
 }
+/** Stop capture, flush the tail segment, wait for transcripts, then tidy. */
 async function stopDictation() {
 	if (!sttActive || sttStopping) return;
 	sttStopping = true;
@@ -1351,6 +1109,7 @@ async function stopDictation() {
 	sttStopping = false;
 	sttAnnounce("");
 }
+/** Esc = cancel: discard everything dictated, restore the prior composer text. */
 function cancelDictation() {
 	if (!sttActive) return;
 	sttActive = false;
@@ -1366,6 +1125,11 @@ function cancelDictation() {
 	}
 	sttAnnounce("Dictation cancelled");
 }
+/**
+* Tidy the dictated span via the server's cleanup model. The replacement goes
+* through execCommand('insertText') over a selection of just the dictated
+* text, so the native undo stack (Ctrl/Cmd+Z) restores the raw transcript.
+*/
 async function sttCleanupPass() {
 	if (!sttConfig?.cleanup || !sttCommitted.trim()) return;
 	const input = $("#message-input");
@@ -1374,13 +1138,11 @@ async function sttCleanupPass() {
 	const mic = $("#mic-btn");
 	mic?.classList.add("tidying");
 	try {
-		const r = await authFetch("/api/stt/cleanup", {
+		const body = await apiJson("/api/stt/cleanup", {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ text: raw })
+			body: { text: raw }
 		});
-		const body = await r.json().catch(() => ({}));
-		if (!r.ok || !body.cleaned || typeof body.text !== "string") return;
+		if (!body.cleaned || typeof body.text !== "string") return;
 		const sep = sttBeforeText && raw ? " " : "";
 		const expected = sttBeforeText + sep + raw;
 		if (input.value !== expected) return;
@@ -1398,11 +1160,10 @@ async function sttCleanupPass() {
 		mic?.classList.remove("tidying");
 	}
 }
+/** Post-auth: reveal the mic when the server has an STT backend configured. */
 async function initSttFeature() {
 	try {
-		const r = await authFetch("/api/stt/config");
-		if (!r.ok) return;
-		sttConfig = await r.json();
+		sttConfig = await apiJson("/api/stt/config");
 		$("#mic-btn").hidden = !sttConfig.enabled;
 	} catch {}
 }
@@ -1440,21 +1201,12 @@ var TtsButton_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* Read-aloud control on an agent reply, overlaid on the bubble's corner.
-		*
-		* buildTtsButton() returned null when no TTS path exists, so the button was
-		* simply absent; the caller reproduces that with v-if on ttsOffered() rather
-		* than rendering a disabled one.
-		*
-		* Three states, and the markup for each is exactly what resetTtsButton() and
-		* markTtsPlaying() used to assign:
+		* Read-aloud control on an agent reply, overlaid on the bubble's corner; the caller
+		* omits it (v-if on ttsOffered()) when no TTS path exists. Three states:
 		*
 		*   idle     volume-2  aria-label/title 'Read aloud'
 		*   loading  volume-2  aria-label 'Synthesizing…', title UNCHANGED, +tts-loading
 		*   playing  square    aria-label/title 'Stop', +tts-playing
-		*
-		* The loading state keeping the idle TITLE is not an oversight being tidied up:
-		* speak() set only aria-label, and this phase reproduces it.
 		*/
 		const props = __props;
 		const phase = computed(() => ttsActiveKey.value === props.msgKey ? ttsPhase.value : null);
@@ -1482,7 +1234,7 @@ var _hoisted_4$45 = ["innerHTML"];
 var _hoisted_5$35 = { class: "file-name" };
 var _hoisted_6$29 = { class: "file-size" };
 var _hoisted_7$20 = ["href", "download"];
-var _hoisted_8$16 = {
+var _hoisted_8$15 = {
 	key: 0,
 	class: "file-caption"
 };
@@ -1504,25 +1256,11 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* One message's .bubble, in whichever of its three shapes applies.
-		*
-		* A component rather than markup repeated inside Transcript, because own
-		* messages nest the same bubble inside a .msg-body row and everything else does
-		* not — see appendMessage's note on why that row exists even for the optimistic
-		* echo.
-		*
-		* Markdown goes on the bubble ITSELF with v-html, not into a wrapper div. The
-		* imperative version assigned bubble.innerHTML, so the markdown nodes were the
-		* bubble's own children; a wrapper would change what `.msg .bubble p:last-child`
-		* and friends select.
-		*
-		* Which is why the TTS button is TELEPORTED in. v-html owns the element's
-		* children, so the button cannot also be a template child of it — teleporting
-		* lands it as the last child exactly where appendChild put it. row.html never
-		* changes after append, so v-html never re-runs and never evicts it.
-		*
-		* The decorators run from the ref callback, in the same position the imperative
-		* version called them: immediately after the innerHTML assignment.
+		* One message's .bubble in whichever of its three shapes applies (own messages nest it
+		* in a .msg-body row). Markdown goes on the bubble itself via v-html so selectors like
+		* `.msg .bubble p:last-child` match; the TTS button is therefore teleported in as the last
+		* child, and since row.html never changes, v-html never evicts it. Decorators run from the
+		* ref callback right after the HTML lands.
 		*/
 		const props = __props;
 		const bubbleEl = ref(null);
@@ -1562,7 +1300,7 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 					title: DOWNLOAD_TITLE,
 					innerHTML: DOWNLOAD
 				}, null, 8, _hoisted_7$20)
-			])]), __props.row.caption ? (openBlock(), createElementBlock("div", _hoisted_8$16, toDisplayString(__props.row.caption), 1)) : createCommentVNode("", true)], 512)) : __props.row.html ? (openBlock(), createElementBlock("div", {
+			])]), __props.row.caption ? (openBlock(), createElementBlock("div", _hoisted_8$15, toDisplayString(__props.row.caption), 1)) : createCommentVNode("", true)], 512)) : __props.row.html ? (openBlock(), createElementBlock("div", {
 				key: 1,
 				ref: bind,
 				class: "bubble",
@@ -1593,18 +1331,9 @@ var MsgDeleteButton_default = /* @__PURE__ */ defineComponent({
 	props: { messageId: {} },
 	setup(__props) {
 		/**
-		* The 🗑 on your own messages, with its two-step confirm.
-		*
-		* createDeleteButton() held the confirm in the ELEMENT — a class, a label swap
-		* and a 3-second timer closed over the button — which is fine for a node nobody
-		* else owns and impossible once the message is Vue-rendered.
-		*
-		* The timer is per-instance rather than keyed state: only one button can be
-		* mid-confirm at a time in practice, but nothing enforced that before either,
-		* and a component instance is exactly the scope the closure had.
-		*
-		* onUnmounted clears it. The old button was garbage with its message; this one
-		* can outlive its confirm window if the transcript re-renders under it.
+		* The 🗑 on your own messages, with its two-step confirm. The 3-second confirm timer is
+		* per-instance and cleared on unmount, since the button can outlive its confirm window if
+		* the transcript re-renders under it.
 		*/
 		const props = __props;
 		const confirming = ref(false);
@@ -1642,8 +1371,7 @@ var MsgDeleteButton_default = /* @__PURE__ */ defineComponent({
 *
 * The 60–190 band is excluded, not wrapped around: those are the yellows and
 * greens that read as "warning" and "success" elsewhere in the console, and a
-* publisher name is neither. Copied exactly — a plain `% 360` would look right
-* and quietly recolour every badge.
+* publisher name is neither.
 */
 function labelHue(str) {
 	const BAND_LO = 60;
@@ -1676,28 +1404,14 @@ var OriginBadge_default = /* @__PURE__ */ defineComponent({
 	props: { origin: {} },
 	setup(__props) {
 		/**
-		* The provenance pill — where a skill or MCP server comes from.
-		*
-		* Not an island: it has no mount point of its own. It is the declarative half
-		* of origin-badge.ts, used by islands that render rows containing a badge,
-		* while the still-imperative call sites keep using originBadgeEl().
-		*
-		* Every decision — element type, classes, hue, and the http(s) test that keeps
-		* a javascript:/data: URL out of an href — comes from originBadgeProps(). This
-		* component makes none of them. That is the whole point of the split: writing
-		* the conditionals again here would put a second copy of a security check in
-		* the codebase, and the copy that drifts is the one that stops checking.
-		*
-		* The click handler stops propagation because the rows that carry a badge are
-		* themselves clickable (they open an editor), matching the imperative version.
+		* The provenance pill for a skill or MCP server; the declarative half of origin-badge.ts.
+		* Every decision — including the http(s) test that keeps a javascript:/data: URL out of
+		* an href — comes from originBadgeProps(), so the security check has exactly one copy.
+		* Clicks stop propagating because the rows carrying a badge are themselves clickable.
 		*/
 		const props = __props;
 		const p = computed(() => originBadgeProps(props.origin));
-		/**
-		* Built as one object so absent values emit NO attribute rather than an empty
-		* one. :href="null" removes it, but --badge-hue via :style would still emit
-		* style="", which is the class of difference the first island was caught on.
-		*/
+		/** One object, so absent values emit no attribute (a :style would emit style=""). */
 		const attrs = computed(() => {
 			const v = p.value;
 			const out = { class: v.className };
@@ -1725,15 +1439,8 @@ var OriginBadge_default = /* @__PURE__ */ defineComponent({
 var skillDuplicates = ref([]);
 /** One agent's own scoped skills, as the agent detail pane receives them. */
 var agentScopedSkills = ref([]);
-/**
-* Rows whose promote button is mid-request.
-*
-* The imperative version disabled the clicked BUTTON directly and re-enabled it
-* on failure. There is no clicked element to hold onto once the row is a vnode,
-* and disabling by identity is what keeps a double-click from promoting twice —
-* so the pending set is state. Keyed by skill name, which is what the endpoint
-* takes.
-*/
+/** Rows whose promote button is mid-request, keyed by skill name — keeps a
+*  double-click from promoting twice. */
 var promotingSkills = ref(/* @__PURE__ */ new Set());
 /**
 * Skill collections shown in Settings, already shaped.
@@ -1756,13 +1463,8 @@ var skillUpdates = ref({});
 var skillUpdating = ref(/* @__PURE__ */ new Set());
 /** One learned-skill draft awaiting review. */
 var skillDrafts = ref([]);
-/**
-* Draft id → the undo countdown currently replacing its actions.
-*
-* armUndo held this in the DOM by swapping the actions element's children. As
-* state it survives a re-render, which the imperative version could not manage —
-* it froze the element's width to stop the row jumping instead.
-*/
+/** Draft id → the undo countdown currently replacing its actions. Held as state
+*  so it survives a re-render. */
 var draftUndo = ref({});
 /** Drafts whose Keep is mid-flight; a re-render must not resurrect a live Keep. */
 var draftsReviewing = ref(/* @__PURE__ */ new Set());
@@ -1804,7 +1506,7 @@ var _hoisted_7$19 = {
 	key: 3,
 	class: "approval-inroom-note"
 };
-var _hoisted_8$15 = {
+var _hoisted_8$14 = {
 	key: 4,
 	class: "approval-inroom-note resolved"
 };
@@ -1860,21 +1562,11 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* An in-transcript skill-draft card.
-		*
-		* Everything about a keep in progress — in flight, checking, overlapping,
-		* kept, undone, failed — comes from ONE store keyed by draft id (draftAction),
-		* not from props and not from imperative writes to the buttons. A root app's
-		* props are read once, so a prop would freeze at mount; and the labels this
-		* used to get written directly onto its buttons ('Keeping…', 'Reviewing…')
-		* could never be reverted, because Vue owns them.
-		*
-		* Both decisions commit immediately and the card then offers Undo, which
-		* reverses what happened rather than cancelling a countdown: a keep is undone
-		* by deleting/reverting the skill, a discard by restoring the draft (the
-		* server soft-discards, so the body is still there). No pre-commit timer
-		* remains on this surface — the list surfaces keep theirs, because a
-		* discarded draft leaves those lists and an Undo would have nowhere to live.
+		* An in-transcript skill-draft card. Keep progress (in flight, checking, overlapping,
+		* kept, undone, failed) comes from ONE store keyed by draft id (draftAction), because a
+		* root app's props are read once. Both decisions commit immediately and Undo reverses
+		* them (discards are soft on the server). The list surfaces keep a pre-commit timer: a
+		* discarded draft leaves those lists, so an Undo would have nowhere to live.
 		*/
 		const props = __props;
 		const busy = computed(() => {
@@ -1900,7 +1592,7 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 				type: "button",
 				class: "btn btn-ghost",
 				onClick: _cache[2] || (_cache[2] = ($event) => props.onUndoDiscard())
-			}, toDisplayString(UNDO$1))])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_6$28, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : unref(draftAction)[__props.draftId]?.phase === "undoing" ? (openBlock(), createElementBlock("div", _hoisted_7$19, toDisplayString(UNDOING))) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_8$15, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_9$10, [
+			}, toDisplayString(UNDO$1))])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_6$28, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : unref(draftAction)[__props.draftId]?.phase === "undoing" ? (openBlock(), createElementBlock("div", _hoisted_7$19, toDisplayString(UNDOING))) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_8$14, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_9$10, [
 				createElementVNode("div", _hoisted_10$9, [createElementVNode("span", _hoisted_11$6, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
 					key: 0,
 					origin: {
@@ -1986,7 +1678,7 @@ var _hoisted_6$27 = {
 	class: "approval-inroom-note"
 };
 var _hoisted_7$18 = ["data-draft-id"];
-var _hoisted_8$14 = {
+var _hoisted_8$13 = {
 	key: 0,
 	class: "msg-body"
 };
@@ -2015,31 +1707,11 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The transcript — the conversion this whole phase was building toward.
-		*
-		* Mounted into <div id="messages">, which had TWELVE writers across nine
-		* modules. Every other island in this phase owned a container nothing else
-		* wrote to; this one could not be sliced, because the moment Vue owns
-		* #messages' children every remaining imperative append is a second writer.
-		* So appendMessage, appendSystem, the context divider, the thinking bubbles,
-		* the file bubble, the thoughts disclosure, the delete button and the TTS
-		* button all moved in one change.
-		*
-		* Rows are VIEW MODELS decided at append time, not raw messages — see
-		* transcript-state.ts for why re-deciding later gives different answers.
-		*
-		* Thinking bubbles render AFTER the list, which is how "insert before the
-		* thinking bubble" survives without an anchor: the imperative version had to
-		* find the bubble and insertBefore it, and ordering here is just position.
-		*
-		* Markdown bodies go through v-html. Vue treats that subtree as opaque and
-		* never diffs inside it, so decorateCodeBlocks and decorateMentions mutating
-		* the rendered HTML is NOT the two-writers problem — they are decorating a
-		* black box, and Vue only ever replaces it wholesale when the string changes.
-		* That is why those two stay imperative and run from a ref callback.
-		*
-		* applyA2aClamp also runs from the ref: it measures, so it needs the element
-		* attached, which is what the imperative version's post-insert call was for.
+		* The transcript, mounted into <div id="messages"> and the only writer of its children.
+		* Rows are view models decided at append time (see transcript-state.ts). Thinking bubbles
+		* render after the list, so "insert before the bubble" is just position. Markdown goes
+		* through v-html, an opaque subtree, so decorateCodeBlocks/decorateMentions and
+		* applyA2aClamp (which measures) run from a ref callback without being a second writer.
 		*/
 		const props = __props;
 		const thoughtsPreview = (lines) => {
@@ -2074,7 +1746,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						class: "icon",
 						"aria-hidden": "true"
 					}, [createElementVNode("use", { href: "#i-bot" })], -1)), createTextVNode(toDisplayString(" " + row.sender), 1)], 64)) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [createTextVNode(toDisplayString(row.isMine ? "You" : row.sender), 1)], 64))], 2),
-					row.body ? (openBlock(), createElementBlock("div", _hoisted_8$14, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
+					row.body ? (openBlock(), createElementBlock("div", _hoisted_8$13, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
 						key: 0,
 						"message-id": row.id
 					}, null, 8, ["message-id"])) : createCommentVNode("", true), createVNode(MessageBubble_default, {
@@ -2160,23 +1832,11 @@ var CodeToolbar_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The Wrap / Copy strip on a fenced code block.
-		*
-		* Mounted INTO the .code-toolbar div itself, one app per <pre>, so the toolbar
-		* element is the host and its children are the component. That keeps the
-		* markdown subtree — which Vue holds as opaque v-html and never diffs into —
-		* untouched apart from the strip that decorateCodeBlocks was already inserting.
-		*
-		* The two buttons' feedback used to live in a DELEGATED handler on #messages
-		* that wrote btn.textContent and toggled classes: 'Copied ✓' for 1.5s, then
-		* back. That handler is gone; both are component state now, which is also why
-		* the copy timer can be cleared on unmount instead of firing into a detached
-		* node.
-		*
-		* Wrap toggles a class on the <pre>, not on itself — the CSS rule is
-		* `.msg .bubble pre.wrap code`. The component reaches its own host's parent for
-		* that, which is the one thing it touches outside its own tree, and it is the
-		* same element the delegated handler reached through btn.closest('pre').
+		* The Wrap / Copy strip on a fenced code block, mounted INTO the .code-toolbar div, one
+		* app per <pre>, so the opaque v-html markdown subtree is otherwise untouched. Button
+		* feedback is component state, so the copy timer is cleared on unmount. Wrap toggles a
+		* class on the parent <pre> (the CSS rule is `.msg .bubble pre.wrap code`) — the one
+		* element it touches outside its own tree.
 		*/
 		const props = __props;
 		const copyState = ref("idle");
@@ -2219,22 +1879,15 @@ var CodeToolbar_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/transcript.ts
-var deps$21 = {};
-/** Wire the legacy helpers the transcript calls. Call once at startup. */
+var deps$16 = {};
+/** Wire the composition-root helpers the transcript calls. Call once at startup. */
 function provideTranscriptDeps(provided) {
-	Object.assign(deps$21, provided);
+	Object.assign(deps$16, provided);
 }
 /**
-* Give every fenced block a Wrap / Copy strip.
-*
-* Not a builder any more: it inserts the toolbar element and mounts CodeToolbar
-* into it, so the markup and the button feedback are the component's. The
-* has-code-toolbar guard is what keeps it idempotent — this runs again whenever
-* a bubble re-renders its markdown.
-*
-* The apps are not tracked for unmount, deliberately: a toolbar lives exactly
-* as long as the <pre> inside the v-html subtree that owns it, and that subtree
-* is replaced wholesale or not at all.
+* Give every fenced block a Wrap / Copy strip by mounting CodeToolbar. The
+* has-code-toolbar guard keeps it idempotent across markdown re-renders. Apps
+* are not tracked for unmount: each lives exactly as long as its v-html <pre>.
 */
 function decorateCodeBlocks(container) {
 	container.querySelectorAll("pre").forEach((pre) => {
@@ -2290,12 +1943,8 @@ function formatTime(ts) {
 	return `${d.toLocaleDateString([], dateOpts)}, ${time}`;
 }
 /**
-* Turn a server message into a transcript ROW.
-*
-* Everything this decides is decided ONCE, here, because it reads state that is
-* gone by the next render: whether the sender was me, which agent's reasoning
-* log to fold onto the reply, what the a2a payload parsed to. `beforeNode` is
-* gone with the DOM — pagination prepends by unshifting instead.
+* Turn a server message into a transcript ROW. Decided ONCE, here, because it
+* reads state gone by the next render (see transcript-state.ts).
 */
 function appendMessage(msg, statusText, prepend) {
 	if (msg?.id) {
@@ -2304,7 +1953,7 @@ function appendMessage(msg, statusText, prepend) {
 	}
 	if (msg.type === "system") return appendSystem(msg.message);
 	if (msg.message_type === "approval" || msg.message_type === "approval_resolved") return pushRow(approvalRow(msg), prepend);
-	if (msg.message_type === "skill_draft") return pushRow(deps$21.skillDraftRow(msg), prepend);
+	if (msg.message_type === "skill_draft") return pushRow(deps$16.skillDraftRow(msg), prepend);
 	if (msg.message_type === "context-divider") return pushRow({
 		key: nextKey(),
 		kind: "divider",
@@ -2326,7 +1975,7 @@ function appendMessage(msg, statusText, prepend) {
 		if (!turn && thinkingTurns.value.length === 1) turn = thinkingTurns.value[0];
 		if (turn) {
 			if (turn.reasoningLog.length > 0) thoughtsForThisMsg = turn.reasoningLog.slice();
-			deps$21.endAgentTurn(turn.name);
+			deps$16.endAgentTurn(turn.name);
 		}
 	}
 	const body = isA2a ? a2aText : msg.content;
@@ -2360,9 +2009,9 @@ function appendMessage(msg, statusText, prepend) {
 		isA2a,
 		sender: msg.sender,
 		a2aTo,
-		a2aAccent: isA2a ? deps$21.agentColor(msg.sender) : void 0,
-		senderColor: isA2a ? deps$21.agentColor(msg.sender) : void 0,
-		toColor: isA2a && a2aTo ? deps$21.agentColor(a2aTo) : void 0,
+		a2aAccent: isA2a ? deps$16.agentColor(msg.sender) : void 0,
+		senderColor: isA2a ? deps$16.agentColor(msg.sender) : void 0,
+		toColor: isA2a && a2aTo ? deps$16.agentColor(a2aTo) : void 0,
 		html,
 		text: html === null ? body : null,
 		file: isFile ? msg.file_meta : null,
@@ -2375,8 +2024,7 @@ function appendMessage(msg, statusText, prepend) {
 		body: isMine
 	}, prepend);
 }
-/** Append, or PREPEND for older-message pagination — which is what beforeNode
-*  expressed when the transcript was a node list. */
+/** Append, or PREPEND for older-message pagination. */
 function pushRow(row, prepend) {
 	const at = messages.value.findIndex((r) => r.key === row.key);
 	if (at !== -1) {
@@ -2437,9 +2085,7 @@ async function loadOlderMessages() {
 	const prevDocHeight = document.documentElement.scrollHeight;
 	const prevWinY = window.scrollY;
 	try {
-		const r = await authFetch(`/api/rooms/${encodeURIComponent(state.currentRoom)}/messages?before_id=${encodeURIComponent(state.oldestMessageId)}`);
-		if (!r.ok) return;
-		const older = await r.json();
+		const older = await apiJson(`/api/rooms/${encodeURIComponent(state.currentRoom)}/messages?before_id=${encodeURIComponent(state.oldestMessageId)}`);
 		if (!Array.isArray(older) || older.length === 0) {
 			state.noMoreOlder = true;
 			return;
@@ -2530,6 +2176,12 @@ function incrementMissedMessages() {
 		updateScrollButton();
 	}
 }
+/**
+* Walk a rendered bubble's text nodes and wrap `@<slug>` tokens in a styled
+* span. Cosmetic only — even if the token doesn't match a wired agent, the
+* styling tells the user "this looks like a mention." Server-side matching
+* is what actually decides routing.
+*/
 function decorateMentions(bubble) {
 	const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT, { acceptNode(node) {
 		let p = node.parentNode;
@@ -2560,7 +2212,7 @@ function decorateMentions(bubble) {
 			const handle = m[2].toLowerCase();
 			if (state.myHandle && handle === state.myHandle) span.classList.add("mention-me");
 			else {
-				const color = deps$21.mentionAgentColor(handle);
+				const color = deps$16.mentionAgentColor(handle);
 				if (color) span.style.background = color;
 			}
 			span.textContent = `@${m[2]}`;
@@ -2575,28 +2227,21 @@ function decorateMentions(bubble) {
 }
 var transcriptApp = null;
 /**
-* Mount the transcript into <div id="messages">, once.
-*
-* The container itself keeps its imperative flags — .room-switching for the
-* switch dim, .drag-over for file drops — because Vue owns an element's
-* CHILDREN, not the element. Same split every island in this phase used.
+* Mount the transcript into <div id="messages">, once. The container keeps its
+* imperative flags (.room-switching, .drag-over): Vue owns its CHILDREN only.
 */
 function mountTranscript() {
-	if (transcriptApp) return;
-	const host = $("#messages");
-	if (!host) return;
-	transcriptApp = createApp(Transcript_default, {
+	transcriptApp ??= mountIsland("#messages", () => createApp(Transcript_default, {
 		decorate: (bubble) => {
 			decorateCodeBlocks(bubble);
 			decorateMentions(bubble);
 		},
 		clampA2a: (bubble, container) => applyA2aClamp(bubble, container),
 		onApprovalRespond: (questionId, value) => respondToApproval(questionId, value),
-		onOpenLightbox: (url, filename) => deps$21.openLightbox(url, filename),
-		onStopAgent: (name) => deps$21.interruptAgent(name),
-		onToggleTurn: (name) => deps$21.toggleThinkingExpanded(name)
-	});
-	transcriptApp.mount(host);
+		onOpenLightbox: (url, filename) => deps$16.openLightbox(url, filename),
+		onStopAgent: (name) => deps$16.interruptAgent(name),
+		onToggleTurn: (name) => deps$16.toggleThinkingExpanded(name)
+	}));
 }
 function wireTranscriptPanel() {
 	mountTranscript();
@@ -2618,11 +2263,7 @@ var momentumUntil = 0;
 /**
 * Clear the user-scroll markers so an imminent PROGRAMMATIC scroll is not
 * mistaken for a user-driven one by a stale wheel/touch from moments earlier.
-*
-* Exported because legacy.js's send path needs the same thing before its
-* scrollToBottom(). That is one named operation crossing the boundary rather
-* than two setters exposing the markers themselves — which is what the 4.1i
-* bridge accessors did, and what this slice removes.
+* Also used by composer.ts's send path.
 */
 function clearUserScrollMarkers() {
 	lastUserScrollAt = 0;
@@ -2687,11 +2328,6 @@ function applyA2aClamp(bubble, container) {
 }
 //#endregion
 //#region src/features/thinking.ts
-var deps$20 = {};
-/** Wire the transcript helpers this module calls. Call once, before any turn. */
-function provideThinkingDeps(provided) {
-	Object.assign(deps$20, provided);
-}
 var THINKING_DETAIL_MAX = 64;
 var REASONING_LOG_MAX = 500;
 /**
@@ -2771,9 +2407,8 @@ function pushReasoning(name, text, full) {
 	}, REASONING_FEED_TTL));
 	if (isNearBottom() || isForcedScroll()) scrollToBottom();
 }
-/** Per-line fade timers, keyed by feed-line key. These hung off the DOM node as
-*  `_fadeTimer`; a row has nowhere to hang them, and they must still be
-*  cancellable when the buffer trims a line early. */
+/** Per-line fade timers, keyed by feed-line key — cancellable when the buffer
+*  trims a line early. */
 var feedTimers = /* @__PURE__ */ new Map();
 /** Drop a finished turn — its bubble and elapsed timer go with it. */
 function removeTurn(name) {
@@ -2820,19 +2455,9 @@ var ToolSecretList_default = /* @__PURE__ */ defineComponent({
 	props: { onRemove: { type: Function } },
 	setup(__props) {
 		/**
-		* Workspace-scoped tool secrets — fifty-seventh island.
-		*
-		* Mounted into <ul id="secrets-list">, exclusively owned by this module.
-		*
-		* Every row is 'shared' — this list IS the workspace scope, so unlike
-		* AgentSecretList there is no personal/shared distinction to draw and no owner
-		* to name. Two lists, two islands, because they answer different questions.
-		*
-		* loadToolSecretList takes a listSel parameter, but the only selector that ever
-		* reaches it is this one: removeToolSecret routes an agent-scoped delete to
-		* renderAgentSecrets instead, which repaints the other island. Checked rather
-		* than assumed — a second writer into a Vue-owned list is exactly the bug this
-		* phase keeps finding.
+		* Workspace-scoped tool secrets, mounted into <ul id="secrets-list">. Every row is
+		* 'shared' — this list IS the workspace scope. Agent-scoped deletes repaint
+		* AgentSecretList instead, so this list has one writer.
 		*/
 		const props = __props;
 		return (_ctx, _cache) => {
@@ -2885,6 +2510,21 @@ function userRoleSummary(u) {
 	if (m) parts.push(`member · ${m} group${m > 1 ? "s" : ""}`);
 	return parts.join(" · ") || "no roles";
 }
+//#endregion
+//#region src/features/mcp-list-state.ts
+var mcpServers = ref([]);
+var selectedMcpId = ref(null);
+/** MCP servers attached to the currently open agent. */
+var agentMcpServers = ref([]);
+/** Every registered MCP server. */
+var allMcpServers = ref([]);
+/** Last successful probe result (the server response). */
+var lastMcpProbe = ref(null);
+var lastMcpProbeToken = ref("");
+/** Re-entry guard while an add is in flight. */
+var mcpAddInProgress = ref(false);
+/** Agent the add flow should attach to on success, or null for unattached. */
+var mcpAgentForAdd = ref(null);
 //#endregion
 //#region src/features/perms-list-state.ts
 /** /api/users, verbatim. */
@@ -2944,16 +2584,9 @@ var RoomWiredAgents_default = /* @__PURE__ */ defineComponent({
 	],
 	setup(__props, { emit: __emit }) {
 		/**
-		* Agents wired into the open room, with the prime (★) toggle and remove.
-		*
-		* Mounted into <ul id="room-wired-agents">. The reply-mode info button lives on
-		* the label line OUTSIDE this list, so it stays in renderRoomWiredAgents() —
-		* an island owns one container, not everything a render function happened to
-		* touch.
-		*
-		* lucide() returns an SVG string, so the two icon buttons bind it with v-html
-		* exactly as the imperative version assigned innerHTML. The star has two
-		* variants, so it is computed per row rather than hoisted.
+		* Agents wired into the open room, with the prime (★) toggle and remove; mounted into
+		* <ul id="room-wired-agents">. The reply-mode info button sits outside this list and stays
+		* in renderRoomWiredAgents(). Icons are lucide() SVG strings bound with v-html.
 		*/
 		const emit = __emit;
 		const xIcon = lucide("x");
@@ -3018,20 +2651,9 @@ var AgentList_default = /* @__PURE__ */ defineComponent({
 	emits: ["pick"],
 	setup(__props, { emit: __emit }) {
 		/**
-		* The agent list — the first Vue island.
-		*
-		* Mounted into <ul id="agent-list">, which no other module writes to. That
-		* exclusivity is why this panel went first: an island and an imperative
-		* renderer sharing a container would fight, and the whole of phase 4.1 was
-		* about producing containers that one owner controls.
-		*
-		* It reads state.allAgents directly — that object became shallowReactive in
-		* phase 4.0, so pushing a new array into it re-renders this list with no
-		* explicit call. The two values that are NOT reactive (the A–Z toggle and the
-		* selected agent) are legacy module state; renderAgents() syncs them into refs
-		* on each call, which is exactly when the imperative version re-rendered. That
-		* keeps renderAgents()'s contract identical for its eight call sites while the
-		* implementation stops touching the DOM.
+		* The agent list, mounted into <ul id="agent-list">. Reads state.allAgents
+		* (shallowReactive) directly, so a new array re-renders it; filter, A–Z and selection
+		* come from agent-list-state.
 		*/
 		const emit = __emit;
 		const byName = (a, b) => String(a.name ?? "").localeCompare(String(b.name ?? ""));
@@ -3075,30 +2697,51 @@ var addAgentCandidates = ref([]);
 /** Non-archived agents offered by the room-create form. */
 var createAgentCandidates = ref([]);
 /**
-* Whether ANY agent exists, archived or not.
-*
-* Separate from createAgentCandidates because the imperative version keyed its
-* empty note off state.allAgents.length, not off the filtered list — so with
-* every agent archived it rendered an empty <ul> and no note. That is arguably
-* a bug, but harmonising it is a behaviour change and this phase does not make
-* those; the flag reproduces it exactly.
+* Whether ANY agent exists, archived or not. The empty note keys off this, not
+* the filtered list, so with every agent archived the list is empty and has no note.
 */
 var createAgentAnyExist = ref(false);
 var agentSecretRows = ref([]);
 /** One line: what the viewer's own turns send, per host. */
 var agentSecretEffective = ref("");
 /**
-* Deploy keys for the open agent, already shaped.
-*
-* `meta` is composed by the renderer because it was one text node in the
-* imperative row; `key` is the untouched API object, which is what the delete
-* call takes.
+* Deploy keys for the open agent, already shaped. `key` is the untouched API
+* object, which is what the delete call takes.
 */
 var agentKeyRows = ref([]);
 /** Env var NAMES for the open agent — values are never sent to the client. */
 var agentEnvNames = ref([]);
 /** Names whose delete is in flight. */
 var agentEnvDeleting = ref(/* @__PURE__ */ new Set());
+//#endregion
+//#region src/features/agent-detail-state.ts
+/** Rooms this agent is assigned to, as /api/agents/:id/rooms returns them. */
+var wiredRooms = ref([]);
+/** Whether the caller may unassign rooms — hides the per-row remove button. */
+var canManageRooms = ref(false);
+/** One row of /api/agents/:id/sessions. */
+var sessions = ref([]);
+/**
+* The session list's non-row states. One field the template switches on, so a
+* stale "Loading…" row cannot survive a failed fetch; empty is `ready` with no rows.
+*/
+var sessionsPhase = ref("loading");
+/** Message for the error phase — already plain text, escaped by the binding. */
+var sessionsError = ref("");
+/** Snapshot of the detail form when it opened — Save stays disabled until an
+*  edit actually diverges from this. */
+var agentDetailBaseline = ref(null);
+/** Rooms the open agent is wired to. */
+var agentDetailRooms = ref([]);
+/** Agents wired to the open ROOM — the room detail's mirror of the above. */
+var roomDetailWiredAgents = ref([]);
+/** Include archived agents in the list? Pickers and the map never do. */
+var showArchivedAgents = ref(false);
+/** How many archived agents exist — drives the toggle's count + visibility. */
+var archivedAgentsCount = ref(0);
+/** setInterval handle ticking the thinking bubbles' elapsed labels, else null.
+*  An interval here, unlike the installers' re-arming timeouts. */
+var turnElapsedTimer = ref(null);
 //#endregion
 //#region src/features/AgentWiredRooms.vue?vue&type=script&setup=true&lang.ts
 var _hoisted_1$60 = {
@@ -3131,18 +2774,9 @@ var AgentWiredRooms_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The rooms an agent is wired to — fourteenth island.
-		*
-		* Mounted into <ul id="agent-wired-rooms">, exclusively owned by this module.
-		*
-		* #agent-rooms-count and #agent-add-room-toggle are NOT part of this island.
-		* They live outside the mount point and agents.ts still sets them imperatively,
-		* which is the rule the islands have followed throughout: a component owns the
-		* subtree it is mounted on and nothing else.
-		*
-		* The remove button's icon goes through v-html because lucide() returns SVG
-		* markup, exactly as `removeBtn.innerHTML = lucide('x')` did. It is a constant
-		* from our own icon set, not user data.
+		* The rooms an agent is wired to, mounted into <ul id="agent-wired-rooms">. The remove
+		* icon goes through v-html because lucide() returns SVG markup — a constant from our own
+		* icon set, never user data.
 		*/
 		const props = __props;
 		const XICON = lucide("x");
@@ -3206,11 +2840,7 @@ var _hoisted_7$17 = ["onClick"];
 var LOADING$3 = "Loading…";
 var EMPTY$16 = "No active sessions.";
 var RESET_TITLE = "Reset this session (inject /clear — drops context, next turn starts fresh)";
-/**
-* Bound, not written as template text. `btn.textContent = 'Reset'` produced
-* exactly "Reset"; template text carries the surrounding newlines. This has
-* caught three islands already.
-*/
+/** Bound, not template text: template text carries the surrounding newlines. */
 var RESET_LABEL = "Reset";
 //#endregion
 //#region src/features/AgentSessions.vue
@@ -3219,21 +2849,9 @@ var AgentSessions_default = /* @__PURE__ */ defineComponent({
 	props: { onReset: { type: Function } },
 	setup(__props) {
 		/**
-		* An agent's live sessions — fifteenth island.
-		*
-		* Mounted into <ul id="agent-sessions-list">, exclusively owned by this module.
-		*
-		* #agent-sessions-count is outside the mount point and stays imperative.
-		*
-		* The three non-row states — loading, fetch failure, empty — were three
-		* different innerHTML writes. They are one phase ref here, which is what stops
-		* the "Loading…" row from surviving a failure: the imperative version only
-		* cleared it because every exit path happened to overwrite the same element.
-		*
-		* The sub-line is bound as ONE string rather than "{{ status }} · {{ when }}".
-		* Both serialise the same today, but the imperative version put a single text
-		* node there and the interpolated form puts three; keeping it one binding means
-		* the DOM diff is comparing like for like.
+		* An agent's live sessions, mounted into <ul id="agent-sessions-list">. Loading, error
+		* and empty are one phase ref, so "Loading…" cannot survive a failure. The sub-line is
+		* bound as ONE string, one text node.
 		*/
 		const props = __props;
 		const rows = computed(() => sessions.value.map((s) => ({
@@ -3277,20 +2895,9 @@ var AddAgentPicker_default = /* @__PURE__ */ defineComponent({
 	props: { onToggle: { type: Function } },
 	setup(__props) {
 		/**
-		* The "wire an existing agent" checklist — sixteenth island.
-		*
-		* Mounted into <ul id="room-add-agent-list">, exclusively owned by this module.
-		*
-		* The checkboxes stay REAL inputs whose checked state lives in the DOM, exactly
-		* as before: updateAddAgentSubmitLabel() and the submit handler both read them
-		* with querySelectorAll('input:checked'). Modelling the selection as a ref
-		* would mean changing those two readers as well, and the failure mode if one
-		* were missed is silent — a submit that wires nothing. Vue only re-renders this
-		* list when the candidate refs change, which is the same moment the imperative
-		* version rebuilt it and dropped the ticks.
-		*
-		* #room-add-agent-existing-submit is outside the mount point and stays
-		* imperative.
+		* The "wire an existing agent" checklist, mounted into <ul id="room-add-agent-list">. The
+		* checked state lives in the DOM: updateAddAgentSubmitLabel() and the submit handler read
+		* input:checked, and a missed reader would fail silently (a submit that wires nothing).
 		*/
 		const props = __props;
 		const rows = computed(() => [...addAgentCandidates.value].sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)).map((a) => ({
@@ -3332,22 +2939,11 @@ var RoomCreateAgentChecklist_default = /* @__PURE__ */ defineComponent({
 	__name: "RoomCreateAgentChecklist",
 	setup(__props) {
 		/**
-		* The room-create form's "which existing agents" checklist — seventeenth
-		* island.
-		*
-		* Mounted into <ul id="room-create-existing-agents">, exclusively owned by this
-		* module.
-		*
-		* Same contract as AddAgentPicker: the ticks live in the DOM because the submit
-		* handler reads them with querySelectorAll. These rows carry no change
-		* listener at all — the imperative version attached none either, so this island
-		* adds no listeners to the boot set.
-		*
-		* Two things copied rather than harmonised, both because changing them would be
-		* a behaviour change this phase does not make:
-		*   - the label is agent.name with a '' fallback, not `name || id`
-		*   - the empty note keys off whether ANY agent exists, not off the filtered
-		*     list, so every-agent-archived renders an empty <ul> with no note
+		* The room-create form's "which existing agents" checklist, mounted into
+		* <ul id="room-create-existing-agents">. The ticks live in the DOM because the submit
+		* handler reads them there (as in AddAgentPicker); rows carry no change listener. The
+		* label is agent.name with a '' fallback, and the empty note keys off whether ANY agent
+		* exists, so an all-archived list renders an empty <ul> with no note.
 		*/
 		const rows = computed(() => [...createAgentCandidates.value].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "")).map((a) => ({
 			id: a.id,
@@ -3386,7 +2982,7 @@ var _hoisted_7$16 = {
 	key: 1,
 	class: "skill-badge secret-scope skill-badge-user"
 };
-var _hoisted_8$13 = {
+var _hoisted_8$12 = {
 	key: 0,
 	class: "skill-desc"
 };
@@ -3401,15 +2997,10 @@ var AgentSecretList_default = /* @__PURE__ */ defineComponent({
 	props: { onRemove: { type: Function } },
 	setup(__props) {
 		/**
-		* An agent's tool secrets — eighteenth island.
-		*
-		* Mounted into <ul id="agent-secrets-list">, exclusively owned by this module.
-		*
-		* Grouped by REACH, nearest scope first, because "whose is this?" was the
-		* question the flat list could not answer: yours, everyone on this agent's, the
-		* all-agents ones, and other people's own — which are listed so an admin can
-		* see who holds a key here, but carry no Remove: only their owner may touch
-		* them, and a button the server refuses is worse than none.
+		* An agent's tool secrets, mounted into <ul id="agent-secrets-list">, grouped by REACH,
+		* nearest first: yours, this agent's shared, all-agents, then other people's own. Those
+		* last are listed so an admin can see who holds a key, but carry no Remove — only their
+		* owner may touch them, and a button the server refuses is worse than none.
 		*/
 		const props = __props;
 		const SECTIONS = [
@@ -3443,7 +3034,7 @@ var AgentSecretList_default = /* @__PURE__ */ defineComponent({
 						return openBlock(), createElementBlock("li", {
 							key: r.key,
 							class: "skill-source-row secret-row"
-						}, [createElementVNode("div", _hoisted_4$36, [createElementVNode("div", _hoisted_5$29, [createElementVNode("span", null, toDisplayString(r.host), 1), r.reach === "other" ? (openBlock(), createElementBlock("span", _hoisted_6$24, toDisplayString(r.ownerLabel), 1)) : r.reach === "mine" ? (openBlock(), createElementBlock("span", _hoisted_7$16, toDisplayString(MINE))) : createCommentVNode("", true)]), r.note ? (openBlock(), createElementBlock("span", _hoisted_8$13, toDisplayString(r.note), 1)) : createCommentVNode("", true)]), r.canRemove ? (openBlock(), createElementBlock("button", {
+						}, [createElementVNode("div", _hoisted_4$36, [createElementVNode("div", _hoisted_5$29, [createElementVNode("span", null, toDisplayString(r.host), 1), r.reach === "other" ? (openBlock(), createElementBlock("span", _hoisted_6$24, toDisplayString(r.ownerLabel), 1)) : r.reach === "mine" ? (openBlock(), createElementBlock("span", _hoisted_7$16, toDisplayString(MINE))) : createCommentVNode("", true)]), r.note ? (openBlock(), createElementBlock("span", _hoisted_8$12, toDisplayString(r.note), 1)) : createCommentVNode("", true)]), r.canRemove ? (openBlock(), createElementBlock("button", {
 							key: 0,
 							class: "btn btn-danger",
 							type: "button",
@@ -3466,17 +3057,9 @@ var AgentEnvList_default = /* @__PURE__ */ defineComponent({
 	props: { onRemove: { type: Function } },
 	setup(__props) {
 		/**
-		* An agent's environment variables — fiftieth island.
-		*
-		* Mounted into <div id="agent-env-list">, exclusively owned by this module.
-		* #agent-env-count and the save control are outside it and stay imperative.
-		*
-		* NAMES only. The server never sends values, and the row shows `$NAME` — the
-		* point of the panel is which variables exist, not what they hold.
-		*
-		* The delete button disables itself while its request is in flight and
-		* re-enables on failure, exactly as before; on success the list re-renders and
-		* the row is gone. Keyed by name because that is what the endpoint takes.
+		* An agent's environment variables, mounted into <div id="agent-env-list">. NAMES only:
+		* the server never sends values. Delete disables its button while in flight and re-enables
+		* on failure; keyed by name because that is what the endpoint takes.
 		*/
 		const props = __props;
 		return (_ctx, _cache) => {
@@ -3514,26 +3097,10 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* An agent's SSH deploy keys — sixtieth island.
-		*
-		* Mounted into <ul id="agent-keys-list">, exclusively owned by this module.
-		* #agent-keys-count sits outside the mount point and keeps its imperative
-		* write: it SETS text on static markup rather than building anything.
-		*
-		* The row builder lived in legacy.js and was reached through the deps bridge —
-		* agents.ts called deps.deployKeyRowEl() per key. That indirection is what the
-		* island removes; the shaping now happens in renderAgentKeys and the markup
-		* lives here.
-		*
-		* The private half of the keypair never reaches the client, so "Copy public
-		* key" is the whole workflow — it is the half you paste into authorized_keys
-		* or a git host — which is why it takes the prominent button and Remove takes
-		* the danger one.
-		*
-		* The meta line carries the ready-to-paste ssh command when a login target is
-		* set and falls back to the path plus a note when it is not. It is composed in
-		* renderAgentKeys rather than here: it is one string in the DOM, and splitting
-		* it across template nodes would put text nodes where the original had one.
+		* An agent's SSH deploy keys, mounted into <ul id="agent-keys-list">; rows are shaped in
+		* renderAgentKeys, including the one-string meta line (ssh command, or path plus note).
+		* The private key never reaches the client, so "Copy public key" is the whole workflow and
+		* takes the prominent button.
 		*/
 		const props = __props;
 		return (_ctx, _cache) => {
@@ -3577,32 +3144,12 @@ var ProbeResults_default = /* @__PURE__ */ defineComponent({
 	__name: "ProbeResults",
 	setup(__props) {
 		/**
-		* The endpoint probe's model checklist — fifty-third island.
-		*
-		* Mounted into <ul id="model-probe-list">, exclusively owned by this module.
-		* The summary line above it (#model-probe-results .model-probe-summary) and the
-		* panel's hidden flag stay imperative — both are outside the list.
-		*
-		* The checkboxes and name inputs keep their state in the DOM: the submit path
-		* reads them with querySelectorAll and pulls the display name off each input.
-		* Same contract as the agent pickers, and the same reason — modelling the
-		* selection as state would mean changing a reader elsewhere, and the failure is
-		* silent (a probe that registers nothing you ticked).
-		*
-		* One accepted difference: Vue emits a `checked` ATTRIBUTE where the imperative
-		* version set only the property. Same call as 4.2c and 4.3b, on the same
-		* evidence — the submit path reads the property, and the property matches.
-		*
-		* A single advertised model is pre-checked, because the one-model case is the
-		* common one and unticking is cheaper than hunting for the box.
+		* The endpoint probe's model checklist, mounted into <ul id="model-probe-list">.
+		* Checkboxes and name inputs keep their state in the DOM because the submit path reads
+		* them there. A single advertised model is pre-checked — the common case.
 		*/
 		const FLEX = { flex: "1" };
-		/**
-		* The default display name is ASSIGNED as a property, not bound. `value` on an
-		* input renders as an ATTRIBUTE under Vue, and the imperative version set only
-		* the property — same call made for the skill editor's textarea in 4.3a. The
-		* field is uncontrolled either way: nothing re-reads it after the probe.
-		*/
+		/** Assigned as a property, not bound (a bound `value` renders an attribute); uncontrolled. */
 		function setName(el, name) {
 			if (el && el.value === "") el.value = name;
 		}
@@ -3652,18 +3199,10 @@ var ModelPicker_default = /* @__PURE__ */ defineComponent({
 	props: { onPick: { type: Function } },
 	setup(__props) {
 		/**
-		* The agent's model picker — fifty-fourth island.
-		*
-		* Mounted into <ul id="model-picker-list">, exclusively owned by this module.
-		*
-		* The Default row is pinned at the top and is NEVER filtered out, even with a
-		* search query — the user may be searching precisely to confirm that nothing
-		* matches and the fallback is what they want. It is shaped upstream and enters
-		* the list like any other row.
-		*
-		* The empty note can appear ALONGSIDE the Default row: "no matches" is about
-		* the registered models, not about the list being empty. That is why it renders
-		* between Default and the matches rather than replacing everything.
+		* The agent's model picker, mounted into <ul id="model-picker-list">. The Default row is
+		* pinned at the top and NEVER filtered out — the user may be searching to confirm that
+		* nothing matches. The empty note renders between Default and the matches, because "no
+		* matches" is about the registered models.
 		*/
 		const props = __props;
 		function rowClass(r) {
@@ -3721,20 +3260,10 @@ var Reachability_default = /* @__PURE__ */ defineComponent({
 	props: { onCopy: { type: Function } },
 	setup(__props) {
 		/**
-		* The model endpoint reachability verdict — fifty-fifth island.
-		*
-		* Mounted into #model-reachability-panel, which legacy CREATES once and inserts
-		* after #model-live-facts. The panel itself and its hidden flag stay imperative:
-		* whether to probe at all is a decision about the model (only endpoints an agent
-		* dials directly are meaningful — hosted Anthropic models have none).
-		*
-		* renderReachabilityOutcome is absorbed. Three phases in one element, which the
-		* imperative version expressed by clearing and repainting `out`: the wait line,
-		* a transport/HTTP error, and the verdict.
-		*
-		* The fix block is a copy-paste command, so the copy button matters more than it
-		* looks — it is how the operator applies the remedy. 'Copied' for 1500ms, and a
-		* toast if the clipboard write is refused.
+		* The model endpoint reachability verdict, mounted into #model-reachability-panel, which
+		* models.ts creates after #model-live-facts and shows only for endpoints an agent dials
+		* directly. Three phases: wait line, transport/HTTP error, verdict. The fix block is a
+		* copy-paste command, so Copy is how the operator applies the remedy.
 		*/
 		const props = __props;
 		const copyLabel = ref(COPY$1);
@@ -3794,15 +3323,8 @@ var ModelList_default = /* @__PURE__ */ defineComponent({
 	emits: ["pick", "remove"],
 	setup(__props, { emit: __emit }) {
 		/**
-		* The model list — fourth island, and the first with a nested interactive
-		* control (the − remove button) inside each row.
-		*
-		* Mounted into <ul id="model-list">, exclusively owned by this module.
-		*
-		* The remove button disables itself through the event target, exactly as the
-		* imperative version did, rather than through per-row reactive state: the
-		* disabled flag is transient UI feedback for one in-flight request, not
-		* application state, and routing it through a ref would outlive the request.
+		* The model list, mounted into <ul id="model-list">. The − remove button disables itself
+		* through the event target, not per-row state: it is feedback for one in-flight request.
 		*/
 		const emit = __emit;
 		function onRemove(ev, id) {
@@ -3858,15 +3380,9 @@ var FilePreview_default = /* @__PURE__ */ defineComponent({
 	emits: ["remove"],
 	setup(__props, { emit: __emit }) {
 		/**
-		* Staged-file thumbnails above the composer.
-		*
-		* Mounted into <div id="file-preview">. Rows arrive with thumbUrl already
-		* resolved — files.ts owns the pendingThumbUrls map and revokes those URLs on
-		* clear, so minting them here would leak one per re-render.
-		*
-		* Non-image rows show the paperclip icon and the remove button shows the x
-		* icon; both are lucide() SVG strings, bound with v-html as the imperative
-		* version assigned them into an innerHTML blob.
+		* Staged-file thumbnails above the composer, mounted into <div id="file-preview">. Rows
+		* arrive with thumbUrl resolved: files.ts owns pendingThumbUrls and revokes them on clear,
+		* so minting URLs here would leak one per re-render. Icons are lucide() SVG strings.
 		*/
 		const emit = __emit;
 		const clipIcon = lucide("paperclip");
@@ -3922,17 +3438,10 @@ var AttachPicker_default = /* @__PURE__ */ defineComponent({
 	emits: ["toggle"],
 	setup(__props, { emit: __emit }) {
 		/**
-		* The attach picker's row list — used by several panels through a config
-		* object (items / searchText / name / meta / isAttached / onToggle).
-		*
-		* Mounted into <ul id="attach-picker-list">. The rows arrive PRE-SHAPED:
-		* resolving the config belongs to the caller that supplied it, not to a
-		* component that would then need to know every panel's item type.
-		*
-		* The imperative version disabled a row mid-flight with
-		* `li.style.pointerEvents = 'none'` and then re-rendered itself. Here the row
-		* emits and the caller re-syncs the refs — a re-render is a data change, not a
-		* function call.
+		* The attach picker's row list, used by several panels through a config object (items /
+		* searchText / name / meta / isAttached / onToggle); mounted into <ul id="attach-picker-list">.
+		* Rows arrive PRE-SHAPED by the caller, so this component knows no panel's item type; a
+		* toggle emits and the caller re-syncs the refs.
 		*/
 		const emit = __emit;
 		function act(ev, r) {
@@ -3978,22 +3487,10 @@ var SearchResults_default = /* @__PURE__ */ defineComponent({
 	__name: "SearchResults",
 	setup(__props) {
 		/**
-		* Room-search results.
-		*
-		* Mounted into <ul id="search-results">. The container keeps its DELEGATED
-		* click listener — Vue replaces the container's children, not the container, so
-		* a listener bound to the <ul> itself survives the mount and keeps working.
-		*
-		* The snippet line is a single v-html on the snip DIV, not a sender span plus a
-		* v-html span beside it. The wrapper span that second form adds is a real
-		* structural difference from the imperative markup — caught by the DOM diff —
-		* and there is no way to v-html without an element, so the whole inner HTML is
-		* shaped in rooms.ts instead.
-		*
-		* That is also where it belongs: FTS5 returns «…» markers around matches, and
-		* the imperative version escaped the text FIRST and only then replaced the
-		* markers with <mark>. That order is the XSS guarantee, so it stays next to the
-		* escaping it depends on, and this component receives HTML it may not build.
+		* Room-search results, mounted into <ul id="search-results">; the <ul>'s delegated
+		* click listener survives the mount. The snippet is ONE v-html on the snip div, shaped in
+		* rooms.ts: FTS5's «…» markers become <mark> only AFTER the text is escaped. That order is
+		* the XSS guarantee, so it stays next to the escaping; this component never builds HTML.
 		*/
 		return (_ctx, _cache) => {
 			return unref(searchRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$47, toDisplayString(EMPTY$11))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(searchRows), (r) => {
@@ -4016,36 +3513,20 @@ var SearchResults_default = /* @__PURE__ */ defineComponent({
 /** Provider the panel is showing. Defaults to 'claude' — the workspace's
 *  primary — not to empty; an empty default renders a provider-less panel. */
 var userCredsProvider = ref("claude");
-/**
-* The panel's rendered shape, or null when there is nothing to offer.
-*
-* Typed from the two places that assign it, not guessed: an object carrying
-* `offered`, `connected`, `provider`, `oauthAllowed`, `apiOffered` and the two
-* label words. My first guess was a state-machine string and the compiler said
-* otherwise — the fourth interface in this project to be corrected by the code
-* it describes.
-*/
+/** The panel's rendered shape (`offered`, `connected`, `provider`, `oauthAllowed`,
+*  `apiOffered` and the two label words), or null when there is nothing to offer. */
 var userCredsState = ref(null);
 /** Whether THIS member has a credential connected. A flag, not a list. */
 var userCredsConnected = ref(false);
-/**
-* The in-flight OAuth attempt. sessionId correlates the popup's callback with
-* the dialog that opened it; target names the provider; returnFocus is the
-* element to restore focus to when the popup closes, which is why it is a live
-* element reference and not an id.
-*/
+/** The in-flight OAuth attempt: correlates the popup's callback with the dialog. */
 var userCredsOauthSessionId = ref(null);
 /** 'member' or 'workspace' — whose credential the mint is for. Defaults to
 *  'member', which is the flow the panel opens in. */
 var userCredsOauthTarget = ref("member");
+/** The element to refocus when the dialog closes — a live reference, not an id. */
 var userCredsOauthReturnFocus = ref(null);
-/**
-* Provider vocabulary for the panel and the mint dialog.
-*
-* Lives here rather than in members.ts because modals.ts needs it too, and
-* modals→members would close a cycle (members already imports modals). A leaf
-* module both can import is what let the bridge entry go.
-*/
+/** Provider vocabulary for the panel and the mint dialog. Here, not in
+*  members.ts: modals.ts needs it too, and modals→members would close a cycle. */
 function userCredsWords(provider) {
 	if (provider === "grok") return {
 		name: "Grok",
@@ -4087,16 +3568,7 @@ var MembersList_default = /* @__PURE__ */ defineComponent({
 	__name: "MembersList",
 	setup(__props) {
 		/**
-		* The room members list — third island.
-		*
-		* Mounted into <ul id="members-list">, exclusively owned by this module.
-		*
-		* Vue rendering rules established by the first two islands and applied here:
-		*   - text that must match textContent exactly is BOUND, never written as
-		*     template text (template text carries the surrounding newlines)
-		*   - no comments in the template; Vue renders them as DOM comment nodes
-		*   - v-bind an object for conditional attributes; :class emits class=""
-		* This island needs none of the class exceptions — every class here is static.
+		* The room members list, mounted into <ul id="members-list">.
 		*/
 		const sorted = computed(() => {
 			const all = [...members.value].sort((a, b) => {
@@ -4106,7 +3578,7 @@ var MembersList_default = /* @__PURE__ */ defineComponent({
 			const f = membersFilter.value;
 			return f ? all.filter((m) => `${m.identity} ${m.handle || ""}`.toLowerCase().includes(f)) : all;
 		});
-		/** Matches the imperative label exactly, including the " (you)" suffix. */
+		/** The member's identity, with a " (you)" suffix for the viewer. */
 		const label = (m) => m.identity === state.myIdentity ? `${m.identity} (you)` : m.identity;
 		return (_ctx, _cache) => {
 			return sorted.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$46, toDisplayString(EMPTY$10))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(sorted.value, (m) => {
@@ -4138,7 +3610,7 @@ var _hoisted_6$18 = {
 	class: "perms-you-tag"
 };
 var _hoisted_7$14 = { class: "perms-user-id-sub" };
-var _hoisted_8$12 = { class: "perms-user-summary" };
+var _hoisted_8$11 = { class: "perms-user-summary" };
 var NO_USERS = "No users yet — anyone who authenticates will appear here.";
 var NO_MATCH$2 = "No users match.";
 //#endregion
@@ -4148,24 +3620,9 @@ var PermsUserList_default = /* @__PURE__ */ defineComponent({
 	props: { onSelect: { type: Function } },
 	setup(__props) {
 		/**
-		* The permissions user list — eleventh island.
-		*
-		* Mounted into <ul id="perms-user-list">, exclusively owned by this module.
-		*
-		* Sorting and filtering stay HERE rather than being shaped at the mount site
-		* like ModelList and SearchResults. Those two shape upstream because their row
-		* data needs something the component must not have (a module cycle, an escaping
-		* order). This one needs neither: the inputs are the raw user records plus two
-		* scalars, and the derivations are pure. Keeping them in a computed means the
-		* A–Z toggle and the search box re-sort by touching a ref, instead of by
-		* calling a render function that rebuilds the DOM.
-		*
-		* Rendering rules from the earlier islands, all load-bearing here:
-		*   - text is BOUND, never written as template text (template text carries the
-		*     surrounding newlines, which textContent did not have)
-		*   - no comments in the template; Vue renders them as DOM comment nodes
-		*   - v-bind an object for a conditional class; :class="{active:false}" emits
-		*     class="" where the imperative version had no class attribute at all
+		* The permissions user list, mounted into <ul id="perms-user-list">. Sorting and
+		* filtering are computeds over the raw records plus two scalars, so the A–Z toggle and
+		* the search box re-sort by touching a ref.
 		*/
 		const props = __props;
 		const byName = (a, b) => userDisplayName(a).localeCompare(userDisplayName(b));
@@ -4188,13 +3645,7 @@ var PermsUserList_default = /* @__PURE__ */ defineComponent({
 		function activate(u) {
 			props.onSelect(u.id);
 		}
-		/**
-		* One keydown handler, not @keydown.enter plus @keydown.space. Two modifier
-		* bindings on the same event compile to an array the invoker walks, which is
-		* still a single addEventListener — but it is a detail of the compiler, and the
-		* listener-set guard compares (id, type) pairs. Writing the original's single
-		* handler keeps the comparison honest instead of relying on that.
-		*/
+		/** One keydown handler, not .enter plus .space modifiers: one listener per (id, type). */
 		function onKey(e, u) {
 			if (e.key === "Enter" || e.key === " ") {
 				e.preventDefault();
@@ -4212,7 +3663,7 @@ var PermsUserList_default = /* @__PURE__ */ defineComponent({
 				}), [
 					createElementVNode("div", _hoisted_4$27, [createElementVNode("span", _hoisted_5$22, toDisplayString(unref(userDisplayName)(u)), 1), u.id === unref(permsMyUserId) ? (openBlock(), createElementBlock("span", _hoisted_6$18, "YOU")) : createCommentVNode("", true)]),
 					createElementVNode("div", _hoisted_7$14, toDisplayString(u.id), 1),
-					createElementVNode("div", _hoisted_8$12, toDisplayString(unref(userRoleSummary)(u)), 1)
+					createElementVNode("div", _hoisted_8$11, toDisplayString(unref(userRoleSummary)(u)), 1)
 				], 16, _hoisted_3$34);
 			}), 128));
 		};
@@ -4220,10 +3671,10 @@ var PermsUserList_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/members.ts
-var deps$19 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
+var deps$15 = {};
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideMembersDeps(provided) {
-	Object.assign(deps$19, provided);
+	Object.assign(deps$15, provided);
 }
 function rememberServerAuthHint(methods) {
 	if (!methods) return;
@@ -4243,12 +3694,7 @@ async function updateUserCredsBanner(roomId) {
 		renderHandleChip();
 	};
 	try {
-		const r = await authFetch(`/api/user-credentials/credential?roomId=${encodeURIComponent(roomId)}`);
-		if (!r.ok) {
-			hideAll();
-			return;
-		}
-		const { connected, mode, oauthAllowed, apiKeyAllowed = true, provider = "claude" } = await r.json();
+		const { connected, mode, oauthAllowed, apiKeyAllowed = true, provider = "claude" } = await apiJson(`/api/user-credentials/credential?roomId=${encodeURIComponent(roomId)}`);
 		userCredsProvider.value = provider;
 		const { name, subWord, keyWord, keyPlaceholder } = userCredsWords(provider);
 		const apiOffered = mode !== "disabled" && apiKeyAllowed;
@@ -4306,23 +3752,17 @@ async function disconnectUserCreds() {
 }
 function closeUserCredsOauthModal() {
 	if (userCredsOauthSessionId.value) {
-		authFetch(userCredsOauthTarget.value === "workspace-codex" ? "/api/workspace-credential/codex/cancel" : userCredsOauthTarget.value === "workspace" ? "/api/workspace-credential/oauth/cancel" : userCredsProvider.value === "codex" ? "/api/user-credentials/codex/cancel" : "/api/user-credentials/oauth/cancel", {
+		apiJson(userCredsOauthTarget.value === "workspace-codex" ? "/api/workspace-credential/codex/cancel" : userCredsOauthTarget.value === "workspace" ? "/api/workspace-credential/oauth/cancel" : userCredsProvider.value === "codex" ? "/api/user-credentials/codex/cancel" : "/api/user-credentials/oauth/cancel", {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify({ sessionId: userCredsOauthSessionId.value })
+			headers: { "X-Webchat-CSRF": "1" },
+			body: { sessionId: userCredsOauthSessionId.value }
 		}).catch(() => {});
 		userCredsOauthSessionId.value = null;
 	}
 	cancelGrokMint();
-	if (userCredsProvider.value === "grok") authFetch("/api/user-credentials/grok/cancel", {
+	if (userCredsProvider.value === "grok") apiJson("/api/user-credentials/grok/cancel", {
 		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-			"X-Webchat-CSRF": "1"
-		}
+		headers: { "X-Webchat-CSRF": "1" }
 	}).catch(() => {});
 	const modal = $("#user-creds-oauth-modal");
 	if (modal) modal.hidden = true;
@@ -4340,11 +3780,7 @@ function renderMembers(list) {
 var membersListApp = null;
 /** Mount the MembersList island into <ul id="members-list">, once. */
 function mountMembersList() {
-	if (membersListApp) return;
-	const host = $("#members-list");
-	if (!host) return;
-	membersListApp = createApp(MembersList_default);
-	membersListApp.mount(host);
+	membersListApp ??= mountIsland("#members-list", () => createApp(MembersList_default));
 }
 function paintMembersList() {
 	mountMembersList();
@@ -4359,19 +3795,11 @@ function toggleMembersPanel() {
 }
 var permsUserListApp = null;
 function mountPermsUserList() {
-	if (permsUserListApp) return;
-	const host = $("#perms-user-list");
-	if (!host) return;
-	permsUserListApp = createApp(PermsUserList_default, { onSelect: permsSelectUser });
-	permsUserListApp.mount(host);
+	permsUserListApp ??= mountIsland("#perms-user-list", () => createApp(PermsUserList_default, { onSelect: permsSelectUser }));
 }
 /**
-* Sync the island's inputs and mount it on first call.
-*
-* The sort and the filter are NOT applied here — the component derives both
-* from these refs, so the A–Z toggle and the search box no longer need to call
-* this function at all. It stays because refreshPermissions() calls it after
-* fetching, which is a genuine data change.
+* Sync the island's inputs and mount it on first call. Sort and filter are
+* derived in the component; this runs only after refreshPermissions() fetches.
 */
 function renderPermsUserList() {
 	permsSortAz.value = !!usersSortAz.value;
@@ -4379,10 +3807,8 @@ function renderPermsUserList() {
 	mountPermsUserList();
 }
 /**
-* Replace the user list with a failure message. Exported because the fetch that
-* fails lives in perms.ts, while the element and its island are owned here —
-* and the whole point of the usersError ref is that this module stays the only
-* writer of that DOM.
+* Replace the user list with a failure message. Called from perms.ts (which
+* fetches) so this module stays the only writer of the island's DOM.
 */
 function showPermsUsersError(message) {
 	usersError.value = message;
@@ -4390,30 +3816,26 @@ function showPermsUsersError(message) {
 }
 function permsSelectUser(userId) {
 	permsSelectedUserId.value = userId;
-	deps$19.renderPermsDetail(userId);
+	deps$15.renderPermsDetail(userId);
 	permsSelectedUserId.value = userId ?? null;
-	deps$19.permsShowDetail();
+	deps$15.permsShowDetail();
 }
 async function deleteUser(targetUserId) {
-	if (!await deps$19.showConfirmModal({
+	if (!await deps$15.showConfirmModal({
 		title: "Delete user",
 		body: `Delete ${targetUserId}? This removes the user record. They will be re-added automatically if they authenticate again.`,
 		confirmLabel: "Delete",
 		destructive: true
 	})) return;
 	try {
-		const r = await authFetch(`/api/users/${encodeURIComponent(targetUserId)}`, {
+		await apiJson(`/api/users/${encodeURIComponent(targetUserId)}`, {
 			method: "DELETE",
 			headers: { "X-Webchat-CSRF": "1" }
 		});
-		if (!r.ok) {
-			showToast("Delete failed: " + ((await r.json().catch(() => ({}))).error || r.statusText), { kind: "error" });
-			return;
-		}
 		showToast(`Deleted user ${targetUserId}.`, { kind: "success" });
 		permsSelectedUserId.value = null;
-		await deps$19.refreshPermissions();
-		deps$19.permsShowList();
+		await deps$15.refreshPermissions();
+		deps$15.permsShowList();
 	} catch (err) {
 		showToast("Delete failed: " + err.message, { kind: "error" });
 	}
@@ -4456,21 +3878,16 @@ function wireMembersPanel() {
 		const btn = e.currentTarget;
 		btn.disabled = true;
 		try {
-			const r = await authFetch("/api/user-credentials/credential", {
+			await apiJson("/api/user-credentials/credential", {
 				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"X-Webchat-CSRF": "1"
-				},
-				body: JSON.stringify({
+				headers: { "X-Webchat-CSRF": "1" },
+				body: {
 					roomId: state.currentRoom,
 					apiKey
-				})
+				}
 			});
-			if (r.ok) {
-				showToast(`Connected your ${userCredsWords(userCredsProvider.value).keyWord}.`, { kind: "success" });
-				await updateUserCredsBanner(state.currentRoom);
-			} else showToast("Failed to connect key: " + ((await r.json().catch(() => ({}))).error || r.statusText), { kind: "error" });
+			showToast(`Connected your ${userCredsWords(userCredsProvider.value).keyWord}.`, { kind: "success" });
+			await updateUserCredsBanner(state.currentRoom);
 		} catch (err) {
 			showToast("Failed to connect key: " + (err?.message || "network error"), { kind: "error" });
 		} finally {
@@ -4557,24 +3974,18 @@ async function saveHandle() {
 		return;
 	}
 	try {
-		const res = await authFetch("/api/me/handle", {
+		state.myHandle = (((await apiJson("/api/me/handle", {
 			method: "PUT",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify({ handle: next })
-		});
-		if (res.ok) {
-			state.myHandle = (((await res.json()).handle || next) + "").toLowerCase();
-			input.value = state.myHandle;
-			renderHandleChip();
-			showStatus("Saved.", true);
-		} else if (res.status === 409) showStatus("That handle is taken.", false);
-		else if (res.status === 400) showStatus("Use 1–32 letters, numbers, or hyphens.", false);
+			headers: { "X-Webchat-CSRF": "1" },
+			body: { handle: next }
+		})).handle || next) + "").toLowerCase();
+		input.value = state.myHandle;
+		renderHandleChip();
+		showStatus("Saved.", true);
+	} catch (err) {
+		if (err.status === 409) showStatus("That handle is taken.", false);
+		else if (err.status === 400) showStatus("Use 1–32 letters, numbers, or hyphens.", false);
 		else showStatus("Couldn’t save — try again.", false);
-	} catch {
-		showStatus("Couldn’t save — try again.", false);
 	}
 }
 //#endregion
@@ -4597,13 +4008,8 @@ var AgentMcpList_default = /* @__PURE__ */ defineComponent({
 	emits: ["detach"],
 	setup(__props, { emit: __emit }) {
 		/**
-		* MCP servers attached to the open agent.
-		*
-		* Mounted into <ul id="agent-mcp-list">. The fetch and the count badge stay in
-		* renderAgentMcp() — an island renders state, it does not own IO.
-		*
-		* The remove button's icon is an SVG string from lucide(), so it is bound with
-		* v-html exactly as the imperative version assigned innerHTML.
+		* MCP servers attached to the open agent, mounted into <ul id="agent-mcp-list">; the
+		* fetch and count badge stay in renderAgentMcp(). The remove icon is a lucide() SVG string.
 		*/
 		const emit = __emit;
 		const xIcon = lucide("x");
@@ -4651,29 +4057,13 @@ var McpList_default = /* @__PURE__ */ defineComponent({
 	emits: ["pick"],
 	setup(__props, { emit: __emit }) {
 		/**
-		* The MCP server list — second Vue island.
-		*
-		* Mounted into <ul id="mcp-list">, which no other module writes to.
-		*
-		* Replicates makeRowActivatable() inline (role/tabindex, click, Enter/Space)
-		* rather than calling it: that helper attaches listeners imperatively to a node
-		* it is handed, which is the thing an island exists to stop doing. The
-		* behaviour is identical — verified by diffing the rendered DOM.
-		*
-		* Vue rendering notes carried over from AgentList.vue, both re-checked here:
-		*   - the active row uses v-bind of a whole object, not :class. Both
-		*     :class="{ active: false }" and :class="undefined" emit class="" on every
-		*     other row, because Vue normalises class to a string instead of omitting.
-		*   - never write explanatory comments in the TEMPLATE; Vue renders them into
-		*     the DOM as comment nodes.
+		* The MCP server list, mounted into <ul id="mcp-list">. makeRowActivatable()'s behaviour
+		* (role/tabindex, click, Enter/Space) is inlined because that helper attaches listeners
+		* imperatively. The active row uses v-bind of an object; :class would emit class="".
 		*/
 		const emit = __emit;
 		const sorted = computed(() => [...mcpServers.value].sort((a, b) => String(a.name ?? "").localeCompare(String(b.name ?? ""))));
-		/**
-		* Bound as an expression, not written as template text. Text on its own line in
-		* a template renders with the surrounding whitespace, which the imperative
-		* textContent assignment never produced — caught by the rendered-DOM diff.
-		*/
+		/** Bound, not template text: template text carries the surrounding whitespace. */
 		function healthTitle(h) {
 			if (h.status === "ok") return `Healthy — ${h.toolCount ?? "?"} tools`;
 			if (h.status === "drift") return "Tool surface changed since approval";
@@ -4735,20 +4125,10 @@ var McpSources_default = /* @__PURE__ */ defineComponent({
 	props: { onToggle: { type: Function } },
 	setup(__props) {
 		/**
-		* The MCP registry source list — nineteenth island.
-		*
-		* Mounted into <ul id="mcp-sources-list">, exclusively owned by this module.
-		*
-		* #mcp-sources (the section's hidden flag, which also encodes "not a
-		* global admin") is outside the mount point and stays imperative.
-		*
-		* First island to render an OriginBadge. The badge is a component rather than
-		* a v-html of originBadgeEl's output precisely because it carries an href
-		* decision — see the note in origin-badge.ts.
-		*
-		* Same row idiom as the skill collections' built-in source: info column (name +
-		* meta), a built-in badge, and a reversible Remove/Add — no standing prose, no
-		* confirm, since adding it back is one click.
+		* The MCP registry source list, mounted into <ul id="mcp-sources-list">; #mcp-sources'
+		* hidden flag (which also encodes "not a global admin") stays with the renderer. Badges
+		* are OriginBadge components because they carry an href decision (see origin-badge.ts).
+		* Remove/Add is reversible in one click, so there is no confirm.
 		*/
 		const props = __props;
 		const rows = computed(() => mcpSources.value.map((src) => {
@@ -4797,17 +4177,8 @@ var McpProbeTools_default = /* @__PURE__ */ defineComponent({
 	__name: "McpProbeTools",
 	setup(__props) {
 		/**
-		* The tools a probed MCP server advertises — twentieth island.
-		*
-		* Mounted into <ul id="mcp-probe-tools">, exclusively owned by this module.
-		*
-		* The probe's other outputs — #mcp-probe-kind, #mcp-probe-notes, the suggested
-		* name in #mcp-probe-name and the #mcp-probe-results hidden flag — are all
-		* outside the mount point and stay imperative.
-		*
-		* The description keeps its inline opacity. It is presentational and belongs in
-		* style.css, but moving it would be a CSS change riding along in a conversion
-		* commit, and this phase does not do that.
+		* The tools a probed MCP server advertises, mounted into <ul id="mcp-probe-tools">; the
+		* probe's other outputs are outside the mount point.
 		*/
 		const DIM = { opacity: "0.75" };
 		const rows = computed(() => probeTools.value.map((t, i) => ({
@@ -4841,7 +4212,7 @@ var _hoisted_5$20 = [
 ];
 var _hoisted_6$17 = ["title"];
 var _hoisted_7$13 = ["disabled"];
-var _hoisted_8$11 = {
+var _hoisted_8$10 = {
 	key: 4,
 	class: "room-prime-note"
 };
@@ -4859,19 +4230,10 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* An MCP server's hardening panel — thirty-fifth island.
-		*
-		* Mounted into <div id="mcp-hardening">, exclusively owned by this module.
-		*
-		* Four independent blocks, each conditional, rendered in a fixed order: health,
-		* drift, the tool allowlist, then OAuth. stdio servers render nothing at all —
-		* there is no transport to harden.
-		*
-		* The tool checkboxes keep their state in the DOM. Save reads them back with
-		* querySelectorAll and compares the checked COUNT to the total, because "all
-		* checked" is stored as null — no restriction, so future tools flow through
-		* automatically. Modelling the ticks as state would mean that comparison reads
-		* a ref instead, and getting it subtly wrong silently pins the surface.
+		* An MCP server's hardening panel, mounted into <div id="mcp-hardening">: health, drift,
+		* tool allowlist, OAuth, in that order; stdio servers render nothing. Tool checkboxes keep
+		* their state in the DOM: Save compares the checked COUNT to the total because "all
+		* checked" is stored as null (no restriction, so future tools flow through).
 		*/
 		const props = __props;
 		const BOLD = { fontWeight: "600" };
@@ -4886,7 +4248,7 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 			if (h.status === "down") return `● Unreachable (checked ${when})`;
 			return `● Tool surface changed (checked ${when})`;
 		});
-		/** The drift summary, in the order the original built it. */
+		/** The drift summary, in display order. */
 		const driftParts = computed(() => {
 			const d = s.value?.drift;
 			if (!d) return [];
@@ -4951,7 +4313,7 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 					disabled: unref(oauthBusy) || void 0,
 					onClick: _cache[2] || (_cache[2] = ($event) => props.onOauth())
 				}, toDisplayString(oauthLabel.value), 9, _hoisted_7$13)) : createCommentVNode("", true),
-				s.value.auth ? (openBlock(), createElementBlock("p", _hoisted_8$11, toDisplayString(authNote.value), 1)) : createCommentVNode("", true)
+				s.value.auth ? (openBlock(), createElementBlock("p", _hoisted_8$10, toDisplayString(authNote.value), 1)) : createCommentVNode("", true)
 			], 64)) : createCommentVNode("", true);
 		};
 	}
@@ -4976,20 +4338,9 @@ var McpCatalog_default = /* @__PURE__ */ defineComponent({
 	props: { onUse: { type: Function } },
 	setup(__props) {
 		/**
-		* The MCP marketplace catalog — forty-sixth island.
-		*
-		* Mounted into <ul id="mcp-catalog-list">, exclusively owned by this module.
-		* #mcp-catalog-status is outside it and stays imperative — it carries the
-		* result count AND the fetch error, which are section-level, not row-level.
-		*
-		* The wait row is written out rather than v-html'd from loadingRow(): that
-		* helper returns the <li> itself, so binding it would nest one. Same call made
-		* for SkillPool, same DESIGN.md §5 wait primitive, and the DOM diff is what
-		* holds the two to it.
-		*
-		* The 'error' phase renders NOTHING — the imperative version cleared the list
-		* and put the message in the status line, so an empty list plus status text is
-		* the correct shape, not an inline error row.
+		* The MCP marketplace catalog, mounted into <ul id="mcp-catalog-list">. The result count
+		* and fetch error live in #mcp-catalog-status, so the 'error' phase renders NOTHING here.
+		* The wait row matches loadingRow()'s markup (DESIGN.md §5), as in SkillPool.
 		*/
 		const props = __props;
 		const waitLabel = computed(() => mcpCatalogQuery.value ? "Searching…" : "Loading catalog…");
@@ -5024,26 +4375,21 @@ var McpCatalog_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/mcp.ts
-var deps$18 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
+var deps$14 = {};
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideMcpDeps(provided) {
-	Object.assign(deps$18, provided);
+	Object.assign(deps$14, provided);
 }
 var agentMcpApp = null;
 function mountAgentMcpList(agentId) {
-	if (agentMcpApp) return;
-	const host = $("#agent-mcp-list");
-	if (!host) return;
-	agentMcpApp = createApp(AgentMcpList_default, { onDetach: (s) => detachAgentMcp(currentAgentMcpId, s) });
-	agentMcpApp.mount(host);
+	agentMcpApp ??= mountIsland("#agent-mcp-list", () => createApp(AgentMcpList_default, { onDetach: (s) => detachAgentMcp(currentAgentMcpId, s) }));
 }
 var currentAgentMcpId = null;
 async function renderAgentMcp(agentId) {
 	currentAgentMcpId = agentId;
 	agentMcpServers.value = [];
 	try {
-		const res = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/mcp-servers`);
-		if (res.ok) agentMcpServers.value = (await res.json()).servers || [];
+		agentMcpServers.value = (await apiJson(`/api/agents/${encodeURIComponent(agentId)}/mcp-servers`)).servers || [];
 	} catch (err) {
 		console.error("Failed to load MCP servers:", err);
 	}
@@ -5062,7 +4408,7 @@ async function setAgentMcp(agentId, body, okMsg) {
 	await renderAgentMcp(agentId);
 }
 async function detachAgentMcp(agentId, server) {
-	if (!await deps$18.showConfirmModal({
+	if (!await deps$14.showConfirmModal({
 		title: `Detach ${server.name}?`,
 		body: "The agent loses these tools on its next message.",
 		confirmLabel: "Detach",
@@ -5085,7 +4431,7 @@ async function maybeAttachAfterMcpAdd(newId, name) {
 	} catch (err) {
 		showToast("Attach failed: " + (err.message || err), { kind: "error" });
 	}
-	await deps$18.openAgentDetail(agentId);
+	await deps$14.openAgentDetail(agentId);
 }
 async function fetchMcpServers() {
 	try {
@@ -5103,6 +4449,11 @@ async function fetchMcpServers() {
 		console.error("Failed to fetch MCP servers:", err);
 	}
 }
+/**
+* The MCP registry is a switchable source, exactly like a skill collection: the
+* same webchat_disabled_sources row, surfaced in Settings the same way. Off means
+* off server-side too — the catalog block disappears and no request is made.
+*/
 var mcpRegistryDisabled = false;
 async function renderMcpSources() {
 	const list = $("#mcp-sources-list");
@@ -5110,12 +4461,7 @@ async function renderMcpSources() {
 	if (!list || !section) return;
 	let sources = [];
 	try {
-		const res = await authFetch("/api/mcp-sources");
-		if (!res.ok) {
-			section.hidden = true;
-			return;
-		}
-		sources = (await res.json()).sources || [];
+		sources = (await apiJson("/api/mcp-sources")).sources || [];
 	} catch {
 		section.hidden = true;
 		return;
@@ -5128,32 +4474,24 @@ async function renderMcpSources() {
 }
 var mcpSourcesApp = null;
 function mountMcpSources() {
-	if (mcpSourcesApp) return;
-	const host = $("#mcp-sources-list");
-	if (!host) return;
-	mcpSourcesApp = createApp(McpSources_default, { onToggle: async (id, off) => {
+	mcpSourcesApp ??= mountIsland("#mcp-sources-list", () => createApp(McpSources_default, { onToggle: async (id, off) => {
 		try {
-			const res = await authFetch(`/api/mcp-sources/${encodeURIComponent(id)}`, { method: off ? "POST" : "DELETE" });
-			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed");
+			await apiJson(`/api/mcp-sources/${encodeURIComponent(id)}`, { method: off ? "POST" : "DELETE" });
 			renderMcpSources();
 			applyMcpCatalogVisibility();
 		} catch (err) {
 			toastError(err, "Could not update the source");
 		}
-	} });
-	mcpSourcesApp.mount(host);
+	} }));
 }
+/** Hide the catalog entirely when its source is switched off. */
 function applyMcpCatalogVisibility() {
 	const block = $("#mcp-catalog-block");
 	if (block) block.hidden = mcpRegistryDisabled;
 }
 var mcpCatalogApp = null;
 function mountMcpCatalog() {
-	if (mcpCatalogApp) return;
-	const host = $("#mcp-catalog-list");
-	if (!host) return;
-	mcpCatalogApp = createApp(McpCatalog_default, { onUse: (raw) => useMcpCatalogEntry(raw) });
-	mcpCatalogApp.mount(host);
+	mcpCatalogApp ??= mountIsland("#mcp-catalog-list", () => createApp(McpCatalog_default, { onUse: (raw) => useMcpCatalogEntry(raw) }));
 }
 async function loadMcpCatalog(q = "") {
 	if (!$("#mcp-catalog-list")) return;
@@ -5199,10 +4537,11 @@ async function loadMcpCatalog(q = "") {
 	}));
 	mcpCatalogPhase.value = "ready";
 }
+/** Prefill the add form from a catalog row. Package servers gate on an explicit confirm. */
 async function useMcpCatalogEntry(s) {
 	if (s.runsCode) {
 		const cmd = `${s.command} ${(s.args || []).join(" ")}`;
-		if (!await deps$18.showConfirmModal({
+		if (!await deps$14.showConfirmModal({
 			title: `Run ${s.name} in your container?`,
 			body: `This isn't a hosted server. It runs code inside your agent container, alongside the agent's credentials:\n\n${cmd}\n\nOnly continue if you trust the publisher (${s.publisher || "unknown"}).`,
 			confirmLabel: "I trust it — fill in the form",
@@ -5235,15 +4574,11 @@ async function useMcpCatalogEntry(s) {
 var mcpListApp = null;
 /** Mount the McpList island into <ul id="mcp-list">, once. */
 function mountMcpList() {
-	if (mcpListApp) return;
-	const host = $("#mcp-list");
-	if (!host) return;
-	mcpListApp = createApp(McpList_default, { onPick: (id) => {
+	mcpListApp ??= mountIsland("#mcp-list", () => createApp(McpList_default, { onPick: (id) => {
 		const detail = $("#mcp-detail");
 		if (selectedMcpId.value === id && detail && !detail.hidden) closeMcpDetail();
 		else openMcpDetail(id);
-	} });
-	mcpListApp.mount(host);
+	} }));
 }
 function renderMcpServers() {
 	mcpServers.value = allMcpServers.value ?? [];
@@ -5252,9 +4587,9 @@ function renderMcpServers() {
 function openMcpDetail(id) {
 	const server = allMcpServers.value.find((s) => s.id === id);
 	if (!server) return;
-	deps$18.closeAgentDetail();
-	deps$18.closeRoomDetail();
-	deps$18.closeModelDetail();
+	deps$14.closeAgentDetail();
+	deps$14.closeRoomDetail();
+	deps$14.closeModelDetail();
 	closeMcpDetail();
 	selectedMcpId.value = id;
 	renderMcpServers();
@@ -5286,10 +4621,7 @@ function openMcpDetail(id) {
 }
 var hardeningApp = null;
 function mountMcpHardening() {
-	if (hardeningApp) return;
-	const host = $("#mcp-hardening");
-	if (!host) return;
-	hardeningApp = createApp(McpHardening_default, {
+	hardeningApp ??= mountIsland("#mcp-hardening", () => createApp(McpHardening_default, {
 		onApprove: async () => {
 			const server = hardeningServer.value;
 			const d = server?.drift;
@@ -5297,7 +4629,7 @@ function mountMcpHardening() {
 			if (d?.added?.length) parts.push(`new: ${d.added.join(", ")}`);
 			if (d?.removed?.length) parts.push(`removed: ${d.removed.join(", ")}`);
 			if (d?.changed?.length) parts.push(`descriptions changed: ${d.changed.join(", ")}`);
-			if (!await deps$18.showConfirmModal({
+			if (!await deps$14.showConfirmModal({
 				title: `Approve ${server.name}'s new tools?`,
 				body: parts.join("\n") || "The tool surface changed.",
 				confirmLabel: "Approve current tools"
@@ -5334,13 +4666,10 @@ function mountMcpHardening() {
 			if (!server) return;
 			oauthBusy.value = true;
 			try {
-				const res = await authFetch(`/api/mcp-servers/${encodeURIComponent(server.id)}/oauth/start`, {
+				const body = await apiJson(`/api/mcp-servers/${encodeURIComponent(server.id)}/oauth/start`, {
 					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: "{}"
+					body: {}
 				});
-				const body = await res.json().catch(() => ({}));
-				if (!res.ok) throw new Error(body.error || res.statusText);
 				if (!/^https?:\/\//i.test(body.authorizeUrl || "")) throw new Error("Server returned an invalid authorization URL");
 				window.open(body.authorizeUrl, "_blank", "noopener");
 				showToast("Finish authorizing in the new tab, then come back", { kind: "info" });
@@ -5350,8 +4679,7 @@ function mountMcpHardening() {
 				oauthBusy.value = false;
 			}
 		}
-	});
-	hardeningApp.mount(host);
+	}));
 }
 function renderMcpHardening(server) {
 	if (!$("#mcp-hardening")) return;
@@ -5436,11 +4764,7 @@ async function runMcpProbe() {
 }
 var mcpProbeToolsApp = null;
 function mountMcpProbeTools() {
-	if (mcpProbeToolsApp) return;
-	const host = $("#mcp-probe-tools");
-	if (!host) return;
-	mcpProbeToolsApp = createApp(McpProbeTools_default);
-	mcpProbeToolsApp.mount(host);
+	mcpProbeToolsApp ??= mountIsland("#mcp-probe-tools", () => createApp(McpProbeTools_default));
 }
 function renderMcpProbeResults(probe) {
 	$("#mcp-probe-kind").className = `model-probe-kind kind-${probe.transport}`;
@@ -5540,23 +4864,18 @@ function wireMcpPanel() {
 		const server = allMcpServers.value.find((s) => s.id === selectedMcpId.value);
 		if (!server) return;
 		try {
-			const res = await authFetch(`/api/mcp-servers/${encodeURIComponent(selectedMcpId.value)}`, { method: "DELETE" });
-			if (res.status === 409) {
-				const n = ((await res.json()).assigned_agent_group_ids || []).length;
+			try {
+				await apiJson(`/api/mcp-servers/${encodeURIComponent(selectedMcpId.value)}`, { method: "DELETE" });
+			} catch (err) {
+				if (err.status !== 409) throw err;
+				const n = (err.body.assigned_agent_group_ids || []).length;
 				if (!await showConfirmModal({
 					title: "Delete MCP server",
 					body: `"${server.name}" is attached to ${n} agent${n === 1 ? "" : "s"}. They lose its tools on their next message.`,
 					confirmLabel: "Delete anyway",
 					destructive: true
 				})) return;
-				const force = await authFetch(`/api/mcp-servers/${encodeURIComponent(selectedMcpId.value)}?force=1`, { method: "DELETE" });
-				if (!force.ok) {
-					showToast(`Failed to delete: ${(await force.json().catch(() => ({}))).error || force.statusText}`, { kind: "error" });
-					return;
-				}
-			} else if (!res.ok) {
-				showToast(`Failed to delete: ${(await res.json().catch(() => ({}))).error || res.statusText}`, { kind: "error" });
-				return;
+				await apiJson(`/api/mcp-servers/${encodeURIComponent(selectedMcpId.value)}?force=1`, { method: "DELETE" });
 			}
 			showToast(`Deleted "${server.name}".`, { kind: "success" });
 			closeMcpDetail();
@@ -5565,11 +4884,6 @@ function wireMcpPanel() {
 			showToast(`Failed to delete: ${err.message}`, { kind: "error" });
 		}
 	});
-	/**
-	* Update the picker trigger button's labels to reflect the currently-
-	* assigned model. Two-line layout: name on top, kind+model_id+host underneath.
-	* No selection → "Default" / "Built-in Anthropic".
-	*/
 }
 /** The MCP catalog block: search, expand and add-from-catalog. */
 function wireMcpCatalog() {
@@ -5611,18 +4925,10 @@ var ThreadNameInput_default = /* @__PURE__ */ defineComponent({
 	emits: ["submit", "cancel"],
 	setup(__props, { emit: __emit }) {
 		/**
-		* The inline thread-name input — used for "new thread" and for rename.
-		*
-		* Replaces makeThreadNameInput(), which built the element imperatively and was
-		* appended into three different places. Rendered by ThreadRows now.
-		*
-		* `settled` is the load-bearing part and is preserved exactly: blur fires after
-		* Enter, so without it a submit is followed immediately by a cancel — or, with
-		* blurSubmits, by a second submit. It guards the pair, not each handler.
-		*
-		* `value` and `placeholder` are mutually exclusive, as before: the imperative
-		* version set placeholder ONLY when there was no initial value, so a rename
-		* input carries no placeholder attribute at all.
+		* The inline thread-name input, for "new thread" and rename. `settled` guards the
+		* Enter/blur pair: blur fires after Enter, so without it a submit is followed by a cancel
+		* (or, with blurSubmits, a second submit). A placeholder is set only when there is no
+		* initial value.
 		*/
 		const props = __props;
 		const emit = __emit;
@@ -5690,21 +4996,10 @@ var ThreadSwitcher_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The in-room thread switcher — forty-ninth island.
-		*
-		* Per-instance: openThreadSwitcher creates the popover and mounts an app into
-		* it, next to the chat header's '#' button. The sidebar thread tree is hidden on
-		* mobile while a room is open, so this is the mobile way to switch threads and
-		* create one without backing out.
-		*
-		* switcherCreate() is absorbed. It did addBtn.replaceWith(input) — replacing a
-		* node Vue would own — so the swap is a `creating` ref, and the input is the
-		* ThreadNameInput component the room list already uses. blurSubmits stays true:
-		* clicking away COMMITS here, which is the prior switcher behaviour and the
-		* opposite of the sidebar's inline input.
-		*
-		* Main chat is always the first row and is never tinted; topic threads carry a
-		* dot in their identity colour.
+		* The in-room thread switcher, one app per popover next to the chat header's '#'
+		* button — the mobile way to switch or create threads, since the sidebar tree is hidden
+		* there while a room is open. Uses ThreadNameInput with blurSubmits: clicking away
+		* COMMITS here, unlike the sidebar's inline input. Main chat is always first and untinted.
 		*/
 		const props = __props;
 		const creating = ref(false);
@@ -5738,10 +5033,10 @@ var ThreadSwitcher_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/threads.ts
-var deps$17 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
+var deps$13 = {};
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideThreadsDeps(provided) {
-	Object.assign(deps$17, provided);
+	Object.assign(deps$13, provided);
 }
 function roomThreads() {
 	return state.threadCache.get(state.currentRoom) || [];
@@ -5749,46 +5044,39 @@ function roomThreads() {
 function toggleRoomThreads(roomId) {
 	if (state.expandedRooms.has(roomId)) {
 		state.expandedRooms.delete(roomId);
-		deps$17.renderRooms(state.lastRoomsList);
+		deps$13.renderRooms(state.lastRoomsList);
 		return;
 	}
 	state.expandedRooms.add(roomId);
 	if (!state.threadCache.has(roomId)) loadRoomThreads(roomId).then(() => {
-		if (state.expandedRooms.has(roomId)) deps$17.renderRooms(state.lastRoomsList);
+		if (state.expandedRooms.has(roomId)) deps$13.renderRooms(state.lastRoomsList);
 	});
-	deps$17.renderRooms(state.lastRoomsList);
+	deps$13.renderRooms(state.lastRoomsList);
 }
 async function loadRoomThreads(roomId) {
 	try {
-		const r = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/threads`);
-		state.threadCache.set(roomId, r.ok ? await r.json() ?? [] : []);
+		state.threadCache.set(roomId, await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/threads`) ?? []);
 	} catch {
 		state.threadCache.set(roomId, []);
 	}
 }
 async function loadThreadList(roomId) {
 	try {
-		const r = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/threads`);
+		const threads = await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/threads`);
 		if (roomId !== state.currentRoom) return;
-		if (!r.ok) {
-			state.threadCache.set(roomId, []);
-			if (r.status !== 404) showToast("Could not load threads", { kind: "error" });
-			return;
-		}
-		const threads = await r.json();
 		const list = Array.isArray(threads) ? threads : [];
 		state.threadCache.set(roomId, list);
 		for (const t of list) if (t.unread && t.thread_id !== state.currentThread) state.threadUnread.add(t.thread_id);
 		updateThreadSyncControls();
-	} catch {
+	} catch (err) {
 		if (roomId !== state.currentRoom) return;
 		state.threadCache.set(roomId, []);
-		showToast("Could not load threads", { kind: "error" });
+		if (err?.status !== 404) showToast("Could not load threads", { kind: "error" });
 	}
 }
 function openThread(threadId) {
 	if (!state.currentRoom || threadId === state.currentThread) return;
-	deps$17.hideOtherFullViews();
+	deps$13.hideOtherFullViews();
 	$("#chat").hidden = false;
 	$("#app").classList.add("in-room");
 	$("#app").classList.remove("in-dashboard");
@@ -5823,7 +5111,7 @@ function updateThreadSyncControls() {
 			const nameEl = $("#thread-crumb-name");
 			if (nameEl) {
 				nameEl.textContent = thread ? thread.title ?? "" : state.currentThread;
-				nameEl.style.setProperty("--thread-color", deps$17.roomColor(state.currentThread));
+				nameEl.style.setProperty("--thread-color", deps$13.roomColor(state.currentThread));
 			}
 		}
 	}
@@ -5839,7 +5127,7 @@ async function createThread(title, roomId = state.currentRoom) {
 			openThread(thread.thread_id);
 		} else {
 			const room = state.lastRoomsList.find((x) => x.id === roomId);
-			deps$17.joinRoom(roomId, room ? room.name : roomId, void 0, thread.thread_id);
+			deps$13.joinRoom(roomId, room ? room.name : roomId, void 0, thread.thread_id);
 		}
 	} catch (err) {
 		showToast("Could not create thread: " + (err?.message || err), { kind: "error" });
@@ -5868,7 +5156,7 @@ function openThreadSwitcher() {
 		label: t.title,
 		threadId: t.thread_id,
 		tinted: true,
-		color: deps$17.roomColor(t.thread_id)
+		color: deps$13.roomColor(t.thread_id)
 	}))];
 	switcherApp = createApp(ThreadSwitcher_default, {
 		rows,
@@ -5912,7 +5200,7 @@ async function deleteThreadConfirm(thread, rowEl) {
 	};
 	const row = rowEl || document.querySelector(`.thread-row[data-thread-id="${cssEscape(thread.thread_id)}"]`);
 	if (!row) {
-		if (await deps$17.showConfirmModal({
+		if (await deps$13.showConfirmModal({
 			title: `Delete "${thread.title}"?`,
 			body: "",
 			confirmLabel: "Delete",
@@ -5934,7 +5222,7 @@ async function deleteThreadConfirm(thread, rowEl) {
 		}
 	};
 }
-/** The countdown length, read through the dep threads.ts already owns. */
+/** The countdown length (UNDO_SECONDS). */
 function getUndoSeconds() {
 	return 10;
 }
@@ -5949,18 +5237,13 @@ async function syncThread(direction) {
 	const room = state.currentRoom;
 	const thread = state.currentThread;
 	const isPull = direction === "pull";
-	if (!await deps$17.showConfirmModal({
+	if (!await deps$13.showConfirmModal({
 		title: isPull ? "Pull main chat down" : "Push this thread up",
 		body: "",
 		confirmLabel: isPull ? "Pull down" : "Push up"
 	})) return;
 	try {
-		const r = await authFetch(`/api/rooms/${encodeURIComponent(room)}/threads/${encodeURIComponent(thread)}/${direction}`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" }
-		});
-		if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
-		const { copied = 0 } = await r.json();
+		const { copied = 0 } = await apiJson(`/api/rooms/${encodeURIComponent(room)}/threads/${encodeURIComponent(thread)}/${direction}`, { method: "POST" });
 		if (copied === 0) showToast(isPull ? "Nothing new to pull" : "Nothing new to push", { kind: "info" });
 		else showToast(`Copied ${copied} message${copied === 1 ? "" : "s"}`, { kind: "success" });
 	} catch (err) {
@@ -5968,13 +5251,8 @@ async function syncThread(direction) {
 	}
 }
 /**
-* The thread actions the RoomList island calls. Bundled as one object because
-* the island takes them as a single `thread` prop — twelve separate props for
-* one cohesive surface reads worse and drifts more easily.
-*
-* renderThreadList/renderRoomThreads used to be the re-render trigger after
-* each of these; the island re-renders from state instead, so the calls that
-* only existed to repaint are gone.
+* The thread actions the RoomList island calls, bundled as its single `thread`
+* prop. The island re-renders from state, so none of these repaint by hand.
 */
 var threadActions = {
 	open: (threadId) => openThread(threadId),
@@ -6025,22 +5303,10 @@ var UndoTimer_default = /* @__PURE__ */ defineComponent({
 	emits: ["commit", "undo"],
 	setup(__props, { emit: __emit }) {
 		/**
-		* The undo countdown that replaces a row's actions after Keep or Discard.
-		*
-		* The only undo countdown now. armUndo() is gone: it captured an element's
-		* childNodes, replaced them with this markup and re-appended them afterwards,
-		* which under Vue means reinserting vnode-managed nodes behind Vue's back —
-		* so an island could never call it, and its last caller (the thread delete)
-		* was handing it a row that ThreadRows renders.
-		*
-		* Its users drive it from state keyed by id — draftUndo/roomSkillUndo for the
-		* skill-draft lists, threadUndo for threads — and each measures the width
-		* BEFORE arming, which is what armUndo's getBoundingClientRect() call was for.
-		* The in-transcript card no longer uses it: both of its decisions commit
-		* immediately and offer a post-hoc Undo instead.
-		*
-		* The two-frame delay is load-bearing: the fill has to paint at 100% before the
-		* transition to 0% starts, or the bar jumps straight to empty.
+		* The undo countdown that replaces a row's actions after Keep or Discard. Callers drive
+		* it from state keyed by id (draftUndo/roomSkillUndo, threadUndo) and measure the width
+		* BEFORE arming. The two-frame delay is load-bearing: the fill must paint at 100% before
+		* the transition to 0% starts, or the bar jumps straight to empty.
 		*/
 		const props = __props;
 		const emit = __emit;
@@ -6100,7 +5366,7 @@ var _hoisted_6$15 = {
 	class: "thread-unread"
 };
 var _hoisted_7$11 = ["onClick", "innerHTML"];
-var _hoisted_8$10 = {
+var _hoisted_8$9 = {
 	key: 3,
 	class: "thread-menu"
 };
@@ -6132,20 +5398,10 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The thread tree nested under a room row.
-		*
-		* Replaces BOTH renderRoomThreads (a non-active room's tree) and renderThreadList
-		* (the active room's, with rename, kebab and the inline "+"). They rendered the
-		* same container class from two different functions with different feature sets;
-		* `active` selects which.
-		*
-		* The "+" placement rule is copied exactly, because it is not obvious:
-		*   - creating          → the input replaces it
-		*   - no threads yet    → "+" goes on the ROOM row's actions group (rendered by
-		*                         RoomList, not here — the empty .thread-list collapses
-		*                         via :empty, so a "+" here would cost a line)
-		*   - has threads       → "+" sits INSIDE the last thread row, right of its name
-		* Only the third case belongs to this component.
+		* The thread tree nested under a room row; `active` selects the active room's variant
+		* (rename, kebab, inline "+"). The "+" is replaced by the input while creating, sits on
+		* the ROOM row's actions when there are no threads (RoomList renders it; an empty
+		* .thread-list collapses via :empty), and inside the last thread row otherwise.
 		*/
 		const KEBAB = lucide("ellipsis");
 		/** Bound, not template text — template text carries the surrounding newlines. */
@@ -6156,14 +5412,7 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 			return all.filter((t) => t.kind !== "main");
 		});
 		const glyph = (kind) => kind === "agent" ? "@" : "#";
-		/**
-		* Only the Undo BUTTON stops the click, not the whole timer.
-		*
-		* armUndo's caller bound stopPropagation to the button alone, so a click on the
-		* label or the bar still reached the row and opened the thread. Listening on the
-		* component root and filtering by target reproduces that without adding an
-		* element to wrap it in.
-		*/
+		/** Only the Undo BUTTON stops the click; elsewhere on the bar a click still opens the thread. */
 		function stopUndoClick(e) {
 			if (e.target?.closest("button")) e.stopPropagation();
 		}
@@ -6236,7 +5485,7 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 						"aria-label": NEW_THREAD$1,
 						onClick: _cache[0] || (_cache[0] = withModifiers((...args) => __props.onStartCreate && __props.onStartCreate(...args), ["stop"]))
 					}, toDisplayString(PLUS$1))) : createCommentVNode("", true),
-					__props.active && unref(openThreadMenuId) === t.thread_id ? (openBlock(), createElementBlock("div", _hoisted_8$10, [createElementVNode("button", { onClick: withModifiers(($event) => __props.onStartRename(t.thread_id), ["stop"]) }, toDisplayString(RENAME), 8, _hoisted_9$7), unref(state).isOwnerView ? (openBlock(), createElementBlock("button", {
+					__props.active && unref(openThreadMenuId) === t.thread_id ? (openBlock(), createElementBlock("div", _hoisted_8$9, [createElementVNode("button", { onClick: withModifiers(($event) => __props.onStartRename(t.thread_id), ["stop"]) }, toDisplayString(RENAME), 8, _hoisted_9$7), unref(state).isOwnerView ? (openBlock(), createElementBlock("button", {
 						key: 0,
 						class: "danger",
 						onClick: withModifiers(($event) => __props.onDelete(t.thread_id), ["stop"])
@@ -6285,7 +5534,7 @@ var _hoisted_6$14 = {
 	title: "You were mentioned here"
 };
 var _hoisted_7$10 = ["innerHTML"];
-var _hoisted_8$9 = {
+var _hoisted_8$8 = {
 	key: 4,
 	class: "thread-list"
 };
@@ -6308,13 +5557,7 @@ var _hoisted_18$2 = ["onClick"];
 var PLUS = "+";
 var NEW_THREAD = "New thread";
 var MENTION = "@";
-/**
-* Empty list. A label, not an explanation — matching `'No rooms yet.'` as it
-* already reads in the agents pane and the topology canvas. It was briefly two
-* role-dependent sentences telling a member to go find an owner; DESIGN.md's
-* rule is label-only by default, and the sidebar is the last place that earns
-* an exception.
-*/
+/** Empty list: a label, not an explanation (DESIGN.md's label-only default). */
 var EMPTY$8 = "No rooms yet.";
 /** A filter that matches nothing is a different state from an empty install. */
 var NO_MATCH$1 = "No rooms match.";
@@ -6344,27 +5587,9 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The sidebar room list — twenty-sixth island, and the largest.
-		*
-		* Mounted into <ul id="room-list">, exclusively owned by this module.
-		*
-		* Four renderers shared this subtree and had to convert together, entangled in
-		* BOTH directions: renderRooms built the rows and the .thread-list hosts;
-		* renderRoomThreads filled a non-active room's host; renderThreadList filled the
-		* active room's AND reached back OUT to append the inline "+" into that row's
-		* .room-actions; openThreadMenu appended a menu into a thread row.
-		*
-		* Two things the imperative version needed and this does not:
-		*   - the 400ms RETRY when a kebab menu was open. The menu was a DOM node inside
-		*     the list, so a background re-render (a message landing in any room) tore
-		*     it down mid-click; the code deferred the whole update instead. The menu is
-		*     state now, so a re-render preserves it.
-		*   - the scrollTop save/restore around the rebuild. Rows are keyed and patched
-		*     rather than replaced, so the scroll position is never lost to begin with.
-		*
-		* Element ORDER inside a row is exact and non-obvious, taken from the sequence
-		* of appends: [chevron], name, [mention|unread], [pin], [thread input], actions,
-		* [thread list], [kebab menu last].
+		* The sidebar room list, mounted into <ul id="room-list">. Row child order is exact:
+		* [chevron], name, [mention|unread], [pin], [thread input], actions, [thread list],
+		* [kebab menu last].
 		*/
 		const props = __props;
 		const KEBAB = lucide("ellipsis");
@@ -6454,9 +5679,8 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 			props.onReorderPin(moved, room.id, after);
 		}
 		/**
-		* Built as a string and bound through v-bind of an object, so a row with NO
-		* classes emits no class attribute at all. :class="" would emit class="" —
-		* the difference the very first island was caught on.
+		* Built as a string and bound through v-bind of an object, so a row with no classes
+		* emits no class attribute at all (:class="" would emit class="").
 		*/
 		function rowClass(room) {
 			const marker = dropMarker.value[room.id];
@@ -6521,7 +5745,7 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 						"aria-label": "Pinned",
 						innerHTML: unref(PIN_ICON)
 					}, null, 8, _hoisted_7$10)) : createCommentVNode("", true),
-					adding(room) ? (openBlock(), createElementBlock("div", _hoisted_8$9, [createVNode(ThreadNameInput_default, {
+					adding(room) ? (openBlock(), createElementBlock("div", _hoisted_8$8, [createVNode(ThreadNameInput_default, {
 						"aria-label": `New thread in #${room.id}`,
 						onSubmit: (title) => __props.onCreateThread(room.id, title),
 						onCancel: __props.onCancelAddThread
@@ -6630,10 +5854,10 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/rooms.ts
-var deps$16 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
+var deps$12 = {};
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideRoomsDeps(provided) {
-	Object.assign(deps$16, provided);
+	Object.assign(deps$12, provided);
 }
 var ROOM_COLORS = [
 	"#4fc3f7",
@@ -6706,12 +5930,8 @@ function mountRoomList() {
 	});
 }
 /**
-* Sync the toggles the island reads, and mount it.
-*
-* The rows themselves come from state.lastRoomsList, which is already reactive,
-* so this does NOT need calling for every change — but every existing caller
-* still works, and the two count-bearing buttons outside the list are updated
-* here because they are outside the mount point.
+* Sync the toggles the island reads, and mount it. Rows come from the reactive
+* state.lastRoomsList; this also updates the two count buttons outside the mount.
 */
 function renderRooms(rooms) {
 	const all = rooms ?? state.lastRoomsList ?? [];
@@ -6730,11 +5950,7 @@ async function toggleRoomArchive(roomId, archive) {
 	if (target) target.archived = archive;
 	renderRooms(state.lastRoomsList);
 	try {
-		const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/${archive ? "archive" : "unarchive"}`, {
-			method: "POST",
-			headers: { "X-Webchat-CSRF": "1" }
-		});
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/${archive ? "archive" : "unarchive"}`, { method: "POST" });
 	} catch (err) {
 		console.error("toggleRoomArchive failed:", err);
 		if (target) target.archived = !archive;
@@ -6756,15 +5972,10 @@ async function reorderPinnedRoom(movedId, targetId, after) {
 	});
 	renderRooms(state.lastRoomsList);
 	try {
-		const res = await authFetch("/api/rooms/pins/order", {
+		await apiJson("/api/rooms/pins/order", {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify({ order })
+			body: { order }
 		});
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 	} catch (err) {
 		console.error("reorderPinnedRoom failed:", err);
 	}
@@ -6781,15 +5992,10 @@ async function movePinnedRoom(roomId, dir) {
 	});
 	renderRooms(state.lastRoomsList);
 	try {
-		const res = await authFetch("/api/rooms/pins/order", {
+		await apiJson("/api/rooms/pins/order", {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify({ order })
+			body: { order }
 		});
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 	} catch (err) {
 		console.error("movePinnedRoom failed:", err);
 	}
@@ -6799,11 +6005,7 @@ async function toggleRoomPin(roomId, pin) {
 	if (target) target.pinned = pin;
 	renderRooms(state.lastRoomsList);
 	try {
-		const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/${pin ? "pin" : "unpin"}`, {
-			method: "POST",
-			headers: { "X-Webchat-CSRF": "1" }
-		});
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/${pin ? "pin" : "unpin"}`, { method: "POST" });
 	} catch (err) {
 		console.error("toggleRoomPin failed:", err);
 		if (target) target.pinned = !pin;
@@ -6815,11 +6017,7 @@ async function toggleRoomHide(roomId, hide) {
 	if (target) target.hidden = hide;
 	renderRooms(state.lastRoomsList);
 	try {
-		const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/${hide ? "hide" : "unhide"}`, {
-			method: "POST",
-			headers: { "X-Webchat-CSRF": "1" }
-		});
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/${hide ? "hide" : "unhide"}`, { method: "POST" });
 	} catch (err) {
 		console.error("toggleRoomHide failed:", err);
 		if (target) target.hidden = !hide;
@@ -6831,9 +6029,9 @@ function joinRoom(roomId, roomName, jumpMessageId, initialThread) {
 	state.pendingSendAfterJoin = null;
 	closeAgentDetail();
 	closeRoomDetail();
-	deps$16.closeModelDetail();
+	deps$12.closeModelDetail();
 	closeMcpDetail();
-	deps$16.hideOtherFullViews();
+	deps$12.hideOtherFullViews();
 	$("#chat").hidden = false;
 	endAllAgentTurns();
 	const prevRoom = state.currentRoom;
@@ -6845,17 +6043,17 @@ function joinRoom(roomId, roomName, jumpMessageId, initialThread) {
 	state.mentionedRooms.delete(roomId);
 	refreshRoomAutoLearn(roomId);
 	updateUnreadDots();
-	deps$16.updateUserCredsBanner(roomId);
+	deps$12.updateUserCredsBanner(roomId);
 	const roomAgent = state.allAgents.find((b) => b.room_id === roomId);
 	if (roomAgent) state.agentName = roomAgent.name;
 	$("#app").classList.add("in-room");
 	$("#app").classList.remove("in-dashboard");
 	for (const t of state.typingUsers.values()) clearTimeout(t.timeout);
 	state.typingUsers.clear();
-	deps$16.renderTypingIndicator();
+	deps$12.renderTypingIndicator();
 	$("#members-panel").hidden = true;
 	$("#members-overlay").classList.remove("visible");
-	deps$16.renderMembers([]);
+	deps$12.renderMembers([]);
 	beginTranscriptSwitch();
 	state.currentThread = initialThread || "main";
 	localStorage.setItem("lastThread:" + roomId, state.currentThread);
@@ -6876,13 +6074,13 @@ function joinRoom(roomId, roomName, jumpMessageId, initialThread) {
 		learnBtn.disabled = false;
 		learnBtn.hidden = !state.learningMasterEnabled;
 	}
-	deps$16.hideLearnNudge();
+	deps$12.hideLearnNudge();
 	learnTurnToolCount.value = 0;
 	$("#message-form button[type=submit]").disabled = false;
 	showRoomSettingsToggle(true);
 	if (state.lastRoomsList.length) renderRooms(state.lastRoomsList);
 	refreshWiredAgentsForCurrentRoom();
-	deps$16.fetchMentionablePeople();
+	deps$12.fetchMentionablePeople();
 }
 function clearRoomSearch() {
 	roomFilter.value = "";
@@ -6913,7 +6111,7 @@ async function continueRoomImport(up) {
 	const missing = p.agents.filter((a) => !a.found).map((a) => a.name);
 	if (found.length) line(`Re-wires agents: ${found.join(", ")}`);
 	if (missing.length) line(`⚠ Agents not on this install (wiring skipped): ${missing.join(", ")}`, "import-warning");
-	if (!await deps$16.showConfirmModal({
+	if (!await deps$12.showConfirmModal({
 		title: "Import this room?",
 		body: el,
 		confirmLabel: "Import"
@@ -6957,11 +6155,7 @@ async function openRoomDetail(roomId) {
 			document.querySelectorAll("#room-credential-modes .setting-option").forEach((b) => b.classList.remove("active"));
 			const hintEl = $("#room-cred-default-hint");
 			if (hintEl) hintEl.textContent = "";
-			authFetch(`/api/rooms/${encodeURIComponent(roomId)}/credential-mode`).then((r) => r.ok ? r.json() : null).then((d) => {
-				if (!d) {
-					if (hintEl) hintEl.textContent = "(couldn’t load — try reopening)";
-					return;
-				}
+			apiJson(`/api/rooms/${encodeURIComponent(roomId)}/credential-mode`).then((d) => {
 				const effective = d.mode === "inherit" ? d.defaultMode : d.mode;
 				document.querySelectorAll("#room-credential-modes .setting-option").forEach((b) => b.classList.toggle("active", b.dataset.value === effective));
 				if (hintEl) hintEl.textContent = "";
@@ -7002,7 +6196,7 @@ async function deleteCurrentRoom() {
 	if (!selectedRoomId.value) return;
 	const room = state.lastRoomsList.find((r) => r.id === selectedRoomId.value);
 	const label = room ? room.name : selectedRoomId.value;
-	if (!await deps$16.showConfirmModal({
+	if (!await deps$12.showConfirmModal({
 		title: "Delete room",
 		body: `Delete room "${label}"? Wired agents will be preserved — delete them separately if you want them gone.`,
 		confirmLabel: "Delete",
@@ -7010,11 +6204,7 @@ async function deleteCurrentRoom() {
 	})) return;
 	const roomToClose = selectedRoomId.value;
 	try {
-		const res = await authFetch(`/api/rooms/${encodeURIComponent(roomToClose)}`, { method: "DELETE" });
-		if (!res.ok) {
-			showToast("Failed to delete room: " + ((await res.json().catch(() => ({}))).error || res.statusText), { kind: "error" });
-			return;
-		}
+		await apiJson(`/api/rooms/${encodeURIComponent(roomToClose)}`, { method: "DELETE" });
 		showToast(`Deleted room "${label}".`, { kind: "success" });
 		closeRoomDetail();
 		if (state.currentRoom === roomToClose) {
@@ -7052,20 +6242,16 @@ async function openRoomCreate() {
 }
 async function refreshRoomAutoLearn(roomId) {
 	try {
-		const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/learning`);
-		if (!res.ok) return;
-		const cfg = await res.json();
+		const cfg = await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/learning`);
 		roomAutoLearn.set(roomId, cfg.autoTrigger === true);
 	} catch {}
 }
 async function putRoomLearning(patch) {
 	try {
-		const res = await authFetch(`/api/rooms/${encodeURIComponent(state.currentRoom)}/learning`, {
+		await apiJson(`/api/rooms/${encodeURIComponent(state.currentRoom)}/learning`, {
 			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(patch)
+			body: patch
 		});
-		if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed");
 		showToast("Learning settings saved for this room");
 		refreshRoomAutoLearn(state.currentRoom);
 		return true;
@@ -7077,11 +6263,7 @@ async function putRoomLearning(patch) {
 var searchDebounce;
 var searchResultsApp = null;
 function mountSearchResults() {
-	if (searchResultsApp) return;
-	const host = $("#search-results");
-	if (!host) return;
-	searchResultsApp = createApp(SearchResults_default);
-	searchResultsApp.mount(host);
+	searchResultsApp ??= mountIsland("#search-results", () => createApp(SearchResults_default));
 }
 function renderSearchResults(results) {
 	const list = $("#search-results");
@@ -7118,9 +6300,7 @@ function wireRoomsPanel() {
 		}
 		searchDebounce = setTimeout(async () => {
 			try {
-				const r = await authFetch(`/api/search?q=${encodeURIComponent(q)}`);
-				if (!r.ok) return renderSearchResults([]);
-				renderSearchResults((await r.json()).results || []);
+				renderSearchResults((await apiJson(`/api/search?q=${encodeURIComponent(q)}`)).results || []);
 			} catch {
 				renderSearchResults([]);
 			}
@@ -7242,19 +6422,13 @@ function wireRoomCreate() {
 			return;
 		}
 		try {
-			const res = await authFetch("/api/rooms", {
+			const body = await apiJson("/api/rooms", {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
+				body: {
 					name,
 					agents: refs
-				})
+				}
 			});
-			if (!res.ok) {
-				showToast("Failed to create room: " + ((await res.json().catch(() => ({}))).error || res.statusText), { kind: "error" });
-				return;
-			}
-			const body = await res.json();
 			closeRoomDetail();
 			await fetchAgents();
 			if (body.room) joinRoom(body.room.id, body.room.name);
@@ -7271,11 +6445,6 @@ function activityOf(room) {
 }
 //#endregion
 //#region src/features/files.ts
-var deps$15 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
-function provideFilesDeps(provided) {
-	Object.assign(deps$15, provided);
-}
 function formatFileSize(bytes) {
 	if (bytes < 1024) return `${bytes} B`;
 	if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -7324,11 +6493,7 @@ function clearStagedFiles() {
 }
 var filePreviewApp = null;
 function mountFilePreview() {
-	if (filePreviewApp) return;
-	const host = $("#file-preview");
-	if (!host) return;
-	filePreviewApp = createApp(FilePreview_default, { onRemove: (id) => removeStagedFile(id) });
-	filePreviewApp.mount(host);
+	filePreviewApp ??= mountIsland("#file-preview", () => createApp(FilePreview_default, { onRemove: (id) => removeStagedFile(id) }));
 }
 function renderFilePreview() {
 	const preview = $("#file-preview");
@@ -7394,16 +6559,10 @@ async function uploadFileChunked(file, caption) {
 		};
 		if (i === totalChunks - 1 && caption) body.caption = caption;
 		try {
-			const res = await authFetch(`/api/rooms/${encodeURIComponent(state.currentRoom)}/upload/chunk?thread_id=${encodeURIComponent(state.currentThread)}`, {
+			await apiJson(`/api/rooms/${encodeURIComponent(state.currentRoom)}/upload/chunk?thread_id=${encodeURIComponent(state.currentThread)}`, {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(body)
+				body
 			});
-			if (!res.ok) {
-				const err = await res.json().catch(() => ({}));
-				if (statusMsg) statusMsg.text = `Upload failed: ${err.error || res.statusText}`;
-				return;
-			}
 		} catch (err) {
 			if (statusMsg) statusMsg.text = `Upload failed: ${err?.message}`;
 			return;
@@ -7437,10 +6596,7 @@ function closeAttachPicker() {
 }
 var attachPickerApp = null;
 function mountAttachPicker() {
-	if (attachPickerApp) return;
-	const host = $("#attach-picker-list");
-	if (!host) return;
-	attachPickerApp = createApp(AttachPicker_default, { onToggle: async (key, attached, li) => {
+	attachPickerApp ??= mountIsland("#attach-picker-list", () => createApp(AttachPicker_default, { onToggle: async (key, attached, li) => {
 		const cfg = attachPickerCfg.value;
 		if (!cfg) return;
 		const item = cfg.items().find((it) => String(cfg.name(it)) === key);
@@ -7452,8 +6608,7 @@ function mountAttachPicker() {
 		}
 		li.style.pointerEvents = "";
 		renderAttachPickerList($("#attach-picker-search")?.value);
-	} });
-	attachPickerApp.mount(host);
+	} }));
 }
 function renderAttachPickerList(filterText) {
 	const cfg = attachPickerCfg.value;
@@ -7611,20 +6766,10 @@ var SlashMenu_default = /* @__PURE__ */ defineComponent({
 	props: { onPick: { type: Function } },
 	setup(__props) {
 		/**
-		* The /command autocomplete — forty-eighth island.
-		*
-		* Mounted into <div id="slash-menu">, exclusively owned by this module. Its
-		* hidden flag stays imperative: the menu is suppressed for non-admins entirely
-		* (every one of these commands is admin-only — see command-gate.ts), and
-		* whether to show it at all is a decision about the surface, not the rows.
-		*
-		* mousedown, NOT click, with preventDefault — the composer's blur would dismiss
-		* the menu before a click could land, and preventing default keeps focus in the
-		* input. Same reason MentionPopover uses it.
-		*
-		* esc() is gone: the imperative version built the row with innerHTML, so the
-		* command and description had to be escaped by hand. Bindings escape by
-		* construction.
+		* The /command autocomplete, mounted into <div id="slash-menu">. Its hidden flag stays
+		* with the caller: every command is admin-only (see command-gate.ts), so non-admins never
+		* see the menu. mousedown, NOT click, with preventDefault — the composer's blur would
+		* dismiss the menu first (same as MentionPopover).
 		*/
 		const props = __props;
 		function pick(e, i) {
@@ -7646,11 +6791,6 @@ var SlashMenu_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/composer.ts
-var deps$14 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
-function provideComposerDeps(provided) {
-	Object.assign(deps$14, provided);
-}
 var roomMentionPeople = [];
 async function fetchMentionablePeople() {
 	const roomId = state.currentRoom;
@@ -7659,9 +6799,7 @@ async function fetchMentionablePeople() {
 		return;
 	}
 	try {
-		const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId ?? "")}/mentionable`);
-		if (!res.ok) return;
-		const people = await res.json();
+		const people = await apiJson(`/api/rooms/${encodeURIComponent(roomId ?? "")}/mentionable`);
 		if (state.currentRoom === roomId) roomMentionPeople = people.map((p) => ({
 			folder: p.handle,
 			name: p.name,
@@ -7810,11 +6948,7 @@ var slashMatches = [];
 var slashActive = 0;
 var slashApp = null;
 function mountSlashMenu() {
-	if (slashApp) return;
-	const host = $("#slash-menu");
-	if (!host) return;
-	slashApp = createApp(SlashMenu_default, { onPick: (i) => pickSlash(i) });
-	slashApp.mount(host);
+	slashApp ??= mountIsland("#slash-menu", () => createApp(SlashMenu_default, { onPick: (i) => pickSlash(i) }));
 }
 function updateSlashMenu() {
 	const menu = $("#slash-menu");
@@ -7949,14 +7083,10 @@ async function broadcastSessionCommand(command) {
 		destructive: command === "/clear"
 	})) return;
 	try {
-		const res = await authFetch(`/api/rooms/${encodeURIComponent(state.currentRoom)}/sessions/broadcast`, {
+		showToast(`${verb} queued for ${(await apiJson(`/api/rooms/${encodeURIComponent(state.currentRoom)}/sessions/broadcast`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ command })
-		});
-		const body = await res.json();
-		if (!res.ok) throw new Error(body.error || res.status);
-		showToast(`${verb} queued for ${body.count} session(s)`, { kind: "success" });
+			body: { command }
+		})).count} session(s)`, { kind: "success" });
 	} catch (err) {
 		showToast(`${verb} all failed: ${err.message}`, { kind: "error" });
 	}
@@ -8039,16 +7169,37 @@ function setMentionSelectedIndex(v) {
 	mentionSelectedIndex$1 = v;
 }
 //#endregion
+//#region src/features/installer-state.ts
+/**
+* One flag for the four harness installs (codex, opencode, pi, grok): each
+* rebuilds the agent image and restarts the host, so two at once is never
+* right. The per-harness names below are aliases of the same ref.
+*/
+var harnessInstallActive = ref(false);
+var codexInstallActive = harnessInstallActive;
+var opencodeInstallActive = harnessInstallActive;
+var routingInstallActive = ref(false);
+var sttInstallActive = ref(false);
+var ttsInstallActive = ref(false);
+var tailscaleInstallActive = ref(false);
+var cloudflaredInstallActive = ref(false);
+/**
+* Pending setTimeout handles while a poll is in flight, else null. Re-armed
+* after each response, so a slow server cannot stack overlapping requests.
+*/
+var ollamaPullPoller = ref(null);
+var opencodeGatePoll = ref(null);
+/**
+* The gate as the SERVER reports it ('running'), rather than as this tab
+* remembers it — which is what makes it survive a page reload.
+*/
+var opencodeGateFromServer = ref(false);
+//#endregion
 //#region src/features/wizard-state.ts
 /** Model names returned by the last successful Ollama probe. */
 var wizardOllamaModels = ref([]);
-/**
-* The model whose radio is checked.
-*
-* State rather than a DOM write because two paths select one: the delegated
-* change listener on the list, and the post-pull path, which used to find the
-* radio with querySelector and set .checked on it directly.
-*/
+/** The model whose radio is checked. State, because two paths select one: the
+*  list's change listener and the post-pull path. */
 var wizardOllamaSelected = ref("");
 //#endregion
 //#region src/features/WizardOllamaModels.vue
@@ -8056,42 +7207,11 @@ var WizardOllamaModels_default = /* @__PURE__ */ defineComponent({
 	__name: "WizardOllamaModels",
 	setup(__props) {
 		/**
-		* The wizard's Ollama model radios — sixty-second island.
-		*
-		* Mounted into <ul id="wizard-ollama-list">, exclusively owned by this module.
-		* Everything else wizardProbeOllama touches — the status line, the results and
-		* download rows, the probe button's busy label — is SET on static markup and
-		* stays imperative. Only the radio list was built.
-		*
-		* No @change here, deliberately. The listener is delegated on the HOST, which
-		* Vue never replaces, so it keeps working across every render and the listener
-		* set is unchanged by this conversion. Putting @change on each input would add
-		* one listener per model and remove the host's — a diff for no gain.
-		*
-		* The checked radio is state because TWO paths select one: that delegated
-		* listener, and the post-pull path, which used to find the input with
-		* querySelector and assign .checked on it — an imperative write into what is
-		* now Vue-owned DOM.
-		*
-		* Both `value` and `checked` are assigned as PROPERTIES through a function ref.
-		* Only one of them had to be — measured, not assumed:
-		*
-		*   radio.value = v      → value="v"      REFLECTS
-		*   radio.checked = true → no attribute   does not reflect
-		*   text.value = v       → no attribute   does not reflect
-		*   button.disabled      → disabled=""    REFLECTS
-		*
-		* `value` on a radio is in the IDL's "default" mode and reflects; on a text
-		* input it is in "value" mode and does not. So :value would have been faithful
-		* HERE and is the trap it has been elsewhere, which is exactly why it is not
-		* worth reasoning about per element — assigning the property is faithful for
-		* every one of these cases, so both go through the ref.
-		*
-		* That also settles `checked`: it does not reflect, so the earlier bindings in
-		* #196, #217, #233 and #236 each bought an accepted markup difference that this
-		* approach does not need. `disabled` in #242 reflects, so binding it was fine.
-		*
-		* The arrow is recreated each render, so Vue re-invokes it each render and the
+		* The wizard's Ollama model radios, mounted into <ul id="wizard-ollama-list">.
+		* No @change: the listener is delegated on the host, which Vue never replaces. The
+		* checked radio is state because two paths select one (that listener and the post-pull
+		* path). `value` and `checked` are assigned as properties through a function ref — the
+		* faithful choice for every input type — and the arrow is recreated each render so the
 		* properties follow the selection.
 		*/
 		function apply(el, m) {
@@ -8126,12 +7246,8 @@ var hostPulls = ref({});
 */
 var hostPullPreview = ref({});
 /**
-* Which cards are expanded.
-*
-* Backed by localStorage under `serverCardOpen:<host>`, the same keys the
-* imperative accordion used — an operator's expanded cards survive this
-* conversion. Held as a Set rather than read from storage during render so the
-* template does not touch localStorage on every patch.
+* Which cards are expanded. Backed by localStorage under `serverCardOpen:<host>`;
+* held as a Set so the template does not touch localStorage on every patch.
 */
 var openCards = ref(/* @__PURE__ */ new Set());
 function isCardOpen(host) {
@@ -8150,10 +7266,10 @@ function syncOpenCards(list) {
 }
 //#endregion
 //#region src/features/installers.ts
-var deps$13 = {};
-/** Wire the legacy helpers these runners call. Call once at startup. */
+var deps$11 = {};
+/** Wire the composition-root helpers these runners call. Call once at startup. */
 function provideInstallerDeps(provided) {
-	Object.assign(deps$13, provided);
+	Object.assign(deps$11, provided);
 }
 var CODEX_WIZARD_ELS = {
 	btn: "#wizard-codex-install",
@@ -8178,9 +7294,8 @@ var HARNESS_NAME = {
 };
 /**
 * One line of progress for a chain install: which step, of how many, and for
-* how long. The agent-image rebuild emits almost nothing for minutes — with
-* only the last output line the pane stopped changing and read as hung. Built
-* from the poll, so the elapsed time visibly moves on every re-render.
+* how long — the image rebuild is silent for minutes, so the elapsed time is
+* what shows it is not hung.
 */
 function installProgressLine(st) {
 	const step = st.stepCount ? `Step ${st.stepIndex} of ${st.stepCount}` : "Installing";
@@ -8196,16 +7311,16 @@ async function runInstall(feature, els) {
 	const log = $(els.log);
 	if (!btn || harnessInstallActive.value) return;
 	harnessInstallActive.value = true;
-	deps$13.refreshWizardNextGate();
+	deps$11.refreshWizardNextGate();
 	const progress = els.progress ? $(els.progress) : null;
 	if (progress) progress.hidden = false;
 	log.hidden = false;
 	log.textContent = "Installing…";
-	let done = deps$13.wizardBusy(btn, "Installing…");
+	let done = deps$11.wizardBusy(btn, "Installing…");
 	const finish = () => {
 		log.textContent = els.doneMsg || name + " installed.";
 		showToast(name + " installed", { kind: "success" });
-		deps$13.refreshWizardCredState?.();
+		deps$11.refreshWizardCredState?.();
 	};
 	try {
 		const res = await authFetch(url, { method: "POST" });
@@ -8248,7 +7363,7 @@ async function runInstall(feature, els) {
 		}
 		if (restarting) {
 			done();
-			done = deps$13.wizardBusy(btn, "Restarting…");
+			done = deps$11.wizardBusy(btn, "Restarting…");
 			log.textContent = "Restarting…";
 			const deadline = Date.now() + 15e4;
 			let sawResponsive = false;
@@ -8278,11 +7393,11 @@ async function runInstall(feature, els) {
 	} finally {
 		done();
 		harnessInstallActive.value = false;
-		deps$13.refreshWizardNextGate();
-		deps$13.renderWizardOpencodeInstall();
-		deps$13.refreshWizardCredState();
-		deps$13.renderCredentialsSettings();
-		deps$13.fetchAgents();
+		deps$11.refreshWizardNextGate();
+		deps$11.renderWizardOpencodeInstall();
+		deps$11.refreshWizardCredState();
+		deps$11.renderCredentialsSettings();
+		deps$11.fetchAgents();
 	}
 }
 var TTS_SETTINGS_ELS = {
@@ -8290,19 +7405,7 @@ var TTS_SETTINGS_ELS = {
 	log: "#tts-install-log",
 	progress: "#tts-install-progress"
 };
-/**
-* The shared install-poll loop.
-*
-* pollTtsInstall and pollSttInstall were the same 30 lines twice, differing in
-* four values: the endpoint, which active-flag accessors to use, the two toast
-* strings, and what to re-render afterwards. The duplication was not harmless —
-* the TTS copy re-renders BOTH its surfaces (settings and wizard) because the
-* shared active-guard means only one poll runs and it cannot rely on a single
-* caller re-rendering; the STT copy does not, and it is not obvious from either
-* one alone whether that is a deliberate difference or a missed edit.
-*
-* Making the difference a parameter answers that question in the call site.
-*/
+/** The shared speech-stack install-poll loop; differences between stacks are PollSpec fields. */
 async function pollInstall(spec) {
 	if (spec.isActive()) return;
 	spec.setActive(true);
@@ -8345,8 +7448,8 @@ async function pollTtsInstall(els = TTS_SETTINGS_ELS) {
 		errPrefix: "Read aloud install error: ",
 		onSuccess: () => loadTtsConfig(),
 		onFinally: () => {
-			deps$13.renderTtsSetupSettings();
-			deps$13.renderWizardFeatures();
+			deps$11.renderTtsSetupSettings();
+			deps$11.renderWizardFeatures();
 		}
 	});
 }
@@ -8355,7 +7458,7 @@ async function runTtsInstall(els = TTS_SETTINGS_ELS) {
 	const log = $(els.log);
 	const progress = $(els.progress);
 	if (progress) progress.hidden = false;
-	const done = btn ? deps$13.wizardBusy(btn, "Installing…") : null;
+	const done = btn ? deps$11.wizardBusy(btn, "Installing…") : null;
 	if (log) log.textContent = "Starting…";
 	try {
 		const res = await authFetch("/api/webchat/tts/install", { method: "POST" });
@@ -8388,7 +7491,7 @@ async function pollSttInstall(els = STT_SETTINGS_ELS, onDone) {
 		errPrefix: "Voice dictation install error: ",
 		onSuccess: () => initSttFeature(),
 		onFinally: () => {
-			deps$13.renderSttSetupSettings();
+			deps$11.renderSttSetupSettings();
 			if (onDone) onDone();
 		}
 	});
@@ -8398,7 +7501,7 @@ async function runSttInstall(payload, els = STT_SETTINGS_ELS, onDone) {
 	const log = $(els.log);
 	const progress = $(els.progress);
 	if (progress) progress.hidden = false;
-	const done = btn ? deps$13.wizardBusy(btn, "Installing…") : null;
+	const done = btn ? deps$11.wizardBusy(btn, "Installing…") : null;
 	if (log) log.textContent = "Starting…";
 	try {
 		const res = await authFetch("/api/webchat/stt/install", {
@@ -8431,12 +7534,8 @@ var ROUTING_ELS_SETTINGS = {
 * `✗` close one, `= ` is an aside. So the most recent line carrying one of
 * those glyphs IS the current step — no parsing beyond a prefix match, and it
 * degrades to '' rather than guessing when the output is something else.
-*
-* Deliberately NOT a percentage. The long pole in phase 1 is the docker image
-* pull, whose only signal is per-layer byte counts from several concurrent
-* layers, in a format that shifts between docker versions. A single number
-* synthesised from that would be a guess wearing the costume of a measurement;
-* the log underneath already shows the real bytes.
+* Deliberately NOT a percentage: docker's per-layer byte counts cannot be
+* honestly summed into one, and the log already shows the real bytes.
 */
 function installStepLabel(lines) {
 	if (!Array.isArray(lines)) return "";
@@ -8484,15 +7583,14 @@ async function pollRoutingInstall() {
 				chainHandled = true;
 				if (st.exitCode === 0) {
 					try {
-						await authFetch("/api/router/routes", {
+						await apiJson("/api/router/routes", {
 							method: "PUT",
-							headers: { "Content-Type": "application/json" },
-							body: JSON.stringify({ live: { enabled: true } })
+							body: { live: { enabled: true } }
 						});
 					} catch {}
-					await deps$13.fetchModels();
+					await deps$11.fetchModels();
 					showToast("Auto routing installed and live — assign the “auto” model to an agent.", { kind: "success" });
-					await deps$13.probeRoutingAvailability();
+					await deps$11.probeRoutingAvailability();
 				} else {
 					showToast("Auto routing setup failed — see log", { kind: "error" });
 					break;
@@ -8506,7 +7604,7 @@ async function pollRoutingInstall() {
 		showToast("Auto routing setup error: " + err.message, { kind: "error" });
 	} finally {
 		routingInstallActive.value = false;
-		deps$13.renderRoutingSetup();
+		deps$11.renderRoutingSetup();
 	}
 }
 async function installLitellmPhase(els = ROUTING_ELS_SETTINGS) {
@@ -8564,14 +7662,7 @@ async function runRoutingInstall() {
 				return;
 			}
 		}
-		const res = await authFetch("/api/router/install", { method: "POST" });
-		if (!res.ok) {
-			log.textContent = "Install failed: " + ((await res.json().catch(() => ({}))).error || res.status);
-			showToast("Auto routing setup failed", { kind: "error" });
-			btn.disabled = false;
-			btn.textContent = "Install";
-			return;
-		}
+		await apiJson("/api/router/install", { method: "POST" });
 		pollRoutingInstall();
 	} catch (err) {
 		log.textContent = "Install failed: " + err.message;
@@ -8584,19 +7675,8 @@ async function runRoutingInstall() {
 var previewTimers = {};
 /**
 * What pulling the currently-typed ref would cost, shown UNDER the box as it
-* is typed.
-*
-* This replaced a confirm dialog. The dialog opened centre-screen while the
-* card it described sat in a corner, dimmed the pane behind it, and put its
-* loudest button on "Pull" directly beneath a warning advising against
-* pulling. Worse, it asked a question whose answer was already computable:
-* size and VRAM fit are known the moment the ref is typed, so making someone
-* click, read and click again bought nothing. Now the cost is simply visible
-* while they decide, and the click that starts the pull is the only click.
-*
-* Silence is a valid answer. A ref whose size cannot be read — private
-* registry, registry unreachable — clears the line rather than announcing its
-* own ignorance, and any failure here leaves the pull entirely unaffected.
+* is typed, so the pull needs no confirm step. A ref whose size cannot be read
+* clears the line; any failure here leaves the pull unaffected.
 */
 function previewOllamaPull(host, model) {
 	clearTimeout(previewTimers[host]);
@@ -8610,7 +7690,7 @@ function previewOllamaPull(host, model) {
 	}
 	previewTimers[host] = setTimeout(async () => {
 		try {
-			const pre = await (await authFetch("/api/ollama/prepull?model=" + encodeURIComponent(ref))).json();
+			const pre = await apiJson("/api/ollama/prepull?model=" + encodeURIComponent(ref));
 			if (pre.sizeBytes == null) {
 				hostPullPreview.value = {
 					...hostPullPreview.value,
@@ -8640,14 +7720,13 @@ function previewOllamaPull(host, model) {
 /** Stop a pull that is already running. */
 async function cancelOllamaPull(host, model) {
 	try {
-		if (!(await authFetch("/api/ollama/pull/cancel", {
+		await apiJson("/api/ollama/pull/cancel", {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
+			body: {
 				host,
 				model
-			})
-		})).ok) return;
+			}
+		});
 	} catch {}
 }
 async function startOllamaPull(host, model, input, btn) {
@@ -8659,16 +7738,13 @@ async function startOllamaPull(host, model, input, btn) {
 		[host]: null
 	};
 	try {
-		const res = await authFetch("/api/ollama/pull", {
+		await apiJson("/api/ollama/pull", {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
+			body: {
 				host,
 				model
-			})
+			}
 		});
-		const body = await res.json();
-		if (!res.ok) throw new Error(body.error || res.status);
 		input.value = "";
 		pollOllamaPulls();
 	} catch (err) {
@@ -8680,9 +7756,7 @@ async function startOllamaPull(host, model, input, btn) {
 /** One-model fitness verdict, attached to the host card's pull status. */
 async function attachPullVerdict(host, model) {
 	try {
-		const r = await authFetch("/api/models/manage");
-		if (!r.ok) return;
-		const inv = await r.json();
+		const inv = await apiJson("/api/models/manage");
 		const tag = String(model).toLowerCase();
 		const m = (inv.models || []).find((x) => String(x.tag).toLowerCase().startsWith(tag));
 		if (!m) return;
@@ -8723,28 +7797,19 @@ function renderOllamaPulls(pulls) {
 			if (job.status === "cancelled") showToast("Cancelled pull of " + job.model);
 			if (job.status === "success") {
 				showToast("Pulled " + job.model, { kind: "success" });
-				deps$13.loadOllamaHostModels(job.host);
+				deps$11.loadOllamaHostModels(job.host);
 				attachPullVerdict(job.host, job.model);
 			}
 		}
 	}
 }
-/**
-* host\0model pairs whose finish has already been announced.
-*
-* Was a data-* attribute on the status box (`done_<model>`), which only worked
-* because that element survived between polls. The element is a vnode now, so
-* the bookkeeping lives beside the state it guards — and a dataset key built by
-* concatenating a model name was one dot away from colliding anyway.
-*/
+/** host\0model pairs whose finish has already been announced. */
 var pullsDone = /* @__PURE__ */ new Set();
 async function pollOllamaPulls() {
 	if (ollamaPullPoller.value) return;
 	const tick = async () => {
 		try {
-			const res = await authFetch("/api/ollama/pulls");
-			if (!res.ok) throw new Error(String(res.status));
-			const { pulls } = await res.json();
+			const { pulls } = await apiJson("/api/ollama/pulls");
 			renderOllamaPulls(pulls);
 			if (pulls.some((p) => p.status === "pulling")) ollamaPullPoller.value = setTimeout(tick, 1500);
 			else ollamaPullPoller.value = null;
@@ -8756,10 +7821,10 @@ async function pollOllamaPulls() {
 }
 //#endregion
 //#region src/features/wizard.ts
-var deps$12 = {};
-/** Wire the legacy helpers this module calls. Call once, before the wizard opens. */
+var deps$10 = {};
+/** Wire the composition-root helpers this module calls. Call once, before the wizard opens. */
 function provideWizardDeps(provided) {
-	Object.assign(deps$12, provided);
+	Object.assign(deps$10, provided);
 }
 var wizardBtnWired = false;
 async function renderSettingsWizardButton() {
@@ -8767,7 +7832,8 @@ async function renderSettingsWizardButton() {
 	if (!wizardSection) return;
 	let ok = false;
 	try {
-		ok = (await authFetch("/api/workspace-credential")).ok;
+		await apiJson("/api/workspace-credential");
+		ok = true;
 	} catch {
 		ok = false;
 	}
@@ -8775,7 +7841,7 @@ async function renderSettingsWizardButton() {
 	if (!ok || wizardBtnWired) return;
 	wizardBtnWired = true;
 	$("#wizard-open-btn")?.addEventListener("click", () => {
-		deps$12.closeSettings();
+		deps$10.closeSettings();
 		openWizard();
 	});
 }
@@ -8798,7 +7864,7 @@ async function renderWizardOpencodeInstall() {
 	}
 	let st = {};
 	try {
-		st = await (await authFetch("/api/install/opencode")).json();
+		st = await apiJson("/api/install/opencode");
 	} catch {}
 	const installed = !!st.installed;
 	const running = !!st.running;
@@ -8877,12 +7943,16 @@ function buildWizardDots() {
 		dots.appendChild(d);
 	}
 }
+/**
+* Reflect live credential state on the engine list: connected engines swap
+* their connect controls for a prominent ✓ card (standard OAuth-connect UX —
+* the action you completed disappears), and the radio chips update without a
+* wizard reopen. Also greys Codex out when its provider isn't installed.
+*/
 async function refreshWizardCredState() {
 	let s;
 	try {
-		const r = await authFetch("/api/workspace-credential");
-		if (!r.ok) return;
-		s = await r.json();
+		s = await apiJson("/api/workspace-credential");
 	} catch {
 		return;
 	}
@@ -8948,11 +8018,11 @@ async function refreshWizardCredState() {
 	}
 	renderWizardOpencodeInstall();
 }
+/** Reveal the wizard's install-Ollama row when nothing answers locally (Linux
+*  only), or prefill the endpoint when a local Ollama is already running. */
 async function wizardCheckLocalOllama() {
 	try {
-		const r = await authFetch("/api/ollama/local");
-		if (!r.ok) return;
-		const st = await r.json();
+		const st = await apiJson("/api/ollama/local");
 		if (st.reachable) {
 			const url = $("#wizard-ollama-url");
 			if (url && !url.value) url.value = "http://localhost:11434";
@@ -8999,11 +8069,7 @@ async function wizardFollowPull(host, model) {
 }
 var wizardOllamaApp = null;
 function mountWizardOllamaModels() {
-	if (wizardOllamaApp) return;
-	const host = $("#wizard-ollama-list");
-	if (!host) return;
-	wizardOllamaApp = createApp(WizardOllamaModels_default);
-	wizardOllamaApp.mount(host);
+	wizardOllamaApp ??= mountIsland("#wizard-ollama-list", () => createApp(WizardOllamaModels_default));
 }
 async function wizardProbeOllama() {
 	const url = ($("#wizard-ollama-url")?.value || "").trim() || "http://localhost:11434";
@@ -9056,7 +8122,7 @@ async function wizardSelectOllamaModel(modelId) {
 	try {
 		let id = null;
 		try {
-			const roster = await (await authFetch("/api/models")).json();
+			const roster = await apiJson("/api/models");
 			id = (Array.isArray(roster) ? roster : []).find((m) => m.kind === "ollama" && String(m.endpoint || "").replace(/\/+$/, "") === endpoint && m.model_id === modelId)?.id ?? null;
 		} catch {}
 		if (!id) {
@@ -9130,7 +8196,7 @@ async function wizardLoadRecommendation() {
 async function wizardReattachPull() {
 	try {
 		const host = ($("#wizard-ollama-url")?.value || "").trim() || "http://localhost:11434";
-		const { pulls } = await (await authFetch("/api/ollama/pulls")).json();
+		const { pulls } = await apiJson("/api/ollama/pulls");
 		const job = (pulls || []).find((j) => j.host === host && j.status === "pulling");
 		if (!job) return;
 		$("#wizard-ollama-dl-model").value = job.model;
@@ -9198,15 +8264,19 @@ function closeWizard() {
 }
 async function finishWizard() {
 	try {
-		await authFetch("/api/webchat/onboarding", {
+		await apiJson("/api/webchat/onboarding", {
 			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ complete: true })
+			body: { complete: true }
 		});
 	} catch {}
 	wizardStopTsPoll();
 	closeWizard();
 }
+/**
+* Put an async wizard button into a busy state: disabled, label swapped, and a
+* small inline spinner — the "doing something" signal lives ON the control the
+* user just pressed. Returns a restore function for the finally block.
+*/
 function wizardBusy(btn, busyLabel) {
 	const original = btn.textContent;
 	btn.disabled = true;
@@ -9234,8 +8304,7 @@ async function wizardProbeHttps() {
 	if (!row) return;
 	let state = null;
 	try {
-		const r = await authFetch("/api/webchat/tailscale-https");
-		if (r.ok) state = await r.json();
+		state = await apiJson("/api/webchat/tailscale-https");
 	} catch {
 		state = null;
 	}
@@ -9311,8 +8380,7 @@ async function renderWizardDictation() {
 	if (!section) return;
 	let st = null;
 	try {
-		const r = await authFetch("/api/webchat/stt/install");
-		if (r.ok) st = await r.json();
+		st = await apiJson("/api/webchat/stt/install");
 	} catch {
 		st = null;
 	}
@@ -9389,11 +8457,10 @@ async function renderWizardFeatures() {
 		ttsDefault?.addEventListener("change", async () => {
 			const on = ttsDefault.checked;
 			try {
-				if (!(await authFetch("/api/tts/config", {
+				await apiJson("/api/tts/config", {
 					method: "PUT",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ readAloud: on })
-				})).ok) throw new Error("save failed");
+					body: { readAloud: on }
+				});
 				setTtsReadAloudEnabled(on);
 				if (!on) stopTts();
 				renderWizardFeatures();
@@ -9406,13 +8473,12 @@ async function renderWizardFeatures() {
 		$("#wizard-autolearn")?.addEventListener("change", async () => {
 			const on = $("#wizard-autolearn").checked;
 			try {
-				if (!(await authFetch("/api/learning/config", {
+				await apiJson("/api/learning/config", {
 					method: "PUT",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ enabled: on })
-				})).ok) throw new Error("save failed");
+					body: { enabled: on }
+				});
 				state.learningMasterEnabled = on;
-				deps$12.applyLearningMaster();
+				deps$10.applyLearningMaster();
 			} catch {
 				$("#wizard-autolearn").checked = !on;
 				showToast("Failed to save auto-learn", { kind: "error" });
@@ -9428,8 +8494,7 @@ async function renderWizardFeatures() {
 	const ttsOn = !!ttsDefault?.checked;
 	let st = null;
 	try {
-		const res = await authFetch("/api/webchat/tts/install");
-		if (res.ok) st = await res.json();
+		st = await apiJson("/api/webchat/tts/install");
 	} catch {
 		st = null;
 	}
@@ -9462,11 +8527,8 @@ async function wizardAccessReady() {
 	if (sel === "bearer" || sel === "localhost") return true;
 	let info = wizardAuthInfo;
 	try {
-		const r = await authFetch("/api/webchat/auth");
-		if (r.ok) {
-			info = await r.json();
-			wizardAuthInfo = info;
-		}
+		info = await apiJson("/api/webchat/auth");
+		wizardAuthInfo = info;
 	} catch {}
 	if (sel === "tailscale") return !!(info && info.tailscale && info.tailscale.healthy);
 	if (sel === "sso") return !!(info && info.proxy);
@@ -9673,9 +8735,7 @@ function wizardStartTsPollIfNeeded() {
 	if (wizardTsPoll) return;
 	wizardTsPoll = setInterval(async () => {
 		try {
-			const r = await authFetch("/api/webchat/auth");
-			if (!r.ok) return;
-			const info = await r.json();
+			const info = await apiJson("/api/webchat/auth");
 			if (info && info.tailscale && info.tailscale.healthy) {
 				wizardStopTsPoll();
 				renderWizardAccess();
@@ -9687,8 +8747,7 @@ async function renderWizardAccess() {
 	const stateEl = $("#wizard-access-state");
 	let info = null;
 	try {
-		const r = await authFetch("/api/webchat/auth");
-		if (r.ok) info = await r.json();
+		info = await apiJson("/api/webchat/auth");
 	} catch {
 		info = null;
 	}
@@ -9726,8 +8785,7 @@ async function renderWizardAccess() {
 	} else {
 		let ts = null;
 		try {
-			const r = await authFetch("/api/webchat/tailscale/install");
-			if (r.ok) ts = await r.json();
+			ts = await apiJson("/api/webchat/tailscale/install");
 		} catch {
 			ts = null;
 		}
@@ -9741,8 +8799,7 @@ async function renderWizardAccess() {
 	}
 	let cf = null;
 	try {
-		const r = await authFetch("/api/webchat/cloudflared");
-		if (r.ok) cf = await r.json();
+		cf = await apiJson("/api/webchat/cloudflared");
 	} catch {
 		cf = null;
 	}
@@ -9883,7 +8940,7 @@ async function wizardTriggerRestart() {
 	};
 	const baseUptime = await readUptime() ?? Infinity;
 	try {
-		await authFetch("/api/webchat/restart", {
+		await apiJson("/api/webchat/restart", {
 			method: "POST",
 			headers: { "X-Webchat-CSRF": "1" }
 		});
@@ -9955,10 +9012,10 @@ function wireWizard() {
 			if (wizardEngine !== "ollama") wizardClearOllamaDefault();
 		});
 	});
-	$("#wizard-claude-oauth")?.addEventListener("click", () => deps$12.openOauthMintModal("workspace"));
+	$("#wizard-claude-oauth")?.addEventListener("click", () => deps$10.openOauthMintModal("workspace"));
 	$("#wizard-codex-install")?.addEventListener("click", () => runInstall("codex", CODEX_WIZARD_ELS));
 	$("#wizard-grok-install")?.addEventListener("click", () => runInstall("grok", GROK_WIZARD_ELS));
-	$("#wizard-codex-oauth")?.addEventListener("click", () => deps$12.openOauthMintModal("workspace-codex"));
+	$("#wizard-codex-oauth")?.addEventListener("click", () => deps$10.openOauthMintModal("workspace-codex"));
 	$("#wizard-codex-save")?.addEventListener("click", async () => {
 		const key = ($("#wizard-codex-key")?.value || "").trim();
 		if (!/^sk-/.test(key)) return wizardSetStatus("#wizard-codex-status", "Expected an OpenAI API key (sk-…).", "err");
@@ -10102,13 +9159,10 @@ async function wizardCreateAndFinish() {
 		applyMarketplaceNav();
 	} catch {}
 	if (state.isOwnerView) try {
-		await authFetch("/api/webchat/tailscale-owner", {
+		await apiJson("/api/webchat/tailscale-owner", {
 			method: "PUT",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify({ armed: document.querySelector("input[name=\"wizard-access\"]:checked")?.value === "tailscale" })
+			headers: { "X-Webchat-CSRF": "1" },
+			body: { armed: document.querySelector("input[name=\"wizard-access\"]:checked")?.value === "tailscale" }
 		});
 	} catch {}
 	const done = wizardBusy($("#wizard-next"), "Creating…");
@@ -10136,19 +9190,16 @@ async function wizardCreateAndFinish() {
 			}
 			return wizardSetStatus("#wizard-room-status", out.error || "Create failed.", "err");
 		}
-		if (out?.room?.id) deps$12.joinRoom(out.room.id, out.room.name);
+		if (out?.room?.id) deps$10.joinRoom(out.room.id, out.room.name);
 		wizardSetStatus("#wizard-room-status", "Created. Finishing…", "ok");
 		await finishWizard();
 		if (wizardBearerPendingRestart) await wizardTriggerRestart();
-		if (typeof deps$12.fetchAgents === "function") deps$12.fetchAgents().catch(() => {});
+		if (typeof deps$10.fetchAgents === "function") deps$10.fetchAgents().catch(() => {});
 		if (wizardEngine === "claude" || wizardEngine === "codex" || wizardEngine === "grok") try {
-			await authFetch("/api/workspace-provider", {
+			await apiJson("/api/workspace-provider", {
 				method: "PUT",
-				headers: {
-					"Content-Type": "application/json",
-					"X-Webchat-CSRF": "1"
-				},
-				body: JSON.stringify({ provider: wizardEngine })
+				headers: { "X-Webchat-CSRF": "1" },
+				body: { provider: wizardEngine }
 			});
 		} catch {}
 	} finally {
@@ -10157,9 +9208,7 @@ async function wizardCreateAndFinish() {
 }
 async function maybeAutoOpenWizard() {
 	try {
-		const r = await authFetch("/api/webchat/onboarding");
-		if (!r.ok) return;
-		const s = await r.json();
+		const s = await apiJson("/api/webchat/onboarding");
 		if (s.canEdit && !s.complete) openWizard();
 	} catch {}
 }
@@ -10234,9 +9283,7 @@ function wireGrokLogin() {
 /** Resume a login that was started before this page loaded (or in another tab). */
 async function resumeGrokLogin() {
 	try {
-		const r = await authFetch("/api/workspace-credential/grok");
-		if (!r.ok) return;
-		const p = await r.json();
+		const p = await apiJson("/api/workspace-credential/grok");
 		if (p.running) {
 			renderGrokLogin(p);
 			startGrokPoll();
@@ -10253,41 +9300,10 @@ var ConfirmInput_default = /* @__PURE__ */ defineComponent({
 	__name: "ConfirmInput",
 	setup(__props) {
 		/**
-		* The text field showConfirmModal borrows as its body — sixty-fourth island.
-		*
-		* Per-instance, like the skill editor and the confirm modal itself: one app per
-		* call, mounted into the detached wrapper that is then handed to
-		* showConfirmModal as `body`. The modal's element-body contract is unchanged;
-		* only what fills that element is Vue now.
-		*
-		* State comes through provide(), NOT props. Root props are read once at
-		* createApp and never update, and two of these can be open at once in principle
-		* — a module ref would make the second overwrite the first. The injected object
-		* is created per call, so instances cannot collide.
-		*
-		* The input is UNCONTROLLED: no v-model, no :value. The caller reads
-		* input.value at confirm time, exactly as before. v-model would attach an input
-		* listener the original only attached when a validator was supplied, and
-		* :value would emit a value="" attribute that the imperative .value assignment
-		* never produced (type=text is IDL "value" mode — it does not reflect; a radio
-		* would, see #244). The element is captured through a function ref so the
-		* caller still has the handle it reads.
-		*
-		* The @input handler is conditional for the same reason: without a validator
-		* the original bound nothing at all — hence v-on with an empty object rather
-		* than a handler that checks and does nothing, which would still bind.
-		*
-		* One accepted markup difference, in the NO-VALIDATOR case only: v-if leaves
-		* its anchor comment behind, so the wrapper holds <input><!----> where the
-		* imperative version held <input>. With a validator both render the error div
-		* and there is no anchor, which is why only one of the four probed states
-		* differs.
-		*
-		* The alternatives are all worse than an invisible comment node: v-show would
-		* add a real element with a style attribute in the case that had none, always
-		* rendering it adds an element outright, and splitting into two components to
-		* dodge the anchor duplicates the markup this is meant to unify. Same call as
-		* data-v-app on every mount host.
+		* The text field showConfirmModal borrows as its body; one app per call. State comes
+		* through provide(), not props: root props never update, and a module ref would let two
+		* open instances collide. The input is uncontrolled (the caller reads input.value at
+		* confirm time), and @input binds only when a validator is supplied.
 		*/
 		const s = inject("confirmInput");
 		function capture(el) {
@@ -10326,18 +9342,9 @@ var ConfirmToggle_default = /* @__PURE__ */ defineComponent({
 	__name: "ConfirmToggle",
 	setup(__props) {
 		/**
-		* The toggle(s) showConfirmModal borrows as its body — sixty-fifth island.
-		*
-		* Same per-instance shape as ConfirmInput, and state arrives the same way, for
-		* the same reason.
-		*
-		* The checkbox is UNCONTROLLED and its state is read at confirm time from the
-		* captured element. `checked` does not reflect to an attribute (measured in
-		* #244), so :checked would emit one the imperative `cb.checked` read never
-		* produced — and there is nothing here that re-renders, so binding buys
-		* nothing anyway.
-		*
-		* The note is optional and comes AFTER the label, matching the append order.
+		* The toggle(s) showConfirmModal borrows as its body; per-instance and provide()-injected
+		* like ConfirmInput. The checkbox is uncontrolled and read from the captured element at
+		* confirm time (nothing here re-renders). The optional note comes after the label.
 		*/
 		const s = inject("confirmToggle");
 		function capture(el, i) {
@@ -10382,23 +9389,10 @@ var ConfirmModal_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The confirm dialog — thirty-sixth island, and the most-used modal in the app.
-		*
-		* Per-instance: the overlay is created by showConfirmModal and the app mounts
-		* into it, so the structure stays overlay > modal.
-		*
-		* `body` may be a STRING or a live HTMLElement, and that contract is load-
-		* bearing: showInputModal passes an <input> and reads input.value after the
-		* promise resolves; confirmWithToggle passes a checkbox and reads cb.checked.
-		* An element body is therefore APPENDED, not rendered — the caller keeps the
-		* reference and Vue must not clone or re-create it.
-		*
-		* There is deliberately NO focus trap here. The skill editor has one because it
-		* is a long-lived editing surface; this dialog never had one, and adding it
-		* would be a behaviour change smuggled into a conversion.
-		*
-		* Focus goes to Cancel for destructive actions so an accidental Enter does not
-		* delete.
+		* The confirm dialog, one app per overlay created by showConfirmModal. `body` may be a
+		* string or a live HTMLElement; an element is APPENDED, not rendered, because callers read
+		* its value after the promise resolves. No focus trap, unlike the skill editor. Focus goes
+		* to Cancel for destructive actions so a stray Enter does not delete.
 		*/
 		const props = __props;
 		const message = ref(null);
@@ -10484,17 +9478,10 @@ var MentionPopover_default = /* @__PURE__ */ defineComponent({
 	props: { onPick: { type: Function } },
 	setup(__props) {
 		/**
-		* The @-mention autocomplete popover — thirty-seventh island.
-		*
-		* Mounted into the popover element ensureMentionPopover() creates, which is
-		* appended next to the composer once and reused.
-		*
-		* mousedown and touchstart, NOT click. The composer's blur dismisses the
-		* popover, and blur fires before click — so a click handler would never run.
-		* touchstart is there for iOS, where the synthesized mouse events can land
-		* after the blur-dismiss timer. preventDefault keeps the input focused.
-		*
-		* Placement is pure CSS (absolute above the composer) — nothing to compute.
+		* The @-mention autocomplete popover, mounted into the element ensureMentionPopover()
+		* creates. mousedown and touchstart, NOT click: the composer's blur dismisses the popover
+		* before click fires, and on iOS synthesized mouse events can land after the dismiss
+		* timer. preventDefault keeps the input focused. Placement is pure CSS.
 		*/
 		const props = __props;
 		const nameLabel = (a) => ` — ${a.name}`;
@@ -10542,21 +9529,9 @@ var CodexPairingCode_default = /* @__PURE__ */ defineComponent({
 	props: { onCopy: { type: Function } },
 	setup(__props) {
 		/**
-		* The Codex device pairing code — forty-seventh island.
-		*
-		* Mounted into <p id="user-creds-oauth-codex-code">. Its hidden flag stays
-		* imperative: the line is shown only for Codex flows, which is a decision the
-		* mint modal makes about the whole step.
-		*
-		* The copy button exists because the operator has to TYPE this code at the
-		* ChatGPT sign-in page — copy beats retyping a device code. On success the
-		* icon swaps to a check for 1500ms; the swap is state here rather than
-		* setAttribute on a <use> href, but the same 1500ms and the same two icons.
-		*
-		* Only the rest of openOauthMintModal is left imperative, and deliberately: it
-		* APPLIES STATE to static markup (hidden flags, textContent, href) rather than
-		* building DOM. Converting that would mean claiming a whole modal to set six
-		* properties.
+		* The Codex device pairing code, mounted into <p id="user-creds-oauth-codex-code">; the
+		* mint modal owns its hidden flag. Copy exists because the operator must TYPE this code at
+		* the ChatGPT sign-in page; on success the icon shows a check for 1500ms.
 		*/
 		const props = __props;
 		const copied = ref(false);
@@ -10587,10 +9562,10 @@ var CodexPairingCode_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/modals.ts
-var deps$11 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
+var deps$9 = {};
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideModalsDeps(provided) {
-	Object.assign(deps$11, provided);
+	Object.assign(deps$9, provided);
 }
 function openHandlePopover() {
 	const pop = $("#handle-popover");
@@ -10603,7 +9578,7 @@ function openHandlePopover() {
 		status.textContent = "";
 		status.classList.remove("ok", "err");
 	}
-	deps$11.updateHandleCreds();
+	deps$9.updateHandleCreds();
 	pop.hidden = false;
 	$("#handle-chip")?.setAttribute("aria-expanded", "true");
 	if (input) input.focus();
@@ -10744,25 +9719,14 @@ async function openGrokMintModal(modal) {
 	modal.hidden = false;
 	$("#user-creds-oauth-close")?.focus();
 	status("Starting sign-in…");
-	const poll = async () => {
-		const r = await authFetch("/api/user-credentials/grok/status");
-		const d = await r.json();
-		if (!r.ok) throw new Error(d.error || r.statusText);
-		return d;
-	};
+	const poll = () => apiJson("/api/user-credentials/grok/status");
 	const wait = (ms) => new Promise((res) => setTimeout(res, ms));
 	try {
-		const r = await authFetch("/api/user-credentials/grok/start", {
+		let d = await apiJson("/api/user-credentials/grok/start", {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify({ roomId: state.currentRoom })
+			headers: { "X-Webchat-CSRF": "1" },
+			body: { roomId: state.currentRoom }
 		});
-		const started = await r.json();
-		if (!r.ok) throw new Error(started.error || r.statusText);
-		let d = started;
 		for (let i = 0; alive() && !d.verificationUrl && d.outcome !== "error" && i < 40; i++) {
 			await wait(750);
 			if (!alive()) return;
@@ -10823,16 +9787,11 @@ async function openOauthMintModal(target) {
 	$("#user-creds-oauth-close")?.focus();
 	userCredsOauthStatus("Preparing sign-in…", "");
 	try {
-		const r = await authFetch(isWorkspace ? isCodex ? "/api/workspace-credential/codex/start" : "/api/workspace-credential/oauth/start" : isCodex ? "/api/user-credentials/codex/start" : "/api/user-credentials/oauth/start", {
+		const data = await apiJson(isWorkspace ? isCodex ? "/api/workspace-credential/codex/start" : "/api/workspace-credential/oauth/start" : isCodex ? "/api/user-credentials/codex/start" : "/api/user-credentials/oauth/start", {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify(isWorkspace ? {} : { roomId: state.currentRoom })
+			headers: { "X-Webchat-CSRF": "1" },
+			body: isWorkspace ? {} : { roomId: state.currentRoom }
 		});
-		const data = await r.json();
-		if (!r.ok) throw new Error(data.error || r.statusText);
 		userCredsOauthSessionId.value = data.sessionId;
 		const link = $("#user-creds-oauth-link");
 		if (link) {
@@ -10860,6 +9819,13 @@ async function openOauthMintModal(target) {
 		userCredsOauthStatus(err?.message || "Could not start sign-in.", "error");
 	}
 }
+/**
+* Promise-based confirmation modal. Resolves true on confirm, false on
+* cancel / backdrop / Escape. `body` may be a string or an HTMLElement (use an
+* element when the message contains user-supplied text, so it stays escaped).
+* `destructive` styles the confirm button as a delete action and focuses
+* Cancel by default.
+*/
 function showConfirmModal({ title, body, confirmLabel = "Confirm", cancelLabel = "Cancel", destructive = false, extraActions = [], beforeConfirm = null }) {
 	return new Promise((resolve) => {
 		const overlay = document.createElement("div");
@@ -10895,6 +9861,12 @@ function showConfirmModal({ title, body, confirmLabel = "Confirm", cancelLabel =
 		});
 	});
 }
+/** Single-line text prompt in the app's modal chrome — replaces native prompt()
+* (unstylable, ESC-inconsistent, blocked in some PWA contexts). Returns the
+* trimmed value, or null on cancel/empty.
+* `validate(trimmedValue)` (optional): return an error string to keep the modal
+* open with that message inline (DESIGN §5 — field validation is inline text),
+* or null/undefined to accept. */
 async function showInputModal({ title, placeholder = "", value = "", confirmLabel = "Create", validate = null }) {
 	const wrap = document.createElement("div");
 	const s = reactive({
@@ -10946,11 +9918,7 @@ function dismissMentionPopover() {
 }
 var codexCodeApp = null;
 function mountCodexCode() {
-	if (codexCodeApp) return;
-	const host = $("#user-creds-oauth-codex-code");
-	if (!host) return;
-	codexCodeApp = createApp(CodexPairingCode_default, { onCopy: (code) => deps$11.copyTextToClipboard(code) });
-	codexCodeApp.mount(host);
+	codexCodeApp ??= mountIsland("#user-creds-oauth-codex-code", () => createApp(CodexPairingCode_default, { onCopy: (code) => deps$9.copyTextToClipboard(code) }));
 }
 var mentionApp = null;
 function renderMentionPopover(input) {
@@ -10964,7 +9932,7 @@ function renderMentionPopover(input) {
 	if (!mentionApp) {
 		mentionApp = createApp(MentionPopover_default, { onPick: (i) => {
 			setMentionSelectedIndex(i);
-			deps$11.acceptMention(input);
+			deps$9.acceptMention(input);
 		} });
 		mentionApp.mount(el);
 	}
@@ -10973,15 +9941,13 @@ function renderMentionPopover(input) {
 async function inspectAndConfirmImport(importBody, displayName, community) {
 	let insp = null;
 	try {
-		const res = await authFetch("/api/skills/inspect", {
+		insp = await apiJson("/api/skills/inspect", {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
+			body: {
 				...importBody,
 				official: !community
-			})
+			}
 		});
-		if (res.ok) insp = await res.json();
 	} catch {}
 	if (!insp) return showConfirmModal({
 		title: `Import ${displayName}?`,
@@ -11009,6 +9975,8 @@ async function inspectAndConfirmImport(importBody, displayName, community) {
 		destructive: !!community || insp.warnings.length > 0
 	});
 }
+/** Confirm modal with one switch option — the modal twin of .setting-toggle
+* (DESIGN.md §2b: binary choices are switches, never raw checkboxes). */
 async function confirmWithToggle({ title, toggleLabel, toggleLabels, note, confirmLabel }) {
 	const el = document.createElement("div");
 	const labels = toggleLabels ?? [toggleLabel];
@@ -11161,28 +10129,21 @@ function wireUserCredsOauth() {
 		const { subWord } = userCredsWords(userCredsProvider.value);
 		userCredsOauthStatus("Connecting…", "");
 		try {
-			const finishUrl = isWorkspace ? isCodex ? "/api/workspace-credential/codex/finish" : "/api/workspace-credential/oauth/code" : isCodex ? "/api/user-credentials/codex/finish" : "/api/user-credentials/oauth/code";
-			const body = isWorkspace ? isCodex ? { sessionId: userCredsOauthSessionId.value } : {
-				sessionId: userCredsOauthSessionId.value,
-				code
-			} : isCodex ? {
-				roomId: state.currentRoom,
-				sessionId: userCredsOauthSessionId.value
-			} : {
-				roomId: state.currentRoom,
-				sessionId: userCredsOauthSessionId.value,
-				code
-			};
-			const r = await authFetch(finishUrl, {
+			await apiJson(isWorkspace ? isCodex ? "/api/workspace-credential/codex/finish" : "/api/workspace-credential/oauth/code" : isCodex ? "/api/user-credentials/codex/finish" : "/api/user-credentials/oauth/code", {
 				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"X-Webchat-CSRF": "1"
-				},
-				body: JSON.stringify(body)
+				headers: { "X-Webchat-CSRF": "1" },
+				body: isWorkspace ? isCodex ? { sessionId: userCredsOauthSessionId.value } : {
+					sessionId: userCredsOauthSessionId.value,
+					code
+				} : isCodex ? {
+					roomId: state.currentRoom,
+					sessionId: userCredsOauthSessionId.value
+				} : {
+					roomId: state.currentRoom,
+					sessionId: userCredsOauthSessionId.value,
+					code
+				}
 			});
-			const data = await r.json();
-			if (!r.ok) throw new Error(data.error || r.statusText);
 			userCredsOauthSessionId.value = null;
 			if (isWorkspace) {
 				showToast(`Workspace default ${isCodex ? "ChatGPT" : "Claude"} subscription connected.`, { kind: "success" });
@@ -11202,11 +10163,7 @@ function wireUserCredsOauth() {
 		}
 	});
 }
-/**
-* The OAuth modal's status line. It writes #user-creds-oauth-status, which is
-* this modal's own markup — it sat in members.ts and was handed back through a
-* bridge entry, which is the shape of a function filed under the wrong owner.
-*/
+/** The OAuth modal's status line (#user-creds-oauth-status). */
 function userCredsOauthStatus(msg, kind) {
 	const el = $("#user-creds-oauth-status");
 	if (!el) return;
@@ -11220,15 +10177,13 @@ function userCredsOauthStatus(msg, kind) {
 }
 //#endregion
 //#region src/features/select-toggle.ts
-var deps$10 = {};
+var deps$8 = {};
 function provideSelectToggleDeps(provided) {
-	Object.assign(deps$10, provided);
+	Object.assign(deps$8, provided);
 }
 /**
-* The registered selectable matching this server row, if there is one.
-*
-* Endpoint comparison is normalised because the same router has been registered
-* under several host forms over time.
+* The registered selectable matching this server row, if there is one. Endpoints
+* are normalised: the same router may be registered under several host forms.
 */
 function findSelectable(kind, endpoint, modelId) {
 	const norm = (e) => (e || "").replace(/^https?:\/\//, "").replace(/\/+$/, "");
@@ -11250,13 +10205,9 @@ function selectToggleProps(kind, endpoint, modelId) {
 	};
 }
 /**
-* What the +/− click does. Shared by the imperative builder and SelectToggle.vue
-* so the two cannot drift — the component owns none of this.
-*
-* `setBusy` is how the caller disables its own control: the button element in
-* the imperative case, a ref in the component's. It is called with false only
-* on failure, matching the original, because on success fetchModels() re-renders
-* the row away.
+* What the +/− click does, shared by both renderers so they cannot drift.
+* `setBusy` disables the caller's control; it is reset only on failure, since
+* on success fetchModels() re-renders the row away.
 */
 async function toggleSelectable(kind, endpoint, modelId, displayName, setBusy) {
 	const existing = findSelectable(kind, endpoint, modelId);
@@ -11271,21 +10222,19 @@ async function toggleSelectable(kind, endpoint, modelId, displayName, setBusy) {
 			}
 			showToast("Removed from selectable models");
 		} else {
-			const r = await authFetch("/api/models", {
+			await apiJson("/api/models", {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
+				body: {
 					name: displayName,
 					kind,
 					endpoint,
 					model_id: modelId
-				})
+				}
 			});
-			if (!r.ok) throw new Error((await r.json()).error || r.status);
 			showToast("Added to selectable models", { kind: "success" });
 		}
-		await deps$10.fetchModels();
-		deps$10.refreshRouterRoster();
+		await deps$8.fetchModels();
+		deps$8.refreshRouterRoster();
 	} catch (err) {
 		showToast(String(err.message || err), { kind: "error" });
 		setBusy(false);
@@ -11305,20 +10254,9 @@ var ModelUsage_default = /* @__PURE__ */ defineComponent({
 	__name: "ModelUsage",
 	setup(__props) {
 		/**
-		* The "assigned to" line in the model detail pane — fifty-first island.
-		*
-		* Mounted into <div id="model-detail-usage">, exclusively owned by this module.
-		*
-		* The rest of openModelDetail stays imperative and that is deliberate: it
-		* APPLIES STATE to static markup — title, badge, explainer, four input values,
-		* a hidden flag — rather than building DOM. This block is the only part that
-		* builds anything. Third time this shape has come up (renderTtsSetupSettings,
-		* openOauthMintModal, here), so the rule is worth stating: convert what BUILDS,
-		* leave what SETS.
-		*
-		* The prefix is a bare text node followed by chips with no separator, exactly
-		* as appendChild(createTextNode(…)) produced — so it is bound rather than
-		* written as template text, which would carry the surrounding newlines.
+		* The "assigned to" line in the model detail pane, mounted into
+		* <div id="model-detail-usage">; the rest of openModelDetail only sets state on static
+		* markup. The prefix is bound, not template text, so no newlines surround it.
 		*/
 		return (_ctx, _cache) => {
 			return unref(modelAssignees).length ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createTextVNode(toDisplayString(PREFIX)), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(modelAssignees), (n, i) => {
@@ -11340,12 +10278,7 @@ var routeDefaultName = ref("");
 var routeSelectedIdx = ref(-1);
 /** Capabilities the router offers to route but that no route covers yet. */
 var routeSuggestions = ref([]);
-/**
-* Capabilities whose Create is in flight.
-*
-* The imperative version disabled the button element directly and re-enabled it
-* on failure; a save that succeeds re-fetches and the row disappears on its own.
-*/
+/** Capabilities whose Create is in flight; on success the re-fetch drops the row. */
 var routeSuggestBusy = ref(/* @__PURE__ */ new Set());
 //#endregion
 //#region src/features/RouteList.vue?vue&type=script&setup=true&lang.ts
@@ -11355,26 +10288,18 @@ var _hoisted_1$27 = {
 };
 var _hoisted_2$23 = ["onClick", "onKeydown"];
 var _hoisted_3$22 = { class: "route-row-top" };
-var _hoisted_4$17 = {
+var _hoisted_4$17 = { class: "model-row-name" };
+var _hoisted_5$15 = {
 	key: 0,
-	class: "model-kind-badge kind-anthropic"
-};
-var _hoisted_5$15 = { class: "model-row-name" };
-var _hoisted_6$13 = {
-	key: 1,
 	class: "model-kind-badge model-default-badge"
 };
-var _hoisted_7$9 = {
-	key: 2,
+var _hoisted_6$13 = {
+	key: 1,
 	class: "model-row-uses"
 };
-var _hoisted_8$8 = {
-	key: 3,
-	class: "model-row-host"
-};
+var _hoisted_7$9 = { class: "model-row-host" };
 var EMPTY$7 = "No routes yet — add one, or a suggestion will offer to.";
 var NO_DESC = "No description — click to add the rule";
-var ESCALATE = "escalate";
 var DEFAULT_CHIP = "default";
 var PINNED = "pinned";
 //#endregion
@@ -11384,24 +10309,10 @@ var RouteList_default = /* @__PURE__ */ defineComponent({
 	props: { onActivate: { type: Function } },
 	setup(__props) {
 		/**
-		* The auto-routing rule list — fifty-second island.
-		*
-		* Mounted into <ul id="route-list">, exclusively owned by this module.
-		*
-		* Same list grammar as Agents/Models/MCP: rows open a detail aside, chips carry
-		* state (default / pinned / escalates), and the bound model rides as dim meta.
-		*
-		* makeRowActivatable() is replicated inline — role/tabindex, click, Enter and
-		* Space — rather than called. That helper attaches listeners imperatively to a
-		* node it is handed, which is the thing an island exists to stop doing. McpList
-		* made the same call for the same reason.
-		*
-		* The active row keys off routeSelectedIdx alone, which legacy sets to -1 when
-		* the detail pane is closed. A separate `detailOpen` prop would be read once at
-		* createApp and never update — root props are not reactive.
-		*
-		* An escalating route shows no bound model: escalation hands the turn to
-		* Claude, so there is nothing local to name.
+		* The auto-routing rule list, mounted into <ul id="route-list">; same grammar as the
+		* Agents/Models/MCP lists, with makeRowActivatable() inlined as in McpList. The active row
+		* keys off routeSelectedIdx alone (routing.ts resets it to -1 when the detail closes; root
+		* props are not reactive).
 		*/
 		const props = __props;
 		function onKey(e, i) {
@@ -11420,11 +10331,10 @@ var RouteList_default = /* @__PURE__ */ defineComponent({
 					onClick: ($event) => props.onActivate(i),
 					onKeydown: ($event) => onKey($event, i)
 				}, [createElementVNode("div", _hoisted_3$22, [
-					r.escalate ? (openBlock(), createElementBlock("span", _hoisted_4$17, toDisplayString(ESCALATE))) : createCommentVNode("", true),
-					createElementVNode("span", _hoisted_5$15, toDisplayString(r.name), 1),
-					unref(routeDefaultName) === r.name ? (openBlock(), createElementBlock("span", _hoisted_6$13, toDisplayString(DEFAULT_CHIP))) : createCommentVNode("", true),
-					r.pinned ? (openBlock(), createElementBlock("span", _hoisted_7$9, toDisplayString(PINNED))) : createCommentVNode("", true),
-					!r.escalate ? (openBlock(), createElementBlock("span", _hoisted_8$8, toDisplayString(r.model || ""), 1)) : createCommentVNode("", true)
+					createElementVNode("span", _hoisted_4$17, toDisplayString(r.name), 1),
+					unref(routeDefaultName) === r.name ? (openBlock(), createElementBlock("span", _hoisted_5$15, toDisplayString(DEFAULT_CHIP))) : createCommentVNode("", true),
+					r.pinned ? (openBlock(), createElementBlock("span", _hoisted_6$13, toDisplayString(PINNED))) : createCommentVNode("", true),
+					createElementVNode("span", _hoisted_7$9, toDisplayString(r.model || ""), 1)
 				]), createElementVNode("div", { class: normalizeClass(r.description ? "route-row-desc" : "route-row-desc empty") }, toDisplayString(r.description || NO_DESC), 3)], 42, _hoisted_2$23);
 			}), 128))], 64);
 		};
@@ -11441,28 +10351,10 @@ var RouteSuggestions_default = /* @__PURE__ */ defineComponent({
 	props: { onCreate: { type: Function } },
 	setup(__props) {
 		/**
-		* Capability routes the router could add but hasn't — sixty-first island.
-		*
-		* Mounted into <div id="route-suggestions">, exclusively owned by this module.
-		* The host's own `hidden` flag stays imperative: Vue manages an element's
-		* CHILDREN, not the element, and hiding an empty box is the renderer's job in
-		* exactly the way #agent-keys-count was.
-		*
-		* The sentence was built with innerHTML and esc() — two <strong> spans inside
-		* running text. It is written here on ONE line: the imperative version produced
-		* no whitespace around the tags, and template text carries its newlines.
-		*
-		* Creating a route disables its button while the save is in flight and
-		* re-enables it if the save fails. That is an async pass reaching back into an
-		* already-rendered row, so it is state (`routeSuggestBusy`) rather than a DOM
-		* mutation — the same reason skillUpdating exists.
-		*
-		* The busy state produces NO markup difference, unlike the `checked` cases in
-		* #196, #217, #233 and #236. `disabled` is a reflected IDL attribute: the
-		* imperative `btn.disabled = true` writes `disabled=""` into the DOM just as
-		* :disabled does. `checked` does not reflect — that is why those slices had a
-		* difference to accept and this one does not. The busy-state diff is run
-		* anyway, and confirms it.
+		* Capability routes the router could add, mounted into <div id="route-suggestions">; the
+		* host's hidden flag stays with the renderer. The sentence stays on ONE template line so
+		* no whitespace appears around its <strong> tags. A create in flight disables its button
+		* through `routeSuggestBusy` state rather than a DOM write.
 		*/
 		const props = __props;
 		return (_ctx, _cache) => {
@@ -11489,13 +10381,8 @@ var RouteSuggestions_default = /* @__PURE__ */ defineComponent({
 //#region src/features/routing-decisions-state.ts
 /** The already-filtered, already-sliced decision rows for the open profile. */
 var decisions = ref([]);
-/**
-* Which of the three terminal states the list is in.
-*
-* The imperative version expressed these as three different innerHTML writes
-* into the same element, which is why a failure mid-render could leave rows from
-* the previous profile sitting above an error line. One field cannot do that.
-*/
+/** Which of the three terminal states the list is in. One field, so rows from a
+*  previous profile cannot sit above an error line. */
 var decisionsPhase = ref("rows");
 /** Router profile name, shown in the empty message. */
 var decisionsRouter = ref("auto");
@@ -11517,21 +10404,8 @@ var RoutingDecisions_default = /* @__PURE__ */ defineComponent({
 	__name: "RoutingDecisions",
 	setup(__props) {
 		/**
-		* The router's recent decisions — twenty-third island.
-		*
-		* Mounted into <div id="routing-decisions-list">, exclusively owned by this
-		* module.
-		*
-		* Rows are <div>, not <li> — the host is a div and always was. Worth saying
-		* because every other list island in this phase is a <ul>.
-		*
-		* The row text is ONE binding, not five interpolations with separators between
-		* them. The imperative version set textContent, which is a single text node;
-		* `{{ when }} · {{ mode }} · …` would produce nine. They serialise the same, but
-		* the DOM diff compares what is there, so the shapes are kept the same too.
-		*
-		* esc() is gone from the empty message: it was needed because the string went
-		* into innerHTML, and a text binding escapes by construction.
+		* The router's recent decisions, mounted into <div id="routing-decisions-list">. Rows
+		* are <div>, not <li> — the host is a div. The row text is ONE binding, a single text node.
 		*/
 		const emptyText = computed(() => `No decisions yet for ${decisionsRouter.value}`);
 		/** Translate the log's internal sentinels to plain language for display. */
@@ -11541,8 +10415,7 @@ var RoutingDecisions_default = /* @__PURE__ */ defineComponent({
 				minute: "2-digit"
 			});
 			const route = d.route === "__error__" ? "classifier error" : d.route;
-			const rawModel = d.final_model || d.bound_model || "";
-			const model = rawModel === "__escalate__" ? "escalated to Claude" : rawModel;
+			const model = d.final_model || d.bound_model || "";
 			return {
 				key: `${i}:${d.ts}`,
 				err: d.route === "__error__",
@@ -11571,13 +10444,8 @@ var loaded = false;
 *
 *   ![alt](./screenshots/x.png)  → the asset route
 *   [text](other.md#anchor)      → in-app navigation, when `other` is served;
-*                                  otherwise the link is flattened to its text,
-*                                  because a dead link reads as a bug and the
-*                                  reader cannot tell that the target simply
-*                                  isn't published in-app.
-*
-* Done on the markdown rather than the DOM: marked emits the anchors already
-* resolved, and rewriting text is far less fiddly than walking nodes.
+*                                  otherwise flattened to its text (a dead
+*                                  link reads as a bug).
 */
 function rewriteDocLinks(md, known) {
 	return md.replace(/!\[([^\]]*)\]\(\.?\/?screenshots\/([a-z0-9-]+\.(?:png|gif))\)/g, (_m, alt, file) => {
@@ -11794,7 +10662,6 @@ async function fetchRunners() {
 			if (!data$1.enabled) note.textContent = "Runner endpoint off (WEBCHAT_RUNNER_ENABLED).";
 		}
 		renderList$1();
-		renderImageSource();
 		renderExtension();
 		if (selectedFp) renderDetail();
 	} catch (err) {
@@ -11813,26 +10680,6 @@ function placedOn(fp) {
 	return data$1?.placements.filter((p) => p.fingerprint === fp) ?? [];
 }
 /**
-* Install-wide image source. Binding on every paired machine: 'pull'/'build'
-* override each laptop's own setting, 'machine' hands the choice back — which
-* the note under the form says out loud, because a control that overrides
-* someone else's setting should admit it.
-*/
-function renderImageSource() {
-	const src = data$1?.imageSource;
-	const select = $("#runner-image-policy");
-	const input = $("#runner-image-ref");
-	const note = $("#runner-image-note");
-	if (!src || !select || !input || !note) return;
-	if (document.activeElement !== select && document.activeElement !== input) {
-		select.value = src.policy;
-		input.value = src.ref ?? "";
-	}
-	input.placeholder = "Image reference (optional)";
-	input.disabled = select.value === "build";
-	note.textContent = "";
-}
-/**
 * The runner package this install serves. Paired machines are offered it on
 * their next keepalive, so publishing here reaches every developer without a
 * file changing hands — which is also why only an admin may do it.
@@ -11841,7 +10688,7 @@ function renderExtension() {
 	const box = $("#runner-ext-current");
 	if (!box) return;
 	const e = data$1?.extension;
-	box.textContent = e ? `${e.version} · ${(e.size / 1024).toFixed(0)} KB · ${ago(Date.parse(e.publishedAt))}` : "None published.";
+	box.textContent = e ? `${e.version} · ${(e.size / 1024).toFixed(0)} KB · ${ago(Date.parse(e.publishedAt))}${e.signature ? " · signed" : ""}` : "None published.";
 }
 function renderList$1() {
 	const list = $("#runner-list");
@@ -11954,42 +10801,59 @@ function wire$3() {
 			openRunnerDetail(li.dataset.fp);
 		}
 	});
-	$("#runner-image-policy")?.addEventListener("change", () => renderImageSource());
-	$("#runner-image-form")?.addEventListener("submit", (e) => {
-		e.preventDefault();
-		const policy = $("#runner-image-policy")?.value;
-		const ref = $("#runner-image-ref")?.value.trim() ?? "";
-		act(() => apiJson("/api/runners/image-source", {
-			method: "PUT",
-			headers: CSRF$2,
-			body: {
-				policy,
-				ref
-			}
-		}), "Save image source");
-	});
 	$("#runner-ext-file")?.addEventListener("change", (e) => {
 		const input = e.target;
-		const file = input.files?.[0];
-		if (!file) return;
+		const files = [...input.files ?? []];
 		input.value = "";
-		if (!/^nanoclaw-\d+\.\d+\.\d+.*\.vsix$/.test(file.name)) {
-			showToast(`Expected a package named nanoclaw-<version>.vsix, not ${file.name}`, { kind: "error" });
+		if (!files.length) return;
+		const vsix = files.find((f) => f.name.endsWith(".vsix"));
+		const sig = files.find((f) => f.name.endsWith(".sig"));
+		const pub = files.find((f) => f.name.endsWith(".pub"));
+		if (vsix && !/^nanoclaw-\d+\.\d+\.\d+.*\.vsix$/.test(vsix.name)) {
+			showToast(`Expected a package named nanoclaw-<version>.vsix, not ${vsix.name}`, { kind: "error" });
 			return;
 		}
-		act(async () => {
-			const res = await authFetch("/api/runners/extension", {
-				method: "POST",
-				headers: {
-					...CSRF$2,
-					"X-NanoClaw-Filename": file.name,
-					"Content-Type": "application/octet-stream"
-				},
-				body: await file.arrayBuffer()
-			});
+		const failed = async (res) => {
 			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
 			return res.json();
-		}, `Publish ${file.name}`);
+		};
+		if (pub) {
+			act(async () => {
+				return apiJson("/api/runners/client-config", {
+					method: "PUT",
+					headers: CSRF$2,
+					body: { releaseKey: (await pub.text()).trim() }
+				});
+			}, "Save release key");
+			return;
+		}
+		if (vsix) {
+			act(async () => {
+				const headers = {
+					...CSRF$2,
+					"X-NanoClaw-Filename": vsix.name,
+					"Content-Type": "application/octet-stream"
+				};
+				if (sig) headers["X-NanoClaw-Signature"] = btoa((await sig.text()).trim());
+				return failed(await authFetch("/api/runners/extension", {
+					method: "POST",
+					headers,
+					body: await vsix.arrayBuffer()
+				}));
+			}, `Publish ${vsix.name}`);
+			return;
+		}
+		if (sig) act(async () => {
+			const body = await sig.text();
+			return failed(await authFetch("/api/runners/extension/signature", {
+				method: "PUT",
+				headers: {
+					...CSRF$2,
+					"Content-Type": "application/json"
+				},
+				body
+			}));
+		}, `Upload ${sig.name}`);
 	});
 	$("#runner-detail-close")?.addEventListener("click", () => closeRunnerDetail());
 	$("#runner-approve-btn")?.addEventListener("click", () => {
@@ -12007,7 +10871,7 @@ function wire$3() {
 		(async () => {
 			if (!await showConfirmModal({
 				title: `Revoke ${m?.hostname ?? "this machine"}?`,
-				body: "Its sessions stop and it must be approved again to come back.",
+				body: "Its agents stop and it must be approved again to come back.",
 				confirmLabel: "Revoke",
 				destructive: true
 			})) return;
@@ -12179,8 +11043,19 @@ function wire$2() {
 		const preset = e.target.closest("[data-preset]")?.dataset.preset;
 		if (preset) editor?.add(PRESETS[preset] ?? []);
 	});
-	$("#runner-egress-reset")?.addEventListener("click", () => {
-		if (data) editor?.replace(data.defaults);
+	$("#runner-egress-reset")?.addEventListener("click", async () => {
+		if (!data || !editor) return;
+		const defaults = data.defaults;
+		const dropped = editor.get().filter((h) => !defaults.includes(h));
+		if (dropped.length) {
+			if (!await showConfirmModal({
+				title: "Reset the allowlist?",
+				body: `Removes ${dropped.slice(0, 8).join(", ") + (dropped.length > 8 ? `, +${dropped.length - 8}` : "")}.`,
+				confirmLabel: "Reset",
+				destructive: true
+			})) return;
+		}
+		await editor.replace(defaults);
 	});
 	$("#runner-egress-blocked")?.addEventListener("click", async (e) => {
 		const btn = e.target.closest("[data-allow]");
@@ -12281,9 +11156,7 @@ async function loadAgentTemplates() {
 	const sel = $("#agent-create-template");
 	if (!wrap || !sel) return;
 	try {
-		const res = await authFetch("/api/templates");
-		if (!res.ok) return;
-		const body = await res.json();
+		const body = await apiJson("/api/templates");
 		templates = Array.isArray(body.templates) ? body.templates : [];
 	} catch {
 		return;
@@ -12315,29 +11188,15 @@ function mcpLine(s) {
 	return `• ${s.name} — runs: ${cmd}${env}`;
 }
 /**
-* Show what a template will do, and require an explicit yes.
-*
-* WHY THIS EXISTS. Stamping imports a stranger's blueprint: persona, skills,
-* MCP servers and scheduled tasks, in one click. Until this existed you found
-* out what was in it AFTERWARDS, from a report — while UPDATING a stamped
-* agent already showed a dry-run plan first. The riskier operation was the
-* less gated one.
-*
-* The MCP lines are the point. `command` is constrained by the reader, but
-* `args` is not, so the only honest review is the actual argv in front of the
-* person deciding. Returns false when the operator declines or the template
-* cannot be read — a plan that fails to load is a reason to stop, not to
-* proceed blind.
+* Show what a template will do, and require an explicit yes: stamping imports a
+* stranger's persona, skills, MCP servers and tasks in one click. The MCP lines
+* are the point — `command` is constrained by the reader but `args` is not, so
+* the reviewer sees the actual argv. False when declined or the plan cannot load.
 */
 async function confirmTemplatePlan(ref) {
 	let plan;
 	try {
-		const res = await authFetch(`/api/templates/detail?ref=${encodeURIComponent(ref)}`);
-		plan = await res.json().catch(() => ({}));
-		if (!res.ok) {
-			showToast(`Could not read ${ref}: ${plan.error || res.statusText}`, { kind: "error" });
-			return false;
-		}
+		plan = await apiJson(`/api/templates/detail?ref=${encodeURIComponent(ref)}`);
 	} catch (err) {
 		showToast(`Could not read ${ref}: ${err?.message || err}`, { kind: "error" });
 		return false;
@@ -12385,12 +11244,7 @@ async function renderTemplateLibrary() {
 	if (!wrap || !list) return 0;
 	let held = [];
 	try {
-		const res = await authFetch("/api/templates");
-		if (!res.ok) {
-			wrap.hidden = true;
-			return 0;
-		}
-		const body = await res.json();
+		const body = await apiJson("/api/templates");
 		held = Array.isArray(body.templates) ? body.templates : [];
 		if (body.error) showToast(body.error, { kind: "error" });
 	} catch {
@@ -12441,9 +11295,7 @@ async function renderSources() {
 	const sel = $("#template-source-select");
 	if (!sel) return;
 	try {
-		const res = await authFetch("/api/template-sources");
-		if (!res.ok) return;
-		const body = await res.json();
+		const body = await apiJson("/api/template-sources");
 		sources = Array.isArray(body.sources) ? body.sources : [];
 	} catch {
 		return;
@@ -12457,13 +11309,8 @@ async function renderSources() {
 	}
 }
 /**
-* The +/− control, matching the selectable-model toggle on the Models tab.
-*
-* Same classes, same glyphs, same colour language as select-toggle.ts: `+` in
-* the success colour to add, `−` in the danger colour (via `.on`) to remove.
-* Deliberately NOT buildSelectToggle() — that one is bound to the selectable-
-* model registry and would toggle a model registration. This borrows the look
-* and the meaning, not the behaviour.
+* The +/− control, styled like select-toggle.ts. Not buildSelectToggle(): that
+* one is bound to the model registry and would toggle a model registration.
 */
 function templateToggle(held) {
 	const btn = document.createElement("button");
@@ -12480,9 +11327,7 @@ function templateToggle(held) {
 */
 async function heldRefs() {
 	try {
-		const res = await authFetch("/api/templates");
-		if (!res.ok) return [];
-		return ((await res.json()).templates ?? []).map((t) => t.ref);
+		return ((await apiJson("/api/templates")).templates ?? []).map((t) => t.ref);
 	} catch {
 		return [];
 	}
@@ -12497,15 +11342,7 @@ async function browseSelectedSource() {
 	pending.textContent = "Loading…";
 	list.appendChild(pending);
 	try {
-		const res = await authFetch(`/api/template-sources/${encodeURIComponent(sel.value)}/browse`);
-		const body = await res.json().catch(() => ({}));
-		if (!res.ok) {
-			list.innerHTML = "";
-			const err = document.createElement("li");
-			err.textContent = body.error || res.statusText;
-			list.appendChild(err);
-			return;
-		}
+		const body = await apiJson(`/api/template-sources/${encodeURIComponent(sel.value)}/browse`);
 		const rows = Array.isArray(body.templates) ? body.templates : [];
 		list.innerHTML = "";
 		if (!rows.length) {
@@ -12619,9 +11456,7 @@ async function renderAgentTemplateRow(agentId) {
 	if (!row || !label) return;
 	row.hidden = true;
 	try {
-		const res = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/template`);
-		if (!res.ok) return;
-		const body = await res.json();
+		const body = await apiJson(`/api/agents/${encodeURIComponent(agentId)}/template`);
 		if (!body.stamped || !body.ref) return;
 		label.textContent = `From ${body.ref}`;
 		row.hidden = false;
@@ -12737,25 +11572,10 @@ var AgentSkillsList_default = /* @__PURE__ */ defineComponent({
 	emits: ["view", "dirty"],
 	setup(__props, { emit: __emit }) {
 		/**
-		* Skills available to the open agent, with per-skill enable toggles.
-		*
-		* Mounted into <ul id="agent-skills-list">. The fetch, the count badge, the
-		* scoped-skills sub-list and the Save button all stay in renderAgentSkills().
-		*
-		* Known, accepted DOM difference: Vue emits a `checked` ATTRIBUTE on the
-		* enabled boxes; the imperative version assigned only the PROPERTY, which does
-		* not serialise. Both the .prop modifier and a plain :checked bind produce the
-		* attribute, so this is Vue's rendering, not a template mistake.
-		*
-		* Inert here, and checked rather than assumed: the property is correct on every
-		* row (verified in-browser), saveAgentSkills() reads the property, and nothing
-		* in this UI resets the form — which is the only path where the attribute's
-		* defaultChecked meaning would diverge.
-		*
-		* The checkbox is UNCONTROLLED on purpose: the binding sets initial state and
-		* nothing binds it back. saveAgentSkills() reads the boxes out of the DOM, so
-		* making them controlled would require re-implementing that read against a ref
-		* for no gain — and would silently change what Save sends.
+		* Skills available to the open agent, with per-skill enable toggles; mounted into
+		* <ul id="agent-skills-list">. The checkboxes are uncontrolled: saveAgentSkills() reads
+		* the property from the DOM, so a controlled ref would change what Save sends. The
+		* `checked` attribute Vue also emits is inert, since nothing resets the form.
 		*/
 		const emit = __emit;
 		return (_ctx, _cache) => {
@@ -12820,24 +11640,10 @@ var LearnMenu_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The 🎓 learn menu — forty-first island.
-		*
-		* Mounted into <div id="learn-menu">, exclusively owned by this module. The
-		* #learn-btn trigger and its aria-expanded stay imperative — outside the mount
-		* point.
-		*
-		* Three fixed actions, then ONE pair of room-scoped toggles. One pair, not one
-		* per agent: the room layer overrides the wired agents' defaults, so many
-		* agents never means many switches.
-		*
-		* aria-checked binds the BOOLEAN. Vue renders aria-* false as the string
-		* "false" rather than dropping the attribute, which is what the imperative
-		* setAttribute(…, String(!!on)) produced — verified in the diff, not assumed.
-		*
-		* The toggles are menuitemcheckbox rows whose state text doubles as the value —
-		* the imperative version read `state.textContent !== 'on'` to decide the next
-		* value. That is a ref here, but the optimistic rule is preserved exactly: the
-		* row only flips once the write comes back true.
+		* The learn menu, mounted into <div id="learn-menu">: three fixed actions, then ONE pair
+		* of room-scoped toggles (the room layer overrides wired agents' defaults). aria-checked
+		* binds the boolean, which Vue renders as "true"/"false". A toggle flips only once the
+		* write comes back true.
 		*/
 		const props = __props;
 		const ITEMS = [
@@ -12902,36 +11708,11 @@ var LearnTargetPicker_default = /* @__PURE__ */ defineComponent({
 	__name: "LearnTargetPicker",
 	setup(__props) {
 		/**
-		* The "learn with which agent?" body — sixty-sixth island.
-		*
-		* Per-instance and provide()-injected, like the two confirm bodies in #246 and
-		* for the same reasons. showConfirmModal's element-body contract is unchanged.
-		*
-		* The room select is DERIVED from the agent select rather than rebuilt by a
-		* change handler. That was the imperative syncRooms(): clear the options,
-		* append the new ones, and hide the whole select when the agent serves one room.
-		* As a computed it is the same rule stated once.
-		*
-		* Both selects are UNCONTROLLED — the caller reads .value at confirm time, so
-		* no v-model. The agent select does carry one @change, which is exactly the one
-		* listener the imperative version bound; it only updates which rooms are
-		* derived, and never writes the select's own value back.
-		*
-		* The initial agent is assigned once in onMounted, not through a binding. The
-		* original set agentSel.value AFTER appending the options — a select's value
-		* cannot be set before the option exists — and a per-render assignment would
-		* fight the user's own selection.
-		*
-		* Attribute order follows the imperative assignment order, which the DOM diff
-		* enforces: class before aria-label on the selects, and value/disabled/title on
-		* the options (new Option(text, value) sets value first).
-		*
-		* Hence :value.attr on the agent options. Vue sets an <option>'s value as a DOM
-		* PROPERTY, which reflects to the attribute afterwards and therefore lands it
-		* LAST — the diff read `disabled title value` against the original's
-		* `value disabled title`. The .attr modifier makes it a plain attribute so it
-		* is written in template order. The room options never carry a second
-		* attribute, so the order cannot show there.
+		* The "learn with which agent?" body for showConfirmModal; per-instance and
+		* provide()-injected like ConfirmInput. The room select is derived from the agent
+		* select. Both selects are uncontrolled (the caller reads .value at confirm time), and
+		* the initial agent is assigned once in onMounted, after its option exists. :value.attr
+		* on the agent options keeps value ahead of disabled/title in attribute order.
 		*/
 		const s = inject("learnTarget");
 		const agent = ref(s.initialAgent);
@@ -12977,10 +11758,10 @@ var LearnTargetPicker_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/learn.ts
-var deps$9 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
+var deps$7 = {};
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideLearnDeps(provided) {
-	Object.assign(deps$9, provided);
+	Object.assign(deps$7, provided);
 }
 function applyLearningMaster() {
 	const learnBtn = document.getElementById("learn-btn");
@@ -12989,8 +11770,7 @@ function applyLearningMaster() {
 }
 async function loadLearningMaster() {
 	try {
-		const r = await authFetch("/api/learning/config");
-		if (r.ok) state.learningMasterEnabled = (await r.json()).enabled !== false;
+		state.learningMasterEnabled = (await apiJson("/api/learning/config")).enabled !== false;
 	} catch {}
 	applyLearningMaster();
 }
@@ -13000,8 +11780,7 @@ async function renderAutoLearnSetting() {
 	if (!section) return;
 	let cfg = null;
 	try {
-		const r = await authFetch("/api/learning/config");
-		if (r.ok) cfg = await r.json();
+		cfg = await apiJson("/api/learning/config");
 	} catch {
 		cfg = null;
 	}
@@ -13080,8 +11859,7 @@ async function pickLearnTarget() {
 	const roomsByAgent = /* @__PURE__ */ new Map();
 	await Promise.all(agents.map(async (a) => {
 		try {
-			const r = await authFetch(`/api/agents/${encodeURIComponent(a.id)}/rooms`);
-			roomsByAgent.set(a.id, r.ok ? await r.json() : []);
+			roomsByAgent.set(a.id, await apiJson(`/api/agents/${encodeURIComponent(a.id)}/rooms`));
 		} catch {
 			roomsByAgent.set(a.id, []);
 		}
@@ -13120,7 +11898,7 @@ function triggerLearn(command = "/learn") {
 	if (!input || input.disabled || !state.currentRoom) return;
 	hideLearnNudge();
 	input.value = command;
-	deps$9.sendCurrentMessage();
+	deps$7.sendCurrentMessage();
 }
 function learnSourceFirstToken(value) {
 	return value.trim().split(/\s+/)[0] || "";
@@ -13156,10 +11934,7 @@ function hideLearnNudge() {
 }
 var learnMenuApp = null;
 function mountLearnMenu() {
-	if (learnMenuApp) return;
-	const host = $("#learn-menu");
-	if (!host) return;
-	learnMenuApp = createApp(LearnMenu_default, {
+	learnMenuApp ??= mountIsland("#learn-menu", () => createApp(LearnMenu_default, {
 		onSession: () => {
 			closeLearnMenu();
 			triggerLearn();
@@ -13190,9 +11965,16 @@ function mountLearnMenu() {
 		onAutoKeep: async (on) => {
 			if (await putRoomLearning({ autoKeep: on })) learnAutoKeep.value = on;
 		}
-	});
-	learnMenuApp.mount(host);
+	}));
 }
+/**
+* 🎓 popover (DESIGN.md § Composer popups — mirrors .mention-popover, no third
+* style). Click the icon → "Distill now" plus the per-agent automation toggles:
+*   Auto-distill — admin-tier; it only stages drafts (default ON).
+*   Auto-keep    — owner-tier; it writes live agent context, so the server
+*                  refuses the toggle for anyone else and the row only renders
+*                  when the server says canAutoKeep.
+*/
 async function toggleLearnMenu() {
 	const menu = $("#learn-menu");
 	if (!menu) return;
@@ -13203,8 +11985,7 @@ async function toggleLearnMenu() {
 	if (!state.currentRoom) return;
 	let cfg = null;
 	try {
-		const res = await authFetch(`/api/rooms/${encodeURIComponent(state.currentRoom)}/learning`);
-		if (res.ok) cfg = await res.json();
+		cfg = await apiJson(`/api/rooms/${encodeURIComponent(state.currentRoom)}/learning`);
 	} catch {}
 	learnTogglesVisible.value = !!(cfg && cfg.canManage && state.learningMasterEnabled);
 	learnAutoTrigger.value = !!cfg?.autoTrigger;
@@ -13265,20 +12046,10 @@ var SkillDuplicates_default = /* @__PURE__ */ defineComponent({
 	props: { onPromote: { type: Function } },
 	setup(__props) {
 		/**
-		* Skills several agents learned independently — twenty-first island.
-		*
-		* Mounted into <ul id="skill-duplicates-list">, exclusively owned by this
-		* module. The #skill-duplicates wrapper's hidden flag is outside the mount
-		* point and stays imperative.
-		*
-		* The badge here is NOT an OriginBadge. It looks like one and shares its
-		* classes, but it is a fixed hue 48 with a count in the label rather than a
-		* provenance link — originBadgeProps would compute a hue from the text and
-		* change the colour. Kept as literal markup for that reason.
-		*
-		* `promote.disabled = true` on the clicked element became a pending SET,
-		* because there is no clicked element to hold once the row is a vnode and
-		* disabling is what stops a double-click promoting twice.
+		* Skills several agents learned independently, mounted into
+		* <ul id="skill-duplicates-list">. The badge is literal markup, NOT an OriginBadge: it
+		* is a fixed hue 48 with a count, and originBadgeProps would derive the hue from the text.
+		* A pending set disables Promote so a double-click cannot promote twice.
 		*/
 		const props = __props;
 		const DUP_HUE = { "--badge-hue": "48" };
@@ -13329,19 +12100,8 @@ var AgentScopedSkills_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* An agent's own scoped skills — twenty-second island.
-		*
-		* Mounted into <ul id="agent-scoped-list">, exclusively owned by this module.
-		* #agent-scoped-add and #agent-scoped-url are outside the mount point; skills.ts
-		* still wires those.
-		*
-		* First island to render an OriginBadge for a REAL origin object (the MCP
-		* sources one builds its own literal), so this is where the component meets the
-		* shape skills.ts actually stores. The badge appears only when origin.label is
-		* truthy — origin itself can be present but empty.
-		*
-		* The info column keeps its inline cursor:pointer. It belongs in style.css, but
-		* moving it would be a CSS change riding in a conversion commit.
+		* An agent's own scoped skills, mounted into <ul id="agent-scoped-list">. The badge
+		* renders only when origin.label is truthy — origin can be present but empty.
 		*/
 		const props = __props;
 		const CLICKABLE = { cursor: "pointer" };
@@ -13404,20 +12164,10 @@ var SkillSources_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The skill collections list in Settings — twenty-seventh island.
-		*
-		* Mounted into <ul id="skill-sources-list">, exclusively owned by this module.
-		* #settings-skill-sources (the section's owner-only hidden flag) is outside the
-		* mount point and stays imperative.
-		*
-		* Two row kinds share one shape and one template: editable GitHub collections
-		* (Edit + Remove) and built-in marketplace sources (a built-in badge and a
-		* reversible Add/Remove, since there is no URL to re-paste). The imperative
-		* version expressed the shared part as a local sourceRow() helper and then
-		* appended different buttons to its result; `kind` selects instead.
-		*
-		* Each row leads with the same coloured OriginBadge as the pool, so a
-		* collection's colour is consistent between Settings and the catalog.
+		* The skill collections list in Settings, mounted into <ul id="skill-sources-list">.
+		* `kind` selects between editable GitHub collections (Edit + Remove) and built-in
+		* marketplace sources (a built-in badge and a reversible Add/Remove — no URL to
+		* re-paste). Rows lead with the same OriginBadge colour as the pool.
 		*/
 		const props = __props;
 		return (_ctx, _cache) => {
@@ -13501,28 +12251,10 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The skills registry — twenty-eighth island.
-		*
-		* Mounted into <ul id="skills-list">, exclusively owned by this module.
-		*
-		* Five functions wrote into this list: renderSkillsRegistry built it,
-		* buildSkillsSectionHead made the section headers, appendSkillRow made the rows,
-		* applySkillsSections hid and showed them by filter and expansion, and
-		* markSkillUpdates injected an Update button into rows AFTER the fact by
-		* querying for data-skill. That last one is why the updates are state here:
-		* an async pass that reaches into already-rendered rows is exactly what an
-		* island cannot allow.
-		*
-		* The Update button precedes Remove because markSkillUpdates used
-		* `insertBefore(btn, li.querySelector('.skill-delete'))`, not appendChild — the
-		* kind of detail that reads as arbitrary until the DOM diff disagrees with you.
-		*
-		* Visibility is `hidden`, not v-if. applySkillsSections set the hidden PROPERTY
-		* on rows that stay in the DOM, and the filter counts matches by reading them —
-		* v-if would remove the rows and change what "no matching skills" means.
-		*
-		* An active filter OWNS expansion: sections ignore their open state while one is
-		* typed, and a section with no matches hides its header entirely.
+		* The skills registry, mounted into <ul id="skills-list">. Available updates are state,
+		* never buttons injected after render; Update precedes Remove. Visibility is `hidden`, not
+		* v-if, because the filter counts matches from rows that stay in the DOM. An active filter
+		* owns expansion, and a section with no matches hides its header.
 		*/
 		const props = __props;
 		const view = computed(() => {
@@ -13641,11 +12373,7 @@ var KEEP$1 = "Keep";
 var DISCARD$1 = "Discard";
 var REVIEWING$1 = "Checking for overlaps…";
 var SOURCE = "from this conversation →";
-/**
-* The separator is BOUND, not a literal space in the template: the imperative
-* version did `desc.append(' ', src)`, an explicit text node, and Vue's compiler
-* condenses whitespace between an interpolation and an element.
-*/
+/** Bound, not a literal space: the compiler condenses whitespace between an interpolation and an element. */
 var SPACE = " ";
 //#endregion
 //#region src/features/SkillDrafts.vue
@@ -13661,17 +12389,10 @@ var SkillDrafts_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* Learned-skill drafts awaiting review — twenty-ninth island.
-		*
-		* Mounted into <ul id="skill-drafts-list">, exclusively owned by this module.
-		* The #skill-drafts wrapper's hidden flag and the nav badge are outside the
-		* mount point and stay imperative.
-		*
-		* The Keep/Discard actions are replaced by an UndoTimer while a countdown runs.
-		* armUndo did that by swapping the actions element's children and restoring
-		* them; here the row simply renders one or the other, so a re-render mid-
-		* countdown is harmless — which is what armUndo's width-freezing was working
-		* around.
+		* Learned-skill drafts awaiting review, mounted into <ul id="skill-drafts-list">; the
+		* #skill-drafts wrapper's hidden flag and the nav badge stay with the renderer. A row
+		* renders either its Keep/Discard actions or an UndoTimer, so a re-render mid-countdown
+		* is harmless.
 		*/
 		const props = __props;
 		const LEARNED_HUE = { "--badge-hue": "48" };
@@ -13763,26 +12484,10 @@ var SkillPool_default = /* @__PURE__ */ defineComponent({
 	props: { onAdd: { type: Function } },
 	setup(__props) {
 		/**
-		* The skills marketplace pool — thirtieth island.
-		*
-		* Mounted into <ul id="skills-catalog-list">, exclusively owned by this module.
-		*
-		* Four list-level states, which the imperative version wrote as four different
-		* innerHTML strings into the same element: the wait row, a fetch failure, an
-		* empty result, and rows. They are one phase ref, so a failed request cannot
-		* leave the previous tier's rows sitting under an error line.
-		*
-		* The wait and empty copy both change when a search is active, so the query is
-		* state too rather than being re-read from the input at render time.
-		*
-		* The wait row is written out rather than v-html'd from loadingRow(): that
-		* helper returns the <li> ITSELF, so v-html would need a wrapper element and
-		* produce a nested li. DESIGN.md §5 wants one wait primitive across the app —
-		* this is the same markup, and the DOM diff is what holds it to that.
-		*
-		* The Review link is community-tier only and points at someone else's site, so
-		* it keeps target=_blank with rel="noopener noreferrer" — the same treatment
-		* OriginBadge gives an outbound URL.
+		* The skills marketplace pool, mounted into <ul id="skills-catalog-list">. Its four
+		* states (wait, error, empty, rows) are one phase ref, so a failed request cannot leave
+		* stale rows under an error line. The wait row matches loadingRow()'s markup (DESIGN.md
+		* §5). Community Review links are outbound, so they keep rel="noopener noreferrer".
 		*/
 		const props = __props;
 		const waitLabel = computed(() => skillPoolQuery.value ? "Searching…" : "Loading skills…");
@@ -13837,17 +12542,10 @@ var SkillSuggestions_default = /* @__PURE__ */ defineComponent({
 	__name: "SkillSuggestions",
 	setup(__props) {
 		/**
-		* Suggested skills on the agent-create form — thirty-first island.
-		*
-		* Mounted into <ul id="agent-create-skills-list">, exclusively owned by this
-		* module. The #agent-create-skills block's hidden flag is outside the mount
-		* point and stays imperative — it hides the heading too, not just the list.
-		*
-		* The checkboxes keep their state in the DOM and carry data-url/data-name,
-		* because the create-agent submit reads them with querySelectorAll and pulls
-		* both off the dataset. Same contract as the two agent pickers: modelling the
-		* selection as a ref would mean changing a reader elsewhere, and the failure
-		* mode is silent — an agent created with none of the skills you ticked.
+		* Suggested skills on the agent-create form, mounted into <ul id="agent-create-skills-list">.
+		* The checkboxes keep their state in the DOM and carry data-url/data-name because the
+		* create-agent submit reads them there; a missed reader would fail silently (an agent
+		* created without the skills you ticked).
 		*/
 		return (_ctx, _cache) => {
 			return openBlock(true), createElementBlock(Fragment, null, renderList(unref(skillSuggestions), (s) => {
@@ -13931,21 +12629,10 @@ var RoomSkills_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* A room's skills — thirty-second island.
-		*
-		* Mounted into <ul id="room-skills-list">, exclusively owned by this module.
-		* #room-skills-section (its hidden flag), #room-skills-count and the "Distill a
-		* skill" trigger are outside the mount point and stay imperative — the section
-		* carries that trigger, which is why it stays visible even when the list is
-		* empty.
-		*
-		* Three row kinds in a fixed order, which is editorial rather than incidental:
-		* proposals first, because they are the ones asking for a decision; then what is
-		* already wired; then the curator's archive, dimmed and restorable.
-		*
-		* The proposal row reuses UndoTimer for Keep/Discard, so the pattern matches the
-		* drafts island — including measuring the actions element's width BEFORE the
-		* swap so the row does not jump.
+		* A room's skills, mounted into <ul id="room-skills-list">; the section stays visible
+		* when the list is empty because it carries the "Distill a skill" trigger. Row order is
+		* editorial: proposals (they ask for a decision), then wired skills, then the curator's
+		* dimmed archive. Proposals use UndoTimer, measuring width BEFORE the swap.
 		*/
 		const props = __props;
 		const rows = computed(() => roomSkillRows.value);
@@ -14044,26 +12731,10 @@ var SkillEditorModal_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The SKILL.md viewer/editor modal — thirty-fourth island.
-		*
-		* Per-instance, like SkillDraftCard: an overlay is created and appended to
-		* document.body, and one app is mounted into it. Nothing owns document.body, so
-		* there is no container to claim.
-		*
-		* The FOCUS TRAP is the part that matters and is preserved exactly. Keyboard
-		* users must not tab behind the overlay (manual-checks SC 2.1.2). The imperative
-		* version built its focusable list as [textarea, ...actionButtons, closeButton,
-		* saveButton]; that is also DOM order within the dialog, so this queries the
-		* dialog instead of tracking each element — same sequence, one source of truth,
-		* and it cannot drift as the footer changes.
-		*
-		* The body is ASSIGNED on mount, not bound. `value` is not a valid attribute on
-		* a textarea, and Vue emits one for both :value and the .prop modifier — markup
-		* the original never had, since it assigned the DOM property. The textarea is
-		* uncontrolled either way: nothing re-reads `body` after open.
-		*
-		* Escape closes, clicking the overlay itself (never the modal) closes, and the
-		* textarea takes focus on the next task — all as before.
+		* The SKILL.md viewer/editor modal, one app per overlay appended to document.body.
+		* Focus trap (SC 2.1.2): the focusable list is queried from the dialog in DOM order, so it
+		* cannot drift as the footer changes. The body is assigned on mount, not bound (a textarea
+		* has no `value` attribute); nothing re-reads it after open.
 		*/
 		const props = __props;
 		const dialog = ref(null);
@@ -14157,10 +12828,10 @@ var SkillEditorModal_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/skills.ts
-var deps$8 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
+var deps$6 = {};
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideSkillsDeps(provided) {
-	Object.assign(deps$8, provided);
+	Object.assign(deps$6, provided);
 }
 /** The in-flight editor draft. Read-only to the outside. */
 function getSkillEditorDraft() {
@@ -14208,8 +12879,7 @@ function skillDraftRow(msg) {
 async function refreshDraftBadge(known) {
 	let n = known;
 	if (typeof n !== "number") try {
-		const res = await authFetch("/api/skill-drafts");
-		n = res.ok ? ((await res.json()).drafts || []).length : 0;
+		n = ((await apiJson("/api/skill-drafts")).drafts || []).length;
 	} catch {
 		n = 0;
 	}
@@ -14223,21 +12893,17 @@ async function refreshDraftBadge(known) {
 }
 var draftsApp = null;
 function mountSkillDrafts() {
-	if (draftsApp) return;
-	const host = $("#skill-drafts-list");
-	if (!host) return;
-	draftsApp = createApp(SkillDrafts_default, {
+	draftsApp ??= mountIsland("#skill-drafts-list", () => createApp(SkillDrafts_default, {
 		undoSeconds: 10,
 		onOpen: (id) => openSkillDraft(id),
 		onSource: (roomId) => {
 			const room = state.lastRoomsList.find((r) => r.id === roomId);
-			deps$8.joinRoom(roomId, room ? room.name : roomId);
+			deps$6.joinRoom(roomId, room ? room.name : roomId);
 		},
 		onKeep: (r) => void keepSkillDraft(r.raw),
 		onDiscard: (r) => armDraftUndo(r.id, `Discarding ${r.raw.skillName}…`, () => discardSkillDraft(r.id)),
 		onUndo: (id) => clearDraftUndo(id)
-	});
-	draftsApp.mount(host);
+	}));
 }
 function armDraftUndo(id, label, commit) {
 	const el = document.querySelector(`#skill-drafts-list li[data-draft-id="${CSS.escape(id)}"] .skill-draft-actions`);
@@ -14264,8 +12930,7 @@ async function renderSkillDrafts() {
 	if (!wrap || !$("#skill-drafts-list")) return;
 	let drafts = [];
 	try {
-		const res = await authFetch("/api/skill-drafts");
-		if (res.ok) drafts = (await res.json()).drafts || [];
+		drafts = (await apiJson("/api/skill-drafts")).drafts || [];
 	} catch {}
 	wrap.hidden = drafts.length === 0;
 	refreshDraftBadge(drafts.length);
@@ -14319,7 +12984,7 @@ async function openScopedSkillEditor(agentId, name) {
 		badgeText: data.editable ? "learned · editable (this agent)" : "read-only",
 		actions: [{
 			label: "History",
-			onClick: () => deps$8.openJourney({
+			onClick: () => deps$6.openJourney({
 				agentGroupId: agentId,
 				skill: name
 			})
@@ -14368,7 +13033,7 @@ async function openSkillDraft(id) {
 		};
 		const draft = skillEditorDraft;
 		if ($("#manage").hidden || $("#mtab-skills").hidden) {
-			deps$8.openManage("skills");
+			deps$6.openManage("skills");
 			setTimeout(() => {
 				skillEditorDraft = draft;
 				renderDraftEditor();
@@ -14378,6 +13043,7 @@ async function openSkillDraft(id) {
 		showToast("Could not open draft: " + (err?.message || err), { kind: "error" });
 	}
 }
+/** Paint the editor from skillEditorDraft (diff-review or edit mode). */
 function renderDraftEditor() {
 	const d = skillEditorDraft;
 	if (!d) return;
@@ -14417,13 +13083,8 @@ function renderDraftEditor() {
 */
 var reviewingDrafts = /* @__PURE__ */ new Set();
 /**
-* The keep flow's ONE writer.
-*
-* Everything a card shows about a keep — in flight, checking, overlapping,
-* kept, undone, failed — is this phase, so there is no second place for the
-* truth to rot. The imperative button writes this replaced (btn.textContent =
-* 'Keeping…' / markDraftReviewing) could not be reverted by anything reactive:
-* Vue owns those labels, so a card that entered a state never left it.
+* The keep flow's ONE writer: everything a card shows about a keep (in flight,
+* checking, overlapping, kept, undone, failed) is this phase.
 */
 function setPhase(id, phase) {
 	const next = { ...draftAction.value };
@@ -14475,9 +13136,8 @@ function handleSkillDraftReview(msg) {
 	toastError(new Error(msg.error || "Review failed"), "Keep failed");
 }
 /**
-* Keep + wire a draft. Commits immediately: the pre-commit countdown is gone,
-* and the undo it used to wait out now sits on the kept card, where it also
-* covers keeps this click never made (auto-keep, another operator).
+* Keep + wire a draft. Commits immediately; the undo sits on the kept card,
+* where it also covers keeps this click never made (auto-keep, another operator).
 */
 async function keepSkillDraft(d, force, updateTarget) {
 	const id = d.id;
@@ -14521,13 +13181,9 @@ async function resolveOverlap(id, d, decision) {
 	setPhase(id, null);
 }
 /**
-* Discard from a card: immediate, then undoable.
-*
-* The server soft-discards — the row flips to 'discarded' and the staged body
-* stays on disk — so the card can offer Undo afterwards rather than making the
-* operator wait out a countdown before anything happens. The list surfaces keep
-* their pre-commit window instead: a discarded draft leaves those lists (they
-* filter to pending), so there is nowhere for an Undo to live.
+* Discard from a card: immediate, then undoable (the server soft-discards and
+* keeps the staged body). The list surfaces keep a pre-commit window instead:
+* they filter to pending, so there is nowhere for an Undo to live.
 */
 async function discardDraftFromCard(id, d) {
 	setPhase(id, { phase: "discarding" });
@@ -14606,8 +13262,7 @@ async function renderSkillDuplicates() {
 	if (!wrap || !list) return;
 	let dups = [];
 	try {
-		const res = await authFetch("/api/skills/duplicates");
-		if (res.ok) dups = (await res.json()).duplicates || [];
+		dups = (await apiJson("/api/skills/duplicates")).duplicates || [];
 	} catch {}
 	wrap.hidden = dups.length === 0;
 	skillDuplicates.value = dups;
@@ -14615,19 +13270,12 @@ async function renderSkillDuplicates() {
 }
 var skillDuplicatesApp = null;
 function mountSkillDuplicates() {
-	if (skillDuplicatesApp) return;
-	const host = $("#skill-duplicates-list");
-	if (!host) return;
-	skillDuplicatesApp = createApp(SkillDuplicates_default, { onPromote: (name) => void promoteSkill(name) });
-	skillDuplicatesApp.mount(host);
+	skillDuplicatesApp ??= mountIsland("#skill-duplicates-list", () => createApp(SkillDuplicates_default, { onPromote: (name) => void promoteSkill(name) }));
 }
-/**
-* The disable-on-click that used to live on the button element. Keyed by name
-* in a pending set, because the row is a vnode now and there is no element to
-* hold — but the guard itself matters: without it a double-click promotes twice.
-*/
+/** Promote one copy to the shared pool. The pending set (keyed by name) keeps a
+*  double-click from promoting twice. */
 async function promoteSkill(name) {
-	if (!await deps$8.showConfirmModal({
+	if (!await deps$6.showConfirmModal({
 		title: `Promote ${name} to the shared pool?`,
 		body: `The newest copy serves every agent; each agent's own copy moves to its archive.`,
 		confirmLabel: "Promote"
@@ -14658,10 +13306,7 @@ function skillsFilterQuery() {
 }
 var registryApp = null;
 function mountSkillsRegistry() {
-	if (registryApp) return;
-	const host = $("#skills-list");
-	if (!host) return;
-	registryApp = createApp(SkillsRegistry_default, {
+	registryApp ??= mountIsland("#skills-list", () => createApp(SkillsRegistry_default, {
 		onOpen: (r) => r.source === "scoped" ? openScopedSkillEditor(r.agentGroupId, r.name) : openSkillEditor(r.name),
 		onToggleSection: (key) => {
 			if (skillsFilter.value) return;
@@ -14672,17 +13317,16 @@ function mountSkillsRegistry() {
 			setSkillsSectionOpen(key, next.has(key));
 		},
 		onDelete: (r) => r.source === "scoped" ? removeAgentScopedSkill(r.agentGroupId, r.name, null, renderSkillsRegistry) : deleteSkill(r.name),
-		onHistory: (r) => deps$8.openJourney({
+		onHistory: (r) => deps$6.openJourney({
 			agentGroupId: r.agentGroupId,
 			agentName: r.agentName,
 			skill: r.name
 		}),
 		onUpdate: (name) => void updateSkillFromSource(name)
-	});
-	registryApp.mount(host);
+	}));
 }
 async function updateSkillFromSource(name) {
-	if (!await deps$8.showConfirmModal({
+	if (!await deps$6.showConfirmModal({
 		title: `Update ${name}?`,
 		body: "Re-imports from its source at the latest commit. The current version is kept in history.",
 		confirmLabel: "Update"
@@ -14701,24 +13345,15 @@ async function updateSkillFromSource(name) {
 		skillUpdating.value = next;
 	}
 }
-/**
-* Re-apply the filter. The island derives visibility from skillsFilter, so this
-* only has to copy the box's value in — the DOM walk applySkillsSections did is
-* gone with it.
-*/
+/** Re-apply the filter: the island derives visibility from skillsFilter. */
 function applySkillsSections() {
 	skillsFilter.value = skillsFilterQuery();
 }
-/**
-* Which skills have newer commits upstream. Was markSkillUpdates(), which
-* queried already-rendered rows and injected a button into each — an async pass
-* reaching into rendered DOM, which is precisely what an island forbids.
-*/
+/** Which skills have newer commits upstream. */
 async function loadSkillUpdates() {
 	let updates = [];
 	try {
-		const res = await authFetch("/api/skills/updates");
-		if (res.ok) updates = (await res.json()).updates || [];
+		updates = (await apiJson("/api/skills/updates")).updates || [];
 	} catch {}
 	const map = {};
 	for (const u of updates) if (u.hasUpdate) map[u.name] = true;
@@ -14735,8 +13370,7 @@ async function renderSkillsRegistry() {
 	mountSkillsRegistry();
 	let skills = [];
 	try {
-		const res = await authFetch("/api/skills");
-		if (res.ok) skills = (await res.json()).skills || [];
+		skills = (await apiJson("/api/skills")).skills || [];
 	} catch (err) {
 		console.error("Failed to load skills:", err);
 	}
@@ -14825,7 +13459,7 @@ function showSkillEditor(show) {
 	if (show) {
 		skillEditorClosing = false;
 		showSkillsView("editor");
-		if (!viewStack.some((v) => v.name === "skill-editor")) deps$8.openView("skill-editor", () => {
+		if (!viewStack.some((v) => v.name === "skill-editor")) deps$6.openView("skill-editor", () => {
 			skillEditorClosing = false;
 			resetSkillEditorState();
 			showSkillsView("browse");
@@ -14835,7 +13469,7 @@ function showSkillEditor(show) {
 	if (viewStack.some((v) => v.name === "skill-editor")) {
 		if (!skillEditorClosing) {
 			skillEditorClosing = true;
-			deps$8.closeView("skill-editor");
+			deps$6.closeView("skill-editor");
 		}
 		return;
 	}
@@ -14864,14 +13498,10 @@ async function setSkillTrust(mode) {
 }
 var poolApp = null;
 function mountSkillPool() {
-	if (poolApp) return;
-	const host = $("#skills-catalog-list");
-	if (!host) return;
-	poolApp = createApp(SkillPool_default, { onAdd: (s) => deps$8.openWireToAgentsPicker({
+	poolApp ??= mountIsland("#skills-catalog-list", () => createApp(SkillPool_default, { onAdd: (s) => deps$6.openWireToAgentsPicker({
 		...s.ref,
 		origin: s.origin
-	}, s.name, { community: skillPoolCommunity.value }) });
-	poolApp.mount(host);
+	}, s.name, { community: skillPoolCommunity.value }) }));
 }
 async function renderSkillPool() {
 	if (!$("#skills-catalog-list")) return;
@@ -14885,8 +13515,7 @@ async function renderSkillPool() {
 	mountSkillPool();
 	let data = null;
 	try {
-		const res = await authFetch(`/api/skills/catalog?tier=${tier}&q=${encodeURIComponent(q)}`);
-		if (res.ok) data = await res.json();
+		data = await apiJson(`/api/skills/catalog?tier=${tier}&q=${encodeURIComponent(q)}`);
 	} catch {}
 	if (seq !== poolSeq) return;
 	if (!data) {
@@ -14909,8 +13538,7 @@ async function openSkillEditor(name) {
 	if (name) {
 		let data = null;
 		try {
-			const res = await authFetch(`/api/skills/${encodeURIComponent(name)}`);
-			if (res.ok) data = await res.json();
+			data = await apiJson(`/api/skills/${encodeURIComponent(name)}`);
 		} catch {}
 		if (!data) return showToast("Couldn’t load skill", { kind: "error" });
 		nameInput.value = data.name;
@@ -14975,10 +13603,7 @@ async function saveSkillEditor() {
 }
 var skillSourcesApp = null;
 function mountSkillSources() {
-	if (skillSourcesApp) return;
-	const host = $("#skill-sources-list");
-	if (!host) return;
-	skillSourcesApp = createApp(SkillSources_default, {
+	skillSourcesApp ??= mountIsland("#skill-sources-list", () => createApp(SkillSources_default, {
 		onEdit: (r) => {
 			const s = r.raw;
 			$("#skill-source-url").value = `https://github.com/${s.owner}/${s.repo}/tree/${s.branch}/${s.dir}`;
@@ -14987,7 +13612,7 @@ function mountSkillSources() {
 			save.dataset.editId = s.id;
 		},
 		onRemove: async (r) => {
-			if (!await deps$8.showConfirmModal({
+			if (!await deps$6.showConfirmModal({
 				title: `Remove ${r.origin.label}?`,
 				body: "The collection disappears from the Skills catalog. Already-imported skills are unaffected.",
 				confirmLabel: "Remove",
@@ -15001,8 +13626,7 @@ function mountSkillSources() {
 			}
 		},
 		onToggleBuiltin: (r) => toggleBuiltinSource(r.raw.id, r.disabled)
-	});
-	skillSourcesApp.mount(host);
+	}));
 }
 /** The catalog's sources — rendered on the Skills TAB, beside what they feed. */
 async function renderSkillSources() {
@@ -15013,12 +13637,9 @@ async function renderSkillSources() {
 	let sources = [];
 	let builtins = [];
 	try {
-		const res = await authFetch("/api/skills/sources");
-		if (res.ok) {
-			const b = await res.json();
-			sources = b.sources || [];
-			builtins = b.builtins || [];
-		}
+		const b = await apiJson("/api/skills/sources");
+		sources = b.sources || [];
+		builtins = b.builtins || [];
 	} catch {}
 	skillSources.value = [...sources.map((s) => ({
 		key: "src:" + s.id,
@@ -15055,10 +13676,10 @@ function importSkill() {
 	if (!url) return;
 	const label = url.replace(/^https?:\/\/github\.com\//, "").replace(/\/tree\/.*$/, "");
 	input.value = "";
-	deps$8.openWireToAgentsPicker({ url }, label || "skill", { community: true });
+	deps$6.openWireToAgentsPicker({ url }, label || "skill", { community: true });
 }
 async function deleteSkill(name) {
-	if (!await deps$8.showConfirmModal({
+	if (!await deps$6.showConfirmModal({
 		title: `Delete ${name}?`,
 		body: "Removes this imported skill. Agents that use it lose it on their next spawn.",
 		confirmLabel: "Delete",
@@ -15075,17 +13696,13 @@ async function deleteSkill(name) {
 var agentSkillsApp = null;
 var currentAgentSkillsId = null;
 function mountAgentSkillsList() {
-	if (agentSkillsApp) return;
-	const host = $("#agent-skills-list");
-	if (!host) return;
-	agentSkillsApp = createApp(AgentSkillsList_default, {
+	agentSkillsApp ??= mountIsland("#agent-skills-list", () => createApp(AgentSkillsList_default, {
 		onView: (name) => openPoolSkillFromAgent(name),
 		onDirty: () => {
 			const saveBtn = $("#agent-skills-save");
 			if (saveBtn) saveBtn.disabled = false;
 		}
-	});
-	agentSkillsApp.mount(host);
+	}));
 }
 async function renderAgentSkills(agentId) {
 	currentAgentSkillsId = agentId;
@@ -15095,8 +13712,7 @@ async function renderAgentSkills(agentId) {
 		enabled: []
 	};
 	try {
-		const res = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/skills`);
-		if (res.ok) data = await res.json();
+		data = await apiJson(`/api/agents/${encodeURIComponent(agentId)}/skills`);
 	} catch (err) {
 		console.error("Failed to load skills:", err);
 	}
@@ -15128,14 +13744,10 @@ var agentScopedApp = null;
 */
 var scopedSkillsAgentId = null;
 function mountAgentScopedSkills() {
-	if (agentScopedApp) return;
-	const host = $("#agent-scoped-list");
-	if (!host) return;
-	agentScopedApp = createApp(AgentScopedSkills_default, {
+	agentScopedApp ??= mountIsland("#agent-scoped-list", () => createApp(AgentScopedSkills_default, {
 		onOpen: (name) => openScopedSkillEditor(scopedSkillsAgentId, name),
 		onRemove: (name, el) => removeAgentScopedSkill(scopedSkillsAgentId, name, el)
-	});
-	agentScopedApp.mount(host);
+	}));
 }
 async function importAgentScopedSkill(agentId, btn, urlInput) {
 	const url = (urlInput?.value || "").trim();
@@ -15157,7 +13769,7 @@ async function importAgentScopedSkill(agentId, btn, urlInput) {
 	}
 }
 async function removeAgentScopedSkill(agentId, name, btn, onDone) {
-	if (!await deps$8.showConfirmModal({
+	if (!await deps$6.showConfirmModal({
 		title: `Remove ${name}?`,
 		body: "Unwires it from this agent.",
 		confirmLabel: "Remove",
@@ -15197,11 +13809,7 @@ function scheduleSkillSuggest() {
 }
 var suggestApp = null;
 function mountSkillSuggestions() {
-	if (suggestApp) return;
-	const host = $("#agent-create-skills-list");
-	if (!host) return;
-	suggestApp = createApp(SkillSuggestions_default);
-	suggestApp.mount(host);
+	suggestApp ??= mountIsland("#agent-create-skills-list", () => createApp(SkillSuggestions_default));
 }
 async function refreshSkillSuggestions() {
 	const text = [
@@ -15217,8 +13825,7 @@ async function refreshSkillSuggestions() {
 	const seq = ++suggestSeq;
 	let suggestions = [];
 	try {
-		const res = await authFetch(`/api/skills/suggest?text=${encodeURIComponent(text.slice(0, 2e3))}`);
-		if (res.ok) suggestions = (await res.json()).suggestions || [];
+		suggestions = (await apiJson(`/api/skills/suggest?text=${encodeURIComponent(text.slice(0, 2e3))}`)).suggestions || [];
 	} catch {}
 	if (seq !== suggestSeq) return;
 	if (!suggestions.length) {
@@ -15262,16 +13869,10 @@ async function draftFor(btn) {
 	btn.disabled = true;
 	btn.innerHTML = "<span class=\"btn-spinner\" aria-hidden=\"true\"></span> Drafting…";
 	try {
-		const res = await authFetch("/api/agents/draft", {
+		const body = await apiJson("/api/agents/draft", {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ prompt })
+			body: { prompt }
 		});
-		const body = await res.json().catch(() => ({}));
-		if (!res.ok) {
-			showToast("Drafter failed: " + (body.error || res.statusText), { kind: "error" });
-			return;
-		}
 		if (nameEl) nameEl.value = body.name || "";
 		if (instructionsEl) instructionsEl.value = body.instructions || "";
 		nameEl?.focus();
@@ -15285,10 +13886,7 @@ async function draftFor(btn) {
 }
 var roomSkillsApp = null;
 function mountRoomSkills() {
-	if (roomSkillsApp) return;
-	const host = $("#room-skills-list");
-	if (!host) return;
-	roomSkillsApp = createApp(RoomSkills_default, {
+	roomSkillsApp ??= mountIsland("#room-skills-list", () => createApp(RoomSkills_default, {
 		undoSeconds: 10,
 		onView: (id) => openSkillDraft(id),
 		onKeep: (r) => {
@@ -15304,14 +13902,13 @@ function mountRoomSkills() {
 		}),
 		onUndo: (id) => clearRoomSkillUndo(id),
 		onRevert: async (r) => {
-			if (!await deps$8.showConfirmModal({
+			if (!await deps$6.showConfirmModal({
 				title: `Revert ${r.name}?`,
 				body: "Back to the previous revision. The current version stays in history — a revert can itself be reverted.",
 				confirmLabel: "Revert"
 			})) return;
 			try {
-				const res = await authFetch(`/api/agents/${encodeURIComponent(r.agentId)}/skills/scoped/${encodeURIComponent(r.name)}/revert`, { method: "POST" });
-				if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed");
+				await apiJson(`/api/agents/${encodeURIComponent(r.agentId)}/skills/scoped/${encodeURIComponent(r.name)}/revert`, { method: "POST" });
 				showToast(`Reverted ${r.name}`);
 				renderRoomSkills();
 			} catch (err) {
@@ -15319,15 +13916,14 @@ function mountRoomSkills() {
 			}
 		},
 		onRemove: async (r) => {
-			if (!await deps$8.showConfirmModal({
+			if (!await deps$6.showConfirmModal({
 				title: `Remove ${r.name}?`,
 				body: `It will no longer be available to ${r.agentLabel}.`,
 				confirmLabel: "Remove",
 				destructive: true
 			})) return;
 			try {
-				const res = await authFetch(`/api/agents/${encodeURIComponent(r.agentId)}/skills/scoped/${encodeURIComponent(r.name)}`, { method: "DELETE" });
-				if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed");
+				await apiJson(`/api/agents/${encodeURIComponent(r.agentId)}/skills/scoped/${encodeURIComponent(r.name)}`, { method: "DELETE" });
 				showToast(`Removed ${r.name}`);
 				renderRoomSkills();
 			} catch (err) {
@@ -15336,16 +13932,14 @@ function mountRoomSkills() {
 		},
 		onRestore: async (r) => {
 			try {
-				const res = await authFetch(`/api/agents/${encodeURIComponent(r.agentId)}/skills/archived/${encodeURIComponent(r.name)}/restore`, { method: "POST" });
-				if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed");
+				await apiJson(`/api/agents/${encodeURIComponent(r.agentId)}/skills/archived/${encodeURIComponent(r.name)}/restore`, { method: "POST" });
 				showToast(`Restored ${r.name}`);
 				renderRoomSkills();
 			} catch (err) {
 				toastError(err, "Could not restore");
 			}
 		}
-	});
-	roomSkillsApp.mount(host);
+	}));
 }
 function armRoomSkillUndo(id, label, commit) {
 	const el = document.querySelector(`#room-skills-list li[data-draft-id="${CSS.escape(id)}"] .room-skill-actions`) ?? document.querySelector(`#room-skills-list .room-skill-actions`);
@@ -15367,6 +13961,12 @@ function clearRoomSkillUndo(id) {
 	delete next[id];
 	roomSkillUndo.value = next;
 }
+/**
+* Learning loop, room-level view: what this room's agents have proposed and what
+* they've learned — in the room, rather than buried in the global Skills page.
+* Pending proposals first (they need a decision); learned skills below, removable.
+* Purely a view over existing endpoints — no new backend.
+*/
 async function renderRoomSkills() {
 	const section = $("#room-skills-section");
 	if (!section || !$("#room-skills-list")) return;
@@ -15440,6 +14040,15 @@ async function renderRoomSkills() {
 	];
 	mountRoomSkills();
 }
+/**
+* The learning loop's explicit trigger (docs/webchat/learning-loop.md §1): reviews
+* THIS session and drafts a skill only if it taught something. It just sends
+* `/learn` — one path, the same one the slash command takes, so there's no second
+* implementation to keep in step.
+*
+* Only offered for the room you're actually in: `/learn` reviews the session, and
+* the session is the one you have open.
+*/
 function renderDistillButton(agents) {
 	const host = $("#room-skills-section .form-label-row");
 	const existing = $("#room-distill-btn");
@@ -15452,8 +14061,8 @@ function renderDistillButton(agents) {
 	btn.textContent = "Distill a skill…";
 	btn.title = "Review this session and draft a skill if it taught something worth keeping";
 	btn.addEventListener("click", () => {
-		deps$8.closeRoomDetail();
-		deps$8.triggerLearn();
+		deps$6.closeRoomDetail();
+		deps$6.triggerLearn();
 	});
 	host.appendChild(btn);
 }
@@ -15560,18 +14169,13 @@ function wireSkillsRegistry() {
 			return;
 		}
 		try {
-			const res = await authFetch("/api/agents", {
+			await apiJson("/api/agents", {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
+				body: {
 					name,
 					instructions: instructions || void 0
-				})
+				}
 			});
-			if (!res.ok) {
-				showToast("Failed to create agent: " + ((await res.json().catch(() => ({}))).error || res.statusText), { kind: "error" });
-				return;
-			}
 			const checked = [...document.querySelectorAll("#agent-create-skills-list .agent-create-skill-check:checked")];
 			if (checked.length) showToast(`Adding ${checked.length} suggested skill(s)…`, { kind: "info" });
 			for (const c of checked) try {
@@ -15648,6 +14252,12 @@ async function showOverlapChoice(d, overlaps) {
 		showToast(`Discarded ${d.skillName || "draft"}`, { kind: "success" });
 	}
 }
+/**
+* Minimal LCS line diff. A revision is only reviewable if you can see what
+* CHANGED — showing the whole new file and asking someone to spot the edit is not
+* review, it's proofreading. Skills are small, so O(m×n) is fine and beats pulling
+* in a diff dependency.
+*/
 function lineDiff(oldText, newText) {
 	const a = String(oldText).split("\n");
 	const b = String(newText).split("\n");
@@ -15670,14 +14280,10 @@ function lineDiff(oldText, newText) {
 }
 async function toggleBuiltinSource(id, wasDisabled) {
 	try {
-		const res = await authFetch(`/api/skills/sources/${encodeURIComponent(id)}`, {
+		await apiJson(`/api/skills/sources/${encodeURIComponent(id)}`, {
 			method: wasDisabled ? "PUT" : "DELETE",
-			...wasDisabled ? {
-				headers: { "Content-Type": "application/json" },
-				body: "{}"
-			} : {}
+			body: wasDisabled ? {} : void 0
 		});
-		if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
 		showToast(wasDisabled ? "Marketplace added back to the pool" : "Marketplace removed from the pool", { kind: "success" });
 		renderSkillSources();
 	} catch (err) {
@@ -15698,15 +14304,9 @@ var UsageTable_default = /* @__PURE__ */ defineComponent({
 	__name: "UsageTable",
 	setup(__props) {
 		/**
-		* Per-user token usage rows — forty-second island.
-		*
-		* Mounted into <tbody id="usage-tbody">. The table's own hidden flag and
-		* #usage-empty are outside it and stay imperative — they swap the whole table
-		* for an empty note, which is a decision about the section, not the rows.
-		*
-		* Every cell but the first carries .usage-num (right-aligned numerics); the
-		* first is the user handle. Shaped upstream so the component holds no
-		* formatting rules.
+		* Per-user token usage rows, mounted into <tbody id="usage-tbody">; the table/empty-note
+		* swap stays with the renderer. Every cell but the first (the handle) carries .usage-num.
+		* Rows are shaped upstream, so no formatting rules live here.
 		*/
 		return (_ctx, _cache) => {
 			return openBlock(true), createElementBlock(Fragment, null, renderList(unref(usageRows), (r, i) => {
@@ -15726,14 +14326,8 @@ var UsageSpark_default = /* @__PURE__ */ defineComponent({
 	__name: "UsageSpark",
 	setup(__props) {
 		/**
-		* The per-day usage sparkline — forty-third island.
-		*
-		* Mounted into <div id="usage-spark">. Its hidden flag stays imperative: the
-		* sparkline is suppressed entirely below two days of data, which is a decision
-		* about whether to show the element at all.
-		*
-		* Bar heights are computed upstream against the range's max, with a 4px floor
-		* so a near-zero day is still visible.
+		* The per-day usage sparkline, mounted into <div id="usage-spark">; hidden below two days
+		* of data. Bar heights are computed upstream with a 4px floor so a near-zero day shows.
 		*/
 		return (_ctx, _cache) => {
 			return openBlock(true), createElementBlock(Fragment, null, renderList(unref(usageBars), (b, i) => {
@@ -15753,10 +14347,8 @@ var UsageModels_default = /* @__PURE__ */ defineComponent({
 	__name: "UsageModels",
 	setup(__props) {
 		/**
-		* Model-breakdown chips — forty-fourth island.
-		*
-		* Mounted into <div id="usage-models">. Attribution is via each room's agent's
-		* CURRENT model, so the chips describe where tokens went, not what was in
+		* Model-breakdown chips, mounted into <div id="usage-models">. Attribution uses each
+		* room's agent's CURRENT model, so chips describe where tokens went, not what was in
 		* effect at the time.
 		*/
 		return (_ctx, _cache) => {
@@ -15773,7 +14365,7 @@ var UsageModels_default = /* @__PURE__ */ defineComponent({
 //#region src/features/matrix-state.ts
 var matrixRooms = ref([]);
 var matrixAgents = ref([]);
-/** "roomId|agentId" for every wired pair — the same key shape legacy uses. */
+/** "roomId|agentId" for every wired pair — the same key shape as matrixWired. */
 var matrixEdges = ref(/* @__PURE__ */ new Set());
 //#endregion
 //#region src/features/WiringMatrix.vue?vue&type=script&setup=true&lang.ts
@@ -15797,19 +14389,9 @@ var WiringMatrix_default = /* @__PURE__ */ defineComponent({
 	__name: "WiringMatrix",
 	setup(__props) {
 		/**
-		* The room ↔ agent wiring matrix — thirty-ninth island.
-		*
-		* Mounted into <div id="matrix-canvas">, exclusively owned by this module.
-		*
-		* The cells carry data-room and data-agent and are NOT wired here. A delegated
-		* click handler on the canvas reads those attributes and toggles the edge —
-		* one listener for a grid that can be rooms × agents cells, which is why it was
-		* delegated in the first place. Putting @click on every cell would multiply the
-		* listener count by the grid size, and the listener-set guard would be right to
-		* flag it.
-		*
-		* The empty state replaces the whole table, as before: a matrix with no rooms
-		* or no agents has nothing to render, not an empty grid.
+		* The room ↔ agent wiring matrix, mounted into <div id="matrix-canvas">. Cells carry
+		* data-room/data-agent and have no listeners: one delegated handler on the canvas toggles
+		* edges for the whole grid. With no rooms or no agents, the empty state replaces the table.
 		*/
 		const empty = computed(() => matrixRooms.value.length === 0 || matrixAgents.value.length === 0);
 		const isOn = (roomId, agentId) => matrixEdges.value.has(`${roomId}|${agentId}`);
@@ -15832,6 +14414,18 @@ var WiringMatrix_default = /* @__PURE__ */ defineComponent({
 			}), 128))])]));
 		};
 	}
+});
+//#endregion
+//#region src/features/journey-state.ts
+/** Every event loaded so far, oldest page first — 'Load more' appends. */
+var journeyEvents = ref([]);
+/** 'loading' | 'error' | 'empty' | 'ready'. */
+var journeyPhase = ref("loading");
+/** The active journey filter. Reassigned wholesale so the island re-derives. */
+var journeyFilter = ref({
+	agent: "",
+	kind: "",
+	skill: ""
 });
 //#endregion
 //#region src/features/JourneyList.vue?vue&type=script&setup=true&lang.ts
@@ -15870,21 +14464,11 @@ var JourneyList_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The learning-journey timeline — fortieth island.
-		*
-		* Mounted into <div id="journey-list">, exclusively owned by this module. The
-		* filter CONTROLS (#journey-agent-filter, the kind buttons, #journey-skill-chip)
-		* live outside it and stay imperative; only the list itself converts.
-		*
-		* Day headers were emitted inline while appending, using a journeyLastDay
-		* variable that persisted across pagination calls. Derived from the full event
-		* list here instead — which is why 'Load more' can append to a ref rather than
-		* having to remember where the previous page stopped.
-		*
-		* Visibility is `hidden`, not v-if, exactly as applyJourneyFilters set it: rows
-		* stay in the DOM and a day header hides only when every row under it is
-		* hidden. #journey-no-match is outside the mount point and driven by the same
-		* derived counts.
+		* The learning-journey timeline, mounted into <div id="journey-list">; the filter
+		* controls live outside it. Day headers are derived from the full event list, so 'Load
+		* more' just appends to a ref. Visibility is `hidden`, not v-if: rows stay in the DOM, a
+		* day header hides only when every row under it does, and #journey-no-match reads the
+		* same derived counts.
 		*/
 		const props = __props;
 		const visible = (ev) => {
@@ -15974,10 +14558,10 @@ var JourneyList_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/views.ts
-var deps$7 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
+var deps$5 = {};
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideViewsDeps(provided) {
-	Object.assign(deps$7, provided);
+	Object.assign(deps$5, provided);
 }
 function openView(name, teardown) {
 	viewStack.push({
@@ -15992,9 +14576,9 @@ function closeView(name) {
 	history.go(-(viewStack.length - idx));
 }
 function openFullView(fn) {
-	if (deps$7.getDetailRouterOpen()) {
-		deps$7.setAfterDetailClose(fn);
-		deps$7.closeAllDetailDrawers();
+	if (deps$5.getDetailRouterOpen()) {
+		deps$5.setAfterDetailClose(fn);
+		deps$5.closeAllDetailDrawers();
 		return;
 	}
 	fn();
@@ -16009,7 +14593,7 @@ function openManage(tab = "agents") {
 		$("#overflow-btn")?.classList.add("active");
 		switchManageTab(tab);
 		if (!viewStack.some((v) => v.name === "manage")) openView("manage", teardownManage);
-		deps$7.probeRoutingAvailability();
+		deps$5.probeRoutingAvailability();
 	});
 }
 function teardownManage() {
@@ -16056,7 +14640,7 @@ function switchManageTab(tab) {
 	} else if (tab === "routing") {
 		if (!routingAvailable.value && !state.isOwnerView) return switchManageTab("agents");
 		renderRoutingSetup();
-		if (routingAvailable.value) deps$7.loadRoutingTab();
+		if (routingAvailable.value) deps$5.loadRoutingTab();
 	}
 }
 var dashboardActive = false;
@@ -16233,10 +14817,7 @@ function journeyMeta(ev) {
 }
 var journeyApp = null;
 function mountJourney() {
-	if (journeyApp) return;
-	const host = $("#journey-list");
-	if (!host) return;
-	journeyApp = createApp(JourneyList_default, {
+	journeyApp ??= mountIsland("#journey-list", () => createApp(JourneyList_default, {
 		verbs: JOURNEY_VERBS,
 		meta: journeyMeta,
 		onOpen: (ev) => openScopedSkillEditor(ev.agentGroupId, ev.skillName),
@@ -16255,8 +14836,7 @@ function mountJourney() {
 				toastError(err, "Revert failed");
 			}
 		}
-	});
-	journeyApp.mount(host);
+	}));
 }
 /** Record the agents seen in a page, for the filter dropdown. */
 function noteJourneyAgents(events) {
@@ -16299,12 +14879,7 @@ async function refreshTopology() {
 	if (!canvas) return;
 	canvas.textContent = "Loading…";
 	try {
-		const r = await authFetch("/api/topology");
-		if (!r.ok) {
-			canvas.textContent = "Could not load topology.";
-			return;
-		}
-		renderTopology(await r.json());
+		renderTopology(await apiJson("/api/topology"));
 	} catch {
 		canvas.textContent = "Could not load topology.";
 	}
@@ -16528,28 +15103,17 @@ async function refreshMatrix() {
 		canvas.textContent = "Could not load wiring.";
 	};
 	try {
-		const r = await authFetch("/api/topology");
-		if (!r.ok) return fail();
-		renderMatrix(await r.json());
+		renderMatrix(await apiJson("/api/topology"));
 	} catch {
 		fail();
 	}
 }
 var matrixApp$1 = null;
 function mountMatrix() {
-	if (matrixApp$1) return;
-	const host = $("#matrix-canvas");
-	if (!host) return;
-	matrixApp$1 = createApp(WiringMatrix_default);
-	matrixApp$1.mount(host);
+	matrixApp$1 ??= mountIsland("#matrix-canvas", () => createApp(WiringMatrix_default));
 }
-/**
-* Drop the island so the next open mounts a fresh one.
-*
-* Load-bearing: without it, `matrixApp` stayed set for the life of the page
-* while the host's DOM got wiped by the placeholder, and the mount guard then
-* refused to rebuild — the view never recovered short of a reload.
-*/
+/** Drop the island so the next open mounts a fresh one; the mount guard will
+*  not rebuild while `matrixApp` is set. */
 function unmountMatrix() {
 	if (!matrixApp$1) return;
 	matrixApp$1.unmount();
@@ -16565,7 +15129,7 @@ function renderMatrix(data) {
 	matrixEdges.value = new Set(matrixWired.value);
 	mountMatrix();
 }
-/** Re-read the edge set after legacy toggles a cell. */
+/** Re-read the edge set after a cell toggles. */
 function refreshMatrixCells() {
 	matrixEdges.value = new Set(matrixWired.value);
 }
@@ -16587,24 +15151,14 @@ function mountUsage() {
 		usageApps.push(app);
 	}
 }
-/**
-* Token usage — a DASHBOARD panel now, not a Settings section. Usage is a
-* thing you check, not a thing you configure; it sat in Settings because
-* that was the only owner-gated surface at the time. The endpoint stays
-* owner-only and a 403 hides the whole panel, so the move changes surface,
-* not audience.
-*/
+/** Token usage — a DASHBOARD panel: something you check, not configure.
+*  Owner-only endpoint; a 403 hides the whole panel. */
 async function renderUsagePanel() {
 	const section = $("#dash-usage-section");
 	if (!section) return;
 	let data = null;
 	try {
-		const r = await authFetch("/api/webchat/usage?days=" + usageRangeDays);
-		if (!r.ok) {
-			section.hidden = true;
-			return;
-		}
-		data = await r.json();
+		data = await apiJson("/api/webchat/usage?days=" + usageRangeDays);
 	} catch {
 		section.hidden = true;
 		return;
@@ -16666,7 +15220,7 @@ async function refreshDashboard() {
 	}
 	renderHealthStrip(snap);
 	renderMetrics(snap);
-	deps$7.refreshRouterMetrics();
+	deps$5.refreshRouterMetrics();
 }
 function syncManageSortIcon() {
 	const btn = $("#manage-sort-az");
@@ -16703,15 +15257,14 @@ function wireViewsPanel() {
 		cell.classList.add("pending");
 		cell.classList.toggle("on", wantWired);
 		try {
-			const r = wantWired ? await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/agents`, {
+			if (wantWired) await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/agents`, {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
+				body: {
 					kind: "existing",
 					id: agentId
-				})
-			}) : await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/agents/${encodeURIComponent(agentId)}`, { method: "DELETE" });
-			if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.statusText);
+				}
+			});
+			else await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/agents/${encodeURIComponent(agentId)}`, { method: "DELETE" });
 			matrixWired.value[wantWired ? "add" : "delete"](`${roomId}|${agentId}`);
 			refreshMatrixCells();
 		} catch (err) {
@@ -16994,7 +15547,7 @@ function hideDetail() {
 async function showMessagesDetail() {
 	const rooms = await authFetch("/api/rooms").then((r) => r.json()).catch(() => []);
 	const since = Date.now() - 864e5;
-	const all = (await Promise.all(rooms.map((room) => authFetch(`/api/rooms/${encodeURIComponent(room.id)}/messages`).then((r) => r.json()).then((msgs) => msgs.filter((m) => m.created_at > since).map((m) => ({
+	const all = (await Promise.all(rooms.map((room) => apiJson(`/api/rooms/${encodeURIComponent(room.id)}/messages`).then((msgs) => msgs.filter((m) => m.created_at > since).map((m) => ({
 		...m,
 		roomId: room.id
 	}))).catch(() => [])))).flat().sort((a, b) => b.created_at - a.created_at).slice(0, 50);
@@ -17089,19 +15642,10 @@ var SelectToggle_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The +/− selectable-model control, declaratively.
-		*
-		* Not an island — it has no mount point of its own. It is the component half of
-		* select-toggle.ts, used by islands that render server rows, while the still
-		* imperative call sites keep using buildSelectToggle().
-		*
-		* It decides nothing. Both what it shows and what the click does come from the
-		* module, so this and the imperative builder cannot drift — which matters here
-		* because the click DELETES a registration when one already exists.
-		*
-		* `busy` is local rather than a shared ref: it disables THIS button while its
-		* own request is in flight, exactly as `btn.disabled` did. Two rows can be
-		* mid-request independently.
+		* The +/− selectable-model control; the component half of select-toggle.ts, which decides
+		* what it shows and what the click does (the click DELETES an existing registration), so
+		* this and buildSelectToggle() cannot drift. `busy` is local: rows are mid-request
+		* independently.
 		*/
 		const props = __props;
 		const busy = ref(false);
@@ -17156,17 +15700,8 @@ var RouterRoster_default = /* @__PURE__ */ defineComponent({
 	__name: "RouterRoster",
 	setup(__props) {
 		/**
-		* The router's model roster — twenty-fourth island.
-		*
-		* Mounted into <ul id="router-roster-list">, exclusively owned by this module.
-		*
-		* Unblocked by the select-toggle extraction: this list could not become an
-		* island while its +/- control arrived as a DOM node from legacy.
-		*
-		* The empty state covers two different situations the original also merged —
-		* the router not answering at all, and answering with an empty model list. The
-		* wording ("not reachable right now") is kept as-is; splitting them would be a
-		* copy change, not a conversion.
+		* The router's model roster, mounted into <ul id="router-roster-list">. One empty state
+		* covers both "router not answering" and "answered with no models".
 		*/
 		return (_ctx, _cache) => {
 			return unref(rosterUnreachable) ? (openBlock(), createElementBlock("li", _hoisted_1$8, toDisplayString(UNREACHABLE))) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(rosterSelectable), (id) => {
@@ -17191,21 +15726,11 @@ var RouterRoster_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/routing.ts
-var deps$6 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
-function provideRoutingDeps(provided) {
-	Object.assign(deps$6, provided);
-}
 async function refreshRouterMetrics() {
 	const section = $("#dash-router-section");
 	if (!section) return;
 	try {
-		const res = await authFetch("/api/router/metrics?days=7");
-		if (!res.ok) {
-			section.hidden = true;
-			return;
-		}
-		const m = await res.json();
+		const m = await apiJson("/api/router/metrics?days=7");
 		if (!m.available || m.total === 0) {
 			section.hidden = true;
 			return;
@@ -17222,7 +15747,6 @@ async function refreshRouterMetrics() {
 		const health = [];
 		health.push(`${m.total} request${m.total === 1 ? "" : "s"}`);
 		health.push(`${m.live} via auto`);
-		if (m.escalations > 0) health.push(`${m.escalations} escalated to Claude`);
 		if (m.errors > 0) health.push(`${m.errors} classifier error${m.errors === 1 ? "" : "s"}`);
 		$("#dash-router").innerHTML = `<div class="router-summary">${esc(health.join(" · "))}</div>` + bars + (routes ? `<div class="router-routes">Routes: ${routes}</div>` : "");
 	} catch {
@@ -17247,9 +15771,8 @@ async function probeRoutingAvailability() {
 async function loadRoutingTab() {
 	try {
 		const q = routingCurrentRouter.value ? `?router=${encodeURIComponent(routingCurrentRouter.value)}` : "";
-		const [routesRes, rosterRes] = await Promise.all([authFetch("/api/router/routes" + q), authFetch("/api/router/models")]);
-		if (!routesRes.ok) throw new Error((await routesRes.json()).error || routesRes.status);
-		routingDraft.value = await routesRes.json();
+		const [draft, rosterRes] = await Promise.all([apiJson("/api/router/routes" + q), authFetch("/api/router/models")]);
+		routingDraft.value = draft;
 		routingCurrentRouter.value = routingDraft.value.router ?? null;
 		routingRouterInfo.value = rosterRes.ok ? await rosterRes.json() : null;
 	} catch (err) {
@@ -17300,11 +15823,7 @@ function switchRoutingSubtab(which) {
 }
 var rosterApp = null;
 function mountRouterRoster() {
-	if (rosterApp) return;
-	const host = $("#router-roster-list");
-	if (!host) return;
-	rosterApp = createApp(RouterRoster_default);
-	rosterApp.mount(host);
+	rosterApp ??= mountIsland("#router-roster-list", () => createApp(RouterRoster_default));
 }
 function renderRouterRoster() {
 	if (!$("#router-roster-list")) return;
@@ -17323,34 +15842,24 @@ function renderRouterRoster() {
 	rosterUnreachable.value = false;
 }
 async function saveRoutingConfig() {
-	const res = await authFetch("/api/router/routes" + (routingCurrentRouter.value ? `?router=${encodeURIComponent(routingCurrentRouter.value)}` : ""), {
+	routingDraft.value = await apiJson("/api/router/routes" + (routingCurrentRouter.value ? `?router=${encodeURIComponent(routingCurrentRouter.value)}` : ""), {
 		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
+		body: {
 			routes: routingDraft.value.routes,
 			default_route: routingDraft.value.default_route
-		})
+		}
 	});
-	const body = await res.json();
-	if (!res.ok) throw new Error(body.error || res.status);
-	routingDraft.value = body;
 	renderRouteList();
 }
 var decisionsApp = null;
 function mountRoutingDecisions() {
-	if (decisionsApp) return;
-	const host = $("#routing-decisions-list");
-	if (!host) return;
-	decisionsApp = createApp(RoutingDecisions_default);
-	decisionsApp.mount(host);
+	decisionsApp ??= mountIsland("#routing-decisions-list", () => createApp(RoutingDecisions_default));
 }
 async function refreshRoutingDecisions() {
 	if (!$("#routing-decisions-list")) return;
 	mountRoutingDecisions();
 	try {
-		const res = await authFetch("/api/router/decisions?limit=60");
-		if (!res.ok) throw new Error(String(res.status));
-		let { decisions: decisions$1 } = await res.json();
+		let { decisions: decisions$1 } = await apiJson("/api/router/decisions?limit=60");
 		const cur = routingCurrentRouter.value ?? "auto";
 		decisions$1 = decisions$1.filter((d) => (d.router ?? "auto") === cur).slice(0, 15);
 		decisionsRouter.value = cur;
@@ -17376,12 +15885,10 @@ function wireRoutingPanel() {
 		const prevName = r.name;
 		r.name = ($("#route-name")?.value ?? "").trim();
 		r.description = $("#route-description")?.value ?? "";
-		if (!r.escalate) {
-			r.model = $("#route-binding")?.value ?? "";
-			r.pinned = $("#route-pinned")?.checked ?? false;
-			if ($("#route-default")?.checked ?? false) routingDraft.value.default_route = r.name;
-			else if (routingDraft.value.default_route === prevName) routingDraft.value.default_route = r.name;
-		}
+		r.model = $("#route-binding")?.value ?? "";
+		r.pinned = $("#route-pinned")?.checked ?? false;
+		if ($("#route-default")?.checked ?? false) routingDraft.value.default_route = r.name;
+		else if (routingDraft.value.default_route === prevName) routingDraft.value.default_route = r.name;
 		if (isNew) {
 			routingDraft.value.routes.push(r);
 			selectedRouteIdx.value = routingDraft.value.routes.length - 1;
@@ -17428,13 +15935,10 @@ function wireRoutingPanel() {
 		outEl.classList.remove("err");
 		outEl.textContent = "Classifying…";
 		try {
-			const res = await authFetch("/api/router/classify", {
+			const body = await apiJson("/api/router/classify", {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt })
+				body: { prompt }
 			});
-			const body = await res.json();
-			if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
 			outEl.textContent = `→ ${body.route} · ${body.model ?? "(no binding)"} · ${body.ms} ms`;
 		} catch (err) {
 			outEl.classList.add("err");
@@ -17464,9 +15968,7 @@ function wireRoutingProfiles() {
 			destructive: true
 		})) return;
 		try {
-			const res = await authFetch("/api/router/routers/" + encodeURIComponent(name), { method: "DELETE" });
-			const body = await res.json();
-			if (!res.ok) throw new Error(body.error || res.status);
+			await apiJson("/api/router/routers/" + encodeURIComponent(name), { method: "DELETE" });
 			routingCurrentRouter.value = null;
 			showToast(`Deleted "${name}"`);
 			await fetchModels();
@@ -17484,13 +15986,10 @@ function wireRouterNew() {
 		});
 		if (!name) return;
 		try {
-			const res = await authFetch("/api/router/routers", {
+			await apiJson("/api/router/routers", {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ name })
+				body: { name }
 			});
-			const body = await res.json();
-			if (!res.ok) throw new Error(body.error || res.status);
 			routingCurrentRouter.value = name;
 			showToast(`Created routing profile "${name}" (cloned)`, { kind: "success" });
 			await fetchModels();
@@ -17502,19 +16001,14 @@ function wireRouterNew() {
 }
 var routeSuggestApp = null;
 function mountRouteSuggestions() {
-	if (routeSuggestApp) return;
-	const host = $("#route-suggestions");
-	if (!host) return;
-	routeSuggestApp = createApp(RouteSuggestions_default, { onCreate: (s) => void createRouteFromSuggestion(s) });
-	routeSuggestApp.mount(host);
+	routeSuggestApp ??= mountIsland("#route-suggestions", () => createApp(RouteSuggestions_default, { onCreate: (s) => void createRouteFromSuggestion(s) }));
 }
 async function renderRouteSuggestions() {
 	const box = $("#route-suggestions");
 	if (!box) return;
 	let suggestions = [];
 	try {
-		const res = await authFetch("/api/router/suggestions");
-		if (res.ok) suggestions = (await res.json()).suggestions || [];
+		suggestions = (await apiJson("/api/router/suggestions")).suggestions || [];
 	} catch {}
 	routeSuggestions.value = suggestions;
 	box.hidden = suggestions.length === 0;
@@ -17549,8 +16043,7 @@ async function runRosterRefresh() {
 	log.hidden = false;
 	log.textContent = "Starting…";
 	try {
-		const res = await authFetch("/api/router/roster-refresh", { method: "POST" });
-		if (!res.ok) throw new Error((await res.json()).error || res.status);
+		await apiJson("/api/router/roster-refresh", { method: "POST" });
 		while (true) {
 			await new Promise((r) => setTimeout(r, 2e3));
 			const st = await (await authFetch("/api/router/roster-refresh")).json();
@@ -17576,14 +16069,10 @@ async function runRosterRefresh() {
 }
 var routeListApp = null;
 function mountRouteList() {
-	if (routeListApp) return;
-	const host = $("#route-list");
-	if (!host) return;
-	routeListApp = createApp(RouteList_default, { onActivate: (i) => {
+	routeListApp ??= mountIsland("#route-list", () => createApp(RouteList_default, { onActivate: (i) => {
 		if (selectedRouteIdx.value === i && !$("#route-detail").hidden) closeRouteDetail();
 		else openRouteDetail(i);
-	} });
-	routeListApp.mount(host);
+	} }));
 }
 function renderRouteList() {
 	if (!$("#route-list")) return;
@@ -17612,34 +16101,22 @@ function populateRouteDetail(r, isNew) {
 	closeModelDetail();
 	renderRouteList();
 	$("#route-detail-title").textContent = isNew ? "New route" : r.name;
-	const badge = $("#route-detail-badge");
-	badge.hidden = !r.escalate;
-	if (r.escalate) {
-		badge.className = "model-kind-badge kind-anthropic";
-		badge.textContent = "escalate";
-	}
 	$("#route-name").value = r.name;
 	$("#route-description").value = r.description || "";
-	$("#route-binding-label").hidden = Boolean(r.escalate);
-	$("#route-escalate-note").hidden = !r.escalate;
-	if (!r.escalate) {
-		const sel = $("#route-binding");
-		sel.innerHTML = "";
-		for (const m of [.../* @__PURE__ */ new Set([r.model, ...routingRouterInfo.value?.models ?? []])].filter(Boolean)) {
-			const o = document.createElement("option");
-			o.value = m;
-			o.textContent = m;
-			if (m === r.model) o.selected = true;
-			sel.appendChild(o);
-		}
+	const sel = $("#route-binding");
+	sel.innerHTML = "";
+	for (const m of [.../* @__PURE__ */ new Set([r.model, ...routingRouterInfo.value?.models ?? []])].filter(Boolean)) {
+		const o = document.createElement("option");
+		o.value = m;
+		o.textContent = m;
+		if (m === r.model) o.selected = true;
+		sel.appendChild(o);
 	}
 	const pin = $("#route-pinned");
 	pin.checked = Boolean(r.pinned);
-	pin.parentElement.hidden = Boolean(r.escalate);
 	const def = $("#route-default");
 	def.checked = routingDraft.value.default_route === r.name;
 	def.disabled = def.checked;
-	def.parentElement.hidden = Boolean(r.escalate);
 	$("#route-detail").hidden = false;
 	$("#members-panel").hidden = true;
 }
@@ -17714,20 +16191,9 @@ var OllamaHostCards_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The Ollama host cards — twenty-fifth island, and the first CLUSTER one.
-		*
-		* Mounted into <div id="ollama-host-cards">, exclusively owned by this module.
-		*
-		* Three renderers previously shared this subtree: buildOllamaHostCard made the
-		* card, loadOllamaHostModels filled .ollama-model-list, renderOllamaPulls filled
-		* .ollama-pull-status. Each rebuilt or overwrote elements the others owned, so
-		* none could convert alone. They are three slices of one state object now.
-		*
-		* Element ORDER is load-bearing and matches the builder exactly: head, then the
-		* accordion body (model list + pull row), then the pull status OUTSIDE the body
-		* so progress stays visible while the card is collapsed.
-		*
-		* The chevron is first inside the head because makeCardAccordion prepended it.
+		* The Ollama host cards, mounted into <div id="ollama-host-cards">. Element order is
+		* load-bearing: chevron-first head, then the accordion body (model list + pull row), then
+		* the pull status OUTSIDE the body so progress stays visible while collapsed.
 		*/
 		const props = __props;
 		const cards = computed(() => hosts.value.map((host) => {
@@ -17878,16 +16344,12 @@ var OllamaHostCards_default = /* @__PURE__ */ defineComponent({
 //#region src/features/ollama-cards.ts
 var cardsApp = null;
 function mountOllamaHostCards() {
-	if (cardsApp) return;
-	const host = $("#ollama-host-cards");
-	if (!host) return;
-	cardsApp = createApp(OllamaHostCards_default, {
+	cardsApp ??= mountIsland("#ollama-host-cards", () => createApp(OllamaHostCards_default, {
 		onPull: (h, model, input, btn) => startOllamaPull(h, model, input, btn),
 		onRemove: (h, model) => void removeHostModel(h, model),
 		onCancel: (h, model) => void cancelOllamaPull(h, model),
 		onPreview: (h, model) => previewOllamaPull(h, model)
-	});
-	cardsApp.mount(host);
+	}));
 }
 function ollamaCardId(host) {
 	return "ollama-card-" + host.replace(/[^a-z0-9]/gi, "-");
@@ -17946,18 +16408,14 @@ async function removeHostModel(host, model) {
 		destructive: true
 	})) return;
 	try {
-		const res = await authFetch("/api/ollama/delete", {
+		await apiJson("/api/ollama/delete", {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify({
+			headers: { "X-Webchat-CSRF": "1" },
+			body: {
 				host,
 				model
-			})
+			}
 		});
-		if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
 		showToast(`Removed ${model}`, { kind: "success" });
 		loadOllamaHostModels(host);
 	} catch (err) {
@@ -17966,10 +16424,10 @@ async function removeHostModel(host, model) {
 }
 //#endregion
 //#region src/features/models.ts
-var deps$5 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
+var deps$4 = {};
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideModelsDeps(provided) {
-	Object.assign(deps$5, provided);
+	Object.assign(deps$4, provided);
 }
 function sttPopulateModelSelect(st) {
 	const select = $("#stt-model-select");
@@ -17987,8 +16445,7 @@ async function populateKnownModelOptions() {
 	const list = $("#agent-config-model-options");
 	if (!list) return;
 	if (knownModelOptions === null) try {
-		const res = await authFetch("/api/models/known");
-		knownModelOptions = res.ok ? (await res.json()).models || [] : [];
+		knownModelOptions = (await apiJson("/api/models/known")).models || [];
 	} catch {
 		knownModelOptions = [];
 	}
@@ -18011,9 +16468,7 @@ async function fetchModels() {
 }
 async function loadOllamaHostModels(host) {
 	try {
-		const res = await authFetch("/api/ollama/models?host=" + encodeURIComponent(host));
-		const body = await res.json();
-		if (!res.ok) throw new Error(body.error || res.status);
+		const body = await apiJson("/api/ollama/models?host=" + encodeURIComponent(host));
 		const isClassifier = (m) => routingClassifierModel.value && m.name === routingClassifierModel.value;
 		hostModels.value[host] = {
 			phase: "ready",
@@ -18060,7 +16515,7 @@ function mountModelList() {
 	modelListApp = createApp(ModelList_default, {
 		onPick: (id) => {
 			if (allModels.value.find((m) => m.id === id)?.model_id === "auto") {
-				if (routingAvailable.value) deps$5.switchManageTab("routing");
+				if (routingAvailable.value) deps$4.switchManageTab("routing");
 				else openModelDetail(id);
 				return;
 			}
@@ -18113,18 +16568,14 @@ function renderModels() {
 }
 var modelUsageApp = null;
 function mountModelUsage() {
-	if (modelUsageApp) return;
-	const host = $("#model-detail-usage");
-	if (!host) return;
-	modelUsageApp = createApp(ModelUsage_default);
-	modelUsageApp.mount(host);
+	modelUsageApp ??= mountIsland("#model-detail-usage", () => createApp(ModelUsage_default));
 }
 async function openModelDetail(id) {
 	const model = allModels.value.find((m) => m.id === id);
 	if (!model) return;
 	selectedModelId.value = id;
 	renderModels();
-	if (typeof deps$5.closeRouteDetail === "function") deps$5.closeRouteDetail();
+	if (typeof deps$4.closeRouteDetail === "function") deps$4.closeRouteDetail();
 	closeAgentDetail();
 	closeRoomDetail();
 	closeMcpDetail();
@@ -18174,9 +16625,7 @@ async function loadModelLiveFacts(model) {
 	el.classList.remove("warn");
 	if (model.kind !== "ollama" || !model.endpoint) return;
 	try {
-		const res = await authFetch("/api/ollama/models?host=" + encodeURIComponent(model.endpoint));
-		if (!res.ok) return;
-		const { models } = await res.json();
+		const { models } = await apiJson("/api/ollama/models?host=" + encodeURIComponent(model.endpoint));
 		if (selectedModelId.value !== model.id) return;
 		const hit = models.find((m) => m.name === model.model_id);
 		if (!hit) {
@@ -18197,17 +16646,13 @@ function closeModelDetail() {
 	renderModels();
 }
 async function discoverModels(kind, endpoint) {
-	const res = await authFetch("/api/models/discover", {
+	return (await apiJson("/api/models/discover", {
 		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(kind === "anthropic" ? { kind } : {
+		body: kind === "anthropic" ? { kind } : {
 			kind,
 			endpoint
-		})
-	});
-	const out = await res.json();
-	if (!res.ok) throw new Error(out.error || "discover failed");
-	return out.models || [];
+		}
+	})).models || [];
 }
 function openModelPicker() {
 	const picker = $("#model-picker");
@@ -18281,16 +16726,10 @@ function wireModelsPanel() {
 			return;
 		}
 		try {
-			const res = await authFetch("/api/models", {
+			const out = await apiJson("/api/models", {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(body)
+				body
 			});
-			const out = await res.json();
-			if (!res.ok) {
-				showToast("Failed to create model: " + (out.error || res.statusText), { kind: "error" });
-				return;
-			}
 			warnIfUnreachable(out.reachability);
 			await fetchModels();
 			closeModelDetail();
@@ -18315,18 +16754,10 @@ function wireModelsPanel() {
 			endpoint: ($("#model-endpoint")?.value ?? "").trim() || null
 		};
 		try {
-			const res = await authFetch(`/api/models/${encodeURIComponent(selectedModelId.value)}`, {
+			await apiJson(`/api/models/${encodeURIComponent(selectedModelId.value)}`, {
 				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(patch)
+				body: patch
 			});
-			const out = await res.json();
-			if (!res.ok) {
-				showToast("Failed to save model: " + (out.error || res.statusText), { kind: "error" });
-				btn.textContent = original;
-				btn.disabled = false;
-				return;
-			}
 			await fetchModels();
 			btn.textContent = "✓ Saved";
 			btn.classList.add("success");
@@ -18362,11 +16793,7 @@ function wireModelsPanel() {
 					confirmLabel: "Delete anyway",
 					destructive: true
 				})) return;
-				const force = await authFetch(`/api/models/${encodeURIComponent(selectedModelId.value)}?force=1`, { method: "DELETE" });
-				if (!force.ok) {
-					showToast(`Failed to delete: ${(await force.json().catch(() => ({}))).error || force.statusText}`, { kind: "error" });
-					return;
-				}
+				await apiJson(`/api/models/${encodeURIComponent(selectedModelId.value)}?force=1`, { method: "DELETE" });
 			} else if (!res.ok) {
 				showToast(`Failed to delete: ${(await res.json().catch(() => ({}))).error || res.statusText}`, { kind: "error" });
 				return;
@@ -18528,11 +16955,7 @@ var pickerAddInProgress = false;
 var pickerAgentForAdd = null;
 var modelPickerApp = null;
 function mountModelPicker() {
-	if (modelPickerApp) return;
-	const host = $("#model-picker-list");
-	if (!host) return;
-	modelPickerApp = createApp(ModelPicker_default, { onPick: (id) => selectFromPicker(id) });
-	modelPickerApp.mount(host);
+	modelPickerApp ??= mountIsland("#model-picker-list", () => createApp(ModelPicker_default, { onPick: (id) => selectFromPicker(id) }));
 }
 function renderPickerList(filterText) {
 	if (!$("#model-picker-list")) return;
@@ -18593,12 +17016,10 @@ async function maybeAssignAfterPickerAdd(createdIds) {
 	pickerAgentForAdd = null;
 	if (!agentId) return false;
 	if (createdIds.length === 1) try {
-		const mRes = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/model`, {
+		warnIfUnreachable((await apiJson(`/api/agents/${encodeURIComponent(agentId)}/model`, {
 			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ modelId: createdIds[0] })
-		});
-		if (mRes.ok) warnIfUnreachable((await mRes.json()).reachability);
+			body: { modelId: createdIds[0] }
+		})).reachability);
 	} catch (err) {
 		console.error("Auto-assign new model failed:", err);
 	}
@@ -18606,7 +17027,7 @@ async function maybeAssignAfterPickerAdd(createdIds) {
 	if (typeof openAgentDetail === "function") await openAgentDetail(agentId);
 	return true;
 }
-/** The picker's "+ Add new model" flow sets these from legacy's wiring block,
+/** The picker's "+ Add new model" flow sets these from the composition root's wiring block,
 *  which cannot assign an imported binding — so it goes through a setter. */
 function setPickerAdd(inProgress, agentId) {
 	pickerAddInProgress = inProgress;
@@ -18614,11 +17035,7 @@ function setPickerAdd(inProgress, agentId) {
 }
 var probeResultsApp = null;
 function mountProbeResults() {
-	if (probeResultsApp) return;
-	const host = $("#model-probe-list");
-	if (!host) return;
-	probeResultsApp = createApp(ProbeResults_default);
-	probeResultsApp.mount(host);
+	probeResultsApp ??= mountIsland("#model-probe-list", () => createApp(ProbeResults_default));
 }
 function renderProbeResults(probe) {
 	const summary = $("#model-probe-results .model-probe-summary");
@@ -18664,16 +17081,10 @@ async function addSelectedFromProbe() {
 	btn.disabled = true;
 	btn.textContent = `Adding ${items.length}…`;
 	try {
-		const res = await authFetch("/api/models/bulk", {
+		const out = await apiJson("/api/models/bulk", {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ models: items })
+			body: { models: items }
 		});
-		const out = await res.json();
-		if (!res.ok) {
-			showToast("Bulk add failed: " + (out.error || res.statusText), { kind: "error" });
-			return;
-		}
 		if (out.failed && out.failed.length > 0) {
 			const lines = out.failed.map((f) => `  • ${items[f.index].model_id}: ${f.error}`).join("\n");
 			showToast(`Added ${out.created_count}, ${out.failed.length} failed:\n${lines}`, { kind: "error" });
@@ -18734,10 +17145,10 @@ async function runProbe() {
 }
 //#endregion
 //#region src/features/agents.ts
-var deps$4 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
+var deps$3 = {};
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideAgentsDeps(provided) {
-	Object.assign(deps$4, provided);
+	Object.assign(deps$3, provided);
 }
 function agentColor(name) {
 	let h = 0;
@@ -18747,28 +17158,28 @@ function agentColor(name) {
 async function refreshWiredAgentsForCurrentRoom() {
 	const roomId = state.currentRoom;
 	if (!roomId) {
-		deps$4.setWiredAgentsForCurrentRoom([]);
+		deps$3.setWiredAgentsForCurrentRoom([]);
 		return;
 	}
 	try {
 		const next = await (await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/agents`)).json();
-		if (state.currentRoom === roomId) deps$4.setWiredAgentsForCurrentRoom(next);
+		if (state.currentRoom === roomId) deps$3.setWiredAgentsForCurrentRoom(next);
 	} catch {}
 }
 function mentionAgentColor(handle) {
-	const a = (deps$4.getWiredAgentsForCurrentRoom() || []).find((x) => (x.folder || "").toLowerCase() === handle);
+	const a = (deps$3.getWiredAgentsForCurrentRoom() || []).find((x) => (x.folder || "").toLowerCase() === handle);
 	return a && a.name ? agentColor(a.name) : null;
 }
 var wireSkillState = null;
 async function openWireToAgentsPicker(importBody, displayName, opts = {}) {
-	if (!await deps$4.inspectAndConfirmImport(importBody, displayName, !!opts.community)) return;
+	if (!await deps$3.inspectAndConfirmImport(importBody, displayName, !!opts.community)) return;
 	if (!state.allAgents.length) await fetchAgents();
 	wireSkillState = {
 		importBody,
 		name: null,
 		wired: /* @__PURE__ */ new Set()
 	};
-	deps$4.openAttachPicker({
+	deps$3.openAttachPicker({
 		title: `Wire ${displayName} to agents`,
 		searchPlaceholder: "Search agents…",
 		emptyText: "No agents yet.",
@@ -18793,7 +17204,7 @@ async function openWireToAgentsPicker(importBody, displayName, opts = {}) {
 			}
 		},
 		onAddNew: async () => {
-			deps$4.closeAttachPicker();
+			deps$3.closeAttachPicker();
 			try {
 				showToast(`Added ${(await apiJson("/api/skills/import", {
 					method: "POST",
@@ -18837,7 +17248,7 @@ async function showAgentsDetail() {
 }
 async function fetchAgents() {
 	try {
-		const all = await (await authFetch("/api/agents?includeArchived=1")).json();
+		const all = await apiJson("/api/agents?includeArchived=1");
 		archivedAgentsCount.value = all.filter((a) => a.status === "archived").length;
 		state.allAgents = showArchivedAgents.value ? all : all.filter((a) => a.status !== "archived");
 		renderAgents();
@@ -18846,13 +17257,7 @@ async function fetchAgents() {
 	}
 }
 var agentListApp = null;
-/**
-* Mount the AgentList island into <ul id="agent-list">, once.
-*
-* Vue replaces the mount element's children, and this <ul> has no server-
-* rendered content, so there is nothing to hydrate — a plain createApp is
-* correct here rather than createSSRApp.
-*/
+/** Mount the AgentList island into <ul id="agent-list">, once. */
 function mountAgentList() {
 	if (agentListApp) return;
 	const host = $("#agent-list");
@@ -18935,18 +17340,18 @@ async function openAgentDetail(id) {
 	if (!agent) return;
 	selectedAgentId.value = id;
 	renderAgents();
-	deps$4.closeRoomDetail();
-	deps$4.closeModelDetail();
+	deps$3.closeRoomDetail();
+	deps$3.closeModelDetail();
 	closeMcpDetail();
 	$("#agent-edit-view").hidden = false;
 	$("#agent-create-view").hidden = true;
 	setAgentSubtab("settings");
 	$("#agent-detail-title").textContent = agent.name ?? "";
 	$("#agent-name").value = agent.name ?? "";
-	if (allModels.value.length === 0) await deps$4.fetchModels();
+	if (allModels.value.length === 0) await deps$3.fetchModels();
 	populateAgentModelSelect(agent.assigned_model_id);
 	$("#agent-config-model").value = agent.config_model || "";
-	deps$4.populateKnownModelOptions();
+	deps$3.populateKnownModelOptions();
 	setAgentStatusControl(agent.status);
 	setAgentHarnessControl(agent.provider);
 	renderAgentTemplateRow(agent.id);
@@ -18954,16 +17359,13 @@ async function openAgentDetail(id) {
 	renderAgentEgressHosts(agent.id, agent.egress);
 	renderAgentEnv(id);
 	try {
-		const res = await authFetch(`/api/agents/${encodeURIComponent(id ?? "")}/instructions`);
-		if (res.ok) {
-			const { content, legacyBytes } = await res.json();
-			$("#agent-instructions").value = content;
-			const note = $("#agent-instructions-legacy");
-			if (note) {
-				const show = !content && legacyBytes > 0;
-				note.hidden = !show;
-				if (show) note.textContent = `This agent also has a ${Math.round(legacyBytes / 1024)} KB CLAUDE.local.md from before standing instructions moved here. It is not edited on this screen — run /migrate-memory to fold it in.`;
-			}
+		const { content, legacyBytes } = await apiJson(`/api/agents/${encodeURIComponent(id ?? "")}/instructions`);
+		$("#agent-instructions").value = content;
+		const note = $("#agent-instructions-legacy");
+		if (note) {
+			const show = !content && legacyBytes > 0;
+			note.hidden = !show;
+			if (show) note.textContent = `This agent also has a ${Math.round(legacyBytes / 1024)} KB CLAUDE.local.md from before standing instructions moved here. It is not edited on this screen — run /migrate-memory to fold it in.`;
 		}
 	} catch {}
 	await loadAgentRooms(id);
@@ -19007,9 +17409,8 @@ function refreshAgentSaveDirty() {
 var canManageAgentRooms = false;
 async function loadAgentRooms(agentId) {
 	try {
-		const res = await authFetch(`/api/agents/${encodeURIComponent(agentId ?? "")}/rooms`);
-		canManageAgentRooms = res.ok;
-		agentDetailRooms.value = res.ok ? await res.json() : [];
+		agentDetailRooms.value = await apiJson(`/api/agents/${encodeURIComponent(agentId ?? "")}/rooms`);
+		canManageAgentRooms = true;
 	} catch {
 		canManageAgentRooms = false;
 		agentDetailRooms.value = [];
@@ -19019,14 +17420,10 @@ async function loadAgentRooms(agentId) {
 }
 var wiredRoomsApp = null;
 function mountAgentWiredRooms() {
-	if (wiredRoomsApp) return;
-	const host = $("#agent-wired-rooms");
-	if (!host) return;
-	wiredRoomsApp = createApp(AgentWiredRooms_default, {
-		onOpenRoom: (roomId) => deps$4.openRoomDetail(roomId),
+	wiredRoomsApp ??= mountIsland("#agent-wired-rooms", () => createApp(AgentWiredRooms_default, {
+		onOpenRoom: (roomId) => deps$3.openRoomDetail(roomId),
 		onRemoveRoom: (roomId, roomName) => removeRoomFromAgent(roomId, roomName)
-	});
-	wiredRoomsApp.mount(host);
+	}));
 }
 function renderAgentWiredRooms() {
 	const rooms = agentDetailRooms.value ?? [];
@@ -19039,18 +17436,14 @@ function renderAgentWiredRooms() {
 }
 async function removeRoomFromAgent(roomId, roomName) {
 	if (!selectedAgentId.value) return;
-	if (!await deps$4.showConfirmModal({
+	if (!await deps$3.showConfirmModal({
 		title: "Remove from room",
 		body: `Remove this agent from "${roomName}"? The room and its other agents are unaffected.`,
 		confirmLabel: "Remove",
 		destructive: true
 	})) return;
 	try {
-		const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/agents/${encodeURIComponent(selectedAgentId.value)}`, { method: "DELETE" });
-		if (!res.ok) {
-			showToast("Failed to remove from room: " + ((await res.json().catch(() => ({}))).error || res.statusText), { kind: "error" });
-			return;
-		}
+		await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/agents/${encodeURIComponent(selectedAgentId.value)}`, { method: "DELETE" });
 		showToast(`Removed from "${roomName}".`, { kind: "success" });
 		await loadAgentRooms(selectedAgentId.value);
 	} catch (err) {
@@ -19066,11 +17459,7 @@ var sessionsApp = null;
 */
 var sessionsAgentId = null;
 function mountAgentSessions() {
-	if (sessionsApp) return;
-	const host = $("#agent-sessions-list");
-	if (!host) return;
-	sessionsApp = createApp(AgentSessions_default, { onReset: (sessionId, el) => resetAgentSession(sessionsAgentId, sessionId, el) });
-	sessionsApp.mount(host);
+	sessionsApp ??= mountIsland("#agent-sessions-list", () => createApp(AgentSessions_default, { onReset: (sessionId, el) => resetAgentSession(sessionsAgentId, sessionId, el) }));
 }
 async function renderAgentSessions(agentId) {
 	const countEl = $("#agent-sessions-count");
@@ -19080,9 +17469,7 @@ async function renderAgentSessions(agentId) {
 	mountAgentSessions();
 	let rows = [];
 	try {
-		const res = await authFetch(`/api/agents/${encodeURIComponent(agentId ?? "")}/sessions`);
-		if (!res.ok) throw new Error((await res.json()).error || res.status);
-		rows = (await res.json()).sessions || [];
+		rows = (await apiJson(`/api/agents/${encodeURIComponent(agentId ?? "")}/sessions`)).sessions || [];
 	} catch (err) {
 		sessionsError.value = `Sessions unavailable: ${err?.message}`;
 		sessionsPhase.value = "error";
@@ -19094,7 +17481,7 @@ async function renderAgentSessions(agentId) {
 	sessionsPhase.value = "ready";
 }
 async function resetAgentSession(agentId, sessionId, btn) {
-	if (!await deps$4.showConfirmModal({
+	if (!await deps$3.showConfirmModal({
 		title: "Reset session",
 		body: "Inject /clear into this session — it drops the accumulated context and the next turn starts fresh. Useful when a session is stuck or \"autocompact is thrashing\".",
 		confirmLabel: "Reset"
@@ -19102,9 +17489,7 @@ async function resetAgentSession(agentId, sessionId, btn) {
 	btn.disabled = true;
 	btn.textContent = "Resetting…";
 	try {
-		const res = await authFetch(`/api/sessions/${encodeURIComponent(sessionId)}/reset`, { method: "POST" });
-		const body = await res.json();
-		if (!res.ok) throw new Error(body.error || res.status);
+		await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}/reset`, { method: "POST" });
 		showToast("Session reset — /clear queued", { kind: "success" });
 		renderAgentSessions(agentId);
 	} catch (err) {
@@ -19132,7 +17517,7 @@ async function continueAgentImport(up) {
 	if (mcpMiss.length) line(`⚠ MCP servers to recreate: ${mcpMiss.join(", ")}`, "import-warning");
 	if (!p.modelFound && p.manifest.references.model) line(`⚠ Model not found here: ${p.manifest.references.model.model_id}`, "import-warning");
 	for (const c of p.manifest.requiredCredentials) line(`⚠ Needs: ${c}`, "import-warning");
-	if (!await deps$4.showConfirmModal({
+	if (!await deps$3.showConfirmModal({
 		title: "Import this agent?",
 		body: el,
 		confirmLabel: "Import"
@@ -19158,8 +17543,7 @@ async function renderAgentLearning(agentId) {
 	}
 	let cfg = null;
 	try {
-		const res = await authFetch(`/api/agents/${encodeURIComponent(agentId ?? "")}/learning`);
-		if (res.ok) cfg = await res.json();
+		cfg = await apiJson(`/api/agents/${encodeURIComponent(agentId ?? "")}/learning`);
 	} catch {}
 	if (!cfg) {
 		if (accordion) accordion.hidden = true;
@@ -19179,12 +17563,10 @@ async function renderAgentLearning(agentId) {
 			b.onclick = async () => {
 				const on = b.dataset.on === "1";
 				try {
-					const res = await authFetch(`/api/agents/${encodeURIComponent(agentId ?? "")}/learning`, {
+					await apiJson(`/api/agents/${encodeURIComponent(agentId ?? "")}/learning`, {
 						method: "PUT",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({ [key]: on })
+						body: { [key]: on }
 					});
-					if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed");
 					paint(groupEl, on);
 					showToast("Learning defaults saved");
 				} catch (err) {
@@ -19196,12 +17578,10 @@ async function renderAgentLearning(agentId) {
 	wire($("#agent-learning-distill"), "autoTrigger");
 	wire($("#agent-learning-keep"), "autoKeep");
 	const put = async (patch) => {
-		const res = await authFetch(`/api/agents/${encodeURIComponent(agentId ?? "")}/learning`, {
+		await apiJson(`/api/agents/${encodeURIComponent(agentId ?? "")}/learning`, {
 			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(patch)
+			body: patch
 		});
-		if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Failed");
 	};
 	const reviewSel = $("#agent-learning-review-model");
 	if (reviewSel) {
@@ -19214,7 +17594,7 @@ async function renderAgentLearning(agentId) {
 		};
 		addOpt("", "Agent's model");
 		try {
-			const models = await (await authFetch("/api/models")).json();
+			const models = await apiJson("/api/models");
 			for (const m of models) addOpt(m.id, `${m.name} (${m.model_id})`);
 		} catch {}
 		for (const id of ["claude-haiku-4-5", "claude-sonnet-5"]) if (![...reviewSel.options].some((o) => o.value === id)) addOpt(id, id);
@@ -19272,18 +17652,14 @@ async function refreshRoomWiredAgents(roomId) {
 }
 var roomWiredApp = null;
 function mountRoomWiredAgents() {
-	if (roomWiredApp) return;
-	const host = $("#room-wired-agents");
-	if (!host) return;
-	roomWiredApp = createApp(RoomWiredAgents_default, {
+	roomWiredApp ??= mountIsland("#room-wired-agents", () => createApp(RoomWiredAgents_default, {
 		onPrime: (agent) => togglePrimeAgent(agent),
 		onRemove: (agent) => removeAgentFromRoom(agent.id, agent.name),
 		onOpen: async (agent) => {
 			if (!state.allAgents.some((x) => x.id === agent.id)) await fetchAgents();
 			await openAgentDetail(agent.id);
 		}
-	});
-	roomWiredApp.mount(host);
+	}));
 }
 function renderRoomWiredAgents() {
 	const wired = roomDetailWiredAgents.value ?? [];
@@ -19306,15 +17682,10 @@ async function togglePrimeAgent(agent) {
 	if (!selectedRoomId.value) return;
 	const url = `/api/rooms/${encodeURIComponent(selectedRoomId.value)}/prime`;
 	try {
-		const res = agent.is_prime ? await authFetch(url, { method: "DELETE" }) : await authFetch(url, {
+		await apiJson(url, agent.is_prime ? { method: "DELETE" } : {
 			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ agentId: agent.id })
+			body: { agentId: agent.id }
 		});
-		if (!res.ok) {
-			showToast("Could not update the default agent: " + ((await res.json().catch(() => ({}))).error || res.statusText), { kind: "error" });
-			return;
-		}
 		await refreshRoomWiredAgents(selectedRoomId.value);
 	} catch (err) {
 		showToast("Could not update the default agent: " + err?.message, { kind: "error" });
@@ -19329,11 +17700,7 @@ async function populateAddAgentSelect() {
 }
 var addAgentPickerApp = null;
 function mountAddAgentPicker() {
-	if (addAgentPickerApp) return;
-	const host = $("#room-add-agent-list");
-	if (!host) return;
-	addAgentPickerApp = createApp(AddAgentPicker_default, { onToggle: () => updateAddAgentSubmitLabel() });
-	addAgentPickerApp.mount(host);
+	addAgentPickerApp ??= mountIsland("#room-add-agent-list", () => createApp(AddAgentPicker_default, { onToggle: () => updateAddAgentSubmitLabel() }));
 }
 function updateAddAgentSubmitLabel() {
 	const checked = $("#room-add-agent-list").querySelectorAll("input[type=checkbox]:checked");
@@ -19370,15 +17737,10 @@ async function addNewAgentToRoom() {
 }
 async function addAgentToRoom(roomId, ref) {
 	try {
-		const res = await authFetch(`/api/rooms/${encodeURIComponent(roomId)}/agents`, {
+		await apiJson(`/api/rooms/${encodeURIComponent(roomId)}/agents`, {
 			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(ref)
+			body: ref
 		});
-		if (!res.ok) {
-			showToast("Failed to add agent: " + ((await res.json().catch(() => ({}))).error || res.statusText), { kind: "error" });
-			return;
-		}
 		$("#room-add-agent-new-name").value = "";
 		$("#room-add-agent-new-instructions").value = "";
 		await fetchAgents();
@@ -19389,18 +17751,14 @@ async function addAgentToRoom(roomId, ref) {
 }
 async function removeAgentFromRoom(agentId, agentName) {
 	if (!selectedRoomId.value) return;
-	if (!await deps$4.showConfirmModal({
+	if (!await deps$3.showConfirmModal({
 		title: "Remove agent",
 		body: `Remove "${agentName}" from this room? The agent itself will not be deleted.`,
 		confirmLabel: "Remove",
 		destructive: true
 	})) return;
 	try {
-		const res = await authFetch(`/api/rooms/${encodeURIComponent(selectedRoomId.value)}/agents/${encodeURIComponent(agentId ?? "")}`, { method: "DELETE" });
-		if (!res.ok) {
-			showToast("Failed to remove agent: " + ((await res.json().catch(() => ({}))).error || res.statusText), { kind: "error" });
-			return;
-		}
+		await apiJson(`/api/rooms/${encodeURIComponent(selectedRoomId.value)}/agents/${encodeURIComponent(agentId ?? "")}`, { method: "DELETE" });
 		showToast(`Removed "${agentName}" from the room.`, { kind: "success" });
 		await refreshRoomWiredAgents(selectedRoomId.value);
 	} catch (err) {
@@ -19409,11 +17767,7 @@ async function removeAgentFromRoom(agentId, agentName) {
 }
 var roomCreateChecklistApp = null;
 function mountRoomCreateAgentChecklist() {
-	if (roomCreateChecklistApp) return;
-	const host = $("#room-create-existing-agents");
-	if (!host) return;
-	roomCreateChecklistApp = createApp(RoomCreateAgentChecklist_default);
-	roomCreateChecklistApp.mount(host);
+	roomCreateChecklistApp ??= mountIsland("#room-create-existing-agents", () => createApp(RoomCreateAgentChecklist_default));
 }
 function renderRoomCreateAgentChecklist() {
 	createAgentAnyExist.value = state.allAgents.length > 0;
@@ -19459,16 +17813,10 @@ var agentEnvApp = null;
 /** Whose env is mounted — the app is created once, the panel is reopened. */
 var agentEnvGroupId = null;
 function mountAgentEnv() {
-	if (agentEnvApp) return;
-	const host = $("#agent-env-list");
-	if (!host) return;
-	agentEnvApp = createApp(AgentEnvList_default, { onRemove: async (name) => {
+	agentEnvApp ??= mountIsland("#agent-env-list", () => createApp(AgentEnvList_default, { onRemove: async (name) => {
 		agentEnvDeleting.value = new Set(agentEnvDeleting.value).add(name);
 		try {
-			if (!(await authFetch(`/api/agents/${encodeURIComponent(agentEnvGroupId ?? "")}/env?name=${encodeURIComponent(name)}`, {
-				method: "DELETE",
-				headers: { "X-Webchat-CSRF": "1" }
-			})).ok) throw new Error("delete failed");
+			await apiJson(`/api/agents/${encodeURIComponent(agentEnvGroupId ?? "")}/env?name=${encodeURIComponent(name)}`, { method: "DELETE" });
 			showToast(`Removed $${name} — applies when the agent restarts`);
 			renderAgentEnv(agentEnvGroupId);
 		} catch {
@@ -19478,16 +17826,18 @@ function mountAgentEnv() {
 			next.delete(name);
 			agentEnvDeleting.value = next;
 		}
-	} });
-	agentEnvApp.mount(host);
+	} }));
 }
+/**
+* Per-agent env vars. The list shows NAMES only — the server never returns a
+* value, so there is nothing to render and nothing to leak into a screenshot.
+*/
 async function renderAgentEnv(agentGroupId) {
 	if (!$("#agent-env-list")) return;
 	agentEnvGroupId = agentGroupId;
 	let names = [];
 	try {
-		const r = await authFetch(`/api/agents/${encodeURIComponent(agentGroupId ?? "")}/env`);
-		if (r.ok) names = (await r.json()).names || [];
+		names = (await apiJson(`/api/agents/${encodeURIComponent(agentGroupId ?? "")}/env`)).names || [];
 	} catch {}
 	$("#agent-env-count").textContent = names.length ? String(names.length) : "";
 	agentEnvNames.value = names;
@@ -19574,7 +17924,7 @@ async function renderAgentSecrets(agentGroupId) {
 				setReachChoice(el.dataset.value);
 			});
 		});
-		wireCustomScheme("#agent-secret");
+		wireSecretKind("#agent-secret");
 	}
 	section.dataset.agentId = agentGroupId;
 	let isolation = null;
@@ -19583,15 +17933,12 @@ async function renderAgentSecrets(agentGroupId) {
 	let effective = [];
 	let workspace = null;
 	try {
-		const r = await authFetch(toolSecretUrl(agentGroupId));
-		if (r.ok) {
-			const b = await r.json();
-			isolation = b.isolation;
-			secrets = b.secrets || [];
-			members = b.members || [];
-			effective = b.effective || [];
-			workspace = b.workspace ?? null;
-		}
+		const b = await apiJson(toolSecretUrl(agentGroupId));
+		isolation = b.isolation;
+		secrets = b.secrets || [];
+		members = b.members || [];
+		effective = b.effective || [];
+		workspace = b.workspace ?? null;
 	} catch {}
 	const isolated = !!isolation?.isolated;
 	$("#agent-secrets-note").textContent = !isolated && isolation?.available ? "Not private yet — secrets added here would also reach other agents" : "";
@@ -19618,12 +17965,12 @@ var agentSecretsApp = null;
 */
 var agentSecretsGroupId = null;
 function mountAgentSecretList() {
-	if (agentSecretsApp) return;
-	const host = $("#agent-secrets-list");
-	if (!host) return;
-	agentSecretsApp = createApp(AgentSecretList_default, { onRemove: (r) => void removeToolSecret(r.scope, r.sec, "#agent-secrets-list", agentSecretsGroupId) });
-	agentSecretsApp.mount(host);
+	agentSecretsApp ??= mountIsland("#agent-secrets-list", () => createApp(AgentSecretList_default, { onRemove: (r) => void removeToolSecret(r.scope, r.sec, "#agent-secrets-list", agentSecretsGroupId) }));
 }
+/**
+* One row per credential: the host, a scope pill, and Remove. `personal` gets
+* the accent colour because it is the exception worth noticing.
+*/
 function renderAgentSecretList(agentGroupId, secrets, members, workspace, effective) {
 	agentSecretsGroupId = agentGroupId;
 	const servedFrom = new Map((effective ?? []).map((e) => [e.hostPattern, e.source]));
@@ -19683,10 +18030,7 @@ var agentKeysApp = null;
 */
 var agentKeysGroupId = null;
 function mountAgentKeyList() {
-	if (agentKeysApp) return;
-	const host = $("#agent-keys-list");
-	if (!host) return;
-	agentKeysApp = createApp(AgentKeyList_default, {
+	agentKeysApp ??= mountIsland("#agent-keys-list", () => createApp(AgentKeyList_default, {
 		onCopy: async (r) => {
 			try {
 				await navigator.clipboard.writeText(r.publicKey);
@@ -19696,8 +18040,7 @@ function mountAgentKeyList() {
 			}
 		},
 		onRemove: (r) => void removeAgentKey(agentKeysGroupId, r.key)
-	});
-	agentKeysApp.mount(host);
+	}));
 }
 async function renderAgentKeys(agentGroupId) {
 	const section = $("#agent-keys-section");
@@ -19709,8 +18052,7 @@ async function renderAgentKeys(agentGroupId) {
 	section.dataset.agentId = agentGroupId;
 	let keys = [];
 	try {
-		const r = await authFetch(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? "")}`);
-		if (r.ok) keys = (await r.json()).keys || [];
+		keys = (await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? "")}`)).keys || [];
 	} catch {}
 	agentKeysGroupId = agentGroupId;
 	agentKeyRows.value = keys.map((k) => ({
@@ -19725,7 +18067,7 @@ async function renderAgentKeys(agentGroupId) {
 async function createAgentKey() {
 	const agentGroupId = $("#agent-keys-section").dataset.agentId;
 	const name = $("#agent-key-name").value.trim().toLowerCase();
-	$("#agent-key-target").value.trim();
+	const target = $("#agent-key-target").value.trim();
 	if (!name) {
 		showToast("Name is required", { kind: "error" });
 		return;
@@ -19733,19 +18075,13 @@ async function createAgentKey() {
 	const btn = $("#agent-key-create");
 	btn.disabled = true;
 	try {
-		const r = await authFetch(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? "")}`, {
+		const body = await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? "")}`, {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify({ name })
+			body: target ? {
+				name,
+				target
+			} : { name }
 		});
-		const body = await r.json().catch(() => ({}));
-		if (!r.ok) {
-			showToast(body.error || "Could not create key", { kind: "error" });
-			return;
-		}
 		$("#agent-key-name").value = "";
 		$("#agent-key-target").value = "";
 		try {
@@ -19755,14 +18091,14 @@ async function createAgentKey() {
 			showToast(`Created ${name}`);
 		}
 		await renderAgentKeys(agentGroupId);
-	} catch {
-		showToast("Could not create key", { kind: "error" });
+	} catch (err) {
+		showToast(err?.body?.error || "Could not create key", { kind: "error" });
 	} finally {
 		btn.disabled = false;
 	}
 }
 async function removeAgentKey(agentGroupId, key) {
-	if (!await deps$4.showConfirmModal({
+	if (!await deps$3.showConfirmModal({
 		title: "Remove deploy key",
 		body: `Delete “${key.name}”? Anything using it to authenticate will stop working.`,
 		confirmLabel: "Remove",
@@ -19782,6 +18118,11 @@ function populateAgentModelSelect(currentModelId) {
 	$("#agent-model").value = currentModelId || "";
 	refreshAgentModelTrigger();
 }
+/**
+* Update the picker trigger button's labels to reflect the currently-
+* assigned model. Two-line layout: name on top, kind+model_id+host underneath.
+* No selection → "Default" / "Built-in Anthropic".
+*/
 function refreshAgentModelTrigger() {
 	const trigger = $("#agent-model-trigger");
 	if (!trigger) return;
@@ -19802,7 +18143,7 @@ function refreshAgentModelTrigger() {
 	}
 	nameEl.textContent = m.name ?? "";
 	const host = endpointHost(m.endpoint);
-	metaEl.textContent = host ? `${deps$4.modelKindLabel(m.kind)} · ${m.model_id} · ${host}` : `${deps$4.modelKindLabel(m.kind)} · ${m.model_id}`;
+	metaEl.textContent = host ? `${deps$3.modelKindLabel(m.kind)} · ${m.model_id} · ${host}` : `${deps$3.modelKindLabel(m.kind)} · ${m.model_id}`;
 }
 var AGENT_STATUS_HINTS = {
 	active: "Responds normally and appears everywhere.",
@@ -19818,12 +18159,10 @@ function wireAgentsPanel() {
 		if (!agent || (agent.provider || "claude") === provider) return;
 		setAgentHarnessControl(provider);
 		try {
-			const res = await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId.value)}/provider`, {
+			await apiJson(`/api/agents/${encodeURIComponent(selectedAgentId.value)}/provider`, {
 				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ provider })
+				body: { provider }
 			});
-			if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.status);
 			showToast(`Harness → ${provider === "opencode" ? "OpenCode" : "Claude"} — restarting the agent…`, { kind: "success" });
 			await fetchAgents();
 		} catch (err) {
@@ -19848,12 +18187,10 @@ function wireAgentsPanel() {
 		if (agent && (agent.status || "active") === status) return;
 		setAgentStatusControl(status);
 		try {
-			const res = await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId.value)}/status`, {
+			await apiJson(`/api/agents/${encodeURIComponent(selectedAgentId.value)}/status`, {
 				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ status })
+				body: { status }
 			});
-			if (!res.ok) throw new Error("status " + res.status);
 			if (agent) agent.status = status;
 			showToast(`${status[0].toUpperCase()}${status.slice(1)} — ${AGENT_STATUS_HINTS[status] || ""}`);
 			renderAgents();
@@ -19881,18 +18218,13 @@ function wireAgentsPanel() {
 		}
 		setAgentEgressControl(egress, placed);
 		try {
-			const res = await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId.value)}/egress`, {
+			const out = await apiJson(`/api/agents/${encodeURIComponent(selectedAgentId.value)}/egress`, {
 				method: "PUT",
-				headers: {
-					"Content-Type": "application/json",
-					"X-Webchat-CSRF": "1"
-				},
-				body: JSON.stringify({ egress })
+				body: { egress }
 			});
-			if (!res.ok) throw new Error("status " + res.status);
 			if (agent) agent.egress = egress;
 			const label = egress === "open" ? "Open" : egress === "none" ? "Model only" : "Allowlist";
-			const now = (await res.json().catch(() => ({})))?.appliesNow;
+			const now = out?.appliesNow;
 			showToast(`${label} — ${now ? "applies now" : "applies at next start"}`);
 		} catch (err) {
 			console.error("Failed to set agent egress:", err);
@@ -19909,10 +18241,9 @@ function wireAgentsPanel() {
 		if (!agentId) return;
 		let allRooms = [];
 		try {
-			const res = await authFetch("/api/rooms");
-			allRooms = res.ok ? await res.json() : [];
+			allRooms = await apiJson("/api/rooms");
 		} catch {}
-		deps$4.openAttachPicker({
+		deps$3.openAttachPicker({
 			title: "Rooms",
 			searchPlaceholder: "Search rooms…",
 			emptyText: "No rooms yet.",
@@ -19921,15 +18252,14 @@ function wireAgentsPanel() {
 			name: (r) => r.name || r.id,
 			isAttached: (r) => agentDetailRooms.value.some((x) => x.id === r.id),
 			onToggle: async (r, add) => {
-				const res = add ? await authFetch(`/api/rooms/${encodeURIComponent(r.id)}/agents`, {
+				if (add) await apiJson(`/api/rooms/${encodeURIComponent(r.id)}/agents`, {
 					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
+					body: {
 						kind: "existing",
 						id: agentId
-					})
-				}) : await authFetch(`/api/rooms/${encodeURIComponent(r.id)}/agents/${encodeURIComponent(agentId)}`, { method: "DELETE" });
-				if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+					}
+				});
+				else await apiJson(`/api/rooms/${encodeURIComponent(r.id)}/agents/${encodeURIComponent(agentId)}`, { method: "DELETE" });
 				showToast(add ? `Wired to ${r.name || r.id}` : `Unwired from ${r.name || r.id}`, { kind: "success" });
 				await loadAgentRooms(agentId);
 			}
@@ -19966,7 +18296,7 @@ function wireAgentDetail1() {
 					body: JSON.stringify({ modelId: selectedModel })
 				});
 				try {
-					if (mRes.ok) deps$4.warnIfUnreachable((await mRes.json()).reachability);
+					if (mRes.ok) deps$3.warnIfUnreachable((await mRes.json()).reachability);
 				} catch {}
 			}
 			const configModel = ($("#agent-config-model")?.value ?? "").trim();
@@ -20097,11 +18427,7 @@ function wireAgentControls4() {
 			destructive: true
 		})) return;
 		try {
-			const res = await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId.value)}`, { method: "DELETE" });
-			if (!res.ok) {
-				showToast(`Failed to delete agent: ${(await res.json().catch(() => ({}))).error || res.statusText}`, { kind: "error" });
-				return;
-			}
+			await apiJson(`/api/agents/${encodeURIComponent(selectedAgentId.value)}`, { method: "DELETE" });
 			showToast(`Deleted "${agent?.name}".`, { kind: "success" });
 			closeAgentDetail();
 			await fetchAgents();
@@ -20212,21 +18538,35 @@ function toggleModeInfoPopup(anchor, text) {
 		document.addEventListener("keydown", onKey);
 	}, 0);
 }
+function secretKind(p) {
+	return $(`${p}-kind`)?.dataset.kind || "token";
+}
 /**
-* Reveal the header/template fields only when the operator opts into stating
-* them. Wired once per form; the rows stay in the DOM so values survive a
-* toggle away and back, and are cleared on a successful save with the rest.
+* The Type choice decides which fields the form shows: a token (scheme inferred
+* from the host), a token with a stated header, or a username + password the
+* server encodes as HTTP Basic. Wired once per form; hidden rows stay in the
+* DOM so values survive switching away and back.
 */
-function wireCustomScheme(p) {
-	const box = $(`${p}-custom`);
-	if (!box || box.dataset.wired) return;
-	box.dataset.wired = "1";
-	const sync = () => {
-		$(`${p}-custom-header-row`).hidden = !box.checked;
-		$(`${p}-custom-format-row`).hidden = !box.checked;
+function wireSecretKind(p) {
+	const group = $(`${p}-kind`);
+	if (!group || group.dataset.wired) return;
+	group.dataset.wired = "1";
+	const buttons = group.querySelectorAll(".setting-option");
+	const set = (kind) => {
+		group.dataset.kind = kind;
+		buttons.forEach((btn) => {
+			const on = btn.dataset.value === kind;
+			btn.classList.toggle("active", on);
+			btn.setAttribute("aria-pressed", String(on));
+		});
+		$(`${p}-value-row`).hidden = kind === "basic";
+		$(`${p}-username-row`).hidden = kind !== "basic";
+		$(`${p}-password-row`).hidden = kind !== "basic";
+		$(`${p}-custom-header-row`).hidden = kind !== "custom";
+		$(`${p}-custom-format-row`).hidden = kind !== "custom";
 	};
-	box.addEventListener("change", sync);
-	sync();
+	buttons.forEach((btn) => btn.addEventListener("click", () => set(btn.dataset.value)));
+	set("token");
 }
 function endpointHost(endpoint) {
 	if (!endpoint) return "";
@@ -20284,7 +18624,7 @@ async function renderToolSecrets() {
 	if (!secretsWired) {
 		secretsWired = true;
 		$("#secret-save").addEventListener("click", () => void saveToolSecret());
-		wireCustomScheme("#secret");
+		wireSecretKind("#secret");
 	}
 	await loadToolSecretList();
 }
@@ -20292,19 +18632,14 @@ var toolSecretsApp = null;
 /** The scope the mounted list belongs to — the remove callback reads it. */
 var toolSecretsScope = null;
 function mountToolSecrets() {
-	if (toolSecretsApp) return;
-	const host = $("#secrets-list");
-	if (!host) return;
-	toolSecretsApp = createApp(ToolSecretList_default, { onRemove: (secret) => void removeToolSecret(toolSecretsScope, secret, "#secrets-list") });
-	toolSecretsApp.mount(host);
+	toolSecretsApp ??= mountIsland("#secrets-list", () => createApp(ToolSecretList_default, { onRemove: (secret) => void removeToolSecret(toolSecretsScope, secret, "#secrets-list") }));
 }
 async function loadToolSecretList(scope = null, listSel = "#secrets-list") {
 	if (listSel !== "#secrets-list" || !$("#secrets-list")) return;
 	toolSecretsScope = scope;
 	let secrets = [];
 	try {
-		const r = await authFetch(toolSecretUrl(scope));
-		if (r.ok) secrets = (await r.json()).secrets || [];
+		secrets = (await apiJson(toolSecretUrl(scope))).secrets || [];
 	} catch {
 		secrets = [];
 	}
@@ -20313,47 +18648,60 @@ async function loadToolSecretList(scope = null, listSel = "#secrets-list") {
 }
 async function saveToolSecret(scope = null, p = "#secret") {
 	const hostPattern = $(`${p}-host`).value.trim();
-	const value = $(`${p}-value`).value;
-	if (!hostPattern || !value) {
-		showToast("Host and value are required", { kind: "error" });
-		return;
-	}
-	let scheme;
-	if ($(`${p}-custom`)?.checked) {
-		const headerName = $(`${p}-custom-header`)?.value.trim() || "";
-		const valueFormat = $(`${p}-custom-format`)?.value.trim() || "";
-		if (!headerName || !valueFormat) {
-			showToast("A custom header needs both a name and a value template", { kind: "error" });
+	const kind = secretKind(p);
+	let body;
+	if (kind === "basic") {
+		const username = $(`${p}-username`).value.trim();
+		const password = $(`${p}-password`).value;
+		if (!hostPattern || !username || !password) {
+			showToast("Host, username and password are required", { kind: "error" });
 			return;
 		}
-		scheme = {
-			headerName,
-			valueFormat
+		body = {
+			hostPattern,
+			basic: {
+				username,
+				password
+			}
+		};
+	} else {
+		const value = $(`${p}-value`).value;
+		if (!hostPattern || !value) {
+			showToast("Host and value are required", { kind: "error" });
+			return;
+		}
+		let scheme;
+		if (kind === "custom") {
+			const headerName = $(`${p}-custom-header`)?.value.trim() || "";
+			const valueFormat = $(`${p}-custom-format`)?.value.trim() || "";
+			if (!headerName || !valueFormat) {
+				showToast("A custom header needs both a name and a value template", { kind: "error" });
+				return;
+			}
+			scheme = {
+				headerName,
+				valueFormat
+			};
+		}
+		body = scheme ? {
+			value,
+			hostPattern,
+			scheme
+		} : {
+			value,
+			hostPattern
 		};
 	}
 	const btn = $(`${p}-save`);
 	btn.disabled = true;
 	try {
-		const r = await authFetch(toolSecretUrl(scope), {
+		await apiJson(toolSecretUrl(scope), {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify(scheme ? {
-				value,
-				hostPattern,
-				scheme
-			} : {
-				value,
-				hostPattern
-			})
+			body
 		});
-		if (!r.ok) {
-			showToast((await r.json().catch(() => ({}))).error || "Could not add secret", { kind: "error" });
-			return;
-		}
 		$(`${p}-value`).value = "";
+		$(`${p}-password`).value = "";
+		$(`${p}-username`).value = "";
 		$(`${p}-host`).value = "";
 		if ($(`${p}-custom-header`)) $(`${p}-custom-header`).value = "";
 		if ($(`${p}-custom-format`)) $(`${p}-custom-format`).value = "";
@@ -20361,8 +18709,8 @@ async function saveToolSecret(scope = null, p = "#secret") {
 		if (p === "#agent-secret") await renderAgentSecrets($("#agent-secrets-section").dataset.agentId);
 		else if (scope) await renderAgentSecrets(typeof scope === "object" ? scope.agentGroupId : scope);
 		if (!scope) await loadToolSecretList(null, "#secrets-list");
-	} catch {
-		showToast("Could not add secret", { kind: "error" });
+	} catch (err) {
+		showToast(err?.body?.error || "Could not add secret", { kind: "error" });
 	} finally {
 		btn.disabled = false;
 	}
@@ -20375,13 +18723,7 @@ async function removeToolSecret(scope, secret, listSel = "#secrets-list", agentG
 		destructive: true
 	})) return;
 	try {
-		if (!(await authFetch(toolSecretUrl(scope, `&id=${encodeURIComponent(secret.id)}`), {
-			method: "DELETE",
-			headers: { "X-Webchat-CSRF": "1" }
-		})).ok) {
-			showToast("Could not remove secret", { kind: "error" });
-			return;
-		}
+		await apiJson(toolSecretUrl(scope, `&id=${encodeURIComponent(secret.id)}`), { method: "DELETE" });
 		showToast(`Removed ${secret.label}`);
 		if (agentGroupId) await renderAgentSecrets(agentGroupId);
 		else if (listSel) await loadToolSecretList(scope, listSel);
@@ -20408,11 +18750,8 @@ var preflightChecks = ref([]);
 //#region src/features/prejudge-state.ts
 /** One row per action: opted-in state and whether it is never-auto-approvable. */
 var prejudgeRows = ref([]);
-/**
-* Judge-model options, already filtered to what the PUT accepts and labelled.
-*
-* "Off" is not in here — it is a fixed first option, not a model.
-*/
+/** Judge-model options, filtered to what the PUT accepts. "Off" is a fixed
+*  first option, not in here. */
 var prejudgeModelOptions = ref([]);
 //#endregion
 //#region src/features/PrejudgeActions.vue?vue&type=script&setup=true&lang.ts
@@ -20430,20 +18769,10 @@ var PrejudgeActions_default = /* @__PURE__ */ defineComponent({
 	props: { onToggle: { type: Function } },
 	setup(__props) {
 		/**
-		* Which approval actions may be pre-judged — fifty-sixth island.
-		*
-		* Mounted into <div id="prejudge-actions-list">, exclusively owned by this
-		* module. The #prejudge-actions-group hidden flag stays imperative: the whole
-		* group disappears when no judge model is configured, which is a decision about
-		* the feature rather than the rows.
-		*
-		* NEVER-list rows are rendered disabled AND unchecked, and that pairing is
-		* load-bearing: the save reads `input:not(:disabled):checked`, so a disabled row
-		* can never contribute to the saved list even if something ticked it. Their
-		* label carries the reason on hover — always needs a human.
-		*
-		* The ticks stay in the DOM because that save reads them with querySelectorAll.
-		* Same contract as the agent pickers and the probe list.
+		* Which approval actions may be pre-judged, mounted into <div id="prejudge-actions-list">.
+		* NEVER-list rows are disabled AND unchecked, and that pairing is load-bearing: the save
+		* reads `input:not(:disabled):checked` from the DOM, so a disabled row can never reach
+		* the saved list even if something ticked it.
 		*/
 		const props = __props;
 		return (_ctx, _cache) => {
@@ -20492,26 +18821,10 @@ var MyCredentials_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The user's own per-agent credentials — fifty-eighth island.
-		*
-		* Mounted into <div id="my-credentials-list">, exclusively owned by this module.
-		* #settings-my-credentials keeps its hidden flag: with no connected credentials
-		* anywhere the whole section disappears rather than explaining itself.
-		*
-		* ONE add-form per agent, not a shared form with an agent picker — that would
-		* just be the "Used by" dropdown again, and this list is short by construction.
-		*
-		* These are the same rows the agent panel files under "Only you"; the badge and
-		* the "For you" line use that panel's words so the two views read as one.
-		*
-		* The two fields are UNCONTROLLED and read at click time, exactly as the
-		* imperative version read hostField.input.value. v-model would have been the
-		* obvious Vue idiom and is wrong here: it attaches an input listener to every
-		* field, which the original never had and which the listener-set guard counts.
-		*
-		* fieldEl() is absorbed; it was used only here. The password field keeps
-		* autocomplete="new-password" — so browsers do not offer the user's saved
-		* login for a token box — and spellcheck off.
+		* The user's own per-agent credentials, mounted into <div id="my-credentials-list">; the
+		* section hides when nothing is connected. One add-form per agent, worded like the agent
+		* panel's "Only you" rows. Fields are uncontrolled and read at click time. The token field
+		* uses autocomplete="new-password" so browsers do not offer a saved login.
 		*/
 		const props = __props;
 		const SOURCE_WORD = {
@@ -20588,20 +18901,9 @@ var Preflight_default = /* @__PURE__ */ defineComponent({
 	props: { onCopy: { type: Function } },
 	setup(__props) {
 		/**
-		* The webchat self-test results — fifty-ninth island.
-		*
-		* Mounted into <div id="selftest-results">, exclusively owned by this module.
-		* Its hidden flag stays imperative — it is revealed when the run starts.
-		*
-		* The element previously held three different things written three different
-		* ways: a plain textContent wait line, a plain textContent error, and built
-		* check rows. Converting only the rows would have left two imperative writers
-		* on a Vue-owned element, so the messages are phases too.
-		*
-		* The fix block is a copy-paste command — same shape as the reachability
-		* verdict, deliberately not shared with it: the classes differ (preflight-fix
-		* vs model-reachability-fix) and a shared component would need a prop to choose
-		* them, which is a worse seam than eight duplicated lines.
+		* The webchat self-test results, mounted into <div id="selftest-results">. The wait line,
+		* the error and the check rows are all phases, so nothing else writes this element. The
+		* fix block mirrors Reachability's but is not shared: the classes differ.
 		*/
 		const props = __props;
 		const copied = ref("");
@@ -20627,6 +18929,10 @@ var Preflight_default = /* @__PURE__ */ defineComponent({
 	}
 });
 //#endregion
+//#region src/features/settings-state.ts
+/** Which speech backend the operator picked in the STT installer: 'local' | … */
+var sttChosenBackend = ref("local");
+//#endregion
 //#region src/features/signins.ts
 var wired$2 = false;
 async function renderSignins() {
@@ -20634,8 +18940,7 @@ async function renderSignins() {
 	if (!section) return;
 	let view = null;
 	try {
-		const r = await authFetch("/api/account/sign-ins");
-		if (r.ok) view = await r.json();
+		view = await apiJson("/api/account/sign-ins");
 	} catch {
 		view = null;
 	}
@@ -20671,12 +18976,10 @@ function wire$1() {
 }
 async function linkTailscale() {
 	try {
-		const r = await authFetch("/api/account/link/tailscale", {
+		await apiJson("/api/account/link/tailscale", {
 			method: "POST",
 			headers: { "X-Webchat-CSRF": "1" }
 		});
-		const data = await r.json().catch(() => ({}));
-		if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
 		showToast("Sign-in linked", { kind: "success" });
 	} catch (err) {
 		toastError(err, "Could not link");
@@ -20691,12 +18994,10 @@ async function unlink(alias) {
 		destructive: true
 	})) return;
 	try {
-		const r = await authFetch(`/api/account/links/${encodeURIComponent(alias)}`, {
+		await apiJson(`/api/account/links/${encodeURIComponent(alias)}`, {
 			method: "DELETE",
 			headers: { "X-Webchat-CSRF": "1" }
 		});
-		const data = await r.json().catch(() => ({}));
-		if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
 	} catch (err) {
 		toastError(err, "Could not unlink");
 	}
@@ -20740,26 +19041,37 @@ function consumeSigninResult() {
 //#endregion
 //#region src/features/vscode.ts
 var wired$1 = false;
-/** vscode://nanoclaw.vscode/connect?server=…, with only the settings that are set. */
-function connectLink(origin, config) {
+/** The id the extension is published under by default; an install may package its own (central says which). */
+var DEFAULT_EXTENSION_ID = "nanoclaw.vscode";
+/** <publisher>.<name>, as central reads it from the published package (runner-extension.ts). */
+var EXTENSION_ID = /^[A-Za-z0-9][A-Za-z0-9-]*\.[A-Za-z0-9][A-Za-z0-9-]*$/;
+/**
+* vscode://<extension id>/connect?server=…, with only the settings that are
+* set. An id that is not <publisher>.<name> would change what the URL points
+* at, so it falls back to the default.
+*/
+function connectLink(origin, config, extensionId = DEFAULT_EXTENSION_ID) {
+	const id = typeof extensionId === "string" && EXTENSION_ID.test(extensionId) ? extensionId : DEFAULT_EXTENSION_ID;
 	const q = new URLSearchParams({ server: origin });
 	for (const k of [
 		"signIn",
 		"tenantId",
 		"appIdUri",
-		"clientId"
+		"clientId",
+		"releaseKey"
 	]) {
 		const v = config[k];
 		if (typeof v === "string" && v) q.set(k, v);
 	}
-	return `vscode://nanoclaw.vscode/connect?${q}`;
+	return `vscode://${id}/connect?${q}`;
 }
 async function renderVsCodeSettings() {
 	const section = $("#settings-vscode");
 	if (!section) return;
 	let published = false;
 	try {
-		published = (await authFetch("/api/runners/extension")).ok;
+		await apiJson("/api/runners/extension");
+		published = true;
 	} catch {
 		published = false;
 	}
@@ -20784,14 +19096,41 @@ async function download() {
 		toastError(err, "Download failed");
 	}
 }
+/**
+* Does this person have the extension on a machine that can answer the link?
+* An older build carries a different extension id, so VS Code fails the link
+* with "not found". Central only knows which build each machine last connected
+* with, so this decides whether to add advice, never whether to open the link.
+*/
+function hasCurrentExtension(machines) {
+	return machines.some((m) => {
+		const v = /(\d+)\.(\d+)\.(\d+)/.exec(m.runner ?? "");
+		return v !== null && (Number(v[1]) > 0 || Number(v[2]) >= 13);
+	});
+}
+/** Open the connect link; where the extension may be missing, say what a "not found" means. */
 async function connect$1() {
+	let machines = [];
+	try {
+		machines = (await apiJson("/api/runners/mine")).machines;
+	} catch {
+		machines = [];
+	}
+	let extensionId;
+	try {
+		extensionId = (await apiJson("/api/runners/extension")).id;
+	} catch {
+		extensionId = void 0;
+	}
 	try {
 		const res = await authFetch("/api/runners/client-config");
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
-		window.location.href = connectLink(window.location.origin, await res.json());
+		window.location.href = connectLink(window.location.origin, await res.json(), extensionId);
 	} catch (err) {
 		toastError(err, "Connect failed");
+		return;
 	}
+	if (!hasCurrentExtension(machines)) showToast("VS Code says \"not found\"? Install the extension first: 1. Download, then \"Install from VSIX\" in VS Code.", { timeout: 15e3 });
 }
 //#endregion
 //#region src/features/PrejudgeModelOptions.vue?vue&type=script&setup=true&lang.ts
@@ -20803,27 +19142,10 @@ var PrejudgeModelOptions_default = /* @__PURE__ */ defineComponent({
 	__name: "PrejudgeModelOptions",
 	setup(__props) {
 		/**
-		* The approval pre-judge's judge-model options — sixty-third island.
-		*
-		* Mounted into <select id="prejudge-model-select">, exclusively owned by this
-		* module. Everything else renderPrejudgeSettings does — hiding the section,
-		* fetching the config, assigning the select's value and its onchange — is state
-		* applied to static markup and stays imperative.
-		*
-		* "Off" is rendered HERE rather than left in index.html. It is in the static
-		* markup, but the imperative version cleared the select and rebuilt Off as the
-		* first option every time; Vue replaces the host's children on mount, so the
-		* static one would be wiped and never come back. Reproducing it is what keeps
-		* the two agreeing.
-		*
-		* Only models the PUT accepts are listed — anthropic kind (OneCLI-proxied), or
-		* a local kind with an endpoint. That filter stays in the renderer: it is a
-		* fact about the API contract, not about this markup.
-		*
-		* The select's own `value` is assigned by the renderer AFTER awaiting nextTick.
-		* Options now appear a tick later than the assignment that selects one, which
-		* they did not when both were synchronous — assigning first would silently
-		* select nothing and read back as "the stored judge left the roster".
+		* The approval pre-judge's judge-model options, mounted into
+		* <select id="prejudge-model-select">. "Off" renders here because mounting replaces the
+		* host's static children. Only models the PUT accepts are listed (filtered in the
+		* renderer), which assigns the select's value after nextTick, once the options exist.
 		*/
 		return (_ctx, _cache) => {
 			return openBlock(), createElementBlock(Fragment, null, [createElementVNode("option", { value: "" }, toDisplayString(OFF)), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(prejudgeModelOptions), (m) => {
@@ -20837,10 +19159,10 @@ var PrejudgeModelOptions_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/settings.ts
-var deps$3 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
+var deps$2 = {};
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideSettingsDeps(provided) {
-	Object.assign(deps$3, provided);
+	Object.assign(deps$2, provided);
 }
 var DEFAULTS = {
 	theme: "dark",
@@ -20892,12 +19214,7 @@ async function renderCredentialsSettings() {
 	if (!section) return;
 	let cfg;
 	try {
-		const r = await authFetch("/api/webchat/credentials-config");
-		if (!r.ok) {
-			section.hidden = true;
-			return;
-		}
-		cfg = await r.json();
+		cfg = await apiJson("/api/webchat/credentials-config");
 	} catch {
 		section.hidden = true;
 		return;
@@ -20975,7 +19292,7 @@ async function renderCredentialsSettings() {
 		btn.addEventListener("click", async () => {
 			if (await putConfig({ defaultMode: btn.dataset.value })) {
 				document.querySelectorAll("#cred-default-mode .setting-option").forEach((b) => b.classList.toggle("active", b === btn));
-				if (state.currentRoom) deps$3.updateUserCredsBanner(state.currentRoom);
+				if (state.currentRoom) deps$2.updateUserCredsBanner(state.currentRoom);
 			}
 		});
 	});
@@ -21005,7 +19322,7 @@ async function renderCredentialsSettings() {
 				[oauthFlag]: on
 			})) {
 				btn.classList.toggle("active", on);
-				if (state.currentRoom) deps$3.updateUserCredsBanner(state.currentRoom);
+				if (state.currentRoom) deps$2.updateUserCredsBanner(state.currentRoom);
 			}
 		});
 	});
@@ -21022,8 +19339,7 @@ async function renderHttpsSettings() {
 	}
 	let state = null;
 	try {
-		const r = await authFetch("/api/webchat/tailscale-https");
-		if (r.ok) state = await r.json();
+		state = await apiJson("/api/webchat/tailscale-https");
 	} catch {
 		state = null;
 	}
@@ -21070,29 +19386,17 @@ var PI_SETTINGS_ELS = {
 	doneMsg: "pi installed — switch an agent to it under Agent → Harness."
 };
 /**
-* About — what this install is actually running.
-*
-* Nothing reported that before. The nanoclaw version was readable only from
-* package.json on the box, and the webchat overlay had no version at all: this
-* repo's versions.json is a build input that never ships, and the install's own
-* versions.json is nanoclaw's onecli/agent pins — a different file with the
-* same name. install.sh now stamps `.webchat-provenance.json`, which is where
-* the webchat rows come from.
-*
-* Read-only by design. Both components update through git against a customised
-* tree, so there is no honest one-click here — the hint under the rows says so
-* rather than implying a button is coming.
-*
-* Gated by the endpoint, not a role flag: /api/system/versions is anyAdmin, so
-* a 403 hides the section the same way the other probe-gated sections work.
+* About — what this install is actually running; the webchat rows come from the
+* `.webchat-provenance.json` install.sh stamps. Read-only: both components update
+* through git against a customised tree, so there is no honest one-click.
+* Gated by the endpoint (/api/system/versions is anyAdmin): a 403 hides it.
 */
 async function renderAboutSettings() {
 	const section = $("#settings-about");
 	if (!section) return;
 	let v = null;
 	try {
-		const res = await authFetch("/api/system/versions");
-		if (res.ok) v = await res.json();
+		v = await apiJson("/api/system/versions");
 	} catch {
 		v = null;
 	}
@@ -21138,8 +19442,7 @@ async function renderAuditSettings() {
 	if (!section) return;
 	let info = null;
 	try {
-		const res = await authFetch("/api/webchat/audit-syslog");
-		if (res.ok) info = await res.json();
+		info = await apiJson("/api/webchat/audit-syslog");
 	} catch {
 		info = null;
 	}
@@ -21212,8 +19515,7 @@ var mb = (bytes) => bytes < 1048576 ? `${Math.ceil(bytes / 1024)} KB` : `${(byte
 async function renderAuditRetention() {
 	let info = null;
 	try {
-		const res = await authFetch("/api/webchat/audit-retention");
-		if (res.ok) info = await res.json();
+		info = await apiJson("/api/webchat/audit-retention");
 	} catch {
 		info = null;
 	}
@@ -21234,16 +19536,9 @@ async function renderAuditRetention() {
 	}
 }
 /**
-* Backup section — owner-only, and until now the ONE section in Settings that
-* started visible with no gate at all. Every other section ships `hidden` in
-* the markup and reveals itself only after its own capability probe passes,
-* so they fail closed; this one failed open and showed a member three buttons
-* that could only ever 403 (`/api/system/export` and `/api/system/import`
-* both carry `guards: ['owner']`).
-*
-* `state.isOwnerView` is the same signal the secrets, skill-sources and
-* prejudge sections use, so this stays consistent with its neighbours rather
-* than adding a fourth way to ask the same question.
+* Backup section — owner-only (`/api/system/export` and `/import` carry
+* `guards: ['owner']`). Ships hidden and fails closed like every other section;
+* gated on `state.isOwnerView`, the same signal its neighbours use.
 */
 function renderBackupSettings() {
 	const section = $("#settings-backup");
@@ -21251,17 +19546,9 @@ function renderBackupSettings() {
 	section.hidden = !state.isOwnerView;
 }
 /**
-* Hide the "Features" column when every feature inside it is hidden.
-*
-* The column is a heading plus four independently-gated sections (TTS, STT,
-* auto-learn, credential isolation). Gate the column on a role and it breaks
-* for whoever holds a role the column doesn't model — a global admin sees
-* auto-learn and credential isolation but is not an owner. So derive it from
-* the children instead: the column is worth showing iff something is in it.
-*
-* Runs after the async gates settle. Each child render hides itself on a 403
-* that we cannot observe synchronously, so calling this inline with
-* openSettings would always see the pre-fetch state.
+* Hide the "Features" column when every feature inside it is hidden. Derived
+* from the children, not a role: its sections are gated independently. Runs
+* after the async gates settle, since each child hides itself on a 403.
 */
 function syncFeaturesColumn() {
 	const col = $("#settings-features-col");
@@ -21322,8 +19609,7 @@ async function renderTtsSetupSettings() {
 	}
 	let st = null;
 	try {
-		const res = await authFetch("/api/webchat/tts/install");
-		if (res.ok) st = await res.json();
+		st = await apiJson("/api/webchat/tts/install");
 	} catch {
 		st = null;
 	}
@@ -21389,8 +19675,7 @@ async function renderSttSetupSettings() {
 	if (!section) return;
 	let st = null;
 	try {
-		const res = await authFetch("/api/webchat/stt/install");
-		if (res.ok) st = await res.json();
+		st = await apiJson("/api/webchat/stt/install");
 	} catch {
 		st = null;
 	}
@@ -21537,7 +19822,7 @@ async function renderSttSetupSettings() {
 		progress.hidden = !st.running;
 		if (st.running) pollSttInstall();
 		try {
-			const cfg = await (await authFetch("/api/stt/config")).json();
+			const cfg = await apiJson("/api/stt/config");
 			if (cfg.canEdit) {
 				await renderSttCleanupSelect(cfg);
 				$("#stt-prompt-row").hidden = false;
@@ -21567,11 +19852,7 @@ async function renderSttSetupSettings() {
 }
 var prejudgeOptionsApp = null;
 function mountPrejudgeModelOptions() {
-	if (prejudgeOptionsApp) return;
-	const host = $("#prejudge-model-select");
-	if (!host) return;
-	prejudgeOptionsApp = createApp(PrejudgeModelOptions_default);
-	prejudgeOptionsApp.mount(host);
+	prejudgeOptionsApp ??= mountIsland("#prejudge-model-select", () => createApp(PrejudgeModelOptions_default));
 }
 async function renderPrejudgeSettings() {
 	const section = $("#settings-prejudge");
@@ -21580,8 +19861,7 @@ async function renderPrejudgeSettings() {
 	if (!state.isOwnerView) return;
 	let cfg = null;
 	try {
-		const r = await authFetch("/api/approvals/prejudge");
-		if (r.ok) cfg = await r.json();
+		cfg = await apiJson("/api/approvals/prejudge");
 	} catch {}
 	if (!cfg) {
 		section.hidden = true;
@@ -21590,7 +19870,7 @@ async function renderPrejudgeSettings() {
 	const sel = $("#prejudge-model-select");
 	let options = [];
 	try {
-		options = (await (await authFetch("/api/models")).json()).filter((m) => m.kind === "anthropic" || (m.kind === "ollama" || m.kind === "openai-compatible") && m.endpoint).map((m) => ({
+		options = (await apiJson("/api/models")).filter((m) => m.kind === "anthropic" || (m.kind === "ollama" || m.kind === "openai-compatible") && m.endpoint).map((m) => ({
 			id: m.id,
 			label: `${m.name} (${m.model_id})`
 		}));
@@ -21620,12 +19900,7 @@ async function renderRoutingSetup() {
 	const section = $("#routing-setup");
 	let st;
 	try {
-		const res = await authFetch("/api/router/install");
-		if (!res.ok) {
-			section.hidden = true;
-			return;
-		}
-		st = await res.json();
+		st = await apiJson("/api/router/install");
 	} catch {
 		section.hidden = true;
 		return;
@@ -21894,14 +20169,7 @@ async function renderSelfTest() {
 		preflightPhase.value = "running";
 		mountPreflight();
 		try {
-			const res = await authFetch("/api/webchat/preflight");
-			const data = await res.json();
-			if (!res.ok) {
-				preflightMessage.value = data.error || res.statusText;
-				preflightPhase.value = "message";
-				return;
-			}
-			const checks = data.checks || [];
+			const checks = (await apiJson("/api/webchat/preflight")).checks || [];
 			if (!checks.length) {
 				preflightMessage.value = "No checks ran.";
 				preflightPhase.value = "message";
@@ -21922,6 +20190,13 @@ async function renderSelfTest() {
 		}
 	});
 }
+/**
+* Credential isolation — an install policy, shown only to someone who can change
+* it. `credentialIsolation` is null when no choice has been made here, in which
+* case .env decides and the row says so; the toggle still reflects what is
+* actually in force (`credentialIsolationEffective`) so it never contradicts
+* the agent panel's "Not private yet" note.
+*/
 function renderCredentialIsolation(feats) {
 	const box = $("#settings-credential-isolation");
 	if (!box) return;
@@ -21939,14 +20214,11 @@ function renderCredentialIsolation(feats) {
 		const want = toggle.checked;
 		toggle.disabled = true;
 		try {
-			if (!(await authFetch("/api/webchat/features", {
+			await apiJson("/api/webchat/features", {
 				method: "PUT",
-				headers: {
-					"Content-Type": "application/json",
-					"X-Webchat-CSRF": "1"
-				},
-				body: JSON.stringify({ credentialIsolation: want })
-			})).ok) throw new Error("save failed");
+				headers: { "X-Webchat-CSRF": "1" },
+				body: { credentialIsolation: want }
+			});
 			envNote.hidden = true;
 			showToast(want ? "Credential isolation on — applies as agents restart" : "Credential isolation off");
 		} catch {
@@ -21958,10 +20230,7 @@ function renderCredentialIsolation(feats) {
 	});
 }
 function mountPrejudgeActions() {
-	if (prejudgeApp) return;
-	const host = $("#prejudge-actions-list");
-	if (!host) return;
-	prejudgeApp = createApp(PrejudgeActions_default, { onToggle: async (cb) => {
+	prejudgeApp ??= mountIsland("#prejudge-actions-list", () => createApp(PrejudgeActions_default, { onToggle: async (cb) => {
 		const next = [...$("#prejudge-actions-list").querySelectorAll("input:not(:disabled):checked")].map((el) => el.dataset.action);
 		try {
 			await apiJson("/api/approvals/prejudge", {
@@ -21973,8 +20242,7 @@ function mountPrejudgeActions() {
 			cb.checked = !cb.checked;
 			showToast("Could not save: " + (err?.message || err), { kind: "error" });
 		}
-	} });
-	prejudgeApp.mount(host);
+	} }));
 }
 function renderPrejudgeActions(cfg) {
 	const group = $("#prejudge-actions-group");
@@ -21995,10 +20263,7 @@ function renderPrejudgeActions(cfg) {
 	mountPrejudgeActions();
 }
 function mountMyCredentials() {
-	if (myCredsApp) return;
-	const host = $("#my-credentials-list");
-	if (!host) return;
-	myCredsApp = createApp(MyCredentials_default, {
+	myCredsApp ??= mountIsland("#my-credentials-list", () => createApp(MyCredentials_default, {
 		onOpenAgent: (group) => {
 			closeSettings();
 			openAgentDetail(group.agentGroupId);
@@ -22047,16 +20312,14 @@ function mountMyCredentials() {
 				myCredSaving.value = next;
 			}
 		}
-	});
-	myCredsApp.mount(host);
+	}));
 }
 async function renderMyCredentials() {
 	const section = $("#settings-my-credentials");
 	if (!section) return;
 	let groups = [];
 	try {
-		const r = await authFetch("/api/tool-secrets/mine");
-		if (r.ok) groups = (await r.json()).groups || [];
+		groups = (await apiJson("/api/tool-secrets/mine")).groups || [];
 	} catch {
 		groups = [];
 	}
@@ -22078,10 +20341,10 @@ var prejudgeApp = null;
 var myCredsApp = null;
 //#endregion
 //#region src/core/ws.ts
-var deps$2 = {};
-/** Wire the legacy helpers the dispatcher calls. Call once at startup. */
+var deps$1 = {};
+/** Wire the composition-root helpers the dispatcher calls. Call once at startup. */
 function provideWsDeps(provided) {
-	Object.assign(deps$2, provided);
+	Object.assign(deps$1, provided);
 }
 function setConnectionBanner(text, offerOpenTailscale = false) {
 	const banner = $("#connection-banner");
@@ -22171,7 +20434,7 @@ function connect() {
 						room_id: state.currentRoom,
 						thread_id: state.currentThread || "main"
 					}));
-					if (state.lastSeenMessageId) authFetch(`/api/rooms/${state.currentRoom}/messages?after_id=${state.lastSeenMessageId}`).then((r) => r.json()).then((missed) => {
+					if (state.lastSeenMessageId) apiJson(`/api/rooms/${state.currentRoom}/messages?after_id=${state.lastSeenMessageId}`).then((missed) => {
 						if (missed.length > 0) {
 							const wasNearBottom = isNearBottom();
 							missed.forEach((m) => appendMessage(m));
@@ -22319,7 +20582,13 @@ function connect() {
 			case "skill_draft_review":
 				handleSkillDraftReview(msg);
 				break;
-			case "error": console.error("WS error:", msg.error);
+			case "error":
+				console.error("WS error:", msg.error);
+				if (msg.client_id && state.pendingMessages.has(msg.client_id)) {
+					state.pendingMessages.get(msg.client_id).status = "Not sent";
+					state.pendingMessages.delete(msg.client_id);
+					showToast("Message not sent. Try again.", { kind: "error" });
+				}
 		}
 	};
 	sock.onclose = () => {
@@ -22364,8 +20633,7 @@ var TOOL_LABELS = {
 var LEARN_NUDGE_MIN_TOOLS = 5;
 async function fetchMyHandle() {
 	try {
-		const r = await authFetch("/api/me/handle");
-		if (r.ok) state.myHandle = ((await r.json()).handle || "").toLowerCase();
+		state.myHandle = ((await apiJson("/api/me/handle")).handle || "").toLowerCase();
 	} catch {}
 	renderHandleChip();
 }
@@ -22386,10 +20654,12 @@ async function probeIsOwner() {
 			state.isOwnerView = !!(me && userIsOwner(me));
 			isWorkspaceAdminView.value = state.isOwnerView || !!(me && userIsGlobalAdmin(me));
 			$("#overflow-signin").hidden = !isWorkspaceAdminView.value;
+			let extensions = [];
 			try {
 				const fr = await authFetch("/api/webchat/features");
 				const feats = fr.ok ? await fr.json() : {};
 				state.marketplaceEnabled = feats.marketplaceEnabled === true;
+				extensions = Array.isArray(feats.extensions) ? feats.extensions : [];
 				renderCredentialIsolation(feats);
 			} catch {
 				state.marketplaceEnabled = false;
@@ -22398,9 +20668,11 @@ async function probeIsOwner() {
 				$("#overflow-mcp")?.removeAttribute("hidden");
 				$("#mtab-mcp-btn")?.removeAttribute("hidden");
 				$("#mtab-skills-btn")?.removeAttribute("hidden");
-				$("#mtab-runners-btn")?.removeAttribute("hidden");
+				if (extensions.includes("vscode")) {
+					$("#mtab-runners-btn")?.removeAttribute("hidden");
+					$("#overflow-runners")?.removeAttribute("hidden");
+				}
 				$("#mtab-network-btn")?.removeAttribute("hidden");
-				$("#overflow-runners")?.removeAttribute("hidden");
 				$("#overflow-network")?.removeAttribute("hidden");
 				$("#overflow-skills")?.removeAttribute("hidden");
 			}
@@ -22480,22 +20752,8 @@ function wireManageTabs() {
 	document.querySelectorAll(".manage-tab").forEach((t) => {
 		t.addEventListener("click", () => switchManageTab(t.dataset.mtab));
 	});
-	/**
-	* Minimal LCS line diff. A revision is only reviewable if you can see what
-	* CHANGED — showing the whole new file and asking someone to spot the edit is not
-	* review, it's proofreading. Skills are small, so O(m×n) is fine and beats pulling
-	* in a diff dependency.
-	*/
 }
-/**
-* Service-worker registration and the update banner.
-*
-* Composition-level, like everything else here: it registers the worker, polls
-* for updates, and drives the banner that offers a reload. It touches
-* #update-banner and the login screen, which belong to the app shell rather
-* than to any panel — which is why the ownership heuristic reported it as
-* "auth+files+learn+rooms+voice" and why none of those is right.
-*/
+/** Service-worker registration, update polling and the reload banner (app-shell, not any panel). */
 function wireServiceWorker(hasStagedFile) {
 	if ("serviceWorker" in navigator) {
 		let swReg = null;
@@ -22595,20 +20853,14 @@ async function copyTextToClipboard(text) {
 	document.body.removeChild(ta);
 	return ok;
 }
-/**
-* Code-block Wrap/Copy used to be delegated from #messages: one click handler
-* that found the button, wrote its label and toggled its classes. CodeToolbar
-* owns both buttons and both pieces of feedback now, so there is nothing left
-* to delegate — see features/CodeToolbar.vue.
-*/
 /** Mobile back affordance: leaves the in-room layout. */
 function wireMobileBack() {
 	$("#mobile-back")?.addEventListener("click", () => {
 		$("#app")?.classList.remove("in-room");
 	});
 }
-/** Composer paste: long text becomes an attachment; files fall through
-* to the drop handler. */
+/** Composer paste: multi-line text is wrapped in a code fence so it renders verbatim
+* (no Markdown or mention decoration); files fall through to the document listener. */
 function wireComposerPaste() {
 	$("#message-input")?.addEventListener("paste", (e) => {
 		if (e.clipboardData?.files?.length) return;
@@ -22644,10 +20896,6 @@ function closeAllDetailDrawers() {
 /** Whether a detail drawer currently owns the top view-stack entry. */
 function getDetailRouterOpen() {
 	return detailRouterOpen;
-}
-/** A deferred full-view open, run once the drawer's route has popped. */
-function getAfterDetailClose() {
-	return afterDetailClose;
 }
 function setAfterDetailClose(fn) {
 	afterDetailClose = fn;
@@ -22795,16 +21043,9 @@ var AuditLog_default = /* @__PURE__ */ defineComponent({
 	},
 	setup(__props) {
 		/**
-		* The audit log viewer — read-only, in Admin → Maintenance.
-		*
-		* The log has existed since the audit work landed, but the only way to read it
-		* was tailing logs/audit.jsonl on the host. A security record nobody can read
-		* during an incident is a record that only pays off if someone happens to have
-		* shell access at the time.
-		*
-		* Deliberately read-only: no delete, no edit, no clear. An audit trail an
-		* operator can rewrite from the UI is not an audit trail, so there is no
-		* endpoint to call even if a control existed.
+		* The audit log viewer, in Admin → Maintenance, so the record is readable during an
+		* incident without shell access. Deliberately read-only: an audit trail an operator can
+		* rewrite from the UI is not an audit trail, and there is no endpoint to call anyway.
 		*/
 		const props = __props;
 		function when(ts) {
@@ -22886,14 +21127,10 @@ var AuditLog_default = /* @__PURE__ */ defineComponent({
 //#region src/features/audit-log.ts
 var app = null;
 function mount() {
-	if (app) return;
-	const host = $("#audit-log-view");
-	if (!host) return;
-	app = createApp(AuditLog_default, {
+	app ??= mountIsland("#audit-log-view", () => createApp(AuditLog_default, {
 		onFilter: () => void loadAuditLog(),
 		onOlder: () => void loadAuditLog({ older: true })
-	});
-	app.mount(host);
+	}));
 }
 function query(beforeTs) {
 	const p = new URLSearchParams({ limit: "50" });
@@ -22903,13 +21140,9 @@ function query(beforeTs) {
 	return p.toString();
 }
 /**
-* Load the newest page, or append the next older one.
-*
-* Self-hiding on 403, the same contract every block on the Admin page uses:
-* a non-owner gets no panel rather than an error. Any other failure shows a
-* message instead of an empty list, so "nothing happened" and "we could not
-* tell you what happened" stay distinguishable — which for a security log is
-* the whole point.
+* Load the newest page, or append the next older one. Self-hides on 403 like
+* every Admin block; any other failure shows a message rather than an empty
+* list, so a security log never reads "nothing happened" when it could not tell.
 */
 async function loadAuditLog(opts = {}) {
 	const section = $("#settings-audit");
@@ -22940,14 +21173,9 @@ async function loadAuditLog(opts = {}) {
 //#endregion
 //#region src/features/admin.ts
 /**
-* Hide a group whose every block hid itself.
-*
-* Without this a scoped admin sees "Setup", "Access & credentials" and
-* "Policy" as headings over empty space — the page would advertise exactly
-* what they are not allowed to do. Same argument as syncFeaturesColumn in
-* settings.ts, and the same shape: ask the rendered children, do not try to
-* re-derive the permission rule here. A second source of truth for who may
-* see what is how the gates drifted apart the last three times.
+* Hide a group whose every block hid itself, so a scoped admin never sees
+* headings over empty space. Asks the rendered children rather than re-deriving
+* the permission rule: a second source of truth for who may see what drifts.
 */
 function syncAdminGroups() {
 	for (const group of document.querySelectorAll("#admin .admin-group")) {
@@ -23000,8 +21228,7 @@ var input = (sel) => $(sel);
 var toggle = (sel) => $(sel);
 async function load() {
 	try {
-		const r = await authFetch("/api/webchat/signin");
-		view = r.ok ? await r.json() : null;
+		view = await apiJson("/api/webchat/signin");
 	} catch {
 		view = null;
 	}
@@ -23210,22 +21437,9 @@ var PermsGlobalToggles_default = /* @__PURE__ */ defineComponent({
 	props: { onToggle: { type: Function } },
 	setup(__props) {
 		/**
-		* The Owner / Global-admin switches — twelfth island.
-		*
-		* Mounted into <div id="perms-global-toggles">, exclusively owned by this
-		* module.
-		*
-		* This one absorbs a legacy function rather than calling it. buildToggleRow()
-		* lived in legacy.js and built these rows imperatively; it was used by nothing
-		* except renderPermsDetail, and it is pure markup plus one click handler. A
-		* component that received DOM nodes from a legacy builder would be a component
-		* in name only — so the markup moved into this template and the legacy function
-		* is deleted in the same commit, along with its dep entry.
-		*
-		* The audit metadata is deliberately rendered twice over: the label carries
-		* "(Granted by …)" as visible text, exactly as the imperative row did. It is
-		* not a title attribute here — that is the matrix, which is a different island
-		* and a different affordance.
+		* The Owner / Global-admin switches, mounted into <div id="perms-global-toggles">. The
+		* audit metadata is visible label text ("(Granted by …)"), not a title attribute — the
+		* title tooltip is the matrix's affordance.
 		*/
 		const props = __props;
 		/** [label, prefix, role kind] — the two global roles, in display order. */
@@ -23282,21 +21496,10 @@ var PermsMatrix_default = /* @__PURE__ */ defineComponent({
 	props: { onToggle: { type: Function } },
 	setup(__props) {
 		/**
-		* The per-agent-group permission matrix — thirteenth island.
-		*
-		* Mounted into <div id="perms-matrix">, exclusively owned by this module.
-		*
-		* Two cells per group, admin and member, each a tap-to-toggle button. The
-		* `busy` class the click handler adds is NOT modelled here: togglePerm() adds
-		* it to the clicked element and removes it when the request settles, and it
-		* survives because the row is not re-rendered in between — refreshPermissions()
-		* only runs after the class is already off again. Modelling it as state would
-		* mean threading a per-cell pending flag for a class nothing reads.
-		*
-		* `title` is set only when there IS an audit record, matching the imperative
-		* version's `if (adminRole) adminBtn.title = …`. An unconditional :title would
-		* emit title="" on every ungranted cell, which is the same class of difference
-		* as the :class="{active:false}" one from the first island.
+		* The per-agent-group permission matrix, mounted into <div id="perms-matrix">. The
+		* `busy` class togglePerm() adds to a clicked cell is not modelled: nothing re-renders
+		* the row until it is removed. `title` is set only when there IS an audit record, so an
+		* ungranted cell has no title="".
 		*/
 		const props = __props;
 		const rows = computed(() => {
@@ -23359,8 +21562,7 @@ async function refreshStatus() {
 	if (!line) return;
 	let machines = [];
 	try {
-		const r = await authFetch("/api/runners/mine");
-		if (r.ok) machines = (await r.json()).machines;
+		machines = (await apiJson("/api/runners/mine")).machines;
 	} catch {
 		machines = [];
 	}
@@ -23385,7 +21587,7 @@ function initVsCodeStart() {
 	started = true;
 	$("#vscode-start-download")?.addEventListener("click", () => void download());
 	$("#vscode-start-connect")?.addEventListener("click", () => void connect$1());
-	authFetch("/api/runners/extension").then((r) => published = r.ok).catch(() => published = false).finally(() => {
+	apiJson("/api/runners/extension").then(() => published = true).catch(() => published = false).finally(() => {
 		watchEffect(() => {
 			show(Boolean(published) && roomsReceived.value && !state.currentRoom && state.lastRoomsList.length === 0);
 		});
@@ -23393,11 +21595,19 @@ function initVsCodeStart() {
 }
 //#endregion
 //#region src/features/auth.ts
-var deps$1 = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
+var deps = {};
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideAuthDeps(provided) {
-	Object.assign(deps$1, provided);
+	Object.assign(deps, provided);
 }
+/**
+* Three outcomes, not two: 'ok' | 'unauthenticated' | 'unreachable'.
+*
+* The SW serves the shell cache-first but `/api/` bypasses it, so on a cold
+* start (radio waking, Tailscale not up, host mid-restart) this probe can fail
+* for a user who is authenticated. Only a real 401/403 sends anyone to the login
+* screen; anything else retries briefly, then defers to the WS reconnect + banner.
+*/
 async function checkAuth() {
 	for (let attempt = 0; attempt < 3; attempt++) {
 		try {
@@ -23414,6 +21624,11 @@ async function checkAuth() {
 	}
 	return "unreachable";
 }
+/**
+* We entered the app without a verdict (see checkAuth). Once the network is
+* genuinely back, settle it: a real 401/403 means show the login screen after
+* all. Runs at most once, and only while still on the optimistic path.
+*/
 async function reprobeAuthWhenOnline() {
 	if (!navigator.onLine) await new Promise((r) => window.addEventListener("online", r, { once: true }));
 	if (await checkAuth() !== "unauthenticated") return;
@@ -23441,8 +21656,7 @@ async function maybeSuggestBearerRetire() {
 	if (localStorage.getItem("nanoclaw-bearer-retire-dismissed") === "1") return;
 	let info = null;
 	try {
-		const r = await authFetch("/api/webchat/auth");
-		if (r.ok) info = await r.json();
+		info = await apiJson("/api/webchat/auth");
 	} catch {
 		info = null;
 	}
@@ -23491,6 +21705,11 @@ async function cacheAuthHint() {
 		if (r.ok) rememberServerAuthHint((await r.json()).methods);
 	} catch {}
 }
+/**
+* Fetch `/api/auth/info` and rewrite the login subtitle so the user knows
+* what's expected (Tailscale on this device vs token entry vs server
+* misconfig) instead of facing a generic token prompt.
+*/
 async function applyLoginHint() {
 	let info;
 	try {
@@ -23547,7 +21766,7 @@ function applyCreateAuthDefault() {
 	else if (m.proxy) hint.textContent = "This install signs people in via SSO / reverse proxy (e.g. Entra ID) — they appear as webchat:<email>.";
 	else if (m.bearer) hint.textContent = "This install uses a shared bearer token — per-user ids only differ when a proxy or Tailscale also fronts it.";
 	else hint.textContent = "";
-	deps$1.permsRefreshCreateUI();
+	deps.permsRefreshCreateUI();
 }
 /** The login form's only error surface — guarded once instead of at four sites. */
 function showLoginError(message) {
@@ -23575,11 +21794,6 @@ function wireAuthPanel() {
 }
 //#endregion
 //#region src/features/perms.ts
-var deps = {};
-/** Wire the legacy helpers this module calls. Call once at startup. */
-function providePermsDeps(provided) {
-	Object.assign(deps, provided);
-}
 function openPermissions() {
 	openFullView(() => {
 		hideOtherFullViews("permissions");
@@ -23628,26 +21842,14 @@ async function refreshPermissions() {
 var globalTogglesApp = null;
 var matrixApp = null;
 function mountPermsDetail() {
-	if (!globalTogglesApp) {
-		const host = $("#perms-global-toggles");
-		if (host) {
-			globalTogglesApp = createApp(PermsGlobalToggles_default, { onToggle: (kind, granting) => {
-				const u = permsDetailUser.value;
-				if (u) togglePerm(u.id, kind, null, granting);
-			} });
-			globalTogglesApp.mount(host);
-		}
-	}
-	if (!matrixApp) {
-		const host = $("#perms-matrix");
-		if (host) {
-			matrixApp = createApp(PermsMatrix_default, { onToggle: (kind, agentGroupId, granting, el) => {
-				const u = permsDetailUser.value;
-				if (u) togglePerm(u.id, kind, agentGroupId, granting, el);
-			} });
-			matrixApp.mount(host);
-		}
-	}
+	globalTogglesApp ??= mountIsland("#perms-global-toggles", () => createApp(PermsGlobalToggles_default, { onToggle: (kind, granting) => {
+		const u = permsDetailUser.value;
+		if (u) togglePerm(u.id, kind, null, granting);
+	} }));
+	matrixApp ??= mountIsland("#perms-matrix", () => createApp(PermsMatrix_default, { onToggle: (kind, agentGroupId, granting, el) => {
+		const u = permsDetailUser.value;
+		if (u) togglePerm(u.id, kind, agentGroupId, granting, el);
+	} }));
 }
 function renderPermsDetail(userId) {
 	const u = permsUsers.value.find((x) => x.id === userId);
@@ -23668,6 +21870,11 @@ function renderPermsDetail(userId) {
 		}
 	}
 }
+/**
+* Toggle a permission on or off. `granting=true` calls /grant; false calls
+* /revoke. The cell is briefly disabled while the request is in flight, then
+* the canonical state is re-fetched from the server.
+*/
 async function togglePerm(targetUserId, kind, agentGroupId, granting, cellEl) {
 	if (cellEl) cellEl.classList.add("busy");
 	const ok = granting ? await grantPerm(targetUserId, kind, agentGroupId) : await revokePermSilent(targetUserId, kind, agentGroupId);
@@ -23676,22 +21883,14 @@ async function togglePerm(targetUserId, kind, agentGroupId, granting, cellEl) {
 }
 async function revokePermSilent(targetUserId, kind, agentGroupId) {
 	try {
-		const r = await authFetch("/api/permissions/revoke", {
+		await apiJson("/api/permissions/revoke", {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify({
+			body: {
 				userId: targetUserId,
 				kind,
 				agentGroupId
-			})
+			}
 		});
-		if (!r.ok) {
-			showToast("Revoke failed: " + ((await r.json().catch(() => ({}))).error || r.statusText), { kind: "error" });
-			return false;
-		}
 		return true;
 	} catch (err) {
 		showToast("Revoke failed: " + err?.message, { kind: "error" });
@@ -23735,22 +21934,14 @@ function permsShowCreate() {
 }
 async function grantPerm(targetUserId, kind, agentGroupId) {
 	try {
-		const r = await authFetch("/api/permissions/grant", {
+		await apiJson("/api/permissions/grant", {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify({
+			body: {
 				userId: targetUserId,
 				kind,
 				agentGroupId
-			})
+			}
 		});
-		if (!r.ok) {
-			showToast("Grant failed: " + ((await r.json().catch(() => ({}))).error || r.statusText), { kind: "error" });
-			return false;
-		}
 		return true;
 	} catch (err) {
 		showToast("Grant failed: " + err?.message, { kind: "error" });
@@ -23822,27 +22013,6 @@ marked.setOptions({
 	breaks: true,
 	gfm: true
 });
-/**
-* Three outcomes, not two: 'ok' | 'unauthenticated' | 'unreachable'.
-*
-* The distinction is the whole point. The service worker caches the app shell
-* and serves it cache-first, so the PWA boots fine with no network at all — but
-* `/api/` deliberately bypasses the SW, so this probe goes straight to the
-* network. On a cold start (app launched from the home screen, radio still
-* waking, VPN/Tailscale not up yet, host mid-restart) it can fail while the user
-* is perfectly authenticated. Treating that as "unauthenticated" is what shows
-* the token screen to someone who never needed it — and why a hard refresh
-* "fixes" it: the retry simply succeeds.
-*
-* So: only a real auth verdict (401/403) sends anyone to the login screen.
-* Anything else retries briefly, then defers to the WebSocket reconnect logic
-* and the connection banner, which already handle being offline gracefully.
-*/
-/**
-* We entered the app without a verdict (see checkAuth). Once the network is
-* genuinely back, settle it: a real 401/403 means show the login screen after
-* all. Runs at most once, and only while still on the optimistic path.
-*/
 async function initApp() {
 	const verdict = await checkAuth();
 	if (verdict === "ok" || verdict === "unreachable") {
@@ -23854,64 +22024,21 @@ async function initApp() {
 		applyLoginHint();
 	}
 }
-/**
-* Fetch `/api/auth/info` and rewrite the login subtitle so the user knows
-* what's expected (Tailscale on this device vs token entry vs server
-* misconfig) instead of facing a generic token prompt.
-*
-* The common failure mode is the client device (this phone / laptop) not
-* having Tailscale running — the server's almost always fine because the
-* operator had to install Tailscale to set up this server in the first
-* place. The copy reflects that.
-*/
 wireAuthPanel();
 consumeSigninResult();
 state.settings = loadSettings();
-/**
-* Credential isolation — an install policy, shown only to someone who can change
-* it. `credentialIsolation` is null when no choice has been made here, in which
-* case .env decides and the row says so; the toggle still reflects what is
-* actually in force (`credentialIsolationEffective`) so it never contradicts
-* the agent panel's "Not private yet" note.
-*/
 $("#wizard-opencode-install")?.addEventListener("click", () => runInstall("opencode", OPENCODE_WIZARD_ELS));
-/**
-* Reflect live credential state on the engine list: connected engines swap
-* their connect controls for a prominent ✓ card (standard OAuth-connect UX —
-* the action you completed disappears), and the radio chips update without a
-* wizard reopen. Also greys Codex out when its provider isn't installed.
-*/
-/** Reveal the wizard's install-Ollama row when nothing answers locally (Linux
-*  only), or prefill the endpoint when a local Ollama is already running. */
-/**
-* Put an async wizard button into a busy state: disabled, label swapped, and a
-* small inline spinner — the "doing something" signal lives ON the control the
-* user just pressed. Returns a restore function for the finally block.
-*/
 wireModalsPanel();
-/** Recording chrome: mic ⇄ red pulsing stop square + elapsed chip (the
-*  standard voice-recorder idiom, so state is unmistakable at a glance). */
-/** Wrap accumulated PCM16 frames in a minimal 16 kHz mono WAV container. */
-/** Close the current segment and ship it for transcription (if it held speech). */
-/** Per-frame handler: RMS gate → segment bookkeeping → cut on pause/length. */
-/** Stop capture, flush the tail segment, wait for transcripts, then tidy. */
-/** Esc = cancel: discard everything dictated, restore the prior composer text. */
 document.addEventListener("keydown", (e) => {
 	if (e.key === "Escape" && isDictationActive()) {
 		e.preventDefault();
 		cancelDictation();
 	}
 });
-/**
-* Tidy the dictated span via the server's cleanup model. The replacement goes
-* through execCommand('insertText') over a selection of just the dictated
-* text, so the native undo stack (Ctrl/Cmd+Z) restores the raw transcript.
-*/
 $("#mic-btn")?.addEventListener("click", () => {
 	if (isDictationActive()) stopDictation();
 	else startDictation();
 });
-/** Post-auth: reveal the mic when the server has an STT backend configured. */
 $("#overflow-btn")?.addEventListener("click", (e) => {
 	e.stopPropagation();
 	const menu = $("#overflow-menu");
@@ -23990,11 +22117,6 @@ setInterval(() => {
 	if (document.visibilityState === "visible") fetchApprovals();
 }, 1e4);
 wireRoomsPanel();
-/**
-* Transient corner notification. `kind` is 'info' (default), 'success', or
-* 'error'. Errors linger longer and must be dismissed-or-time-out; all toasts
-* are click-to-dismiss. Returns the element so callers can remove it early.
-*/
 wireMembersPanel();
 $("#user-creds-oauth-btn")?.addEventListener("click", () => openOauthMintModal("member"));
 $("#user-creds-oauth-cancel")?.addEventListener("click", closeUserCredsOauthModal);
@@ -24007,28 +22129,9 @@ $("#user-creds-oauth-code")?.addEventListener("paste", () => {
 	}, 0);
 });
 wireUserCredsOauth();
-/**
-* Promise-based confirmation modal. Resolves true on confirm, false on
-* cancel / backdrop / Escape. `body` may be a string or an HTMLElement (use an
-* element when the message contains user-supplied text, so it stays escaped).
-* `destructive` styles the confirm button as a delete action and focuses
-* Cancel by default.
-*/
-/** Single-line text prompt in the app's modal chrome — replaces native prompt()
-* (unstylable, ESC-inconsistent, blocked in some PWA contexts). Returns the
-* trimmed value, or null on cancel/empty.
-* `validate(trimmedValue)` (optional): return an error string to keep the modal
-* open with that message inline (DESIGN §5 — field validation is inline text),
-* or null/undefined to accept. */
 wireScrollTracking();
 wireTranscriptPanel();
 wireComposer();
-/**
-* Walk a rendered bubble's text nodes and wrap `@<slug>` tokens in a styled
-* span. Cosmetic only — even if the token doesn't match a wired agent, the
-* styling tells the user "this looks like a mention." Server-side matching
-* is what actually decides routing.
-*/
 $("#members-toggle").addEventListener("click", toggleMembersPanel);
 $("#members-close").addEventListener("click", toggleMembersPanel);
 $("#members-search")?.addEventListener("input", (e) => {
@@ -24039,17 +22142,7 @@ wireMembersOauth2();
 wireDetailOverlay();
 $("#manage-back")?.addEventListener("click", () => closeView("manage"));
 wireManageTabs();
-/**
-* Undo window: swaps an actions row for a sliding countdown + Undo. The action
-* commits when the bar empties; Undo restores the row untouched. The timer only
-* ever starts from a human CLICK — automation (auto-keep) stays instant — and a
-* tab closed mid-countdown commits nothing: the draft simply stays pending,
-* which is the safe default.
-*/
-/** Paint the editor from skillEditorDraft (diff-review or edit mode). */
 wireSkillsPanel();
-/** The Keep button currently rendered for a draft (null after navigation). */
-/** Reflect a draft's in-flight review on its Keep button, if one is rendered. */
 wireApprovalsPanel();
 wireMobileBack();
 wireViewChrome1();
@@ -24065,11 +22158,6 @@ $("#perms-user-search")?.addEventListener("input", (e) => {
 	permsUserFilter.value = e.target.value.trim().toLowerCase();
 	renderPermsUserList();
 });
-/**
-* Toggle a permission on or off. `granting=true` calls /grant; false calls
-* /revoke. The cell is briefly disabled while the request is in flight, then
-* the canonical state is re-fetched from the server.
-*/
 $("#perms-exit").addEventListener("click", togglePermissions);
 $("#admin-exit").addEventListener("click", toggleAdmin);
 $("#signin-exit").addEventListener("click", toggleSigninPage);
@@ -24090,8 +22178,6 @@ $("#perms-create-kind").addEventListener("change", permsRefreshCreateUI);
 wirePermsCreate();
 $("#dash-detail-close").addEventListener("click", hideDetail);
 wireAgentsPanel();
-/** Confirm modal with one switch option — the modal twin of .setting-toggle
-* (DESIGN.md §2b: binary choices are switches, never raw checkboxes). */
 wireAgentControls1();
 $("#room-export-btn")?.addEventListener("click", () => {
 	const roomId = selectedRoomId.value || state.currentRoom;
@@ -24183,12 +22269,6 @@ renderTemplateLibrary();
 document.querySelectorAll(".drafter-btn").forEach((btn) => {
 	btn.addEventListener("click", () => draftFor(btn));
 });
-/**
-* Learning loop, room-level view: what this room's agents have proposed and what
-* they've learned — in the room, rather than buried in the global Skills page.
-* Pending proposals first (they need a decision); learned skills below, removable.
-* Purely a view over existing endpoints — no new backend.
-*/
 wireRoomDetail1();
 $("#thread-switch")?.addEventListener("click", (e) => {
 	e.stopPropagation();
@@ -24218,14 +22298,6 @@ wireViewChrome2();
 $("#room-create-close").addEventListener("click", closeRoomDetail);
 wireRoomDetail5();
 wireRoomCreate();
-/**
-* 🎓 popover (DESIGN.md § Composer popups — mirrors .mention-popover, no third
-* style). Click the icon → "Distill now" plus the per-agent automation toggles:
-*   Auto-distill — admin-tier; it only stages drafts (default ON).
-*   Auto-keep    — owner-tier; it writes live agent context, so the server
-*                  refuses the toggle for anyone else and the row only renders
-*                  when the server says canAutoKeep.
-*/
 $("#learn-btn")?.addEventListener("click", toggleLearnMenu);
 wireLearnPanel();
 var typingTimeout = null;
@@ -24333,48 +22405,6 @@ $("#model-probe-select-all").addEventListener("click", () => {
 $("#model-probe-add-selected").addEventListener("click", addSelectedFromProbe);
 bindDiscover("#model-create-discover-btn", () => $("#model-create-kind").value, () => $("#model-create-endpoint").value.trim(), "#model-create-model-id", "#model-create-discover-select");
 wireModelsPanel();
-/**
-* MCP catalog — browse the public registry, prefill the add form.
-*
-* Discovery only: choosing a row never writes anything. It fills in the form below,
-* and the server still has to be probed and added like any hand-entered one.
-*
-* The remote/package split is the security line. A REMOTE server is a URL the
-* container dials out to. A PACKAGE server is npm/pypi code that runs INSIDE the
-* agent container, next to its credentials — so it's labelled, and picking one costs
-* an explicit confirm naming the exact command. Browsing must never be one click
-* away from executing a stranger's code.
-*/
-/**
-* The MCP registry is a switchable source, exactly like a skill collection: the
-* same webchat_disabled_sources row, surfaced in Settings the same way. Off means
-* off server-side too — the catalog block disappears and no request is made.
-*/
-/**
-* Per-agent env vars. The list shows NAMES only — the server never returns a
-* value, so there is nothing to render and nothing to leak into a screenshot.
-*/
-/**
-* One row per credential: the host, a scope pill, and Remove.
-*
-* The pill (not prose) carries ownership because it is the thing you scan for —
-* and `personal` gets the accent colour because it is the EXCEPTION worth
-* noticing; shared is the default and stays neutral. Reuses the `.skill-badge`
-* vocabulary already used for skill provenance, so the panel doesn't invent a
-* second badge language.
-*/
-/** Labelled input matching the .secret-field pattern used in the static forms. */
-/**
-* The learning loop's explicit trigger (docs/webchat/design/learning-loop.md §1): reviews
-* THIS session and drafts a skill only if it taught something. It just sends
-* `/learn` — one path, the same one the slash command takes, so there's no second
-* implementation to keep in step.
-*
-* Only offered for the room you're actually in: `/learn` reviews the session, and
-* the session is the one you have open.
-*/
-/** Hide the catalog entirely when its source is switched off. */
-/** Prefill the add form from a catalog row. Package servers gate on an explicit confirm. */
 wireMcpCatalog();
 $("#mcp-detail-close").addEventListener("click", closeMcpDetail);
 $("#mcp-create-close").addEventListener("click", closeMcpDetail);
@@ -24397,7 +22427,6 @@ $("#model-picker-add-new").addEventListener("click", () => {
 	setTimeout(() => $("#create-model-btn").click(), 180);
 });
 initApp();
-provideThinkingDeps({ interruptAgent });
 provideWizardDeps({
 	openOauthMintModal,
 	fetchAgents,
@@ -24514,19 +22543,14 @@ provideViewsDeps({
 	probeRoutingAvailability,
 	refreshRouterMetrics,
 	getDetailRouterOpen,
-	getAfterDetailClose,
 	setAfterDetailClose
 });
 provideAuthDeps({ permsRefreshCreateUI });
 provideLearnDeps({ sendCurrentMessage });
-provideFilesDeps({});
 provideSelectToggleDeps({
 	fetchModels,
 	refreshRouterRoster: () => {
 		if (!$("#mtab-routing").hidden) renderRouterRoster();
 	}
 });
-providePermsDeps({});
-provideRoutingDeps({});
-provideComposerDeps({});
 //#endregion

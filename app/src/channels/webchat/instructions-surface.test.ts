@@ -4,10 +4,8 @@
  * reads via readGroupPersona() and emits as the persona fragment for every
  * provider.
  *
- * It used to write `CLAUDE.local.md`, which nanoclaw stopped composing. That
- * file is still loaded by the Claude harness (settingSources includes 'local'),
- * so the editor appeared to work while being silently provider-local: nothing
- * saved reached a Codex-backed group, and switching provider dropped it.
+ * Not `CLAUDE.local.md`: the Claude harness still loads that, so a save there
+ * would look fine while never reaching another provider.
  *
  * These tests pin the contract at the filesystem boundary — which file is read,
  * which is written, and that a symlink cannot turn a save into a write outside

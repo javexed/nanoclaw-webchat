@@ -1,9 +1,6 @@
 <script setup lang="ts">
 /**
- * The pending-approvals panel list — forty-fifth island.
- *
- * Mounted into <ul id="approval-list">, exclusively owned by this module. The
- * banner count is set outside it and stays imperative.
+ * The pending-approvals panel list, mounted into <ul id="approval-list">.
  */
 import ApprovalCard from './ApprovalCard.vue';
 import { approvalRows } from './approvals-state.js';

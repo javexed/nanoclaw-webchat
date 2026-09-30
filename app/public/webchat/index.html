@@ -399,7 +399,7 @@
             <!-- Thread context-sync + delete controls — shown only inside a topic
                  thread. Pull copies the main chat into this thread; push copies
                  this thread's messages up; delete removes the thread. See
-                 thread-context-sync.md. -->
+                 docs/webchat/threads.md §8. -->
             <div id="thread-sync" class="thread-sync" hidden>
               <button id="thread-pull" class="thread-sync-btn" type="button" title="Pull main chat into this thread" aria-label="Pull main chat into this thread">
                 <svg class="icon" aria-hidden="true"><use href="#i-arrow-down"></use></svg>
@@ -432,8 +432,8 @@
             </button>
           </div>
         </div>
-        <!-- Handle editor popover — anchored under the header chip. Moved out of
-             Settings so the @handle lives where it's surfaced. -->
+        <!-- Handle editor popover — anchored under the header chip, where the
+             @handle is surfaced. -->
         <div id="handle-popover" class="handle-popover" role="dialog" aria-label="Your handle" hidden>
           <div class="handle-popover-header">
             <span></span>
@@ -529,8 +529,10 @@
               <!-- Overflow "+" — shown only when the composer is too narrow to
                    hold every tool inline (see the composer breakpoint in the CSS).
                    Toggles .composer-tools between an inline row and a popover. -->
+              <!-- No `hidden` here: the CSS shows this only below 520px, and the global
+                   [hidden] rule is !important, so the attribute would hide it on phones too. -->
               <button type="button" id="composer-more" class="file-picker-btn" title="More"
-                aria-label="More actions" aria-haspopup="true" aria-expanded="false" hidden>
+                aria-label="More actions" aria-haspopup="true" aria-expanded="false">
                 <svg class="icon" aria-hidden="true"><use href="#i-plus"></use></svg>
               </button>
               <div id="composer-tools" class="composer-tools" role="group" aria-label="Composer tools">
@@ -706,14 +708,25 @@
                     <p class="room-prime-note" id="agent-secrets-note"></p>
                     <ul id="agent-secrets-list" class="skill-sources-list"></ul>
                     <div class="secret-form" id="agent-secret-form">
+                      <div class="secret-field secret-kind">
+                        <span class="form-label">Type</span>
+                        <div id="agent-secret-kind" class="setting-options" role="group" aria-label="Credential type">
+                          <button class="setting-option active" type="button" data-value="token" aria-pressed="true">Token</button>
+                          <button class="setting-option" type="button" data-value="custom" aria-pressed="false">Custom header</button>
+                          <button class="setting-option" type="button" data-value="basic" aria-pressed="false">Username + password</button>
+                        </div>
+                      </div>
                       <label class="secret-field"><span class="form-label">Host</span>
                         <input id="agent-secret-host" type="text" placeholder="dev.azure.com" autocomplete="off" autocapitalize="none" spellcheck="false" />
                       </label>
-                      <label class="secret-field"><span class="form-label">Token or key</span>
+                      <label class="secret-field" id="agent-secret-value-row"><span class="form-label">Token or key</span>
                         <input id="agent-secret-value" type="password" autocomplete="new-password" spellcheck="false" />
                       </label>
-                      <label class="secret-field setting-toggle" id="agent-secret-custom-row"><span class="form-label">Custom header</span>
-                        <input id="agent-secret-custom" type="checkbox" />
+                      <label class="secret-field" id="agent-secret-username-row" hidden><span class="form-label">Username</span>
+                        <input id="agent-secret-username" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" />
+                      </label>
+                      <label class="secret-field" id="agent-secret-password-row" hidden><span class="form-label">Password</span>
+                        <input id="agent-secret-password" type="password" autocomplete="new-password" spellcheck="false" />
                       </label>
                       <label class="secret-field secret-custom" id="agent-secret-custom-header-row" hidden><span class="form-label">Header</span>
                         <input id="agent-secret-custom-header" type="text" placeholder="X-Api-Key" autocomplete="off" spellcheck="false" />
@@ -1109,7 +1122,6 @@
           </aside>
           <aside id="route-detail" class="agent-detail" hidden>
             <div class="agent-detail-header">
-              <span id="route-detail-badge" class="model-kind-badge" hidden></span>
               <span id="route-detail-title">Route</span>
               <button id="route-detail-close" class="members-close" aria-label="Close">
                 <svg class="icon" aria-hidden="true"><use href="#i-x"></use></svg>
@@ -1128,10 +1140,6 @@
                 <span class="form-label">Model</span>
                 <select id="route-binding"></select>
               </label>
-              <p id="route-escalate-note" class="model-kind-explainer" hidden>
-                Escalate route — no local model; matching prompts hand off to the
-                agent group's fallback provider (Claude) instead.
-              </p>
               <div class="route-flags">
                 <label class="setting-toggle">
                   <span>Pin</span>
@@ -1571,21 +1579,10 @@
           <div id="mtab-runners" class="manage-pane" role="tabpanel" hidden>
             <ul id="runner-list"></ul>
             <p id="runner-list-note" class="runners-note" hidden></p>
-            <h3 class="runners-h">Agent image</h3>
-            <form id="runner-image-form" class="runner-image">
-              <select id="runner-image-policy" aria-label="Where paired machines get the agent image">
-                <option value="machine">Machine decides</option>
-                <option value="pull">Pull</option>
-                <option value="build">Build</option>
-              </select>
-              <input id="runner-image-ref" type="text" spellcheck="false" autocomplete="off" aria-label="Image reference" />
-              <button class="btn btn-secondary btn-sm" type="submit">Save</button>
-            </form>
-            <p id="runner-image-note" class="runners-note"></p>
             <h3 class="runners-h">Runner extension</h3>
             <p id="runner-ext-current" class="runners-note"></p>
             <label class="btn btn-secondary btn-sm" for="runner-ext-file">Publish…</label>
-            <input id="runner-ext-file" type="file" accept=".vsix" hidden />
+            <input id="runner-ext-file" type="file" accept=".vsix,.sig,.pub" multiple hidden />
           </div>
           <div id="mtab-network" class="manage-pane" role="tabpanel" hidden>
             <h3 class="runners-h">Allowlist</h3>
@@ -1614,9 +1611,8 @@
           <div id="mtab-mcp" class="manage-pane" role="tabpanel" hidden>
             <ul id="mcp-list"></ul>
             <button id="create-mcp-btn" class="btn btn-secondary btn-list-footer">+ New server</button>
-            <!-- MCP registry — the Add-MCP-server catalog's source, moved from
-                 Settings: managed on the tab it feeds. Global-admin only; the
-                 render hides it on 403. -->
+            <!-- MCP registry — the Add-MCP-server catalog's source, managed on the
+                 tab it feeds. Global-admin only; the render hides it on 403. -->
             <div id="mcp-sources" class="skill-sources" hidden>
               <div class="ollama-hosts-title">MCP registry</div>
               <ul id="mcp-sources-list" class="skill-sources-list"></ul>
@@ -1648,9 +1644,8 @@
               </div>
               <ul id="skills-list"></ul>
               <button id="skill-add-btn" class="btn btn-secondary btn-list-footer" type="button">+ Add skill</button>
-              <!-- Skill collections registry — the catalog's SOURCES, moved from
-                   Settings: you manage where skills come from on the same tab
-                   where you browse them. Owner/global-admin only; the render
+              <!-- Skill collections registry — the catalog's SOURCES, managed on the
+                   tab where you browse them. Owner/global-admin only; the render
                    hides it for everyone else and the server enforces. -->
               <div id="skill-sources" class="skill-sources" hidden>
                 <div class="ollama-hosts-title">Skill collections</div>
@@ -1707,8 +1702,8 @@
             </div>
           </div>
           <div id="mtab-routing" class="manage-pane" role="tabpanel" hidden>
-            <!-- Setup, moved from Settings — the tab is where routing LIVES, so
-                 it is also where it installs. Owners see this tab before routing
+            <!-- Setup — the tab is where routing LIVES, so it is also where it
+                 installs. Owners see this tab before routing
                  exists (probeRoutingAvailability reveals it for isOwnerView);
                  renderRoutingSetup swaps Install button ↔ Installed badge. -->
             <div id="routing-setup" class="routing-setup" hidden>
@@ -1728,12 +1723,10 @@
                     </span>
                   </div>
                   <p class="cred-hint feature-info" id="routing-feature-info" hidden>
-                    Sends each message to the model that fits it — quick turns go to a
-                    small local model, hard ones escalate to Claude. A local
+                    Sends each message to the model that fits it. A local
                     Arch-Router classifier (running on Ollama) reads the conversation
                     and picks a route; a LiteLLM proxy carries the call to the chosen
-                    model, falling back to Claude whenever the local answer isn't good
-                    enough. A nightly job recalibrates the routes from real traffic.
+                    model. A nightly job recalibrates the routes from real traffic.
                     Runs fully on this machine — no extra cloud services.
                   </p>
                   <p class="cred-hint" id="routing-setup-desc" hidden></p>
@@ -2094,14 +2087,25 @@
                 <h3 class="settings-section-title">Secrets for all agents</h3>
                 <ul id="secrets-list" class="skill-sources-list"></ul>
                 <div class="secret-form">
+                  <div class="secret-field secret-kind">
+                    <span class="form-label">Type</span>
+                    <div id="secret-kind" class="setting-options" role="group" aria-label="Credential type">
+                      <button class="setting-option active" type="button" data-value="token" aria-pressed="true">Token</button>
+                      <button class="setting-option" type="button" data-value="custom" aria-pressed="false">Custom header</button>
+                      <button class="setting-option" type="button" data-value="basic" aria-pressed="false">Username + password</button>
+                    </div>
+                  </div>
                   <label class="secret-field"><span class="form-label">Host</span>
                     <input id="secret-host" type="text" placeholder="dev.azure.com" autocomplete="off" autocapitalize="none" spellcheck="false" />
                   </label>
-                  <label class="secret-field"><span class="form-label">Token or key</span>
+                  <label class="secret-field" id="secret-value-row"><span class="form-label">Token or key</span>
                     <input id="secret-value" type="password" autocomplete="new-password" spellcheck="false" />
                   </label>
-                  <label class="secret-field setting-toggle" id="secret-custom-row"><span class="form-label">Custom header</span>
-                    <input id="secret-custom" type="checkbox" />
+                  <label class="secret-field" id="secret-username-row" hidden><span class="form-label">Username</span>
+                    <input id="secret-username" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" />
+                  </label>
+                  <label class="secret-field" id="secret-password-row" hidden><span class="form-label">Password</span>
+                    <input id="secret-password" type="password" autocomplete="new-password" spellcheck="false" />
                   </label>
                   <label class="secret-field secret-custom" id="secret-custom-header-row" hidden><span class="form-label">Header</span>
                     <input id="secret-custom-header" type="text" placeholder="X-Api-Key" autocomplete="off" spellcheck="false" />
@@ -2283,10 +2287,8 @@
             <div class="dash-section-title">Metrics</div>
             <div id="dash-graph" class="dash-graph"></div>
           </div>
-          <!-- Token usage — owner-only; renderUsagePanel hides it on 403. Moved
-               from Settings: usage is a thing you CHECK, and the dashboard is the
-               checking surface. Inner ids unchanged so the render logic moved
-               without a rewrite. -->
+          <!-- Token usage — owner-only; renderUsagePanel hides it on 403. Usage is
+               a thing you CHECK, so it lives on the dashboard. -->
           <div class="dash-section" id="dash-usage-section" hidden>
             <div class="dash-section-title">Token usage</div>
               
@@ -2596,14 +2598,6 @@
               </label>
             </div>
             <!-- Re-open the first-run setup wizard — owner/global-admin only. -->
-            <!-- Self-test: run capability checks (tailscale, docker, container→host
-                 networking) from the vantage point that matters, with fixes. -->
-            <!-- Default login (Anthropic/Codex) now lives in the setup wizard's
-                 engine picker — reached via "Run setup wizard…" above. -->
-            <!-- My credentials — self-service PERSONAL credentials. Visible to
-                 everyone (not admin-gated): a per-user PAT is only meaningful if
-                 its owner is the one who enters it. Hidden entirely for people
-                 who aren't enrolled in any agent, so it never nags. -->
             <!-- Sign-ins — how YOU sign in, and linking a second sign-in (Microsoft,
                  or this device's Tailscale) to the same account. Hidden for the
                  shared operator token and the localhost owner, which are not a person. -->
@@ -2616,6 +2610,10 @@
                 <button id="signins-signout" class="btn btn-ghost" type="button" hidden>Sign out</button>
               </div>
             </div>
+            <!-- My credentials — self-service PERSONAL credentials. Visible to
+                 everyone (not admin-gated): a per-user PAT is only meaningful if
+                 its owner is the one who enters it. Hidden entirely for people
+                 who aren't enrolled in any agent, so it never nags. -->
             <div id="settings-my-credentials" class="settings-credentials" hidden>
               <h3 class="settings-section-title">Secrets only you use</h3>
               <p class="cred-hint">Your own turns only. Wins over the agent’s and all-agents ones.</p>
@@ -2687,7 +2685,6 @@
                     <select id="tts-voice-select" class="stt-cleanup-select" aria-label="Read aloud voice"></select>
                   </div>
                   <div id="tts-install-progress" hidden>
-                    <div class="cred-hint" id="tts-install-label" hidden></div>
                     <pre id="tts-install-log" class="roster-refresh-log"></pre>
                   </div>
                 </div>

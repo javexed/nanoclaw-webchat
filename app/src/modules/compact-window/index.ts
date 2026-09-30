@@ -2,17 +2,10 @@
  * Auto-compact window for Claude agent containers.
  *
  * The agent-runner defaults to 165000 tokens, sized for 200K-context models.
- * Every model the fleet pins today has a far larger window, so that default can
- * force compaction at a fraction of capacity and thrash — one agent hit 95
- * compactions in a single session, roughly one every three minutes, with only
- * ~11-16k tokens of new work between them.
- *
- * `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in .env raises it. Unset → the runner's own
- * default stands, so installs are unaffected.
- *
- * Delivered through the container-env seam rather than as a core patch: the
- * value is per-agent-group (it depends on the group's provider) and the seam
- * expresses that without touching nanoclaw-owned files. Patches only shrink.
+ * On a larger-window model that default forces compaction at a fraction of
+ * capacity and thrashes. `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in .env raises it;
+ * unset → the runner's own default stands. Per-agent-group (it depends on the
+ * group's provider), hence the container-env seam.
  */
 import { registerContainerEnvResolver, registerSessionPrepareHook } from '../../seam/index.js';
 import { getContainerConfig } from '../../db/container-configs.js';

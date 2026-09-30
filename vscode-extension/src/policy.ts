@@ -1,12 +1,11 @@
-// What this machine binds into an agent container, decided HERE.
+// Which project on this machine the agent's tools work on, decided HERE.
 //
-// Central may declare a slot (a container path it wants filled, e.g. the
-// developer's project at /workspace/project); only the laptop can say which
+// Central names the slot /workspace/project; only the laptop can say which
 // local directory that is. An explicit `nanoclaw.slots` entry always wins; the
-// workspace slot is otherwise filled with the first open workspace folder, so
-// an agent placed on this machine works on the code in front of the developer
-// without any configuration. `workspaceMount: 'off'` withholds it — central's
-// spec then refuses with "slot not bound", never a silent fallback.
+// slot is otherwise the open workspace folder, so an agent placed on this
+// machine works on the code in front of the developer without any
+// configuration. `workspaceMount: 'off'` withholds it — the tools then refuse
+// with "slot not bound", never a silent fallback.
 export const WORKSPACE_SLOT = '/workspace/project';
 
 export type WorkspaceMount = 'workspace' | 'off';
@@ -27,7 +26,7 @@ export function effectiveSlots(
 /**
  * Which folder of a multi-root workspace the agent gets. The one holding the
  * file the developer is looking at, when that is one of them — otherwise the
- * first. (A single container path can hold one folder; binding several would
+ * first. (The slot holds one folder; binding several would
  * make "the project" ambiguous for the agent and for review.)
  */
 export function pickWorkspaceFolder(folders: readonly string[], activeFile?: string): string {
@@ -76,9 +75,53 @@ export const DEFAULT_WORKSPACE_EXCLUDES: readonly string[] = [
   'service-account*.json',
   'terraform.tfstate',
   'terraform.tfstate.*',
+  '*.env',
+  '.envrc',
+  '.kube',
+  'kubeconfig',
+  'id_ecdsa',
+  'id_ecdsa.*',
+  'id_dsa',
+  'id_dsa.*',
+  '*.ppk',
+  '**/.docker/config.json',
+  '.pgpass',
+  '.htpasswd',
+  '.vault-token',
+  '*.tfstate',
+  '*.tfstate.backup',
+  'application_default_credentials.json',
+  'settings.local.php',
+  'wp-config.php',
+  '*.kdbx',
 ];
 
-/** Glob → RegExp for one path segment or a relative path: `*` (no `/`), `?`, `**`. */
+/**
+ * Names that are secrets or data dumps when git does not track them, and
+ * ordinary project files when it does: an i18n `auth.json`, a yarn berry
+ * `.yarnrc.yml`, a `.tfvars` per environment, a test fixture `*.db`. Hiding
+ * those would break real projects, so this list applies only where the tracked
+ * ones can be told apart — the propose-mode snapshot, which leaves the
+ * untracked matches out. A read-only slot overlays whatever is on disk and
+ * cannot tell them apart, so it does not use this list.
+ */
+export const UNTRACKED_SECRET_EXCLUDES: readonly string[] = [
+  'auth.json',
+  '.yarnrc.yml',
+  '*.tfvars',
+  '*.sql',
+  '*.sql.gz',
+  '*.sqlite',
+  '*.sqlite3',
+  '*.db',
+  '*.dump',
+];
+
+/**
+ * Glob → RegExp for one path segment or a relative path: `*` (no `/`), `?`, `**`.
+ * Case-insensitive: on Windows (and macOS) `.ENV` is the same file as `.env`,
+ * and a secret list that a capital letter walks past is no list.
+ */
 function globToRegExp(glob: string): RegExp {
   let re = '';
   for (let i = 0; i < glob.length; i++) {
@@ -92,87 +135,22 @@ function globToRegExp(glob: string): RegExp {
     } else if (c === '?') re += '[^/]';
     else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
   }
-  return new RegExp(`^${re}$`);
+  return new RegExp(`^${re}$`, 'i');
 }
 
+/**
+ * Whether `relPath` is hidden by `patterns`: it, or a folder it is in, matches
+ * one. (A snapshot lists tracked files one by one, so `.aws/credentials` must
+ * be caught by `.aws` as the walk below catches the folder whole.)
+ */
 export function matchesExclude(relPath: string, patterns: readonly string[]): boolean {
-  const rel = relPath
-    .split(/[\\/]+/)
-    .filter(Boolean)
-    .join('/');
-  const base = rel.slice(rel.lastIndexOf('/') + 1);
+  const segs = relPath.split(/[\\/]+/).filter(Boolean);
+  const prefixes = segs.map((_, i) => segs.slice(0, i + 1).join('/'));
   for (const raw of patterns) {
     const pat = raw.trim().replace(/\/+$/, '');
     if (!pat) continue;
     const re = globToRegExp(pat.replace(/^\.\//, ''));
-    if (pat.includes('/')) {
-      if (re.test(rel)) return true;
-    } else if (re.test(base)) return true;
+    if (pat.includes('/') ? prefixes.some((p) => re.test(p)) : segs.some((seg) => re.test(seg))) return true;
   }
   return false;
-}
-
-export interface ExcludedPath {
-  rel: string;
-  kind: 'dir' | 'file';
-}
-
-/**
- * Walk the slot root and list what the patterns hide. A matched directory is
- * hidden whole (not descended). `.git` and `node_modules` are skipped unless a
- * pattern names them — they are huge and hold no secrets of this shape.
- * Bounded: the walk stops (and reports `truncated`) rather than spend minutes
- * on a monorepo; a hidden set that large is a sign to exclude a directory.
- */
-export function findExcluded(
-  root: string,
-  patterns: readonly string[],
-  fs: {
-    readdirSync: (
-      p: string,
-      o: { withFileTypes: true },
-    ) => Array<{ name: string; isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean }>;
-  },
-  limits: { maxMatches?: number; maxVisited?: number; maxDepth?: number } = {},
-): { excluded: ExcludedPath[]; truncated: boolean } {
-  const maxMatches = limits.maxMatches ?? 500;
-  const maxVisited = limits.maxVisited ?? 200_000;
-  const maxDepth = limits.maxDepth ?? 24;
-  const excluded: ExcludedPath[] = [];
-  let visited = 0;
-  let truncated = false;
-  const skipDirs = new Set(['.git', 'node_modules']);
-  const namesPatterns = (name: string) => patterns.some((p) => p.replace(/\/+$/, '') === name);
-  const walk = (dirRel: string, depth: number): void => {
-    if (truncated) return;
-    let entries;
-    try {
-      entries = fs.readdirSync(dirRel ? `${root}/${dirRel}` : root, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      if (++visited > maxVisited || excluded.length >= maxMatches) {
-        truncated = true;
-        return;
-      }
-      const rel = dirRel ? `${dirRel}/${e.name}` : e.name;
-      if (e.isSymbolicLink()) {
-        // Never follow: a link out of the workspace must not widen what is visible, and a
-        // link named like a secret is hidden as a file.
-        if (matchesExclude(rel, patterns)) excluded.push({ rel, kind: 'file' });
-        continue;
-      }
-      if (e.isDirectory()) {
-        if (matchesExclude(rel, patterns)) {
-          excluded.push({ rel, kind: 'dir' });
-          continue;
-        }
-        if (skipDirs.has(e.name) && !namesPatterns(e.name)) continue;
-        if (depth < maxDepth) walk(rel, depth + 1);
-      } else if (e.isFile() && matchesExclude(rel, patterns)) excluded.push({ rel, kind: 'file' });
-    }
-  };
-  walk('', 0);
-  return { excluded, truncated };
 }

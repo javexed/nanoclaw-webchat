@@ -1,15 +1,7 @@
 // ── Finding the package manager from inside the service ─────────────────────
-// A step that shells out to `pnpm` cannot assume the service PATH has it.
-// systemd gives the unit a bare PATH (/usr/local/bin:/usr/bin:/bin plus
-// whatever the unit sets), and version managers put pnpm somewhere else
-// entirely.
-//
-// The old rule — "pnpm ships alongside the node that is running us, so splice
-// dirname(process.execPath)" — is true for a single corepack-enabled install
-// and false the moment there are two. Observed 2026-09-20: the service runs
-// mise's node 26.5.0, whose bin holds only node/npm/npx/node-gyp, while pnpm
-// lives in the node 22 install next door. `spawn('pnpm', …)` → ENOENT, which
-// surfaced as "Install failed — ✗ spawn pnpm ENOENT" in the wizard.
+// systemd gives the unit a bare PATH, and version managers put pnpm elsewhere;
+// with several node versions installed, pnpm need not sit next to the node
+// running us, so a list of candidate directories is searched.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';

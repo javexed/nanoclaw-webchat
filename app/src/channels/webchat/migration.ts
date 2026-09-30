@@ -6,34 +6,28 @@ import type Database from 'better-sqlite3';
 // trunk-types cycle is erased at runtime; otherwise the cycle would
 // load with `Migration` undefined for the brief window it imports back.
 import type { Migration } from '../../db/migrations/index.js';
+import { addColumnIfMissing } from '../../db/add-column-if-missing.js';
+
+// Every migration here is `sqliteOnly` (raw PRAGMA/DDL): the sqlite-only side of
+// upstream's Migration union.
 
 /**
  * Webchat module schema (initial).
  *
- * Tables:
- *   - webchat_rooms: chat room metadata (name, created_at). DEPRECATED — the
- *     `webchat-drop-rooms` migration removes this table and migrates rows
- *     into `messaging_groups WHERE channel_type='webchat'`. Kept here for
- *     installs that came before that migration; new installs land both
- *     migrations in the same run, so the table flickers in and out.
- *   - webchat_messages: per-room message log used by the PWA for history
- *     and replay. Distinct from inbound.db / outbound.db — the adapter
- *     mirrors agent traffic into this log so the PWA has a single view.
- *     `room_id` originally REFERENCED webchat_rooms with a cascade — the
- *     drop-rooms migration recreates this table without the FK so the
- *     `room_id` column is just `messaging_groups.platform_id` by convention.
+ *   - webchat_rooms: dropped again by `webchat-drop-rooms` (rooms are
+ *     `messaging_groups WHERE channel_type='webchat'`); kept so the migration
+ *     chain stays replayable.
+ *   - webchat_messages: the PWA's per-room history, mirroring agent traffic so
+ *     the PWA has a single view (distinct from inbound.db / outbound.db).
  *   - webchat_push_subscriptions: Web Push endpoints keyed by user identity.
  */
 export const moduleWebchat: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 100,
   name: 'webchat-initial',
   up(db: Database.Database) {
-    // IF NOT EXISTS guards survive the install→remove→install cycle when the
-    // user skipped the optional DROP TABLE block in REMOVE.md (which would
-    // otherwise leave the tables behind without their schema_version row,
-    // breaking re-install with "table already exists").
+    // IF NOT EXISTS: a remove that skipped REMOVE.md's DROP TABLE block leaves
+    // the tables without their schema_version row, so re-install must not throw.
     db.exec(`
       CREATE TABLE IF NOT EXISTS webchat_rooms (
         id          TEXT PRIMARY KEY,
@@ -67,31 +61,18 @@ export const moduleWebchat: Migration = {
 };
 
 /**
- * Drop the redundant `webchat_rooms` table. After this migration:
- *   - `messaging_groups WHERE channel_type='webchat'` is the single source
- *     of truth for "what rooms exist". `webchat_rooms.id` corresponds to
- *     `messaging_groups.platform_id`.
- *   - `webchat_messages.room_id` is a plain string (no FK) that holds the
- *     same `platform_id`. The cascade-on-room-delete behavior moves to
- *     application code (`deleteWebchatRoom` deletes messages explicitly).
- *
- * Migration steps:
- *   1. Backfill any `webchat_rooms` rows that don't already exist in
- *      `messaging_groups` (the install-time room was created before any
- *      agent was wired, so it could be missing).
- *   2. Recreate `webchat_messages` without the FK (SQLite can't drop FKs
- *      in place; we copy into a new table and rename).
- *   3. Drop `webchat_rooms`.
+ * Drop `webchat_rooms`: `messaging_groups WHERE channel_type='webchat'` becomes
+ * the single source of rooms, and `webchat_messages.room_id` a plain
+ * `platform_id` string with no FK (`deleteWebchatRoom` cascades in app code).
+ * Backfills rooms missing from messaging_groups (the install-time room predates
+ * any wiring), then rebuilds webchat_messages, since SQLite can't drop an FK in place.
  */
 export const moduleWebchatDropRooms: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 101,
   name: 'webchat-drop-rooms',
   up(db: Database.Database) {
-    // Skip cleanly on installs that never created webchat_rooms (shouldn't
-    // happen since webchat-initial runs first in the same migrate pass, but
-    // defensive against future reordering).
+    // Defensive against reordering: webchat-initial normally runs first.
     const hasRooms = db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='webchat_rooms'`).get();
     if (!hasRooms) return;
 
@@ -105,10 +86,8 @@ export const moduleWebchatDropRooms: Migration = {
          )`,
       )
       .all() as { id: string; name: string; created_at: number }[];
-    // `instance` (NOT NULL) is added by upstream migration 016, which precedes
-    // this one in production order. Stay robust if it isn't present yet (e.g. a
-    // test that builds a baseline excluding 016): include the column only when
-    // it exists — a later 016 backfills it to channel_type ('webchat').
+    // `instance` (NOT NULL) comes from upstream migration 016; a baseline
+    // without it (tests) gets it backfilled to channel_type by a later 016.
     const hasInstance = (db.prepare("PRAGMA table_info('messaging_groups')").all() as Array<{ name: string }>).some(
       (c) => c.name === 'instance',
     );
@@ -151,20 +130,14 @@ export const moduleWebchatDropRooms: Migration = {
 };
 
 /**
- * Per-room "prime" agent designation.
+ * Per-room "prime" agent: answers every message that doesn't @-mention another
+ * wired agent. Implemented purely as engage_pattern rewrites
+ * (`recomputeEngagePatterns`, server/agent-wiring.ts).
  *
- * A room can opt-in to "prime" routing: one wired agent answers all messages,
- * unless the message @-mentions another wired agent (by their slug folder
- * name). This is implemented entirely by rewriting `messaging_group_agents.engage_pattern`
- * on every wiring change — no router code change needed. See `recomputeEngagePatterns`
- * in server.ts for the rewrite logic.
- *
- * `room_id` is the messaging_groups.platform_id (no FK because the FK
- * constraint would force us to mirror cascade-on-room-delete here too;
- * the deleteWebchatRoom path already cleans this table explicitly).
+ * Webchat `room_id` columns are `messaging_groups.platform_id` with no FK;
+ * deleteWebchatRoom cascades in app code. Later tables follow this convention.
  */
 export const moduleWebchatRoomPrimes: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 102,
   name: 'webchat-room-primes',
@@ -180,26 +153,14 @@ export const moduleWebchatRoomPrimes: Migration = {
 };
 
 /**
- * Models — registered LLM endpoints/configurations that the operator can
- * assign to agents.
+ * Model registry. `webchat_models.kind` selects the backend ('anthropic' pins a
+ * model_id on the OneCLI Anthropic credential; 'ollama' points the Anthropic SDK
+ * at <endpoint>/v1/messages); `credential_ref` names a OneCLI secret for keyed kinds.
  *
- * `webchat_models` is the registry. `kind` selects the implementation:
- *   - 'anthropic': use the operator's existing Anthropic credential
- *     (managed by OneCLI) but pin to a specific model_id.
- *   - 'ollama': route Anthropic SDK calls at a local Ollama endpoint
- *     (Ollama speaks the Anthropic API at <endpoint>/v1/messages).
- *   `endpoint` is required for ollama, ignored for anthropic.
- *   `credential_ref` is reserved for future kinds (openai-compatible) and
- *   points at a OneCLI secret name; null for the MVP kinds.
- *
- * `webchat_agent_models` records which model is assigned to which agent.
- * PK on agent_group_id keeps it 1:1 (one model per agent). No FK to
- * `webchat_models` so the delete-model handler can do
- * cascade-with-confirmation in JS — operator sees the impact list before
- * the assignments disappear.
+ * `webchat_agent_models` is 1:1 (PK agent_group_id). No FK to webchat_models so
+ * delete-model can show the impact list and cascade in JS.
  */
 export const moduleWebchatModels: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 103,
   name: 'webchat-models',
@@ -227,28 +188,11 @@ export const moduleWebchatModels: Migration = {
 };
 
 /**
- * Per-room engagement-default setting.
- *
- * Two values:
- *   'broadcast'   — legacy default. When no prime is set, every wiring's
- *                   engage_pattern collapses to '.', i.e. every agent
- *                   responds to every message. Useful for single-agent
- *                   rooms; chaotic for many-agent shared rooms.
- *   'mention-only' — when no prime is set, every wiring is rewritten to
- *                   `\B@<folder>\b`. Unaddressed messages fall through
- *                   to nobody — the room is silent unless you @-mention
- *                   someone. Combine with prime=NULL for a "trading
- *                   floor" room with no fallback agent.
- *
- * When a prime IS set, the prime-mode rewrite logic in `recomputeEngagePatterns`
- * takes over and engage_default is ignored. This setting only affects the
- * no-prime branch.
- *
- * `room_id` is the messaging_groups.platform_id (same convention as
- * webchat_room_primes — no FK so the room-delete path can cascade in JS).
+ * Per-room settings row; later migrations add columns to it. `engage_default`
+ * is not consulted for routing: `recomputeEngagePatterns` makes every un-primed
+ * wiring mention-only.
  */
 export const moduleWebchatRoomSettings: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 105,
   name: 'webchat-room-settings',
@@ -264,36 +208,20 @@ export const moduleWebchatRoomSettings: Migration = {
 };
 
 /**
- * Skill-side index of webchat-bound approvals so the PWA can query
- * "which approvals are for this user?" without depending on a trunk-side
- * stamp on `pending_approvals.channel_type`/`platform_id` (those columns
- * exist on the trunk schema but trunk's `requestApproval` doesn't
- * populate them — so a query filtering on them returns nothing).
- *
- * Webchat populates this index inside its own `deliver()` whenever an
- * approval lands on a webchat approval-inbox. The PWA's
- * `/api/approvals/pending` query JOINs `pending_approvals` against this
- * index keyed on `approval_id`. No trunk modification required.
- *
- * Rows aren't pruned when an approval transitions out of 'pending' —
- * stale rows are filtered out by the JOIN's `pa.status = 'pending'`
- * predicate. A future cleanup job can reap them; for current install
- * sizes (dozens of approvals total in the lifetime of an install), the
- * cost is negligible.
+ * Webchat-side index of approvals delivered to a webchat inbox (written in
+ * `deliver()`), because trunk's `requestApproval` leaves
+ * `pending_approvals.channel_type`/`platform_id` unset. `/api/approvals/pending`
+ * JOINs on approval_id; rows are never pruned — the JOIN's
+ * `pa.status = 'pending'` filters stale ones.
  */
 export const moduleWebchatActivityLog: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 211,
   name: 'webchat-activity-log',
   up(db: Database.Database) {
-    // Durable copy of the agent activity feed (the thinking bubble): tool
-    // calls, progress, and reasoning. The container's status_events table is
-    // per-session and wiped each turn, so this is the only place the feed
-    // survives a turn. `detail` holds the FULL reasoning block for a
-    // 'reasoning' row (the live ticker only carries the clipped line);
-    // everything is already redacted upstream at the feed's choke point AND
-    // again in sendStatus before it reaches here. Pruned to 30 days.
+    // Durable copy of the agent activity feed (the container's status_events is
+    // wiped each turn). `detail` holds a reasoning row's full block. Rows arrive
+    // redacted twice (the feed's choke point and sendStatus). Pruned to 30 days.
     db.exec(`
       CREATE TABLE IF NOT EXISTS webchat_activity_log (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -311,7 +239,6 @@ export const moduleWebchatActivityLog: Migration = {
 };
 
 export const moduleWebchatApprovalsIndex: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 104,
   name: 'webchat-approvals-index',
@@ -329,22 +256,11 @@ export const moduleWebchatApprovalsIndex: Migration = {
 };
 
 /**
- * Per-user room archive state.
- *
- * "Archived" is purely a sidebar-presentation hint — the room still routes
- * messages normally and shows up in unread counts. Each user controls their
- * own archive set; archiving a room only affects the archiving user's view.
- *
- * `room_id` is `messaging_groups.platform_id`. No FK (matches the
- * webchat_room_primes / webchat_messages convention) so cascade-on-delete
- * is handled in application code (deleteWebchatRoom).
- *
- * `user_id` is the trusted webchat userId (`webchat:<scheme>:<id>`),
- * established at auth time — same identifier used everywhere else
- * webchat does per-user state (push subscriptions, role grants).
+ * Per-user room archive (a sidebar hint; the room still routes). Split into
+ * global archives + per-user hides by `webchat-archive-split`.
+ * Webchat `user_id` columns hold the trusted auth-time id (`webchat:<scheme>:<id>`).
  */
 export const moduleWebchatUserArchives: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 105,
   name: 'webchat-user-archives',
@@ -363,38 +279,14 @@ export const moduleWebchatUserArchives: Migration = {
 };
 
 /**
- * Split the per-user "archive" concept into two:
- *
- *   - `webchat_room_archives` — global archive flag per room, settable by
- *     owners + admins. Indicates a room is closed-to-active-work; appears
- *     in a collapsed "Archived" section in everyone's sidebar but still
- *     routes messages normally (archive is presentation, not silencing).
- *
- *   - `webchat_user_room_hides` — renamed from `webchat_user_room_archives`.
- *     Per-user sidebar preference. Hides a room from one user's view only,
- *     no effect on anyone else.
- *
- * Migration steps (atomic — runs in a single transaction per the migrate
- * loop):
- *
- *   1. Create the new global-archive table.
- *   2. Promote existing per-user "archive" rows → one global-archive row per
- *      room (earliest archived_at wins; archived_by null because they came
- *      from possibly multiple users and the legacy table didn't track it).
- *   3. ALTER TABLE rename `webchat_user_room_archives` → `webchat_user_room_hides`.
- *      SQLite preserves indexes through ALTER TABLE RENAME; we drop+recreate
- *      the index under the new name for clarity, so DB inspection makes
- *      sense.
- *   4. Truncate the new `webchat_user_room_hides` table — the migrated rows
- *      represented archive intent, not hide intent, and were promoted to
- *      globals in step 2. Hides starts empty for everyone.
- *
- * Forward-only: there is no down-migration. Reverting would conflate
- * promoted-global-archives with original-per-user-archives, which can't be
- * separated cleanly.
+ * Split archive into `webchat_room_archives` (global, owner/admin-set; a
+ * collapsed sidebar section, still routes) and `webchat_user_room_hides`
+ * (per-user, renamed from webchat_user_room_archives). Existing per-user rows
+ * become one global row per room (earliest archived_at, archived_by NULL) and
+ * hides start empty — they recorded archive intent, not hide intent.
+ * Forward-only: the two kinds of archive can't be separated again.
  */
 export const moduleWebchatArchiveSplit: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 106,
   name: 'webchat-archive-split',
@@ -407,9 +299,7 @@ export const moduleWebchatArchiveSplit: Migration = {
       );
     `);
 
-    // Step 2 + 3 + 4 depend on the legacy table existing. On fresh installs
-    // it exists because version 105 ran first (registered earlier in the
-    // migrations array). Guard defensively in case of reordering.
+    // Defensive against reordering: version 105 normally created it.
     const hasLegacy = db
       .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='webchat_user_room_archives'`)
       .get();
@@ -432,17 +322,11 @@ export const moduleWebchatArchiveSplit: Migration = {
 };
 
 /**
- * Relax the primary key on `webchat_approvals_index` from `approval_id` to
- * `(approval_id, platform_id)` so one approval can be indexed against multiple
- * approver inboxes. Required for the fan-out delivery path in
- * `requestApproval` — every reachable approver gets a card with the same
- * approval_id, and the index needs one row per recipient inbox.
- *
- * SQLite can't redefine a primary key in place, so this rebuilds the table.
- * Existing rows are preserved; the platform_id lookup index is recreated.
+ * Widen `webchat_approvals_index`'s PK to `(approval_id, platform_id)`: fan-out
+ * gives every reachable approver a card with the same approval_id. SQLite can't
+ * change a PK in place, so the table is rebuilt (rows kept).
  */
 export const moduleWebchatApprovalsIndexFanout: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 107,
   name: 'webchat-approvals-index-fanout',
@@ -471,7 +355,6 @@ export const moduleWebchatApprovalsIndexFanout: Migration = {
  * Powers GET /api/search. FTS5 is compiled into the bundled SQLite.
  */
 export const moduleWebchatMessageFts: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 110,
   name: 'webchat-message-fts',
@@ -498,15 +381,11 @@ export const moduleWebchatMessageFts: Migration = {
 };
 
 /**
- * Agent lifecycle status: active | paused | archived. Delivered as a webchat
- * module migration (webchat is the consumer — the Agents UI surfaces/sets it;
- * the router gates engagement on it). Adds a NOT NULL column defaulting to
- * 'active', so every existing agent keeps responding. Writes are validated in
- * setAgentStatus (src/db/agent-groups.ts) — plain TEXT, no CHECK, matching the
- * rest of the schema.
+ * Agent lifecycle status: active | paused | archived (the router gates
+ * engagement on it). Plain TEXT, validated in setAgentStatus
+ * (src/db/agent-groups.ts); defaults to 'active'.
  */
 export const moduleWebchatAgentStatus: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 111,
   name: 'agent-status',
@@ -518,26 +397,12 @@ export const moduleWebchatAgentStatus: Migration = {
 };
 
 /**
- * Per-user "last read" marker so unread state survives an away-and-return.
- *
- * Before this table unread was a purely client-side, in-memory Set: it was
- * populated only by live `{type:'unread'}` WS pushes while a tab was open, so
- * messages that arrived while the user was away left no trace the UI could
- * reconstruct on reconnect (the rooms payload carried no unread metadata).
- *
- * `last_read_at` is the high-water mark of message `created_at` the user has
- * seen in a room. A room is unread for the user when the newest message in it
- * is newer than this marker (or there's no row yet and the room has messages).
- * Advanced on join, on receiving a message in the open room, and on the user's
- * own sends. Keyed on the trusted webchat `user_id` (same identifier as
- * webchat_user_room_hides / push subscriptions), so the marker — and therefore
- * the unread badge — is shared across all of that user's devices.
- *
- * `room_id` is `messaging_groups.platform_id` (no FK, matching the rest of the
- * webchat tables; deleteWebchatRoom clears rows in app code).
+ * Per-user "last read" marker, so unread survives time away and is shared
+ * across the user's devices. `last_read_at` is the newest message `created_at`
+ * seen; a room is unread when a newer message exists (or no row and any
+ * message). Advanced on join, on a message in the open room, and on own sends.
  */
 export const moduleWebchatRoomReads: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 112,
   name: 'webchat-room-reads',
@@ -564,7 +429,6 @@ export const moduleWebchatRoomReads: Migration = {
  * Secure-by-default: rooms start 'disabled' until an admin opts in.
  */
 export const moduleWebchatRoomCredentialMode: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 108,
   name: 'webchat-room-credential-mode',
@@ -579,10 +443,9 @@ export const moduleWebchatRoomCredentialMode: Migration = {
  * UserCreds OAuth: per-room toggle allowing members to connect a Claude *subscription*
  * (OAuth) token, orthogonal to `credential_mode` (which governs API-key UserCreds).
  * Off by default — a room never accepts OAuth tokens until an owner/admin opts
- * in. See docs/webchat/user-credentials-oauth.md.
+ * in. See docs/webchat/user-credentials.md §9.
  */
 export const moduleWebchatRoomOauthAllowed: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 109,
   name: 'webchat-room-oauth-allowed',
@@ -600,7 +463,6 @@ export const moduleWebchatRoomOauthAllowed: Migration = {
  * Defaults to a slug of the display name on first connect (see ensureWebchatUserHandle).
  */
 export const moduleWebchatUserHandles: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 113,
   name: 'webchat-user-handles',
@@ -618,18 +480,10 @@ export const moduleWebchatUserHandles: Migration = {
 };
 
 /**
- * Per-user room pins. The sidebar sorts rooms by recent activity (newest
- * message first); pinned rooms are lifted into a sticky group at the top, above
- * a divider, so the ones you care about don't drift down as other rooms get
- * traffic. Each user controls their own pins — pinning only affects their view.
- *
- * Keyed on the trusted webchat `user_id` (same as webchat_room_reads /
- * webchat_user_room_hides), so a pin follows the user across all their devices.
- * `room_id` is `messaging_groups.platform_id` (no FK; deleteWebchatRoom clears
- * rows in app code).
+ * Per-user room pins: lifted into a sticky group above the activity-sorted
+ * sidebar. Keyed on user_id, so pins follow the user across devices.
  */
 export const moduleWebchatRoomPins: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 114,
   name: 'webchat-room-pins',
@@ -648,23 +502,15 @@ export const moduleWebchatRoomPins: Migration = {
 };
 
 /**
- * Workspace-wide credentials policy + per-room mode inheritance.
+ * Workspace credentials policy. `webchat_settings` (singleton id=1) holds the
+ * accepted user-credential types ({API key | OAuth} × {Claude | Codex}) and the
+ * default room mode; `credential_mode_override` NULL = inherit it.
  *
- * `webchat_settings` is a singleton (id=1) holding which user-credential TYPES
- * the workspace accepts ({API key | OAuth} × {Claude | Codex}) and the default
- * room mode. Types are global so they're configured once, not per room. The
- * per-room control becomes an OVERRIDE: `credential_mode_override` is nullable —
- * NULL means "inherit the global default", a value means this room overrides it.
- * New/untouched rooms (NULL) inherit automatically.
- *
- * Migration preserves current behavior: any room previously set to optional/
- * required keeps that as an explicit override, and `allow_claude_oauth` seeds to
- * 1 if any room had the old per-room `oauth_allowed` on (so existing OAuth rooms
- * keep working). Anthropic keys default on; Codex types default off (and are
- * inert until the Codex provider is installed).
+ * Behavior-preserving: optional/required rooms keep their mode as an override,
+ * and `allow_claude_oauth` seeds to 1 if any room had `oauth_allowed` on.
+ * Anthropic types default on; Codex off (inert until the provider is installed).
  */
 export const moduleWebchatCredentialsConfig: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 115,
   name: 'webchat-credentials-config',
@@ -708,7 +554,6 @@ export const moduleWebchatCredentialsConfig: Migration = {
  *     existing `webchat_room_reads` rows seed the 'main' thread marker.
  */
 export const moduleWebchatThreads: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 116,
   name: 'webchat-threads',
@@ -733,12 +578,7 @@ export const moduleWebchatThreads: Migration = {
     `);
     // ADD COLUMN is not idempotent — guard it so a re-run (or a partial prior
     // apply) doesn't throw "duplicate column name".
-    const hasThreadCol = (db.prepare("PRAGMA table_info('webchat_messages')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'thread_id',
-    );
-    if (!hasThreadCol) {
-      db.exec(`ALTER TABLE webchat_messages ADD COLUMN thread_id TEXT NOT NULL DEFAULT 'main'`);
-    }
+    addColumnIfMissing(db, 'webchat_messages', `thread_id TEXT NOT NULL DEFAULT 'main'`);
     db.exec(`
       CREATE INDEX IF NOT EXISTS idx_webchat_messages_thread
         ON webchat_messages(room_id, thread_id, created_at);
@@ -750,23 +590,15 @@ export const moduleWebchatThreads: Migration = {
     `);
     // Per-room auto-thread setting (confirm-first per-agent lanes). NULL = unset
     // → effective default is "on for multi-agent rooms" (computed at read).
-    const hasAutoThread = (
-      db.prepare("PRAGMA table_info('webchat_room_settings')").all() as Array<{ name: string }>
-    ).some((c) => c.name === 'auto_thread');
-    if (!hasAutoThread) {
-      db.exec(`ALTER TABLE webchat_room_settings ADD COLUMN auto_thread INTEGER`);
-    }
+    addColumnIfMissing(db, 'webchat_room_settings', `auto_thread INTEGER`);
   },
 };
 
 /**
- * Per-thread "engaged agents" set. A row means agent_group_id is engaged in
- * (room_id, thread_id): it receives every message in that thread and is expected
- * to reply when addressed. Never written for the 'main' thread (the regular chat
- * stays mention-only). See docs/webchat/thread-engaged-agents.md.
+ * Per-thread "engaged agents" set from a retired feature; dropped again by
+ * webchat-drop-thread-engaged. Kept so the ordered migration list stays intact.
  */
 export const moduleWebchatThreadEngaged: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 117,
   name: 'webchat-thread-engaged',
@@ -786,14 +618,10 @@ export const moduleWebchatThreadEngaged: Migration = {
 };
 
 /**
- * Manual ordering for pinned rooms. Adds a per-user `position` to
- * webchat_room_pins so the operator can drag pinned rooms into a fixed order
- * (previously the pinned group auto-sorted by recent activity). Existing pins
- * are backfilled 0-indexed by pinned_at (oldest pin at the top), a stable
- * starting order; the room_id tiebreaker keeps it deterministic.
+ * Per-user drag order for pinned rooms. Existing pins are backfilled 0-indexed
+ * by pinned_at (oldest first), room_id breaking ties so the order is deterministic.
  */
 export const moduleWebchatRoomPinOrder: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 116,
   name: 'webchat-room-pin-order',
@@ -819,21 +647,15 @@ export const moduleWebchatRoomPinOrder: Migration = {
  *     thread messages (skip the pulled-in prefix) and the client mark imports.
  *   - webchat_thread_sync — per-thread high-water marks so pull/push are
  *     incremental (each sync appends only the source delta; no duplicates).
- * See docs/webchat/thread-context-sync.md.
+ * See docs/webchat/threads.md §8.
  */
 export const moduleWebchatThreadContextSync: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 118,
   name: 'webchat-thread-context-sync',
   up(db: Database.Database) {
     // ADD COLUMN isn't idempotent — guard against a partial prior apply.
-    const hasOrigin = (db.prepare("PRAGMA table_info('webchat_messages')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'origin',
-    );
-    if (!hasOrigin) {
-      db.exec(`ALTER TABLE webchat_messages ADD COLUMN origin TEXT`);
-    }
+    addColumnIfMissing(db, 'webchat_messages', `origin TEXT`);
     db.exec(`
       CREATE TABLE IF NOT EXISTS webchat_thread_sync (
         room_id            TEXT NOT NULL,
@@ -847,36 +669,17 @@ export const moduleWebchatThreadContextSync: Migration = {
 };
 
 /**
- * MCP server registry — mirrors webchat_models/webchat_agent_models (§103
- * above), but the assignment is many-to-many (an agent can have several MCP
- * servers; the same server can be wired to several agents), unlike a model's
- * 1:1 assignment.
+ * MCP server registry, like webchat_models but with a many-to-many assignment
+ * (`webchat_agent_mcp_servers`, no FK: delete-server cascades in JS after
+ * showing the impact list). `transport` is 'stdio' (command/args/env, spawned
+ * in the agent's container) or 'http' (url/headers; older rows may say 'sse').
+ * args/env/headers are JSON text, like container_configs.mcp_servers.
  *
- * `webchat_mcp_servers` is the registry. `transport` selects the shape:
- *   - 'stdio': command/args/env — a subprocess spawned inside the agent's
- *     container. Defined once here so the same server can be attached to
- *     multiple agents without re-entering it.
- *   - 'http': url/headers — a server reached over the network ('sse' rows predate its retirement)
- *     (e.g. a tool server on another machine). These are the transports the
- *     host-side probe (POST /api/mcp-servers/probe) can verify before save.
- * `args`/`env`/`headers` are stored as JSON text (sqlite has no array/object
- * column type), matching the mcp_servers JSON column on container_configs.
- *
- * `webchat_agent_mcp_servers` is the assignment join. PK on
- * (agent_group_id, mcp_server_id) — many-to-many, no FK (mirrors
- * webchat_agent_models: the delete-server handler cascades in JS after
- * surfacing the impact list to the operator).
- *
- * Assign/unassign is an INCREMENTAL upsert/delete against a single key —
- * container_configs.mcp_servers[server.name] — not a wholesale recompute.
- * That matters because `ncl groups config add-mcp-server` writes into the
- * same JSON column directly (a separate, still-supported entry point); a
- * full recompute-from-registry on every assignment change would silently
- * wipe any ncl-added server with a name outside the registry. Incremental
- * writes only ever touch the one key they own.
+ * Assign/unassign upserts/deletes ONE key, container_configs.mcp_servers[name],
+ * never recomputes the whole map: `ncl groups config add-mcp-server` writes the
+ * same column, and a recompute would wipe its servers.
  */
 export const moduleWebchatMcpServers: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 119,
   name: 'webchat-mcp-servers',
@@ -908,30 +711,19 @@ export const moduleWebchatMcpServers: Migration = {
 };
 
 /**
- * First-run setup-wizard state. A single boolean on the `webchat_settings`
- * singleton (id=1): 0 = onboarding not finished (the owner sees the auto-opening
- * wizard on first login), 1 = finished/dismissed. Owner-only to flip; re-openable
- * from Settings regardless. Kept on the existing settings singleton rather than a
- * new table — it's one workspace-wide flag.
+ * First-run setup wizard: 0 = not finished (auto-opens for the owner),
+ * 1 = finished/dismissed. Owner-only to flip; re-openable from Settings.
  */
 export const moduleWebchatOnboarding: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 123,
   name: 'webchat-onboarding',
   up(db: Database.Database) {
     // ADD COLUMN isn't idempotent — guard against a re-run / partial prior apply.
-    const hasCol = (db.prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'onboarding_complete',
-    );
-    if (!hasCol) {
-      db.exec(`ALTER TABLE webchat_settings ADD COLUMN onboarding_complete INTEGER NOT NULL DEFAULT 0`);
-      // An install that already has agent groups finished setup long ago — an
-      // upgrade must never pop the first-run wizard at it. Default 0 (above) is
-      // only correct for a genuinely fresh install, i.e. one with no agent
-      // groups at the moment this migration first runs. The webchat_settings
-      // id=1 row is seeded by an earlier migration, so this UPDATE reliably
-      // lands on it.
+    if (addColumnIfMissing(db, 'webchat_settings', `onboarding_complete INTEGER NOT NULL DEFAULT 0`)) {
+      // An upgrade with agent groups already set up must never get the
+      // first-run wizard; 0 is right only for a fresh install. Row id=1 is
+      // seeded by an earlier migration.
       const alreadyConfigured = (db.prepare('SELECT COUNT(*) AS n FROM agent_groups').get() as { n: number }).n > 0;
       if (alreadyConfigured) {
         db.exec(`UPDATE webchat_settings SET onboarding_complete = 1 WHERE id = 1`);
@@ -946,92 +738,60 @@ export const moduleWebchatOnboarding: Migration = {
  * webchat_settings singleton: one workspace-wide choice, owner-set.
  */
 export const moduleWebchatStt: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 124,
   name: 'webchat-stt',
   up(db: Database.Database) {
-    const hasCol = (db.prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'stt_cleanup_model_id',
-    );
-    if (!hasCol) {
-      db.exec(`ALTER TABLE webchat_settings ADD COLUMN stt_cleanup_model_id TEXT`);
-    }
+    addColumnIfMissing(db, 'webchat_settings', `stt_cleanup_model_id TEXT`);
   },
 };
 
 /**
- * Bearer-token opt-out. The provisioner seeds WEBCHAT_TOKEN so a LAN-exposed
- * install isn't open before the owner claims it, but a shared secret is weaker
- * than identity auth. Once Tailscale or a trusted-proxy / SSO (EntraID) method
- * is live, the owner can retire the bearer token from Settings: this flag makes
- * auth.ts ignore WEBCHAT_TOKEN (the value stays in .env but no longer
- * authenticates). Only offered when an alternative method is active, so
- * disabling it can never leave the server with no way to authenticate anyone.
- * 0 = bearer honored (default), 1 = bearer inert.
+ * Bearer-token opt-out. WEBCHAT_TOKEN keeps a LAN-exposed install closed until
+ * claimed, but a shared secret is weaker than identity auth; once Tailscale or a
+ * trusted proxy / SSO is live the owner may retire it (auth.ts then ignores the
+ * .env value). Only offered while another method is active, so it can never
+ * leave no way in. 0 = bearer honored (default), 1 = bearer inert.
  */
 export const moduleWebchatBearerAuth: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 130,
   name: 'webchat-bearer-auth',
   up(db: Database.Database) {
-    const hasCol = (db.prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'bearer_token_disabled',
-    );
-    if (!hasCol) {
-      db.exec(`ALTER TABLE webchat_settings ADD COLUMN bearer_token_disabled INTEGER NOT NULL DEFAULT 0`);
-    }
+    addColumnIfMissing(db, 'webchat_settings', `bearer_token_disabled INTEGER NOT NULL DEFAULT 0`);
   },
 };
 
 /**
- * MCP + skills-marketplace opt-out. Both are code-execution surfaces (MCP wires
- * arbitrary servers; the skills marketplace imports code from git). On by
- * default (recommended), but an owner can disable them from the setup wizard /
- * Settings for a locked-down deployment — which hides the MCP + Skills tabs AND
- * makes the server 403 their endpoints (DOM + server, per the admin-surface
- * rule). 0 = enabled (default), 1 = disabled.
+ * MCP + skills-marketplace switch. Both are code-execution surfaces (MCP wires
+ * arbitrary servers; the skills marketplace imports code from git), so they are
+ * OFF by default on a fresh install; an owner turns them on from the setup
+ * wizard or Settings. Off hides the MCP + Skills tabs AND makes the server 403
+ * their endpoints (DOM + server, per the admin-surface rule). 1 = disabled
+ * (fresh default), 0 = enabled.
  */
 export const moduleWebchatMarketplaceToggle: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 131,
   name: 'webchat-marketplace-toggle',
   up(db: Database.Database) {
-    const hasCol = (db.prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'marketplace_disabled',
-    );
-    if (!hasCol) {
-      // Disabled by default — the MCP & skills catalog is opt-in. The guard means
-      // installs that already added this column (at the old default 0) keep their
-      // state; only fresh DBs pick up the disabled default.
-      db.exec(`ALTER TABLE webchat_settings ADD COLUMN marketplace_disabled INTEGER NOT NULL DEFAULT 1`);
-    }
+    // The guard keeps any existing column's value; only fresh DBs get DEFAULT 1.
+    addColumnIfMissing(db, 'webchat_settings', `marketplace_disabled INTEGER NOT NULL DEFAULT 1`);
   },
 };
 
 /**
- * Fleet credential isolation as a runtime setting rather than an env var.
- *
- * NULL = follow `CREDENTIAL_ISOLATION` in .env (what installs had before this
- * column existed, so nothing changes on upgrade). 0/1 = an explicit operator
- * choice made in Settings, which wins over the env var.
- *
- * Nullable on purpose: "not chosen" and "chosen off" must be distinguishable,
- * or an install that set the env var would silently lose it the first time the
- * settings row was written for any other reason.
+ * Fleet credential isolation. NULL = follow `CREDENTIAL_ISOLATION` in .env;
+ * 0/1 = an explicit Settings choice, which wins. Nullable on purpose: "not
+ * chosen" must differ from "chosen off", or the env var would be silently lost
+ * the first time the settings row is written for another reason.
  */
 export const moduleWebchatCredentialIsolation: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 205,
   name: 'webchat-credential-isolation',
   up(db: Database.Database) {
-    const hasCol = (db.prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'credential_isolation',
-    );
-    if (!hasCol) db.exec(`ALTER TABLE webchat_settings ADD COLUMN credential_isolation INTEGER`);
+    addColumnIfMissing(db, 'webchat_settings', `credential_isolation INTEGER`);
   },
 };
 
@@ -1043,38 +803,24 @@ export const moduleWebchatCredentialIsolation: Migration = {
  * itself. 0 = off (default), 1 = armed.
  */
 export const moduleWebchatTailscaleOwner: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 132,
   name: 'webchat-tailscale-owner',
   up(db: Database.Database) {
-    const hasCol = (db.prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'promote_first_tailscale_owner',
-    );
-    if (!hasCol) {
-      db.exec(`ALTER TABLE webchat_settings ADD COLUMN promote_first_tailscale_owner INTEGER NOT NULL DEFAULT 0`);
-    }
+    addColumnIfMissing(db, 'webchat_settings', `promote_first_tailscale_owner INTEGER NOT NULL DEFAULT 0`);
   },
 };
 
 /**
- * Workspace-level Read aloud. The speaker control on agent replies is enabled
- * by the OWNER for the whole workspace — not per device (a per-device switch
- * confused shared rooms: one member saw speakers, another didn't). 0 = off
- * (default), 1 = on for every authed user.
+ * Read aloud, owner-set for the whole workspace so everyone in a shared room
+ * sees the same speaker controls. 0 = off (default), 1 = on for every authed user.
  */
 export const moduleWebchatReadAloud: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 133,
   name: 'webchat-read-aloud',
   up(db: Database.Database) {
-    const hasCol = (db.prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'read_aloud_enabled',
-    );
-    if (!hasCol) {
-      db.exec(`ALTER TABLE webchat_settings ADD COLUMN read_aloud_enabled INTEGER NOT NULL DEFAULT 0`);
-    }
+    addColumnIfMissing(db, 'webchat_settings', `read_aloud_enabled INTEGER NOT NULL DEFAULT 0`);
   },
 };
 
@@ -1084,17 +830,11 @@ export const moduleWebchatReadAloud: Migration = {
  * the place to teach the tidy pass domain words ("NanoClaw", not "Nano-clot").
  */
 export const moduleWebchatSttPrompt: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 134,
   name: 'webchat-stt-prompt',
   up(db: Database.Database) {
-    const hasCol = (db.prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'stt_cleanup_prompt',
-    );
-    if (!hasCol) {
-      db.exec(`ALTER TABLE webchat_settings ADD COLUMN stt_cleanup_prompt TEXT`);
-    }
+    addColumnIfMissing(db, 'webchat_settings', `stt_cleanup_prompt TEXT`);
   },
 };
 
@@ -1106,41 +846,26 @@ export const moduleWebchatSttPrompt: Migration = {
  * src/modules/approvals/prejudge.ts.
  */
 export const moduleWebchatApprovalPrejudge: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 207,
   name: 'webchat-approval-prejudge',
   up(db: Database.Database) {
-    const cols = db.prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>;
-    if (!cols.some((c) => c.name === 'approval_prejudge_model_id')) {
-      db.exec(`ALTER TABLE webchat_settings ADD COLUMN approval_prejudge_model_id TEXT`);
-    }
-    if (!cols.some((c) => c.name === 'approval_prejudge_actions')) {
-      db.exec(`ALTER TABLE webchat_settings ADD COLUMN approval_prejudge_actions TEXT`);
-    }
+    addColumnIfMissing(db, 'webchat_settings', `approval_prejudge_model_id TEXT`);
+    addColumnIfMissing(db, 'webchat_settings', `approval_prejudge_actions TEXT`);
   },
 };
 
 /**
- * Workspace DEFAULT model — the roster model (webchat_models.id, ollama kind)
- * that any claude-family agent WITHOUT its own assigned model falls back to.
- * The model analogue of the workspace default credential: the wizard's
- * "default engine = Ollama" writes this, and every unassigned agent inherits
- * it at spawn. NULL = no fallback (unassigned agents use the workspace
- * Anthropic credential as before).
+ * Workspace DEFAULT model (webchat_models.id, ollama kind) inherited at spawn by
+ * every claude-family agent without its own assignment; written by the wizard's
+ * "default engine = Ollama". NULL = unassigned agents use the Anthropic credential.
  */
 export const moduleWebchatDefaultModel: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 125,
   name: 'webchat-default-model',
   up(db: Database.Database) {
-    const hasCol = (db.prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'default_model_id',
-    );
-    if (!hasCol) {
-      db.exec(`ALTER TABLE webchat_settings ADD COLUMN default_model_id TEXT`);
-    }
+    addColumnIfMissing(db, 'webchat_settings', `default_model_id TEXT`);
   },
 };
 
@@ -1151,7 +876,6 @@ export const moduleWebchatDefaultModel: Migration = {
  * folder per entry under `dir`.
  */
 export const moduleWebchatSkillSources: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 120,
   name: 'webchat-skill-sources',
@@ -1183,15 +907,11 @@ export const moduleWebchatSkillSources: Migration = {
  * and any admin-added collection — is community (review link + confirm gate).
  */
 export const moduleWebchatSkillSourcesOfficial: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 121,
   name: 'webchat-skill-sources-official',
   up(db: Database.Database) {
-    const hasCol = (db.prepare("PRAGMA table_info('webchat_skill_sources')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'official',
-    );
-    if (!hasCol) db.exec('ALTER TABLE webchat_skill_sources ADD COLUMN official INTEGER NOT NULL DEFAULT 0');
+    addColumnIfMissing(db, 'webchat_skill_sources', 'official INTEGER NOT NULL DEFAULT 0');
     db.prepare("UPDATE webchat_skill_sources SET official = 1 WHERE id = 'anthropic'").run();
   },
 };
@@ -1200,7 +920,6 @@ export const moduleWebchatSkillSourcesOfficial: Migration = {
 // an owner has switched off, so they can be removed from the pool like any GitHub
 // collection. Absence = enabled; a row = disabled.
 export const moduleWebchatDisabledBuiltins: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 122,
   name: 'webchat-disabled-builtins',
@@ -1216,38 +935,24 @@ export const moduleWebchatDisabledBuiltins: Migration = {
  * re-establishes the forwarder without re-configuration.
  */
 export const moduleWebchatAuditSyslog: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 208,
   name: 'webchat-audit-syslog',
   up(db: Database.Database) {
-    const hasCol = (db.prepare("PRAGMA table_info('webchat_settings')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'audit_syslog_target',
-    );
-    if (!hasCol) {
-      db.exec(`ALTER TABLE webchat_settings ADD COLUMN audit_syslog_target TEXT`);
-    }
+    addColumnIfMissing(db, 'webchat_settings', `audit_syslog_target TEXT`);
   },
 };
 
 /**
- * Approval triage record (fork): what the pre-judge concluded about ONE
- * approval, so the card can explain why it is asking.
+ * Approval triage record: what the pre-judge concluded about ONE approval, so
+ * the card can explain why it asks. Its own table because `pending_approvals`
+ * is upstream's; a row, not a map, because re-renders read it too.
  *
- * A separate table rather than columns on the approval row, because
- * `pending_approvals` is upstream's and this is fork-owned description. Keyed
- * by approval_id, written once when the hold is created and read when the card
- * is built — including on a later re-render, which is why this is a row and not
- * an in-memory map.
- *
- * `tier` distinguishes unscreened / heuristic / model / unavailable: once the
- * card shows flag chips, an ABSENCE of chips must never be read as "screened,
- * nothing found". `flags` are the model's claims, `heuristic_flags` the
- * deterministic never-list ones — kept apart so the card can show a
- * disagreement between them.
+ * `tier` (unscreened / heuristic / model / unavailable) keeps "no chips" from
+ * reading as "screened, nothing found". `flags` (model) and `heuristic_flags`
+ * (never-list) are kept apart so the card can show a disagreement.
  */
 export const moduleWebchatApprovalTriage: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 209,
   name: 'webchat-approval-triage',
@@ -1265,19 +970,12 @@ export const moduleWebchatApprovalTriage: Migration = {
 };
 
 /**
- * Template sources (fork): browsable GitHub repos the operator can fetch agent
- * templates from, mirroring webchat_skill_sources.
- *
- * Upstream's registry URL is a fixed constant in setup/templates.ts, reachable
- * only from the wizard. A LIST makes the useful case possible — your own
- * template repo, public or private — which is what closes the loop with
- * exporting an agent as a template.
- *
- * Seeded with the public registry as official=1. Operator-added rows are
- * always community (official=0), same contract as skill sources.
+ * Template sources: GitHub repos to fetch agent templates from (upstream has
+ * one fixed registry URL), so an operator's own template repo works too.
+ * Seeded with the public registry as official=1; added rows are community
+ * (official=0), as with skill sources.
  */
 export const moduleWebchatTemplateSources: Migration = {
-  // PRAGMA/raw sqlite — the sqlite-only side of upstream's Migration union.
   sqliteOnly: true,
   version: 210,
   name: 'webchat-template-sources',
@@ -1300,7 +998,8 @@ export const moduleWebchatTemplateSources: Migration = {
 
 /**
  * Runner machines + placements. A machine is a developer laptop that
- * connected to /ws/runner as a signed-in person; it is `pending` until an owner/global admin approves the pairing card, and
+ * connected to /ws/runner as a signed-in person; it is `pending` until an
+ * owner/global admin approves the pairing card, and
  * a pairing binds ONE user to ONE machine fingerprint. A placement assigns an
  * agent group to an approved machine; the fleet driver consults it.
  * `slots_json` holds the project directories a placed group may mount.
@@ -1345,16 +1044,16 @@ export const moduleWebchatRunners: Migration = {
  * Where agent images come from for sessions placed on paired runners
  * (install-wide, `webchat_settings` singleton).
  *
- * `runner_image_policy` is the authority, not a hint: `pull` or `build` is a
- * decision every paired machine must obey, and `machine` (the default, and
- * what a missing row reads as) hands the choice back to each laptop's own
- * setting. `runner_image_ref` NULL = the reference this install is pinned to
- * in versions.json.
+ * `runner_image_policy` is the authority, not a hint: `central`, `pull` or
+ * `build` is a decision every paired machine must obey, and `machine` hands
+ * the choice back to each laptop's own setting. NULL (what a missing row reads
+ * as) means `central` — see decodeRunnerImagePolicy in db.ts.
+ * `runner_image_ref` NULL = the reference this install is pinned to in
+ * versions.json.
  */
 export const moduleWebchatRunnerImage: Migration = {
-  // Portable: the column-exists guard duplicated what the runner already
-  // guarantees — schema_version dedupes by name, so this runs exactly once —
-  // and webchat-settings is created well before any module-file migration.
+  // Portable, no column-exists guard: schema_version dedupes by name, and
+  // webchat-settings exists before any module-file migration.
   version: 212,
   name: 'webchat-runner-image',
   async up(db) {
@@ -1450,5 +1149,66 @@ export const moduleWebchatAuditRetention: Migration = {
   name: 'webchat-audit-retention',
   async up(db) {
     await db.exec(`ALTER TABLE webchat_settings ADD COLUMN audit_retention TEXT;`);
+  },
+};
+
+/**
+ * A runner machine's public key (runner-ws.ts): Ed25519, SPKI DER in base64.
+ * The extension proves it holds the private half on every connect. NULL = not
+ * bound yet: a machine approved before keys existed binds the key it presents
+ * on its next connect, and revoking a machine clears it.
+ */
+export const moduleWebchatRunnerMachineKey: Migration = {
+  version: 219,
+  name: 'webchat-runner-machine-key',
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_runner_machines ADD COLUMN public_key TEXT;`);
+  },
+};
+
+/**
+ * Which runner machines may still connect without a key: only those paired
+ * before keys existed (unkeyed and not revoked when this runs). Binding a key
+ * or revoking clears it, so a machine revoked and approved again must bring
+ * one; before this, a revoke (which clears the key) reopened keyless entry.
+ */
+export const moduleWebchatRunnerKeylessAllowed: Migration = {
+  version: 221,
+  name: 'webchat-runner-keyless-allowed',
+  async up(db) {
+    await db.exec(`
+      ALTER TABLE webchat_runner_machines ADD COLUMN keyless_allowed INTEGER NOT NULL DEFAULT 0;
+      UPDATE webchat_runner_machines SET keyless_allowed = 1 WHERE public_key IS NULL AND status != 'revoked';
+    `);
+  },
+};
+
+/**
+ * How a group placed on a runner machine runs there. 'container' (every
+ * placement before this): its agent container runs on the machine. 'tools':
+ * the agent runs on central and uses the project on the machine through the
+ * laptop tools the extension serves; tools_token authenticates the agent's
+ * container to central's tools endpoint for that group.
+ */
+export const moduleWebchatRunnerPlacementMode: Migration = {
+  version: 222,
+  name: 'webchat-runner-placement-mode',
+  async up(db) {
+    await db.exec(`
+      ALTER TABLE webchat_runner_placements ADD COLUMN mode TEXT NOT NULL DEFAULT 'container';
+      ALTER TABLE webchat_runner_placements ADD COLUMN tools_token TEXT;
+    `);
+  },
+};
+
+/** The retired per-thread engaged-agents set (webchat-thread-engaged): nothing reads or writes it. */
+export const moduleWebchatDropThreadEngaged: Migration = {
+  version: 220,
+  name: 'webchat-drop-thread-engaged',
+  async up(db) {
+    await db.exec(`
+      DROP INDEX IF EXISTS idx_webchat_engaged_thread;
+      DROP TABLE IF EXISTS webchat_thread_engaged;
+    `);
   },
 };
