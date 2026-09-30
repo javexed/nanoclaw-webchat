@@ -2,23 +2,14 @@
 // The +/− control every server row carries. Adding registers the model as a
 // selectable (kind decided by the server type); removing deletes the
 // selectable — refused with names when agents are assigned to it.
-//
-// Out of legacy.js because two renderers use it — the Ollama host model list in
-// models.ts and the router roster in routing.ts — and neither can become an
-// island while the row it builds comes back as a DOM node from legacy.
-//
-// Same split as origin-badge.ts: selectToggleProps() decides everything the
-// control shows, toggleSelectable() is everything the click does, and BOTH
-// renderers — the imperative builder here and SelectToggle.vue — are thin over
-// them. The one decision that matters is findSelectable's: whether this model
-// is already registered, and against which endpoint form.
-import { authFetch } from '../core/api.js';
+// selectToggleProps() decides what the control shows and toggleSelectable() what
+// the click does; the imperative builder and SelectToggle.vue are thin over both.
+import { apiJson, authFetch } from '../core/api.js';
 import { allModels } from './model-list-state.js';
 import { showToast } from '../core/toast.js';
 
-/** What the toggle needs from the modules that still own this state. */
+/** Supplied by provideSelectToggleDeps in composition-root.ts. */
 export interface SelectToggleDeps {
-  /** Every registered selectable model row. */
   /** Re-fetch after a change — one pass re-renders selection AND servers. */
   fetchModels: () => Promise<unknown> | unknown;
   /** Keep the Routing tab's roster in sync when it is the visible tab. */
@@ -32,10 +23,8 @@ export function provideSelectToggleDeps(provided: Partial<SelectToggleDeps>): vo
 }
 
 /**
- * The registered selectable matching this server row, if there is one.
- *
- * Endpoint comparison is normalised because the same router has been registered
- * under several host forms over time.
+ * The registered selectable matching this server row, if there is one. Endpoints
+ * are normalised: the same router may be registered under several host forms.
  */
 export function findSelectable(kind: string, endpoint: string, modelId: string) {
   const norm = (e: string) => (e || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
@@ -64,13 +53,9 @@ export function selectToggleProps(kind: string, endpoint: string, modelId: strin
 }
 
 /**
- * What the +/− click does. Shared by the imperative builder and SelectToggle.vue
- * so the two cannot drift — the component owns none of this.
- *
- * `setBusy` is how the caller disables its own control: the button element in
- * the imperative case, a ref in the component's. It is called with false only
- * on failure, matching the original, because on success fetchModels() re-renders
- * the row away.
+ * What the +/− click does, shared by both renderers so they cannot drift.
+ * `setBusy` disables the caller's control; it is reset only on failure, since
+ * on success fetchModels() re-renders the row away.
  */
 export async function toggleSelectable(
   kind: string,
@@ -91,12 +76,7 @@ export async function toggleSelectable(
       }
       showToast('Removed from selectable models');
     } else {
-      const r = await authFetch('/api/models', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: displayName, kind, endpoint, model_id: modelId }),
-      });
-      if (!r.ok) throw new Error((await r.json()).error || r.status);
+      await apiJson('/api/models', { method: 'POST', body: { name: displayName, kind, endpoint, model_id: modelId } });
       showToast('Added to selectable models', { kind: 'success' });
     }
     await deps.fetchModels(); // one pass re-renders selection AND servers

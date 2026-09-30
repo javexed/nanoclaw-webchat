@@ -1,14 +1,10 @@
 // ── DOM leaves ───────────────────────────────────────────────────────────────
-// The helpers everything else calls and which call nothing back. Extracting
-// these first keeps every later module a one-way dependency on core/, so the
-// split never has to reason about import cycles.
+// The helpers everything else calls and which call nothing back, so every
+// module's dependency on core/ stays one-way.
 
 /** querySelector, the shorthand the whole UI is written in. */
-// Defaults to HTMLElement, not Element. Every caller in this codebase is
-// reaching for .hidden / .dataset / .value / .style — properties Element does
-// not have — so an Element default made the common case wrong and forced a type
-// argument at hundreds of call sites. Pass one explicitly for SVG or generic
-// Element cases.
+// Defaults to HTMLElement, not Element: callers reach for .hidden / .dataset /
+// .value / .style. Pass a type argument for SVG or generic Element cases.
 export const $ = <T extends Element = HTMLElement>(sel: string): T | null =>
   document.querySelector<T>(sel);
 
@@ -23,18 +19,13 @@ export function lucide(name: string, cls = ''): string {
 export function lucideEl(name: string, cls = ''): ChildNode {
   const t = document.createElement('template');
   t.innerHTML = lucide(name, cls);
-  // Never null. firstChild is only null if lucide() produced empty markup —
-  // an unknown icon name — and every caller immediately appendChild()s the
-  // result, where null throws TypeError. Degrading to an empty text node makes
-  // a bad icon name render nothing instead of aborting the surrounding render,
-  // and it removes a null-check from every single call site.
+  // Never null: an unknown icon name yields an empty text node, so it renders
+  // nothing instead of throwing in the caller's appendChild().
   return t.content.firstChild ?? document.createTextNode('');
 }
 
 /** HTML-escape for the few places that still build markup as a string.
- * `'` is escaped too: every current attribute interpolation is double-quoted,
- * but nothing enforces that, and a future single-quoted attribute built with
- * esc() would otherwise be a breakout. Cheap insurance, not a fix for a bug. */
+ * `'` is escaped too, so a single-quoted attribute built with esc() cannot break out. */
 export function esc(s: unknown): string {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -44,8 +35,7 @@ export function esc(s: unknown): string {
     .replace(/'/g, '&#39;');
 }
 
-// CSS.escape with a fallback — belongs with the DOM helpers rather than being
-// injected into every module that builds an attribute selector.
+// CSS.escape with a fallback.
 export function cssEscape(s: string): string {
   if (window.CSS && CSS.escape) return CSS.escape(String(s));
   return String(s).replace(/["\\\]]/g, '\\$&');

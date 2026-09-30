@@ -1,19 +1,8 @@
 <script setup lang="ts">
 /**
- * The Ollama host cards — twenty-fifth island, and the first CLUSTER one.
- *
- * Mounted into <div id="ollama-host-cards">, exclusively owned by this module.
- *
- * Three renderers previously shared this subtree: buildOllamaHostCard made the
- * card, loadOllamaHostModels filled .ollama-model-list, renderOllamaPulls filled
- * .ollama-pull-status. Each rebuilt or overwrote elements the others owned, so
- * none could convert alone. They are three slices of one state object now.
- *
- * Element ORDER is load-bearing and matches the builder exactly: head, then the
- * accordion body (model list + pull row), then the pull status OUTSIDE the body
- * so progress stays visible while the card is collapsed.
- *
- * The chevron is first inside the head because makeCardAccordion prepended it.
+ * The Ollama host cards, mounted into <div id="ollama-host-cards">. Element order is
+ * load-bearing: chevron-first head, then the accordion body (model list + pull row), then
+ * the pull status OUTSIDE the body so progress stays visible while collapsed.
  */
 import { computed } from 'vue';
 import SelectToggle from './SelectToggle.vue';
@@ -45,10 +34,7 @@ const cards = computed(() =>
     const rows = (list: any[]) =>
       list.map((x: any) => ({
         name: x.name,
-        // Guarded: a row arriving without a size rendered the literal "NaN GB".
-        // /api/tags always carries one today, so this is belt-and-braces — but
-        // "NaN GB" is the kind of thing that reaches a screenshot before anyone
-        // notices, and an em dash costs nothing.
+        // A row without a size shows an em dash, never "NaN GB".
         meta: typeof x.size === 'number' ? (x.size / 1e9).toFixed(1) + ' GB' : '—',
         loaded: !!x.loaded,
         vram: typeof x.size_vram === 'number' ? (x.size_vram / 1e9).toFixed(1) + ' GB in VRAM' : '',
@@ -58,7 +44,7 @@ const cards = computed(() =>
       id: ollamaCardId(host),
       label: host.replace(/^https?:\/\//, ''),
       open,
-      // '…' until the model count arrives, exactly as the builder seeded it.
+      // '…' until the model count arrives.
       summary: !m || m.phase === 'loading' ? DOTS : m.phase === 'error' ? '' : countLabel(m),
       phase: m ? m.phase : 'loading',
       error: m ? m.error : '',

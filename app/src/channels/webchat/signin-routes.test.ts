@@ -7,33 +7,16 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { WebchatServer } from './server.js';
+import { PROXY_ENV, seeder, startServer } from './test-server.js';
 
-const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
 const ISS = 'https://sso.example.org/realms/main';
 
-async function boot(env: Record<string, string>) {
-  for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
-  vi.resetModules();
-  const conn = await import('../../db/connection.js');
-  await conn.initTestDb();
-  const migrations = await import('../../db/migrations/index.js');
-  await migrations.runMigrations(conn.getDb());
-  const db = conn.getDb();
-  const now = new Date().toISOString();
-  for (const id of ['webchat:owner@example.org', 'webchat:nobody@example.org', 'webchat:local-owner'])
-    await db.run(`INSERT INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, id, now);
-  for (const id of ['webchat:owner@example.org', 'webchat:local-owner'])
-    await db.run(
-      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, 'owner', NULL, NULL, ?)`,
-      id,
-      now,
-    );
-  const server = await import('./server.js');
-  const wc = await server.startWebchatServer(noopHooks);
-  const a = wc.http.address();
-  return { server, wc, conn, port: typeof a === 'object' && a ? a.port : 0 };
-}
+const boot = (env: Record<string, string>) =>
+  startServer(env, async (db) => {
+    const { user, role } = seeder(db, new Date().toISOString());
+    for (const id of ['webchat:owner@example.org', 'webchat:nobody@example.org', 'webchat:local-owner']) await user(id);
+    for (const id of ['webchat:owner@example.org', 'webchat:local-owner']) await role(id, 'owner', null);
+  });
 
 describe('/api/webchat/signin', () => {
   let ctx: Awaited<ReturnType<typeof boot>>;
@@ -59,15 +42,6 @@ describe('/api/webchat/signin', () => {
     vi.resetModules();
     fs.rmSync(root, { recursive: true, force: true });
   });
-
-  const PROXY_ENV = {
-    WEBCHAT_HOST: '127.0.0.1',
-    WEBCHAT_PORT: '0',
-    WEBCHAT_TOKEN: '',
-    WEBCHAT_TAILSCALE: '',
-    WEBCHAT_TRUSTED_PROXY_IPS: '127.0.0.1',
-    WEBCHAT_TRUSTED_PROXY_HEADER: 'x-forwarded-user',
-  };
 
   const call = async (method: string, what: string, who: string | null, body?: unknown) => {
     const res = await fetch(`http://127.0.0.1:${ctx.port}/api/webchat/signin${what}`, {

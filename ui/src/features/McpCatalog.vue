@@ -1,19 +1,8 @@
 <script setup lang="ts">
 /**
- * The MCP marketplace catalog — forty-sixth island.
- *
- * Mounted into <ul id="mcp-catalog-list">, exclusively owned by this module.
- * #mcp-catalog-status is outside it and stays imperative — it carries the
- * result count AND the fetch error, which are section-level, not row-level.
- *
- * The wait row is written out rather than v-html'd from loadingRow(): that
- * helper returns the <li> itself, so binding it would nest one. Same call made
- * for SkillPool, same DESIGN.md §5 wait primitive, and the DOM diff is what
- * holds the two to it.
- *
- * The 'error' phase renders NOTHING — the imperative version cleared the list
- * and put the message in the status line, so an empty list plus status text is
- * the correct shape, not an inline error row.
+ * The MCP marketplace catalog, mounted into <ul id="mcp-catalog-list">. The result count
+ * and fetch error live in #mcp-catalog-status, so the 'error' phase renders NOTHING here.
+ * The wait row matches loadingRow()'s markup (DESIGN.md §5), as in SkillPool.
  */
 import { computed } from 'vue';
 import OriginBadge from './OriginBadge.vue';

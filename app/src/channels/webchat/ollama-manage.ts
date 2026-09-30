@@ -1,32 +1,8 @@
 /**
- * Backend for the webchat Models and Routing tabs (owner-only surfaces). All
- * outbound calls to operator-supplied Ollama/LiteLLM endpoints go through
- * models.ts's safeFetch SSRF gate.
- *
- * Ollama host management (Models tab):
- *   - listHostModels(host)   — installed models (/api/tags) merged with what's
- *     loaded and its VRAM split (/api/ps).
- *   - Pull manager           — start a streamed pull (/api/pull, NDJSON) and
- *     expose progress snapshots the client polls. One active pull per
- *     host+model; finished jobs linger ~10 min for reconnecting clients.
- *   - Roster refresh         — re-run the /add-litellm installer (+ /add-routing
- *     layer when present) so a freshly pulled model becomes routable. Shells out
- *     to the skill's own installer; reports {available:false} when the skill
- *     isn't installed so the UI can hide the button. Skills are referenced by
- *     path at runtime, never imported.
- *
- * LiteLLM router / classifier (Routing tab), all guarded by the routing skill
- * being present (routes.json / capabilities.json):
- *   - getRouterInfo / getRouterMetrics — the roster and the dashboard traffic
- *     panel (from the routing decision log).
- *   - Routes config CRUD (readRoutesConfig / mergeRoutesUpdate / writeRoutesConfig)
- *     — the operator-editable routes; the classifier section is never
- *     client-writable.
- *   - dryClassify            — run the real classifier on a prompt, change nothing
- *     (the "test a prompt" bench). Prompt contract KEEP-IN-SYNC with router_hook.py.
- *   - getRouteSuggestions / computeRouteSuggestions + readCapabilityCatalog —
- *     propose a route for a roster capability nothing covers yet.
- *   - recentDecisions        — tail the routing decision log for the Logs sub-tab.
+ * Backend for the owner-only Models and Routing tabs: Ollama host management
+ * (listing, pulls, roster refresh) and the LiteLLM router/classifier (routes
+ * config, dry classify, suggestions, decision log). Every outbound call to an
+ * operator-supplied endpoint goes through models.ts's safeFetch SSRF gate.
  */
 import { spawn } from 'child_process';
 import fs from 'fs';
@@ -47,6 +23,7 @@ import {
 } from './install-engine.js';
 import { listProviderContainerConfigNames } from '../../providers/provider-container-registry.js';
 import { listWebchatModels } from './db.js';
+import { ELEVENLABS_API_HOST } from './stt.js';
 import { getSystemdUnit, getLaunchdLabel } from '../../install-slug.js';
 
 // ── Host model listing ─────────────────────────────────────────────────────
@@ -115,10 +92,8 @@ const pulls = new Map<string, PullJob>();
  * on it would ride along as a meaningless `{}` in every poll response.
  *
  * Cancelling works because Ollama drives the download from the request
- * handler: drop the connection and the daemon stops fetching. Verified against
- * a live daemon rather than assumed. Already-downloaded blobs are kept, so a
- * later re-pull of the same model resumes instead of starting over — which is
- * what makes cancel a cheap, low-regret action worth offering.
+ * handler: drop the connection and the daemon stops fetching. Downloaded blobs
+ * are kept, so a later re-pull resumes — cancel is cheap.
  */
 const pullAborts = new Map<string, AbortController>();
 
@@ -144,10 +119,6 @@ export function _resetPullsForTest(): void {
   pulls.clear();
 }
 
-/**
- * Start a pull. Returns the job (existing one if the same pull is already
- * running — pressing the button twice must not start two downloads).
- */
 /**
  * Ollama model names are lowercase with no whitespace, so a display-style entry
  * like "Qwen 3.5:9B" is invalid and Ollama rejects it with a bare 400. Normalize
@@ -180,6 +151,10 @@ export async function deleteHostModel(host: string, rawModel: string): Promise<v
   }
 }
 
+/**
+ * Start a pull. Returns the job (existing one if the same pull is already
+ * running — pressing the button twice must not start two downloads).
+ */
 export async function startPull(host: string, rawModel: string): Promise<PullJob> {
   const model = normalizeOllamaModelName(rawModel);
   const key = pullKey(host, model);
@@ -204,8 +179,7 @@ export async function startPull(host: string, rawModel: string): Promise<PullJob
   // Validate the endpoint (SSRF gate) BEFORE returning, so a blocked URL is
   // a synchronous 4xx for the caller instead of a background failure.
   // No overall timeout on the stream itself: model pulls legitimately run
-  // for many minutes (the curl --max-time lesson). The signal is the ONLY
-  // thing that ends it early, and only when a human asks.
+  // for many minutes. The signal is the ONLY thing that ends it early.
   let res: Response;
   try {
     res = await safeFetch(`${job.host}/api/pull`, {
@@ -382,7 +356,6 @@ export function getRosterRefreshState(root = process.cwd()): RosterRefreshState 
   return refreshState;
 }
 
-/** The subset of installer state the shared runner drives (a rolling log job). */
 // The chain machinery (InstallState, InstallStep, runInstallChain, restartPending)
 // lives in install-engine.ts; re-exported so existing importers keep their path.
 export { restartPending, type InstallState, type InstallStep } from './install-engine.js';
@@ -417,7 +390,7 @@ export function startRosterRefresh(root = process.cwd()): boolean {
   }
   // Capability auto-binding: a refreshed roster re-binds unpinned routes so a
   // freshly pulled model joins routing on its own (see the routing skill's
-  // bind-routes.mjs — pins, escalate, and descriptions are never touched).
+  // bind-routes.mjs — pins and descriptions are never touched).
   if (fs.existsSync(bindRoutesPath(root))) {
     steps.push({ run: ['node', [bindRoutesPath(root), '--apply']] });
     // A refreshed roster may cover a capability no route handles yet — create it,
@@ -494,7 +467,7 @@ registerFeatureInstall('routing', {
     { run: ['bash', [routingInstallerPath(root)]], label: 'Installing the routing layer' },
     { call: () => configureClassifierHost(root), label: 'configure classifier host' },
     { run: ['node', [bindRoutesPath(root), '--apply']], label: 'Binding routes to the roster' },
-    // Seed only general + escalate, then auto-create a route for each capability
+    // Seed only general, then auto-create a route for each capability
     // the current roster covers — routes derive from your models, not a fixed set.
     {
       call: async () => {
@@ -655,7 +628,7 @@ registerFeatureInstall<StartSttOptions>('stt', {
           label: 'validate the ElevenLabs key',
           call: async () => {
             // Hostname fixed — the key goes to ElevenLabs and nowhere else.
-            const res = await fetch('https://api.elevenlabs.io/v1/user', {
+            const res = await fetch(`https://${ELEVENLABS_API_HOST}/v1/user`, {
               headers: { 'xi-api-key': apiKey },
               signal: AbortSignal.timeout(10_000),
             });
@@ -691,10 +664,7 @@ registerFeatureInstall<StartSttOptions>('stt', {
 // unprivileged Proxmox LXC only has it if the host passes it through) and the
 // install + sign-in need root. When those don't hold, the UI points at the
 // Proxmox community helper (which does the host-side TUN setup) instead.
-// Distro-aware, signed-repo Tailscale install (no curl|sh). Debian/Ubuntu via
-// apt with the GPG-verified keyring; RHEL/Fedora via dnf/yum repo. Everything
-// is apt/dnf-verified; the only network trust is the static signing key, after
-// which package signatures are checked. Refuses on unknown package managers.
+// Debian/Ubuntu via apt, RHEL/Fedora via dnf/yum; see the install step below.
 const TAILSCALE_PKG_INSTALL = [
   'set -e',
   'if command -v tailscale >/dev/null 2>&1; then echo "tailscale already installed"; exit 0; fi',
@@ -743,13 +713,10 @@ registerFeatureInstall('tailscale', {
           error: "Can't install Tailscale here — /dev/net/tun or root is missing. Use the Proxmox community helper.",
         },
   steps: () => [
-    // Install tailscaled from Tailscale's SIGNED package repo (apt/dnf/yum),
-    // not `curl … | sh`. apt/dnf verify the GPG-signed keyring + package, so a
-    // MITM'd or compromised endpoint can't inject arbitrary root code the way a
-    // piped install script can. Idempotent (no-ops if already present); refuses
-    // on distros without a known package manager rather than falling back to a
-    // pipe-to-shell. The keyring/repo URLs are the ones Tailscale's own
-    // installer configures.
+    // Tailscale's SIGNED package repo, not `curl … | sh`: apt/dnf verify the
+    // GPG-signed keyring + package, so a MITM'd endpoint can't inject root code.
+    // Idempotent; refuses on distros without a known package manager rather
+    // than falling back to a pipe-to-shell.
     { run: ['bash', ['-c', TAILSCALE_PKG_INSTALL]], label: 'Installing Tailscale from its signed repo' },
     // Bring it up; `tailscale up` prints the sign-in URL to the log for the operator
     // to open, and returns once they authenticate. A 10-minute cap keeps a
@@ -1011,25 +978,15 @@ registerFeatureInstall('ollama', {
 // barrel at boot. The chain gates the restart on a fully-green build.
 
 /**
- * Restart the host so a freshly-installed provider barrel is loaded. Fired only
- * after a green install+build. Detached + a short delay so the HTTP response
- * flushes and the restart survives our own SIGTERM. Context-aware, same trap as
- * the Ollama installer (user vs system systemd vs launchd).
- */
-/**
  * The service-restart command for the current runtime context — pure, so the
  * per-context branching (the part that can't be live-exercised here) is unit
  * tested. macOS uses launchd; Linux uses the user systemd session when one
  * exists (rootless dev host), falling back to the system unit (LXC / root).
  *
  * Linux uses `systemd-run` so the restart runs as a transient unit owned by the
- * systemd MANAGER, not as a child of this process. A service restarting ITSELF
- * with a plain `systemctl restart` is fragile: the child issuing it lives in the
- * unit's cgroup, and `KillMode=control-group` (the default) SIGKILLs the whole
- * cgroup on stop — so the restarter can die before the restart is even enqueued,
- * leaving the OLD process running (the "machine's up but the service never
- * reloaded, so the new provider never registers" bug). A transient unit is
- * detached from that cgroup and survives the teardown. Falls back to a bare
+ * systemd MANAGER: a plain `systemctl restart` issued from inside the unit's
+ * cgroup can be SIGKILLed (KillMode=control-group) before the restart is
+ * enqueued, leaving the OLD process running. Falls back to a bare
  * `systemctl restart` where systemd-run isn't available.
  */
 export function providerRestartCommand(opts: {
@@ -1052,12 +1009,9 @@ export function providerRestartCommand(opts: {
 /**
  * The systemd unit this process is actually running under, read from its own
  * cgroup. `getSystemdUnit()` computes the name a *fresh setup* would register
- * (`nanoclaw-v2-<slug>`), but other installers name it differently — the Proxmox
- * community/deploy path uses a plain `nanoclaw.service`. Restarting the computed
- * name then hits a unit that doesn't exist and silently no-ops, so the service
- * never reloads (the "Codex installed but never activates" bug). Reading the live
- * cgroup makes the restart target whatever unit we're truly under, regardless of
- * what the installer called it. Pure so it's unit-tested against real cgroup text.
+ * (`nanoclaw-v2-<slug>`), but other installers name it differently (e.g. a plain
+ * `nanoclaw.service`), and restarting a unit that doesn't exist silently no-ops.
+ * Pure so it's unit-tested against real cgroup text.
  */
 export function parseSystemdUnitFromCgroup(cgroup: string): string | null {
   // cgroup v2: "0::/system.slice/nanoclaw.service". A --user service nests under
@@ -1092,8 +1046,8 @@ export function scheduleHostRestart(): void {
 /**
  * Webchat's changes to a provider's own files (provider-overlays/apply.sh in
  * the install root), applied right after the skill copies those files in.
- * install.sh runs the same script at compose time; without this step a
- * provider installed from Settings ran without them (the Codex activity feed).
+ * install.sh runs the same script at compose time; this step gives a provider
+ * installed from Settings the same changes.
  */
 export const providerOverlaysStep: InstallStep = {
   run: ['bash', ['provider-overlays/apply.sh']],
@@ -1101,41 +1055,10 @@ export const providerOverlaysStep: InstallStep = {
 };
 
 /**
- * The Grok install chain. Same shape as Codex with one difference that matters:
- * the image build is NOT optional here. Grok ships as a native binary installed
- * by an ARG in the Dockerfile (it cannot go in the npm-shaped cli-tools.json), so
- * skipping the rebuild leaves a wired provider whose CLI does not exist and every
- * spawn dies with ENOENT.
- *
- * runInstallChain stops on the first non-zero exit, so the restart is reached
- * only from a fully-green build — never into a half-wired tree.
- */
-export function grokInstallSteps(root: string): InstallStep[] {
-  const canTypecheckContainer = fs.existsSync(path.join(root, 'container/agent-runner/node_modules/bun-types'));
-  return [
-    {
-      run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', 'grok']],
-      label: 'Applying the Grok skill',
-    },
-    providerOverlaysStep,
-    { run: ['pnpm', ['run', 'build']], label: 'Rebuilding NanoClaw' },
-    ...(canTypecheckContainer
-      ? [
-          {
-            run: ['pnpm', ['exec', 'tsc', '-p', 'container/agent-runner/tsconfig.json', '--noEmit']],
-            label: 'Type-checking the agent runner',
-          } as InstallStep,
-        ]
-      : []),
-    { run: ['bash', ['container/build.sh']], label: 'Rebuilding the agent image' },
-    { call: () => scheduleHostRestart(), label: 'installed — restarting to load Grok' },
-  ];
-}
-
-/**
- * The Codex install chain. Extracted + exported so the container-typecheck guard
- * is a TESTED invariant, not a fragile inline hunk — #247 added it and a branch
- * rebuild silently dropped it once already.
+ * A provider harness install chain: apply the skill's directives, re-apply the
+ * provider overlays, build host + image, restart. The image build is never
+ * optional — Grok's CLI is a native binary baked by a Dockerfile ARG, so a
+ * skipped rebuild leaves a wired provider whose every spawn dies with ENOENT.
  *
  * runInstallChain stops on the first non-zero exit, so the restart step is reached
  * ONLY when install + both builds are green — never restart into a broken tree.
@@ -1145,12 +1068,12 @@ export function grokInstallSteps(root: string): InstallStep[] {
  * 'bun'". Run it only where the host has them (a dev checkout); container/build.sh
  * compiles the same code inside the image anyway.
  */
-export function codexInstallSteps(root: string): InstallStep[] {
+function harnessInstallSteps(root: string, name: string, label: string): InstallStep[] {
   const canTypecheckContainer = fs.existsSync(path.join(root, 'container/agent-runner/node_modules/bun-types'));
   return [
     {
-      run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', 'codex']],
-      label: 'Applying the Codex skill',
+      run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', name]],
+      label: `Applying the ${label} skill`,
     },
     providerOverlaysStep,
     { run: ['pnpm', ['run', 'build']], label: 'Rebuilding NanoClaw' },
@@ -1163,104 +1086,35 @@ export function codexInstallSteps(root: string): InstallStep[] {
         ]
       : []),
     { run: ['bash', ['container/build.sh']], label: 'Rebuilding the agent image' },
-    { call: () => scheduleHostRestart(), label: 'installed — restarting to load Codex' },
+    { call: () => scheduleHostRestart(), label: `installed — restarting to load ${label}` },
   ];
 }
 
-// ── OpenCode stack install (mirrors Codex) ────────────────────────────────
-// The OpenCode harness for weak local models. Same shape as Codex: apply the
-// skill's copy/wire directives, add the agent-runner SDK dep, build host + image,
-// restart. runInstallChain stops on first failure, so restart is reached only
-// when everything is green — never into a half-wired tree.
-export function opencodeInstallSteps(root: string): InstallStep[] {
-  const canTypecheckContainer = fs.existsSync(path.join(root, 'container/agent-runner/node_modules/bun-types'));
-  return [
-    {
-      run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', 'opencode']],
-      label: 'Applying the OpenCode skill',
-    },
-    providerOverlaysStep,
-    // @opencode-ai/sdk is an agent-runner BUN dep (not the root pnpm tree), so it
-    // can't ride the directive engine — add it here, before the image build.
-    {
-      run: ['bash', ['-c', 'cd container/agent-runner && bun add @opencode-ai/sdk@1.4.17']],
-      label: 'Adding the OpenCode SDK to the agent runner',
-    },
-    { run: ['pnpm', ['run', 'build']], label: 'Rebuilding NanoClaw' },
-    ...(canTypecheckContainer
-      ? [
-          {
-            run: ['pnpm', ['exec', 'tsc', '-p', 'container/agent-runner/tsconfig.json', '--noEmit']],
-            label: 'Type-checking the agent runner',
-          } as InstallStep,
-        ]
-      : []),
-    { run: ['bash', ['container/build.sh']], label: 'Rebuilding the agent image' },
-    { call: () => scheduleHostRestart(), label: 'installed — restarting to load OpenCode' },
-  ];
-}
-
-// ── pi harness install (add-pi-stack) ──────────────────────────────────────
-// Same chain shape as OpenCode minus the SDK step — pi is CLI-only, so the
-// directive apply (files + barrels + cli-tools pin) plus build + image bake is
-// the whole install.
-export function piInstallSteps(root: string): InstallStep[] {
-  const canTypecheckContainer = fs.existsSync(path.join(root, 'container/agent-runner/node_modules/bun-types'));
-  return [
-    {
-      run: ['pnpm', ['exec', 'tsx', 'setup/index.ts', '--step', 'provider-install', 'pi']],
-      label: 'Applying the pi skill',
-    },
-    providerOverlaysStep,
-    { run: ['pnpm', ['run', 'build']], label: 'Rebuilding NanoClaw' },
-    ...(canTypecheckContainer
-      ? [
-          {
-            run: ['pnpm', ['exec', 'tsc', '-p', 'container/agent-runner/tsconfig.json', '--noEmit']],
-            label: 'Type-checking the agent runner',
-          } as InstallStep,
-        ]
-      : []),
-    { run: ['bash', ['container/build.sh']], label: 'Rebuilding the agent image' },
-    { call: () => scheduleHostRestart(), label: 'installed — restarting to load pi' },
-  ];
-}
+export const grokInstallSteps = (root: string): InstallStep[] => harnessInstallSteps(root, 'grok', 'Grok');
+export const codexInstallSteps = (root: string): InstallStep[] => harnessInstallSteps(root, 'codex', 'Codex');
+export const opencodeInstallSteps = (root: string): InstallStep[] => harnessInstallSteps(root, 'opencode', 'OpenCode');
+export const piInstallSteps = (root: string): InstallStep[] => harnessInstallSteps(root, 'pi', 'pi');
 
 // ── The four harness installs, on the engine ────────────────────────────────
 // Each is its steps builder plus the two facts that differ: which skill must be
 // present, and which provider name proves the restart loaded it. State, the
 // running/installed refusals, the pnpm check, progress and restart-pending are
-// the engine's, once. (All four chains shell out to pnpm; codex and grok used to
-// discover that on their first step, half-applied.)
+// the engine's, once.
 const providerRegistered = (name: string) => () => listProviderContainerConfigNames().includes(name);
-registerFeatureInstall('codex', {
-  restarts: true,
-  label: 'Codex',
-  installed: providerRegistered('codex'),
-  preflight: allPreflights(skillPreflight('add-codex'), pnpmPreflight),
-  steps: codexInstallSteps,
-});
-registerFeatureInstall('grok', {
-  restarts: true,
-  label: 'Grok',
-  installed: providerRegistered('grok'),
-  preflight: allPreflights(skillPreflight('add-grok'), pnpmPreflight),
-  steps: grokInstallSteps,
-});
-registerFeatureInstall('opencode', {
-  restarts: true,
-  label: 'OpenCode',
-  installed: providerRegistered('opencode'),
-  preflight: allPreflights(skillPreflight('add-opencode-stack'), pnpmPreflight),
-  steps: opencodeInstallSteps,
-});
-registerFeatureInstall('pi', {
-  restarts: true,
-  label: 'pi',
-  installed: providerRegistered('pi'),
-  preflight: allPreflights(skillPreflight('add-pi-stack'), pnpmPreflight),
-  steps: piInstallSteps,
-});
+for (const [name, label, skill, steps] of [
+  ['codex', 'Codex', 'add-codex', codexInstallSteps],
+  ['grok', 'Grok', 'add-grok', grokInstallSteps],
+  ['opencode', 'OpenCode', 'add-opencode', opencodeInstallSteps],
+  ['pi', 'pi', 'add-pi-stack', piInstallSteps],
+] as const) {
+  registerFeatureInstall(name, {
+    restarts: true,
+    label,
+    installed: providerRegistered(name),
+    preflight: allPreflights(skillPreflight(skill), pnpmPreflight),
+    steps,
+  });
+}
 
 // ── Router (LiteLLM) as a server card ─────────────────────────────────────
 
@@ -1306,7 +1160,6 @@ export interface RouterMetrics {
   total: number;
   live: number;
   errors: number;
-  escalations: number;
   byModel: Array<{ model: string; count: number }>;
   byRoute: Array<{ route: string; count: number }>;
 }
@@ -1328,7 +1181,6 @@ export function computeRouterMetrics(
   let total = 0;
   let live = 0;
   let errors = 0;
-  let escalations = 0;
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
     let e: {
@@ -1351,10 +1203,6 @@ export function computeRouterMetrics(
     const route = e.route || '?';
     byRoute.set(route, (byRoute.get(route) ?? 0) + 1);
     if (route === '__error__') errors += 1;
-    if (e.final_model === '__escalate__' || e.bound_model === '__escalate__') {
-      escalations += 1;
-      continue; // escalated turns ran on the fallback provider, not a roster model
-    }
     const model = mode === 'live' ? e.final_model : e.requested_model;
     if (model) byModel.set(model, (byModel.get(model) ?? 0) + 1);
   }
@@ -1363,7 +1211,6 @@ export function computeRouterMetrics(
     total,
     live,
     errors,
-    escalations,
     byModel: sort(byModel).map(([model, count]) => ({ model, count })),
     byRoute: sort(byRoute).map(([route, count]) => ({ route, count })),
   };
@@ -1372,7 +1219,7 @@ export function computeRouterMetrics(
 export function getRouterMetrics(days: number, root = process.cwd()): RouterMetrics {
   const logPath = path.join(root, 'data/litellm/routing/routing-shadow.jsonl');
   if (!fs.existsSync(logPath)) {
-    return { available: false, days, total: 0, live: 0, errors: 0, escalations: 0, byModel: [], byRoute: [] };
+    return { available: false, days, total: 0, live: 0, errors: 0, byModel: [], byRoute: [] };
   }
   return { available: true, days, ...computeRouterMetrics(fs.readFileSync(logPath, 'utf8'), days) };
 }
@@ -1383,7 +1230,6 @@ interface RouteDef {
   name: string;
   description: string;
   model?: string;
-  escalate?: boolean;
   pinned?: boolean;
 }
 
@@ -1405,9 +1251,8 @@ export function readRoutesConfig(root = process.cwd()): Record<string, unknown> 
 
 // A routes.json may be single-router (top-level routes) or multi-router
 // (a `routers` map). The current single-router GUI operates on the PRIMARY
-// router — `auto` if present, else the first defined — so the tab keeps
-// working against either shape; full multi-router editing is a later GUI
-// phase. KEEP-IN-SYNC with _routers()/routers() in the skill.
+// router — `auto` if present, else the first defined — so the tab works
+// against either shape. KEEP-IN-SYNC with _routers()/routers() in the skill.
 export function primaryRouterName(cfg: Record<string, unknown>): string {
   const routers = cfg.routers as Record<string, unknown> | undefined;
   if (routers && typeof routers === 'object') {
@@ -1447,9 +1292,7 @@ export function mergeRoutesUpdate(
     if (typeof r.description !== 'string' || r.description.trim().length < 8) {
       throw new Error(`route "${r.name}" needs a description (it is what the classifier matches against)`);
     }
-    if (r.escalate) {
-      if (r.model) throw new Error(`escalate route "${r.name}" must not have a model binding`);
-    } else if (typeof r.model !== 'string' || !r.model.trim()) {
+    if (typeof r.model !== 'string' || !r.model.trim()) {
       throw new Error(`route "${r.name}" needs a model binding`);
     }
   }
@@ -1457,14 +1300,14 @@ export function mergeRoutesUpdate(
   const newRoutes = update.routes.map((r) => ({
     name: r.name,
     description: r.description.trim(),
-    ...(r.escalate ? { escalate: true } : { model: r.model }),
+    model: r.model,
     ...(r.pinned ? { pinned: true } : {}),
   }));
   if (update.default_route !== undefined && !seen.has(update.default_route)) {
     throw new Error(`default_route "${update.default_route}" is not a route`);
   }
   // Multi-router config: edit the PRIMARY router in place; single-router:
-  // write the top-level fields as before.
+  // write the top-level fields.
   if (merged.routers && typeof merged.routers === 'object') {
     const map = merged.routers as Record<string, Record<string, unknown>>;
     const name = routerName ?? primaryRouterName(merged);
@@ -1499,7 +1342,7 @@ export function writeRoutesConfig(cfg: Record<string, unknown>, root = process.c
   fs.renameSync(tmp, p);
 }
 
-// ── Router management (Phase 2 picker) ─────────────────────────────────────
+// ── Router management (picker) ─────────────────────────────────────
 
 /** Ordered router names — `auto` first, then the rest. Normalizes old format. */
 export function listRouters(cfg: Record<string, unknown>): string[] {
@@ -1653,7 +1496,7 @@ export async function dryClassify(
   const ms = Date.now() - t0;
   const hit = routes.find((r) => r.name === route);
   const fallback = routes.find((r) => r.name === default_route);
-  const model = hit?.escalate ? '__escalate__' : (hit?.model ?? fallback?.model ?? null);
+  const model = hit?.model ?? fallback?.model ?? null;
   return { route, model, ms };
 }
 

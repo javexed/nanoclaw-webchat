@@ -1,21 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
-
 /**
  * A model change on a transcript-replaying harness must clear its live sessions.
  *
  * pi continues a conversation by re-sending the whole prior transcript, so
  * swapping the model underneath one leaves the NEW model reading the OLD
- * model's replies as few-shot examples. Observed live on pi/ornith
- * (2026-08-21): carrying the previous model's history, the answer to "which
- * model are you running" came back as an invented `<personation name="pi sox"
- * />` wrapped in a made-up `<delivered>` element — an opening-turn shape rather
- * than an answer. After a clear, the same model answered correctly.
+ * model's replies as few-shot examples, and imitating their shape instead of
+ * answering.
  *
  * The two refusals matter as much as the clear: re-selecting the SAME model
  * must not discard a conversation, and Claude must never be cleared — it
  * resumes server-side by id rather than replaying a local transcript, so it
  * cannot inherit another model's voice.
  */
+import { describe, expect, it, vi } from 'vitest';
 
 const injected: Array<{ agentGroupId: string; sessionId: string; command: string }> = [];
 

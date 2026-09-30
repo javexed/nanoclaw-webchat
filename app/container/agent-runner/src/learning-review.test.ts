@@ -1,5 +1,5 @@
 /**
- * The isolated learning review (docs/webchat/design/learning-loop.md §2).
+ * The isolated learning review (docs/webchat/learning-loop.md §2).
  *
  * /learn must NOT become an ordinary turn when the provider can do better: it
  * runs as a second query flagged `learningReview` — which the claude provider
@@ -12,7 +12,7 @@
  * Context: when the container has seen exchanges, the review runs FRESH over
  * a bounded digest of them (no continuation — nothing replayed); with no
  * exchanges yet (e.g. /learn as the container's first message), it falls back
- * to the old replay path. See learning-digest.test.ts for the digest bounds.
+ * to the replay path. See learning-digest.test.ts for the digest bounds.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 

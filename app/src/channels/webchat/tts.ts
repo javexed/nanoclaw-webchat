@@ -21,8 +21,7 @@
  *   WEBCHAT_TTS_VOICE      default voice (default "af_heart")
  *
  * The play control appears only when the OWNER enables Read aloud for the
- * workspace (webchat_settings.read_aloud_enabled, default off — see
- * getReadAloudEnabled / migration 133). Once on: with a backend configured the
+ * workspace (getReadAloudEnabled, default off). Once on: with a backend configured the
  * PWA uses it; with `enabled:false` it falls back to the browser's Web Speech
  * API (device voices). Off at the workspace level = no control at all.
  */
@@ -158,10 +157,7 @@ export async function maybeHandleTts(
         sendJson(res, 502, { error: 'TTS synthesis failed' });
         return true;
       }
-      // Buffer then send: assistant replies are short (a few seconds of audio,
-      // typically well under a megabyte), so a single write is simpler and more
-      // robust across Node/undici stream-piping quirks than plumbing the web
-      // ReadableStream through to the socket.
+      // Buffer then send: replies are short, and one write avoids stream-piping quirks.
       const audio = Buffer.from(await upstream.arrayBuffer());
       res.writeHead(200, {
         'Content-Type': 'audio/mpeg',

@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
   adjustBlocks,
   blockAt,
+  conflictBlocks,
+  decidedText,
   lineHunks,
-  planDirect,
+  nextReviewFile,
   planPropose,
   resolveBlock,
   splitLines,
@@ -131,6 +133,21 @@ describe('propose mode', () => {
     expect(review(current, plan, () => 'accept')).toBe(current.replace('import b\n', 'import b\nimport c\n'));
   });
 
+  it('a change the file already carries is applied, not a conflict (a review accepted before a reload)', () => {
+    const all = planPropose(BASE, PROPOSAL, PROPOSAL);
+    expect(all.blocks).toEqual([]);
+    expect(all.conflicts).toEqual([]);
+    expect(all.applied).toHaveLength(2);
+    // Half accepted: the import is in, return 1 still reviews.
+    const half = BASE.replace('import b\n', 'import b\nimport c\n');
+    const plan = planPropose(BASE, PROPOSAL, half);
+    expect(plan.applied.map((h) => h.newLines)).toEqual([['import c']]);
+    expect(plan.conflicts).toEqual([]);
+    expect(review(half, plan, () => 'accept')).toBe(PROPOSAL);
+    // Deleted lines already gone count too.
+    expect(planPropose('a\nb\nc\n', 'a\nc\n', 'a\nc\n').applied).toHaveLength(1);
+  });
+
   it('keeps CRLF files CRLF', () => {
     const crlf = (s: string) => s.replace(/\n/g, '\r\n');
     const plan = planPropose(crlf(BASE), crlf(PROPOSAL), crlf(BASE));
@@ -138,16 +155,15 @@ describe('propose mode', () => {
   });
 });
 
-describe('direct mode', () => {
-  it("brings the old lines back above the agent's; accept keeps what is on disk, reject restores the old", () => {
-    const plan = planDirect(BASE, PROPOSAL);
-    const shown = applyInserts(PROPOSAL, plan.inserts).split('\n');
-    expect(shown.slice(5, 7)).toEqual(['  return 1;', '  return 42;']);
-    expect(review(PROPOSAL, plan, () => 'accept')).toBe(PROPOSAL);
-    expect(review(PROPOSAL, plan, () => 'reject')).toBe(BASE);
-    expect(review(PROPOSAL, plan, (k) => (k === 0 ? 'reject' : 'accept'))).toBe(
-      BASE.replace('return 1;', 'return 42;'),
-    );
+describe('decided so far', () => {
+  it('is the buffer with every open change rejected: the file as the decisions made leave it', () => {
+    const plan = planPropose(BASE, PROPOSAL, BASE);
+    let text = applyInserts(BASE, plan.inserts);
+    expect(decidedText(text, plan.blocks)).toBe(BASE);
+    const r = resolveBlock(plan.blocks, 0, 'accept');
+    text = deleteLines(text, r.deleteStart, r.deleteCount);
+    expect(decidedText(text, r.blocks)).toBe(BASE.replace('import b\n', 'import b\nimport c\n'));
+    expect(decidedText('a\r\nb', [{ removedStart: 0, removedCount: 1, addedStart: 1, addedCount: 1 }])).toBe('a');
   });
 });
 
@@ -201,16 +217,40 @@ describe('randomized', () => {
     if (want) return text.endsWith('\n') ? text : `${text}\n`;
     return text.endsWith('\n') && text !== '\n' ? text.slice(0, -1) : text;
   };
-  it('accept all and reject all are exact in both modes, over 500 random edits', () => {
+  it('accept all and reject all are exact, over 500 random edits', () => {
     for (let n = 0; n < 500; n++) {
       const base = randomFile();
       const proposal = withEnding(mutate(base), base);
       const p = planPropose(base, proposal, base);
       expect(review(base, p, () => 'accept')).toBe(proposal);
       expect(review(base, p, () => 'reject')).toBe(base);
-      const d = planDirect(base, proposal);
-      expect(review(proposal, d, () => 'accept')).toBe(proposal);
-      expect(review(proposal, d, () => 'reject')).toBe(base);
     }
+  });
+});
+
+describe('nextReviewFile', () => {
+  const files = ['a.ts', 'src/b.ts', 'src/c.ts'];
+  it('is the file after the active one, wrapping after the last', () => {
+    expect(nextReviewFile(files, 'a.ts')).toBe('src/b.ts');
+    expect(nextReviewFile(files, 'src/c.ts')).toBe('a.ts');
+  });
+  it('starts from the first when the developer is in no file under review, and is null when none are left', () => {
+    expect(nextReviewFile(files, 'README.md')).toBe('a.ts');
+    expect(nextReviewFile(files, null)).toBe('a.ts');
+    expect(nextReviewFile([], 'a.ts')).toBeNull();
+  });
+  it('compares without case where the file system does (Windows)', () => {
+    expect(nextReviewFile(files, 'SRC/B.ts', true)).toBe('src/c.ts');
+    expect(nextReviewFile(files, 'SRC/B.ts')).toBe('a.ts');
+  });
+});
+
+describe('conflictBlocks', () => {
+  it('counts the blocks a merged Apply left, and only those', () => {
+    const block = (a: string, b: string) => `<<<<<<< yours\n${a}\n=======\n${b}\n>>>>>>> agent\n`;
+    expect(conflictBlocks(`x\n${block('a', 'b')}y\n${block('c', 'd')}`)).toBe(2);
+    expect(conflictBlocks(block('a', 'b').replace(/\n/g, '\r\n'))).toBe(1);
+    expect(conflictBlocks('<<<<<<< HEAD\na\n=======\nb\n>>>>>>> main\n')).toBe(0);
+    expect(conflictBlocks('no conflicts\n')).toBe(0);
   });
 });

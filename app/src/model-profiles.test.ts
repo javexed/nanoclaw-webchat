@@ -104,8 +104,6 @@ describe('PROFILES keys', () => {
   it('are bare model ids, never provider-prefixed', () => {
     // A prefixed key misses every lookup SILENTLY: resolution falls through to
     // the default, the timeout collapses to the floor, and nothing logs it.
-    // Shipped that way once; the live container came up with a 120s budget and
-    // no cap, and only an env dump found it.
     for (const key of Object.keys(PROFILES)) {
       expect(key).not.toContain('/');
     }

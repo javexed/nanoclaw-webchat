@@ -1,9 +1,7 @@
 /**
  * Digest-based learning review + adaptive cadence (docs/webchat/learning-loop.md §2).
  *
- * The Hermes-inspired cost cut: the review reads a BOUNDED digest of recent
- * exchanges and runs as a fresh query, instead of forking the live session and
- * replaying the whole transcript at main-model price. These tests pin:
+ * These tests pin:
  *   - the digest builder's bounds (entry count, per-field truncation, total cap);
  *   - the dry-streak cooldown backoff math and its state transitions;
  *   - reviewModel resolution (default = no override; config wins);
@@ -39,7 +37,6 @@ import {
   runLearningReview,
   shouldAutoReview,
   truncateMiddle,
-  wrapExchangeHook,
   type LearningConfig,
 } from './learning-loop.js';
 
@@ -117,28 +114,6 @@ describe('buildReviewDigest', () => {
     expect(digest.length).toBeLessThanOrEqual(DIGEST_MAX_CHARS);
     expect(digest).toContain(`ask-${DIGEST_MAX_EXCHANGES - 1}`); // newest present
     expect(digest).not.toContain('ask-0 '); // oldest dropped for budget
-  });
-});
-
-describe('wrapExchangeHook', () => {
-  it('records into the log and forwards to the inner hook', () => {
-    const log = createExchangeLog();
-    const seen: string[] = [];
-    const hook = wrapExchangeHook(log, (ex) => seen.push(ex.prompt));
-    hook({ prompt: 'p1', result: 'r1', status: 'completed' });
-    expect(log.entries).toEqual([{ prompt: 'p1', result: 'r1' }]);
-    expect(seen).toEqual(['p1']);
-  });
-
-  it('records even when there is no inner hook, and BEFORE a throwing one', () => {
-    const log = createExchangeLog();
-    wrapExchangeHook(log, undefined)({ prompt: 'p1', result: null, status: 'completed' });
-    expect(log.entries.length).toBe(1);
-    const throwing = wrapExchangeHook(log, () => {
-      throw new Error('inner exploded');
-    });
-    expect(() => throwing({ prompt: 'p2', result: 'r2', status: 'completed' })).toThrow('inner exploded');
-    expect(log.entries.length).toBe(2); // the record survived the throw
   });
 });
 

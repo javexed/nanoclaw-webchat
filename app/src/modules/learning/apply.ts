@@ -3,9 +3,8 @@
  * button and the auto-keep option (docs/webchat/learning-loop.md §4).
  *
  * Two callers, one implementation, because this is the security-sensitive
- * write: a kept skill becomes agent context on the next spawn. Extracted from
- * the webchat keep handler so auto-keep cannot drift into a second, subtly
- * different set of rules.
+ * write: a kept skill becomes agent context on the next spawn, and auto-keep
+ * must not drift into a second, subtly different set of rules.
  *
  * The rules it enforces:
  *   - SCOPED only — the skill lands in the one agent's own skills dir, never
@@ -21,6 +20,14 @@ import path from 'path';
 import { DATA_DIR } from '../../config.js';
 import { readSkillDraftBody, resolveSkillDraft, type SkillDraft } from '../../db/skill-drafts.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
+import {
+  assertPlainDir,
+  mkdirNoFollow,
+  readNoFollow,
+  removeNoFollow,
+  skipLinks,
+  writeNoFollow,
+} from '../../no-follow-fs.js';
 
 export function sanitizeSkillName(raw: string): string {
   return raw
@@ -43,7 +50,9 @@ export interface SkillOriginInfo {
 
 function readOrigin(skillDir: string): SkillOriginInfo | null {
   try {
-    const raw = JSON.parse(fs.readFileSync(path.join(skillDir, '.origin.json'), 'utf8')) as SkillOriginInfo;
+    const raw = JSON.parse(
+      readNoFollow(path.dirname(skillDir), path.join(path.basename(skillDir), '.origin.json')) ?? '',
+    ) as SkillOriginInfo;
     return raw && typeof raw.label === 'string' ? raw : null;
   } catch {
     return null;
@@ -75,6 +84,13 @@ export async function applySkillDraft(draft: SkillDraft, restartReason: string):
 
   const dir0 = scopedSkillsDir(draft.agent_group_id);
   const dest = path.join(dir0, name);
+  // The skills dir lives in the agent's writable ~/.claude: a link planted in
+  // it must not carry this write to a host path (no-follow-fs).
+  try {
+    assertPlainDir(dir0);
+  } catch (err) {
+    return { ok: false, status: 409, error: err instanceof Error ? err.message : String(err) };
+  }
   const pooled =
     fs.existsSync(path.join(process.cwd(), 'container', 'skills', name)) ||
     fs.existsSync(path.join(process.cwd(), 'data', 'user-skills', name));
@@ -101,14 +117,17 @@ export async function applySkillDraft(draft: SkillDraft, restartReason: string):
   }
 
   const staging = `${dest}.importing`;
+  const stagingRel = path.basename(staging);
   try {
-    fs.mkdirSync(staging, { recursive: true });
-    fs.writeFileSync(path.join(staging, 'SKILL.md'), body);
-    fs.writeFileSync(path.join(staging, '.origin.json'), JSON.stringify(origin));
-    fs.rmSync(dest, { recursive: true, force: true });
+    fs.mkdirSync(dir0, { recursive: true });
+    removeNoFollow(dir0, stagingRel);
+    fs.mkdirSync(staging);
+    writeNoFollow(dir0, path.join(stagingRel, 'SKILL.md'), body);
+    writeNoFollow(dir0, path.join(stagingRel, '.origin.json'), JSON.stringify(origin));
+    removeNoFollow(dir0, name);
     fs.renameSync(staging, dest);
   } catch (err) {
-    fs.rmSync(staging, { recursive: true, force: true });
+    removeNoFollow(dir0, stagingRel);
     return { ok: false, status: 500, error: 'Write failed: ' + (err instanceof Error ? err.message : String(err)) };
   }
   await resolveSkillDraft(draft.id, 'kept');
@@ -125,8 +144,9 @@ export function snapshotRevision(skillsDir: string, name: string): string {
   let ts = Date.now();
   while (fs.existsSync(path.join(skillsDir, '.history', name, String(ts)))) ts++;
   const dest = path.join(skillsDir, '.history', name, String(ts));
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  fs.cpSync(src, dest, { recursive: true });
+  assertPlainDir(skillsDir);
+  mkdirNoFollow(skillsDir, path.join('.history', name));
+  fs.cpSync(src, dest, { recursive: true, filter: skipLinks });
   return dest;
 }
 
@@ -156,10 +176,10 @@ export function revertLastRevision(skillsDir: string, name: string): { ok: boole
   const snap = path.join(skillsDir, '.history', name, String(revs[0]));
   snapshotRevision(skillsDir, name); // current → history, so the revert is undoable
   const staging = `${dest}.reverting`;
-  fs.rmSync(staging, { recursive: true, force: true });
-  fs.cpSync(snap, staging, { recursive: true });
-  fs.rmSync(dest, { recursive: true, force: true });
+  removeNoFollow(skillsDir, path.basename(staging));
+  fs.cpSync(snap, staging, { recursive: true, filter: skipLinks });
+  removeNoFollow(skillsDir, name);
   fs.renameSync(staging, dest);
-  fs.rmSync(snap, { recursive: true, force: true });
+  removeNoFollow(skillsDir, path.join('.history', name, String(revs[0])));
   return { ok: true };
 }

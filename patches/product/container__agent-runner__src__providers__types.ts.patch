@@ -1,8 +1,8 @@
 diff --git a/container/agent-runner/src/providers/types.ts b/container/agent-runner/src/providers/types.ts
-index c0296f04..d1eeb2cb 100644
+index c0296f04..5e720bf2 100644
 --- a/container/agent-runner/src/providers/types.ts
 +++ b/container/agent-runner/src/providers/types.ts
-@@ -9,6 +9,38 @@ import type { MemorySessionHookRegistration } from '../memory/session-hook.js';
+@@ -9,6 +9,30 @@ import type { MemorySessionHookRegistration } from '../memory/session-hook.js';
  export type ProviderSpeed = string;
  
  export interface AgentProvider {
@@ -30,18 +30,10 @@ index c0296f04..d1eeb2cb 100644
 +   */
 +  readonly supportsMcpTools?: boolean;
 +
-+  /**
-+   * Optional. When true, the runner scaffolds a persistent `memory/` tree in the
-+   * agent's workspace at boot. Providers with their own native memory (e.g.
-+   * Claude's `CLAUDE.local.md`) omit this and get nothing — memory is opt-in per
-+   * provider, never gated on a provider name.
-+   */
-+  readonly usesMemoryScaffold?: boolean;
-+
    /**
     * Register shared memory through the provider's native session-start
     * mechanism. `memory` is the contract's resolved memory capability (core
-@@ -72,6 +104,13 @@ export interface ProviderExchange {
+@@ -72,6 +96,13 @@ export interface ProviderExchange {
   * providers; individual providers may ignore any they don't need.
   */
  export interface ProviderOptions {
@@ -55,7 +47,7 @@ index c0296f04..d1eeb2cb 100644
    assistantName?: string;
    mcpServers?: Record<string, McpServerConfig>;
    env?: Record<string, string | undefined>;
-@@ -92,6 +131,14 @@ export interface ProviderOptions {
+@@ -92,6 +123,14 @@ export interface ProviderOptions {
     * keeps the provider default; a tier it did not declare never reaches it.
     */
    speed?: ProviderSpeed;
@@ -70,7 +62,7 @@ index c0296f04..d1eeb2cb 100644
  }
  
  export interface QueryInput {
-@@ -144,8 +191,16 @@ export type McpServerConfig =
+@@ -144,8 +183,16 @@ export type McpServerConfig =
         * (cwd-shim.ts) or drop it — never launch in the wrong directory.
         */
        cwd?: string;
@@ -88,17 +80,3 @@ index c0296f04..d1eeb2cb 100644
  
  export interface AgentQuery {
    /** Push a follow-up message into the active query. */
-@@ -190,4 +245,12 @@ export type ProviderEvent =
-    * event (tool call, thinking, partial message, anything) so the
-    * poll-loop's idle timer stays honest during long tool runs.
-    */
--  | { type: 'activity' };
-+  | { type: 'activity' }
-+  /**
-+   * A file the provider produced this turn (e.g. a codex-generated image).
-+   * Carried so provider code that emits it type-checks. NOTE: the poll-loop
-+   * does not yet deliver these as attachments — neither does upstream — so a
-+   * `file` event is currently ignored at runtime. Wiring delivery (write to the
-+   * batch's reply destination) is a separate future enhancement.
-+   */
-+  | { type: 'file'; path: string };

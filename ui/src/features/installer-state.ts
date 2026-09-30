@@ -1,18 +1,13 @@
 // ── Installer state ─────────────────────────────────────────────────────────
 // One "is this install running?" flag per installable stack, plus the two
-// pollers that watch a run in progress.
-//
-// Flags, not a single enum: the panels are independent and more than one can be
-// mid-install. They gate re-entry (a second click must not start a second run)
-// and drive each panel's busy affordance, which is why every one is read by the
-// panel that owns it AND by the wizard that can start the same install.
+// pollers that watch a run in progress. Flags, not one enum: more than one
+// install can be mid-run. Each gates re-entry for both its panel and the wizard.
 import { ref } from 'vue';
 
 /**
  * One flag for the four harness installs (codex, opencode, pi, grok): each
  * rebuilds the agent image and restarts the host, so two at once is never
- * right. The two older names are the same ref — readers that gate a row on
- * "is a harness installing?" keep working, and now mean it for all four.
+ * right. The per-harness names below are aliases of the same ref.
  */
 export const harnessInstallActive = ref(false);
 export const codexInstallActive = harnessInstallActive;
@@ -24,11 +19,8 @@ export const tailscaleInstallActive = ref(false);
 export const cloudflaredInstallActive = ref(false);
 
 /**
- * Pending setTimeout handles while a poll is in flight, else null.
- *
- * setTimeout, not setInterval: both poll by re-arming after each response, so a
- * slow server cannot stack overlapping requests the way a fixed interval would.
- * Typing them as interval handles compiled but was wrong about the mechanism.
+ * Pending setTimeout handles while a poll is in flight, else null. Re-armed
+ * after each response, so a slow server cannot stack overlapping requests.
  */
 export const ollamaPullPoller = ref<ReturnType<typeof setTimeout> | null>(null);
 export const opencodeGatePoll = ref<ReturnType<typeof setTimeout> | null>(null);

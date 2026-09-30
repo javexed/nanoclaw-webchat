@@ -104,7 +104,7 @@ push payload, optional TLS.
 
 ## Screenshots
 
-Real shots from a live install.
+Real shots from a running install.
 
 | Agent settings — Settings / Instructions tabs | Auto routing — rules + classify bench |
 |---|---|
@@ -140,12 +140,12 @@ install.sh          composes an install from three pinned inputs (versions.json)
 |---|---|
 | `app/` | Webchat's source, laid out in nanoclaw's tree shape. **Everything here ships into an install** — including `app/docs/webchat/`, which operators and agents read in a running system. |
 | `patches/` | Edits to nanoclaw-owned files, sorted by destiny: `upstreamable/` (generic fixes bound for upstream), `product/` (features awaiting a seam registry), `local/`. See [INVENTORY.md](patches/INVENTORY.md). |
-| `versions.json` | The three pins: upstream, seam, and the transitional fork reference. |
+| `versions.json` | The two pins: upstream and seam. |
 | `docs/` | Documentation **about this repo** (contributor-facing) — as opposed to `app/docs/`, which ships. |
-| `scripts/` | Dev harness: compose a tree, regenerate patches, check coverage, migrate a fork install. |
+| `scripts/` | Dev harness: compose a tree, regenerate patches, the CI guards. |
 
-The composed install passes upstream's full suites plus webchat's own
-(1,900+ tests), re-proven by CI on every push. `scripts/check-manifest.sh`
+The composed install passes upstream's full suites plus webchat's own,
+re-proven by CI on every push. `scripts/check-manifest.sh`
 catches the failure tests can't see: it keeps `app-manifest.txt` in step with
 the app tree, because a migration missing its entry ships into installs and
 never runs. See [docs/coverage-guards.md](docs/coverage-guards.md).
@@ -165,9 +165,7 @@ never runs. See [docs/coverage-guards.md](docs/coverage-guards.md).
 **Working on it:** [docs index](docs/README.md) ·
 [patch inventory](patches/INVENTORY.md) ·
 [upstream drift & sync](app/docs/webchat/upstream-drift.md) ·
-[hook-seam submission](docs/upstream-submission.md) ·
-[frontend design contract](app/public/webchat/DESIGN.md) ·
-[migrating a fork install](app/docs/webchat/design/migrate-from-fork.md)
+[frontend design contract](app/public/webchat/DESIGN.md)
 
 ## License
 

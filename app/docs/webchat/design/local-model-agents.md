@@ -4,7 +4,7 @@
 local model as a *per-agent* driver you opt into. Nothing here removes or
 replaces Claude — an unassigned agent group still runs on it.
 
-Related: [add-litellm.md](add-litellm.md) (the OpenAI-compatible proxy),
+Related: [`/add-litellm`](../../../.claude/skills/add-litellm/SKILL.md) (the OpenAI-compatible proxy),
 [llm-router.md](llm-router.md) (prompt-aware routing over that proxy). This doc
 is the layer above: pointing an actual **agent** at a local model and judging
 whether the model is good enough to *drive* one.
@@ -24,9 +24,6 @@ Because it's per-agent, it's additive and reversible:
 - Claude remains the default for every agent group you don't touch.
 - You flip one throwaway agent to a local model, judge it, and flip it back (or
   keep it) — nothing else is affected.
-- Optionally leave `fallback_provider: claude` on the local agent so terminal
-  errors re-run the turn on Claude (see llm-router.md §16c). That keeps a safety
-  net while you're evaluating.
 
 ## Prerequisites
 
@@ -112,13 +109,3 @@ Score each task pass / partial / fail and keep the transcript — the transcript
 is the evidence. A model that's clean on tasks 1–2 and shaky on 3–4 is the
 expected ~8–9B result and is still useful for lightweight agents; a model that
 fails task 2 (can't reliably make one tool call) isn't ready to drive an agent.
-
-## Keeping Claude in the picture
-
-- Unassigned agent groups stay on Claude — no change.
-- On the local test agent, `fallback_provider: claude` re-runs a *failed* turn on
-  Claude, so a bad local turn degrades gracefully instead of dead-ending. Drop it
-  if you want to see the model's raw, unassisted behavior.
-- The routing `escalate` route (llm-router.md §16c) is the prompt-level version:
-  prompts the classifier judges as beyond the local roster get handed up. Point
-  it at Claude, a bigger local model, or turn it off — your call per install.

@@ -1,5 +1,5 @@
 /**
- * Phase 4: shared-context fan-out. On a per-member wake, the member's session
+ * Shared-context fan-out. On a per-member wake, the member's session
  * receives the full room transcript — current message trigger=1, the rest
  * trigger=0 — idempotently. The INVARIANT that matters: exactly one trigger=1
  * (the current message); everything else is context.
@@ -93,10 +93,8 @@ describe('writeMemberTranscript', () => {
     void [a, b];
   });
 
-  // REGRESSION: a file row's `content` column is only the caption; the bytes
-  // live in file_meta. Serialising content alone handed the agent {"text":""}
-  // for every upload — 21 of Mark's files in a row arrived blank and the
-  // attachment never reached the container at all.
+  // A file row's `content` column is only the caption; the bytes live in
+  // file_meta, and must reach the container as an attachment.
   it("delivers the current turn's file as a staged attachment, not a blank message", async () => {
     const meta = { url: '/api/files/room-1/abc123.pdf', filename: 'Drawing.pdf', mime: 'application/pdf', size: 5 };
     fs.mkdirSync(uploadsDir('room-1'), { recursive: true });

@@ -1,21 +1,8 @@
 // ── Global listeners ─────────────────────────────────────────────────────────
-// Document- and window-level wiring that belongs to no single panel.
-//
-// At src/ rather than src/core/, deliberately. This is a COMPOSITION module: it
-// calls into feature modules (fetchApprovals, switchManageTab) as well as core
-// ones (connect, state), so putting it under core/ would make core import
-// features and invert the layering the rest of the split maintains. It sits
-// beside legacy.js, at the level allowed to know about everything.
-//
-// ONE EXPORTED FUNCTION PER BLOCK, each called from the line its block
-// occupied. Collapsing both into a single wireGlobalListeners() called at the
-// first block's position is what I tried first, and the boot-order trace caught
-// it: the manage-tab listeners registered ~900 lines earlier than before. The
-// listener SET was byte-identical, so the older diff reported nothing. See
-// docs/webchat/boot-order-guard.md.
-//
-// The lightbox and scroll listeners stay in legacy.js for now: they share six
-// mutable locals that each need an accessor pair, which is its own slice.
+// Document- and window-level wiring that belongs to no single panel. In src/, not
+// core/: it calls into features, and core must not import features.
+// ONE EXPORTED FUNCTION PER BLOCK, each called from its own place in boot order;
+// merging them reorders listener registration (docs/webchat/boot-order-guard.md).
 
 import { $ } from './core/dom.js';
 import { state } from './core/state.js';
@@ -45,9 +32,7 @@ export function wireVisibilityRefresh(): void {
       // Returning to a focused tab with a room open means its messages are now
       // seen — advance the server marker (and sync other devices). The reconnect
       // path already re-joins (which reads) when the socket was actually down.
-      // `?.`, not a bare call: this else-branch is reached when the socket is
-      // OPEN *or* when state.ws is null (the && above is false either way), so
-      // `state.ws.send(...)` threw on every wake with a room open and no socket.
+      // `?.`: this branch is also reached when state.ws is null.
       if (state.currentRoom)
         state.ws?.send(JSON.stringify({ type: 'read', room_id: state.currentRoom, thread_id: state.currentThread }));
     }
@@ -66,16 +51,6 @@ export function wireVisibilityRefresh(): void {
   window.addEventListener('offline', () => {
     if (state.ws && state.ws.readyState !== WebSocket.OPEN) void diagnoseConnection();
   });
-
-  // Safety-net poll for approvals. WS push + the reconnect/visibilitychange
-  // refetches above cover the common cases, but a *foreground* socket can go
-  // silently dead (zombie/throttled connection) and drop an `approval` push with
-  // no onclose, no reconnect, and no visibility change to trigger a catch-up — so
-  // the card would hang until the next unrelated push or a manual refocus. Poll
-  // the canonical pending list on a short interval while the tab is visible so a
-  // missed approval still surfaces within seconds. Cheap + idempotent
-  // (fetchApprovals just re-renders the scoped list); skipped while hidden since
-  // the visibilitychange handler already refetches on return to foreground.
 }
 
 /**
@@ -85,35 +60,9 @@ export function wireManageTabs(): void {
   document.querySelectorAll<HTMLElement>('.manage-tab').forEach((t: any) => {
     t.addEventListener('click', () => switchManageTab(t.dataset.mtab));
   });
-
-  // ── Skills registry tab ─────────────────────────────────────────────────────
-  // Browse every skill (shipped + imported), import one from a GitHub folder, and
-  // delete imported ones. Assignment to agents stays in the agent detail's Skills
-  // panel; this is the catalog.
-  // Learning loop: skills the agents proposed, staged for review (keep + wire, or
-  // discard). See docs/webchat/design/learning-loop.md.
-  // Pending-drafts badge (learning loop): a count on the ⋯ menu so staged drafts
-  // aren't invisible until someone happens to open Skills. Non-admins get a 403
-  // from the endpoint → count 0 → badge hidden, correct for who can act on them.
-
-
-  /**
-   * Minimal LCS line diff. A revision is only reviewable if you can see what
-   * CHANGED — showing the whole new file and asking someone to spot the edit is not
-   * review, it's proofreading. Skills are small, so O(m×n) is fine and beats pulling
-   * in a diff dependency.
-   */
 }
 
-/**
- * Service-worker registration and the update banner.
- *
- * Composition-level, like everything else here: it registers the worker, polls
- * for updates, and drives the banner that offers a reload. It touches
- * #update-banner and the login screen, which belong to the app shell rather
- * than to any panel — which is why the ownership heuristic reported it as
- * "auth+files+learn+rooms+voice" and why none of those is right.
- */
+/** Service-worker registration, update polling and the reload banner (app-shell, not any panel). */
 export function wireServiceWorker(hasStagedFile: () => boolean): void {
   if ('serviceWorker' in navigator) {
     let swReg: ServiceWorkerRegistration | null = null;
@@ -123,11 +72,8 @@ export function wireServiceWorker(hasStagedFile: () => boolean): void {
       // (automation, some embedded webviews).
       if (!reg) return;
       swReg = reg;
-      // Check immediately, then every 60s. The interval is frozen while the PWA
-      // is backgrounded (especially on iOS), so the foreground re-check below is
-      // what actually catches a new build on relaunch — without it a stale shell
-      // (e.g. a login screen for a retired bearer token) can render and just sit
-      // there versions behind.
+      // Check now, then every 60s. The interval freezes while the PWA is
+      // backgrounded (iOS), so the foreground re-check below catches relaunches.
       reg.update().catch(() => {});
       setInterval(checkForUpdate, 60000);
       // A worker reaching 'installed' while one already controls the page is a
@@ -152,16 +98,11 @@ export function wireServiceWorker(hasStagedFile: () => boolean): void {
     function safeToReload() {
       const input = document.getElementById('message-input') as HTMLTextAreaElement | null;
       const hasDraft = input && input.value.trim().length > 0;
-      // Passed in as a predicate rather than read directly: pendingFiles is
-      // legacy.js module state, and legacy.js imports THIS module, so reading it
-      // from here would be a cycle. The block only needs to know whether a file
-      // is staged, so that is the whole interface.
+      // A predicate, not an import: composition-root.ts imports this module.
       const staged = hasStagedFile();
       if (hasDraft || staged) return false;
-      // On the login screen there's no in-app work to lose, so reload straight
-      // away instead of waiting for the tab to hide — this is exactly the stuck
-      // case (a stale PWA showing a retired-token prompt): the fresh build then
-      // auto-signs-in via Tailscale. Only hold off if a token is mid-entry.
+      // On the login screen there's no work to lose (unless a token is mid-entry),
+      // and a stale shell there would otherwise sit versions behind.
       const loginScreen = document.getElementById('login-screen');
       const tokenField = document.getElementById('login-token') as HTMLInputElement | null;
       const onLogin = loginScreen && !loginScreen.hidden;
@@ -175,10 +116,8 @@ export function wireServiceWorker(hasStagedFile: () => boolean): void {
         refreshing = true;
         location.reload();
       } else {
-        // Silent deferral was invisible on mobile: the tab is always visible in
-        // use, and iOS freezes JS on background so the hidden-tab reload often
-        // never fires — clients sat versions behind with no signal. Surface an
-        // actionable banner instead; the hidden-tab auto-reload path still runs.
+        // Mobile tabs are visible whenever used, and iOS freezes JS in the
+        // background, so the hidden-tab reload may never fire: offer a banner too.
         reloadPending = true;
         showUpdateBanner();
       }
@@ -232,20 +171,8 @@ export function wireServiceWorker(hasStagedFile: () => boolean): void {
 }
 
 // ── App-shell wiring ─────────────────────────────────────────────────────────
-// Blocks whose SUBJECT element belongs to the shell rather than to any panel:
+// Blocks whose subject element belongs to the shell rather than to any panel:
 // #messages, #message-input, #mobile-back.
-//
-// The ownership census labelled these "multi-owner" — one showed as
-// agents+approvals+composer+rooms+skills+thinking+transcript+ws — but that is
-// the union of every id a block touches, not its owner. #messages is referenced
-// by eight modules because eight modules render INTO it; the container itself is
-// nobody's. Attributing by the block's subject separates a genuinely shared
-// element from an incidental reference.
-//
-// Only the three shell blocks with no legacy-local dependencies are here. The
-// other four (#overflow-btn, #detail-overlay, and two more on #message-input)
-// each need two or three symbols that are still legacy module state — those
-// want an accessor design of their own, not a twelve-parameter function.
 
 export async function copyTextToClipboard(text: string): Promise<boolean> {
   if (navigator.clipboard && window.isSecureContext) {
@@ -273,13 +200,6 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
   return ok;
 }
 
-/**
- * Code-block Wrap/Copy used to be delegated from #messages: one click handler
- * that found the button, wrote its label and toggled its classes. CodeToolbar
- * owns both buttons and both pieces of feedback now, so there is nothing left
- * to delegate — see features/CodeToolbar.vue.
- */
-
 /** Mobile back affordance: leaves the in-room layout. */
 export function wireMobileBack(): void {
   $('#mobile-back')?.addEventListener('click', () => {
@@ -287,8 +207,8 @@ export function wireMobileBack(): void {
   });
 }
 
-/** Composer paste: long text becomes an attachment; files fall through
- * to the drop handler. */
+/** Composer paste: multi-line text is wrapped in a code fence so it renders verbatim
+ * (no Markdown or mention decoration); files fall through to the document listener. */
 export function wireComposerPaste(): void {
   $('#message-input')?.addEventListener('paste', (e: any) => {
     if (e.clipboardData?.files?.length) return; // images/files handled by the document listener
@@ -315,21 +235,10 @@ export function wireComposerPaste(): void {
   });
 }
 
-// ── Detail-overlay routing ───────────────────────────────────────────────────
-// The shared backdrop behind every detail aside, plus the two pieces of state it
-// needs: whether a drawer owns the top view-stack entry, and a deferred
-// full-view open to run once the drawer's route has popped.
-//
-// Owned here rather than injected. boot.ts cannot read legacy state — legacy
-// imports this module — so the choice was to move the state or to pass three
-// callbacks in. The state has no reason to live in legacy: the overlay is the
-// only thing that drives it, and views.ts reads it through a deps entry that
-// legacy now relays from the accessors below.
-
 // ── Detail-panel backdrop (mobile-only via CSS) ─────────────────────────────
-// Shared view-stack state for the detail drawers (mirrored from panel `.hidden`
-// by the observer below). Hoisted to module scope so full-view openers can close
-// an open drawer and wait for its router teardown before pushing themselves.
+// Drawer view-stack state, mirrored from panel `.hidden` by the observer below.
+// Module scope so full-view openers can close a drawer and wait for its router
+// teardown; views.ts reads it through deps relayed by composition-root.ts.
 let detailRouterOpen = false; // a detail drawer owns the top view-stack entry
 
 let afterDetailClose: (() => void) | null = null; // deferred full-view open, run once the drawer's router teardown completes
@@ -344,11 +253,6 @@ export function closeAllDetailDrawers(): void {
 /** Whether a detail drawer currently owns the top view-stack entry. */
 export function getDetailRouterOpen(): boolean {
   return detailRouterOpen;
-}
-
-/** A deferred full-view open, run once the drawer's route has popped. */
-export function getAfterDetailClose(): (() => void) | null {
-  return afterDetailClose;
 }
 
 export function setAfterDetailClose(fn: (() => void) | null): void {
@@ -368,12 +272,9 @@ export function wireDetailOverlay(): void {
   const sync = () => {
     const allHidden = panels.every((p: any) => p.hidden);
     overlay.hidden = allHidden;
-    // The three detail panels are nested inside <section id="chat">, which
-    // mobile CSS hides (`display: none`) unless `#app.in-room`. Without this
-    // class the panels stay invisible while the backdrop (a sibling of #chat)
-    // dims the screen — looked like a frozen grey UI when opened from a
-    // sidebar tab. Toggling `detail-open` keeps #chat displayed for the
-    // panel's lifetime.
+    // The detail panels sit inside #chat, which mobile CSS hides unless
+    // `#app.in-room`; `detail-open` keeps #chat displayed while a panel is open,
+    // or the backdrop dims the screen over an invisible panel.
     if (app) app.classList.toggle('detail-open', !allHidden);
     // Router: a detail pane is an overlay surface, so the OS/browser back
     // gesture closes it (and, when opened over Manage, returns there). Guarded

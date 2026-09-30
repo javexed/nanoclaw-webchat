@@ -8,26 +8,19 @@
 // sent and not rendered, because withholding in the GUI is not withholding:
 // the response is one devtools tab away. `restricted` says which shape the
 // client received, so it can render the difference instead of guessing.
-//
-// Lifted out of server.ts unchanged. It closed over nothing in that file's
-// module scope; the only cross-boundary reference was the route handler
-// calling buildOverview, which now imports it.
 import { execFile } from 'child_process';
 import os from 'os';
 
 import { getDb } from '../../../db/connection.js';
 import { canAccessAgentGroup } from '../../../modules/permissions/access.js';
-import { canAccessRoom, filterRoomsForUser } from '../access.js';
+import { filterRoomsForUser } from '../access.js';
 import { getAllWebchatRooms, getWebchatRoom } from '../db.js';
 import { hasAdminPrivilege, isOwner } from '../roles.js';
-import { json } from './http.js';
 import { filterAsync } from '../async-array.js';
 
 export interface OverviewSnapshot {
   restricted: boolean;
-  // `uptime` and `agents.total` are install-wide facts, so they are null for a
-  // restricted caller rather than sent-and-not-rendered. Withholding in the
-  // GUI is not withholding: the response is one devtools tab away.
+  // `uptime` and `agents.total` are install-wide facts: null for a restricted caller.
   health: { uptime: number | null; container_runtime_ok: boolean };
   agents: { total: number | null; visible: number };
   sessions: { active: number; total: number };
@@ -69,10 +62,7 @@ export async function buildOverview(userId: string): Promise<OverviewSnapshot> {
   // SCOPING RULE for the activity counts below. A restricted caller counts
   // only sessions on agent groups they can ACCESS and messages in rooms they
   // can ACCESS — `canAccessAgentGroup` / `canAccessRoom`, which is exactly
-  // what the drill-down panels already enforce. Before this, the headline was
-  // install-wide while the drill-down was scoped, so a member could read
-  // "247 messages (24h)", click it, and find four: the number described rooms
-  // they had no right to see.
+  // what the drill-down panels already enforce, so headline and drill-down agree.
   //
   // Note this is a DIFFERENT predicate from `visibleAgents` above, on purpose.
   // The agents card counts what you can ADMINISTER (hasAdminPrivilege, so it

@@ -6,31 +6,15 @@ import FilePreview from './FilePreview.vue';
 import { previewRows } from './file-preview-state.js';
 import AttachPicker from './AttachPicker.vue';
 import { attachEmptyText, attachPickerCfg, attachRows, pendingFiles } from './attach-picker-state.js';
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
-import { showToast, toastError } from '../core/toast.js';
+import { $ } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
+import { showToast } from '../core/toast.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
-import { openLightbox, showConfirmModal } from './modals.js';
+import { showConfirmModal } from './modals.js';
 import { appendSystem, removeRow } from './transcript.js';
 import { continueAgentImport } from './agents.js';
 import { continueRoomImport } from './rooms.js';
-
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideFilesDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
-export interface FilesDeps {
-}
-
-const deps = {} as FilesDeps;
-
-/** Wire the legacy helpers this module calls. Call once at startup. */
-export function provideFilesDeps(provided: Partial<FilesDeps>): void {
-  Object.assign(deps, provided);
-}
-
 
 function formatFileSize(bytes?: any) {
   if (bytes < 1024) return `${bytes} B`;
@@ -92,13 +76,11 @@ export function clearStagedFiles() {
 let filePreviewApp: ReturnType<typeof createApp> | null = null;
 
 function mountFilePreview(): void {
-  if (filePreviewApp) return;
-  const host = $('#file-preview');
-  if (!host) return;
-  filePreviewApp = createApp(FilePreview, {
-    onRemove: (id: number) => removeStagedFile(id),
-  });
-  filePreviewApp.mount(host);
+  filePreviewApp ??= mountIsland('#file-preview', () =>
+    createApp(FilePreview, {
+      onRemove: (id: number) => removeStagedFile(id),
+    }),
+  );
 }
 
 function renderFilePreview(): void {
@@ -121,7 +103,6 @@ function renderFilePreview(): void {
     return { id, name: file.name, size: formatFileSize(file.size), thumbUrl };
   });
 }
-
 
 const CHUNK_THRESHOLD = 512 * 1024; // Use chunked upload for files > 512KB
 
@@ -178,19 +159,10 @@ async function uploadFileChunked(file?: any, caption?: any) {
     if (i === totalChunks - 1 && caption) body.caption = caption;
 
     try {
-      const res = await authFetch(
+      await apiJson(
         `/api/rooms/${encodeURIComponent(state.currentRoom!)}/upload/chunk?thread_id=${encodeURIComponent(state.currentThread)}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        },
+        { method: 'POST', body },
       );
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        if (statusMsg) statusMsg.text = `Upload failed: ${err.error || res.statusText}`;
-        return;
-      }
     } catch (err) {
       if (statusMsg) statusMsg.text = `Upload failed: ${(err as any)?.message}`;
       return;
@@ -228,25 +200,23 @@ export function closeAttachPicker() {
 let attachPickerApp: ReturnType<typeof createApp> | null = null;
 
 function mountAttachPicker(): void {
-  if (attachPickerApp) return;
-  const host = $('#attach-picker-list');
-  if (!host) return;
-  attachPickerApp = createApp(AttachPicker, {
-    onToggle: async (key: string, attached: boolean, li: HTMLElement) => {
-      const cfg = attachPickerCfg.value;
-      if (!cfg) return;
-      const item = cfg.items().find((it: any) => String(cfg.name(it)) === key);
-      if (!item) return;
-      try {
-        await cfg.onToggle(item, !attached);
-      } catch (err: any) {
-        showToast('Failed: ' + (err?.message || err), { kind: 'error' });
-      }
-      li.style.pointerEvents = '';
-      renderAttachPickerList($<HTMLInputElement>('#attach-picker-search')?.value);
-    },
-  });
-  attachPickerApp.mount(host);
+  attachPickerApp ??= mountIsland('#attach-picker-list', () =>
+    createApp(AttachPicker, {
+      onToggle: async (key: string, attached: boolean, li: HTMLElement) => {
+        const cfg = attachPickerCfg.value;
+        if (!cfg) return;
+        const item = cfg.items().find((it: any) => String(cfg.name(it)) === key);
+        if (!item) return;
+        try {
+          await cfg.onToggle(item, !attached);
+        } catch (err: any) {
+          showToast('Failed: ' + (err?.message || err), { kind: 'error' });
+        }
+        li.style.pointerEvents = '';
+        renderAttachPickerList($<HTMLInputElement>('#attach-picker-search')?.value);
+      },
+    }),
+  );
 }
 
 export function renderAttachPickerList(filterText?: any): void {
@@ -270,13 +240,8 @@ export function renderAttachPickerList(filterText?: any): void {
   }));
 }
 
-
 // ── Panel wiring ───────────────────────────────────────────────────────────
 // File and import controls: system export/import, per-agent import, and the attach picker.
-//
-// These blocks were invisible to the ownership census: no module referenced
-// their element ids, because the wiring that would have referenced them was
-// still here in legacy.js. Attributed by the subject element's NAME instead.
 
 export function wireFileControls1(): void {
   $<HTMLButtonElement>('#import-any-btn')?.addEventListener('click', () => {
@@ -369,11 +334,9 @@ export function wireFileControls3(): void {
   });
 }
 
-// crypto.randomUUID is only exposed in secure contexts (HTTPS / localhost).
-// Webchat is commonly served over plain HTTP on a tailnet hostname where it
-// is absent — fall back to a getRandomValues-based v4 builder, which IS
-// available in non-secure contexts. Format matches the server's UUID regex
-// in src/channels/webchat/files.ts (handleChunkedUpload).
+// crypto.randomUUID exists only in secure contexts, and webchat is often served
+// over plain HTTP — so fall back to getRandomValues, which works everywhere.
+// Format matches the server's UUID regex (handleChunkedUpload).
 export function uuidv4() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();

@@ -114,11 +114,8 @@ describe('enableTailscaleServe', () => {
   });
 
   it("resolves the username rather than relaying the daemon's $USER", async () => {
-    // Verbatim stderr from tailscale 1.92.5 (snap). Relaying the line it
-    // suggests looks helpful and is not: `--operator=$USER` is a shell
-    // variable, and nothing expands it on the way to a web page — so the hint
-    // would swap one unexpanded placeholder for another. This asserts we
-    // answer with a name someone can actually paste.
+    // Verbatim stderr from tailscale 1.92.5 (snap). Its `--operator=$USER` is
+    // unexpanded on a web page; assert we answer with a pasteable name.
     const real = [
       'sending serve config: Access denied: serve config denied',
       '',

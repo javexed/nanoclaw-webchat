@@ -39,6 +39,7 @@ import { upsertUser } from '../../modules/permissions/db/users.js';
 import { getBearerTokenDisabled, getPromoteFirstTailscaleOwner, setPromoteFirstTailscaleOwner } from './db.js';
 import { ensureOwnerRoleOnFirstLogin, grantOwnerRole, isOwner } from './roles.js';
 import { lookupSigninSession, resolveLinkedUserId, sessionTokenFromCookie } from './signins.js';
+import { serveFrontedHosts } from './tailscale-serve.js';
 
 const WEBCHAT_TOKEN = process.env.WEBCHAT_TOKEN || '';
 const tailscaleEnabled = (): boolean => process.env.WEBCHAT_TAILSCALE === 'true';
@@ -178,12 +179,10 @@ const JWT_SHAPE = /^[\w-]+\.[\w-]+\.[\w-]+$/;
 // Id tokens live ~1h; allow for modest clock drift either way.
 const CLOCK_SKEW_S = 120;
 const JWKS_TTL_MS = 3_600_000;
-// Every fetch — TTL refresh or unknown-kid refetch — is rate-limited on the last
-// ATTEMPT, not the last success. Keying on success (the first cut did) meant a
-// JWKS outage reset nothing, so each request retried immediately: exactly the
-// outbound storm the limit exists to prevent. On an attempt-based gate an
-// outage costs one request per window, and a stream of forged kids the same.
-// Rotation still lands within one window without a restart.
+// Every fetch (TTL refresh or unknown-kid refetch) is rate-limited on the last
+// ATTEMPT, not the last success: during a JWKS outage, or under a stream of
+// forged kids, that costs one outbound request per window instead of one per
+// request. Rotation still lands within one window without a restart.
 const JWKS_MIN_REFETCH_MS = 60_000;
 
 /** A signing key and the one algorithm it may verify: a token's `alg` must match its key. */
@@ -351,15 +350,8 @@ export function oidcIdentityClaim(provider: OidcProvider, claims: Record<string,
   return verified ? str(claims.email) : null;
 }
 
-/** Verify signature + iss/aud/exp/nbf. Returns null on ANY failure. */
-export async function verifyOidcToken(token: string): Promise<OidcIdentity | null> {
-  const r = await verifyOidcTokenDetailed(token);
-  return r.ok ? r.identity : null;
-}
-
-// A stale token is re-sent on EVERY request — one page load produced ~45
-// identical warnings in five seconds. One line per (source ip, reason) per
-// minute, carrying the count it swallowed, keeps the signal and drops the flood.
+// A stale token is re-sent on EVERY request. One line per (source ip, reason)
+// per minute, carrying the count it swallowed, keeps the signal without the flood.
 const OIDC_WARN_WINDOW_MS = 60_000;
 const oidcWarnState = new Map<string, { at: number; suppressed: number }>();
 function warnOidcFallThrough(remoteIp: string, r: Extract<OidcResult, { ok: false }>): void {
@@ -410,13 +402,11 @@ export interface AuthFailure {
 }
 
 /**
- * Auth events, deduplicated. authenticateRequest runs on EVERY HTTP request
- * and WS upgrade, so raw emission would write a line per API call and turn
- * the audit log into an access log. What an incident review needs is
- * TRANSITIONS: the first time an identity shows up over a given source+ip
- * since boot, and refusals. The concrete case this must answer: "which
- * identity consumed the fresh-install owner grant, and from where?" — a
- * question that was unanswerable when exactly that happened.
+ * Auth events, deduplicated: authenticateRequest runs on EVERY request, and
+ * raw emission would turn the audit log into an access log. Recorded are
+ * TRANSITIONS — the first time an identity shows up over a given source+ip
+ * since boot (e.g. which identity consumed the fresh-install owner grant, and
+ * from where) — and refusals.
  */
 const auditedSessions = new Set<string>();
 const auditedDenials = new Map<string, number>();
@@ -472,12 +462,11 @@ async function authenticate(req: IncomingMessage): Promise<AuthResult | AuthFail
   //     client (a runner daemon, an extension) would present its own token as
   //     a Bearer. Same verification either way.
   //
-  //     A token that fails verification FALLS THROUGH rather than refusing.
+  //     A token that fails verification FALLS THROUGH rather than refusing:
   //     EasyAuth's stored id token can lapse between refreshes, and a browser
-  //     that the platform already authenticated must not be locked out by our
-  //     stricter check. Falling through costs nothing: the branch below is
-  //     IP-gated to the proxy, so the fallback is exactly today's posture, and
-  //     a forged token cannot manufacture reach it does not already have.
+  //     the platform already authenticated must not be locked out. Falling
+  //     through grants nothing: the methods below apply their own gates, so a
+  //     forged token cannot manufacture reach it does not already have.
   if (oidcCfg().enabled) {
     const rawId = req.headers['x-ms-token-aad-id-token'];
     const headerToken = Array.isArray(rawId) ? rawId[0] : rawId;
@@ -533,7 +522,7 @@ async function authenticate(req: IncomingMessage): Promise<AuthResult | AuthFail
     //     ignored. Minting the SAME `webchat:tailscale:<login>` id that whois
     //     produces keeps identity continuous across the http-tailnet → https-
     //     serve switch, so an owner claimed over http stays owner over https.
-    const serveLogin = tailscaleServeIdentity(req, remoteIp);
+    const serveLogin = isLocalhost(remoteIp) ? tailscaleServeIdentity(req, remoteIp, await serveFrontedHosts()) : null;
     if (serveLogin) {
       return withHint(
         await finalize({
@@ -583,9 +572,6 @@ export function requiresExplicitAuth(host: string): boolean {
  * disabled flag / moduleWebchatBearerAuth).
  */
 async function bearerActive(): Promise<boolean> {
-  // The disabled flag lives in the DB now. `!getBearerTokenDisabled()` on the
-  // un-awaited promise was always false — the bearer token reported INACTIVE
-  // forever, and canDisableBearer with it.
   return Boolean(WEBCHAT_TOKEN) && !(await getBearerTokenDisabled());
 }
 
@@ -620,30 +606,14 @@ export async function hasExplicitAuth(): Promise<boolean> {
 }
 
 // ── Tailscale health probe ──
-// The login screen needs to tell the user *why* their request was rejected.
-// We probe `tailscale status --json` — it succeeds only when the binary is on
-// PATH AND the local daemon is logged into a tailnet, so a flipped flag
-// captures both "not installed" and "tailscaled down / logged out" without
-// needing two probes.
+// `tailscale status --json` succeeds only when the binary is on PATH AND the
+// daemon is logged into a tailnet, so one probe covers both failure modes. Not
+// cached for the process lifetime: Tailscale may be added after boot, so stale
+// reads re-probe in the background (refreshTailscaleHealth) and never block.
 //
-// The result is NOT cached for the process lifetime: the very deployments this
-// serves (the Proxmox / community-script install) enable Tailscale auth up
-// front and add Tailscale *later*, so a boot probe legitimately starts false
-// and must be able to flip true without a restart. Reads re-probe in the
-// background when the cached value is stale (see refreshTailscaleHealth), so
-// "not detected" self-heals within a poll cycle once tailscale comes up — and
-// flips back if tailscaled later goes down. A snap-packaged `tailscale` (the
-// Ubuntu default) can be slow to cold-start, so the timeout is generous; the
-// probe never blocks a request, it only refreshes the cached flag.
-//
-// State:
 //   null  → not probed yet (probe runs during startWebchatServer)
 //   true  → `tailscale status` succeeded → server can do whois
 //   false → ENOENT, non-zero exit, or timeout → log already emitted
-//
-// Note: this only checks the SERVER. A healthy server can still 401 a
-// client if Tailscale isn't running on the client device — the most common
-// failure pattern. The PWA's login copy reflects that.
 let tailscaleHealthy: boolean | null = null;
 let tailscaleProbedAt = 0;
 let tailscaleProbeInFlight: Promise<void> | null = null;
@@ -679,14 +649,9 @@ export function tailscaleReprobeDue(healthy: boolean | null, probedAt: number, n
 }
 
 export async function probeTailscaleHealth(run: TailscaleProbeRunner = defaultProbeRunner): Promise<void> {
-  // Probe UNCONDITIONALLY. `tailscaleHealthy` is a host-presence fact — is a
-  // tailnet-joined daemon up on this box? — which the wizard needs in order to
-  // OFFER tailnet auth. Whether tailscale is actually USED for auth is a
-  // separate decision (TAILSCALE_ENABLED, applied downstream). Gating the probe
-  // on the enable flag was a chicken-and-egg: the probe only ran once you'd
-  // already turned on the very thing the probe exists to help you turn on, so
-  // the wizard's Tailscale step could never see a running tailnet.
-  // Collapse concurrent callers onto one in-flight probe.
+  // Probe UNCONDITIONALLY: `tailscaleHealthy` is a host-presence fact the wizard
+  // needs in order to OFFER tailnet auth, so it cannot depend on that auth being
+  // enabled. Concurrent callers collapse onto one in-flight probe.
   if (tailscaleProbeInFlight) return tailscaleProbeInFlight;
   const wasHealthy = tailscaleHealthy;
   tailscaleProbeInFlight = (async () => {
@@ -697,10 +662,8 @@ export async function probeTailscaleHealth(run: TailscaleProbeRunner = defaultPr
       // has no tailscale. Detection still records the false either way.
       if (wasHealthy !== false && tailscaleEnabled()) {
         if (notInstalled) {
-          // Not an error: deployments (e.g. the Proxmox install) enable Tailscale
-          // auth up front so the tailnet flow needs no config, and add Tailscale
-          // later. Until then tailscale-auth simply doesn't apply and other
-          // methods (bearer / proxy) carry access.
+          // Not an error: Tailscale auth may be enabled before Tailscale is
+          // added; until then bearer / proxy carry access.
           log.info(
             'Webchat: WEBCHAT_TAILSCALE=true but `tailscale` is not installed yet — ' +
               'tailnet sign-in becomes available once you add Tailscale; bearer/proxy auth works meanwhile.',
@@ -724,8 +687,8 @@ export async function probeTailscaleHealth(run: TailscaleProbeRunner = defaultPr
  * Fire a background re-probe if the cached health is stale, so the coarse flag
  * the login screen / wizard reads tracks reality without a restart. Non-blocking
  * by design: the current read returns the cached value and the refreshed one
- * lands for the next poll — the UI already polls these endpoints. No-op when
- * Tailscale auth isn't enabled or a probe is already running.
+ * lands for the next poll — the UI already polls these endpoints. No-op while
+ * a probe is running or the cached value is fresh.
  */
 export function refreshTailscaleHealth(): void {
   // Runs regardless of TAILSCALE_ENABLED so host-presence detection works during
@@ -916,15 +879,8 @@ function authenticateTrustedProxy(req: IncomingMessage, remoteIp: string): { ide
     if (!isTrustedProxyIp(cleanIp, cfg.entries)) return null;
   }
 
-  // Step 2 — resolve the identity. BOTH modes consult the same headers.
-  //
-  // Keeping these two concerns apart matters. Pinning the proxy IP tightens
-  // *who may assert an identity*; it must not also narrow *which headers
-  // carry one*. It used to do both: an explicit IP list read only
-  // TRUSTED_PROXY_HEADER and skipped the platform pairs entirely, so an
-  // operator hardening `auto` → a specific IP would silently 401 every
-  // EasyAuth / Cloudflare Access login on the box — the tightening you'd
-  // reach for first is exactly the one that broke sign-in.
+  // Step 2 — identity. BOTH modes read the same headers: pinning the proxy IP
+  // narrows *who may assert* an identity, never *which headers carry one*.
   for (const ph of PLATFORM_HEADERS) {
     const identity = req.headers[ph.identity];
     const proof = req.headers[ph.verify];
@@ -955,12 +911,22 @@ function authenticateTrustedProxy(req: IncomingMessage, remoteIp: string): { ide
  * and injects `Tailscale-User-Login` — the tailnet login, the same string
  * whois returns as `UserProfile.LoginName`, so both paths mint an identical
  * `webchat:tailscale:<login>` id. Honor it ONLY when the request arrives on
- * loopback: serve is always localhost→localhost, so this header from a
- * non-loopback source is a spoof (a direct :PORT hit) and must be rejected.
+ * loopback AND is addressed to a name Serve is fronting (`serveHosts`, from
+ * serveFrontedHosts): serve is always localhost→localhost under its .ts.net
+ * name, while a direct :PORT hit, or a tunnel or reverse proxy forwarding
+ * from loopback under its own name, can send the same header as a spoof.
  * Exported so that security boundary is unit-tested directly.
  */
-export function tailscaleServeIdentity(req: IncomingMessage, remoteIp: string): string | null {
+export function tailscaleServeIdentity(
+  req: IncomingMessage,
+  remoteIp: string,
+  serveHosts: ReadonlySet<string>,
+): string | null {
   if (!isLocalhost(remoteIp)) return null;
+  const host = String(req.headers.host ?? '')
+    .toLowerCase()
+    .replace(/:443$/, '');
+  if (!host || !serveHosts.has(host)) return null;
   const raw = req.headers['tailscale-user-login'];
   const login = Array.isArray(raw) ? raw[0] : raw;
   return typeof login === 'string' && login.trim() ? login.trim() : null;
@@ -1054,7 +1020,8 @@ function sameOriginRequest(req: IncomingMessage): boolean {
 export async function tailscaleIdentityOf(req: IncomingMessage): Promise<{ userId: string; login: string } | null> {
   if (!tailscaleEnabled()) return null;
   const remoteIp = (req.socket.remoteAddress ?? '127.0.0.1').replace(/^::ffff:/, '');
-  const login = tailscaleServeIdentity(req, remoteIp) ?? (await tailscaleWhois(remoteIp));
+  const serveLogin = isLocalhost(remoteIp) ? tailscaleServeIdentity(req, remoteIp, await serveFrontedHosts()) : null;
+  const login = serveLogin ?? (await tailscaleWhois(remoteIp));
   return login ? { userId: `webchat:tailscale:${normalizeId(login)}`, login } : null;
 }
 
@@ -1103,13 +1070,9 @@ async function finalize(args: {
   // bearer bootstrap), then the flag disarms so later tailnet peers don't get it.
   if (args.source === 'tailscale' && (await getPromoteFirstTailscaleOwner())) {
     const granted = await grantOwnerRole(args.userId, 'webchat:first-tailscale-owner');
-    // Disarm on the END STATE, not on the return value. `granted` is false in
-    // two very different cases — the grant failed, and this identity already
-    // held owner — and clearing the flag unconditionally conflates them. That
-    // conflation is unrecoverable in the direction that matters: the one-shot
-    // is spent, no role exists, and the operator is left holding a tailnet
-    // identity that can authenticate but not administer, with the only UI for
-    // re-arming gated behind the owner they just failed to become.
+    // Disarm on the END STATE, not the return value: `granted` is also false
+    // when the grant failed, and spending the one-shot then would leave no
+    // owner to re-arm it.
     if (granted || (await isOwner(args.userId))) await setPromoteFirstTailscaleOwner(false);
   }
   return { ok: true, userId: args.userId, displayName: args.displayName, source: args.source };

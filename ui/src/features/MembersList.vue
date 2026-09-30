@@ -1,15 +1,6 @@
 <script setup lang="ts">
 /**
- * The room members list — third island.
- *
- * Mounted into <ul id="members-list">, exclusively owned by this module.
- *
- * Vue rendering rules established by the first two islands and applied here:
- *   - text that must match textContent exactly is BOUND, never written as
- *     template text (template text carries the surrounding newlines)
- *   - no comments in the template; Vue renders them as DOM comment nodes
- *   - v-bind an object for conditional attributes; :class emits class=""
- * This island needs none of the class exceptions — every class here is static.
+ * The room members list, mounted into <ul id="members-list">.
  */
 import { computed } from 'vue';
 import { state } from '../core/state.js';
@@ -26,7 +17,7 @@ const sorted = computed(() => {
   return f ? all.filter((m: any) => `${m.identity} ${m.handle || ''}`.toLowerCase().includes(f)) : all;
 });
 
-/** Matches the imperative label exactly, including the " (you)" suffix. */
+/** The member's identity, with a " (you)" suffix for the viewer. */
 const label = (m: any) => (m.identity === state.myIdentity ? `${m.identity} (you)` : m.identity);
 </script>
 

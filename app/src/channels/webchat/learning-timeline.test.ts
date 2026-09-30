@@ -17,11 +17,11 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import type { WebchatServer } from './server.js';
-
-const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
+import type { DbDriver } from '../../db/driver.js';
+import { httpRequest, loadServer, noopHooks, portOf, PROXY_ENV, resetServerModules, seeder } from './test-server.js';
 
 const AG_A = 'ag-tl-a';
 const AG_B = 'ag-tl-b';
@@ -34,19 +34,8 @@ const T_DISCARDED = 2_500_000; // discarded card (B)
 const T_REVISED = 1_500_000; // .history snapshot (A) — kept fallback ties here
 const T_DRAFT_NOCARD = 1_000_000; // pending draft with no card (A)
 
-beforeEach(async () => {
-  vi.resetModules();
-});
-
 afterEach(async () => {
-  vi.unstubAllEnvs();
-  try {
-    const conn = await import('../../db/connection.js');
-    await conn.closeDb();
-  } catch {
-    // ignore
-  }
-  vi.resetModules();
+  await resetServerModules();
   for (const g of [AG_A, AG_B]) {
     fs.rmSync(path.join(process.cwd(), 'data', 'v2-sessions', g), { recursive: true, force: true });
   }
@@ -59,68 +48,9 @@ afterEach(async () => {
   fs.rmSync(path.join(process.cwd(), 'data', 'skill-drafts', 'd-nocard'), { recursive: true, force: true });
 });
 
-async function loadServerWithEnv(env: Record<string, string | undefined>) {
-  for (const [k, v] of Object.entries(env)) {
-    if (v === undefined) vi.stubEnv(k, '');
-    else vi.stubEnv(k, v);
-  }
-  vi.resetModules();
-  const conn = await import('../../db/connection.js');
-  await conn.initTestDb();
-  const migrations = await import('../../db/migrations/index.js');
-  await migrations.runMigrations(conn.getDb());
-  return { server: await import('./server.js'), conn };
-}
-
-async function httpRequest(
-  port: number,
-  method: string,
-  path_: string,
-  headers: Record<string, string> = {},
-): Promise<{ status: number; body: string }> {
-  const http = await import('http');
-  return new Promise((resolve, reject) => {
-    const r = http.request({ host: '127.0.0.1', port, path: path_, method, headers }, (res) => {
-      let buf = '';
-      res.on('data', (c) => (buf += c));
-      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: buf }));
-    });
-    r.on('error', reject);
-    r.end();
-  });
-}
-
-const portOf = (wc: { http: { address: () => unknown } }): number => {
-  const a = wc.http.address();
-  return typeof a === 'object' && a ? (a as { port: number }).port : 0;
-};
-
 const now = '2026-07-22T00:00:00.000Z';
-async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
-  const user = async (id: string) =>
-    await db.run(
-      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
-      id,
-      now,
-    );
-  const group = async (id: string, name: string) =>
-    await db.run(
-      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      id,
-      name,
-      id,
-      now,
-    );
-  const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
-    await user(uid);
-    await db.run(
-      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
-      uid,
-      r,
-      g,
-      now,
-    );
-  };
+async function seed(db: DbDriver): Promise<void> {
+  const { group, role } = seeder(db, now);
   await group(AG_A, 'Alpha');
   await group(AG_B, 'Beta');
   await role('webchat:owner', 'owner', null);
@@ -156,18 +86,12 @@ interface TimelineEvent {
 }
 
 describe('GET /api/learning/timeline', () => {
-  let server: Awaited<ReturnType<typeof loadServerWithEnv>>['server'];
+  let server: typeof import('./server.js');
   let wc: WebchatServer;
   let port: number;
 
   beforeEach(async () => {
-    const loaded = await loadServerWithEnv({
-      WEBCHAT_HOST: '127.0.0.1',
-      WEBCHAT_PORT: '0',
-      WEBCHAT_TOKEN: '',
-      WEBCHAT_TRUSTED_PROXY_IPS: '127.0.0.1',
-      WEBCHAT_TRUSTED_PROXY_HEADER: 'x-forwarded-user',
-    });
+    const loaded = await loadServer(PROXY_ENV);
     server = loaded.server;
     const db = loaded.conn.getDb();
     await seed(db);

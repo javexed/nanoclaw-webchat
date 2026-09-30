@@ -1,16 +1,7 @@
 /**
  * Sign-in routes: the web app's OIDC sign-in ("Sign in with <provider>"),
- * sign-out, and the account's linked sign-ins.
- *
- * Pre-auth (called before the auth gate):
- *   GET  /auth/oidc/login[?link=1]        → 302 to the provider
- *   GET  /auth/oidc/callback              → session cookie, 302 back to the app
- *   (/auth/microsoft/login and /callback, the first version's paths, still work)
- *   POST /auth/logout                     → end this browser's session
- * Authenticated (called with the request's auth result):
- *   GET    /api/account/sign-ins          → this account and its linked sign-ins
- *   POST   /api/account/link/tailscale    → link this device's Tailscale identity
- *   DELETE /api/account/links/<id>        → unlink a sign-in from this account
+ * sign-out (both pre-auth, under /auth/), and the account's linked sign-ins
+ * (/api/account/*, authenticated). /auth/microsoft/* are kept as aliases.
  *
  * Linking always needs BOTH identities in one person's hands at once: the
  * account signed in now, and a second sign-in completed in this same browser

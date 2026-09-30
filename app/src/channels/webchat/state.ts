@@ -2,15 +2,9 @@
  * Webchat in-memory client registry + broadcast.
  *
  * Tracks connected WS clients per room, fans out broadcasts, and triggers
- * Web Push to offline subscribers. Redaction is applied to message bodies
- * before they leave the host.
- *
- * Differences from the v1 module:
- *   - No setOnNewMessage / setOnGroupUpdated callback registry. The hooks
- *     for inbound chat messages are passed at server start; room-list
- *     changes are broadcast eagerly by the routes that mutate them, since
- *     v2 has no central group-change event (per design Q1=c).
- *   - getChatRoom / getChatRooms calls are routed through webchat/db.ts.
+ * Web Push to offline subscribers. Message bodies are redacted before they
+ * leave the host. Room-list changes are broadcast by the routes that make
+ * them: there is no central group-change event.
  */
 import { WebSocket } from 'ws';
 
@@ -108,11 +102,9 @@ export function extractHandles(text: string): string[] {
 }
 
 // ── Active agent turns (for thinking-bubble replay on room re-join) ─────────
-// Status frames are broadcast live only to clients CURRENTLY in the room (see
-// broadcast below), and are ephemeral — so a client that leaves and returns
-// mid-turn never sees the bubble again. Track which agents have an open turn
-// per room so a re-join can replay a synthetic `start`. Keyed roomId → Set of
-// agent names. start adds; done/stalled removes.
+// Status frames reach only clients in the room at the time, so a re-join
+// replays a synthetic `start` from this roomId → agent-names map (start adds;
+// done/stalled removes).
 const activeTurns = new Map<string, Set<string>>();
 
 export function recordTurnStart(roomId: string, agentName: string): void {
@@ -180,13 +172,9 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string)
   const payload = JSON.stringify(outgoing);
   const notifyPayload = isMessage ? JSON.stringify({ type: 'unread', room_id: roomId }) : '';
 
-  // Resolve @-handle mentions to user ids so a mentioned recipient who isn't in
-  // the room gets a distinct `mention` signal (room badge) instead of a plain
-  // unread. Parsed from the original text — redaction never touches @handles.
-  // In-room recipients render the highlight + fire a mention notification client
-  // side from their own handle, so no per-recipient payload is needed here.
-  // (Web-push stays generic for now — subscriptions are keyed by display name,
-  // not user id, so per-recipient mention tailoring is a follow-up.)
+  // A mentioned user outside the room gets a `mention` signal instead of a plain
+  // unread (redaction never touches @handles); in-room clients detect their own
+  // mentions. Web Push stays generic: subscriptions are keyed by display name.
   const mentionedUserIds = isMessage
     ? new Set(await resolveHandlesToUserIds(extractHandles((msg as { content?: string }).content || '')))
     : new Set<string>();
@@ -208,11 +196,8 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string)
       // Socket may have closed between readyState check and send — ignore.
     }
   }
-  // A message nobody is in the room for, while clients ARE connected, is the
-  // signature of "I sent it and saw nothing until I switched rooms and back":
-  // the sender's own socket is tracking a different room, so it takes the
-  // unread branch instead of receiving the message. Worth a line, because the
-  // alternative is diagnosing it from the absence of evidence.
+  // Nobody in the room while clients are connected: the signature of a sender
+  // socket tracking another room ("saw nothing until I switched back").
   if (isMessage && inRoom === 0 && elsewhere > 0) {
     log.warn('Webchat: message broadcast with no client in the room', { roomId, clientsElsewhere: elsewhere });
   }
@@ -239,16 +224,10 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string)
 }
 
 /**
- * Surface an agent→agent (a2a) message into every webchat room both agents
- * share, as a read-only side-channel copy. Called from the a2a router after a
- * message is delivered to the target agent's session, so humans watching the
- * room can see agents talking to each other (which otherwise happens entirely
- * off-screen). Best-effort and self-contained: any failure is logged and
- * swallowed by the caller so it never blocks routing.
- *
- * `contentJson` is the raw a2a message content (`{"text": "..."}`); only the
- * text is surfaced (file attachments are not). Self-messages (from === to,
- * used for system notes) and empty text are skipped.
+ * Surface an a2a message, after delivery, into every webchat room both agents
+ * share as a read-only copy. Only the text of `contentJson` (`{"text": …}`) is
+ * shown; self-messages (from === to) and empty text are skipped. The caller
+ * swallows failures so routing never blocks.
  */
 export async function surfaceA2aMessage(
   fromAgentGroupId: string,
@@ -280,14 +259,7 @@ export async function surfaceA2aMessage(
   }
 }
 
-/**
- * Send a payload to every connected client matching `userId`. Used by
- * webchat's approval-inbox delivery path — when an admin/owner has an
- * approval queued, the card is pushed to all of their currently-open
- * PWA tabs regardless of which room they have selected.
- *
- * Returns the number of clients that received the payload.
- */
+/** Send a payload to every connected client of `userId`, whatever room; returns the count. */
 export function pushToUser(userId: string, msg: object): number {
   const payload = JSON.stringify(msg);
   let sent = 0;
@@ -305,11 +277,8 @@ export function pushToUser(userId: string, msg: object): number {
 }
 
 /**
- * Convenience wrapper for the approvals delivery path: pushes a typed
- * `approval` event with the ask_question payload spread onto it. Logs at
- * info level when the approver isn't currently connected so the gap is
- * visible (the PWA refetches /api/approvals/pending on connect, so the
- * card will surface on next open — this is informational, not an error).
+ * Push an `approval` event (the ask_question payload). An offline approver is
+ * only logged: the PWA refetches /api/approvals/pending on connect.
  */
 export function pushApprovalToUser(userId: string, askQuestionPayload: Record<string, unknown>): void {
   const sent = pushToUser(userId, { type: 'approval', ...askQuestionPayload });
@@ -328,30 +297,14 @@ export function pushApprovalResolvedToUser(userId: string, approvalId: string, r
 }
 
 /**
- * Push the current room list to every connected client. Called by the routes
- * that mutate webchat_rooms — webchat-initiated changes only, per Q1=c. We
- * don't try to detect external messaging_groups changes; that would require a
- * polling layer and was scoped out of the v2 PR.
- *
- * Per-client filter: each client only sees rooms whose wired agent groups they
- * can access (`canAccessRoom`). Filtering happens here, not at the call sites,
- * so every broadcastRooms() call stays per-user-correct without each caller
- * threading userId.
- */
-/**
- * Annotate the room list for one user with the per-viewer flags the PWA
- * sidebar needs: `archived` (global), `hidden` (per-user), `canArchive`
- * (capability), and `unread` (per-user read marker). Shared by the auth-time
- * send (ws.ts) and broadcastRooms so both paths carry identical metadata —
- * crucially `unread`, so the badge reconstructs on reconnect instead of only
- * appearing for live messages. `allRooms`/`archivedSet` are accepted so a
- * fan-out (broadcastRooms) computes them once across all clients.
+ * Annotate the room list with one user's sidebar flags (archived, hidden,
+ * canArchive, unread). Shared by the auth-time send (ws.ts) and broadcastRooms
+ * so both carry identical metadata.
  */
 export async function annotateRoomsForUser(
   userId: string,
-  // Optional, resolved below when omitted: a parameter DEFAULT cannot await,
-  // and these four became async with the DB. A fan-out (broadcastRooms) still
-  // passes them in to compute once across all clients.
+  // Resolved below when omitted (a default cannot await); broadcastRooms passes
+  // them to compute once across all clients.
   allRoomsIn?: WebchatRoom[],
   archivedSetIn?: Set<string>,
   activityMapIn?: Map<string, number>,
@@ -400,6 +353,11 @@ export async function annotateRoomsForUser(
   );
 }
 
+/**
+ * Push the current room list to every connected client, filtered per client by
+ * `canAccessRoom` here so no caller has to thread userId. Called by the routes
+ * that change rooms; external messaging_groups changes are not detected.
+ */
 export async function broadcastRooms(): Promise<void> {
   const allRooms = await getAllWebchatRooms();
   const archivedSet = await getArchivedRoomIds(); // global, computed once per broadcast
@@ -423,11 +381,8 @@ export async function broadcastRooms(): Promise<void> {
 }
 
 /**
- * Advance a user's read marker for a room and clear the unread badge live on
- * that user's OTHER connected clients. The `read_cleared` push is what makes
- * read state feel synced across devices: open a room on your phone and the
- * stale dot disappears on your laptop without waiting for a reconnect. The
- * originating client (which already cleared its own dot locally) is skipped.
+ * Advance a user's read marker and push `read_cleared` to their OTHER clients,
+ * so the dot clears on every device (the originating client is skipped).
  */
 export function markRoomReadForUser(userId: string, roomId: string, ts: number, originClientId?: string): void {
   markRoomRead(userId, roomId, ts).catch((err) =>

@@ -30,9 +30,7 @@ describe('classifyRounds', () => {
   });
 
   it('does not let one lucky round decide', () => {
-    // The behaviour was measured as intermittent at roughly 1 run in 3, so a
-    // single sample is close to a coin toss. One round still yields a verdict,
-    // but the caller asks for three; this pins the arithmetic either way.
+    // One round still yields a verdict, though the caller asks for three.
     expect(classifyRounds([answered])!.disciplined).toBe(true);
     expect(classifyRounds([reached])!.disciplined).toBe(false);
   });
@@ -50,9 +48,7 @@ describe('profileFromVerdict', () => {
   });
 
   it('switches nothing it did not measure', () => {
-    // The sweep justified exactly one knob. A probe that also flipped tools or
-    // thinking would be guessing with extra steps, so those must stay absent
-    // and let the documented default apply.
+    // Only the loop cutoff is set; tools/thinking stay absent (default applies).
     const p = profileFromVerdict(classifyRounds([reached, answered, answered])!);
     expect(p.tools).toBeUndefined();
     expect(p.thinking).toBeUndefined();

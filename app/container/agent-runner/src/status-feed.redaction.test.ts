@@ -4,14 +4,9 @@ import { initTestSessionDb, closeTestSessionDb } from './mailbox/sqlite/connecti
 import { appendStatusEvent, clearStatusEvents } from './status-feed.js';
 
 /**
- * The feed is the one choke point every provider's events pass through on the
- * way to something a person reads — the live bubble, and the durable feed
- * next. Reasoning is where a model most readily restates a token it just read,
- * so redaction belongs HERE and not at each call site: one missed site would
- * put a secret somewhere it is kept rather than somewhere it scrolls past.
- *
- * This asserts on the ROW, not on redactSecrets — testing the helper would
- * pass just as happily if nothing called it.
+ * Redaction belongs in the feed (the one choke point), not at each call site.
+ * Asserts on the ROW, not on redactSecrets — testing the helper would pass
+ * just as happily if nothing called it.
  */
 const SECRET = 'sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'; // leak-scan-allow: synthetic fixture, the point of the test
 

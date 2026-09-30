@@ -1,71 +1,20 @@
 /**
  * Boot-gate tests — verifies the server's two startup refusals:
  *   1. Bind to non-loopback host with no auth method configured.
- *   2. Bearer token shorter than the minimum length (Batch 1).
+ *   2. Bearer token shorter than the minimum length.
  *
  * Each scenario boots the server module against its own env snapshot, then
  * tears down — same `vi.resetModules()` pattern as auth.test.ts.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 
-const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
+import { httpRequest, loadServer, noopHooks, portOf, resetServerModules } from './test-server.js';
 
-beforeEach(async () => {
-  vi.resetModules();
-});
-
-afterEach(async () => {
-  vi.unstubAllEnvs();
-  try {
-    const conn = await import('../../db/connection.js');
-    await conn.closeDb();
-  } catch {
-    // ignore
-  }
-  vi.resetModules();
-});
-
-async function loadServerWithEnv(env: Record<string, string | undefined>) {
-  for (const [k, v] of Object.entries(env)) {
-    if (v === undefined) vi.stubEnv(k, '');
-    else vi.stubEnv(k, v);
-  }
-  vi.resetModules();
-  const conn = await import('../../db/connection.js');
-  await conn.initTestDb();
-  const migrations = await import('../../db/migrations/index.js');
-  await migrations.runMigrations(conn.getDb());
-  return await import('./server.js');
-}
-
-async function httpRequest(
-  port: number,
-  method: string,
-  path: string,
-  headers: Record<string, string> = {},
-  body?: string,
-): Promise<{ status: number; body: string }> {
-  const http = await import('http');
-  return new Promise((resolve, reject) => {
-    const r = http.request({ host: '127.0.0.1', port, path, method, headers }, (res) => {
-      let buf = '';
-      res.on('data', (c) => (buf += c));
-      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: buf }));
-    });
-    r.on('error', reject);
-    if (body) r.write(body);
-    r.end();
-  });
-}
-
-const portOf = (wc: { http: { address: () => unknown } }): number => {
-  const a = wc.http.address();
-  return typeof a === 'object' && a ? (a as { port: number }).port : 0;
-};
+afterEach(resetServerModules);
 
 describe('startWebchatServer — boot gate', () => {
   it('refuses to bind to 0.0.0.0 without any explicit auth', async () => {
-    const server = await loadServerWithEnv({
+    const { server } = await loadServer({
       WEBCHAT_HOST: '0.0.0.0',
       WEBCHAT_PORT: '0', // ephemeral; would have bound but we expect throw first
       WEBCHAT_TOKEN: '',
@@ -76,7 +25,7 @@ describe('startWebchatServer — boot gate', () => {
   });
 
   it('refuses to start with a bearer token shorter than 24 chars', async () => {
-    const server = await loadServerWithEnv({
+    const { server } = await loadServer({
       WEBCHAT_HOST: '127.0.0.1',
       WEBCHAT_PORT: '0',
       WEBCHAT_TOKEN: 'short',
@@ -85,7 +34,7 @@ describe('startWebchatServer — boot gate', () => {
   });
 
   it('starts on loopback with no auth (the legitimate localhost case)', async () => {
-    const server = await loadServerWithEnv({
+    const { server } = await loadServer({
       WEBCHAT_HOST: '127.0.0.1',
       WEBCHAT_PORT: '0',
       WEBCHAT_TOKEN: '',
@@ -103,7 +52,7 @@ describe('startWebchatServer — boot gate', () => {
   });
 
   it('starts on 0.0.0.0 with a strong bearer token', async () => {
-    const server = await loadServerWithEnv({
+    const { server } = await loadServer({
       WEBCHAT_HOST: '0.0.0.0',
       WEBCHAT_PORT: '0',
       WEBCHAT_TOKEN: 'a'.repeat(32),
@@ -118,7 +67,7 @@ describe('startWebchatServer — boot gate', () => {
 
   it('sets CSP + nosniff + frame headers on every response', async () => {
     const http = await import('http');
-    const server = await loadServerWithEnv({ WEBCHAT_HOST: '127.0.0.1', WEBCHAT_PORT: '0', WEBCHAT_TOKEN: '' });
+    const { server } = await loadServer({ WEBCHAT_HOST: '127.0.0.1', WEBCHAT_PORT: '0', WEBCHAT_TOKEN: '' });
     const wc = await server.startWebchatServer(noopHooks);
     try {
       const addr = wc.http.address();
@@ -147,7 +96,7 @@ describe('startWebchatServer — boot gate', () => {
     // shell must load so the user can reach the token field, but /api/* stays
     // gated. Regression guard for the chicken-and-egg where static was 401'd.
     const http = await import('http');
-    const server = await loadServerWithEnv({
+    const { server } = await loadServer({
       WEBCHAT_HOST: '0.0.0.0',
       WEBCHAT_PORT: '0',
       WEBCHAT_TOKEN: 'a'.repeat(32),
@@ -184,7 +133,7 @@ describe('startWebchatServer — boot gate', () => {
 
   it('refuses to disable the bearer token when no alternative auth method is live', async () => {
     const TOKEN = 'a'.repeat(32);
-    const server = await loadServerWithEnv({ WEBCHAT_HOST: '0.0.0.0', WEBCHAT_PORT: '0', WEBCHAT_TOKEN: TOKEN });
+    const { server } = await loadServer({ WEBCHAT_HOST: '0.0.0.0', WEBCHAT_PORT: '0', WEBCHAT_TOKEN: TOKEN });
     const wc = await server.startWebchatServer(noopHooks);
     try {
       const port = portOf(wc);
@@ -207,7 +156,7 @@ describe('startWebchatServer — boot gate', () => {
 
   it('marketplace toggle gates MCP + skills endpoints (default off, owner enables)', async () => {
     const TOKEN = 'a'.repeat(32);
-    const server = await loadServerWithEnv({ WEBCHAT_HOST: '0.0.0.0', WEBCHAT_PORT: '0', WEBCHAT_TOKEN: TOKEN });
+    const { server } = await loadServer({ WEBCHAT_HOST: '0.0.0.0', WEBCHAT_PORT: '0', WEBCHAT_TOKEN: TOKEN });
     const wc = await server.startWebchatServer(noopHooks);
     try {
       const port = portOf(wc);
@@ -246,7 +195,7 @@ describe('startWebchatServer — boot gate', () => {
 
   it('arms/reads the first-tailscale-owner flag (owner only)', async () => {
     const TOKEN = 'a'.repeat(32);
-    const server = await loadServerWithEnv({ WEBCHAT_HOST: '0.0.0.0', WEBCHAT_PORT: '0', WEBCHAT_TOKEN: TOKEN });
+    const { server } = await loadServer({ WEBCHAT_HOST: '0.0.0.0', WEBCHAT_PORT: '0', WEBCHAT_TOKEN: TOKEN });
     const wc = await server.startWebchatServer(noopHooks);
     try {
       const port = portOf(wc);
@@ -267,7 +216,7 @@ describe('startWebchatServer — boot gate', () => {
 
   it('exposes tailscale-serve state to owner (GET) and CSRF-gates the enable action', async () => {
     const TOKEN = 'a'.repeat(32);
-    const server = await loadServerWithEnv({ WEBCHAT_HOST: '0.0.0.0', WEBCHAT_PORT: '0', WEBCHAT_TOKEN: TOKEN });
+    const { server } = await loadServer({ WEBCHAT_HOST: '0.0.0.0', WEBCHAT_PORT: '0', WEBCHAT_TOKEN: TOKEN });
     const wc = await server.startWebchatServer(noopHooks);
     try {
       const port = portOf(wc);
@@ -289,7 +238,7 @@ describe('startWebchatServer — boot gate', () => {
 
   it('GET /api/webchat/auth reports the caller session source (gates the retire prompt)', async () => {
     const TOKEN = 'a'.repeat(32);
-    const server = await loadServerWithEnv({
+    const { server } = await loadServer({
       WEBCHAT_HOST: '0.0.0.0',
       WEBCHAT_PORT: '0',
       WEBCHAT_TOKEN: TOKEN,
@@ -315,7 +264,7 @@ describe('startWebchatServer — boot gate', () => {
 
   it('disables the bearer token when a trusted-proxy method is live and used', async () => {
     const TOKEN = 'a'.repeat(32);
-    const server = await loadServerWithEnv({
+    const { server } = await loadServer({
       WEBCHAT_HOST: '0.0.0.0',
       WEBCHAT_PORT: '0',
       WEBCHAT_TOKEN: TOKEN,

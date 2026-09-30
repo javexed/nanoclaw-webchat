@@ -1,9 +1,6 @@
 /**
- * status_events readers — moved here with the readers themselves when the
- * table became module-owned (declared container-side via the outbound
- * schema-extension seam; the host reads best-effort). All readers tolerate a
- * missing table: a session whose container hasn't opened its DB yet simply
- * has no feed.
+ * status_events readers. All tolerate a missing table: a session whose
+ * container hasn't written an event yet simply has no feed.
  */
 import Database from 'better-sqlite3';
 import fs from 'fs';
@@ -13,12 +10,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { getStatusEventsSince, getMaxStatusEventSeq } from './index.js';
 
-// mkdtemp, NOT a fixed path. A fixed name under os.tmpdir() is shared between
-// users: a run as root leaves the directory root-owned, and every later run as
-// a normal user then dies with EACCES trying to rmSync it — which is exactly
-// what happened on the 2026-09-10 deploy, where three tests failed for a
-// reason that had nothing to do with the code under test. A per-run directory
-// cannot collide with anyone.
+// mkdtemp, NOT a fixed path: a fixed name under os.tmpdir() is shared between
+// users, and a root run leaves it root-owned (EACCES for every later run).
 let testDir: string;
 
 describe('status_events readers (webchat thinking bubble)', () => {

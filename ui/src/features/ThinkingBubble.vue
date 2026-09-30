@@ -1,28 +1,9 @@
 <script setup lang="ts">
 /**
- * One agent's live thinking bubble.
- *
- * Reproduces ensureThinkingBubble's markup exactly, including the four content
- * divs that were written as one innerHTML string and then addressed
- * individually by four different functions — the verb and target by
- * updateThinkingBubble, the milestone by setThinkingMilestone, the feed by
- * pushReasoning, the fulltrace by renderFullTrace. Those four were the reason
- * this could not be converted on its own: each held a querySelector into a
- * bubble that a component would own.
- *
- * The feed is a BOUNDED TAIL with per-line fade state, not a slice of
- * reasoningLog. pushReasoning kept both — the full log for the expanded trace
- * and the reply's disclosure, and a trimmed DOM buffer for the fading window —
- * and collapsing them would change what the expanded view shows.
- *
- * data-status-live is still rendered even though nothing reads it from the DOM
- * any more — the typing heartbeat reads turn.statusLive now. It stays because
- * the attribute was there before and dropping it would be a markup change
- * smuggled in under a conversion.
- *
- * Feed scroll-follow stays imperative on purpose: it is a scrollTop write on an
- * element Vue owns, which is not a second WRITER (it renders nothing), and
- * there is no declarative way to say "keep the newest line in view".
+ * One agent's live thinking bubble. The feed is a bounded tail with per-line fade
+ * state, separate from reasoningLog, which the expanded trace and the reply's disclosure
+ * show in full. data-status-live is kept for markup stability (the typing heartbeat reads
+ * turn.statusLive). Feed scroll-follow is an imperative scrollTop write; it renders nothing.
  */
 import { computed, nextTick, watch, useTemplateRef } from 'vue';
 import type { ThinkingTurn } from './transcript-state.js';
@@ -36,9 +17,7 @@ const NO_TRACE = 'No reasoning captured for this turn yet.';
 const feedEl = useTemplateRef<HTMLElement>('feed');
 const traceEl = useTemplateRef<HTMLElement>('trace');
 
-/** Follow the newest line inside the feed's own scroll viewport, and keep the
- *  expanded trace pinned to the bottom — both were scrollTop writes after the
- *  append that produced them. */
+/** Follow the newest line in the feed's viewport; keep the expanded trace pinned to the bottom. */
 watch(
   () => props.turn.feed.length,
   () => void nextTick(() => { if (feedEl.value) feedEl.value.scrollTop = feedEl.value.scrollHeight; }),
@@ -48,11 +27,8 @@ watch(
   () => void nextTick(() => { if (traceEl.value) traceEl.value.scrollTop = traceEl.value.scrollHeight; }),
 );
 
-/** renderFullTrace only ran on expand, so a collapsed bubble's trace div stayed
- *  EMPTY — not merely hidden. Both derivations reproduce that. */
-// Prefer the untruncated blocks when the provider sent them; fall back to the
-// clipped feed lines otherwise. Expanding used to show the same clipped text
-// the feed had already scrolled past, which made the click feel broken.
+// A collapsed bubble's trace stays empty, not merely hidden. Prefer the untruncated
+// blocks when the provider sent them; fall back to the clipped feed lines otherwise.
 const traceRows = computed(() =>
   props.turn.expanded ? (props.turn.fullTrace.length ? props.turn.fullTrace : props.turn.reasoningLog) : [],
 );

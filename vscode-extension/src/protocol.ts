@@ -10,6 +10,8 @@ export interface Machine {
   os: string;
   arch: string;
   runner: string;
+  /** Ed25519 public key, SPKI DER in base64 (machine-key.ts). */
+  publicKey?: string;
 }
 export type Frame = { type: string; [k: string]: unknown };
 
@@ -34,6 +36,15 @@ export function secureOrigin(serverUrl: string): boolean {
   }
   if (u.protocol === 'https:' || u.protocol === 'wss:') return true;
   return (u.protocol === 'http:' || u.protocol === 'ws:') && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
+}
+/**
+ * What the machine key signs in answer to central's challenge: bound to the
+ * fingerprint and to the origin this machine dialled, so a signature obtained
+ * by some other server does not verify at central. Same shape as runner-ws.ts.
+ */
+export const MACHINE_KEY_CONTEXT = 'nanoclaw-runner-key-v1';
+export function machineKeyMessage(fingerprint: string, origin: string, nonce: string): string {
+  return `${MACHINE_KEY_CONTEXT}\n${fingerprint}\n${origin}\n${nonce}`;
 }
 export const helloFrame = (machine: Machine): Frame => ({ type: 'hello', v: PROTOCOL_VERSION, machine });
 

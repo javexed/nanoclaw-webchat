@@ -1,12 +1,7 @@
 /**
- * Tests for sender attribution in webchat's deliver() path.
- *
- * Before threading the producing agent's id through delivery.ts, the
- * adapter used `findActiveAgentForWebchatRoom` — a most-recently-active
- * heuristic that raced badly under concurrent containers. With the
- * `senderAgentGroupId` field on OutboundMessage, attribution is exact:
- * delivery.ts knows which session emitted the message and tells the
- * adapter. The heuristic remains only as a defensive fallback.
+ * Tests for sender attribution in webchat's deliver() path. delivery.ts's
+ * `senderAgentGroupId` makes attribution exact; the most-recently-active
+ * heuristic (`findActiveAgentForWebchatRoom`) is only a fallback.
  *
  * This test covers the adapter's exit path (storeWebchatMessage's
  * `sender` field) and the loop-back's `senderAgentGroupId` propagation,
@@ -35,7 +30,7 @@ beforeEach(async () => {
   await runMigrations(getDb());
 
   // Two agents wired to one room, both with running sessions. The setup
-  // is what previously confused the heuristic: which agent gets credit
+  // is what confuses the heuristic: which agent gets credit
   // when both are 'running' and have recently-bumped `last_active`?
   await createAgentGroup({
     id: 'ag-alpha',
@@ -136,12 +131,8 @@ describe('sender attribution — with threading (exact)', () => {
 
 describe('contract: OutboundMessage carries senderAgentGroupId end-to-end', () => {
   it('the adapter-layer message shape exposes the field', async () => {
-    // Compile-time contract check: TypeScript permits assigning
-    // senderAgentGroupId on OutboundMessage. If this test compiles, the
-    // shape change is in place. We don't actually invoke the adapter here
-    // (that requires the server + WS wiring); router.agent-loopback.test
-    // covers the routing side. This test would have failed to type-check
-    // before the OutboundMessage extension.
+    // Compile-time contract: OutboundMessage carries senderAgentGroupId.
+    // router.agent-loopback.test covers the routing side.
     const msg: import('../adapter.js').OutboundMessage = {
       kind: 'chat',
       content: { text: 'hi' },

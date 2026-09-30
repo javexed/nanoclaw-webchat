@@ -3,11 +3,8 @@
 // inside it: onboarding, the feature manifest the client reads at boot,
 // credential config, usage, and the Tailscale / cloudflared ingress setup
 // (preflight, install, connect).
-//
-// The loosest cluster in server.ts — three references outside its own handlers,
-// two of them constants now in server/constants.ts.
 
-import { json, readJsonBody } from './http.js';
+import { json, readJsonBody, readJsonObject } from './http.js';
 import {
   audit,
   auditRetention,
@@ -51,6 +48,7 @@ import { codexAvailable, grokAvailable, opencodeAvailable, piAvailable } from '.
 import { enableTailscaleServe, getTailscaleServeState } from '../tailscale-serve.js';
 import { computeUsageRollup } from '../usage.js';
 import type { RouteCtx } from '../server.js';
+import { installedFeatures } from '../extensions.js';
 
 // ── UserCreds: workspace credentials policy — accepted TYPES + default room mode ──
 // Read by anyone (the room UIs need it); only the owner can change it.
@@ -68,14 +66,8 @@ export async function rWebchatCredentialsConfig(ctx: RouteCtx, _m: RegExpMatchAr
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (!(await isOwner(userId))) return json(res, 403, { error: 'Owner only' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: Record<string, unknown>;
-  try {
-    body = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<Record<string, unknown>>(req, res);
+  if (body === undefined) return;
   const patch: Partial<CredentialsConfig> = {};
   if (body.defaultMode !== undefined) {
     if (body.defaultMode !== 'disabled' && body.defaultMode !== 'optional' && body.defaultMode !== 'required')
@@ -123,14 +115,8 @@ export async function rWebchatOnboarding(ctx: RouteCtx, _m: RegExpMatchArray): P
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (!canEdit) return json(res, 403, { error: 'Forbidden' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { complete?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ complete?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.complete !== 'boolean') return json(res, 400, { error: 'complete must be a boolean' });
   await setOnboardingComplete(body.complete);
   return json(res, 200, { complete: body.complete });
@@ -150,19 +136,15 @@ export async function rWebchatFeatures(ctx: RouteCtx, _m: RegExpMatchArray): Pro
       marketplaceEnabled: !(await getMarketplaceDisabled()),
       credentialIsolation: await getCredentialIsolation(),
       credentialIsolationEffective: await fleetIsolationEnabled(),
+      // Installed extensions (./extensions.ts); the UI shows their screens only when listed.
+      extensions: installedFeatures(),
       canEdit,
     });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (!canEdit) return json(res, 403, { error: 'Forbidden' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { marketplaceEnabled?: unknown; credentialIsolation?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ marketplaceEnabled?: unknown; credentialIsolation?: unknown }>(req, res);
+  if (body === undefined) return;
   if (body.credentialIsolation !== undefined) {
     // null clears the override and returns the install to whatever .env says.
     if (body.credentialIsolation !== null && typeof body.credentialIsolation !== 'boolean')
@@ -201,29 +183,13 @@ export async function rWebchatTailscaleOwner(ctx: RouteCtx, _m: RegExpMatchArray
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (!canEdit) return json(res, 403, { error: 'Forbidden' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { armed?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ armed?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.armed !== 'boolean') return json(res, 400, { error: 'armed must be a boolean' });
   await setPromoteFirstTailscaleOwner(body.armed);
   return json(res, 200, { armed: await getPromoteFirstTailscaleOwner() });
 }
 
-// ── Audit syslog forwarder ──────────────────────────────────────────────────
-// Owner-only, GET status / PUT target. The local JSONL is always on and is
-// not configurable here on purpose — this route manages the FORWARDER only.
-//
-// The one rule that matters: changing the audit configuration is itself an
-// audit event, and it is emitted TWICE — once before the swap (delivered to
-// the old sink, so the collector being abandoned records who abandoned it)
-// and once after (delivered to the new sink, so the new collector's record
-// starts with its own provenance). Without this, the first move of a
-// compromised owner session is to silently repoint the forwarder.
 /**
  * Read the audit log back. Same reader-side posture as the syslog config next
  * door — owner or global admin — because these lines name who did what, and a
@@ -256,14 +222,8 @@ export async function rWebchatAuditSyslog(ctx: RouteCtx, _m: RegExpMatchArray): 
     return json(res, 200, { target: await getAuditSyslogTarget(), status: getSyslogStatus() });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { target?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ target?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.target !== 'string') return json(res, 400, { error: 'target must be a string' });
   const target = body.target.trim();
   if (target && !parseSyslogTarget(target)) {
@@ -340,9 +300,8 @@ export async function rWebchatTailscaleHttps(ctx: RouteCtx, _m: RegExpMatchArray
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
   // This endpoint reports HTTPS status in BOTH flavors: `tailscale serve`
   // (what the enable button sets up) and native TLS (WEBCHAT_TLS_CERT/KEY —
-  // an install like the tailscale-https setup script produces). Without the
-  // native check, an already-HTTPS install is offered "Enable HTTPS" on a
-  // page it is literally serving over HTTPS.
+  // an install like the tailscale-https setup script produces), so an
+  // already-HTTPS install is not offered "Enable HTTPS".
   const nativeTls = !!(process.env.WEBCHAT_TLS_CERT && process.env.WEBCHAT_TLS_KEY);
   if (method === 'GET') {
     const state = await getTailscaleServeState();
@@ -390,14 +349,8 @@ export async function rWebchatCloudflaredInstallPost(ctx: RouteCtx, _m: RegExpMa
 export async function rWebchatCloudflaredConnectPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { token?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ token?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.token !== 'string' || !body.token.trim()) return json(res, 400, { error: 'token required' });
   return installPost(res, 'cloudflared', { token: body.token }, ['bad-token']);
 }

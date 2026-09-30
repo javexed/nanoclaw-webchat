@@ -1,20 +1,8 @@
 <script setup lang="ts">
 /**
- * The MCP server list — second Vue island.
- *
- * Mounted into <ul id="mcp-list">, which no other module writes to.
- *
- * Replicates makeRowActivatable() inline (role/tabindex, click, Enter/Space)
- * rather than calling it: that helper attaches listeners imperatively to a node
- * it is handed, which is the thing an island exists to stop doing. The
- * behaviour is identical — verified by diffing the rendered DOM.
- *
- * Vue rendering notes carried over from AgentList.vue, both re-checked here:
- *   - the active row uses v-bind of a whole object, not :class. Both
- *     :class="{ active: false }" and :class="undefined" emit class="" on every
- *     other row, because Vue normalises class to a string instead of omitting.
- *   - never write explanatory comments in the TEMPLATE; Vue renders them into
- *     the DOM as comment nodes.
+ * The MCP server list, mounted into <ul id="mcp-list">. makeRowActivatable()'s behaviour
+ * (role/tabindex, click, Enter/Space) is inlined because that helper attaches listeners
+ * imperatively. The active row uses v-bind of an object; :class would emit class="".
  */
 import { computed } from 'vue';
 import { mcpServers, selectedMcpId } from './mcp-list-state.js';
@@ -25,14 +13,10 @@ const sorted = computed(() =>
   [...mcpServers.value].sort((a: any, b: any) => String(a.name ?? '').localeCompare(String(b.name ?? ''))),
 );
 
-/**
- * Bound as an expression, not written as template text. Text on its own line in
- * a template renders with the surrounding whitespace, which the imperative
- * textContent assignment never produced — caught by the rendered-DOM diff.
- */
+/** Bound, not template text: template text carries the surrounding whitespace. */
 const emptyMessage = 'No MCP servers registered. Click "+ New server" to add one.';
 
-/** Matches the imperative title text exactly, including the optional reason. */
+/** The health tooltip, including the optional reason. */
 function healthTitle(h: any): string {
   if (h.status === 'ok') return `Healthy — ${h.toolCount ?? '?'} tools`;
   if (h.status === 'drift') return 'Tool surface changed since approval';

@@ -1,17 +1,13 @@
 // ── Network ──────────────────────────────────────────────────────────────────
-// The install's egress allowlist, which every agent set to Allowlist (the
-// default) is held to — runner agents by central's relay, local agents by
-// central's egress filter — plus each agent's own hosts on top of it (the
-// agent panel's Network section). Owner / global-admin for the install list;
-// an agent's admins for its own. The API 403s everyone else.
-//
-// Below the list, what agents actually tried and were refused, each with one
-// click to allow for every agent or for just the one that asked: the lists
-// grow from real needs rather than guesses.
+// The install's egress allowlist every Allowlist agent is held to, plus each
+// agent's own hosts on top. Owner / global-admin edit the install list, an
+// agent's admins its own; the API 403s everyone else. Refused requests are
+// listed with one-click allow, so the lists grow from real needs.
 import { apiJson, authFetch } from '../core/api.js';
 import { $, esc } from '../core/dom.js';
 import { toastError } from '../core/toast.js';
 import { hostListEditor, type HostListEditor } from './hostlist.js';
+import { showConfirmModal } from './modals.js';
 import { ago, loadAgents, type Agent } from './runners.js';
 
 interface BlockedHost { host: string; port: number; count: number; firstAt: number; lastAt: number; agentGroupIds: string[] }
@@ -106,8 +102,22 @@ function wire(): void {
     const preset = (e.target as HTMLElement).closest<HTMLElement>('[data-preset]')?.dataset.preset;
     if (preset) void editor?.add(PRESETS[preset] ?? []);
   });
-  $('#runner-egress-reset')?.addEventListener('click', () => {
-    if (data) void editor?.replace(data.defaults);
+  // Every change saves at once, so a reset asks first: it drops what admins added.
+  $('#runner-egress-reset')?.addEventListener('click', async () => {
+    if (!data || !editor) return;
+    const defaults = data.defaults;
+    const dropped = editor.get().filter((h) => !defaults.includes(h));
+    if (dropped.length) {
+      const shown = dropped.slice(0, 8).join(', ') + (dropped.length > 8 ? `, +${dropped.length - 8}` : '');
+      const ok = await showConfirmModal({
+        title: 'Reset the allowlist?',
+        body: `Removes ${shown}.`,
+        confirmLabel: 'Reset',
+        destructive: true,
+      });
+      if (!ok) return;
+    }
+    await editor.replace(defaults);
   });
   $('#runner-egress-blocked')?.addEventListener('click', async (e) => {
     const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-allow]');

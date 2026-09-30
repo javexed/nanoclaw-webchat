@@ -2,12 +2,10 @@
 // Everything addressed at a room: create and delete, the agents wired into it,
 // its threads and their context sync, prime state, and room import (upload,
 // then apply).
-//
-// What the room routes share with routes outside this cluster lives in
-// server/agent-wiring.ts and server/archive.ts — see the notes there.
 import type { IncomingMessage, ServerResponse } from 'http';
 
-import { json, readJsonBody } from './http.js';
+import { json, readJsonBody, readJsonObject } from './http.js';
+import { requireRoomAccess } from './route-guards.js';
 import { DATA_DIR, GROUPS_DIR } from '../../../config.js';
 import { restartAgentGroupContainers } from '../../../container-restart.js';
 import { deleteAgentGroup, getAgentGroup } from '../../../db/agent-groups.js';
@@ -16,6 +14,7 @@ import { ensureContainerConfig, updateContainerConfigScalars } from '../../../db
 import { getMessagingGroupAgents, getMessagingGroupByPlatform } from '../../../db/messaging-groups.js';
 import { getSessionsByAgentGroup } from '../../../db/sessions.js';
 import { log } from '../../../log.js';
+import { nonPlainTarMembers } from '../../../modules/transfer/agent-transfer.js';
 import { getRoomLearning, setRoomLearning } from '../../../modules/learning/room-settings.js';
 import {
   applyRoomImport,
@@ -104,10 +103,9 @@ import type { RouteCtx } from '../server.js';
 import { everyAsync, filterAsync, someAsync } from '../async-array.js';
 
 // ── Rooms ─────────────────────────────────────────────────────────────
-// Two creation paths exist for historical reasons and they are NOT
-// redundant: POST /api/agents is "agent-first" (the room is incidental,
-// 1:1 with the agent's folder), POST /api/rooms is "room-first" (the
-// room is the conversation unit and you wire 1+ agents to it). Both
+// Two creation paths, NOT redundant: POST /api/agents is "agent-first" (the
+// room is incidental, 1:1 with the agent's folder), POST /api/rooms is
+// "room-first" (the room is the conversation unit, 1+ agents wired). Both
 // converge on the same messaging_groups + messaging_group_agents shape.
 export async function rRoomsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
@@ -139,15 +137,12 @@ export async function rRoomIdDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise
 }
 
 export async function rRoomAgentsGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  const roomId = decodeURIComponent(m[1]);
-  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const { res } = ctx;
+  const roomId = await requireRoomAccess(ctx, m);
+  if (roomId === undefined) return;
   const agents = await getAgentsForWebchatRoom(roomId);
   const primeAgentId = await getPrimeAgentForWebchatRoom(roomId);
-  // Promise.all around the map: the callback is async (learning_auto reads
-  // the DB), so without it `json` would serialize an array of Promises —
-  // which stringify as {} and hand the client a room full of empty agents.
+  // Promise.all: the map callback is async, and a Promise serializes as {}.
   return json(
     res,
     200,
@@ -169,9 +164,8 @@ export async function rRoomAgentsGet(ctx: RouteCtx, m: RegExpMatchArray): Promis
 // return). Excludes the requester. Used by the composer's @ autocomplete.
 export async function rRoomMentionableGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const roomId = decodeURIComponent(m[1]);
-  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const roomId = await requireRoomAccess(ctx, m);
+  if (roomId === undefined) return;
   const people = (
     await filterAsync(
       await getWebchatHandleUsers(),
@@ -182,21 +176,14 @@ export async function rRoomMentionableGet(ctx: RouteCtx, m: RegExpMatchArray): P
 }
 
 /**
- * Full reasoning traces for a room, newest first.
- *
- * The live bubble only ever holds the CURRENT turn's clipped lines — the
- * container wipes status_events each turn — so click-to-expand on an older
- * turn had nothing to show. This reads the durable copy, where each reasoning
- * row's `detail` is the untruncated block.
- *
- * Same room guard as every other room-scoped read: membership decides, not
- * whether you happen to know the room id.
+ * Full reasoning traces for a room, newest first. The container wipes
+ * status_events each turn, so older turns are read from the durable copy, where
+ * each reasoning row's `detail` is the untruncated block. Room-membership guarded.
  */
 export async function rRoomReasoningGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  const roomId = decodeURIComponent(m[1]);
-  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const { res } = ctx;
+  const roomId = await requireRoomAccess(ctx, m);
+  if (roomId === undefined) return;
   const rows = await getReasoningForRoom(roomId);
   return json(
     res,
@@ -221,10 +208,9 @@ export async function rRoomAgentsPost(ctx: RouteCtx, m: RegExpMatchArray): Promi
 
 // ── UserCreds: per-room credential mode (admin) ────────────────────────────────
 export async function rRoomCredModeGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  const roomId = decodeURIComponent(m[1]);
-  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const { res } = ctx;
+  const roomId = await requireRoomAccess(ctx, m);
+  if (roomId === undefined) return;
   // The per-room OVERRIDE ('inherit' when unset); the effective mode is what the
   // room actually runs (override, else the global default).
   return json(res, 200, {
@@ -243,14 +229,8 @@ export async function rRoomCredModePut(ctx: RouteCtx, m: RegExpMatchArray): Prom
     (await isOwner(userId)) ||
     (await someAsync(await getAgentsForWebchatRoom(roomId), (a) => hasAdminPrivilege(userId, a.id)));
   if (!allowed) return json(res, 403, { error: 'Admin privilege required' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { mode?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ mode?: unknown }>(req, res);
+  if (body === undefined) return;
   if (body.mode !== 'inherit' && body.mode !== 'disabled' && body.mode !== 'optional' && body.mode !== 'required') {
     return json(res, 400, { error: "mode must be 'inherit', 'disabled', 'optional', or 'required'" });
   }
@@ -261,10 +241,9 @@ export async function rRoomCredModePut(ctx: RouteCtx, m: RegExpMatchArray): Prom
 
 // ── UserCreds OAuth: per-room toggle allowing subscription tokens (admin) ───────
 export async function rRoomOauthGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  const roomId = decodeURIComponent(m[1]);
-  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const { res } = ctx;
+  const roomId = await requireRoomAccess(ctx, m);
+  if (roomId === undefined) return;
   return json(res, 200, { allowed: await getRoomOauthAllowed(roomId) });
 }
 
@@ -276,14 +255,8 @@ export async function rRoomOauthPut(ctx: RouteCtx, m: RegExpMatchArray): Promise
     (await isOwner(userId)) ||
     (await someAsync(await getAgentsForWebchatRoom(roomId), (a) => hasAdminPrivilege(userId, a.id)));
   if (!allowed) return json(res, 403, { error: 'Admin privilege required' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { allowed?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ allowed?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.allowed !== 'boolean') return json(res, 400, { error: 'allowed must be a boolean' });
   await setRoomOauthAllowed(roomId, body.allowed);
   return json(res, 200, { ok: true, allowed: body.allowed });
@@ -309,14 +282,8 @@ export async function rRoomAgentDelete(ctx: RouteCtx, m: RegExpMatchArray): Prom
 export async function rRoomPrimePut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
   const roomId = decodeURIComponent(m[1]);
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { agentId?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ agentId?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.agentId !== 'string' || !body.agentId.trim()) {
     return json(res, 400, { error: 'agentId required' });
   }
@@ -353,9 +320,8 @@ export async function rRoomArchivePost(ctx: RouteCtx, m: RegExpMatchArray): Prom
 // beyond that user's view. CSRF-guarded because it's state-mutating.
 export async function rRoomHidePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const roomId = decodeURIComponent(m[1]);
-  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const roomId = await requireRoomAccess(ctx, m);
+  if (roomId === undefined) return;
   if (m[2] === 'hide') {
     await hideRoomForUser(userId, roomId);
   } else {
@@ -371,9 +337,8 @@ export async function rRoomHidePost(ctx: RouteCtx, m: RegExpMatchArray): Promise
 // pin syncs live across the user's other devices.
 export async function rRoomPinPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const roomId = decodeURIComponent(m[1]);
-  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const roomId = await requireRoomAccess(ctx, m);
+  if (roomId === undefined) return;
   if (m[2] === 'pin') {
     await pinRoomForUser(userId, roomId);
   } else {
@@ -390,14 +355,8 @@ export async function rRoomPinPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<
 // new order to the user's other devices.
 export async function rRoomsPinsOrderPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { order?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ order?: unknown }>(req, res);
+  if (body === undefined) return;
   if (!Array.isArray(body.order) || body.order.some((x) => typeof x !== 'string')) {
     return json(res, 400, { error: 'order must be an array of room id strings' });
   }
@@ -407,15 +366,12 @@ export async function rRoomsPinsOrderPost(ctx: RouteCtx, _m: RegExpMatchArray): 
 }
 
 // ── Engage mode (room-scoped) ──
-// Controls what `recomputeEngagePatterns` rewrites un-primed wirings to:
-//   'mention-only' — agents fire only on explicit @-mention (no fallback).
-// This is the only mode; the legacy 'broadcast' (every wired agent answers
-// every message) has been retired.
+// Controls what `recomputeEngagePatterns` rewrites un-primed wirings to. The
+// only mode is 'mention-only': agents fire only on explicit @-mention.
 export async function rRoomEngageGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { res, userId } = ctx;
-  const roomId = decodeURIComponent(m[1]);
-  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const { res } = ctx;
+  const roomId = await requireRoomAccess(ctx, m);
+  if (roomId === undefined) return;
   return json(res, 200, { mode: getRoomEngageDefault(roomId) });
 }
 
@@ -423,14 +379,8 @@ export async function rRoomEngagePut(ctx: RouteCtx, m: RegExpMatchArray): Promis
   const { req, res } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { mode?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ mode?: unknown }>(req, res);
+  if (body === undefined) return;
   if (body.mode !== 'mention-only') {
     return json(res, 400, { error: "mode must be 'mention-only'" });
   }
@@ -448,14 +398,8 @@ export async function rRoomNamePut(ctx: RouteCtx, m: RegExpMatchArray): Promise<
   const { req, res } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { name?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ name?: unknown }>(req, res);
+  if (body === undefined) return;
   const name = sanitizeRoomName(body.name);
   if (name === null) return json(res, 400, { error: 'name must be 1–80 characters' });
   await updateWebchatRoomName(roomId, name);
@@ -469,19 +413,17 @@ export async function rRoomNamePut(ctx: RouteCtx, m: RegExpMatchArray): Promise<
 // down the thread's session) is owner-only.
 export async function rRoomThreadReadPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const roomId = decodeURIComponent(m[1]);
   const threadId = decodeURIComponent(m[2]);
-  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const roomId = await requireRoomAccess(ctx, m);
+  if (roomId === undefined) return;
   await markThreadRead(userId, roomId, threadId);
   return json(res, 200, { ok: true });
 }
 
 export async function rRoomThreadsGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const roomId = decodeURIComponent(m[1]);
-  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const roomId = await requireRoomAccess(ctx, m);
+  if (roomId === undefined) return;
   await ensureMainThread(roomId); // every room has a main thread once listed
   const unread = await getUnreadThreadIdsForRoom(userId, roomId);
   return json(
@@ -492,18 +434,11 @@ export async function rRoomThreadsGet(ctx: RouteCtx, m: RegExpMatchArray): Promi
 }
 
 export async function rRoomThreadsPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, userId } = ctx;
-  const roomId = decodeURIComponent(m[1]);
-  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { title?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const { req, res } = ctx;
+  const roomId = await requireRoomAccess(ctx, m);
+  if (roomId === undefined) return;
+  const body = await readJsonObject<{ title?: unknown }>(req, res);
+  if (body === undefined) return;
   const title = sanitizeThreadTitle(body.title);
   if (title === null) return json(res, 400, { error: 'title must be 1–80 characters' });
   const thread = await createWebchatThread(roomId, title);
@@ -512,20 +447,13 @@ export async function rRoomThreadsPost(ctx: RouteCtx, m: RegExpMatchArray): Prom
 }
 
 export async function rRoomThreadPatch(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, userId } = ctx;
-  const roomId = decodeURIComponent(m[1]);
+  const { req, res } = ctx;
   const threadId = decodeURIComponent(m[2]);
-  if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
+  const roomId = await requireRoomAccess(ctx, m);
+  if (roomId === undefined) return;
   if (!(await getWebchatThread(roomId, threadId))) return json(res, 404, { error: 'Thread not found' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { title?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ title?: unknown }>(req, res);
+  if (body === undefined) return;
   const title = sanitizeThreadTitle(body.title);
   if (title === null) return json(res, 400, { error: 'title must be 1–80 characters' });
   await renameWebchatThread(roomId, threadId, title);
@@ -548,7 +476,7 @@ export async function rRoomThreadDelete(ctx: RouteCtx, m: RegExpMatchArray): Pro
 // broadcast the copies, and advance the per-thread high-water mark so repeat
 // syncs only carry genuinely new messages. The 'main' regular chat is the
 // shared trunk; only a topic thread can pull from / push to it.
-// See docs/webchat/thread-context-sync.md.
+// See docs/webchat/threads.md §8.
 export async function rRoomThreadPullPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
@@ -581,10 +509,6 @@ export async function rRoomThreadPullPost(ctx: RouteCtx, m: RegExpMatchArray): P
   return json(res, 200, { copied });
 }
 
-// Learning-loop settings, per agent. Two toggles, two owners (docs/webchat/learning-loop.md):
-//   autoTrigger — spends tokens, stages drafts → per-agent ADMIN.
-//   autoKeep    — writes live agent context unreviewed → OWNER/GLOBAL ADMIN only,
-//                 the same boundary as every other skill write.
 // Per-ROOM learning settings — the layer the 🎓 menu edits. Room overrides
 // the wired agents' per-agent config; the effective view resolves
 // room → first wired agent → defaults, so the toggles show what will
@@ -611,14 +535,8 @@ export async function rRoomLearning(ctx: RouteCtx, m: RegExpMatchArray): Promise
   }
   if (!canManage) return json(res, 403, { error: 'Admin privilege over every wired agent required' });
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { autoTrigger?: unknown; autoKeep?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ autoTrigger?: unknown; autoKeep?: unknown }>(req, res);
+  if (body === undefined) return;
   // Boolean sets the room override; explicit null CLEARS it (back to the
   // agent-level default) — JSON.stringify drops undefined keys on save.
   const patch: { autoTrigger?: boolean; autoKeep?: boolean } = {};
@@ -643,7 +561,7 @@ export async function rRoomLearning(ctx: RouteCtx, m: RegExpMatchArray): Promise
   });
 }
 
-// ── Room export/import (backup Phase 3) ───────────────────────────────
+// ── Room export/import ────────────────────────────────────────────────
 export async function rRoomExportGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId)))
@@ -757,7 +675,7 @@ export async function sessionsForThreadKey(
  * keyed under — both directions track progress against that one row so a push and
  * a pull on the same thread don't share a mark. Returns the number of messages
  * copied (excluding the divider; 0 = nothing new). See
- * docs/webchat/thread-context-sync.md.
+ * docs/webchat/threads.md §8.
  */
 export async function syncThreadContext(opts: {
   roomId: string;
@@ -831,6 +749,8 @@ export async function importRoomUploadHandler(req: IncomingMessage, res: ServerR
       .filter(Boolean)
       .filter((e) => !isSafeRoomEntry(e));
     if (bad.length > 0) throw new Error(`Bundle contains unsafe paths: ${bad.slice(0, 3).join(', ')}`);
+    const links = await nonPlainTarMembers(tmpFile!);
+    if (links.length > 0) throw new Error(`Bundle contains links or special files: ${links.slice(0, 3).join(', ')}`);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-roomimport-'));
     await new Promise<void>((resolve, reject) => {
       const p = spawnTar(['-xzf', tmpFile!, '-C', dir, '--no-same-owner']);
@@ -852,14 +772,8 @@ export async function importRoomUploadHandler(req: IncomingMessage, res: ServerR
 }
 
 export async function importRoomApplyHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { token?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ token?: unknown }>(req, res);
+  if (body === undefined) return;
   const staged = pendingAgentImports.get(String(body.token || ''));
   if (!staged) return json(res, 410, { error: 'Import expired — upload the bundle again' });
   try {
@@ -914,14 +828,8 @@ export function parseAgentRef(raw: unknown): AgentRef | { error: string } {
 }
 
 export async function createRoomHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { name?: unknown; agents?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ name?: unknown; agents?: unknown }>(req, res);
+  if (body === undefined) return;
   if (typeof body.name !== 'string' || !body.name.trim()) return json(res, 400, { error: 'name required' });
   const roomName = body.name.trim();
   if (!Array.isArray(body.agents) || body.agents.length === 0) {

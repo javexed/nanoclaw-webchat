@@ -1,18 +1,11 @@
 /**
  * Models — orchestration helpers around the webchat_models registry.
  *
- * Two non-DB concerns live here:
- *   1. Container plumbing — translate an assigned model into an env-var
- *      override block that the agent's container picks up via Claude
- *      Code's settings.json env. See `writeAgentSettingsForAssignedModel`.
- *      This keeps the integration trunk-free: we don't extend the
- *      agent-runner's container.json schema, we just lean on the
- *      already-mounted settings.json (`.claude-shared/settings.json` is
- *      mounted at `/home/node/.claude` — the SDK's user setting source —
- *      so its `env` block applies to the agent's process).
- *   2. External I/O — Ollama auto-discovery + health checks. Both are
- *      best-effort, fail-soft so a temporarily-unreachable endpoint
- *      doesn't block save/discover entirely.
+ *   1. Container plumbing — an assigned model becomes an env override block in
+ *      the agent's already-mounted settings.json (writeAgentSettingsForAssignedModel),
+ *      so the container.json schema stays untouched.
+ *   2. External I/O — Ollama discovery + health checks, best-effort and
+ *      fail-soft so an unreachable endpoint doesn't block save/discover.
  */
 import fs from 'fs';
 import path from 'path';
@@ -26,29 +19,19 @@ import { log } from '../../log.js';
 import { readEnvFile } from '../../env.js';
 import { getAssignedModelForAgent, getEffectiveModelForAgent, type WebchatModel } from './db.js';
 import { upsertEnv } from './env-write.js';
+import { refreshOllamaLenient } from './ollama-lenient.js';
 
 // ─── SSRF defense for owner-supplied probe/discover/validate URLs ─────────
+// Probe, Ollama discovery and openai-compat reachability all fetch() an
+// operator-typed URL. Ungated, an owner (or whoever races the first-login
+// owner grant) could reach host-internal services — above all cloud metadata
+// (169.254.169.254): the probe is blind, but timing confirms reachability and
+// any future body surfacing would make it a read primitive.
 //
-// The probe endpoint, Ollama discovery, and openai-compat reachability
-// check all do a raw fetch() against an operator-typed URL. Without a gate,
-// an authenticated owner (or — much worse — anyone who races the
-// first-authentication-wins owner promotion) can use those endpoints to
-// read host-internal services. The most damaging case: cloud metadata
-// (`169.254.169.254/latest/meta-data/iam/...`) — a blind probe surface is
-// fine for a malicious URL like that (nothing classifies, no body content
-// leaks back), but timing alone confirms reachability and a future change
-// to surface body content would silently turn this into a read primitive.
-//
-// What we block by default: link-local (covers all cloud metadata IPs),
-// 0.0.0.0/8 (default route), multicast, plus non-http(s) schemes
-// (`file://`, `gopher://` would be silly on `fetch` but cheap to refuse).
-//
-// What we *don't* block by default: loopback, RFC1918, CGNAT (Tailscale).
-// These are the legit Ollama-on-LAN destinations — blocking them would
-// make the probe useless for the primary use case. Operators who run with
-// untrusted owners or in hardened environments can opt into stricter
-// blocking via `WEBCHAT_BLOCK_PRIVATE_IPS=true`.
-
+// Always blocked: link-local (all cloud metadata IPs), 0.0.0.0/8, multicast,
+// non-http(s) schemes. NOT blocked by default: loopback, RFC1918, CGNAT
+// (Tailscale) — the legit Ollama-on-LAN destinations. Hardened installs opt
+// into blocking those with `WEBCHAT_BLOCK_PRIVATE_IPS=true`.
 const BLOCKED_HOSTNAME_SUFFIXES = ['metadata.google.internal', 'metadata.azure.com', 'metadata.azure.internal'];
 
 interface IpRange {
@@ -85,9 +68,7 @@ const ALWAYS_BLOCKED_RANGES: IpRange[] = [
 ];
 
 const PRIVATE_RANGES: IpRange[] = [
-  // Loopback IPv4
   { cidr: '127.0.0.0/8', test: (ip) => ip.startsWith('127.') },
-  // RFC 1918
   { cidr: '10.0.0.0/8', test: (ip) => ip.startsWith('10.') },
   {
     cidr: '172.16.0.0/12',
@@ -214,16 +195,9 @@ export async function assertSafeOutboundUrl(rawUrl: string): Promise<void> {
   }
 }
 
-/**
- * URL translation between the two perspectives an endpoint is used from.
- *
- * Operators register endpoints as reachable FROM THE HOST (that's where the
- * probe and save-validation run); agent containers consume them FROM INSIDE
- * DOCKER. `localhost`/`127.0.0.1` means a different machine in each place,
- * and `host.docker.internal` only resolves inside containers (via the
- * --add-host host-gateway alias every agent container gets).
- */
-
+// Endpoints are registered as reachable FROM THE HOST (probe, save-validation)
+// but consumed FROM INSIDE DOCKER: loopback is a different machine in each, and
+// host.docker.internal resolves only in containers (the --add-host alias).
 /** Container-facing form: loopback → host.docker.internal. For env writes. */
 export function containerReachableUrl(url: string): string {
   return url.replace(/^(https?:\/\/)(localhost|127\.0\.0\.1)(?=[:/]|$)/, '$1host.docker.internal');
@@ -265,14 +239,9 @@ export async function safeFetch(url: string, init?: RequestInit): Promise<Respon
   throw new Error(`safeFetch: too many redirects starting at ${url}`);
 }
 
-// Curated list of currently-supported Anthropic model ids — a SUGGESTION
-// source for the pickers, never a gate. `validateModel` deliberately does not
-// reject ids outside this list, and the agent "Anthropic model" field is a
-// free-text input with this as its datalist: a NanoClaw install routinely
-// outlives the list, and refusing a model Anthropic has already shipped is a
-// worse failure than accepting a typo (which surfaces immediately as the
-// "couldn't reach the configured model" reply on the agent's next turn).
-//
+// Anthropic model ids — a SUGGESTION source for the pickers, never a gate: an
+// install outlives this list, and refusing a model Anthropic has since shipped
+// is worse than accepting a typo (which surfaces on the agent's next turn).
 // Update when Anthropic ships new models.
 export const KNOWN_ANTHROPIC_MODELS = [
   'claude-opus-5',
@@ -297,15 +266,6 @@ export function isPlausibleAnthropicModelId(id: string): boolean {
 }
 
 /**
- * Compute the env-var overrides for a given model. Returns an empty object
- * when nothing needs to change (caller can use that to wipe the env block).
- *
- * Anthropic-with-custom-model-name: just ANTHROPIC_MODEL.
- * Ollama: ANTHROPIC_BASE_URL pointed at the Ollama endpoint + ANTHROPIC_MODEL.
- *   Ollama serves the Anthropic API at <endpoint>/v1/messages; the SDK
- *   reads ANTHROPIC_BASE_URL and uses it as the API root.
- */
-/**
  * Container-reachable learning-classifier params for a roster model, or null if
  * the model can't serve one (anthropic kind, or no endpoint). The classifier
  * runner makes an OpenAI-format `/v1/chat/completions` call, so 127.0.0.1/
@@ -323,6 +283,16 @@ export function classifierParamsForModel(model: WebchatModel | null): { url: str
   return { url, model: model.model_id };
 }
 
+/**
+ * The env-var overrides for a model; empty when nothing needs to change (the
+ * caller uses that to wipe the env block).
+ *
+ *   anthropic          → ANTHROPIC_MODEL.
+ *   ollama             → ANTHROPIC_BASE_URL at the Ollama root (it serves the
+ *                        Anthropic API at /v1/messages) + ANTHROPIC_MODEL + NO_PROXY.
+ *   openai-compatible  → ANTHROPIC_BASE_URL at the router (LiteLLM serves the
+ *                        Anthropic spec) + ANTHROPIC_MODEL + NO_PROXY.
+ */
 export function envForModel(model: WebchatModel | null): Record<string, string> {
   if (!model) return {};
   if (model.kind === 'anthropic') {
@@ -330,12 +300,8 @@ export function envForModel(model: WebchatModel | null): Record<string, string> 
   }
   if (model.kind === 'ollama') {
     if (!model.endpoint) return {};
-    // ANTHROPIC_BASE_URL must be the bare Ollama root: the Anthropic SDK appends
-    // the FULL `/v1/messages` path itself, and Ollama serves the Anthropic API
-    // there. Appending `/v1` here is a bug — it makes the SDK hit
-    // `<endpoint>/v1/v1/messages` → 404, surfaced to the agent as
-    // "issue with the selected model … may not exist". Verified against Ollama
-    // 0.17 (qwen3-coder, llama3.2): bare → 200, `/v1` → 404.
+    // ANTHROPIC_BASE_URL must be the bare Ollama root: the SDK appends the full
+    // `/v1/messages` path itself, so a `/v1` here 404s as `/v1/v1/messages`.
     const base = containerReachableUrl(model.endpoint.replace(/\/+$/, ''));
     // The container routes model calls through the OneCLI credential proxy
     // (HTTP_PROXY/HTTPS_PROXY from the gateway env). A redirected Ollama
@@ -398,6 +364,9 @@ export function envForModel(model: WebchatModel | null): Record<string, string> 
  * Idempotent. Preserves any pre-existing env keys we don't manage.
  */
 export async function writeAgentSettingsForAssignedModel(agentGroupId: string): Promise<void> {
+  // First, and even for a group with no folder yet: the spawn path reads this
+  // before its prepare hooks run (./ollama-lenient.ts).
+  await refreshOllamaLenient(agentGroupId);
   // Per-agent assignment wins; a claude-family group WITHOUT one falls back to
   // the workspace default model (wizard "default engine = Ollama"). Groups on
   // a non-default provider (e.g. codex) never inherit the fallback — their
@@ -456,26 +425,16 @@ function piInstalled(): boolean {
 }
 
 /**
- * Which provider a model kind should run on. A small local model (Ollama) follows
- * tools/format far better on a local harness than on the Claude SDK — so once one
- * is installed, an Ollama-backed agent DEFAULTS to it (no manual Agent → Harness
- * switch; that's the "install it and it just works" behavior). Every other kind —
- * and Ollama when no local harness is installed — stays on the default Claude
- * provider (openai-compatible/LiteLLM is consumed via its Anthropic-spec surface).
+ * Which provider a model kind runs on. A small Ollama model follows tools and
+ * format far better on a local harness, so once one is installed an Ollama agent
+ * DEFAULTS to it; every other kind stays on the default Claude provider
+ * (openai-compatible/LiteLLM is consumed via its Anthropic-spec surface).
  *
- * WHY pi OUTRANKS OpenCode when both are installed. This is the only place that
- * preference is expressed, and it is a property of the harnesses rather than a
- * toss-up: pi replaces the system prompt outright, so the model sees NanoClaw's
- * instructions and nothing else, while OpenCode-lean still carries a coding
- * preamble that has to be stripped. Measured head-to-head 2026-07-31: 587 tokens
- * vs 6,443 — an order of magnitude of a small model's context spent before it
- * reaches the actual task, which is why the lean path fit a stock 4k window and
- * the other needed a 16k variant.
+ * pi outranks OpenCode: pi replaces the system prompt outright, while OpenCode
+ * keeps a coding preamble that eats a small model's context.
  *
- * Harness selection is deliberately NOT a user-facing choice: it is derived from
- * the model, because "which model" is a question an operator can answer and
- * "which agent harness" is not. An explicit pick still wins — see
- * syncAgentProviderForAssignedModel, where a sticky choice survives reassignment.
+ * Derived from the model, not a user-facing choice; an explicit pick still wins
+ * (syncAgentProviderForAssignedModel).
  */
 export function providerForModelKind(kind: string | null | undefined): 'opencode' | 'pi' | null {
   if (kind !== 'ollama') return null;
@@ -509,11 +468,10 @@ export function openCodeBackendEnv(model: WebchatModel): { env: Record<string, s
       OPENCODE_PROVIDER: 'openai',
       OPENCODE_BASE_URL: base,
       OPENCODE_MODEL: `openai/${model.model_id}`,
-      // OpenCode runs side tasks (session titles, summaries) on a SMALL model,
-      // and with none configured it asks for its own built-in default
-      // (gpt-5.4-nano), which a local endpoint never serves — every auxiliary
-      // call fails. Point it at the same model: the only one this endpoint is
-      // known to have.
+      // Main and small model together, as upstream's own setup writes them
+      // (add-opencode scripts/opencode-auth.ts). Picking a model here never runs
+      // that setup, so left alone the small model (titles, summaries) would stay
+      // on whatever setup chose, which this endpoint may not serve.
       OPENCODE_SMALL_MODEL: `openai/${model.model_id}`,
     },
     proxyHost,
@@ -594,27 +552,11 @@ export async function syncAgentProviderForAssignedModel(agentGroupId: string): P
 }
 
 /**
- * Bridge the webchat model registry → a LOCAL harness. Neither local provider has
- * a notion of webchat's per-agent model, so both read this file to learn which
- * backend to talk to. Written when the group is on a local harness with an
- * Ollama-kind effective model; removed otherwise, so switching away (or a cloud
- * reassignment) fully clears it. Same placement + "only if the folder exists"
- * contract as writeAgentSettingsForAssignedModel.
- *
- * The file is `local-model.json`. It was `opencode-model.json` when OpenCode was
- * the only reader; pi then inherited the name and a third harness would have
- * inherited the misnomer too. The readers accept either name (new first), so a
- * file written before this rename still resolves; this writer emits only the new
- * name and REMOVES the legacy one, so the two can never disagree.
- *
- * As of the thin add-opencode-stack, **pi is the only reader**. Upstream's
- * add-opencode owns the opencode provider and takes its model from the group's
- * container_configs.model, else OPENCODE_MODEL in .env — both written by
- * syncAgentProviderForAssignedModel — so for an opencode group this file is
- * written and nothing consumes it. The write is kept deliberately: an install
- * still running the old forked payload DOES read it, and removing the write
- * would strand it. Drop the opencode branch once no install can be on that
- * payload.
+ * Per-agent local-model wiring, read by pi (upstream's opencode provider reads
+ * container_configs.model instead). Written only for a pi group with an
+ * Ollama-kind effective model, removed otherwise; written only once the folder exists, like
+ * writeAgentSettingsForAssignedModel. Readers fall back to the legacy name, so
+ * the writer removes it to keep one source of truth.
  */
 export const LOCAL_MODEL_FILE = 'local-model.json';
 /** Pre-rename name. Written by no one; still read as a fallback. */
@@ -624,34 +566,27 @@ export async function writeLocalModelForAgent(agentGroupId: string): Promise<voi
   const dir = path.join(DATA_DIR, 'v2-sessions', agentGroupId, '.claude-shared');
   const file = path.join(dir, LOCAL_MODEL_FILE);
   const legacy = path.join(dir, LEGACY_LOCAL_MODEL_FILE);
-  // Shared local-model wiring: both local harnesses (opencode + pi) read this file.
   const provider = (await getContainerConfig(agentGroupId))?.provider;
-  const onLocalHarness = (provider === 'opencode' && opencodeInstalled()) || (provider === 'pi' && piInstalled());
-  const model = await (onLocalHarness ? getEffectiveModelForAgent(agentGroupId) : null);
+  const model = await (provider === 'pi' && piInstalled() ? getEffectiveModelForAgent(agentGroupId) : null);
   if (!model || model.kind !== 'ollama' || !model.endpoint) {
-    // Clear BOTH names: an install that predates the rename can still be
-    // carrying the legacy file, and leaving it would keep stale wiring alive
-    // through the readers' fallback.
+    // Clear BOTH names, or the readers' fallback keeps stale wiring alive.
     fs.rmSync(file, { force: true });
     fs.rmSync(legacy, { force: true });
     return;
   }
   if (!fs.existsSync(dir)) return; // folder not initialized yet; a later sync rewrites
-  // OpenCode speaks OpenAI-compat at /v1/chat/completions, so its baseURL DOES take
+  // pi speaks OpenAI-compat at /v1/chat/completions, so its baseURL DOES take
   // the /v1 suffix (unlike the Anthropic-SDK path in envForModel, where /v1 is a
   // bug). containerReachableUrl rewrites localhost → host.docker.internal so the
   // container reaches the host's Ollama, bypassing the OneCLI proxy (NO_PROXY set
-  // by the provider). OPENCODE_MODEL form is `<provider>/<model>` = `ollama/<id>`.
+  // by the provider). pi strips the `ollama/` prefix from the model.
   const baseURL = containerReachableUrl(model.endpoint.replace(/\/+$/, '')) + '/v1';
   const payload = {
     provider: 'ollama',
     model: `ollama/${model.model_id}`,
-    smallModel: `ollama/${model.model_id}`,
     baseURL,
   };
   fs.writeFileSync(file, JSON.stringify(payload, null, 2) + '\n');
-  // One source of truth: drop the pre-rename file so a reader's fallback can
-  // never serve wiring this function has since changed.
   fs.rmSync(legacy, { force: true });
 }
 
@@ -725,9 +660,7 @@ export async function validateModel(input: {
   if (input.kind === 'anthropic') {
     if (!input.model_id) return 'model_id required';
     if (!KNOWN_ANTHROPIC_MODELS.includes(input.model_id as (typeof KNOWN_ANTHROPIC_MODELS)[number])) {
-      // Soft warning — we allow custom ids in case the user knows about a
-      // newer model than the curated list. Just don't fail on it.
-      // (No-op return null.)
+      // Custom ids are allowed — see KNOWN_ANTHROPIC_MODELS.
     }
     return null;
   }
@@ -805,9 +738,7 @@ export async function probeEndpoint(rawUrl: string): Promise<ProbeResult> {
   if (candidates.length === 1) {
     return probeOneScheme(candidates[0]);
   }
-  // Race all candidates in parallel — first one that classifies a kind
-  // wins. Total worst-case latency = single probeOneScheme window
-  // (~12s) regardless of how many candidates we try.
+  // In parallel: worst case is one probeOneScheme window, however many candidates.
   const results = await Promise.all(
     candidates.map((url) => probeOneScheme(url).catch((err) => fallbackResult(url, err))),
   );

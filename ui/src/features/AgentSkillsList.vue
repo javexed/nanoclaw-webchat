@@ -1,24 +1,9 @@
 <script setup lang="ts">
 /**
- * Skills available to the open agent, with per-skill enable toggles.
- *
- * Mounted into <ul id="agent-skills-list">. The fetch, the count badge, the
- * scoped-skills sub-list and the Save button all stay in renderAgentSkills().
- *
- * Known, accepted DOM difference: Vue emits a `checked` ATTRIBUTE on the
- * enabled boxes; the imperative version assigned only the PROPERTY, which does
- * not serialise. Both the .prop modifier and a plain :checked bind produce the
- * attribute, so this is Vue's rendering, not a template mistake.
- *
- * Inert here, and checked rather than assumed: the property is correct on every
- * row (verified in-browser), saveAgentSkills() reads the property, and nothing
- * in this UI resets the form — which is the only path where the attribute's
- * defaultChecked meaning would diverge.
- *
- * The checkbox is UNCONTROLLED on purpose: the binding sets initial state and
- * nothing binds it back. saveAgentSkills() reads the boxes out of the DOM, so
- * making them controlled would require re-implementing that read against a ref
- * for no gain — and would silently change what Save sends.
+ * Skills available to the open agent, with per-skill enable toggles; mounted into
+ * <ul id="agent-skills-list">. The checkboxes are uncontrolled: saveAgentSkills() reads
+ * the property from the DOM, so a controlled ref would change what Save sends. The
+ * `checked` attribute Vue also emits is inert, since nothing resets the form.
  */
 import { agentSkillRows, agentSkillsEnabled } from './agent-skills-state.js';
 

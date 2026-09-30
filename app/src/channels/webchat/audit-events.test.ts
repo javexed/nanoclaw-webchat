@@ -2,14 +2,14 @@
  * The audit trail, end to end: boot the real server, make real requests, read
  * the real file. Unit tests on audit() prove lines get written; these prove
  * the SEAMS emit — which is where the value lives, and which nothing else
- * exercises (the decision used to be computed and thrown away).
+ * exercises.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
+import { LOOPBACK_ENV, resetServerModules, startServer } from './test-server.js';
 
 let auditFile: string;
 const SCRATCH: string[] = [];
@@ -23,14 +23,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  vi.unstubAllEnvs();
-  try {
-    const conn = await import('../../db/connection.js');
-    await conn.closeDb();
-  } catch {
-    /* ignore */
-  }
-  vi.resetModules();
+  await resetServerModules();
   for (const d of SCRATCH.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
@@ -44,29 +37,8 @@ const events = () =>
         .map((l) => JSON.parse(l) as Record<string, any>)
     : [];
 
-async function bootLocalhost(env: Record<string, string> = {}) {
-  // Defaults first, caller overrides second — the refusal test sets
-  // WEBCHAT_TOKEN, and the first version of this helper stubbed it back to ''
-  // AFTER the test had set it, which made the server auto-pass loopback and
-  // the test fail with 200-instead-of-401.
-  const merged = {
-    WEBCHAT_HOST: '127.0.0.1',
-    WEBCHAT_PORT: '0',
-    WEBCHAT_TOKEN: '',
-    WEBCHAT_TAILSCALE: '',
-    WEBCHAT_TRUSTED_PROXY_IPS: '',
-    ...env,
-  };
-  for (const [k, v] of Object.entries(merged)) vi.stubEnv(k, v);
-  const conn = await import('../../db/connection.js');
-  await conn.initTestDb();
-  const migrations = await import('../../db/migrations/index.js');
-  await migrations.runMigrations(conn.getDb());
-  const server = await import('./server.js');
-  const wc = await server.startWebchatServer(noopHooks);
-  const addr = wc.http.address() as { port: number };
-  return { server, wc, port: addr.port };
-}
+// Defaults first, caller overrides second: the refusal test turns WEBCHAT_TOKEN on.
+const bootLocalhost = (env: Record<string, string> = {}) => startServer({ ...LOOPBACK_ENV, ...env });
 
 describe('audit events at the seams', () => {
   it('records the first-login owner grant and the session, once', async () => {

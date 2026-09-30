@@ -1,26 +1,8 @@
 <script setup lang="ts">
 /**
- * The sidebar room list — twenty-sixth island, and the largest.
- *
- * Mounted into <ul id="room-list">, exclusively owned by this module.
- *
- * Four renderers shared this subtree and had to convert together, entangled in
- * BOTH directions: renderRooms built the rows and the .thread-list hosts;
- * renderRoomThreads filled a non-active room's host; renderThreadList filled the
- * active room's AND reached back OUT to append the inline "+" into that row's
- * .room-actions; openThreadMenu appended a menu into a thread row.
- *
- * Two things the imperative version needed and this does not:
- *   - the 400ms RETRY when a kebab menu was open. The menu was a DOM node inside
- *     the list, so a background re-render (a message landing in any room) tore
- *     it down mid-click; the code deferred the whole update instead. The menu is
- *     state now, so a re-render preserves it.
- *   - the scrollTop save/restore around the rebuild. Rows are keyed and patched
- *     rather than replaced, so the scroll position is never lost to begin with.
- *
- * Element ORDER inside a row is exact and non-obvious, taken from the sequence
- * of appends: [chevron], name, [mention|unread], [pin], [thread input], actions,
- * [thread list], [kebab menu last].
+ * The sidebar room list, mounted into <ul id="room-list">. Row child order is exact:
+ * [chevron], name, [mention|unread], [pin], [thread input], actions, [thread list],
+ * [kebab menu last].
  */
 import { computed } from 'vue';
 import { state } from '../core/state.js';
@@ -53,13 +35,7 @@ const PIN_ICON = lucide('pin');
 const PLUS = '+';
 const NEW_THREAD = 'New thread';
 const MENTION = '@';
-/**
- * Empty list. A label, not an explanation — matching `'No rooms yet.'` as it
- * already reads in the agents pane and the topology canvas. It was briefly two
- * role-dependent sentences telling a member to go find an owner; DESIGN.md's
- * rule is label-only by default, and the sidebar is the last place that earns
- * an exception.
- */
+/** Empty list: a label, not an explanation (DESIGN.md's label-only default). */
 const EMPTY = 'No rooms yet.';
 /** A filter that matches nothing is a different state from an empty install. */
 const NO_MATCH = 'No rooms match.';
@@ -170,9 +146,8 @@ function onRowDrop(room: any, e: DragEvent) {
 }
 
 /**
- * Built as a string and bound through v-bind of an object, so a row with NO
- * classes emits no class attribute at all. :class="" would emit class="" —
- * the difference the very first island was caught on.
+ * Built as a string and bound through v-bind of an object, so a row with no classes
+ * emits no class attribute at all (:class="" would emit class="").
  */
 function rowClass(room: any) {
   const marker = dropMarker.value[room.id];
@@ -180,12 +155,9 @@ function rowClass(room: any) {
     room.archived ? 'archived' : '',
     room.id === state.currentRoom ? 'active' : '',
     marker ? 'drop-' + marker : '',
-    // A row hosting a .thread-list needs less bottom padding: that padding is
-    // breathing room under a room NAME, and once threads follow it lands under
-    // the thread block instead, where the rows already carry their own. Marked
-    // here rather than matched with :has() so the rule keys off the same
-    // condition that renders the list. Both branches count — the expanded tree
-    // and the inline new-thread input share one container.
+    // A row hosting a .thread-list needs less bottom padding (the thread rows carry
+    // their own). Keyed off the condition that renders the list rather than :has();
+    // the expanded tree and the inline new-thread input share one container.
     expanded(room) || adding(room) ? 'has-threads' : '',
   ].filter(Boolean);
   return parts.length ? parts.join(' ') : undefined;
@@ -214,10 +186,8 @@ const activeHasThreads = computed(() =>
 
 <template>
   <!--
-    Empty state. Load-bearing for non-owners: "+ New room" is owner-only and is
-    now hidden for them, so without this a member with no rooms gets a blank
-    sidebar and no idea what to do next. Owners keep the button, so they are
-    told to use it rather than to go find themselves.
+    Load-bearing for non-owners: "+ New room" is owner-only, so without this a
+    member with no rooms gets a blank sidebar.
   -->
   <li v-if="rendered.length === 0" class="room-list-empty">{{ roomFilter.trim() ? NO_MATCH : EMPTY }}</li>
   <template v-for="room in rendered" :key="room.id">

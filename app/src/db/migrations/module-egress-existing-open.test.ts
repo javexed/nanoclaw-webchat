@@ -26,7 +26,9 @@ function seed(): Database.Database {
 }
 
 async function run(db: Database.Database): Promise<void> {
-  await moduleEgressExistingOpen.up({ exec: async (sql: string) => void db.exec(sql) } as never);
+  await moduleEgressExistingOpen.up({
+    exec: async (sql: string) => void db.exec(sql),
+  } as never);
 }
 
 describe('webchat-egress-existing-open', () => {

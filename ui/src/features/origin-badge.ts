@@ -2,23 +2,16 @@
 // The little provenance pill that leads a skill or MCP row: who published it,
 // linking to the source when there is a safe one.
 //
-// Out of legacy.js and into its own module because ten call sites across
-// mcp.ts and skills.ts use it, and the islands need to render it declaratively
-// while the not-yet-converted callers still need a DOM node.
-//
-// The shape is deliberate: originBadgeProps() makes every DECISION — including
-// the http(s) test that keeps a javascript:/data: URL out of an href — and the
-// two renderers below are thin. Writing the component's own conditionals would
-// have meant two copies of that test, and the copy that drifts is the one that
-// stops being a security check.
+// originBadgeProps() makes every DECISION, including the http(s) test that keeps
+// a javascript:/data: URL out of an href; both renderers stay thin so that
+// security check exists exactly once.
 
 /**
  * Stable hue per label, so a publisher keeps its colour across renders.
  *
  * The 60–190 band is excluded, not wrapped around: those are the yellows and
  * greens that read as "warning" and "success" elsewhere in the console, and a
- * publisher name is neither. Copied exactly — a plain `% 360` would look right
- * and quietly recolour every badge.
+ * publisher name is neither.
  */
 function labelHue(str: string): number {
   const BAND_LO = 60;
@@ -64,10 +57,7 @@ export function originBadgeProps(origin: Origin): OriginBadgeProps {
   };
 }
 
-/**
- * The imperative renderer, for the call sites that are still imperative.
- * Byte-for-byte what legacy.js produced — this is a move, not a rewrite.
- */
+/** The imperative renderer, for the call sites that are still imperative. */
 export function originBadgeEl(origin: Origin): HTMLElement {
   const p = originBadgeProps(origin);
   const el = document.createElement(p.tag);

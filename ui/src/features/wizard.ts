@@ -2,17 +2,9 @@
 // The first-run flow: pick an engine, probe/pull a local model, choose how the
 // console is reached from outside (Tailscale / Cloudflare / bearer token), and
 // create the first agent. Also owns the wizard's slice of the settings panel.
-//
-// 42 functions, but only 8 are public — the rest are steps and helpers nothing
-// outside the flow has any business calling. Keeping that boundary narrow is
-// most of the value of pulling this out of legacy.js at all.
-//
-// DEPENDENCY INJECTION for the handful of legacy helpers this still reaches
-// back to, same as features/thinking. legacy.js imports THIS module, so
-// importing back would form a cycle through a module with top-level side
-// effects. legacy calls provideWizardDeps() once at startup. These become
-// ordinary imports as the remaining features come out.
-import { $, lucide, lucideEl, esc } from '../core/dom.js';
+// Keep the export surface narrow: the steps and helpers are the flow's own.
+import { $, esc } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { applyMarketplaceNav } from './thinking.js';
 import {
   cloudflaredInstallActive,
@@ -26,12 +18,9 @@ import { state } from '../core/state.js';
 import { createApp, nextTick } from 'vue';
 import WizardOllamaModels from './WizardOllamaModels.vue';
 import { wizardOllamaModels, wizardOllamaSelected } from './wizard-state.js';
-import { showToast, toastError } from '../core/toast.js';
-import { authFetch, apiJson, setAuthToken } from '../core/api.js';
-// Voice is already a module — these are ordinary imports, not injection.
+import { showToast } from '../core/toast.js';
+import { apiJson, authFetch, setAuthToken } from '../core/api.js';
 import { getTtsReadAloudEnabled, setTtsReadAloudEnabled, stopTts } from './voice.js';
-// Injected until phase 1e; now that installers is a module these are ordinary
-// imports. Each extraction turns a slice of the injection back into real edges.
 import {
   pollTtsInstall,
   runTtsInstall,
@@ -43,12 +32,8 @@ import {
   installProgressLine,
 } from './installers.js';
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideWizardDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
+/** Supplied by provideWizardDeps in composition-root.ts. `any` marks a signature not
+ *  yet typed, not an opt-out of checking. */
 export interface WizardDeps {
   applyLearningMaster: () => any;
   closeSettings: () => any;
@@ -59,12 +44,12 @@ export interface WizardDeps {
 
 const deps = {} as WizardDeps;
 
-/** Wire the legacy helpers this module calls. Call once, before the wizard opens. */
+/** Wire the composition-root helpers this module calls. Call once, before the wizard opens. */
 export function provideWizardDeps(provided: Partial<WizardDeps>): void {
   Object.assign(deps, provided);
 }
 
-// The default engine/login is set in the wizard now, not here. Admin-gated: the
+// The default engine/login is set in the wizard. Admin-gated: the
 // admin-only GET /api/workspace-credential 403s for non-admins, so the button
 // only appears for those who can actually run setup.
 let wizardBtnWired = false;
@@ -74,7 +59,8 @@ export async function renderSettingsWizardButton() {
   if (!wizardSection) return;
   let ok = false;
   try {
-    ok = (await authFetch('/api/workspace-credential')).ok;
+    await apiJson('/api/workspace-credential');
+    ok = true;
   } catch {
     ok = false;
   }
@@ -87,6 +73,11 @@ export async function renderSettingsWizardButton() {
   });
 }
 
+// ── First-run setup wizard ───────────────────────────────────────────────────
+// Owner/global-admin only. Auto-opens on first login while onboarding is
+// incomplete (see maybeAutoOpenWizard); re-openable from Settings. Every step is
+// skippable and reuses existing endpoints. Closing (X) or reaching Finish marks
+// onboarding complete so it never re-nags.
 const WIZARD_STEPS = 3;
 
 let wizardStep = 0;
@@ -119,16 +110,14 @@ export async function renderWizardOpencodeInstall() {
   }
   let st: any = {};
   try {
-    st = await (await authFetch('/api/install/opencode')).json();
+    st = await apiJson('/api/install/opencode');
   } catch {
     /* endpoint absent on an older host → just show the install button */
   }
   const installed = !!st.installed;
   const running = !!st.running;
-  // Green, but the process answering is still the old one: its provider
-  // registry predates the install and the restart is scheduled, not done. Read
-  // as "not installed" this put the Install button back after a reload — and
-  // pressing it only asked the new process, which said "already installed".
+  // Green, but the process answering predates the install: its restart is
+  // scheduled, not done, so treat it as in progress rather than "not installed".
   // Bounded, so a restart that never lands stops looking like progress.
   const restarting = !!st.restartPending && Date.now() - (st.startedAt ?? Date.now()) < 15 * 60 * 1000;
   const badge = $('#wizard-opencode-installed-badge');
@@ -164,10 +153,9 @@ export async function renderWizardOpencodeInstall() {
 
 // ── Resume across a reload ──────────────────────────────────────────────────
 // The OpenCode install ends in a host restart and a rebuilt client bundle; the
-// service worker then offers a reload, and an operator waiting through the gap
-// may press F5 anyway. Without this the wizard reopened at step one on the
-// Claude card, and the Ollama pick looked reset. sessionStorage: same tab only,
-// which is the only place a reload can land; an hour old means abandoned.
+// operator may reload through the gap; this reopens the wizard where it was.
+// sessionStorage: same tab only, the only place a reload lands; an hour old
+// means abandoned.
 const RESUME_KEY = 'nanoclaw-wizard-resume';
 const WIZARD_ENGINES = ['claude', 'codex', 'grok', 'ollama'];
 
@@ -222,12 +210,16 @@ function buildWizardDots() {
   }
 }
 
+/**
+ * Reflect live credential state on the engine list: connected engines swap
+ * their connect controls for a prominent ✓ card (standard OAuth-connect UX —
+ * the action you completed disappears), and the radio chips update without a
+ * wizard reopen. Also greys Codex out when its provider isn't installed.
+ */
 export async function refreshWizardCredState() {
   let s;
   try {
-    const r = await authFetch('/api/workspace-credential');
-    if (!r.ok) return;
-    s = await r.json();
+    s = await apiJson('/api/workspace-credential');
   } catch {
     return; // non-fatal — controls stay as-is
   }
@@ -301,12 +293,9 @@ export async function refreshWizardCredState() {
   // the connect controls only once it is present. `installed` comes from the same
   // status payload the chip reads, so the row disappears as soon as the install
   // chain finishes and the host comes back.
-  // grokStatus() calls this field `available`, not `installed` — the
-  // /api/workspace-credential/grok ROUTE adds an `installed` key, but the wizard
-  // state does not go through that route. Reading the wrong key made this
-  // `undefined !== false` -> true -> row hidden, so a clean install showed "not
-  // installed" with no way to act on it. Default to NOT-installed when the field
-  // is missing: a spurious install row is recoverable, a hidden one is a dead end.
+  // The wizard state names this `available` (only the grok credential ROUTE adds
+  // `installed`). Missing means NOT installed: a spurious install row is
+  // recoverable, a hidden one is a dead end.
   const grokInstalled = grok?.available === true;
   const grokInstallRow = $('#wizard-grok-install-row');
   if (grokInstallRow && !opencodeInstallActive.value) grokInstallRow.hidden = grokInstalled;
@@ -351,11 +340,11 @@ export async function refreshWizardCredState() {
   void renderWizardOpencodeInstall();
 }
 
+/** Reveal the wizard's install-Ollama row when nothing answers locally (Linux
+ *  only), or prefill the endpoint when a local Ollama is already running. */
 async function wizardCheckLocalOllama() {
   try {
-    const r = await authFetch('/api/ollama/local');
-    if (!r.ok) return;
-    const st = await r.json();
+    const st = await apiJson('/api/ollama/local');
     if (st.reachable) {
       const url = $('#wizard-ollama-url') as HTMLInputElement;
       if (url && !(url as HTMLInputElement).value) (url as HTMLInputElement).value = 'http://localhost:11434';
@@ -420,11 +409,7 @@ async function wizardFollowPull(host?: any, model?: any) {
 let wizardOllamaApp: any = null;
 
 function mountWizardOllamaModels(): void {
-  if (wizardOllamaApp) return;
-  const host = $('#wizard-ollama-list');
-  if (!host) return;
-  wizardOllamaApp = createApp(WizardOllamaModels);
-  wizardOllamaApp.mount(host);
+  wizardOllamaApp ??= mountIsland('#wizard-ollama-list', () => createApp(WizardOllamaModels));
 }
 
 async function wizardProbeOllama() {
@@ -453,13 +438,8 @@ async function wizardProbeOllama() {
     $('#wizard-ollama-results')!.hidden = false;
     $('#wizard-ollama-dl-row')!.hidden = false;
     void wizardLoadRecommendation();
-    // SAY that it worked. This used to clear the status on success, on the
-    // reasoning that the radios below speak for themselves — but the radio list
-    // is the ONLY success feedback there was, and it renders ~450px down inside
-    // a scrollable wizard body. On a short window it lands below the fold, so
-    // the button un-busies and nothing visibly changes: reported as "I click
-    // Probe and see no feedback that it found anything". Errors always had a
-    // line here; success now does too.
+    // SAY that it worked: the radio list renders far down a scrollable body and
+    // can land below the fold, leaving no visible feedback.
     const n = wizardOllamaModels.value.length;
     wizardSetStatus('#wizard-ollama-status', `Found ${n} model${n === 1 ? '' : 's'} at ${body.endpoint || url}`, 'ok');
     // …and show them. nextTick first: the radios mount on the next render, and
@@ -492,7 +472,7 @@ export async function wizardSelectOllamaModel(modelId?: any) {
   try {
     let id = null;
     try {
-      const roster = await (await authFetch('/api/models')).json();
+      const roster = await apiJson('/api/models');
       id =
         (Array.isArray(roster) ? roster : []).find(
           (m) =>
@@ -598,7 +578,7 @@ async function wizardLoadRecommendation() {
 async function wizardReattachPull() {
   try {
     const host = ($<HTMLInputElement>('#wizard-ollama-url')?.value || '').trim() || 'http://localhost:11434';
-    const { pulls } = await (await authFetch('/api/ollama/pulls')).json();
+    const { pulls } = await apiJson('/api/ollama/pulls');
     const job = (pulls || []).find((j: any) => j.host === host && j.status === 'pulling');
     if (!job) return;
     $<HTMLInputElement>('#wizard-ollama-dl-model')!.value = job.model;
@@ -608,12 +588,16 @@ async function wizardReattachPull() {
   }
 }
 
+// Accordion: only the selected engine's connect controls are expanded.
 function syncWizardEngineBodies() {
   document.querySelectorAll('.wizard-engine-body').forEach((b) => {
     (b as HTMLElement).hidden = (b as HTMLElement).dataset.engine !== wizardEngine;
   });
 }
 
+// True once the engine picked in step 0 has a usable credential/default set, from
+// the last refreshWizardCredState snapshot. Gates the step-0 Next so the operator
+// can't advance with an engine that can't answer a message.
 function wizardEngineConnected() {
   const s: any = wizardCred || {};
   if (wizardEngine === 'codex') return !!s.codex?.connected;
@@ -645,6 +629,11 @@ function showWizardStep(i?: any) {
   refreshWizardNextGate();
 }
 
+// Block advancing/finishing while OpenCode is installing. The install ends in a
+// host restart that auto-assigns the harness and respawns the agent container —
+// finishing before that settles drops the operator into chat just as their first
+// message gets killed mid-turn. opencodeInstallActive.value stays true across the whole
+// build + restart poll, so this holds Next/Finish until the harness is stable.
 export function refreshWizardNextGate() {
   const btn = $('#wizard-next')! as HTMLInputElement;
   if (!btn) return;
@@ -679,11 +668,7 @@ function closeWizard() {
 
 async function finishWizard() {
   try {
-    await authFetch('/api/webchat/onboarding', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ complete: true }),
-    });
+    await apiJson('/api/webchat/onboarding', { method: 'PUT', body: { complete: true } });
   } catch {
     /* best-effort — closing is more important than persisting the flag */
   }
@@ -691,6 +676,11 @@ async function finishWizard() {
   closeWizard();
 }
 
+/**
+ * Put an async wizard button into a busy state: disabled, label swapped, and a
+ * small inline spinner — the "doing something" signal lives ON the control the
+ * user just pressed. Returns a restore function for the finally block.
+ */
 export function wizardBusy(btn?: any, busyLabel?: any) {
   const original = btn.textContent;
   btn.disabled = true;
@@ -723,8 +713,7 @@ async function wizardProbeHttps() {
   if (!row) return;
   let state = null;
   try {
-    const r = await authFetch('/api/webchat/tailscale-https');
-    if (r.ok) state = await r.json();
+    state = await apiJson('/api/webchat/tailscale-https');
   } catch {
     state = null;
   }
@@ -735,9 +724,7 @@ async function wizardProbeHttps() {
   } else if (state && state.active) {
     row.hidden = false;
     $('#wizard-https-btn')!.hidden = true;
-    // Already-on is the state an operator lands in most often, and the URL is
-    // the one thing they actually want from it — the enable path linked it and
-    // this one did not, so the common case was the worse one.
+    // Already-on is the common case, and the URL is what the operator wants.
     wizardSetStatus('#wizard-https-status', 'HTTPS is already on.', 'ok');
     if (state.url) {
       $('#wizard-https-status')!.innerHTML =
@@ -792,12 +779,8 @@ async function wizardEnableHttps() {
   }
 }
 
-// Step 2 (Access): summarize how this instance is reached + secured, surface the
-// one-click Tailscale HTTPS when available, and offer to retire the bootstrap
-// bearer token once a stronger method (Tailscale/SSO) can authenticate. Owner-
-// only endpoint — a 403 just leaves the neutral "owner-only" line.
-// Show the body for the selected access radio (accordion, like step 0). When
-// Tailscale is picked, probe for the one-click HTTPS affordance.
+// Step 2 (Access): show the body for the selected access radio (accordion, like
+// step 0). When Tailscale is picked, probe for the one-click HTTPS affordance.
 function syncWizardAccessBodies() {
   const sel =
     (document.querySelector('input[name="wizard-access"]:checked') as HTMLInputElement | null)?.value || 'bearer';
@@ -809,10 +792,17 @@ function syncWizardAccessBodies() {
   wizardStartTsPollIfNeeded();
 }
 
+// Step 1 "Features" — reflect the MCP + read-aloud toggles from state and surface
+// the TTS voice-model install (same /api/webchat/tts/install as Settings → Features,
+// via the shared runTtsInstall/pollTtsInstall with wizard element ids).
 let wizardTtsWired = false;
 
 const WIZARD_TTS_ELS = { btn: '#wizard-tts-install', log: '#wizard-tts-log', progress: '#wizard-tts-progress' };
 
+// Wizard voice-dictation control — mirrors Settings → Features → Voice dictation:
+// pick a backend (Local whisper.cpp / ElevenLabs cloud), install (local) or connect
+// a key (ElevenLabs). Drives the same /api/webchat/stt/install as Settings via the
+// shared run/pollSttInstall. Owner-only: the endpoint 403s → the whole block hides.
 let wizardSttWired = false;
 
 let wizardSttBackend = 'local';
@@ -824,8 +814,7 @@ async function renderWizardDictation() {
   if (!section) return;
   let st = null;
   try {
-    const r = await authFetch('/api/webchat/stt/install');
-    if (r.ok) st = await r.json();
+    st = await apiJson('/api/webchat/stt/install');
   } catch {
     st = null;
   }
@@ -910,12 +899,7 @@ export async function renderWizardFeatures() {
       // Workspace-level (owner-set) — the wizard is an owner surface.
       const on = (ttsDefault as HTMLInputElement).checked;
       try {
-        const r = await authFetch('/api/tts/config', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ readAloud: on }),
-        });
-        if (!r.ok) throw new Error('save failed');
+        await apiJson('/api/tts/config', { method: 'PUT', body: { readAloud: on } });
         setTtsReadAloudEnabled(on);
         if (!on) stopTts();
         renderWizardFeatures(); // reveal / hide the voice-model recommendation
@@ -925,18 +909,12 @@ export async function renderWizardFeatures() {
       }
     });
     $('#wizard-tts-install')?.addEventListener('click', () => runTtsInstall(WIZARD_TTS_ELS));
-    // Auto-learn — workspace master (owner surface). Instant, no install; toggling
-    // The classifier auto-defaults to the agent's own model server-side (or the
+    // Auto-learn — workspace master (owner surface). Instant, no install. The classifier auto-defaults to the agent's own model server-side (or the
     // busy-turn heuristic for Claude agents) — no picker here; override in Settings.
     $('#wizard-autolearn')?.addEventListener('change', async () => {
       const on = $<HTMLInputElement>('#wizard-autolearn')!.checked;
       try {
-        const r = await authFetch('/api/learning/config', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled: on }),
-        });
-        if (!r.ok) throw new Error('save failed');
+        await apiJson('/api/learning/config', { method: 'PUT', body: { enabled: on } });
         state.learningMasterEnabled = on;
         deps.applyLearningMaster();
       } catch {
@@ -955,8 +933,7 @@ export async function renderWizardFeatures() {
   const ttsOn = !!ttsDefault?.checked;
   let st = null;
   try {
-    const res = await authFetch('/api/webchat/tts/install');
-    if (res.ok) st = await res.json();
+    st = await apiJson('/api/webchat/tts/install');
   } catch {
     st = null;
   }
@@ -1001,11 +978,8 @@ async function wizardAccessReady() {
   if (sel === 'bearer' || sel === 'localhost') return true;
   let info = wizardAuthInfo;
   try {
-    const r = await authFetch('/api/webchat/auth');
-    if (r.ok) {
-      info = await r.json();
-      wizardAuthInfo = info;
-    }
+    info = await apiJson('/api/webchat/auth');
+    wizardAuthInfo = info;
   } catch {
     /* keep the last snapshot */
   }
@@ -1014,6 +988,9 @@ async function wizardAccessReady() {
   return true;
 }
 
+// One-click Tailscale install (wizard Access step). Runs the install + sign-in on
+// the host; `tailscale up` prints its auth URL into the log for the operator to
+// open. Same install-row + progress-log shape as the other wizard installers.
 async function runTailscaleInstall() {
   const btn = $('#wizard-ts-install-btn') as HTMLInputElement;
   const log = $('#wizard-ts-install-log')!;
@@ -1211,9 +1188,7 @@ function wizardStartTsPollIfNeeded() {
   if (wizardTsPoll) return; // already polling
   wizardTsPoll = setInterval(async () => {
     try {
-      const r = await authFetch('/api/webchat/auth');
-      if (!r.ok) return;
-      const info = await r.json();
+      const info = await apiJson('/api/webchat/auth');
       if (info && info.tailscale && info.tailscale.healthy) {
         wizardStopTsPoll();
         void renderWizardAccess(); // repaint into the up/owner state
@@ -1228,8 +1203,7 @@ async function renderWizardAccess() {
   const stateEl = $('#wizard-access-state');
   let info = null;
   try {
-    const r = await authFetch('/api/webchat/auth');
-    if (r.ok) info = await r.json();
+    info = await apiJson('/api/webchat/auth');
   } catch {
     info = null;
   }
@@ -1283,8 +1257,7 @@ async function renderWizardAccess() {
   } else {
     let ts = null;
     try {
-      const r = await authFetch('/api/webchat/tailscale/install');
-      if (r.ok) ts = await r.json();
+      ts = await apiJson('/api/webchat/tailscale/install');
     } catch {
       ts = null;
     }
@@ -1305,8 +1278,7 @@ async function renderWizardAccess() {
   // the token install when we can run it here (Linux + root), otherwise the helper.
   let cf = null;
   try {
-    const r = await authFetch('/api/webchat/cloudflared');
-    if (r.ok) cf = await r.json();
+    cf = await apiJson('/api/webchat/cloudflared');
   } catch {
     cf = null;
   }
@@ -1349,10 +1321,8 @@ async function renderWizardAccess() {
       if (tsAuthActive) methods.push('Tailscale identity');
       if (proxyOn) methods.push('reverse-proxy SSO');
       if (bearerOn) methods.push('a bearer token');
-      // Nothing configured is the DEFAULT, not a status worth narrating — and
-      // the methods on offer are the controls directly beneath this line. It
-      // used to read "Loopback-only — no network auth configured."; the line
-      // now appears only when there is something to report.
+      // Nothing configured is the DEFAULT, not a status worth narrating: the
+      // line appears only when there is something to report.
       stateEl.textContent = methods.length ? `Secured by ${methods.join(' + ')}.` : '';
       stateEl.hidden = !methods.length;
     }
@@ -1483,7 +1453,7 @@ async function wizardTriggerRestart() {
 
   // Fire the restart (fire-and-forget — the socket may drop mid-response).
   try {
-    await authFetch('/api/webchat/restart', { method: 'POST', headers: { 'X-Webchat-CSRF': '1' } });
+    await apiJson('/api/webchat/restart', { method: 'POST', headers: { 'X-Webchat-CSRF': '1' } });
   } catch {
     /* expected as the host goes down */
   }
@@ -1771,14 +1741,14 @@ async function wizardCreateAndFinish() {
   // in — so their real (tailnet) identity gets owner, not just the bearer boot id.
   // It grants owner, so only an owner may arm it.
   if (state.isOwnerView) try {
-    await authFetch('/api/webchat/tailscale-owner', {
+    await apiJson('/api/webchat/tailscale-owner', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-      body: JSON.stringify({
+      headers: { 'X-Webchat-CSRF': '1' },
+      body: {
         armed:
           (document.querySelector('input[name="wizard-access"]:checked') as HTMLInputElement | null)?.value ===
           'tailscale',
-      }),
+      },
     });
   } catch {
     /* non-fatal */
@@ -1788,14 +1758,10 @@ async function wizardCreateAndFinish() {
   {
     try {
       const agentRef: Record<string, unknown> = { kind: 'new', name: agentName };
-      // Pin the harness the operator chose — always, Claude included. The
-      // install default (DEFAULT_AGENT_PROVIDER) is only switched AFTER this
-      // create, because switching it restarts the host; so an install whose
-      // .env already names another harness would otherwise hand the wizard's
-      // own agent that old default. Codex-only was the first form of this bug
-      // (choosing Grok created a Claude agent); Claude-on-a-Grok-default was
-      // the second. Ollama is not a provider — it is a workspace default MODEL,
-      // handled above — and its agents run on the Claude harness.
+      // Pin the harness the operator chose — always, Claude included: the install
+      // default (DEFAULT_AGENT_PROVIDER) is only switched AFTER this create, so
+      // without a pin the agent gets the old default. Ollama is a workspace
+      // default MODEL, not a provider; its agents run on the Claude harness.
       agentRef.provider = wizardEngine === 'ollama' ? 'claude' : wizardEngine;
       const r = await authFetch('/api/rooms', {
         method: 'POST',
@@ -1823,9 +1789,6 @@ async function wizardCreateAndFinish() {
       // JOIN WHAT WE CREATED. The WS echo only reaches clients whose tracked
       // room matches the broadcast's (`c.room_id === roomId` in state.ts), so a
       // client that never joined gets the unread signal instead of the message.
-      // (Review note: this hunk and the provider default below originally landed
-      // in wizardSelectOllamaModel — a wrong-anchor patch apply against a shape
-      // both functions share — where neither condition could ever be true.)
       if (out?.room?.id) deps.joinRoom(out.room.id, out.room.name);
       wizardSetStatus('#wizard-room-status', 'Created. Finishing…', 'ok');
       await finishWizard();
@@ -1841,10 +1804,10 @@ async function wizardCreateAndFinish() {
       // everything the wizard still needed to do has already happened.
       if (wizardEngine === 'claude' || wizardEngine === 'codex' || wizardEngine === 'grok') {
         try {
-          await authFetch('/api/workspace-provider', {
+          await apiJson('/api/workspace-provider', {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-            body: JSON.stringify({ provider: wizardEngine }),
+            headers: { 'X-Webchat-CSRF': '1' },
+            body: { provider: wizardEngine },
           });
         } catch {
           /* the agent just created is still pinned correctly */
@@ -1860,9 +1823,7 @@ async function wizardCreateAndFinish() {
 // isn't finished. Non-admins get {complete:true} from the endpoint, so this no-ops.
 export async function maybeAutoOpenWizard() {
   try {
-    const r = await authFetch('/api/webchat/onboarding');
-    if (!r.ok) return;
-    const s = await r.json();
+    const s = await apiJson('/api/webchat/onboarding');
     if (s.canEdit && !s.complete) openWizard();
   } catch {
     /* non-fatal — the wizard is always reachable from Settings */
@@ -1960,9 +1921,7 @@ function wireGrokLogin() {
 /** Resume a login that was started before this page loaded (or in another tab). */
 async function resumeGrokLogin() {
   try {
-    const r = await authFetch('/api/workspace-credential/grok');
-    if (!r.ok) return;
-    const p = await r.json();
+    const p = await apiJson('/api/workspace-credential/grok');
     if (p.running) {
       renderGrokLogin(p);
       startGrokPoll();

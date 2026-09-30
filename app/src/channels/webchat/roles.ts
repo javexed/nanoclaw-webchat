@@ -1,23 +1,13 @@
 /**
- * Webchat role helpers.
- *
- * v2 has a `permissions` module that owns `user_roles` (`webchat:owner`,
- * `webchat:admin`, scoped admins). When that module isn't installed the
- * helpers degrade to "trust authenticated callers" — the channel itself
- * still authenticates, but admin gating becomes a no-op.
- *
- * All schema knowledge for `user_roles` and `users` lives here so it stays
- * consolidated when the schema evolves; auth.ts and server.ts go through
- * this file rather than running their own queries.
+ * Webchat role helpers — the only webchat code that queries `user_roles` and
+ * `users`. Without the permissions module they degrade to "trust authenticated
+ * callers": the channel still authenticates, but admin gating is a no-op.
  *
  * Privilege matrix (`user_roles` rows):
  *   role='owner', agent_group_id IS NULL  → global owner
  *   role='admin', agent_group_id IS NULL  → global admin (every group)
  *   role='admin', agent_group_id = X      → scoped admin (only group X)
- *   role='owner', agent_group_id = X      → not used by webchat; the
- *                                            permissions module does not
- *                                            create scoped owners. If such a
- *                                            row exists from another caller,
+ *   role='owner', agent_group_id = X      → never created by webchat;
  *                                            hasAdminPrivilege treats it as
  *                                            scoped-admin-of-X for safety.
  */
@@ -76,15 +66,9 @@ export async function isAnyAdmin(userId: string): Promise<boolean> {
 }
 
 /**
- * When permissions is installed and there is no owner yet, promote this
- * caller. This is the v2 replacement for v1's "main group" — first
- * authenticated webchat operator becomes the owner. Idempotent: a system
- * that already has an owner skips this entirely.
- *
- * The check-and-insert is atomic via `INSERT ... WHERE NOT EXISTS`. Two
- * concurrent first-time logins can't race into a "two co-owners" state —
- * SQLite's row-level write lock plus the WHERE-NOT-EXISTS subquery means
- * exactly one INSERT succeeds.
+ * With permissions installed and no owner yet, the first authenticated caller
+ * becomes owner. Atomic (`INSERT ... WHERE NOT EXISTS`), so two concurrent
+ * first logins can't both become owner.
  */
 export async function ensureOwnerRoleOnFirstLogin(userId: string): Promise<void> {
   const db = getDb();
@@ -101,11 +85,7 @@ export async function ensureOwnerRoleOnFirstLogin(userId: string): Promise<void>
     );
   }
   try {
-    // Atomic guard: insert iff there's no owner yet. SQLite evaluates the
-    // SELECT and INSERT in one statement under a row-write lock, so a
-    // concurrent caller racing the same first-login window can't squeeze
-    // a second INSERT through. Subsequent calls see an owner exists and
-    // the INSERT inserts zero rows (no error).
+    // One statement under the write lock; once an owner exists it inserts nothing.
     const result = await db.run(
       `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at)
          SELECT ?, 'owner', NULL, NULL, ?
@@ -154,17 +134,10 @@ export async function grantOwnerRole(userId: string, grantedBy: string | null = 
       new Date().toISOString(),
     );
   }
-  // `granted_by` is `REFERENCES users(id)` and the connection runs with
-  // `foreign_keys = ON`, so a caller naming a REASON rather than a user (the
-  // one-shot promotion passes 'webchat:first-tailscale-owner') fails the
-  // constraint and takes the whole grant down with it. That is not
-  // hypothetical: it is why the wizard's Tailscale opt-in granted nothing on
-  // a real install while reporting success — the INSERT threw, the catch
-  // swallowed it, and the caller disarmed its flag anyway.
-  //
-  // Keep the audit value when it names a real user; otherwise record the
-  // grant with no grantor. Losing the attribution is strictly better than
-  // losing the role.
+  // `granted_by` is an FK to users(id) (foreign_keys = ON), and some callers pass
+  // a REASON ('webchat:first-tailscale-owner'), which would fail the whole
+  // grant. Keep it only when it names a real user: better to lose the
+  // attribution than the role.
   const grantor = grantedBy && (await userExists(db, grantedBy)) ? grantedBy : null;
   try {
     const result = await db.run(

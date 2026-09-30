@@ -1,6 +1,6 @@
 /**
  * Session-less approvals — the minimal sibling of `requestApproval()` for
- * actions that have no agent session behind them (today: runner pairing).
+ * actions that have no agent session behind them (e.g. runner pairing).
  *
  * It reuses everything that makes approvals ONE system: `pickApprover` (owners
  * + global admins, the same fan-out set), `pickAllApprovalDeliveries`, the
@@ -109,8 +109,7 @@ export async function requestSessionlessApproval(req: SessionlessApprovalRequest
 
 /**
  * Called by the response dispatcher for a row with no session. Returns false
- * when no handler owns the action (the dispatcher then drops the row as it
- * always did). Any non-approve option is a reject; "reject with reason" has
+ * when no handler owns the action (the dispatcher then drops the row). Any non-approve option is a reject; "reject with reason" has
  * no agent to carry the reason to, so it is a plain reject here.
  */
 export async function resolveSessionlessApproval(

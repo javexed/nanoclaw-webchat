@@ -15,92 +15,16 @@
  * Identity is supplied per-request via a trusted proxy header, so each request
  * can act as a different user. Same boot/teardown pattern as server.auth.test.ts.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import type { WebchatServer } from './server.js';
+import type { DbDriver } from '../../db/driver.js';
+import { httpRequest, PROXY_ENV, resetServerModules, seeder, startServer } from './test-server.js';
 
-const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
+afterEach(resetServerModules);
 
-beforeEach(async () => {
-  vi.resetModules();
-});
-
-afterEach(async () => {
-  vi.unstubAllEnvs();
-  try {
-    const conn = await import('../../db/connection.js');
-    await conn.closeDb();
-  } catch {
-    // ignore
-  }
-  vi.resetModules();
-});
-
-async function loadServerWithEnv(env: Record<string, string | undefined>) {
-  for (const [k, v] of Object.entries(env)) {
-    if (v === undefined) vi.stubEnv(k, '');
-    else vi.stubEnv(k, v);
-  }
-  vi.resetModules();
-  const conn = await import('../../db/connection.js');
-  await conn.initTestDb();
-  const migrations = await import('../../db/migrations/index.js');
-  await migrations.runMigrations(conn.getDb());
-  return { server: await import('./server.js'), conn };
-}
-
-async function httpRequest(
-  port: number,
-  method: string,
-  path: string,
-  headers: Record<string, string> = {},
-  body?: string,
-): Promise<{ status: number; body: string }> {
-  const http = await import('http');
-  return new Promise((resolve, reject) => {
-    const r = http.request({ host: '127.0.0.1', port, path, method, headers }, (res) => {
-      let buf = '';
-      res.on('data', (c) => (buf += c));
-      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: buf }));
-    });
-    r.on('error', reject);
-    if (body) r.write(body);
-    r.end();
-  });
-}
-
-const portOf = (wc: { http: { address: () => unknown } }): number => {
-  const a = wc.http.address();
-  return typeof a === 'object' && a ? (a as { port: number }).port : 0;
-};
-
-const now = '2026-07-14T00:00:00.000Z';
-async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
-  const user = async (id: string) =>
-    await db.run(
-      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
-      id,
-      now,
-    );
-  const group = async (id: string) =>
-    await db.run(
-      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      id,
-      id,
-      id,
-      now,
-    );
-  const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
-    await user(uid);
-    if (g) await group(g);
-    await db.run(
-      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
-      uid,
-      r,
-      g,
-      now,
-    );
-  };
+async function seed(db: DbDriver): Promise<void> {
+  const { user, group, role } = seeder(db, '2026-07-14T00:00:00.000Z');
   await group('ag-test-a');
   await group('ag-test-b');
   // Pre-seed an owner so the first authenticated request doesn't auto-claim it.
@@ -112,22 +36,12 @@ async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
 const SCOPED = (g: string) => `/api/agents/${g}/skills/scoped/nonexistent-skill/content`;
 
 describe('scoped-skill content endpoints — authorization', () => {
-  let server: Awaited<ReturnType<typeof loadServerWithEnv>>['server'];
+  let server: typeof import('./server.js');
   let wc: WebchatServer;
   let port: number;
 
   beforeEach(async () => {
-    const loaded = await loadServerWithEnv({
-      WEBCHAT_HOST: '127.0.0.1',
-      WEBCHAT_PORT: '0',
-      WEBCHAT_TOKEN: '',
-      WEBCHAT_TRUSTED_PROXY_IPS: '127.0.0.1',
-      WEBCHAT_TRUSTED_PROXY_HEADER: 'x-forwarded-user',
-    });
-    server = loaded.server;
-    await seed(loaded.conn.getDb());
-    wc = await server.startWebchatServer(noopHooks);
-    port = portOf(wc);
+    ({ server, wc, port } = await startServer(PROXY_ENV, seed));
   });
 
   afterEach(async () => {

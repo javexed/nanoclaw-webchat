@@ -3,17 +3,7 @@
 // backoff, and the switch that turns every server event into a transcript,
 // room-list, thread, approval or status update. Also the connection banner and
 // the diagnose-on-failure probe.
-//
-// Extracted LAST of the phase-1 core, on purpose. Measured against connect():
-//
-//   56 external names  before features/transcript existed
-//   43                 after transcript
-//   17                 after core/state
-//
-// Pulling it out first would have meant inventing ~40 injected accessors for
-// things that simply became imports once their real owners existed. The order
-// was chosen from those numbers, not from taste.
-import { $, lucide, lucideEl, esc } from '../core/dom.js';
+import { $ } from '../core/dom.js';
 import { learnTurnToolCount, roomAutoLearn, roomsReceived } from '../features/room-list-state.js';
 import { pushReasoning, setThinkingMilestone, updateThinkingBubble } from '../features/thinking.js';
 import { renderCredentialIsolation } from '../features/settings.js';
@@ -22,31 +12,30 @@ import { permsMyUserId } from '../features/perms-list-state.js';
 import { joinRoom, renderRooms, updateUnreadDots } from '../features/rooms.js';
 import { renderHandleChip, renderMembers, userIsOwner } from '../features/members.js';
 import { userIsGlobalAdmin } from '../features/perms-user-info.js';
-import { hideLearnNudge, showLearnNudge, triggerLearn } from '../features/learn.js';
+import { showLearnNudge, triggerLearn } from '../features/learn.js';
 import { fetchMentionablePeople, handleTypingEvent } from '../features/composer.js';
-import { beginAgentTurn, endAgentTurn, interruptAgent, markTurnActivity, refreshWiredAgentsForCurrentRoom } from '../features/agents.js';
-import { showToast, toastError } from '../core/toast.js';
-import { authFetch, apiJson, getWsUrl, getWsProtocols } from '../core/api.js';
+import { beginAgentTurn, endAgentTurn, markTurnActivity, refreshWiredAgentsForCurrentRoom } from '../features/agents.js';
+import { showToast } from '../core/toast.js';
+import { apiJson, authFetch, getWsUrl, getWsProtocols } from '../core/api.js';
 import { state } from '../core/state.js';
 import { readdRow, transcriptEmpty, type MsgRow } from '../features/transcript-state.js';
 import {
-  appendMessage, appendSystem, isNearBottom, scrollToBottom, setMessages,
-  scheduleFollowScroll, updateScrollButton, incrementMissedMessages,
-  messageMentionsMe, jumpToMessage, beginTranscriptSwitch, endTranscriptSwitch,
+  appendMessage,
+  appendSystem,
+  isNearBottom,
+  scrollToBottom,
+  setMessages,
+  updateScrollButton,
+  incrementMissedMessages,
+  messageMentionsMe,
+  jumpToMessage,
+  endTranscriptSwitch,
 } from '../features/transcript.js';
 import { fetchApprovals, handleApprovalEvent, handleApprovalResolvedEvent } from '../features/approvals.js';
-import { handleSkillDraftReview, refreshDraftBadge, unmountAllDraftCards } from '../features/skills.js';
+import { handleSkillDraftReview, refreshDraftBadge } from '../features/skills.js';
 
-/**
- * What core/ws needs from legacy. Declaring this as a TYPE rather than an
- * untyped bag is most of the value of converting this file: `const deps = {}`
- * infers `{}`, so every `deps.x(...)` was an error the moment strict checking
- * applied — 25 of the 45 errors this conversion started with.
- *
- * It also documents the contract in one place. check:deps still earns its
- * keep: types cannot see whether legacy.js actually SUPPLIES these at runtime,
- * only that the shapes agree.
- */
+/** Supplied by provideWsDeps in composition-root.ts. Types check the shapes;
+ *  check:deps checks that each one is actually supplied. */
 /**
  * The socket, plus the one marker we hang on it. `_intentionalClose` tells the
  * close handler that WE closed the socket (reconnect, logout) so it must not
@@ -61,7 +50,7 @@ export interface WsDeps {
 
 const deps = {} as WsDeps;
 
-/** Wire the legacy helpers the dispatcher calls. Call once at startup. */
+/** Wire the composition-root helpers the dispatcher calls. Call once at startup. */
 export function provideWsDeps(provided: Partial<WsDeps>): void {
   Object.assign(deps, provided);
 }
@@ -85,6 +74,19 @@ export function setConnectionBanner(text: string, offerOpenTailscale = false): v
   banner!.classList.add('visible');
 }
 
+// ── Connection diagnosis ───────────────────────────────────────────────────
+// "Reconnecting…" alone can't tell the user WHERE the path broke. Three states
+// are distinguishable from a browser:
+//   offline — navigator.onLine is false (no network at all)
+//   no-path — an internet probe succeeds but the server stays unreachable; on
+//             a Tailscale-auth install that means Tailscale is off on THIS
+//             device (we can't probe tailscaled itself: Quad100 is plain HTTP,
+//             blocked as mixed content from an HTTPS page)
+//   unknown — the probe failed too; plain "no internet" wording
+// The probe races two no-cors /generate_204 fetches (Tailscale's own DERP
+// relay + gstatic; both CSP-allowed in server.ts): an opaque response
+// resolving proves internet works without reading any content. Throttled —
+// reconnect retries fire on a backoff and don't each need a fresh probe.
 export async function diagnoseConnection() {
   if (!navigator.onLine) {
     setConnectionBanner('You’re offline. Reconnecting when the network returns…');
@@ -184,19 +186,14 @@ export function connect() {
         refreshWiredAgentsForCurrentRoom();
         fetchMentionablePeople();
         if (state.currentRoom) {
-          // Rejoin after reconnect — catch up on missed messages.
-          //
-          // Carries thread_id because this is now also the DEFERRED join: when a
-          // room is opened against a still-connecting socket, joinRoom skips its
-          // own send and leaves the join to this handler. Without the thread the
-          // catch-up would silently land in 'main', dropping a user who opened a
-          // topic thread back into the trunk.
+          // Rejoin after reconnect — catch up on missed messages. Also the
+          // DEFERRED join (joinRoom skips its send on a connecting socket), so it
+          // carries thread_id or the user would land back in 'main'.
           state.ws?.send(
             JSON.stringify({ type: 'join', room_id: state.currentRoom, thread_id: state.currentThread || 'main' }),
           );
           if (state.lastSeenMessageId) {
-            authFetch(`/api/rooms/${state.currentRoom}/messages?after_id=${state.lastSeenMessageId}`)
-              .then((r) => r.json())
+            apiJson(`/api/rooms/${state.currentRoom}/messages?after_id=${state.lastSeenMessageId}`)
               .then((missed) => {
                 if (missed.length > 0) {
                   // Capture before append: if the user was scrolled up reading
@@ -224,20 +221,10 @@ export function connect() {
         }
         break;
       case 'history': {
-        // Draft cards are rows in the list now, not per-instance apps mounted
-        // into elements here, so replacing the list disposes them with it —
-        // there is nothing left to unmount by hand.
-        // A message sent between the join and THIS reply is not in the payload —
-        // the server queried before it existed — so wiping the list drops it for
-        // good: the echo UPGRADES a row in place, and a row that is no longer in
-        // the list can never be re-added by it. The message then stayed
-        // invisible until the next room switch re-fetched history. That is the
-        // "my first message didn't show up" bug, reproduced deterministically by
-        // withholding history until after the send.
-        //
-        // Scoped by room AND thread: pendingMessages is never cleared on switch,
-        // so an unscoped carry would paste a message sent in one room into
-        // another one's transcript.
+        // Carry pending sends across the history reset: a message sent between
+        // the join and this reply is not in the payload, and its echo only
+        // upgrades a row in place, so a wiped row would never reappear. Scoped by
+        // room AND thread: pendingMessages is never cleared on switch.
         const room = msg.room_id || state.currentRoom;
         const carried: Array<[string, MsgRow]> = [];
         for (const [clientId, row] of state.pendingMessages) {
@@ -313,21 +300,13 @@ export function connect() {
         if ((msg.room_id || state.currentRoom) === state.currentRoom && msgThread !== state.currentThread) {
           if (msg.sender !== state.myIdentity) {
             state.threadUnread.add(msgThread);
-            // The thread list repaints itself from this flag now. The guard
-            // that used to sit here — skip the rebuild while the user is
-            // naming or renaming a thread — was needed because
-            // renderThreadList reseeded the inline input from scratch, so a
-            // message on some OTHER thread silently discarded whatever they
-            // had typed. The input is a keyed component Vue patches rather
-            // than rebuilds, so typing survives and the unread dot no longer
-            // has to wait for an unrelated render.
+            // The thread list repaints from this flag; its inline input is keyed,
+            // so a rename in progress survives the patch.
           }
           break;
         }
-        // Snapshot the scroll position BEFORE appending. If we check after,
-        // the newly-inserted message has already pushed the bottom past our
-        // 80px threshold and `isNearBottom()` lies about the user's intent.
-        // That's why long agent replies sometimes silently failed to scroll.
+        // Snapshot the scroll position BEFORE appending: afterwards the new
+        // message has pushed the bottom past the 80px threshold.
         const wasNearBottom = isNearBottom();
         // Desktop notification for messages from others when tab is not focused
         if (
@@ -348,9 +327,8 @@ export function connect() {
         }
         if (msg.sender === state.myIdentity && msg.client_id && state.pendingMessages.has(msg.client_id)) {
           const row = state.pendingMessages.get(msg.client_id)!; // guarded by has() above
-          // Upgrade the optimistic row in place: delivered tick, then the
-          // server id — which is also what makes the delete button appear, so
-          // there is no addDeleteButton call any more.
+          // Upgrade the optimistic row in place: delivered tick, then the server
+          // id (which is what makes the delete button appear).
           row.status = '✓✓';
           state.pendingMessages.delete(msg.client_id);
           if (msg.id) row.id = msg.id;
@@ -434,6 +412,13 @@ export function connect() {
         break;
       case 'error':
         console.error('WS error:', msg.error);
+        // A send the server could not store: mark its bubble instead of
+        // leaving it on the single tick.
+        if (msg.client_id && state.pendingMessages.has(msg.client_id)) {
+          state.pendingMessages.get(msg.client_id)!.status = 'Not sent';
+          state.pendingMessages.delete(msg.client_id);
+          showToast('Message not sent. Try again.', { kind: 'error' });
+        }
         break;
     }
   };
@@ -476,7 +461,6 @@ export function setLastSeenMessageId(id: string | null) {
   if (id) sessionStorage.setItem('lastSeenMessageId', id);
 }
 
-
 // ── Agent status events ───────────────────────────────────────────────────
 const TOOL_LABELS: Record<string, string> = {
   Bash: 'Running command',
@@ -491,37 +475,16 @@ const TOOL_LABELS: Record<string, string> = {
   NotebookEdit: 'Editing notebook',
 };
 
-// Status frames carry fine-grained turn activity from the agent (see
-// src/channels/webchat/index.ts sendStatus). `event` is the kind:
-//   start     → a turn began; show the bubble and keep it up until done/stalled
-//   tool      → text = tool name, detail = target (file/command/query)
-//   progress  → text = milestone message
-//   reasoning → text = a reasoning summary line (rendered by the fading feed)
-//   done      → turn finished cleanly; clear the bubble
-//   stalled   → turn ended abnormally (agent died/killed); notice + clear
-// ── Learn surfaces ───────────────────────────────────────────────────────────
-// One path for every learn trigger (composer 🎓, nudge chip, room-settings
-// button, typing /learn): set the input and send. No second implementation.
-// `command` lets source-directed callers send `/learn <url|path>` through the
-// exact same gate (in a room, composer enabled) and send path.
-
-// Client-side mirror of classifyLearnHint's first-token rule (container/
-// agent-runner/src/learning-loop.ts): only the FIRST token decides whether the
-// hint is a source; anything after it is focus text. Pre-validating here keeps
-// a typo from silently degrading into a free-text steering hint.
-
-// Shared source prompt: one input — the source first, optional focus text
-// after it — composed into `/learn <value>` and sent through triggerLearn.
-
 // The nudge: Hermes' bare heuristic (a tool-heavy turn), but human-gated — it
 // suggests, the user taps, nothing runs or costs anything on its own. Dismiss
 // hides it until the NEXT qualifying turn; switching rooms clears it.
 const LEARN_NUDGE_MIN_TOOLS = 5;
 
+// Load my @-mention handle (server-stored, settable in Settings), for
+// highlight + notify on @-mentions of me. Best-effort.
 export async function fetchMyHandle() {
   try {
-    const r = await authFetch('/api/me/handle');
-    if (r.ok) state.myHandle = ((await r.json()).handle || '').toLowerCase();
+    state.myHandle = ((await apiJson('/api/me/handle')).handle || '').toLowerCase();
   } catch {
     /* non-fatal — mentions just won't self-highlight until next load */
   }
@@ -537,10 +500,8 @@ export async function probeIsOwner() {
       if (body && typeof body.userId === 'string') permsMyUserId.value = body.userId;
     }
     if (users.ok) {
-      // /api/users is now open to any admin (not just owners), so its success
-      // only means "I can see the permissions panel". Reveal the toggle for
-      // every admin, but derive true-owner status from my own roles in the
-      // response — isOwnerView must stay owner-only since it gates owner-only
+      // /api/users succeeds for any admin: reveal the toggle for every admin,
+      // but derive owner status from my own roles — isOwnerView gates owner-only
       // write controls (e.g. room assignment).
       $('#overflow-permissions')!.hidden = false;
       // Admin is any-admin for the same reason: its blocks self-hide on 403,
@@ -551,48 +512,42 @@ export async function probeIsOwner() {
       $('#overflow-journey')?.removeAttribute('hidden');
       // /api/users success = admin+ → gates the admin-only slash menu.
       isAdminView.value = true;
-      // Resolved HERE, before the reveal below, because that reveal now depends
-      // on it. It used to be computed after, which is why the owner clause
-      // could not simply be added to the condition.
+      // Resolved before the reveal below, which depends on it.
       const list = await users.json().catch(() => []);
       const me = Array.isArray(list) ? list.find((u) => u.id === permsMyUserId.value) : null;
       state.isOwnerView = !!(me && userIsOwner(me));
       // Sign-in: owner or global admin, the same audience its endpoint allows.
       isWorkspaceAdminView.value = state.isOwnerView || !!(me && userIsGlobalAdmin(me));
       $('#overflow-signin')!.hidden = !isWorkspaceAdminView.value;
+      // Server extensions installed as skills (the VS Code runner, …): their
+      // screens stay hidden unless listed.
+      let extensions: string[] = [];
       try {
         const fr = await authFetch('/api/webchat/features');
         const feats = fr.ok ? await fr.json() : {};
         state.marketplaceEnabled = feats.marketplaceEnabled === true;
+        extensions = Array.isArray(feats.extensions) ? feats.extensions : [];
         renderCredentialIsolation(feats);
       } catch {
         state.marketplaceEnabled = false;
       }
-      // MCP + skills: admin-only, and the catalogs can be turned off
-      // workspace-wide by the marketplace toggle.
-      //
-      // The owner clause is not optional. Gating purely on the toggle was
-      // correct while these tabs held nothing but catalog browsing, and stopped
-      // being correct the moment the registry SOURCES moved onto them: with
-      // marketplace off, an owner had no route to the two screens that
-      // configure where catalogs come from — including the switch that would
-      // turn the marketplace back on. Verified on a live install with the
-      // toggle off: both blocks present in the DOM, all four entry points
-      // hidden, nothing to click.
-      //
-      // Same shape as the Routing tab, which reveals on `installed ||
-      // isOwnerView` for the same reason: a surface an owner configures must
-      // not be gated behind the state it configures.
+      // MCP + skills: admin-only, and the marketplace toggle can hide the
+      // catalogs. The owner clause is required: these tabs also hold the catalog
+      // SOURCES and the toggle itself, and a surface an owner configures must not
+      // be gated behind the state it configures (same as the Routing tab).
       if (state.marketplaceEnabled || state.isOwnerView) {
         $('#overflow-mcp')?.removeAttribute('hidden');
         $('#mtab-mcp-btn')?.removeAttribute('hidden');
         $('#mtab-skills-btn')?.removeAttribute('hidden');
-        // Runners: paired developer machines. Owner/global-admin surface; the
-        // API 403s anyone else, so revealing on the owner view is enough here.
-        $('#mtab-runners-btn')?.removeAttribute('hidden');
+        // Runners: paired developer machines, when the VS Code runner is
+        // installed. Owner/global-admin surface; the API 403s anyone else, so
+        // revealing on the owner view is enough here.
+        if (extensions.includes('vscode')) {
+          $('#mtab-runners-btn')?.removeAttribute('hidden');
+          $('#overflow-runners')?.removeAttribute('hidden');
+        }
         // Network: the install's egress allowlist (every agent). Same audience.
         $('#mtab-network-btn')?.removeAttribute('hidden');
-        $('#overflow-runners')?.removeAttribute('hidden');
         $('#overflow-network')?.removeAttribute('hidden');
         $('#overflow-skills')?.removeAttribute('hidden');
       }
@@ -605,10 +560,18 @@ export async function probeIsOwner() {
   return false;
 }
 
+// Status frames carry fine-grained turn activity from the agent (see
+// src/channels/webchat/index.ts sendStatus). `event` is the kind:
+//   start     → a turn began; show the bubble and keep it up until done/stalled
+//   tool      → text = tool name, detail = target (file/command/query)
+//   progress  → text = milestone message
+//   reasoning → text = a reasoning summary line (rendered by the fading feed)
+//   done      → turn finished cleanly; clear the bubble
+//   stalled   → turn ended abnormally (agent died/killed); notice + clear
 export function handleStatusEvent(msg: any) {
   if (msg.room_id !== state.currentRoom) return;
   // Each frame names its agent (host stamps agent_name); fall back to the room's
-  // single agent name so old/unattributed frames still land on one bubble.
+  // single agent name so unattributed frames still land on one bubble.
   const name = msg.agent_name || state.agentName || 'Agent';
   switch (msg.event) {
     case 'start':

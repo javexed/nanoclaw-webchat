@@ -4,7 +4,7 @@
 # Usage: harness/editor-docker.sh   (after npm run build && npm run build:core)
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
-image="${NANOCLAW_HARNESS_IMAGE:?set NANOCLAW_HARNESS_IMAGE to this install's agent image (nanoclaw-agent-v2-<install slug>:latest)}"
+image="${NANOCLAW_HARNESS_IMAGE:?set NANOCLAW_HARNESS_IMAGE to the agent image of this install (nanoclaw-agent-v2-<install slug>:latest)}"
 display=":$((90 + RANDOM % 9))"
 fb="${NCL_EDITOR_FBDIR:-}"
 Xvfb "$display" -screen 0 1280x800x24 -nolisten tcp ${fb:+-fbdir "$fb"} >/dev/null 2>&1 &

@@ -19,9 +19,7 @@ export type UserCredsCredType = 'api_key' | 'oauth_token';
  * Grok is generic rather than a provider type because OneCLI has no xAI family.
  * That works HERE and would not for Claude: a generic secret on a recognised
  * provider host is shadowed by the provider gate (see createCredentialSecret),
- * and xAI's host is not one. Measured, not assumed — a container holding a
- * deliberately invalid token completed a real turn because the gateway swapped
- * the header from a generic secret.
+ * and xAI's host is not one.
  */
 export type UserCredsProvider = 'claude' | 'codex' | 'grok';
 

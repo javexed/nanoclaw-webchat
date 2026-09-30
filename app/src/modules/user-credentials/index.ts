@@ -19,15 +19,9 @@ import {
 import { writeMemberTranscript } from './fanout.js';
 import { log } from '../../log.js';
 import { getDb, hasTable } from '../../db/connection.js';
-import { getContainerConfig } from '../../db/container-configs.js';
 import { registerApprovalAgentGroupFallback } from '../approvals/agent-identity.js';
 import { getEffectiveRoomMode, getCredentialsConfig } from '../../channels/webchat/db.js';
-import {
-  userHasConnectedCredential,
-  getUserCredential,
-  agentGroupForUserCredsAgent,
-  type UserCredsProvider,
-} from './db.js';
+import { userHasConnectedCredential, getUserCredential, agentGroupForUserCredsAgent } from './db.js';
 import { ensureGroupEnrollment, userCredsProviderForGroup } from './onboard.js';
 import { apiKeyAllowedFor, credentialName, oauthAllowedFor } from './policy.js';
 import { realOnecliAdmin } from './onecli-admin.js';
@@ -115,9 +109,8 @@ registerTurnGate(async (mg, agentGroupId, userId) => {
   // availability on an evaluation bug.
   let state: Awaited<ReturnType<typeof evaluateRoomCredState>>;
   try {
-    // Await INSIDE the try: un-awaited, a rejection escaped past this catch to
-    // the later use site, so the fail-CLOSED posture silently became fail-open
-    // (the gate runner skips a throwing gate).
+    // Await INSIDE the try, or a rejection escapes this catch and fail-closed
+    // silently becomes fail-open (the gate runner skips a throwing gate).
     state = await evaluateRoomCredState(mg, agentGroupId, userId);
   } catch (err) {
     let required = true; // unknown mode → treat as required
@@ -143,9 +136,7 @@ registerTurnGate(async (mg, agentGroupId, userId) => {
     // point is that the shared key is not billed).
     try {
       // Write into the room's REAL shared session (idempotently resolved) so
-      // the sweep delivery poll actually delivers it — the previous target
-      // (session id == agentGroupId) exists in no sessions row, so the notice
-      // was written where nothing ever read it.
+      // the sweep delivery poll actually delivers it.
       const noticeSession = (await resolveSession(agentGroupId, mg.id, null, 'shared')).session;
       await writeOutboundDirect(agentGroupId, noticeSession.id, {
         id: `user-creds-block-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -174,10 +165,6 @@ registerAgentIdentityResolver((agentGroupId, threadId) => {
   return spawnCache.get(spawnKey(agentGroupId, threadId))?.identity ?? null;
 });
 
-// Lazy / just-in-time enrollment: the first time a connected member's session is
-// spawned in a room, create their per-(user,group) OneCLI agent and assign their
-// secret + the group's tool secrets. Runs before identity resolution. Idempotent
-// + a fast no-op once enrolled, so it costs nothing on subsequent spawns.
 // Cache for the SYNC resolvers below. The seam's identity/env resolvers cannot
 // await (the driver calls them synchronously mid-spawn); this hook runs first —
 // that ordering is the hook's documented contract — and stages every async
@@ -189,9 +176,6 @@ const spawnKey = (agentGroupId: string, threadId: string | null): string => `${a
 registerSessionPrepareHook(async (agentGroupId, threadId) => {
   const provider = await userCredsProviderForGroup(agentGroupId);
   const userId = memberUserFromKey(threadId) ?? threadId;
-  // NOTE the await on userHasConnectedCredential: un-awaited, the promise was
-  // truthy and this guard never fired — every session (including base ones)
-  // was being enrolled as if its user had connected a credential.
   const connected = !!userId && (await userHasConnectedCredential(userId, provider));
 
   // Identity: a connected member's session runs under THEIR OneCLI identity.

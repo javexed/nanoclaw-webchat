@@ -1,18 +1,10 @@
 /**
  * Webchat WebSocket protocol.
  *
- * Handshake: HTTP upgrade on /ws is gated by authenticateRequest(); once
- * promoted to a WS, the client sends `{type:'auth'}` to bind the connection
- * to its derived userId. Subsequent messages: join / typing / message /
- * delete_message.
- *
- * v1 → v2 changes:
- *   - Dropped agent-token auth (`getChatAgentToken`) — Q4: agents push via
- *     outbound.db, not back through this WS.
- *   - Inbound chat messages are pushed via the `onInbound` hook supplied at
- *     server start, not via the v1 setOnNewMessage callback registry.
- *   - The inbound payload's `content` carries `senderId` (v2-namespaced) so
- *     the permissions module's senderResolver upserts the correct users row.
+ * The HTTP upgrade on /ws is gated by authenticateRequest(); the client then
+ * sends `{type:'auth'}` to bind the connection to its userId. Inbound messages
+ * go to the `onInbound` hook with `senderId` in content for the permissions
+ * senderResolver. Agents never write back through this socket (outbound.db).
  */
 import http from 'http';
 import type { Duplex } from 'stream';
@@ -53,14 +45,9 @@ import { writeSessionMessage } from '../../session-manager.js';
 import { filterAsync } from './async-array.js';
 
 /**
- * Deliver a "stop" signal to live session(s) behind a webchat room (the GUI Stop
- * button — the in-browser equivalent of the CLI's ESC). Writes a trigger=0
- * `interrupt` control row into each targeted running session's inbound.db; the
- * container's poll-loop aborts the active stream when it sees one mid-turn, and
- * treats a stale one (no live stream) as a no-op. Never wakes/spawns a container.
- *
- * `agentName` (the thinking bubble's per-agent Stop) targets just that agent's
- * session; omitted, it stops every running agent in the room.
+ * The Stop button (the CLI's ESC): a trigger=0 `interrupt` row into each running
+ * session's inbound.db, which the poll loop honours mid-turn and ignores
+ * otherwise. Never wakes a container. `agentName` narrows it to one agent.
  */
 async function interruptRoomSessions(roomId: string, agentName?: string | null): Promise<void> {
   const mg = await getMessagingGroupByPlatform('webchat', roomId);
@@ -87,8 +74,6 @@ const WS_MAX_PAYLOAD = 1024 * 1024; // 1 MB
 const WS_PING_INTERVAL = 30_000;
 
 // Carries identity from the HTTP upgrade into the WS connection event.
-// `(req as any)._authUserId` would typecheck via cast but offends the
-// no-explicit-any rule that v2 enforces; a typed augmentation keeps it clean.
 interface AuthedUpgradeRequest extends http.IncomingMessage {
   _authUserId?: string;
   _authDisplayName?: string;
@@ -105,11 +90,9 @@ export interface AuthForUpgrade {
   displayName: string;
 }
 
-// Inbound-message idempotency. A client_id seen within this window is a duplicate
-// delivery of the same logical send (flaky-socket resend, future offline-outbox
-// replay, double-fire) and is dropped so it can't spawn a second agent turn. The
-// id is unique per send (client mints `local-<seq>-<ts>`), so global keying never
-// collides across users/rooms.
+// Inbound idempotency: a client_id repeated within this window (resend,
+// double-fire) is dropped so it can't spawn a second agent turn. Ids are unique
+// per send (`local-<seq>-<ts>`), so global keying never collides.
 const CLIENT_ID_DEDUP_WINDOW_MS = 10_000;
 const seenClientIds = new Map<string, number>();
 
@@ -126,6 +109,11 @@ export function claimClientId(id: string, now: number = Date.now()): boolean {
     for (const [k, t] of seenClientIds) if (now - t >= CLIENT_ID_DEDUP_WINDOW_MS) seenClientIds.delete(k);
   }
   return true;
+}
+
+/** Give back a claim whose send never landed, so the client's retry is not dropped. */
+export function releaseClientId(id: string): void {
+  seenClientIds.delete(id);
 }
 
 // ── Upgrade-path registry ─────────────────────────────────────────────────
@@ -242,12 +230,8 @@ export function setupWebSocket(
       }
     };
 
-    // Frames must process IN ARRIVAL ORDER. The handler is async now (the DB
-    // is), and a bare async listener interleaves at every await — a `message`
-    // frame arriving while `join` awaited its access check saw no room_id and
-    // dropped silently. Every join-then-send client hit this: the ops
-    // post-to-room script first, but the UI's own reconnect path is the same
-    // shape. A per-connection chain restores the pre-async ordering guarantee.
+    // Frames must process IN ARRIVAL ORDER: an async listener interleaves at every
+    // await, so a `message` right after `join` would see no room yet. Chain them.
     let frameChain: Promise<void> = Promise.resolve();
     const handleFrame = async (raw: Buffer | ArrayBuffer | Buffer[]) => {
       let msg: { type?: string; [k: string]: unknown };
@@ -279,13 +263,8 @@ export function setupWebSocket(
       if (msg.type === 'join') {
         const roomId = typeof msg.room_id === 'string' ? msg.room_id : '';
         const room = await getWebchatRoom(roomId);
-        // A REFUSED JOIN WAS SILENT HERE. The client is told, but nothing is
-        // logged — and the symptom it produces is deeply confusing: messages
-        // are stored correctly and simply never render, because live delivery
-        // is gated on the client's tracked room, and a refused join leaves that
-        // pointing at the previous one. Reported twice as "I don't see my
-        // message until I switch rooms and come back". Log it so the next
-        // occurrence names its own cause.
+        // Logged: a refused join leaves the client tracking its previous room, so
+        // its messages store fine but never render until it switches rooms.
         if (!room) {
           log.warn('Webchat: join refused — room not found', { roomId, userId: client.userId });
           send({ type: 'error', error: `Room not found: ${roomId}` });
@@ -320,10 +299,7 @@ export function setupWebSocket(
           room_id: room.id,
           members: await getMemberList(room.id),
         });
-        // Replay any in-progress agent turn so a re-join mid-turn re-shows the
-        // thinking bubble (status frames are live-only + room-scoped, so leaving
-        // and returning otherwise loses it). A synthetic `start` — subsequent
-        // live frames refine it; the turn's real `done` clears it.
+        // Replay in-progress turns as a synthetic `start`; live frames refine it.
         for (const agentName of getActiveTurns(room.id)) {
           send({ type: 'status', room_id: room.id, agent_name: agentName || null, event: 'start' });
         }
@@ -372,10 +348,8 @@ export function setupWebSocket(
         const text = typeof msg.content === 'string' ? msg.content : '';
         if (!text.trim()) return;
 
-        // Idempotency: a duplicate delivery of the same client_id (flaky-socket
-        // resend / double-fire) must NOT create a second inbound row → a second
-        // agent turn → a phantom reply. The first delivery already echoed the
-        // sender's optimistic bubble, so the repeat is dropped silently.
+        // A duplicate client_id is dropped silently (see CLIENT_ID_DEDUP_WINDOW_MS);
+        // the first delivery already echoed the sender's bubble.
         const cid = typeof msg.client_id === 'string' ? msg.client_id : null;
         if (cid && !claimClientId(cid)) {
           log.warn('Webchat: dropped duplicate message (client_id already seen)', {
@@ -385,19 +359,25 @@ export function setupWebSocket(
           return;
         }
 
-        // Resolve the thread this message belongs to, BOUNDED so an arbitrary
-        // client-supplied thread_id can't lazily spawn unbounded threads/sessions
-        // (the spawn-amplification vector). See resolveBoundedThread in db.ts —
-        // shared with the file-upload handlers so both enforce the same bound.
-        const storeThread = await resolveBoundedThread(client.room_id, msg.thread_id);
-
-        const stored = await storeWebchatMessage(
-          client.room_id,
-          client.identity,
-          client.identity_type,
-          text,
-          await storeThread,
-        );
+        // BOUNDED thread resolution: a client-supplied thread_id must not spawn
+        // unbounded sessions (resolveBoundedThread, shared with file uploads).
+        let storeThread: string;
+        let stored: Awaited<ReturnType<typeof storeWebchatMessage>>;
+        try {
+          storeThread = await resolveBoundedThread(client.room_id, msg.thread_id);
+          stored = await storeWebchatMessage(client.room_id, client.identity, client.identity_type, text, storeThread);
+        } catch (err) {
+          // Nothing was stored: release the claim so a resend of this client_id
+          // goes through, and tell the sender, whose bubble would otherwise sit
+          // on its single tick.
+          if (cid) releaseClientId(cid);
+          log.warn('Webchat: storing a message failed', {
+            identity: client.identity,
+            err: err instanceof Error ? err.message : String(err),
+          });
+          send({ type: 'error', error: 'Message not sent', client_id: cid });
+          return;
+        }
         // The sender has by definition read their own message — advance their
         // marker (and sync their other devices) so it never self-unreads.
         markRoomReadForUser(client.userId, client.room_id, stored.created_at, clientId);
@@ -405,10 +385,7 @@ export function setupWebSocket(
         if (typeof msg.client_id === 'string') outgoing.client_id = msg.client_id;
         await broadcast(client.room_id, outgoing, clientId);
 
-        // Pipe the inbound to the router so the agent sees it. content carries
-        // senderId (namespaced for the v2 permissions module's senderResolver).
-        // threadId is the SESSION key (null for main) so per-thread routing keys
-        // the right session.
+        // threadId is the SESSION key (null for main).
         hooks.onInbound(
           client.room_id,
           {
@@ -423,7 +400,7 @@ export function setupWebSocket(
               senderName: client.identity,
             },
           },
-          threadToSessionKey(await storeThread),
+          threadToSessionKey(storeThread),
         );
 
         send({ ...outgoing, content: redactSensitiveData(stored.content) });

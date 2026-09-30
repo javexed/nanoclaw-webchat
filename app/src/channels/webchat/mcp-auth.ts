@@ -1,5 +1,5 @@
 /**
- * MCP server credentials, host-side (items 6+7 of the MCP hardening review).
+ * MCP server credentials, host-side.
  *
  * Credentials live in webchat_mcp_servers.auth — a JSON column the relay and
  * the health probe read. They are NEVER materialized into container.json:
@@ -129,6 +129,8 @@ interface PendingOAuth {
     scope?: string;
   };
   at: number;
+  /** Who started the flow; only they may finish it. */
+  startedBy: string;
 }
 
 const pending = new Map<string, PendingOAuth>(); // key = state
@@ -211,7 +213,8 @@ async function registerClient(
 export async function startOAuthFlow(
   serverId: string,
   redirectUri: string,
-  staticClient?: { client_id: string; client_secret?: string },
+  staticClient: { client_id: string; client_secret?: string } | undefined,
+  startedBy: string,
 ): Promise<string> {
   const server = await getWebchatMcpServer(serverId);
   if (!server?.url) throw new Error('Not a remote MCP server');
@@ -230,6 +233,7 @@ export async function startOAuthFlow(
     verifier,
     redirectUri,
     at: Date.now(),
+    startedBy,
     meta: {
       client_id: client.client_id,
       client_secret: client.client_secret,
@@ -252,9 +256,13 @@ export async function startOAuthFlow(
 }
 
 /** Token exchange on callback. Persists auth to the server row. */
-export async function finishOAuthFlow(state: string, code: string): Promise<{ serverId: string }> {
+export async function finishOAuthFlow(state: string, code: string, userId: string): Promise<{ serverId: string }> {
   const p = pending.get(state);
   if (!p || Date.now() - p.at > PENDING_TTL_MS) throw new Error('OAuth state expired — start again');
+  // Another signed-in user landing on this callback (a forwarded link) must
+  // not connect the server to an account of their choosing. The state stays
+  // live, so the admin who started the flow can still finish it.
+  if (p.startedBy !== userId) throw new Error('This sign-in was started by someone else — start it again yourself');
   pending.delete(state);
   const body = new URLSearchParams({
     grant_type: 'authorization_code',

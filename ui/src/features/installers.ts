@@ -1,34 +1,21 @@
 // ── Installers ───────────────────────────────────────────────────────────────
 // Every "install a thing and watch it happen" flow: the four harnesses
 // (Codex, OpenCode, pi, Grok — one runner, see runInstall), the speech stacks
-// (TTS, STT), the routing/LiteLLM stack, and local model pulls. Each is the
-// same shape — kick off a job, poll it, render progress into a set of elements
-// — which is why they belong together even though the wizard and the settings
-// panel both surface them.
-//
-// The *_ELS constants are the element maps each flow renders into.
-//
-// Injection, as in features/wizard: the install-active flags live in legacy and
-// are ASSIGNED here, so they arrive as getter/setter pairs. A getter alone
-// would compile and silently drop the write, leaving the re-entrancy guards
-// permanently unlatched.
-import { $, lucide, lucideEl, esc } from '../core/dom.js';
+// (TTS, STT), the routing/LiteLLM stack, and local model pulls: kick off a job,
+// poll it, render progress into an element map (the *_ELS constants).
+import { $ } from '../core/dom.js';
 import { harnessInstallActive, ollamaPullPoller, routingInstallActive, sttInstallActive, ttsInstallActive } from './installer-state.js';
 import { mmFmtGB } from './models.js';
-import { showToast, toastError } from '../core/toast.js';
-import { authFetch, apiJson } from '../core/api.js';
-// Voice is a module and does NOT import this one, so these are safe as direct
-// imports. The five wizard entry points these runners also call are injected
-// instead: wizard.js imports THIS module, so importing it back would form a
-// cycle. legacy wires them in provideInstallerDeps from its own wizard import.
+import { showToast } from '../core/toast.js';
+import { apiJson, authFetch } from '../core/api.js';
+// The wizard entry points these runners call are injected, not imported:
+// wizard.ts imports this module, so importing it back would form a cycle.
 import { loadTtsConfig, initSttFeature } from './voice.js';
 import { hostPulls, hostPullPreview } from './ollama-cards-state.js';
 
 /**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideInstallerDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
+ * Supplied by provideInstallerDeps in composition-root.ts. `any` marks a signature not yet
+ * typed, not an opt-out of checking.
  */
 export interface InstallerDeps {
   fetchAgents: () => any;
@@ -48,7 +35,7 @@ export interface InstallerDeps {
 
 const deps = {} as InstallerDeps;
 
-/** Wire the legacy helpers these runners call. Call once at startup. */
+/** Wire the composition-root helpers these runners call. Call once at startup. */
 export function provideInstallerDeps(provided: Partial<InstallerDeps>): void {
   Object.assign(deps, provided);
 }
@@ -58,10 +45,7 @@ export function provideInstallerDeps(provided: Partial<InstallerDeps>): void {
 // two-phase shape: the chain mutates the tree and rebuilds the agent image
 // (minutes), then RESTARTS the host — `installed` only flips once the new
 // process re-imports the provider barrel, so the poll rides through the
-// restart. The element maps say WHERE each surface renders; the feature name
-// says what to install. There used to be two copies of the loop, differing in
-// what they re-rendered afterwards and in whether "already installed" counted
-// as success; now there is one, and it does the union.
+// restart. The element maps say WHERE each surface renders.
 
 export const CODEX_WIZARD_ELS: Record<string, string> = {
   btn: '#wizard-codex-install',
@@ -85,9 +69,8 @@ const HARNESS_NAME: Record<string, string> = { codex: 'Codex', opencode: 'OpenCo
 
 /**
  * One line of progress for a chain install: which step, of how many, and for
- * how long. The agent-image rebuild emits almost nothing for minutes — with
- * only the last output line the pane stopped changing and read as hung. Built
- * from the poll, so the elapsed time visibly moves on every re-render.
+ * how long — the image rebuild is silent for minutes, so the elapsed time is
+ * what shows it is not hung.
  */
 export function installProgressLine(st: {
   stepIndex?: number;
@@ -119,12 +102,8 @@ export async function runInstall(feature: string, els: Record<string, string>) {
   const finish = () => {
     log.textContent = els.doneMsg || name + ' installed.';
     showToast(name + ' installed', { kind: 'success' });
-    // Re-render the card. Without this the install BUTTON stays on screen after a
-    // successful install: the row's visibility is computed from wizard state that
-    // was fetched before the provider existed, and the chain restarts the host, so
-    // nothing re-reads it. The operator is left looking at "Install X" for a
-    // provider that is already installed, with the control they actually need —
-    // authenticate — still hidden behind the same stale flag.
+    // Re-read wizard state: the row's visibility was computed before the
+    // provider existed, so without this "Install X" stays and "authenticate" stays hidden.
     void deps.refreshWizardCredState?.();
   };
   try {
@@ -141,7 +120,7 @@ export async function runInstall(feature: string, els: Record<string, string>) {
       showToast(err.error || name + ' install failed', { kind: 'error' });
       return;
     }
-    // Phase 1 — build. Poll until the host fires its restart (green build → exit 0,
+    // Build: poll until the host fires its restart (green build → exit 0,
     // not running), the build fails, or the connection drops (host going down).
     let restarting = false;
     for (;;) {
@@ -170,7 +149,7 @@ export async function runInstall(feature: string, els: Record<string, string>) {
         return;
       }
     }
-    // Phase 2 — restart probe. installed only flips once the host re-imports the
+    // Restart probe: installed only flips once the host re-imports the
     // provider barrel at boot. Probe until it answers, or give up after the deadline.
     if (restarting) {
       done();
@@ -243,19 +222,7 @@ export interface PollSpec {
   onFinally?: () => void;
 }
 
-/**
- * The shared install-poll loop.
- *
- * pollTtsInstall and pollSttInstall were the same 30 lines twice, differing in
- * four values: the endpoint, which active-flag accessors to use, the two toast
- * strings, and what to re-render afterwards. The duplication was not harmless —
- * the TTS copy re-renders BOTH its surfaces (settings and wizard) because the
- * shared active-guard means only one poll runs and it cannot rely on a single
- * caller re-rendering; the STT copy does not, and it is not obvious from either
- * one alone whether that is a deliberate difference or a missed edit.
- *
- * Making the difference a parameter answers that question in the call site.
- */
+/** The shared speech-stack install-poll loop; differences between stacks are PollSpec fields. */
 async function pollInstall(spec: PollSpec): Promise<void> {
   if (spec.isActive()) return;
   spec.setActive(true);
@@ -301,11 +268,9 @@ export async function pollTtsInstall(els = TTS_SETTINGS_ELS) {
     errPrefix: 'Read aloud install error: ',
     onSuccess: () => loadTtsConfig(), // pick up server-side synthesis immediately
     onFinally: () => {
-      // Re-render BOTH TTS surfaces (Settings + wizard) so whichever the
-      // operator is viewing flips Installing… → Installed. The shared
-      // active-guard means only one poll runs, so it cannot rely on a single
-      // caller's re-render. STT deliberately does not do this — it has one
-      // surface — which is only visible now that the difference is a parameter.
+      // Re-render BOTH TTS surfaces (Settings + wizard): the shared active-guard
+      // means only one poll runs, so no single caller's re-render suffices. STT
+      // has one surface and deliberately does not.
       deps.renderTtsSetupSettings();
       deps.renderWizardFeatures();
     },
@@ -396,12 +361,8 @@ const ROUTING_ELS_SETTINGS: Record<string, string> = { log: '#routing-install-lo
  * `✗` close one, `= ` is an aside. So the most recent line carrying one of
  * those glyphs IS the current step — no parsing beyond a prefix match, and it
  * degrades to '' rather than guessing when the output is something else.
- *
- * Deliberately NOT a percentage. The long pole in phase 1 is the docker image
- * pull, whose only signal is per-layer byte counts from several concurrent
- * layers, in a format that shifts between docker versions. A single number
- * synthesised from that would be a guess wearing the costume of a measurement;
- * the log underneath already shows the real bytes.
+ * Deliberately NOT a percentage: docker's per-layer byte counts cannot be
+ * honestly summed into one, and the log already shows the real bytes.
  */
 export function installStepLabel(lines?: unknown): string {
   if (!Array.isArray(lines)) return '';
@@ -430,10 +391,7 @@ export function renderRoutingInstallProgress(st?: any, els = ROUTING_ELS_SETTING
     else if (pull.status === 'success') label.textContent = 'Classifier model ready.';
     else label.textContent = 'Classifier model pull failed: ' + (pull.error || '');
   } else {
-    // No model pull in flight — so no honest percentage exists. Show WHICH STEP
-    // is running instead of nothing: before this, the bar and label both hid
-    // and the only feedback for the whole LiteLLM phase (the slowest part of a
-    // first install) was a scrolling log tail.
+    // No model pull in flight, so no honest percentage: show WHICH STEP is running.
     bar.hidden = true;
     const step = installStepLabel(st.lines);
     label.hidden = !step;
@@ -461,11 +419,7 @@ export async function pollRoutingInstall() {
           // the selectable 'auto' model on this PUT) instead of leaving it in
           // shadow behind a separate toggle.
           try {
-            await authFetch('/api/router/routes', {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ live: { enabled: true } }),
-            });
+            await apiJson('/api/router/routes', { method: 'PUT', body: { live: { enabled: true } } });
           } catch {
             /* non-fatal — routing still installed; the roster refresh below shows state */
           }
@@ -489,10 +443,8 @@ export async function pollRoutingInstall() {
   }
 }
 
-// Phase-1 helper: install the LiteLLM router (routing's prerequisite) and
-// stream its log into the shared routing-install box, resolving true on
-// success. Automates what used to require running /add-litellm in a shell, so
-// the one-click Install flow no longer dead-ends on the missing prerequisite.
+// Install the LiteLLM router (routing's prerequisite) and stream its log into
+// the shared routing-install box, resolving true on success.
 async function installLitellmPhase(els: Record<string, string> = ROUTING_ELS_SETTINGS) {
   const log = $(els.log)!;
   const label = $(els.label)!;
@@ -549,7 +501,7 @@ export async function runRoutingInstall() {
   btn.textContent = 'Installing…';
   log.textContent = 'Starting…';
   try {
-    // Phase 1 — ensure the LiteLLM router is present. If it's missing, install
+    // Ensure the LiteLLM router is present. If it's missing, install
     // it here and wait for it to finish before layering routing on top.
     const pre = await (await authFetch('/api/router/install')).json().catch(() => ({}));
     if (!pre.litellmReady) {
@@ -560,16 +512,8 @@ export async function runRoutingInstall() {
         return;
       }
     }
-    // Phase 2 — install auto routing (shadow mode).
-    const res = await authFetch('/api/router/install', { method: 'POST' });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      log.textContent = 'Install failed: ' + (err.error || res.status);
-      showToast('Auto routing setup failed', { kind: 'error' });
-      btn.disabled = false;
-      btn.textContent = 'Install';
-      return;
-    }
+    // Then install auto routing (shadow mode).
+    await apiJson('/api/router/install', { method: 'POST' });
     pollRoutingInstall();
   } catch (err: any) {
     log.textContent = 'Install failed: ' + err.message;
@@ -584,19 +528,8 @@ const previewTimers: Record<string, ReturnType<typeof setTimeout>> = {};
 
 /**
  * What pulling the currently-typed ref would cost, shown UNDER the box as it
- * is typed.
- *
- * This replaced a confirm dialog. The dialog opened centre-screen while the
- * card it described sat in a corner, dimmed the pane behind it, and put its
- * loudest button on "Pull" directly beneath a warning advising against
- * pulling. Worse, it asked a question whose answer was already computable:
- * size and VRAM fit are known the moment the ref is typed, so making someone
- * click, read and click again bought nothing. Now the cost is simply visible
- * while they decide, and the click that starts the pull is the only click.
- *
- * Silence is a valid answer. A ref whose size cannot be read — private
- * registry, registry unreachable — clears the line rather than announcing its
- * own ignorance, and any failure here leaves the pull entirely unaffected.
+ * is typed, so the pull needs no confirm step. A ref whose size cannot be read
+ * clears the line; any failure here leaves the pull unaffected.
  */
 export function previewOllamaPull(host: string, model: string): void {
   clearTimeout(previewTimers[host]);
@@ -607,7 +540,7 @@ export function previewOllamaPull(host: string, model: string): void {
   }
   previewTimers[host] = setTimeout(async () => {
     try {
-      const pre = await (await authFetch('/api/ollama/prepull?model=' + encodeURIComponent(ref))).json();
+      const pre = await apiJson('/api/ollama/prepull?model=' + encodeURIComponent(ref));
       if (pre.sizeBytes == null) {
         hostPullPreview.value = { ...hostPullPreview.value, [host]: null };
         return;
@@ -629,15 +562,8 @@ export function previewOllamaPull(host: string, model: string): void {
 /** Stop a pull that is already running. */
 export async function cancelOllamaPull(host: string, model: string): Promise<void> {
   try {
-    const res = await authFetch('/api/ollama/pull/cancel', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ host, model }),
-    });
-    // 404 means it finished between the render and the click. Saying "cancelled"
-    // there would be a lie about a model that is now on disk, so let the poll
-    // report whatever actually happened instead of asserting anything.
-    if (!res.ok) return;
+    // A 404 (it finished first) is ignored: saying "cancelled" would lie; the poll reports the outcome.
+    await apiJson('/api/ollama/pull/cancel', { method: 'POST', body: { host, model } });
   } catch {
     /* the poller remains the source of truth for the job's real state */
   }
@@ -652,13 +578,7 @@ export async function startOllamaPull(host?: any, model?: any, input?: any, btn?
   clearTimeout(previewTimers[host]);
   hostPullPreview.value = { ...hostPullPreview.value, [host]: null };
   try {
-    const res = await authFetch('/api/ollama/pull', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ host, model }),
-    });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error || res.status);
+    await apiJson('/api/ollama/pull', { method: 'POST', body: { host, model } });
     input.value = '';
     pollOllamaPulls();
   } catch (err: any) {
@@ -671,9 +591,7 @@ export async function startOllamaPull(host?: any, model?: any, input?: any, btn?
 /** One-model fitness verdict, attached to the host card's pull status. */
 async function attachPullVerdict(host: string, model: string): Promise<void> {
   try {
-    const r = await authFetch('/api/models/manage');
-    if (!r.ok) return;
-    const inv = await r.json();
+    const inv = await apiJson('/api/models/manage');
     const tag = String(model).toLowerCase();
     const m = (inv.models || []).find((x: any) => String(x.tag).toLowerCase().startsWith(tag));
     if (!m) return;
@@ -699,14 +617,9 @@ async function attachPullVerdict(host: string, model: string): Promise<void> {
 function renderOllamaPulls(pulls?: any) {
   for (const job of pulls) {
     const pct = job.total > 0 ? Math.min(100, Math.round((100 * job.completed) / job.total)) : 0;
-    // No esc() anywhere: model, detail and error come from the Ollama daemon and
-    // are BOUND in the template now, which escapes by construction. The manual
-    // escaping this replaced was there because the line was built as innerHTML.
-    // Preserve an attached verdict across ticks: attachPullVerdict lands
-    // asynchronously after the success tick, and a later poll rebuilding this
-    // entry from the job alone silently erased it — the verdict flashed for
-    // one tick and vanished. Same host+model → the verdict still describes
-    // this pull.
+    // No esc(): daemon-supplied strings are bound in the template, which escapes.
+    // Preserve an attached verdict across ticks: attachPullVerdict lands after
+    // the success tick, and rebuilding from the job alone would erase it.
     const prev = hostPulls.value[job.host];
     hostPulls.value[job.host] = {
       status: job.status,
@@ -725,35 +638,22 @@ function renderOllamaPulls(pulls?: any) {
       if (job.status === 'success') {
         showToast('Pulled ' + job.model, { kind: 'success' });
         deps.loadOllamaHostModels(job.host);
-        // Fitness at PULL TIME. The standing "Local models" analysis block is
-        // gone — a page of ✓/⚠ prose about every model was noise, but the same
-        // three facts about the model you JUST pulled, measured against the
-        // hardware as it is right now, answer the only question the pull
-        // raises: will this actually work here? Owner-gated endpoint; a 403
-        // (or any failure) just means no verdict line — never a broken pull.
+        // Fitness at pull time: will this model work on this hardware? Owner-
+        // gated; a 403 (or any failure) just means no verdict line.
         void attachPullVerdict(job.host, job.model);
       }
     }
   }
 }
 
-/**
- * host\0model pairs whose finish has already been announced.
- *
- * Was a data-* attribute on the status box (`done_<model>`), which only worked
- * because that element survived between polls. The element is a vnode now, so
- * the bookkeeping lives beside the state it guards — and a dataset key built by
- * concatenating a model name was one dot away from colliding anyway.
- */
+/** host\0model pairs whose finish has already been announced. */
 const pullsDone = new Set<string>();
 
 export async function pollOllamaPulls() {
   if (ollamaPullPoller.value) return; // one poller
   const tick = async () => {
     try {
-      const res = await authFetch('/api/ollama/pulls');
-      if (!res.ok) throw new Error(String(res.status));
-      const { pulls } = await res.json();
+      const { pulls } = await apiJson('/api/ollama/pulls');
       renderOllamaPulls(pulls);
       if (pulls.some((p: any) => p.status === 'pulling')) {
         ollamaPullPoller.value = setTimeout(tick, 1500);

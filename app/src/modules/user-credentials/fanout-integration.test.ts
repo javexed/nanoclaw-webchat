@@ -4,10 +4,6 @@
  * The unit tests in fanout.test.ts call writeMemberTranscript directly, so they
  * all still pass if the router stops invoking the writer, if the session-key
  * override stops firing, or if the writer is handed the wrong currentMessageId.
- * That seam is exactly where the production bug lived: both halves looked
- * correct on their own and the file died in the interaction — 21 uploads
- * reached the agent as `{"text":""}` with no attachment.
- *
  * So this drives routeInbound end to end and asserts the bytes land on disk in
  * the per-member session, which is the thing a human actually noticed.
  */
@@ -87,16 +83,9 @@ afterEach(async () => {
 });
 
 /**
- * THE REGRESSION THIS SUITE EXISTED TO CATCH AND DIDN'T.
- *
- * Mark's symptom was not "the message vanished" — it was a message posted in
- * the ROOM being answered in a THREAD. Keyed by user alone, every thread in a
- * room shared one per-member session, so one queue held 89 main-thread rows
- * and 60 topic-thread rows and the agent replied on whichever it picked.
- *
- * Every earlier test here stops at "the message arrived", which PASSES on a
- * mixed queue. The load-bearing assertion is the negative one: each session's
- * queue must contain the other thread's messages NOT AT ALL.
+ * Threads stay separate: "the message arrived" PASSES on a mixed queue, so the
+ * load-bearing assertion is the negative one — each session's queue must
+ * contain the other thread's messages NOT AT ALL.
  */
 describe('router -> per-member sessions: threads stay separate', () => {
   async function routeText(text: string, threadId: string | null) {
@@ -181,8 +170,7 @@ describe('router -> per-member session: file delivery', () => {
     const meta = { url: '/api/files/room-int/u1.pdf', filename: 'Drawing.pdf', mime: 'application/pdf', size: 9 };
     // The bytes must exist where webchat staged them: the fan-out claims this
     // write and rebuilds content from the stored row + file_meta, discarding
-    // the attachment the router was handed. That indirection is precisely what
-    // made the original bug invisible.
+    // the attachment the router was handed.
     fs.mkdirSync(uploadsDir(ROOM), { recursive: true });
     fs.writeFileSync(path.join(uploadsDir(ROOM), 'u1.pdf'), 'PDF-BYTES');
     const stored = await storeWebchatFileMessage(ROOM, USER, 'user', '', meta);

@@ -10,19 +10,18 @@
  *      the container's own address on that network, mapped to the container
  *      and so to its session and group (never from a token: with per-member
  *      credentials one identity spans several groups);
- *   2. applies that group's policy (egress-policy.ts), the same one central's
- *      relay applies to runner agents;
+ *   2. applies that group's policy (egress-policy.ts);
  *   3. forwards what is allowed to the OneCLI gateway with the credential the
  *      container presented, so the gateway still injects secrets and applies
  *      its own rules; refuses the rest with a 403 that names the host.
  *
  * Central's own services on `host.docker.internal` (the MCP relay) are passed
  * straight through on their own ports. The OneCLI gateway is NOT on the
- * lockdown network: this filter is the only way out, as the relay is for a
- * runner agent's container.
+ * lockdown network: this filter is the only way out.
  */
 import { execFile } from 'child_process';
 import net from 'net';
+import type { Duplex } from 'stream';
 
 import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
 import { log } from '../../log.js';
@@ -37,7 +36,7 @@ import {
   recordBlocked,
   type EgressMode,
 } from './egress-policy.js';
-import { connectThroughGateway } from './runner-relay.js';
+import { connectThroughGateway } from './gateway-connect.js';
 
 const MAX_HEAD = 64 * 1024;
 const IP_MAP_TTL_MS = 2_000;
@@ -58,11 +57,18 @@ export interface EgressFilterDeps {
   always?: (agentGroupId: string) => Promise<string[]>;
 }
 
+/**
+ * One proxied connection: a TCP socket from the lockdown network, or a stream
+ * that arrived over a container's exec pipe (exec-relay.ts), which has no
+ * address.
+ */
+export type ProxyClient = Duplex & { remoteAddress?: string };
+
 /** A client that sends no request head within this window is holding a socket, not talking. */
 const HEAD_TIMEOUT_MS = 10_000;
 
 /** Answer a proxy client and close. */
-function answer(sock: net.Socket, status: string, message: string, extra = ''): void {
+function answer(sock: ProxyClient, status: string, message: string, extra = ''): void {
   const body = `${message}\n`;
   sock.end(
     `HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n${extra}\r\n${body}`,
@@ -122,9 +128,10 @@ export function parseProxyHead(head: string): ParsedRequest | { error: string; s
 }
 
 /** Serve one proxied connection from a local agent's container. */
-export async function serveProxyClient(client: net.Socket, deps: EgressFilterDeps): Promise<void> {
+export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDeps): Promise<void> {
   client.on('error', () => {});
   let buf = Buffer.alloc(0);
+  let timer: NodeJS.Timeout | undefined;
   const head = await new Promise<{ head: string; rest: Buffer } | null>((resolve) => {
     const onData = (chunk: Buffer): void => {
       buf = Buffer.concat([buf, chunk]);
@@ -139,9 +146,9 @@ export async function serveProxyClient(client: net.Socket, deps: EgressFilterDep
     };
     client.on('data', onData);
     client.once('close', () => resolve(null));
-    client.setTimeout(HEAD_TIMEOUT_MS, () => resolve(null));
+    timer = setTimeout(() => resolve(null), HEAD_TIMEOUT_MS);
   });
-  client.setTimeout(0);
+  clearTimeout(timer);
   if (!head) return void client.destroy();
   const req = parseProxyHead(head.head);
   if ('error' in req) return answer(client, req.status, req.error);
@@ -210,12 +217,59 @@ function listenOnce(host: string, port: number, onConn: (sock: net.Socket) => vo
   servers.set(k, server);
 }
 
-/** Start (idempotently) the filter on the lockdown network's host address, plus pass-throughs to central's own services. */
+/** Central's host name as a container on the lockdown network dials it: a host-local model is reached under it. */
+const HOST_NAME = 'host.docker.internal';
+
+/**
+ * A host-local model's port on the bridge. Unlike central's own services it is
+ * NOT for every agent on the network: each connection is identified like a
+ * proxied one and held to the caller's policy — its own model, the allowlist
+ * where the mode allows it, anything when Open. Otherwise a localhost model
+ * added for one agent would be open to every Model-only agent, arriving from
+ * 127.0.0.1, which that server may trust.
+ */
+export async function serveModelPort(
+  client: ProxyClient,
+  port: number,
+  target: { host: string; port: number },
+  deps: EgressFilterDeps,
+): Promise<void> {
+  client.on('error', () => {});
+  const caller = await deps.identify(client.remoteAddress ?? '');
+  if (!caller) {
+    log.warn('Egress filter: a model connection from an unknown address on the lockdown network', {
+      remote: client.remoteAddress,
+      port,
+    });
+    return void client.destroy();
+  }
+  const mode = await deps.mode(caller.agentGroupId);
+  const always = deps.always ? await deps.always(caller.agentGroupId) : undefined;
+  if (!egressAllowed(mode, HOST_NAME, port, await deps.allowlist(caller.agentGroupId), always)) {
+    recordBlocked(HOST_NAME, port, caller.agentGroupId, caller.sessionId, mode);
+    return void client.destroy();
+  }
+  const up = net.connect(target);
+  up.on('error', () => client.destroy());
+  client.on('error', () => up.destroy());
+  client.pipe(up);
+  up.pipe(client);
+}
+
+/** Model listeners by bridge, so one whose model was removed is closed at the next spawn. */
+const modelPorts = new Map<string, Set<number>>();
+
+/**
+ * Start (idempotently) the filter on the lockdown network's host address,
+ * central's own services passed straight through, and host-local models
+ * behind the per-agent check above.
+ */
 export function ensureEgressFilter(
   bridgeIp: string,
   gatewayPort: number,
   deps: EgressFilterDeps,
   passthrough: Array<{ port: number; target: { host: string; port: number } }> = [],
+  models: Array<{ port: number; target: { host: string; port: number } }> = [],
 ): void {
   listenOnce(bridgeIp, gatewayPort, (sock) => void serveProxyClient(sock, deps).catch(() => sock.destroy()), 'proxy');
   for (const p of passthrough) {
@@ -230,6 +284,24 @@ export function ensureEgressFilter(
         up.pipe(sock);
       },
       `passthrough:${p.port}`,
+    );
+  }
+  const wanted = new Set(models.map((m) => m.port));
+  const had = modelPorts.get(bridgeIp) ?? new Set<number>();
+  for (const port of had) {
+    if (wanted.has(port)) continue;
+    const k = `${bridgeIp}:${port}`;
+    servers.get(k)?.close();
+    servers.delete(k);
+    log.info('Egress filter: closed a model port no model uses any more', { host: bridgeIp, port });
+  }
+  modelPorts.set(bridgeIp, wanted);
+  for (const m of models) {
+    listenOnce(
+      bridgeIp,
+      m.port,
+      (sock) => void serveModelPort(sock, m.port, m.target, deps).catch(() => sock.destroy()),
+      `model:${m.port}`,
     );
   }
 }

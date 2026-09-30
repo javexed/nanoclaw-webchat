@@ -11,10 +11,9 @@ import type { Migration } from './index.js';
  * Defaults to 0, so an existing install does not silently start accepting
  * member credentials for a provider its operator never enabled.
  *
- * Portable (no PRAGMA): the previous column-exists guard duplicated what the
- * migration runner already guarantees — schema_version dedupes by name, so
- * this runs exactly once — and webchat-credentials-config (which creates the
- * table) is ordered before every module-file migration in the composed tree.
+ * Portable (no PRAGMA, no column-exists guard): schema_version dedupes by name,
+ * and webchat-credentials-config (which creates the table) is ordered before
+ * every module-file migration in the composed tree.
  */
 export const moduleUserCredentialsGrokFlag: Migration = {
   version: 207,

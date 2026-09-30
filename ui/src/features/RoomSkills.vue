@@ -1,20 +1,9 @@
 <script setup lang="ts">
 /**
- * A room's skills — thirty-second island.
- *
- * Mounted into <ul id="room-skills-list">, exclusively owned by this module.
- * #room-skills-section (its hidden flag), #room-skills-count and the "Distill a
- * skill" trigger are outside the mount point and stay imperative — the section
- * carries that trigger, which is why it stays visible even when the list is
- * empty.
- *
- * Three row kinds in a fixed order, which is editorial rather than incidental:
- * proposals first, because they are the ones asking for a decision; then what is
- * already wired; then the curator's archive, dimmed and restorable.
- *
- * The proposal row reuses UndoTimer for Keep/Discard, so the pattern matches the
- * drafts island — including measuring the actions element's width BEFORE the
- * swap so the row does not jump.
+ * A room's skills, mounted into <ul id="room-skills-list">; the section stays visible
+ * when the list is empty because it carries the "Distill a skill" trigger. Row order is
+ * editorial: proposals (they ask for a decision), then wired skills, then the curator's
+ * dimmed archive. Proposals use UndoTimer, measuring width BEFORE the swap.
  */
 import { computed } from 'vue';
 import OriginBadge from './OriginBadge.vue';

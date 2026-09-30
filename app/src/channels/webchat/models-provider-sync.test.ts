@@ -1,13 +1,8 @@
 /**
- * Provider follows the assigned model's kind — which, post-OpenCode, is
- * always the default Claude provider (openai-compatible endpoints are
- * consumed through LiteLLM's Anthropic-spec /v1/messages surface).
- *
- * The sync's remaining job is REVERSION: a group some earlier install
- * flipped to 'opencode' must come back to null (default) on its next
- * (re)assignment. Guards that wiring end-to-end against the real central
- * DB: delete the syncAgentProviderForAssignedModel call (or its column
- * write) and this goes red.
+ * Provider follows the effective model's kind: the default Claude provider,
+ * unless a local harness is installed and the model is Ollama (pi over
+ * OpenCode). End-to-end against the real central DB: delete the
+ * syncAgentProviderForAssignedModel call (or its column write) and this goes red.
  */
 import fs from 'fs';
 import os from 'os';
@@ -188,9 +183,7 @@ describe('with BOTH pi and OpenCode installed', () => {
   });
 
   it('prefers pi over opencode for ollama', async () => {
-    // The preference is the whole point: both are valid local harnesses, and pi
-    // wins on prompt budget (587 vs 6,443 tokens head-to-head). If this ever
-    // flips back to 'opencode' the auto-selection silently regresses to the
+    // pi wins on prompt budget; flipping this back to 'opencode' would put the
     // heavier harness on exactly the models that can least afford it.
     expect(providerForModelKind('ollama')).toBe('pi');
   });

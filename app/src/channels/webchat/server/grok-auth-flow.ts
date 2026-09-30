@@ -5,13 +5,10 @@
  * returns {started,error}, a `get` the route reports, and a `cancel` — so the
  * route pair reads identically to every other long-running job here.
  *
- * NOT an InstallState, though, and deliberately so. Those model a CHAIN of
- * commands this process runs to completion. A device login is a different
- * animal: it finishes when a HUMAN confirms a code on another device, it can
- * expire, its useful output is scraped from stdout while it runs, and its
- * working directory holds a live refresh token that must be destroyed on every
- * exit path. Forcing it into InstallState would mean an eleventh copy of a
- * pattern the backlog already wants collapsed, in the one case that does not fit.
+ * NOT an InstallState, deliberately: those model a chain of commands run to
+ * completion. A device login finishes when a HUMAN confirms a code elsewhere,
+ * can expire, is scraped from stdout while it runs, and its working directory
+ * holds a live refresh token that must be destroyed on every exit path.
  *
  * THE CLI PATH STILL WORKS. `setup --step provider-auth grok` remains the
  * supported route for headless installs with no browser reach, and both write
@@ -176,11 +173,9 @@ export interface StartResult {
  * Remove login directories left by a flow that never finished.
  *
  * finish() shreds the temp dir on every exit path, but a host RESTART mid-login
- * runs none of them — the process simply goes away, and the directory outlives
- * it. Observed: a dozen of them accumulated during development restarts. They
- * were empty (the token only lands once the login completes, and an abandoned
- * login never gets that far), so this is hygiene rather than exposure — but the
- * one that is NOT empty is exactly the one worth never leaving behind.
+ * runs none of them and the directory outlives the process. Usually empty (the
+ * token lands only once the login completes), but one that is not must never
+ * be left behind.
  *
  * Only sweeps directories older than the login timeout, so a concurrent flow in
  * another process is never pulled out from under itself.
@@ -263,8 +258,7 @@ export function startGrokLogin(root = process.cwd()): StartResult {
   proc.on('exit', (code) => {
     // Identity, not just the running flag: cancel-then-restart leaves THIS
     // proc dying for a second while a new flow is already running — its late
-    // exit must not fail (and shred the tmp dir of) the new flow. The member
-    // login flow got this right by closing over a per-flow object.
+    // exit must not fail (and shred the tmp dir of) the new flow.
     if (state.proc !== proc) return;
     if (!state.running) return; // already cancelled or timed out
     if (code !== 0) return finish('failed', `The login exited with code ${code}.`);

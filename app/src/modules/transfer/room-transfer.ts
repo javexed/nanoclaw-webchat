@@ -1,5 +1,5 @@
 /**
- * Room export/import (Phase 3 of backup/import) — one webchat room as a
+ * Room export/import — one webchat room as a
  * portable .tgz: the messaging group, room settings, threads, the FULL
  * message history, per-room learning settings, uploaded files, and its
  * agent wiring BY REFERENCE (agents match by folder on import).
@@ -34,7 +34,6 @@ const ROOM_TABLES = [
   'webchat_threads',
   'webchat_room_settings',
   'webchat_room_primes',
-  'webchat_thread_engaged',
   'webchat_thread_sync',
 ];
 

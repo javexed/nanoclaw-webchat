@@ -7,7 +7,7 @@
 // is published.
 import { watchEffect } from 'vue';
 
-import { authFetch } from '../core/api.js';
+import { apiJson } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { state } from '../core/state.js';
 import { roomsReceived } from './room-list-state.js';
@@ -29,8 +29,7 @@ async function refreshStatus(): Promise<void> {
   if (!line) return;
   let machines: Machine[] = [];
   try {
-    const r = await authFetch('/api/runners/mine');
-    if (r.ok) machines = ((await r.json()) as { machines: Machine[] }).machines;
+    machines = ((await apiJson('/api/runners/mine')) as { machines: Machine[] }).machines;
   } catch {
     machines = [];
   }
@@ -57,8 +56,8 @@ export function initVsCodeStart(): void {
   started = true;
   $('#vscode-start-download')?.addEventListener('click', () => void download());
   $('#vscode-start-connect')?.addEventListener('click', () => void connect());
-  void authFetch('/api/runners/extension')
-    .then((r) => (published = r.ok))
+  void apiJson('/api/runners/extension')
+    .then(() => (published = true))
     .catch(() => (published = false))
     .finally(() => {
       watchEffect(() => {

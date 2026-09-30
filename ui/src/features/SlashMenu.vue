@@ -1,19 +1,9 @@
 <script setup lang="ts">
 /**
- * The /command autocomplete — forty-eighth island.
- *
- * Mounted into <div id="slash-menu">, exclusively owned by this module. Its
- * hidden flag stays imperative: the menu is suppressed for non-admins entirely
- * (every one of these commands is admin-only — see command-gate.ts), and
- * whether to show it at all is a decision about the surface, not the rows.
- *
- * mousedown, NOT click, with preventDefault — the composer's blur would dismiss
- * the menu before a click could land, and preventing default keeps focus in the
- * input. Same reason MentionPopover uses it.
- *
- * esc() is gone: the imperative version built the row with innerHTML, so the
- * command and description had to be escaped by hand. Bindings escape by
- * construction.
+ * The /command autocomplete, mounted into <div id="slash-menu">. Its hidden flag stays
+ * with the caller: every command is admin-only (see command-gate.ts), so non-admins never
+ * see the menu. mousedown, NOT click, with preventDefault — the composer's blur would
+ * dismiss the menu first (same as MentionPopover).
  */
 import { slashActiveIndex, slashRows } from './slash-menu-state.js';
 

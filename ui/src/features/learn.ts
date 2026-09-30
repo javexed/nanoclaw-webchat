@@ -1,7 +1,8 @@
 // ── Learn ────────────────────────────────────────────────────────────────────
 // The /learn flow: the nudge, the source picker, the URL and folder modals, and
 // the turn-tool bookkeeping that decides when to offer it.
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { $ } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { showToast, toastError } from '../core/toast.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
@@ -12,23 +13,20 @@ import LearnMenu from './LearnMenu.vue';
 import LearnTargetPicker from './LearnTargetPicker.vue';
 import { learnAutoKeep, learnAutoTrigger, learnTogglesVisible } from './learn-menu-state.js';
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideLearnDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
+/** Supplied by provideLearnDeps in composition-root.ts. `any` marks a signature not yet typed, not an opt-out of checking. */
 export interface LearnDeps {
   sendCurrentMessage: () => any;
 }
 
 const deps = {} as LearnDeps;
 
-/** Wire the legacy helpers this module calls. Call once at startup. */
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 export function provideLearnDeps(provided: Partial<LearnDeps>): void {
   Object.assign(deps, provided);
 }
 
+// Apply the learning master to the live UI: the composer 🎓 and its nudge only
+// exist while learning is on. Agent/room panels re-read the flag when opened.
 export function applyLearningMaster() {
   const learnBtn = document.getElementById('learn-btn');
   if (learnBtn) learnBtn.hidden = !state.learningMasterEnabled;
@@ -37,17 +35,19 @@ export function applyLearningMaster() {
 
 export async function loadLearningMaster() {
   try {
-    const r = await authFetch('/api/learning/config');
-    if (r.ok) {
-      const cfg = await r.json();
-      state.learningMasterEnabled = cfg.enabled !== false;
-    }
+    const cfg = await apiJson('/api/learning/config');
+    state.learningMasterEnabled = cfg.enabled !== false;
   } catch {
     /* keep default (on) */
   }
   applyLearningMaster();
 }
 
+// ── Settings → Features → Auto-learn (workspace master, owner-only) ─────────
+// The master kill switch for the learning loop. Owner-gated (the section hides
+// for non-owners). Off disables learning workspace-wide and, via the flag,
+// removes the per-agent / per-room learning controls. Behavior applies to each
+// agent on its next spawn.
 let autoLearnWired = false;
 
 export async function renderAutoLearnSetting() {
@@ -55,8 +55,7 @@ export async function renderAutoLearnSetting() {
   if (!section) return;
   let cfg: any = null;
   try {
-    const r = await authFetch('/api/learning/config');
-    if (r.ok) cfg = await r.json();
+    cfg = await apiJson('/api/learning/config');
   } catch {
     cfg = null;
   }
@@ -133,6 +132,11 @@ export async function renderAutoLearnSetting() {
   });
 }
 
+// ── 'Add from link…' — learn a skill from a URL, run by an agent ───────────
+// /learn is room-mediated by design: the command must run IN a session of the
+// chosen agent, so we resolve one of its webchat rooms, join it, and send
+// `/learn <url>` as the user — the command and the draft card that follows are
+// visible in the room, exactly like typing it there.
 export async function pickLearnTarget() {
   let agents: any[] = [];
   try {
@@ -151,8 +155,7 @@ export async function pickLearnTarget() {
   await Promise.all(
     agents.map(async (a) => {
       try {
-        const r = await authFetch(`/api/agents/${encodeURIComponent(a.id)}/rooms`);
-        roomsByAgent.set(a.id, r.ok ? await r.json() : []);
+        roomsByAgent.set(a.id, await apiJson(`/api/agents/${encodeURIComponent(a.id)}/rooms`));
       } catch {
         roomsByAgent.set(a.id, []);
       }
@@ -186,6 +189,11 @@ export async function pickLearnTarget() {
   return room || null;
 }
 
+// ── Learn surfaces ───────────────────────────────────────────────────────────
+// One path for every learn trigger (composer 🎓, nudge chip, room-settings
+// button, typing /learn): set the input and send. No second implementation.
+// `command` lets source-directed callers send `/learn <url|path>` through the
+// exact same gate (in a room, composer enabled) and send path.
 export function triggerLearn(command = '/learn') {
   const input = ($('#message-input')) as HTMLInputElement;
   if (!input || (input as HTMLInputElement).disabled || !state.currentRoom) return;
@@ -194,6 +202,10 @@ export function triggerLearn(command = '/learn') {
   deps.sendCurrentMessage();
 }
 
+// Client-side mirror of classifyLearnHint's first-token rule (container/
+// agent-runner/src/learning-loop.ts): only the FIRST token decides whether the
+// hint is a source; anything after it is focus text. Pre-validating here keeps
+// a typo from silently degrading into a free-text steering hint.
 function learnSourceFirstToken(value?: any) {
   return value.trim().split(/\s+/)[0] || '';
 }
@@ -212,6 +224,8 @@ function isLearnPathToken(tok?: any) {
   return tok === '~' || tok === '.' || tok === '..' || /^(\/|\.\/|\.\.\/|~\/)/.test(tok);
 }
 
+// Shared source prompt: one input — the source first, optional focus text
+// after it — composed into `/learn <value>` and sent through triggerLearn.
 export async function promptLearnSource({ title, placeholder, check, invalid }: any) {
   const v = await showInputModal({
     title,
@@ -236,49 +250,54 @@ export function hideLearnNudge() {
 let learnMenuApp: ReturnType<typeof createApp> | null = null;
 
 function mountLearnMenu(): void {
-  if (learnMenuApp) return;
-  const host = $('#learn-menu');
-  if (!host) return;
-  learnMenuApp = createApp(LearnMenu, {
-    onSession: () => {
-      closeLearnMenu();
-      triggerLearn();
-    },
-    // Source-directed learning: one input (source first, optional focus text
-    // after), composed into `/learn <value>` — the same message the user could
-    // type; the container-side classifier does the rest.
-    onLink: async () => {
-      closeLearnMenu();
-      const v = await promptLearnSource({
-        title: 'Learn from a link',
-        placeholder: 'https://…',
-        check: isLearnUrlToken,
-        invalid: 'Start with a full link (http:// or https://)',
-      });
-      if (v) triggerLearn('/learn ' + v);
-    },
-    onFolder: async () => {
-      closeLearnMenu();
-      const v = await promptLearnSource({
-        title: 'Learn from a folder',
-        placeholder: '/workspace/…',
-        check: isLearnPathToken,
-        invalid: 'Start with a path (/, ./ or ~/)',
-      });
-      if (v) triggerLearn('/learn ' + v);
-    },
-    // Optimistic ONLY on success — the row flips after the write returns true,
-    // exactly as the imperative handler did.
-    onAutoTrigger: async (on: boolean) => {
-      if (await putRoomLearning({ autoTrigger: on })) learnAutoTrigger.value = on;
-    },
-    onAutoKeep: async (on: boolean) => {
-      if (await putRoomLearning({ autoKeep: on })) learnAutoKeep.value = on;
-    },
-  });
-  learnMenuApp.mount(host);
+  learnMenuApp ??= mountIsland('#learn-menu', () =>
+    createApp(LearnMenu, {
+      onSession: () => {
+        closeLearnMenu();
+        triggerLearn();
+      },
+      // Source-directed learning: one input (source first, optional focus text
+      // after), composed into `/learn <value>` — the same message the user could
+      // type; the container-side classifier does the rest.
+      onLink: async () => {
+        closeLearnMenu();
+        const v = await promptLearnSource({
+          title: 'Learn from a link',
+          placeholder: 'https://…',
+          check: isLearnUrlToken,
+          invalid: 'Start with a full link (http:// or https://)',
+        });
+        if (v) triggerLearn('/learn ' + v);
+      },
+      onFolder: async () => {
+        closeLearnMenu();
+        const v = await promptLearnSource({
+          title: 'Learn from a folder',
+          placeholder: '/workspace/…',
+          check: isLearnPathToken,
+          invalid: 'Start with a path (/, ./ or ~/)',
+        });
+        if (v) triggerLearn('/learn ' + v);
+      },
+      // Not optimistic: the row flips only after the write returns true.
+      onAutoTrigger: async (on: boolean) => {
+        if (await putRoomLearning({ autoTrigger: on })) learnAutoTrigger.value = on;
+      },
+      onAutoKeep: async (on: boolean) => {
+        if (await putRoomLearning({ autoKeep: on })) learnAutoKeep.value = on;
+      },
+    }),
+  );
 }
 
+/**
+ * 🎓 popover (DESIGN.md § Composer popups — mirrors .mention-popover, no third
+ * style). Click the icon → "Distill now" plus the per-agent automation toggles:
+ *   Auto-distill — admin-tier; it only stages drafts (default ON).
+ *   Auto-keep    — owner-tier; it writes live agent context, so the server
+ *                  refuses the toggle for anyone else and the row only renders
+ *                  when the server says canAutoKeep.
+ */
 export async function toggleLearnMenu() {
   const menu = $('#learn-menu');
   if (!menu) return;
@@ -292,8 +311,7 @@ export async function toggleLearnMenu() {
   // wired agents' defaults, so many agents never means many switches.
   let cfg: any = null;
   try {
-    const res = await authFetch(`/api/rooms/${encodeURIComponent(state.currentRoom)}/learning`);
-    if (res.ok) cfg = await res.json();
+    cfg = await apiJson(`/api/rooms/${encodeURIComponent(state.currentRoom)}/learning`);
   } catch {
     /* room without learning surface (no wired agents) — trigger row only */
   }
@@ -311,15 +329,9 @@ export function closeLearnMenu() {
   $('#learn-btn')?.setAttribute('aria-expanded', 'false');
 }
 
-
-
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // The learn surface: source prompts and the digest controls.
-//
-// A function rather than module-scope code: legacy.js runs its blocks in source
-// order around initApp(), so relocating them to another module's top level would
-// silently re-order them. legacy calls wireLearnPanel() at the exact line the
-// first block occupied, so execution order is unchanged.
+// Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
 export function wireLearnPanel(): void {
   (() => {

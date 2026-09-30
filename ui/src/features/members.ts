@@ -6,21 +6,17 @@ import { createApp } from 'vue';
 import { userCredsConnected, userCredsOauthReturnFocus, userCredsOauthSessionId, userCredsOauthTarget, userCredsProvider, userCredsState, userCredsWords } from './user-creds-state.js';
 import MembersList from './MembersList.vue';
 import PermsUserList from './PermsUserList.vue';
-import { members, membersFilter, usersSortAz } from './members-list-state.js';
-import { permsMyUserId, permsSelectedUserId, permsSortAz, permsUserFilter, permsUsers, usersError } from './perms-list-state.js';
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { members, usersSortAz } from './members-list-state.js';
+import { permsSelectedUserId, permsSortAz, usersError } from './perms-list-state.js';
+import { $ } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { cancelGrokMint, closeHandlePopover, showConfirmModal } from './modals.js';
-import { showToast, toastError } from '../core/toast.js';
-import { authFetch, apiJson } from '../core/api.js';
+import { showToast } from '../core/toast.js';
+import { apiJson, authFetch } from '../core/api.js';
 import { state } from '../core/state.js';
 
-
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideMembersDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
+/** Supplied by provideMembersDeps in composition-root.ts. `any` marks a signature not
+ *  yet typed, not an opt-out of checking. */
 export interface MembersDeps {
   permsShowDetail: () => any;
   permsShowList: () => any;
@@ -31,7 +27,7 @@ export interface MembersDeps {
 
 const deps = {} as MembersDeps;
 
-/** Wire the legacy helpers this module calls. Call once at startup. */
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 export function provideMembersDeps(provided: Partial<MembersDeps>): void {
   Object.assign(deps, provided);
 }
@@ -44,7 +40,11 @@ export function rememberServerAuthHint(methods?: any) {
   } catch {}
 }
 
-
+// ── UserCreds: per-member key banner ───────────────────────────────────────────
+// Shown in a room whose credential_mode is optional/required when the current
+// user hasn't connected their own Anthropic key. Connecting onboards the key
+// into the OneCLI vault (host-side) so the member's turns bill their account.
+// The room's model provider decides the connect vocabulary + which mint runs.
 export async function updateUserCredsBanner(roomId?: any) {
   const banner = $('#user-creds-banner');
   if (!banner || !roomId) return;
@@ -56,12 +56,9 @@ export async function updateUserCredsBanner(roomId?: any) {
     renderHandleChip();
   };
   try {
-    const r = await authFetch(`/api/user-credentials/credential?roomId=${encodeURIComponent(roomId)}`);
-    if (!r.ok) {
-      hideAll();
-      return;
-    }
-    const { connected, mode, oauthAllowed, apiKeyAllowed = true, provider = 'claude' } = await r.json();
+    const { connected, mode, oauthAllowed, apiKeyAllowed = true, provider = 'claude' } = await apiJson(
+      `/api/user-credentials/credential?roomId=${encodeURIComponent(roomId)}`,
+    );
     userCredsProvider.value = provider;
     const { name, subWord, keyWord, keyPlaceholder } = userCredsWords(provider);
     // The room's mode is the master switch: 'disabled' (User credentials: Off)
@@ -122,7 +119,6 @@ export async function disconnectUserCreds() {
   }
 }
 
-
 export function closeUserCredsOauthModal() {
   if (userCredsOauthSessionId.value) {
     const cancelUrl =
@@ -133,10 +129,10 @@ export function closeUserCredsOauthModal() {
           : userCredsProvider.value === 'codex'
             ? '/api/user-credentials/codex/cancel'
             : '/api/user-credentials/oauth/cancel';
-    authFetch(cancelUrl, {
+    apiJson(cancelUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-      body: JSON.stringify({ sessionId: userCredsOauthSessionId.value }),
+      headers: { 'X-Webchat-CSRF': '1' },
+      body: { sessionId: userCredsOauthSessionId.value },
     }).catch(() => {});
     userCredsOauthSessionId.value = null;
   }
@@ -145,9 +141,9 @@ export function closeUserCredsOauthModal() {
   // drop the CLI process rather than leaving it running until it expires.
   cancelGrokMint();
   if (userCredsProvider.value === 'grok')
-    authFetch('/api/user-credentials/grok/cancel', {
+    apiJson('/api/user-credentials/grok/cancel', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+      headers: { 'X-Webchat-CSRF': '1' },
     }).catch(() => {});
   const modal = $('#user-creds-oauth-modal');
   if (modal) modal.hidden = true;
@@ -157,11 +153,7 @@ export function closeUserCredsOauthModal() {
 }
 
 export function renderMembers(list?: any) {
-  // The parameter used to be named `members`, which SHADOWED the imported ref
-  // of the same name: `members.value = members` set .value on the plain array
-  // argument and left the ref the MembersList island reads untouched. The count
-  // came straight off the argument, so it stayed correct while the list stayed
-  // empty — a room would report "1" and show nobody, including you.
+  // Not named `members`: that would shadow the imported ref the island reads.
   const next = Array.isArray(list) ? list : [];
   members.value = next;
   const toggle = $('#members-toggle')!;
@@ -174,17 +166,14 @@ let membersListApp: ReturnType<typeof createApp> | null = null;
 
 /** Mount the MembersList island into <ul id="members-list">, once. */
 function mountMembersList(): void {
-  if (membersListApp) return;
-  const host = $('#members-list');
-  if (!host) return;
-  membersListApp = createApp(MembersList);
-  membersListApp.mount(host);
+  membersListApp ??= mountIsland('#members-list', () => createApp(MembersList));
 }
 
+// Render #members-list from currentMembers, applying the search filter. Split
+// from renderMembers so the search box can re-paint without a re-fetch.
 export function paintMembersList(): void {
   mountMembersList();
 }
-
 
 export function toggleMembersPanel() {
   const panel = $('#members-panel')!;
@@ -195,30 +184,19 @@ export function toggleMembersPanel() {
   else overlay.classList.remove('visible');
 }
 
-// Re-exported so the modules that already import these from here keep working:
-// perms.ts, agents.ts (via a dep) and legacy.js all name this module. The
-// definitions moved to perms-user-info.ts, which the PermsUserList island
-// imports — a component importing THIS module would close a cycle, since this
-// is where the island is mounted.
+// Defined in perms-user-info.ts so the PermsUserList island can import them
+// without a cycle (this module mounts it); re-exported for existing importers.
 export { findMembership, userDisplayName, userIsOwner } from './perms-user-info.js';
 
 let permsUserListApp: ReturnType<typeof createApp> | null = null;
 
 function mountPermsUserList(): void {
-  if (permsUserListApp) return;
-  const host = $('#perms-user-list');
-  if (!host) return;
-  permsUserListApp = createApp(PermsUserList, { onSelect: permsSelectUser });
-  permsUserListApp.mount(host);
+  permsUserListApp ??= mountIsland('#perms-user-list', () => createApp(PermsUserList, { onSelect: permsSelectUser }));
 }
 
 /**
- * Sync the island's inputs and mount it on first call.
- *
- * The sort and the filter are NOT applied here — the component derives both
- * from these refs, so the A–Z toggle and the search box no longer need to call
- * this function at all. It stays because refreshPermissions() calls it after
- * fetching, which is a genuine data change.
+ * Sync the island's inputs and mount it on first call. Sort and filter are
+ * derived in the component; this runs only after refreshPermissions() fetches.
  */
 export function renderPermsUserList() {
   permsSortAz.value = !!usersSortAz.value;
@@ -227,10 +205,8 @@ export function renderPermsUserList() {
 }
 
 /**
- * Replace the user list with a failure message. Exported because the fetch that
- * fails lives in perms.ts, while the element and its island are owned here —
- * and the whole point of the usersError ref is that this module stays the only
- * writer of that DOM.
+ * Replace the user list with a failure message. Called from perms.ts (which
+ * fetches) so this module stays the only writer of the island's DOM.
  */
 export function showPermsUsersError(message: string) {
   usersError.value = message;
@@ -240,8 +216,7 @@ export function showPermsUsersError(message: string) {
 function permsSelectUser(userId?: any) {
   permsSelectedUserId.value = userId;
   deps.renderPermsDetail(userId);
-  // The imperative version cleared .active off every row here and re-rendered
-  // to put it back. Both are gone: the class is bound to this ref.
+  // The row's .active class is bound to this ref.
   permsSelectedUserId.value = userId ?? null;
   deps.permsShowDetail();
 }
@@ -255,15 +230,10 @@ export async function deleteUser(targetUserId?: any) {
   });
   if (!confirmed) return;
   try {
-    const r = await authFetch(`/api/users/${encodeURIComponent(targetUserId)}`, {
+    await apiJson(`/api/users/${encodeURIComponent(targetUserId)}`, {
       method: 'DELETE',
       headers: { 'X-Webchat-CSRF': '1' },
     });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      showToast('Delete failed: ' + (err.error || r.statusText), { kind: 'error' });
-      return;
-    }
     showToast(`Deleted user ${targetUserId}.`, { kind: 'success' });
     permsSelectedUserId.value = null;
     await deps.refreshPermissions();
@@ -273,14 +243,9 @@ export async function deleteUser(targetUserId?: any) {
   }
 }
 
-
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // The room members panel: the invite form, role changes and removal.
-//
-// A function rather than module-scope code: legacy.js runs its blocks in source
-// order around initApp(), so relocating them to another module's top level would
-// silently re-order them. legacy calls wireMembersPanel() at the exact line the
-// first block occupied, so execution order is unchanged.
+// Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
 export function wireMembersPanel(): void {
   $<HTMLButtonElement>('#handle-creds-action')?.addEventListener('click', async () => {
@@ -321,23 +286,17 @@ export function wireMembersPanel(): void {
     }
     const apiKey = input.value.trim();
     if (!apiKey) return;
-    // Busy-guard + try/catch: without them a network failure here was an
-    // unhandled rejection — the user's key submit died with zero feedback.
+    // Busy-guard + try/catch so a network failure surfaces instead of rejecting silently.
     const btn = e.currentTarget as HTMLButtonElement;
     btn!.disabled = true;
     try {
-      const r = await authFetch('/api/user-credentials/credential', {
+      await apiJson('/api/user-credentials/credential', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-        body: JSON.stringify({ roomId: state.currentRoom, apiKey }),
+        headers: { 'X-Webchat-CSRF': '1' },
+        body: { roomId: state.currentRoom, apiKey },
       });
-      if (r.ok) {
-        showToast(`Connected your ${userCredsWords(userCredsProvider.value).keyWord}.`, { kind: 'success' });
-        await updateUserCredsBanner(state.currentRoom);
-      } else {
-        const err = await r.json().catch(() => ({}));
-        showToast('Failed to connect key: ' + (err.error || r.statusText), { kind: 'error' });
-      }
+      showToast(`Connected your ${userCredsWords(userCredsProvider.value).keyWord}.`, { kind: 'success' });
+      await updateUserCredsBanner(state.currentRoom);
     } catch (err: any) {
       showToast('Failed to connect key: ' + (err?.message || 'network error'), { kind: 'error' });
     } finally {
@@ -348,19 +307,7 @@ export function wireMembersPanel(): void {
   $<HTMLInputElement>('#user-creds-key-input')?.addEventListener('keydown', (e: any) => {
     if (e.key === 'Enter') $<HTMLButtonElement>('#user-creds-connect-btn')?.click();
   });
-
-
-  // The connected state lives as a compact key chip in the header; clicking it
-  // disconnects (after a confirm), so the full banner no longer sits over the chat.
-  // ── UserCreds OAuth: connect a Claude subscription token ────────────────────────
-  // Browser-mint OAuth: no terminal. Opening the form starts a server-side mint
-  // (a throwaway container runs `claude setup-token`), surfaces the sign-in URL,
-  // takes the pasted code, and onboards the resulting token per-member.
 }
-
-// ── Panel wiring ───────────────────────────────────────────────────────────
-// Blocks the census read as multi-owner: the union of every id they touch spans
-// several modules, but the element each one WIRES belongs here.
 
 export function wireMembersOauth1(): void {
   $('#user-creds-oauth-modal')?.addEventListener('click', (e: any) => {
@@ -438,6 +385,8 @@ export function renderHandleChip() {
   chip.setAttribute('aria-label', userCredsConnected.value ? 'Billing your own account — manage credentials' : 'Edit your handle');
 }
 
+// Persist the @handle from the Settings field. Inline feedback (per DESIGN.md):
+// success/taken/invalid all surface on the #handle-status line, not a toast.
 export async function saveHandle() {
   const input = $<HTMLInputElement>('#handle-input');
   const status = $('#handle-status');
@@ -458,26 +407,19 @@ export async function saveHandle() {
     return;
   }
   try {
-    const res = await authFetch('/api/me/handle', {
+    const out = await apiJson('/api/me/handle', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-      body: JSON.stringify({ handle: next }),
+      headers: { 'X-Webchat-CSRF': '1' },
+      body: { handle: next },
     });
-    if (res.ok) {
-      state.myHandle = (((await res.json()).handle || next) + '').toLowerCase();
-      input.value = state.myHandle;
-      renderHandleChip();
-      // Keep the popover open briefly showing the inline "Saved." status,
-      // consistent with the prior in-Settings behavior.
-      showStatus('Saved.', true);
-    } else if (res.status === 409) {
-      showStatus('That handle is taken.', false);
-    } else if (res.status === 400) {
-      showStatus('Use 1–32 letters, numbers, or hyphens.', false);
-    } else {
-      showStatus('Couldn’t save — try again.', false);
-    }
-  } catch {
-    showStatus('Couldn’t save — try again.', false);
+    state.myHandle = ((out.handle || next) + '').toLowerCase();
+    input.value = state.myHandle;
+    renderHandleChip();
+    // Keep the popover open briefly showing the inline "Saved." status.
+    showStatus('Saved.', true);
+  } catch (err: any) {
+    if (err.status === 409) showStatus('That handle is taken.', false);
+    else if (err.status === 400) showStatus('Use 1–32 letters, numbers, or hyphens.', false);
+    else showStatus('Couldn’t save — try again.', false);
   }
 }

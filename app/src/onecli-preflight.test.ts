@@ -1,10 +1,7 @@
 /**
  * classifyGatewayProbe — maps a OneCLI gateway probe to a startup log verdict.
- * Pins the diagnostics for the failure modes that have actually bitten this
- * project: unset URL, unreachable gateway, and an old gateway (no /v1 API).
- *
- * awaitGateway pins the retry policy that keeps a reboot's Docker-vs-systemd
- * race from being reported as a broken install.
+ * Pins the diagnostics for an unset URL, an unreachable gateway, and an old
+ * gateway (no /v1 API); awaitGateway pins the boot-race retry policy.
  */
 import { describe, it, expect } from 'vitest';
 

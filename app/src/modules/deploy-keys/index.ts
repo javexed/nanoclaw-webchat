@@ -17,14 +17,20 @@
  *
  * Memory holds the PATH and fingerprint, never key material — the same rule the
  * tool-secrets module applies to tokens.
+ *
+ * The group folder is mounted read-write into the agent's container, so a key
+ * file may be a link the agent planted. Nothing here follows one: a read would
+ * show a host file in the UI, a write or chmod would land on it.
  */
 import { execFileSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import { GROUPS_DIR } from '../../config.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { log } from '../../log.js';
+import { isPlainFile, readNoFollow, removeNoFollow, writeNoFollow } from '../../no-follow-fs.js';
 
 /** A deploy key, as the UI may see it. Never carries the private half. */
 export interface DeployKeyInfo {
@@ -37,8 +43,7 @@ export interface DeployKeyInfo {
    * Where the key is meant to be used, as `user@host`. Carried in the key's
    * comment because a keypair is otherwise just two opaque files: without it an
    * agent knows it HAS a key but not who to log in as, and burns a turn
-   * guessing usernames (observed: root/deploy/ubuntu/admin all tried, the right
-   * one never reached).
+   * guessing usernames.
    */
   target?: string;
 }
@@ -68,14 +73,24 @@ async function groupDir(agentGroupId: string): Promise<string | null> {
 }
 
 /** `deploy_key_<name>` — prefixed so keys are obvious among the group's files. */
-function keyFile(dir: string, name: string): string {
-  return path.join(dir, `deploy_key_${name}`);
+function keyRel(name: string): string {
+  return `deploy_key_${name}`;
 }
 
-function fingerprintOf(pubPath: string): string {
+/** Anything at all at `p`, a dangling link included (existsSync misses those). */
+function occupied(p: string): boolean {
   try {
-    // `ssh-keygen -lf` → "256 SHA256:… comment (ED25519)"; keep the hash only.
-    const out = execFileSync('ssh-keygen', ['-lf', pubPath], { encoding: 'utf-8', timeout: 5000 });
+    fs.lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function fingerprintOf(publicKey: string): string {
+  try {
+    // `ssh-keygen -lf -` → "256 SHA256:… comment (ED25519)"; keep the hash only.
+    const out = execFileSync('ssh-keygen', ['-lf', '-'], { input: publicKey, encoding: 'utf-8', timeout: 5000 });
     return out.trim().split(/\s+/)[1] ?? '';
   } catch {
     return '';
@@ -89,13 +104,13 @@ export async function listDeployKeys(agentGroupId: string): Promise<DeployKeyInf
   for (const entry of fs.readdirSync(dir)) {
     if (!entry.startsWith('deploy_key_') || !entry.endsWith('.pub')) continue;
     const name = entry.slice('deploy_key_'.length, -'.pub'.length);
-    const pubPath = path.join(dir, entry);
-    const publicKey = fs.readFileSync(pubPath, 'utf-8').trim();
+    if (!isPlainFile(dir, entry)) continue;
+    const publicKey = (readNoFollow(dir, entry) ?? '').trim();
     out.push({
       name,
       path: `/workspace/agent/deploy_key_${name}`,
       publicKey,
-      fingerprint: fingerprintOf(pubPath),
+      fingerprint: fingerprintOf(publicKey),
       target: targetFromComment(publicKey),
     });
   }
@@ -112,16 +127,24 @@ export async function createDeployKey(agentGroupId: string, name: string, target
   if (target && !TARGET_RE.test(target)) throw new Error('Target must look like user@host');
   const dir = await groupDir(agentGroupId);
   if (!dir) throw new Error('This agent has no workspace folder yet');
-  const priv = keyFile(dir, name);
-  if (fs.existsSync(priv) || fs.existsSync(`${priv}.pub`)) throw new Error(`A key named "${name}" already exists`);
+  const rel = keyRel(name);
+  if (occupied(path.join(dir, rel)) || occupied(path.join(dir, `${rel}.pub`)))
+    throw new Error(`A key named "${name}" already exists`);
 
   const group = (await getAgentGroup(agentGroupId))!;
   // The comment carries the target when we know it — that is what tells the
   // agent (via its memory note) who to log in as.
   const comment = target || `${name}@${group.folder}`;
-  execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', priv, '-N', '', '-C', comment, '-q'], { timeout: 15000 });
-  fs.chmodSync(priv, 0o600);
-  fs.chmodSync(`${priv}.pub`, 0o644);
+  // Generated in a private temp dir, then written in without following links.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-deploy-key-'));
+  try {
+    const priv = path.join(tmp, 'key');
+    execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', priv, '-N', '', '-C', comment, '-q'], { timeout: 15000 });
+    writeNoFollow(dir, rel, fs.readFileSync(priv), 0o600);
+    writeNoFollow(dir, `${rel}.pub`, fs.readFileSync(`${priv}.pub`), 0o644);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
   log.info('Deploy key created', { agentGroupId, name });
 
   const info = (await listDeployKeys(agentGroupId)).find((k) => k.name === name);
@@ -139,10 +162,11 @@ export async function setDeployKeyTarget(agentGroupId: string, name: string, tar
   if (!TARGET_RE.test(target)) throw new Error('Target must look like user@host');
   const dir = await groupDir(agentGroupId);
   if (!dir) throw new Error('This agent has no workspace folder yet');
-  const pubPath = `${keyFile(dir, name)}.pub`;
-  if (!fs.existsSync(pubPath)) throw new Error(`No key named "${name}"`);
-  const [type, material] = fs.readFileSync(pubPath, 'utf-8').trim().split(/\s+/);
-  fs.writeFileSync(pubPath, `${type} ${material} ${target}\n`, { mode: 0o644 });
+  const pubRel = `${keyRel(name)}.pub`;
+  const pub = isPlainFile(dir, pubRel) ? readNoFollow(dir, pubRel) : null;
+  if (pub === null) throw new Error(`No key named "${name}"`);
+  const [type, material] = pub.trim().split(/\s+/);
+  writeNoFollow(dir, pubRel, `${type} ${material} ${target}\n`, 0o644);
   log.info('Deploy key target set', { agentGroupId, name, target });
   return (await listDeployKeys(agentGroupId)).find((k) => k.name === name)!;
 }
@@ -151,10 +175,10 @@ export async function deleteDeployKey(agentGroupId: string, name: string): Promi
   if (!NAME_RE.test(name)) return false;
   const dir = await groupDir(agentGroupId);
   if (!dir) return false;
-  const priv = keyFile(dir, name);
-  if (!fs.existsSync(`${priv}.pub`)) return false;
-  fs.rmSync(priv, { force: true });
-  fs.rmSync(`${priv}.pub`, { force: true });
+  const rel = keyRel(name);
+  if (!occupied(path.join(dir, `${rel}.pub`))) return false;
+  removeNoFollow(dir, rel);
+  removeNoFollow(dir, `${rel}.pub`);
   log.info('Deploy key deleted', { agentGroupId, name });
   return true;
 }

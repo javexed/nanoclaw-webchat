@@ -20,14 +20,8 @@ export const manageTab = ref('agents');
 /** Last topology payload, or null before the first fetch. */
 export const topoData = ref<any>(null);
 
-/**
- * "roomId|agentId" for currently-wired pairs.
- *
- * A ref, not a bare Set: refreshMatrix REPLACES it wholesale from the topology
- * payload, and an imported const cannot be reassigned. It is also mutated in
- * place when a single cell toggles — both patterns are real, which is why my
- * first pass called it in-place-only and the compiler disagreed.
- */
+/** "roomId|agentId" for currently-wired pairs. A ref: refreshMatrix REPLACES it
+ *  wholesale, while a single cell toggle mutates it in place. */
 export const matrixWired = ref(new Set<string>());
 /** The open full views, innermost last: [{ name, teardown }]. Pushed and popped,
  *  never replaced, so closing one runs exactly its own teardown. */

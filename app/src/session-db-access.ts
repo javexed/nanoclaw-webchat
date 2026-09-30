@@ -1,11 +1,6 @@
-// Session-DB access for the fork's modules, fork-owned.
-//
-// Upstream's session-manager used to export these by-session openers; its
-// mailbox refactor moved raw access to mailbox/sqlite/session-db.ts (by path)
-// and dropped the by-session wrappers. Several fork modules still need them —
-// the status feed tails a session's outbound.db, per-user credential fan-out
-// syncs a room's transcript into a member session's inbound.db. They live here
-// so upstream's file stays untouched and the modules keep one import site.
+// By-session session-DB openers for this overlay's modules (the status feed
+// tails outbound.db; credential fan-out syncs a transcript into a member
+// session's inbound.db). Upstream only opens session DBs by path.
 import type Database from 'better-sqlite3';
 
 import {

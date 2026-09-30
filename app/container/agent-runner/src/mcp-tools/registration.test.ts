@@ -1,8 +1,6 @@
 /**
- * MCP tool registration — the outage class this guards against: a tool module
- * whose definitions don't match { tool: { name, ... }, handler } used to throw
- * at import and take the ENTIRE nanoclaw MCP server down for every agent,
- * invisibly (chat kept working via <message> envelopes). Three legs:
+ * MCP tool registration — a malformed tool module must not take the whole
+ * nanoclaw MCP server down (invisibly: chat keeps working). Three legs:
  *   1. every shipped tool module loads and registers well-formed definitions;
  *   2. the expected core tools are actually present by name;
  *   3. registerTools rejects malformed shapes instead of exploding later.

@@ -1,20 +1,11 @@
 <script setup lang="ts">
 /**
- * Read-aloud control on an agent reply, overlaid on the bubble's corner.
- *
- * buildTtsButton() returned null when no TTS path exists, so the button was
- * simply absent; the caller reproduces that with v-if on ttsOffered() rather
- * than rendering a disabled one.
- *
- * Three states, and the markup for each is exactly what resetTtsButton() and
- * markTtsPlaying() used to assign:
+ * Read-aloud control on an agent reply, overlaid on the bubble's corner; the caller
+ * omits it (v-if on ttsOffered()) when no TTS path exists. Three states:
  *
  *   idle     volume-2  aria-label/title 'Read aloud'
  *   loading  volume-2  aria-label 'Synthesizing…', title UNCHANGED, +tts-loading
  *   playing  square    aria-label/title 'Stop', +tts-playing
- *
- * The loading state keeping the idle TITLE is not an oversight being tidied up:
- * speak() set only aria-label, and this phase reproduces it.
  */
 import { computed } from 'vue';
 import { ttsActiveKey, ttsPhase, toggleTts } from './voice.js';

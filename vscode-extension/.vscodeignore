@@ -11,3 +11,5 @@ pnpm-workspace.yaml
 harness/**
 .vscode-test/**
 logs/**
+data/**
+scripts/**

@@ -10,8 +10,7 @@ import { missingRegistrations } from './index.js';
  * The failure this guards: a skill copies a provider file but its barrel-import
  * step does not run, so registration never happens. Everything compiles and
  * every test passes; the group pinned to that provider dies at spawn with
- * `Unknown provider`, hours later, in a container whose logs are gone. pi sat
- * that way for five days.
+ * `Unknown provider`, hours later, in a container whose logs are gone.
  */
 describe('missingRegistrations', () => {
   it('flags a provider groups use that never registered', async () => {

@@ -15,8 +15,8 @@
  * The size penalty encodes "a 30B on modest hardware loses to a good 9B"
  * without hardcoding hosts (paramB parsed from the model id: ':30b', '-9b',
  * …). Operators pin a route with `"pinned": true` in routes.json — the
- * binder never touches those, or the escalate route (no local binding by
- * design), or route DESCRIPTIONS (the classifier's whole game).
+ * binder never touches those, or route DESCRIPTIONS (the classifier's whole
+ * game).
  *
  * Dry-run by default (prints the decision table); --apply writes routes.json
  * atomically. Wired into the nightly recalibration timer and the webchat
@@ -55,17 +55,13 @@ export function scoreModel(modelId, route, catalog) {
 }
 
 /**
- * Decide bindings for every unpinned, non-escalate route. Returns
+ * Decide bindings for every unpinned route. Returns
  * { decisions: [{route, current, chosen, score, changed, pinned}], unknown: [...] }.
  */
 export function chooseBindings(routesCfg, roster, catalog) {
   const decisions = [];
   const unknown = roster.filter((m) => !matchCatalog(m, catalog.entries));
   for (const r of routesCfg.routes) {
-    if (r.escalate) {
-      decisions.push({ route: r.name, current: null, chosen: null, score: null, changed: false, pinned: true });
-      continue;
-    }
     if (r.pinned) {
       decisions.push({ route: r.name, current: r.model, chosen: r.model, score: null, changed: false, pinned: true });
       continue;
@@ -122,7 +118,7 @@ export function usablePromptTokens(numCtx) {
 export function annotateContext(router, ctxByModel) {
   let changed = 0;
   for (const r of router.routes ?? []) {
-    if (!r.model || r.escalate) continue;
+    if (!r.model) continue;
     const ctx = ctxByModel[r.model];
     if (typeof ctx !== 'number') continue;
     const cap = usablePromptTokens(ctx);

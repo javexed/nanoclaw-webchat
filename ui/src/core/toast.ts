@@ -1,11 +1,15 @@
 // ── Toasts ───────────────────────────────────────────────────────────────────
-// The UI's only notification primitive (~330 call sites). Depends on core/dom
-// and nothing else, so it stays a leaf: modules import it, it imports no
+// The UI's only notification primitive. A leaf: it imports core/dom and no
 // feature code.
 import { $ } from './dom.js';
 
 export type ToastKind = 'info' | 'success' | 'error';
 
+/**
+ * Transient corner notification. `kind` is 'info' (default), 'success', or
+ * 'error'. Errors linger longer and must be dismissed-or-time-out; all toasts
+ * are click-to-dismiss. Returns the element so callers can remove it early.
+ */
 export function showToast(
   message: string,
   { kind = 'info', timeout }: { kind?: ToastKind; timeout?: number } = {},

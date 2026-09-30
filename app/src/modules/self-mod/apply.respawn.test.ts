@@ -1,5 +1,5 @@
 /**
- * Guard for the multi-session self-mod fix: a package/MCP change applies to the
+ * A package/MCP change applies to the
  * whole agent group, so EVERY active session's container must be respawned —
  * not just the one that requested it. Otherwise an agent wired to multiple
  * rooms keeps a stale container in the other rooms and re-requests forever.

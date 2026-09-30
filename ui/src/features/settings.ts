@@ -5,7 +5,8 @@
 // The section renderers that belong to another feature (skills sources, MCP,
 // credentials, TTS/STT install) deliberately stay with that feature and are
 // called from here — the overlay is a host, not an owner.
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { $, esc } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { openAgentDetail, removeToolSecret, toolSecretUrl } from './agents.js';
 import { permsMyUserId } from './perms-list-state.js';
 import { myCredGroups, myCredSaving } from './my-credentials-state.js';
@@ -15,7 +16,7 @@ import MyCredentials from './MyCredentials.vue';
 import Preflight from './Preflight.vue';
 import { sttChosenBackend } from './settings-state.js';
 import { codexInstallActive, opencodeInstallActive } from './installer-state.js';
-import { showToast, toastError } from '../core/toast.js';
+import { showToast } from '../core/toast.js';
 import { renderSignins } from './signins.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
@@ -27,19 +28,15 @@ import { createApp, nextTick } from 'vue';
 import PrejudgeModelOptions from './PrejudgeModelOptions.vue';
 import { prejudgeModelOptions, prejudgeRows } from './prejudge-state.js';
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideSettingsDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
+/** Supplied by provideSettingsDeps in composition-root.ts. `any` marks a signature not
+ *  yet typed, not an opt-out of checking. */
 export interface SettingsDeps {
   updateUserCredsBanner: (a0?: any) => any;
 }
 
 const deps = {} as SettingsDeps;
 
-/** Wire the legacy helpers this module calls. Call once at startup. */
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 export function provideSettingsDeps(provided: Partial<SettingsDeps>): void {
   Object.assign(deps, provided);
 }
@@ -92,6 +89,7 @@ export function renderSettingsModal() {
 
 }
 
+// ── Workspace credentials policy (Settings → User credentials, owner-only) ──
 let credConfigWired = false;
 
 export async function renderCredentialsSettings() {
@@ -99,12 +97,7 @@ export async function renderCredentialsSettings() {
   if (!section) return;
   let cfg;
   try {
-    const r = await authFetch('/api/webchat/credentials-config');
-    if (!r.ok) {
-      section.hidden = true;
-      return;
-    }
-    cfg = await r.json();
+    cfg = await apiJson('/api/webchat/credentials-config');
   } catch {
     section.hidden = true;
     return;
@@ -118,10 +111,8 @@ export async function renderCredentialsSettings() {
     btn!.classList.toggle('active', (btn as HTMLElement).dataset.value === cfg.defaultMode);
   });
   // Allowed providers — pill toggles (multi-select). "on" = accept BOTH a key
-  // and a subscription for that provider. Displayed with AND (not OR) so the
-  // pill can't read "on" while one half (e.g. OAuth) is actually off — that
-  // mismatch hid the "Connect to <provider>" (OAuth) action even though the
-  // pill looked enabled (allowClaudeOauth defaults off, allowAnthropicKey on).
+  // and a subscription. Displayed with AND so the pill never reads "on" while
+  // one half (e.g. OAuth, off by default) is off.
   const providerOn = {
     claude: !!(cfg.allowAnthropicKey && cfg.allowClaudeOauth),
     codex: !!(cfg.allowOpenaiKey && cfg.allowCodexOauth),
@@ -238,14 +229,19 @@ export async function renderCredentialsSettings() {
       if (await putConfig({ [keyFlag]: on, [oauthFlag]: on })) {
         btn!.classList.toggle('active', on);
         // Reflect the policy change in the open chat's credential banner right
-        // away (show/hide "Connect to <provider>") instead of waiting for the
-        // next room open — the gap that made enabling OAuth look like a no-op.
+        // away rather than on the next room open.
         if (state.currentRoom) deps.updateUserCredsBanner(state.currentRoom);
       }
     });
   });
 }
 
+// ── HTTPS over Tailscale (`tailscale serve`) ─────────────────────────────────
+// Owner/global-admin. Shown only when tailscaled is detected up on the host.
+// Enabling fronts webchat with a real *.ts.net cert so it's a secure context
+// (PWA install / push / voice). Identity stays continuous across http→https
+// (auth.ts maps Serve's header back to the whois id), so an owner claimed over
+// http://<node>.ts.net:PORT stays owner over https.
 let accessHttpsWired = false;
 
 export async function renderHttpsSettings() {
@@ -259,8 +255,7 @@ export async function renderHttpsSettings() {
   }
   let state = null;
   try {
-    const r = await authFetch('/api/webchat/tailscale-https');
-    if (r.ok) state = await r.json();
+    state = await apiJson('/api/webchat/tailscale-https');
   } catch {
     state = null;
   }
@@ -311,29 +306,17 @@ const PI_SETTINGS_ELS = {
 } as Record<string, string>;
 
 /**
- * About — what this install is actually running.
- *
- * Nothing reported that before. The nanoclaw version was readable only from
- * package.json on the box, and the webchat overlay had no version at all: this
- * repo's versions.json is a build input that never ships, and the install's own
- * versions.json is nanoclaw's onecli/agent pins — a different file with the
- * same name. install.sh now stamps `.webchat-provenance.json`, which is where
- * the webchat rows come from.
- *
- * Read-only by design. Both components update through git against a customised
- * tree, so there is no honest one-click here — the hint under the rows says so
- * rather than implying a button is coming.
- *
- * Gated by the endpoint, not a role flag: /api/system/versions is anyAdmin, so
- * a 403 hides the section the same way the other probe-gated sections work.
+ * About — what this install is actually running; the webchat rows come from the
+ * `.webchat-provenance.json` install.sh stamps. Read-only: both components update
+ * through git against a customised tree, so there is no honest one-click.
+ * Gated by the endpoint (/api/system/versions is anyAdmin): a 403 hides it.
  */
 export async function renderAboutSettings(): Promise<void> {
   const section = $('#settings-about');
   if (!section) return;
   let v: any = null;
   try {
-    const res = await authFetch('/api/system/versions');
-    if (res.ok) v = await res.json();
+    v = await apiJson('/api/system/versions');
   } catch {
     v = null;
   }
@@ -342,13 +325,9 @@ export async function renderAboutSettings(): Promise<void> {
     return;
   }
   const short = (sha: unknown) => (typeof sha === 'string' && sha ? sha.slice(0, 12) : null);
-  // A dirty tree is NOT the commit it names, so say so rather than printing a
-  // SHA the operator cannot reconcile with what is running. This still applies
-  // to WEBCHAT's ref, which records whether the source repo was clean when the
-  // release was composed. It no longer applies to nanoclaw's: that tree is
-  // modified by construction, so the flag was true on every working install.
-  // What replaces it is the composition row below, which compares the payload
-  // on disk against what the composition actually wrote.
+  // A dirty tree is NOT the commit it names, so say so. Only webchat's ref
+  // carries the flag: nanoclaw's tree is modified by construction, so the
+  // composition row below checks the payload on disk instead.
   const withDirty = (sha: string | null, dirty: boolean | null) =>
     sha ? sha + (dirty ? ' (modified)' : '') : null;
 
@@ -400,8 +379,7 @@ export async function renderAuditSettings(): Promise<void> {
   if (!section) return;
   let info: any = null;
   try {
-    const res = await authFetch('/api/webchat/audit-syslog');
-    if (res.ok) info = await res.json();
+    info = await apiJson('/api/webchat/audit-syslog');
   } catch {
     info = null;
   }
@@ -476,8 +454,7 @@ const mb = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)}
 async function renderAuditRetention(): Promise<void> {
   let info: any = null;
   try {
-    const res = await authFetch('/api/webchat/audit-retention');
-    if (res.ok) info = await res.json();
+    info = await apiJson('/api/webchat/audit-retention');
   } catch {
     info = null;
   }
@@ -500,16 +477,9 @@ async function renderAuditRetention(): Promise<void> {
 }
 
 /**
- * Backup section — owner-only, and until now the ONE section in Settings that
- * started visible with no gate at all. Every other section ships `hidden` in
- * the markup and reveals itself only after its own capability probe passes,
- * so they fail closed; this one failed open and showed a member three buttons
- * that could only ever 403 (`/api/system/export` and `/api/system/import`
- * both carry `guards: ['owner']`).
- *
- * `state.isOwnerView` is the same signal the secrets, skill-sources and
- * prejudge sections use, so this stays consistent with its neighbours rather
- * than adding a fourth way to ask the same question.
+ * Backup section — owner-only (`/api/system/export` and `/import` carry
+ * `guards: ['owner']`). Ships hidden and fails closed like every other section;
+ * gated on `state.isOwnerView`, the same signal its neighbours use.
  */
 export function renderBackupSettings(): void {
   const section = $('#settings-backup');
@@ -518,17 +488,9 @@ export function renderBackupSettings(): void {
 }
 
 /**
- * Hide the "Features" column when every feature inside it is hidden.
- *
- * The column is a heading plus four independently-gated sections (TTS, STT,
- * auto-learn, credential isolation). Gate the column on a role and it breaks
- * for whoever holds a role the column doesn't model — a global admin sees
- * auto-learn and credential isolation but is not an owner. So derive it from
- * the children instead: the column is worth showing iff something is in it.
- *
- * Runs after the async gates settle. Each child render hides itself on a 403
- * that we cannot observe synchronously, so calling this inline with
- * openSettings would always see the pre-fetch state.
+ * Hide the "Features" column when every feature inside it is hidden. Derived
+ * from the children, not a role: its sections are gated independently. Runs
+ * after the async gates settle, since each child hides itself on a 403.
  */
 function syncFeaturesColumn(): void {
   const col = $('#settings-features-col');
@@ -537,11 +499,9 @@ function syncFeaturesColumn(): void {
   col.hidden = !anyVisible;
 }
 
-// Settings is YOUR settings now: appearance, your own credentials, and the two
-// speech features. Everything that configures the installation moved to the
-// Admin view — see features/admin.ts for why, and for the renderers that went
-// with it. Adding an operator control back here is almost always a mistake;
-// it belongs in an Admin group.
+// Settings is YOUR settings: appearance, your own credentials, and the two
+// speech features. Controls that configure the installation belong in the
+// Admin view (features/admin.ts).
 export function openSettings() {
   renderSettingsModal();
   void Promise.allSettled([renderTtsSetupSettings(), renderSttSetupSettings()]).then(syncFeaturesColumn);
@@ -559,6 +519,12 @@ export function closeSettings() {
   $('#settings-overlay')!.hidden = true;
 }
 
+// ── Settings → Features → Read aloud (one-click Kokoro install) ─────────────
+// Owner-only endpoint; non-owners still see the block (hidden install row —
+// the per-device toggle works for everyone via Web Speech). Same install-row
+// + progress-log pattern as Auto routing; the health-check phase covers the
+// ~330MB first-boot model download, and the final step activates the .env
+// flags in-process, so no host restart.
 let ttsInstallWired = false;
 
 export async function renderTtsSetupSettings() {
@@ -603,13 +569,12 @@ export async function renderTtsSetupSettings() {
   }
   let st = null;
   try {
-    const res = await authFetch('/api/webchat/tts/install');
-    if (res.ok) st = await res.json();
+    st = await apiJson('/api/webchat/tts/install');
   } catch {
     st = null;
   }
   if (!st) {
-    // Non-owner: the whole block is the owner's control surface now that the
+    // Non-owner: the whole block is the owner's control surface, since the
     // switch applies workspace-wide.
     section.hidden = true;
     return;
@@ -677,6 +642,10 @@ export async function renderTtsSetupSettings() {
   }
 }
 
+// ── Settings → Features → Voice dictation (install + config, owner-only) ────
+// Backend segmented Local/ElevenLabs; Local shows the hardware-suggested model
+// select + Install, ElevenLabs swaps to key + Connect. Same install-row/log/
+// badge flow as Read aloud, through /api/webchat/stt/install.
 let sttInstallWired = false;
 
 let sttLastState: any = null; // last /api/webchat/stt/install snapshot (render + change guard)
@@ -686,8 +655,7 @@ export async function renderSttSetupSettings() {
   if (!section) return;
   let st = null;
   try {
-    const res = await authFetch('/api/webchat/stt/install');
-    if (res.ok) st = await res.json();
+    st = await apiJson('/api/webchat/stt/install');
   } catch {
     st = null;
   }
@@ -705,10 +673,8 @@ export async function renderSttSetupSettings() {
     sttInstallWired = true;
     document.querySelectorAll('#stt-backend-mode .setting-option').forEach((b) => {
       b.addEventListener('click', () => {
-        // dataset.value is string|undefined; every button in this group carries
-        // data-value, so the fallback is unreachable in practice — but assigning
-        // undefined would blank the choice rather than leave it, which is worse
-        // than falling back to the declared default.
+        // Every button carries data-value; the fallback only keeps the type
+        // honest rather than letting undefined blank the choice.
         sttChosenBackend.value = (b as HTMLElement).dataset.value ?? 'local';
         renderSttSetupSettings();
       });
@@ -835,7 +801,7 @@ export async function renderSttSetupSettings() {
     if (st.running) pollSttInstall();
     // Cleanup model applies whichever backend transcribes.
     try {
-      const cfg = await (await authFetch('/api/stt/config')).json();
+      const cfg = await apiJson('/api/stt/config');
       if (cfg.canEdit) {
         await renderSttCleanupSelect(cfg);
         // Prompt editor: prefill with the effective prompt; Reset only shows
@@ -876,15 +842,10 @@ export async function renderSttSetupSettings() {
 let prejudgeOptionsApp: any = null;
 
 function mountPrejudgeModelOptions(): void {
-  if (prejudgeOptionsApp) return;
-  const host = $('#prejudge-model-select');
-  if (!host) return;
-  prejudgeOptionsApp = createApp(PrejudgeModelOptions);
-  prejudgeOptionsApp.mount(host);
+  prejudgeOptionsApp ??= mountIsland('#prejudge-model-select', () => createApp(PrejudgeModelOptions));
 }
 
-// Exported now that the Admin view owns this block — it was private while
-// openSettings was its only caller.
+// Rendered from the Admin view.
 export async function renderPrejudgeSettings() {
   const section = $('#settings-prejudge')!;
   if (!section) return;
@@ -892,8 +853,7 @@ export async function renderPrejudgeSettings() {
   if (!state.isOwnerView) return;
   let cfg = null;
   try {
-    const r = await authFetch('/api/approvals/prejudge');
-    if (r.ok) cfg = await r.json();
+    cfg = await apiJson('/api/approvals/prejudge');
   } catch {}
   if (!cfg) {
     section.hidden = true; // endpoint 403'd or failed — no surface
@@ -905,7 +865,7 @@ export async function renderPrejudgeSettings() {
   // a local kind with an endpoint.
   let options: Array<{ id: string; label: string }> = [];
   try {
-    const models = await (await authFetch('/api/models')).json();
+    const models = await apiJson('/api/models');
     options = models
       .filter(
         (m: any) =>
@@ -939,15 +899,17 @@ export async function renderPrejudgeSettings() {
   };
 }
 
+// ── Settings → "Set up routing" (one-click add-routing install) ─────────────
+// Owner-only (the /api/router/install endpoint 403s otherwise, hiding the whole
+// section). Scaffolds routing + pulls the classifier model, then the Routing tab
+// appears via probeRoutingAvailability().
 let routingInstallWired = false;
 
 export async function renderRoutingSetup() {
   const section = $('#routing-setup')!;
   let st;
   try {
-    const res = await authFetch('/api/router/install');
-    if (!res.ok) { section.hidden = true; return; } // 403 (non-owner) etc. → no surface
-    st = await res.json();
+    st = await apiJson('/api/router/install'); // throws on 403 (non-owner) etc. → no surface
   } catch {
     section.hidden = true;
     return;
@@ -1084,11 +1046,7 @@ function urlBase64ToUint8Array(base64String: string): BufferSource {
 
 // ── Panel wiring ───────────────────────────────────────────────────────────
 // The settings surface: the panel toggles, theme and font controls.
-//
-// One function per GROUP of blocks, each called from the line its group
-// started on. Blocks with an executing statement between them cannot share a
-// function: a single call at the first block moves the later ones ahead of
-// whatever ran in between, which the boot-order trace catches.
+// One function per run of boot statements: a call cannot span an executing statement without reordering boot.
 
 export function wireSettingsPanel1(): void {
   $('#settings-overlay')?.addEventListener('click', (e) => {
@@ -1108,6 +1066,8 @@ export function wireSettingsPanel2(): void {
       renderSettingsModal();
     });
   });
+
+  // Font size selection
   document.querySelectorAll<HTMLElement>('#font-options .setting-option').forEach((btn) => {
     btn.addEventListener('click', () => {
       if (state.settings) state.settings.font = btn.dataset.value as never;
@@ -1116,6 +1076,8 @@ export function wireSettingsPanel2(): void {
       renderSettingsModal();
     });
   });
+
+  // Send key selection
   document.querySelectorAll<HTMLElement>('#send-options .setting-option').forEach((btn) => {
     btn.addEventListener('click', () => {
       if (state.settings) state.settings.sendKey = btn.dataset.value as never;
@@ -1123,6 +1085,10 @@ export function wireSettingsPanel2(): void {
       renderSettingsModal();
     });
   });
+
+  // Read aloud — WORKSPACE-level: the owner flips it for everyone (PUT
+  // /api/tts/config, owner-gated server-side); other members see it after
+  // their next reload.
   const readAloud = $<HTMLInputElement>('#tts-readaloud-toggle');
   readAloud?.addEventListener('change', async () => {
     const on = readAloud.checked;
@@ -1151,6 +1117,8 @@ export function wireSettingsPanel2(): void {
       readAloud.disabled = false;
     }
   });
+
+  // Notifications toggle — handles both foreground Notifications and Web Push
   const notifToggle = $<HTMLInputElement>('#notif-toggle');
   notifToggle?.addEventListener('change', async () => {
     if (notifToggle.checked) {
@@ -1237,6 +1205,10 @@ export function sttRenderBackendChoice(st: any) {
   if (local) sttPopulateModelSelect(st);
 }
 
+// ── Self-test (preflight) ────────────────────────────────────────────────────
+// Runs capability checks (tailscale, docker, container→host networking) from
+// the vantage point that matters and shows verdicts + copy-paste fixes. Owner-
+// gated to match the endpoint (GET 401s everyone else → section stays hidden).
 export async function renderSelfTest() {
   const section = $('#settings-selftest');
   if (!section) return;
@@ -1274,19 +1246,12 @@ export async function renderSelfTest() {
     const orig = btn.textContent;
     btn!.textContent = 'Running…';
     out!.hidden = false;
-    // The wait line, the error and the rows all landed in this one element by
-    // three different routes; they are one island's phases now.
+    // The wait line, the error and the rows are one island's phases.
     preflightMessage.value = 'Running checks (this may spin a probe container)…';
     preflightPhase.value = 'running';
     mountPreflight();
     try {
-      const res = await authFetch('/api/webchat/preflight');
-      const data = await res.json();
-      if (!res.ok) {
-        preflightMessage.value = data.error || res.statusText;
-        preflightPhase.value = 'message';
-        return;
-      }
+      const data = await apiJson('/api/webchat/preflight');
       const checks = data.checks || [];
       if (!checks.length) {
         preflightMessage.value = 'No checks ran.';
@@ -1309,6 +1274,13 @@ export async function renderSelfTest() {
   });
 }
 
+/**
+ * Credential isolation — an install policy, shown only to someone who can change
+ * it. `credentialIsolation` is null when no choice has been made here, in which
+ * case .env decides and the row says so; the toggle still reflects what is
+ * actually in force (`credentialIsolationEffective`) so it never contradicts
+ * the agent panel's "Not private yet" note.
+ */
 export function renderCredentialIsolation(feats: any) {
   const box = $('#settings-credential-isolation');
   if (!box) return;
@@ -1326,12 +1298,11 @@ export function renderCredentialIsolation(feats: any) {
     const want = toggle!.checked;
     toggle!.disabled = true;
     try {
-      const r = await authFetch('/api/webchat/features', {
+      await apiJson('/api/webchat/features', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-        body: JSON.stringify({ credentialIsolation: want }),
+        headers: { 'X-Webchat-CSRF': '1' },
+        body: { credentialIsolation: want },
       });
-      if (!r.ok) throw new Error('save failed');
       envNote!.hidden = true;
       // Applied per spawn, so running agents keep their current scope until they
       // next start — say so rather than implying it took effect everywhere now.
@@ -1346,26 +1317,24 @@ export function renderCredentialIsolation(feats: any) {
 }
 
 export function mountPrejudgeActions() {
-  if (prejudgeApp) return;
-  const host = $('#prejudge-actions-list');
-  if (!host) return;
-  prejudgeApp = createApp(PrejudgeActions, {
-    onToggle: async (cb: any) => {
-      // Disabled rows can never contribute — the never-list is enforced by the
-      // selector, not by trusting the rendered checked state.
-      const next = [...$('#prejudge-actions-list')!.querySelectorAll('input:not(:disabled):checked')].map(
-        (el) => (el as HTMLElement).dataset.action,
-      );
-      try {
-        await apiJson('/api/approvals/prejudge', { method: 'PUT', body: { actions: next } });
-        showToast('Approval pre-judge saved', { kind: 'success' });
-      } catch (err) {
-        cb.checked = !cb.checked;
-        showToast('Could not save: ' + ((err as any)?.message || err), { kind: 'error' });
-      }
-    },
-  });
-  prejudgeApp.mount(host);
+  prejudgeApp ??= mountIsland('#prejudge-actions-list', () =>
+    createApp(PrejudgeActions, {
+      onToggle: async (cb: any) => {
+        // Disabled rows can never contribute — the never-list is enforced by the
+        // selector, not by trusting the rendered checked state.
+        const next = [...$('#prejudge-actions-list')!.querySelectorAll('input:not(:disabled):checked')].map(
+          (el) => (el as HTMLElement).dataset.action,
+        );
+        try {
+          await apiJson('/api/approvals/prejudge', { method: 'PUT', body: { actions: next } });
+          showToast('Approval pre-judge saved', { kind: 'success' });
+        } catch (err) {
+          cb.checked = !cb.checked;
+          showToast('Could not save: ' + ((err as any)?.message || err), { kind: 'error' });
+        }
+      },
+    }),
+  );
 }
 
 export function renderPrejudgeActions(cfg: any) {
@@ -1389,60 +1358,61 @@ export function renderPrejudgeActions(cfg: any) {
 }
 
 export function mountMyCredentials() {
-  if (myCredsApp) return;
-  const host = $('#my-credentials-list');
-  if (!host) return;
-  myCredsApp = createApp(MyCredentials, {
-    // The same rows live under "Only you" on the agent's own panel.
-    onOpenAgent: (group: any) => {
-      closeSettings();
-      void openAgentDetail(group.agentGroupId);
-    },
-    onRemove: async (group: any, sec: any) => {
-      await removeToolSecret({ agentGroupId: group.agentGroupId, userId: permsMyUserId.value }, sec, null);
-      await renderMyCredentials();
-    },
-    onAdd: async (group: any, hostPattern: any, value: any, fields: any) => {
-      if (!hostPattern || !value) {
-        showToast('Host and value are required', { kind: 'error' });
-        return;
-      }
-      const scope = { agentGroupId: group.agentGroupId, userId: permsMyUserId.value };
-      myCredSaving.value = new Set(myCredSaving.value).add(group.agentGroupId);
-      try {
-        const r = await authFetch(toolSecretUrl(scope), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-          body: JSON.stringify({ hostPattern, value }),
-        });
-        if (!r.ok) {
-          showToast((await r.json().catch(() => ({}))).error || 'Could not add secret', { kind: 'error' });
+  myCredsApp ??= mountIsland('#my-credentials-list', () =>
+    createApp(MyCredentials, {
+      // The same rows live under "Only you" on the agent's own panel.
+      onOpenAgent: (group: any) => {
+        closeSettings();
+        void openAgentDetail(group.agentGroupId);
+      },
+      onRemove: async (group: any, sec: any) => {
+        await removeToolSecret({ agentGroupId: group.agentGroupId, userId: permsMyUserId.value }, sec, null);
+        await renderMyCredentials();
+      },
+      onAdd: async (group: any, hostPattern: any, value: any, fields: any) => {
+        if (!hostPattern || !value) {
+          showToast('Host and value are required', { kind: 'error' });
           return;
         }
-        // Clear the uncontrolled fields directly, as before — the list
-        // re-renders next, but these inputs are not keyed by their contents.
-        for (const el of fields) el.value = '';
-        showToast(`Added ${hostPattern}`);
-        await renderMyCredentials();
-      } catch {
-        showToast('Could not add secret', { kind: 'error' });
-      } finally {
-        const next = new Set(myCredSaving.value);
-        next.delete(group.agentGroupId);
-        myCredSaving.value = next;
-      }
-    },
-  });
-  myCredsApp.mount(host);
+        const scope = { agentGroupId: group.agentGroupId, userId: permsMyUserId.value };
+        myCredSaving.value = new Set(myCredSaving.value).add(group.agentGroupId);
+        try {
+          const r = await authFetch(toolSecretUrl(scope), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
+            body: JSON.stringify({ hostPattern, value }),
+          });
+          if (!r.ok) {
+            showToast((await r.json().catch(() => ({}))).error || 'Could not add secret', { kind: 'error' });
+            return;
+          }
+          // Clear the uncontrolled fields directly: the list re-renders next,
+          // but these inputs are not keyed by their contents.
+          for (const el of fields) el.value = '';
+          showToast(`Added ${hostPattern}`);
+          await renderMyCredentials();
+        } catch {
+          showToast('Could not add secret', { kind: 'error' });
+        } finally {
+          const next = new Set(myCredSaving.value);
+          next.delete(group.agentGroupId);
+          myCredSaving.value = next;
+        }
+      },
+    }),
+  );
 }
 
+// ── My credentials ──────────────────────────────────────────────────────────
+// Self-service personal credentials, one block per agent the person is enrolled
+// in. Not admin-gated by design: a per-user PAT is only worth having if its
+// owner is the only one who ever handles it.
 export async function renderMyCredentials() {
   const section = $('#settings-my-credentials');
   if (!section) return;
   let groups = [];
   try {
-    const r = await authFetch('/api/tool-secrets/mine');
-    if (r.ok) groups = (await r.json()).groups || [];
+    groups = (await apiJson('/api/tool-secrets/mine')).groups || [];
   } catch {
     groups = [];
   }
@@ -1456,7 +1426,6 @@ export async function renderMyCredentials() {
   mountMyCredentials();
 }
 
-// Module state that came across with the panels above.
 let preflightApp: any = null;
 let selftestWired = false;
 const PREFLIGHT_ICON: Record<string, string> = { ok: '✓', warn: '⚠', fail: '✕', info: '•' };

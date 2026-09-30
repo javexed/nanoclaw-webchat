@@ -4,31 +4,16 @@
 import { createApp } from 'vue';
 import PermsGlobalToggles from './PermsGlobalToggles.vue';
 import PermsMatrix from './PermsMatrix.vue';
-import { permsActive, permsAgents, permsCreateChannelTouched, permsDetailUser, permsMyUserId, permsSelectedUserId, permsUserFilter, permsUsers } from './perms-list-state.js';
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
-import { showToast, toastError } from '../core/toast.js';
+import { permsActive, permsAgents, permsCreateChannelTouched, permsDetailUser, permsMyUserId, permsSelectedUserId, permsUsers } from './perms-list-state.js';
+import { $ } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
+import { showToast } from '../core/toast.js';
 import { authFetch, apiJson } from '../core/api.js';
-import { state } from '../core/state.js';
+import '../core/state.js';
 import { populatePermsAgentDropdowns } from './agents.js';
 import { applyCreateAuthDefault, ensureServerAuthMethods } from './auth.js';
 import { renderPermsUserList, showPermsUsersError, userDisplayName, userIsOwner } from './members.js';
 import { closeView, hideOtherFullViews, openFullView, openView } from './views.js';
-
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the providePermsDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
-export interface PermsDeps {
-}
-
-const deps = {} as PermsDeps;
-
-/** Wire the legacy helpers this module calls. Call once at startup. */
-export function providePermsDeps(provided: Partial<PermsDeps>): void {
-  Object.assign(deps, provided);
-}
 
 function openPermissions() {
   openFullView(() => {
@@ -62,9 +47,8 @@ export async function refreshPermissions() {
   try {
     const [usersRes, agentsRes] = await Promise.all([authFetch('/api/users'), authFetch('/api/agents')]);
     if (!usersRes.ok) {
-      // Routed through state, not written into #perms-user-list. That element
-      // is a Vue mount point now, and an innerHTML write behind Vue's back
-      // leaves the vnode tree describing rows that are no longer in the DOM.
+      // Routed through state, not written into #perms-user-list: that element
+      // is a Vue mount point, and an innerHTML write desyncs its vnode tree.
       showPermsUsersError('Failed to load users.');
       return;
     }
@@ -88,30 +72,22 @@ let globalTogglesApp: ReturnType<typeof createApp> | null = null;
 let matrixApp: ReturnType<typeof createApp> | null = null;
 
 function mountPermsDetail(): void {
-  if (!globalTogglesApp) {
-    const host = $('#perms-global-toggles');
-    if (host) {
-      globalTogglesApp = createApp(PermsGlobalToggles, {
-        onToggle: (kind: string, granting: boolean) => {
-          const u = permsDetailUser.value;
-          if (u) togglePerm(u.id, kind, null, granting);
-        },
-      });
-      globalTogglesApp.mount(host);
-    }
-  }
-  if (!matrixApp) {
-    const host = $('#perms-matrix');
-    if (host) {
-      matrixApp = createApp(PermsMatrix, {
-        onToggle: (kind: string, agentGroupId: string, granting: boolean, el: HTMLElement) => {
-          const u = permsDetailUser.value;
-          if (u) togglePerm(u.id, kind, agentGroupId, granting, el);
-        },
-      });
-      matrixApp.mount(host);
-    }
-  }
+  globalTogglesApp ??= mountIsland('#perms-global-toggles', () =>
+    createApp(PermsGlobalToggles, {
+      onToggle: (kind: string, granting: boolean) => {
+        const u = permsDetailUser.value;
+        if (u) togglePerm(u.id, kind, null, granting);
+      },
+    }),
+  );
+  matrixApp ??= mountIsland('#perms-matrix', () =>
+    createApp(PermsMatrix, {
+      onToggle: (kind: string, agentGroupId: string, granting: boolean, el: HTMLElement) => {
+        const u = permsDetailUser.value;
+        if (u) togglePerm(u.id, kind, agentGroupId, granting, el);
+      },
+    }),
+  );
 }
 
 export function renderPermsDetail(userId: any) {
@@ -120,12 +96,9 @@ export function renderPermsDetail(userId: any) {
   $('#perms-detail-name')!.textContent = userDisplayName(u);
   $('#perms-detail-id')!.textContent = u.id;
 
-  // The GLOBAL toggles and the PER-AGENT-GROUP matrix are two islands, mounted
-  // into two separate containers because index.html puts a static
-  // .perms-matrix-header between them. They share one input — the selected
-  // user — so the toggle callbacks read it from the ref rather than closing
-  // over `u`: a callback that captured this call's user would keep firing
-  // against a stale id after the next selection.
+  // The global toggles and the per-group matrix are two islands (index.html has
+  // a static header between them). Their callbacks read the selected user from
+  // this ref rather than closing over `u`, which would go stale on reselect.
   permsDetailUser.value = u;
   mountPermsDetail();
 
@@ -146,6 +119,11 @@ export function renderPermsDetail(userId: any) {
   }
 }
 
+/**
+ * Toggle a permission on or off. `granting=true` calls /grant; false calls
+ * /revoke. The cell is briefly disabled while the request is in flight, then
+ * the canonical state is re-fetched from the server.
+ */
 async function togglePerm(targetUserId?: any, kind?: any, agentGroupId?: any, granting?: any, cellEl?: any) {
   if (cellEl) cellEl.classList.add('busy');
   const ok = granting
@@ -161,16 +139,7 @@ async function revokePermSilent(targetUserId: any, kind: any, agentGroupId: any)
   // owner protection still trips the server's 409 response, surfaced as an
   // alert rather than a confirmation prompt.
   try {
-    const r = await authFetch('/api/permissions/revoke', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-      body: JSON.stringify({ userId: targetUserId, kind, agentGroupId }),
-    });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      showToast('Revoke failed: ' + (err.error || r.statusText), { kind: 'error' });
-      return false;
-    }
+    await apiJson('/api/permissions/revoke', { method: 'POST', body: { userId: targetUserId, kind, agentGroupId } });
     return true;
   } catch (err) {
     showToast('Revoke failed: ' + (err as any)?.message, { kind: 'error' });
@@ -221,16 +190,7 @@ export function permsShowCreate() {
 
 export async function grantPerm(targetUserId: any, kind: any, agentGroupId: any) {
   try {
-    const r = await authFetch('/api/permissions/grant', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
-      body: JSON.stringify({ userId: targetUserId, kind, agentGroupId }),
-    });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      showToast('Grant failed: ' + (err.error || r.statusText), { kind: 'error' });
-      return false;
-    }
+    await apiJson('/api/permissions/grant', { method: 'POST', body: { userId: targetUserId, kind, agentGroupId } });
     return true;
   } catch (err) {
     showToast('Grant failed: ' + (err as any)?.message, { kind: 'error' });
@@ -263,9 +223,6 @@ export function permsRefreshCreateUI() {
 }
 
 // ── Panel wiring ───────────────────────────────────────────────────────────
-// Blocks whose SUBJECT element this module already owns. The ownership census
-// reported them as multi-owner, which was the union of every id they touch
-// rather than what they are for.
 
 /** The permissions create form. */
 export function wirePermsCreate(): void {
@@ -310,12 +267,6 @@ export function wirePermsNew(): void {
   });
 }
 
-// View switching within the detail pane (also flips the mobile data-mode)
-// ── + New User wizard: auth-aware id defaults ────────────────────────────────
-// The composed user_id must match EXACTLY what the auth layer mints at login.
-// We default the channel prefix to whatever this install actually uses (from
-// /api/auth/info) so admins don't, e.g., create a Tailscale-shaped id on an
-// SSO/Entra install. Fetched once, best-effort.
 // Mirror of normalizeId() in src/channels/webchat/auth.ts — fold a webchat
 // handle to the canonical (lowercased, restricted-charset) form so the live
 // preview shows the id the server will actually store and match.

@@ -154,8 +154,8 @@ describe('handleRouteLearningReview — enrollment and policy', () => {
 
     await handleRouteLearningReview(payload(), await origin);
 
-    // A per-member session (thread_id = user id) now exists and got the row.
-    const member = (await getSessionsByAgentGroup(AG)).find((s) => s.thread_id === 'webchat:alice');
+    // The per-member session the router gives alice in the room's main thread.
+    const member = (await getSessionsByAgentGroup(AG)).find((s) => s.thread_id === 'webchat:alice::main');
     expect(member).toBeDefined();
     const texts = inboundTexts(member!.id);
     expect(texts).toHaveLength(1);
@@ -168,6 +168,36 @@ describe('handleRouteLearningReview — enrollment and policy', () => {
     expect(routed.text).toBe('/learn focus');
     expect(routed.digest).toBe('<exchange>D</exchange>');
     expect(routed.origin).toEqual({ channel_type: 'webchat', platform_id: 'room-1' });
+    expect(wakes).toEqual([member!.id]);
+  });
+
+  it('routes a topic-thread /learn to the invoker’s session for that thread', async () => {
+    const origin = await seed({ chargeInvoker: 'auto' });
+    await getDb().run(`UPDATE sessions SET thread_id = 'topic-1' WHERE id = ?`, origin.id);
+    await addMember('webchat:alice');
+    await upsertUserCredential('webchat:alice', 'claude', 'secret-1', 'api_key');
+
+    await handleRouteLearningReview(payload(), { ...origin, thread_id: 'topic-1' });
+
+    const member = (await getSessionsByAgentGroup(AG)).find((s) => s.thread_id === 'webchat:alice::topic-1');
+    expect(member).toBeDefined();
+    expect(inboundTexts(member!.id)).toEqual(['/learn-routed']);
+  });
+
+  it('checks a Grok group’s invoker for a Grok credential, not a Claude one', async () => {
+    const origin = await seed({ chargeInvoker: 'require' });
+    await getDb().run(`UPDATE container_configs SET provider = 'grok' WHERE agent_group_id = ?`, AG);
+    await addMember('webchat:alice');
+    await upsertUserCredential('webchat:alice', 'claude', 'secret-1', 'api_key');
+
+    // A Claude credential doesn't pay for a Grok review.
+    await handleRouteLearningReview(payload(), origin);
+    expect(wakes).toEqual([]);
+
+    await upsertUserCredential('webchat:alice', 'grok', 'secret-2', 'oauth_token');
+    await handleRouteLearningReview(payload(), origin);
+    const member = (await getSessionsByAgentGroup(AG)).find((s) => s.thread_id === 'webchat:alice::main');
+    expect(member).toBeDefined();
     expect(wakes).toEqual([member!.id]);
   });
 

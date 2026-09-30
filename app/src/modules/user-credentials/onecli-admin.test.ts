@@ -3,7 +3,6 @@ import { describe, it, expect, vi } from 'vitest';
 // Mimic execFile's real non-zero-exit rejection: the Error's message + cmd embed
 // the FULL argv (including `--value <secret>`). The onecli() wrapper must scrub
 // this so a member's plaintext key can never reach the host log via err.message.
-// Regression guard for the user-creds-adversarial-review (cred-storage) finding.
 vi.mock('child_process', () => ({
   execFile: vi.fn(
     (
@@ -89,9 +88,7 @@ describe('onecli() wrapper scrubs credentials from errors', () => {
 });
 
 describe('agent listing paginates the full fleet (--max)', () => {
-  // Regression: `agents list` returns only ~20 rows by default, so findAgentId /
-  // listAgents silently missed agents past row 20 — the reconcile re-point skipped
-  // most of the fleet and findAgentId could re-create duplicates.
+  // `agents list` returns only ~20 rows by default (see LIST_MAX).
   it('findAgentId passes --max so it sees every agent', async () => {
     await realOnecliAdmin.findAgentId('whatever').catch(() => {});
     const args = mockExecFile.mock.calls.at(-1)?.[1] as string[];

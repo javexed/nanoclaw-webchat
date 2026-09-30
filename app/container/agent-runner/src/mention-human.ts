@@ -1,16 +1,9 @@
 /**
- * "Reaching a human" prompt section — fork-owned consumer of the destinations
- * prompt seam (R4), paired with the host's writeRoomHumans.
- *
- * Without this an agent's only known correspondents are its destinations:
- * channels and other AGENTS. Faced with something needing a person it picks the
- * nearest agent, which cannot help. That is not hypothetical — an agent with a
- * genuine bug to report sent it to a coding agent, got told "I'm not a human,
- * route this to the actual admin", and the report sat unread for ~15 hours.
- *
- * The delivery mechanism already worked: webchat resolves `@handle` on every
- * message including agent-authored ones, and the mentioned person gets a room
- * badge plus a push. Only the knowledge was missing.
+ * "Reaching a human" prompt section — consumer of the destinations prompt seam,
+ * paired with the host's writeRoomHumans. Without it an agent's only known
+ * correspondents are channels and other AGENTS, so something needing a person
+ * goes to the nearest agent. Webchat already resolves `@handle` in
+ * agent-authored messages (room badge + push); this supplies the knowledge.
  */
 import { getInboundDb } from './mailbox/sqlite/connection.js';
 import { registerPromptSectionContributor } from './seam/index.js';

@@ -1,17 +1,9 @@
 <script setup lang="ts">
 /**
- * The inline thread-name input — used for "new thread" and for rename.
- *
- * Replaces makeThreadNameInput(), which built the element imperatively and was
- * appended into three different places. Rendered by ThreadRows now.
- *
- * `settled` is the load-bearing part and is preserved exactly: blur fires after
- * Enter, so without it a submit is followed immediately by a cancel — or, with
- * blurSubmits, by a second submit. It guards the pair, not each handler.
- *
- * `value` and `placeholder` are mutually exclusive, as before: the imperative
- * version set placeholder ONLY when there was no initial value, so a rename
- * input carries no placeholder attribute at all.
+ * The inline thread-name input, for "new thread" and rename. `settled` guards the
+ * Enter/blur pair: blur fires after Enter, so without it a submit is followed by a cancel
+ * (or, with blurSubmits, a second submit). A placeholder is set only when there is no
+ * initial value.
  */
 import { onMounted, ref } from 'vue';
 
@@ -58,8 +50,8 @@ function onKey(e: KeyboardEvent) {
 }
 
 onMounted(() => {
-  // setTimeout, not nextTick: the imperative version deferred a full task so
-  // focus lands after the row it sits in is in the document and laid out.
+  // setTimeout, not nextTick: a full task defers focus until the row is in the
+  // document and laid out.
   setTimeout(() => {
     el.value?.focus();
     if (props.selectAll) el.value?.select();

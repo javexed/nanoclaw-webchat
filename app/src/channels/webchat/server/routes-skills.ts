@@ -2,12 +2,10 @@
 // The skill surface: the marketplace catalog and its pool, import (inspect,
 // then apply), user skills (read, write, delete), the source setting, update
 // checks and suggestions.
-//
-// Storage lives in server/skills-store.ts, shared with the agent routes — see
-// the note there.
 import type { IncomingMessage, ServerResponse } from 'http';
 
-import { json, readJsonBody } from './http.js';
+import { json, readJsonBody, readJsonObject } from './http.js';
+import { requireAgentAdmin } from './route-guards.js';
 import { restartAgentGroupContainers } from '../../../container-restart.js';
 import { getAgentGroup } from '../../../db/agent-groups.js';
 import { listSkillDrafts } from '../../../db/skill-drafts.js';
@@ -21,7 +19,7 @@ import { inspectSkillFiles } from '../../../modules/skills/inspect.js';
 import { deleteSkillSource, isSourceDisabled, listSkillSources, setSourceDisabled, upsertSkillSource } from '../db.js';
 import type { WebchatSkillSource } from '../db.js';
 import { hasAdminPrivilege, isGlobalAdmin, isOwner } from '../roles.js';
-import { listAgentsForUser, resolveAgent } from './agent-lookup.js';
+import { listAgentsForUser } from './agent-lookup.js';
 import { MARKETPLACE_ID } from './constants.js';
 import {
   SKILL_DISCOVERY_URL,
@@ -129,13 +127,6 @@ export async function rSkillSource(ctx: RouteCtx, m: RegExpMatchArray): Promise<
     : json(res, 404, { error: 'Source not found' });
 }
 
-// Delete a user skill (imported/uploaded). Shipped skills can't be removed.
-// Read / write / delete a single skill. GET returns its SKILL.md (any
-// source); PUT creates or edits a USER skill's SKILL.md (shipped skills are
-// read-only — they're repo files); DELETE removes a user skill.
-// Cross-agent duplicates + promotion (learning loop). Detection is read-only
-// and admin-visible; PROMOTION writes the shared pool — install-wide reach —
-// so it stays owner/global-admin, the pool's own boundary.
 // Pre-import inspection: fetch the skill's files WITHOUT writing anything and
 // return the "what's inside" inventory + lint findings. Read-only, so any
 // admin may look (per-group admins import scoped skills through the same
@@ -213,10 +204,9 @@ export async function rSkillItem(ctx: RouteCtx, m: RegExpMatchArray): Promise<vo
 }
 
 export async function rSkillRevertPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { req, res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const name = sanitizeSkillName(decodeURIComponent(m[2]));
   if (!name) return json(res, 400, { error: 'Invalid skill name' });
@@ -227,10 +217,9 @@ export async function rSkillRevertPost(ctx: RouteCtx, m: RegExpMatchArray): Prom
 }
 
 export async function rSkillRestorePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
-  const { req, res, userId } = ctx;
-  const group = await resolveAgent(decodeURIComponent(m[1]));
-  if (!group) return json(res, 404, { error: 'Agent not found' });
-  if (!(await hasAdminPrivilege(userId, group.id))) return json(res, 403, { error: 'Admin privilege required' });
+  const { req, res } = ctx;
+  const group = await requireAgentAdmin(ctx, m);
+  if (!group) return;
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   const name = sanitizeSkillName(decodeURIComponent(m[2]));
   if (!name) return json(res, 400, { error: 'Invalid skill name' });
@@ -245,10 +234,7 @@ export async function rSkillDraftsGet(ctx: RouteCtx, _m: RegExpMatchArray): Prom
   const { res, userId } = ctx;
   // Scoped admins see only their own groups' drafts (owners/global admins
   // pass hasAdminPrivilege for every group) — same tier as the per-draft routes.
-  // Array.filter cannot await, and an async predicate returns a PROMISE — which
-  // is truthy, so every draft passed the admin check regardless of privilege.
-  // tsc does not flag this: a Promise<boolean> is a perfectly good truthy value
-  // as far as filter's signature is concerned. It has to be a loop.
+  // A loop, not Array.filter: an async predicate's Promise is always truthy.
   const visible = [];
   for (const d of await listSkillDrafts()) {
     if (await hasAdminPrivilege(userId, d.agent_group_id)) visible.push(d);
@@ -478,14 +464,8 @@ export async function catalogPoolHandler(res: ServerResponse, tier: string, q: s
 export async function putSkillSourceHandler(req: IncomingMessage, res: ServerResponse, id: string): Promise<void> {
   const clean = sanitizeSkillName(id);
   if (!clean) return json(res, 400, { error: 'Invalid source id (a-z, 0-9, hyphens)' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { label?: unknown; url?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ label?: unknown; url?: unknown }>(req, res);
+  if (body === undefined) return;
   const parsed = await resolveSourceUrl(String(body.url || ''));
   if (!parsed) {
     return json(res, 400, {
@@ -604,14 +584,8 @@ export async function suggestSkillsHandler(res: ServerResponse, text: string): P
 }
 
 export async function importSkillHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { url?: unknown; repo?: unknown; name?: unknown; origin?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ url?: unknown; repo?: unknown; name?: unknown; origin?: unknown }>(req, res);
+  if (body === undefined) return;
   let url = String(body.url || '').trim();
   // Discovery import: resolve {repo, name} into a github folder URL first.
   if (!url && body.repo) {
@@ -684,15 +658,14 @@ export async function importSkillHandler(req: IncomingMessage, res: ServerRespon
   return json(res, 200, { ok: true, name: skillName, files: files.length, warnings: inspection.warnings });
 }
 
+/**
+ * Pre-import preview: resolve the same body /api/skills/import takes, fetch the
+ * files, inspect — write NOTHING. The client shows this before the user
+ * confirms; a failed preview falls back to a text-only confirm.
+ */
 export async function inspectSkillHandler(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { url?: unknown; repo?: unknown; name?: unknown; official?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ url?: unknown; repo?: unknown; name?: unknown; official?: unknown }>(req, res);
+  if (body === undefined) return;
   let url = String(body.url || '').trim();
   if (!url && body.repo) {
     try {

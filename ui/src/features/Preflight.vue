@@ -1,19 +1,8 @@
 <script setup lang="ts">
 /**
- * The webchat self-test results — fifty-ninth island.
- *
- * Mounted into <div id="selftest-results">, exclusively owned by this module.
- * Its hidden flag stays imperative — it is revealed when the run starts.
- *
- * The element previously held three different things written three different
- * ways: a plain textContent wait line, a plain textContent error, and built
- * check rows. Converting only the rows would have left two imperative writers
- * on a Vue-owned element, so the messages are phases too.
- *
- * The fix block is a copy-paste command — same shape as the reachability
- * verdict, deliberately not shared with it: the classes differ (preflight-fix
- * vs model-reachability-fix) and a shared component would need a prop to choose
- * them, which is a worse seam than eight duplicated lines.
+ * The webchat self-test results, mounted into <div id="selftest-results">. The wait line,
+ * the error and the check rows are all phases, so nothing else writes this element. The
+ * fix block mirrors Reachability's but is not shared: the classes differ.
  */
 import { ref } from 'vue';
 import { preflightChecks, preflightMessage, preflightPhase } from './preflight-state.js';

@@ -2,17 +2,14 @@
 
 Runner for NanoClaw central (0.13.x). It does two things:
 
-- **Runs agents on this machine.** Agent groups an owner places on this machine run in a local container. Central sends the spec; this extension realizes it.
+- **Gives an agent your project.** An agent group an owner places on this machine runs on central; this extension serves it file tools (read, search, edit, and read-only git) over a copy of your project. It runs nothing on this machine.
 - **The NanoClaw panel.** Chat with this machine's agent from the editor, and review its changes.
 
 Signs in as you with VS Code's built-in Microsoft account. No credential ever reaches this machine.
 
 ## Requirements
 
-- Docker or Podman. `nanoclaw.containerRuntime` = `auto` (docker, then podman), `docker` or `podman`; `nanoclaw.runtimePath` if the CLI is not on PATH.
-- Windows with a Podman machine works as-is: the model relay runs **inside** the container, over the runtime's `exec` channel. Nothing listens on the host; no firewall rule.
-- Podman: the container user is pinned (`--userns keep-id`); `C:\…` is mapped to the machine's `/mnt/c/…`.
-- First session: the agent image is built locally from the context central ships (several minutes). See [Agent image](#agent-image).
+- The project folder is a git repository: the agent works on a copy of it, and its changes come back as a diff.
 
 ## Sign-in and connection
 
@@ -20,7 +17,7 @@ Signs in as you with VS Code's built-in Microsoft account. No credential ever re
 - A new machine waits for an owner's approval (Manage → Runners).
 - The link reconnects on its own, with backoff.
 - After sleep/wake: once connected, a missing token is treated as temporary and retried. Focusing the window, or a sign-in change, retries at once.
-- Central holds a session while this machine is away (up to 12 h) and resumes it when the machine and its container runtime return. A container that stopped meanwhile is replaced, never revived.
+- While this machine is away the agent's tools fail; it says so in the chat.
 - Status bar: connection state and who you are signed in as.
 
 ## The NanoClaw panel
@@ -38,12 +35,16 @@ Activity bar → **NanoClaw**.
 
 ## Reviewing changes
 
-**Propose mode** (default). The agent edits a clone of your repository at your current commit (branch `nanoclaw/proposal`). Your tree is untouched until you apply.
+The agent edits a copy of your working tree: your commit plus uncommitted and untracked files (gitignored ones with `nanoclaw.proposeIncludeIgnored`; never dependency folders, secret-like files or nested `.git`). Your tree is untouched until you apply.
 
+A text file up to 1 MiB holding a secret (private key, cloud or API token, a long quoted `password`/`token`/`secret`/`api_key` value) is left out of the copy whole; the count is shown, the list is in the NanoClaw output. Larger and binary files are copied unscanned.
+
+- The proposal is listed in the Source Control view, as **NanoClaw** beside Git, and in the panel.
 - Per file: **Review** (inline) / **Diff** / **Apply** / **Reject**; plus **Review**, **Apply all**, **Reject all**.
 - New and deleted files: Apply / Reject only.
-
-**Direct mode.** The agent edits your working tree. Per file: **Review** / **Diff** / **Keep** (stage) / **Revert**.
+- Applied files leave the list and show in Git's, ready to commit.
+- A file you changed since the proposal is merged: your edits and the agent's both go in, and where you both changed the same lines you get conflict blocks (Accept Current = yours, Accept Incoming = the agent's). The file is listed under **Conflicts** (Source Control and the panel) until it is saved with none left; Next / Previous change (Alt+F5 / Shift+Alt+F5) move between the blocks, and the status bar counts them.
+- When the agent finishes a turn with new changes, the chat says so with Review / Apply all (a notification when the panel is hidden).
 
 **Inline review.** Old lines red, new lines green, in the real file. **✓ Accept** / **✗ Reject** above each hunk; **Accept all** / **Reject all** above the first.
 
@@ -52,17 +53,12 @@ Activity bar → **NanoClaw**.
 | Accept change | Ctrl+Alt+Enter | Cmd+Alt+Enter |
 | Reject change | Ctrl+Alt+Backspace | Cmd+Alt+Backspace |
 | Next change | Alt+F5 | Alt+F5 |
+| Previous change | Shift+Alt+F5 | Shift+Alt+F5 |
+| Next file to review | Ctrl+Alt+F5 | Cmd+Alt+F5 |
 
-- Hunks whose lines you edited since the proposal are set aside; use Diff.
-- The file is saved when the last hunk is decided (if it had no unsaved edits). Undo ends the review.
-
-## Network policy
-
-Each agent is Open, Allowlist (default) or Model only, set in NanoClaw. A refused connection:
-
-```
-HTTP 403 — blocked by NanoClaw network policy: <host> is not on the allowlist — an admin can allow it in Manage → Network
-```
+- Changes whose lines read differently in your file are not shown; **Compare** opens the agent's version beside yours, and the diff's arrows copy a change across. Changes already in the file count as done.
+- Each decision is written to disk as you make it, so Git shows progress; the status bar shows the changes left. A file with unsaved edits is instead saved by you at the end. Undo ends the review.
+- A review survives a window reload.
 
 ## Updates
 
@@ -71,10 +67,7 @@ Central serves the runner package and offers newer builds on connect and keepali
 - `nanoclaw.autoUpdate`: `prompt` (default) / `auto` / `off`.
 - Downloaded over the signed-in connection, sha256 checked against central's announcement, installed by VS Code; reload to activate.
 - Offered once per window; a status-bar item stays until installed. **NanoClaw: Check for Updates** asks central now.
-
-## Agent image
-
-`nanoclaw.agentImage`: `build` (default) or `pull`. The install-wide policy (Manage → Runners → Agent image; default **Build**) overrides it when set to Build or Pull.
+- Signed releases: with a release signing key pinned for the server, an update must carry the operator's signature by that key, or it is refused. Central (or its Connect link) offers the key; it is pinned on a confirmation showing its fingerprint, and a different key later asks again. `nanoclaw.releaseSigningKey` pins one yourself. No key pinned: accepted as before, with a one-time notice.
 
 ## Settings
 
@@ -86,16 +79,14 @@ Central serves the runner package and offers newer builds on connect and keepali
 | `nanoclaw.tenantId` | `""` | Entra tenant ID. |
 | `nanoclaw.clientId` | `""` | Own app registration to sign in with; empty = VS Code's Microsoft app. |
 | `nanoclaw.autoConnect` | `true` | Connect at startup when signed in. |
-| `nanoclaw.containerRuntime` | `auto` | `auto` / `docker` / `podman`. |
-| `nanoclaw.runtimePath` | `""` | Full path of the docker/podman CLI. |
-| `nanoclaw.workspaceMount` | `workspace` | `workspace`: the open folder fills `/workspace/project`. `off`: none. |
-| `nanoclaw.slots` | `{}` | Container path → local directory for slots central declares. Unbound slots are refused. |
-| `nanoclaw.mountAllowlist` | `[]` | Directories a slot may resolve into; empty = folders open in this window. |
-| `nanoclaw.workspaceExcludes` | secrets, `.env*`, keys, `.ssh`, `.aws`, `.azure`, … | Hidden from the agent inside a slot (empty read-only mounts). Central may add more. |
-| `nanoclaw.agentImage` | `build` | `build` / `pull`. |
-| `nanoclaw.agentImageRef` | `""` | Image to pull, pinned by digest; empty = central's pin. |
-| `nanoclaw.allowUnlabeledAgentImage` | `false` | Accept a pulled image without the agent-runner lock label. |
+| `nanoclaw.workspaceMount` | `workspace` | `workspace`: the open folder is the project. `off`: only `nanoclaw.slots`. |
+| `nanoclaw.slots` | `{}` | `/workspace/project` → a local directory: the project, overriding the open folder. |
+| `nanoclaw.mountAllowlist` | `[]` | Directories the project may resolve into; empty = folders open in this window. |
+| `nanoclaw.workspaceExcludes` | secrets, `.env*`, keys, `.ssh`, `.aws`, `.azure`, … | Left out of the agent's copy. |
+| `nanoclaw.proposeIncludeIgnored` | `false` | Copy gitignored files into the copy the agent sees. |
+| `nanoclaw.proposeSecretScanAllow` | `[]` | Globs copied even when the secret scan finds a secret in them. |
 | `nanoclaw.autoUpdate` | `prompt` | `prompt` / `auto` / `off`. |
+| `nanoclaw.releaseSigningKey` | `""` | Release signing key (`ed25519:…`) updates must be signed with; empty = the key central offers, pinned per server on confirmation. |
 
 ## Commands
 
@@ -111,7 +102,10 @@ Central serves the runner package and offers newer builds on connect and keepali
 | `nanoclaw.installUpdate` | NanoClaw: Install Offered Update |
 | `nanoclaw.review.accept` / `.reject` | NanoClaw: Accept change / Reject change |
 | `nanoclaw.review.acceptAll` / `.rejectAll` | NanoClaw: Accept / Reject all changes in file |
-| `nanoclaw.review.next` | NanoClaw: Next change |
+| `nanoclaw.review.next` / `.previous` | NanoClaw: Next change / Previous change |
+| `nanoclaw.review.nextFile` | NanoClaw: Next file to review |
+| `nanoclaw.forgetAllowedFolders` | NanoClaw: Forget allowed folders |
+| `nanoclaw.proposal.reviewAll` / `.applyAll` / `.rejectAll` | NanoClaw: Review / Apply all / Reject all (Source Control title bar) |
 
 ## App registration (Entra ID)
 
@@ -126,23 +120,25 @@ Sign-in uses VS Code's built-in Microsoft account provider. Two options:
 
 Do not add `offline_access` to any scope list; the provider adds `openid email profile offline_access` and refreshes silently.
 
-## How a placed session runs
+## How it works
 
-- The spec never names a central path or carries a credential. The gateway URL is replaced by a sentinel; the container's proxy is a forwarder inside it that relays each connection to central, which checks the network policy and terminates it at the credential gateway as that agent.
-- The container runs with `--network none`; the relay is its only way out.
-- The agent syncs its own mailbox, status, acknowledgements and files with central over the relay.
-- Storage (extension global storage): `runner/state/…` (session state), `runner/bundles/<sha256>/` (shipped read-only content), `runner/proposals/<group>/<session>` (proposal clones).
+- The agent runs on central. Its only way to this machine is the laptop tools, over the runner link: `Read`, `Edit`, `Write`, `Glob`, `Grep`, and `GitStatus`, `GitDiff`, `GitLog`, `GitShow`, `GitBlame`. Nothing runs on this machine for it.
+- A folder is served only once you allow it (asked once per folder and server; **NanoClaw: Forget allowed folders** asks again).
+- Every path is checked against the copy: `..`, absolute paths elsewhere, a link leading out, and `.git` are refused.
+- The git tools see your history beneath the copy, but not what the copy leaves out: those paths are refused at any revision and kept out of diffs; revisions must be commits.
+- Grep runs in a worker and is stopped after 20 s, so a pattern that backtracks badly cannot freeze the editor.
+- **Stop all agents** stops serving the tools until you resume (writing to the agent resumes too), and tells central.
+- Storage (extension global storage): `runner/proposals/<group>/laptop-tools` (the agent's copy of the project).
 
 ## Development
 
 | Script | Does |
 |---|---|
 | `npm run build` | Bundle `dist/extension.js` (esbuild). |
-| `npm run build:core` | `tsc` → `out/` (used by the harnesses). |
+| `npm run build:core` | `tsc` → `out/` (used by the editor harness). |
 | `npm test` | Unit tests (vitest). |
 | `npm run typecheck` | `tsc --noEmit`. |
 | `npm run package` | Build and package `nanoclaw-<version>.vsix`. |
-| `npm run harness` | Real runner + real container against a minimal central (staging `dist`). Run before packaging any runner change. |
 | `npm run harness:editor` | Inline review in a real VS Code: `harness/editor-docker.sh` runs it in the agent image against a host Xvfb. |
 
 Publish to central (staging checkout, `.env` loaded):

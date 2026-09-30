@@ -1,14 +1,6 @@
 /**
- * The update-before-create hierarchy.
- *
- * A learning loop that only ever CREATES fills the library with near-duplicates:
- * the same lesson re-learned and re-filed under a slightly different name every
- * time it comes up. Two things prevent that, and both are tested here:
- *
- *   1. the agent is shown the skills it actually has (it can't avoid duplicating
- *      what it can't see), and
- *   2. the hierarchy is ENFORCED, not suggested — a 'create' that collides with an
- *      existing skill is coerced into a revision of it.
+ * The update-before-create hierarchy: the agent is shown the skills it actually
+ * has, and a 'create' that collides with one is coerced into a revision of it.
  */
 import { describe, expect, it } from 'bun:test';
 import fs from 'fs';
@@ -127,9 +119,7 @@ describe('LEARNING_REVIEW_PROMPT — the two quality-critical parts', () => {
 
   it('forbids inventing, but treats user-stated lessons as ground truth', () => {
     expect(LEARNING_REVIEW_PROMPT).toContain('Never invent flags, paths, or APIs');
-    // Found live: the earlier wording ("if you did not run it, do not write it
-    // down") made the agent refuse a lesson the USER explicitly dictated. A
-    // user-stated correction is a trigger in the design, not fabrication.
+    // A user-stated correction is a trigger in the design, not fabrication.
     expect(LEARNING_REVIEW_PROMPT).toContain('user-stated lesson is ground truth');
   });
 });

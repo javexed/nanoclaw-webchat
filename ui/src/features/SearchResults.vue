@@ -1,21 +1,9 @@
 <script setup lang="ts">
 /**
- * Room-search results.
- *
- * Mounted into <ul id="search-results">. The container keeps its DELEGATED
- * click listener — Vue replaces the container's children, not the container, so
- * a listener bound to the <ul> itself survives the mount and keeps working.
- *
- * The snippet line is a single v-html on the snip DIV, not a sender span plus a
- * v-html span beside it. The wrapper span that second form adds is a real
- * structural difference from the imperative markup — caught by the DOM diff —
- * and there is no way to v-html without an element, so the whole inner HTML is
- * shaped in rooms.ts instead.
- *
- * That is also where it belongs: FTS5 returns «…» markers around matches, and
- * the imperative version escaped the text FIRST and only then replaced the
- * markers with <mark>. That order is the XSS guarantee, so it stays next to the
- * escaping it depends on, and this component receives HTML it may not build.
+ * Room-search results, mounted into <ul id="search-results">; the <ul>'s delegated
+ * click listener survives the mount. The snippet is ONE v-html on the snip div, shaped in
+ * rooms.ts: FTS5's «…» markers become <mark> only AFTER the text is escaped. That order is
+ * the XSS guarantee, so it stays next to the escaping; this component never builds HTML.
  */
 import { searchRows } from './search-results-state.js';
 

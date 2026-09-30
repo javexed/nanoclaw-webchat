@@ -1,6 +1,6 @@
 /**
  * MCP auth relay — the host-side hop that keeps MCP credentials out of
- * containers (item 7 of the MCP hardening review).
+ * containers.
  *
  * A remote MCP server with host-side auth (webchat_mcp_servers.auth) is synced
  * into container configs with its url REWRITTEN to
@@ -16,13 +16,10 @@
  * legitimate path is the docker bridge (and tailnet links are WireGuard-
  * encrypted regardless); the token gates every request.
  *
- * Listener lifetime: the relay binds only while at least one relay-backed
- * assignment exists — `startMcpRelayIfAssigned()` at boot, and lazily from
- * `ensureRelayToken()` the first time a (group, server) pair is given a token.
- * An install with no authed remote MCP server never opens the port at all,
- * which is most installs. It is not stopped when the last assignment goes
- * away: teardown owns that, and an operator who unassigns mid-session would
- * otherwise silently break a container already holding a relay url.
+ * Lifetime: binds only once a relay-backed assignment exists (at boot, or
+ * lazily from `ensureRelayToken()`), so most installs never open the port. It
+ * is not stopped when the last assignment goes: a container may still hold a
+ * relay url, and teardown owns that.
  */
 import http from 'http';
 import os from 'os';
@@ -47,8 +44,23 @@ async function lookupAssignment(token: string): Promise<{ agent_group_id: string
   )) as { agent_group_id: string; mcp_server_id: string } | undefined;
 }
 
+/**
+ * Endpoints central serves itself on the relay port, by path prefix, for
+ * installed modules (the VS Code runner's laptop tools). Each authenticates
+ * its own callers: the relay only routes.
+ */
+type RelayRoute = (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>;
+const relayRoutes = new Map<string, RelayRoute>();
+export function registerRelayRoute(prefix: string, route: RelayRoute): void {
+  relayRoutes.set(prefix, route);
+}
+
 async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const m = (req.url || '').match(/^\/relay\/([^/?]+)(\/[^?]*)?(\?.*)?$/);
+  const url = req.url || '';
+  for (const [prefix, route] of relayRoutes) {
+    if (url === prefix || url.startsWith(`${prefix}/`) || url.startsWith(`${prefix}?`)) return route(req, res);
+  }
+  const m = url.match(/^\/relay\/([^/?]+)(\/[^?]*)?(\?.*)?$/);
   if (!m) {
     res.writeHead(404).end('not found');
     return;
@@ -124,24 +136,34 @@ async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse):
 }
 
 let relayServer: http.Server | null = null;
+/** The loopback listener exec-relayed agents reach through central (exec-relay.ts). */
+let loopbackServer: http.Server | null = null;
+/** WEBCHAT_EXEC_RELAY=1: relayed agents dial the relay through central's own process, on loopback. */
+const execRelayed = (): boolean => (process.env.WEBCHAT_EXEC_RELAY ?? '').trim() === '1';
+const LOOPBACK = '127.0.0.1';
+
+function relayHttpServer(): http.Server {
+  const server = http.createServer((req, res) => {
+    void handleRelay(req, res).catch((err) => {
+      log.error('MCP relay handler threw', { err });
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    });
+  });
+  server.on('error', (err) => log.error('MCP relay listener error', { err: String(err) }));
+  return server;
+}
 
 export type RelayBind = { kind: 'bind'; host: string } | { kind: 'refuse'; reason: string };
 
 /**
  * Where to bind, as a pure decision (IO lives in startMcpRelay).
  *
- * Bind the docker-bridge IP, not 0.0.0.0 — the only legitimate clients are
- * agent containers reaching `host.docker.internal` (→ the default-bridge
- * gateway, e.g. 172.17.0.1 on Linux). 0.0.0.0 additionally exposed the
- * token-gated relay on the tailnet interface.
- *
- * With no docker0 IP discoverable (macOS Docker Desktop, custom nets) we
- * REFUSE rather than falling back to 0.0.0.0: an unknown container network is
- * exactly the case where "listen on everything" is the wrong guess, and every
- * other credential path here fails closed (the OneCLI gateway refuses to spawn
- * without credentials; egress lockdown throws rather than spawning open). The
- * operator names the interface with WEBCHAT_MCP_RELAY_HOST, which is also the
- * override for a non-default container network.
+ * Bind the docker-bridge IP (what `host.docker.internal` reaches, e.g.
+ * 172.17.0.1), never 0.0.0.0, which would also expose the relay on the tailnet.
+ * With no docker0 IP (macOS Docker Desktop, custom nets) REFUSE rather than
+ * guess, like every other credential path here fails closed; the operator
+ * names the interface with WEBCHAT_MCP_RELAY_HOST.
  */
 export function resolveRelayBindHost(explicit: string | undefined, bridgeIp: string | null): RelayBind {
   const named = (explicit ?? '').trim();
@@ -156,34 +178,41 @@ export function resolveRelayBindHost(explicit: string | undefined, bridgeIp: str
 }
 
 export function startMcpRelay(): void {
+  // Exec-relayed agents have no network: central's process dials the relay
+  // for them, on loopback — whether or not a docker bridge is discoverable
+  // (Node does not list a bridge with nothing attached to it).
+  if (execRelayed() && !loopbackServer) {
+    loopbackServer = relayHttpServer();
+    loopbackServer.listen(MCP_RELAY_PORT, LOOPBACK, () =>
+      log.info('MCP auth relay listening', { port: MCP_RELAY_PORT, host: LOOPBACK }),
+    );
+  }
   if (relayServer) return;
   const bind = resolveRelayBindHost(process.env.WEBCHAT_MCP_RELAY_HOST, dockerBridgeHost());
   if (bind.kind === 'refuse') {
+    if (execRelayed()) {
+      log.info('MCP auth relay: no docker bridge to listen on; relayed agents reach it on loopback', {
+        port: MCP_RELAY_PORT,
+      });
+      return;
+    }
     // Fail closed: MCP servers with host-side auth stay unreachable (their
     // tools simply don't load) rather than the relay listening on every
     // interface. Loud, because the symptom is otherwise a missing toolset.
     log.error(`MCP auth relay NOT started — ${bind.reason}`, { port: MCP_RELAY_PORT });
     return;
   }
-  relayServer = http.createServer((req, res) => {
-    void handleRelay(req, res).catch((err) => {
-      log.error('MCP relay handler threw', { err });
-      if (!res.headersSent) res.writeHead(500);
-      res.end();
-    });
-  });
-  relayServer.on('error', (err) => log.error('MCP relay listener error', { err: String(err) }));
+  if (bind.host === LOOPBACK && loopbackServer) return;
+  relayServer = relayHttpServer();
   relayServer.listen(MCP_RELAY_PORT, bind.host, () => {
     log.info('MCP auth relay listening', { port: MCP_RELAY_PORT, host: bind.host });
   });
 }
 
 /**
- * Boot-time start: bind only if a relay-backed assignment already exists.
- * Nothing can legitimately dial the relay before one does — the url only
- * reaches a container through `mcpServerToConfig`, which needs a relay token.
- * A throw here (table absent on a part-migrated install) leaves it unbound,
- * which is the safe direction: the feature is unused in that state anyway.
+ * Boot-time start, only if a relay-backed assignment exists (the relay url
+ * reaches a container only with a token). A throw leaves it unbound, the safe
+ * direction.
  */
 export async function startMcpRelayIfAssigned(): Promise<void> {
   let assigned = false;
@@ -217,15 +246,17 @@ function dockerBridgeHost(): string | null {
  * does; the relay hop resolves that name to this address on central.
  */
 export function mcpRelayTarget(): { host: string; port: number } {
+  if (execRelayed()) return { host: LOOPBACK, port: MCP_RELAY_PORT };
   const host = process.env.WEBCHAT_MCP_RELAY_HOST || dockerBridgeHost() || '127.0.0.1';
   return { host, port: MCP_RELAY_PORT };
 }
 
 export function stopMcpRelay(): void {
-  // close() alone waits for idle keep-alive sockets — a single lingering
-  // client (an MCP connection, a stray probe) turns shutdown into a 90s
-  // SIGKILL and an "unclean shutdown" mark for the circuit breaker.
-  relayServer?.closeAllConnections?.();
-  relayServer?.close();
+  // close() alone waits on idle keep-alive sockets: shutdown would hang to SIGKILL.
+  for (const server of [relayServer, loopbackServer]) {
+    server?.closeAllConnections?.();
+    server?.close();
+  }
   relayServer = null;
+  loopbackServer = null;
 }

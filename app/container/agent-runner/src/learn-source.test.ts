@@ -7,8 +7,8 @@
  *  1. Detection is narrow — the hint must START with the source token. Prose
  *     that mentions a URL mid-sentence, or a bare filename, stays a plain
  *     steering hint.
- *  2. Plain hints are BYTE-IDENTICAL to the pre-source-mode prompt (pinned
- *     against the literal template, not just buildLearnReviewPrompt).
+ *  2. Plain hints are BYTE-IDENTICAL to the authoring prompt (pinned against
+ *     the literal template, not just buildLearnReviewPrompt).
  *  3. Source modes carry exactly the minimal read-only extra tools, and the
  *     untrusted-material rules, through to the provider's QueryInput.
  */
@@ -92,7 +92,7 @@ describe('classifyLearnHint — source detection', () => {
 
 describe('buildLearnReview — prompts and tools per mode', () => {
   it('plain /learn is byte-identical to the old prompt (no extra tools)', () => {
-    // Pinned against the LITERAL old template, not just the old builder, so a
+    // Pinned against the LITERAL template, not just the builder, so a
     // refactor of buildLearnReviewPrompt can't silently move both sides.
     expect(buildLearnReview('/learn')).toEqual({ prompt: LEARNING_REVIEW_PROMPT });
     const steered = buildLearnReview('/learn keep the rsync part');

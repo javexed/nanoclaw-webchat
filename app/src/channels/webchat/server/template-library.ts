@@ -160,7 +160,6 @@ export async function fetchTemplateInto(
   }
 }
 
-/** What one library template contains — enough to decide whether to stamp it. */
 /**
  * What an MCP server in a template will actually launch.
  *
@@ -187,6 +186,7 @@ export interface TemplateMcpSummary {
   envKeys?: string[];
 }
 
+/** What one library template contains — enough to decide whether to stamp it. */
 export interface TemplateDetail extends LocalTemplateEntry {
   persona: string | null;
   skills: string[];
@@ -214,9 +214,8 @@ export function templateDetail(ref: string): TemplateDetail {
     mcpServers: Object.entries(t.mcpServers)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([name, s]): TemplateMcpSummary => {
-        // `'url' in s` narrows the McpServerConfig union properly. Casting it to
-        // Record<string, unknown> does not typecheck — the http variant has no
-        // index signature — and would have thrown away the narrowing anyway.
+        // `'url' in s` narrows the McpServerConfig union (the http variant has no
+        // index signature, so a Record cast would not typecheck).
         if ('url' in s) {
           return {
             name,

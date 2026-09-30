@@ -5,9 +5,8 @@ debugged something non-obvious can propose a `SKILL.md` capturing the lesson; a
 human reviews it; if kept, it's wired to **that agent only**. Nothing the loop
 produces runs without a human approving it first, unless auto-keep is on.
 
-This is the *operator's guide to the shipped system*. The rationale and the
-prior art (Hermes Agent's skill generation) live in the design doc:
-[docs/webchat/design/learning-loop.md](design/learning-loop.md).
+This is the operator's guide to the shipped system; the design rationale and
+prior art are in §9.
 
 ```
 trigger (/learn · 🎓 · nudge)          human review                curator
@@ -321,3 +320,31 @@ Per-agent defaults (stored in `container_configs.learning`, API-only:
   imports everywhere badges render, including the topology graph.
 - **Reversible** — discards delete only the draft; the curator archives and
   never deletes; restores never clobber.
+
+## 9. Design rationale and prior art
+
+Skill generation is not an ML pipeline: it is **running the agent on its own
+transcript with a skill-authoring prompt and a restricted toolset**. That
+premise comes from a code-level read of Nous Research's
+[Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT). NanoClaw
+already had every primitive except the review pass and a review surface, so the
+loop reuses the outbound system-action channel (the same one `schedule` and
+approvals use), the skills stack ([design/skills.md](design/skills.md)), and the
+60s host sweep.
+
+**Adopted from Hermes:** the fork-and-review architecture, the authoring spec
+(front-matter, fixed section order, "never invent flags, paths, or APIs"), the
+denylist of things not to learn (environment-dependent failures, transient
+errors, "tool X is broken" claims, one-off narratives), and the prefer-edit
+hierarchy (§3). The denylist and prefer-edit rule are what keep the library from
+filling with noise and near-duplicates.
+
+**Deliberate divergences:** drafts are staged to a **review surface** and kept
+**scoped** to the learning agent by default (Hermes pools by default); the
+trigger can be gated by a **classifier** that judges whether a procedure is
+reusable, rather than a bare tool count; and the curator runs on the **host
+sweep** rather than at agent idle.
+
+**Not adopted:** features Hermes describes but does not implement — per-skill
+success-rate tracking, automatic version bumps, a cron-scheduled curator. If
+success statistics are wanted, they get added deliberately.

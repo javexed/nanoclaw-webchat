@@ -182,6 +182,28 @@ describe('ensureGroupEnrollment (lazy, at first spawn)', () => {
     expect(agents.get(ident)!.secretIds.sort()).toEqual([userSecret, 'grp-gmail'].sort());
   });
 
+  it('a Grok member keeps the group tool secrets (same `generic` type as the Grok token)', async () => {
+    const { admin, secrets, seedGroupAgent, agents } = fakeAdmin();
+    await makeCodexGroup('ag-g');
+    await updateContainerConfigScalars('ag-g', { provider: 'grok' });
+    seedGroupAgent(
+      'ag-g',
+      [
+        { id: 'grp-pat', type: 'generic' },
+        { id: 'grp-grok', type: 'generic' },
+      ],
+      'selective',
+    );
+    secrets.set('grp-pat', { value: 'x', type: 'generic', name: 'ToolSecret ag-g dev.azure.com' });
+    secrets.set('grp-grok', { value: 'x', type: 'generic', name: 'Grok (install)' });
+    await storeUserCredential(admin, 'webchat:gina', 'grok', 'grok-token', 'oauth_token');
+    await ensureGroupEnrollment(admin, 'webchat:gina', 'ag-g');
+    const ident = userCredsAgentIdentifier('ag-g', 'webchat:gina');
+    const userSecret = (await getUserSecretId('webchat:gina', 'grok'))!;
+    // the member's Grok token + the group's PAT; NOT the group's own Grok token
+    expect(agents.get(ident)!.secretIds.sort()).toEqual([userSecret, 'grp-pat'].sort());
+  });
+
   it('reuses the one user secret across multiple enrolled groups', async () => {
     const { admin } = fakeAdmin();
     await storeUserCredential(admin, 'webchat:alice', 'claude', 'sk-ant-1', 'api_key');

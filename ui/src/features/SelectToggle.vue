@@ -1,18 +1,9 @@
 <script setup lang="ts">
 /**
- * The +/− selectable-model control, declaratively.
- *
- * Not an island — it has no mount point of its own. It is the component half of
- * select-toggle.ts, used by islands that render server rows, while the still
- * imperative call sites keep using buildSelectToggle().
- *
- * It decides nothing. Both what it shows and what the click does come from the
- * module, so this and the imperative builder cannot drift — which matters here
- * because the click DELETES a registration when one already exists.
- *
- * `busy` is local rather than a shared ref: it disables THIS button while its
- * own request is in flight, exactly as `btn.disabled` did. Two rows can be
- * mid-request independently.
+ * The +/− selectable-model control; the component half of select-toggle.ts, which decides
+ * what it shows and what the click does (the click DELETES an existing registration), so
+ * this and buildSelectToggle() cannot drift. `busy` is local: rows are mid-request
+ * independently.
  */
 import { computed, ref } from 'vue';
 import { selectToggleProps, toggleSelectable } from './select-toggle.js';

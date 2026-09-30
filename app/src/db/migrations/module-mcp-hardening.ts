@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { Migration } from './index.js';
+import { addColumnIfMissing } from '../add-column-if-missing.js';
 
 /**
  * MCP hardening columns on webchat_mcp_servers (all JSON, all nullable):
@@ -22,20 +23,12 @@ export const moduleMcpHardening: Migration = {
   version: 202,
   name: 'webchat-mcp-hardening',
   up(db: Database.Database) {
-    const cols = new Set(
-      (db.prepare("PRAGMA table_info('webchat_mcp_servers')").all() as Array<{ name: string }>).map((c) => c.name),
-    );
     for (const col of ['health', 'pinned_tools', 'drift', 'enabled_tools', 'auth']) {
-      if (!cols.has(col)) db.exec(`ALTER TABLE webchat_mcp_servers ADD COLUMN ${col} TEXT`);
+      addColumnIfMissing(db, 'webchat_mcp_servers', `${col} TEXT`);
     }
     // Per-assignment relay token: the container-side indirection credential for
     // the MCP auth relay. Scoped to ONE (agent group, server) pair — the real
     // secret stays host-side in webchat_mcp_servers.auth.
-    const acols = new Set(
-      (db.prepare("PRAGMA table_info('webchat_agent_mcp_servers')").all() as Array<{ name: string }>).map(
-        (c) => c.name,
-      ),
-    );
-    if (!acols.has('relay_token')) db.exec(`ALTER TABLE webchat_agent_mcp_servers ADD COLUMN relay_token TEXT`);
+    addColumnIfMissing(db, 'webchat_agent_mcp_servers', `relay_token TEXT`);
   },
 };

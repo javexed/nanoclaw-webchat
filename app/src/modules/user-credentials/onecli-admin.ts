@@ -27,15 +27,11 @@ import { randomBytes } from 'crypto';
 const pexec = promisify(execFile);
 
 /**
- * `onecli <resource> list` pages at 20 rows by default. Every lookup here is a
- * "find the one row I mean" query, so an unbounded call silently misses agents
- * and secrets past the first page — findAgentId returns null for an agent that
- * exists (which makes ensureAgent create a duplicate) and listAllSecrets
- * mis-classifies assignments. Always ask for the full set.
+ * Page cap for every OneCLI list call. `onecli <resource> list` pages at 20 by
+ * default, and every lookup here must see the full set: a missed row makes
+ * findAgentId return null for an existing agent (ensureAgent then creates a
+ * duplicate) and listAllSecrets mis-classify assignments.
  */
-// One page cap for every OneCLI list call. 1000 over the patch's 500: a
-// larger page is strictly safer for completeness, and it is the value this
-// install already ran for agents.
 const LIST_MAX = '1000';
 const TIMEOUT_MS = 20_000;
 
@@ -56,8 +52,7 @@ async function withSecretFile<T>(content: string, fn: (path: string) => Promise<
 }
 
 async function onecli(args: string[]): Promise<unknown> {
-  // A bare systemd service env (a Proxmox LXC / any `Environment=`-less unit)
-  // carries neither of the two things onecli needs:
+  // A bare systemd service env carries neither of the two things onecli needs:
   //   • HOME — onecli reads its auth token from $HOME/.config; unset → every call
   //     comes back "Unauthorized" (exit 2).
   //   • ~/.local/bin on PATH — the onecli CLI installs there (setup/onecli.ts),
@@ -81,7 +76,7 @@ async function onecli(args: string[]): Promise<unknown> {
     // unreachable, secret already exists, bad type, …), not the value it received —
     // surface a short slice of it so a failure is diagnosable instead of a bare
     // exit code. Belt-and-braces: redact any value we passed via `--value`, in case
-    // onecli ever echoes it back. See user-creds-adversarial-review (cred-storage).
+    // onecli ever echoes it back.
     const e = err as { code?: unknown; stderr?: unknown } | null;
     const code = e?.code;
     const vi = args.indexOf('--value');
@@ -112,6 +107,18 @@ export interface SecretRow {
   type?: string;
   hostPattern?: string;
   name?: string;
+}
+
+/** Vault-name prefix of every tool secret (see modules/tool-secrets). */
+export const TOOL_SECRET_NAME_PREFIX = 'ToolSecret ';
+
+/**
+ * A tool secret, as opposed to a model credential. The type alone can't tell
+ * them apart: a Grok member's credential is a `generic` secret, the same type
+ * as every tool secret. The vault name can.
+ */
+export function isToolSecret(s: SecretRow | undefined): boolean {
+  return s?.type === 'generic' && (s.name ?? '').startsWith(TOOL_SECRET_NAME_PREFIX);
 }
 
 /**
@@ -182,11 +189,8 @@ export interface OnecliAdmin {
   setSecrets(agentId: string, secretIds: string[]): Promise<void>;
 }
 
-// `agents list` returns only the first ~20 rows by default. Every caller here
-// needs the FULL fleet — a lookup that misses an agent past row 20 makes
-// findAgentId re-create a duplicate, and makes the workspace-default reconcile
-// (setWorkspaceDefaultCredential → listAgents) silently skip most agents. Pass a
-// high --max so one call covers any realistic fleet.
+// The FULL fleet (see LIST_MAX): a short page also makes the workspace-default
+// reconcile silently skip agents.
 const AGENTS_LIST = ['agents', 'list', '--max', LIST_MAX];
 
 export const realOnecliAdmin: OnecliAdmin = {

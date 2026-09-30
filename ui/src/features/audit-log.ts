@@ -3,6 +3,7 @@
 import { createApp } from 'vue';
 
 import { $ } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { authFetch } from '../core/api.js';
 import AuditLog from './AuditLog.vue';
 import {
@@ -19,14 +20,12 @@ import {
 let app: ReturnType<typeof createApp> | null = null;
 
 function mount(): void {
-  if (app) return;
-  const host = $('#audit-log-view');
-  if (!host) return;
-  app = createApp(AuditLog, {
-    onFilter: () => void loadAuditLog(),
-    onOlder: () => void loadAuditLog({ older: true }),
-  });
-  app.mount(host);
+  app ??= mountIsland('#audit-log-view', () =>
+    createApp(AuditLog, {
+      onFilter: () => void loadAuditLog(),
+      onOlder: () => void loadAuditLog({ older: true }),
+    }),
+  );
 }
 
 function query(beforeTs?: string): string {
@@ -38,13 +37,9 @@ function query(beforeTs?: string): string {
 }
 
 /**
- * Load the newest page, or append the next older one.
- *
- * Self-hiding on 403, the same contract every block on the Admin page uses:
- * a non-owner gets no panel rather than an error. Any other failure shows a
- * message instead of an empty list, so "nothing happened" and "we could not
- * tell you what happened" stay distinguishable — which for a security log is
- * the whole point.
+ * Load the newest page, or append the next older one. Self-hides on 403 like
+ * every Admin block; any other failure shows a message rather than an empty
+ * list, so a security log never reads "nothing happened" when it could not tell.
  */
 export async function loadAuditLog(opts: { older?: boolean } = {}): Promise<void> {
   const section = $('#settings-audit');

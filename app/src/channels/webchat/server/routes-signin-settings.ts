@@ -1,13 +1,6 @@
 /**
- * Admin → Sign-in: which ways in this install accepts, each on or off.
- *
- *   GET    /api/webchat/signin              the whole picture
- *   PUT    /api/webchat/signin/tailscale    {enabled}
- *   PUT    /api/webchat/signin/oidc         {provider, tenant | issuer, name, clientId, clientSecret?, clearSecret?}
- *   DELETE /api/webchat/signin/oidc
- *   PUT    /api/webchat/signin/proxy        {ips, header}
- *   DELETE /api/webchat/signin/proxy
- *   PUT    /api/webchat/signin/token        {enabled}
+ * Admin → Sign-in (/api/webchat/signin/*): which ways in this install accepts,
+ * each on or off.
  *
  * Owner / global admin; CSRF on writes; every change audited
  * (auth.signin.set). Changes apply at once (signin-settings.ts).
@@ -37,7 +30,7 @@ import {
 import { setBearerTokenDisabled, setPromoteFirstTailscaleOwner } from '../db.js';
 import { CALLBACK_PATH, requestOrigin } from '../oidc-login.js';
 import { isGlobalAdmin, isOwner } from '../roles.js';
-import { derivedClientConfig, getClientOverrides } from '../runner-client-config.js';
+import { extensionSigninSections } from '../extensions.js';
 import {
   applyOidc,
   applyProxy,
@@ -65,8 +58,6 @@ const isTls = (req: IncomingMessage): boolean => Boolean((req.socket as TLSSocke
 async function view(req: IncomingMessage, auth: AuthResult): Promise<Record<string, unknown>> {
   refreshTailscaleHealth();
   const info = await getAuthManagementInfo();
-  const overrides = await getClientOverrides();
-  const derived = derivedClientConfig();
   return {
     session: methodOfSource(auth.source) ?? 'localhost',
     loopback: info.loopback,
@@ -74,12 +65,8 @@ async function view(req: IncomingMessage, auth: AuthResult): Promise<Record<stri
     oidc: { ...readOidc(), redirectUri: `${requestOrigin(req, isTls(req))}${CALLBACK_PATH}` },
     proxy: readProxy(),
     token: { configured: info.bearerConfigured, enabled: info.bearerActive },
-    // VS Code (Microsoft only): the two optional overrides, and what applies without them.
-    vscode: {
-      appIdUri: overrides.appIdUri ?? '',
-      clientId: overrides.clientId ?? '',
-      defaultAppIdUri: derived.appIdUri,
-    },
+    // Sections installed extensions add (e.g. vscode, from the VS Code runner).
+    ...(await extensionSigninSections()),
   };
 }
 

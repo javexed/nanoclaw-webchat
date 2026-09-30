@@ -16,6 +16,8 @@ while IFS= read -r rel; do
   [ -z "$rel" ] && continue
   src="$HERE/app/$rel"
   dst="$TARGET/$rel"
+  # Already reached through a directory entry linked above: linking it again would target itself.
+  [ "$dst" -ef "$src" ] && continue
   if [ -f "$src" ]; then
     mkdir -p "$(dirname "$dst")"
     ln -sf "$src" "$dst"

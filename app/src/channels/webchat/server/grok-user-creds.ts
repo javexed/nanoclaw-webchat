@@ -30,8 +30,7 @@ export const USER_REFRESH_SKEW_MS = 10 * 60_000;
 
 /**
  * How often the host checks. MUST stay shorter than the skew — a longer tick
- * leaves a window where a credential falls due and expires between checks,
- * which is exactly the bug the install-wide sweep shipped with first.
+ * leaves a window where a credential falls due and expires between checks.
  */
 export const GROK_USER_REFRESH_TICK_MS = 5 * 60_000;
 
@@ -122,8 +121,7 @@ export interface UserRefreshDeps {
 /**
  * Exchange one member's refresh token and push the result to the vault.
  *
- * The refresh token ROTATES on every use — measured against xAI, not assumed —
- * so the new one must be persisted or the member is locked out at the next
+ * The refresh token ROTATES on every use, so the new one must be persisted or the member is locked out at the next
  * renewal. The vault write happens BEFORE the local write: if the process dies
  * between them the member keeps a working token and we retry with a refresh
  * token that is merely stale-but-recorded, whereas the other order can leave the

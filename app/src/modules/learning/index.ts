@@ -1,6 +1,6 @@
 /**
  * Learning loop module — registers the `propose_skill` delivery action and
- * the curator's host-sweep task. See docs/webchat/design/learning-loop.md.
+ * the curator's periodic sweep. See docs/webchat/learning-loop.md.
  */
 import { registerDeliveryAction } from '../../delivery.js';
 import { registerModuleSweep } from '../../module-sweep.js';
@@ -27,8 +27,7 @@ registerDeliveryAction(
 );
 
 // Curator: archive scoped skills nothing has invoked in months (learning loop
-// §6). Registered on the host-sweep seam (H7); self-gated to one real run per
-// day inside sweepStaleScopedSkills.
+// §6); self-gated to one real run per day inside sweepStaleScopedSkills.
 registerModuleSweep('learning-curator', async () => {
   await sweepStaleScopedSkills();
 });

@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import type { Migration } from './index.js';
+import { addColumnIfMissing } from '../add-column-if-missing.js';
 
 /**
  * Per-agent learning-loop settings (design §1: "per-agent opt-in").
@@ -17,11 +18,6 @@ export const moduleLearningConfig: Migration = {
   version: 201,
   name: 'learning-config',
   up(db: Database.Database) {
-    const has = (db.prepare("PRAGMA table_info('container_configs')").all() as Array<{ name: string }>).some(
-      (c) => c.name === 'learning',
-    );
-    if (!has) {
-      db.exec(`ALTER TABLE container_configs ADD COLUMN learning TEXT NOT NULL DEFAULT '{}'`);
-    }
+    addColumnIfMissing(db, 'container_configs', `learning TEXT NOT NULL DEFAULT '{}'`);
   },
 };

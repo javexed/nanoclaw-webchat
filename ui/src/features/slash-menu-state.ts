@@ -1,5 +1,5 @@
 // ── Slash menu state ────────────────────────────────────────────────────────
-// Bridge refs for the SlashMenu island. composer.ts still owns slashMatches and
+// Bridge refs for the SlashMenu island. composer.ts owns slashMatches and
 // slashActive — the keyboard handlers move the selection — so these mirror them.
 import { ref } from 'vue';
 

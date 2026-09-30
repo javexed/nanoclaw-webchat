@@ -9,22 +9,14 @@ export const addAgentCandidates = ref<any[]>([]);
 /** Non-archived agents offered by the room-create form. */
 export const createAgentCandidates = ref<any[]>([]);
 /**
- * Whether ANY agent exists, archived or not.
- *
- * Separate from createAgentCandidates because the imperative version keyed its
- * empty note off state.allAgents.length, not off the filtered list — so with
- * every agent archived it rendered an empty <ul> and no note. That is arguably
- * a bug, but harmonising it is a behaviour change and this phase does not make
- * those; the flag reproduces it exactly.
+ * Whether ANY agent exists, archived or not. The empty note keys off this, not
+ * the filtered list, so with every agent archived the list is empty and has no note.
  */
 export const createAgentAnyExist = ref(false);
 
 /**
- * Secret rows, already flattened. The imperative version built shared rows and
- * per-member personal rows from one local row() helper and appended both to the
- * same <ul>; the component sees a single list because that is what the DOM was.
- * `scope` is carried through untouched — it is the argument removeToolSecret
- * needs, not something the template renders.
+ * Secret rows (shared and per-member personal), flattened into one list.
+ * `scope` is carried through for removeToolSecret; the template never renders it.
  */
 export type SecretReach = 'mine' | 'agent' | 'workspace' | 'other';
 export const agentSecretRows = ref<
@@ -46,11 +38,8 @@ export const agentSecretRows = ref<
 export const agentSecretEffective = ref('');
 
 /**
- * Deploy keys for the open agent, already shaped.
- *
- * `meta` is composed by the renderer because it was one text node in the
- * imperative row; `key` is the untouched API object, which is what the delete
- * call takes.
+ * Deploy keys for the open agent, already shaped. `key` is the untouched API
+ * object, which is what the delete call takes.
  */
 export const agentKeyRows = ref<
   Array<{ name: string; meta: string; publicKey: string; key: unknown }>

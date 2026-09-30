@@ -6,6 +6,7 @@
     "resolveJsonModule": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
+    "noUnusedLocals": true,
     "noEmit": true,
     "allowJs": true,
     "checkJs": false,

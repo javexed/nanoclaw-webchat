@@ -19,11 +19,8 @@
  *     finish waits for `auth.json` to appear and returns its CONTENTS.
  *
  * This module only *produces* the credential (captured server-side, never round-
- * tripped through the browser). The UserCreds onboard path decides what to do with it
- * (storeUserCredential → an `anthropic` secret for Claude, an `openai` auth.json
- * secret for Codex). Keeping mint and storage separate is deliberate: the same
- * mint can later feed an operator shared-key path, and UserCreds owns the per-member
- * identity wiring.
+ * tripped through the browser); the caller stores it (storeUserCredential → an
+ * `anthropic` secret for Claude, an `openai` auth.json secret for Codex).
  */
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from 'child_process';
 import { randomUUID } from 'crypto';
@@ -368,7 +365,7 @@ export async function mintClaudeToken(userId: string, sessionId: string, code: s
   // `claude setup-token` is a raw-mode TUI (Ink). Writing `code + '\r'` in one
   // chunk reads as a bulk PASTE — Ink inserts the CR into the field instead of
   // submitting, so the code just sits there masked as asterisks and the prompt
-  // waits forever (confirmed via capture diagnostics). Send the code first, then
+  // waits forever. Send the code first, then
   // Enter as a SEPARATE keystroke a beat later so the field's onSubmit fires.
   session.child.stdin.write(code.trim());
   setTimeout(() => {

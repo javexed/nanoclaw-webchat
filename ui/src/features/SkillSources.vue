@@ -1,19 +1,9 @@
 <script setup lang="ts">
 /**
- * The skill collections list in Settings — twenty-seventh island.
- *
- * Mounted into <ul id="skill-sources-list">, exclusively owned by this module.
- * #settings-skill-sources (the section's owner-only hidden flag) is outside the
- * mount point and stays imperative.
- *
- * Two row kinds share one shape and one template: editable GitHub collections
- * (Edit + Remove) and built-in marketplace sources (a built-in badge and a
- * reversible Add/Remove, since there is no URL to re-paste). The imperative
- * version expressed the shared part as a local sourceRow() helper and then
- * appended different buttons to its result; `kind` selects instead.
- *
- * Each row leads with the same coloured OriginBadge as the pool, so a
- * collection's colour is consistent between Settings and the catalog.
+ * The skill collections list in Settings, mounted into <ul id="skill-sources-list">.
+ * `kind` selects between editable GitHub collections (Edit + Remove) and built-in
+ * marketplace sources (a built-in badge and a reversible Add/Remove — no URL to
+ * re-paste). Rows lead with the same OriginBadge colour as the pool.
  */
 import { skillSources } from './skills-panel-state.js';
 import OriginBadge from './OriginBadge.vue';

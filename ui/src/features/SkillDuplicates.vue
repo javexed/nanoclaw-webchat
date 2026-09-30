@@ -1,19 +1,9 @@
 <script setup lang="ts">
 /**
- * Skills several agents learned independently — twenty-first island.
- *
- * Mounted into <ul id="skill-duplicates-list">, exclusively owned by this
- * module. The #skill-duplicates wrapper's hidden flag is outside the mount
- * point and stays imperative.
- *
- * The badge here is NOT an OriginBadge. It looks like one and shares its
- * classes, but it is a fixed hue 48 with a count in the label rather than a
- * provenance link — originBadgeProps would compute a hue from the text and
- * change the colour. Kept as literal markup for that reason.
- *
- * `promote.disabled = true` on the clicked element became a pending SET,
- * because there is no clicked element to hold once the row is a vnode and
- * disabling is what stops a double-click promoting twice.
+ * Skills several agents learned independently, mounted into
+ * <ul id="skill-duplicates-list">. The badge is literal markup, NOT an OriginBadge: it
+ * is a fixed hue 48 with a count, and originBadgeProps would derive the hue from the text.
+ * A pending set disables Promote so a double-click cannot promote twice.
  */
 import { computed } from 'vue';
 import { promotingSkills, skillDuplicates } from './skills-panel-state.js';

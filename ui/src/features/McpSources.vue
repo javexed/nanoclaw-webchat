@@ -1,19 +1,9 @@
 <script setup lang="ts">
 /**
- * The MCP registry source list — nineteenth island.
- *
- * Mounted into <ul id="mcp-sources-list">, exclusively owned by this module.
- *
- * #mcp-sources (the section's hidden flag, which also encodes "not a
- * global admin") is outside the mount point and stays imperative.
- *
- * First island to render an OriginBadge. The badge is a component rather than
- * a v-html of originBadgeEl's output precisely because it carries an href
- * decision — see the note in origin-badge.ts.
- *
- * Same row idiom as the skill collections' built-in source: info column (name +
- * meta), a built-in badge, and a reversible Remove/Add — no standing prose, no
- * confirm, since adding it back is one click.
+ * The MCP registry source list, mounted into <ul id="mcp-sources-list">; #mcp-sources'
+ * hidden flag (which also encodes "not a global admin") stays with the renderer. Badges
+ * are OriginBadge components because they carry an href decision (see origin-badge.ts).
+ * Remove/Add is reversible in one click, so there is no confirm.
  */
 import { computed } from 'vue';
 import OriginBadge from './OriginBadge.vue';

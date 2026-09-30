@@ -1,23 +1,15 @@
 /**
  * The install-wide default agent provider, as chosen in the setup wizard.
  *
- * `DEFAULT_AGENT_PROVIDER` decides what a NEW agent group runs when nothing
- * pins it. It lived only in .env, so an operator who picked and authenticated an
- * engine in the wizard still got Claude agents afterwards — the choice governed
- * that one create step and nothing else.
+ * `DEFAULT_AGENT_PROVIDER` (.env) decides what a NEW agent group runs when
+ * nothing pins it.
  *
- * NEW GROUPS ONLY, and that is not this module's promise to keep: container
- * configs are stamped at creation with INSERT OR IGNORE, so an existing group's
- * row is never rewritten (see db/container-configs.ts, which calls that property
- * load-bearing). Changing the default cannot retroactively flip a running agent.
+ * NEW GROUPS ONLY: container configs are stamped at creation with INSERT OR
+ * IGNORE, so an existing group's row is never rewritten (db/container-configs.ts).
  *
- * A RESTART IS REQUIRED and is not avoidable from here. config.ts reads the
- * value into a module-level const at import, and both consumers
- * (group-init, container-configs) import that const rather than reading
- * process.env, so mutating the environment after boot changes nothing. The TTS
- * and STT installers get away with an in-process "activate" because their
- * consumers read process.env directly; this one cannot, so it restarts the way
- * the Codex and OpenCode installs already do.
+ * A RESTART IS REQUIRED: config.ts reads the value into a module-level const at
+ * import, and its consumers (group-init, container-configs) import that const
+ * rather than reading process.env.
  */
 import fs from 'node:fs';
 import path from 'node:path';

@@ -1,18 +1,8 @@
 <script setup lang="ts">
 /**
- * Workspace-scoped tool secrets — fifty-seventh island.
- *
- * Mounted into <ul id="secrets-list">, exclusively owned by this module.
- *
- * Every row is 'shared' — this list IS the workspace scope, so unlike
- * AgentSecretList there is no personal/shared distinction to draw and no owner
- * to name. Two lists, two islands, because they answer different questions.
- *
- * loadToolSecretList takes a listSel parameter, but the only selector that ever
- * reaches it is this one: removeToolSecret routes an agent-scoped delete to
- * renderAgentSecrets instead, which repaints the other island. Checked rather
- * than assumed — a second writer into a Vue-owned list is exactly the bug this
- * phase keeps finding.
+ * Workspace-scoped tool secrets, mounted into <ul id="secrets-list">. Every row is
+ * 'shared' — this list IS the workspace scope. Agent-scoped deletes repaint
+ * AgentSecretList instead, so this list has one writer.
  */
 import { toolSecretRows } from './tool-secrets-state.js';
 

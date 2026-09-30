@@ -6,13 +6,13 @@ server. It is the only channel that ships its own management surface; everything
 else routes through NanoClaw's normal entity model (users → messaging groups →
 agent groups → sessions), exactly like Discord/Slack/Telegram.
 
-This is the overview. Focused design docs cover the harder subsystems in depth:
+This is the overview; the user-facing tour is [guide.md](guide.md). Focused
+docs cover the harder subsystems in depth:
 
-- Threads: [threads.md](threads.md), [threads-qa.md](threads-qa.md)
-- Thread context sync: [thread-context-sync.md](thread-context-sync.md)
-- Thread-engaged agents (dormant): [thread-engaged-agents.md](thread-engaged-agents.md)
-- User credentials (per-member): [user-credentials.md](user-credentials.md), [user-credentials-oauth.md](user-credentials-oauth.md)
-- Local-model routing: [llm-router.md](design/llm-router.md), [add-litellm.md](design/add-litellm.md)
+- Message path: [message-path.md](message-path.md), [architecture-diagram.md](architecture-diagram.md)
+- Threads and context sync: [threads.md](threads.md), [threads-qa.md](threads-qa.md)
+- User credentials (per-member): [user-credentials.md](user-credentials.md)
+- Local-model routing: [llm-router.md](design/llm-router.md), [auto-routing.md](design/auto-routing.md)
 
 Ships **disabled by default** — the adapter factory returns `null` unless
 `WEBCHAT_ENABLED=true`.
@@ -27,25 +27,14 @@ a factory that builds the adapter only when enabled. The adapter declares
 `threadId` end to end. From the router's perspective it is an ordinary
 `ChannelAdapter` with `onInbound` / `deliver` / `setTyping` / `sendStatus`.
 
-### Message flow (round trip)
+### Message flow
 
-1. **Browser → adapter.** The PWA sends a WebSocket frame
-   `{type:'message', content, thread_id}`. `ws.ts` resolves the authenticated
-   identity and calls `onInbound(roomId, threadId, message)`. Sender identity and
-   access gating are enforced downstream in the router / permissions module from a
-   `senderId` carried on the message.
-2. **Router → session.** The router resolves a session for
-   `(agentGroup, room, threadId, mode)` and writes into that session's
-   `inbound.db`; the per-agent-group container is woken.
-3. **Agent → outbound.** The container writes replies into `outbound.db`.
-4. **Delivery → browser.** Host delivery polls `outbound.db` and calls
-   `adapter.deliver(roomId, threadId, msg)`, which stores the reply in
-   `webchat_messages` (thread-stamped) and `broadcast`s it over WebSocket to
-   connected clients. A rate-limited **loop-back** re-enters the router so other
-   agents wired to the room can react (bounded to ~30 events / 60 s per room).
-
-The two-DB session split and central-DB model are unchanged — webchat is a
-consumer of them, not a new IO path. `webchat_messages` is a PWA-facing history
+A browser WebSocket frame becomes `onInbound(roomId, threadId, message)`; the
+router writes it into the session's `inbound.db` and wakes the container; host
+delivery polls `outbound.db` and calls `adapter.deliver`, which stores the reply
+and broadcasts it. A rate-limited **loop-back** re-enters the router so other
+agents wired to the room can react. The full walk-through is
+[message-path.md](message-path.md). `webchat_messages` is a PWA-facing history
 mirror; routing and delivery still flow through `inbound.db` / `outbound.db`.
 
 ### Storage
@@ -74,34 +63,27 @@ response.
 
 ### Chat
 
-- **Rooms / lobby** — sidebar room list with search, A–Z / recent sort, create,
-  per-room color; pin / archive / hide / drag-reorder.
-- **@mention routing** — mention autocomplete from a room's mentionable set.
-  Rooms are **mention-only**: an agent replies only when @-mentioned. A per-room
-  **prime** agent acts as a catch-all; a per-room engage mode governs stickiness.
-- **Per-agent DMs** — single-agent `dm:<folder>` rooms.
+What each feature looks like to a user is in [guide.md](guide.md); the
+implementation notes that matter here:
+
+- **Mention routing** — rooms are **mention-only**: an agent replies only when
+  @-mentioned. A per-room **prime** agent acts as a catch-all; a per-room engage
+  mode governs stickiness.
 - **Threads** — a thread *is* an agent session (`resolveSession(…, 'per-thread')`),
   so each `(room, thread)` has isolated context and its own `inbound.db` /
-  `outbound.db`. Sidebar-nested tree; `main` is pinned and non-deletable; manual
-  create / rename / delete; per-thread unread; active-thread persistence.
-  (Auto-spawn was cut — only a dormant column remains.)
-- **Thread context sync** — pull or push a verbatim, additive, incremental slice
-  of one thread's history into another, with per-direction high-water marks so
-  re-syncs never duplicate; imported spans render as labelled context dividers.
-- **Markdown** — GFM via vendored `marked` + `DOMPurify`; code-block copy toolbars.
-- **Attachments** — small uploads plus chunked/resumable uploads above ~512 KB;
-  image bubbles with a pinch-zoom lightbox; files stored as separate message rows.
+  `outbound.db`; context sync copies a verbatim, incremental slice between a
+  thread and main. See [threads.md](threads.md).
+- **Markdown** — GFM via vendored `marked` + `DOMPurify`.
+- **Attachments** — chunked/resumable uploads above ~512 KB; files are stored as
+  separate message rows.
 - **Live agent activity** — redacted `status` frames stream a per-turn thinking
-  bubble (`start` / `tool` / `progress` / `reasoning` / `done` / `stalled`) with an
-  elapsed timer, expandable full trace, typing indicator, and an **interrupt**.
-- **Search** — SQLite **FTS5** external-content virtual table with sync triggers,
-  prefix matching, and `snippet()` highlighting; jumps to a match, paging history
-  as needed.
-- **Notifications / PWA** — Web Push (VAPID) with an SSRF-allowlisted endpoint set;
-  a service worker (cache-first shell under a content-hashed cache name, cache-first vendored libs, `/api` & `/ws`
-  bypass) for an installable, offline-capable app; IndexedDB unread app-badge.
-- **Themes** — dark / light / system, font scale, send-key preference; design
-  tokens per [`public/webchat/DESIGN.md`](../../public/webchat/DESIGN.md).
+  bubble (`start` / `tool` / `progress` / `reasoning` / `done` / `stalled`).
+- **Search** — an SQLite **FTS5** external-content table with sync triggers,
+  prefix matching and `snippet()` highlighting.
+- **PWA** — Web Push (VAPID) with an SSRF-allowlisted endpoint set; a service
+  worker (cache-first shell under a content-hashed cache name, `/api` and `/ws`
+  bypassed); design tokens per
+  [`public/webchat/DESIGN.md`](../../public/webchat/DESIGN.md).
 
 ### Security & identity
 
@@ -132,21 +114,23 @@ response.
 
 In a shared room, each member's turns run in a container bearing that member's own
 OneCLI agent identity, so the gateway bills that member's own credential. Per-member
-session keying uses `per-thread` with `thread_id = userId`; shared context is
-preserved by fan-out (sender `trigger:1`, others `trigger:0`).
+session keying uses `per-thread` with `thread_id = <userId>::<threadId|main>`;
+shared context is preserved by fan-out (sender `trigger:1`, others `trigger:0`).
+Full design: [user-credentials.md](user-credentials.md).
 
 - **Credential types** — Anthropic API key (`sk-ant-…`), Claude subscription OAuth
-  token, OpenAI API key, Codex ChatGPT subscription. The **API-key path is
-  shipping**; the **OAuth / subscription minting flow is a prototype**
-  (`oauth-mint.ts` screen-scrapes `claude setup-token` / `codex login` output via a
-  PTY — fragile, untested). Codex / OpenAI types are inert until `/add-codex`.
+  token, OpenAI API key, Codex (ChatGPT) and Grok subscriptions. Subscriptions are
+  minted from the browser (`oauth-mint.ts` drives `claude setup-token` /
+  `codex login` through a PTY and reads their output, so a CLI output change can
+  break it). Codex / OpenAI types are inert until `/add-codex`.
 - **Storage / injection** — credentials go straight to the OneCLI vault (the host
   never holds them); the per-member agent id is a deterministic
   `user-creds-<slug>-<hash>`. Approval reversal is tracked in
   `user_credential_members`.
-- **Per-room gating** — `credential_mode` (disabled / optional / required, default
-  disabled) + an `oauth_allowed` toggle; a workspace policy sets the default mode
-  and which credential types are permitted (out of the box: Anthropic key only).
+- **Gating** — per-room `credential_mode` (disabled / optional / required, default
+  disabled); a workspace policy sets the default mode, which credential types are
+  permitted (out of the box: Anthropic key only), and one subscription switch per
+  provider (`allow_{claude,codex,grok}_oauth`).
   Onboarding is bound to the authenticated `userId`, room-access + CSRF gated, and
   rate-limited.
 
@@ -168,24 +152,19 @@ preserved by fan-out (sender `trigger:1`, others `trigger:0`).
   requires `/add-litellm` (fronts them on the default Claude harness).
 - **Ollama host management** — list hosts, stream model **pulls** with progress,
   refresh the router roster.
-- **Local-model routing** — a console over a LiteLLM + Arch-Router classifier stack.
-  The **Auto routing → Install** button in Settings installs and configures it in one flow
-  (`POST /api/router/install`: pulls the classifier model with a progress bar, runs
-  the `add-routing` installer, points the classifier at `host.docker.internal`, and
-  auto-binds routes to the roster) — no shell required; it can still be installed via
-  `/add-litellm` + `/add-routing` instead. Once installed the **Auto routing tab** appears
-  (hidden until `routes.json` exists) with **Rules**, **Models**, and **Logs** sub-tabs: a routes
-  editor with a live **test bench** and per-route suggestions when a roster model has
-  an uncovered capability, a **decisions tail** (`routing-shadow.jsonl`) and
-  shadow-vs-live **metrics**, the router roster, and a roster-refresh that re-runs
-  the installers and re-binds. A **router picker** (New / Delete) defines multiple
-  named routing profiles (`auto`, `auto-vision`, …) sharing one classifier + roster;
-  the sub-tabs operate on the selected profile, and an agent picks one by its assigned
-  virtual model. The button install flips it **live** straight away; the
-  `/add-routing` skill path starts in **shadow mode**, flipped live from the tab. Degrades cleanly to "not installed" when `data/litellm/*` is absent.
+- **Local-model routing** — a console over a LiteLLM + Arch-Router classifier
+  stack: routes editor with a live test bench, decisions tail and metrics, the
+  router roster, and multiple named routing profiles. **Settings → Auto routing →
+  Install** sets the stack up with no shell (or use `/add-litellm` +
+  `/add-routing`); the tab stays hidden until `routes.json` exists. Details:
+  [auto-routing.md](design/auto-routing.md).
 - **MCP registry** — register / probe (real MCP client, lists tools) / assign MCP
   servers to agents; syncs into `container_configs.mcp_servers`, co-existing with
-  `ncl`-added servers.
+  `ncl`-added servers. A remote server's tool surface is hash-pinned at approval,
+  so description drift flags it until re-approved; per-server tool allowlists
+  feed the SDK's `allowedTools`. Servers with host-side auth (bearer or OAuth 2.1)
+  reach containers through a relay URL with a per-(agent, server) token, so the
+  real credential never enters `container.json`.
 - **Approvals inbox** — pending list + respond; in-room and per-approver cards.
 - **Permissions** — user list, role grants/revokes, per-agent-group admin/member
   matrix (role grants owner-only; member grants delegable to scoped admins).
@@ -298,62 +277,10 @@ Loaded from `.env` into `process.env` (if unset) by the adapter's `env-load.ts`
 | `WEBCHAT_MCP_RELAY_HOST` | Interface the relay binds — the address agent containers reach as `host.docker.internal`. Required on hosts with no `docker0` | auto (docker0 IP) |
 | `OLLAMA_HOST` | Dashboard "is Ollama up" probe only | `''` |
 
-## REST endpoints (by area)
+## HTTP API
 
-- **Health / auth / identity** — `GET /health`, `GET /api/auth/info`,
-  `GET /api/auth/check`, `GET|PUT /api/me/handle`.
-- **Rooms** — `GET|POST /api/rooms`, `DELETE /api/rooms/:id`,
-  `GET /api/rooms/:id/agents` + `POST` (wire) + `DELETE …/agents/:aid`,
-  `GET /api/rooms/:id/mentionable`, `PUT|DELETE …/prime`,
-  archive/hide/pin variants, `POST /api/rooms/pins/order`,
-  `GET|PUT …/engage-mode`, `PUT …/name`.
-- **Threads** — `GET|POST /api/rooms/:id/threads`,
-  `PATCH|DELETE …/threads/:tid`, `PUT …/threads/:tid/read`,
-  `POST …/threads/:tid/pull|push` (dormant: `…/engaged` routes).
-- **User credentials** — `GET|PUT /api/webchat/credentials-config`,
-  `GET|POST|DELETE /api/user-credentials/credential`,
-  `POST /api/user-credentials/oauth/(start|code|cancel)`,
-  `POST /api/user-credentials/codex/(start|finish|cancel)`,
-  `GET|PUT /api/rooms/:id/credential-mode`, `GET|PUT /api/rooms/:id/oauth-allowed`.
-- **History / files / search** — `GET /api/rooms/:id/messages` (`?thread_id=`),
-  `POST /api/rooms/:id/upload`, `POST /api/rooms/:id/upload/chunk`,
-  `GET /api/files/:roomId/:fileId`, `GET /api/search`, `GET /api/topology`.
-- **Agents** — `GET|POST /api/agents`, `POST /api/agents/draft`,
-  `GET|PUT|DELETE /api/agents/:id`, `PUT …/instructions`, `GET …/rooms`,
-  `PUT …/model`, `GET|PUT …/mcp-servers`, `PUT …/status`.
-- **MCP** — `GET|POST /api/mcp-servers`, `POST /api/mcp-servers/probe`,
-  `PUT|DELETE /api/mcp-servers/:id`. Hardening: `POST …/:id/repin` (re-approve
-  a drifted tool surface), `PUT …/:id/tools` (per-server tool allowlist →
-  SDK `allowedTools`), `PUT …/:id/auth` (host-side bearer credential),
-  `POST …/:id/oauth/start` + `GET /api/mcp-servers/oauth/callback` (OAuth 2.1 +
-  PKCE via discovery/DCR). Remote servers are health-probed hourly and their
-  tool surface hash-pinned at approval — description drift ("rug pull") flags
-  the server in the MCP tab until re-approved. Servers with host-side auth are
-  synced to containers as a RELAY url (`:3102/relay/:id`) + per-(agent,server)
-  token; the real credential never enters container.json.
-- **Models / Ollama / router** — `GET|POST /api/models`,
-  `POST /api/models/discover|probe|bulk`, `PUT|DELETE /api/models/:id`,
-  `GET /api/ollama/hosts|models|pulls`, `POST /api/ollama/pull`,
-  `GET|PUT /api/router/routes`, `POST /api/router/classify`,
-  `GET /api/router/decisions|metrics|models`, `GET|POST /api/router/install`,
-  `GET|POST /api/router/roster-refresh`.
-- **Skills** — `GET /api/skills`, `POST /api/skills/import` (pool) +
-  `POST /api/skills/inspect` (pre-import preview: inventory + lint, writes
-  nothing), `GET /api/skills/updates` + `POST /api/skills/:name/update`
-  (imports are SHA-pinned; update re-imports from the recorded source,
-  snapshotting the outgoing version), `GET /api/skills/catalog|suggest|sources`,
-  `PUT|DELETE /api/skills/sources/:id`, `GET /api/skills/duplicates` +
-  `POST /api/skills/promote`, `GET|PUT|DELETE /api/skills/:name`.
-  Per-agent: `GET|PUT /api/agents/:id/skills`, `POST …/skills/import` (scoped),
-  `DELETE …/skills/scoped/:name`, `POST …/skills/scoped/:name/revert`,
-  `POST …/skills/archived/:name/restore`, `GET|PUT /api/agents/:id/learning`.
-  Learning-loop drafts: `GET /api/skill-drafts`, `GET|PUT|DELETE
-  /api/skill-drafts/:id`, `POST /api/skill-drafts/:id/keep`
-  (see [docs/webchat/learning-loop.md](learning-loop.md)).
-- **Approvals / permissions / push** — `GET /api/approvals/pending`,
-  `POST /api/approvals/:id/respond`, `GET /api/users`, `DELETE /api/users/:id`,
-  `POST /api/permissions/grant|revoke`, `GET /api/push/vapid-public`,
-  `POST /api/push/subscribe|unsubscribe`. Plus static PWA serve + WS upgrade.
+The route table (`API_ROUTES` in `src/channels/webchat/server.ts`) is the source
+of truth for endpoints. Every mutating route requires the `X-Webchat-CSRF: 1` header.
 
 ## File layout
 
@@ -369,7 +296,7 @@ Adapter (`src/channels/webchat/`):
 | `migration.ts` | The ~25 webchat tables |
 | `models.ts` / `ollama-manage.ts` | Model registry + SSRF policy + env injection; Ollama pull + router state |
 | `mcp-registry.ts` / `mcp-probe.ts` | MCP registry + probe |
-| `drafter.ts` / `oauth-mint.ts` | Host-side agent drafter; browser OAuth/Codex mint (prototype) |
+| `drafter.ts` / `oauth-mint.ts` | Host-side agent drafter; browser OAuth/Codex mint |
 | `push.ts` / `redact.ts` / `reconcile.ts` / `env-load.ts` | Web Push + allowlist; secret masking; delivery-race recovery; `.env` shim |
 
 PWA (`public/webchat/`): `index.html` (all views/modals), `app.js` (behavior; built from `ui/src/`),
@@ -386,8 +313,8 @@ from three pinned inputs (`versions.json`) — it is deliberately not merged
 into NanoClaw core (too large a surface):
 
 - **Upstream nanoclaw** is cloned at the pinned ref, unmodified.
-- **The hook seam** (`pub/module-hooks`, 21 module registries, proposed
-  upstream) merges in — inert until modules register.
+- **The hook seam** (`pub/module-hooks`, a set of module registries) merges in —
+  inert until modules register.
 - **`app/`** — webchat-owned dirs (`src/channels/webchat`, `public/webchat`,
   `src/modules/user-credentials`, the agent-status + learning modules,
   migrations, docs) overlay as pure adds; **`patches/`** carries the small
@@ -396,20 +323,3 @@ into NanoClaw core (too large a surface):
 - Migrations register, pinned deps (`ws`, `busboy`, `web-push`, `undici`,
   `@modelcontextprotocol/sdk`) install, host and container build.
 - `configure-webchat.sh` writes `.env` (enable flag, network mode, VAPID keys).
-
-## Status: shipped vs prototype vs companion-skill
-
-- **Shipped** (built, in this repo): the adapter + console core, rooms /
-  mentions / pins / archive, **threads**, **thread context sync**, FTS5 search, Web
-  Push / PWA, the approvals bridge, the models registry + discover/probe, Ollama
-  pull, the MCP registry, permissions / topology / wiring, draft-from-prompt, all
-  five auth methods, SSRF / CSRF / redaction.
-- **User credentials**: the **Anthropic API-key path ships**; the **OAuth / subscription +
-  Codex minting flow is a prototype** (fragile PTY screen-scrape, no tests).
-- **Thread-engaged agents (chips)**: built but **dormant/removed** — the backend
-  tables and routes remain, but the UI was pulled and threads route mention-only.
-- **Local-model routing**: the **console is shipped**, now with a one-click **"Set
-  up routing"** installer in Settings (pulls the classifier, scaffolds routing, and
-  auto-binds routes). The **engine** (LiteLLM + Arch-Router classifier) is still a
-  separate stack — installed from that button or via `/add-litellm` + `/add-routing`;
-  the console degrades to "not installed" without it.

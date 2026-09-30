@@ -2,7 +2,7 @@
 
 Interactive checklist for the **per-room threads** UI (shipped — design in
 [threads.md](threads.md)). The backend is unit-tested; this validates the UI,
-which can't be. Run on a **dev/throwaway instance**, not the live install.
+which can't be. Run on a **dev or throwaway instance**, never one people are using.
 
 ## Setup
 - On a dev instance with the webchat channel installed: `pnpm run build`, `./container/build.sh`, restart the host, then open the webchat PWA.

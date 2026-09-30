@@ -1,20 +1,9 @@
 // ── Agent templates ─────────────────────────────────────────────────────────
-//
-// A template is an Agent Plugins directory in the install's LOCAL library. It
-// carries an agent's persona, skills, MCP servers and recurring tasks — but no
-// provider and no secrets — and stamping it produces a configured agent.
-//
-// The picker only exists when the library has something in it. Most installs
-// ship an empty library, and a permanently-empty select is a control that
-// teaches the reader nothing; hiding it keeps the create form as short as it
-// is today until templates are actually present.
-//
-// Choosing a template hides Instructions and the drafter, because the template
-// supplies the persona and those fields would be silently ignored. That is the
-// whole explanation for their absence — which is why there is no hint line
-// saying so.
+// A template is an Agent Plugins directory in the install's LOCAL library:
+// persona, skills, MCP servers and recurring tasks, but no provider and no
+// secrets. The picker is hidden while the library is empty.
 import { $ } from '../core/dom.js';
-import { authFetch } from '../core/api.js';
+import { apiJson, authFetch } from '../core/api.js';
 import { showToast } from '../core/toast.js';
 import { showConfirmModal, showInputModal } from './modals.js';
 import { selectedAgentId } from './agent-list-state.js';
@@ -65,9 +54,8 @@ export async function loadAgentTemplates(): Promise<void> {
   const sel = $<HTMLSelectElement>('#agent-create-template');
   if (!wrap || !sel) return;
   try {
-    const res = await authFetch('/api/templates');
-    if (!res.ok) return; // 403 for non-owners: leave the picker hidden
-    const body = (await res.json()) as { templates?: AgentTemplate[] };
+    // 403 for non-owners throws: leave the picker hidden
+    const body = (await apiJson('/api/templates')) as { templates?: AgentTemplate[] };
     templates = Array.isArray(body.templates) ? body.templates : [];
   } catch {
     return; // a listing failure must never block creating a blank agent
@@ -124,29 +112,15 @@ function mcpLine(s: TemplateMcpSummary): string {
 }
 
 /**
- * Show what a template will do, and require an explicit yes.
- *
- * WHY THIS EXISTS. Stamping imports a stranger's blueprint: persona, skills,
- * MCP servers and scheduled tasks, in one click. Until this existed you found
- * out what was in it AFTERWARDS, from a report — while UPDATING a stamped
- * agent already showed a dry-run plan first. The riskier operation was the
- * less gated one.
- *
- * The MCP lines are the point. `command` is constrained by the reader, but
- * `args` is not, so the only honest review is the actual argv in front of the
- * person deciding. Returns false when the operator declines or the template
- * cannot be read — a plan that fails to load is a reason to stop, not to
- * proceed blind.
+ * Show what a template will do, and require an explicit yes: stamping imports a
+ * stranger's persona, skills, MCP servers and tasks in one click. The MCP lines
+ * are the point — `command` is constrained by the reader but `args` is not, so
+ * the reviewer sees the actual argv. False when declined or the plan cannot load.
  */
 export async function confirmTemplatePlan(ref: string): Promise<boolean> {
   let plan: TemplatePlan;
   try {
-    const res = await authFetch(`/api/templates/detail?ref=${encodeURIComponent(ref)}`);
-    plan = (await res.json().catch(() => ({}))) as TemplatePlan;
-    if (!res.ok) {
-      showToast(`Could not read ${ref}: ${plan.error || res.statusText}`, { kind: 'error' });
-      return false;
-    }
+    plan = (await apiJson(`/api/templates/detail?ref=${encodeURIComponent(ref)}`)) as TemplatePlan;
   } catch (err: any) {
     showToast(`Could not read ${ref}: ${err?.message || err}`, { kind: 'error' });
     return false;
@@ -202,11 +176,8 @@ export async function stampTemplate(ref: string, name: string): Promise<{ error:
 }
 
 // ── Library management ──────────────────────────────────────────────────────
-//
-// The library block lives on the Agents tab, next to where agents are created,
-// rather than in Settings — the same decomposition the model/skill/MCP blocks
-// followed. It hides itself unless there is something to manage or somewhere
-// to fetch from, so an install that never touches templates never sees it.
+// On the Agents tab; hides itself unless there is something to manage or
+// somewhere to fetch from.
 
 interface TemplateSource {
   id: string;
@@ -227,12 +198,8 @@ export async function renderTemplateLibrary(): Promise<number> {
 
   let held: AgentTemplate[] = [];
   try {
-    const res = await authFetch('/api/templates');
-    if (!res.ok) {
-      wrap.hidden = true; // 403: not an owner — nothing here is actionable
-      return 0;
-    }
-    const body = (await res.json()) as { templates?: AgentTemplate[]; error?: string };
+    // 403 (not an owner) throws: nothing here is actionable
+    const body = (await apiJson('/api/templates')) as { templates?: AgentTemplate[]; error?: string };
     held = Array.isArray(body.templates) ? body.templates : [];
     if (body.error) showToast(body.error, { kind: 'error' });
   } catch {
@@ -250,10 +217,8 @@ export async function renderTemplateLibrary(): Promise<number> {
     label.className = 'ollama-model-name';
     label.textContent = t.version ? `${t.name} ${t.version}` : t.name;
     label.title = t.description ? `${t.ref} — ${t.description}` : t.ref;
-    // Same control as the browse list and as the Models tab: everything in the
-    // library is by definition held, so it is always the `−` (on) state. A text
-    // "Remove" button here and a +/− toggle one list away was two vocabularies
-    // for one action.
+    // Same +/− control as the browse list and the Models tab; everything in the
+    // library is held, so it is always the `−` (on) state.
     const del = templateToggle(true);
     del.addEventListener('click', () => void removeTemplate(t));
     li.append(label, del);
@@ -295,9 +260,7 @@ async function renderSources(): Promise<void> {
   const sel = $<HTMLSelectElement>('#template-source-select');
   if (!sel) return;
   try {
-    const res = await authFetch('/api/template-sources');
-    if (!res.ok) return;
-    const body = (await res.json()) as { sources?: TemplateSource[] };
+    const body = (await apiJson('/api/template-sources')) as { sources?: TemplateSource[] };
     sources = Array.isArray(body.sources) ? body.sources : [];
   } catch {
     return;
@@ -312,13 +275,8 @@ async function renderSources(): Promise<void> {
 }
 
 /**
- * The +/− control, matching the selectable-model toggle on the Models tab.
- *
- * Same classes, same glyphs, same colour language as select-toggle.ts: `+` in
- * the success colour to add, `−` in the danger colour (via `.on`) to remove.
- * Deliberately NOT buildSelectToggle() — that one is bound to the selectable-
- * model registry and would toggle a model registration. This borrows the look
- * and the meaning, not the behaviour.
+ * The +/− control, styled like select-toggle.ts. Not buildSelectToggle(): that
+ * one is bound to the model registry and would toggle a model registration.
  */
 function templateToggle(held: boolean): HTMLButtonElement {
   const btn = document.createElement('button');
@@ -336,9 +294,7 @@ function templateToggle(held: boolean): HTMLButtonElement {
  */
 async function heldRefs(): Promise<string[]> {
   try {
-    const res = await authFetch('/api/templates');
-    if (!res.ok) return [];
-    const body = (await res.json()) as { templates?: AgentTemplate[] };
+    const body = (await apiJson('/api/templates')) as { templates?: AgentTemplate[] };
     return (body.templates ?? []).map((t) => t.ref);
   } catch {
     return [];
@@ -355,17 +311,10 @@ async function browseSelectedSource(): Promise<void> {
   pending.textContent = 'Loading…';
   list.appendChild(pending);
   try {
-    const res = await authFetch(`/api/template-sources/${encodeURIComponent(sel.value)}/browse`);
-    const body = (await res.json().catch(() => ({}))) as { templates?: RemoteTemplateRow[]; error?: string };
-    if (!res.ok) {
-      // Reaching someone else's server is the one step here that can fail for
-      // reasons the operator cannot fix locally, so say what happened.
-      list.innerHTML = '';
-      const err = document.createElement('li');
-      err.textContent = body.error || res.statusText;
-      list.appendChild(err);
-      return;
-    }
+    // A remote source can fail for reasons the operator cannot fix locally; the catch says why.
+    const body = (await apiJson(`/api/template-sources/${encodeURIComponent(sel.value)}/browse`)) as {
+      templates?: RemoteTemplateRow[];
+    };
     const rows = Array.isArray(body.templates) ? body.templates : [];
     list.innerHTML = '';
     if (!rows.length) {
@@ -374,9 +323,7 @@ async function browseSelectedSource(): Promise<void> {
       list.appendChild(empty);
       return;
     }
-    // Which of these are already in the library. Without this the browse list
-    // offered the same affordance whether or not you already held a template,
-    // so fetching one repeatedly looked like it did something new.
+    // Which of these are already in the library, so held ones show as held.
     const held = new Set(await heldRefs());
     for (const t of rows) {
       const li = document.createElement('li');
@@ -491,9 +438,11 @@ export async function renderAgentTemplateRow(agentId: string): Promise<void> {
   if (!row || !label) return;
   row.hidden = true;
   try {
-    const res = await authFetch(`/api/agents/${encodeURIComponent(agentId)}/template`);
-    if (!res.ok) return;
-    const body = (await res.json()) as { stamped?: boolean; ref?: string; plugin?: string };
+    const body = (await apiJson(`/api/agents/${encodeURIComponent(agentId)}/template`)) as {
+      stamped?: boolean;
+      ref?: string;
+      plugin?: string;
+    };
     if (!body.stamped || !body.ref) return;
     label.textContent = `From ${body.ref}`;
     row.hidden = false;
@@ -559,13 +508,9 @@ async function showUpdatePlan(agentId: string, ref: string): Promise<void> {
 }
 
 // ── Saving an agent as a template ───────────────────────────────────────────
-//
-// Distinct from "Export agent…", which produces a migration tarball carrying
-// memory and chats. This produces a shareable BLUEPRINT: persona, skills, MCP
-// servers (secrets replaced by a placeholder) and recurring tasks, and nothing
-// else. The result lists what came along AND what did not, because the gap
-// between "my agent works" and "the template reproduces it" is where an
-// afternoon goes.
+// Unlike "Export agent…" (a migration tarball with memory and chats), this is a
+// shareable blueprint with secrets replaced by a placeholder. The result names
+// what did NOT come along as well as what did.
 
 export function wireAgentTemplateExport(): void {
   $('#agent-export-template-btn')?.addEventListener('click', () => void saveAsTemplate());
@@ -579,9 +524,7 @@ async function saveAsTemplate(): Promise<void> {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  // showInputModal, not window.prompt: DESIGN.md §5 rules out native
-  // prompt/confirm/alert outright, and a browser prompt is the one dialog that
-  // cannot be made to match the rest of the site.
+  // showInputModal, not window.prompt: DESIGN.md §5 rules out native dialogs.
   const name = await showInputModal({
     title: 'Save as template',
     placeholder: 'lowercase letters, digits and dashes',
@@ -617,15 +560,8 @@ async function saveAsTemplate(): Promise<void> {
         inc.contextFiles.length ? `${inc.contextFiles.length} context file(s)` : null,
       ].filter(Boolean)
     : [];
-  // DESIGN.md §5 puts operation outcomes in a toast; a confirm modal is for
-  // consent BEFORE an action, not for reporting one after. The original modal
-  // here was defended on the grounds that omissions are worth reading, which
-  // is true — but only when something was actually omitted. With nothing
-  // omitted it was a dialog whose entire content was "it worked", dismissed
-  // by reflex.
-  //
-  // So: toast the success, and escalate to the modal only for the case the
-  // modal exists for.
+  // DESIGN.md §5: outcomes go in a toast. Escalate to a modal only when
+  // something was omitted, which is worth reading.
   if (body.omitted?.length) {
     await showConfirmModal({
       title: `Saved as ${body.ref}`,

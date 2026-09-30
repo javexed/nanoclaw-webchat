@@ -1,19 +1,9 @@
 <script setup lang="ts">
 /**
- * The model endpoint reachability verdict — fifty-fifth island.
- *
- * Mounted into #model-reachability-panel, which legacy CREATES once and inserts
- * after #model-live-facts. The panel itself and its hidden flag stay imperative:
- * whether to probe at all is a decision about the model (only endpoints an agent
- * dials directly are meaningful — hosted Anthropic models have none).
- *
- * renderReachabilityOutcome is absorbed. Three phases in one element, which the
- * imperative version expressed by clearing and repainting `out`: the wait line,
- * a transport/HTTP error, and the verdict.
- *
- * The fix block is a copy-paste command, so the copy button matters more than it
- * looks — it is how the operator applies the remedy. 'Copied' for 1500ms, and a
- * toast if the clipboard write is refused.
+ * The model endpoint reachability verdict, mounted into #model-reachability-panel, which
+ * models.ts creates after #model-live-facts and shows only for endpoints an agent dials
+ * directly. Three phases: wait line, transport/HTTP error, verdict. The fix block is a
+ * copy-paste command, so Copy is how the operator applies the remedy.
  */
 import { ref } from 'vue';
 import { reachError, reachOutcome, reachPhase } from './reachability-state.js';

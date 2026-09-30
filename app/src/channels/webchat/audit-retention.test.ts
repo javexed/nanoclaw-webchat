@@ -6,12 +6,11 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { parseRetention } from './audit-retention.js';
 import type { WebchatServer } from './server.js';
-
-const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
+import { PROXY_ENV, resetServerModules, seeder, startServer } from './test-server.js';
 
 describe('parseRetention', () => {
   it('takes whole days 0 … 3650 and a cap of 10 MB or more', () => {
@@ -38,40 +37,17 @@ describe('/api/webchat/audit-retention', () => {
 
   beforeEach(async () => {
     auditFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'audit-ret-')), 'audit.jsonl');
-    for (const [k, v] of Object.entries({
-      WEBCHAT_HOST: '127.0.0.1',
-      WEBCHAT_PORT: '0',
-      WEBCHAT_TOKEN: '',
-      WEBCHAT_TRUSTED_PROXY_IPS: '127.0.0.1',
-      WEBCHAT_TRUSTED_PROXY_HEADER: 'x-forwarded-user',
-      NANOCLAW_AUDIT_FILE: auditFile,
-    }))
-      vi.stubEnv(k, v);
-    vi.resetModules();
-    conn = await import('../../db/connection.js');
-    await conn.initTestDb();
-    const migrations = await import('../../db/migrations/index.js');
-    await migrations.runMigrations(conn.getDb());
-    const db = conn.getDb();
-    const now = new Date().toISOString();
-    for (const id of ['webchat:owner', 'webchat:nobody'])
-      await db.run(`INSERT INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`, id, now);
-    await db.run(
-      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES ('webchat:owner', 'owner', NULL, NULL, ?)`,
-      now,
-    );
-    server = await import('./server.js');
-    wc = await server.startWebchatServer(noopHooks);
-    const a = wc.http.address();
-    port = typeof a === 'object' && a ? a.port : 0;
+    ({ server, conn, wc, port } = await startServer({ ...PROXY_ENV, NANOCLAW_AUDIT_FILE: auditFile }, async (db) => {
+      const { user, role } = seeder(db, new Date().toISOString());
+      await role('webchat:owner', 'owner', null);
+      await user('webchat:nobody');
+    }));
   });
 
   afterEach(async () => {
     if (wc) await server.stopWebchatServer(wc);
     (await import('../../audit.js')).setAuditRetention(null);
-    await conn.closeDb();
-    vi.unstubAllEnvs();
-    vi.resetModules();
+    await resetServerModules();
   });
 
   const call = async (method: string, who: string, body?: unknown, csrf = true) => {

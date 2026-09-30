@@ -1,6 +1,5 @@
 // ── Model picker state ──────────────────────────────────────────────────────
-// Bridge refs for the ModelPicker island. legacy.js still owns allModels and
-// the selection write-back; these are what the picker renders.
+// Refs for the ModelPicker island; models.ts owns the selection write-back.
 import { ref } from 'vue';
 
 /** Rows in display order — the Default row is always first. */

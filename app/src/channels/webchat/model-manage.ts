@@ -146,13 +146,10 @@ export interface PrepullEstimate {
  * default registry is inspected; a ref carrying its own registry host
  * (`host.tld/name`, `host:port/name`) returns unknown rather than a guess.
  *
- * Size and VRAM only. The 4k-context caveat used to ride along here and was
- * removed: pre-pull it compares Ollama's fixed 4k default against a fixed
- * prompt budget, so it produced the identical warning for every model on
- * every pull — a constant cannot inform a choice between models, and a
- * warning that always fires is one people stop reading. The context verdict
- * belongs after the pull (gatherModelInventory), where it reads the model's
- * REAL configured num_ctx and where creating a variant can actually fix it.
+ * Size and VRAM only. No context verdict: pre-pull it could only compare
+ * Ollama's fixed 4k default to a fixed budget, the same warning for every
+ * model. It belongs after the pull (gatherModelInventory), which reads the
+ * REAL num_ctx and where creating a variant can fix it.
  */
 export async function prepullEstimate(model: string): Promise<PrepullEstimate> {
   const gpu = await readGpu();
@@ -165,10 +162,8 @@ export async function prepullEstimate(model: string): Promise<PrepullEstimate> {
   if (!raw) return unknown;
   const [refPart, tag = 'latest'] = raw.split(':');
   const segs = refPart.split('/');
-  // A registry host can only BE a host when something follows it. Testing the
-  // first segment for a dot unconditionally rejected every bare name that has
-  // one — llama3.2, qwen2.5, phi3.5 — which is most of the popular families,
-  // and they are exactly the refs whose size a user most wants up front.
+  // A registry host can only BE a host when something follows it: bare names
+  // like llama3.2 or qwen2.5 carry a dot too.
   if (segs.length > 2) return unknown;
   if (segs.length === 2 && (segs[0].includes('.') || segs[0].includes(':'))) return unknown; // custom registry — no guess
   const ns = segs.length === 2 ? segs[0] : 'library';

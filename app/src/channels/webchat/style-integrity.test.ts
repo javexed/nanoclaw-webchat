@@ -1,15 +1,7 @@
 /**
- * Regression: a single unclosed `{` in style.css silently kills every rule after it.
- *
- * The setup-wizard commit left a stray, declaration-less `.wizard-list {` with no
- * closing brace. CSS has no "error" — the parser just swallows everything that
- * follows into the unterminated block. 607 lines / 89 rule-blocks (the router
- * picker, the slash menu, the wizard list's own li/label styles) were dead on the
- * live install for two days and nothing failed: no build error, no test, no
- * console warning. The only symptom was "my new CSS isn't applying."
- *
- * Cheap structural check, and the only thing standing between us and a silent
- * repeat.
+ * A single unclosed `{` in style.css silently kills every rule after it: CSS has
+ * no error, the parser swallows the rest into the block, and nothing fails.
+ * Cheap structural check.
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'fs';

@@ -38,24 +38,17 @@ import {
   type UserCredsCredType,
   type UserCredsProvider,
 } from './db.js';
-import type { OnecliAdmin } from './onecli-admin.js';
+import { isToolSecret, type OnecliAdmin } from './onecli-admin.js';
 import { getAllAgentGroups } from '../../db/agent-groups.js';
 import { ensureFleetIsolation } from '../fleet-isolation/index.js';
 
 /**
  * The agent group's provider, mapped to the UserCreds-supported families.
- *
- * EXPORTED because this derivation had been copied three times — onboard,
- * the module index, and twice in routes-users — and each copy knew about a
- * different set of providers. Adding Grok made the drift visible: a member
- * could be in a Grok room while the credential routes still resolved them as
- * Claude. One definition, imported everywhere.
+ * The one definition: copies drift on which providers they know.
  */
 export async function userCredsProviderForGroup(agentGroupId: string): Promise<UserCredsProvider> {
   const provider = (await getContainerConfig(agentGroupId))?.provider;
-  // A lookup rather than a chain of ternaries: the same shape drifted once
-  // already, when a provider the harness picker knew about was invisible to
-  // room creation. Anything unrecognised falls back to claude, the built-in.
+  // Anything unrecognised falls back to claude, the built-in.
   return provider === 'codex' || provider === 'grok' ? provider : 'claude';
 }
 
@@ -67,12 +60,9 @@ function secretTypeFor(provider: UserCredsProvider): 'anthropic' | 'openai' | 'g
 }
 
 /**
- * Where a member's Grok token is injected.
- *
- * MEASURED, and not where the documentation points. The CLI talks to
- * cli-chat-proxy.grok.com, not api.x.ai — a secret scoped to the documented host
- * silently never matches, and the failure is `credential_not_found` with nothing
- * naming the cause.
+ * Where a member's Grok token is injected: the CLI talks to
+ * cli-chat-proxy.grok.com, not the documented api.x.ai — a secret scoped there
+ * silently never matches (`credential_not_found`).
  */
 export const GROK_SECRET_SPEC = {
   hostPattern: 'cli-chat-proxy.grok.com',
@@ -81,17 +71,21 @@ export const GROK_SECRET_SPEC = {
 } as const;
 
 /**
- * The group's tool secret ids EXCLUDING the member-supplied credential type, to
- * mirror onto a per-member agent so its container keeps working tools (Gmail,
- * GitHub, …) while its model credential (Anthropic for Claude, OpenAI for Codex)
- * comes from the member.
+ * The group's secret ids EXCLUDING its model credential, to mirror onto a
+ * per-member agent so its container keeps working tools (Gmail, GitHub, …)
+ * while its model credential (Anthropic for Claude, OpenAI for Codex, a Grok
+ * token for Grok) comes from the member. A tool secret is never the model
+ * credential, even when it shares the type (Grok's is `generic` too).
  */
 async function groupToolSecretIds(admin: OnecliAdmin, agentGroupId: string, credSecretType: string): Promise<string[]> {
   const groupAgentUuid = await admin.findAgentId(agentGroupId);
   if (!groupAgentUuid) return [];
   const groupIds = await admin.listAgentSecretIds(groupAgentUuid);
-  const typeById = new Map((await admin.listAllSecrets()).map((s) => [s.id, s.type]));
-  return groupIds.filter((id) => typeById.get(id) !== credSecretType);
+  const byId = new Map((await admin.listAllSecrets()).map((s) => [s.id, s]));
+  return groupIds.filter((id) => {
+    const s = byId.get(id);
+    return isToolSecret(s) || s?.type !== credSecretType;
+  });
 }
 
 /**
@@ -221,23 +215,6 @@ export async function revokeUserCredential(
 }
 
 /**
- * Set (or rotate) a WORKSPACE DEFAULT credential — the owner-managed fallback
- * that `all`-mode base agents auto-inject when a member has no user credential.
- * `claude` → an `anthropic` vault secret; `codex` → an `openai` secret (a
- * ChatGPT/Codex auth.json for OAuth, an OpenAI key otherwise).
- *
- * Stores it as the workspace-default's own tracked secret (reusing
- * `storeUserCredential`), then reconciles to the single-secret invariant: any
- * OTHER secret of the provider's type NOT tracked by a `user_credentials` row —
- * i.e. a legacy secret from `setup/auth.ts`/`init-onecli`/`/add-codex` — is
- * deleted so two eligible `all`-mode provider secrets can't resolve
- * nondeterministically. (Typed provider secrets ARE the model credential; tool
- * secrets are `generic`-typed and never touched.) The new secret is created
- * first, so there's never a zero-credential window and it's already tracked
- * (never deleted) by the time reconciliation runs. Member secrets are tracked
- * too, so they are never touched — even before their lazy enrollment.
- */
-/**
  * Assign a workspace-default model credential to every agent that should carry
  * it, and drop assignments the vault no longer knows about.
  *
@@ -245,11 +222,9 @@ export async function revokeUserCredential(
  * creates a new one with a NEW id. An `all`-mode agent picks that up for free,
  * but a `selective` agent only ever receives what is explicitly assigned — so
  * without this every isolated agent is left holding a dangling id and fails with
- * "credentials exist in OneCLI but this agent does not have access". A whole
- * fleet went down this way after one wizard reauth. (The legacy re-point inside
- * setWorkspaceDefaultCredential does NOT cover this: it only rewrites references
- * to legacy secrets still present in the vault, and the re-minted old secret is
- * already deleted by then.)
+ * "credentials exist in OneCLI but this agent does not have access". (The legacy
+ * re-point in setWorkspaceDefaultCredential only rewrites references to secrets
+ * still in the vault, and the re-minted old secret is already deleted.)
  *
  * Members who have connected their OWN credential keep it — theirs is not ours
  * to replace.
@@ -289,6 +264,23 @@ async function fanOutWorkspaceCredential(
   log.info('Workspace default fanned out', { provider, agentsUpdated: assigned });
 }
 
+/**
+ * Set (or rotate) a WORKSPACE DEFAULT credential — the owner-managed fallback
+ * that `all`-mode base agents auto-inject when a member has no user credential.
+ * `claude` → an `anthropic` vault secret; `codex` → an `openai` secret (a
+ * ChatGPT/Codex auth.json for OAuth, an OpenAI key otherwise).
+ *
+ * Stores it as the workspace-default's own tracked secret (reusing
+ * `storeUserCredential`), then reconciles to the single-secret invariant: any
+ * OTHER secret of the provider's type NOT tracked by a `user_credentials` row —
+ * i.e. a legacy secret from `setup/auth.ts`/`init-onecli`/`/add-codex` — is
+ * deleted so two eligible `all`-mode provider secrets can't resolve
+ * nondeterministically. (Typed provider secrets ARE the model credential; tool
+ * secrets are `generic`-typed and never touched.) The new secret is created
+ * first, so there's never a zero-credential window and it's already tracked
+ * (never deleted) by the time reconciliation runs. Member secrets are tracked
+ * too, so they are never touched — even before their lazy enrollment.
+ */
 export async function setWorkspaceDefaultCredential(
   admin: OnecliAdmin,
   provider: UserCredsProvider,
@@ -300,14 +292,10 @@ export async function setWorkspaceDefaultCredential(
   const tracked = new Set(await listAllTrackedSecretIds());
   const stale = (await admin.listAllSecrets()).filter((s) => s.type === secretType && !tracked.has(s.id));
 
-  // Before deleting the legacy secrets, re-point any `selective` agent that was
-  // pinned to one onto the new workspace-default. Otherwise a base group agent
-  // stuck in selective mode (e.g. a leftover from an earlier per-agent credential
-  // setup) silently loses its model credential the moment the legacy secret is
-  // deleted — surfacing later as a 401 disguised as "issue with the selected
-  // model". `all`-mode agents auto-inject the new secret and need no fixup; and
-  // per-member UserCreds agents hold TRACKED secrets, so they never reference a
-  // stale id and are naturally excluded from the re-point set.
+  // Before deleting the legacy secrets, re-point any `selective` agent pinned to
+  // one onto the new workspace-default, or it silently loses its model
+  // credential (a 401 disguised as "issue with the selected model"). `all`-mode
+  // agents need no fixup; per-member agents hold TRACKED secrets, never stale.
   const newSecretId = (await getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider))?.secret_id ?? null;
   const staleIds = new Set(stale.map((s) => s.id));
   if (newSecretId && stale.length) {

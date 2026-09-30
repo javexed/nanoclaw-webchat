@@ -29,10 +29,7 @@ export const DOCS: readonly DocEntry[] = [
   { slug: 'install', title: 'Installing NanoClaw', section: 'Getting started' },
 
   { slug: 'threads', title: 'Per-room threads', section: 'Using it' },
-  { slug: 'thread-context-sync', title: 'Thread context sync', section: 'Using it' },
-  { slug: 'thread-engaged-agents', title: 'Thread engaged agents', section: 'Using it' },
   { slug: 'user-credentials', title: 'Per-member credentials', section: 'Using it' },
-  { slug: 'user-credentials-oauth', title: 'Subscription (OAuth) credentials', section: 'Using it' },
   { slug: 'learning-loop', title: 'The learning loop', section: 'Using it' },
   { slug: 'agent-templates', title: 'Agent templates', section: 'Using it' },
   { slug: 'approval-prejudge', title: 'Approval pre-judge', section: 'Using it' },

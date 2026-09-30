@@ -1,24 +1,10 @@
 <script setup lang="ts">
 /**
- * One message's .bubble, in whichever of its three shapes applies.
- *
- * A component rather than markup repeated inside Transcript, because own
- * messages nest the same bubble inside a .msg-body row and everything else does
- * not — see appendMessage's note on why that row exists even for the optimistic
- * echo.
- *
- * Markdown goes on the bubble ITSELF with v-html, not into a wrapper div. The
- * imperative version assigned bubble.innerHTML, so the markdown nodes were the
- * bubble's own children; a wrapper would change what `.msg .bubble p:last-child`
- * and friends select.
- *
- * Which is why the TTS button is TELEPORTED in. v-html owns the element's
- * children, so the button cannot also be a template child of it — teleporting
- * lands it as the last child exactly where appendChild put it. row.html never
- * changes after append, so v-html never re-runs and never evicts it.
- *
- * The decorators run from the ref callback, in the same position the imperative
- * version called them: immediately after the innerHTML assignment.
+ * One message's .bubble in whichever of its three shapes applies (own messages nest it
+ * in a .msg-body row). Markdown goes on the bubble itself via v-html so selectors like
+ * `.msg .bubble p:last-child` match; the TTS button is therefore teleported in as the last
+ * child, and since row.html never changes, v-html never evicts it. Decorators run from the
+ * ref callback right after the HTML lands.
  */
 import { ref } from 'vue';
 import type { MsgRow } from './transcript-state.js';
@@ -51,8 +37,7 @@ function bind(el: any): void {
   bubbleEl.value = el || null;
   if (!el) return;
   if (props.row.html) props.decorate(el);
-  // a2a cards clamp to ~5 lines and the clamp MEASURES, so it needs the element
-  // attached — this is the post-insert call the imperative version made.
+  // a2a cards clamp to ~5 lines and the clamp MEASURES, so it needs the element attached.
   if (props.row.isA2a && el.parentElement) props.clampA2a(el, el.parentElement);
 }
 </script>

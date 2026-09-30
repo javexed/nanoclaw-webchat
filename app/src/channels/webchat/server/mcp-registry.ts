@@ -3,11 +3,6 @@
 // handlers touch: the built-in registry's id, the removed-entry key derived
 // from it, the container reload that follows any change, and the UI shape an
 // MCP server is projected into.
-//
-// Shared rather than moved. server/routes-mcp.ts owns the panel's handlers, but
-// the agent wiring in server.ts assigns servers to agents and renders the same
-// UI shape — so a third module both import is what keeps the graph acyclic.
-// Same reason server/providers.ts exists.
 
 import { restartAgentGroupContainers } from '../../../container-restart.js';
 import { log } from '../../../log.js';

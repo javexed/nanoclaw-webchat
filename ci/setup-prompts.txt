@@ -1,0 +1,56 @@
+# Upstream setup steps and prompts, reviewed for the headless installers
+# (app/deploy/install.sh, app/deploy/webchat-deploy.sh). Checked in CI by
+# scripts/check-setup-prompts.mjs; see its header for what to do on a failure.
+#
+# step <id> skip  — cannot finish headless; must be in NANOCLAW_SKIP (webchat-deploy.sh)
+# step <id> run   — finishes headless (its questions are answered by .env or
+#                   do not arise without a TTY)
+# prompt <file> | <message> — reviewed: skipped with its step, answered ahead
+#                   in .env (NANOCLAW_HARDENED_IMAGE for the image choice), or
+#                   not reached headless.
+
+step auth skip
+step channel skip
+step cli-agent skip
+step container run
+step echo-reminder skip
+step environment run
+step first-chat skip
+step gateway run
+step mounts run
+step service run
+step slack-reminder skip
+step timezone skip
+step verify run
+
+prompt setup/auto.ts | ${agentProvider} needs a sandbox image built on this machine. Stop using the pre-built one?
+prompt setup/auto.ts | <first>
+prompt setup/auto.ts | Agent "${plan.group.name}" is already stamped from this template. Update it in place?
+prompt setup/auto.ts | Channel name
+prompt setup/auto.ts | Continue with template "${preset}" from the previous run?
+prompt setup/auto.ts | Enter an IANA timezone string
+prompt setup/auto.ts | I detected ${resolvedTz} from your computer settings. Is that right?
+prompt setup/auto.ts | Name the new agent
+prompt setup/auto.ts | What should your assistant call ${accentGreen('you')}?
+prompt setup/auto.ts | Where are you? (city, region, or IANA zone)
+prompt setup/channels/run-channel-skill.ts | What should your assistant be called?
+prompt setup/channels/telegram-pre-step.ts | Short name for the new bot (lowercase letters, digits, dashes; e.g. mega)
+prompt setup/lib/browser.ts | ${message}${fallback}
+prompt setup/lib/claude-assist.ts | Claude CLI is needed to diagnose this. Install it now?
+prompt setup/lib/claude-assist.ts | Claude CLI isn't signed in. Sign in now? (a browser will open)
+prompt setup/lib/claude-assist.ts | Run this command? (you can edit it before executing)
+prompt setup/lib/claude-assist.ts | Want me to ask Claude to diagnose this?
+prompt setup/lib/claude-handoff.ts | Paste your Azure App ID
+prompt setup/lib/claude-handoff.ts | Want to debug this with Claude?
+prompt setup/lib/runner.ts | Retry the ${stepName} step to check whether the problem is resolved?
+prompt setup/lib/setup-config-screen.ts | <e.label>
+prompt setup/lib/skill-driver.ts | (no message)
+prompt setup/lib/skill-driver.ts | <meta.question>
+prompt setup/migrate-v2/select-channels.ts | Which channels do you want to set up?
+prompt setup/migrate-v2/switchover-prompt.ts | Keep v2 running, or switch back to v1?
+prompt setup/migrate-v2/switchover-prompt.ts | Want to stop the v1 service and start v2 so you can test?
+prompt setup/portal.ts | <stage === 'echo'>
+prompt setup/portal.ts | Enable ${labels[stage]}? Open the perks dashboard in your browser?
+prompt setup/provider-auth.ts | ${name} needs a sandbox image built on this machine. Stop using the pre-built one?
+prompt setup/registry-login.ts | Email me security and project updates?
+prompt setup/uninstall/flow.ts | <prompt>

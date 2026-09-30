@@ -2,9 +2,6 @@
 // "Is this harness installed?" for each optional coding-agent stack. All of them
 // answer the same way — the provider registers a container config when its
 // install skill has run — so they live together.
-//
-// Separated from server.ts for the same reason as http.ts: the install routes
-// need them, and a route module importing from server.ts would cycle.
 import { listProviderContainerConfigNames } from '../../../providers/provider-container-registry.js';
 
 /** Auto-detect: the Codex provider is installed when it's registered a container config. */
@@ -25,12 +22,8 @@ export function grokAvailable(): boolean {
 }
 
 /**
- * Every non-default harness this install can actually run.
- *
- * Exists because the same list was being re-derived per call site — the harness
- * picker knew about a provider that room creation did not, so choosing it in the
- * wizard silently produced an agent on the default harness. One list, consulted
- * everywhere, so adding a provider cannot half-land again.
+ * Every non-default harness this install can actually run. The one list every
+ * call site consults, so the picker and room creation cannot disagree.
  */
 export function availableProviders(): string[] {
   return [

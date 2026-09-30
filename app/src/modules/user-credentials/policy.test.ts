@@ -1,11 +1,6 @@
 /**
- * Credential policy per provider.
- *
- * This exists because the mapping had been re-derived at five call sites and the
- * copies disagreed — a Grok room consulted allowClaudeOauth, so enabling member
- * credentials for Grok did nothing while enabling Claude's silently switched
- * Grok on. Every provider is asserted explicitly, so adding one cannot half-land
- * again.
+ * Credential policy per provider. Every provider is asserted explicitly, so no
+ * provider can read another's flag.
  */
 import { describe, expect, it } from 'vitest';
 
@@ -64,8 +59,7 @@ describe('no provider is affected by another provider’s flags', () => {
   });
 
   it('enabling ONLY Claude does not switch Grok on', () => {
-    // The precise failure the old ternary produced: grok fell through to
-    // allowClaudeOauth, so a Claude allowance leaked into Grok rooms.
+    // A Claude allowance must not leak into Grok rooms via allowClaudeOauth.
     const cfg: CredentialsConfig = {
       defaultMode: 'optional',
       allowAnthropicKey: true,

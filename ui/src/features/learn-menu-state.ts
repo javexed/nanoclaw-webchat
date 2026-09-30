@@ -1,5 +1,5 @@
 // ── Learn menu state ────────────────────────────────────────────────────────
-// Bridge refs for the LearnMenu island. learn.ts still fetches the room's
+// Bridge refs for the LearnMenu island. learn.ts fetches the room's
 // learning config and owns the actions; this holds what the menu renders.
 import { ref } from 'vue';
 

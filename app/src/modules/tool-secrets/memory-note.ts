@@ -1,13 +1,10 @@
 /**
  * Keep each agent's memory truthful about what it can reach.
  *
- * A credential in the vault is invisible to the agent by design — the gateway
- * injects it on the wire. That solves secrecy but creates a DISCOVERY problem:
- * an agent with no idea a credential exists concludes it has no access and
- * stops, which is exactly what happened when the Drupal agent refused to clone
- * a repo whose PAT it could in fact have used. Its skill says "never say you
- * lack access without trying the request first", but that instruction competes
- * with a strong (and correct) refusal instinct about credentials.
+ * A vault credential is invisible to the agent by design (the gateway injects
+ * it on the wire), so an agent that doesn't know it exists concludes it has no
+ * access and stops — a skill instruction to "try first" loses to its (correct)
+ * refusal instinct about credentials.
  *
  * So the panel writes the capability into the agent's memory — the HOSTS it can
  * authenticate to, never the values. Same rule as SSH keys: memory holds the
@@ -17,19 +14,10 @@
  * OKF-typed concept file. The always-loaded surface is `memory/index.md`
  * (renderMemorySection embeds its CONTENT at startup, after clear and after
  * compaction), so a short delimited pointer goes there too — discovery is the
- * whole point, and a concept file nobody opens would reintroduce the exact
- * failure this exists to prevent.
+ * whole point, and a concept file nobody opens would not help.
  *
- * This used to write `CLAUDE.local.md`. Nanoclaw stopped composing that file,
- * and only the Claude harness still loads it (settingSources includes 'local'),
- * so the note was invisible to a Codex-backed group — a credential-discovery
- * aid that silently did not apply to some providers.
- *
- * NEVER CREATES `index.md`. The container scaffolds memory with COPYFILE_EXCL,
- * so a host-created index would permanently suppress the real template and
- * leave the group with this block and no memory structure. If the index is not
- * there yet the pointer is skipped; the next sync after the group's first run
- * lands it.
+ * NEVER CREATES `index.md` (see step 2 below): if it is not there yet the
+ * pointer is skipped, and the next sync after the group's first run lands it.
  *
  * Both writes are delimited and rewritten wholesale, so they stay idempotent
  * and the agent's own surrounding memory is never touched.
@@ -40,6 +28,7 @@ import path from 'path';
 import { GROUPS_DIR } from '../../config.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { log } from '../../log.js';
+import { readNoFollow, removeNoFollow, writeNoFollow } from '../../no-follow-fs.js';
 
 const START = '<!-- nanoclaw:credentials:start -->';
 const END = '<!-- nanoclaw:credentials:end -->';
@@ -119,7 +108,7 @@ function renderBlock(hosts: string[], keys: { name: string; path: string; target
 }
 
 /**
- * Rewrite the managed credential block in a group's `CLAUDE.local.md`.
+ * Rewrite a group's managed credential note (concept file + index pointer).
  * Best-effort: a missing group folder or unwritable file must never fail the
  * secret operation that triggered it — the credential is already wired, and a
  * stale note is a much smaller problem than a half-applied write.
@@ -139,33 +128,25 @@ export async function syncCredentialNote(
     const concept = renderConcept(sorted, keys);
     const pointer = renderIndexPointer(sorted, keys);
 
+    // The group folder is mounted read-write into the agent's container, so
+    // any path under it may be a link the agent planted: every access below
+    // refuses to follow one (no-follow-fs).
+
     // 1. Concept file — wholly machine-owned, so write or remove it outright.
-    const conceptFile = path.join(groupDir, CONCEPT_REL);
-    if (concept) {
-      fs.mkdirSync(path.dirname(conceptFile), { recursive: true });
-      writeIfChanged(conceptFile, concept);
-    } else if (fs.existsSync(conceptFile)) {
-      fs.rmSync(conceptFile, { force: true });
-    }
+    if (concept) writeIfChanged(groupDir, CONCEPT_REL, concept);
+    else removeNoFollow(groupDir, CONCEPT_REL);
 
     // 2. Index pointer — the agent owns this file, so only ever splice the
     // delimited block. Never CREATE it: the container scaffolds memory with
     // COPYFILE_EXCL, and a host-created index would permanently suppress the
     // real template.
-    const indexFile = path.join(groupDir, INDEX_REL);
-    if (fs.existsSync(indexFile)) {
-      const prior = fs.readFileSync(indexFile, 'utf-8');
-      writeIfChanged(indexFile, spliceBlock(prior, pointer));
-    }
+    const index = readNoFollow(groupDir, INDEX_REL);
+    if (index !== null) writeIfChanged(groupDir, INDEX_REL, spliceBlock(index, pointer));
 
-    // 3. Retire any block left in the pre-cutover CLAUDE.local.md. That file is
-    // still auto-loaded by the Claude harness, so a stale copy would keep
-    // asserting access the agent may no longer have.
-    const legacy = path.join(groupDir, 'CLAUDE.local.md');
-    if (fs.existsSync(legacy)) {
-      const prior = fs.readFileSync(legacy, 'utf-8');
-      if (prior.includes(START)) writeIfChanged(legacy, spliceBlock(prior, ''));
-    }
+    // 3. Retire any block left in CLAUDE.local.md: the Claude harness still
+    // auto-loads it, so a stale copy would assert access the agent may lack.
+    const legacy = readNoFollow(groupDir, 'CLAUDE.local.md');
+    if (legacy?.includes(START)) writeIfChanged(groupDir, 'CLAUDE.local.md', spliceBlock(legacy, ''));
 
     log.info('Credential note synced', { agentGroupId, hosts: hosts.length, keys: keys.length });
   } catch (err) {
@@ -173,9 +154,14 @@ export async function syncCredentialNote(
   }
 }
 
-function writeIfChanged(file: string, next: string): void {
-  const prior = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : null;
-  if (prior !== next) fs.writeFileSync(file, next);
+function writeIfChanged(root: string, rel: string, next: string): void {
+  let prior: string | null = null;
+  try {
+    prior = readNoFollow(root, rel);
+  } catch {
+    /* a link (or not a file) at this name: replace it */
+  }
+  if (prior !== next) writeNoFollow(root, rel, next);
 }
 
 /**

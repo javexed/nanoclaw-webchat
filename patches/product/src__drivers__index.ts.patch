@@ -1,0 +1,59 @@
+diff --git a/src/drivers/index.ts b/src/drivers/index.ts
+index 9cffca3e..65c9f521 100644
+--- a/src/drivers/index.ts
++++ b/src/drivers/index.ts
+@@ -59,7 +59,7 @@ import {
+ // whole reason the registry lives in its own module — see `driver-registry.ts`.
+ import './installed.js';
+ import { withSessionEvents, type SessionEventsDriver } from './session-events.js';
+-import type { MountPolicy, SessionDriver, SessionSpec } from './types.js';
++import { deniedByPolicy, type MountPolicy, type SessionDriver, type SessionSpec } from './types.js';
+ 
+ const DEFAULT_DRIVER_KIND = 'docker';
+ 
+@@ -70,6 +70,17 @@ export function readSetting(key: (typeof SETTINGS)[number], env: NodeJS.ProcessE
+   return env[key]?.trim() || readEnvFile([...SETTINGS])[key]?.trim() || '';
+ }
+ 
++/**
++ * "Would this agent be put behind an egress filter?" — asked, without side
++ * effects, of the module that filters, for a session whose gateway is a
++ * sidecar. One module owns egress; the last registration wins.
++ */
++export type SidecarEgressCheck = (spec: SessionSpec) => boolean;
++let sidecarEgressCheck: SidecarEgressCheck | null = null;
++export function registerSidecarEgressCheck(fn: SidecarEgressCheck | null): void {
++  sidecarEgressCheck = fn;
++}
++
+ /**
+  * Docker's network topology, decided at spawn: the egress-lockdown network
+  * when the flag is on (throws rather than spawning with open egress), else the
+@@ -79,7 +90,26 @@ export function readSetting(key: (typeof SETTINGS)[number], env: NodeJS.ProcessE
+  * states the intent, this realizes it, and nothing rides between them.
+  */
+ function dockerNetworkArgs(spec: SessionSpec): string[] {
+-  if (spec.networkAccess.target.kind === 'session-container') return [];
++  if (spec.networkAccess.target.kind === 'session-container') {
++    // A sidecar gateway brings its own network: nothing to realize here —
++    // unless a module's policy needs a network of its own (central's egress
++    // filter), which the sidecar's namespace would bypass. Refuse that rather
++    // than start the agent unfiltered; a check that throws or gives no clear
++    // answer refuses too.
++    let filtered: unknown = false;
++    try {
++      filtered = sidecarEgressCheck ? sidecarEgressCheck(spec) : false;
++    } catch (err) {
++      log.error('Sidecar egress check failed; refusing the start', { err: String(err) });
++      filtered = true;
++    }
++    if (filtered !== false) {
++      throw deniedByPolicy(
++        `${agentContainerName(spec)}: its network policy cannot be enforced behind a session-container gateway — set the agent's network to Open, or use a runtime gateway`,
++      );
++    }
++    return [];
++  }
+   // Seam: a module's resolver first, then the spec's own declared intent (which upstream declares but never read).
+   const fromModule = resolveNetworkPolicy(spec);
+   if (fromModule) return fromModule;

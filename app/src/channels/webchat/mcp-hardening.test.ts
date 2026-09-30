@@ -1,5 +1,5 @@
 /**
- * MCP hardening invariants (review items 4, 5, 7):
+ * MCP hardening invariants:
  *   - tool-surface hashing is order-independent and description-sensitive
  *     (drift = the rug pull; a reordered list is NOT drift);
  *   - the drift diff names exactly what changed;

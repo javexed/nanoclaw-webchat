@@ -1,11 +1,8 @@
 /**
- * The OneCLI gateway's settings, for fork code that talks to it from the host.
- *
- * Credential gateways are skills now (`/add-onecli`, `/add-iron-proxy`), so
- * core no longer exports ONECLI_URL / ONECLI_API_KEY and trunk no longer
- * carries the OneCLI SDK. Read them the way the OneCLI gateway provider does —
- * process env first, then `.env` — and say which gateway is selected, so a
- * caller can stand down on an install that runs a different one.
+ * The OneCLI gateway's settings, for overlay code that talks to it from the
+ * host. Core does not export them (gateways are skill-installed), so read them
+ * the way the OneCLI provider does — process env, then `.env` — and say which
+ * gateway is selected, so a caller can stand down under a different one.
  */
 import { readEnvFile } from './env.js';
 

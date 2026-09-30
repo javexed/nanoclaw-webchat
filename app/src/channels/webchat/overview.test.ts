@@ -7,59 +7,23 @@
  * gates (auth mode, token strength) are honoured the same way they would
  * be in production.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'crypto';
-import type Database from 'better-sqlite3';
 
-const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
+import { LOOPBACK_ENV, portOf, resetServerModules, startServer } from './test-server.js';
 
-beforeEach(async () => {
-  vi.resetModules();
-});
-
-afterEach(async () => {
-  vi.unstubAllEnvs();
-  try {
-    const conn = await import('../../db/connection.js');
-    await conn.closeDb();
-  } catch {
-    // ignore
-  }
-  vi.resetModules();
-});
-
-async function bootLocalhost() {
-  vi.stubEnv('WEBCHAT_HOST', '127.0.0.1');
-  vi.stubEnv('WEBCHAT_PORT', '0');
-  vi.stubEnv('WEBCHAT_TOKEN', '');
-  vi.stubEnv('WEBCHAT_TAILSCALE', '');
-  vi.stubEnv('WEBCHAT_TRUSTED_PROXY_IPS', '');
-  vi.resetModules();
-  const conn = await import('../../db/connection.js');
-  await conn.initTestDb();
-  const migrations = await import('../../db/migrations/index.js');
-  await migrations.runMigrations(conn.getDb());
-  const server = await import('./server.js');
-  const wc = await server.startWebchatServer(noopHooks);
-  return { server, wc, conn };
-}
-
-function port(wc: { http: { address: () => unknown } }): number {
-  const addr = wc.http.address() as { port: number } | null;
-  if (!addr) throw new Error('server has no address');
-  return addr.port;
-}
+afterEach(resetServerModules);
 
 async function getOverview(wc: {
   http: { address: () => unknown };
 }): Promise<{ status: number; body: Record<string, unknown> }> {
-  const res = await fetch(`http://127.0.0.1:${port(wc)}/api/overview`);
+  const res = await fetch(`http://127.0.0.1:${portOf(wc)}/api/overview`);
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 }
 
 describe('GET /api/overview — owner (loopback no-auth path)', () => {
   it('returns the full snapshot shape', async () => {
-    const { server, wc } = await bootLocalhost();
+    const { server, wc } = await startServer(LOOPBACK_ENV);
     try {
       const { status, body } = await getOverview(wc);
       expect(status).toBe(200);
@@ -81,7 +45,7 @@ describe('GET /api/overview — owner (loopback no-auth path)', () => {
   });
 
   it('counts agents and channel wirings correctly', async () => {
-    const { server, wc, conn } = await bootLocalhost();
+    const { server, wc, conn } = await startServer(LOOPBACK_ENV);
     try {
       const db = conn.getDb();
       // Seed 2 agents + 2 webchat rooms + 1 wiring.
@@ -134,7 +98,7 @@ describe('GET /api/overview — owner (loopback no-auth path)', () => {
   });
 
   it('counts webchat messages in the last 24 hours, not older ones', async () => {
-    const { server, wc, conn } = await bootLocalhost();
+    const { server, wc, conn } = await startServer(LOOPBACK_ENV);
     try {
       const db = conn.getDb();
       const now = new Date().toISOString();
@@ -166,7 +130,7 @@ describe('GET /api/overview — owner (loopback no-auth path)', () => {
   });
 
   it('counts active sessions by last_active within the 5-minute window', async () => {
-    const { server, wc, conn } = await bootLocalhost();
+    const { server, wc, conn } = await startServer(LOOPBACK_ENV);
     try {
       const db = conn.getDb();
       const now = new Date().toISOString();
@@ -203,9 +167,8 @@ describe('GET /api/overview — owner (loopback no-auth path)', () => {
 });
 
 /**
- * The RESTRICTED branch — previously untested entirely, which is how it came
- * to serve install-wide session/message/channel counts to every non-owner
- * while the drill-down panels beside them were properly scoped.
+ * The RESTRICTED branch: a non-owner must get scoped counts, never
+ * install-wide ones.
  *
  * Making the loopback caller non-owner is the whole trick: seed a DIFFERENT
  * owner before the first request, so `ensureOwnerRoleOnFirstLogin` finds an
@@ -312,7 +275,7 @@ describe('GET /api/overview — restricted (non-owner caller)', () => {
   }
 
   it('scopes sessions and messages to what the caller can access', async () => {
-    const { server, wc, conn } = await bootLocalhost();
+    const { server, wc, conn } = await startServer(LOOPBACK_ENV);
     try {
       const db = conn.getDb();
       await seedOwnerElsewhere(db);
@@ -331,7 +294,7 @@ describe('GET /api/overview — restricted (non-owner caller)', () => {
   });
 
   it('reports zero — not install-wide totals — for a caller with no access', async () => {
-    const { server, wc, conn } = await bootLocalhost();
+    const { server, wc, conn } = await startServer(LOOPBACK_ENV);
     try {
       const db = conn.getDb();
       await seedOwnerElsewhere(db);
@@ -349,7 +312,7 @@ describe('GET /api/overview — restricted (non-owner caller)', () => {
   });
 
   it('withholds install-wide facts on the wire, not just in the GUI', async () => {
-    const { server, wc, conn } = await bootLocalhost();
+    const { server, wc, conn } = await startServer(LOOPBACK_ENV);
     try {
       const db = conn.getDb();
       await seedOwnerElsewhere(db);
@@ -370,7 +333,7 @@ describe('GET /api/overview — restricted (non-owner caller)', () => {
   });
 
   it('still reports the caller-visible agent count', async () => {
-    const { server, wc, conn } = await bootLocalhost();
+    const { server, wc, conn } = await startServer(LOOPBACK_ENV);
     try {
       const db = conn.getDb();
       await seedOwnerElsewhere(db);

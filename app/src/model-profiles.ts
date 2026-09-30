@@ -1,13 +1,8 @@
 /**
- * Per-model harness settings for local models.
- *
- * WHY THIS EXISTS. Two models of the SAME family, with the same declared
- * capabilities, the same context window and the same quantisation, behaved
- * completely differently in the same harness: qwen3.5:4b reached for a shell to
- * answer "what is 2 + 2" and looped on its delivery tool, while ornith-1.5:9b
- * answered in text and never touched a tool it did not need. Ollama exposes no
- * flag for that difference. The only metadata separating them is parameter
- * count, so anything finer has to be stated or measured, not inferred.
+ * Per-model harness settings for local models. Models with identical declared
+ * capabilities can behave completely differently in the same harness, and
+ * Ollama exposes nothing but parameter count to tell them apart — so anything
+ * finer is stated or measured, not inferred.
  *
  * Resolution order, first hit wins:
  *   1. an exact entry in PROFILES, keyed by model id
@@ -35,8 +30,7 @@ export interface ModelProfile {
   turnTimeoutMs?: number;
   /**
    * Consecutive identical tool calls tolerated before the turn is cut short.
-   * Lower for a model that loops: qwen3.5:4b emitted five identical `message`
-   * calls where the default of 3 let two duplicates through first.
+   * Lower for a model observed to loop.
    */
   noopCapThreshold?: number;
   /** Free text for whoever reads this table next. */
@@ -44,10 +38,8 @@ export interface ModelProfile {
 }
 
 /**
- * The safe default: tools on, because turning them OFF was measured and is far
- * worse — a toolless qwen3.5:4b took 263s to answer "what is 2 + 2" against
- * 21-38s with tools, and timed out every eval run. Small local models are not
- * made safer by taking their tools away.
+ * The safe default: tools on — a toolless small model was measured far slower
+ * and less reliable, not safer.
  */
 export const DEFAULT_PROFILE: Readonly<ModelProfile> = Object.freeze({
   tools: 'read,write,edit,bash,message',
@@ -64,8 +56,7 @@ export const DEFAULT_PROFILE: Readonly<ModelProfile> = Object.freeze({
  * strips the provider prefix before resolving (that is what reaches the model
  * server, and what PI_MODEL shows). Keyed with the prefix, every lookup misses
  * SILENTLY: the resolver falls through to the default, the timeout collapses to
- * the floor, and nothing logs a word. Shipped that way once and the live
- * container came up with a 120s budget and no cap.
+ * the floor, and nothing logs a word.
  *
  * Rows carry an explicit turnTimeoutMs because parameter size is not available
  * at spawn — it needs a round trip to the model server, which the spawn path
@@ -73,39 +64,23 @@ export const DEFAULT_PROFILE: Readonly<ModelProfile> = Object.freeze({
  * together.
  */
 export const PROFILES: Readonly<Record<string, ModelProfile>> = Object.freeze({
-  // Measured 2026-08-23, same six cases, same code, one sweep.
-  //
-  // Note what the rows do NOT say. None of them changes `tools` or `thinking`,
-  // because nothing in the sweep justified changing either — the differences
-  // between these models were handled by the always-on invariants and by the
-  // derived timeout, not by per-model switches. Resist filling these in from
-  // intuition; an unmeasured row is worse than no row, because it looks
-  // authoritative.
+  // One six-case sweep. No row changes `tools` or `thinking`: nothing measured
+  // justified it, and an unmeasured row looks authoritative.
   'llama3.2:3b': {
-    // 3/6. Perfect tool discipline (3/3 on the plain question, never reached
-    // for a shell, zero tool sends) and simply not capable of the file work:
-    // one partial write, then two runs where it did nothing at all. Discipline
-    // and capability are separate axes — this model has the first without the
-    // second, which is why parameter count alone cannot pick a harness.
+    // Disciplined but not capable of file work: discipline and capability are
+    // separate axes, so parameter count alone cannot pick a harness.
     noopCapThreshold: 3,
     turnTimeoutMs: 180_000, // deriveTurnTimeoutMs(3.2)
     notes: '3/6 sweep. Chat-capable, not file-capable. No looping observed.',
   },
   'qwen3.5:4b': {
-    // 5/6, up from 3/6 before duplicate-suppression existed. Capable at file
-    // work, poor discipline when answering: it loops on whatever delivery
-    // affordance it has. This sweep it emitted five identical `message` calls
-    // — the cap fired once and two duplicates were dropped before reaching
-    // anyone. Tighter cap because it is the one model observed to loop.
+    // Tighter cap: the one model observed to loop on its delivery tool.
     noopCapThreshold: 2,
     turnTimeoutMs: 220_000, // deriveTurnTimeoutMs(4.7)
     notes: '5/6 sweep (was 3/6 pre-dedupe). Loops on the delivery tool; cap fired.',
   },
   'ornith-1.5:9b': {
-    // 5/6. Capable and disciplined; the single failure was writing the answer
-    // to /tmp/answer.txt instead of replying, once in three runs. Delivers
-    // almost entirely as prose — one tool send across six runs — which means
-    // lenientOutput is load-bearing for it.
+    // Delivers almost entirely as prose, so lenientOutput is load-bearing for it.
     noopCapThreshold: 3,
     turnTimeoutMs: 335_000, // deriveTurnTimeoutMs(9.0)
     notes: '5/6 sweep. Capable + disciplined. Delivers as prose; needs lenientOutput.',
@@ -113,21 +88,11 @@ export const PROFILES: Readonly<Record<string, ModelProfile>> = Object.freeze({
 });
 
 /**
- * Turn budget from parameter count, fitted to a three-model sweep rather than
- * to taste. Slowest observed turn per model, same six cases:
- *
- *   llama3.2:3b     3.2B    90s
- *   qwen3.5:4b      4.7B   144s
- *   ornith-1.5:9b   9.0B   168s
- *
- * Note how weakly it scales — nearly 3x the parameters for under 2x the time.
- * An earlier linear guess (30s per billion) overshot to 660s at 9B, which is
- * not a backstop, it is a licence to loop for eleven minutes. The fit through
- * those points is about 13.4s per billion over a 47s floor; doubled, that
- * leaves roughly 2x headroom over anything actually measured.
- *
- * Generous on purpose all the same: a turn cut off early reads as a capability
- * failure and sends someone chasing the wrong bug.
+ * Turn budget from parameter count, fitted to measured slowest turns (3.2B 90s,
+ * 4.7B 144s, 9.0B 168s): ~13.4s per billion over a 47s floor, doubled for
+ * headroom. Latency scales weakly with size, so a steeper slope is just a
+ * licence to loop; generous all the same, since a turn cut off early reads as
+ * a capability failure.
  */
 export function deriveTurnTimeoutMs(parameterSizeB: number | null): number {
   const FLOOR_MS = 120_000;

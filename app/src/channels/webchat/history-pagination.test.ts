@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
-import { getWebchatMessagesBeforeId, getWebchatMessages } from './db.js';
+import { getWebchatMessagesAfterId, getWebchatMessagesBeforeId, getWebchatMessages } from './db.js';
 
 // Insert with an explicit created_at so ordering is deterministic (storeWebchatMessage
 // stamps Date.now(), which collides for rows created in the same millisecond).
@@ -61,5 +61,35 @@ describe('getWebchatMessagesBeforeId', () => {
     const older2 = await getWebchatMessagesBeforeId('room-1', 'm3', 4); // m1..m2 (short → end)
     expect(older2.map((m) => m.id)).toEqual(['m1', 'm2']);
     expect(older2.length).toBeLessThan(4); // client treats a short page as "no more"
+  });
+});
+
+describe('messages sharing a millisecond', () => {
+  // A reply and its attachment are routinely stored in the same millisecond.
+  beforeEach(async () => {
+    await seed('room-3', 'a1', 100);
+    await seed('room-3', 'b2', 200);
+    await seed('room-3', 'c3', 200);
+    await seed('room-3', 'd4', 300);
+  });
+
+  it('catch-up after a tied anchor still returns its same-millisecond sibling', async () => {
+    const page = await getWebchatMessagesAfterId('room-3', 'b2');
+    expect(page.map((m) => m.id)).toEqual(['c3', 'd4']);
+  });
+
+  it('scroll-back from a tied anchor still returns its same-millisecond sibling', async () => {
+    const page = await getWebchatMessagesBeforeId('room-3', 'c3', 50);
+    expect(page.map((m) => m.id)).toEqual(['a1', 'b2']);
+  });
+
+  it('paging one at a time visits every row exactly once', async () => {
+    const seen: string[] = (await getWebchatMessages('room-3', 1)).map((m) => m.id);
+    for (;;) {
+      const older = await getWebchatMessagesBeforeId('room-3', seen[0], 1);
+      if (older.length === 0) break;
+      seen.unshift(older[0].id);
+    }
+    expect(seen).toEqual(['a1', 'b2', 'c3', 'd4']);
   });
 });

@@ -6,10 +6,7 @@
 //
 // A feature registers its steps builder and the two facts that differ — what
 // proves it installed, and what must be true before starting — and gets the
-// GET/POST contract for free. Before this there were twelve hand-rolled copies
-// of the state and start/progress pair in ollama-manage.ts, and a fix to one
-// (progress labels, restart-pending, the pnpm lookup) reached the others only
-// by hand.
+// GET/POST contract for free.
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
@@ -18,6 +15,7 @@ import { pnpmDir } from './host-path.js';
 
 const LINES_CAP = 200;
 
+/** The subset of installer state the shared runner drives (a rolling log job). */
 export interface InstallState {
   running: boolean;
   lines: string[];
@@ -77,10 +75,8 @@ export function restartPending(
 function installChainEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
   const parts = (env.PATH ?? '').split(path.delimiter).filter(Boolean);
-  // Our own node, and wherever pnpm actually lives — which is NOT always the
-  // same directory. See host-path.ts: a host with two node installs puts pnpm
-  // beside the other one, and splicing only node's dir gives `spawn pnpm
-  // ENOENT`. Both go on, so a step and anything it spawns can reach either.
+  // pnpm is not always beside our node (a host with two node installs; see
+  // host-path.ts), so both directories go on.
   for (const dir of [pnpmDir(), path.dirname(process.execPath)]) {
     if (dir && !parts.includes(dir)) parts.unshift(dir);
   }

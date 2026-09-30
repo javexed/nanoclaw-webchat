@@ -1,5 +1,5 @@
 // ── Skills panel view state ─────────────────────────────────────────────────
-// Bridge refs for the skills-side islands. skills.ts still owns the fetches and
+// Bridge refs for the skills-side islands. skills.ts owns the fetches and
 // copies into these.
 import { ref } from 'vue';
 
@@ -8,15 +8,8 @@ export const skillDuplicates = ref<any[]>([]);
 
 /** One agent's own scoped skills, as the agent detail pane receives them. */
 export const agentScopedSkills = ref<any[]>([]);
-/**
- * Rows whose promote button is mid-request.
- *
- * The imperative version disabled the clicked BUTTON directly and re-enabled it
- * on failure. There is no clicked element to hold onto once the row is a vnode,
- * and disabling by identity is what keeps a double-click from promoting twice —
- * so the pending set is state. Keyed by skill name, which is what the endpoint
- * takes.
- */
+/** Rows whose promote button is mid-request, keyed by skill name — keeps a
+ *  double-click from promoting twice. */
 export const promotingSkills = ref<Set<string>>(new Set());
 
 /**
@@ -67,13 +60,8 @@ export const skillUpdating = ref<Set<string>>(new Set());
 
 /** One learned-skill draft awaiting review. */
 export const skillDrafts = ref<any[]>([]);
-/**
- * Draft id → the undo countdown currently replacing its actions.
- *
- * armUndo held this in the DOM by swapping the actions element's children. As
- * state it survives a re-render, which the imperative version could not manage —
- * it froze the element's width to stop the row jumping instead.
- */
+/** Draft id → the undo countdown currently replacing its actions. Held as state
+ *  so it survives a re-render. */
 export const draftUndo = ref<Record<string, { label: string; width: string; commit: () => void }>>({});
 /** Drafts whose Keep is mid-flight; a re-render must not resurrect a live Keep. */
 export const draftsReviewing = ref<Set<string>>(new Set());
@@ -98,15 +86,9 @@ export const roomSkillUndo = ref<Record<string, { label: string; width: string; 
 export const roomSkillsReviewing = ref<Set<string>>(new Set());
 
 /**
- * The keep flow's ONE source of truth, id → phase. Replaces cardReviewing plus
- * the imperative button writes (btn.textContent / btn.disabled) that used to
- * carry 'Keeping…' and 'Reviewing…'. Those could not be reverted by anything
- * reactive, so a card that entered a phase never left it.
- *
- * A phase is the whole truth about a card: what it renders, whether its
- * actions are live, and what its Undo does. Terminal phases ('kept') live here
- * too, so a card shows its outcome even if the server's re-broadcast never
- * arrives.
+ * The keep flow's ONE source of truth, id → phase: what a card renders, whether
+ * its actions are live, and what its Undo does. Terminal phases ('kept') live
+ * here too, so a card shows its outcome even if the re-broadcast never arrives.
  */
 export type DraftPhase =
   | { phase: 'saving' }

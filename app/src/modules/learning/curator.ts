@@ -1,9 +1,8 @@
 /**
- * The curator sweep (docs/webchat/design/learning-loop.md §6).
+ * The curator sweep (docs/webchat/learning-loop.md §5).
  *
  * A skill library that only ever grows rots: skills for tools that changed,
- * lessons for projects that ended. Hermes solves this with a curator; ours rides
- * nanoclaw's host sweep instead of their idle-at-startup trigger.
+ * lessons for projects that ended.
  *
  * What it does — and deliberately does NOT do:
  *   - marks a SCOPED skill stale when nothing has invoked it for
@@ -25,6 +24,7 @@ import path from 'path';
 
 import { DATA_DIR } from '../../config.js';
 import { log } from '../../log.js';
+import { assertPlainDir, mkdirNoFollow, skipLinks, writeNoFollow } from '../../no-follow-fs.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Directory name inside a scoped-skills dir. Dot-prefixed: skill scanners skip it. */
@@ -83,7 +83,9 @@ function listScopedSkillDirs(skillsDir: string): string[] {
 /** Archive one skill: move the dir under .archive/, never overwrite, never delete. */
 function archiveSkill(skillsDir: string, name: string): void {
   const archiveRoot = path.join(skillsDir, ARCHIVE_DIR);
-  fs.mkdirSync(archiveRoot, { recursive: true });
+  // The agent can write its skills dir, so .archive may be a planted link.
+  assertPlainDir(skillsDir);
+  mkdirNoFollow(skillsDir, ARCHIVE_DIR);
   let dest = path.join(archiveRoot, name);
   if (fs.existsSync(dest)) dest = `${dest}-${Date.now()}`; // an older archived copy exists — keep both
   fs.renameSync(path.join(skillsDir, name), dest);
@@ -109,7 +111,7 @@ function markRan(): void {
 }
 
 /**
- * The sweep entry point, called from the host sweep every tick and self-gated
+ * The sweep entry point, called from the module sweep every tick and self-gated
  * to one real run per day. Walks every agent's scoped skills; archives the
  * stale ones. Idempotent and best-effort per agent — one unreadable dir never
  * stops the rest.
@@ -185,11 +187,18 @@ export function restoreArchivedSkill(
   const skillsDir = path.join(dataDir, 'v2-sessions', agentGroupId, '.claude-shared', 'skills');
   const src = path.join(skillsDir, ARCHIVE_DIR, name);
   const dest = path.join(skillsDir, name);
+  try {
+    assertPlainDir(skillsDir);
+    assertPlainDir(path.join(skillsDir, ARCHIVE_DIR));
+    assertPlainDir(src);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
   if (!fs.existsSync(src)) return { ok: false, error: 'Not in the archive' };
   if (fs.existsSync(dest)) return { ok: false, error: 'A live skill with this name already exists' };
   // Restoring is a use signal — otherwise the next sweep re-archives it a day later.
   try {
-    fs.writeFileSync(path.join(src, '.last-invoked'), new Date().toISOString());
+    writeNoFollow(skillsDir, path.join(ARCHIVE_DIR, name, '.last-invoked'), new Date().toISOString());
   } catch {
     /* stamp is best-effort */
   }
@@ -259,14 +268,23 @@ export function promoteScopedSkill(
   if (!dup) return { ok: false, error: 'Not duplicated across agents' };
   const poolDest = path.join(poolDir, name);
   if (fs.existsSync(poolDest)) return { ok: false, error: 'Already in the shared pool' };
-  const newest = path.join(dataDir, 'v2-sessions', dup.newestAgent, '.claude-shared', 'skills', name);
+  const newestSkills = path.join(dataDir, 'v2-sessions', dup.newestAgent, '.claude-shared', 'skills');
+  const newest = path.join(newestSkills, name);
+  try {
+    assertPlainDir(newestSkills);
+    assertPlainDir(newest);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
   fs.mkdirSync(path.dirname(poolDest), { recursive: true });
-  fs.cpSync(newest, poolDest, { recursive: true });
+  // Every agent reads the pool: links from one agent's copy stay behind.
+  fs.cpSync(newest, poolDest, { recursive: true, filter: skipLinks });
   for (const agent of dup.agents) {
     const skillsDir = path.join(dataDir, 'v2-sessions', agent, '.claude-shared', 'skills');
     try {
       const archiveRoot = path.join(skillsDir, ARCHIVE_DIR);
-      fs.mkdirSync(archiveRoot, { recursive: true });
+      assertPlainDir(skillsDir);
+      mkdirNoFollow(skillsDir, ARCHIVE_DIR);
       let dest = path.join(archiveRoot, name);
       if (fs.existsSync(dest)) dest = `${dest}-${Date.now()}`;
       fs.renameSync(path.join(skillsDir, name), dest);

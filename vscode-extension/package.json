@@ -2,7 +2,7 @@
   "name": "vscode",
   "displayName": "NanoClaw",
   "description": "Run NanoClaw agents on this machine and work with them from the editor.",
-  "version": "0.13.2",
+  "version": "0.16.0",
   "publisher": "nanoclaw",
   "private": true,
   "license": "MIT",
@@ -50,6 +50,26 @@
         "category": "NanoClaw"
       },
       {
+        "command": "nanoclaw.stopAllAgents",
+        "title": "Stop all agents",
+        "category": "NanoClaw"
+      },
+      {
+        "command": "nanoclaw.resumeAgents",
+        "title": "Resume agents",
+        "category": "NanoClaw"
+      },
+      {
+        "command": "nanoclaw.forgetAllowedFolders",
+        "title": "Forget allowed folders",
+        "category": "NanoClaw"
+      },
+      {
+        "command": "nanoclaw.showActivityLog",
+        "title": "Show activity log",
+        "category": "NanoClaw"
+      },
+      {
         "command": "nanoclaw.checkForUpdates",
         "title": "Check for Updates",
         "category": "NanoClaw"
@@ -87,7 +107,71 @@
         "command": "nanoclaw.review.next",
         "title": "Next change",
         "category": "NanoClaw",
-        "enablement": "nanoclaw.reviewing"
+        "enablement": "nanoclaw.reviewing || nanoclaw.conflicted"
+      },
+      {
+        "command": "nanoclaw.review.previous",
+        "title": "Previous change",
+        "category": "NanoClaw",
+        "enablement": "nanoclaw.reviewing || nanoclaw.conflicted"
+      },
+      {
+        "command": "nanoclaw.review.nextFile",
+        "title": "Next file to review",
+        "category": "NanoClaw"
+      },
+      {
+        "command": "nanoclaw.finishUpdate",
+        "title": "Finish Update",
+        "category": "NanoClaw"
+      },
+      {
+        "command": "nanoclaw.proposal.applyAll",
+        "title": "Apply all",
+        "category": "NanoClaw",
+        "icon": "$(check-all)"
+      },
+      {
+        "command": "nanoclaw.proposal.rejectAll",
+        "title": "Reject all",
+        "category": "NanoClaw",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "nanoclaw.proposal.reviewAll",
+        "title": "Review",
+        "category": "NanoClaw",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "nanoclaw.proposal.refresh",
+        "title": "Refresh",
+        "category": "NanoClaw",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nanoclaw.proposal.apply",
+        "title": "Apply",
+        "category": "NanoClaw",
+        "icon": "$(check)"
+      },
+      {
+        "command": "nanoclaw.proposal.reject",
+        "title": "Reject",
+        "category": "NanoClaw",
+        "icon": "$(discard)"
+      },
+      {
+        "command": "nanoclaw.proposal.review",
+        "title": "Review",
+        "category": "NanoClaw",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "nanoclaw.proposal.diff",
+        "title": "Open Diff",
+        "category": "NanoClaw",
+        "icon": "$(diff)"
       }
     ],
     "configuration": {
@@ -102,7 +186,10 @@
         "nanoclaw.signIn": {
           "scope": "machine",
           "type": "string",
-          "enum": ["microsoft", "network"],
+          "enum": [
+            "microsoft",
+            "network"
+          ],
           "enumDescriptions": [
             "Sign in with Microsoft (Entra). For installs behind App Service authentication.",
             "No sign-in: central knows you by your network identity (Tailscale, or an identity-aware proxy)."
@@ -140,7 +227,7 @@
           "additionalProperties": {
             "type": "string"
           },
-          "markdownDescription": "Project slots: maps a container path central declares (e.g. `/workspace/project`) to a local directory. A slot that is not bound here is refused."
+          "markdownDescription": "Project slots: maps a slot central declares (e.g. `/workspace/project`) to a local directory: the folder the agent's tools work on. A slot that is not bound here is refused."
         },
         "nanoclaw.mountAllowlist": {
           "scope": "machine",
@@ -151,49 +238,6 @@
           },
           "markdownDescription": "Directories a slot may resolve into (symlinks followed). Empty = the folders open in this window."
         },
-        "nanoclaw.containerRuntime": {
-          "scope": "machine",
-          "type": "string",
-          "enum": [
-            "auto",
-            "docker",
-            "podman"
-          ],
-          "default": "auto",
-          "markdownDescription": "Container runtime for sessions placed on this machine. `auto` tries `docker` then `podman`. Docker Desktop or a Podman machine both work; the relay runs inside the container, so no host listener or WSL remote is needed."
-        },
-        "nanoclaw.runtimePath": {
-          "scope": "machine",
-          "type": "string",
-          "default": "",
-          "description": "Optional: full path of the docker/podman CLI when it is not on PATH."
-        },
-        "nanoclaw.agentImage": {
-          "scope": "machine",
-          "type": "string",
-          "enum": [
-            "build",
-            "pull"
-          ],
-          "default": "build",
-          "enumDescriptions": [
-            "Build the agent image on this machine from the context central sends. No registry needed; the first build takes several minutes and fetches from Docker Hub, apt, npm and GitHub.",
-            "Pull a prebuilt agent image and retag it to the name central expects. Uses the reference below, or central's pin when that is empty. Nothing is built here."
-          ],
-          "markdownDescription": "How this machine obtains the agent image for sessions placed on it. `pull` requires the runtime to be logged in to the registry already (`docker login` / `podman login`); a pulled image is rejected if it bakes a different agent-runner than central expects. Applies only when central's image source is \"Machine decides\"; by default central has every runner build the image."
-        },
-        "nanoclaw.agentImageRef": {
-          "scope": "machine",
-          "type": "string",
-          "default": "",
-          "markdownDescription": "Image reference to pull when `#nanoclaw.agentImage#` is `pull` — a corporate mirror or any registry this machine can reach, e.g. `myregistry.azurecr.io/nanoclaw/agent@sha256:…`. Pin by digest. Empty means: use the reference central is pinned to. Applies only when central's image source is \"Machine decides\"; by default central has every runner build the image."
-        },
-        "nanoclaw.allowUnlabeledAgentImage": {
-          "scope": "machine",
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Accept a pulled image that carries no agent-runner lock label (a `save`/`load` or third-party image). Off by default: without the label the image's runtime cannot be checked against what central expects."
-        },
         "nanoclaw.workspaceMount": {
           "scope": "machine",
           "type": "string",
@@ -203,10 +247,10 @@
           ],
           "default": "workspace",
           "enumDescriptions": [
-            "Bind the first open workspace folder to /workspace/project when central declares that slot (read/write).",
-            "Never bind the workspace automatically; a declared /workspace/project slot must be set in nanoclaw.slots or the session is refused."
+            "The open workspace folder (the one holding the active file, in a multi-root workspace) is the project the agent's tools work on.",
+            "Never pick the workspace automatically; the project must be set in nanoclaw.slots."
           ],
-          "markdownDescription": "How the developer's project reaches an agent placed on this machine. Central declares the slot `/workspace/project`; this machine decides which folder fills it. An explicit `nanoclaw.slots` entry for that path always wins."
+          "markdownDescription": "Which folder the agent's tools work on. An explicit `nanoclaw.slots` entry for `/workspace/project` always wins."
         },
         "nanoclaw.workspaceExcludes": {
           "scope": "machine",
@@ -241,9 +285,49 @@
             "credentials.json",
             "service-account*.json",
             "terraform.tfstate",
-            "terraform.tfstate.*"
+            "terraform.tfstate.*",
+            "*.env",
+            ".envrc",
+            ".kube",
+            "kubeconfig",
+            "id_ecdsa",
+            "id_ecdsa.*",
+            "id_dsa",
+            "id_dsa.*",
+            "*.ppk",
+            "**/.docker/config.json",
+            ".pgpass",
+            ".htpasswd",
+            ".vault-token",
+            "*.tfstate",
+            "*.tfstate.backup",
+            "application_default_credentials.json",
+            "settings.local.php",
+            "wp-config.php",
+            "*.kdbx"
           ],
-          "markdownDescription": "Secret-like paths hidden from the agent inside a bound slot (an empty read-only mount covers each match). Patterns are relative to the slot root; a pattern without `/` matches a file or folder name anywhere; `*`, `?` and `**` are supported. Central may add patterns per placement; the union applies. Only paths that exist when the container is created are covered."
+          "markdownDescription": "Secret-like paths left out of the agent's copy of the project. Patterns are relative to the project root; a pattern without `/` matches a file or folder name anywhere; `*`, `?` and `**` are supported."
+        },
+        "nanoclaw.proposeIncludeIgnored": {
+          "scope": "machine",
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Also copy gitignored files into the agent's copy. Off: tracked and untracked (not ignored) files only."
+        },
+        "nanoclaw.proposeSecretScanAllow": {
+          "scope": "machine",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Files copied into the agent's copy even when the secret scan finds a secret in them. Globs as in `nanoclaw.workspaceExcludes`."
+        },
+        "nanoclaw.releaseSigningKey": {
+          "scope": "machine",
+          "type": "string",
+          "default": "",
+          "markdownDescription": "The operator's release signing key (`ed25519:…`). When set, runner updates must be signed by it, whatever central offers. Empty: the key central offers is pinned per server on your confirmation."
         },
         "nanoclaw.autoUpdate": {
           "scope": "machine",
@@ -289,6 +373,68 @@
           "group": "navigation@9",
           "when": "nanoclaw.connected"
         }
+      ],
+      "scm/title": [
+        {
+          "command": "nanoclaw.proposal.reviewAll",
+          "group": "navigation@1",
+          "when": "scmProvider == nanoclaw && nanoclaw.proposalReviewable"
+        },
+        {
+          "command": "nanoclaw.proposal.applyAll",
+          "group": "navigation@2",
+          "when": "scmProvider == nanoclaw"
+        },
+        {
+          "command": "nanoclaw.proposal.rejectAll",
+          "group": "navigation@3",
+          "when": "scmProvider == nanoclaw"
+        },
+        {
+          "command": "nanoclaw.proposal.refresh",
+          "group": "navigation@4",
+          "when": "scmProvider == nanoclaw"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "nanoclaw.proposal.review",
+          "group": "inline@1",
+          "when": "scmProvider == nanoclaw && scmResourceState == reviewable && scmResourceState != conflict"
+        },
+        {
+          "command": "nanoclaw.proposal.apply",
+          "group": "inline@2",
+          "when": "scmProvider == nanoclaw && scmResourceState != conflict"
+        },
+        {
+          "command": "nanoclaw.proposal.reject",
+          "group": "inline@3",
+          "when": "scmProvider == nanoclaw && scmResourceState != conflict"
+        },
+        {
+          "command": "nanoclaw.proposal.diff",
+          "group": "navigation",
+          "when": "scmProvider == nanoclaw && scmResourceState != conflict"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "nanoclaw.proposal.apply",
+          "when": "false"
+        },
+        {
+          "command": "nanoclaw.proposal.reject",
+          "when": "false"
+        },
+        {
+          "command": "nanoclaw.proposal.review",
+          "when": "false"
+        },
+        {
+          "command": "nanoclaw.proposal.diff",
+          "when": "false"
+        }
       ]
     },
     "keybindings": [
@@ -308,6 +454,18 @@
         "command": "nanoclaw.review.next",
         "key": "alt+f5",
         "mac": "alt+f5",
+        "when": "editorTextFocus && (nanoclaw.reviewing || nanoclaw.conflicted)"
+      },
+      {
+        "command": "nanoclaw.review.previous",
+        "key": "shift+alt+f5",
+        "mac": "shift+alt+f5",
+        "when": "editorTextFocus && (nanoclaw.reviewing || nanoclaw.conflicted)"
+      },
+      {
+        "command": "nanoclaw.review.nextFile",
+        "key": "ctrl+alt+f5",
+        "mac": "cmd+alt+f5",
         "when": "editorTextFocus && nanoclaw.reviewing"
       }
     ]
@@ -317,8 +475,7 @@
     "test": "vitest run",
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
-    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository --out nanoclaw-$npm_package_version.vsix",
-    "harness": "npm run build:core && node harness/runner-harness.mjs",
+    "package": "npm run build && node scripts/package.mjs",
     "build:core": "tsc -p tsconfig.json",
     "harness:editor": "npm run build && npm run build:core && harness/editor-docker.sh"
   },

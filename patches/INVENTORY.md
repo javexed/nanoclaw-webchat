@@ -7,8 +7,7 @@
 #                   them. Each is a candidate upstream PR; landing one DELETES
 #                   its patch. This is where the residue shrinks fastest.
 #   product/      — webchat features that still need a core touchpoint. These
-#                   shrink when a seam registry absorbs them (H12 deleted three;
-#                   R3 halved poll-loop), not by upstreaming.
+#                   shrink when a seam registry absorbs them, not by upstreaming.
 #   local/        — install-local reality: fork-specific skill payloads, the
 #                   OpenCode-removal reference sweep, ignore entries. Neither
 #                   upstreamable nor a product feature; expected to persist.
@@ -21,28 +20,22 @@
 
 setup/verify.ts
     exports CHANNEL_ENV_KEYS so a test can neutralise exactly the credential
-    env vars that mark a channel configured. `has()` reads process.env before
-    the install's .env, so an ambient GITHUB_TOKEN — every Actions runner sets
-    one, as does any shell with `gh` — invents a github channel and fails five
-    tests in setup/verify-slack.test.ts. Carried from upstream PR #3757 (open,
-    all checks green, awaiting review). DELETE both this and the test patch
-    when it merges.
+    env vars that mark a channel configured: an ambient GITHUB_TOKEN (every
+    Actions runner sets one) otherwise invents a github channel and fails
+    setup/verify-slack.test.ts. Submitted upstream; DELETE both this and the
+    test patch when it merges.
 setup/verify-slack.test.ts
-    the other half of #3757: stubs those keys empty in beforeEach and calls
+    the other half: stubs those keys empty in beforeEach and calls
     vi.unstubAllEnvs() in afterEach, so the suite stops inheriting ambient env.
-    Replaced the GITHUB_TOKEN="" workaround the compose workflow used to set.
 CLAUDE.md
     operator docs for the above
 container/Dockerfile
     rtk (bash-output compression) baked in, arch-aware
 container/agent-runner/package.json
-    pin @anthropic-ai/claude-agent-sdk exactly instead of ^. This tree has no
-    minimumReleaseAge policy (that is a pnpm-workspace setting and the
-    agent-runner is a bun tree), so the caret was held only by bun.lock — one
-    non-frozen install floats the SDK the runner is built against. Upstream's
-    own CLAUDE.md already says to bump it deliberately and never `bun update`
-    blindly; this makes the manifest say what the docs say. No lockfile change:
-    bun.lock already resolved 0.3.197, so the caret was latitude nothing used.
+    pin @anthropic-ai/claude-agent-sdk exactly instead of ^. The bun tree has
+    no minimumReleaseAge policy, so a caret held only by bun.lock lets one
+    non-frozen install float the SDK; upstream's CLAUDE.md already says to bump
+    it deliberately. No lockfile change.
 src/providers/provider-container-registry.ts
     lacksMcpTools capability. NEGATIVE polarity on purpose: this registry is
     sparse (a provider with no host-side container needs never registers, and
@@ -56,12 +49,11 @@ src/project-doc-compose.test.ts
     coverage for the above, including the polarity (an unregistered or
     undeclared provider is unaffected)
 container/agent-runner/src/destinations.ts
-    do not describe the MCP messaging tools to a provider that has none. The
-    prompt asserted `send_message` unconditionally; on a provider whose model
-    cannot call it (pi, and any harness with its own fixed toolset) that is a
-    promise the model spends the turn trying to keep — observed looping four
-    times and answering nothing. Gated on the new AgentProvider.supportsMcpTools,
-    so upstreaming this wants the types.ts hunk of the same name alongside it.
+    do not describe the MCP messaging tools to a provider that has none (pi, and
+    any harness with its own fixed toolset); a model promised `send_message` it
+    cannot call loops trying to keep the promise. Gated on
+    AgentProvider.supportsMcpTools, so upstreaming this wants the types.ts hunk
+    of the same name alongside it.
 container/agent-runner/src/destinations.test.ts
     coverage for the above, both chat and task mode
 container/agent-runner/src/formatter.test.ts
@@ -88,7 +80,6 @@ pnpm-workspace.yaml
     dependency policy tweaks
 scripts/skill-apply.test.ts
     tests for masking + gitless fallback; scratch dirs removed in afterAll
-    (leaked ~200 tmpdirs per run)
 scripts/skill-apply.ts
     secret masking in logged commands + gitless (tarball) deploy fallback
 src/guard/guard.ts
@@ -104,7 +95,7 @@ setup/providers/install.ts
     resolve the remote that actually carries the provider branch being copied,
     not whichever remote carries `channels`; falls back to the channels resolver
 setup/lib/skill-driver.test.ts
-    scratch dirs removed in afterAll (leaked ~20 tmpdirs per run, cleaned none)
+    scratch dirs removed in afterAll
 setup/channels/run-channel-skill.test.ts
     scratch dirs removed in afterAll
 setup/channels/whatsapp.test.ts
@@ -112,16 +103,12 @@ setup/channels/whatsapp.test.ts
 setup/service.test.ts
     tests for the PATH fix
 setup/service.ts
-    two hunks. (1) /snap/bin on the service PATH so snap CLIs (tailscale)
-    resolve. (2) the stale-docker-group path: a minimal image (the Debian 13
-    LXC template) ships no `acl`, so the setfacl workaround silently did not
-    happen and the unit started straight into a crash loop — install the
-    package and retry; if the group is still stale, say what it is and what
-    fixes it BEFORE the unit starts, instead of leaving it to the journal;
-    and report linger from `loginctl show-user` rather than assuming an
-    unprivileged `enable-linger` took (it exits 1 without a polkit agent —
-    every headless SSH install — so sudo is tried too). Carried from the
-    web branch, where a Debian 13 CT install hit all three.
+    (1) /snap/bin on the service PATH so snap CLIs (tailscale) resolve.
+    (2) stale docker group on minimal images with no `acl` (e.g. Debian 13 LXC):
+    install it and retry, and if the group is still stale explain the fix
+    before the unit starts rather than crash-looping. (3) report linger from
+    `loginctl show-user` instead of assuming an unprivileged `enable-linger`
+    took (it fails without a polkit agent, so sudo is tried too).
 src/drivers/docker-driver.ts
     the other half of that: when the socket exists but is forbidden, the boot
     banner names the docker group and the fix (`loginctl terminate-user`),
@@ -132,25 +119,19 @@ src/drivers/docker-driver.test.ts
     coverage for the above: permission-denied on an existing socket names the
     group and not the daemon.
 .claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode-config.ts
-    default OPENCODE_SMALL_MODEL to the main model. OpenCode runs side tasks
-    (session titles, summaries) on a small model and, with none configured,
-    asks its own catalogue for gpt-5.4-nano — which a local endpoint never
-    serves, so every auxiliary call failed ("model 'gpt-5.4-nano' not found"
-    in the session log, main reply unaffected). The main model is the one
-    model the endpoint is known to have. Webchat sets the env var itself since
-    the model-from-the-pick fix, so this is for a hand-applied skill; it is
-    upstream's payload, hence a patch on the skill directory.
+    default OPENCODE_SMALL_MODEL to the main model. With none configured
+    OpenCode asks its catalogue for a small cloud model that a local endpoint
+    never serves, so every auxiliary call (titles, summaries) fails. Webchat
+    sets the env var itself; this covers a hand-applied skill. Upstream's
+    payload, hence a patch on the skill directory.
 container/agent-runner/src/mailbox/registry.test.ts
-    make the unreadable-context test uid-independent. It wrote the file with
-    mode 0o000 so the read would fail; root (CI containers) bypasses that, read
-    it fine, and the test asserted the opposite of its intent. Spies Bun.file for
-    that one path so json() rejects with EACCES regardless of uid.
+    make the unreadable-context test uid-independent: root (CI containers)
+    bypasses mode 0o000, so it spies Bun.file for that one path and json()
+    rejects with EACCES regardless of uid.
 scripts/update/transaction.e2e.test.ts
-    make the partial-snapshot test uid-independent. It planted an unreadable
-    file with chmod 0o000 to force copyEntry to throw; CI containers run as
-    root, which bypasses permission bits, so the copy succeeded and the test
-    asserted the opposite of what it meant. Spies fs.copyFileSync for that one
-    path instead — same technique as remove.test.ts below.
+    make the partial-snapshot test uid-independent: root bypasses chmod 0o000,
+    so it spies fs.copyFileSync for that one path to force copyEntry to throw
+    (same technique as remove.test.ts below).
 setup/uninstall/remove.test.ts
     failure injection via spy — root in CI bypasses chmod bits
 src/backfill-container-configs.ts
@@ -162,9 +143,9 @@ src/cli/resources/groups.test.ts
 src/cli/resources/groups.ts
     FK-aware group deletion for module-installed tables
 src/container-runner.test.ts
-    tests for the container hardening policy
+    test for the memory-cap default
 src/container-runner.ts
-    root-host chown, user-skills mount, memory cap default, bun cache, output-token ceiling, per-group egress
+    root-host chown, user-skills mount, memory cap default, bun cache, per-group egress
 src/db/agent-groups.ts
     lifecycle status setter with validation
 src/db/db-v2.test.ts
@@ -184,7 +165,7 @@ src/host-sweep.ts
 src/modules/agent-to-agent/agent-route.test.ts
     reproduction test for the a2a self-loop
 src/modules/agent-to-agent/agent-route.ts
-    a2a self-loop guard (the production message-flood fix)
+    a2a self-loop guard (an error reply routed back to its own session floods the room)
 src/modules/agent-to-agent/message-gate.test.ts
     self-loop guard coverage
 src/modules/agent-to-agent/write-destinations.test.ts
@@ -194,7 +175,7 @@ src/modules/agent-to-agent/write-destinations.ts
 src/modules/approvals/primitive.test.ts
     tests: an unnamed fan-out leaves approver_user_id null; a policy-named approver is recorded
 src/modules/approvals/primitive.ts
-    approver fan-out: every eligible admin gets the card, first response wins — approver_user_id records only a policy-named approver (it used to default to the first target, which made a fan-out an exclusive assignment); exports APPROVAL_OPTIONS for the session-less sibling
+    approver fan-out: every eligible admin gets the card, first response wins — approver_user_id records only a policy-named approver, so a fan-out is never an exclusive assignment; exports APPROVAL_OPTIONS for the session-less sibling
 src/modules/approvals/response-handler.test.ts
     tests for the double-fire guard
 src/modules/approvals/response-handler.ts
@@ -203,12 +184,10 @@ src/modules/approvals/response-handler.ts
 src/modules/self-mod/apply.ts
     respawn ALL of a group's sessions after install/mcp change, not just one
 src/reconcile-session.ts
-    UTC-safe claim-timestamp parsing (SQLite stamps carry no zone, so Date.parse
-    read them as local and the claim-stuck check killed fresh claims on a
-    non-UTC host), plus the bloated-continuation self-heal: after two ceiling
-    kills that produced no output, clear the stored continuation so the next
-    turn starts fresh. Was in host-sweep.ts until upstream moved the sweep
-    decision logic here.
+    UTC-safe claim-timestamp parsing (zone-less SQLite stamps read as local
+    made the claim-stuck check kill fresh claims on a non-UTC host), plus the
+    bloated-continuation self-heal: after two ceiling kills with no output,
+    clear the stored continuation so the next turn starts fresh.
 src/router.ts
     agent lifecycle gate (active/paused/archived) + prime negative-lookahead
 src/session-manager.attachments.test.ts
@@ -231,8 +210,7 @@ src/types.ts
 src/mailbox/model.ts
     add the 'interrupt' inbound kind — the webchat stop button writes a control
     row of that kind (trigger=false, never wakes a container) and the runner's
-    poll loop consumes it to abort a live turn. Without the kind in the union the
-    feature's own comparisons were dead code that failed the container typecheck.
+    poll loop consumes it to abort a live turn.
 container/agent-runner/src/mailbox/model.generated.ts
     the same change, byte-identical: `pnpm mailbox-model:check` cmp's the two
     copies, so this patch must always mirror src/mailbox/model.ts exactly.
@@ -267,8 +245,6 @@ container/agent-runner/src/config.ts
 container/agent-runner/src/index.ts
     module imports (status feed, learning, send-file hint); the prompt addendum
     is built after the provider so it can consult supportsMcpTools
-container/agent-runner/src/mailbox/sqlite/operations.ts
-    relay-sync support for agents placed on runners
 container/agent-runner/src/mcp-tools/cli.instructions.md
     agent-facing CLI instructions
 container/agent-runner/src/mcp-tools/core.instructions.md
@@ -280,8 +256,8 @@ container/agent-runner/src/poll-loop.ts
 container/agent-runner/src/providers/claude.ts
     thinking/reasoning stream taps, restricted-review support, rate-limit classification
 container/agent-runner/src/providers/types.ts
-    provider capability flags (supportsRestrictedReview, memory scaffold, settings
-    scopes, supportsMcpTools)
+    provider capability flags (supportsRestrictedReview, settings scopes,
+    supportsMcpTools)
 docs/SECURITY.md
     egress section points at the per-group filter (docs/webchat/security.md)
 eslint.config.js
@@ -299,11 +275,14 @@ src/config.ts
 src/container-config.ts
     egress/learning/lenient config plumbing + MCP tool allowlist and private-LAN http
 src/container-config.test.ts
-    regression test: egress reaches container.json (it silently did not)
+    regression test: egress reaches container.json
 src/db/container-configs.ts
     egress + learning columns
-src/drivers/installed.ts
-    append-only barrel import registering the `fleet` session driver (a seam registry for out-of-tree drivers would retire this)
+src/drivers/index.ts
+    a session-container gateway consults the network-policy seam before its
+    early return: an agent a module filters is refused rather than started on
+    the sidecar's unfiltered network (moving the seam call above upstream's
+    return would retire this)
 src/drivers/types.ts
     slot mounts carry `exclude` globs and `propose` (runner placements)
 src/modules/approvals/index.ts
@@ -319,15 +298,11 @@ src/modules/typing/index.ts
 ## LOCAL — install-local, expected to persist (6)
 
 setup/lib/restart-readiness.test.ts
-    skips TWO tests behind NANOCLAW_WEBCHAT_SKIP_RESTART_FALLBACK, which only
-    this repo's CI sets. Both exercise restart.sh's nohup fallback and hang the
-    full 30s on that one runner; they pass in 4.4s in the runner's OWN image
-    (catthehacker/ubuntu:act-22.04), as root, on Node 24, and down to 0.5 CPU,
-    and take an identical 63.7s alone as in the full suite — so not contention,
-    not the image, not root, Node or CPU. Unlike the rest of this folder it is
-    NOT expected to persist: delete it when the runner is fixed or replaced and
-    let a run prove it. If the fallback proves genuinely broken in some
-    environments, report it upstream instead of skipping.
+    skips two tests behind NANOCLAW_WEBCHAT_SKIP_RESTART_FALLBACK, which only
+    this repo's CI sets: both exercise restart.sh's nohup fallback and hang on
+    one CI runner while passing everywhere else. Unlike the rest of this folder
+    it is NOT expected to persist: delete it when that runner is replaced. If
+    the fallback proves genuinely broken somewhere, report it upstream.
 .claude/skills/add-karpathy-llm-wiki/llm-wiki.md
     OpenCode-removal reference sweep
 .claude/skills/add-mnemon/SKILL.md

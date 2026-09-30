@@ -39,6 +39,13 @@ credential vault, the agent image, and a `systemctl --user` service), then seeds
 the webchat `.env` with a generated bearer token. It skips the interactive setup
 steps (auth, channel, first agent, timezone) — the browser wizard owns those.
 
+A run counts as done only when setup's own step log shows the container and
+service steps finished and `/health` answers; `setup:auto` returning 0 is not
+enough, since a question it cannot answer headless ends it early without an
+error. Each run records what it installed in `/var/log/nanoclaw-install.json`:
+`status` (`running`, then `success` or `failed`), the `phase` reached, the
+exact webchat commit and the upstream and seam pins.
+
 Installs under a dedicated `nanoclaw` service user with a lingering
 `systemctl --user` unit, so nothing runs as root beyond the initial package
 install.
@@ -73,6 +80,7 @@ plain LAN + token setup is unaffected.
 | `NANOCLAW_TZ` | host zone | IANA timezone for agent time-awareness |
 | `NANOCLAW_REPO_URL` / `NANOCLAW_REPO_BRANCH` | nanoclaw-webchat / `main` | Source to clone and compose |
 | `NANOCLAW_SRC_DIR` | `/opt/nanoclaw-webchat` | Where that source is cloned before composing |
+| `NANOCLAW_RESULT_FILE` | `/var/log/nanoclaw-install.json` | Where the run's result record is written |
 
 ## Updating
 
@@ -121,7 +129,3 @@ root it chowns the bind-mounted group/session dirs to the container UID at spawn
 (override via `NANOCLAW_CONTAINER_UID` for a non-standard image). An
 already-broken install self-heals on the next spawn after updating; to fix it
 immediately without waiting: `chown -R 1000:1000 /opt/nanoclaw/groups /opt/nanoclaw/data`.
-
-**Escalation seam.** If auto-routing is installed, the overlay reverts its
-`core-escalation` patches to tracked files — re-apply them after updating:
-`bash .claude/skills/add-routing/resources/core-escalation/install-core-escalation.sh`.

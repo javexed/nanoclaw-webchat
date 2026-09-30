@@ -3,15 +3,28 @@
 // Cursor / Copilot shape, built from what VS Code gives an extension
 // (edits, whole-line decorations, CodeLens). The rules live in
 // inline-review.ts; this file only applies them to documents.
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+
 import * as vscode from 'vscode';
 
-import { adjustBlocks, blockAt, resolveBlock, splitLines, type Block, type ReviewPlan } from './inline-review.js';
+import {
+  adjustBlocks,
+  blockAt,
+  decidedText,
+  resolveBlock,
+  splitLines,
+  type Block,
+  type ReviewPlan,
+} from './inline-review.js';
 
 export interface ReviewResult {
   accepted: number;
   rejected: number;
   /** Hunks that could not be placed inline (the file moved on); still in the proposal. */
   conflicts: number;
+  /** Hunks the file already carried: nothing to decide. */
+  applied: number;
   /** The review ended without every hunk decided (undo, closed, cancelled). */
   abandoned: boolean;
 }
@@ -23,8 +36,36 @@ interface Session {
   accepted: number;
   rejected: number;
   conflicts: number;
+  applied: number;
+  /**
+   * Each decision goes to disk as it is made (the file was saved and plain
+   * UTF-8 when the review began): Git shows progress, and a lost review loses
+   * nothing decided. `bom` is restored on write.
+   */
+  writeThrough: boolean;
+  bom: boolean;
+  /** The disk was written: the end reloads the editor from it rather than saving over it. */
+  wrote: boolean;
   onDone: (r: ReviewResult) => void;
 }
+
+/** A session as kept across a window reload: restored only onto the very text it was saved with. */
+interface SavedSession {
+  blocks: Block[];
+  wasDirty: boolean;
+  accepted: number;
+  rejected: number;
+  conflicts: number;
+  applied: number;
+  writeThrough: boolean;
+  bom: boolean;
+  wrote: boolean;
+  hash: string;
+}
+
+const SAVED = 'nanoclaw.reviews';
+
+const hashText = (text: string) => createHash('sha256').update(text).digest('hex');
 
 export class ReviewController implements vscode.CodeLensProvider, vscode.Disposable {
   private readonly sessions = new Map<string, Session>();
@@ -46,13 +87,25 @@ export class ReviewController implements vscode.CodeLensProvider, vscode.Disposa
     overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.addedForeground'),
     overviewRulerLane: vscode.OverviewRulerLane.Left,
   });
+  private readonly status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 49);
   private readonly disposables: vscode.Disposable[] = [];
+  /** Saved sessions whose document has not opened since the reload. */
+  private readonly pending = new Map<string, SavedSession>();
+  private resume: ((uri: vscode.Uri) => (r: ReviewResult) => void) | null = null;
+  private saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(private readonly log: (line: string) => void) {
+  /** `store` keeps sessions across a window reload (workspace state); without it they last as long as the window. */
+  constructor(
+    private readonly log: (line: string) => void,
+    private readonly store?: vscode.Memento,
+  ) {
+    this.status.command = 'nanoclaw.review.next';
     this.disposables.push(
       this.removed,
       this.added,
       this.lenses,
+      this.status,
+      vscode.workspace.onDidOpenTextDocument((d) => this.restoreInto(d)),
       vscode.languages.registerCodeLensProvider({ scheme: 'file' }, this),
       vscode.workspace.onDidChangeTextDocument((e) => this.onChange(e)),
       vscode.workspace.onDidCloseTextDocument((d) => {
@@ -60,7 +113,10 @@ export class ReviewController implements vscode.CodeLensProvider, vscode.Disposa
         if (s) this.end(s, true);
       }),
       vscode.window.onDidChangeVisibleTextEditors(() => this.paintAll()),
-      vscode.window.onDidChangeActiveTextEditor(() => this.setContext()),
+      vscode.window.onDidChangeActiveTextEditor(() => {
+        this.setContext();
+        this.showStatus();
+      }),
       vscode.commands.registerCommand('nanoclaw.review.accept', (uri?: string, index?: number) =>
         this.decideCmd('accept', uri, index),
       ),
@@ -70,7 +126,41 @@ export class ReviewController implements vscode.CodeLensProvider, vscode.Disposa
       vscode.commands.registerCommand('nanoclaw.review.acceptAll', (uri?: string) => this.allCmd('accept', uri)),
       vscode.commands.registerCommand('nanoclaw.review.rejectAll', (uri?: string) => this.allCmd('reject', uri)),
       vscode.commands.registerCommand('nanoclaw.review.next', () => this.next()),
+      vscode.commands.registerCommand('nanoclaw.review.previous', () => this.previous()),
+      vscode.commands.registerCommand('nanoclaw.review.jump', (uri: string, index: number) => this.jump(uri, index)),
     );
+  }
+
+  /**
+   * Take back the reviews a window reload interrupted. The editor restores
+   * the unsaved text (both versions of every open hunk); this restores the
+   * blocks over it, when the text is exactly what was saved. `resume` gives
+   * each one back its onDone.
+   */
+  restore(resume: (uri: vscode.Uri) => (r: ReviewResult) => void): void {
+    this.resume = resume;
+    for (const [uri, saved] of Object.entries(this.store?.get<Record<string, SavedSession>>(SAVED) ?? {})) {
+      this.pending.set(uri, saved);
+    }
+    for (const d of vscode.workspace.textDocuments) this.restoreInto(d);
+  }
+
+  private restoreInto(doc: vscode.TextDocument): void {
+    const key = doc.uri.toString();
+    const saved = this.pending.get(key);
+    if (!saved || !this.resume) return;
+    this.pending.delete(key);
+    const name = vscode.workspace.asRelativePath(doc.uri);
+    if (hashText(doc.getText()) !== saved.hash || this.sessions.has(key)) {
+      void vscode.window.showWarningMessage(`Review of ${name} was lost; the file may hold both versions.`);
+      this.save();
+      return;
+    }
+    const { hash: _hash, ...state } = saved;
+    this.sessions.set(key, { uri: doc.uri, ...state, onDone: this.resume(doc.uri) });
+    this.paintAll();
+    this.setContext();
+    this.log(`review: ${name} — resumed, ${saved.blocks.length} change(s) left`);
   }
 
   isReviewing(uri: vscode.Uri): boolean {
@@ -85,6 +175,8 @@ export class ReviewController implements vscode.CodeLensProvider, vscode.Disposa
     uri: vscode.Uri,
     makePlan: (current: string) => ReviewPlan,
     onDone: (r: ReviewResult) => void,
+    /** Opens the proposal beside the developer's file: where changes that could not be placed are taken by hand. */
+    compare?: () => void,
   ): Promise<void> {
     const existing = this.sessions.get(uri.toString());
     const doc = await vscode.workspace.openTextDocument(uri);
@@ -96,10 +188,26 @@ export class ReviewController implements vscode.CodeLensProvider, vscode.Disposa
     const text = doc.getText();
     const plan = makePlan(text);
     if (plan.blocks.length === 0) {
-      void vscode.window.showInformationMessage(
-        plan.conflicts.length ? `${plan.conflicts.length} change(s) no longer fit. Use Diff.` : 'Nothing to review.',
-      );
-      onDone({ accepted: 0, rejected: 0, conflicts: plan.conflicts.length, abandoned: plan.conflicts.length > 0 });
+      const name = vscode.workspace.asRelativePath(uri);
+      if (plan.conflicts.length) {
+        const done = plan.applied.length ? ` ${plan.applied.length} already in.` : '';
+        void this.setAside(name, plan.conflicts.length, compare, done);
+      } else if (plan.applied.length && doc.isDirty) {
+        void vscode.window.showInformationMessage(`${name} has the changes, unsaved.`, 'Save').then((pick) => {
+          if (pick === 'Save') void doc.save();
+        });
+      } else {
+        void vscode.window.showInformationMessage(
+          plan.applied.length ? `${name} has the changes.` : 'Nothing to review.',
+        );
+      }
+      onDone({
+        accepted: 0,
+        rejected: 0,
+        conflicts: plan.conflicts.length,
+        applied: plan.applied.length,
+        abandoned: plan.conflicts.length > 0,
+      });
       return;
     }
     const session: Session = {
@@ -109,6 +217,9 @@ export class ReviewController implements vscode.CodeLensProvider, vscode.Disposa
       accepted: 0,
       rejected: 0,
       conflicts: plan.conflicts.length,
+      applied: plan.applied.length,
+      ...writable(doc),
+      wrote: false,
       onDone,
     };
     const { eol } = splitLines(text);
@@ -125,22 +236,27 @@ export class ReviewController implements vscode.CodeLensProvider, vscode.Disposa
     }
     this.sessions.set(uri.toString(), session);
     await this.apply(edit);
+    this.save();
     this.paintAll();
     this.setContext();
     this.reveal(editor, session.blocks[0]);
-    if (session.conflicts) {
-      void vscode.window.showWarningMessage(
-        `${session.conflicts} change(s) set aside (you edited those lines). Use Diff.`,
-      );
-    }
+    if (session.conflicts) void this.setAside(vscode.workspace.asRelativePath(uri), session.conflicts, compare);
     this.log(
       `review: ${vscode.workspace.asRelativePath(uri)} — ${session.blocks.length} change(s) inline, ${session.conflicts} set aside`,
     );
   }
 
+  /** Changes whose lines read differently in the developer's file: said plainly, with the way to take them by hand. */
+  private async setAside(name: string, n: number, compare?: () => void, prefix = ''): Promise<void> {
+    const text = `${name}:${prefix} ${n} change(s) not shown: those lines in your file differ from the agent's starting point.`;
+    const pick = await vscode.window.showWarningMessage(text.trim(), ...(compare ? ['Compare'] : []));
+    if (pick === 'Compare') compare?.();
+  }
+
   // ---- decisions ------------------------------------------------------------------
 
-  async decide(uri: vscode.Uri, index: number, decision: 'accept' | 'reject'): Promise<void> {
+  /** `advance`: move on to the change after this one (not for Accept / Reject all, which decide them all). */
+  async decide(uri: vscode.Uri, index: number, decision: 'accept' | 'reject', advance = true): Promise<void> {
     const s = this.sessions.get(uri.toString());
     if (!s || index < 0 || index >= s.blocks.length) return;
     const doc = await vscode.workspace.openTextDocument(uri);
@@ -157,7 +273,42 @@ export class ReviewController implements vscode.CodeLensProvider, vscode.Disposa
       await this.end(s, false);
       return;
     }
+    if (s.writeThrough) this.writeDisk(s, decidedText(doc.getText(), s.blocks));
+    this.save();
     this.paintAll();
+    // The change after the one decided now has its index; past the last, the first.
+    const ed = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === uri.toString());
+    if (advance && ed) this.reveal(ed, s.blocks[index < s.blocks.length ? index : 0]);
+  }
+
+  /**
+   * Take a review back out of the editor without deciding anything: the
+   * panel applied or rejected the file itself (or it left the proposal), and
+   * its proposed lines must not stay behind in the open document. Pending
+   * hunks are removed — the file is as it was, plus any hunk already accepted.
+   */
+  async withdraw(uri: vscode.Uri): Promise<void> {
+    const s = this.sessions.get(uri.toString());
+    if (!s) return;
+    const doc = await vscode.workspace.openTextDocument(uri);
+    // Bottom-up, so each deletion leaves the blocks above it where they are.
+    while (s.blocks.length) {
+      const r = resolveBlock(s.blocks, s.blocks.length - 1, 'reject');
+      if (r.deleteCount > 0) {
+        const edit = new vscode.WorkspaceEdit();
+        edit.delete(uri, lineRange(doc, r.deleteStart, r.deleteCount));
+        await this.apply(edit);
+      }
+      s.blocks = r.blocks;
+    }
+    // It was clean before the review: leave it clean, not dirty with a no-op.
+    if (!s.wasDirty) await this.settle(s, doc);
+    await this.end(s, true);
+  }
+
+  /** The files under review now. */
+  reviewing(): vscode.Uri[] {
+    return [...this.sessions.values()].map((s) => s.uri);
   }
 
   private async decideCmd(decision: 'accept' | 'reject', uri?: string, index?: number): Promise<void> {
@@ -175,32 +326,122 @@ export class ReviewController implements vscode.CodeLensProvider, vscode.Disposa
     const s = target && this.sessions.get(target.toString());
     if (!target || !s) return;
     // Bottom-up, so each deletion leaves the blocks above it where they are.
-    while (s.blocks.length) await this.decide(target, s.blocks.length - 1, decision);
+    while (s.blocks.length) await this.decide(target, s.blocks.length - 1, decision, false);
   }
 
-  private next(): void {
+  private async next(): Promise<void> {
     const ed = vscode.window.activeTextEditor;
     const s = ed && this.sessions.get(ed.document.uri.toString());
-    if (!ed || !s || !s.blocks.length) return;
+    // No review here: a file a merged Apply left conflicts in — the same keys go between those.
+    if (!s) return void (await vscode.commands.executeCommand('merge-conflict.next'));
+    if (!ed || !s.blocks.length) return;
     const line = ed.selection.active.line;
     const b = s.blocks.find((x) => x.removedStart > line) ?? s.blocks[0];
     this.reveal(ed, b);
   }
 
+  /** A lens click: the cursor is not in the change it sits on, so go by index. */
+  private jump(uri: string, index: number): void {
+    const ed = vscode.window.visibleTextEditors.find((e) => e.document.uri.toString() === uri);
+    const s = this.sessions.get(uri);
+    if (ed && s) this.reveal(ed, s.blocks[index]);
+  }
+
+  private async previous(): Promise<void> {
+    const ed = vscode.window.activeTextEditor;
+    const s = ed && this.sessions.get(ed.document.uri.toString());
+    if (!s) return void (await vscode.commands.executeCommand('merge-conflict.previous'));
+    if (!ed || !s.blocks.length) return;
+    const line = ed.selection.active.line;
+    const k = blockAt(s.blocks, line);
+    const before = k >= 0 ? s.blocks.slice(0, k) : s.blocks.filter((x) => x.addedStart + x.addedCount <= line);
+    this.reveal(ed, before[before.length - 1] ?? s.blocks[s.blocks.length - 1]);
+  }
+
   private async end(s: Session, abandoned: boolean): Promise<void> {
     this.sessions.delete(s.uri.toString());
+    this.save();
     this.paintAll();
     this.setContext();
-    if (!abandoned && !s.wasDirty) {
+    if (!abandoned) {
       const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === s.uri.toString());
-      await doc?.save();
+      if (!s.wasDirty) await (doc && this.settle(s, doc));
+      else if (doc?.isDirty) {
+        const name = vscode.workspace.asRelativePath(s.uri);
+        void vscode.window.showInformationMessage(`${name} reviewed, unsaved.`, 'Save').then((pick) => {
+          if (pick === 'Save') void doc.save();
+        });
+      }
     }
     s.onDone({
       accepted: s.accepted,
       rejected: s.rejected,
       conflicts: s.conflicts,
+      applied: s.applied,
       abandoned: abandoned || s.blocks.length > 0,
     });
+  }
+
+  // ---- writing through --------------------------------------------------------------
+
+  private writeDisk(s: Session, text: string): void {
+    try {
+      fs.writeFileSync(s.uri.fsPath, (s.bom ? '\uFEFF' : '') + text);
+      s.wrote = true;
+    } catch (err) {
+      // Not fatal: the decisions stay in the editor and are saved at the end.
+      s.writeThrough = false;
+      this.log(`review: could not write ${s.uri.fsPath} as you go: ${String((err as Error).message)}`);
+    }
+  }
+
+  /**
+   * The review is over and the editor holds exactly the decided file. Saved
+   * as usual when the disk was never touched; otherwise the disk takes the
+   * text and the editor reloads from it — a save would stop on "the file is
+   * newer", since we wrote it behind the editor's back.
+   */
+  private async settle(s: Session, doc: vscode.TextDocument): Promise<void> {
+    if (!s.wrote) {
+      await doc.save();
+      return;
+    }
+    this.writeDisk(s, doc.getText());
+    await vscode.window.showTextDocument(doc, { preview: false });
+    await vscode.commands.executeCommand('workbench.action.files.revert');
+  }
+
+  // ---- surviving a reload -----------------------------------------------------------
+
+  /** Keep the sessions in workspace state, each with the text its blocks sit on. */
+  private save(): void {
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    if (!this.store) return;
+    const out: Record<string, SavedSession> = Object.fromEntries(this.pending);
+    for (const [key, s] of this.sessions) {
+      const doc = vscode.workspace.textDocuments.find((d) => d.uri.toString() === key);
+      if (!doc) continue;
+      out[key] = {
+        blocks: s.blocks,
+        wasDirty: s.wasDirty,
+        accepted: s.accepted,
+        rejected: s.rejected,
+        conflicts: s.conflicts,
+        applied: s.applied,
+        writeThrough: s.writeThrough,
+        bom: s.bom,
+        wrote: s.wrote,
+        hash: hashText(doc.getText()),
+      };
+    }
+    void this.store.update(SAVED, Object.keys(out).length ? out : undefined);
+  }
+
+  /** While the developer types: once they pause. */
+  private saveSoon(): void {
+    clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => this.save(), 300);
   }
 
   // ---- keeping blocks on their lines ------------------------------------------------
@@ -225,6 +466,7 @@ export class ReviewController implements vscode.CodeLensProvider, vscode.Disposa
       const removed = c.range.end.line - c.range.start.line;
       s.blocks = adjustBlocks(s.blocks, c.range.start.line, c.range.end.line, added - removed);
     }
+    this.saveSoon();
     this.paintAll();
   }
 
@@ -252,6 +494,24 @@ export class ReviewController implements vscode.CodeLensProvider, vscode.Disposa
       ed.setDecorations(this.added, green);
     }
     this.lenses.fire();
+    this.showStatus();
+  }
+
+  /** How many changes are left in the file in front of the developer; it saves when none are. */
+  private showStatus(): void {
+    const ed = vscode.window.activeTextEditor;
+    const s = ed && this.sessions.get(ed.document.uri.toString());
+    if (!s) {
+      this.status.hide();
+      return;
+    }
+    this.status.text = `$(diff) ${s.blocks.length} left`;
+    this.status.tooltip = s.writeThrough
+      ? 'Changes left to accept or reject. Each decision is saved as you go.'
+      : s.wasDirty
+        ? 'Changes left to accept or reject. The file had unsaved edits: save it yourself when done.'
+        : 'Changes left to accept or reject. The file saves when none are left.';
+    this.status.show();
   }
 
   provideCodeLenses(doc: vscode.TextDocument): vscode.CodeLens[] {
@@ -287,6 +547,16 @@ export class ReviewController implements vscode.CodeLensProvider, vscode.Disposa
           arguments: [uri, k],
         }),
       );
+      if (s.blocks.length > 1) {
+        out.push(
+          new vscode.CodeLens(range, {
+            title: '↓ Next',
+            tooltip: 'Next change (Alt+F5); previous: Shift+Alt+F5',
+            command: 'nanoclaw.review.jump',
+            arguments: [uri, (k + 1) % s.blocks.length],
+          }),
+        );
+      }
     });
     return out;
   }
@@ -311,6 +581,8 @@ export class ReviewController implements vscode.CodeLensProvider, vscode.Disposa
   }
 
   dispose(): void {
+    // A reload: write down where the review stands before the window goes.
+    if (this.saveTimer) this.save();
     for (const d of this.disposables) d.dispose();
   }
 }
@@ -333,4 +605,18 @@ function lineRange(doc: vscode.TextDocument, start: number, count: number): vsco
     doc.lineCount - 1,
     doc.lineAt(doc.lineCount - 1).text.length,
   );
+}
+
+/** Whether decisions can go straight to disk: a saved file on disk that reads back as UTF-8 byte for byte. */
+function writable(doc: vscode.TextDocument): { writeThrough: boolean; bom: boolean } {
+  if (doc.isDirty || doc.uri.scheme !== 'file') return { writeThrough: false, bom: false };
+  try {
+    const bytes = fs.readFileSync(doc.uri.fsPath);
+    const bom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+    const text = bytes.toString('utf8');
+    const same = Buffer.from(text, 'utf8').equals(bytes) && (bom ? text.slice(1) : text) === doc.getText();
+    return { writeThrough: same, bom };
+  } catch {
+    return { writeThrough: false, bom: false };
+  }
 }

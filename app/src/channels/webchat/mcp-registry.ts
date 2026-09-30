@@ -1,15 +1,8 @@
 /**
- * MCP server registry — DB layer + container-config sync.
- *
- * Mirrors the models registry (db.ts §Models) but for MCP servers, with a
- * many-to-many assignment (an agent can have several servers; one server can
- * be wired to several agents).
- *
- * Sync model: the registry rows are the GUI's source of truth; the agent's
- * container reads container_configs.mcp_servers (the same JSON column `ncl
- * groups config add-mcp-server` edits). On assign/unassign we upsert/delete
- * ONLY the assigned server's own key in that JSON — never a wholesale
- * recompute — so ncl-added servers with names outside the registry survive.
+ * MCP server registry — DB layer + container-config sync. Assign/unassign
+ * touches ONLY the server's own key in container_configs.mcp_servers, so
+ * servers added with `ncl groups config add-mcp-server` survive (see
+ * moduleWebchatMcpServers).
  */
 import { createHash, randomUUID } from 'crypto';
 

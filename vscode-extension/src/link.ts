@@ -17,6 +17,8 @@ export interface LinkEvents {
   log: (line: string) => void;
   /** Central named a (different) served runner build, in a welcome or a later keepalive. */
   update?: () => void;
+  /** An owner revoked this machine (live, or refused at connect). */
+  revoked?: () => void;
 }
 export interface RequestHandler {
   (op: string, payload: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -28,7 +30,9 @@ export interface LinkDeps {
   events: LinkEvents;
   /** Serves central's requests. Throw an Error with a `failure` field to answer with a structured failure. */
   onRequest?: RequestHandler;
-  /** Takes frames that are not request/response — the relay's tunnels. Returns true when handled. */
+  /** Signs central's challenge with this machine's key (machine-key.ts); absent when the machine has none. */
+  signChallenge?: (fingerprint: string, origin: string, nonce: string) => string;
+  /** Takes frames that are not request/response (the chat panel's). Returns true when handled. */
   onFrame?: (frame: Record<string, unknown>) => boolean;
   /** test seam */
   WebSocketImpl?: typeof WebSocket;
@@ -49,6 +53,8 @@ export class RunnerLink {
     keepaliveMs: number;
     pairing: PairingState;
     update?: UpdateOffer;
+    /** The central install's slug: requests naming any other are refused. */
+    installSlug?: string;
   } | null = null;
 
   constructor(private readonly d: LinkDeps) {}
@@ -91,7 +97,7 @@ export class RunnerLink {
 
   /**
    * One line per distinct refusal, not one per attempt. A laptop that has
-   * slept, or whose container runtime is down, refuses every request central
+   * slept, or has no project bound, refuses every request central
    * makes — twice a second, identically. Repeats are counted and reported when
    * the message finally changes (or every 50th), so the log still shows the
    * outage without burying everything else.
@@ -196,12 +202,17 @@ export class RunnerLink {
         this.connectedOnce = true;
         const pairing = (f.pairing === 'pending' || f.pairing === 'revoked' ? f.pairing : 'approved') as PairingState;
         const offered = parseOffer(f.update);
+        const installSlug =
+          typeof f.installSlug === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(f.installSlug)
+            ? f.installSlug
+            : undefined;
         this.welcome = {
           userId: String(f.userId),
           displayName: String(f.displayName),
           keepaliveMs: Number(f.keepaliveMs),
           pairing,
           ...(offered ? { update: offered } : {}),
+          ...(installSlug ? { installSlug } : {}),
         };
         this.d.events.state('connected', `${this.welcome.displayName} (${this.welcome.userId})`);
         this.d.events.log(
@@ -209,6 +220,19 @@ export class RunnerLink {
         );
         if (pairing === 'pending')
           this.d.events.log("this machine is awaiting an owner's approval in NanoClaw (Manage → Runners)");
+        return;
+      }
+      if (f.type === 'challenge' && !welcomed) {
+        // Prove the machine key, for the origin this link dialled — never one central names.
+        if (!this.d.signChallenge || typeof f.nonce !== 'string') return;
+        const origin = new URL(this.d.serverUrl).origin;
+        ws.send(
+          JSON.stringify({
+            type: 'challenge.response',
+            origin,
+            signature: this.d.signChallenge(this.d.machine.fingerprint, origin, f.nonce),
+          }),
+        );
         return;
       }
       if (f.type === 'ping' && this.welcome) {
@@ -231,6 +255,7 @@ export class RunnerLink {
         };
         this.d.events.log(`pairing ${this.welcome.pairing}`);
         this.d.events.state('connected', `${this.welcome.displayName} (${this.welcome.userId})`);
+        if (this.welcome.pairing === 'revoked') this.d.events.revoked?.();
         return;
       }
       if (f.type === 'req') {
@@ -263,6 +288,7 @@ export class RunnerLink {
         // Not transient — stop until the user acts.
         this.stopped = true;
         this.d.events.state('unauthorized', `server refused this machine (${reason.toString() || '4403'})`);
+        if (reason.toString() === 'machine-revoked') this.d.events.revoked?.();
         return;
       }
       if (!this.stopped) {
@@ -289,7 +315,7 @@ export class RunnerLink {
       reply({ ok: true, ...result });
     } catch (e) {
       const err = e as Error & { failure?: unknown };
-      if (op !== 'bundle') this.logRefusal(op, err.message);
+      this.logRefusal(op, err.message);
       reply({ ok: false, error: err.message, ...(err.failure ? { failure: err.failure } : {}) });
     }
   }

@@ -1,5 +1,5 @@
 diff --git a/src/container-config.ts b/src/container-config.ts
-index f9b0d100..4557094e 100644
+index f9b0d100..605a2686 100644
 --- a/src/container-config.ts
 +++ b/src/container-config.ts
 @@ -14,6 +14,9 @@ import { resolveContainerConfigAugmentation } from './seam/spawn-hooks.js';
@@ -12,25 +12,16 @@ index f9b0d100..4557094e 100644
  import { getAgentGroup } from './db/agent-groups.js';
  import { isValidTimezone } from './timezone.js';
  import { log } from './log.js';
-@@ -69,6 +72,17 @@ export interface McpHttpServerConfig {
+@@ -69,6 +72,8 @@ export interface McpHttpServerConfig {
    /** See McpStdioServerConfig.plugin — same ownership marker. */
    plugin?: string;
    instructions?: string;
 +  /** Tool allowlist — absent means every tool the server exposes. */
 +  enabledTools?: string[];
-+}
-+
-+export interface McpRemoteServerConfig {
-+  type: 'http';
-+  url: string;
-+  headers?: Record<string, string>;
-+  instructions?: string;
-+  /** Tool allowlist — absent means every tool the server exposes. */
-+  enabledTools?: string[];
  }
  
  export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
-@@ -156,8 +170,19 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
+@@ -156,8 +161,19 @@ export function parseMcpServerConfig(input: Record<string, unknown>): McpServerC
        throw new Error('url must be a valid HTTP(S) URL', { cause: err });
      }
      const loopback = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'].includes(parsed.hostname);
@@ -52,7 +43,7 @@ index f9b0d100..4557094e 100644
      }
      if (parsed.username || parsed.password || parsed.hash) {
        throw new Error('url must not contain credentials or fragments; use the credential gateway');
-@@ -260,6 +285,42 @@ export interface ContainerConfig {
+@@ -260,6 +276,42 @@ export interface ContainerConfig {
    timezone?: string;
    /** Session isolation tier for the group's containers; absent = the composer's default ('container'). */
    runtimeTier?: 'container' | 'vm';
@@ -95,7 +86,7 @@ index f9b0d100..4557094e 100644
  }
  
  /**
-@@ -384,6 +445,10 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
+@@ -384,6 +436,13 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
      ...speedFields(parseContainerSpeed(row.speed) ?? (FAST_MODE ? 'fast' : undefined)),
      timezone: row.timezone && isValidTimezone(row.timezone) ? row.timezone : undefined,
      runtimeTier: parseRuntimeTier(row.runtime_tier, group.name),
@@ -103,10 +94,13 @@ index f9b0d100..4557094e 100644
 +    // exist but never meet: buildContainerArgs reads undefined and every group
 +    // spawns with open egress, whatever was configured.
 +    egress: row.egress ?? undefined,
++    // The agent's own learning settings; rooms, the classifier and the master
++    // switch layer on top in materializeContainerJson.
++    learning: row.learning ? (JSON.parse(row.learning) as ContainerConfig['learning']) : undefined,
    };
  }
  
-@@ -417,6 +482,34 @@ export async function materializeContainerJson(agentGroupId: string): Promise<Co
+@@ -417,6 +476,34 @@ export async function materializeContainerJson(agentGroupId: string): Promise<Co
    const config = configFromDb(row, group);
    Object.assign(config, resolveContainerConfigAugmentation(agentGroupId)); // seam: module-contributed fields win
  

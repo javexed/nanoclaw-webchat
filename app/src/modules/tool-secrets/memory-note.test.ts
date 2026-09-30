@@ -121,3 +121,31 @@ describe('credential note placement', () => {
     expect(() => syncCredentialNote('ag-1', ['x.example.com'], [])).not.toThrow();
   });
 });
+
+describe('links the agent planted in its own folder', () => {
+  const hostFile = path.join(GROUPS, 'host-env');
+  beforeEach(() => fs.writeFileSync(hostFile, 'WEBCHAT_TOKEN=secret\n'));
+  afterEach(() => fs.rmSync(hostFile, { force: true }));
+
+  it('replaces a linked concept file instead of overwriting what it points at', async () => {
+    scaffoldIndex();
+    fs.symlinkSync(hostFile, conceptFile);
+    await syncCredentialNote('ag-1', ['git.example.com'], []);
+    expect(fs.readFileSync(hostFile, 'utf-8')).toBe('WEBCHAT_TOKEN=secret\n');
+    expect(fs.lstatSync(conceptFile).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(conceptFile, 'utf-8')).toContain('git.example.com');
+  });
+
+  it('never splices the index through a link', async () => {
+    fs.mkdirSync(path.join(groupDir, 'memory'), { recursive: true });
+    fs.symlinkSync(hostFile, indexFile);
+    await syncCredentialNote('ag-1', ['git.example.com'], []);
+    expect(fs.readFileSync(hostFile, 'utf-8')).toBe('WEBCHAT_TOKEN=secret\n');
+  });
+
+  it('writes nothing through a linked memory directory', async () => {
+    fs.symlinkSync(GROUPS, path.join(groupDir, 'memory'));
+    await syncCredentialNote('ag-1', ['git.example.com'], []);
+    expect(fs.existsSync(path.join(GROUPS, 'system', 'credential-access.md'))).toBe(false);
+  });
+});

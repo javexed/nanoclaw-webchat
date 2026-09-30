@@ -3,14 +3,10 @@
  * keys) held in the OneCLI vault and injected by the gateway into matching
  * outbound requests.
  *
- * WHY THIS EXISTS: the alternative users reach for is pasting a token into a
- * chat room, which persists it in `webchat_messages`, the session `inbound.db`,
- * and every archived transcript under `conversations/` — permanently, in
- * several places at once. Agents are instructed to refuse that (see
- * `container/skills/onecli-gateway/SKILL.md`), correctly, which left no
- * sanctioned path. This is that path: the value goes browser → host → vault,
- * is never rendered back, never enters an agent's context, never appears in a
- * message.
+ * WHY: pasting a token into a chat room persists it in `webchat_messages`, the
+ * session `inbound.db` and every archived transcript, and agents are told to
+ * refuse it. This is the sanctioned path: browser → host → vault, never
+ * rendered back, never in an agent's context or a message.
  *
  * ── HOW SCOPING ACTUALLY WORKS (the load-bearing fact) ─────────────────────
  * A OneCLI agent in `all` secret mode receives EVERY vault secret whose host
@@ -27,8 +23,8 @@
  *
  *   AGENT scope — only meaningful once that group's agent is in `selective`
  *     mode (see `isolateGroup`). Until then a secret "for one agent" would in
- *     fact be offered to every `all`-mode agent in the install, so this module
- *     refuses to create one rather than implying an isolation it cannot honour.
+ *     fact be offered to every `all`-mode agent, so creating one isolates the
+ *     group first and refuses if that fails.
  *
  * Selective mode is a real trade: the agent then receives NOTHING implicitly,
  * including its model credential, which surfaces as a 401 from an API whose key
@@ -49,9 +45,14 @@
 import { log } from '../../log.js';
 import { getAgentGroup, getAllAgentGroups } from '../../db/agent-groups.js';
 import { getContainerConfig } from '../../db/container-configs.js';
-import { listGroupMemberEnrollments, getUserCredential } from '../user-credentials/db.js';
+import { listGroupMemberEnrollments, getUserCredential, getUserCredsCredential } from '../user-credentials/db.js';
 import { WORKSPACE_DEFAULT_USER_ID, userCredsAgentIdentifier, userSlug } from '../user-credentials/identity.js';
-import type { GenericSecretSpec, OnecliAdmin } from '../user-credentials/onecli-admin.js';
+import {
+  isToolSecret,
+  TOOL_SECRET_NAME_PREFIX,
+  type GenericSecretSpec,
+  type OnecliAdmin,
+} from '../user-credentials/onecli-admin.js';
 import { listDeployKeys } from '../deploy-keys/index.js';
 import { syncCredentialNote } from './memory-note.js';
 
@@ -98,11 +99,11 @@ function scopeKey(scope: Scope): string {
 }
 
 function secretName(scope: Scope, label: string): string {
-  return `ToolSecret ${scopeKey(scope)} ${label}`;
+  return `${TOOL_SECRET_NAME_PREFIX}${scopeKey(scope)} ${label}`;
 }
 
 function labelFromName(scope: Scope, name: string | undefined): string | null {
-  const prefix = `ToolSecret ${scopeKey(scope)} `;
+  const prefix = `${TOOL_SECRET_NAME_PREFIX}${scopeKey(scope)} `;
   return name && name.startsWith(prefix) ? name.slice(prefix.length) : null;
 }
 
@@ -188,15 +189,20 @@ async function reconcileMember(admin: OnecliAdmin, agentGroupId: string, userId:
   // Preserve whatever provider credential the member is already using — that is
   // theirs (their own key or the workspace default) and is not ours to change.
   const assigned = await admin.listAgentSecretIds(agentId);
-  const typeById = new Map((await admin.listAllSecrets()).map((x) => [x.id, x.type]));
+  const byId = new Map((await admin.listAllSecrets()).map((x) => [x.id, x]));
   // Only ids the vault still KNOWS about, and that aren't tool secrets. An
   // unknown id is a deleted secret — keeping it would resurrect dangling
   // assignments and, worse, mistake a just-deleted PAT for a model credential.
+  // The enrollment names the member's credential by id. Without it: a
+  // provider-typed secret, then a `generic` one that isn't a tool secret by
+  // name (a Grok credential is `generic`, the same type as a PAT).
+  const known = assigned.filter((id) => byId.has(id));
+  const enrolled = (await getUserCredsCredential(userId, agentGroupId))?.secret_id ?? null;
   const modelCred =
-    assigned.find((id) => {
-      const t = typeById.get(id);
-      return t !== undefined && t !== 'generic';
-    }) ?? null;
+    (enrolled && known.includes(enrolled) ? enrolled : null) ??
+    known.find((id) => byId.get(id)!.type !== 'generic') ??
+    known.find((id) => !isToolSecret(byId.get(id))) ??
+    null;
   await admin.setSecrets(agentId, await desiredMemberSecrets(admin, agentGroupId, userId, modelCred));
 }
 
@@ -205,10 +211,10 @@ async function reconcileGroupAgent(admin: OnecliAdmin, agentGroupId: string): Pr
   const agentId = await admin.findAgentId(agentGroupId);
   if (!agentId) return;
   const assigned = await admin.listAgentSecretIds(agentId);
-  const typeById = new Map((await admin.listAllSecrets()).map((x) => [x.id, x.type]));
+  const byId = new Map((await admin.listAllSecrets()).map((x) => [x.id, x]));
   const keep = assigned.filter((id) => {
-    const t = typeById.get(id);
-    return t !== undefined && t !== 'generic';
+    const x = byId.get(id);
+    return x !== undefined && !isToolSecret(x);
   });
   await admin.setSecrets(agentId, Array.from(new Set([...keep, ...(await groupToolSecretIds(admin, agentGroupId))])));
 }
@@ -319,29 +325,10 @@ export async function isolateAllGroups(
 }
 
 /**
- * How a credential for `host` goes on the wire.
- *
- * Asking the operator for a header name and value template is asking them to
- * know an API's auth scheme by heart; almost every service is `Authorization:
- * Bearer`, and the notable exception (Azure DevOps) has a fixed, knowable rule.
- * So infer it, and keep the knowledge in one place instead of in a dropdown.
- *
- * `encodeBasic` marks the schemes where the wire value is not the raw token:
- * Azure DevOps takes a PAT as HTTP Basic with an EMPTY username, i.e.
- * base64(":<pat>"), so the operator can paste the PAT exactly as Azure shows it.
- */
-/**
- * How a credential for `host` goes on the wire.
- *
- * Inference stays the default: for a public API the hostname names the service,
- * so the operator should not have to know its auth header. It cannot work for a
- * self-hosted API, whose host is just a LAN address that says nothing about
- * which service answers there — so `scheme` overrides it.
- *
- * Deliberately NOT a table of named services. Every scheme is the same shape,
- * `<header>: <template containing {value}>`, so a per-service entry would add a
- * release cycle to every new integration and would bake one deployment's stack
- * into the product. Express the shape; let the operator fill it in.
+ * An operator-supplied wire format, for a self-hosted API whose host (a LAN
+ * address) says nothing about which service answers there. Deliberately a
+ * shape, `<header>: <template containing {value}>`, not a table of named
+ * services: a per-service entry would add a release cycle to every integration.
  */
 export type AuthScheme = { headerName: string; valueFormat: string };
 
@@ -395,6 +382,38 @@ export function resolveAuthScheme(input: unknown): AuthScheme | { error: string 
   return { error: 'scheme must be {headerName, valueFormat}' };
 }
 
+/** RFC 7617 credentials: base64 of the UTF-8 `user:password` pair. */
+export function basicAuthValue(username: string, password: string): string {
+  return Buffer.from(`${username}:${password}`, 'utf8').toString('base64');
+}
+
+const BASIC_SCHEME: AuthScheme = { headerName: 'Authorization', valueFormat: 'Basic {value}' };
+
+/**
+ * Validate a username + password pair and turn it into the stored wire value
+ * and scheme. Errors never quote either field. A colon in the username cannot
+ * be told apart from the separator (RFC 7617); control characters would be
+ * rejected by most servers.
+ */
+export function resolveBasicCredential(input: unknown): { value: string; scheme: AuthScheme } | { error: string } {
+  const o = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
+  const { username, password } = o;
+  if (typeof username !== 'string' || !username) return { error: 'Username is required' };
+  if (typeof password !== 'string' || !password) return { error: 'Password is required' };
+  if (username.length > 256 || password.length > 256)
+    return { error: 'Username and password must each be at most 256 characters' };
+  if (username.includes(':')) return { error: 'Username cannot contain a colon' };
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1F\x7F]/.test(username)) return { error: 'Username must be printable text on a single line' };
+  return { value: basicAuthValue(username, password), scheme: BASIC_SCHEME };
+}
+
+/**
+ * How a credential for `host` goes on the wire: `scheme` if given, else
+ * inferred from the host so the operator needn't know an API's auth header.
+ * `encodeBasic` marks schemes where the wire value is not the raw token: Azure
+ * DevOps takes a PAT as HTTP Basic with an EMPTY username, base64(":<pat>").
+ */
 export function injectionForHost(host: string, scheme?: AuthScheme): GenericSecretSpec & { encodeBasic?: boolean } {
   if (scheme) return { hostPattern: host, ...scheme };
   const h = host.toLowerCase().replace(/^\*\./, '');
@@ -445,10 +464,9 @@ export async function listToolSecrets(admin: OnecliAdmin, scope: Scope): Promise
 }
 
 /**
- * Create a tool secret. Workspace-scoped secrets are left unassigned (every
- * `all`-mode agent picks them up). Agent-scoped secrets are assigned to the
- * group's agents — and REQUIRE the group to be isolated first, because in `all`
- * mode the gateway would hand the credential to every other agent too.
+ * Create a tool secret and reconcile its scope's assignments. Agent-scoped
+ * secrets REQUIRE the group to be isolated first, because in `all` mode the
+ * gateway would hand the credential to every other agent too.
  */
 export async function createToolSecret(
   admin: OnecliAdmin,
@@ -457,10 +475,8 @@ export async function createToolSecret(
   value: string,
   scheme?: AuthScheme,
 ): Promise<ToolSecretInfo> {
-  // Hostnames are case-insensitive; the gateway's pattern match is not. A phone
-  // keyboard capitalises the first letter of a field, and "Dev.azure.com" then
-  // never matches a request to dev.azure.com — a secret that exists and is
-  // never sent. Normalise once, here, so every scope stores the same form.
+  // Hostnames are case-insensitive; the gateway's pattern match is not (a phone
+  // keyboard's "Dev.azure.com" would never be sent). Normalise once, here.
   const host = rawHost.trim().toLowerCase();
   // The host IS the identity of the credential — one credential per host per
   // scope — so it doubles as the label and there is nothing extra to name.
@@ -503,7 +519,7 @@ export async function createToolSecret(
     headerName: inferred.headerName,
     valueFormat: inferred.valueFormat,
   };
-  const wireValue = inferred.encodeBasic ? Buffer.from(`:${value}`).toString('base64') : value;
+  const wireValue = inferred.encodeBasic ? basicAuthValue('', value) : value;
 
   const secretId = await admin.createGenericSecret(secretName(scope, label), wireValue, spec);
   try {

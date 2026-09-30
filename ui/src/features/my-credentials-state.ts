@@ -1,6 +1,5 @@
 // ── My credentials state ────────────────────────────────────────────────────
-// Bridge ref for the MyCredentials island. legacy.js still fetches the groups
-// and owns the section's hidden flag.
+// Refs for the MyCredentials island; settings.ts fetches the groups.
 import { ref } from 'vue';
 
 /** One group per agent the user has personal credentials for. */

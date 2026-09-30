@@ -1,16 +1,7 @@
 <script setup lang="ts">
 /**
- * The router's model roster — twenty-fourth island.
- *
- * Mounted into <ul id="router-roster-list">, exclusively owned by this module.
- *
- * Unblocked by the select-toggle extraction: this list could not become an
- * island while its +/- control arrived as a DOM node from legacy.
- *
- * The empty state covers two different situations the original also merged —
- * the router not answering at all, and answering with an empty model list. The
- * wording ("not reachable right now") is kept as-is; splitting them would be a
- * copy change, not a conversion.
+ * The router's model roster, mounted into <ul id="router-roster-list">. One empty state
+ * covers both "router not answering" and "answered with no models".
  */
 import SelectToggle from './SelectToggle.vue';
 import { rosterEndpoint, rosterSelectable, rosterSystem, rosterUnreachable } from './router-roster-state.js';

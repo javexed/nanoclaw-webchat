@@ -1,8 +1,7 @@
 /**
  * Redaction tests — every pattern in `redact.ts` should match its target
- * shape and pass benign-looking content through unchanged. The CONN_PASSWORD
- * pattern in particular has a history of over-matching benign URLs; the
- * tightened regex (Batch 1) should leave them alone.
+ * shape and pass benign-looking content through unchanged — in particular,
+ * CONN_PASSWORD must leave benign URLs alone.
  */
 import { describe, it, expect } from 'vitest';
 

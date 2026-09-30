@@ -1,15 +1,7 @@
 // ── Permissions view state ──────────────────────────────────────────────────
-// Bridge refs for the three permissions islands. Every one of these is still
-// owned by legacy module state; the render functions in members.ts and perms.ts
-// copy into these refs, and the islands read only from here.
-//
-// `usersError` exists because refreshPermissions() used to write an error <li>
-// straight into #perms-user-list with innerHTML. That element is now owned by a
-// Vue app, and an innerHTML write behind Vue's back is not a cosmetic problem:
-// the vnode tree still describes the rows it thinks are there, so the next
-// patch reconciles against DOM that no longer matches and can leave the error
-// message stranded or remove the wrong node. Routing the failure through state
-// keeps one writer.
+// Refs for the three permissions islands, written by members.ts and perms.ts.
+// Failures go through `usersError`, never innerHTML into the island's element:
+// a write behind Vue's back desyncs the vnode tree from the DOM.
 import { ref } from 'vue';
 
 /** /api/users, verbatim. */

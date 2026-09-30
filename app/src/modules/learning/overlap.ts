@@ -8,8 +8,8 @@
  *
  * Why at Keep and not only at stage time: the reviewer names skills freely,
  * so exact-name dedup misses twins ("branded-pdf-deliverables" vs
- * "branded-pdf-documents" — a real pair this install produced 84 minutes
- * apart). Keep is the last gate where every candidate is visible.
+ * "branded-pdf-documents"). Keep is the last gate where every candidate is
+ * visible.
  *
  * Two layers:
  *   1. Heuristic (always on): token-set similarity over name + description.

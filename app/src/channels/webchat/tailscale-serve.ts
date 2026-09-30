@@ -97,6 +97,36 @@ export async function getTailscaleServeState(runner: TailscaleRunner = defaultRu
 }
 
 /**
+ * The hostnames `tailscale serve` is fronting (its Web config keys, `:443`
+ * dropped), which is the Host header Serve's own requests carry. Serve's login
+ * header is only believed on a request addressed to one of these: a tunnel or
+ * reverse proxy on the same box forwards from loopback too, but under its own
+ * name. Cached briefly; enabling Serve here clears it.
+ */
+const SERVE_HOSTS_TTL_MS = 60_000;
+let serveHostsCache: { hosts: ReadonlySet<string>; at: number } | null = null;
+
+export async function serveFrontedHosts(runner: TailscaleRunner = defaultRunner): Promise<ReadonlySet<string>> {
+  if (serveHostsCache && Date.now() - serveHostsCache.at < SERVE_HOSTS_TTL_MS) return serveHostsCache.hosts;
+  const hosts = new Set<string>();
+  const serve = await runner(['serve', 'status', '--json']);
+  if (serve.ok) {
+    try {
+      const cfg = JSON.parse(serve.stdout) as { Web?: Record<string, unknown> };
+      for (const hostPort of Object.keys(cfg.Web ?? {})) hosts.add(hostPort.toLowerCase().replace(/:443$/, ''));
+    } catch {
+      /* no config → no fronted hosts */
+    }
+  }
+  serveHostsCache = { hosts, at: Date.now() };
+  return hosts;
+}
+
+export function forgetServeHosts(): void {
+  serveHostsCache = null;
+}
+
+/**
  * Turn on `tailscale serve --bg <port>`. Classifies the common failure modes
  * (certs not enabled, insufficient privilege, daemon down, binary missing) into
  * actionable hints so the UI can guide the operator instead of dumping stderr.
@@ -115,6 +145,7 @@ export async function enableTailscaleServe(
   }
 
   const run = await runner(['serve', '--bg', String(port)]);
+  forgetServeHosts();
   if (run.ok) {
     const after = await getTailscaleServeState(runner);
     return { ok: true, url: after.url ?? state.url ?? undefined };
@@ -138,15 +169,8 @@ export async function enableTailscaleServe(
     };
   }
   if (/access denied|permission|operator|must be run|not permitted|are not allowed/.test(err)) {
-    // Name the actual user and include sudo. The old hint read
-    // `tailscale set --operator=<user>` and left both the placeholder and the
-    // missing sudo as an exercise — the dead end an operator hits at the
-    // moment they are least equipped to guess.
-    //
-    // Echoing the daemon's own suggestion looks like the better idea and is
-    // not: tailscale prints `sudo tailscale set --operator=$USER`, so relaying
-    // it just swaps our placeholder for a shell variable that is equally
-    // unexpanded on a web page. Resolving the name here is the whole point.
+    // Name the actual user and include sudo. Not the daemon's own suggestion:
+    // its `$USER` is unexpanded on a web page.
     return {
       ok: false,
       error: 'This process is not allowed to configure `tailscale serve`.',

@@ -1,12 +1,7 @@
 <script setup lang="ts">
 /**
- * MCP servers attached to the open agent.
- *
- * Mounted into <ul id="agent-mcp-list">. The fetch and the count badge stay in
- * renderAgentMcp() — an island renders state, it does not own IO.
- *
- * The remove button's icon is an SVG string from lucide(), so it is bound with
- * v-html exactly as the imperative version assigned innerHTML.
+ * MCP servers attached to the open agent, mounted into <ul id="agent-mcp-list">; the
+ * fetch and count badge stay in renderAgentMcp(). The remove icon is a lucide() SVG string.
  */
 import { lucide } from '../core/dom.js';
 import { agentMcpRows } from './agent-mcp-state.js';

@@ -38,6 +38,8 @@ export interface ReviewPlan {
   blocks: Block[];
   /** Changes that could not be placed in the current file (it moved on); left to a 3-way apply. */
   conflicts: Hunk[];
+  /** Changes the current file already carries (accepted before, or made by hand): nothing to decide. */
+  applied: Hunk[];
 }
 
 export function splitLines(text: string): { lines: string[]; eol: '\n' | '\r\n' } {
@@ -161,14 +163,20 @@ export function planPropose(base: string, proposal: string, current: string): Re
   const places = placeHunks(splitLines(base).lines, splitLines(current).lines, hunks);
   const inserts: Insert[] = [];
   const blocks: Block[] = [];
-  const conflicts: Hunk[] = [];
+  const unplaced = hunks.filter((_, k) => places[k] === null);
+  // A hunk that no longer fits may be one the file already has: read it
+  // backwards (proposal to base) and look for its new lines in their place.
+  const done = placeHunks(
+    splitLines(proposal).lines,
+    splitLines(current).lines,
+    unplaced.map((h) => ({ oldStart: h.newStart, newStart: h.oldStart, oldLines: h.newLines, newLines: h.oldLines })),
+  );
+  const applied = unplaced.filter((_, k) => done[k] !== null);
+  const conflicts = unplaced.filter((_, k) => done[k] === null);
   let offset = 0;
   hunks.forEach((h, k) => {
     const at = places[k];
-    if (at === null) {
-      conflicts.push(h);
-      return;
-    }
+    if (at === null) return;
     if (h.newLines.length) inserts.push({ line: at + h.oldLines.length, lines: h.newLines });
     const removedStart = at + offset;
     blocks.push({
@@ -179,30 +187,20 @@ export function planPropose(base: string, proposal: string, current: string): Re
     });
     offset += h.newLines.length;
   });
-  return { inserts, blocks, conflicts };
+  return { inserts, blocks, conflicts, applied };
 }
 
 /**
- * Direct mode: the agent already wrote the file, so the buffer holds its new
- * content; the old lines come back in above the lines that replaced them.
+ * The file as decided so far: the buffer without the green lines of every
+ * block still open — each undecided change read as rejected. What the disk
+ * holds while a review is under way.
  */
-export function planDirect(old: string, current: string): ReviewPlan {
-  const hunks = lineHunks(old, current);
-  const inserts: Insert[] = [];
-  const blocks: Block[] = [];
-  let offset = 0;
-  for (const h of hunks) {
-    if (h.oldLines.length) inserts.push({ line: h.newStart, lines: h.oldLines });
-    const removedStart = h.newStart + offset;
-    blocks.push({
-      removedStart,
-      removedCount: h.oldLines.length,
-      addedStart: removedStart + h.oldLines.length,
-      addedCount: h.newLines.length,
-    });
-    offset += h.oldLines.length;
-  }
-  return { inserts, blocks, conflicts: [] };
+export function decidedText(text: string, blocks: Block[]): string {
+  const { lines, eol } = splitLines(text);
+  const drop = new Set<number>();
+  for (const b of blocks) for (let k = 0; k < b.addedCount; k++) drop.add(b.addedStart + k);
+  const kept = lines.filter((_, k) => !drop.has(k));
+  return kept.length ? kept.join(eol) + (text.endsWith('\n') ? eol : '') : '';
 }
 
 /** Accept keeps the new lines (deletes the red); Reject keeps the old (deletes the green). */
@@ -246,4 +244,25 @@ export function adjustBlocks(blocks: Block[], startLine: number, endLine: number
 /** The block a cursor on `line` belongs to, or -1. */
 export function blockAt(blocks: Block[], line: number): number {
   return blocks.findIndex((b) => line >= b.removedStart && line < b.addedStart + b.addedCount);
+}
+
+/**
+ * The file after `active` among those still to review, wrapping; the first
+ * when `active` is none of them (the developer is elsewhere), null when there
+ * are none. Paths compare as given, or without case (Windows).
+ */
+export function nextReviewFile(files: readonly string[], active: string | null, ignoreCase = false): string | null {
+  if (!files.length) return null;
+  const norm = (p: string): string => (ignoreCase ? p.toLowerCase() : p);
+  const at = active === null ? -1 : files.findIndex((f) => norm(f) === norm(active));
+  return files[(at + 1) % files.length];
+}
+
+/**
+ * How many conflict blocks a merged Apply left in `text` — the ones labelled
+ * `yours` / `agent` (git-changes.ts mergeInto), not markers the file may hold
+ * for its own reasons.
+ */
+export function conflictBlocks(text: string): number {
+  return (text.match(/^<<<<<<< yours\r?$/gm) ?? []).length;
 }

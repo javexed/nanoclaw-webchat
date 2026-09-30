@@ -1,13 +1,7 @@
 <script setup lang="ts">
 /**
- * The per-day usage sparkline — forty-third island.
- *
- * Mounted into <div id="usage-spark">. Its hidden flag stays imperative: the
- * sparkline is suppressed entirely below two days of data, which is a decision
- * about whether to show the element at all.
- *
- * Bar heights are computed upstream against the range's max, with a 4px floor
- * so a near-zero day is still visible.
+ * The per-day usage sparkline, mounted into <div id="usage-spark">; hidden below two days
+ * of data. Bar heights are computed upstream with a 4px floor so a near-zero day shows.
  */
 import { usageBars } from './usage-state.js';
 </script>

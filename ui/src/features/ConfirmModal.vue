@@ -1,22 +1,9 @@
 <script setup lang="ts">
 /**
- * The confirm dialog — thirty-sixth island, and the most-used modal in the app.
- *
- * Per-instance: the overlay is created by showConfirmModal and the app mounts
- * into it, so the structure stays overlay > modal.
- *
- * `body` may be a STRING or a live HTMLElement, and that contract is load-
- * bearing: showInputModal passes an <input> and reads input.value after the
- * promise resolves; confirmWithToggle passes a checkbox and reads cb.checked.
- * An element body is therefore APPENDED, not rendered — the caller keeps the
- * reference and Vue must not clone or re-create it.
- *
- * There is deliberately NO focus trap here. The skill editor has one because it
- * is a long-lived editing surface; this dialog never had one, and adding it
- * would be a behaviour change smuggled into a conversion.
- *
- * Focus goes to Cancel for destructive actions so an accidental Enter does not
- * delete.
+ * The confirm dialog, one app per overlay created by showConfirmModal. `body` may be a
+ * string or a live HTMLElement; an element is APPENDED, not rendered, because callers read
+ * its value after the promise resolves. No focus trap, unlike the skill editor. Focus goes
+ * to Cancel for destructive actions so a stray Enter does not delete.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 

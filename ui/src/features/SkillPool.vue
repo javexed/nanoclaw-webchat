@@ -1,25 +1,9 @@
 <script setup lang="ts">
 /**
- * The skills marketplace pool — thirtieth island.
- *
- * Mounted into <ul id="skills-catalog-list">, exclusively owned by this module.
- *
- * Four list-level states, which the imperative version wrote as four different
- * innerHTML strings into the same element: the wait row, a fetch failure, an
- * empty result, and rows. They are one phase ref, so a failed request cannot
- * leave the previous tier's rows sitting under an error line.
- *
- * The wait and empty copy both change when a search is active, so the query is
- * state too rather than being re-read from the input at render time.
- *
- * The wait row is written out rather than v-html'd from loadingRow(): that
- * helper returns the <li> ITSELF, so v-html would need a wrapper element and
- * produce a nested li. DESIGN.md §5 wants one wait primitive across the app —
- * this is the same markup, and the DOM diff is what holds it to that.
- *
- * The Review link is community-tier only and points at someone else's site, so
- * it keeps target=_blank with rel="noopener noreferrer" — the same treatment
- * OriginBadge gives an outbound URL.
+ * The skills marketplace pool, mounted into <ul id="skills-catalog-list">. Its four
+ * states (wait, error, empty, rows) are one phase ref, so a failed request cannot leave
+ * stale rows under an error line. The wait row matches loadingRow()'s markup (DESIGN.md
+ * §5). Community Review links are outbound, so they keep rel="noopener noreferrer".
  */
 import { computed } from 'vue';
 import OriginBadge from './OriginBadge.vue';

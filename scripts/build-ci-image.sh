@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# build-ci-image.sh — build the webchat CI job's container (ci/runner-image).
+# build-ci-image.sh — build a CI job image with Chromium's libraries (ci/image).
 #
-#   scripts/build-ci-image.sh          # build nanoclaw-webchat-ci:pw-<version> and :latest
+#   scripts/build-ci-image.sh                       # on the default act base
+#   CI_IMAGE_BASE=<image> scripts/build-ci-image.sh # on your runner's own base
+#   CI_IMAGE_TAG=<name>   scripts/build-ci-image.sh # tag (default nanoclaw-webchat-ci)
 #
-# Run on the runner host, where the runner's Docker can see the image. Rebuild
-# only when ui/'s Playwright version changes; until then the workflow notices
-# the mismatch and installs the libraries itself (slower, not broken).
-#
-# Then point the runner's `ubuntu-latest` label at it, in the runner's
-# config.yaml:
+# Tags <name>:pw-<version> and <name>:latest. Run it where the runner's Docker
+# can see the image, then point the runner's job image at it — for an act-based
+# runner, a label mapping in its config.yaml:
 #
 #   runner:
 #     labels:
 #       - "ubuntu-latest:docker://nanoclaw-webchat-ci:latest"
 #
-# and restart the runner.
+# Rebuilding after a Playwright bump is optional: the libraries rarely change
+# between versions, and when they do the workflow's launch probe fails and it
+# installs what is missing.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")/.." && pwd)"
 VERSION="$(node -p "require('$HERE/ui/package.json').devDependencies.playwright")"
@@ -22,9 +23,11 @@ case "$VERSION" in
   [0-9]*.[0-9]*.[0-9]*) ;;
   *) echo "build-ci-image: ui/package.json pins no exact playwright version (got '$VERSION')" >&2; exit 2 ;;
 esac
+TAG="${CI_IMAGE_TAG:-nanoclaw-webchat-ci}"
 docker build \
+  ${CI_IMAGE_BASE:+--build-arg "BASE=$CI_IMAGE_BASE"} \
   --build-arg "PLAYWRIGHT_VERSION=$VERSION" \
-  -t "nanoclaw-webchat-ci:pw-$VERSION" \
-  -t nanoclaw-webchat-ci:latest \
-  "$HERE/ci/runner-image"
-echo "built nanoclaw-webchat-ci:pw-$VERSION (and :latest)"
+  -t "$TAG:pw-$VERSION" \
+  -t "$TAG:latest" \
+  "$HERE/ci/image"
+echo "built $TAG:pw-$VERSION (and :latest)"

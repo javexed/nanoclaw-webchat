@@ -179,9 +179,8 @@ describe('engage-pattern matching honors backtick escape', () => {
   });
 
   it('the exact failure mode from the schedule_task setup is prevented', async () => {
-    // The body of my @advisor setup message contained literal "@news", "@tech",
-    // etc. as part of the task prompt. With the escape, wrapping each in
-    // backticks would have left only @advisor as a live mention.
+    // A setup message quoting other handles in backticks leaves only the bare
+    // @advisor as a live mention.
     const { routeInbound } = await import('./router.js');
     const { getActiveSessions } = await import('./db/sessions.js');
     await routeInbound(event('@advisor schedule a task with prompt: "review `@news` briefing, then..."'));

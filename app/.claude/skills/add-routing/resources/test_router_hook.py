@@ -86,7 +86,6 @@ LIVE_CFG = {
     "routes": [
         {"name": "code", "description": "d", "model": "qwen3-coder:30b"},
         {"name": "general", "description": "d", "model": "gemma4:latest"},
-        {"name": "escalate", "description": "d", "escalate": True},
     ],
 }
 
@@ -145,28 +144,16 @@ class LiveRouting(unittest.IsolatedAsyncioTestCase):
         out, _ = await self._call(cfg, _req(), mock.AsyncMock(return_value="code"))
         self.assertEqual(out["model"], "auto")
 
-    async def test_escalate_route_raises_no_adequate_model(self):
-        from fastapi import HTTPException
-
-        with self.assertRaises(HTTPException) as ctx:
-            await self._call(LIVE_CFG, _req(), mock.AsyncMock(return_value="escalate"))
-        self.assertEqual(ctx.exception.status_code, 400)
-        self.assertIn("no_adequate_model", str(ctx.exception.detail))
-
-    async def test_classifier_error_never_escalates(self):
-        # Escalation costs fallback-provider quota — only an affirmative
-        # classification may trigger it. Errors stay on the local default.
-        out, _ = await self._call(LIVE_CFG, _req(), mock.AsyncMock(side_effect=RuntimeError("down")))
+    async def test_unbound_route_falls_back_to_default(self):
+        # A route with no model binding (e.g. a legacy "escalate": true route)
+        # routes like "other": the default binding, never an error.
+        cfg = {**LIVE_CFG, "routes": LIVE_CFG["routes"] + [{"name": "hard", "description": "d", "escalate": True}]}
+        out, _ = await self._call(cfg, _req(), mock.AsyncMock(return_value="hard"))
         self.assertEqual(out["model"], "gemma4:latest")
 
-    async def test_shadow_logs_escalate_binding(self):
-        with mock.patch.object(router_hook, "_load_routes", return_value=LIVE_CFG), \
-             mock.patch.object(router_hook, "_classify", mock.AsyncMock(return_value="escalate")), \
-             mock.patch.object(router_hook, "_append_log") as logged:
-            await router_hook._classify_and_log("gemma4:latest", "some prompt")
-        entry = logged.call_args[0][0]
-        self.assertEqual(entry["route"], "escalate")
-        self.assertEqual(entry["bound_model"], "__escalate__")
+    async def test_classifier_error_uses_default(self):
+        out, _ = await self._call(LIVE_CFG, _req(), mock.AsyncMock(side_effect=RuntimeError("down")))
+        self.assertEqual(out["model"], "gemma4:latest")
 
 
 if __name__ == "__main__":
@@ -190,16 +177,15 @@ class RoutersNormalize(unittest.TestCase):
         cfg = {"routers": {"auto": {"routes": []}, "auto-vision": {"routes": []}}}
         self.assertEqual(list(_routers(cfg).keys()), ["auto", "auto-vision"])
 
-    def test_bindings_and_escalate_operate_per_router(self):
-        from router_hook import _bindings, _escalate_routes, _default_binding
+    def test_bindings_operate_per_router(self):
+        from router_hook import _bindings, _default_binding
 
         router = {"default_route": "gen", "routes": [
             {"name": "code", "model": "ornith"},
             {"name": "gen", "model": "gemma"},
-            {"name": "hard", "escalate": True},
+            {"name": "hard"},
         ]}
         self.assertEqual(_bindings(router), {"code": "ornith", "gen": "gemma"})
-        self.assertEqual(_escalate_routes(router), {"hard"})
         self.assertEqual(_default_binding(router), "gemma")
 
     def test_primary_router_falls_back_to_first(self):
@@ -250,14 +236,6 @@ class AnthropicMessagesRouting(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(out["model"], "qwen3-coder:30b")
 
-    async def test_anthropic_messages_escalate_raises(self):
-        from fastapi import HTTPException
-
-        with self.assertRaises(HTTPException) as ctx:
-            await self._call(LIVE_CFG, _req(), mock.AsyncMock(return_value="escalate"))
-        self.assertEqual(ctx.exception.status_code, 400)
-        self.assertIn("no_adequate_model", str(ctx.exception.detail))
-
     async def test_anthropic_messages_classifier_error_falls_back(self):
         out, _ = await self._call(LIVE_CFG, _req(), mock.AsyncMock(side_effect=RuntimeError("down")))
         self.assertEqual(out["model"], "gemma4:latest")
@@ -281,7 +259,6 @@ class FitOverride(unittest.TestCase):
         "routes": [
             {"name": "general", "model": "small", "max_prompt_tokens": 2048},
             {"name": "code", "model": "big", "max_prompt_tokens": 8192},
-            {"name": "escalate", "escalate": True},
         ],
         "default_route": "general",
     }
@@ -302,7 +279,7 @@ class FitOverride(unittest.TestCase):
         self.assertEqual(target, "big")
         self.assertIn("ctx: est 4000 > 2048", reason)
 
-    def test_nothing_fits_escalates(self):
+    def test_nothing_fits_returns_none(self):
         target, reason = router_hook._fit_override(self.ROUTER, "small", 20000)
         self.assertIsNone(target)
         self.assertIn("exceeds every local binding", reason)

@@ -1,17 +1,9 @@
 /**
- * Consecutive-identical-tool-call detection.
- *
- * A small local model that cannot bring itself to deliver in plain text
- * sometimes reaches for a tool as its outlet and never stops. Asked "what is
- * 2 + 2", qwen3.5:4b ran `echo 4`, read its own stdout back as proof it had
- * replied, and ran it again — up to ten times, until the turn timed out having
- * sent nothing. Prompting against it was measured and does not work: the model
- * restates the rule correctly and calls the tool anyway.
- *
- * So this bounds the behaviour instead. It lives here rather than beside the
- * provider that uses it because a provider installed by a skill is absent from
- * a stock tree — untestable in CI — and because nothing about counting repeats
- * is specific to one harness.
+ * Consecutive-identical-tool-call detection. A small local model sometimes
+ * uses a tool as its outlet instead of replying (e.g. `echo 4` read back as
+ * proof it answered, repeated until timeout), and prompting does not stop it —
+ * so this bounds the behaviour. Lives here, not beside the skill-installed
+ * provider that uses it, so it is testable in a stock tree.
  */
 
 /** Consecutive identical calls tolerated before a turn is judged stuck. */

@@ -30,14 +30,11 @@ interface Machine {
 }
 interface Placement { agent_group_id: string; fingerprint: string; created_by: string }
 interface Connected { fingerprint: string; connectedAt: number }
-type ImagePolicy = 'machine' | 'pull' | 'build';
-interface ImageSource { policy: ImagePolicy; ref: string | null; pin: string | null }
 export interface Agent { id: string; name?: string }
-interface PublishedExtension { version: string; sha256: string; size: number; publishedAt: string }
+interface PublishedExtension { version: string; sha256: string; size: number; publishedAt: string; signature?: unknown }
 interface ClientConfig { signIn?: 'microsoft' | 'network'; tenantId?: string; appIdUri?: string; clientId?: string }
 interface ClientSettings { defaults: Required<ClientConfig>; overrides: ClientConfig }
-interface RunnersPayload { enabled: boolean; runners: Connected[]; machines: Machine[]; placements: Placement[]; imageSource?: ImageSource; extension?: PublishedExtension | null; client?: ClientSettings }
-
+interface RunnersPayload { enabled: boolean; runners: Connected[]; machines: Machine[]; placements: Placement[]; extension?: PublishedExtension | null; client?: ClientSettings }
 
 let data: RunnersPayload | null = null;
 let agents: Agent[] = [];
@@ -83,7 +80,6 @@ export async function fetchRunners(): Promise<void> {
       if (!data.enabled) note.textContent = 'Runner endpoint off (WEBCHAT_RUNNER_ENABLED).';
     }
     renderList();
-    renderImageSource();
     renderExtension();
     if (selectedFp) renderDetail();
   } catch (err) {
@@ -101,28 +97,6 @@ function placedOn(fp: string): Placement[] {
 }
 
 /**
- * Install-wide image source. Binding on every paired machine: 'pull'/'build'
- * override each laptop's own setting, 'machine' hands the choice back — which
- * the note under the form says out loud, because a control that overrides
- * someone else's setting should admit it.
- */
-function renderImageSource(): void {
-  const src = data?.imageSource;
-  const select = $<HTMLSelectElement>('#runner-image-policy');
-  const input = $<HTMLInputElement>('#runner-image-ref');
-  const note = $('#runner-image-note');
-  if (!src || !select || !input || !note) return;
-  // Don't yank the control out from under someone mid-edit.
-  if (document.activeElement !== select && document.activeElement !== input) {
-    select.value = src.policy;
-    input.value = src.ref ?? '';
-  }
-  input.placeholder = 'Image reference (optional)';
-  input.disabled = select.value === 'build';
-  note.textContent = '';
-}
-
-/**
  * The runner package this install serves. Paired machines are offered it on
  * their next keepalive, so publishing here reaches every developer without a
  * file changing hands — which is also why only an admin may do it.
@@ -132,7 +106,7 @@ function renderExtension(): void {
   if (!box) return;
   const e = data?.extension;
   box.textContent = e
-    ? `${e.version} · ${(e.size / 1024).toFixed(0)} KB · ${ago(Date.parse(e.publishedAt))}`
+    ? `${e.version} · ${(e.size / 1024).toFixed(0)} KB · ${ago(Date.parse(e.publishedAt))}${e.signature ? ' · signed' : ''}`
     : 'None published.';
 }
 
@@ -261,34 +235,46 @@ function wire(): void {
     const li = (e.target as HTMLElement).closest<HTMLElement>('li[data-fp]');
     if (li?.dataset.fp) { e.preventDefault(); openRunnerDetail(li.dataset.fp); }
   });
-  $('#runner-image-policy')?.addEventListener('change', () => renderImageSource());
-  $('#runner-image-form')?.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const policy = $<HTMLSelectElement>('#runner-image-policy')?.value as ImagePolicy;
-    const ref = $<HTMLInputElement>('#runner-image-ref')?.value.trim() ?? '';
-    void act(
-      () => apiJson('/api/runners/image-source', { method: 'PUT', headers: CSRF, body: { policy, ref } }),
-      'Save image source',
-    );
-  });
+  // One picker for a release: the .vsix (with its .sig, signed on the
+  // operator's machine), a lone .sig for the published package, or the
+  // release key's .pub.
   $('#runner-ext-file')?.addEventListener('change', (e) => {
     const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
+    const files = [...(input.files ?? [])];
     input.value = ''; // let the same file be chosen again after a failure
-    if (!/^nanoclaw-\d+\.\d+\.\d+.*\.vsix$/.test(file.name)) {
-      showToast(`Expected a package named nanoclaw-<version>.vsix, not ${file.name}`, { kind: 'error' });
+    if (!files.length) return;
+    const vsix = files.find((f) => f.name.endsWith('.vsix'));
+    const sig = files.find((f) => f.name.endsWith('.sig'));
+    const pub = files.find((f) => f.name.endsWith('.pub'));
+    if (vsix && !/^nanoclaw-\d+\.\d+\.\d+.*\.vsix$/.test(vsix.name)) {
+      showToast(`Expected a package named nanoclaw-<version>.vsix, not ${vsix.name}`, { kind: 'error' });
       return;
     }
-    void act(async () => {
-      const res = await authFetch('/api/runners/extension', {
-        method: 'POST',
-        headers: { ...CSRF, 'X-NanoClaw-Filename': file.name, 'Content-Type': 'application/octet-stream' },
-        body: await file.arrayBuffer(),
-      });
+    const failed = async (res: Response) => {
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`);
       return res.json();
-    }, `Publish ${file.name}`);
+    };
+    if (pub) {
+      void act(async () => {
+        const releaseKey = (await pub.text()).trim();
+        return apiJson('/api/runners/client-config', { method: 'PUT', headers: CSRF, body: { releaseKey } });
+      }, 'Save release key');
+      return;
+    }
+    if (vsix) {
+      void act(async () => {
+        const headers: Record<string, string> = { ...CSRF, 'X-NanoClaw-Filename': vsix.name, 'Content-Type': 'application/octet-stream' };
+        if (sig) headers['X-NanoClaw-Signature'] = btoa((await sig.text()).trim());
+        return failed(await authFetch('/api/runners/extension', { method: 'POST', headers, body: await vsix.arrayBuffer() }));
+      }, `Publish ${vsix.name}`);
+      return;
+    }
+    if (sig) {
+      void act(async () => {
+        const body = await sig.text();
+        return failed(await authFetch('/api/runners/extension/signature', { method: 'PUT', headers: { ...CSRF, 'Content-Type': 'application/json' }, body }));
+      }, `Upload ${sig.name}`);
+    }
   });
   $('#runner-detail-close')?.addEventListener('click', () => closeRunnerDetail());
   $('#runner-approve-btn')?.addEventListener('click', () => {
@@ -303,7 +289,7 @@ function wire(): void {
     void (async () => {
       const ok = await showConfirmModal({
         title: `Revoke ${m?.hostname ?? 'this machine'}?`,
-        body: 'Its sessions stop and it must be approved again to come back.',
+        body: 'Its agents stop and it must be approved again to come back.',
         confirmLabel: 'Revoke',
         destructive: true,
       });

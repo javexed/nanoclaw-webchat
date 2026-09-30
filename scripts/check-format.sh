@@ -40,7 +40,11 @@ done
 # container tree has its own toolchain and is not prettier-managed here).
 CHECK=()
 for f in "${OWNED[@]}"; do
-  case "$f" in src/*) [ -f "$TREE/$f" ] && CHECK+=("$f");; esac
+  case "$f" in
+    src/*) [ -f "$TREE/$f" ] && CHECK+=("$f") ;;
+    # A skill's payload ships as-is and becomes src/ when installed.
+    .claude/skills/*/payload/src/*) [ -f "$TREE/$f" ] && CHECK+=("$f") ;;
+  esac
 done
 
 if [ "${#CHECK[@]}" -eq 0 ]; then

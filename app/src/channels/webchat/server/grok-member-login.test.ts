@@ -85,7 +85,7 @@ describe('startMemberLogin', () => {
   it('is single-flight per member, not globally — two members sign in at once', () => {
     expect(startMemberLogin('webchat:alice').started).toBe(true);
     expect(startMemberLogin('webchat:alice')).toEqual({ started: false, error: 'already-running' });
-    // Bob is unaffected: this is the bug the wizard flow would have had.
+    // Bob is unaffected (the wizard flow is globally single-flight).
     expect(startMemberLogin('webchat:bob').started).toBe(true);
     expect(spawned).toHaveLength(2);
   });

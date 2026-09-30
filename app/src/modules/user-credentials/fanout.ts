@@ -43,12 +43,9 @@ const SKIP_TYPES = new Set(['a2a', 'approval', 'approval_resolved']);
 const INLINE_ATTACHMENT_CAP = 25 * 1024 * 1024;
 
 /**
- * Build the inbound content for one transcript row.
- *
- * A file row's `content` column holds only the caption — the bytes live in
- * `file_meta`. Serialising `content` alone (as this did before) handed the
- * agent `{"text":""}` for every upload: no text, no attachment, nothing to act
- * on. Mark hit exactly that — 21 uploads in a row arrived blank.
+ * Build the inbound content for one transcript row. A file row's `content`
+ * column holds only the caption — the bytes live in `file_meta`, so `content`
+ * alone would hand the agent a blank message for every upload.
  */
 function contentFor(m: WebchatMessage, roomId: string, isCurrent: boolean): string {
   const base = { sender: m.sender, senderName: m.sender, senderId: '' };
@@ -94,11 +91,9 @@ function contentFor(m: WebchatMessage, roomId: string, isCurrent: boolean): stri
 }
 
 export async function writeMemberTranscript(args: SessionInboundWriterArgs): Promise<boolean> {
-  // Scope to the session's OWN thread. The session key is (user, thread); a
-  // room-wide transcript is what mixed 89 main-thread rows with 60 topic-thread
-  // rows in one member's queue, leaving the agent to answer a room message into
-  // a topic thread. A legacy bare-user key has no thread — fall back to the
-  // room-wide read so those sessions keep working unchanged.
+  // Scope to the session's OWN thread (the session key is (user, thread)), or
+  // the agent answers a room message into a topic thread. A bare-user key has
+  // no thread — fall back to the room-wide read.
   const thread = memberThreadFromKey(args.session.thread_id);
   const transcript = thread
     ? getWebchatMessages(args.roomId, TRANSCRIPT_LIMIT, thread)

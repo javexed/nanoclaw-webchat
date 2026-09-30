@@ -1,6 +1,7 @@
+import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 
-import { parseOutboundTs, recentOutbound, replayThread } from './reconcile.js';
+import { deliveredIds, parseOutboundTs, recentOutbound, replayThread } from './reconcile.js';
 
 describe('webchat reconcile window', () => {
   it('reads both timestamp forms as UTC', () => {
@@ -27,5 +28,20 @@ describe('webchat reconcile replay target', () => {
     expect(await replayThread({ thread_id: 'webchat:alice::topic-7' }, 'room-1')).toBe('topic-7');
     // A main-thread session (no key) replays into main.
     expect(await replayThread({ thread_id: null }, 'room-1')).toBe('main');
+  });
+});
+
+describe('webchat reconcile only second-guesses finished deliveries', () => {
+  it('counts a message as settled only once trunk marked it delivered', () => {
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE delivered (
+      message_out_id TEXT PRIMARY KEY, platform_message_id TEXT,
+      status TEXT NOT NULL DEFAULT 'delivered', delivered_at TEXT NOT NULL)`);
+    db.prepare(`INSERT INTO delivered (message_out_id, delivered_at) VALUES ('done', 'x')`).run();
+    db.prepare(`INSERT INTO delivered (message_out_id, status, delivered_at) VALUES ('gave-up', 'failed', 'x')`).run();
+    // 'in-flight' has no row: pending, between retries, or inside a slow deliver().
+    expect([...deliveredIds(db, ['done', 'gave-up', 'in-flight'])]).toEqual(['done']);
+    expect(deliveredIds(db, []).size).toBe(0);
+    db.close();
   });
 });

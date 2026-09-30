@@ -1,6 +1,6 @@
 // ── Model probe results state ───────────────────────────────────────────────
-// Bridge refs for the ProbeResults island. legacy.js still runs the probe and
-// owns the summary line; this is the model checklist only.
+// Bridge refs for the ProbeResults island; models.ts runs the probe and owns
+// the summary line.
 import { ref } from 'vue';
 
 /** One row per advertised model: the id and its default display name. */

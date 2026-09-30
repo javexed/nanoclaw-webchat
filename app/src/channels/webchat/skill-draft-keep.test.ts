@@ -20,6 +20,8 @@ import path from 'path';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import type { WebchatServer } from './server.js';
+import type { DbDriver } from '../../db/driver.js';
+import { httpRequest, loadServer, noopHooks, portOf, PROXY_ENV, resetServerModules, seeder } from './test-server.js';
 
 const ctl = vi.hoisted(() => ({
   impl: (async () => []) as () => Promise<unknown[]>,
@@ -33,8 +35,6 @@ vi.mock('../../modules/learning/overlap.js', () => ({
   },
 }));
 
-const noopHooks = { onInbound: vi.fn(), onAction: vi.fn() };
-
 const AG_A = 'ag-keep-async-a';
 const AG_B = 'ag-keep-async-b';
 const DRAFT = 'draft-keep-async-1';
@@ -46,14 +46,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  vi.unstubAllEnvs();
-  try {
-    const conn = await import('../../db/connection.js');
-    await conn.closeDb();
-  } catch {
-    // ignore
-  }
-  vi.resetModules();
+  await resetServerModules();
   // Drafts + kept skills land under the real DATA_DIR (cwd/data) — remove
   // exactly what these tests can create.
   fs.rmSync(path.join(process.cwd(), 'data', 'skill-drafts', DRAFT), { recursive: true, force: true });
@@ -63,71 +56,9 @@ afterEach(async () => {
   }
 });
 
-async function loadServerWithEnv(env: Record<string, string | undefined>) {
-  for (const [k, v] of Object.entries(env)) {
-    if (v === undefined) vi.stubEnv(k, '');
-    else vi.stubEnv(k, v);
-  }
-  vi.resetModules();
-  const conn = await import('../../db/connection.js');
-  await conn.initTestDb();
-  const migrations = await import('../../db/migrations/index.js');
-  await migrations.runMigrations(conn.getDb());
-  return { server: await import('./server.js'), conn };
-}
-
-async function httpRequest(
-  port: number,
-  method: string,
-  path0: string,
-  headers: Record<string, string> = {},
-  body?: string,
-): Promise<{ status: number; body: string }> {
-  const http = await import('http');
-  return new Promise((resolve, reject) => {
-    const r = http.request({ host: '127.0.0.1', port, path: path0, method, headers }, (res) => {
-      let buf = '';
-      res.on('data', (c) => (buf += c));
-      res.on('end', () => resolve({ status: res.statusCode ?? 0, body: buf }));
-    });
-    r.on('error', reject);
-    if (body) r.write(body);
-    r.end();
-  });
-}
-
-const portOf = (wc: { http: { address: () => unknown } }): number => {
-  const a = wc.http.address();
-  return typeof a === 'object' && a ? (a as { port: number }).port : 0;
-};
-
 const now = '2026-07-21T00:00:00.000Z';
-async function seed(db: import('../../db/driver.js').DbDriver): Promise<void> {
-  const user = async (id: string) =>
-    await db.run(
-      `INSERT OR IGNORE INTO users (id, kind, display_name, created_at) VALUES (?, 'webchat', NULL, ?)`,
-      id,
-      now,
-    );
-  const group = async (id: string) =>
-    await db.run(
-      `INSERT OR IGNORE INTO agent_groups (id, name, folder, agent_provider, created_at) VALUES (?, ?, ?, NULL, ?)`,
-      id,
-      id,
-      id,
-      now,
-    );
-  const role = async (uid: string, r: 'owner' | 'admin', g: string | null) => {
-    await user(uid);
-    if (g) await group(g);
-    await db.run(
-      `INSERT INTO user_roles (user_id, role, agent_group_id, granted_by, granted_at) VALUES (?, ?, ?, NULL, ?)`,
-      uid,
-      r,
-      g,
-      now,
-    );
-  };
+async function seed(db: DbDriver): Promise<void> {
+  const { group, role } = seeder(db, now);
   await group(AG_A);
   await group(AG_B);
   await role('webchat:owner', 'owner', null);
@@ -158,20 +89,14 @@ const asUser = (name: string) => ({
 const bodyFor = (group: string) => JSON.stringify({ agentGroupId: group });
 
 describe('POST /api/skill-drafts/:id/keep — async review', () => {
-  let server: Awaited<ReturnType<typeof loadServerWithEnv>>['server'];
+  let server: typeof import('./server.js');
   let state: typeof import('./state.js');
   let wc: WebchatServer;
   let port: number;
   let sent: Array<Record<string, unknown>>;
 
   beforeEach(async () => {
-    const loaded = await loadServerWithEnv({
-      WEBCHAT_HOST: '127.0.0.1',
-      WEBCHAT_PORT: '0',
-      WEBCHAT_TOKEN: '',
-      WEBCHAT_TRUSTED_PROXY_IPS: '127.0.0.1',
-      WEBCHAT_TRUSTED_PROXY_HEADER: 'x-forwarded-user',
-    });
+    const loaded = await loadServer(PROXY_ENV);
     server = loaded.server;
     await seed(loaded.conn.getDb());
     await stageDraft(DRAFT, AG_A, 'zz-async-keep-test', 'unique async keep test skill zz');
@@ -323,14 +248,9 @@ describe('POST /api/skill-drafts/:id/keep — async review', () => {
     expect(sent[0].outcome).toBe('error');
   });
 
-  // A surviving DB row with a vanished BODY is a distinct failure from the
-  // discard above: getSkillDraft still returns a pending row, so the job sails
-  // past the re-fetch and only fails at apply, where readSkillDraftBody turns a
-  // missing SKILL.md into a bare 410. Worth pinning because it is the shape a
-  // stray `rm -rf data/skill-drafts` produces — and because until now this path
-  // pushed 'error' to the user's tab with nothing in the log, which is exactly
-  // why an intermittent "expected 'error' to be 'kept'" in this file resisted
-  // attribution.
+  // A pending row whose BODY vanished passes the re-fetch and fails only at
+  // apply (readSkillDraftBody → 410): the shape a stray `rm -rf
+  // data/skill-drafts` produces.
   it("a draft whose body vanished mid-review reports 'Draft body missing', not a keep", async () => {
     let release!: () => void;
     ctl.impl = () =>

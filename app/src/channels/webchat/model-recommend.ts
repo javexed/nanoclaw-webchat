@@ -1,13 +1,11 @@
 /**
  * Hardware profiler + local-model recommender for the setup wizard.
  *
- * The chicken-and-egg ("recommend a model before any model exists") dissolves
- * once you see model sizing as a LOOKUP, not a reasoning task: read the host's
- * hardware, match it against a curated manifest of known-good picks. No LLM in
- * the loop, works offline/headless on first boot.
+ * Model sizing is a LOOKUP, not a reasoning task: read the host's hardware and
+ * match it against a curated manifest of known-good picks. No LLM in the loop,
+ * so it works offline/headless on first boot.
  *
- * Load-bearing lesson from live testing (qwen3:4b thrashed a 14 GB box): size
- * by real HEADROOM, not totals. Two numbers that look right and aren't —
+ * Size by real HEADROOM, not totals. Two numbers that look right and aren't —
  *   - total RAM (the stack already eats most of it), and
  *   - iGPU "VRAM" (reported but unusable without ROCm/CUDA).
  * So we budget against available RAM minus a margin, and only trust VRAM on a
@@ -64,8 +62,8 @@ export const MODEL_MANIFEST: ModelSpec[] = [
 
 // Headroom above the chosen model. CPU RAM is SHARED and contended — the model
 // grows under context AND each agent turn spawns a container, and "available"
-// is a snapshot that only shrinks under real use (the qwen3:4b-looked-fine-then-
-// thrashed lesson). So the CPU margin is deliberately fat. Dedicated GPU VRAM
+// is a snapshot that only shrinks under real use. So the CPU margin is
+// deliberately fat. Dedicated GPU VRAM
 // isn't contended that way, so it gets a thin margin.
 const CPU_HEADROOM_GB = 2.5;
 const GPU_HEADROOM_GB = 1;

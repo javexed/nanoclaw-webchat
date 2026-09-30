@@ -1,17 +1,8 @@
 <script setup lang="ts">
 /**
- * The 🗑 on your own messages, with its two-step confirm.
- *
- * createDeleteButton() held the confirm in the ELEMENT — a class, a label swap
- * and a 3-second timer closed over the button — which is fine for a node nobody
- * else owns and impossible once the message is Vue-rendered.
- *
- * The timer is per-instance rather than keyed state: only one button can be
- * mid-confirm at a time in practice, but nothing enforced that before either,
- * and a component instance is exactly the scope the closure had.
- *
- * onUnmounted clears it. The old button was garbage with its message; this one
- * can outlive its confirm window if the transcript re-renders under it.
+ * The 🗑 on your own messages, with its two-step confirm. The 3-second confirm timer is
+ * per-instance and cleared on unmount, since the button can outlive its confirm window if
+ * the transcript re-renders under it.
  */
 import { onUnmounted, ref } from 'vue';
 import { state } from '../core/state.js';

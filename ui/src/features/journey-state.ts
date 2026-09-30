@@ -1,9 +1,6 @@
 // ── Journey timeline state ──────────────────────────────────────────────────
-// Bridge refs for the JourneyList island, plus the filter itself.
-//
-// The filter used to exist TWICE — a const object in legacy.js and this mirror
-// of it, kept in step by hand. It is one binding now, so the island reads the
-// same object views.ts mutates and there is nothing to sync.
+// Bridge refs for the JourneyList island, plus the filter itself: one binding,
+// so the island reads the same object views.ts mutates.
 import { ref } from 'vue';
 
 /** Every event loaded so far, oldest page first — 'Load more' appends. */

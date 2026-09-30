@@ -1,6 +1,5 @@
 /**
- * Tests for computeSwCacheVersion — the derived service-worker cache name that
- * replaced the hand-bumped `nanoclaw-chat-vNNN` constant. The version must be
+ * Tests for computeSwCacheVersion — the derived service-worker cache name. The version must be
  * deterministic, change when any served asset changes, and be insensitive to
  * sw.js itself (whose content embeds the version, which would otherwise be
  * circular).

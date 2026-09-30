@@ -11,8 +11,8 @@
 // Two things make it a coding tool rather than a chat window:
 // - every message carries an editor note — the file (and lines) the developer
 //   is looking at — so "this file" means something to the agent;
-// - a Changes section shows what the agent touched this turn, as git sees it,
-//   with a diff against HEAD and Keep / Revert per file.
+// - a Proposal section shows what the agent changed in its copy of the
+//   developer's tree, with a diff and Apply / Reject per file.
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -20,27 +20,20 @@ import * as vscode from 'vscode';
 
 import {
   applyProposal,
-  headContent,
-  keep,
+  changedFiles,
+  resolveWorkspace,
   proposalBaseContent,
   proposalChanges,
   rejectProposal,
-  revert,
-  snapshot,
-  touchedBetween,
-  workspaceChanges,
-  workspaceFor,
-  workspaceRecords,
-  type ChangedFile,
-  type InRepo,
   type Proposal,
   type ProposedFile,
-  type Snapshot,
 } from './git-changes.js';
 import { fileCard, safeLocalName, uploadPath, statusLine, type FileMeta } from './chat-render.js';
+import { recordActivity } from './activity-log.js';
 import { editorNote, splitEditorNote } from './editor-note.js';
-import { planDirect, planPropose } from './inline-review.js';
+import { planPropose, nextReviewFile } from './inline-review.js';
 import type { ReviewController } from './review-controller.js';
+import type { ConflictTracker } from './conflicts.js';
 import { escapeHtml, renderMarkdown } from './markdown.js';
 
 interface ChatMessage {
@@ -60,16 +53,20 @@ export interface ChatDeps {
   /** Push a frame to central; false when not connected. */
   send: (frame: Record<string, unknown>) => boolean;
   log: (line: string) => void;
-  /** The folder bound as the agent's workspace (what the Changes section reviews). */
+  /** The folder bound as the agent's workspace (where attachments are picked from and saved to). */
   workspaceRoot: () => string | undefined;
-  /** Scratch space for HEAD copies shown in diffs. */
+  /** Scratch space for base copies shown in diffs. */
   storageRoot: () => string;
-  /** The proposal clone under review, when the session runs in propose mode. */
+  /** The proposal clone under review, once the session has one. */
   proposal: () => Proposal | null;
   /** An authenticated call to central (bearer token, CSRF header on writes). `apiPath` starts with /api/. */
   api: (apiPath: string, init?: RequestInit) => Promise<Response>;
   /** Inline review in the editor (Accept / Reject per hunk). */
   review: ReviewController;
+  /** Files a merged Apply left conflicts in, until they are resolved. */
+  conflicts?: ConflictTracker;
+  /** The proposal was re-read (the Source Control view shows it too). */
+  proposedChanged?: (repoRoot: string | null, files: ProposedFile[]) => void;
 }
 
 export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
@@ -79,10 +76,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   private messages: ChatMessage[] = [];
   private status = 'Not connected';
   private opened = false;
-  /** Tree state when the last message went out; what differs after the reply is the agent's work. */
-  private before: Snapshot | null = null;
-  private touched = new Set<string>();
-  private changes: ChangedFile[] = [];
   /** Files chosen with "+ File", uploaded with the next send. */
   private pending: string[] = [];
   /** The editor a code block is inserted into: the webview has focus when its button is clicked. */
@@ -93,6 +86,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   constructor(private readonly d: ChatDeps) {
     this.editorWatch = vscode.window.onDidChangeActiveTextEditor((e) => {
       if (e && e.document.uri.scheme !== 'output') this.lastEditor = e;
+    });
+    // A review a window reload interrupted finishes like any other: its file is
+    // found against the proposal when the last change is decided.
+    d.review.restore((uri) => (r) => {
+      const root = this.d.proposal()?.repoRoot;
+      if (!root) return this.d.log(`review: ${uri.fsPath} finished with no proposal open`);
+      void this.reviewDone(path.relative(root, uri.fsPath).split(path.sep).join('/'), r);
     });
   }
 
@@ -109,7 +109,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         switch (m.type) {
           case 'ready':
             this.repaint();
-            void this.refreshChanges(false);
+            void this.refreshChanges();
             return;
           case 'send':
             if (typeof m.text === 'string') void this.sendText(m.text);
@@ -135,22 +135,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
             this.open(true);
             return;
           case 'changes.refresh':
-            void this.refreshChanges(false);
+            void this.refreshChanges();
             return;
           case 'changes.diff':
             if (m.path) void this.openDiff(m.path);
             return;
-          case 'changes.keep':
-            if (m.path) void this.act(m.path, 'keep');
-            return;
-          case 'changes.revert':
-            if (m.path) void this.act(m.path, 'revert');
-            return;
-          case 'changes.revertAgent':
-            void this.revertAgentChanges();
-            return;
           case 'review':
             if (m.path) void this.reviewFile(m.path);
+            return;
+          case 'conflict.open':
+            if (m.path) void this.openConflict(m.path);
             return;
           case 'review.all':
             void this.reviewNext();
@@ -169,9 +163,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     });
   }
 
-  /** Re-read the Changes / Proposal section (the runner learned of a proposal clone). */
+  /** Re-read the Proposal section (the runner learned of a proposal clone). */
   refresh(): void {
-    void this.refreshChanges(false);
+    void this.refreshChanges();
   }
 
   /** Link state changed: reflect it and (re)open the room when connected. */
@@ -209,8 +203,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
           this.messages.push(m);
           if (this.messages.length > 500) this.messages.splice(0, this.messages.length - 500);
           this.post({ type: 'message', html: this.renderOne(m) });
-          // The agent answered: whatever changed since we asked is its work.
-          if (m.sender_type === 'agent') void this.refreshChanges(true);
+          // The agent answered: its copy may hold new work.
+          if (m.sender_type === 'agent') void this.refreshChanges().then(() => this.offerNewWork());
         }
         return true;
       }
@@ -240,8 +234,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       vscode.workspace.asRelativePath(u as vscode.Uri, false),
     );
     if (t && note && !t.includes('(editor: ')) t = `${t}\n${note}`;
-    // Remember the tree as it is now; the reply will tell us what the agent did.
-    this.before = await this.safeSnapshot();
     if (this.pending.length) {
       await this.uploadPending(t);
       return;
@@ -362,37 +354,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   // ---- inline review ------------------------------------------------------------
 
   /**
-   * Lay one file's changes into the editor for Accept / Reject per hunk. In
-   * propose mode the agent's copy against its base, placed onto the file the
-   * developer has open; in direct mode the file on disk against HEAD.
+   * Lay one file's changes into the editor for Accept / Reject per hunk: the
+   * agent's copy against its base, placed onto the file the developer has open.
    */
-  private async reviewFile(rel: string): Promise<void> {
+  async reviewFile(rel: string): Promise<void> {
     const proposal = this.d.proposal();
+    if (!proposal) return;
     try {
-      if (proposal) {
-        const real = insideRoot(proposal.repoRoot, rel);
-        insideRoot(proposal.dir, rel);
-        if (!fs.existsSync(real))
-          throw new Error('a new file has nothing to review line by line — use Apply or Reject');
-        const next = fs.readFileSync(path.join(proposal.dir, rel), 'utf8');
-        const base = (await proposalBaseContent(proposal, rel)) ?? '';
-        if (next.includes('\0') || base.includes('\0')) throw new Error('binary file — use Apply or Reject');
-        await this.d.review.start(
-          vscode.Uri.file(real),
-          (current) => planPropose(base, next, current),
-          (r) => void this.reviewDone(rel, r),
-        );
-        return;
-      }
-      const ws = await this.repo();
-      if (!ws) throw new Error('no git repository for the workspace folder');
-      const old = await headContent(ws, rel);
-      if (old === null) throw new Error('a new file has nothing to review line by line — use Keep or Revert');
-      if (old.includes('\0')) throw new Error('binary file — use Keep or Revert');
+      const real = insideRoot(proposal.repoRoot, rel);
+      insideRoot(proposal.dir, rel);
+      if (!fs.existsSync(real)) throw new Error('a new file has nothing to review line by line — use Apply or Reject');
+      const next = fs.readFileSync(path.join(proposal.dir, rel), 'utf8');
+      const base = (await proposalBaseContent(proposal, rel)) ?? '';
+      if (next.includes('\0') || base.includes('\0')) throw new Error('binary file — use Apply or Reject');
       await this.d.review.start(
-        vscode.Uri.file(insideRoot(ws.root, rel)),
-        (current) => planDirect(old, current),
+        vscode.Uri.file(real),
+        (current) => planPropose(base, next, current),
         (r) => void this.reviewDone(rel, r),
+        () =>
+          void vscode.commands.executeCommand(
+            'vscode.diff',
+            vscode.Uri.file(path.join(proposal.dir, rel)),
+            vscode.Uri.file(real),
+            `${rel} (agent's version ↔ yours)`,
+          ),
       );
     } catch (err) {
       this.post({ type: 'error', text: `Review ${rel}: ${String((err as Error).message)}` });
@@ -401,7 +386,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
   private async reviewDone(
     rel: string,
-    r: { accepted: number; rejected: number; conflicts: number; abandoned: boolean },
+    r: { accepted: number; rejected: number; conflicts: number; applied: number; abandoned: boolean },
   ): Promise<void> {
     const proposal = this.d.proposal();
     // Every hunk decided in the real file: the proposal for it is spent. With
@@ -411,38 +396,78 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
         this.d.log(`review: could not clear ${rel} from the proposal: ${String(err)}`),
       );
     }
+    this.tally.files++;
+    this.tally.accepted += r.accepted;
+    this.tally.rejected += r.rejected;
+    recordActivity('review', {
+      file: rel,
+      accepted: r.accepted,
+      rejected: r.rejected,
+      conflicts: r.conflicts,
+      applied: r.applied,
+    });
     this.d.log(
-      `review: ${rel} — ${r.accepted} accepted, ${r.rejected} rejected${r.conflicts ? `, ${r.conflicts} set aside` : ''}${r.abandoned ? ' (ended early)' : ''}`,
+      `review: ${rel} — ${r.accepted} accepted, ${r.rejected} rejected${r.applied ? `, ${r.applied} already in` : ''}${r.conflicts ? `, ${r.conflicts} set aside` : ''}${r.abandoned ? ' (ended early)' : ''}`,
     );
-    await this.refreshChanges(false);
-    if (!r.abandoned) void this.reviewNext(true);
+    await this.refreshChanges();
+    if (r.abandoned) return;
+    // Straight on to the next file: one decision after another, no prompt between files.
+    const next = this.nextToReview();
+    if (next) {
+      void vscode.window.setStatusBarMessage(`Next: ${next}`, 3000);
+      void this.reviewFile(next);
+    } else this.summarize();
   }
 
-  /** Files that can be reviewed inline right now: modified ones (new and deleted files use Apply / Keep). */
+  /** Files reviewed since the last summary. */
+  private tally = { files: 0, accepted: 0, rejected: 0 };
+
+  /** Every reviewable file is done: what came of it, and the way on to Git. */
+  private summarize(): void {
+    const t = this.tally;
+    this.tally = { files: 0, accepted: 0, rejected: 0 };
+    if (!t.files) return;
+    const left = this.proposed.length ? ` ${this.proposed.length} more to apply or reject.` : '';
+    void vscode.window
+      .showInformationMessage(
+        `Reviewed ${t.files} file(s): ${t.accepted} accepted, ${t.rejected} rejected.${left}`,
+        'Source Control',
+      )
+      .then((pick) => pick && vscode.commands.executeCommand('workbench.view.scm'));
+  }
+
+  private nextToReview(): string | undefined {
+    const root = this.d.proposal()?.repoRoot ?? '';
+    return this.reviewable().find((p) => !this.d.review.isReviewing(vscode.Uri.file(path.join(root, p))));
+  }
+
+  /** Files that can be reviewed inline right now: modified ones (new and deleted files use Apply / Reject). */
   private reviewable(): string[] {
-    if (this.d.proposal()) return this.proposed.filter((f) => proposedReviewable(f)).map((f) => f.path);
-    return this.changes.filter((f) => this.changeReviewable(f)).map((f) => f.path);
+    return this.d.proposal() ? this.proposed.filter((f) => proposedReviewable(f)).map((f) => f.path) : [];
   }
 
-  /** In direct mode only the agent's edits are offered for review. */
-  private changeReviewable(f: ChangedFile): boolean {
-    return !f.untracked && f.status.includes('M') && this.touched.has(f.path);
-  }
-
-  private async reviewNext(offer = false): Promise<void> {
-    const next = this.reviewable().find(
-      (p) =>
-        !this.d.review.isReviewing(
-          vscode.Uri.file(path.join(this.d.proposal()?.repoRoot ?? this.d.workspaceRoot() ?? '', p)),
-        ),
-    );
+  /**
+   * "Next file" for the review: the changed file after the one in the active
+   * editor (wrapping), opened for inline review. Next change stays within a file.
+   */
+  async reviewNextFile(): Promise<void> {
+    await this.refreshChanges();
+    const root = this.d.proposal()?.repoRoot;
+    const active = vscode.window.activeTextEditor?.document.uri.fsPath;
+    const rel = root && active ? path.relative(root, active).split(path.sep).join('/') : null;
+    const next = nextReviewFile(this.reviewable(), rel, process.platform === 'win32');
     if (!next) {
-      if (!offer) this.post({ type: 'error', text: 'Nothing to review.' });
+      void vscode.window.showInformationMessage('NanoClaw: no changed files to review.');
       return;
     }
-    if (offer) {
-      const pick = await vscode.window.showInformationMessage(`Review ${next}?`, 'Review', 'Later');
-      if (pick !== 'Review') return;
+    await this.reviewFile(next);
+  }
+
+  async reviewNext(): Promise<void> {
+    const next = this.nextToReview();
+    if (!next) {
+      this.post({ type: 'error', text: 'Nothing to review.' });
+      return;
     }
     await this.reviewFile(next);
   }
@@ -504,90 +529,41 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
   // ---- changes -------------------------------------------------------------
 
-  private async safeSnapshot(): Promise<Snapshot | null> {
-    try {
-      const ws = await this.repo();
-      return ws ? await snapshot(ws) : null;
-    } catch (err) {
-      this.d.log(`changes: snapshot failed: ${String((err as Error).message)}`);
-      return null;
-    }
-  }
-
-  /**
-   * The workspace folder and the repository recorded for it when it was
-   * mounted (never one discovered from the tree the agent writes), or null
-   * when there is no folder or it is in no repository.
-   */
-  private async repo(): Promise<InRepo | null> {
-    const root = this.d.workspaceRoot();
-    if (!root) return null;
-    try {
-      const ws = await workspaceFor(workspaceRecords(this.d.storageRoot()), root);
-      return ws.repo ? (ws as InRepo) : null;
-    } catch {
-      return null; // the folder is gone
-    }
-  }
-
-  /** Re-read the working tree; when `afterReply`, mark what changed since the message went out as the agent's. */
   private proposed: ProposedFile[] = [];
 
-  async refreshChanges(afterReply: boolean): Promise<void> {
+  /** Re-read the proposal: what the agent's copy differs from its base by. */
+  async refreshChanges(): Promise<void> {
     const proposal = this.d.proposal();
-    if (proposal) {
-      try {
-        this.proposed = await proposalChanges(proposal);
-        this.post({
-          type: 'changes',
-          mode: 'propose',
-          note: this.proposed.length ? '' : 'No proposal.',
-          base: proposal.base.slice(0, 10),
-          files: this.proposed.map((f) => ({
-            path: f.path,
-            status: f.status,
-            agent: true,
-            reviewable: proposedReviewable(f),
-          })),
-        });
-      } catch (err) {
-        this.post({
-          type: 'changes',
-          mode: 'propose',
-          note: `git failed: ${String((err as Error).message)}`,
-          files: [],
-        });
-      }
-      return;
-    }
-    const root = this.d.workspaceRoot();
-    if (!root) {
-      this.post({ type: 'changes', note: 'No workspace.', files: [] });
+    if (!proposal) {
+      this.proposed = [];
+      this.post({ type: 'changes', files: [] });
+      this.d.proposedChanged?.(null, []);
       return;
     }
     try {
-      const ws = await this.repo();
-      if (!ws) {
-        this.post({ type: 'changes', note: 'Not a git repo.', files: [] });
-        return;
+      this.proposed = await proposalChanges(proposal);
+      this.d.proposedChanged?.(proposal.repoRoot, this.proposed);
+      // What was already there when the panel first looked is not the agent's news.
+      this.seen ??= new Set(this.stamps().keys());
+      void this.findConflicts(proposal.repoRoot);
+      // A review whose file left the proposal (rejected or applied elsewhere,
+      // or the proposal was reset) would otherwise linger in the editor.
+      // Windows: VS Code says c:\, the recorded root may say C:\ — compare without case there.
+      const norm = (p: string) => (process.platform === 'win32' ? p.toLowerCase() : p);
+      const root = norm(proposal.repoRoot + path.sep);
+      const pending = new Set(this.proposed.map((f) => norm(path.join(proposal.repoRoot, f.path))));
+      for (const uri of this.d.review.reviewing()) {
+        const p = norm(uri.fsPath);
+        if (p.startsWith(root) && !pending.has(p)) await this.d.review.withdraw(uri);
       }
-      this.changes = await workspaceChanges(ws);
-      if (afterReply && this.before) {
-        const now = await snapshot(ws);
-        for (const p of touchedBetween(this.before, now)) this.touched.add(p);
-        this.before = now; // a follow-up turn measures from here
-      }
-      const present = new Set(this.changes.map((f) => f.path));
-      for (const p of [...this.touched]) if (!present.has(p)) this.touched.delete(p); // kept+committed or reverted
       this.post({
         type: 'changes',
-        note: '',
-        files: this.changes.map((f) => ({
+        conflicts: this.d.conflicts?.under(proposal.repoRoot) ?? [],
+        files: this.proposed.map((f) => ({
           path: f.path,
           status: f.status,
-          untracked: f.untracked,
-          agent: this.touched.has(f.path),
-          reviewable: this.changeReviewable(f),
+          reviewable: proposedReviewable(f),
+          risk: f.risk,
         })),
       });
     } catch (err) {
@@ -595,42 +571,93 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     }
   }
 
-  private fileOf(p: string): ChangedFile | undefined {
-    return this.changes.find((f) => f.path === p);
+  /** What each proposed file looked like when the agent last finished a turn (null: not read yet). */
+  private seen: Set<string> | null = null;
+
+  /** Each proposed file as status, path and mtime: a changed stamp is new work. */
+  private stamps(): Map<string, ProposedFile> {
+    const proposal = this.d.proposal();
+    const stamp = (f: ProposedFile) => {
+      let t = 0;
+      try {
+        t = proposal ? fs.statSync(path.join(proposal.dir, f.path)).mtimeMs : 0;
+      } catch {
+        // Deleted: the status alone marks it.
+      }
+      return `${f.status}:${f.path}:${t}`;
+    };
+    return new Map(this.proposed.map((f) => [stamp(f), f]));
   }
 
-  private async openDiff(p: string): Promise<void> {
+  /**
+   * The agent finished a turn: when its copy holds work that was not there
+   * before, say so in the chat with Review / Apply, and — the panel out of
+   * sight — as a notification.
+   */
+  private offerNewWork(): void {
+    if (!this.d.proposal()) return;
+    const now = this.stamps();
+    const fresh = [...now].filter(([k]) => !this.seen?.has(k)).map(([, f]) => f);
+    this.seen = new Set(now.keys());
+    if (!fresh.length) return;
+    const reviewable = fresh.some((f) => proposedReviewable(f));
+    this.post({ type: 'newWork', files: fresh.map((f) => f.path), reviewable });
+    if (this.view?.visible) return;
+    const names = fresh.length === 1 ? fresh[0].path : `${fresh.length} files`;
+    const picks = reviewable ? ['Review', 'Source Control'] : ['Source Control'];
+    void vscode.window.showInformationMessage(`NanoClaw proposed changes to ${names}.`, ...picks).then((pick) => {
+      if (pick === 'Review') void this.reviewNext();
+      else if (pick === 'Source Control') void vscode.commands.executeCommand('workbench.view.scm');
+    });
+  }
+
+  /**
+   * Conflict blocks a merged Apply left in files the list does not hold (an
+   * Apply from before it existed, or a list lost with the workspace state):
+   * found among the developer's changed files, so they are listed too.
+   */
+  private async findConflicts(root: string): Promise<void> {
+    if (!this.d.conflicts) return;
+    try {
+      const ws = await resolveWorkspace(root);
+      if (!ws.repo) return;
+      const files = (await changedFiles(root, ws.repo))
+        .map((f) => path.join(ws.repo!.workTree, f.path))
+        .filter(
+          (f) =>
+            !this.d.conflicts!.has(f) &&
+            fs.statSync(f, { throwIfNoEntry: false })?.isFile() &&
+            fs.statSync(f).size < 2_000_000,
+        );
+      if (files.length) this.d.conflicts.add(files);
+    } catch (err) {
+      this.d.log(`conflicts: could not look for conflict blocks: ${String((err as Error).message)}`);
+    }
+  }
+
+  /** A file a merged Apply left conflicts in, opened at the first one. */
+  async openConflict(rel: string): Promise<void> {
+    const root = this.d.proposal()?.repoRoot;
+    if (!root || !this.d.conflicts) return;
+    const file = insideRoot(root, rel);
+    if (this.d.conflicts.has(file)) await this.d.conflicts.open(file);
+  }
+
+  async openDiff(p: string): Promise<void> {
     const proposal = this.d.proposal();
-    if (proposal) {
-      const f = this.proposed.find((x) => x.path === p);
-      if (!f) return;
-      const inClone = vscode.Uri.file(path.join(proposal.dir, p));
-      if (f.status === 'A') {
-        await vscode.window.showTextDocument(inClone, { preview: true });
-        return;
-      }
-      const base = this.writeTemp(p, await proposalBaseContent(proposal, p));
-      if (f.status === 'D') {
-        await vscode.window.showTextDocument(base, { preview: true });
-        return;
-      }
-      await vscode.commands.executeCommand('vscode.diff', base, inClone, `${p} (your commit ↔ proposal)`);
+    const f = this.proposed.find((x) => x.path === p);
+    if (!proposal || !f) return;
+    const inClone = vscode.Uri.file(path.join(proposal.dir, p));
+    if (f.status === 'A') {
+      await vscode.window.showTextDocument(inClone, { preview: true });
       return;
     }
-    const ws = await this.repo();
-    const f = this.fileOf(p);
-    if (!ws || !f) return;
-    const real = vscode.Uri.file(path.join(ws.root, p));
-    if (f.untracked || f.status === 'A') {
-      await vscode.window.showTextDocument(real, { preview: true });
-      return;
-    }
-    const left = this.writeTemp(p, await headContent(ws, p));
+    const base = this.writeTemp(p, await proposalBaseContent(proposal, p));
     if (f.status === 'D') {
-      await vscode.window.showTextDocument(left, { preview: true });
+      await vscode.window.showTextDocument(base, { preview: true });
       return;
     }
-    await vscode.commands.executeCommand('vscode.diff', left, real, `${p} (HEAD ↔ working tree)`);
+    await vscode.commands.executeCommand('vscode.diff', base, inClone, `${p} (your commit ↔ proposal)`);
   }
 
   /** The old side of a diff, as a scratch file named after `p` (empty when there is none). */
@@ -642,31 +669,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     return vscode.Uri.file(tmp);
   }
 
-  private async act(p: string, what: 'keep' | 'revert'): Promise<void> {
-    const f = this.fileOf(p);
-    if (!f) return;
-    try {
-      const ws = await this.repo();
-      if (!ws) return;
-      if (what === 'revert') {
-        const ok = await vscode.window.showWarningMessage(
-          `Revert ${p}? The working-tree change is discarded.`,
-          { modal: true },
-          'Revert',
-        );
-        if (ok !== 'Revert') return;
-        await revert(ws, f);
-        this.touched.delete(p);
-      } else {
-        await keep(ws, f);
-      }
-    } catch (err) {
-      this.post({ type: 'error', text: String((err as Error).message) });
-    }
-    await this.refreshChanges(false);
-  }
-
-  private async proposalAct(what: 'apply' | 'reject', paths?: string[]): Promise<void> {
+  async proposalAct(what: 'apply' | 'reject', paths?: string[]): Promise<void> {
     const proposal = this.d.proposal();
     if (!proposal) return;
     // A path from the webview is input: act only on files the proposal holds.
@@ -679,16 +682,63 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       const ok = await vscode.window.showWarningMessage(`Reject the proposal for ${which}?`, { modal: true }, 'Reject');
       if (ok !== 'Reject') return;
     }
+    // A change that could run something on this machine (editor config, a
+    // hook, attributes, a link, an exec bit) is never part of "apply all";
+    // on its own it is applied after a yes that names why.
+    let held: ProposedFile[] = [];
+    if (what === 'apply') {
+      if (paths) {
+        for (const f of this.proposed.filter((x) => paths!.includes(x.path) && x.risk)) {
+          const ok = await vscode.window.showWarningMessage(`${f.path}: ${f.risk}. Apply?`, { modal: true }, 'Apply');
+          if (ok !== 'Apply') return;
+        }
+      } else {
+        held = this.proposed.filter((f) => f.risk);
+        paths = this.proposed.filter((f) => !f.risk).map((f) => f.path);
+        if (!paths.length) {
+          this.post({ type: 'error', text: 'Apply these one by one.' });
+          return;
+        }
+      }
+    }
+    // A file open for inline review holds the proposed lines in the editor;
+    // take them back out first, or they would stay behind after the panel
+    // decided the file (and an apply would land them twice).
+    for (const rel of paths ?? this.proposed.map((f) => f.path)) {
+      const uri = vscode.Uri.file(path.join(proposal.repoRoot, rel));
+      if (this.d.review.isReviewing(uri)) await this.d.review.withdraw(uri);
+    }
     try {
       if (what === 'apply') {
-        const applied = await applyProposal(proposal, paths);
+        const { applied, conflicted } = await applyProposal(proposal, paths);
         // Applied files leave the proposal: the clone is reset for them so the
-        // next refresh shows only what is still pending.
+        // next refresh shows only what is still pending. A merged file's
+        // conflict blocks carry what is left to decide, in the file itself.
         if (applied.length) await rejectProposal(proposal, applied);
-        this.d.log(`proposal: applied ${applied.length} file(s) to ${proposal.repoRoot}: ${applied.join(', ')}`);
-        void vscode.window.showInformationMessage(`Applied ${applied.length}.`);
+        for (const file of applied)
+          recordActivity('proposal.apply', { file, repo: proposal.repoRoot, conflict: conflicted.includes(file) });
+        this.d.log(
+          `proposal: applied ${applied.length} file(s) to ${proposal.repoRoot}: ${applied.join(', ')}${conflicted.length ? ` (conflicts: ${conflicted.join(', ')})` : ''}`,
+        );
+        this.d.conflicts?.add(conflicted.map((rel) => path.join(proposal.repoRoot, rel)));
+        const skipped = held.length ? ` Skipped ${held.length}: apply one by one.` : '';
+        if (conflicted.length) {
+          await this.openConflict(conflicted[0]);
+          void vscode.window
+            .showWarningMessage(
+              `Applied ${applied.length}; conflicts to resolve in ${conflicted.join(', ')}, where you and the agent changed the same lines.${skipped}`,
+              'Next conflict',
+            )
+            .then((pick) => pick && vscode.commands.executeCommand('nanoclaw.review.next'));
+        } else {
+          void vscode.window
+            .showInformationMessage(`Applied ${applied.length}.${skipped}`, 'Source Control')
+            .then((pick) => pick && vscode.commands.executeCommand('workbench.view.scm'));
+        }
       } else {
         await rejectProposal(proposal, paths);
+        for (const file of paths ?? this.proposed.map((f) => f.path))
+          recordActivity('proposal.reject', { file, repo: proposal.repoRoot });
       }
     } catch (err) {
       const msg = String((err as Error).message);
@@ -700,29 +750,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
             : msg.slice(0, 300),
       });
     }
-    await this.refreshChanges(false);
-  }
-
-  private async revertAgentChanges(): Promise<void> {
-    const ws = await this.repo();
-    if (!ws) return;
-    const files = this.changes.filter((f) => this.touched.has(f.path));
-    if (files.length === 0) return;
-    const ok = await vscode.window.showWarningMessage(
-      `Revert ${files.length} file(s) the agent changed?\n${files.map((f) => f.path).join('\n')}`,
-      { modal: true },
-      'Revert all',
-    );
-    if (ok !== 'Revert all') return;
-    for (const f of files) {
-      try {
-        await revert(ws, f);
-        this.touched.delete(f.path);
-      } catch (err) {
-        this.post({ type: 'error', text: `${f.path}: ${String((err as Error).message)}` });
-      }
-    }
-    await this.refreshChanges(false);
+    await this.refreshChanges();
   }
 
   // ---- rendering -------------------------------------------------------------
@@ -787,6 +815,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   .file .st { width: 16px; text-align:center; font-family: var(--vscode-editor-font-family); opacity:.8; }
   .file .path { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
   .file .badge { font-size:10px; padding:0 5px; border-radius:8px; background: var(--vscode-badge-background); color: var(--vscode-badge-foreground); }
+  .file .badge.risk { background: var(--vscode-inputValidation-warningBackground); color: var(--vscode-foreground); }
   .file button { padding: 1px 6px; font-size: 11px; }
   .changesNote { opacity:.6; font-size:11px; padding: 2px 4px 6px; }
   #composer { border-top: 1px solid var(--vscode-sideBarSectionHeader-border, transparent); padding: 6px 8px; display: flex; flex-direction: column; gap: 6px; }
@@ -826,8 +855,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 <div id="status"><span id="statusText">Connecting…</span><button class="secondary" id="reopen" title="Reload the room">↻</button></div>
 <div id="log"><div id="empty">No messages.</div></div>
 <section id="changes">
-  <header id="changesHeader"><span><span id="changesTitle">Changes</span> <span class="count" id="changesCount"></span></span><span><button id="reviewAll" title="Review the agent's changes in the editor, hunk by hunk" style="display:none">Review</button> <button class="secondary" id="applyAll" title="Apply every proposed file to your working tree" style="display:none">Apply all</button> <button class="danger" id="rejectAll" title="Discard the whole proposal" style="display:none">Reject all</button> <button class="secondary" id="revertAgent" title="Revert every file the agent changed" style="display:none">Revert agent changes</button> <button class="secondary" id="refreshChanges" title="Re-read git status">↻</button></span></header>
-  <div id="changesBody"><div class="changesNote" id="changesNote">Clean.</div></div>
+  <header id="changesHeader"><span><span id="changesTitle">Proposal</span> <span class="count" id="changesCount"></span></span><span><button id="reviewAll" title="Review the agent's changes in the editor, hunk by hunk" style="display:none">Review</button> <button class="secondary" id="applyAll" title="Apply every proposed file to your working tree" style="display:none">Apply all</button> <button class="danger" id="rejectAll" title="Discard the whole proposal" style="display:none">Reject all</button> <button class="secondary" id="refreshChanges" title="Re-read the proposal">↻</button></span></header>
+  <div id="changesBody"><div class="changesNote" id="changesNote">No proposal.</div></div>
 </section>
 <div id="working" role="status" aria-live="polite"><span class="dot"></span><span id="workingText">Working…</span></div>
 <div id="error"></div>
@@ -841,7 +870,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   const vscode = acquireVsCodeApi();
   const log = document.getElementById('log'), input = document.getElementById('input'), err = document.getElementById('error');
   const statusText = document.getElementById('statusText'), empty = document.getElementById('empty');
-  const changesBody = document.getElementById('changesBody'), changesNote = document.getElementById('changesNote'), changesCount = document.getElementById('changesCount'), revertAgent = document.getElementById('revertAgent');
+  const changesBody = document.getElementById('changesBody'), changesNote = document.getElementById('changesNote'), changesCount = document.getElementById('changesCount');
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const atBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   const scroll = () => { log.scrollTop = log.scrollHeight; };
@@ -871,7 +900,6 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   document.getElementById('attach').onclick = () => vscode.postMessage({ type: 'attachSelection' });
   document.getElementById('reopen').onclick = () => vscode.postMessage({ type: 'reopen' });
   document.getElementById('refreshChanges').onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: 'changes.refresh' }); };
-  revertAgent.onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: 'changes.revertAgent' }); };
   const applyAll = document.getElementById('applyAll'), rejectAll = document.getElementById('rejectAll'), reviewAll = document.getElementById('reviewAll');
   reviewAll.onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: 'review.all' }); };
   applyAll.onclick = (e) => { e.stopPropagation(); vscode.postMessage({ type: 'proposal.apply' }); };
@@ -880,27 +908,34 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
   function renderChanges(m) {
     const files = m.files || [];
-    const propose = m.mode === 'propose';
-    const agentCount = files.filter((f) => f.agent).length;
-    document.getElementById('changesTitle').textContent = propose ? 'Proposal' : 'Changes';
-    changesCount.textContent = files.length ? '(' + files.length + (!propose && agentCount ? ', ' + agentCount + ' agent' : '') + ')' : '';
-    revertAgent.style.display = !propose && agentCount ? '' : 'none';
-    applyAll.style.display = propose && files.length ? '' : 'none';
-    rejectAll.style.display = propose && files.length ? '' : 'none';
+    const conflicts = m.conflicts || [];
+    applyAll.style.display = files.length ? '' : 'none';
+    rejectAll.style.display = files.length ? '' : 'none';
     reviewAll.style.display = files.some((f) => f.reviewable) ? '' : 'none';
-    if (!files.length) { changesBody.innerHTML = '<div class="changesNote">' + esc(m.note || (propose ? 'No proposal.' : 'Clean.')) + '</div>'; return; }
-    const acts = propose
-      ? [['changes.diff', 'secondary', 'Diff', 'Diff: your commit vs the proposal'], ['proposal.apply', 'secondary', 'Apply', 'Apply the whole file to your working tree'], ['proposal.reject', 'danger', 'Reject', 'Discard this proposed change']]
-      : [['changes.diff', 'secondary', 'Diff', 'Diff against HEAD'], ['changes.keep', 'secondary', 'Keep', 'Stage this file (accept)'], ['changes.revert', 'danger', 'Revert', 'Discard this change']];
-    const sorted = [...files].sort((a, b) => (b.agent - a.agent) || a.path.localeCompare(b.path));
-    changesBody.innerHTML = (m.note ? '<div class="changesNote">' + esc(m.note) + '</div>' : '') + sorted.map((f) =>
-      '<div class="file"><span class="st" title="' + (propose ? 'proposed change' : 'git status') + '">' + esc(f.status) + '</span>' +
+    const conflictRows = conflicts.map((c) =>
+      '<div class="file"><span class="st" title="conflicts to resolve">⚠</span>' +
+      '<span class="path conflict" title="Open at the next conflict" data-path="' + esc(c.path) + '">' + esc(c.path) + '</span>' +
+      '<span class="badge risk">' + c.blocks + ' conflict' + (c.blocks === 1 ? '' : 's') + '</span>' +
+      '<button data-act="conflict.open" data-path="' + esc(c.path) + '" title="Go to the next conflict">Next</button></div>').join('');
+    changesCount.textContent = files.length + conflicts.length ? '(' + (files.length + conflicts.length) + ')' : '';
+    if (!files.length) {
+      changesBody.innerHTML = conflictRows || '<div class="changesNote">' + esc(m.note || 'No proposal.') + '</div>';
+      bindChanges();
+      return;
+    }
+    const acts = [['changes.diff', 'secondary', 'Diff', 'Diff: your commit vs the proposal'], ['proposal.apply', 'secondary', 'Apply', 'Apply the whole file to your working tree'], ['proposal.reject', 'danger', 'Reject', 'Discard this proposed change']];
+    const sorted = [...files].sort((a, b) => a.path.localeCompare(b.path));
+    changesBody.innerHTML = conflictRows + (m.note ? '<div class="changesNote">' + esc(m.note) + '</div>' : '') + sorted.map((f) =>
+      '<div class="file"><span class="st" title="proposed change">' + esc(f.status) + '</span>' +
       '<span class="path" title="Open diff" data-path="' + esc(f.path) + '">' + esc(f.path) + '</span>' +
-      (!propose && f.agent ? '<span class="badge">agent</span>' : '') +
+      (f.risk ? '<span class="badge risk" title="Not in Apply all">' + esc(f.risk) + '</span>' : '') +
       (f.reviewable ? '<button data-act="review" data-path="' + esc(f.path) + '" title="Accept or reject each change in the editor">Review</button>' : '') +
       acts.map(([act, cls, label, title]) => '<button class="' + cls + '" data-act="' + act + '" data-path="' + esc(f.path) + '" title="' + title + '">' + label + '</button>').join('') + '</div>').join('');
+    bindChanges();
+  }
+  function bindChanges() {
     changesBody.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => vscode.postMessage({ type: b.dataset.act, path: b.dataset.path }); });
-    changesBody.querySelectorAll('.path').forEach((p) => { p.onclick = () => vscode.postMessage({ type: 'changes.diff', path: p.dataset.path }); });
+    changesBody.querySelectorAll('.path').forEach((p) => { p.onclick = () => vscode.postMessage({ type: p.classList.contains('conflict') ? 'conflict.open' : 'changes.diff', path: p.dataset.path }); });
   }
   window.addEventListener('message', (ev) => {
     const m = ev.data;
@@ -913,13 +948,25 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     else if (m.type === 'error') { err.textContent = m.text; }
     else if (m.type === 'insert') { input.value = (input.value ? input.value.replace(/\\s*$/, '') + '\\n' : '') + m.text; input.focus(); input.setSelectionRange(0, 0); }
     else if (m.type === 'changes') { renderChanges(m); }
+    else if (m.type === 'newWork') {
+      empty.remove(); const keep = atBottom();
+      const card = document.createElement('div'); card.className = 'msg system newwork';
+      card.innerHTML = '<div class="body"><p>Proposed: ' + m.files.map(esc).join(', ') + '</p></div>';
+      const row = document.createElement('div'); row.className = 'row';
+      for (const [type, cls, label] of [m.reviewable ? ['review.all', '', 'Review'] : null, ['proposal.apply', 'secondary', 'Apply all']].filter(Boolean)) {
+        const b = document.createElement('button'); if (cls) b.className = cls; b.textContent = label;
+        b.onclick = () => vscode.postMessage({ type }); row.appendChild(b);
+      }
+      card.appendChild(row); log.appendChild(card); if (keep) scroll();
+    }
   });
   vscode.postMessage({ type: 'ready' });
 </script></body></html>`;
   }
 }
 
-const proposedReviewable = (f: ProposedFile): boolean => f.status === 'M';
+// A marked change (a link above all: its "content" is whatever it points at) is applied whole, after a yes.
+export const proposedReviewable = (f: ProposedFile): boolean => f.status === 'M' && !f.risk;
 
 /** `root/rel`, refused when `rel` climbs out of `root` — the list is ours today, but a path is still input. */
 function insideRoot(root: string, rel: string): string {

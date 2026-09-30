@@ -1,20 +1,9 @@
 <script setup lang="ts">
 /**
- * The per-agent-group permission matrix — thirteenth island.
- *
- * Mounted into <div id="perms-matrix">, exclusively owned by this module.
- *
- * Two cells per group, admin and member, each a tap-to-toggle button. The
- * `busy` class the click handler adds is NOT modelled here: togglePerm() adds
- * it to the clicked element and removes it when the request settles, and it
- * survives because the row is not re-rendered in between — refreshPermissions()
- * only runs after the class is already off again. Modelling it as state would
- * mean threading a per-cell pending flag for a class nothing reads.
- *
- * `title` is set only when there IS an audit record, matching the imperative
- * version's `if (adminRole) adminBtn.title = …`. An unconditional :title would
- * emit title="" on every ungranted cell, which is the same class of difference
- * as the :class="{active:false}" one from the first island.
+ * The per-agent-group permission matrix, mounted into <div id="perms-matrix">. The
+ * `busy` class togglePerm() adds to a clicked cell is not modelled: nothing re-renders
+ * the row until it is removed. `title` is set only when there IS an audit record, so an
+ * ungranted cell has no title="".
  */
 import { computed } from 'vue';
 import { permsAgents, permsDetailUser } from './perms-list-state.js';

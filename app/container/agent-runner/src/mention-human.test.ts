@@ -1,8 +1,4 @@
-/**
- * The runner half of "an agent can reach a human". The mention machinery
- * already worked end to end; the agent just never learned the handles, so it
- * escalated a real bug to another agent and nobody was told for ~15 hours.
- */
+/** The runner half of "an agent can reach a human": the prompt names the handles. */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { closeSessionDb, getInboundDb, initTestSessionDb } from './mailbox/sqlite/connection.js';
@@ -50,8 +46,6 @@ describe('reaching a human', () => {
   });
 
   it('tells the agent NOT to route human matters to another agent', () => {
-    // The actual failure: the agent had a bug to report, addressed it to a
-    // coding agent, and that agent could only bounce it back.
     seedDestination();
     seedHumans([['mark', 'Mark']]);
 

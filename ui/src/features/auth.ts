@@ -1,9 +1,9 @@
 // ── Auth & onboarding ────────────────────────────────────────────────────────
 // The login screen, the bearer-token path, and the first-run onboarding gate
 // that decides whether the wizard opens.
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { $ } from '../core/dom.js';
 import { permsCreateChannelTouched } from './perms-list-state.js';
-import { showToast, toastError } from '../core/toast.js';
+import { showToast } from '../core/toast.js';
 import { apiJson, authFetch, getAuthToken, setAuthToken } from '../core/api.js';
 import { state } from '../core/state.js';
 import { connect } from '../core/ws.js';
@@ -14,28 +14,29 @@ import { initVsCodeStart } from './vscode-start.js';
 import { initSttFeature, loadTtsConfig } from './voice.js';
 import { maybeAutoOpenWizard } from './wizard.js';
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideAuthDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
+/** Supplied by provideAuthDeps in composition-root.ts. `any` marks a signature not yet typed, not an opt-out of checking. */
 export interface AuthDeps {
   permsRefreshCreateUI: () => any;
 }
 
 const deps = {} as AuthDeps;
 
-/** Wire the legacy helpers this module calls. Call once at startup. */
+/** Wire the composition-root helpers this module calls. Call once at startup. */
 export function provideAuthDeps(provided: Partial<AuthDeps>): void {
   Object.assign(deps, provided);
 }
 
+/**
+ * Three outcomes, not two: 'ok' | 'unauthenticated' | 'unreachable'.
+ *
+ * The SW serves the shell cache-first but `/api/` bypasses it, so on a cold
+ * start (radio waking, Tailscale not up, host mid-restart) this probe can fail
+ * for a user who is authenticated. Only a real 401/403 sends anyone to the login
+ * screen; anything else retries briefly, then defers to the WS reconnect + banner.
+ */
 export async function checkAuth() {
-  // Always ask, localhost included. The server signs loopback in only when no
-  // other sign-in method is configured; assuming it here opened the app on an
-  // install that refuses localhost, and every request then failed behind a
-  // "server unreachable" banner.
+  // Always ask, localhost included: the server signs loopback in only when no
+  // other sign-in method is configured.
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const headers = getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {};
@@ -53,6 +54,11 @@ export async function checkAuth() {
   return 'unreachable';
 }
 
+/**
+ * We entered the app without a verdict (see checkAuth). Once the network is
+ * genuinely back, settle it: a real 401/403 means show the login screen after
+ * all. Runs at most once, and only while still on the optimistic path.
+ */
 export async function reprobeAuthWhenOnline() {
   if (!navigator.onLine) {
     await new Promise((r) => window.addEventListener('online', r, { once: true }));
@@ -64,6 +70,10 @@ export async function reprobeAuthWhenOnline() {
   void applyLoginHint();
 }
 
+// Shared post-auth entry: reveal the app, open the socket, and run first-run
+// hooks. Called from BOTH initApp (reload with a stored token) and the login
+// form (fresh token entry) — the wizard must auto-open in both, not only on a
+// later reload, or a just-logged-in owner never sees it.
 export function enterAuthedApp() {
   $('#login-screen')!.hidden = true;
   $('#app')!.hidden = false;
@@ -72,10 +82,8 @@ export function enterAuthedApp() {
   // Tailscale later, even if the network drops (authed users skip the login
   // screen where applyLoginHint would otherwise cache it).
   void cacheAuthHint();
-  // Auto-subscribe to push if the user has already granted permission.
-  // Browsers require a user gesture for `Notification.requestPermission()`,
-  // so a fresh install will still need one flip of the Settings toggle to
-  // trigger the prompt — but after that, every reload re-subscribes silently.
+  // Re-subscribe to push silently once permission is granted; the first grant
+  // needs a user gesture (the Settings toggle).
   if (state.settings?.notifications && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
     enableWebPush();
   }
@@ -94,6 +102,10 @@ export function enterAuthedApp() {
   void loadTtsConfig();
 }
 
+// ── Suggest retiring the bearer token once a stronger identity is live ───────
+// Fires when THIS session authenticated via Tailscale/proxy (not bearer), the
+// shared bearer token is still active, and an alternative method works.
+// Dismissible; the same control lives in Admin → Sign-in.
 let bearerRetireWired = false;
 
 async function maybeSuggestBearerRetire() {
@@ -102,8 +114,7 @@ async function maybeSuggestBearerRetire() {
   if (localStorage.getItem('nanoclaw-bearer-retire-dismissed') === '1') return;
   let info: any = null;
   try {
-    const r = await authFetch('/api/webchat/auth'); // owner/global-admin only (403 otherwise)
-    if (r.ok) info = await r.json();
+    info = await apiJson('/api/webchat/auth'); // owner/global-admin only (403 otherwise)
   } catch {
     info = null;
   }
@@ -147,6 +158,8 @@ async function retireBearerFromBanner() {
   }
 }
 
+// Best-effort: cache the server's auth mode even for already-authenticated
+// users who never see the login screen (so applyLoginHint never runs for them).
 async function cacheAuthHint() {
   try {
     const r = await fetch('/api/auth/info');
@@ -154,6 +167,11 @@ async function cacheAuthHint() {
   } catch {}
 }
 
+/**
+ * Fetch `/api/auth/info` and rewrite the login subtitle so the user knows
+ * what's expected (Tailscale on this device vs token entry vs server
+ * misconfig) instead of facing a generic token prompt.
+ */
 export async function applyLoginHint() {
   let info;
   try {
@@ -250,14 +268,9 @@ export function applyCreateAuthDefault() {
   deps.permsRefreshCreateUI();
 }
 
-
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // The sign-in surface: the login form submit, its error line and the token field.
-//
-// A function rather than module-scope code: legacy.js runs its blocks in source
-// order around initApp(), so relocating them to another module's top level would
-// silently re-order them. legacy calls wireAuthPanel() at the exact line the
-// first block occupied, so execution order is unchanged.
+// Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
 /** The login form's only error surface — guarded once instead of at four sites. */
 function showLoginError(message: string): void {
@@ -287,8 +300,5 @@ export function wireAuthPanel(): void {
       showLoginError('Connection failed');
     }
   });
-
-
-
 
 }

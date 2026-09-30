@@ -1,21 +1,19 @@
 /**
  * Auth tests — bearer token gating, loopback auto-pass, IPv4-mapped IPv6
- * handling, trusted-proxy IP gating, and the Batch-1 minimum-token-length
- * startup gate.
+ * handling, trusted-proxy IP gating, and the minimum-token-length startup gate.
  *
  * Auth.ts reads env vars at module load (`WEBCHAT_TOKEN`, `WEBCHAT_TAILSCALE`,
  * `WEBCHAT_TRUSTED_PROXY_IPS`). Tests use `vi.resetModules()` + dynamic
  * imports so each scenario boots auth.ts with its own env snapshot.
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+
+vi.mock('./tailscale-serve.js', async (orig) => ({
+  ...(await orig<typeof import('./tailscale-serve.js')>()),
+  serveFrontedHosts: async () => new Set(['node-1.example.ts.net']),
+}));
 import { createHmac, generateKeyPairSync, sign as cryptoSign } from 'crypto';
 import type { IncomingMessage } from 'http';
-
-// Each test resets modules to load auth.ts with a fresh env snapshot. That
-// also resets the `db/connection.js` module instance, so the DB has to be
-// re-initialised inside loadAuthWithEnv against the FRESH module instance —
-// importing initTestDb at the top of this file gives us the wrong (already-
-// closed) connection module after reset.
 
 // Minimal IncomingMessage fake — the auth path only reads `socket.remoteAddress`
 // and `headers`, so we don't need a real HTTP server.
@@ -44,6 +42,9 @@ afterEach(async () => {
   vi.resetModules();
 });
 
+// vi.resetModules() also resets the `db/connection.js` instance, so the DB is
+// re-initialised here against the FRESH module (a top-level initTestDb import
+// would hold the already-closed one).
 async function loadAuthWithEnv(env: Record<string, string | undefined>) {
   for (const [k, v] of Object.entries(env)) {
     if (v === undefined) vi.stubEnv(k, '');
@@ -218,29 +219,63 @@ describe('authenticateRequest — loopback bypass', () => {
 });
 
 describe('tailscaleServeIdentity — serve HTTPS header, loopback-gated', () => {
-  it('returns the login when the header arrives on loopback', async () => {
+  const SERVE = new Set(['node-1.example.ts.net']);
+  const serveReq = (remoteAddress: string, host: string, login?: string) =>
+    fakeReq({ remoteAddress, headers: { host, ...(login ? { 'tailscale-user-login': login } : {}) } });
+
+  it('returns the login when the header arrives on loopback for a name Serve fronts', async () => {
     const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
-    const req = fakeReq({ remoteAddress: '127.0.0.1', headers: { 'tailscale-user-login': 'alice@github' } });
-    expect(auth.tailscaleServeIdentity(req, '127.0.0.1')).toBe('alice@github');
+    expect(
+      auth.tailscaleServeIdentity(serveReq('127.0.0.1', 'node-1.example.ts.net', 'alice@github'), '127.0.0.1', SERVE),
+    ).toBe('alice@github');
+    expect(
+      auth.tailscaleServeIdentity(
+        serveReq('127.0.0.1', 'NODE-1.example.ts.net:443', 'alice@github'),
+        '127.0.0.1',
+        SERVE,
+      ),
+    ).toBe('alice@github');
   });
 
   it('rejects the header from a non-loopback source (spoof guard)', async () => {
     const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
     // A LAN attacker hitting :PORT directly and forging the header must NOT be trusted.
-    const req = fakeReq({ remoteAddress: '10.0.0.10', headers: { 'tailscale-user-login': 'attacker@evil' } });
-    expect(auth.tailscaleServeIdentity(req, '10.0.0.10')).toBeNull();
+    expect(
+      auth.tailscaleServeIdentity(serveReq('10.0.0.10', 'node-1.example.ts.net', 'attacker@evil'), '10.0.0.10', SERVE),
+    ).toBeNull();
+  });
+
+  it('rejects the header on loopback under any other name (a tunnel or local proxy)', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    for (const host of ['chat.example.com', 'localhost:3100', '127.0.0.1:3100', '']) {
+      expect(
+        auth.tailscaleServeIdentity(serveReq('127.0.0.1', host, 'owner@github'), '127.0.0.1', SERVE),
+        host,
+      ).toBeNull();
+    }
+    // …and under any name at all when Serve fronts nothing.
+    expect(
+      auth.tailscaleServeIdentity(
+        serveReq('127.0.0.1', 'node-1.example.ts.net', 'owner@github'),
+        '127.0.0.1',
+        new Set(),
+      ),
+    ).toBeNull();
   });
 
   it('returns null on loopback when the header is absent', async () => {
     const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
-    expect(auth.tailscaleServeIdentity(fakeReq({ remoteAddress: '127.0.0.1' }), '127.0.0.1')).toBeNull();
+    expect(auth.tailscaleServeIdentity(serveReq('127.0.0.1', 'node-1.example.ts.net'), '127.0.0.1', SERVE)).toBeNull();
   });
 });
 
 describe('authenticateRequest — tailscale serve header path', () => {
   it('authenticates a loopback serve request as the same webchat:tailscale id whois mints', async () => {
     const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
-    const req = fakeReq({ remoteAddress: '127.0.0.1', headers: { 'tailscale-user-login': 'Alice@Github' } });
+    const req = fakeReq({
+      remoteAddress: '127.0.0.1',
+      headers: { host: 'node-1.example.ts.net', 'tailscale-user-login': 'Alice@Github' },
+    });
     const result = await auth.authenticateRequest(req);
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -248,6 +283,16 @@ describe('authenticateRequest — tailscale serve header path', () => {
       // Same normalization as the whois path → identity continuity across http→https.
       expect(result.userId).toBe('webchat:tailscale:alice@github');
     }
+  });
+
+  it('does NOT trust the serve header on loopback under a name Serve is not fronting', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    const req = fakeReq({
+      remoteAddress: '127.0.0.1',
+      headers: { host: 'chat.example.com', 'tailscale-user-login': 'owner@github' },
+    });
+    const result = await auth.authenticateRequest(req);
+    if (result.ok) expect(result.userId).not.toBe('webchat:tailscale:owner@github');
   });
 
   it('does NOT trust the serve header from a non-loopback IP (falls through to reject)', async () => {

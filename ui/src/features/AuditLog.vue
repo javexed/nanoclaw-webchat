@@ -1,15 +1,8 @@
 <script setup lang="ts">
 /**
- * The audit log viewer — read-only, in Admin → Maintenance.
- *
- * The log has existed since the audit work landed, but the only way to read it
- * was tailing logs/audit.jsonl on the host. A security record nobody can read
- * during an incident is a record that only pays off if someone happens to have
- * shell access at the time.
- *
- * Deliberately read-only: no delete, no edit, no clear. An audit trail an
- * operator can rewrite from the UI is not an audit trail, so there is no
- * endpoint to call even if a control existed.
+ * The audit log viewer, in Admin → Maintenance, so the record is readable during an
+ * incident without shell access. Deliberately read-only: an audit trail an operator can
+ * rewrite from the UI is not an audit trail, and there is no endpoint to call anyway.
  */
 import { computed } from 'vue';
 import {

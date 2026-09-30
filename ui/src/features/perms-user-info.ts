@@ -1,16 +1,8 @@
 // ── User info helpers ───────────────────────────────────────────────────────
 // Pure derivations from one /api/users record: the display name, the role
-// predicates, and the summary line. No DOM, no legacy state, no fetches.
-//
-// A separate module because the PermsUserList island needs them and members.ts
-// mounts that island — a component importing members.ts would close a cycle.
-// They are the *only* thing in members.ts the component needed, and they were
-// already pure, so lifting them is a move rather than a rewrite. members.ts
-// re-exports the two that other modules import so no call site changes.
-//
-// findRole and auditTooltip are the same shape of problem and live next door in
-// perms-audit.ts — separate because these describe a user and those describe a
-// grant, and the two detail islands need only the latter.
+// predicates, and the summary line. No DOM, no module state, no fetches.
+// Separate from members.ts, which mounts the PermsUserList island that needs
+// them — importing members.ts from the component would close a cycle.
 
 /**
  * Prefer the channel-supplied display name, else extract a readable token from

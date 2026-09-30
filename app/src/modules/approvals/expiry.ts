@@ -6,12 +6,12 @@
  * that finally gets tapped three days later executes in a context nobody
  * remembers. Expiry goes through the SAME finalizeReject path a human deny
  * uses, so the agent gets told, the cards flip everywhere, and the container
- * wakes to see the outcome. (Chat approvals are asynchronous by nature, so
- * the window is hours, not an interactive CLI's 60 seconds.)
+ * wakes to see the outcome.
  */
 import { getExpiredPendingApprovals, getSession } from '../../db/sessions.js';
 import { registerModuleSweep } from '../../module-sweep.js';
 import { finalizeReject } from './finalize.js';
+import { resolveSessionlessApproval } from './sessionless.js';
 import { log } from '../../log.js';
 
 const DEFAULT_TTL_HOURS = 24;
@@ -23,23 +23,26 @@ export function approvalTtlMs(): number {
   return hours * 60 * 60 * 1000;
 }
 
-/** Deny every pending approval older than the TTL. Returns how many expired. */
+/** Deny every pending approval older than the TTL. Returns how many were denied. */
 export async function sweepExpiredApprovals(now = Date.now()): Promise<number> {
   const ttl = approvalTtlMs();
   if (ttl === 0) return 0;
-  const expired = await getExpiredPendingApprovals(now - ttl);
-  for (const approval of expired) {
+  const reason = `no response within ${Math.round(ttl / 3_600_000)}h — expired`;
+  let denied = 0;
+  for (const approval of await getExpiredPendingApprovals(now - ttl)) {
     try {
-      // Await BEFORE the guard: un-awaited, `session` was a truthy promise, so
-      // the missing-session skip never fired and expiry rejected against undefined.
-      const session = approval.session_id ? await getSession(approval.session_id) : undefined;
-      if (!session) continue;
-      await finalizeReject(
-        approval,
-        session,
-        'system:expiry',
-        `no response within ${Math.round(ttl / 3_600_000)}h — expired`,
-      );
+      let done: boolean;
+      if (!approval.session_id) {
+        // Session-less (e.g. runner pairing): its owning handler takes the
+        // reject, exactly as for an admin's click, and the row is removed.
+        done = await resolveSessionlessApproval(approval, 'reject', 'system:expiry');
+      } else {
+        const session = await getSession(approval.session_id);
+        if (!session) continue;
+        done = await finalizeReject(approval, session, 'system:expiry', reason);
+      }
+      if (!done) continue;
+      denied++;
       log.info('Approval expired (auto-denied)', {
         approvalId: approval.approval_id,
         action: approval.action,
@@ -49,12 +52,11 @@ export async function sweepExpiredApprovals(now = Date.now()): Promise<number> {
       log.warn('Approval expiry sweep: finalize failed', { approvalId: approval.approval_id, err: String(err) });
     }
   }
-  return expired.length;
+  return denied;
 }
 
-// Self-register on the host sweep (seam H7): unanswered approvals deny
-// themselves after NANOCLAW_APPROVAL_TTL_HOURS (default 24h) — security model
-// §approvals. Loaded via the approvals barrel.
+// Unanswered approvals deny themselves after NANOCLAW_APPROVAL_TTL_HOURS
+// (default 24h) — security model §approvals. Loaded via the approvals barrel.
 registerModuleSweep('approval-expiry', async () => {
   await sweepExpiredApprovals();
 });

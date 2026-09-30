@@ -2,17 +2,7 @@
 // Where skills live on disk and how they are named, listed and written: the
 // name sanitiser, the per-agent scoped directory, the two listings, the room a
 // draft came from, and the write path for a user skill.
-//
-// Shared rather than moved. The skill routes are the main caller, but the agent
-// routes list an agent's scoped skills and its available ones, and the draft and
-// learning paths reach the same storage — none of them in the skill cluster.
-// listAvailableSkills is used by both clusters and nothing else, which is
-// exactly the case a third module exists for.
 
-// Available skills = folders containing a SKILL.md across BOTH mounts: the
-// shipped container/skills and the runtime data/user-skills (imported/uploaded).
-// The dir name is the id used in the config + symlinks; the front-matter
-// `description` is shown in the picker. Shipped wins on a name collision.
 import { DATA_DIR } from '../../../config.js';
 import { getMessagingGroup } from '../../../db/messaging-groups.js';
 import { getSession } from '../../../db/sessions.js';
@@ -93,6 +83,10 @@ export type AvailableSkill = {
   origin?: SkillOrigin | null;
 };
 
+// Available skills = folders containing a SKILL.md across BOTH mounts: the
+// shipped container/skills and the runtime data/user-skills (imported/uploaded).
+// The dir name is the id used in the config + symlinks; the front-matter
+// `description` is shown in the picker. Shipped wins on a name collision.
 export function listAvailableSkills(): AvailableSkill[] {
   const roots: Array<{ dir: string; source: 'shipped' | 'user' }> = [
     { dir: path.join(process.cwd(), 'container', 'skills'), source: 'shipped' },

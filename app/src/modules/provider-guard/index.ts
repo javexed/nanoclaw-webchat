@@ -7,11 +7,7 @@
  * registration; without it the file sits on disk, compiles, passes every test,
  * and the provider does not exist at runtime. A group pinned to it then dies at
  * SPAWN with `Unknown provider: pi. Registered: claude, grok` — hours later,
- * in a container whose logs are gone (`--rm`), attributed to whatever the user
- * was doing at the time.
- *
- * That is not hypothetical: pi sat half-installed for five days that way. One
- * of its four install steps had run; nothing failed, and nothing said so.
+ * in a container whose logs are gone (`--rm`).
  *
  * Why a boot check rather than a test. The provider files are skill-installed
  * and untracked, so they are ABSENT from the composed tree — a test asserting
@@ -91,8 +87,3 @@ registerModuleSweep('provider-registration-guard', async () => {
   checked = true;
   await checkProviderRegistrations();
 });
-
-/** Test seam: allow the one-shot gate to run again. */
-export function __resetProviderGuardForTest(): void {
-  checked = false;
-}

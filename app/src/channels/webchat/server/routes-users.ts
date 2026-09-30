@@ -2,18 +2,14 @@
 // The user directory and the grants attached to it: listing users with their
 // permissions, deleting a user, granting and revoking a permission, plus the
 // per-user credential endpoints that share the same authorisation check.
-//
-// The rate limiter these share with the credential handlers still in server.ts
-// lives in server/rate-limit.ts — see the note there.
-import type { IncomingMessage, ServerResponse } from 'http';
+import type { ServerResponse } from 'http';
 
-import { json, readJsonBody } from './http.js';
+import { json, readJsonObject } from './http.js';
 import { killContainer } from '../../../container-runner.js';
 import { userCredsProviderForGroup } from '../../../modules/user-credentials/onboard.js';
 import { apiKeyAllowedFor, oauthAllowedFor, providerLabel } from '../../../modules/user-credentials/policy.js';
 import { getAgentGroup, getAllAgentGroups } from '../../../db/agent-groups.js';
 import { getDb } from '../../../db/connection.js';
-import { getContainerConfig } from '../../../db/container-configs.js';
 import { getSessionsByAgentGroup } from '../../../db/sessions.js';
 import { log } from '../../../log.js';
 import {
@@ -51,13 +47,7 @@ import {
 import { realOnecliAdmin } from '../../../modules/user-credentials/onecli-admin.js';
 import { canAccessRoom } from '../access.js';
 import { canonicalizeWebchatUserId } from '../auth.js';
-import {
-  getAgentsForWebchatRoom,
-  getCredentialsConfig,
-  getEffectiveRoomMode,
-  getWebchatRoom,
-  type CredentialsConfig,
-} from '../db.js';
+import { getAgentsForWebchatRoom, getCredentialsConfig, getEffectiveRoomMode, getWebchatRoom } from '../db.js';
 import { MAX_ACTIVE_MINTS, activeMintCount, cancelMint, mintClaudeToken, startClaudeMint } from '../oauth-mint.js';
 import { hasAdminPrivilege, isAnyAdmin, isGlobalAdmin, isOwner } from '../roles.js';
 import { userCredsRateLimited } from './rate-limit.js';
@@ -95,14 +85,8 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
     });
   }
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { roomId?: unknown; apiKey?: unknown; type?: unknown; token?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ roomId?: unknown; apiKey?: unknown; type?: unknown; token?: unknown }>(req, res);
+  if (body === undefined) return;
   const roomId = typeof body.roomId === 'string' ? body.roomId : '';
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
@@ -234,14 +218,8 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
 // terminal. Same gates as the OAuth paste path: room access + OAuth opt-in.
 export async function rUserCredsMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { roomId?: unknown; sessionId?: unknown; code?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ roomId?: unknown; sessionId?: unknown; code?: unknown }>(req, res);
+  if (body === undefined) return;
   const step = m[1];
   if (step === 'cancel') {
     if (typeof body.sessionId === 'string') cancelMint(userId, body.sessionId);
@@ -292,14 +270,8 @@ export async function rUserIdDelete(ctx: RouteCtx, m: RegExpMatchArray): Promise
 
 export async function rPermissionsGrantPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { userId?: unknown; kind?: unknown; agentGroupId?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ userId?: unknown; kind?: unknown; agentGroupId?: unknown }>(req, res);
+  if (body === undefined) return;
   const granted = await checkMemberGrantAuth(userId, body.kind, body.agentGroupId);
   if (granted) return json(res, 403, granted);
   return grantPermissionHandler(res, body, userId);
@@ -307,14 +279,8 @@ export async function rPermissionsGrantPost(ctx: RouteCtx, _m: RegExpMatchArray)
 
 export async function rPermissionsRevokePost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
-  const raw = await readJsonBody(req, res);
-  if (raw === null) return;
-  let body: { userId?: unknown; kind?: unknown; agentGroupId?: unknown };
-  try {
-    body = JSON.parse(raw) as typeof body;
-  } catch {
-    return json(res, 400, { error: 'Invalid JSON' });
-  }
+  const body = await readJsonObject<{ userId?: unknown; kind?: unknown; agentGroupId?: unknown }>(req, res);
+  if (body === undefined) return;
   const revoked = await checkMemberGrantAuth(userId, body.kind, body.agentGroupId);
   if (revoked) return json(res, 403, revoked);
   return revokePermissionHandler(res, body);
@@ -486,11 +452,6 @@ export async function grantPermissionHandler(
   // Upsert the users row so grants on never-seen-before identities work.
   // The kind is derived from the namespace; the display_name is left null
   // and gets populated by the channel adapter on first auth.
-  // Await BEFORE negating: `!promise` is always false, so this guard never
-  // fired after the async migration — the users-row upsert was skipped and a
-  // grant to a never-seen identity died on the user_roles FK. The same
-  // negated-guard class the migration cleared elsewhere; this one hid inside a
-  // sync handler every codemod skipped.
   if (!(await permsGetUser(targetUserId))) {
     await permsUpsertUser({
       id: targetUserId,
@@ -621,9 +582,8 @@ export async function rGrokMemberLoginRoute(ctx: RouteCtx, m: RegExpMatchArray):
             });
           }
         } catch (err) {
-          // Give the credential back: without this the claim above destroyed
-          // it, the outcome stayed 'complete', and the NEXT poll reported
-          // success with nothing stored. Restored, the next poll retries.
+          // Give the credential back (the claim above consumed it) so the next
+          // poll retries instead of reporting success with nothing stored.
           restoreMemberCredential(userId, cred);
           return json(res, 500, {
             ...progress,

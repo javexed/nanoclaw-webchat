@@ -20,7 +20,20 @@ The webchat host **proxies** synthesis (`/api/tts` → backend) so the browser
 only ever talks to the webchat origin. That's what makes it work over
 Tailscale/remote access, not just localhost.
 
-Design + integration map: [docs/webchat/design/add-webchat-tts.md](../../../docs/webchat/design/add-webchat-tts.md).
+## Why it looks like this
+
+- **Kokoro over a cloud TTS.** OpenAI's `gpt-4o-mini-tts` is easier (no
+  container) but usage-billed and cloud-dependent. The host route speaks the
+  OpenAI `/v1/audio/speech` contract, so an operator who prefers it — or any
+  compatible server — just re-points `WEBCHAT_TTS_ENDPOINT`.
+- **The contract.** `GET /api/tts/config` → `{ enabled, voice }`, read once at
+  boot. `POST /api/tts { text, voice? }` → `audio/mpeg`; text over 4000 chars
+  is refused with `413`, `503` when disabled, `502` on a backend error, `504`
+  after 30 s (generous for a cold model load). Playback uses a `blob:` URL,
+  which is why the CSP carries `media-src 'self' blob:`.
+- **Degradation.** Backend down → the PWA falls through to Web Speech for that
+  click; flag off → Web Speech from the start; no Web Speech either → the
+  control is omitted. It is always functional or absent, never a dead button.
 
 ## Prerequisites
 

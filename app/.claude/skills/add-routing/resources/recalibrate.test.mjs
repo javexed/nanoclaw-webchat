@@ -35,10 +35,10 @@ test('percentile on small samples', () => {
   assert.equal(percentile([100, 200, 300, 400], 50), 200);
 });
 
-test('computeMetrics: modes, routes, errors, escalations, latency', () => {
+test('computeMetrics: modes, routes, errors, latency', () => {
   const entries = [
     { ts: NOW, mode: 'live', route: 'code', ms: 900, final_model: 'qwen3.5:4b' },
-    { ts: NOW, mode: 'live', route: 'escalate', ms: 1100, final_model: '__escalate__' },
+    { ts: NOW, mode: 'live', route: 'reasoning', ms: 1100, final_model: 'gemma4:latest' },
     { ts: NOW, mode: 'live', route: '__error__', ms: 5020, error: 'ReadTimeout: ' },
     { ts: NOW, route: 'other', ms: 800 }, // legacy line, no mode → shadow
   ];
@@ -48,7 +48,6 @@ test('computeMetrics: modes, routes, errors, escalations, latency', () => {
   assert.equal(m.byMode.shadow, 1);
   assert.equal(m.errors, 1);
   assert.equal(m.timeouts, 1);
-  assert.equal(m.escalations, 1);
   assert.equal(m.other, 1);
   assert.equal(m.liveTotal, 3);
   assert.equal(m.latency.samples, 3); // the __error__ ms is excluded
@@ -73,16 +72,14 @@ test('recommendTimeout: needs 5+ samples, respects 20% deadband, clamps and roun
   assert.equal(recommendTimeout({ latency: { samples: 20, p95: 3400 } }, 8000).recommended, 5500); // 5100 → 5500
 });
 
-test('renderReport flags high other/error/escalation rates', () => {
+test('renderReport flags high other/error rates', () => {
   const metrics = computeMetrics([
-    { ts: NOW, mode: 'live', route: 'escalate', ms: 1000, final_model: '__escalate__' },
     { ts: NOW, mode: 'live', route: 'other', ms: 900 },
     { ts: NOW, mode: 'live', route: '__error__', ms: 5000, error: 'ReadTimeout' },
   ]);
   const report = renderReport({ metrics, rec: null, days: 7, currentTimeout: 8000, generatedAt: '2026-07-04T00:00:00Z' });
   assert.match(report, /error rate/);
   assert.match(report, /`other` rate/);
-  assert.match(report, /escalation rate/);
 });
 
 test('renderReport with empty window says so', () => {

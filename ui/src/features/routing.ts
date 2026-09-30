@@ -11,42 +11,22 @@ import { allModels } from './model-list-state.js';
 import { routingAvailable, routingClassifierModel, routingCurrentRouter, routingDraft, routingRouterInfo, selectedRouteIdx } from './routing-state.js';
 import RoutingDecisions from './RoutingDecisions.vue';
 import { decisions as decisionRows, decisionsPhase, decisionsRouter } from './routing-decisions-state.js';
-import { $, lucide, lucideEl, esc, cssEscape } from '../core/dom.js';
+import { $, esc } from '../core/dom.js';
+import { mountIsland } from '../core/island.js';
 import { showConfirmModal, showInputModal } from './modals.js';
-import { showToast, toastError } from '../core/toast.js';
-import { authFetch, apiJson } from '../core/api.js';
+import { showToast } from '../core/toast.js';
+import { apiJson, authFetch } from '../core/api.js';
 import { state } from '../core/state.js';
 import { fetchModels } from './models.js';
 import { switchManageTab } from './views.js';
 import RouterRoster from './RouterRoster.vue';
 import { rosterEndpoint, rosterSelectable, rosterSystem, rosterUnreachable } from './router-roster-state.js';
 
-/**
- * What this module needs from legacy. Generated from its own `deps.*` uses and
- * the provideRoutingDeps block that supplies them, then narrowed by hand where
- * the shape is actually known. `any` here is a placeholder for a legacy
- * function that has not been converted yet — not a decision to stop checking.
- */
-export interface RoutingDeps {
-}
-
-const deps = {} as RoutingDeps;
-
-/** Wire the legacy helpers this module calls. Call once at startup. */
-export function provideRoutingDeps(provided: Partial<RoutingDeps>): void {
-  Object.assign(deps, provided);
-}
-
 export async function refreshRouterMetrics() {
   const section = $('#dash-router-section');
   if (!section) return;
   try {
-    const res = await authFetch('/api/router/metrics?days=7');
-    if (!res.ok) {
-      section.hidden = true;
-      return;
-    }
-    const m = await res.json();
+    const m = await apiJson('/api/router/metrics?days=7');
     if (!m.available || m.total === 0) {
       section.hidden = true;
       return;
@@ -70,7 +50,6 @@ export async function refreshRouterMetrics() {
     const health = [];
     health.push(`${m.total} request${m.total === 1 ? '' : 's'}`);
     health.push(`${m.live} via auto`);
-    if (m.escalations > 0) health.push(`${m.escalations} escalated to Claude`);
     if (m.errors > 0) health.push(`${m.errors} classifier error${m.errors === 1 ? '' : 's'}`);
     $('#dash-router')!.innerHTML =
       `<div class="router-summary">${esc(health.join(' · '))}</div>` +
@@ -81,6 +60,10 @@ export async function refreshRouterMetrics() {
   }
 }
 
+// The Routing tab exists only when the LLM stack answers: the routing skill
+// installed (routes.json present) AND the viewer is the owner — anyone else
+// gets no tab, no menu item, no dead surface. Probed lazily, re-checked when
+// the manage view opens so installing the stack shows up without a reload.
 export async function probeRoutingAvailability() {
   try {
     const res = await authFetch('/api/router/routes');
@@ -94,7 +77,7 @@ export async function probeRoutingAvailability() {
     routingAvailable.value = false;
   }
   // Owners see the tab even when routing is NOT installed — the installer
-  // lives there now, and a tab that only appears after the thing it installs
+  // lives there, and a tab that only appears after the thing it installs
   // exists is a door that only unlocks from the inside.
   const reveal = routingAvailable.value || state.isOwnerView;
   document.querySelectorAll('.manage-tab[data-mtab="routing"], .overflow-item[data-action="routing"]').forEach((el: any) => {
@@ -106,12 +89,8 @@ export async function probeRoutingAvailability() {
 export async function loadRoutingTab() {
   try {
     const q = routingCurrentRouter.value ? `?router=${encodeURIComponent(routingCurrentRouter.value)}` : '';
-    const [routesRes, rosterRes] = await Promise.all([
-      authFetch('/api/router/routes' + q),
-      authFetch('/api/router/models'),
-    ]);
-    if (!routesRes.ok) throw new Error((await routesRes.json()).error || routesRes.status);
-    routingDraft.value = await routesRes.json();
+    const [draft, rosterRes] = await Promise.all([apiJson('/api/router/routes' + q), authFetch('/api/router/models')]);
+    routingDraft.value = draft;
     routingCurrentRouter.value = routingDraft.value.router ?? null; // the server tells us which it returned
     routingRouterInfo.value = rosterRes.ok ? await rosterRes.json() : null;
   } catch (err) {
@@ -128,6 +107,9 @@ export async function loadRoutingTab() {
   $('#routing-bench-result-log')!.hidden = true;
 }
 
+// The router (profile) picker: a dropdown of all routers + new/delete. Shown
+// only when the config exposes a routers list (multi-router aware). Switching
+// reloads the tab for the selected router.
 function renderRouterPicker() {
   const sel = $('#router-select')!;
   const names = routingDraft.value?.routers ?? [routingCurrentRouter.value ?? 'auto'];
@@ -147,6 +129,10 @@ function renderRouterPicker() {
   void updateRoutingIntro();
 }
 
+// DESIGN.md §6 (prose budget): the intro is a PREREQUISITE hint, so it only
+// exists while the prerequisite is unmet — no agent routes through this
+// profile yet. Once the router's model is assigned somewhere, the line goes
+// away; the controls explain themselves.
 async function updateRoutingIntro() {
   const intro = $('#routing-intro');
   if (intro) intro.hidden = true;
@@ -170,13 +156,11 @@ export function switchRoutingSubtab(which: any) {
 let rosterApp: ReturnType<typeof createApp> | null = null;
 
 function mountRouterRoster(): void {
-  if (rosterApp) return;
-  const host = $('#router-roster-list');
-  if (!host) return;
-  rosterApp = createApp(RouterRoster);
-  rosterApp.mount(host);
+  rosterApp ??= mountIsland('#router-roster-list', () => createApp(RouterRoster));
 }
 
+// Router models: the LiteLLM roster with the same +/− selection controls as
+// the Ollama host cards — one row per roster model, nothing else.
 export function renderRouterRoster() {
   if (!$('#router-roster-list')) return;
   mountRouterRoster();
@@ -197,34 +181,27 @@ export function renderRouterRoster() {
   rosterUnreachable.value = false;
 }
 
+// PUT the whole draft (routes + default + live controls) — the server
+// validates; the hook picks it up on the next request.
 export async function saveRoutingConfig() {
   const q = routingCurrentRouter.value ? `?router=${encodeURIComponent(routingCurrentRouter.value)}` : '';
-  const res = await authFetch('/api/router/routes' + q, {
+  routingDraft.value = await apiJson('/api/router/routes' + q, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
     // Only routes + default_route are editable in the UI. Omitting `live`
-    // leaves the server's existing live config (enabled / timeout_ms) untouched
-    // — those controls were removed from the UI (live-routing was a footgun for
-    // 'auto'-assigned agents; timeout is an install-tuning detail).
-    body: JSON.stringify({
+    // leaves the server's live config (enabled / timeout_ms) untouched: toggling
+    // live routing breaks 'auto'-assigned agents, and timeout is install tuning.
+    body: {
       routes: routingDraft.value.routes,
       default_route: routingDraft.value.default_route,
-    }),
+    },
   });
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || res.status);
-  routingDraft.value = body;
   renderRouteList();
 }
 
 let decisionsApp: ReturnType<typeof createApp> | null = null;
 
 function mountRoutingDecisions(): void {
-  if (decisionsApp) return;
-  const host = $('#routing-decisions-list');
-  if (!host) return;
-  decisionsApp = createApp(RoutingDecisions);
-  decisionsApp.mount(host);
+  decisionsApp ??= mountIsland('#routing-decisions-list', () => createApp(RoutingDecisions));
 }
 
 async function refreshRoutingDecisions() {
@@ -232,11 +209,9 @@ async function refreshRoutingDecisions() {
   mountRoutingDecisions();
   try {
     // Over-fetch and filter client-side to the selected profile — the log
-    // interleaves every router's traffic. (Legacy lines with no `router` field
-    // are attributed to the primary `auto`.)
-    const res = await authFetch('/api/router/decisions?limit=60');
-    if (!res.ok) throw new Error(String(res.status));
-    let { decisions } = await res.json();
+    // interleaves every router's traffic. (Lines with no `router` field are
+    // attributed to the primary `auto`.)
+    let { decisions } = await apiJson('/api/router/decisions?limit=60');
     const cur = routingCurrentRouter.value ?? 'auto';
     decisions = decisions.filter((d: any) => (d.router ?? 'auto') === cur).slice(0, 15);
     decisionsRouter.value = cur;
@@ -252,17 +227,12 @@ async function refreshRoutingDecisions() {
 
 // ── Panel wiring ─────────────────────────────────────────────────────────────
 // The routing panel: the detail close button, the route detail form, the
-// create-route button, and the two classifier bench widgets.
-//
-// runBench and wireBench are function DECLARATIONS, so moving them alongside
-// the statements that call them cannot change execution order — only the two
-// wireBench() calls actually run, and they keep their position relative to
-// everything else in the slice. Confirmed with the boot-order trace rather than
-// argued: see docs/webchat/boot-order-guard.md.
+// create-route button, and the two classifier bench widgets. runBench and
+// wireBench are hoisted declarations; only the wireBench() calls affect boot
+// order (docs/webchat/boot-order-guard.md).
 
 export function wireRoutingPanel(): void {
-  // Registered here, first, because it was a top-level statement immediately
-  // BEFORE legacy's wireRoutingPanel() call — folding it in keeps that order.
+  // Registered first: boot order places it just before the rest of this panel.
   $('#roster-refresh-btn')?.addEventListener('click', runRosterRefresh);
   $<HTMLButtonElement>('#route-detail-close')?.addEventListener('click', () => closeRouteDetail());
 
@@ -274,12 +244,10 @@ export function wireRoutingPanel(): void {
     const prevName = r.name;
     r.name = ($<HTMLInputElement>('#route-name')?.value ?? '').trim();
     r.description = ($<HTMLTextAreaElement>('#route-description')?.value ?? '');
-    if (!r.escalate) {
-      r.model = ($<HTMLSelectElement>('#route-binding')?.value ?? '');
-      r.pinned = ($<HTMLInputElement>('#route-pinned')?.checked ?? false);
-      if (($<HTMLInputElement>('#route-default')?.checked ?? false)) routingDraft.value.default_route = r.name;
-      else if (routingDraft.value.default_route === prevName) routingDraft.value.default_route = r.name;
-    }
+    r.model = ($<HTMLSelectElement>('#route-binding')?.value ?? '');
+    r.pinned = ($<HTMLInputElement>('#route-pinned')?.checked ?? false);
+    if (($<HTMLInputElement>('#route-default')?.checked ?? false)) routingDraft.value.default_route = r.name;
+    else if (routingDraft.value.default_route === prevName) routingDraft.value.default_route = r.name;
     // Append a new route only now, right before the save that validates it; pop
     // it back off on failure so the draft never keeps an unsaved/invalid row.
     if (isNew) {
@@ -306,8 +274,7 @@ export function wireRoutingPanel(): void {
   $<HTMLButtonElement>('#route-delete')?.addEventListener('click', async () => {
     const r = routingDraft.value.routes[selectedRouteIdx.value ?? -1];
     if (!r) return;
-    // Destructive + persisted immediately — the confirm modal is universal at
-    // delete sites (DESIGN.md §5); this was the one that slipped through.
+    // Destructive + persisted immediately — confirm, as at every delete site (DESIGN.md §5).
     const ok = await showConfirmModal({
       title: `Delete the route "${r.name || r.model || 'unnamed'}"?`,
       confirmLabel: 'Delete',
@@ -336,13 +303,7 @@ export function wireRoutingPanel(): void {
     outEl.classList.remove('err');
     outEl.textContent = 'Classifying…';
     try {
-      const res = await authFetch('/api/router/classify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      const body = await apiJson('/api/router/classify', { method: 'POST', body: { prompt } });
       outEl.textContent = `→ ${body.route} · ${body.model ?? '(no binding)'} · ${body.ms} ms`;
     } catch (err: any) {
       // Errors must not read like a green success — flip to the warning colour.
@@ -365,11 +326,7 @@ export function wireRoutingPanel(): void {
 
 // ── Panel wiring ───────────────────────────────────────────────────────────
 // The routing profile list and its selection controls.
-//
-// One function per GROUP of blocks, each called from the line its group
-// started on. Blocks with an executing statement between them cannot share a
-// function: a single call at the first block moves the later ones ahead of
-// whatever ran in between, which the boot-order trace catches.
+// One function per run of boot statements: a call cannot span an executing statement without reordering boot.
 
 export function wireRoutingProfiles(): void {
   $<HTMLButtonElement>('#router-delete-btn')?.addEventListener('click', async () => {
@@ -383,9 +340,7 @@ export function wireRoutingProfiles(): void {
     });
     if (!ok) return;
     try {
-      const res = await authFetch('/api/router/routers/' + encodeURIComponent(name), { method: 'DELETE' });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || res.status);
+      await apiJson('/api/router/routers/' + encodeURIComponent(name), { method: 'DELETE' });
       routingCurrentRouter.value = null; // fall back to primary
       showToast(`Deleted "${name}"`);
       await fetchModels();
@@ -398,10 +353,6 @@ export function wireRoutingProfiles(): void {
 
 // ── Panel wiring ───────────────────────────────────────────────────────────
 // The router profile creation control.
-//
-// These blocks were invisible to the ownership census: no module referenced
-// their element ids, because the wiring that would have referenced them was
-// still here in legacy.js. Attributed by the subject element's NAME instead.
 
 export function wireRouterNew(): void {
   $<HTMLButtonElement>('#router-new-btn')?.addEventListener('click', async () => {
@@ -411,17 +362,8 @@ export function wireRouterNew(): void {
     });
     if (!name) return;
     try {
-      const res = await authFetch('/api/router/routers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        // `target` was never defined in this scope, so this threw ReferenceError
-        // and creating a routing profile was impossible. The server reads only
-        // `name` (rRouterRoutersPost, server.ts) — addRouter() clones the primary
-        // router as the starting point — so the field was vestigial, not missing.
-        body: JSON.stringify({ name }),
-      });
-      const body = await res.json();
-      if (!res.ok) throw new Error(body.error || res.status);
+      // Only `name`: the server's addRouter() clones the primary router.
+      await apiJson('/api/router/routers', { method: 'POST', body: { name } });
       routingCurrentRouter.value = name; // clone of the current profile; edit from here
       showToast(`Created routing profile "${name}" (cloned)`, { kind: 'success' });
       await fetchModels(); // the new router auto-registered as a model
@@ -440,13 +382,11 @@ export function wireRouterNew(): void {
 let routeSuggestApp: any = null;
 
 function mountRouteSuggestions() {
-  if (routeSuggestApp) return;
-  const host = $('#route-suggestions');
-  if (!host) return;
-  routeSuggestApp = createApp(RouteSuggestions, {
-    onCreate: (s: any) => void createRouteFromSuggestion(s),
-  });
-  routeSuggestApp.mount(host);
+  routeSuggestApp ??= mountIsland('#route-suggestions', () =>
+    createApp(RouteSuggestions, {
+      onCreate: (s: any) => void createRouteFromSuggestion(s),
+    }),
+  );
 }
 
 export async function renderRouteSuggestions() {
@@ -454,8 +394,7 @@ export async function renderRouteSuggestions() {
   if (!box) return;
   let suggestions = [];
   try {
-    const res = await authFetch('/api/router/suggestions');
-    if (res.ok) suggestions = (await res.json()).suggestions || [];
+    suggestions = (await apiJson('/api/router/suggestions')).suggestions || [];
   } catch {
     /* skill not installed / router down — no suggestions */
   }
@@ -478,9 +417,8 @@ async function createRouteFromSuggestion(s: any) {
     routingDraft.value.routes = routingDraft.value.routes.filter((r: any) => r.name !== s.capability); // roll back
     showToast('Could not create route: ' + (err as any)?.message, { kind: 'error' });
   } finally {
-    // Re-enable on BOTH paths. The imperative version only did so on failure,
-    // because on success the row was rebuilt away; the busy set outlives the
-    // rebuild, so a stale entry would disable a capability that comes back.
+    // Re-enable on BOTH paths: the busy set outlives the re-render, so a stale
+    // entry would disable a capability that comes back.
     const next = new Set(routeSuggestBusy.value);
     next.delete(s.capability);
     routeSuggestBusy.value = next;
@@ -495,8 +433,7 @@ async function runRosterRefresh() {
   log!.hidden = false;
   log!.textContent = 'Starting…';
   try {
-    const res = await authFetch('/api/router/roster-refresh', { method: 'POST' });
-    if (!res.ok) throw new Error((await res.json()).error || res.status);
+    await apiJson('/api/router/roster-refresh', { method: 'POST' });
     while (true) {
       await new Promise((r: any) => setTimeout(r, 2000));
       const st = await (await authFetch('/api/router/roster-refresh')).json();
@@ -521,26 +458,19 @@ async function runRosterRefresh() {
   }
 }
 
-// PUT the whole draft (routes + default + live controls) — the server
-// validates; the hook picks it up on the next request.
-
-
-
 // Same list grammar as Agents/Models/MCP: rows open a detail aside; chips
-// carry state (default / pinned / escalates); bound model rides as dim meta.
+// carry state (default / pinned); bound model rides as dim meta.
 let routeListApp: any = null;
 
 function mountRouteList() {
-  if (routeListApp) return;
-  const host = $('#route-list');
-  if (!host) return;
-  routeListApp = createApp(RouteList, {
-    onActivate: (i: any) => {
-      if (selectedRouteIdx.value === i && !$('#route-detail')!.hidden) closeRouteDetail();
-      else openRouteDetail(i);
-    },
-  });
-  routeListApp.mount(host);
+  routeListApp ??= mountIsland('#route-list', () =>
+    createApp(RouteList, {
+      onActivate: (i: any) => {
+        if (selectedRouteIdx.value === i && !$('#route-detail')!.hidden) closeRouteDetail();
+        else openRouteDetail(i);
+      },
+    }),
+  );
 }
 
 export function renderRouteList() {
@@ -550,8 +480,7 @@ export function renderRouteList() {
   routeSelectedIdx.value = selectedRouteIdx.value ?? -1;
   mountRouteList();
   // detailOpen is a root prop, which Vue reads ONCE — so the open state rides
-  // on the selected index instead: -1 whenever the detail pane is closed. Same
-  // conclusion the draft-card island reached about root props.
+  // on the selected index instead: -1 whenever the detail pane is closed.
   if ($('#route-detail')!.hidden) routeSelectedIdx.value = -1;
 }
 
@@ -576,34 +505,22 @@ export function populateRouteDetail(r: any, isNew: boolean) {
   renderRouteList();
 
   $('#route-detail-title')!.textContent = isNew ? 'New route' : r.name;
-  const badge = $('#route-detail-badge');
-  badge!.hidden = !r.escalate;
-  if (r.escalate) {
-    badge!.className = 'model-kind-badge kind-anthropic';
-    badge!.textContent = 'escalate';
-  }
   $<HTMLInputElement>('#route-name')!.value = r.name;
   $<HTMLInputElement>('#route-description')!.value = r.description || '';
-  $('#route-binding-label')!.hidden = Boolean(r.escalate);
-  $('#route-escalate-note')!.hidden = !r.escalate;
-  if (!r.escalate) {
-    const sel = $('#route-binding');
-    sel!.innerHTML = '';
-    for (const m of [...new Set([r.model, ...(routingRouterInfo.value?.models ?? [])])].filter(Boolean)) {
-      const o = document.createElement('option');
-      o.value = m;
-      o.textContent = m;
-      if (m === r.model) o.selected = true;
-      sel!.appendChild(o);
-    }
+  const sel = $('#route-binding');
+  sel!.innerHTML = '';
+  for (const m of [...new Set([r.model, ...(routingRouterInfo.value?.models ?? [])])].filter(Boolean)) {
+    const o = document.createElement('option');
+    o.value = m;
+    o.textContent = m;
+    if (m === r.model) o.selected = true;
+    sel!.appendChild(o);
   }
   const pin = $<HTMLInputElement>('#route-pinned');
   pin!.checked = Boolean(r.pinned);
-  pin!.parentElement!.hidden = Boolean(r.escalate);
   const def = $<HTMLInputElement>('#route-default');
   def!.checked = routingDraft.value.default_route === r.name;
   def!.disabled = def!.checked; // pick a new default elsewhere instead of unsetting
-  def!.parentElement!.hidden = Boolean(r.escalate);
 
   $('#route-detail')!.hidden = false;
   $('#members-panel')!.hidden = true;

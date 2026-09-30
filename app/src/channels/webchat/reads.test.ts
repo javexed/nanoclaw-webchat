@@ -1,9 +1,7 @@
 /**
  * Tests for the per-user read-marker helpers that back the unread badge.
  *
- * Before this feature unread was a purely client-side, in-memory Set, so a
- * message that arrived while the user was away left no trace on reconnect.
- * These tests pin the server-side semantics that fix that:
+ * These tests pin the server-side semantics:
  *
  *   - markRoomRead is a monotonic high-water mark (never moves backward).
  *   - getUnreadRoomIdsForUser flags a room iff its newest message is newer

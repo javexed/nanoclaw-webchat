@@ -1,5 +1,5 @@
 /**
- * File-handling tests — focused on the security-critical paths Batch 1 fixed:
+ * File-handling tests — focused on the security-critical paths:
  * chunked-upload uploadId UUID validation, chunkIndex type validation
  * (path-traversal guard), cumulativeSize cap, JSON body size cap, and
  * handleFileServe path traversal in roomId/filename.
@@ -18,10 +18,7 @@ const ROOM_ID = 'test-room';
 beforeEach(async () => {
   await initTestDb();
   await runMigrations(getDb());
-  // Seed a room so handleChunkedUpload doesn't 404 before reaching its
-  // validation checks. createWebchatRoom is the post-migration helper —
-  // it writes to messaging_groups (channel_type='webchat'), not the
-  // dropped webchat_rooms table.
+  // Seed a room so handleChunkedUpload doesn't 404 before its validation checks.
   await createWebchatRoom('Test', ROOM_ID);
 });
 
@@ -92,7 +89,7 @@ describe('handleChunkedUpload — uploadId validation', () => {
   });
 });
 
-// ── Chunked upload — chunkIndex type validation (Batch 1) ─────────────────
+// ── Chunked upload — chunkIndex type validation ───────────────────────────
 
 describe('handleChunkedUpload — chunkIndex validation', () => {
   const validUuid = '12345678-1234-1234-1234-123456789abc';
@@ -164,7 +161,7 @@ describe('handleChunkedUpload — chunkIndex validation', () => {
   });
 });
 
-// ── Chunked upload — body size cap (Batch 1) ──────────────────────────────
+// ── Chunked upload — body size cap ────────────────────────────────────────
 
 describe('handleChunkedUpload — JSON body size cap', () => {
   it('rejects a body larger than the chunk-body cap', async () => {

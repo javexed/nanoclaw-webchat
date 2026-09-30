@@ -62,6 +62,39 @@ describe('RunnerLink', () => {
     expect(link.welcome?.userId).toBe('webchat:jane');
     link.stop();
   });
+  it('answers the challenge with its key, for the origin it dialled, before the welcome', async () => {
+    let response: Record<string, unknown> | null = null;
+    const url = await serve((ws) => {
+      ws.on('message', (d) => {
+        const f = JSON.parse(String(d));
+        if (f.type === 'hello') {
+          expect(f.machine.publicKey).toBe('PUB');
+          ws.send(JSON.stringify({ type: 'challenge', nonce: 'n-1', origin: 'https://ignored.example' }));
+        }
+        if (f.type === 'challenge.response') {
+          response = f;
+          ws.send(JSON.stringify({ type: 'welcome', v: 1, userId: 'u', displayName: 'U', keepaliveMs: 50 }));
+        }
+      });
+    });
+    const states: LinkState[] = [];
+    const link = new RunnerLink({
+      serverUrl: `${url}/some/path`,
+      machine: { ...machine, publicKey: 'PUB' },
+      signChallenge: (fp, origin, nonce) => `sig(${fp}|${origin}|${nonce})`,
+      getToken: async () => 'tok',
+      events: { state: (s) => states.push(s), log: () => {} },
+    });
+    link.start();
+    await new Promise((r) => setTimeout(r, 200));
+    expect(response).toEqual({
+      type: 'challenge.response',
+      origin: url,
+      signature: `sig(fp|${url}|n-1)`,
+    });
+    expect(states).toContain('connected');
+    link.stop();
+  });
   it('a 403 on upgrade becomes the unauthorized state and does not retry', async () => {
     let attempts = 0;
     const url = await serve(

@@ -1,21 +1,20 @@
 diff --git a/container/agent-runner/src/destinations.ts b/container/agent-runner/src/destinations.ts
-index a03049d5..f26c0303 100644
+index a03049d5..73e5bdaf 100644
 --- a/container/agent-runner/src/destinations.ts
 +++ b/container/agent-runner/src/destinations.ts
-@@ -61,19 +61,32 @@ export function findByRouting(
+@@ -12,6 +12,7 @@
+  */
+ import { getAgentMailbox } from './mailbox/index.js';
+ import { resolvePromptSections } from './seam/prompt-sections.js';
++import type { PromptCapabilities } from './seam/prompt-sections.js';
+ import type { Destination } from './mailbox/types.js';
+ 
+ export interface DestinationEntry {
+@@ -61,19 +62,23 @@ export function findByRouting(
   * per-agent-group and changes when the operator renames an agent, while
   * the shared base is identical across all agents.
   */
 -export function buildSystemPromptAddendum(assistantName?: string, mode: SessionMode = { kind: 'chat' }): string {
-+/**
-+ * Options describing what the running provider can actually do, so the prompt
-+ * only promises tools that exist. See `AgentProvider.supportsMcpTools`.
-+ */
-+export interface PromptCapabilities {
-+  /** True when NanoClaw's MCP tools are callable by the model. Absent = no. */
-+  mcpTools?: boolean;
-+}
-+
 +export function buildSystemPromptAddendum(
 +  assistantName?: string,
 +  mode: SessionMode = { kind: 'chat' },
@@ -38,7 +37,7 @@ index a03049d5..f26c0303 100644
    const all = getAllDestinations();
    const lines = ['## Sending messages', ''];
  
-@@ -94,9 +107,17 @@ function buildDestinationsSection(mode: SessionMode): string {
+@@ -94,9 +99,17 @@ function buildDestinationsSection(mode: SessionMode): string {
  
    if (mode.kind === 'task') {
      lines.push(
@@ -58,7 +57,7 @@ index a03049d5..f26c0303 100644
      if (channelDestinations.length > 0) {
        const channelNames = channelDestinations.map((destination) => `\`${destination.name}\``).join(', ');
        lines.push(
-@@ -118,15 +139,17 @@ function buildDestinationsSection(mode: SessionMode): string {
+@@ -118,15 +131,17 @@ function buildDestinationsSection(mode: SessionMode): string {
    lines.push(
      'When replying to an incoming message, default to addressing the destination it came `from` (every inbound `<message>` tag carries a `from="name"` attribute). Pick a different destination when the request asks for it (e.g., "tell Laura that…").',
    );

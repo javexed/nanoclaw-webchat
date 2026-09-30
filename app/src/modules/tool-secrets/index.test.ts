@@ -16,6 +16,7 @@ import {
   unisolateGroup,
   injectionForHost,
   resolveAuthScheme,
+  resolveBasicCredential,
   parseCustomScheme,
 } from './index.js';
 
@@ -23,9 +24,8 @@ import {
  * In-memory fake vault that models the REAL gateway rule, not just bookkeeping:
  * an `all`-mode agent receives every secret whose host pattern matches,
  * regardless of assignment; a `selective` agent receives only what is assigned.
- * `injectedFor()` is the thing worth asserting on — an earlier version of these
- * tests asserted on assignment alone and therefore "passed" while the feature
- * leaked every secret to every agent.
+ * `injectedFor()` is the thing worth asserting on — assignment alone can
+ * "pass" while every secret leaks to every agent.
  */
 function fakeAdmin(opts: { failSetSecrets?: boolean } = {}) {
   const secrets = new Map<
@@ -39,9 +39,7 @@ function fakeAdmin(opts: { failSetSecrets?: boolean } = {}) {
     async findAgentId(identifier) {
       return agents.get(identifier)?.uuid ?? null;
     },
-    // OnecliAdmin gained listAgents (the paginated admin surface); this mock
-    // predates it. Backed by the same in-memory map
-    // so the fake stays self-consistent.
+    // Backed by the same in-memory map so the fake stays self-consistent.
     async listAgents() {
       return [...agents.entries()].map(([identifier, a]) => ({
         id: a.uuid,
@@ -437,13 +435,8 @@ describe('user-scoped secrets and precedence', () => {
 });
 
 /**
- * Wire format.
- *
- * Host inference covers a public API, where the hostname names the service. It
- * cannot cover a self-hosted one, whose host is just a LAN address. Getting
- * this wrong is silent — the gateway injects `Authorization: Bearer …`, the
- * service ignores it, and the operator sees a 401 from a credential that IS in
- * the vault. So the scheme is statable, as a shape rather than a service list.
+ * Wire format. Host inference can't cover a self-hosted API (a LAN address),
+ * and getting it wrong is silent — a 401 from a credential that IS in the vault.
  */
 describe('wire format', () => {
   it('still infers from the host when nothing is stated', async () => {
@@ -548,6 +541,58 @@ describe('wire format', () => {
   });
 });
 
+describe('username + password', () => {
+  const decode = (v: string) => Buffer.from(v, 'base64').toString('utf8');
+
+  it('encodes user:password as UTF-8 base64 behind Authorization: Basic', () => {
+    const r = resolveBasicCredential({ username: 'me@example.com', password: 'abcd-efgh-ijkl-mnop' });
+    expect(r).toEqual({
+      value: 'bWVAZXhhbXBsZS5jb206YWJjZC1lZmdoLWlqa2wtbW5vcA==',
+      scheme: { headerName: 'Authorization', valueFormat: 'Basic {value}' },
+    });
+  });
+
+  it('keeps non-ASCII intact and allows a colon in the password', () => {
+    const r = resolveBasicCredential({ username: 'jürgen', password: 'pä:ss€' });
+    expect('value' in r && decode(r.value)).toBe('jürgen:pä:ss€');
+  });
+
+  it('rejects a missing, colon-bearing, control-character or overlong username', () => {
+    for (const username of [undefined, '', 42, 'a:b', 'a\nb', 'a\x7F', 'u'.repeat(257)])
+      expect(resolveBasicCredential({ username, password: 'p' })).toHaveProperty('error');
+    expect(resolveBasicCredential({ username: 'u'.repeat(256), password: 'p' })).not.toHaveProperty('error');
+  });
+
+  it('rejects a missing or overlong password, and a non-object', () => {
+    for (const password of [undefined, '', 7, 'p'.repeat(257)])
+      expect(resolveBasicCredential({ username: 'u', password })).toHaveProperty('error');
+    for (const bad of [undefined, null, 'u:p', ['u', 'p']]) expect(resolveBasicCredential(bad)).toHaveProperty('error');
+  });
+
+  it('never quotes either field in an error', () => {
+    const r = resolveBasicCredential({ username: 'who:ami', password: 'hunter2' });
+    expect(JSON.stringify(r)).not.toMatch(/who|ami|hunter2/);
+  });
+
+  it('stores the encoded pair with the Basic scheme and returns metadata only', async () => {
+    const { admin, secrets } = fakeAdmin();
+    const r = resolveBasicCredential({ username: 'me@example.com', password: 'app-pass' });
+    if ('error' in r) throw new Error(r.error);
+    const created = await createToolSecret(admin, WORKSPACE, 'caldav.icloud.com', r.value, r.scheme);
+    expect(Object.keys(created).sort()).toEqual(['hostPattern', 'id', 'label']);
+    const stored = [...secrets.values()].find((x) => x.hostPattern === 'caldav.icloud.com');
+    expect(stored).toMatchObject({ headerName: 'Authorization', valueFormat: 'Basic {value}' });
+    expect(decode(stored!.value)).toBe('me@example.com:app-pass');
+    expect(JSON.stringify(await listToolSecrets(admin, WORKSPACE))).not.toContain(r.value);
+  });
+
+  it('leaves the Azure DevOps empty-username encoding unchanged', async () => {
+    const { admin, secrets } = fakeAdmin();
+    await createToolSecret(admin, WORKSPACE, 'dev.azure.com', 'pat');
+    expect([...secrets.values()][0].value).toBe(Buffer.from(':pat').toString('base64'));
+  });
+});
+
 describe('createToolSecret — host normalisation', () => {
   it('stores the host lowercased, so a phone-capitalised entry still matches', async () => {
     const { admin, injectedFor } = fakeAdmin();
@@ -608,5 +653,38 @@ describe('effectiveSecretsFor — the precedence, read back for display', () => 
     const bob = await effectiveSecretsFor(admin, 'ag-1', 'webchat:bob');
     expect(bob).toHaveLength(1);
     expect(bob[0]).toMatchObject({ hostPattern: 'github.com', source: 'agent' });
+  });
+});
+
+describe('Grok members (their model credential is `generic`, like a tool secret)', () => {
+  async function seedGrokMember(admin: OnecliAdmin, agentGroupId: string, userId: string) {
+    const ident = userCredsAgentIdentifier(agentGroupId, userId);
+    const uuid = await admin.ensureAgent(`${userId} (UserCreds)`, ident);
+    await admin.setSecretMode(uuid, 'selective');
+    const grok = await admin.createGenericSecret(`UserCreds ${userId} (grok)`, 'grok-token', {
+      hostPattern: 'cli-chat-proxy.grok.com',
+      headerName: 'Authorization',
+      valueFormat: 'Bearer {value}',
+    });
+    await admin.setSecrets(uuid, [grok]);
+    await upsertUserCredsCredential(userId, agentGroupId, ident, grok, 'oauth_token', 'grok');
+    return { ident, grok };
+  }
+
+  it('keeps the Grok credential when a tool secret changes, and gets the tool secret', async () => {
+    const { admin, injectedFor } = fakeAdmin();
+    await seedWorkspaceDefault();
+    await seedGroupAgent(admin, 'ag-1');
+    const { ident, grok } = await seedGrokMember(admin, 'ag-1', 'webchat:alice');
+    await isolateGroup(admin, 'ag-1');
+    const agent = { kind: 'agent' as const, agentGroupId: 'ag-1' };
+    const pat = await createToolSecret(admin, agent, 'dev.azure.com', 'v');
+    expect(injectedFor(ident, 'cli-chat-proxy.grok.com')).toEqual([grok]);
+    expect(injectedFor(ident, 'dev.azure.com')).toEqual([pat.id]);
+
+    // A second change must not swap the credential for the first PAT either.
+    await createToolSecret(admin, agent, 'api.github.com', 'v2');
+    expect(injectedFor(ident, 'cli-chat-proxy.grok.com')).toEqual([grok]);
+    expect(injectedFor(ident, 'dev.azure.com')).toEqual([pat.id]);
   });
 });
