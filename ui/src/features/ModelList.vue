@@ -4,6 +4,7 @@
  * through the event target, not per-row state: it is feedback for one in-flight request.
  */
 import { modelRows } from './model-list-state.js';
+import { hostHealth } from './ollama-cards-state.js';
 
 const emit = defineEmits<{ (e: 'pick', id: string): void; (e: 'remove', id: string, btn: HTMLButtonElement): void }>();
 
@@ -12,6 +13,7 @@ const emit = defineEmits<{ (e: 'pick', id: string): void; (e: 'remove', id: stri
 const REMOVE_GLYPH = '\u2212';
 
 const EMPTY = 'No models selected yet — use + on a server below, or “Add model endpoint…” for anything else.';
+const DOWN = 'Unreachable';
 
 function onRemove(ev: MouseEvent, id: string) {
   ev.stopPropagation();
@@ -36,7 +38,16 @@ function onRemove(ev: MouseEvent, id: string) {
       <span :class="`model-kind-badge kind-${row.badgeKind}`">{{ row.badgeText }}</span>
       <span class="model-row-name">{{ row.title }}</span>
       <span v-if="row.hint" class="model-row-hint">{{ row.hint }}</span>
-      <span v-else-if="row.host" class="model-row-host">{{ row.host }}</span>
+      <span v-else-if="row.host" class="model-row-host"
+        ><span
+          v-if="row.healthKey && hostHealth[row.healthKey]?.status === 'down'"
+          class="host-dot down"
+          role="img"
+          :title="DOWN"
+          :aria-label="DOWN"
+        ></span
+        >{{ row.host }}</span
+      >
       <span v-if="row.uses > 0" class="model-row-uses">{{ row.uses }}×</span>
       <button
         type="button"

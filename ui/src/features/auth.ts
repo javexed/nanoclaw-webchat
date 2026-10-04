@@ -7,6 +7,7 @@ import { showToast } from '../core/toast.js';
 import { apiJson, authFetch, getAuthToken, setAuthToken } from '../core/api.js';
 import { state } from '../core/state.js';
 import { connect } from '../core/ws.js';
+import { checkSessionExpired } from '../core/session-expiry.js';
 import { loadLearningMaster } from './learn.js';
 import { rememberServerAuthHint } from './members.js';
 import { enableWebPush } from './settings.js';
@@ -27,7 +28,8 @@ export function provideAuthDeps(provided: Partial<AuthDeps>): void {
 }
 
 /**
- * Three outcomes, not two: 'ok' | 'unauthenticated' | 'unreachable'.
+ * Four outcomes, not two: 'ok' | 'unauthenticated' | 'unreachable' | 'expired'
+ * (a sign-in front door's session ended: session-expiry.ts takes it from there).
  *
  * The SW serves the shell cache-first but `/api/` bypasses it, so on a cold
  * start (radio waking, Tailscale not up, host mid-restart) this probe can fail
@@ -40,7 +42,14 @@ export async function checkAuth() {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const headers = getAuthToken() ? { Authorization: `Bearer ${getAuthToken()}` } : {};
-      const res = await fetch('/api/auth/check', { headers: headers as HeadersInit, cache: 'no-store' });
+      // redirect: 'manual' — a sign-in front door's redirect to its login page is an answer
+      // ('expired'), not the network error following it cross-origin would make it.
+      const res = await fetch('/api/auth/check', {
+        headers: headers as HeadersInit,
+        cache: 'no-store',
+        redirect: 'manual',
+      });
+      if (res.type === 'opaqueredirect') return 'expired';
       if (res.ok) return 'ok';
       // A real verdict from the server — stop retrying, show the login screen.
       if (res.status === 401 || res.status === 403) return 'unauthenticated';
@@ -64,6 +73,10 @@ export async function reprobeAuthWhenOnline() {
     await new Promise((r) => window.addEventListener('online', r, { once: true }));
   }
   const verdict = await checkAuth();
+  if (verdict === 'expired') {
+    void checkSessionExpired();
+    return;
+  }
   if (verdict !== 'unauthenticated') return; // 'ok', or still unreachable — leave the banner to it
   $('#login-screen')!.hidden = false;
   $('#app')!.hidden = true;
@@ -135,7 +148,7 @@ async function maybeSuggestBearerRetire() {
 
 async function retireBearerFromBanner() {
   const banner = $('#bearer-retire-banner');
-  const btn = ($('#bearer-retire-disable')!) as HTMLInputElement;
+  const btn = $('#bearer-retire-disable')! as HTMLInputElement;
   if (btn) (btn as HTMLInputElement).disabled = true;
   try {
     const r = await authFetch('/api/webchat/auth/bearer', {
@@ -300,5 +313,4 @@ export function wireAuthPanel(): void {
       showLoginError('Connection failed');
     }
   });
-
 }

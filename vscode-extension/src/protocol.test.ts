@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { authHeader, helloFrame, nextBackoff, replyFor, scopesFor, secureOrigin, wsUrl } from './protocol.js';
+import {
+  authHeader,
+  helloFrame,
+  nextBackoff,
+  replyFor,
+  scopesFor,
+  secureOrigin,
+  refusalHeaders,
+  tokenClaimsSummary,
+  upgradeRefusal,
+  wsUrl,
+} from './protocol.js';
 
 describe('protocol', () => {
   it('derives the runner socket URL from the server origin', () => {
@@ -59,5 +70,31 @@ describe('secureOrigin', () => {
     ]) {
       expect(secureOrigin(u)).toBe(false);
     }
+  });
+});
+
+describe('upgradeRefusal', () => {
+  it("names App Service's IP restriction, and the token otherwise", () => {
+    expect(upgradeRefusal(403, 'Ip Forbidden', '20.1.2.3')).toMatch(/network address \(20\.1\.2\.3\)/);
+    expect(upgradeRefusal(403, 'Ip Forbidden')).toMatch(/network address;/);
+    expect(upgradeRefusal(403, 'Forbidden')).toBe('server refused the token (HTTP 403)');
+    expect(upgradeRefusal(401, 'Unauthorized')).toBe('server refused the token (HTTP 401)');
+  });
+});
+
+describe('refusal diagnostics', () => {
+  it('summarises who a token is for, never the token', () => {
+    const b = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const token = `${b({ alg: 'RS256' })}.${b({ aud: 'api://app', azp: 'client-1', ver: '2.0', scp: 'user_impersonation', exp: 0, upn: 'x' })}.sig`;
+    const s = tokenClaimsSummary(token);
+    expect(s).toBe('aud=api://app azp=client-1 ver=2.0 scp=user_impersonation exp=1970-01-01T00:00:00.000Z');
+    expect(s).not.toMatch(/sig|upn/);
+    expect(tokenClaimsSummary('')).toBe('no token');
+    expect(tokenClaimsSummary('garbage')).toBe('token not readable');
+  });
+
+  it('names the headers that identify the refusing layer', () => {
+    expect(refusalHeaders({ server: 'nginx', 'content-type': 'text/html' })).toBe('server: nginx');
+    expect(refusalHeaders({})).toBe('no identifying headers');
   });
 });

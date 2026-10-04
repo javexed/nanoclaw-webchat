@@ -1,17 +1,19 @@
 diff --git a/src/reconcile-session.ts b/src/reconcile-session.ts
-index 8c6d796c..4cf3cc5c 100644
+index 8c6d796c..2cac4215 100644
 --- a/src/reconcile-session.ts
 +++ b/src/reconcile-session.ts
-@@ -36,6 +36,8 @@ import { getSession, isTaskThread, updateSession } from './db/sessions.js';
+@@ -36,7 +36,10 @@ import { getSession, isTaskThread, updateSession } from './db/sessions.js';
  import { getAgentGroup } from './db/agent-groups.js';
  import { log } from './log.js';
  import { heartbeatPath, withExistingMailboxSession } from './session-manager.js';
 +import { openOutboundDbRw } from './mailbox/sqlite/session-db.js';
 +import { outboundDbPath } from './mailbox/sqlite/paths.js';
  import { getContainerStartedAtMs, isContainerRunning, killContainer } from './container-runner.js';
++import { isContainerStopping } from './container-runner.js';
  import { requestWake } from './request-wake.js';
  import type { Session } from './types.js';
-@@ -98,7 +100,7 @@ export function decideStuckAction(args: {
+ import type { ContainerState, InboundMailbox, OutboundMailbox } from './mailbox/index.js';
+@@ -98,7 +101,7 @@ export function decideStuckAction(args: {
  
    const tolerance = Math.max(CLAIM_STUCK_MS, declaredBashMs ?? 0);
    for (const claim of claims) {
@@ -20,7 +22,12 @@ index 8c6d796c..4cf3cc5c 100644
      if (Number.isNaN(claimedAt)) continue;
      const claimAge = now - claimedAt;
      if (claimAge <= tolerance) continue;
-@@ -236,14 +238,14 @@ async function enforceRunningContainerSla(
+@@ -233,17 +236,19 @@ async function enforceRunningContainerSla(
+   session: Session,
+   agentGroupId: string,
+ ): Promise<void> {
++  // A stop already under way (or a teardown awaiting retry) is not a new verdict.
++  if (isContainerStopping(session.id)) return;
    let incarnationStartMs = 0;
    const claimRow = await getSessionClaim(session.id);
    if (claimRow?.claimed_at) {
@@ -37,15 +44,18 @@ index 8c6d796c..4cf3cc5c 100644
      if (Number.isNaN(claimedAt) || claimedAt >= incarnationStartMs) return claim;
      return { ...claim, statusChanged: new Date(incarnationStartMs).toISOString() };
    });
-@@ -266,6 +268,7 @@ async function enforceRunningContainerSla(
+@@ -266,6 +271,10 @@ async function enforceRunningContainerSla(
      });
      killContainer(session.id, 'absolute-ceiling');
      resetStuckProcessingRows(inDb, outDb, session, 'absolute-ceiling');
-+    selfHealBloatedContinuation(session);
++    selfHealBloatedContinuation(session, {
++      hadClaims: gatedClaims.length > 0,
++      incarnation: incarnationKey(claimRow?.incarnation, getContainerStartedAtMs(session.id)),
++    });
      return;
    }
  
-@@ -338,3 +341,78 @@ function resetStuckProcessingRows(
+@@ -338,3 +347,105 @@ function resetStuckProcessingRows(
      log.warn('Failed to clear orphan processing claims', { sessionId: session.id, err });
    }
  }
@@ -67,11 +77,35 @@ index 8c6d796c..4cf3cc5c 100644
 +// continuation so the next turn starts fresh.
 +const CEILING_HEAL_STREAK = 2;
 +
++/** What the sweep knew about a ceiling kill when it made it. */
++export interface CeilingKill {
++  /** Processing claims were open: a turn was stuck, not an idle container reaped. */
++  hadClaims: boolean;
++  /**
++   * Identifies the killed container incarnation, so a repeated kill of it
++   * counts once. Empty when unknown: then every kill counts.
++   */
++  incarnation: string;
++}
++
++/**
++ * The incarnation a ceiling kill is of, from the session claim's incarnation
++ * and the container's start time; empty when neither is known. Two kills
++ * with no ids would otherwise share one key (`:`) and count once, so the
++ * self-heal never fired for them.
++ */
++export function incarnationKey(claimIncarnation?: number | null, startedAtMs?: number | null): string {
++  if (claimIncarnation == null && startedAtMs == null) return '';
++  return `${claimIncarnation ?? ''}:${startedAtMs ?? ''}`;
++}
++
 +/**
 + * Self-heal for a bloated continuation. Tracks, in the session's own outbound
 + * DB, how many ceiling kills in a row produced no output; at the streak
 + * threshold it clears every stored continuation so the next turn starts from a
-+ * fresh session. Returns true when it cleared. A caller that already holds the
++ * fresh session. Only a kill of a stuck turn counts, once per incarnation: an
++ * idle container past the ceiling is reaped by design and says nothing about
++ * its continuation. Returns true when it cleared. A caller that already holds the
 + * writable handle passes it in (tests do); otherwise one is opened and closed
 + * here. Best-effort: any failure here is
 + * logged and the sweep goes on — a kill already happened, this only decides
@@ -79,8 +113,10 @@ index 8c6d796c..4cf3cc5c 100644
 + */
 +export function selfHealBloatedContinuation(
 +  session: Session,
++  kill: CeilingKill,
 +  writableOutDb?: ReturnType<typeof openOutboundDbRw>,
 +): boolean {
++  if (!kill.hadClaims) return false;
 +  const ownsDb = !writableOutDb;
 +  let db: ReturnType<typeof openOutboundDbRw> | null = writableOutDb ?? null;
 +  try {
@@ -92,12 +128,13 @@ index 8c6d796c..4cf3cc5c 100644
 +    const prevRaw = (
 +      db.prepare("SELECT value FROM session_state WHERE key = '_ceiling_heal'").get() as { value: string } | undefined
 +    )?.value;
-+    let prev: { lastMaxOut: number; streak: number } | null = null;
++    let prev: { lastMaxOut: number; streak: number; incarnation?: string } | null = null;
 +    try {
-+      prev = prevRaw ? (JSON.parse(prevRaw) as { lastMaxOut: number; streak: number }) : null;
++      prev = prevRaw ? (JSON.parse(prevRaw) as { lastMaxOut: number; streak: number; incarnation?: string }) : null;
 +    } catch {
 +      prev = null;
 +    }
++    if (prev && kill.incarnation && prev.incarnation === kill.incarnation) return false;
 +    // Output advanced since the last kill (or this is the first kill) → the
 +    // streak restarts at 1; otherwise it's another no-output kill in a row.
 +    const streak = prev && maxOut <= prev.lastMaxOut ? prev.streak + 1 : 1;
@@ -113,7 +150,7 @@ index 8c6d796c..4cf3cc5c 100644
 +      return true;
 +    }
 +    db.prepare("INSERT OR REPLACE INTO session_state (key, value, updated_at) VALUES ('_ceiling_heal', ?, ?)").run(
-+      JSON.stringify({ lastMaxOut: maxOut, streak }),
++      JSON.stringify({ lastMaxOut: maxOut, streak, incarnation: kill.incarnation }),
 +      new Date().toISOString(),
 +    );
 +    return false;

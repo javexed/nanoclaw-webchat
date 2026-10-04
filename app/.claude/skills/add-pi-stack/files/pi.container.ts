@@ -14,7 +14,7 @@
  *
  * Reasoning arrives as structured thinking_delta events (pi parses <think>),
  * which map 1:1 onto the runner's reasoning telemetry. Depth is PI_THINKING
- * (default 'low' — chat-first work rarely needs pi's own 'medium').
+ * (default 'high' — see the measurement in runTurn).
  *
  * Process model: one `pi -p --mode json` process per queued message —
  * continuation via `--session-id` (pi creates the id if missing, so the
@@ -22,8 +22,7 @@
  */
 import { randomUUID } from 'crypto';
 import { spawn, type ChildProcess } from 'child_process';
-import { createInterface } from 'readline';
-import { writeFileSync } from 'fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -45,9 +44,9 @@ const IDLE_TIMEOUT_MS = Number(process.env.PI_IDLE_TIMEOUT_MS) || 300_000;
 // stopped it. 0 disables. Generous on purpose: a backstop, not a scheduler.
 const TURN_TIMEOUT_MS = Number(process.env.PI_TURN_TIMEOUT_MS) || 0;
 
-// Same thinking-stall recovery as the opencode provider: a small thinking model
-// can emit only reasoning and stop. Retry the turn with qwen's /no_think soft
-// switch (inert on other models), remember the model, cap the retries.
+// Thinking-stall recovery: a small thinking model can emit only reasoning and
+// stop. Retry the turn with qwen's /no_think soft switch (inert on other
+// models), remember the model, cap the retries.
 const THINKING_OFF_DIRECTIVE = '/no_think';
 const MAX_STALL_RETRIES = 2;
 
@@ -76,11 +75,253 @@ function reasoningChunks(delta: string): string[] {
     .map((s) => (s.length > REASONING_LINE_MAX ? `${s.slice(0, REASONING_LINE_MAX - 1)}…` : s));
 }
 
+/**
+ * Splits a stream into lines on '\n' ONLY. readline also breaks on U+2028 and
+ * U+2029, which JSON.stringify leaves unescaped inside strings, so a model
+ * writing either character cut its event in two and both halves failed to parse.
+ */
+export class JsonLineSplitter {
+  private buffer = '';
+
+  push(chunk: string): string[] {
+    this.buffer += chunk;
+    const lines = this.buffer.split('\n');
+    this.buffer = lines.pop() ?? '';
+    return lines;
+  }
+
+  flush(): string[] {
+    const rest = this.buffer;
+    this.buffer = '';
+    return rest ? [rest] : [];
+  }
+}
+
+/** pi gets SIGTERM first so its handler can reap tool children and close the session. Read per stop. */
+function stopGraceMs(): number {
+  return Number(process.env.PI_STOP_GRACE_MS) || 3000;
+}
+/** After SIGKILL, how long a stop still waits for the exit before giving up on it. */
+const KILL_WAIT_MS = 1000;
+
+function signalProcessGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      /* group already gone, or not a group leader: signal the handle */
+    }
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * SIGTERM the process group, then SIGKILL it if pi has not exited after the
+ * grace. Resolves once pi has exited — or, should it outlive even SIGKILL,
+ * shortly after — so a caller can wait before the next spawn reuses its
+ * session.
+ */
+export function stopProcessTree(child: ChildProcess, graceMs = stopGraceMs()): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return new Promise((resolve) => {
+    let giveUp: ReturnType<typeof setTimeout> | undefined;
+    const force = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) signalProcessGroup(child, 'SIGKILL');
+      giveUp = setTimeout(resolve, KILL_WAIT_MS);
+    }, graceMs);
+    child.once('exit', () => {
+      clearTimeout(force);
+      if (giveUp) clearTimeout(giveUp);
+      resolve();
+    });
+    signalProcessGroup(child, 'SIGTERM');
+  });
+}
+
+/** A small model's prompt budget is tight; memory beyond this is trimmed. */
+const MEMORY_MAX_CHARS = Number(process.env.PI_MEMORY_MAX_CHARS) || 8000;
+const MEMORY_HOOK_TIMEOUT_MS = 10_000;
+
+/** Run `command` in a shell with `input` on stdin; never rejects. */
+function runHookCommand(
+  command: string,
+  input: string,
+  timeoutMs: number,
+): Promise<{ stdout: string; status: number | null; error?: string }> {
+  return new Promise((resolve) => {
+    let stdout = '';
+    let done = false;
+    const finish = (r: { stdout: string; status: number | null; error?: string }): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(r);
+    };
+    const child = spawn(command, { shell: true, stdio: ['pipe', 'pipe', 'ignore'] });
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      finish({ stdout, status: null, error: `timed out after ${timeoutMs}ms` });
+    }, timeoutMs);
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    child.on('error', (err) => finish({ stdout, status: null, error: err.message }));
+    child.on('close', (code) => finish({ stdout, status: code }));
+    child.stdin?.on('error', () => {
+      /* the hook need not read its input */
+    });
+    child.stdin?.end(input);
+  });
+}
+
+/**
+ * Run the registered memory session hook (startup source) and return its
+ * output, trimmed to `maxChars`. Failures log and return undefined. Async:
+ * the hook runs every turn and must not block the runner while it does.
+ */
+export async function runPiMemoryHook(
+  hook: MemorySessionHookRegistration | undefined,
+  maxChars = MEMORY_MAX_CHARS,
+): Promise<string | undefined> {
+  if (!hook || !hook.sources.includes('startup')) return undefined;
+  const res = await runHookCommand(
+    hook.command,
+    JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup' }),
+    MEMORY_HOOK_TIMEOUT_MS,
+  );
+  if (res.error || res.status !== 0) {
+    log(`memory session hook failed (${res.error ?? `exit ${String(res.status)}`}); continuing without memory`);
+    return undefined;
+  }
+  const out = res.stdout.trim();
+  if (!out || out.length <= maxChars) return out || undefined;
+  return (
+    `${out.slice(0, maxChars)}\n` +
+    `[memory truncated to ${maxChars} characters — the files under /workspace/agent/memory/ are authoritative; read them for the rest]`
+  );
+}
+
+/** The text of an assistant message, joined across its text parts. */
+function assistantText(message: PiEvent['message']): string {
+  return (message?.content ?? [])
+    .filter((p) => p.type === 'text' && typeof p.text === 'string')
+    .map((p) => p.text)
+    .join('');
+}
+
+const ENVELOPE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
+
+/**
+ * The turn's result text: the last assistant message, preceded by any complete
+ * <message> envelope an EARLIER message of the turn wrote. Without this an
+ * envelope written before a tool call was lost to the closing "Done.". Earlier
+ * prose is not carried (it was narration between calls), an envelope the last
+ * message repeats is not carried twice, and neither is one the `message` tool
+ * already sent (`toolSent` holds `${to}\0${text}` signatures).
+ */
+export function composeTurnText(texts: string[], toolSent: ReadonlySet<string> = new Set()): string {
+  const last = texts.at(-1) ?? '';
+  const sent = new Set(
+    [...toolSent].map((sig) => sig.replace(/\u0000([\s\S]*)$/, (_, t: string) => `\u0000${t.trim()}`)),
+  );
+  const seen = new Set<string>();
+  for (const m of last.matchAll(ENVELOPE_RE)) seen.add(`${m[1]}\u0000${m[2].trim()}`);
+  const carried: string[] = [];
+  for (const earlier of texts.slice(0, -1)) {
+    for (const m of earlier.matchAll(ENVELOPE_RE)) {
+      const sig = `${m[1]}\u0000${m[2].trim()}`;
+      if (seen.has(sig) || sent.has(sig)) continue;
+      seen.add(sig);
+      carried.push(m[0]);
+    }
+  }
+  return [...carried, last].filter(Boolean).join('\n\n');
+}
+
+/** Map a backend error onto the runner's terminal-error classes. */
+function classifyBackendError(message: string): string | undefined {
+  if (/connection error|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|fetch failed|socket hang up/i.test(message)) {
+    return 'network';
+  }
+  if (/model .*not found|\b404\b/i.test(message)) return 'config';
+  return undefined;
+}
+
+/** The one-line notice for a model the pi harness cannot serve. */
+export function unservableModelMessage(model: string): string {
+  return (
+    `This agent's model (${model}) is not a local model, and the pi harness only runs local Ollama models. ` +
+    'Assign the agent a local model, or switch it to a different harness.'
+  );
+}
+
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+const MAX_IMAGE_ARGS = 4;
+
+/** True when the host declared the current model as taking images. */
+function modelTakesImages(piDir: string): boolean {
+  try {
+    const parsed = JSON.parse(readFileSync(path.join(piDir, 'models.json'), 'utf-8')) as {
+      providers?: Record<string, { models?: Array<{ input?: string[] }> }>;
+    };
+    return Object.values(parsed.providers ?? {}).some((p) => (p.models ?? []).some((m) => m.input?.includes('image')));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `@path` arguments for the image attachments the formatter listed in the
+ * prompt (`[image: cat.png — saved to /workspace/…]`). Vision models only: pi
+ * attaches an @-image as image content. A missing file makes pi exit, so each
+ * path is checked first.
+ */
+export function imageFileArgs(text: string, piDir: string): string[] {
+  if (!modelTakesImages(piDir)) return [];
+  const args: string[] = [];
+  for (const m of text.matchAll(/\[[^\]:\n]+: [^\]\n]*? — saved to (\/[^\]\n]+)\]/g)) {
+    const file = m[1]
+      .replace(/&quot;/g, '"')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&');
+    if (!IMAGE_EXTENSIONS.has(path.extname(file).toLowerCase())) continue;
+    try {
+      if (!existsSync(file) || statSync(file).size === 0) continue;
+    } catch {
+      continue;
+    }
+    if (!args.includes(`@${file}`)) args.push(`@${file}`);
+    if (args.length >= MAX_IMAGE_ARGS) break;
+  }
+  return args;
+}
+
 interface PiEvent {
   type?: string;
   id?: string;
-  message?: { role?: string; content?: Array<{ type?: string; text?: string; thinking?: string }> };
-  assistantMessageEvent?: { type?: string; delta?: string };
+  message?: {
+    role?: string;
+    content?: Array<{ type?: string; text?: string; thinking?: string }>;
+    /** 'error' when the backend request failed; pi still exits 0 in json mode. */
+    stopReason?: string;
+    errorMessage?: string;
+  };
+  /** thinking_end carries the whole block in `content`. */
+  assistantMessageEvent?: { type?: string; delta?: string; content?: string };
+  /** auto_retry_start / auto_retry_end. */
+  attempt?: number;
+  maxAttempts?: number;
+  delayMs?: number;
+  errorMessage?: string;
+  success?: boolean;
+  finalError?: string;
   /** tool_execution_start / _end carry the call pi is about to run. */
   toolName?: string;
   args?: Record<string, unknown>;
@@ -112,6 +353,8 @@ interface TurnResult {
   loopedToolCall?: boolean;
   /** At least one `message` tool call delivered during this turn. */
   deliveredViaMessageTool?: boolean;
+  /** The backend request failed (after pi's own retries). */
+  error?: string;
 }
 
 export class PiProvider implements AgentProvider {
@@ -119,15 +362,20 @@ export class PiProvider implements AgentProvider {
 
   private readonly options: ProviderOptions;
   private activeSessionId: string | undefined;
-  private activeChild: ChildProcess | null = null;
+  /** Stops the running pi process, if any (SIGTERM, then SIGKILL after a grace). */
+  private stopActive: (() => void) | null = null;
 
   constructor(options: ProviderOptions = {}) {
     this.options = options;
   }
 
-  // pi loads context from AGENTS.md files natively; NanoClaw's instructions
-  // travel in --system-prompt instead, so there is no session hook to register.
-  registerMemorySessionHook(_hook: MemorySessionHookRegistration): void {}
+  private memoryHook: MemorySessionHookRegistration | undefined;
+
+  // pi has no session-start hook, so the memory renderer runs per spawn and
+  // its output rides in the appended system prompt.
+  registerMemorySessionHook(hook: MemorySessionHookRegistration): void {
+    this.memoryHook = hook;
+  }
 
   isSessionInvalid(err: unknown): boolean {
     const msg = err instanceof Error ? err.message : String(err);
@@ -138,12 +386,29 @@ export class PiProvider implements AgentProvider {
    * Run ONE message through a fresh `pi -p --mode json` process. Yields
    * reasoning lines through `emit`; resolves with the final assistant text.
    */
-  private runTurn(
+  private async runTurn(
     text: string,
     sessionId: string,
     emit: (ev: ProviderEvent) => void,
     opts: { toolsOff?: boolean } = {},
   ): Promise<TurnResult> {
+    // TOOLS. pi ships read/bash/edit/write. They were disabled wholesale for
+    // the smallest possible prompt, which was the right call for a 3B model;
+    // a 9B-class local model can afford the preamble and is far more useful
+    // able to actually DO things. PI_TOOLS is the knob: a comma-separated
+    // allowlist, or the literal 'none' to restore the toolless behaviour.
+    // MESSAGE_TOOL is not optional scenery: --tools is an allowlist that
+    // covers extension tools too, so leaving it out silently filters the
+    // extension's tool back out and we are exactly where we started.
+    const tools = (process.env.PI_TOOLS ?? `read,write,edit,bash,${MESSAGE_TOOL}`).trim();
+    // opts.toolsOff is the no-op cap's retry: the model already proved this
+    // turn that it will not stop calling a tool, so take the tool away. Note
+    // this also flips the prompt to REPLACE below, which is right — with no
+    // tools there is no tool documentation of pi's worth keeping.
+    const toolsEnabled = opts.toolsOff !== true && Boolean(tools) && tools !== 'none';
+    // Memory rides only on the APPEND path (tools on): the replace path exists
+    // for the smallest possible prompt. Read before the spawn, off the event loop.
+    const memory = toolsEnabled && this.currentSystem ? await runPiMemoryHook(this.memoryHook) : undefined;
     return new Promise((resolve, reject) => {
       const piDir = process.env.PI_CODING_AGENT_DIR || '/pi-agent';
       const args = [
@@ -161,20 +426,6 @@ export class PiProvider implements AgentProvider {
         '--session-id',
         sessionId,
       ];
-      // TOOLS. pi ships read/bash/edit/write. They were disabled wholesale for
-      // the smallest possible prompt, which was the right call for a 3B model;
-      // a 9B-class local model can afford the preamble and is far more useful
-      // able to actually DO things. PI_TOOLS is the knob: a comma-separated
-      // allowlist, or the literal 'none' to restore the toolless behaviour.
-      // MESSAGE_TOOL is not optional scenery: --tools is an allowlist that
-      // covers extension tools too, so leaving it out silently filters the
-      // extension's tool back out and we are exactly where we started.
-      const tools = (process.env.PI_TOOLS ?? `read,write,edit,bash,${MESSAGE_TOOL}`).trim();
-      // opts.toolsOff is the no-op cap's retry: the model already proved this
-      // turn that it will not stop calling a tool, so take the tool away. Note
-      // this also flips the prompt to REPLACE below, which is right — with no
-      // tools there is no tool documentation of pi's worth keeping.
-      const toolsEnabled = opts.toolsOff !== true && Boolean(tools) && tools !== 'none';
       if (!toolsEnabled) args.push('--no-tools');
       else {
         args.push('--tools', tools);
@@ -232,9 +483,13 @@ export class PiProvider implements AgentProvider {
         // instructions ride on top. With tools OFF the original reasoning still
         // holds — replace outright for the smallest possible prompt, which is
         // the whole point of pi for a small model.
-        args.push(toolsEnabled ? '--append-system-prompt' : '--system-prompt', system);
+        //
+        args.push(
+          toolsEnabled ? '--append-system-prompt' : '--system-prompt',
+          memory ? `${memory}\n\n${system}` : system,
+        );
       }
-      args.push(text);
+      args.push(...imageFileArgs(text, piDir), text);
 
       // stdin MUST be closed ('ignore'): pi in print mode also accepts piped
       // stdin and waits for its EOF before starting the turn — an open pipe
@@ -242,14 +497,32 @@ export class PiProvider implements AgentProvider {
       // cwd is load-bearing once tools are on: pi resolves read/write/edit
       // paths against it, so an unset cwd would put the agent's files wherever
       // the runner started rather than in its workspace.
+      // detached: pi leads its own process group, so a stop reaches what it spawned.
       const child = spawn('pi', args, {
         cwd: this.currentCwd,
         env: { ...process.env },
         stdio: ['ignore', 'pipe', 'pipe'],
+        detached: true,
       });
-      this.activeChild = child;
 
-      let finalText = '';
+      // Text of every assistant message this turn, in order; see composeTurnText.
+      const assistantTexts: string[] = [];
+      let turnError: string | undefined;
+      // Set once we decide to stop pi: anything it prints while shutting down
+      // (an aborted partial message, say) is not part of the turn.
+      let stopping = false;
+      let stopped: Promise<void> | null = null;
+      // Resolves once pi has exited (bounded): a turn that ends in a stop
+      // settles only then, so the next turn never runs a second pi on the
+      // same --session-id while this one is still shutting down.
+      const stop = (): Promise<void> => {
+        stopping = true;
+        stopped ??= stopProcessTree(child);
+        return stopped;
+      };
+      this.stopActive = () => void stop();
+      let idleTimedOut = false;
+      const idleError = (): Error => new Error(`pi idle timeout (${IDLE_TIMEOUT_MS}ms)`);
       let sawReasoning = false;
       let reasoningEmitted = 0;
       let reasoningBuffer = '';
@@ -275,8 +548,10 @@ export class PiProvider implements AgentProvider {
       const idle = setInterval(() => {
         if (Date.now() - lastActivity > IDLE_TIMEOUT_MS) {
           clearInterval(idle);
-          child.kill('SIGKILL');
-          reject(new Error(`pi idle timeout (${IDLE_TIMEOUT_MS}ms)`));
+          idleTimedOut = true;
+          // Usually 'close' settles first, with this same error; this covers
+          // a pi that outlives SIGKILL.
+          void stop().then(() => reject(idleError()));
           return;
         }
         if (TURN_TIMEOUT_MS > 0 && Date.now() - startedAt > TURN_TIMEOUT_MS) {
@@ -286,15 +561,14 @@ export class PiProvider implements AgentProvider {
           log(`pi: turn exceeded ${TURN_TIMEOUT_MS}ms - cutting it short`);
           killedForTurnBudget = true;
           clearInterval(idle);
-          child.kill('SIGKILL');
+          stop();
         }
       }, 5000);
 
-      const rl = createInterface({ input: child.stdout! });
-      rl.on('line', (line) => {
-        // Buffered lines can still arrive after the cap SIGKILLs the child;
-        // ignore them rather than log and re-kill a corpse.
-        if (killedForLoop) return;
+      const onLine = (line: string): void => {
+        // Buffered lines can still arrive after we stop the child; ignore
+        // them rather than log and re-stop a process on its way out.
+        if (stopping) return;
         lastActivity = Date.now();
         let ev: PiEvent;
         try {
@@ -302,7 +576,22 @@ export class PiProvider implements AgentProvider {
         } catch {
           return; // non-JSON noise
         }
-        if (ev.type === 'message_update' && ev.assistantMessageEvent?.type === 'thinking_delta') {
+        if (ev.type === 'message_update' && ev.assistantMessageEvent?.type === 'thinking_end') {
+          // The whole block rides `detail` on its first line, for the bubble's
+          // click-to-expand; the feed lines above are clipped.
+          const full = ev.assistantMessageEvent.content ?? '';
+          const tail = reasoningChunks(reasoningBuffer.slice(reasoningEmitted));
+          reasoningEmitted = reasoningBuffer.length;
+          const lines = tail.length > 0 ? tail : reasoningChunks(full).slice(-1);
+          lines.forEach((l, i) => {
+            notifyProviderMessage({
+              kind: 'reasoning',
+              text: l,
+              ...(i === 0 && full.trim() ? { detail: full } : {}),
+            } as Parameters<typeof notifyProviderMessage>[0]); // seam: direct, no ProviderEvent
+          });
+          emit({ type: 'activity' });
+        } else if (ev.type === 'message_update' && ev.assistantMessageEvent?.type === 'thinking_delta') {
           sawReasoning = true;
           // Deltas are token-sized; buffer and emit on natural boundaries.
           reasoningBuffer += ev.assistantMessageEvent.delta ?? '';
@@ -345,38 +634,75 @@ export class PiProvider implements AgentProvider {
               );
               killedForLoop = true;
               clearInterval(idle);
-              child.kill('SIGKILL');
+              stop();
               return;
             }
           }
           emit({ type: 'activity' });
         } else if (ev.type === 'message_end' && ev.message?.role === 'assistant') {
-          finalText = (ev.message.content ?? [])
-            .filter((p) => p.type === 'text' && typeof p.text === 'string')
-            .map((p) => p.text)
-            .join('');
+          // pi exits 0 in json mode even when the backend failed; the failure
+          // is only visible here. A later good message (pi's own retry
+          // succeeding) clears it, and a failed message's partial text is not
+          // part of the reply.
+          if (ev.message.stopReason === 'error') {
+            turnError = ev.message.errorMessage || 'the model request failed';
+          } else {
+            turnError = undefined;
+            assistantTexts.push(assistantText(ev.message));
+          }
+          emit({ type: 'activity' });
+        } else if (ev.type === 'auto_retry_start') {
+          log(
+            `pi: backend error, retry ${ev.attempt ?? '?'}/${ev.maxAttempts ?? '?'} in ${ev.delayMs ?? '?'}ms: ${ev.errorMessage ?? ''}`,
+          );
+          emit({ type: 'activity' });
+        } else if (ev.type === 'auto_retry_end') {
+          if (ev.success === false) turnError = ev.finalError || turnError || 'the model request failed';
+          emit({ type: 'activity' });
         } else {
           emit({ type: 'activity' });
         }
+      };
+      const stdout = new JsonLineSplitter();
+      child.stdout?.setEncoding('utf8');
+      child.stdout?.on('data', (chunk: string) => {
+        for (const line of stdout.push(chunk)) onLine(line);
       });
-      child.stderr?.on('data', (chunk: Buffer) => {
-        stderrTail = (stderrTail + chunk.toString()).slice(-2000);
+      // pi's stderr is its only diagnostic channel; keep it in the runner log.
+      const stderrLines = new JsonLineSplitter();
+      child.stderr?.setEncoding('utf8');
+      child.stderr?.on('data', (chunk: string) => {
+        stderrTail = (stderrTail + chunk).slice(-2000);
+        for (const line of stderrLines.push(chunk)) if (line.trim()) console.error(`[pi] ${line}`);
       });
       child.on('error', (err) => {
         clearInterval(idle);
         reject(err);
       });
-      child.on('exit', (code) => {
+      // Settle on 'close', after stdout has drained: on 'exit' the last lines
+      // — the final message_end among them — may still be in the pipe.
+      let settled = false;
+      const settle = (code: number | null): void => {
+        if (settled) return;
+        settled = true;
         clearInterval(idle);
-        this.activeChild = null;
-        // We killed it on purpose, so a nonzero code here is expected and must
-        // not surface as a turn error. Hand back whatever text exists (usually
-        // none) plus the flag the caller retries on.
-        if (killedForTurnBudget) return resolve({ text: finalText, sawReasoning, deliveredViaMessageTool });
-        if (killedForLoop)
-          return resolve({ text: finalText, sawReasoning, loopedToolCall: true, deliveredViaMessageTool });
-        if (code === 0) resolve({ text: finalText, sawReasoning, deliveredViaMessageTool });
+        this.stopActive = null;
+        for (const line of stdout.flush()) onLine(line);
+        for (const line of stderrLines.flush()) if (line.trim()) console.error(`[pi] ${line}`);
+        const text = composeTurnText(assistantTexts, sentThisTurn);
+        // We stopped it on purpose, so a nonzero code here is expected and
+        // must not surface as a turn error. Hand back whatever text exists
+        // (usually none) plus the flag the caller retries on.
+        if (idleTimedOut) return reject(idleError());
+        if (killedForTurnBudget) return resolve({ text, sawReasoning, deliveredViaMessageTool });
+        if (killedForLoop) return resolve({ text, sawReasoning, loopedToolCall: true, deliveredViaMessageTool });
+        if (code === 0) resolve({ text, sawReasoning, deliveredViaMessageTool, error: turnError });
         else reject(new Error(`pi exited ${code}${stderrTail ? `: ${stderrTail.slice(-400)}` : ''}`));
+      };
+      child.on('close', (code) => settle(code));
+      // A grandchild holding the pipe open must not hold the turn open.
+      child.on('exit', (code) => {
+        setTimeout(() => settle(code), 2000).unref?.();
       });
     });
   }
@@ -463,6 +789,14 @@ export class PiProvider implements AgentProvider {
         if (pending.length === 0 && ended) return;
 
         const item = pending.shift()!;
+        // The host found the agent assigned a model pi cannot serve. Say so
+        // instead of running against whatever the install-wide fallback is.
+        const unservable = process.env.PI_UNSERVABLE_MODEL;
+        if (unservable) {
+          log(`pi: assigned model ${unservable} is not servable by pi — failing the turn`);
+          yield { type: 'result', text: null, isError: true, error: unservableModelMessage(unservable) };
+          continue;
+        }
         const modelKey = process.env.PI_MODEL || '';
         let text = item.text;
         if (thinkingOffModels.has(modelKey) && !text.includes(THINKING_OFF_DIRECTIVE)) {
@@ -487,6 +821,35 @@ export class PiProvider implements AgentProvider {
           throw err;
         }
 
+        // DOUBLE-DELIVERY GUARD. When the message tool already delivered, the
+        // model's closing text is a confirmation to itself — "Message delivered
+        // successfully to pi-soak" — and this group runs with lenientOutput, so
+        // the poll-loop would send that unwrapped prose as a SECOND message.
+        // Measured: every tool-delivered turn produced two.
+        //
+        // Only prose is dropped. Text carrying its own <message> envelope is
+        // passed through untouched: that is a real delivery, possibly to a
+        // different destination, and swallowing it would lose a message rather
+        // than de-duplicate one.
+        const redundantConfirmation = result.deliveredViaMessageTool === true && !/<message\b/i.test(result.text);
+        const deliverable = redundantConfirmation ? null : result.text || null;
+
+        // A failed backend request ends the turn as a failure. It must never
+        // reach the retries below: an errored turn has no text, and the stall
+        // branch would read that as a reasoning-only turn and run it again.
+        if (result.error) {
+          log(`pi: turn failed: ${result.error}`);
+          const classification = classifyBackendError(result.error);
+          yield {
+            type: 'error',
+            message: result.error,
+            retryable: false,
+            ...(classification ? { classification } : {}),
+          };
+          yield { type: 'result', text: deliverable, isError: true };
+          continue;
+        }
+
         // No-op tool-call cap. MUST be checked before the thinking-stall
         // recovery below: a capped turn also has no text and did reason, so the
         // stall branch would claim it first and retry with /no_think — which
@@ -502,7 +865,7 @@ export class PiProvider implements AgentProvider {
           continue;
         }
 
-        // Thinking-stall recovery (same shape as the opencode provider).
+        // Thinking-stall recovery.
         if (!result.text && result.sawReasoning && item.retries < MAX_STALL_RETRIES) {
           thinkingOffModels.add(modelKey);
           log(
@@ -514,18 +877,7 @@ export class PiProvider implements AgentProvider {
           });
           continue;
         }
-        // DOUBLE-DELIVERY GUARD. When the message tool already delivered, the
-        // model's closing text is a confirmation to itself — "Message delivered
-        // successfully to pi-soak" — and this group runs with lenientOutput, so
-        // the poll-loop would send that unwrapped prose as a SECOND message.
-        // Measured: every tool-delivered turn produced two.
-        //
-        // Only prose is dropped. Text carrying its own <message> envelope is
-        // passed through untouched: that is a real delivery, possibly to a
-        // different destination, and swallowing it would lose a message rather
-        // than de-duplicate one.
-        const redundantConfirmation = result.deliveredViaMessageTool === true && !/<message\b/i.test(result.text);
-        yield { type: 'result', text: redundantConfirmation ? null : result.text || null };
+        yield { type: 'result', text: deliverable };
       }
     }
 
@@ -541,7 +893,7 @@ export class PiProvider implements AgentProvider {
       events: gen(),
       abort: (): void => {
         aborted = true;
-        this.activeChild?.kill('SIGKILL');
+        this.stopActive?.();
         kick();
       },
     };

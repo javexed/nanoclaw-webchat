@@ -22,7 +22,7 @@ import { INSTALL_SLUG } from '../../config.js';
 import { log } from '../../log.js';
 import { authenticateRequest, type AuthFailure, type AuthResult } from './auth.js';
 import { tailnetHostNames } from './request-guard.js';
-import { registerUpgradeHandler, type UpgradeHandler } from './ws.js';
+import { logPreAuth, registerUpgradeHandler, type UpgradeHandler } from './ws.js';
 import { closeRunnerChat, handleChatFrame, setupRunnerChat, type ChatDeps } from './runner-chat.js';
 import { attachRunnerLink, detachRunnerLink, handleRunnerFrame } from './runner-transport.js';
 import { readExtensionManifest } from './runner-extension.js';
@@ -293,6 +293,10 @@ export function setupRunnerWebSocket(opts: RunnerWsOptions = {}): WebSocketServe
       const remoteIp = (req.socket.remoteAddress ?? '').replace(/^::ffff:/, '');
       const auth = await authenticate(req);
       if (!auth.ok) {
+        logPreAuth('Runner connection refused: not signed in', {
+          remoteIp,
+          bearer: /^Bearer\s/i.test(String(req.headers.authorization ?? '')),
+        });
         refuse(socket, 401, 'Unauthorized');
         return;
       }
@@ -343,6 +347,12 @@ function onConnection(
   originHosts: string[],
 ): void {
   let entry: Live | null = null;
+  /**
+   * The hello said `standby`: this window only wants the connection if no
+   * other window on the machine holds it (a window that lost it, or one that
+   * opened while another was connected). Without it, a hello takes over.
+   */
+  let standby = false;
   /** Set between a keyed hello and its signed answer. */
   let challenge: {
     nonce: string;
@@ -431,6 +441,12 @@ function onConnection(
     publicKey: string | null,
     existing: RunnerMachineRow | undefined,
   ): Promise<void> => {
+    const holder = runners.get(m.fingerprint);
+    if (standby && holder && holder.ws !== ws && holder.alive && holder.ws.readyState === holder.ws.OPEN) {
+      send(ws, { type: 'error', code: 'held', message: 'another window on this machine holds the connection' });
+      ws.close(4409, 'held');
+      return;
+    }
     let machine = await activeRegistry.recordMachineSeen({
       fingerprint: m.fingerprint,
       userId: auth.userId,
@@ -539,6 +555,9 @@ function onConnection(
       installSlug: INSTALL_SLUG,
       // The runner build this install serves; the extension offers the update when it is newer.
       ...updateOffer(),
+      // A standby hello is turned away while another window holds the machine
+      // (4409 held), so a window that lost the connection may retry often.
+      standby: true,
     });
   };
 
@@ -603,6 +622,7 @@ function onConnection(
         return;
       }
       helloSeen = true;
+      standby = frame.standby === true;
       const machine: RunnerMachine = {
         fingerprint: m.fingerprint,
         hostname: String(m.hostname ?? ''),

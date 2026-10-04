@@ -6,6 +6,7 @@
 // appendMessage decides from transient state (whether the sender was me, which
 // reasoning log to fold on, the parsed a2a payload) that a re-render no longer has.
 import { ref } from 'vue';
+import type { TraceMeta, TraceView } from './turn-trace-view.js';
 
 /** Monotonic row key. Server ids are absent on the optimistic echo and on
  *  system lines, so identity cannot come from the payload. */
@@ -46,6 +47,10 @@ export interface MsgRow {
   file?: any;
   caption?: string | null;
   thoughts?: string[] | null;
+  /** The live turn this reply ended, for its Thoughts until the stored trace is fetched. */
+  liveTrace?: TraceView | null;
+  /** The server holds a trace for this reply (history `has_trace`, or a live `trace` frame). */
+  hasTrace?: boolean;
   ttsText?: string | null;
   timeStr?: string;
   timeTitle?: string;
@@ -102,6 +107,12 @@ export interface ThinkingTurn {
   /** The fading feed window — a bounded tail of reasoningLog with per-line
    *  fade state, which is why it is not just a slice of it. */
   feed: Array<{ key: number; text: string; fading: boolean }>;
+  /** Tools this turn, in order; `ms` is filled when the next activity arrives. */
+  tools: Array<{ name: string; target: string | null; at: number; ms: number | null }>;
+  /** Progress milestones and errors this turn. */
+  notes: Array<{ kind: string; text: string }>;
+  /** Harness, model and host, from the server's `turn_meta` frame. */
+  meta: TraceMeta | null;
   expanded: boolean;
   elapsed: string;
   /** Owned by an active status stream, so the typing heartbeat must not clear

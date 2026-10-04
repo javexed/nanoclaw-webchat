@@ -12,6 +12,7 @@ import MessageBubble from './MessageBubble.vue';
 import MsgDeleteButton from './MsgDeleteButton.vue';
 import ApprovalCard from './ApprovalCard.vue';
 import SkillDraftCard from './SkillDraftCard.vue';
+import TurnThoughts from './TurnThoughts.vue';
 
 const props = defineProps<{
   decorate: (bubble: HTMLElement) => void;
@@ -21,12 +22,6 @@ const props = defineProps<{
   onStopAgent: (name: string) => void;
   onToggleTurn: (name: string) => void;
 }>();
-
-const THOUGHTS = 'Thoughts';
-const thoughtsPreview = (lines: string[]) => {
-  const last = lines[lines.length - 1] || '';
-  return last ? ' — ' + (last.length > 90 ? `${last.slice(0, 89)}…` : last) : '';
-};
 
 </script>
 
@@ -94,18 +89,7 @@ const thoughtsPreview = (lines: string[]) => {
           :on-open-lightbox="props.onOpenLightbox"
         />
 
-        <details v-if="row.thoughts && row.thoughts.length" class="thoughts">
-          <summary
-            ><svg class="icon" aria-hidden="true"><use href="#i-sparkles"></use></svg
-            >{{ ` ${THOUGHTS} (${row.thoughts.length})`
-            }}<span v-if="thoughtsPreview(row.thoughts)" class="thoughts-preview">{{
-              thoughtsPreview(row.thoughts)
-            }}</span></summary
-          >
-          <div class="thoughts-body">
-            <div v-for="(l, i) in row.thoughts" :key="i" class="thoughts-line">{{ l }}</div>
-          </div>
-        </details>
+        <TurnThoughts v-if="row.isAgent" :row="row" />
 
         <div v-if="row.timeStr" class="timestamp" :title="row.timeTitle || undefined">{{ row.timeStr }}</div>
         <div v-if="row.isMine && row.status" :class="row.status === '✓✓' ? 'status delivered' : 'status'">{{

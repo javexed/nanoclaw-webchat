@@ -32,8 +32,13 @@ other. A model on the host itself (`localhost` / `host.docker.internal`) is dial
 directly by the container, not through the proxy, so the egress filter listens
 on that port too and forwards to the host — per connection, held to the
 caller's policy (its own model, the allowlist, or Open); a port no model uses
-any more is closed at the next spawn. Central's own services (the MCP relay)
-are routed before the check.
+any more is closed at the next spawn. A model on another machine (a LAN GPU
+box, plain HTTP) is out of reach of the lockdown network altogether, so the
+filter relays it the same way: one port per model host (47100-47899, from a
+hash of host:port), forwarding to that host, admitting the agents whose model
+it is (and, on Allowlist, a listed host). A filtered agent's model URL names
+that port; an Open agent dials the model directly. Central's own services
+(the MCP relay) are routed before the check.
 
 **Groups that existed before this policy keep open egress.** An unset mode
 used to mean open; migration `webchat-egress-existing-open` stamps `'open'`
@@ -69,6 +74,16 @@ filter's ports.
   `runner.egress.blocked`, and Manage → Network → Recently blocked.
 - Fail-closed: an agent that cannot be put behind the filter starts with
   `--network none`.
+- Model ports, host-local or relayed to another machine, are checked per caller
+  on both paths: an agent reaches its own model, or a model host its mode
+  allows. Under the exec relay only the MCP relay is passed straight through
+  (it checks a per-agent token on every request).
+- An Ollama server, admitted, still serves an agent inference only
+  (`ollama-filter.ts`): chat, generate, embeddings and their OpenAI- and
+  Anthropic-compatible forms, plus read-only lookups (tags, ps, show, version,
+  models). Pull, delete, create, copy and push get a 403: Ollama has no
+  authentication, and an agent could otherwise fill the disk or remove the
+  models others use. Every request on a kept-alive connection is checked.
 
 **The lockdown network:** a Docker `--internal` network
 (`nanoclaw-egress-<install slug>`, one per install) with no route out. The
@@ -116,6 +131,14 @@ allowlist into the sidecar so the modes mean the same thing there.
 npm, PyPI, NuGet, GitHub, `learn.microsoft.com`. An install adds its own
 (organisation feeds) with `NANOCLAW_EGRESS_EXTRA_DEFAULTS` in `.env` — never in
 the repo. Recently blocked offers one-click Allow.
+
+**Direct tunnels:** an install-list entry with an explicit port other than
+443/80 (`git.example.com:22`) is tunnelled by the filter itself, past the
+gateway (which would read it as TLS). Never to this machine (loopback, any of
+its own addresses, the docker bridge gateway `172.17.0.1` where host services
+listen) or a link-local address. A private address (RFC 1918, IPv6 ULA) only
+when the entry is that address (`10.0.0.5:22`): a name that resolves to one is
+refused, so a name whose DNS someone else controls cannot reach into the LAN.
 
 **Setting a mode:** agent panel → Network (Open / Allowlist / Model only; only
 opening asks for confirmation; `PUT /api/agents/:id/egress` reports
@@ -221,13 +244,37 @@ they administer.
 | --- | --- |
 | workspace | owner / global admin — it is install-wide |
 | agent | whoever administers THAT agent, scoped admins included |
-| user (self) | anyone |
+| user (self) | anyone, for an agent they use (`canAccessAgentGroup`) |
 | user (someone else) | **nobody, at any privilege level** |
 
 The last row is deliberate and is a tightening: an owner could previously manage
 another person's personal credential. A personal credential must be entered by
 its owner — an admin doing it on their behalf would have to handle that person's
 token, which is precisely what per-user credentials exist to prevent.
+
+### Personal secrets without a Claude credential of one's own
+
+An **Only you** secret needs the person's own OneCLI identity: on the agent's
+shared identity it would reach everyone. Connecting a model credential creates
+that identity; so does a first personal secret, for someone who has connected
+none. Their identity then holds the **workspace** model credential (the one the
+shared session runs on), the agent's tool secrets and their own. It is recorded
+as an enrollment holding no key of theirs, and it changes where their turns run:
+
+- they get their own session (and container), since a shared session serves the
+  whole room and has no "you" to send a personal secret for;
+- in every room, **User credentials: Off** included: that setting is about who
+  pays for the model, not about personal secrets;
+- except a **Required** room, which still turns away anyone without a model
+  credential of their own;
+- removing their last personal secret puts them back on the shared session;
+  connecting their own key moves the identity onto it, and disconnecting it
+  later returns them to the workspace credential, personal secrets kept.
+
+Saving a personal secret isolates the fleet first (`ensureFleetIsolation`), as
+any per-agent or per-person secret does: an agent left in `all` mode would be
+offered it too. Without a workspace credential for the agent's provider there is
+nothing for their identity to run on, and the save is refused.
 
 This covers `/api/tool-secrets`, `/api/tool-secrets/isolation` and
 `/api/deploy-keys`. The isolation toggle is included because it is the same
@@ -268,6 +315,15 @@ password by hand. The username must be non-empty, contain no `:` (RFC 7617) or
 control characters, and both fields are capped at 256 characters. `basic` is
 refused alongside `value` or `scheme`, errors never quote either field, and like
 every tool secret it is write-only.
+
+**Updating** a secret (`PUT /api/tool-secrets?…&id=`, the row's **Update**)
+replaces its value, and its type when that changed, in place: the same vault
+secret, so every assignment stands and no request goes out without a credential
+in between. The body is the add body without `hostPattern` (the host is what
+the credential is: another host is remove and add) and passes the same
+validation; who may update follows the same scope rules as adding and removing,
+and an id outside the scope is refused. The value still never comes back: the
+form opens with the current type but an empty value.
 
 Deliberately not a table of named services: every scheme is the same shape, so
 per-service entries would add a release cycle to every integration and bake one
@@ -317,6 +373,55 @@ written down:
 gateway rather than the host — so relay-backed MCP servers are expected to be
 unreachable for a group set to `host-only`, in the same way host-local LiteLLM
 and Ollama are. Not measured; treat it as unreachable until it is.
+
+### OneCLI's own ports
+
+OneCLI's compose file binds all three of its ports to one `ONECLI_BIND_HOST`,
+and on Linux setup sets that to the bridge address so containers can reach the
+gateway. Left there, the management API (no auth in a local install: `GET
+/api/agents` answers anyone) and Postgres (the compose default password) are
+in reach of every container on the host. Whoever can manage the vault can
+re-point a secret at a host they control, and the gateway then delivers the
+real key there.
+
+Containers need only the gateway. With the add-onecli patch:
+
+| Port | Bound to | Who dials it |
+| --- | --- | --- |
+| 10254 (API) | `127.0.0.1` | central, the `onecli` CLI, the operator's browser (`APP_URL`) |
+| 10255 (gateway) | the bridge **and** `127.0.0.1` | agent containers; host-side callers (they derive its address from `ONECLI_URL`) |
+| 5432 (Postgres) | not published | OneCLI's container only, on its compose network |
+
+Fresh installs get this, and an update applies it to an existing install:
+`install.sh` and `deploy/webchat-deploy.sh` both end by running
+`deploy/onecli-private-ports.sh`, which runs the add-onecli migration
+(`setup.ts --private-ports`): it rewrites `~/.onecli/docker-compose.yml`,
+recreates the stack (only on a change), points the CLI's `api-host` and this
+install's `ONECLI_URL` at loopback, and fails unless the API answers on
+loopback and neither the API nor Postgres accepts a connection on the bridge
+any more. Restart the service after an update so it picks up a moved
+`ONECLI_URL` (`webchat-deploy.sh` restarts it itself).
+
+The update skips the step, touching nothing, when there is no local OneCLI or
+the install dials a remote one, and when another NanoClaw install on the host
+(a systemd unit with another working directory) still dials the API on the
+bridge: moving the API would cut that one off. It then prints the command to
+run in each install directory before restarting each:
+
+```bash
+pnpm exec tsx .claude/skills/add-onecli/scripts/setup.ts --private-ports
+```
+
+A failed migration warns and leaves the update in place; run the same command
+to retry. `NANOCLAW_SKIP_ONECLI_PRIVATE_PORTS=1` opts an update out.
+
+Still open, and OneCLI's to fix: the gateway relays a request to any host its
+container can resolve, its own API (`http://onecli:10254`) and Postgres
+included. A filtered agent is stopped by the egress filter (only its allowed
+hosts pass); an agent on Open egress is not. The Postgres password is still
+the compose default: with no published port only containers on OneCLI's
+network reach it, but rotating it (`ALTER USER`, then `POSTGRES_PASSWORD` in
+`~/.onecli/.env` and `docker compose up -d`) is worth doing.
 
 ## Container hardening & resource limits
 

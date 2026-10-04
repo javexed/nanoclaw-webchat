@@ -103,7 +103,15 @@ import {
   rModelIdPut,
   rModelIdDelete,
   rModelsManageGet,
+  rModelHostsGet,
+  rModelFitContextPut,
+  rModelFitCheckPost,
+  rModelFitStartPost,
   rModelsContextVariantPost,
+  rCloudModelsGet,
+  rCloudModelsListGet,
+  rCloudModelsPost,
+  rModelTestPost,
 } from './server/routes-models.js';
 import { refreshUnassignedGroupsForDefaultModel } from './server/model-wiring.js';
 import {
@@ -241,6 +249,7 @@ import { log } from '../../log.js';
 import { getAgentGroup, getAllAgentGroups } from '../../db/agent-groups.js';
 import { getPendingApproval, getSession } from '../../db/sessions.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
+import { restartAgentGroupContainersWhenIdle } from '../../container-restart-idle.js';
 import type { InboundMessage, OutboundFile } from '../adapter.js';
 import {
   assertBearerTokenStrength,
@@ -286,6 +295,8 @@ import { syncAgentProviderForAssignedModel, classifierParamsForModel } from './m
 import { handleChunkedUpload, handleFileServe, handleMultipartUpload } from './files.js';
 import { initWebPush, isValidPushEndpoint } from './push.js';
 import { redactSensitiveData } from './redact.js';
+import { withTraceFlags } from './turn-traces.js';
+import { rMessageTraceGet, rTurnTracesGet, rTurnTracesPut } from './server/routes-traces.js';
 import {
   grantOwnerRole,
   hasAdminPrivilege,
@@ -333,10 +344,13 @@ import {
 } from './db.js';
 
 import {
+  ensurePersonalEnrollment,
   storeUserCredential,
   revokeUserCredential,
   setWorkspaceDefaultCredential,
 } from '../../modules/user-credentials/onboard.js';
+import { canAccessAgentGroup } from '../../modules/permissions/access.js';
+import { filterAsync } from './async-array.js';
 import { WORKSPACE_DEFAULT_USER_ID } from '../../modules/user-credentials/identity.js';
 import {
   startClaudeMint,
@@ -362,6 +376,7 @@ import {
   listToolSecrets,
   createToolSecret,
   deleteToolSecret,
+  updateToolSecret,
   getGroupIsolation,
   isolateGroup,
   unisolateGroup,
@@ -373,7 +388,6 @@ import {
 } from '../../modules/tool-secrets/index.js';
 import {
   getUserCredential,
-  listEnrolledGroups,
   listAllTrackedSecretIds,
   listGroupMemberEnrollments,
 } from '../../modules/user-credentials/db.js';
@@ -916,6 +930,7 @@ const RE_TEMPLATE_SOURCE = /^\/api\/template-sources\/([^/]+)$/;
 const RE_ROOM_AGENTS = /^\/api\/rooms\/([^/]+)\/agents$/;
 const RE_ROOM_MENTIONABLE = /^\/api\/rooms\/([^/]+)\/mentionable$/;
 const RE_ROOM_REASONING = /^\/api\/rooms\/([^/]+)\/reasoning$/;
+const RE_MESSAGE_TRACE = /^\/api\/messages\/([^/]+)\/trace$/;
 const RE_ROOM_CRED_MODE = /^\/api\/rooms\/([^/]+)\/credential-mode$/;
 const RE_ROOM_OAUTH = /^\/api\/rooms\/([^/]+)\/oauth-allowed$/;
 const RE_USER_CREDS_MINT = /^\/api\/user-credentials\/oauth\/(start|code|cancel)$/;
@@ -985,6 +1000,7 @@ const RE_SESSION_RESET = /^\/api\/sessions\/([^/]+)\/reset$/;
 const RE_ROOM_BROADCAST = /^\/api\/rooms\/([^/]+)\/sessions\/broadcast$/;
 const RE_ROUTER_DEL = /^\/api\/router\/routers\/([^/]+)$/;
 const RE_MODEL_ID = /^\/api\/models\/([^/]+)$/;
+const RE_MODEL_TEST = /^\/api\/models\/([^/]+)\/test$/;
 const RE_APPROVE = /^\/api\/approvals\/([^/]+)\/respond$/;
 const RE_USER_ID = /^\/api\/users\/([^/]+)$/;
 
@@ -1041,30 +1057,24 @@ async function rCodexMintPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void>
 // Deliberately NOT admin-gated: the whole point of a per-user PAT is that its
 // owner is the only one who ever handles it, so each person needs a place to
 // manage their own without an admin in the loop. Returns only the caller's
-// own credentials, for the agents they are actually enrolled in.
+// own credentials, for every agent they may use: a personal secret needs no
+// Claude credential of their own (it runs on the workspace's).
 async function rToolSecretsMine(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
-  const seen = new Set<string>();
   const groups: { agentGroupId: string; name: string; secrets: unknown[]; effective: unknown[] }[] = [];
-  for (const provider of ['claude', 'codex'] as const) {
-    for (const row of await listEnrolledGroups(userId, provider)) {
-      if (seen.has(row.agent_group_id)) continue;
-      seen.add(row.agent_group_id);
-      const group = await getAgentGroup(row.agent_group_id);
-      if (!group) continue;
-      groups.push({
-        agentGroupId: group.id,
-        name: group.name,
-        secrets: await listToolSecrets(realOnecliAdmin, {
-          kind: 'user',
-          agentGroupId: group.id,
-          userId,
-        }),
-        // What this person's turns send per host — theirs, the agent's, or the
-        // all-agents one — so the Settings view can say it too.
-        effective: await effectiveSecretsFor(realOnecliAdmin, group.id, userId),
-      });
-    }
+  const usable = await filterAsync(
+    await getAllAgentGroups(),
+    async (g) => (await canAccessAgentGroup(userId, g.id)).allowed,
+  );
+  for (const group of usable) {
+    groups.push({
+      agentGroupId: group.id,
+      name: group.name,
+      secrets: await listToolSecrets(realOnecliAdmin, { kind: 'user', agentGroupId: group.id, userId }),
+      // What this person's turns send per host — theirs, the agent's, or the
+      // all-agents one — so the Settings view can say it too.
+      effective: await effectiveSecretsFor(realOnecliAdmin, group.id, userId),
+    });
   }
   return json(res, 200, { groups: groups.sort((a, b) => a.name.localeCompare(b.name)) });
 }
@@ -1075,6 +1085,57 @@ async function rToolSecretsMine(ctx: RouteCtx, _m: RegExpMatchArray): Promise<vo
 // DB and every archived transcript. Admin-only on every verb, and WRITE-ONLY:
 // GET returns metadata (id/label/host) and never a value, so this endpoint can
 // never become a way to read a stored credential back out.
+/**
+ * A secret as the form sends it: a value (with an optional scheme) or a
+ * username + password, and — when adding — the host it is for. The validation
+ * adding and updating share, so an update cannot take what an add would refuse.
+ */
+function parseSecretInput(
+  raw: unknown,
+  needHost: boolean,
+): { value: string; scheme?: AuthScheme; hostPattern: string } | { error: string } {
+  const body = (raw && typeof raw === 'object' ? raw : {}) as {
+    value?: string;
+    hostPattern?: string;
+    scheme?: unknown;
+    basic?: unknown;
+  };
+  let value = body.value ?? '';
+  let scheme: AuthScheme | undefined;
+  // Username + password: the server does the base64 so nobody encodes a
+  // password by hand. It replaces both the value and the scheme.
+  if (body.basic !== undefined) {
+    if (body.value !== undefined || body.scheme !== undefined)
+      return { error: 'Send basic on its own, without value or scheme' };
+    const basic = resolveBasicCredential(body.basic);
+    if ('error' in basic) return { error: basic.error };
+    ({ value, scheme } = basic);
+  }
+  const hostPattern = (body.hostPattern ?? '').trim();
+  if (!value) return { error: needHost ? 'host and value are required' : 'a value is required' };
+  if (needHost && !hostPattern) return { error: 'host and value are required' };
+  if (!needHost && body.hostPattern !== undefined)
+    return { error: 'the host of a secret does not change: remove it and add one for the new host' };
+  // Optional: how the credential goes on the wire, for a host that cannot say
+  // which service answers there. Either a preset name or a custom
+  // {headerName, valueFormat}. resolveAuthScheme owns the validation — header
+  // token charset, forbidden request-control headers, exactly one {value},
+  // printable single-line template — so a crafted request cannot smuggle a
+  // header or split the request.
+  if (body.scheme !== undefined) {
+    const resolved = resolveAuthScheme(body.scheme);
+    if ('error' in resolved) return { error: resolved.error };
+    scheme = resolved;
+  }
+  // The host pattern is what SCOPES the credential. A bare `*` (or a
+  // wildcard anywhere but the leading label) would offer the token to every
+  // site the agent touches — the whole point is that a DevOps PAT never
+  // leaves dev.azure.com. Allow `example.com` and `*.example.com`, nothing looser.
+  if (needHost && !/^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(hostPattern))
+    return { error: 'hostPattern must be a hostname, optionally *.example.com' };
+  return { value, ...(scheme ? { scheme } : {}), hostPattern };
+}
+
 async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, url, method, userId } = ctx;
   // Scope: no agentGroupId (or '*') = system-wide; + userId = that person only.
@@ -1148,46 +1209,34 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
     }
     const raw = await readJsonBody(req, res);
     if (raw === null) return;
-    const body = JSON.parse(raw) as { value?: string; hostPattern?: string; scheme?: unknown; basic?: unknown };
-    let value = body.value ?? '';
-    let basicScheme: AuthScheme | undefined;
-    // Username + password: the server does the base64 so nobody encodes a
-    // password by hand. It replaces both the value and the scheme.
-    if (body.basic !== undefined) {
-      if (body.value !== undefined || body.scheme !== undefined)
-        return json(res, 400, { error: 'Send basic on its own, without value or scheme' });
-      const basic = resolveBasicCredential(body.basic);
-      if ('error' in basic) return json(res, 400, { error: basic.error });
-      ({ value, scheme: basicScheme } = basic);
+    const input = parseSecretInput(JSON.parse(raw), method !== 'PUT');
+    if ('error' in input) return json(res, 400, { error: input.error });
+    if (method === 'PUT') {
+      // A new value (and kind) for an existing secret, in place; its host stays.
+      const updated = await updateToolSecret(
+        realOnecliAdmin,
+        scope,
+        url.searchParams.get('id') ?? '',
+        input.value,
+        input.scheme,
+      );
+      return updated
+        ? json(res, 200, { ok: true, secret: updated })
+        : json(res, 404, { error: 'Not a secret of this agent' });
     }
-    const hostPattern = (body.hostPattern ?? '').trim();
-    if (!value || !hostPattern) return json(res, 400, { error: 'host and value are required' });
-    // Optional: how the credential goes on the wire, for a host that cannot say
-    // which service answers there. Either a preset name or a custom
-    // {headerName, valueFormat}. resolveAuthScheme owns the validation — header
-    // token charset, forbidden request-control headers, exactly one {value},
-    // printable single-line template — so a crafted request cannot smuggle a
-    // header or split the request.
-    let scheme: AuthScheme | undefined = basicScheme;
-    if (body.scheme !== undefined) {
-      const resolved = resolveAuthScheme(body.scheme);
-      if ('error' in resolved) return json(res, 400, { error: resolved.error });
-      scheme = resolved;
-    }
-    // The host pattern is what SCOPES the credential. A bare `*` (or a
-    // wildcard anywhere but the leading label) would offer the token to every
-    // site the agent touches — the whole point is that a DevOps PAT never
-    // leaves dev.azure.com. Allow `example.com` and `*.example.com`, nothing looser.
-    if (!/^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(hostPattern))
-      return json(res, 400, { error: 'hostPattern must be a hostname, optionally *.example.com' });
-    // Injection scheme is inferred from the host (injectionForHost) rather than
-    // asked for — the operator should not need to know an API's auth header by
-    // heart, and one credential per host is the sane model. The exception is a
-    // self-hosted service on an IP, which no host rule can identify; there the
-    // operator names the service and the table still supplies the header.
+    const { value, scheme, hostPattern } = input;
+    // Without a stated scheme, how the credential goes on the wire is inferred
+    // from the host (injectionForHost): the operator should not need to know an
+    // API's auth header by heart, and one credential per host is the model.
     // A secret for one agent or one person is private only while no agent is
     // in `all` mode, so the whole fleet is isolated first.
+    // Your own secret, for an agent you use: checked before anything changes.
+    if (scope.kind === 'user' && !(await canAccessAgentGroup(scope.userId, scope.agentGroupId)).allowed)
+      return json(res, 403, { error: 'You can only add credentials for agents you use' });
     if (scope.kind !== 'workspace') await ensureFleetIsolation(realOnecliAdmin);
+    // No Claude credential of your own needed: a first personal secret gives
+    // you your own identity, on the workspace's credential.
+    if (scope.kind === 'user') await ensurePersonalEnrollment(realOnecliAdmin, scope.userId, scope.agentGroupId);
     const created = await createToolSecret(realOnecliAdmin, scope, hostPattern, value, scheme);
     return json(res, 200, { ok: true, secret: created });
   } catch (err) {
@@ -1197,7 +1246,7 @@ async function rToolSecrets(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> 
     log.error('Tool secret request failed', { agentGroupId, method, err });
     const msg = err instanceof Error ? err.message : '';
     const safe =
-      /^(No OneCLI agent|Could not (create|isolate)|No model credential|This person has not|A credential for|Credential isolation is off|Couldn't make every agent private)/.test(
+      /^(No OneCLI agent|Could not (create|isolate)|No model credential|This person has not|A credential for|Credential isolation is off|Couldn't make every agent private|This agent has no workspace)/.test(
         msg,
       );
     return json(res, safe ? 409 : 500, { error: safe ? msg : 'Vault operation failed — check host logs' });
@@ -1583,7 +1632,7 @@ async function rHistGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   return json(
     res,
     200,
-    msgs.map((m) => ({ ...m, content: redactSensitiveData(m.content) })),
+    (await withTraceFlags(msgs)).map((m) => ({ ...m, content: redactSensitiveData(m.content) })),
   );
 }
 
@@ -2473,7 +2522,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: RE_CODEX_MINT, guards: ['csrf'], h: rCodexMintPost },
   { method: ['GET', 'PUT', 'DELETE'], path: '/api/workspace-credential', h: rWorkspaceCredential },
   { method: 'GET', path: '/api/tool-secrets/mine', h: rToolSecretsMine },
-  { method: ['GET', 'POST', 'DELETE'], path: '/api/tool-secrets', h: rToolSecrets },
+  { method: ['GET', 'POST', 'PUT', 'DELETE'], path: '/api/tool-secrets', h: rToolSecrets },
   { method: 'POST', path: '/api/tool-secrets/isolation', h: rToolSecretsIsolation },
   { method: ['GET', 'POST', 'DELETE'], path: '/api/deploy-keys', h: rDeployKeys },
   { method: 'POST', path: RE_WS_CRED_MINT, h: rWsCredMintPost },
@@ -2489,6 +2538,20 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/webchat/usage', guards: ['owner'], h: rWebchatUsageGet },
   { method: 'GET', path: '/api/models/manage', guards: ['owner'], h: rModelsManageGet },
   { method: 'POST', path: '/api/models/context-variant', guards: ['csrf', 'owner'], h: rModelsContextVariantPost },
+  { method: 'GET', path: '/api/models/hosts', guards: ['owner'], h: rModelHostsGet },
+  { method: 'PUT', path: '/api/models/fit-context', guards: ['csrf', 'owner'], h: rModelFitContextPut },
+  {
+    method: 'POST',
+    path: '/api/models/fit-context/start',
+    guards: ['csrf', 'owner'],
+    h: rModelFitStartPost,
+  },
+  {
+    method: 'POST',
+    path: '/api/models/fit-context/check',
+    guards: ['csrf', 'owner'],
+    h: rModelFitCheckPost,
+  },
   { method: ['GET', 'PUT'], path: '/api/webchat/tailscale-owner', h: rWebchatTailscaleOwner },
   { method: ['GET', 'PUT'], path: '/api/webchat/audit-syslog', h: rWebchatAuditSyslog },
   { method: ['GET', 'PUT'], path: '/api/webchat/audit-retention', h: rWebchatAuditRetention },
@@ -2519,6 +2582,15 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/topology', h: rTopologyGet },
   { method: 'GET', path: '/api/search', h: rSearchGet },
   { method: 'GET', path: RE_HIST, h: rHistGet },
+  { method: 'GET', path: RE_MESSAGE_TRACE, h: rMessageTraceGet },
+  { method: 'GET', path: '/api/webchat/turn-traces', guards: ['owner'], h: rTurnTracesGet },
+  {
+    method: 'PUT',
+    path: '/api/webchat/turn-traces',
+    guards: ['owner', 'csrf'],
+    h: rTurnTracesPut,
+    audit: 'policy.turn-traces',
+  },
   { method: 'POST', path: RE_UPLOAD, h: rUploadPost },
   { method: 'POST', path: RE_CHUNK, h: rChunkPost },
   { method: 'GET', path: RE_FILE, h: rFileGet },
@@ -2725,6 +2797,10 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/router/litellm-install', guards: ['owner'], h: rRouterLitellmInstallGet },
   { method: 'POST', path: '/api/router/litellm-install', guards: ['csrf', 'owner'], h: rRouterLitellmInstallPost },
   { method: 'POST', path: '/api/models', guards: ['csrf', 'owner'], h: rModelsPost, audit: 'model.create' },
+  { method: 'GET', path: '/api/models/cloud', guards: ['owner'], h: rCloudModelsGet },
+  { method: 'GET', path: '/api/models/cloud/models', guards: ['owner'], h: rCloudModelsListGet },
+  { method: 'POST', path: RE_MODEL_TEST, guards: ['owner', 'csrf'], h: rModelTestPost },
+  { method: 'POST', path: '/api/models/cloud', guards: ['csrf', 'owner'], h: rCloudModelsPost, audit: 'model.cloud' },
   { method: 'GET', path: '/api/models/known', h: rModelsKnownGet },
   { method: 'POST', path: '/api/models/discover', guards: ['csrf', 'owner'], h: rModelsDiscoverPost },
   { method: 'POST', path: '/api/models/probe', guards: ['csrf', 'owner'], h: rModelsProbePost },
@@ -3165,7 +3241,7 @@ async function putScopedSkillContentHandler(
   } finally {
     fs.closeSync(fd);
   }
-  const restarted = await restartAgentGroupContainers(agentGroupId, `Scoped skill ${name} edited`);
+  const restarted = await restartAgentGroupContainersWhenIdle(agentGroupId, `Scoped skill ${name} edited`);
   return json(res, 200, { ok: true, name, restarted });
 }
 

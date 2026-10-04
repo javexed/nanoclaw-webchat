@@ -259,3 +259,93 @@ describe('handleChunkedUpload — concurrency safety', () => {
     expect(b.captured.status).not.toBe(413);
   });
 });
+
+// ── Chunked upload — a long upload, a lost one, an oversized one ──────────
+
+describe('handleChunkedUpload — lifetime', () => {
+  const body = (uploadId: string, chunkIndex: number, totalChunks: number, extra: object = {}) =>
+    JSON.stringify({
+      uploadId,
+      chunkIndex,
+      totalChunks,
+      filename: 'big.bin',
+      mime: 'application/octet-stream',
+      data: Buffer.from('x').toString('base64'),
+      ...extra,
+    });
+  const send = async (b: string, sender: string) => {
+    const { res, captured } = fakeRes();
+    await handleChunkedUpload(fakeReq(b), res, ROOM_ID, 'alice', sender, noopHooks);
+    return captured;
+  };
+
+  it('refuses a chunk for an upload it no longer holds, instead of starting it over', async () => {
+    const r = await send(body('33333333-3333-3333-3333-333333333333', 7, 10), 'webchat:test-lost');
+    expect(r.status).toBe(410);
+    expect(r.body).toMatch(/expired/i);
+  });
+
+  it('refuses a file over the limit at its first chunk', async () => {
+    const r = await send(
+      body('44444444-4444-4444-4444-444444444444', 0, 3000, { size: 9 * 1024 ** 3 }),
+      'webchat:test-big',
+    );
+    expect(r.status).toBe(413);
+  });
+
+  it('puts the file together byte for byte, a resent chunk counted once', async () => {
+    const { randomBytes } = await import('crypto');
+    const fs = await import('fs');
+    const path = await import('path');
+    const id = '66666666-6666-6666-6666-666666666666';
+    const parts = Array.from({ length: 20 }, () => randomBytes(64 * 1024));
+    const chunk = (i: number) =>
+      JSON.stringify({
+        uploadId: id,
+        chunkIndex: i,
+        totalChunks: parts.length,
+        filename: 'whole.bin',
+        mime: 'application/octet-stream',
+        data: parts[i].toString('base64'),
+      });
+    let last: CapturedResponse | undefined;
+    for (let i = 0; i < parts.length; i++) {
+      if (i === 3) await send(chunk(2), 'webchat:test-whole'); // a retry
+      last = await send(chunk(i), 'webchat:test-whole');
+    }
+    expect(last!.status).toBe(200);
+    const meta = JSON.parse(last!.body!) as { url: string; size: number };
+    expect(meta.size).toBe(20 * 64 * 1024);
+    const { uploadsDir } = await import('./files.js');
+    const stored = fs.readFileSync(path.join(uploadsDir(ROOM_ID), meta.url.split('/').pop()!));
+    expect(stored.equals(Buffer.concat(parts))).toBe(true);
+  });
+
+  it('keeps an upload that is still sending chunks past five minutes', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const id = '55555555-5555-5555-5555-555555555555';
+      const sender = 'webchat:test-long';
+      expect((await send(body(id, 0, 3), sender)).status).toBe(200);
+      vi.advanceTimersByTime(4 * 60 * 1000);
+      expect((await send(body(id, 1, 3), sender)).status).toBe(200);
+      vi.advanceTimersByTime(4 * 60 * 1000);
+      const last = await send(body(id, 2, 3), sender);
+      expect(last.status).toBe(200);
+      // Put together, not taken for a new upload (the old timer would have dropped chunks 0 and 1).
+      expect(last.body).toContain('big.bin');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('room on the data disk for an upload', () => {
+  it('needs twice the file (chunks and the file put together) plus a margin', async () => {
+    const { uploadFits, UPLOAD_DISK_MARGIN } = await import('./files.js');
+    const GB = 1024 ** 3;
+    expect(uploadFits(4 * GB, 8 * GB + UPLOAD_DISK_MARGIN)).toBe(true);
+    expect(uploadFits(4 * GB, 8 * GB + UPLOAD_DISK_MARGIN - 1)).toBe(false);
+    expect(uploadFits(8 * GB, 10 * GB)).toBe(false);
+  });
+});

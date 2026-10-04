@@ -196,3 +196,179 @@ describe('a host-local model port', () => {
     expect(await throughModelPort(d)).toBe('');
   });
 });
+
+describe('a relay to a model on another machine', () => {
+  // A stand-in for the model on the LAN behind a relay port; `d` is given the model's address.
+  async function throughRelay(d: (model: string) => EgressFilterDeps): Promise<string> {
+    const model = net.createServer((sock) => sock.end('lan-model-says-hi'));
+    const mPort = await new Promise<number>((r) =>
+      model.listen(0, '127.0.0.1', () => r((model.address() as net.AddressInfo).port)),
+    );
+    const bridge = net.createServer(
+      (sock) => void serveModelPort(sock, 47123, { host: '127.0.0.1', port: mPort }, d(`127.0.0.1:${mPort}`), true),
+    );
+    const bPort = await new Promise<number>((r) =>
+      bridge.listen(0, '127.0.0.1', () => r((bridge.address() as net.AddressInfo).port)),
+    );
+    try {
+      return await new Promise<string>((resolve) => {
+        let got = '';
+        const c = net.connect(bPort, '127.0.0.1');
+        c.on('data', (x) => (got += x.toString()));
+        c.on('close', () => resolve(got));
+        c.on('error', () => resolve(got));
+      });
+    } finally {
+      bridge.close();
+      model.close();
+    }
+  }
+
+  it('lets the agent whose model it is through, in either filtered mode', async () => {
+    for (const mode of ['host-only', 'none'] as const) {
+      const got = await throughRelay((m) => ({ ...deps, mode: async () => mode, ownModels: async () => [m] }));
+      expect(got).toBe('lan-model-says-hi');
+    }
+  });
+
+  it('refuses any other agent on the network, and records the model host it wanted', async () => {
+    let wanted = '';
+    const got = await throughRelay((m) => {
+      wanted = m;
+      return { ...deps, mode: async () => 'host-only', ownModels: async () => ['192.0.2.10:11434'] };
+    });
+    expect(got).toBe('');
+    expect(listBlocked().map((b) => `${b.host}:${b.port}`)).toEqual([wanted]);
+  });
+
+  it('model only stays model only: an allowlisted model host is still refused to an agent it is not the model of', async () => {
+    const got = await throughRelay((m) => ({
+      ...deps,
+      mode: async () => 'none',
+      allowlist: async () => [m],
+      ownModels: async () => [],
+    }));
+    expect(got).toBe('');
+  });
+
+  it('is refused to a caller the filter cannot identify', async () => {
+    expect(await throughRelay((m) => ({ ...deps, identify: async () => null, ownModels: async () => [m] }))).toBe('');
+  });
+});
+
+describe('a direct tunnel to an explicitly listed non-web port', () => {
+  let target: net.Server;
+  let dialled: string[];
+  beforeEach(async () => {
+    dialled = [];
+    target = net.createServer((sock) => {
+      sock.write('SSH-2.0-test\r\n');
+      sock.on('data', (x) => sock.write(Buffer.concat([Buffer.from('echo:'), x])));
+      sock.on('error', () => {});
+    });
+    const port = await new Promise<number>((r) =>
+      target.listen(0, '127.0.0.1', () => r((target.address() as net.AddressInfo).port)),
+    );
+    // The install list (global admins) names the direct-tunnel entries; the
+    // agent's own hosts come on top in `allowlist`.
+    const install = ['app.internal:22', 'api.internal:443', '127.0.0.1:5432', 'plain.internal'];
+    deps.installAllowlist = async () => install;
+    deps.allowlist = async () => [...install, 'own.internal:22'];
+    deps.direct = async (host, p) => {
+      dialled.push(`${host}:${p}`);
+      return net.connect(port, '127.0.0.1');
+    };
+  });
+  afterEach(() => target.close());
+
+  it('connects straight to the target, past the gateway, and pipes both ways', async () => {
+    const got = await ask(`CONNECT app.internal:22 HTTP/1.1\r\n${cred}\r\n\r\n`, 'hi');
+    expect(got).toContain('200 Connection Established');
+    expect(got).toContain('SSH-2.0-test');
+    expect(got).toContain('echo:hi');
+    expect(dialled).toEqual(['app.internal:22']);
+    expect(seen).toEqual([]);
+  });
+
+  it('leaves web ports, loopback and unported entries to the gateway or the allowlist', async () => {
+    await ask(`CONNECT api.internal:443 HTTP/1.1\r\n${cred}\r\n\r\n`, 'x');
+    await ask(`CONNECT 127.0.0.1:5432 HTTP/1.1\r\n${cred}\r\n\r\n`, 'x');
+    expect(dialled).toEqual([]);
+    expect(seen.map((s) => s.split('\r\n')[0])).toEqual([
+      'CONNECT api.internal:443 HTTP/1.1',
+      'CONNECT 127.0.0.1:5432 HTTP/1.1',
+    ]);
+    // A host listed without a port allows 443 and 80 only.
+    expect(await ask(`CONNECT plain.internal:22 HTTP/1.1\r\n${cred}\r\n\r\n`)).toMatch(/^HTTP\/1.1 403/);
+  });
+
+  it("an agent's own host:port (its scoped admins') goes to the gateway, never direct", async () => {
+    await ask(`CONNECT own.internal:22 HTTP/1.1\r\n${cred}\r\n\r\n`, 'x');
+    expect(dialled).toEqual([]);
+    expect(seen.map((s) => s.split('\r\n')[0])).toEqual(['CONNECT own.internal:22 HTTP/1.1']);
+  });
+
+  it('is refused under model only, and a target that does not answer is a 502', async () => {
+    deps.mode = async () => 'none';
+    expect(await ask(`CONNECT app.internal:22 HTTP/1.1\r\n${cred}\r\n\r\n`)).toMatch(/^HTTP\/1.1 403/);
+    deps.mode = async () => 'host-only';
+    deps.direct = async () => {
+      throw new Error('connect ECONNREFUSED');
+    };
+    const got = await ask(`CONNECT app.internal:22 HTTP/1.1\r\n${cred}\r\n\r\n`);
+    expect(got).toMatch(/^HTTP\/1.1 502/);
+    expect(got).toContain('could not reach app.internal:22');
+  });
+});
+
+describe('which addresses a direct tunnel may reach', () => {
+  const own = new Set(['172.17.0.1', '192.168.0.20', 'fd00::5']);
+
+  it('refuses loopback, link-local (the metadata service) and unspecified, IPv4-mapped included', async () => {
+    const { directAddressAllowed } = await import('./egress-policy.js');
+    for (const a of [
+      '127.0.0.1',
+      '127.8.8.8',
+      '169.254.169.254',
+      '0.0.0.0',
+      '::1',
+      '::',
+      'fe80::1',
+      '::ffff:127.0.0.1',
+    ])
+      for (const literal of [false, true]) expect(directAddressAllowed(a, literal, own), a).toBe(false);
+    for (const a of ['203.0.113.7', '2001:db8::1', '100.96.1.2'])
+      expect(directAddressAllowed(a, false, own), a).toBe(true);
+  });
+
+  it('refuses this machine itself: its own addresses and the docker bridge gateway, even listed literally', async () => {
+    const { directAddressAllowed, hostOwnAddresses } = await import('./egress-policy.js');
+    for (const a of ['172.17.0.1', '::ffff:172.17.0.1', '192.168.0.20', 'fd00::5'])
+      expect(directAddressAllowed(a, true, own), a).toBe(false);
+    // The real set: the bridge gateway always, and this machine's loopback.
+    const real = hostOwnAddresses();
+    expect(real.has('172.17.0.1')).toBe(true);
+    expect(directAddressAllowed('172.17.0.1', true)).toBe(false);
+  });
+
+  it('a private address only when the entry is that address, never by a name resolving there', async () => {
+    const { directAddressAllowed } = await import('./egress-policy.js');
+    for (const a of ['10.0.0.5', '172.16.0.0', '192.168.0.7', 'fd00::7', '::ffff:10.0.0.5']) {
+      expect(directAddressAllowed(a, false, own), a).toBe(false);
+      expect(directAddressAllowed(a, true, own), a).toBe(true);
+    }
+    // 172.32.x is not RFC 1918.
+    expect(directAddressAllowed('172.32.0.1', false, own)).toBe(true);
+  });
+
+  it('decides by the install list alone, and refuses a literal loopback, metadata or bridge address', async () => {
+    const { directTunnel } = await import('./egress-policy.js');
+    expect(directTunnel('host-only', 'git.example', 22, ['git.example:22'])).toBe(true);
+    expect(directTunnel('host-only', 'git.example', 22, [])).toBe(false);
+    expect(directTunnel('host-only', '169.254.169.254', 80, ['169.254.169.254:80'])).toBe(false);
+    expect(directTunnel('host-only', '169.254.169.254', 8080, ['169.254.169.254:8080'])).toBe(false);
+    expect(directTunnel('host-only', '172.17.0.1', 5432, ['172.17.0.1:5432'])).toBe(false);
+    expect(directTunnel('host-only', '10.0.0.5', 22, ['10.0.0.5:22'])).toBe(true);
+    expect(directTunnel('none', 'git.example', 22, ['git.example:22'])).toBe(false);
+  });
+});

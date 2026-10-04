@@ -1,10 +1,9 @@
 # Skills — design and architecture
 
-*As-built reference for the webchat skills feature (PR #190 lineage). Skills
-are standard [Anthropic Agent Skills](https://github.com/anthropics/skills): a
-folder with a `SKILL.md` (front-matter `name` + `description`, then
-instructions, optionally scripts), loaded by the Claude Agent SDK from
-`.claude/skills/`.*
+*As-built reference for the webchat skills feature. Skills are standard
+[Anthropic Agent Skills](https://github.com/anthropics/skills): a folder with a
+`SKILL.md` (front-matter `name` + `description`, then instructions, optionally
+scripts), loaded by the Claude Agent SDK from `.claude/skills/`.*
 
 ## The two-mount model
 

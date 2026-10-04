@@ -18,7 +18,8 @@ skill installs each module.
 
 **Invariant:** the machine only ever dials out. The extension opens one
 authenticated WebSocket to central (`/ws/runner`); everything else rides it.
-It signs in one of two ways (`nanoclaw.signIn`): `microsoft` sends an Entra
+It signs in one of two ways, as central's sign-in settings say (Manage →
+Runners): `microsoft` sends an Entra
 token from VS Code's Microsoft sign-in, verified by central
 (`WEBCHAT_OIDC_ISSUER` / `_AUDIENCE`); `network` sends none, and central knows
 the laptop by Tailscale or a trusted proxy's identity headers. Pairing needs
@@ -84,8 +85,7 @@ A group placed on a machine runs its agent **on central** and works on the
 developer's project through tools the extension serves on that machine: Read,
 Edit, Write, Glob, Grep and read-only git (GitStatus, GitDiff, GitLog, GitShow,
 GitBlame), confined to a proposal copy of the folder bound at
-`/workspace/project` (the open workspace folder, or `nanoclaw.slots`; inside
-`nanoclaw.mountAllowlist`; secret-like files left out). Nothing on the machine
+`/workspace/project` (the open workspace folder; secret-like files left out). Nothing on the machine
 runs a command the agent chose. A folder is served only once the developer
 allows it (once per folder and server). The git tools see the developer's
 history beneath the copy but refuse, at any revision, the paths the copy leaves

@@ -2,16 +2,20 @@
 /**
  * An agent's tool secrets, mounted into <ul id="agent-secrets-list">, grouped by REACH,
  * nearest first: yours, this agent's shared, all-agents, then other people's own. Those
- * last are listed so an admin can see who holds a key, but carry no Remove — only their
- * owner may touch them, and a button the server refuses is worse than none.
+ * last are listed so an admin can see who holds a key, but carry no Update or Remove — only
+ * their owner may touch them, and a button the server refuses is worse than none.
  */
 import { computed } from 'vue';
 
 import { agentSecretEffective, agentSecretRows, type SecretReach } from './agent-lists-state.js';
 
-const props = defineProps<{ onRemove: (row: { scope: unknown; sec: unknown }) => void }>();
+const props = defineProps<{
+  onRemove: (row: { scope: unknown; sec: unknown }) => void;
+  onUpdate: (row: { scope: unknown; sec: unknown }) => void;
+}>();
 
 const REMOVE = 'Remove';
+const UPDATE = 'Update';
 const EMPTY = 'No secrets yet';
 const SECTIONS: Array<{ reach: SecretReach; title: string }> = [
   { reach: 'mine', title: 'Only you' },
@@ -42,7 +46,10 @@ const sections = computed(() =>
         </div>
         <span v-if="r.note" class="skill-desc">{{ r.note }}</span>
       </div>
-      <button v-if="r.canRemove" class="btn btn-danger" type="button" @click="props.onRemove(r)">{{ REMOVE }}</button>
+      <template v-if="r.canRemove">
+        <button class="btn btn-secondary" type="button" @click="props.onUpdate(r)">{{ UPDATE }}</button>
+        <button class="btn btn-danger" type="button" @click="props.onRemove(r)">{{ REMOVE }}</button>
+      </template>
     </li>
   </template>
 </template>

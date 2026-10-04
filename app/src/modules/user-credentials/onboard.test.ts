@@ -5,6 +5,7 @@ import { runMigrations } from '../../db/migrations/index.js';
 import {
   storeUserCredential,
   ensureGroupEnrollment,
+  ensurePersonalEnrollment,
   revokeUserCredential,
   setWorkspaceDefaultAnthropic,
   setWorkspaceDefaultCredential,
@@ -76,9 +77,14 @@ function fakeAdmin() {
     async updateSecretValue(secretId, value) {
       secrets.set(secretId, { value, type: secrets.get(secretId)?.type ?? 'anthropic' });
     },
+    async updateGenericSecret(secretId, value) {
+      secrets.set(secretId, { ...secrets.get(secretId)!, value });
+    },
     async deleteSecret(secretId) {
       secrets.delete(secretId);
     },
+    async updateSecretPathPattern() {},
+    async deleteAgent() {},
     async getSecretMode(uuid) {
       return (byUuid(uuid)?.mode as 'all' | 'selective' | undefined) ?? null;
     },
@@ -535,5 +541,87 @@ describe('setWorkspaceDefaultCredential fan-out (re-mint must not orphan selecti
     const ws = (await getUserSecretId(WORKSPACE_DEFAULT_USER_ID))!;
     expect(agents.get(ident)!.secretIds).toContain(aliceSecret);
     expect(agents.get(ident)!.secretIds).not.toContain(ws); // hers wins; not overwritten
+  });
+});
+
+describe('ensurePersonalEnrollment (personal secrets, no Claude credential of their own)', () => {
+  it("gives the member their own selective agent on the workspace's credential, plus the group's tools", async () => {
+    const { admin, agents, secrets, seedGroupAgent } = fakeAdmin();
+    await setWorkspaceDefaultAnthropic(admin, 'sk-ant-ws', 'api_key');
+    const ws = (await getUserSecretId(WORKSPACE_DEFAULT_USER_ID))!;
+    seedGroupAgent('ag-1', [{ id: 'grp-gmail', type: 'generic' }]);
+    await ensurePersonalEnrollment(admin, 'webchat:alice', 'ag-1');
+    const ident = userCredsAgentIdentifier('ag-1', 'webchat:alice');
+    expect(agents.get(ident)!.mode).toBe('selective');
+    expect(agents.get(ident)!.secretIds.sort()).toEqual([ws, 'grp-gmail'].sort());
+    const row = (await getUserCredsCredential('webchat:alice', 'ag-1'))!;
+    expect(row.status).toBe('active');
+    expect(row.secret_id).toBeNull(); // no key of hers
+    expect(row.onecli_agent_id).toBe(ident);
+    // She has connected nothing, and no vault secret of hers was made.
+    expect(await userHasConnectedCredential('webchat:alice', 'claude')).toBe(false);
+    expect([...secrets.values()].filter((x) => x.type === 'anthropic')).toHaveLength(1);
+  });
+
+  it('refuses without a workspace credential for the provider: the agent would have none', async () => {
+    const { admin, agents } = fakeAdmin();
+    await expect(ensurePersonalEnrollment(admin, 'webchat:alice', 'ag-1')).rejects.toThrow(
+      /no workspace Claude credential/,
+    );
+    expect(agents.has(userCredsAgentIdentifier('ag-1', 'webchat:alice'))).toBe(false);
+    expect(await getUserCredsCredential('webchat:alice', 'ag-1')).toBeNull();
+  });
+
+  it('is idempotent, and a member with a key of their own gets the ordinary enrollment', async () => {
+    const { admin } = fakeAdmin();
+    await setWorkspaceDefaultAnthropic(admin, 'sk-ant-ws', 'api_key');
+    await ensurePersonalEnrollment(admin, 'webchat:alice', 'ag-1');
+    await ensurePersonalEnrollment(admin, 'webchat:alice', 'ag-1');
+    expect(await getDb().all(`SELECT * FROM user_credential_members WHERE user_id = 'webchat:alice'`)).toHaveLength(1);
+
+    await storeUserCredential(admin, 'webchat:bob', 'claude', 'sk-ant-bob', 'api_key');
+    await ensurePersonalEnrollment(admin, 'webchat:bob', 'ag-1');
+    expect((await getUserCredsCredential('webchat:bob', 'ag-1'))!.secret_id).toBe(await getUserSecretId('webchat:bob'));
+  });
+
+  it('connecting a key later moves the member onto it, keeping the tool secrets their agent holds', async () => {
+    const { admin, agents, secrets } = fakeAdmin();
+    await setWorkspaceDefaultAnthropic(admin, 'sk-ant-ws', 'api_key');
+    const ws = (await getUserSecretId(WORKSPACE_DEFAULT_USER_ID))!;
+    await ensurePersonalEnrollment(admin, 'webchat:alice', 'ag-1');
+    const ident = userCredsAgentIdentifier('ag-1', 'webchat:alice');
+    // Her personal PAT, as tool-secrets' reconcile would have assigned it.
+    secrets.set('pat-alice', { value: 'x', type: 'generic', name: 'ToolSecret ag-1:alice dev.azure.com' });
+    agents.get(ident)!.secretIds.push('pat-alice');
+
+    await storeUserCredential(admin, 'webchat:alice', 'claude', 'sk-ant-alice', 'api_key');
+    await ensureGroupEnrollment(admin, 'webchat:alice', 'ag-1');
+    const own = (await getUserSecretId('webchat:alice'))!;
+    expect((await getUserCredsCredential('webchat:alice', 'ag-1'))!.secret_id).toBe(own);
+    expect(agents.get(ident)!.secretIds).toContain(own);
+    expect(agents.get(ident)!.secretIds).toContain('pat-alice');
+    expect(agents.get(ident)!.secretIds).not.toContain(ws);
+  });
+
+  it("disconnecting a key leaves a personal-secrets enrollment alone (it holds nothing of the member's)", async () => {
+    const { admin } = fakeAdmin();
+    await setWorkspaceDefaultAnthropic(admin, 'sk-ant-ws', 'api_key');
+    await ensurePersonalEnrollment(admin, 'webchat:alice', 'ag-1');
+    await storeUserCredential(admin, 'webchat:alice', 'claude', 'sk-ant-alice', 'api_key');
+    await ensureGroupEnrollment(admin, 'webchat:alice', 'ag-2');
+    await revokeUserCredential(admin, 'webchat:alice', 'claude');
+    expect((await getUserCredsCredential('webchat:alice', 'ag-1'))!.status).toBe('active');
+    expect((await getUserCredsCredential('webchat:alice', 'ag-2'))!.status).toBe('revoked');
+  });
+
+  it("a workspace credential rotation reaches the member's agent", async () => {
+    const { admin, agents } = fakeAdmin();
+    // The fan-out walks agent_groups.
+    await getDb().run(`INSERT INTO agent_groups (id, name, folder, created_at) VALUES ('ag-1', 'a', 'a', '')`);
+    await setWorkspaceDefaultAnthropic(admin, 'sk-ant-first', 'api_key');
+    await ensurePersonalEnrollment(admin, 'webchat:alice', 'ag-1');
+    await setWorkspaceDefaultAnthropic(admin, 'sk-ant-second', 'api_key');
+    const second = (await getUserSecretId(WORKSPACE_DEFAULT_USER_ID))!;
+    expect(agents.get(userCredsAgentIdentifier('ag-1', 'webchat:alice'))!.secretIds).toContain(second);
   });
 });

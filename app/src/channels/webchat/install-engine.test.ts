@@ -169,6 +169,63 @@ describe('install engine', () => {
     });
   });
 
+  it('chains sharing a lock run one after the other, never interleaved', async () => {
+    const order: string[] = [];
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => (release = r));
+    for (const [name, first] of [
+      ['one', gate],
+      ['two', Promise.resolve()],
+    ] as const) {
+      registerFeatureInstall(name, {
+        label: name,
+        lock: 'shared',
+        installed: () => false,
+        steps: () => [
+          {
+            call: async () => {
+              order.push(`${name}:start`);
+              await first;
+            },
+            label: 'a',
+          },
+          { call: () => void order.push(`${name}:end`), label: 'b' },
+        ],
+      });
+    }
+    await startFeatureInstall('one', '/nowhere');
+    await startFeatureInstall('two', '/nowhere');
+    await tick();
+    expect(order).toEqual(['one:start']);
+    expect((await installStatus('two')).running).toBe(true);
+    release();
+    await tick();
+    expect(order).toEqual(['one:start', 'one:end', 'two:start', 'two:end']);
+  });
+
+  it('onFinish learns whether the chain succeeded', async () => {
+    const seen: boolean[] = [];
+    registerFeatureInstall('fin', {
+      label: 'Fin',
+      idempotent: true,
+      installed: () => false,
+      onFinish: (_r, _a, ok) => void seen.push(ok),
+      steps: (_r, a: { fail?: boolean } | undefined) => [
+        {
+          call: () => {
+            if (a?.fail) throw new Error('no');
+          },
+          label: 'x',
+        },
+      ],
+    });
+    await startFeatureInstall('fin', '/nowhere', { fail: true });
+    await tick();
+    await startFeatureInstall('fin', '/nowhere', {});
+    await tick();
+    expect(seen).toEqual([false, true]);
+  });
+
   it('skillPreflight and allPreflights: first refusal wins, null when all clear', () => {
     const missing = skillPreflight('add-nothing');
     expect(missing('/nowhere')).toMatchObject({ code: 'skill-missing' });

@@ -1,8 +1,16 @@
 diff --git a/src/cli/resources/groups.ts b/src/cli/resources/groups.ts
-index 52351f8b..f63a589c 100644
+index 88deac77..fe19be67 100644
 --- a/src/cli/resources/groups.ts
 +++ b/src/cli/resources/groups.ts
-@@ -259,6 +259,8 @@ registerResource({
+@@ -11,6 +11,7 @@ import {
+ import { buildAgentGroupImage, killContainer } from '../../container-runner.js';
+ import { requestWake } from '../../request-wake.js';
+ import { restartAgentGroupContainers } from '../../container-restart.js';
++import { restartForModelSwitch } from '../../container-restart-idle.js';
+ import { createAgentGroup, getAgentGroupByFolder } from '../../db/agent-groups.js';
+ import { getDb, hasTable } from '../../db/connection.js';
+ import { getSession } from '../../db/sessions.js';
+@@ -271,6 +272,8 @@ registerResource({
              agent_group_members: 0,
              user_roles: 0,
              container_configs: 0,
@@ -11,7 +19,7 @@ index 52351f8b..f63a589c 100644
            };
  
            if (hasAgentDestinations) {
-@@ -298,6 +300,21 @@ registerResource({
+@@ -310,6 +313,21 @@ registerResource({
              await db.run('DELETE FROM agent_group_members WHERE agent_group_id = ?', id)
            ).changes;
            counts.user_roles = (await db.run('DELETE FROM user_roles WHERE agent_group_id = ?', id)).changes;
@@ -33,17 +41,24 @@ index 52351f8b..f63a589c 100644
            // migration-014 has ON DELETE CASCADE on container_configs.agent_group_id;
            // the explicit delete here mirrors the other tables and surfaces the count.
            counts.container_configs = (
-@@ -391,7 +408,8 @@ registerResource({
-         'Update container config scalar fields. Changes are saved but do NOT take effect until you run `ncl groups restart`. ' +
+@@ -400,11 +418,13 @@ registerResource({
+     'config update': {
+       access: 'approval',
+       description:
+-        'Update container config scalar fields. Changes are saved but do NOT take effect until you run `ncl groups restart`. ' +
++        'Update container config scalar fields. Changes are saved but do NOT take effect until you run `ncl groups restart` — ' +
++        'except --model from an agent: approving it restarts you on the new model once your current turn ends, so do not run `ncl groups restart` after it. ' +
          'Use --id <group-id> and any of: --provider, --model, --effort, --speed, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope, ' +
          '--speed must be one of the speed tiers the group\'s provider declares (Claude: "standard", "fast"), or "" to follow the install default; a provider that declares none accepts only "". ' +
 -        '--timezone (IANA id like "Europe/Lisbon"; "" clears back to the install default; scheduled-task times follow it immediately, message display after restart).',
+-      handler: async (args) => {
 +        '--timezone (IANA id like "Europe/Lisbon"; "" clears back to the install default; scheduled-task times follow it immediately, message display after restart), ' +
 +        '--egress (open|host-only|none).',
-       handler: async (args) => {
++      handler: async (args, ctx) => {
          const id = args.id as string;
          if (!id) throw new Error('--id is required');
-@@ -410,6 +428,7 @@ registerResource({
+         const row = await getContainerConfig(id);
+@@ -422,6 +442,7 @@ registerResource({
              | 'max_messages_per_prompt'
              | 'cli_scope'
              | 'timezone'
@@ -51,7 +66,7 @@ index 52351f8b..f63a589c 100644
            >
          > = {};
          if (args.provider !== undefined) updates.provider = args.provider as string;
-@@ -437,9 +456,18 @@ registerResource({
+@@ -449,15 +470,31 @@ registerResource({
            updates.cli_scope = scope;
          }
  
@@ -71,7 +86,20 @@ index 52351f8b..f63a589c 100644
            );
          }
  
-@@ -454,7 +482,7 @@ registerResource({
+         await updateContainerConfigScalars(id, updates);
+ 
+         const updated = (await getContainerConfig(id))!;
++        // A model switch takes effect on approval: the group restarts on it once
++        // its current turn ends, so the agent needs no second (`groups restart`)
++        // approval card and the turn's reply is not lost to the restart.
++        if (ctx.caller === 'agent' && updates.model !== undefined) {
++          const restarted = await restartForModelSwitch(id, row.model, updated.model);
++          if (restarted) return { ...presentConfig(updated), restarted };
++        }
+         return presentConfig(updated);
+       },
+     },
+@@ -466,7 +503,7 @@ registerResource({
        description:
          'Add an MCP server to a group. Requires `ncl groups restart` to take effect. ' +
          'Use --id <group-id> --name <server-name> with either --command <cmd> [--args <json-array>] [--env <json-object>] ' +
@@ -80,7 +108,7 @@ index 52351f8b..f63a589c 100644
        handler: async (args) => {
          const id = args.id as string;
          if (!id) throw new Error('--id is required');
-@@ -475,6 +503,7 @@ registerResource({
+@@ -487,6 +524,7 @@ registerResource({
          }
          servers[name] = parseMcpServerConfig({
            command: args.command,

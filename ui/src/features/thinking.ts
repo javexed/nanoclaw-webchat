@@ -36,6 +36,9 @@ function ensureTurn(name?: string): ThinkingTurn {
       reasoningLog: [],
       fullTrace: [],
       feed: [],
+      tools: [],
+      notes: [],
+      meta: null,
       expanded: false,
       elapsed: '',
       statusLive: false,
@@ -65,7 +68,35 @@ function updateThinkingBubble(name: string, label: string, detail?: string) {
 }
 
 function setThinkingMilestone(name: string, text: string) {
-  ensureTurn(name).milestone = text;
+  const turn = ensureTurn(name);
+  closeOpenTool(turn);
+  turn.milestone = text;
+  pushNote(turn, 'progress', text);
+}
+
+const TURN_TOOLS_MAX = 300;
+const TURN_NOTES_MAX = 100;
+
+/** A tool runs until the next activity: that is when its time is known. */
+function closeOpenTool(turn: ThinkingTurn, now = Date.now()): void {
+  const last = turn.tools[turn.tools.length - 1];
+  if (last && last.ms === null) last.ms = Math.max(0, now - last.at);
+}
+
+function pushNote(turn: ThinkingTurn, kind: string, text: string): void {
+  if (turn.notes.length < TURN_NOTES_MAX) turn.notes.push({ kind, text });
+}
+
+/** Record a tool call for the expanded bubble and the reply's Thoughts. */
+function pushTool(name: string, tool: string, target: string | null) {
+  const turn = ensureTurn(name);
+  closeOpenTool(turn);
+  if (turn.tools.length < TURN_TOOLS_MAX) turn.tools.push({ name: tool, target, at: Date.now(), ms: null });
+}
+
+/** Harness · model · host for the turn, from the server's `turn_meta` frame. */
+function setTurnMeta(name: string, meta: { harness: string | null; model: string | null; host: string | null }) {
+  ensureTurn(name).meta = meta;
 }
 
 const REASONING_FEED_BUFFER = 40; // max lines kept in the feed (scroll history)
@@ -79,6 +110,7 @@ const REASONING_FADE_MS = 500; // fade-out transition duration (matches CSS)
 // bubble when the agent's message lands. A bounded DOM buffer caps memory.
 function pushReasoning(name: string, text: string, full?: string) {
   const turn = ensureTurn(name);
+  closeOpenTool(turn);
 
   // Retain the clipped line for the feed and the reply disclosure.
   turn.reasoningLog.push(text);
@@ -138,7 +170,15 @@ export function removeTurn(name: string): void {
   thinkingTurns.value = thinkingTurns.value.filter((t) => t.name !== name);
 }
 
-export { ensureTurn, updateThinkingBubble, setThinkingMilestone, pushReasoning, toggleThinkingExpanded };
+export {
+  ensureTurn,
+  updateThinkingBubble,
+  setThinkingMilestone,
+  pushReasoning,
+  pushTool,
+  setTurnMeta,
+  toggleThinkingExpanded,
+};
 
 // Show/hide the MCP + Skills nav for the current session (admin AND enabled).
 export function applyMarketplaceNav() {

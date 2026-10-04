@@ -1,6 +1,6 @@
 // ── Egress allowlist routes ──────────────────────────────────────────────
 // Manage → Network: the install-wide egress allowlist every filtered agent
-// uses, local or on a paired machine (egress-policy.ts allowlistFor). Owner /
+// uses (egress-policy.ts allowlistFor). Owner /
 // global-admin only (the 'globalAdmin' guard in server.ts).
 import { json, readJsonObject } from './http.js';
 import {

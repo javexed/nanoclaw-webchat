@@ -49,7 +49,7 @@ bash .claude/skills/add-webchat-dictation/resources/install-whisper.sh
 # Pick the model / port / language explicitly:
 bash .claude/skills/add-webchat-dictation/resources/install-whisper.sh --model small --port 8771 --lang auto
 
-# No container — point at an existing whisper.cpp / OpenAI-compatible server (e.g. the GPU box):
+# No container — point at an existing whisper.cpp / OpenAI-compatible server (e.g. on a GPU host):
 bash .claude/skills/add-webchat-dictation/resources/install-whisper.sh --url http://gpu-box:8000/v1 --model whisper-1
 ```
 

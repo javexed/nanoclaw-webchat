@@ -4,8 +4,10 @@
 // room-list, thread, approval or status update. Also the connection banner and
 // the diagnose-on-failure probe.
 import { $ } from '../core/dom.js';
+import { checkSessionExpired, clearSessionExpired, sessionExpiredShown } from './session-expiry.js';
 import { learnTurnToolCount, roomAutoLearn, roomsReceived } from '../features/room-list-state.js';
-import { pushReasoning, setThinkingMilestone, updateThinkingBubble } from '../features/thinking.js';
+import { pushReasoning, pushTool, setThinkingMilestone, setTurnMeta, updateThinkingBubble } from '../features/thinking.js';
+import { forgetTrace } from '../features/turn-trace-view.js';
 import { renderCredentialIsolation } from '../features/settings.js';
 import { isAdminView, isWorkspaceAdminView } from './state.js';
 import { permsMyUserId } from '../features/perms-list-state.js';
@@ -14,11 +16,16 @@ import { renderHandleChip, renderMembers, userIsOwner } from '../features/member
 import { userIsGlobalAdmin } from '../features/perms-user-info.js';
 import { showLearnNudge, triggerLearn } from '../features/learn.js';
 import { fetchMentionablePeople, handleTypingEvent } from '../features/composer.js';
-import { beginAgentTurn, endAgentTurn, markTurnActivity, refreshWiredAgentsForCurrentRoom } from '../features/agents.js';
+import {
+  beginAgentTurn,
+  endAgentTurn,
+  markTurnActivity,
+  refreshWiredAgentsForCurrentRoom,
+} from '../features/agents.js';
 import { showToast } from '../core/toast.js';
 import { apiJson, authFetch, getWsUrl, getWsProtocols } from '../core/api.js';
 import { state } from '../core/state.js';
-import { readdRow, transcriptEmpty, type MsgRow } from '../features/transcript-state.js';
+import { messages, readdRow, transcriptEmpty, type MsgRow } from '../features/transcript-state.js';
 import {
   appendMessage,
   appendSystem,
@@ -45,8 +52,7 @@ export interface TaggedSocket extends WebSocket {
   _intentionalClose?: boolean;
 }
 
-export interface WsDeps {
-}
+export interface WsDeps {}
 
 const deps = {} as WsDeps;
 
@@ -92,6 +98,8 @@ export async function diagnoseConnection() {
     setConnectionBanner('You’re offline. Reconnecting when the network returns…');
     return;
   }
+  // Not down at all: the sign-in front door wants a sign-in (session-expiry.ts).
+  if (await checkSessionExpired()) return;
   if (Date.now() - state.lastProbeAt < 10000) {
     // Throttled — but each retry's onclose resets the banner to the generic
     // text, so re-apply the standing diagnosis instead of losing it.
@@ -130,6 +138,7 @@ export function connect() {
 
   sock.onopen = () => {
     $('#connection-banner')?.classList.remove('visible');
+    clearSessionExpired();
     state.reconnectDelay = 1000;
     state.lastProbeAt = 0; // next drop diagnoses fresh, not against a stale probe
     state.lastDiagnosis = null;
@@ -325,7 +334,11 @@ export function connect() {
             });
           } catch {}
         }
-        if (msg.sender === state.myIdentity && msg.client_id && state.pendingMessages.has(msg.client_id)) {
+        // By client id alone: this tab generated it, and the server echoes it
+        // only on this sender's own message. Matching the sender NAME as well
+        // failed whenever the server's name for us changed mid-session (a
+        // sign-in falling back to another path), and every message showed twice.
+        if (msg.client_id && state.pendingMessages.has(msg.client_id)) {
           const row = state.pendingMessages.get(msg.client_id)!; // guarded by has() above
           // Upgrade the optimistic row in place: delivered tick, then the server
           // id (which is what makes the delete button appear).
@@ -369,6 +382,23 @@ export function connect() {
       case 'status':
         handleStatusEvent(msg);
         break;
+      case 'turn_meta':
+        // Harness · model · host for a turn that just started (turn-traces.ts).
+        if (msg.room_id === state.currentRoom)
+          setTurnMeta(msg.agent_name || state.agentName || 'Agent', {
+            harness: msg.harness ?? null,
+            model: msg.model ?? null,
+            host: msg.host ?? null,
+          });
+        break;
+      case 'trace': {
+        // A reply's turn was stored: its Thoughts can now be fetched.
+        if (!msg.message_id) break;
+        forgetTrace(msg.message_id);
+        const row = messages.value.find((r) => r.id === msg.message_id);
+        if (row) row.hasTrace = true;
+        break;
+      }
       case 'unread':
         if (msg.room_id && msg.room_id !== state.currentRoom) {
           state.unreadRooms.add(msg.room_id);
@@ -430,8 +460,12 @@ export function connect() {
     // If another socket has since taken over (rapid reconnects, visibility
     // change), let it own the reconnect lifecycle.
     if (state.ws !== sock) return;
-    setConnectionBanner('Connection lost. Reconnecting…');
-    void diagnoseConnection();
+    // An expired sign-in is already explained, with its button: keep that up and retry quietly
+    // (a sign-in in another tab brings the socket back).
+    if (!sessionExpiredShown()) {
+      setConnectionBanner('Connection lost. Reconnecting…');
+      void diagnoseConnection();
+    }
     state.myIdentity = '';
     setTimeout(connect, state.reconnectDelay);
     state.reconnectDelay = Math.min(state.reconnectDelay * 2, 30000);
@@ -446,10 +480,7 @@ export async function probeInternet() {
       signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(4000) : undefined,
     });
   try {
-    await Promise.any([
-      hit('https://derp1.tailscale.com/generate_204'),
-      hit('https://www.gstatic.com/generate_204'),
-    ]);
+    await Promise.any([hit('https://derp1.tailscale.com/generate_204'), hit('https://www.gstatic.com/generate_204')]);
     return true;
   } catch {
     return false;
@@ -492,9 +523,16 @@ export async function fetchMyHandle() {
   renderHandleChip();
 }
 
+// Bumped by every probe. Probes overlap (each `rooms` frame starts one), so a
+// slow one that lost a race drops its result instead of overwriting a newer one.
+let probeSeq = 0;
+
 export async function probeIsOwner() {
+  const seq = ++probeSeq;
+  const superseded = () => seq !== probeSeq;
   try {
     const [check, users] = await Promise.all([authFetch('/api/auth/check'), authFetch('/api/users')]);
+    if (superseded()) return isAdminView.value;
     if (check.ok) {
       const body = await check.json();
       if (body && typeof body.userId === 'string') permsMyUserId.value = body.userId;
@@ -514,7 +552,8 @@ export async function probeIsOwner() {
       isAdminView.value = true;
       // Resolved before the reveal below, which depends on it.
       const list = await users.json().catch(() => []);
-      const me = Array.isArray(list) ? list.find((u) => u.id === permsMyUserId.value) : null;
+      if (superseded()) return isAdminView.value;
+      const me =Array.isArray(list) ? list.find((u) => u.id === permsMyUserId.value) : null;
       state.isOwnerView = !!(me && userIsOwner(me));
       // Sign-in: owner or global admin, the same audience its endpoint allows.
       isWorkspaceAdminView.value = state.isOwnerView || !!(me && userIsGlobalAdmin(me));
@@ -553,11 +592,18 @@ export async function probeIsOwner() {
       }
       return true;
     }
-  } catch {}
-  state.isOwnerView = false;
-  isAdminView.value = false;
-  isWorkspaceAdminView.value = false;
-  return false;
+    // Only the server saying no demotes. A 502 from a front door while the
+    // server restarts is not an answer about roles; the next reconnect re-probes.
+    if (users.status === 401 || users.status === 403) {
+      state.isOwnerView = false;
+      isAdminView.value = false;
+      isWorkspaceAdminView.value = false;
+      return false;
+    }
+  } catch {
+    // Network error — same as a 5xx: keep what we had.
+  }
+  return isAdminView.value;
 }
 
 // Status frames carry fine-grained turn activity from the agent (see
@@ -583,6 +629,7 @@ export function handleStatusEvent(msg: any) {
       learnTurnToolCount.value++;
       const verb = msg.text ? TOOL_LABELS[msg.text] || `Using ${msg.text}` : 'Working';
       updateThinkingBubble(name, verb, msg.detail || null);
+      if (msg.text) pushTool(name, msg.text, msg.detail || null);
       break;
     }
     case 'progress':
@@ -598,7 +645,8 @@ export function handleStatusEvent(msg: any) {
       // A tool-heavy turn is the design's first heuristic signal — worth
       // offering to keep. Never fires for /learn's own turn: the review pass
       // uses one restricted tool at most.
-      if (learnTurnToolCount.value >= LEARN_NUDGE_MIN_TOOLS && roomAutoLearn.get(state.currentRoom ?? '') !== true) showLearnNudge();
+      if (learnTurnToolCount.value >= LEARN_NUDGE_MIN_TOOLS && roomAutoLearn.get(state.currentRoom ?? '') !== true)
+        showLearnNudge();
       learnTurnToolCount.value = 0;
       break;
     case 'stalled':

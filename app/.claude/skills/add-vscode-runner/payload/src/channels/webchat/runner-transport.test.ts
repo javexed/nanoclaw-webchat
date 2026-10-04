@@ -26,31 +26,25 @@ describe('runner transport', () => {
     __resetRunnerTransportForTest();
     const ws = fakeWs();
     attachRunnerLink({ fingerprint: FP, userId: 'u', ws });
-    const p = runnerRequest(FP, 'status', { name: 'n' });
+    const p = runnerRequest(FP, 'tools.list', { name: 'n' });
     const req = ws.sent[0];
-    expect(req).toMatchObject({ type: 'req', op: 'status', name: 'n' });
+    expect(req).toMatchObject({ type: 'req', op: 'tools.list', name: 'n' });
     expect(handleRunnerFrame(FP, { type: 'res', id: req.id, ok: true, state: 'running' })).toBe(true);
     expect(await p).toEqual({ state: 'running' });
     expect(connectedRunnerFingerprints()).toEqual([FP]);
   });
 
-  it('a refusal carries the runner failure; a foreign answer is dropped; a timeout rejects', async () => {
+  it('a refusal rejects with its error; a foreign answer is dropped; a timeout rejects', async () => {
     __resetRunnerTransportForTest();
     vi.useFakeTimers();
     const ws = fakeWs();
     attachRunnerLink({ fingerprint: FP, userId: 'u', ws });
-    const p1 = runnerRequest(FP, 'prepare', {}, 1000);
+    const p1 = runnerRequest(FP, 'tools.call', {}, 1000);
     const id = ws.sent[0].id;
     handleRunnerFrame('b'.repeat(64), { type: 'res', id, ok: false, error: 'impostor' }); // wrong runner: ignored
-    handleRunnerFrame(FP, {
-      type: 'res',
-      id,
-      ok: false,
-      error: 'no docker',
-      failure: { kind: 'runtime-unavailable', retryable: true },
-    });
-    await expect(p1).rejects.toMatchObject({ code: 'refused', failure: { kind: 'runtime-unavailable' } });
-    const p2 = runnerRequest(FP, 'status', {}, 1000);
+    handleRunnerFrame(FP, { type: 'res', id, ok: false, error: 'folder not allowed' });
+    await expect(p1).rejects.toMatchObject({ code: 'refused', message: 'folder not allowed' });
+    const p2 = runnerRequest(FP, 'tools.list', {}, 1000);
     vi.advanceTimersByTime(1001);
     await expect(p2).rejects.toMatchObject({ code: 'timeout' });
     vi.useRealTimers();

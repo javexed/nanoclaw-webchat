@@ -41,6 +41,7 @@ import {
 import { isToolSecret, type OnecliAdmin } from './onecli-admin.js';
 import { getAllAgentGroups } from '../../db/agent-groups.js';
 import { ensureFleetIsolation } from '../fleet-isolation/index.js';
+import { providerLabel } from './policy.js';
 
 /**
  * The agent group's provider, mapped to the UserCreds-supported families.
@@ -123,6 +124,8 @@ async function createCredentialSecret(
  */
 async function unenrollGroups(admin: OnecliAdmin, userId: string, provider: UserCredsProvider): Promise<void> {
   for (const row of await listEnrolledGroups(userId, provider)) {
+    // A personal-secrets enrollment holds no key of the member's: not theirs to undo here.
+    if (!row.secret_id) continue;
     const agentUuid = await admin.findAgentId(row.onecli_agent_id);
     if (agentUuid && row.secret_id) {
       const remaining = (await admin.listAgentSecretIds(agentUuid)).filter((id) => id !== row.secret_id);
@@ -179,8 +182,10 @@ export async function ensureGroupEnrollment(admin: OnecliAdmin, userId: string, 
   // Already enrolled — but only skip when the enrollment is for THIS group's
   // CURRENT provider. If the group's provider was switched after enrollment, the
   // stale row would otherwise pin the wrong secret; fall through to re-enroll.
+  // A personal-secrets enrollment (no key of their own, secret_id null) is not:
+  // a member who connects one moves onto it.
   const existing = await getUserCredsCredential(userId, agentGroupId);
-  if (existing?.status === 'active' && existing.provider === provider) return;
+  if (existing?.status === 'active' && existing.provider === provider && existing.secret_id) return;
   const userCred = await getUserCredential(userId, provider);
   if (userCred?.status !== 'active' || !userCred.secret_id) return; // not connected — nothing to enroll
   const secretId = userCred.secret_id;
@@ -189,10 +194,58 @@ export async function ensureGroupEnrollment(admin: OnecliAdmin, userId: string, 
   const agentUuid = await admin.ensureAgent(`${userSlug(userId)} (UserCreds)`, identifier);
   await admin.setSecretMode(agentUuid, 'selective');
   const toolSecretIds = await groupToolSecretIds(admin, agentGroupId, secretTypeFor(provider));
-  const merged = Array.from(new Set([secretId, ...toolSecretIds]));
+  const merged = Array.from(new Set([secretId, ...toolSecretIds, ...(await memberToolSecretIds(admin, agentUuid))]));
   await admin.setSecrets(agentUuid, merged);
   await upsertUserCredsCredential(userId, agentGroupId, identifier, secretId, userCred.cred_type, provider);
   log.info('UserCreds group enrolled (lazy)', { userId, agentGroupId, provider, toolSecrets: toolSecretIds.length });
+}
+
+/** The tool secrets a member's own agent already holds (their personal ones among them): kept across re-enrollment. */
+async function memberToolSecretIds(admin: OnecliAdmin, agentUuid: string): Promise<string[]> {
+  const byId = new Map((await admin.listAllSecrets()).map((s) => [s.id, s]));
+  return (await admin.listAgentSecretIds(agentUuid)).filter((id) => isToolSecret(byId.get(id)));
+}
+
+/**
+ * A member with personal secrets (an Azure PAT, say) but no model credential of
+ * their own still needs their own OneCLI identity: a personal secret on the
+ * group's agent would be everyone's. Their identity holds the WORKSPACE
+ * DEFAULT model credential, the one the shared session already runs on, plus
+ * the group's tool secrets; tool-secrets' reconcile adds their personal ones.
+ * Recorded as an enrollment with no secret of theirs (secret_id null), which
+ * routes their turns to a per-member session (index.ts). A member who has
+ * connected their own key gets the ordinary enrollment instead. Idempotent; a
+ * provider switch re-enrolls. Throws when the workspace has no default for
+ * the agent's provider: the identity would have no model credential at all.
+ */
+export async function ensurePersonalEnrollment(
+  admin: OnecliAdmin,
+  userId: string,
+  agentGroupId: string,
+): Promise<void> {
+  if (isWorkspaceDefaultUser(userId)) throw new Error('The workspace default has no personal credentials');
+  const provider = await userCredsProviderForGroup(agentGroupId);
+  const existing = await getUserCredsCredential(userId, agentGroupId);
+  if (existing?.status === 'active' && existing.provider === provider) return;
+  const own = await getUserCredential(userId, provider);
+  if (own?.status === 'active' && own.secret_id) return ensureGroupEnrollment(admin, userId, agentGroupId);
+  const ws = await getUserCredential(WORKSPACE_DEFAULT_USER_ID, provider);
+  if (ws?.status !== 'active' || !ws.secret_id)
+    throw new Error(
+      `This agent has no workspace ${providerLabel(provider)} credential for your own session to use — ask an owner to set one, or connect your own`,
+    );
+  const identifier = userCredsAgentIdentifier(agentGroupId, userId);
+  const agentUuid = await admin.ensureAgent(`${userSlug(userId)} (UserCreds)`, identifier);
+  // Model credential and tool secrets FIRST, selective second: never a moment
+  // in selective mode with nothing assigned.
+  const toolSecretIds = await groupToolSecretIds(admin, agentGroupId, secretTypeFor(provider));
+  await admin.setSecrets(
+    agentUuid,
+    Array.from(new Set([ws.secret_id, ...toolSecretIds, ...(await memberToolSecretIds(admin, agentUuid))])),
+  );
+  await admin.setSecretMode(agentUuid, 'selective');
+  await upsertUserCredsCredential(userId, agentGroupId, identifier, null, ws.cred_type, provider);
+  log.info('UserCreds personal enrollment', { userId, agentGroupId, provider });
 }
 
 /**

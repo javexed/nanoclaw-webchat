@@ -4,11 +4,26 @@
 // Central's `req` frames are handed to the runner agent and answered with
 // `res`; the agent pushes `event`/`heartbeat` frames through `send()`.
 import WebSocket from 'ws';
-import { helloFrame, nextBackoff, replyFor, wsUrl, type Frame, type Machine, authHeader } from './protocol.js';
+import {
+  helloFrame,
+  nextBackoff,
+  replyFor,
+  refusalHeaders,
+  tokenClaimsSummary,
+  upgradeRefusal,
+  wsUrl,
+  type Frame,
+  type Machine,
+  authHeader,
+} from './protocol.js';
 import type { UpdateOffer } from './update.js';
 
-/** How long a superseded window waits before trying again. */
+/** How long a superseded window waits before trying again, against a central that cannot turn a standby hello away. */
 const SUPERSEDED_BACKOFF_MS = 5 * 60_000;
+/** How often a standing-by window checks whether the machine's connection is free, against one that can. */
+export const STANDBY_POLL_MS = 30_000;
+/** The status detail of a window standing by; the extension shows "other window" for it. */
+export const STANDBY_DETAIL = 'another window holds this machine';
 
 export type LinkState = 'disconnected' | 'connecting' | 'connected' | 'unauthorized';
 export type PairingState = 'pending' | 'approved' | 'revoked';
@@ -34,8 +49,16 @@ export interface LinkDeps {
   signChallenge?: (fingerprint: string, origin: string, nonce: string) => string;
   /** Takes frames that are not request/response (the chat panel's). Returns true when handled. */
   onFrame?: (frame: Record<string, unknown>) => boolean;
+  /**
+   * Start standing by: connect only if no other window on this machine holds
+   * the connection. For connects the user did not ask for (startup, settings
+   * changes); an explicit Connect takes the connection over.
+   */
+  standby?: boolean;
   /** test seam */
   WebSocketImpl?: typeof WebSocket;
+  /** test seam */
+  standbyPollMs?: number;
 }
 
 export class RunnerLink {
@@ -47,6 +70,12 @@ export class RunnerLink {
   private connectedOnce = false;
   /** Consecutive attempts that got no token; logged on the first only. */
   private tokenMisses = 0;
+  /** The next hello says standby (see LinkDeps.standby). */
+  private standby: boolean;
+  /** This central turns a standby hello away while the machine is held (its welcome says so). */
+  private centralStandby = false;
+  /** Standing by has been said (log and status), once until this window connects again. */
+  private standingBy = false;
   welcome: {
     userId: string;
     displayName: string;
@@ -57,7 +86,23 @@ export class RunnerLink {
     installSlug?: string;
   } | null = null;
 
-  constructor(private readonly d: LinkDeps) {}
+  constructor(private readonly d: LinkDeps) {
+    this.standby = !!d.standby;
+  }
+  private get standbyPollMs(): number {
+    return this.d.standbyPollMs ?? STANDBY_POLL_MS;
+  }
+  /** Stand by quietly: another window holds the machine. */
+  private standBy(): void {
+    if (!this.standingBy) {
+      this.standingBy = true;
+      this.d.events.log('another VS Code window on this machine holds the runner connection; standing by');
+      this.d.events.state('disconnected', STANDBY_DETAIL);
+    }
+    this.standby = true;
+    this.backoff = this.centralStandby ? this.standbyPollMs : SUPERSEDED_BACKOFF_MS;
+    this.schedule();
+  }
 
   start(): void {
     this.stopped = false;
@@ -81,7 +126,7 @@ export class RunnerLink {
    * by for another window.
    */
   nudge(): void {
-    if (this.stopped || this.ws || !this.timer || this.backoff >= SUPERSEDED_BACKOFF_MS) return;
+    if (this.stopped || this.ws || !this.timer || this.standby) return;
     clearTimeout(this.timer);
     this.timer = null;
     this.backoff = 1000;
@@ -120,17 +165,18 @@ export class RunnerLink {
 
   private schedule(): void {
     if (this.stopped) return;
-    if (this.tokenMisses <= 1) this.d.events.log(`reconnecting in ${Math.round(this.backoff / 1000)}s`);
+    if (this.tokenMisses <= 1 && !this.standby)
+      this.d.events.log(`reconnecting in ${Math.round(this.backoff / 1000)}s`);
     this.timer = setTimeout(() => {
       this.timer = null;
       void this.attempt();
     }, this.backoff);
-    this.backoff = this.backoff >= SUPERSEDED_BACKOFF_MS ? this.backoff : nextBackoff(this.backoff);
+    if (!this.standby) this.backoff = nextBackoff(this.backoff);
   }
 
   private async attempt(): Promise<void> {
     if (this.stopped) return;
-    this.d.events.state('connecting');
+    if (!this.standby) this.d.events.state('connecting');
     let token: string;
     try {
       token = await this.d.getToken();
@@ -173,7 +219,14 @@ export class RunnerLink {
 
     ws.on('unexpected-response', (_req, res) => {
       const code = res.statusCode ?? 0;
-      this.d.events.log(`HTTP ${code} on upgrade`);
+      const forbiddenIp = res.headers['x-ms-forbidden-ip'];
+      this.d.events.log(
+        `HTTP ${code}${res.statusMessage ? ` ${res.statusMessage}` : ''} on upgrade${forbiddenIp ? ` (address seen: ${String(forbiddenIp)})` : ''}`,
+      );
+      if (code === 401 || code === 403) {
+        this.d.events.log(`refused by: ${refusalHeaders(res.headers)}`);
+        this.d.events.log(`token sent: ${tokenClaimsSummary(token)}`);
+      }
       // Detach BEFORE terminating: the resulting 'close' event must not be
       // mistaken for a live session dropping, or it would overwrite the state
       // we set here and schedule a retry of a refusal.
@@ -183,12 +236,12 @@ export class RunnerLink {
         // A refused token is not transient. Stop until the user acts (Connect),
         // which re-requests a token from the auth provider.
         this.stopped = true;
-        this.d.events.state('unauthorized', `server refused the token (HTTP ${code})`);
+        this.d.events.state('unauthorized', upgradeRefusal(code, res.statusMessage, forbiddenIp));
         return;
       }
       this.schedule();
     });
-    ws.on('open', () => ws.send(JSON.stringify(helloFrame(this.d.machine))));
+    ws.on('open', () => ws.send(JSON.stringify(helloFrame(this.d.machine, this.standby))));
     ws.on('message', (data) => {
       let f: Frame;
       try {
@@ -199,6 +252,9 @@ export class RunnerLink {
       if (f.type === 'welcome') {
         welcomed = true;
         this.backoff = 1000;
+        this.standby = false;
+        this.standingBy = false;
+        this.centralStandby = f.standby === true;
         this.connectedOnce = true;
         const pairing = (f.pairing === 'pending' || f.pairing === 'revoked' ? f.pairing : 'approved') as PairingState;
         const offered = parseOffer(f.update);
@@ -243,6 +299,7 @@ export class RunnerLink {
         }
       }
       if (f.type === 'error') {
+        if (f.code === 'held') return; // standing by: the close says it
         this.d.events.log(`server: ${f.code} — ${f.message}`);
         return;
       }
@@ -271,16 +328,17 @@ export class RunnerLink {
       if (this.ws !== ws) return;
       this.ws = null;
       this.welcome = null;
-      this.d.events.log(`disconnected (${code}${reason.length ? ' ' + reason.toString() : ''})`);
+      const held = code === 4409 && reason.toString() === 'held';
+      if (!held) this.d.events.log(`disconnected (${code}${reason.length ? ' ' + reason.toString() : ''})`);
       if (code === 4409) {
-        // Another window on this machine took the connection. Both windows
-        // reconnecting at once would trade it forever, so the loser waits a
-        // long time — long enough to be quiet, short enough to recover when
-        // the other window closes.
-        this.d.events.log('another VS Code window on this machine holds the runner connection; standing by');
-        this.d.events.state('disconnected', 'another window holds this machine');
-        this.backoff = SUPERSEDED_BACKOFF_MS;
-        this.schedule();
+        // Another window on this machine holds the connection: it took it
+        // (superseded), or this window's standby hello was turned away (held).
+        // A standby hello never takes it back, so a central that knows standby
+        // is asked every half minute and the connection passes here only when
+        // the other window lets go. Against one that does not, a retry would
+        // take it back, so the wait is long: two windows must not trade it.
+        if (held) this.centralStandby = true;
+        this.standBy();
         return;
       }
       if (code === 4403) {

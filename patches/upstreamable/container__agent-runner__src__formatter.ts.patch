@@ -1,8 +1,31 @@
 diff --git a/container/agent-runner/src/formatter.ts b/container/agent-runner/src/formatter.ts
-index a08fc1da..d8655b6c 100644
+index 0e154fd9..10d84c41 100644
 --- a/container/agent-runner/src/formatter.ts
 +++ b/container/agent-runner/src/formatter.ts
-@@ -119,6 +119,7 @@ export function isClearCommand(msg: MessageInRow): boolean {
+@@ -103,8 +103,12 @@ export function categorizeMessage(msg: MessageInRow, providerName: string): Comm
+ 
+   // Cross-session echo rows are ambient copies of another conversation —
+   // a copied "/clear" etc. must never execute here. Nor may a failure
+-  // notice whose error text happens to start with a slash.
+-  if (isSessionEcho(msg) || isFailureNotice(msg) || !text.startsWith('/')) {
++  // notice whose error text happens to start with a slash, or any other
++  // context row (trigger 0): a member-credential turn's exchange is mirrored
++  // into the base session as one, and a mirrored "/clear" left pending made
++  // every later turn of that session abort for it, answering only with the
++  // empty-turn net.
++  if (isSessionEcho(msg) || isFailureNotice(msg) || msg.trigger === 0 || !text.startsWith('/')) {
+     return { category: 'none', command: '', text, senderId };
+   }
+ 
+@@ -129,12 +133,14 @@ export function categorizeMessage(msg: MessageInRow, providerName: string): Comm
+  * before messages reach the container.
+  */
+ export function isClearCommand(msg: MessageInRow): boolean {
+-  if (isSessionEcho(msg) || isFailureNotice(msg)) return false;
++  // A context row (trigger 0) never runs, as in categorizeMessage.
++  if (isSessionEcho(msg) || isFailureNotice(msg) || msg.trigger === 0) return false;
+   const content = parseContent(msg.content);
+   const text = (content.text || '').trim();
    return text.toLowerCase().startsWith('/clear');
  }
  
@@ -10,9 +33,9 @@ index a08fc1da..d8655b6c 100644
  /**
   * True for any chat that needs the outer loop's command path: /clear plus
   * admin/passthrough slash commands the SDK can only dispatch when they are
-@@ -165,6 +166,23 @@ export interface RoutingContext {
-  * back to the plain first row if the batch is somehow all echo (shouldn't
-  * happen — echo rows never trigger).
+@@ -185,6 +191,23 @@ export interface RoutingContext {
+  * notice routes by its first real waking message instead, so a failure
+  * answers the requester, not the agent that failed.
   */
 +/**
 + * The origin of ONE inbound row.
@@ -32,9 +55,9 @@ index a08fc1da..d8655b6c 100644
 +}
 +
  export function extractRouting(messages: MessageInRow[]): RoutingContext {
-   const first = messages.find((m) => !isSessionEcho(m)) ?? messages[0];
-   return {
-@@ -424,3 +442,31 @@ function escapeXml(str: string): string {
+   const nonEcho = messages.filter((m) => !isSessionEcho(m));
+   const waking = nonEcho.filter((m) => m.trigger !== 0);
+@@ -449,3 +472,31 @@ function escapeXml(str: string): string {
  export function stripInternalTags(text: string): string {
    return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
  }

@@ -84,13 +84,71 @@ function installChainEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
   return env;
 }
 
+/** Chains holding the same lock run one after another (the tail of each queue). */
+const lockTails = new Map<string, Promise<void>>();
+
+export interface ChainOptions {
+  /**
+   * Chains that rebuild one shared thing (the LiteLLM router container) take
+   * the same lock and wait their turn instead of replacing it mid-install.
+   */
+  lock?: string;
+  /** Called once with the chain's exit code. */
+  onDone?: (exitCode: number) => void;
+}
+
 /**
  * Run installer steps in sequence, streaming a capped rolling log into `state`.
  * Stops on the first non-zero exit or thrown callback. Every registered
  * feature and the roster refresh run through it, so the spawn/log boilerplate
  * lives once.
  */
-export function runInstallChain(state: InstallState, steps: InstallStep[], root: string): void {
+export function runInstallChain(
+  state: InstallState,
+  steps: InstallStep[],
+  root: string,
+  name?: string,
+  opts: ChainOptions = {},
+): void {
+  if (!opts.lock) return runChain(state, steps, root, name, opts.onDone);
+  const lock = opts.lock;
+  const prev = lockTails.get(lock);
+  let release = (): void => {};
+  const mine = new Promise<void>((resolve) => (release = resolve));
+  const tail = (prev ?? Promise.resolve()).then(() => mine);
+  lockTails.set(lock, tail);
+  const start = (): void =>
+    runChain(state, steps, root, name, (code) => {
+      if (lockTails.get(lock) === tail) lockTails.delete(lock);
+      release();
+      opts.onDone?.(code);
+    });
+  if (!prev) return start();
+  state.lines.push('… waiting for another install of the same component to finish');
+  void prev.then(start);
+}
+
+function runChain(
+  state: InstallState,
+  steps: InstallStep[],
+  root: string,
+  name: string | undefined,
+  onDone: ((exitCode: number) => void) | undefined,
+): void {
+  // The log on disk too (logs/install-<name>.log): it is the only record left
+  // once a chain ends with a host restart.
+  const keepLog = (): void => {
+    if (!name) return;
+    try {
+      fs.mkdirSync(path.join(root, 'logs'), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, 'logs', `install-${name}.log`),
+        `${new Date().toISOString()} exit ${state.exitCode}\n${state.lines.join('\n')}\n`,
+      );
+    } catch {
+      /* best effort */
+    }
+  };
   // Line-buffered append. Chunks rarely align with lines: progress output
   // (health-check dots, docker/ollama status) arrives newline-free or
   // \r-separated. An unterminated tail is held as `partial` and rendered as a
@@ -127,6 +185,8 @@ export function runInstallChain(state: InstallState, steps: InstallStep[], root:
     state.running = false;
     state.exitCode = code;
     state.finishedAt = Date.now();
+    keepLog();
+    onDone?.(code);
   };
   const runStep = (i: number): void => {
     if (i >= steps.length) {
@@ -134,6 +194,8 @@ export function runInstallChain(state: InstallState, steps: InstallStep[], root:
       state.exitCode = 0;
       state.finishedAt = Date.now();
       state.stepLabel = null;
+      keepLog();
+      onDone?.(0);
       return;
     }
     const step = steps[i];
@@ -225,6 +287,10 @@ export interface FeatureInstallSpec<A = undefined> {
   preflight?: (root: string, args: A) => InstallRefusal | null;
   /** Side effect at start, outside the chain (routing kicks a model pull in parallel). */
   onStart?: (root: string, args: A) => void;
+  /** Called when the chain ends, with whether it succeeded. */
+  onFinish?: (root: string, args: A, ok: boolean) => void;
+  /** Shared with other chains that rebuild the same thing (ChainOptions.lock). */
+  lock?: string;
   steps: (root: string, args: A) => InstallStep[];
 }
 
@@ -309,7 +375,10 @@ export async function startFeatureInstall<A = undefined>(
   state.exitCode = null;
   state.startedAt = Date.now();
   state.finishedAt = null;
-  runInstallChain(state, spec.steps(root, args as A), root);
+  runInstallChain(state, spec.steps(root, args as A), root, name, {
+    lock: spec.lock,
+    onDone: (code) => spec.onFinish?.(root, args as A, code === 0),
+  });
   return { started: true };
 }
 

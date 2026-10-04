@@ -74,15 +74,13 @@ describe('signInChanges', () => {
 });
 
 describe('resolveClientConfig', () => {
-  it("the user's own setting wins, then central's, then the default", () => {
-    expect(
-      resolveClientConfig({ tenantId: TID }, { tenantId: 'other', appIdUri: 'api://x', signIn: 'network' }),
-    ).toEqual({
+  it("central's value, else the default", () => {
+    expect(resolveClientConfig({ tenantId: TID, appIdUri: 'api://x', signIn: 'network' })).toEqual({
       signIn: 'network',
       tenantId: TID,
       appIdUri: 'api://x',
       clientId: '',
     });
-    expect(resolveClientConfig({}, {})).toEqual({ signIn: 'microsoft', tenantId: '', appIdUri: '', clientId: '' });
+    expect(resolveClientConfig({})).toEqual({ signIn: 'microsoft', tenantId: '', appIdUri: '', clientId: '' });
   });
 });

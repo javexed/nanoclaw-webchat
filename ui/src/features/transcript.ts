@@ -21,6 +21,7 @@ import {
   turnFor,
 } from './transcript-state.js';
 import type { MsgRow } from './transcript-state.js';
+import { traceHasContent, traceViewFromTurn, type TraceView } from './turn-trace-view.js';
 
 /** Supplied by provideTranscriptDeps in composition-root.ts. `any` marks a signature not
  *  yet typed, not an opt-out of checking. */
@@ -158,6 +159,7 @@ export function appendMessage(msg?: any, statusText?: any, prepend?: boolean): M
   // reasoning so it can be folded onto THIS reply as a "Thoughts" disclosure,
   // then clear it so only the first reply of the turn carries it.
   let thoughtsForThisMsg = null;
+  let liveTrace: TraceView | null = null;
   if (isAgent) {
     // Fold THIS agent's reasoning onto its reply and clear ITS turn only — not
     // another agent's that may still be thinking. Match by name; if there is a
@@ -166,6 +168,8 @@ export function appendMessage(msg?: any, statusText?: any, prepend?: boolean): M
     if (!turn && thinkingTurns.value.length === 1) turn = thinkingTurns.value[0];
     if (turn) {
       if (turn.reasoningLog.length > 0) thoughtsForThisMsg = turn.reasoningLog.slice();
+      const view = traceViewFromTurn(turn, Date.now());
+      if (traceHasContent(view)) liveTrace = view;
       deps.endAgentTurn(turn.name);
     }
   }
@@ -219,6 +223,8 @@ export function appendMessage(msg?: any, statusText?: any, prepend?: boolean): M
     file: isFile ? msg.file_meta : null,
     caption: isFile && msg.content && msg.content !== msg.file_meta.filename ? msg.content : null,
     thoughts: thoughtsForThisMsg,
+    liveTrace,
+    hasTrace: msg.has_trace === true,
     ttsText: isAgent && msg.content ? msg.content : null,
     timeStr,
     timeTitle: msg.created_at ? new Date(msg.created_at).toLocaleString() : undefined,

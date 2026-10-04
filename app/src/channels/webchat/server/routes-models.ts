@@ -13,26 +13,53 @@ import {
   deleteWebchatModel,
   getAgentsAssignedToModel,
   getDefaultModelId,
+  getFitContextToGpu,
   getWebchatModel,
   getWebchatRoomsForAgent,
   listWebchatModels,
   setDefaultModelId,
+  setFitContextToGpu,
   updateWebchatModel,
 } from '../db.js';
 import type { WebchatModel, WebchatModelKind } from '../db.js';
 import { createContextVariant, gatherModelInventory } from '../model-manage.js';
-import { KNOWN_ANTHROPIC_MODELS, discoverOllamaModels, probeEndpoint, validateModel } from '../models.js';
+import { autoFitNewModels, fitBenefit, fitJobsSnapshot, startFits } from '../model-autofit.js';
+import { hostHealthSnapshot } from '../model-host-health.js';
+import { noteRosterHosts, rosterHosts } from '../model-host-sync.js';
+import { KNOWN_ANTHROPIC_MODELS, discoverOllamaModels, probeEndpoint, testModel, validateModel } from '../models.js';
+import { hasFeatureInstall, installStatus, startFeatureInstall } from '../install-engine.js';
 import {
+  CLOUD_PROVIDERS,
+  CloudModelError,
+  cloudModelNames,
+  isRouterEndpoint,
+  listProviderModels,
+  prepareCloudModel,
+  removeCloudModel,
+  removeRouter,
+  storedProviders,
+  routerEndpoint,
+  routerInstalled,
+  routerViaGateway,
+} from '../cloud-models.js';
+import {
+  deriveModelServerHosts,
   listRouters,
   readRoutesConfig,
   removeRouteFromConfig,
   routerView,
+  startRouterReinstall,
   writeRoutesConfig,
+  type CloudModelStep,
 } from '../ollama-manage.js';
 import { probeContainerReachability } from '../reachability.js';
 import { isOwner } from '../roles.js';
 import { readBody } from './http.js';
-import { refreshUnassignedGroupsForDefaultModel, reloadAgentModelEnv } from './model-wiring.js';
+import {
+  refreshUnassignedGroupsForDefaultModel,
+  reloadAgentModelEnv,
+  reloadRouterModelAgents,
+} from './model-wiring.js';
 import { randomUUID } from 'crypto';
 import type { RouteCtx } from '../server.js';
 
@@ -51,6 +78,96 @@ export async function rModelsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<v
   // infrastructure fields — endpoint (internal model-server URLs) and
   // credential_ref stay owner-only, matching the rest of the model surface.
   return json(res, 200, await listModelsForUI(await isOwner(userId)));
+}
+
+/** Manage → Models: the cloud providers and whether the router is there. */
+export async function rCloudModelsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  return json(ctx.res, 200, {
+    providers: CLOUD_PROVIDERS.map(({ id, label }) => ({ id, label })),
+    router: { installed: routerInstalled(), endpoint: routerEndpoint() },
+    models: cloudModelNames(),
+    stored: await storedProviders().catch(() => []),
+  });
+}
+
+/** The provider's model ids, read with the key the vault holds. */
+export async function rCloudModelsListGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  try {
+    return json(ctx.res, 200, { models: await listProviderModels(ctx.url.searchParams.get('provider')) });
+  } catch (err) {
+    return json(ctx.res, err instanceof CloudModelError ? 409 : 502, { error: 'No list' });
+  }
+}
+
+/** POST /api/models/:id/test — one tiny completion; OK or the provider's reason. */
+export async function rModelTestPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const model = await getWebchatModel(decodeURIComponent(m[1]));
+  if (!model) return json(ctx.res, 404, { error: 'Model not found' });
+  return json(ctx.res, 200, await testModel(model));
+}
+
+/**
+ * Add a cloud model: its key to the OneCLI vault for the router's identity,
+ * then (re)install the router, which registers the model at the end. A failed
+ * install withdraws the backend again. The key is never echoed or logged.
+ */
+export async function rCloudModelsPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { req, res } = ctx;
+  const body = await readJsonObject<{ provider?: unknown; model_id?: unknown; api_key?: unknown }>(req, res);
+  if (body === undefined) return;
+  if (!hasFeatureInstall('litellm')) return json(res, 404, { error: "No install named 'litellm'" });
+  const wasViaGateway = routerViaGateway();
+  let prepared: Awaited<ReturnType<typeof prepareCloudModel>>;
+  try {
+    prepared = await prepareCloudModel({ provider: body.provider, model_id: body.model_id, api_key: body.api_key });
+  } catch (err) {
+    if (err instanceof CloudModelError) return json(res, 400, { error: err.message });
+    log.warn('Cloud model: vault step failed', { err: String((err as Error)?.message ?? err).slice(0, 300) });
+    return json(res, 502, { error: 'OneCLI failed' });
+  }
+  const { provider, modelId, added } = prepared;
+  const cloud: CloudModelStep = {
+    register: async () => {
+      await registerCloudModel(`${provider.label} ${modelId}`, modelId);
+      // The router's first cloud model: agents already on it (local servers, the
+      // auto router) reach it through the gateway from now on.
+      if (!wasViaGateway) await reloadRouterModelAgents('LiteLLM router moved behind the gateway');
+    },
+    rollback: async () => {
+      if (!added) return;
+      try {
+        const twin = (await listWebchatModels()).some((x) => x.model_id === modelId && isRouterEndpoint(x.endpoint));
+        await removeCloudModel(modelId, twin);
+      } catch (err) {
+        log.warn('Cloud model: rollback failed', { err: String((err as Error)?.message ?? err).slice(0, 300) });
+      }
+    },
+  };
+  const r = await startFeatureInstall('litellm', process.cwd(), {
+    hosts: async () => (await deriveModelServerHosts()) ?? '',
+    cloud,
+  });
+  if (!r.started) {
+    await cloud.rollback();
+    return json(res, 409, { error: r.error, code: r.code });
+  }
+  return json(res, 202, { ...(await installStatus('litellm')), started: true });
+}
+
+/** Register a cloud model the router now serves, unless a registration already names it. */
+async function registerCloudModel(name: string, modelId: string): Promise<void> {
+  const endpoint = routerEndpoint();
+  if ((await listWebchatModels()).some((m) => m.model_id === modelId && m.endpoint === endpoint)) return;
+  await createWebchatModel({
+    id: randomUUID(),
+    name,
+    kind: 'openai-compatible',
+    endpoint,
+    model_id: modelId,
+    credential_ref: null,
+    created_at: Date.now(),
+  });
+  forgetModelHosts();
 }
 
 export async function rModelsPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
@@ -111,9 +228,20 @@ export async function manageEndpoint(): Promise<string> {
   return reg?.endpoint ?? 'http://localhost:11434';
 }
 
+/** A registered Ollama host named by the request, else the default above; null when it names an unregistered one. */
+async function requestedEndpoint(raw: unknown): Promise<string | null> {
+  if (raw === undefined || raw === null || raw === '') return manageEndpoint();
+  if (typeof raw !== 'string') return null;
+  const want = raw.trim().replace(/\/+$/, '');
+  const hit = (await listWebchatModels()).find((m) => m.kind === 'ollama' && m.endpoint?.replace(/\/+$/, '') === want);
+  return hit?.endpoint ?? null;
+}
+
 export async function rModelsManageGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { res } = ctx;
-  return json(res, 200, await gatherModelInventory(await manageEndpoint()));
+  const endpoint = await requestedEndpoint(ctx.url.searchParams.get('endpoint'));
+  if (!endpoint) return json(res, 400, { error: 'endpoint is not a registered Ollama host' });
+  return json(res, 200, await gatherModelInventory(endpoint));
 }
 
 // Create a num_ctx variant of a pulled model (the 4k-default-trap fix), register
@@ -121,7 +249,7 @@ export async function rModelsManageGet(ctx: RouteCtx, _m: RegExpMatchArray): Pro
 // step — the "Fix: create 16k variant" button.
 export async function rModelsContextVariantPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res } = ctx;
-  let body: { tag?: unknown; ctx?: unknown; makeDefault?: unknown };
+  let body: { tag?: unknown; ctx?: unknown; makeDefault?: unknown; endpoint?: unknown };
   try {
     body = JSON.parse(await readBody(req)) as typeof body;
   } catch {
@@ -129,10 +257,11 @@ export async function rModelsContextVariantPost(ctx: RouteCtx, _m: RegExpMatchAr
   }
   if (typeof body.tag !== 'string' || !body.tag.trim()) return json(res, 400, { error: 'tag required' });
   const ctxSize = Math.floor(Number(body.ctx));
-  const endpoint = await manageEndpoint();
+  const endpoint = await requestedEndpoint(body.endpoint);
+  if (!endpoint) return json(res, 400, { error: 'endpoint is not a registered Ollama host' });
   try {
     const variantTag = await createContextVariant(await endpoint, body.tag, ctxSize);
-    const existing = (await listWebchatModels()).find((m) => m.model_id === variantTag);
+    const existing = (await listWebchatModels()).find((m) => m.model_id === variantTag && m.endpoint === endpoint);
     let id = existing?.id;
     if (!id) {
       id = randomUUID();
@@ -155,6 +284,65 @@ export async function rModelsContextVariantPost(ctx: RouteCtx, _m: RegExpMatchAr
   } catch (err) {
     return json(res, 502, { error: err instanceof Error ? err.message : String(err) });
   }
+}
+
+/** New registrations: the router follows a new host; Ollama models get fitted to the GPU (in the background). */
+async function afterModelsAdded(hostsBefore: string[], added: WebchatModel[]): Promise<void> {
+  if (added.length === 0) return;
+  noteRosterHosts(hostsBefore, await rosterHosts());
+  await autoFitNewModels(added).catch((err) => log.warn('Fit context to GPU: not started', { err: String(err) }));
+}
+
+/** GET /api/models/hosts — each model host's last health check and the GPU fits running or just finished. */
+export async function rModelHostsGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  return json(ctx.res, 200, {
+    health: hostHealthSnapshot(),
+    fits: fitJobsSnapshot(),
+    fitContext: await getFitContextToGpu(),
+  });
+}
+
+/**
+ * POST /api/models/fit-context/start — { ids }: fit these registered Ollama
+ * models to their host's GPU now. What the UI calls when the owner says yes to
+ * its prompt after adding models (the setting being off).
+ */
+export async function rModelFitStartPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const body = await readJsonObject<{ ids?: unknown }>(ctx.req, ctx.res);
+  if (body === undefined) return;
+  const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === 'string').slice(0, 50) : [];
+  if (!ids.length) return json(ctx.res, 400, { error: 'ids must list model ids' });
+  const models = (await Promise.all(ids.map((id) => getWebchatModel(id)))).filter((m): m is WebchatModel => !!m);
+  return json(ctx.res, 200, { ok: true, started: startFits(models) });
+}
+
+/**
+ * POST /api/models/fit-context/check — { ids }: which of these registered
+ * Ollama models could get a larger window by fitting. Metadata only; the UI
+ * asks before it offers, so models already at their largest window (or with
+ * num_ctx set) never prompt.
+ */
+export async function rModelFitCheckPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const body = await readJsonObject<{ ids?: unknown }>(ctx.req, ctx.res);
+  if (body === undefined) return;
+  const ids = Array.isArray(body.ids) ? body.ids.filter((x): x is string => typeof x === 'string').slice(0, 50) : [];
+  if (!ids.length) return json(ctx.res, 400, { error: 'ids must list model ids' });
+  const models = (await Promise.all(ids.map((id) => getWebchatModel(id)))).filter((m): m is WebchatModel => !!m);
+  const checked = await Promise.all(models.map(async (m) => ({ id: m.id, out: await fitBenefit(m) })));
+  return json(ctx.res, 200, {
+    models: checked.flatMap(({ id, out }) =>
+      out.worth ? [{ id, served: out.served, maxContext: out.maxContext }] : [],
+    ),
+  });
+}
+
+/** PUT /api/models/fit-context — { enabled }: fit new Ollama registrations to the GPU without asking. */
+export async function rModelFitContextPut(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const body = await readJsonObject<{ enabled?: unknown }>(ctx.req, ctx.res);
+  if (body === undefined) return;
+  if (typeof body.enabled !== 'boolean') return json(ctx.res, 400, { error: 'enabled must be a boolean' });
+  await setFitContextToGpu(body.enabled);
+  return json(ctx.res, 200, { ok: true, fitContext: body.enabled });
 }
 
 export interface ModelForUI extends WebchatModel {
@@ -223,8 +411,10 @@ export async function createModelHandler(req: IncomingMessage, res: ServerRespon
     credential_ref,
     created_at: Date.now(),
   };
+  const hostsBefore = await rosterHosts();
   await createWebchatModel(m);
   forgetModelHosts();
+  await afterModelsAdded(hostsBefore, [m]);
   // Preflight: does an agent CONTAINER reach this endpoint? (self-skips fast
   // for hosted/LAN endpoints; only spins a probe container for loopback ones.)
   const reachability = await probeContainerReachability(endpoint);
@@ -258,8 +448,10 @@ export async function updateModelHandler(req: IncomingMessage, res: ServerRespon
   });
   if (validationError) return json(res, 400, { error: validationError });
 
+  const hostsBefore = await rosterHosts();
   await updateWebchatModel(id, patch);
   forgetModelHosts();
+  noteRosterHosts(hostsBefore, await rosterHosts());
   // Endpoint or model_id change → re-emit env and respawn for every agent that
   // uses it, so live containers pick up the edited endpoint/model immediately.
   for (const agentGroupId of await getAgentsAssignedToModel(id)) {
@@ -329,7 +521,27 @@ export async function deleteModelHandler(res: ServerResponse, id: string, force:
       writeRoutesConfig(cfg);
     }
   }
+  const hostsBefore = await rosterHosts();
   await deleteWebchatModel(id);
+  noteRosterHosts(hostsBefore, await rosterHosts());
+  // A cloud model: the router stops serving it (and drops the provider's vault
+  // key once no model of that provider is left), in the background.
+  // Matched on any local port: a registration made before LITELLM_PORT changed is still the router's.
+  if (isRouterEndpoint(existing.endpoint, process.cwd(), true) && cloudModelNames().includes(existing.model_id)) {
+    const twin = (await listWebchatModels()).some(
+      (x) => x.model_id === existing.model_id && isRouterEndpoint(x.endpoint, process.cwd(), true),
+    );
+    void (async () => {
+      const r = await removeCloudModel(existing.model_id, twin);
+      if (!r.removed) return;
+      const hosts = await deriveModelServerHosts();
+      const reloadIfLeft = async (): Promise<void> => {
+        if (r.leftGateway) await reloadRouterModelAgents('LiteLLM router left the gateway');
+      };
+      if (r.remaining === 0 && !hosts) await removeRouter().then(reloadIfLeft);
+      else startRouterReinstall(process.cwd(), async () => (await deriveModelServerHosts()) ?? '', reloadIfLeft);
+    })().catch((err) => log.warn('Cloud model removal failed', { err: String((err as Error)?.message ?? err) }));
+  }
   // If this model was the workspace default, clear it and refresh the groups
   // that were inheriting it (they fall back to the workspace credential).
   if ((await getDefaultModelId()) === id) {
@@ -380,6 +592,7 @@ export async function bulkCreateModelsHandler(req: IncomingMessage, res: ServerR
   // the response. The PWA can re-prompt for the failed ones.
   const created: WebchatModel[] = [];
   const failed: Array<{ index: number; error: string }> = [];
+  const hostsBefore = await rosterHosts();
   for (let i = 0; i < body.models.length; i++) {
     const entry = body.models[i] as Record<string, unknown>;
     if (!entry || typeof entry !== 'object') {
@@ -427,6 +640,7 @@ export async function bulkCreateModelsHandler(req: IncomingMessage, res: ServerR
       failed.push({ index: i, error: err instanceof Error ? err.message : 'create failed' });
     }
   }
+  await afterModelsAdded(hostsBefore, created);
   return json(res, 200, { ok: true, created_count: created.length, failed, created });
 }
 

@@ -302,7 +302,17 @@ export async function syncThread(direction?: any) {
  * prop. The island re-renders from state, so none of these repaint by hand.
  */
 export const threadActions = {
-  open: (threadId: string) => openThread(threadId),
+  open: (threadId: string, roomId?: string) => {
+    // A thread under another room's open tree: enter that room on the thread
+    // (one join, as createThread does). openThread alone keeps the current
+    // room, which opened the thread id inside it: a blank, nonexistent thread.
+    if (roomId && roomId !== state.currentRoom) {
+      const room = state.lastRoomsList.find((x) => x.id === roomId);
+      deps.joinRoom(roomId, room ? room.name : roomId, undefined, threadId);
+      return;
+    }
+    openThread(threadId);
+  },
   create: (title: string) => {
     state.threadCreating = false;
     createThread(title);

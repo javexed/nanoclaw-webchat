@@ -29,3 +29,21 @@ export const opencodeGatePoll = ref<ReturnType<typeof setTimeout> | null>(null);
  * remembers it — which is what makes it survive a page reload.
  */
 export const opencodeGateFromServer = ref(false);
+
+/**
+ * One line of progress for a chain install: which step, of how many, and for
+ * how long — the image rebuild is silent for minutes, so the elapsed time is
+ * what shows it is not hung.
+ */
+export function installProgressLine(st: {
+  stepIndex?: number;
+  stepCount?: number;
+  stepLabel?: string | null;
+  startedAt?: number | null;
+}): string {
+  const step = st.stepCount ? `Step ${st.stepIndex} of ${st.stepCount}` : 'Installing';
+  const label = st.stepLabel ? ` — ${st.stepLabel}` : '';
+  const secs = st.startedAt ? Math.max(0, Math.round((Date.now() - st.startedAt) / 1000)) : 0;
+  const elapsed = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
+  return `${step}${label} · ${elapsed}`;
+}

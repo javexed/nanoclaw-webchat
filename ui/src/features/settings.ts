@@ -448,6 +448,58 @@ export async function renderAuditSettings(): Promise<void> {
 }
 
 const keepLabel = (days: number) => (days === 365 ? '1 year' : `${days} days`);
+
+let agentActivityWired = false;
+
+/**
+ * Record agent activity (turn traces) — owner-only, gated by its endpoint like
+ * the audit section. The switch and Keep apply on change; the result is a toast.
+ */
+export async function renderAgentActivitySettings(): Promise<void> {
+  const section = $('#settings-agent-activity');
+  if (!section) return;
+  let info: any = null;
+  try {
+    info = await apiJson('/api/webchat/turn-traces');
+  } catch {
+    info = null;
+  }
+  section.hidden = !info;
+  if (!info) return;
+  const toggle = $<HTMLInputElement>('#agent-activity-toggle');
+  if (toggle && !toggle.disabled) toggle.checked = info.enabled === true;
+  const sel = $<HTMLSelectElement>('#agent-activity-keep');
+  if (sel && document.activeElement !== sel) {
+    const v = String(info.days);
+    if (![...sel.options].some((o) => o.value === v)) sel.add(new Option(keepLabel(info.days), v));
+    sel.value = v;
+  }
+  if (agentActivityWired) return;
+  agentActivityWired = true;
+  toggle?.addEventListener('change', async () => {
+    const on = toggle.checked;
+    toggle.disabled = true;
+    try {
+      await apiJson('/api/webchat/turn-traces', { method: 'PUT', body: { enabled: on } });
+      showToast(on ? 'Recording agent activity' : 'Agent activity not recorded', { kind: 'success' });
+    } catch (err: any) {
+      toggle.checked = !on;
+      showToast('Could not change recording: ' + (err?.message || err), { kind: 'error' });
+    } finally {
+      toggle.disabled = false;
+    }
+  });
+  sel?.addEventListener('change', async () => {
+    const days = Number(sel.value);
+    try {
+      await apiJson('/api/webchat/turn-traces', { method: 'PUT', body: { days } });
+      showToast(days ? `Agent activity kept ${keepLabel(days)}` : 'Agent activity kept forever', { kind: 'success' });
+    } catch (err: any) {
+      showToast('Could not change how long activity is kept: ' + (err?.message || err), { kind: 'error' });
+      void renderAgentActivitySettings();
+    }
+  });
+}
 const mb = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.ceil(bytes / 1024)} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 
 /** Keep / cap, and what is on disk now. Same audience as forwarding (the endpoint 403s everyone else). */
@@ -1416,8 +1468,9 @@ export async function renderMyCredentials() {
   } catch {
     groups = [];
   }
-  // Nothing to manage until you have connected credentials somewhere — show
-  // nothing at all rather than an empty panel explaining itself.
+  // One form per agent you use (a personal secret needs no Claude credential of
+  // your own); none at all for someone who uses no agent, rather than an empty
+  // panel explaining itself.
   section.hidden = groups.length === 0;
   if (!groups.length) return;
 

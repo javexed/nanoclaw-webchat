@@ -16,10 +16,12 @@
  *      its own rules; refuses the rest with a 403 that names the host.
  *
  * Central's own services on `host.docker.internal` (the MCP relay) are passed
- * straight through on their own ports. The OneCLI gateway is NOT on the
- * lockdown network: this filter is the only way out.
+ * straight through on their own ports; models, host-local or on another
+ * machine (model-relay.ts), on theirs, per caller. The OneCLI gateway is NOT
+ * on the lockdown network: this filter is the only way out.
  */
 import { execFile } from 'child_process';
+import dns from 'dns/promises';
 import net from 'net';
 import type { Duplex } from 'stream';
 
@@ -29,14 +31,19 @@ import { log } from '../../log.js';
 import {
   allowlistFor,
   blockedMessage,
+  directAddressAllowed,
+  directTunnel,
   egressAllowed,
+  getRunnerEgressAllowlist,
   groupEgressMode,
   isSafeEgressHost,
   modelHostsFor,
+  ownModelTargetsFor,
   recordBlocked,
   type EgressMode,
 } from './egress-policy.js';
 import { connectThroughGateway } from './gateway-connect.js';
+import { serveOllamaFiltered } from './ollama-filter.js';
 
 const MAX_HEAD = 64 * 1024;
 const IP_MAP_TTL_MS = 2_000;
@@ -55,6 +62,54 @@ export interface EgressFilterDeps {
   allowlist: (agentGroupId: string) => Promise<string[]>;
   /** What this agent may always reach (its model's host on top of the provider floor); default: the floor only. */
   always?: (agentGroupId: string) => Promise<string[]>;
+  /** This agent's own model on another machine, as host:port; default: none. */
+  ownModels?: (agentGroupId: string) => Promise<string[]>;
+  /** Open a direct tunnel (directTunnel in egress-policy.ts); default: a TCP connection from here. */
+  direct?: (host: string, port: number) => Promise<net.Socket>;
+  /** The install allowlist alone, which direct tunnels need (global admins); default: none, so no direct tunnels. */
+  installAllowlist?: () => Promise<string[]>;
+}
+
+/** A model listener: a host-local model's port, or the relay to a model on another machine (`remote`). */
+export interface ModelListener {
+  port: number;
+  target: { host: string; port: number };
+  remote?: boolean;
+  /** An Ollama server: requests filtered to inference (ollama-filter.ts). */
+  ollama?: boolean;
+}
+
+const DIRECT_CONNECT_TIMEOUT_MS = 10_000;
+
+/**
+ * Connect a direct tunnel: resolve the name once, refuse an address a direct
+ * tunnel may not reach (directAddressAllowed: this machine, loopback,
+ * link-local, and a private address a NAME resolves to — a listed name may
+ * point there), and connect to that same address, so a second lookup cannot
+ * swap it.
+ */
+async function connectDirect(host: string, port: number): Promise<net.Socket> {
+  const bare = host.replace(/^\[|\]$/g, '');
+  const { address } = await dns.lookup(bare);
+  if (!directAddressAllowed(address, net.isIP(bare) !== 0))
+    throw new Error(
+      `${host} resolves to ${address}, which is not allowed directly (a private address: list the address itself)`,
+    );
+  return new Promise((resolve, reject) => {
+    const sock = net.connect({ host: address, port });
+    const timer = setTimeout(() => {
+      sock.destroy();
+      reject(new Error('timed out'));
+    }, DIRECT_CONNECT_TIMEOUT_MS);
+    sock.once('connect', () => {
+      clearTimeout(timer);
+      resolve(sock);
+    });
+    sock.once('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
 }
 
 /**
@@ -173,24 +228,39 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
   }
   const mode = await deps.mode(caller.agentGroupId);
   const always = deps.always ? await deps.always(caller.agentGroupId) : undefined;
-  if (!egressAllowed(mode, req.host, req.port, await deps.allowlist(caller.agentGroupId), always)) {
+  const allowlist = await deps.allowlist(caller.agentGroupId);
+  if (!egressAllowed(mode, req.host, req.port, allowlist, always)) {
     recordBlocked(req.host, req.port, caller.agentGroupId, caller.sessionId, mode);
     return answer(client, '403 Forbidden', blockedMessage(req.host, req.port, mode));
   }
   let upstream: net.Socket;
-  try {
-    const gw = deps.gateway();
-    upstream = await connectThroughGateway(
-      { host: gw.host, port: gw.port, username: req.username, password: req.password },
-      req.host,
-      req.port,
-    );
-  } catch (err) {
-    return answer(
-      client,
-      '502 Bad Gateway',
-      `the credential gateway refused ${req.host}:${req.port}: ${String((err as Error).message).slice(0, 200)}`,
-    );
+  const install = deps.installAllowlist ? await deps.installAllowlist() : [];
+  if (req.kind === 'connect' && directTunnel(mode, req.host, req.port, install)) {
+    try {
+      upstream = await (deps.direct ?? connectDirect)(req.host, req.port);
+    } catch (err) {
+      return answer(
+        client,
+        '502 Bad Gateway',
+        `could not reach ${req.host}:${req.port}: ${String((err as Error).message).slice(0, 200)}`,
+      );
+    }
+    log.info('Egress filter: direct tunnel', { agentGroupId: caller.agentGroupId, host: req.host, port: req.port });
+  } else {
+    try {
+      const gw = deps.gateway();
+      upstream = await connectThroughGateway(
+        { host: gw.host, port: gw.port, username: req.username, password: req.password },
+        req.host,
+        req.port,
+      );
+    } catch (err) {
+      return answer(
+        client,
+        '502 Bad Gateway',
+        `the credential gateway refused ${req.host}:${req.port}: ${String((err as Error).message).slice(0, 200)}`,
+      );
+    }
   }
   upstream.on('error', () => client.destroy());
   client.on('error', () => upstream.destroy());
@@ -221,18 +291,21 @@ function listenOnce(host: string, port: number, onConn: (sock: net.Socket) => vo
 const HOST_NAME = 'host.docker.internal';
 
 /**
- * A host-local model's port on the bridge. Unlike central's own services it is
- * NOT for every agent on the network: each connection is identified like a
- * proxied one and held to the caller's policy — its own model, the allowlist
- * where the mode allows it, anything when Open. Otherwise a localhost model
- * added for one agent would be open to every Model-only agent, arriving from
- * 127.0.0.1, which that server may trust.
+ * A model's port on the bridge. Unlike central's own services it is NOT for
+ * every agent on the network: each connection is identified like a proxied
+ * one and held to the caller's policy — its own model, the allowlist where
+ * the mode allows it, anything when Open. Otherwise a localhost model added
+ * for one agent would be open to every Model-only agent, arriving from
+ * 127.0.0.1, which that server may trust. A `remote` port relays to a model
+ * on another machine and is checked against that machine.
  */
 export async function serveModelPort(
   client: ProxyClient,
   port: number,
   target: { host: string; port: number },
   deps: EgressFilterDeps,
+  remote = false,
+  ollama = false,
 ): Promise<void> {
   client.on('error', () => {});
   const caller = await deps.identify(client.remoteAddress ?? '');
@@ -245,9 +318,26 @@ export async function serveModelPort(
   }
   const mode = await deps.mode(caller.agentGroupId);
   const always = deps.always ? await deps.always(caller.agentGroupId) : undefined;
-  if (!egressAllowed(mode, HOST_NAME, port, await deps.allowlist(caller.agentGroupId), always)) {
-    recordBlocked(HOST_NAME, port, caller.agentGroupId, caller.sessionId, mode);
+  const [host, checked] = remote ? [target.host, target.port] : [HOST_NAME, port];
+  const own = remote && deps.ownModels ? await deps.ownModels(caller.agentGroupId) : [];
+  if (
+    !own.includes(`${host}:${checked}`) &&
+    !egressAllowed(mode, host, checked, await deps.allowlist(caller.agentGroupId), always)
+  ) {
+    recordBlocked(host, checked, caller.agentGroupId, caller.sessionId, mode);
     return void client.destroy();
+  }
+  // Ollama has no authentication: inference only, never pull, delete or create.
+  if (ollama) {
+    serveOllamaFiltered(client, target, (method, path) =>
+      log.warn('Egress filter: an Ollama request refused (inference only)', {
+        agentGroupId: caller.agentGroupId,
+        method,
+        path,
+        target: `${target.host}:${target.port}`,
+      }),
+    );
+    return;
   }
   const up = net.connect(target);
   up.on('error', () => client.destroy());
@@ -256,20 +346,20 @@ export async function serveModelPort(
   up.pipe(client);
 }
 
-/** Model listeners by bridge, so one whose model was removed is closed at the next spawn. */
-const modelPorts = new Map<string, Set<number>>();
+/** Model listeners by bridge (port → target), so one whose model was removed or moved is closed at the next spawn. */
+const modelPorts = new Map<string, Map<number, string>>();
 
 /**
  * Start (idempotently) the filter on the lockdown network's host address,
- * central's own services passed straight through, and host-local models
- * behind the per-agent check above.
+ * central's own services passed straight through, and models behind the
+ * per-agent check above.
  */
 export function ensureEgressFilter(
   bridgeIp: string,
   gatewayPort: number,
   deps: EgressFilterDeps,
   passthrough: Array<{ port: number; target: { host: string; port: number } }> = [],
-  models: Array<{ port: number; target: { host: string; port: number } }> = [],
+  models: ModelListener[] = [],
 ): void {
   listenOnce(bridgeIp, gatewayPort, (sock) => void serveProxyClient(sock, deps).catch(() => sock.destroy()), 'proxy');
   for (const p of passthrough) {
@@ -286,10 +376,11 @@ export function ensureEgressFilter(
       `passthrough:${p.port}`,
     );
   }
-  const wanted = new Set(models.map((m) => m.port));
-  const had = modelPorts.get(bridgeIp) ?? new Set<number>();
-  for (const port of had) {
-    if (wanted.has(port)) continue;
+  // Keyed with the Ollama flag too: a port whose filtering changed is reopened.
+  const wanted = new Map(models.map((m) => [m.port, `${m.target.host}:${m.target.port}${m.ollama ? ' ollama' : ''}`]));
+  const had = modelPorts.get(bridgeIp) ?? new Map<number, string>();
+  for (const [port, target] of had) {
+    if (wanted.get(port) === target) continue;
     const k = `${bridgeIp}:${port}`;
     servers.get(k)?.close();
     servers.delete(k);
@@ -300,7 +391,7 @@ export function ensureEgressFilter(
     listenOnce(
       bridgeIp,
       m.port,
-      (sock) => void serveModelPort(sock, m.port, m.target, deps).catch(() => sock.destroy()),
+      (sock) => void serveModelPort(sock, m.port, m.target, deps, m.remote, m.ollama).catch(() => sock.destroy()),
       `model:${m.port}`,
     );
   }
@@ -379,6 +470,8 @@ export function defaultFilterDeps(network: string, gateway: () => { host: string
     gateway,
     mode: groupEgressMode,
     allowlist: allowlistFor,
+    installAllowlist: getRunnerEgressAllowlist,
     always: modelHostsFor,
+    ownModels: ownModelTargetsFor,
   };
 }

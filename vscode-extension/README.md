@@ -35,7 +35,7 @@ Activity bar → **NanoClaw**.
 
 ## Reviewing changes
 
-The agent edits a copy of your working tree: your commit plus uncommitted and untracked files (gitignored ones with `nanoclaw.proposeIncludeIgnored`; never dependency folders, secret-like files or nested `.git`). Your tree is untouched until you apply.
+The agent edits a copy of your working tree: your commit plus uncommitted and untracked files (gitignored ones only those listed in `nanoclaw.agentCopy.includeIgnored`, or all with `*` there; never dependency folders, secret-like files or nested `.git`). Your tree is untouched until you apply.
 
 A text file up to 1 MiB holding a secret (private key, cloud or API token, a long quoted `password`/`token`/`secret`/`api_key` value) is left out of the copy whole; the count is shown, the list is in the NanoClaw output. Larger and binary files are copied unscanned.
 
@@ -74,17 +74,12 @@ Central serves the runner package and offers newer builds on connect and keepali
 | Setting | Default | Meaning |
 |---|---|---|
 | `nanoclaw.serverUrl` | `""` | Central origin, e.g. `https://<app>.azurewebsites.net`. |
-| `nanoclaw.signIn` | `"microsoft"` | `microsoft`: Entra sign-in (App Service installs). `network`: no sign-in; central identifies you by Tailscale or an identity-aware proxy, so the laptop must reach central over that network. |
-| `nanoclaw.appIdUri` | `""` | App Service Entra Application ID URI (`api://<client-id>`); token audience. |
-| `nanoclaw.tenantId` | `""` | Entra tenant ID. |
-| `nanoclaw.clientId` | `""` | Own app registration to sign in with; empty = VS Code's Microsoft app. |
 | `nanoclaw.autoConnect` | `true` | Connect at startup when signed in. |
-| `nanoclaw.workspaceMount` | `workspace` | `workspace`: the open folder is the project. `off`: only `nanoclaw.slots`. |
-| `nanoclaw.slots` | `{}` | `/workspace/project` → a local directory: the project, overriding the open folder. |
-| `nanoclaw.mountAllowlist` | `[]` | Directories the project may resolve into; empty = folders open in this window. |
-| `nanoclaw.workspaceExcludes` | secrets, `.env*`, keys, `.ssh`, `.aws`, `.azure`, … | Left out of the agent's copy. |
-| `nanoclaw.proposeIncludeIgnored` | `false` | Copy gitignored files into the copy the agent sees. |
-| `nanoclaw.proposeSecretScanAllow` | `[]` | Globs copied even when the secret scan finds a secret in them. |
+| `nanoclaw.agentCopy.includeIgnored` | `[]` | Gitignored folders or files to copy for the agent, relative to the project root, e.g. `site-theme`. `*` copies all. |
+| `nanoclaw.agentCopy.exclude` | secrets, `.env*`, keys, `.ssh`, `.aws`, `.azure`, … | Left out of the agent's copy. |
+| `nanoclaw.agentCopy.allowSecretsIn` | `[]` | Globs copied even when the secret scan finds a secret in them. |
+
+Before 0.16.11 these were `proposeIncludePaths` and `proposeIncludeIgnored` (now one list), `workspaceExcludes` and `proposeSecretScanAllow`; values set under those names move to the new ones at start-up.
 | `nanoclaw.autoUpdate` | `prompt` | `prompt` / `auto` / `off`. |
 | `nanoclaw.releaseSigningKey` | `""` | Release signing key (`ed25519:…`) updates must be signed with; empty = the key central offers, pinned per server on confirmation. |
 
@@ -109,20 +104,22 @@ Central serves the runner package and offers newer builds on connect and keepali
 
 ## App registration (Entra ID)
 
-Sign-in uses VS Code's built-in Microsoft account provider. Two options:
+Sign-in uses VS Code's built-in Microsoft account provider, with the settings central sends (Manage → Runners: tenant, App ID URI, optional client id). Nothing to set on the machine. Two options, set on central:
 
-1. **Own app registration** — set `nanoclaw.clientId`. Under *Authentication → Mobile and desktop applications*:
+1. **Own app registration** — set its client id on central. Under *Authentication → Mobile and desktop applications*:
    - `http://localhost` (browser loopback)
    - `ms-appx-web://microsoft.aad.brokerplugin/<client-id>` (Windows broker/WAM; without it VS Code falls back to the browser)
    - *Allow public client flows* = Yes
    - Delegated `user_impersonation` on the NanoClaw App Service app, consented.
-2. **VS Code's default client** (`aebc6443-996d-45c2-90f0-388ff96faa56`) — leave `nanoclaw.clientId` empty; EasyAuth's `allowedApplications` must include that id.
+2. **VS Code's default client** (`aebc6443-996d-45c2-90f0-388ff96faa56`) — leave the client id empty. EasyAuth's `allowedApplications` must include that id, and the App Service app should list it under *Expose an API → Authorized client applications* (with `user_impersonation`), or users are asked for admin consent.
 
 Do not add `offline_access` to any scope list; the provider adds `openid email profile offline_access` and refreshes silently.
 
 ## How it works
 
 - The agent runs on central. Its only way to this machine is the laptop tools, over the runner link: `Read`, `Edit`, `Write`, `Glob`, `Grep`, and `GitStatus`, `GitDiff`, `GitLog`, `GitShow`, `GitBlame`. Nothing runs on this machine for it.
+- The copy is taken each time the agent starts, in the background: its tool list is answered at once, and its first tool call waits for the copy (or reports why it was refused).
+- Between starts the copy follows your saved edits within seconds, unless it holds an unapplied proposal. A folder listed in `nanoclaw.agentCopy.includeIgnored` follows them only if it is a git repository of its own; otherwise it is copied again at the next start.
 - A folder is served only once you allow it (asked once per folder and server; **NanoClaw: Forget allowed folders** asks again).
 - Every path is checked against the copy: `..`, absolute paths elsewhere, a link leading out, and `.git` are refused.
 - The git tools see your history beneath the copy, but not what the copy leaves out: those paths are refused at any revision and kept out of diffs; revisions must be commits.

@@ -21,8 +21,13 @@ import { log } from '../../log.js';
 import { getDb, hasTable } from '../../db/connection.js';
 import { registerApprovalAgentGroupFallback } from '../approvals/agent-identity.js';
 import { getEffectiveRoomMode, getCredentialsConfig } from '../../channels/webchat/db.js';
-import { userHasConnectedCredential, getUserCredential, agentGroupForUserCredsAgent } from './db.js';
-import { ensureGroupEnrollment, userCredsProviderForGroup } from './onboard.js';
+import {
+  userHasConnectedCredential,
+  getUserCredential,
+  getUserCredsCredential,
+  agentGroupForUserCredsAgent,
+} from './db.js';
+import { ensureGroupEnrollment, ensurePersonalEnrollment, userCredsProviderForGroup } from './onboard.js';
 import { apiKeyAllowedFor, credentialName, oauthAllowedFor } from './policy.js';
 import { realOnecliAdmin } from './onecli-admin.js';
 import {
@@ -72,25 +77,37 @@ async function evaluateRoomCredState(
   // Grok has no API-key path, so it is never offered one.
   const apiOffered = mode !== 'disabled' && apiKeyAllowedFor(provider, cfg);
   const oauthOffered = mode !== 'disabled' && oauthAllowedFor(provider, cfg);
-  if (!apiOffered && !oauthOffered) return none; // UserCreds entirely off here.
+  const perMember = {
+    ...none,
+    override: { sessionMode: 'per-thread' as const, threadId: memberSessionKey(userId, threadId) },
+  };
 
-  // A member gets their own per-member session ONLY if their connected credential
+  // A member gets their own per-member session if their connected credential
   // is still PERMITTED by current policy — so flipping an allowance off (or a
   // room to disabled) stops already-connected members routing, not just new ones.
   // The per-(user,group) OneCLI agent is created lazily at spawn (prepare hook).
-  const cred = await getUserCredential(userId, provider);
-  if (cred?.status === 'active') {
-    const permitted = cred.cred_type === 'oauth_token' ? oauthOffered : apiOffered;
-    // Key by (user, thread), not user alone: a per-member session that ignores
-    // the thread collapses a room's threads into one queue, and the agent then
-    // answers a room message into a topic thread.
-    if (permitted)
-      return { ...none, override: { sessionMode: 'per-thread', threadId: memberSessionKey(userId, threadId) } };
+  // Key by (user, thread), not user alone: a per-member session that ignores
+  // the thread collapses a room's threads into one queue, and the agent then
+  // answers a room message into a topic thread.
+  if (apiOffered || oauthOffered) {
+    const cred = await getUserCredential(userId, provider);
+    if (cred?.status === 'active' && (cred.cred_type === 'oauth_token' ? oauthOffered : apiOffered)) return perMember;
+    // No permitted credential: API-key 'required' rooms decline with guidance,
+    // personal secrets or not (they are no model credential).
+    if (mode === 'required') return { ...none, requiredBlocked: true, credName: credentialName(provider) };
   }
-  // No permitted credential: API-key 'required' rooms decline with guidance;
-  // otherwise (optional, or OAuth-only) fall back to the shared session.
-  const credName = credentialName(provider);
-  return { ...none, requiredBlocked: mode === 'required', credName };
+  // Personal secrets (a PAT of their own) need their own identity, so their own
+  // session, on the workspace's model credential: in every room, User
+  // credentials Off included, since that setting is about the model credential.
+  if (await hasPersonalEnrollment(userId, agentGroupId)) return perMember;
+  // Otherwise (optional, OAuth-only, or UserCreds off) the shared session.
+  return none;
+}
+
+/** An enrollment for personal secrets alone: no credential of the member's (ensurePersonalEnrollment). */
+async function hasPersonalEnrollment(userId: string, agentGroupId: string): Promise<boolean> {
+  const row = await getUserCredsCredential(userId, agentGroupId);
+  return row?.status === 'active' && !row.secret_id;
 }
 
 registerSessionKeyResolver(async (mg, agentGroupId, userId, threadId) => {
@@ -177,9 +194,11 @@ registerSessionPrepareHook(async (agentGroupId, threadId) => {
   const provider = await userCredsProviderForGroup(agentGroupId);
   const userId = memberUserFromKey(threadId) ?? threadId;
   const connected = !!userId && (await userHasConnectedCredential(userId, provider));
+  // Personal secrets without a key of their own: their own identity all the same.
+  const personal = !connected && !!userId && (await hasPersonalEnrollment(userId, agentGroupId));
 
   // Identity: a connected member's session runs under THEIR OneCLI identity.
-  const identity = connected ? userCredsAgentIdentifier(agentGroupId, userId!) : null;
+  const identity = connected || personal ? userCredsAgentIdentifier(agentGroupId, userId!) : null;
 
   // Env: Claude OAuth sessions need the sentinel treatment (see the comment on
   // the resolver below); API-key and non-Claude sessions need nothing.
@@ -201,6 +220,8 @@ registerSessionPrepareHook(async (agentGroupId, threadId) => {
   // wipe the identity/env staging — the gateway will surface its own error at
   // spawn if the agent truly doesn't exist.
   if (connected) await ensureGroupEnrollment(realOnecliAdmin, userId!, agentGroupId);
+  // A provider switch since the personal enrollment: bring it onto the new provider's credential.
+  else if (personal) await ensurePersonalEnrollment(realOnecliAdmin, userId!, agentGroupId);
 });
 
 // Claude OAuth members: put their per-member container in subscription/OAuth mode

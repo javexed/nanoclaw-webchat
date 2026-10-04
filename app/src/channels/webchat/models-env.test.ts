@@ -3,7 +3,17 @@
  * The Anthropic SDK appends the full `/v1/messages` path itself; appending `/v1`
  * here makes it hit `<endpoint>/v1/v1/messages` → 404 ("model may not exist").
  */
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+
+// A cloud model is one the router serves (cloud-models.ts); here, only 'command-a'.
+// The router (port 4000 here) is behind the gateway only when a test says so.
+const router = vi.hoisted(() => ({ viaGateway: false }));
+vi.mock('./cloud-models.js', () => ({
+  cloudModelMaxOutput: (id: string) => (id === 'command-a' ? 8192 : null),
+  agentRouterBase: (endpoint: string | null) =>
+    router.viaGateway && /:4000(\/|$)/.test(endpoint ?? '') ? 'http://nanoclaw-litellm:4000' : null,
+  routerAuthHeaders: () => ({}),
+}));
 
 import { envForModel, openCodeBackendEnv } from './models.js';
 
@@ -62,6 +72,47 @@ describe('openCodeBackendEnv — the picked model reaches the harness', () => {
       openCodeBackendEnv({ kind: 'openai-compatible', endpoint: 'http://r:4000/v1', model_id: 'm' } as never),
     ).toBeNull();
     expect(openCodeBackendEnv({ kind: 'ollama', endpoint: null, model_id: 'm' } as never)).toBeNull();
+  });
+
+  it('maps a cloud model to the router at /v1, with its provider cap', () => {
+    const b = openCodeBackendEnv({
+      kind: 'openai-compatible',
+      endpoint: 'http://127.0.0.1:4001/v1',
+      model_id: 'command-a',
+    } as never)!;
+    expect(b.env).toEqual({
+      OPENCODE_PROVIDER: 'openai',
+      OPENCODE_BASE_URL: 'http://host.docker.internal:4001/v1',
+      OPENCODE_MODEL: 'openai/command-a',
+      OPENCODE_SMALL_MODEL: 'openai/command-a',
+      OPENCODE_MODEL_OUTPUT_LIMIT: '8192',
+    });
+  });
+});
+
+describe('the router behind the gateway', () => {
+  afterEach(() => void (router.viaGateway = false));
+  const cloud = { kind: 'openai-compatible', endpoint: 'http://127.0.0.1:4000/v1', model_id: 'command-a' } as never;
+
+  it('Claude Code dials it by container name through the gateway: no NO_PROXY bypass', () => {
+    router.viaGateway = true;
+    expect(envForModel(cloud)).toEqual({
+      ANTHROPIC_BASE_URL: 'http://nanoclaw-litellm:4000',
+      ANTHROPIC_MODEL: 'command-a',
+      CLAUDE_CODE_MAX_OUTPUT_TOKENS: '8192',
+    });
+  });
+
+  it('OpenCode too, and adds nothing to NO_PROXY', () => {
+    router.viaGateway = true;
+    const b = openCodeBackendEnv(cloud)!;
+    expect(b.env.OPENCODE_BASE_URL).toBe('http://nanoclaw-litellm:4000/v1');
+    expect(b.proxyHost).toBeNull();
+  });
+
+  it('directly, with the bypass, while it serves no cloud model', () => {
+    expect(envForModel(cloud).ANTHROPIC_BASE_URL).toBe('http://host.docker.internal:4000');
+    expect(envForModel(cloud).NO_PROXY).toBe('host.docker.internal');
   });
 });
 

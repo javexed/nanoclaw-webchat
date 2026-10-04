@@ -288,6 +288,10 @@ if [ -n "${NANOCLAW_CHANNELS_REMOTE_URL:-}" ]; then env_set NANOCLAW_CHANNELS_RE
 HOST="$(env_get WEBCHAT_HOST)"; HOST="${HOST:-0.0.0.0}"
 PORT="$(env_get WEBCHAT_PORT)"; PORT="${PORT:-3100}"
 say "Wrote .env (webchat on ${HOST}:${PORT})"
+# An install made before OneCLI's API and database were bound privately moves
+# them off the docker bridge now (idempotent; the restart below picks up a
+# moved ONECLI_URL). See deploy/onecli-private-ports.sh for when it skips.
+bash deploy/onecli-private-ports.sh || true
 
 # ── 3. System service (root + systemd) ──────────────────────────────────────
 if [ "$SERVICE" = 1 ] && [ "$(id -u)" = 0 ] && command -v systemctl >/dev/null 2>&1; then

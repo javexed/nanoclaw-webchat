@@ -2,12 +2,18 @@
   "name": "vscode",
   "displayName": "NanoClaw",
   "description": "Run NanoClaw agents on this machine and work with them from the editor.",
-  "version": "0.16.0",
+  "version": "0.16.11",
   "publisher": "nanoclaw",
   "private": true,
   "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode NanoClaw connects and chats, but does not let an agent work on the folder until you trust it."
+    }
   },
   "categories": [
     "Other"
@@ -183,74 +189,87 @@
           "default": "",
           "description": "Central NanoClaw origin, e.g. https://<app>.azurewebsites.net"
         },
-        "nanoclaw.signIn": {
-          "scope": "machine",
-          "type": "string",
-          "enum": [
-            "microsoft",
-            "network"
-          ],
-          "enumDescriptions": [
-            "Sign in with Microsoft (Entra). For installs behind App Service authentication.",
-            "No sign-in: central knows you by your network identity (Tailscale, or an identity-aware proxy)."
-          ],
-          "default": "microsoft",
-          "description": "How this machine proves who you are to central. Central supplies it; set here to override."
-        },
-        "nanoclaw.appIdUri": {
-          "scope": "machine",
-          "type": "string",
-          "default": "",
-          "description": "Application ID URI of the App Service's Entra registration, e.g. api://<client-id>. The token's audience. Central supplies it; set here to override."
-        },
-        "nanoclaw.tenantId": {
-          "scope": "machine",
-          "type": "string",
-          "default": "",
-          "description": "Entra tenant ID (workforce tenant). Central supplies it; set here to override."
-        },
-        "nanoclaw.clientId": {
-          "scope": "machine",
-          "type": "string",
-          "default": "",
-          "description": "Optional: your own native app registration to sign in with (VSCODE_CLIENT_ID). Leave empty to use VS Code's Microsoft app. Central supplies it; set here to override."
-        },
         "nanoclaw.autoConnect": {
           "type": "boolean",
           "default": true,
           "description": "Connect on startup when signed in."
         },
-        "nanoclaw.slots": {
-          "scope": "machine",
-          "type": "object",
-          "default": {},
-          "additionalProperties": {
-            "type": "string"
-          },
-          "markdownDescription": "Project slots: maps a slot central declares (e.g. `/workspace/project`) to a local directory: the folder the agent's tools work on. A slot that is not bound here is refused."
-        },
-        "nanoclaw.mountAllowlist": {
+        "nanoclaw.agentCopy.includeIgnored": {
           "scope": "machine",
           "type": "array",
-          "default": [],
           "items": {
             "type": "string"
           },
-          "markdownDescription": "Directories a slot may resolve into (symlinks followed). Empty = the folders open in this window."
+          "default": [],
+          "order": 1,
+          "markdownDescription": "Gitignored folders or files to copy for the agent, relative to the project root, e.g. `site-theme`. `*` copies all."
         },
-        "nanoclaw.workspaceMount": {
+        "nanoclaw.agentCopy.exclude": {
           "scope": "machine",
-          "type": "string",
-          "enum": [
-            "workspace",
-            "off"
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "secrets",
+            "secret",
+            ".secrets",
+            ".env",
+            ".env.*",
+            "*.pem",
+            "*.key",
+            "*.pfx",
+            "*.p12",
+            "*.jks",
+            "*.keystore",
+            "id_rsa",
+            "id_rsa.*",
+            "id_ed25519",
+            "id_ed25519.*",
+            ".ssh",
+            ".aws",
+            ".azure",
+            ".gnupg",
+            ".npmrc",
+            ".pypirc",
+            ".netrc",
+            ".git-credentials",
+            "credentials.json",
+            "service-account*.json",
+            "terraform.tfstate",
+            "terraform.tfstate.*",
+            "*.env",
+            ".envrc",
+            ".kube",
+            "kubeconfig",
+            "id_ecdsa",
+            "id_ecdsa.*",
+            "id_dsa",
+            "id_dsa.*",
+            "*.ppk",
+            "**/.docker/config.json",
+            ".pgpass",
+            ".htpasswd",
+            ".vault-token",
+            "*.tfstate",
+            "*.tfstate.backup",
+            "application_default_credentials.json",
+            "settings.local.php",
+            "wp-config.php",
+            "*.kdbx"
           ],
-          "default": "workspace",
-          "enumDescriptions": [
-            "The open workspace folder (the one holding the active file, in a multi-root workspace) is the project the agent's tools work on.",
-            "Never pick the workspace automatically; the project must be set in nanoclaw.slots."
-          ],
-          "markdownDescription": "Which folder the agent's tools work on. An explicit `nanoclaw.slots` entry for `/workspace/project` always wins."
+          "markdownDescription": "Secret-like paths left out of the agent's copy of the project. Patterns are relative to the project root; a pattern without `/` matches a file or folder name anywhere; `*`, `?` and `**` are supported.",
+          "order": 2
+        },
+        "nanoclaw.agentCopy.allowSecretsIn": {
+          "scope": "machine",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "order": 3,
+          "markdownDescription": "Files copied even when the secret scan finds a secret in them. Globs as in `nanoclaw.agentCopy.exclude`."
         },
         "nanoclaw.workspaceExcludes": {
           "scope": "machine",
@@ -306,13 +325,25 @@
             "wp-config.php",
             "*.kdbx"
           ],
-          "markdownDescription": "Secret-like paths left out of the agent's copy of the project. Patterns are relative to the project root; a pattern without `/` matches a file or folder name anywhere; `*`, `?` and `**` are supported."
+          "markdownDescription": "Secret-like paths left out of the agent's copy of the project. Patterns are relative to the project root; a pattern without `/` matches a file or folder name anywhere; `*`, `?` and `**` are supported.",
+          "markdownDeprecationMessage": "Now `nanoclaw.agentCopy.exclude`."
         },
         "nanoclaw.proposeIncludeIgnored": {
           "scope": "machine",
           "type": "boolean",
           "default": false,
-          "markdownDescription": "Also copy gitignored files into the agent's copy. Off: tracked and untracked (not ignored) files only."
+          "markdownDescription": "Also copy gitignored files into the agent's copy. Off: tracked and untracked (not ignored) files only.",
+          "markdownDeprecationMessage": "Now `*` in `nanoclaw.agentCopy.includeIgnored`."
+        },
+        "nanoclaw.proposeIncludePaths": {
+          "scope": "machine",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Gitignored folders or files to copy into the agent's copy anyway, relative to the project root, e.g. `site-theme`.",
+          "markdownDeprecationMessage": "Now `nanoclaw.agentCopy.includeIgnored`."
         },
         "nanoclaw.proposeSecretScanAllow": {
           "scope": "machine",
@@ -321,7 +352,8 @@
             "type": "string"
           },
           "default": [],
-          "markdownDescription": "Files copied into the agent's copy even when the secret scan finds a secret in them. Globs as in `nanoclaw.workspaceExcludes`."
+          "markdownDescription": "Files copied into the agent's copy even when the secret scan finds a secret in them. Globs as in `nanoclaw.workspaceExcludes`.",
+          "markdownDeprecationMessage": "Now `nanoclaw.agentCopy.allowSecretsIn`."
         },
         "nanoclaw.releaseSigningKey": {
           "scope": "machine",

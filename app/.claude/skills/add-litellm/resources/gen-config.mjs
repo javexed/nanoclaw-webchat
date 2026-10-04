@@ -18,8 +18,8 @@
  * they are declared in a backends.json file. Key VALUES never enter the
  * generated config — entries carry an env-var NAME and the config emits
  * LiteLLM's os.environ/<NAME> indirection; the installer delivers values
- * to the container via --env-file. Declaring any keyed backend makes the
- * generator emit general_settings.master_key (proxy auth) — an
+ * to the container via --env-file. Declaring any keyed or gateway backend
+ * makes the generator emit general_settings.master_key (proxy auth) — an
  * unauthenticated endpoint fronting a paid key would be a free credential
  * proxy.
  *
@@ -35,19 +35,29 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 
-const args = process.argv.slice(2);
-const opt = (name, dflt) => {
+/**
+ * The value after `--<name>` in `args`, else `dflt`. Present but empty
+ * (`--hosts ''`) is a value: no local servers, cloud only. A missing value —
+ * the flag last, or followed by another flag (`--hosts --out x`) — is an error,
+ * never the next flag read as the value.
+ */
+export function opt(args, name, dflt) {
   const i = args.indexOf(`--${name}`);
-  return i >= 0 && args[i + 1] ? args[i + 1] : dflt;
-};
+  if (i < 0) return dflt;
+  const value = args[i + 1];
+  if (value === undefined || value.startsWith('--')) throw new Error(`gen-config: --${name} needs a value`);
+  return value;
+}
 
-const HOSTS = opt('hosts', process.env.MODEL_HOSTS ?? 'http://localhost:11434')
+const args = process.argv.slice(2);
+
+const HOSTS = opt(args, 'hosts', process.env.MODEL_HOSTS ?? 'http://localhost:11434')
   .split(',')
   .map((h) => h.trim().replace(/\/$/, ''))
   .filter(Boolean);
-const TAGS_FILE = opt('tags-file', null);
-const BACKENDS_FILE = opt('backends', null);
-const OUT = opt('out', null);
+const TAGS_FILE = opt(args, 'tags-file', null);
+const BACKENDS_FILE = opt(args, 'backends', null);
+const OUT = opt(args, 'out', null);
 
 /**
  * Discover a host's roster. Returns { kind: 'ollama'|'openai', names: [] }.
@@ -56,7 +66,7 @@ const OUT = opt('out', null);
  * to the standard /v1/models. Fixture mode detects by response shape:
  * { models: [{ name }] } is Ollama, { data: [{ id }] } is OpenAI-compat.
  */
-async function rosterFor(host, fixtures) {
+async function rosterFor(host, fixtures, fetchImpl = fetch) {
   if (fixtures) {
     const entry = fixtures[host];
     if (!entry) throw new Error(`--tags-file has no entry for host ${host}`);
@@ -65,7 +75,7 @@ async function rosterFor(host, fixtures) {
     throw new Error(`--tags-file entry for ${host} matches neither Ollama nor OpenAI shape`);
   }
   const probe = async (path) => {
-    const res = await fetch(`${host}${path}`, { signal: AbortSignal.timeout(5000) });
+    const res = await fetchImpl(`${host}${path}`, { signal: AbortSignal.timeout(5000) });
     return res.ok ? res.json() : null;
   };
   const tags = await probe('/api/tags');
@@ -76,8 +86,11 @@ async function rosterFor(host, fixtures) {
 }
 
 /**
- * Validate one declared keyed-backend entry. Shape:
- *   { model_name, model, api_key_env, api_base? }
+ * Validate one declared backend entry. Two shapes:
+ *   { model_name, model, api_key_env, api_base? }  key from the env file
+ *   { model_name, model, gateway: true, api_base? } key added on the way out
+ *     by the OneCLI gateway the container's traffic goes through
+ *     (data/litellm/onecli.env); LiteLLM itself only holds a placeholder.
  * api_key_env is an env-var NAME; a literal `api_key` field is a hard error
  * so a pasted key value can never end up committed or in the plaintext
  * config.
@@ -86,6 +99,13 @@ function validateBackend(b, i) {
   const at = `backends[${i}]`;
   if (b.api_key !== undefined)
     throw new Error(`${at}: literal api_key values are forbidden — use api_key_env (an env-var NAME)`);
+  if (b.gateway === true) {
+    if (b.api_key_env !== undefined) throw new Error(`${at}: gateway and api_key_env are exclusive`);
+    for (const field of ['model_name', 'model']) {
+      if (typeof b[field] !== 'string' || !b[field]) throw new Error(`${at}: missing required field ${field}`);
+    }
+    return b;
+  }
   for (const field of ['model_name', 'model', 'api_key_env']) {
     if (typeof b[field] !== 'string' || !b[field]) throw new Error(`${at}: missing required field ${field}`);
   }
@@ -107,12 +127,27 @@ function yamlEscape(s) {
   return /[:#{}[\],&*?|<>=!%@`"']/.test(s) ? JSON.stringify(s) : s;
 }
 
-export async function generate({ hosts = HOSTS, fixtures = null, backends = null } = {}) {
-  const keyed = (backends ?? []).map(validateBackend);
+export async function generate({ hosts = HOSTS, fixtures = null, backends = null, fetchImpl = fetch } = {}) {
+  const declared = (backends ?? []).map(validateBackend);
+  // Either kind puts a paid key behind this proxy, so either turns auth on
+  // (master_key below): an env-file key sits in the container, and a gateway
+  // backend's key is added to whatever the container sends to the provider.
+  const keyed = declared.filter((b) => b.gateway !== true);
+  const gatewayed = declared.filter((b) => b.gateway === true);
 
   const modelList = [];
   for (const host of hosts) {
-    const { kind, names } = await rosterFor(host, fixtures);
+    let roster;
+    try {
+      roster = await rosterFor(host, fixtures, fetchImpl);
+    } catch (err) {
+      // A host that is off (a GPU box asleep) must not take the others down
+      // with it: it stays in the header, and the next rebuild picks it up.
+      if (fixtures) throw err;
+      console.error(`gen-config: skipping ${host} — ${err.message}`);
+      continue;
+    }
+    const { kind, names } = roster;
     for (const name of names) {
       // model_name is the served name itself; the same name on several hosts
       // becomes multiple deployments under one model_name — exactly how
@@ -135,12 +170,20 @@ export async function generate({ hosts = HOSTS, fixtures = null, backends = null
     if (b.api_base) params.api_base = containerReachable(b.api_base);
     modelList.push({ model_name: b.model_name, litellm_params: params });
   }
+  for (const b of gatewayed) {
+    // A placeholder LiteLLM sends; the gateway replaces it with the vault's value.
+    const params = { model: b.model, api_key: 'gateway-managed' };
+    if (b.api_base) params.api_base = containerReachable(b.api_base);
+    modelList.push({ model_name: b.model_name, litellm_params: params });
+  }
   if (modelList.length === 0) throw new Error('no models discovered on any host and no keyed backends declared');
 
   const lines = [];
   lines.push('# Generated by add-litellm/gen-config.mjs — regenerate, do not hand-edit.');
   lines.push(`# hosts: ${hosts.join(', ') || '(none)'}`);
   if (keyed.length) lines.push(`# keyed backends: ${keyed.map((b) => b.model_name).join(', ')}`);
+  if (gatewayed.length)
+    lines.push(`# gateway backends (key added by OneCLI): ${gatewayed.map((b) => b.model_name).join(', ')}`);
   lines.push('model_list:');
   for (const m of modelList) {
     lines.push(`  - model_name: ${yamlEscape(m.model_name)}`);
@@ -155,14 +198,20 @@ export async function generate({ hosts = HOSTS, fixtures = null, backends = null
   lines.push('  request_timeout: 600');
   lines.push('  num_retries: 2');
   lines.push('  drop_params: true');
+  // The Claude harness speaks /v1/messages. For openai/ deployments LiteLLM
+  // would otherwise translate that to the Responses API, which most
+  // OpenAI-compatible servers (and cloud compat endpoints) don't serve.
+  lines.push('  use_chat_completions_url_for_anthropic_messages: true');
   lines.push('');
   lines.push('router_settings:');
   lines.push('  routing_strategy: simple-shuffle');
   lines.push('');
-  if (keyed.length) {
+  if (keyed.length || gatewayed.length) {
     lines.push('general_settings:');
     lines.push('  # Auth is mandatory once a paid key sits behind the endpoint — an open');
-    lines.push('  # port would be a free credential proxy. Value comes from the env file.');
+    lines.push('  # port would be a free credential proxy. A gateway backend counts: its key');
+    lines.push('  # is added on the way out, so whoever reaches this port spends it. Value');
+    lines.push('  # comes from the env file.');
     lines.push('  master_key: os.environ/LITELLM_MASTER_KEY');
     lines.push('');
     lines.push('# Keyed mode (.claude/skills/add-litellm/SKILL.md): key VALUES live only in the');

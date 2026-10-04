@@ -4,13 +4,14 @@
 // proposal clone below); review is that copy against the snapshot it was
 // made from, and applying moves the chosen files over as a patch.
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 import { riskOf, type Risk } from './host-run-paths.js';
 import { matchesExclude, UNTRACKED_SECRET_EXCLUDES } from './policy.js';
-import { proposeIncludeIgnored, proposeSecretScanAllow } from './propose-settings.js';
+import { proposeIncludeIgnored, proposeIncludePaths, proposeSecretScanAllow } from './propose-settings.js';
 import { leaveOutSecrets } from './secret-scan.js';
 
 export interface ChangedFile {
@@ -31,8 +32,8 @@ export interface ChangedFile {
  * read attributes from the committed tree instead of the work tree (git 2.42+;
  * older git ignores it, and an unborn HEAD still falls back to the work tree).
  * The real protection is that the config is never one the agent could write:
- * every call names its repository explicitly and the git dir reaches the
- * container read-only.
+ * every call names its repository explicitly, and the git dir sits outside
+ * the copy the agent's tools can reach.
  */
 export const SAFE_GIT_CONFIG = [
   // Not a safety setting, but on every call too: Git for Windows refuses paths
@@ -209,10 +210,9 @@ export async function resolveWorkspace(dir: string): Promise<PinnedWorkspace> {
 // ---- propose mode ------------------------------------------------------------
 //
 // The agent works in a self-contained local clone of the developer's
-// repository (a worktree's `.git` file would point at a Windows path the
-// container cannot follow), holding a snapshot of their WORKING TREE, not just
+// repository (a worktree would share the developer's own git dir), holding a snapshot of their WORKING TREE, not just
 // their last commit: uncommitted edits, untracked files, and — when the
-// developer opts in (nanoclaw.proposeIncludeIgnored) — gitignored ones (a
+// developer lists them (nanoclaw.agentCopy.includeIgnored) — gitignored ones (a
 // Drupal codebase, a compose file, a theme cloned beside the repo): a project
 // whose repository tracks three files is otherwise invisible to the agent.
 // Dependency and cache folders are left out (SNAPSHOT_SKIP_DIRS), as is
@@ -269,6 +269,56 @@ async function headOf(cwd: string, repo?: GitRepo): Promise<string> {
   return (await git(cwd, ['rev-parse', 'HEAD'], undefined, repo)).trim();
 }
 
+/**
+ * A cheap stamp of the developer's working tree: HEAD, and each path git
+ * reports as changed or untracked, with its size and modification time. It
+ * moves after a pull, a checkout, a commit or an edit, so the proposal copy
+ * can tell it has fallen behind without a full snapshot. Reads only:
+ * `--no-optional-locks` keeps git from refreshing the developer's index.
+ * (Gitignored files and nested repositories are not in it; the next agent
+ * start takes those in — except an include path that is a repository of its
+ * own, stamped the same way.)
+ */
+export async function workingTreeStamp(
+  repoRoot: string,
+  includePaths: readonly string[] = proposeIncludePaths(),
+): Promise<string> {
+  const h = createHash('sha256');
+  const stampRepo = async (root: string): Promise<void> => {
+    h.update(await headOf(root).catch(() => '')).update('\0');
+    const status = await git(root, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all']);
+    const entries = status.split('\0');
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (!entry) continue;
+      h.update(entry).update('\0');
+      // A rename or copy is `XY new\0old`: the old name follows as an entry of
+      // its own, with no status in front of it — part of this record, not a path.
+      if (/^[RC]|^.[RC]/.test(entry)) h.update(entries[++i] ?? '').update('\0');
+      try {
+        const st = fs.statSync(path.join(root, entry.slice(3)));
+        h.update(`${st.size}:${st.mtimeMs}\0`);
+      } catch {
+        /* deleted */
+      }
+    }
+  };
+  await stampRepo(repoRoot);
+  for (const rel of includePaths.map(projectRelative)) {
+    if (!rel || !fs.existsSync(path.join(repoRoot, rel, '.git'))) continue;
+    h.update(`\0${rel}\0`);
+    await stampRepo(path.join(repoRoot, rel)).catch(() => {});
+  }
+  return h.digest('hex');
+}
+
+/** An include path as a path inside the project, or null: never absolute, never above the root. */
+export function projectRelative(p: string): string | null {
+  const rel = p.trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
+  if (!rel || path.isAbsolute(rel) || /^[a-zA-Z]:/.test(rel) || rel.split('/').some((s) => s === '..')) return null;
+  return rel;
+}
+
 /** Folders a snapshot leaves out unless tracked: dependencies and caches — large, regenerated, not what the agent reads. */
 export const SNAPSHOT_SKIP_DIRS = new Set([
   'node_modules',
@@ -288,23 +338,47 @@ export const SNAPSHOT_LIMITS = { files: 150_000, bytes: 3 * 1024 ** 3 };
  * are now, untracked ones and — with `includeIgnored` — gitignored ones
  * (walking into nested repositories, never their `.git`), minus skipped
  * folders, links, anything named like a secret, and untracked files named like
- * a dump or a credential (UNTRACKED_SECRET_EXCLUDES). Relative paths, forward
- * slashes.
+ * a dump or a credential (UNTRACKED_SECRET_EXCLUDES). `includePaths` names
+ * gitignored folders or files taken in anyway, by the same rules. Relative
+ * paths, forward slashes.
  */
 export async function workingTreeFiles(
   repoRoot: string,
   excludes: readonly string[] = [],
   includeIgnored = false,
+  includePaths: readonly string[] = [],
 ): Promise<string[]> {
   const out = new Set<string>();
   let bytes = 0;
   // `.GIT` is `.git` on Windows (and never legitimate elsewhere).
   const isGit = (seg: string) => seg.toLowerCase() === '.git';
   const skipped = (rel: string) => rel.split('/').some((seg) => SNAPSHOT_SKIP_DIRS.has(seg) || isGit(seg));
+  // lstat sees only the last component: a folder on the way that is a link (an
+  // include path through `theme -> ~/.ssh`, or a tracked folder since swapped
+  // for one) would carry files from outside the project into the copy.
+  const realRoot = fs.realpathSync(repoRoot);
+  const folderInside = new Map<string, boolean>();
+  const insideProject = (relDir: string): boolean => {
+    if (relDir === '.' || relDir === '') return true;
+    let ok = folderInside.get(relDir);
+    if (ok === undefined) {
+      let real: string | null = null;
+      try {
+        real = fs.realpathSync(path.join(repoRoot, relDir));
+      } catch {
+        /* gone */
+      }
+      ok =
+        !!real && (real === realRoot || real.startsWith(realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep));
+      folderInside.set(relDir, ok);
+    }
+    return ok;
+  };
   const add = (rel: string, tracked: boolean): void => {
     rel = rel.replace(/\\/g, '/').replace(/\/+$/, '');
     if (!rel || rel.split('/').some(isGit) || (!tracked && skipped(rel)) || matchesExclude(rel, excludes)) return;
     if (!tracked && matchesExclude(rel, UNTRACKED_SECRET_EXCLUDES)) return;
+    if (!insideProject(path.posix.dirname(rel))) return;
     const st = fs.lstatSync(path.join(repoRoot, rel), { throwIfNoEntry: false });
     if (!st || st.isSymbolicLink()) return;
     if (st.isDirectory()) {
@@ -316,7 +390,7 @@ export async function workingTreeFiles(
     bytes += st.size;
     if (out.size > SNAPSHOT_LIMITS.files || bytes > SNAPSHOT_LIMITS.bytes) {
       throw new Error(
-        `the working tree is too large to snapshot for propose mode (over ${SNAPSHOT_LIMITS.files} files or ${SNAPSHOT_LIMITS.bytes / 1024 ** 3} GB outside dependency folders); exclude folders with nanoclaw.workspaceExcludes`,
+        `the working tree is too large to snapshot for propose mode (over ${SNAPSHOT_LIMITS.files} files or ${SNAPSHOT_LIMITS.bytes / 1024 ** 3} GB outside dependency folders); exclude folders with nanoclaw.agentCopy.exclude`,
       );
     }
   };
@@ -326,6 +400,7 @@ export async function workingTreeFiles(
   if (includeIgnored)
     for (const rel of await list(['ls-files', '--others', '--ignored', '--exclude-standard', '--directory']))
       add(rel, false);
+  for (const rel of includePaths.map(projectRelative)) if (rel) add(rel, false);
   return [...out];
 }
 
@@ -416,11 +491,12 @@ export async function ensureProposalClone(
   excludes: readonly string[] = [],
   includeIgnored = proposeIncludeIgnored(),
   secretAllow: readonly string[] = proposeSecretScanAllow(),
+  includePaths: readonly string[] = proposeIncludePaths(),
 ): Promise<Proposal> {
   let gitDir = proposalGitDir(dir);
   if (fs.existsSync(gitDir) && !fs.existsSync(path.join(gitDir, 'HEAD'))) {
-    // A git dir partly deleted and held (on Windows a container runtime can
-    // keep files in it open: EPERM on every remove) — it can be neither used
+    // A git dir partly deleted and held (on Windows an antivirus scan or an
+    // indexer can keep files in it open: EPERM on every remove) — it can be neither used
     // nor removed. Leave it; make a fresh one beside it and point to that.
     gitDir = beside(dir, `.nanoclaw-git-${Date.now()}`);
     await git(path.dirname(dir), ['init', '--quiet', '--bare', gitDir]);
@@ -431,7 +507,7 @@ export async function ensureProposalClone(
   }
   const baseFile = baseFileOf(dir);
   const rootFile = rootFileOf(dir);
-  const listed = await workingTreeFiles(repoRoot, excludes, includeIgnored);
+  const listed = await workingTreeFiles(repoRoot, excludes, includeIgnored, includePaths);
   // Scanned only when a snapshot is taken: a clone holding a proposal is left alone.
   const snapshotFiles = (): string[] => {
     const { files, leftOut } = leaveOutSecrets(repoRoot, listed, secretAllow);
@@ -443,7 +519,7 @@ export async function ensureProposalClone(
     // No git dir: a first clone, or one whose git dir went missing. A fresh,
     // empty one, made beside the clone without touching it; the clone is then
     // rebuilt in place below. (Not `git clone`: it refuses a folder that is
-    // not empty — files left behind, or the `.git` mountpoint Docker leaves.)
+    // not empty — files left behind by an earlier version.)
     fs.mkdirSync(path.dirname(dir), { recursive: true });
     await git(path.dirname(dir), ['init', '--quiet', '--bare', gitDir]);
     await git(path.dirname(dir), ['--git-dir', gitDir, 'config', 'core.bare', 'false']);
@@ -478,8 +554,8 @@ export async function ensureProposalClone(
   // before snapshots (last commit only), one half moved by an earlier
   // version, one of another repository — is rebuilt
   // IN PLACE: its files copied aside (they may hold something wanted), its git
-  // dir reused. Never deleted or renamed: on Windows a container runtime can
-  // hold these folders (EPERM), and that failed every start of the session.
+  // dir reused. Never deleted or renamed: on Windows something else can hold
+  // these folders open (EPERM), and that failed every start of the session.
   if (fs.existsSync(dir) && fs.readdirSync(dir).length) {
     fs.cpSync(dir, `${dir}.aside-${Date.now()}`, { recursive: true });
     pruneAsides(dir);
@@ -511,7 +587,7 @@ function pruneAsides(dir: string): void {
 
 /**
  * Read back a proposal clone that already exists — after a window reload the
- * runner re-attaches to a running container without preparing it, and must
+ * runner picks up the proposal it had without preparing it again, and must
  * not move the clone (it may hold an unapplied proposal). The developer's
  * repository and the base are what was recorded beside the clone when it was
  * made; nothing is taken from the clone's own git config.

@@ -4,7 +4,15 @@
 // (TTS, STT), the routing/LiteLLM stack, and local model pulls: kick off a job,
 // poll it, render progress into an element map (the *_ELS constants).
 import { $ } from '../core/dom.js';
-import { harnessInstallActive, ollamaPullPoller, routingInstallActive, sttInstallActive, ttsInstallActive } from './installer-state.js';
+import {
+  harnessInstallActive,
+  installProgressLine,
+  ollamaPullPoller,
+  routingInstallActive,
+  sttInstallActive,
+  ttsInstallActive,
+} from './installer-state.js';
+export { installProgressLine };
 import { mmFmtGB } from './models.js';
 import { showToast } from '../core/toast.js';
 import { apiJson, authFetch } from '../core/api.js';
@@ -66,24 +74,6 @@ export const GROK_WIZARD_ELS: Record<string, string> = {
 };
 
 const HARNESS_NAME: Record<string, string> = { codex: 'Codex', opencode: 'OpenCode', pi: 'pi', grok: 'Grok' };
-
-/**
- * One line of progress for a chain install: which step, of how many, and for
- * how long — the image rebuild is silent for minutes, so the elapsed time is
- * what shows it is not hung.
- */
-export function installProgressLine(st: {
-  stepIndex?: number;
-  stepCount?: number;
-  stepLabel?: string | null;
-  startedAt?: number | null;
-}): string {
-  const step = st.stepCount ? `Step ${st.stepIndex} of ${st.stepCount}` : 'Installing';
-  const label = st.stepLabel ? ` — ${st.stepLabel}` : '';
-  const secs = st.startedAt ? Math.max(0, Math.round((Date.now() - st.startedAt) / 1000)) : 0;
-  const elapsed = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
-  return `${step}${label} · ${elapsed}`;
-}
 
 /** Install a harness through /api/install/:feature, rendering into `els`. */
 export async function runInstall(feature: string, els: Record<string, string>) {
@@ -591,7 +581,7 @@ export async function startOllamaPull(host?: any, model?: any, input?: any, btn?
 /** One-model fitness verdict, attached to the host card's pull status. */
 async function attachPullVerdict(host: string, model: string): Promise<void> {
   try {
-    const inv = await apiJson('/api/models/manage');
+    const inv = await apiJson('/api/models/manage?endpoint=' + encodeURIComponent(host));
     const tag = String(model).toLowerCase();
     const m = (inv.models || []).find((x: any) => String(x.tag).toLowerCase().startsWith(tag));
     if (!m) return;

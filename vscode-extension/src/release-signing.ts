@@ -16,7 +16,7 @@ import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sig
 export const SIGNATURE_FORMAT = 'nanoclaw-runner-release-signature/1';
 const MESSAGE_HEADER = 'nanoclaw-runner-release/1';
 
-/** The runner package. (The agent image was the other kind, until the laptop container was retired.) */
+/** The runner package. */
 export type ReleaseKind = 'vsix';
 
 /** What a signature vouches for. */

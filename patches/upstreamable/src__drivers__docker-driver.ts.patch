@@ -1,8 +1,86 @@
 diff --git a/src/drivers/docker-driver.ts b/src/drivers/docker-driver.ts
-index fe8e607d..fb373eaf 100644
+index a9ba5cfc..90b2862d 100644
 --- a/src/drivers/docker-driver.ts
 +++ b/src/drivers/docker-driver.ts
-@@ -702,6 +702,22 @@ export function assertMountSourcesExist(mounts: readonly MountSpec[]): void {
+@@ -60,6 +60,16 @@ export interface DockerDriverOptions extends MountPolicy {
+ const WATCH_RECOVERY_BASE_MS = 1_000;
+ const WATCH_RECOVERY_MAX_MS = 30_000;
+ 
++// A stop racing the daemon's auto-removal: how long to wait for the container to go.
++const REMOVAL_SETTLE_MS = 3_000;
++const REMOVAL_POLL_MS = 250;
++const REMOVAL_UNDERWAY = /no such container|removal of container .* is already in progress/i;
++/** The settle wait's clock; tests swap it for one that needs no real time. */
++export const removalWaitClock = {
++  now: (): number => Date.now(),
++  sleep: (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms)),
++};
++
+ interface InstallWatch {
+   subscribers: Set<(event: SessionEvent) => void>;
+   attempt: number;
+@@ -588,6 +598,7 @@ class DockerHandle implements SessionHandle {
+     try {
+       this.cli.run(['rm', '--force', this.name]);
+     } catch (error) {
++      await this.#awaitRemoval(this.name, error);
+       this.#confirmRemoved(this.name, error);
+     }
+     for (const auxiliary of [...this.auxiliaryNames].reverse()) {
+@@ -599,6 +610,7 @@ class DockerHandle implements SessionHandle {
+       try {
+         this.cli.run(['rm', '--force', auxiliary]);
+       } catch (error) {
++        await this.#awaitRemoval(auxiliary, error);
+         this.#confirmRemoved(auxiliary, error);
+       }
+     }
+@@ -613,6 +625,7 @@ class DockerHandle implements SessionHandle {
+ 
+   /** A successful daemon query distinguishes auto-removal from a daemon outage. */
+   #confirmRemoved(name: string, error: unknown): void {
++    if (this.#removalSettled.delete(name)) return;
+     try {
+       const remaining = this.cli.run(['ps', '-a', '--filter', `name=^/${name}$`, '--format', '{{.Names}}']);
+       if (!remaining.trim()) return;
+@@ -622,6 +635,36 @@ class DockerHandle implements SessionHandle {
+     throw normalizeDockerError(error);
+   }
+ 
++  /** Containers `#awaitRemoval` saw go (or the daemon removing), for `#confirmRemoved` to accept. */
++  readonly #removalSettled = new Set<string>();
++
++  /**
++   * `rm --force` races the daemon's own `--rm` removal: it fails with "removal
++   * ... already in progress" and `ps -a` lists the container until that ends.
++   * The daemon owns a removal in progress; anything else gets a short window
++   * to disappear, waited for without holding the event loop. Unsettled leaves
++   * the verdict to the probe in `#confirmRemoved`.
++   */
++  async #awaitRemoval(name: string, error: unknown): Promise<void> {
++    if (await this.#removalSettles(name, error)) this.#removalSettled.add(name);
++  }
++
++  async #removalSettles(name: string, error: unknown): Promise<boolean> {
++    if (REMOVAL_UNDERWAY.test(error instanceof Error ? error.message : String(error))) return true;
++    const deadline = removalWaitClock.now() + REMOVAL_SETTLE_MS;
++    for (;;) {
++      let state: string;
++      try {
++        state = this.cli.run(['ps', '-a', '--filter', `name=^/${name}$`, '--format', '{{.State}}']).trim();
++      } catch {
++        return false;
++      }
++      if (!state || state === 'removing') return true;
++      if (removalWaitClock.now() >= deadline) return false;
++      await removalWaitClock.sleep(REMOVAL_POLL_MS);
++    }
++  }
++
+   /** `docker exec` against this session's container — see `SessionExecSpec`. */
+   execSpec(command: string[]): SessionExecSpec {
+     return {
+@@ -852,6 +895,22 @@ export function assertMountSourcesExist(mounts: readonly MountSpec[]): void {
    }
  }
  
@@ -25,7 +103,7 @@ index fe8e607d..fb373eaf 100644
  /** Ensure the container runtime is reachable. Fatal at startup — agents cannot run without it. */
  export function ensureDockerRunning(cli: Cli = realCli('docker')): void {
    try {
-@@ -712,10 +728,26 @@ export function ensureDockerRunning(cli: Cli = realCli('docker')): void {
+@@ -862,10 +921,26 @@ export function ensureDockerRunning(cli: Cli = realCli('docker')): void {
      console.error('\n╔════════════════════════════════════════════════════════════════╗');
      console.error('║  FATAL: Container runtime failed to start                      ║');
      console.error('║                                                                ║');

@@ -222,5 +222,7 @@ export async function rRouterLitellmInstallPost(ctx: RouteCtx, _m: RegExpMatchAr
   // the roster, or the hosts an existing config already declares) — not a
   // localhost Ollama that may not exist. Falls back to the localhost default
   // only when the roster is empty.
-  return installPost(res, 'litellm', { hosts: (await deriveModelServerHosts()) ?? undefined });
+  return installPost(res, 'litellm', {
+    hosts: async () => (await deriveModelServerHosts()) ?? 'http://localhost:11434',
+  });
 }

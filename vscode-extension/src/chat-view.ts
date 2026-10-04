@@ -48,6 +48,10 @@ interface ChatMessage {
 
 /** What one upload may weigh: the PWA's own limit is higher, but a panel attachment is a file from the project. */
 const MAX_ATTACHMENT = 100 * 1024 * 1024;
+/** Central's limit on one panel message (runner-chat.ts MAX_TEXT). */
+const MAX_MESSAGE = 256_000;
+/** What + Selection inserts at most, leaving room in the message for the question. */
+const MAX_SELECTION = 200_000;
 
 export interface ChatDeps {
   /** Push a frame to central; false when not connected. */
@@ -234,6 +238,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
       vscode.workspace.asRelativePath(u as vscode.Uri, false),
     );
     if (t && note && !t.includes('(editor: ')) t = `${t}\n${note}`;
+    if (t.length > MAX_MESSAGE) {
+      // The panel has already cleared its input: put the text back, so nothing is lost.
+      this.post({ type: 'insert', text: text });
+      this.post({
+        type: 'error',
+        text: `Message too long (${t.length.toLocaleString()} characters, limit ${MAX_MESSAGE.toLocaleString()}). Name the file instead, or attach it with + File.`,
+      });
+      return;
+    }
     if (this.pending.length) {
       await this.uploadPending(t);
       return;
@@ -283,8 +296,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
 
   /**
    * Upload each attached file exactly as the PWA does, so central stores it,
-   * broadcasts it and hands it to the agent (over the mailbox sync, for a
-   * session on this machine). The text rides on the first file as its caption.
+   * broadcasts it and hands it to the agent. The text rides on the first file
+   * as its caption.
    */
   private async uploadPending(text: string): Promise<void> {
     if (!this.room) {
@@ -511,8 +524,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
     const sel = ed.selection;
     const whole = sel.isEmpty;
     const text = whole ? ed.document.getText() : ed.document.getText(sel);
-    if (text.length > 60_000) {
-      this.post({ type: 'error', text: 'Selection over 60 KB.' });
+    if (text.length > MAX_SELECTION) {
+      this.post({
+        type: 'error',
+        text: `${whole ? 'File' : 'Selection'} too long to paste (over ${MAX_SELECTION / 1000}k characters). Name the file instead: the agent can read it.`,
+      });
       return;
     }
     const rel = vscode.workspace.asRelativePath(ed.document.uri, false);
@@ -617,7 +633,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider, vscode.Disp
    * found among the developer's changed files, so they are listed too.
    */
   private async findConflicts(root: string): Promise<void> {
-    if (!this.d.conflicts) return;
+    // git over an untrusted folder can run its config's commands; Restricted Mode skips the scan.
+    if (!this.d.conflicts || !vscode.workspace.isTrusted) return;
     try {
       const ws = await resolveWorkspace(root);
       if (!ws.repo) return;

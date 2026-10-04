@@ -38,6 +38,7 @@ import {
 import { hostAllowed, originAllowed } from './request-guard.js';
 import { canAccessRoom } from './access.js';
 import { redactSensitiveData } from './redact.js';
+import { withTraceFlags } from './turn-traces.js';
 import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { getRunningSessions } from '../../db/sessions.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
@@ -132,6 +133,69 @@ export function __resetUpgradeHandlersForTest(): void {
   upgradeHandlers.clear();
 }
 
+// Keyed by the requested path, which a scanner picks: capped, oldest dropped first.
+const REFUSALS_NOTED_MAX = 256;
+const refusalsNoted = new Map<string, number>();
+function noteRefusedUpgrade(req: http.IncomingMessage, check: 'origin' | 'host'): void {
+  const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+  const key = `${check} ${path}`;
+  const now = Date.now();
+  if ((refusalsNoted.get(key) ?? 0) > now - 60_000) return;
+  refusalsNoted.delete(key);
+  refusalsNoted.set(key, now);
+  if (refusalsNoted.size > REFUSALS_NOTED_MAX) refusalsNoted.delete(refusalsNoted.keys().next().value!);
+  logPreAuth('WebSocket upgrade refused', {
+    check,
+    path: clipHeader(path),
+    host: clipHeader(String(req.headers.host ?? '')),
+    origin: clipHeader(String(req.headers.origin ?? '')),
+    remoteIp: (req.socket.remoteAddress ?? '').replace(/^::ffff:/, ''),
+  });
+}
+
+/** A caller-chosen value as it goes into a log line: no control characters, at most 100 of the rest. */
+export function clipHeader(value: string): string {
+  return value.replace(/\p{Cc}/gu, '').slice(0, 100);
+}
+
+// Lines logged before a caller is authenticated: whoever connects picks how
+// many, so all of them share one budget a minute, and the rest are counted.
+const PREAUTH_LOGS_PER_MINUTE = 30;
+let preAuthWindowStart = 0;
+let preAuthLogged = 0;
+let preAuthSuppressed = 0;
+let preAuthFlush: NodeJS.Timeout | null = null;
+function flushPreAuthSuppressed(): void {
+  if (preAuthFlush) clearTimeout(preAuthFlush);
+  preAuthFlush = null;
+  if (preAuthSuppressed > 0) log.warn('Pre-auth log lines suppressed', { suppressed: preAuthSuppressed });
+  preAuthSuppressed = 0;
+}
+export function logPreAuth(msg: string, fields: Record<string, unknown>, now: number = Date.now()): void {
+  if (now - preAuthWindowStart >= 60_000) {
+    flushPreAuthSuppressed();
+    preAuthWindowStart = now;
+    preAuthLogged = 0;
+  }
+  if (preAuthLogged < PREAUTH_LOGS_PER_MINUTE) {
+    preAuthLogged++;
+    log.warn(msg, fields);
+    return;
+  }
+  preAuthSuppressed++;
+  if (!preAuthFlush) {
+    preAuthFlush = setTimeout(flushPreAuthSuppressed, Math.max(0, preAuthWindowStart + 60_000 - now));
+    preAuthFlush.unref();
+  }
+}
+export function __resetPreAuthLogForTest(): void {
+  if (preAuthFlush) clearTimeout(preAuthFlush);
+  preAuthFlush = null;
+  preAuthWindowStart = 0;
+  preAuthLogged = 0;
+  preAuthSuppressed = 0;
+}
+
 export function setupWebSocket(
   server: http.Server,
   hooks: WSHooks,
@@ -157,7 +221,11 @@ export function setupWebSocket(
     void (async () => {
       // Every WebSocket path: a cross-site page must not open one with the
       // visitor's ambient identity, nor reach us under a rebound host name.
-      if (!originAllowed(req) || !(await hostAllowed(req))) {
+      const originOk = originAllowed(req);
+      if (!originOk || !(await hostAllowed(req))) {
+        // Said once per path and reason a minute: a bare 403 on the upgrade is
+        // otherwise indistinguishable, from the client, from a proxy's.
+        noteRefusedUpgrade(req, originOk ? 'host' : 'origin');
         socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
         socket.destroy();
         return;
@@ -288,7 +356,7 @@ export function setupWebSocket(
           type: 'history',
           room_id: room.id,
           thread_id: joinThread,
-          messages: (await getWebchatMessages(room.id, 50, joinThread)).map((m) => ({
+          messages: (await withTraceFlags(await getWebchatMessages(room.id, 50, joinThread))).map((m) => ({
             ...m,
             content: redactSensitiveData(m.content),
           })),

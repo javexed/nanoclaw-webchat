@@ -7,12 +7,15 @@
  */
 import { computed, nextTick, watch, useTemplateRef } from 'vue';
 import type { ThinkingTurn } from './transcript-state.js';
+import TraceView from './TraceView.vue';
+import { traceHasContent, traceViewFromTurn } from './turn-trace-view.js';
 
 const props = defineProps<{ turn: ThinkingTurn; onStop: (name: string) => void; onToggle: (name: string) => void }>();
 
 const STOP = 'Stop';
 const STOP_TITLE = 'Stop the agent';
 const NO_TRACE = 'No reasoning captured for this turn yet.';
+const TOGGLE_TITLE = 'Show activity';
 
 const feedEl = useTemplateRef<HTMLElement>('feed');
 const traceEl = useTemplateRef<HTMLElement>('trace');
@@ -23,18 +26,14 @@ watch(
   () => void nextTick(() => { if (feedEl.value) feedEl.value.scrollTop = feedEl.value.scrollHeight; }),
 );
 watch(
-  [() => props.turn.reasoningLog.length, () => props.turn.expanded],
+  [() => props.turn.reasoningLog.length, () => props.turn.tools.length, () => props.turn.expanded],
   () => void nextTick(() => { if (traceEl.value) traceEl.value.scrollTop = traceEl.value.scrollHeight; }),
 );
 
-// A collapsed bubble's trace stays empty, not merely hidden. Prefer the untruncated
-// blocks when the provider sent them; fall back to the clipped feed lines otherwise.
-const traceRows = computed(() =>
-  props.turn.expanded ? (props.turn.fullTrace.length ? props.turn.fullTrace : props.turn.reasoningLog) : [],
-);
-const traceEmpty = computed(() =>
-  props.turn.expanded && !props.turn.fullTrace.length && !props.turn.reasoningLog.length ? NO_TRACE : '',
-);
+// A collapsed bubble's trace stays empty, not merely hidden. The expanded view is the
+// same TraceView a reply's Thoughts render, built from this turn as it runs.
+const liveView = computed(() => (props.turn.expanded ? traceViewFromTurn(props.turn) : null));
+const traceEmpty = computed(() => (liveView.value && !traceHasContent(liveView.value) ? NO_TRACE : ''));
 
 function onClick(e: MouseEvent): void {
   // Ignore clicks on links and buttons so selecting text or tapping a link
@@ -55,8 +54,14 @@ function onClick(e: MouseEvent): void {
       <svg class="icon" aria-hidden="true"><use href="#i-bot"></use></svg
       >{{ ` ${turn.name} — ` }}<span class="thinking-verb">{{ turn.verb }}</span
       ><span class="thinking-elapsed">{{ turn.elapsed }}</span
-      ><span class="thinking-chevron"
-        ><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"></use></svg></span
+      ><button
+        type="button"
+        class="thinking-chevron"
+        :title="TOGGLE_TITLE"
+        :aria-label="TOGGLE_TITLE"
+        :aria-expanded="turn.expanded ? 'true' : 'false'"
+        @click.stop="props.onToggle(turn.name)"
+      ><svg class="icon" aria-hidden="true"><use href="#i-chevron-right"></use></svg></button
       ><button
         type="button"
         class="thinking-stop"
@@ -76,7 +81,7 @@ function onClick(e: MouseEvent): void {
         >{{ l.text }}</div>
       </div>
       <div ref="trace" class="thinking-fulltrace">{{ traceEmpty
-        }}<div v-for="(l, i) in traceRows" :key="i" class="thinking-fulltrace-line">{{ l }}</div></div>
+        }}<TraceView v-if="liveView && !traceEmpty" :view="liveView" /></div>
       <span class="dots"><span></span><span></span><span></span></span>
     </div>
   </div>

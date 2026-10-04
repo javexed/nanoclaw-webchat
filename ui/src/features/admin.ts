@@ -13,6 +13,7 @@ import { renderToolSecrets } from './agents.js';
 import { loadAuditLog } from './audit-log.js';
 import {
   renderAboutSettings,
+  renderAgentActivitySettings,
   renderAuditSettings,
   renderBackupSettings,
   renderCredentialsSettings,
@@ -56,6 +57,7 @@ function openAdmin(): void {
       renderToolSecrets(),
       renderAutoLearnSetting(),
       renderAuditSettings(),
+      renderAgentActivitySettings(),
       loadAuditLog(),
       renderAboutSettings(),
     ]).then(syncAdminGroups);

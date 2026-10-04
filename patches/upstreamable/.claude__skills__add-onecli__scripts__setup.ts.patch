@@ -1,0 +1,192 @@
+diff --git a/.claude/skills/add-onecli/scripts/setup.ts b/.claude/skills/add-onecli/scripts/setup.ts
+index 958a3e2a..8ac02082 100644
+--- a/.claude/skills/add-onecli/scripts/setup.ts
++++ b/.claude/skills/add-onecli/scripts/setup.ts
+@@ -13,6 +13,7 @@
+  */
+ import { execFileSync, execSync } from 'child_process';
+ import fs from 'fs';
++import net from 'net';
+ import os from 'os';
+ import path from 'path';
+ import { fileURLToPath } from 'url';
+@@ -163,19 +164,146 @@ export function withLinuxHostGateway(compose: string, platform = process.platfor
+   return compose.replace(marker, `${marker}    extra_hosts:\n      - "host.docker.internal:host-gateway"\n`);
+ }
+ 
+-function ensureLocalGatewayHostAccess(): void {
++const LOOPBACK = '127.0.0.1';
++const PG_PORTS = '\n    ports:\n      - "${ONECLI_BIND_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"\n';
++const API_PORT = '      - "${ONECLI_BIND_HOST:-127.0.0.1}:${ONECLI_APP_PORT:-10254}:10254"\n';
++const API_PORT_LOOPBACK = '      - "127.0.0.1:${ONECLI_APP_PORT:-10254}:10254"\n';
++const GATEWAY_PORT = '      - "${ONECLI_BIND_HOST:-127.0.0.1}:${ONECLI_GATEWAY_PORT:-10255}:10255"\n';
++const GATEWAY_PORT_LOOPBACK = '      - "127.0.0.1:${ONECLI_GATEWAY_PORT:-10255}:10255"\n';
++
++/**
++ * Keep OneCLI's management API and its database off the docker bridge.
++ *
++ * OneCLI's compose file binds every port (Postgres, the API, the gateway) to
++ * one ONECLI_BIND_HOST, and on Linux that is the bridge address so containers
++ * can reach the gateway. That also put the API (no auth in a local install)
++ * and Postgres (the compose default password) in reach of every container on
++ * the host. Containers need only the gateway. So: the API binds to loopback
++ * (central runs on the host); the gateway to the bridge AND loopback (host-side
++ * callers derive its address from ONECLI_URL's host); Postgres is not
++ * published at all (only OneCLI's own container uses it, on its compose
++ * network). Idempotent; an unrecognised compose file comes back unchanged.
++ */
++export function withPrivateServicePorts(compose: string, bindHost: string): string {
++  let out = compose.replace(PG_PORTS, '\n').replace(API_PORT, API_PORT_LOOPBACK);
++  if (bindHost !== LOOPBACK && out.includes(GATEWAY_PORT) && !out.includes(GATEWAY_PORT_LOOPBACK)) {
++    out = out.replace(GATEWAY_PORT, GATEWAY_PORT + GATEWAY_PORT_LOOPBACK);
++  }
++  return out;
++}
++
++/** Is anything besides the gateway still published on ONECLI_BIND_HOST? */
++export function servicesExposed(compose: string): boolean {
++  return compose.includes(PG_PORTS) || compose.includes(API_PORT);
++}
++
++/** The API URL as central reaches it once it binds to loopback: same port, loopback host (Linux). */
++export function privateApiUrl(url: string, platform = process.platform): string {
++  if (platform !== 'linux') return url;
++  try {
++    const u = new URL(url);
++    u.hostname = LOOPBACK;
++    return u.origin;
++  } catch {
++    return url;
++  }
++}
++
++const ONECLI_DIR = path.join(os.homedir(), '.onecli');
++
++/**
++ * Linux: the gateway reaches the host (host.docker.internal), and OneCLI's API
++ * and database stay off the bridge (withPrivateServicePorts). APP_URL, the
++ * address OneCLI puts in links for the operator, follows the API to loopback
++ * unless an operator has set their own. Recreates the stack only on a change.
++ */
++function ensureLocalGatewayHostAccess(bindHost: string, apiUrl: string): void {
+   if (process.platform !== 'linux') return;
+-  const composeFile = path.join(os.homedir(), '.onecli', 'docker-compose.yml');
++  const composeFile = path.join(ONECLI_DIR, 'docker-compose.yml');
+   const current = fs.readFileSync(composeFile, 'utf8');
+-  const next = withLinuxHostGateway(current);
+-  if (next === current) return;
++  const next = withPrivateServicePorts(withLinuxHostGateway(current), bindHost);
++  if (servicesExposed(next)) {
++    log.warn('OneCLI compose file not recognised: its API and database stay on the bridge', { composeFile });
++  }
++  const envFile = path.join(ONECLI_DIR, '.env');
++  const env = fs.existsSync(envFile) ? fs.readFileSync(envFile, 'utf-8') : '';
++  const appUrlSet = /^APP_URL=/m.test(env);
++  if (!appUrlSet) writeEnvVar('APP_URL', apiUrl, envFile);
++  if (next === current && appUrlSet) return;
+   fs.writeFileSync(composeFile, next);
+-  execFileSync('docker', ['compose', '-f', composeFile, 'up', '-d', 'onecli'], {
++  execFileSync('docker', ['compose', '-f', composeFile, 'up', '-d'], {
+     cwd: path.dirname(composeFile),
+     stdio: 'ignore',
+   });
+ }
+ 
++/** Does anything accept a TCP connection at host:port? */
++function tcpOpen(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
++  return new Promise((resolve) => {
++    const sock = net.connect({ host, port });
++    const done = (open: boolean) => {
++      sock.destroy();
++      resolve(open);
++    };
++    sock.setTimeout(timeoutMs, () => done(false));
++    sock.once('connect', () => done(true));
++    sock.once('error', () => done(false));
++  });
++}
++
++/**
++ * --private-ports: move an EXISTING local OneCLI's API and database off the
++ * bridge (a fresh install does this itself). Rewrites OneCLI's compose file,
++ * points the CLI and this install's ONECLI_URL at loopback, and checks the
++ * result. Other installs on this host that share the gateway need their own
++ * ONECLI_URL moved: run this step in each (the compose change is a no-op then).
++ */
++async function makePortsPrivate(): Promise<void> {
++  if (process.platform !== 'linux') {
++    emitStatus('ONECLI', { STATUS: 'skipped', HINT: 'Only Linux binds OneCLI to the docker bridge.' });
++    return;
++  }
++  const current = getOnecliApiHost();
++  if (!current) {
++    emitStatus('ONECLI', {
++      STATUS: 'failed',
++      ERROR: 'onecli_api_host_not_configured',
++      HINT: 'No local OneCLI found (onecli config get api-host).',
++    });
++    process.exit(1);
++  }
++  // OneCLI's own record of the bridge address: a second run (another install
++  // on this host) finds the CLI on loopback already.
++  const onecliEnv = path.join(ONECLI_DIR, '.env');
++  const bindHost =
++    (fs.existsSync(onecliEnv) && /^ONECLI_BIND_HOST=(.+)$/m.exec(fs.readFileSync(onecliEnv, 'utf-8'))?.[1]?.trim()) ||
++    new URL(current).hostname;
++  const apiUrl = privateApiUrl(current);
++  ensureLocalGatewayHostAccess(bindHost, apiUrl);
++  try {
++    execFileSync('onecli', ['config', 'set', 'api-host', apiUrl], { stdio: 'ignore', env: childEnv() });
++  } catch (err) {
++    log.warn('onecli config set api-host failed', { err });
++  }
++  writeEnvOnecliUrl(apiUrl);
++  const healthy = await pollHealth(apiUrl, 30000);
++  const apiPort = Number(new URL(current).port || 10254);
++  const apiOnBridge = bindHost !== LOOPBACK && (await tcpOpen(bindHost, apiPort));
++  const pgOnBridge = bindHost !== LOOPBACK && (await tcpOpen(bindHost, 5432));
++  const ok = healthy && !apiOnBridge && !pgOnBridge;
++  emitStatus('ONECLI', {
++    PRIVATE_PORTS: ok,
++    ONECLI_URL: apiUrl,
++    HEALTHY: healthy,
++    API_ON_BRIDGE: apiOnBridge,
++    POSTGRES_ON_BRIDGE: pgOnBridge,
++    STATUS: ok ? 'success' : 'failed',
++    ...(ok ? {} : { HINT: 'Check ~/.onecli/docker-compose.yml and `docker ps` for onecli / postgres ports.' }),
++    LOG: 'logs/setup.log',
++  });
++  if (!ok) process.exit(1);
++}
++
+ function installOnecli(): { stdout: string; ok: boolean } {
+   let stdout = '';
+ 
+@@ -199,7 +327,7 @@ function installOnecli(): { stdout: string; ok: boolean } {
+     const onecliEnv = path.join(os.homedir(), '.onecli', '.env');
+     writeEnvVar('ONECLI_VERSION', ONECLI_GATEWAY_VERSION, onecliEnv);
+     writeEnvVar('ONECLI_BIND_HOST', new URL(gatewayUrl).hostname, onecliEnv);
+-    ensureLocalGatewayHostAccess();
++    ensureLocalGatewayHostAccess(new URL(gatewayUrl).hostname, privateApiUrl(gatewayUrl));
+   } catch (err) {
+     log.error('OneCLI gateway host mapping failed', { err });
+     return { stdout, ok: false };
+@@ -350,6 +478,7 @@ export async function pollHealth(url: string, timeoutMs: number): Promise<boolea
+ }
+ 
+ export async function run(args: string[]): Promise<void> {
++  if (args.includes('--private-ports')) return makePortsPrivate();
+   const requestedRemote = process.env.NANOCLAW_ONECLI_API_HOST?.trim();
+   if (requestedRemote && !args.includes('--remote-url')) args = [...args, '--remote-url', requestedRemote];
+   const reuse = args.includes('--reuse') || (!requestedRemote && !!onecliVersion() && !!getOnecliApiHost());
+@@ -484,7 +613,9 @@ export async function run(args: string[]): Promise<void> {
+     process.exit(1);
+   }
+ 
+-  const url = extractUrlFromOutput(res.stdout);
++  // Central reaches the API on loopback: it no longer binds to the bridge (withPrivateServicePorts).
++  const installedUrl = extractUrlFromOutput(res.stdout);
++  const url = installedUrl ? privateApiUrl(installedUrl) : null;
+   if (!url) {
+     emitStatus('ONECLI', {
+       INSTALLED: true,

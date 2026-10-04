@@ -1,0 +1,21 @@
+diff --git a/.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode.ts b/.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode.ts
+index 51326022..ed1fba73 100644
+--- a/.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode.ts
++++ b/.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode.ts
+@@ -23,6 +23,7 @@ import type { ResolvedRuntimeConfiguration } from '../provider-contracts/registr
+ import { getTaskSeriesId } from '../db/session-routing.js';
+ import { getAllDestinations } from '../destinations.js';
+ import { prepareOpenCodeMemory, type OpenCodeMemorySessionHook } from './opencode-memory.js';
++import { forwardOpenCodeEvent } from './opencode-feed.js';
+ import {
+   boundedOpenCodeCall,
+   executeOpenCodeTurn,
+@@ -683,6 +684,8 @@ function eventPump(runtime: OpenCodeRuntimeHandle): OpenCodeEventPump {
+   let pump = runtimePumps.get(runtime);
+   if (!pump) {
+     pump = new OpenCodeEventPump(runtime.stream, (event) => {
++      // Tool calls and reasoning to the thinking bubble (opencode-feed.ts).
++      forwardOpenCodeEvent(event);
+       if (event.type === 'question.asked') {
+         void handleQuestionAsked(runtime.questionClient, event.properties);
+       }

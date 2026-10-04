@@ -51,6 +51,13 @@ vi.mock('../../db/agent-groups.js', () => ({
 }));
 
 import { forwardSessionStatus, notifySessionStopped, setStatusAdapter, stopSessionStatus } from './index.js';
+import { hasUnforwardedTurnStart, registerStatusEventObserver, type ObservedStatusEvent } from './observers.js';
+
+// Observers are a process-wide registry: register once, reset per test.
+const observed: ObservedStatusEvent[] = [];
+registerStatusEventObserver((_s, ev) => {
+  observed.push(ev);
+});
 
 function seedDb(): void {
   if (fs.existsSync(OUT_DIR)) fs.rmSync(OUT_DIR, { recursive: true });
@@ -103,6 +110,7 @@ beforeEach(async () => {
   seedDb();
   stubAdapter();
   stopSessionStatus('sess-1'); // reset watermark between tests
+  observed.length = 0;
 });
 
 afterEach(async () => {
@@ -235,5 +243,45 @@ describe('reconcileStaleBubble (stuck/orphaned bubble)', () => {
     containerRunning = false;
     await forwardSessionStatus(session); // last event is done → no synthetic done
     expect(captured).toHaveLength(0);
+  });
+});
+
+describe('status-event observers (turn traces)', () => {
+  it('see each forwarded event raw, with the time the container wrote it', async () => {
+    await forwardSessionStatus(session); // seed
+    append('start', null);
+    append('tool', 'Bash', 'ls');
+    await forwardSessionStatus(session);
+    expect(observed.map((e) => [e.kind, e.text, e.detail])).toEqual([
+      ['start', null, null],
+      ['tool', 'Bash', 'ls'],
+    ]);
+    expect(Date.parse(observed[1]!.createdAt!)).not.toBeNaN();
+  });
+
+  it("see the host's stall, and a throwing observer breaks nothing", async () => {
+    registerStatusEventObserver(() => {
+      throw new Error('observer bug');
+    });
+    await forwardSessionStatus(session); // seed
+    append('start', null);
+    await forwardSessionStatus(session);
+    captured.length = 0;
+    await notifySessionStopped(session);
+    expect(observed.map((e) => e.kind)).toEqual(['start', 'stalled']);
+    expect(captured.map((c) => c.status.kind)).toEqual(['stalled']);
+  });
+});
+
+describe('hasUnforwardedTurnStart', () => {
+  it("answers whether a 'start' waits past what has been forwarded", async () => {
+    expect(hasUnforwardedTurnStart('ag-1', 'sess-1')).toBe(false); // never seen: unknown
+    await forwardSessionStatus(session); // seed
+    append('tool', 'Read', 'a.ts');
+    expect(hasUnforwardedTurnStart('ag-1', 'sess-1')).toBe(false);
+    append('start', null);
+    expect(hasUnforwardedTurnStart('ag-1', 'sess-1')).toBe(true);
+    await forwardSessionStatus(session);
+    expect(hasUnforwardedTurnStart('ag-1', 'sess-1')).toBe(false);
   });
 });
