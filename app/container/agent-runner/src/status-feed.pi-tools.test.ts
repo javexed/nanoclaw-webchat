@@ -17,6 +17,10 @@ describe('summarizeToolTarget — pi built-ins', () => {
     expect(summarizeToolTarget('bash', { command: 'ls -la' })).toBe('ls -la');
   });
 
+  it('names the destination for the message tool', () => {
+    expect(summarizeToolTarget('message', { to: 'family', text: 'dinner at 6' })).toBe('family');
+  });
+
   it('still honours the Claude vocabulary it shares the switch with', () => {
     expect(summarizeToolTarget('Bash', { command: 'echo hi' })).toBe('echo hi');
     expect(summarizeToolTarget('Read', { file_path: '/tmp/x' })).toBe('/tmp/x');

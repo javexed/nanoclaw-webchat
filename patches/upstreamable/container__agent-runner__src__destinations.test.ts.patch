@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/destinations.test.ts b/container/agent-runner/src/destinations.test.ts
-index b24a2e5e..a5e7d5e1 100644
+index af175537..0652967a 100644
 --- a/container/agent-runner/src/destinations.test.ts
 +++ b/container/agent-runner/src/destinations.test.ts
 @@ -64,7 +64,11 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
@@ -26,7 +26,7 @@ index b24a2e5e..a5e7d5e1 100644
  
      expect(prompt).toContain(
        'For user-visible escalation output, default to your own channel destination(s): `casa`',
-@@ -102,10 +108,76 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
+@@ -102,7 +108,9 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
        )
        .run();
  
@@ -37,7 +37,8 @@ index b24a2e5e..a5e7d5e1 100644
  
      expect(prompt).toContain('Always pass the explicit named destination.');
      expect(prompt).not.toContain('For user-visible escalation output, default to');
-     expect(prompt).not.toContain('your own channel destination(s):');
+@@ -131,3 +139,67 @@ describe('buildSystemPromptAddendum — reading messages', () => {
+     expect(prompt).not.toContain('cross-session-context');
    });
  });
 +

@@ -7,6 +7,7 @@
 import { apiJson, authFetch } from '../core/api.js';
 import { allModels } from './model-list-state.js';
 import { showToast } from '../core/toast.js';
+import { offerFitContext } from './fit-context-offer.js';
 
 /** Supplied by provideSelectToggleDeps in composition-root.ts. */
 export interface SelectToggleDeps {
@@ -65,6 +66,7 @@ export async function toggleSelectable(
   setBusy: (busy: boolean) => void,
 ): Promise<void> {
   const existing = findSelectable(kind, endpoint, modelId);
+  let added: Parameters<typeof offerFitContext>[0][number] | null = null;
   setBusy(true);
   try {
     if (existing) {
@@ -76,11 +78,17 @@ export async function toggleSelectable(
       }
       showToast('Removed from selectable models');
     } else {
-      await apiJson('/api/models', { method: 'POST', body: { name: displayName, kind, endpoint, model_id: modelId } });
+      const out = await apiJson('/api/models', {
+        method: 'POST',
+        body: { name: displayName, kind, endpoint, model_id: modelId },
+      });
       showToast('Added to selectable models', { kind: 'success' });
+      added = out?.model ?? null;
     }
     await deps.fetchModels(); // one pass re-renders selection AND servers
     deps.refreshRouterRoster();
+    // After the refresh, and not awaited: the list must not wait on the modal.
+    if (added) void offerFitContext([added]);
   } catch (err: any) {
     showToast(String(err.message || err), { kind: 'error' });
     setBusy(false);

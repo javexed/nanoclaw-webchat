@@ -1,8 +1,17 @@
 diff --git a/container/agent-runner/src/index.ts b/container/agent-runner/src/index.ts
-index 1e5595e3..0af0e5fa 100644
+index 1e5595e3..fd80edac 100644
 --- a/container/agent-runner/src/index.ts
 +++ b/container/agent-runner/src/index.ts
-@@ -38,6 +38,13 @@ import './providers/index.js';
+@@ -19,6 +19,8 @@
+  *   /home/node/.claude/ ← Claude SDK state + skill symlinks (RW)
+  */
+ 
++// First: keeps the runner's log beside the session (runner-log.ts).
++import './runner-log.js';
+ import fs from 'fs';
+ import path from 'path';
+ import { fileURLToPath } from 'url';
+@@ -38,6 +40,13 @@ import './providers/index.js';
  // registration on import. Provider skills append imports to
  // provider-contracts/index.ts alongside the providers barrel line.
  import './provider-contracts/index.js';
@@ -16,7 +25,7 @@ index 1e5595e3..0af0e5fa 100644
  import { createProvider } from './providers/factory.js';
  import { getProviderRuntimeContract, requireProviderName } from './providers/provider-registry.js';
  import { resolvePluginServer } from './plugin-mcp.js';
-@@ -63,17 +70,7 @@ async function main(): Promise<void> {
+@@ -63,17 +72,7 @@ async function main(): Promise<void> {
    // operator-run migration and never happen in this normal startup path.
    ensureMemoryScaffold();
  
@@ -34,7 +43,7 @@ index 1e5595e3..0af0e5fa 100644
  
    // Discover additional directories mounted at /workspace/extra/*
    const additionalDirectories: string[] = [];
-@@ -107,11 +104,8 @@ async function main(): Promise<void> {
+@@ -107,11 +106,8 @@ async function main(): Promise<void> {
      // Plugin-shipped servers get ${PLUGIN_ROOT}/${PLUGIN_DATA} expansion and
      // the two injected env vars; everything else passes through untouched.
      mcpServers[name] = resolvePluginServer(serverConfig);
@@ -48,7 +57,7 @@ index 1e5595e3..0af0e5fa 100644
    }
  
    const provider = createProvider(providerName, {
-@@ -122,9 +116,28 @@ async function main(): Promise<void> {
+@@ -122,9 +118,28 @@ async function main(): Promise<void> {
      model: config.model,
      effort: config.effort,
      speed: config.speed,
@@ -77,7 +86,7 @@ index 1e5595e3..0af0e5fa 100644
    try {
      await runPollLoop({
        provider,
-@@ -132,6 +145,8 @@ async function main(): Promise<void> {
+@@ -132,6 +147,8 @@ async function main(): Promise<void> {
        providerName,
        cwd: CWD,
        systemContext: { instructions },

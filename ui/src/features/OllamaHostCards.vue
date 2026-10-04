@@ -6,7 +6,18 @@
  */
 import { computed } from 'vue';
 import SelectToggle from './SelectToggle.vue';
-import { hostModels, hostPullPreview, hostPulls, hosts, openCards, setCardOpen } from './ollama-cards-state.js';
+import {
+  fitContext,
+  fitJobs,
+  hostHealth,
+  hostModels,
+  hostPullPreview,
+  hostPulls,
+  hosts,
+  openCards,
+  setCardOpen,
+  type FitJob,
+} from './ollama-cards-state.js';
 import { ollamaCardId } from './ollama-cards.js';
 
 const props = defineProps<{
@@ -14,6 +25,7 @@ const props = defineProps<{
   onCancel: (host: string, model: string) => void;
   onPreview: (host: string, model: string) => void;
   onPull: (host: string, model: string, input: HTMLInputElement, btn: HTMLElement) => void;
+  onFitContext: (on: boolean) => void;
 }>();
 
 const LOADING = 'Loading…';
@@ -26,6 +38,28 @@ const CANCEL = 'Cancel';
 const PULL_PLACEHOLDER = 'Model to pull, e.g. qwen3.5:4b…';
 const CHEVRON = '›';
 const DOTS = '…';
+const FIT_LABEL = 'Fit context to GPU';
+const UP = 'Reachable';
+const DOWN = 'Unreachable';
+
+/** The host's fit worth a line: the one running, else the newest finished (a skip says nothing). */
+function fitLine(host: string): { text: string; cls: string } | null {
+  const jobs = fitJobs.value.filter((j) => j.host === host && j.status !== 'skipped');
+  const j: FitJob | undefined =
+    jobs.find((x) => x.status === 'queued' || x.status === 'fitting') ?? jobs[jobs.length - 1];
+  if (!j) return null;
+  if (j.status === 'queued' || j.status === 'fitting') return { text: `Fitting ${j.model} to GPU…`, cls: '' };
+  if (j.status === 'fitted') return { text: `${j.model}: ${Math.round((j.ctx ?? 0) / 1024)}k context on GPU`, cls: 'ok' };
+  if (j.status === 'no-fit')
+    return { text: j.detail === 'cpu' ? `${j.model}: no GPU` : `${j.model}: no larger context fits on GPU`, cls: '' };
+  return { text: `Fitting ${j.model} failed: ${j.detail ?? ''}`, cls: 'err' };
+}
+
+function healthTitle(host: string): string {
+  const h = hostHealth.value[host];
+  if (!h) return '';
+  return h.status === 'up' ? UP : h.lastError ? `${DOWN} — ${h.lastError}` : DOWN;
+}
 
 const cards = computed(() =>
   hosts.value.map((host) => {
@@ -51,6 +85,9 @@ const cards = computed(() =>
       selectable: m ? rows(m.selectable) : [],
       system: m ? rows(m.system) : [],
       pull: hostPulls.value[host] || null,
+      health: hostHealth.value[host]?.status ?? null,
+      healthTitle: healthTitle(host),
+      fit: fitLine(host),
       preview: hostPullPreview.value[host] || null,
     };
   }),
@@ -86,9 +123,27 @@ function preview(host: string, e: Event) {
 </script>
 
 <template>
+  <div v-if="fitContext !== null" class="setting-group install-row">
+    <span class="setting-label">{{ FIT_LABEL }}</span>
+    <label class="setting-toggle">
+      <input
+        type="checkbox"
+        :checked="fitContext"
+        :aria-label="FIT_LABEL"
+        @change="props.onFitContext(($event.target as HTMLInputElement).checked)"
+      />
+    </label>
+  </div>
   <div v-for="c in cards" :key="c.host" class="ollama-host-card" :id="c.id" :data-host="c.host">
     <div class="ollama-host-head clickable" role="button" tabindex="0" @click="toggle(c.host, $event)">
       <span :class="c.open ? 'ollama-card-chevron open' : 'ollama-card-chevron'">{{ CHEVRON }}</span
+      ><span
+        v-if="c.health"
+        :class="`host-dot ${c.health}`"
+        role="img"
+        :title="c.healthTitle"
+        :aria-label="c.healthTitle"
+      ></span
       ><span class="ollama-host-name">{{ c.label }}</span
       ><span class="ollama-card-summary" :hidden="c.open">{{ c.summary }}</span>
     </div>
@@ -134,6 +189,9 @@ function preview(host: string, e: Event) {
       <!-- What this pull would cost, while it is still being typed. Absent
            unless the size is actually known — see previewOllamaPull. -->
       <div v-if="c.preview" class="ollama-pull-preview" :class="{ warn: c.preview.warn }">{{ c.preview.text }}</div>
+    </div>
+    <div v-if="c.fit" class="ollama-pull-status">
+      <div :class="`ollama-pull-line ${c.fit.cls}`">{{ c.fit.text }}</div>
     </div>
     <div class="ollama-pull-status" :hidden="!c.pull">
       <template v-if="c.pull">

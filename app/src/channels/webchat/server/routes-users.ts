@@ -34,7 +34,12 @@ import {
   listEnrolledGroups,
   userHasConnectedCredential,
 } from '../../../modules/user-credentials/db.js';
-import { revokeUserCredential, storeUserCredential } from '../../../modules/user-credentials/onboard.js';
+import {
+  ensurePersonalEnrollment,
+  revokeUserCredential,
+  storeUserCredential,
+} from '../../../modules/user-credentials/onboard.js';
+import { groupsWithPersonalSecrets, reconcileMemberSecrets } from '../../../modules/tool-secrets/index.js';
 import { getUserSecretId } from '../../../modules/user-credentials/db.js';
 import { deleteUserCredential, writeUserCredential } from './grok-user-creds.js';
 import {
@@ -190,6 +195,16 @@ export async function rUserCredentialsCredential(ctx: RouteCtx, _m: RegExpMatchA
       // lingers (with its copy of the session) to the idle ceiling.
       const enrolledGroupIds = (await listEnrolledGroups(userId, provider)).map((r) => r.agent_group_id);
       await revokeUserCredential(realOnecliAdmin, userId, provider);
+      // Personal secrets outlive the model credential: where the member holds
+      // any, they keep their own identity, now on the workspace's credential.
+      for (const gid of await groupsWithPersonalSecrets(realOnecliAdmin, userId, enrolledGroupIds)) {
+        try {
+          await ensurePersonalEnrollment(realOnecliAdmin, userId, gid);
+          await reconcileMemberSecrets(realOnecliAdmin, gid, userId);
+        } catch (err) {
+          log.warn('UserCreds: personal secrets kept without an identity after disconnect', { userId, gid, err });
+        }
+      }
       // Disconnecting must take the host-side half with it. Leaving the refresh
       // token behind would keep renewing a vault secret the member has revoked —
       // a credential that outlives its own disconnect.

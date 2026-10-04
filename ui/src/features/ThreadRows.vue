@@ -22,7 +22,8 @@ const props = defineProps<{
   active: boolean;
   /** Per-thread identity hue for the spine, mirroring the rooms' colored bar. */
   color: (id: string) => string;
-  onOpen: (threadId: string) => void;
+  /** The row's room goes with it: a tree stays open under rooms other than the current one. */
+  onOpen: (threadId: string, roomId: string) => void;
   onCreate: (title: string) => void;
   onCancelCreate: () => void;
   onStartCreate: () => void;
@@ -88,13 +89,13 @@ function stopUndoClick(e: MouseEvent): void {
           '--thread-color': color(t.thread_id),
           width: threadUndo[t.thread_id]?.width || undefined,
         }"
-        @click.stop="onOpen(t.thread_id)"
+        @click.stop="onOpen(t.thread_id, roomId)"
         @keydown="
           (e) => {
             if (e.key === 'Enter' || e.key === ' ') {
               e.preventDefault();
               e.stopPropagation();
-              onOpen(t.thread_id);
+              onOpen(t.thread_id, roomId);
             }
           }
         "

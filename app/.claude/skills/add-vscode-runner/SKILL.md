@@ -44,6 +44,7 @@ payload/src/channels/webchat/server/routes-runners.ts -> src/channels/webchat/se
 payload/src/drivers/fleet-driver.test.ts -> src/drivers/fleet-driver.test.ts
 payload/src/drivers/fleet-driver.ts -> src/drivers/fleet-driver.ts
 payload/src/drivers/fleet-fixture.ts -> src/drivers/fleet-fixture.ts
+payload/container/skills/laptop-copy/SKILL.md -> container/skills/laptop-copy/SKILL.md
 ```
 
 ## Register the extension and the session driver
@@ -55,8 +56,10 @@ section attach through webchat's extension points.
 import './runner-register.js';
 ```
 
-The `fleet` session driver kind: sessions run through the docker driver here;
-for a group placed on a machine it makes sure the laptop tools' relay is up.
+The `fleet` session driver kind is kept for installs whose `.env` still sets
+`NANOCLAW_RUNTIME_DRIVER=fleet` (earlier runner docs said to): it runs sessions
+through the docker driver. Placed groups do not need it; the laptop tools'
+relay is started on channel start and on placement.
 
 ```nc:append to:src/drivers/installed.ts
 import './fleet-driver.js';
@@ -72,10 +75,11 @@ WEBCHAT_RUNNER_ENABLED=true
 
 Earlier versions ran a placed agent in a container on the developer's machine.
 Their files are not in the copy list any more, and an upgrade leaves them
-behind, where they no longer compile. Remove them.
+behind, where they no longer compile. Remove them, and the session store the
+laptop container kept under `data/`.
 
 ```nc:run effect:refresh
-rm -f src/channels/webchat/runner-image.ts src/channels/webchat/runner-image.test.ts src/channels/webchat/runner-image-download.test.ts src/channels/webchat/runner-image-policy.test.ts src/channels/webchat/runner-relay.ts src/channels/webchat/runner-relay.test.ts src/channels/webchat/runner-mailbox-endpoint.ts src/channels/webchat/runner-mailbox-endpoint.test.ts src/channels/webchat/runner-sessions-store.ts src/channels/webchat/runner-sessions-store.test.ts src/drivers/remote-spec.ts src/drivers/remote-spec.test.ts src/drivers/fleet-events.test.ts src/drivers/fleet-remote.test.ts
+rm -f src/channels/webchat/runner-image.ts src/channels/webchat/runner-image.test.ts src/channels/webchat/runner-image-download.test.ts src/channels/webchat/runner-image-policy.test.ts src/channels/webchat/runner-relay.ts src/channels/webchat/runner-relay.test.ts src/channels/webchat/runner-mailbox-endpoint.ts src/channels/webchat/runner-mailbox-endpoint.test.ts src/channels/webchat/runner-sessions-store.ts src/channels/webchat/runner-sessions-store.test.ts src/drivers/remote-spec.ts src/drivers/remote-spec.test.ts src/drivers/fleet-events.test.ts src/drivers/fleet-remote.test.ts data/runner-sessions.json
 ```
 
 ## Validate

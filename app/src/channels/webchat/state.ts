@@ -11,6 +11,8 @@ import { WebSocket } from 'ws';
 import { log } from '../../log.js';
 import { canArchiveRoom, filterRoomsForUser } from './access.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
+import { getMessagingGroup } from '../../db/messaging-groups.js';
+import { getSession } from '../../db/sessions.js';
 import {
   getAllWebchatRooms,
   getArchivedRoomIds,
@@ -27,6 +29,7 @@ import {
   resolveHandlesToUserIds,
   storeWebchatA2aMessage,
   type WebchatRoom,
+  sessionKeyToThread,
 } from './db.js';
 import { sendPushForMessage } from './push.js';
 import { redactSensitiveData } from './redact.js';
@@ -227,12 +230,14 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string)
  * Surface an a2a message, after delivery, into every webchat room both agents
  * share as a read-only copy. Only the text of `contentJson` (`{"text": …}`) is
  * shown; self-messages (from === to) and empty text are skipped. The caller
- * swallows failures so routing never blocks.
+ * swallows failures so routing never blocks. The copy lands in the thread of
+ * whichever of `sessionIds` (source first) is a thread of that room, else main.
  */
 export async function surfaceA2aMessage(
   fromAgentGroupId: string,
   toAgentGroupId: string,
   contentJson: string,
+  sessionIds: Array<string | undefined> = [],
 ): Promise<void> {
   if (fromAgentGroupId === toAgentGroupId) return;
 
@@ -253,8 +258,19 @@ export async function surfaceA2aMessage(
   const fromName = (await getAgentGroup(fromAgentGroupId))?.name ?? fromAgentGroupId;
   const toName = (await getAgentGroup(toAgentGroupId))?.name ?? toAgentGroupId;
 
+  // A session's key is not always a thread id: a per-member session's is
+  // `<user>::<thread>`, and a bare user key names no thread (sessionKeyToThread).
+  const threads: Array<{ roomId: string; threadId: string }> = [];
+  for (const id of sessionIds) {
+    const s = id ? await getSession(id) : undefined;
+    if (!s?.thread_id || !s.messaging_group_id) continue;
+    const mg = await getMessagingGroup(s.messaging_group_id);
+    if (mg) threads.push({ roomId: mg.platform_id, threadId: await sessionKeyToThread(s.thread_id, mg.platform_id) });
+  }
+
   for (const room of rooms) {
-    const stored = await storeWebchatA2aMessage(room.id, fromName, toName, text);
+    const threadId = threads.find((t) => t.roomId === room.id)?.threadId ?? 'main';
+    const stored = await storeWebchatA2aMessage(room.id, fromName, toName, text, threadId);
     await broadcast(room.id, { type: 'message', ...(await stored) });
   }
 }

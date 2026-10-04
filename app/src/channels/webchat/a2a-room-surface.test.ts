@@ -14,8 +14,9 @@ import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { createAgentGroup } from '../../db/agent-groups.js';
 import { createMessagingGroup, createMessagingGroupAgent } from '../../db/messaging-groups.js';
+import { createSession } from '../../db/sessions.js';
 import { surfaceA2aMessage } from './state.js';
-import { getSharedWebchatRooms } from './db.js';
+import { createWebchatThread, getSharedWebchatRooms } from './db.js';
 
 vi.mock('../../container-runner.js', () => ({
   wakeContainer: vi.fn().mockResolvedValue(undefined),
@@ -45,6 +46,7 @@ async function a2aRows(roomId: string) {
     sender: string;
     sender_type: string;
     content: string;
+    thread_id: string;
   }[];
 }
 
@@ -141,5 +143,33 @@ describe('surfaceA2aMessage', () => {
   it('skips empty text', async () => {
     await surfaceA2aMessage('ag-gamma', 'ag-delta', JSON.stringify({ text: '   ' }));
     expect(await a2aRows('plant-vision')).toHaveLength(0);
+  });
+
+  it("lands in the thread of the room's session, source or target, else main", async () => {
+    const session = (id: string, agent: string, mg: string | null, thread: string | null) =>
+      createSession({
+        id,
+        agent_group_id: agent,
+        messaging_group_id: mg,
+        thread_id: thread,
+        agent_provider: null,
+        status: 'active',
+        container_status: 'idle',
+        last_active: null,
+        created_at: now(),
+      });
+    const th = (await createWebchatThread('plant-vision', 'Topic')).thread_id;
+    await session('s-thread', 'ag-gamma', 'mg-shared', th);
+    await session('s-agent', 'ag-delta', null, null);
+    // A per-member session's key is `<user>::<thread>`; a bare user key names no thread.
+    await session('s-member', 'ag-gamma', 'mg-shared', `webchat:alice::${th}`);
+    await session('s-bare', 'ag-gamma', 'mg-shared', 'webchat:alice');
+    const msg = JSON.stringify({ text: 'x' });
+    await surfaceA2aMessage('ag-gamma', 'ag-delta', msg, ['s-thread', 's-agent']);
+    await surfaceA2aMessage('ag-delta', 'ag-gamma', msg, ['s-agent', 's-thread']);
+    await surfaceA2aMessage('ag-delta', 'ag-gamma', msg, ['s-agent']);
+    await surfaceA2aMessage('ag-gamma', 'ag-delta', msg, ['s-member', 's-agent']);
+    await surfaceA2aMessage('ag-gamma', 'ag-delta', msg, ['s-bare', 's-agent']);
+    expect((await a2aRows('plant-vision')).map((r) => r.thread_id)).toEqual([th, th, 'main', th, 'main']);
   });
 });

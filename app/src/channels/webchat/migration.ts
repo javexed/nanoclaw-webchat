@@ -1001,8 +1001,8 @@ export const moduleWebchatTemplateSources: Migration = {
  * connected to /ws/runner as a signed-in person; it is `pending` until an
  * owner/global admin approves the pairing card, and
  * a pairing binds ONE user to ONE machine fingerprint. A placement assigns an
- * agent group to an approved machine; the fleet driver consults it.
- * `slots_json` holds the project directories a placed group may mount.
+ * agent group to an approved machine, whose laptop tools its agent then uses.
+ * `slots_json` is unused since the laptop container was retired (always '{}').
  */
 export const moduleWebchatRunners: Migration = {
   // Portable: plain DDL, no PRAGMA. The runner dedupes by name, so the
@@ -1041,15 +1041,9 @@ export const moduleWebchatRunners: Migration = {
 };
 
 /**
- * Where agent images come from for sessions placed on paired runners
- * (install-wide, `webchat_settings` singleton).
- *
- * `runner_image_policy` is the authority, not a hint: `central`, `pull` or
- * `build` is a decision every paired machine must obey, and `machine` hands
- * the choice back to each laptop's own setting. NULL (what a missing row reads
- * as) means `central` — see decodeRunnerImagePolicy in db.ts.
- * `runner_image_ref` NULL = the reference this install is pinned to in
- * versions.json.
+ * Where the retired laptop container's agent image came from. Nothing reads
+ * or writes these columns any more; the migration stays so the schema history
+ * of existing installs is unchanged.
  */
 export const moduleWebchatRunnerImage: Migration = {
   // Portable, no column-exists guard: schema_version dedupes by name, and
@@ -1063,10 +1057,10 @@ export const moduleWebchatRunnerImage: Migration = {
 };
 
 /**
- * Hosts agents placed on developer machines may reach (install-wide,
- * `webchat_settings` singleton). JSON array of host patterns; NULL = the
- * built-in default list (egress-policy.ts). Enforced by central's relay for
- * groups whose network mode is 'host-only'.
+ * The install-wide egress allowlist (`webchat_settings` singleton; the
+ * `runner_` name dates from when only placed agents used it). JSON array of
+ * host patterns; NULL = the built-in default list (egress-policy.ts). Enforced
+ * by central's egress filter for agents whose network mode is 'host-only'.
  */
 export const moduleWebchatRunnerEgress: Migration = {
   version: 213,
@@ -1209,6 +1203,54 @@ export const moduleWebchatDropThreadEngaged: Migration = {
     await db.exec(`
       DROP INDEX IF EXISTS idx_webchat_engaged_thread;
       DROP TABLE IF EXISTS webchat_thread_engaged;
+    `);
+  },
+};
+
+/** Fit context to GPU: new Ollama registrations get a variant with the largest window that stays on the GPU. Off by default (the UI offers it per add). */
+export const moduleWebchatFitContext: Migration = {
+  version: 223,
+  name: 'webchat-fit-context',
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_settings ADD COLUMN fit_context_to_gpu INTEGER NOT NULL DEFAULT 0;`);
+  },
+};
+
+/**
+ * One row per agent turn (turn-traces.ts): the thinking bubble's activity —
+ * tools, reasoning, notes, the harness and model it ran on — kept after the
+ * live feed is wiped, so a reply's Thoughts survive a reload. `message_id` is
+ * the turn's first reply (where the client shows the disclosure);
+ * `message_ids` is every message the turn delivered, as a JSON array. The two
+ * settings columns are NULL until changed: recording on, kept 90 days.
+ */
+export const moduleWebchatTurnTraces: Migration = {
+  version: 224,
+  name: 'webchat-turn-traces',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS webchat_turn_traces (
+        id              TEXT PRIMARY KEY,
+        room_id         TEXT NOT NULL,
+        thread_id       TEXT NOT NULL DEFAULT 'main',
+        message_id      TEXT NOT NULL,
+        message_ids     TEXT NOT NULL,
+        agent_group_id  TEXT,
+        agent_name      TEXT,
+        started_at      INTEGER NOT NULL,
+        ended_at        INTEGER,
+        outcome         TEXT NOT NULL,
+        provider        TEXT,
+        model           TEXT,
+        endpoint_host   TEXT,
+        trace_json      TEXT NOT NULL,
+        size            INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_webchat_turn_traces_message ON webchat_turn_traces (message_id);
+      CREATE INDEX IF NOT EXISTS idx_webchat_turn_traces_room ON webchat_turn_traces (room_id, thread_id);
+      CREATE INDEX IF NOT EXISTS idx_webchat_turn_traces_started ON webchat_turn_traces (started_at);
+      ALTER TABLE webchat_settings ADD COLUMN turn_traces_enabled INTEGER;
+      ALTER TABLE webchat_settings ADD COLUMN turn_trace_days INTEGER;
     `);
   },
 };

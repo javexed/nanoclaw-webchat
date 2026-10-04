@@ -5,16 +5,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Proposal } from './git-changes.js';
 import { RunnerAgent, recoverLaptopToolsProposal, type AgentPolicy } from './agent.js';
-import { DEFAULT_WORKSPACE_EXCLUDES, effectiveSlots, type WorkspaceMount } from './policy.js';
+import { DEFAULT_WORKSPACE_EXCLUDES, workspaceSlots } from './policy.js';
 import { planUpdate, type AutoUpdate, type UpdateOffer } from './update.js';
 import { userSetting } from './settings.js';
+import { copySettings, migrateCopySettings } from './copy-settings.js';
 import { apiUrl } from './chat-render.js';
 import { ReviewController } from './review-controller.js';
 import { ProposalScm } from './proposal-scm.js';
 import { ConflictTracker } from './conflicts.js';
 import { ChatViewProvider, proposedReviewable } from './chat-view.js';
 import { adoptLegacyStorage, legacyExtensionId } from './legacy.js';
-import { RunnerLink, parseOffer, type LinkState } from './link.js';
+import { RunnerLink, STANDBY_DETAIL, parseOffer, type LinkState } from './link.js';
 import {
   decidePin,
   decodeSignatureHeader,
@@ -30,7 +31,6 @@ import { loadOrCreateMachineKey, type MachineKey } from './machine-key.js';
 import { activityLogFile, initActivityLog, recordActivity } from './activity-log.js';
 import { scopesFor, secureOrigin, type Machine, authHeader } from './protocol.js';
 import {
-  CLIENT_KEYS,
   parseConnectQuery,
   resolveClientConfig,
   sanitizeClientConfig,
@@ -39,6 +39,12 @@ import {
 } from './client-config.js';
 
 const AUTH_PROVIDER = 'microsoft';
+/**
+ * No sign-in settings for this server yet. They arrive with its Connect link,
+ * and from the server once connected — which needs them first. Typing a new
+ * server into nanoclaw.serverUrl therefore cannot sign in on its own.
+ */
+const NO_SIGNIN_SETTINGS = 'no sign-in settings for this server yet: open it in the browser and click Connect VS Code';
 let link: RunnerLink | null = null;
 let chat: ChatViewProvider | null = null;
 let agent: RunnerAgent | null = null;
@@ -47,7 +53,7 @@ let recoveredProposal: Proposal | null = null;
 let storageRoot = '';
 let lastState: LinkState = 'disconnected';
 let status: vscode.StatusBarItem;
-let out: vscode.OutputChannel;
+let out: vscode.OutputChannel | undefined;
 /** The files the secret scan last left out, as the developer was last told. */
 let lastLeftOut = '';
 let globalState: vscode.Memento | undefined;
@@ -68,16 +74,7 @@ let unreportedStop = false;
 let machineKey: Promise<MachineKey | null> = Promise.resolve(null);
 
 function log(line: string): void {
-  out.appendLine(`[${new Date().toISOString()}] ${line}`);
-}
-/** The sign-in settings the user set themselves (user settings only); unset ones fall back to central's. */
-function ownClientConfig(c: vscode.WorkspaceConfiguration): ClientConfig {
-  const own: Record<string, unknown> = {};
-  for (const k of CLIENT_KEYS) {
-    const v = userSetting(c, k, '');
-    if (v.trim()) own[k] = v.trim();
-  }
-  return own as ClientConfig;
+  out?.appendLine(`[${new Date().toISOString()}] ${line}`);
 }
 /** Central's sign-in settings, remembered for the server they came from. */
 function centralClientConfig(serverUrl: string): ClientConfig {
@@ -93,12 +90,9 @@ function cfg() {
   const serverUrl = userSetting(c, 'serverUrl', '').trim().replace(/\/$/, '');
   return {
     serverUrl,
-    ...resolveClientConfig(ownClientConfig(c), centralClientConfig(serverUrl)),
+    ...resolveClientConfig(centralClientConfig(serverUrl)),
     autoConnect: c.get<boolean>('autoConnect') ?? true,
-    slots: userSetting<Record<string, string>>(c, 'slots', {}),
-    mountAllowlist: userSetting<string[]>(c, 'mountAllowlist', []),
-    workspaceMount: userSetting(c, 'workspaceMount', 'workspace') as WorkspaceMount,
-    workspaceExcludes: userSetting<string[]>(c, 'workspaceExcludes', [...DEFAULT_WORKSPACE_EXCLUDES]),
+    workspaceExcludes: copySettings(c).exclude ?? [...DEFAULT_WORKSPACE_EXCLUDES],
     autoUpdate: userSetting(c, 'autoUpdate', 'prompt') as AutoUpdate,
     releaseSigningKey: parsePublicKey(userSetting(c, 'releaseSigningKey', '')),
   };
@@ -135,7 +129,7 @@ async function getToken(createIfNone: boolean): Promise<string> {
     }
     throw new Error(insecure);
   }
-  if (!appIdUri) throw new Error('set nanoclaw.appIdUri (api://<client-id>) in settings');
+  if (!appIdUri) throw new Error(NO_SIGNIN_SETTINGS);
   const session = await vscode.authentication.getSession(
     AUTH_PROVIDER,
     scopesFor(appIdUri, tenantId, clientId || undefined),
@@ -157,6 +151,13 @@ function render(s: LinkState, detail?: string): void {
   const pairing = s === 'connected' ? link?.welcome?.pairing : undefined;
   status.text = `${icon} NanoClaw${s === 'connected' && link?.welcome ? `: ${link.welcome.displayName}${pairing === 'pending' ? ' (awaiting approval)' : ''}` : ''}`;
   status.tooltip = `NanoClaw runner — ${s}${detail ? ` · ${detail}` : ''}`;
+  status.command = 'nanoclaw.status';
+  if (s === 'disconnected' && detail === STANDBY_DETAIL) {
+    // The agent works on the folder of the window that holds the connection.
+    status.text = `${icon} NanoClaw: other window`;
+    status.tooltip = 'Another VS Code window on this machine holds the NanoClaw connection. Click to use this window.';
+    status.command = 'nanoclaw.connect';
+  }
   status.backgroundColor =
     s === 'unauthorized' || pairing === 'pending'
       ? new vscode.ThemeColor('statusBarItem.warningBackground')
@@ -164,16 +165,15 @@ function render(s: LinkState, detail?: string): void {
   status.show();
 }
 
-/** Slot targets may resolve only under these roots: the explicit allowlist, else the open workspace folders. */
+/** The project is the open workspace folder; slot targets may resolve only under the open folders. */
 function policy(): AgentPolicy {
   const c = cfg();
   const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
-  const allowlist = c.mountAllowlist.length ? c.mountAllowlist : folders;
   const active = vscode.window.activeTextEditor?.document.uri;
   const activeFile = active?.scheme === 'file' ? active.fsPath : undefined;
   return {
-    slots: effectiveSlots(c.slots, folders, c.workspaceMount, activeFile),
-    allowlist,
+    slots: workspaceSlots(folders, activeFile),
+    allowlist: folders,
     excludes: c.workspaceExcludes,
   };
 }
@@ -183,7 +183,7 @@ function ensureAgent(): RunnerAgent {
     policy,
     proposalChanged: () => chat?.refresh(),
     secretsLeftOut: (paths) => {
-      for (const p of paths) out.appendLine(`secret found, left out of the agent's copy: ${p}`);
+      for (const p of paths) out?.appendLine(`secret found, left out of the agent's copy: ${p}`);
       // Once per distinct list: each agent start re-takes the same snapshot.
       const key = paths.join('\0');
       if (key === lastLeftOut) return;
@@ -191,7 +191,7 @@ function ensureAgent(): RunnerAgent {
       const n = paths.length;
       void vscode.window
         .showWarningMessage(`${n} file${n === 1 ? '' : 's'} with secrets left out`, 'Show')
-        .then((pick) => pick && out.show(true));
+        .then((pick) => pick && out?.show(true));
     },
     installSlug: () => link?.welcome?.installSlug,
     halted: () => globalState?.get<{ reason: string }>(HALTED)?.reason ?? null,
@@ -218,6 +218,8 @@ async function connect(interactive: boolean): Promise<void> {
     machine: machine(key),
     ...(key ? { signChallenge: key.signChallenge } : {}),
     getToken: () => getToken(interactive),
+    // Only an explicit Connect takes the connection from another window.
+    standby: !interactive,
     onRequest: (op, payload) => ensureAgent().handle(op, payload),
     onFrame: (frame) => chat?.handleFrame(frame) ?? false,
     events: {
@@ -230,8 +232,17 @@ async function connect(interactive: boolean): Promise<void> {
           void considerUpdate();
           void refreshCentralConfig();
         }
-        if (s === 'unauthorized' && interactive)
-          void vscode.window.showWarningMessage(`NanoClaw: ${d ?? 'sign-in required'}`);
+        if (s === 'unauthorized' && interactive) {
+          if (d === NO_SIGNIN_SETTINGS) {
+            const open = 'Open in browser';
+            void vscode.window
+              .showWarningMessage(
+                `NanoClaw: ${c.serverUrl} has not sent its sign-in settings yet. Open it and click Connect VS Code.`,
+                open,
+              )
+              .then((pick) => pick === open && vscode.env.openExternal(vscode.Uri.parse(c.serverUrl)));
+          } else void vscode.window.showWarningMessage(`NanoClaw: ${d ?? 'sign-in required'}`);
+        }
       },
       log,
       update: () => {
@@ -324,7 +335,18 @@ function checkRelease(kind: ReleaseKind, subject: string, sha256: string, signat
  * concurrent requests share one question.
  */
 const folderQuestions = new Map<string, Promise<boolean>>();
-async function approveFolder(folder: string): Promise<boolean> {
+const untrustedNoted = new Set<string>();
+async function approveFolder(folder: string): Promise<boolean | string> {
+  // Restricted Mode: connect and chat, but no folder VS Code does not trust goes to an agent.
+  if (!vscode.workspace.isTrusted) {
+    if (!untrustedNoted.has(folder)) {
+      untrustedNoted.add(folder);
+      void vscode.window.showWarningMessage(
+        `NanoClaw: ${path.basename(folder)} is open in Restricted Mode, so the agent cannot work on it. Trust the folder to allow it.`,
+      );
+    }
+    return `${folder} is open in VS Code's Restricted Mode (not trusted); the developer must trust it before an agent can work on it`;
+  }
   const origin = releaseOrigin(cfg().serverUrl) ?? cfg().serverUrl;
   const all = globalState?.get<Record<string, string[]>>(ALLOWED_FOLDERS) ?? {};
   if (all[origin]?.includes(folder)) return true;
@@ -430,31 +452,19 @@ async function handleConnectUri(uri: vscode.Uri): Promise<void> {
     return;
   }
   const { serverUrl, config, releaseKey } = parsed;
-  // Say what the sign-in will actually be — own settings win per key, so a
-  // link to a different server may still sign in for the old one's audience.
-  const c = vscode.workspace.getConfiguration('nanoclaw');
-  const own = ownClientConfig(c);
-  const eff = resolveClientConfig(own, config);
-  const ownKeys = CLIENT_KEYS.filter((k) => own[k] !== undefined);
-  const newServer = serverUrl !== cfg().serverUrl;
+  const eff = resolveClientConfig(config);
   const detail = [
     eff.signIn === 'microsoft' ? `Token for: ${eff.appIdUri || '(server default)'}` : 'Sign-in: network',
     eff.tenantId ? `Tenant: ${eff.tenantId}` : '',
-    newServer && ownKeys.length ? `Your own ${ownKeys.map((k) => `nanoclaw.${k}`).join(', ')} still apply.` : '',
   ]
     .filter(Boolean)
     .join('\n');
-  const useLink = 'Connect, drop my own';
   const pick = await vscode.window.showInformationMessage(
     `Connect to NanoClaw at ${serverUrl}?`,
     { modal: true, detail: `${detail}\nIts agents can ask to work on the folders you open here.` },
     'Connect',
-    ...(newServer && ownKeys.length ? [useLink] : []),
   );
-  if (pick !== 'Connect' && pick !== useLink) return;
-  if (pick === useLink) {
-    for (const k of ownKeys) await c.update(k, undefined, vscode.ConfigurationTarget.Global);
-  }
+  if (pick !== 'Connect') return;
   await globalState?.update(CENTRAL_CONFIG, { serverUrl, config });
   await vscode.workspace.getConfiguration('nanoclaw').update('serverUrl', serverUrl, vscode.ConfigurationTarget.Global);
   await considerReleaseKey(serverUrl, releaseKey ?? null);
@@ -614,7 +624,44 @@ async function offerSwitch(legacyId: string): Promise<void> {
 }
 
 /** Returns the inline-review controller and the conflict list: the editor harness drives them without a chat panel. */
-export function activate(ctx: vscode.ExtensionContext): { review: ReviewController; conflicts?: ConflictTracker } {
+export function activate(ctx: vscode.ExtensionContext): { review?: ReviewController; conflicts?: ConflictTracker } {
+  try {
+    return activateNow(ctx);
+  } catch (err) {
+    return activationFailed(ctx, err);
+  }
+}
+
+/**
+ * Start-up failed part-way. Every NanoClaw command still answers, with the
+ * reason: otherwise VS Code reports "command 'nanoclaw.connect' not found",
+ * which points nowhere.
+ */
+function activationFailed(ctx: vscode.ExtensionContext, err: unknown): Record<string, never> {
+  const why = String((err as Error)?.message ?? err);
+  out ??= vscode.window.createOutputChannel('NanoClaw');
+  out.appendLine(`[${new Date().toISOString()}] NanoClaw could not start: ${String((err as Error)?.stack ?? err)}`);
+  const say = (): void => {
+    void vscode.window
+      .showErrorMessage(`NanoClaw could not start: ${why}`, 'Show log')
+      .then((pick) => pick && out?.show());
+  };
+  const commands = (
+    (ctx.extension.packageJSON as { contributes?: { commands?: Array<{ command: string }> } }).contributes?.commands ??
+    []
+  ).map((c) => c.command);
+  for (const id of commands) {
+    try {
+      ctx.subscriptions.push(vscode.commands.registerCommand(id, say));
+    } catch {
+      /* registered before the failure: it keeps its own handler */
+    }
+  }
+  say();
+  return {};
+}
+
+function activateNow(ctx: vscode.ExtensionContext): { review: ReviewController; conflicts?: ConflictTracker } {
   out = vscode.window.createOutputChannel('NanoClaw');
   globalState = ctx.globalState;
   self = ctx.extension;
@@ -638,6 +685,14 @@ export function activate(ctx: vscode.ExtensionContext): { review: ReviewControll
     return null;
   });
   initActivityLog(ctx.globalStorageUri.fsPath);
+  // Copy settings set under their old names move to agentCopy.* (read from the old names until then).
+  migrateCopySettings({
+    inspect: (k) => vscode.workspace.getConfiguration('nanoclaw').inspect(k),
+    update: (k, v) => vscode.workspace.getConfiguration('nanoclaw').update(k, v, vscode.ConfigurationTarget.Global),
+  }).then(
+    (moved) => moved.forEach((m) => log(`settings: ${m}`)),
+    (err: unknown) => log(`settings: could not move the old copy settings: ${String((err as Error)?.message ?? err)}`),
+  );
   storageRoot = vscode.Uri.joinPath(ctx.globalStorageUri, 'runner').fsPath;
   updateStorage = vscode.Uri.joinPath(ctx.globalStorageUri, 'updates').fsPath;
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
@@ -680,10 +735,14 @@ export function activate(ctx: vscode.ExtensionContext): { review: ReviewControll
     openConflict: (rel) => panel.openConflict(rel),
   });
   conflicts.onChange(() => void panel.refreshChanges());
-  void recoverLaptopToolsProposal(storageRoot, policy()).then((p) => {
-    recoveredProposal = p;
-    if (p) chat?.refresh();
-  });
+  // Recovery runs git over the developer's folder: not in Restricted Mode, only once it is trusted.
+  const recover = () =>
+    void recoverLaptopToolsProposal(storageRoot, policy()).then((p) => {
+      recoveredProposal = p;
+      if (p) chat?.refresh();
+    });
+  if (vscode.workspace.isTrusted) recover();
+  else ctx.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(recover));
   ctx.subscriptions.push(
     conflicts,
     scm,
@@ -735,7 +794,7 @@ export function activate(ctx: vscode.ExtensionContext): { review: ReviewControll
           'Show log',
         )
         .then((a) => {
-          if (a) out.show();
+          if (a) out?.show();
         });
     }),
     vscode.commands.registerCommand('nanoclaw.openChat', () => {

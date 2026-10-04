@@ -324,11 +324,10 @@ export function joinRoom(roomId?: any, roomName?: any, jumpMessageId?: any, init
 
 export function clearRoomSearch() {
   roomFilter.value = '';
+  // The island's rows, not its host's HTML (see clearStagedFiles in files.ts).
+  searchRows.value = [];
   const list = $('#search-results');
-  if (list) {
-    list.hidden = true;
-    list.innerHTML = '';
-  }
+  if (list) list.hidden = true;
   const roomList = $('#room-list');
   if (roomList) roomList.hidden = false;
   const sortBtn = $('#room-sort-az');

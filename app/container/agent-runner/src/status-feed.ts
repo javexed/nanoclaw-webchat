@@ -18,6 +18,9 @@ import { registerProviderMessageObserver } from './providers/hooks.js';
 export function summarizeToolTarget(toolName: string, input: Record<string, unknown> | undefined): string | null {
   const str = (v: unknown): string | null => (typeof v === 'string' && v.length > 0 ? v : null);
   switch (toolName) {
+    // pi's delivery tool: the destination is what the reader wants to see.
+    case 'message':
+      return str(input?.to);
     case 'Bash':
       return str(input?.command);
     case 'Read':
@@ -35,12 +38,20 @@ export function summarizeToolTarget(toolName: string, input: Record<string, unkn
     // pi's built-ins. Lowercase names and its own argument keys, so they miss
     // every case above and would otherwise render as a bare verb — "write"
     // with no hint of what was written.
+    // pi's and OpenCode's (OpenCode names the file filePath).
     case 'read':
     case 'write':
     case 'edit':
-      return str(input?.path) ?? str(input?.file_path);
+      return str(input?.path) ?? str(input?.file_path) ?? str(input?.filePath);
     case 'bash':
       return str(input?.command) ?? str(input?.cmd);
+    case 'glob':
+    case 'grep':
+      return str(input?.pattern);
+    case 'list':
+      return str(input?.path);
+    case 'webfetch':
+      return str(input?.url);
     default:
       return null;
   }

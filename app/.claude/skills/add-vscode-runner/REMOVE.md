@@ -1,8 +1,12 @@
 # Remove the VS Code runner
 
-First, on the Runners tab, clear every placement, so no agent group is left
-pointing at a machine: a placed group cannot start once the `fleet` driver is
-gone.
+First, on the Runners tab, clear every placement: that gives each placed
+group its own configuration back (the laptop MCP server, the tool denials and
+the laptop instructions go). A group still placed when the skill is removed
+keeps them and runs with neither its own file tools nor the laptop's.
+
+If `.env` sets `NANOCLAW_RUNTIME_DRIVER=fleet`, remove that line too: without
+the skill no driver of that name exists, and no session starts.
 
 Then, from the install directory:
 
@@ -13,6 +17,7 @@ sed -n 's/^payload\/[^ ]* -> //p' .claude/skills/add-vscode-runner/SKILL.md | xa
 sed -i "/^import '.\/runner-register.js';$/d" src/channels/webchat/extensions-installed.ts
 sed -i "/^import '.\/fleet-driver.js';$/d" src/drivers/installed.ts
 sed -i '/^WEBCHAT_RUNNER_ENABLED=/d' .env
+sed -i '/^NANOCLAW_RUNTIME_DRIVER=fleet$/d' .env
 pnpm run build
 ```
 

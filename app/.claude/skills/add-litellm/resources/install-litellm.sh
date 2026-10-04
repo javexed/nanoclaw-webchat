@@ -9,17 +9,22 @@
 # plus, opt-in, declared keyed backends (data/litellm/backends.json). No
 # routing/classifier logic — dependent skills layer that on separately.
 #
-# Keyless by default. Declaring any keyed backend turns on proxy auth
-# (master_key) automatically; key values live only in data/litellm/env
-# (mode 600), read by the LiteLLM container via --env-file.
+# Keyless by default. Declaring any backend — keyed or gateway — turns on
+# proxy auth (master_key) automatically; key values live only in
+# data/litellm/env (mode 600), read by the LiteLLM container via --env-file.
 #
 # Flags / env:
 #   --dry-run          print what would happen, change nothing
-#   --port <n>         listen port                          (default 4000)
+#   --port <n>         listen port (LITELLM_PORT env)       (default 4000)
+#   --name <n>         container name (LITELLM_CONTAINER)   (default nanoclaw-litellm)
 #   --tag <t>          LiteLLM image tag (LITELLM_TAG env)  (default: pinned, see below)
 #   --hosts <csv>      model-server hosts (MODEL_HOSTS env) (default http://localhost:11434)
 #   --backends <file>  keyed-backend declarations           (default data/litellm/backends.json if present)
 #   --skip-run         generate config only, don't (re)start the container
+#   --reuse-config     keep the existing config.yaml (no probe, no regenerate);
+#                      for layers that edit it and then restart the container
+#   --mount <src:dst>  extra container mount, repeatable (dependent layers)
+#   --image <ref>      full image reference (overrides --tag)
 #
 set -euo pipefail
 
@@ -32,7 +37,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TOPLEVEL="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || true)"
 cd "${TOPLEVEL:-$(cd "$HERE/../../../.." && pwd)}"
 
-PORT=4000
+PORT="${LITELLM_PORT:-4000}"
 # Pinned per docs/skill-guidelines.md ("pin the version; reject latest").
 # Bump deliberately: check https://github.com/BerriAI/litellm/releases first.
 TAG="${LITELLM_TAG:-v1.90.0}"
@@ -40,21 +45,29 @@ HOSTS="${MODEL_HOSTS:-http://localhost:11434}"
 BACKENDS=""
 DRY=0
 SKIP_RUN=0
+REUSE=0
+IMAGE_ARG=""
+EXTRA_MOUNTS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY=1 ;;
     --port) PORT="$2"; shift ;;
+    --name) NAME_ARG="$2"; shift ;;
     --tag) TAG="$2"; shift ;;
     --hosts) HOSTS="$2"; shift ;;
     --backends) BACKENDS="$2"; shift ;;
     --skip-run) SKIP_RUN=1 ;;
+    --reuse-config) REUSE=1 ;;
+    --mount) EXTRA_MOUNTS+=(-v "$2"); shift ;;
+    --image) IMAGE_ARG="$2"; shift ;;
     *) echo "unknown flag: $1" >&2; exit 2 ;;
   esac
   shift
 done
 
-IMAGE="ghcr.io/berriai/litellm:${TAG}"
-NAME="nanoclaw-litellm"
+IMAGE="${IMAGE_ARG:-ghcr.io/berriai/litellm:${TAG}}"
+# A second install on the same host runs its own router: LITELLM_CONTAINER + LITELLM_PORT.
+NAME="${NAME_ARG:-${LITELLM_CONTAINER:-nanoclaw-litellm}}"
 OUT_DIR="data/litellm"
 KEYFILE="$OUT_DIR/master.key"
 ENVFILE="$OUT_DIR/env"
@@ -69,15 +82,30 @@ command -v node >/dev/null || { echo "install-litellm: node is required (config 
 #      Ollama answers /api/tags; any other OpenAI-compatible server answers
 #      /v1/models. The generator re-probes every host the same way. With
 #      keyed backends declared, --hosts '' (no local servers) is legitimate.
-FIRST_HOST="${HOSTS%%,*}"
-if [ -n "$FIRST_HOST" ] \
-   && ! curl -fsS --max-time 5 "${FIRST_HOST}/api/tags" >/dev/null 2>&1 \
-   && ! curl -fsS --max-time 5 "${FIRST_HOST}/v1/models" >/dev/null 2>&1; then
-  echo "install-litellm: no model server reachable at ${FIRST_HOST}." >&2
-  echo "  Start one first — Ollama (https://ollama.com) with a model pulled, or any" >&2
-  echo "  OpenAI-compatible server (vLLM, LM Studio, llama.cpp) — then re-run." >&2
-  echo "  Multiple hosts: --hosts http://localhost:11434,http://<lan-ip>:8000" >&2
-  exit 1
+if [ "$REUSE" = 1 ]; then
+  [ -f "$OUT_DIR/config.yaml" ] || { echo "install-litellm: --reuse-config but $OUT_DIR/config.yaml is missing" >&2; exit 1; }
+  # The hosts the kept config was generated from (gen-config's header).
+  HOSTS="$(sed -n 's/^# hosts: //p' "$OUT_DIR/config.yaml" | head -1)"
+  [ "$HOSTS" = "(none)" ] && HOSTS=""
+fi
+reachable() {
+  curl -fsS --max-time 5 "$1/api/tags" >/dev/null 2>&1 || curl -fsS --max-time 5 "$1/v1/models" >/dev/null 2>&1
+}
+# Any one host will do: one that is off is skipped by the generator.
+if [ "$REUSE" = 0 ] && [ -n "$HOSTS" ]; then
+  ANY_UP=0
+  IFS=',' read -ra HOST_LIST <<< "$HOSTS"
+  for h in "${HOST_LIST[@]}"; do
+    h="${h//[[:space:]]/}"
+    if [ -n "$h" ] && reachable "$h"; then ANY_UP=1; break; fi
+  done
+  if [ "$ANY_UP" = 0 ]; then
+    echo "install-litellm: no model server reachable at ${HOSTS}." >&2
+    echo "  Start one first — Ollama (https://ollama.com) with a model pulled, or any" >&2
+    echo "  OpenAI-compatible server (vLLM, LM Studio, llama.cpp) — then re-run." >&2
+    echo "  Multiple hosts: --hosts http://localhost:11434,http://<lan-ip>:8000" >&2
+    exit 1
+  fi
 fi
 
 run mkdir -p "$OUT_DIR"
@@ -87,10 +115,22 @@ GEN_ARGS=(--hosts "$HOSTS" --out "$OUT_DIR/config.yaml")
 DOCKER_ENV=()
 KEYED=0
 if [ -n "$BACKENDS" ]; then
-  KEYED=1
   [ -f "$BACKENDS" ] || { echo "install-litellm: --backends $BACKENDS not found" >&2; exit 1; }
   GEN_ARGS+=(--backends "$BACKENDS")
-
+  # Any backend puts a paid key behind the proxy, so any turns auth on. A
+  # gateway backend's key is added by OneCLI on the way out: whoever reaches
+  # this port would spend it as surely as an env-file key.
+  if [ "$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).length>0?1:0)' "$BACKENDS")" = 1 ]; then
+    KEYED=1
+  fi
+fi
+# A kept config that already turns proxy auth on stays keyed, backends.json or
+# not: the container must keep the master key it was generated to require (the
+# same test the routing layer uses to decide whether to send it).
+if [ "$REUSE" = 1 ] && grep -qE '^[[:space:]]*master_key:' "$OUT_DIR/config.yaml"; then
+  KEYED=1
+fi
+if [ "$KEYED" = 1 ]; then
   # Proxy auth is mandatory once a paid key sits behind the endpoint.
   if [ ! -f "$KEYFILE" ]; then
     echo "→ Generating proxy master key ($KEYFILE) …"
@@ -102,12 +142,17 @@ if [ -n "$BACKENDS" ]; then
   # Key VALUES live in the env file (mode 600), read only by the container.
   if [ "$DRY" = 1 ]; then echo "DRY-RUN: ensure $ENVFILE (mode 600) with LITELLM_MASTER_KEY + backend keys"; else
     (umask 077; touch "$ENVFILE")
-    grep -q '^LITELLM_MASTER_KEY=' "$ENVFILE" 2>/dev/null \
-      || printf 'LITELLM_MASTER_KEY=%s\n' "$(cat "$KEYFILE")" >> "$ENVFILE"
+    # master.key is what clients (and the router's vault secret) send: the container's copy always matches it.
+    if ! grep -qxF "LITELLM_MASTER_KEY=$(cat "$KEYFILE")" "$ENVFILE"; then
+      (umask 077
+       { grep -v '^LITELLM_MASTER_KEY=' "$ENVFILE" || true; printf 'LITELLM_MASTER_KEY=%s\n' "$(cat "$KEYFILE")"; } > "$ENVFILE.tmp"
+       mv "$ENVFILE.tmp" "$ENVFILE")
+    fi
     # Every api_key_env declared in backends.json must have a value.
-    missing=$(node -e '
+    missing=""
+    [ -n "$BACKENDS" ] && missing=$(node -e '
       const fs = require("fs");
-      const wanted = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).map(b => b.api_key_env);
+      const wanted = JSON.parse(fs.readFileSync(process.argv[1], "utf8")).filter(b => b.gateway !== true).map(b => b.api_key_env);
       const have = new Set(fs.readFileSync(process.argv[2], "utf8").split("\n").map(l => l.split("=")[0]));
       console.log(wanted.filter(w => !have.has(w)).join(" "));
     ' "$BACKENDS" "$ENVFILE")
@@ -121,9 +166,52 @@ if [ -n "$BACKENDS" ]; then
   DOCKER_ENV=(--env-file "$ENVFILE")
 fi
 
+# ── 2b. OneCLI: the container's outbound traffic goes through the gateway,
+#        which adds each gateway backend's key (data/litellm/onecli.env: the
+#        proxy URL and CA trust; onecli-ca.pem: system roots + OneCLI's CA). ─
+#        The container joins a network shared with OneCLI's container only
+#        (not OneCLI's own, beside the vault's database): agents reach it by
+#        container name THROUGH the gateway, which adds the master key on
+#        inference paths for the agents holding the router's vault secrets
+#        (webchat assigns them).
+MOUNTS=()
+NETWORK=()
+if [ -f "$OUT_DIR/onecli.env" ] && [ -f "$OUT_DIR/onecli-ca.pem" ]; then
+  DOCKER_ENV+=(--env-file "$OUT_DIR/onecli.env")
+  MOUNTS=(-v "$(pwd)/$OUT_DIR/onecli-ca.pem:/etc/onecli/ca.pem:ro")
+  # A network of its own, shared with OneCLI's container only: not OneCLI's
+  # network, where the vault's database lives. An ordinary (routable) bridge
+  # network, so the router keeps its published port and its route out; a
+  # user-defined one, so names resolve on it. Attached again on every run:
+  # recreating OneCLI's container drops the attachment.
+  ONECLI_CTR="${ONECLI_GATEWAY_CONTAINER:-onecli}"
+  ROUTER_NET="${NAME}-gateway"
+  docker inspect "$ONECLI_CTR" >/dev/null 2>&1 || { echo "install-litellm: OneCLI's container ($ONECLI_CTR) is not running; the router reaches agents through it" >&2; exit 1; }
+  docker network inspect "$ROUTER_NET" >/dev/null 2>&1 || run docker network create "$ROUTER_NET"
+  docker inspect "$ONECLI_CTR" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' | tr ' ' '\n' | grep -qx "$ROUTER_NET" \
+    || run docker network connect "$ROUTER_NET" "$ONECLI_CTR"
+  NETWORK=(--network "$ROUTER_NET")
+  # Local model servers and the routing classifier are reached directly, never
+  # through the gateway (-e wins over the env file).
+  NOPROXY="$(node -e '
+    const fs = require("fs");
+    const out = new Set(["localhost", "127.0.0.1", "host.docker.internal"]);
+    const add = (u) => { try { out.add(new URL(u).hostname); } catch {} };
+    for (const h of (process.argv[1] || "").split(",")) if (h.trim()) add(h.trim());
+    try { add(JSON.parse(fs.readFileSync(process.argv[2], "utf8")).classifier.url); } catch {}
+    console.log([...out].join(","));
+  ' "$HOSTS" "$OUT_DIR/routing/routes.json")"
+  DOCKER_ENV+=(-e "NO_PROXY=$NOPROXY" -e "no_proxy=$NOPROXY")
+fi
+MOUNTS+=(${EXTRA_MOUNTS[@]+"${EXTRA_MOUNTS[@]}"})
+
 # ── 3. Generate config.yaml ───────────────────────────────────────────────
-echo "→ Generating LiteLLM config.yaml from the model-server roster(s) …"
-run node "$HERE/gen-config.mjs" "${GEN_ARGS[@]}"
+if [ "$REUSE" = 1 ]; then
+  echo "= --reuse-config: keeping $OUT_DIR/config.yaml."
+else
+  echo "→ Generating LiteLLM config.yaml from the model-server roster(s) …"
+  run node "$HERE/gen-config.mjs" "${GEN_ARGS[@]}"
+fi
 
 # ── 4. Bind addresses: localhost + docker bridge (agents reach it via
 #      host.docker.internal → the bridge IP). Never 0.0.0.0. ───────────────
@@ -141,9 +229,17 @@ if docker ps -a --format '{{.Names}}' | grep -qx "$NAME"; then
 fi
 MODE_DESC="keyless"; [ "$KEYED" = 1 ] && MODE_DESC="keyed (proxy auth on)"
 echo "→ Starting $IMAGE on 127.0.0.1:${PORT} + ${BRIDGE_IP}:${PORT} (${MODE_DESC}, local-only) …"
+# No cloud models any more: the router's gateway network goes too (the old
+# container is already removed; OneCLI's container is the only one left on it).
+if [ ${#NETWORK[@]} -eq 0 ] && docker network inspect "${NAME}-gateway" >/dev/null 2>&1; then
+  run docker network disconnect "${NAME}-gateway" "${ONECLI_GATEWAY_CONTAINER:-onecli}" >/dev/null 2>&1 || true
+  run docker network rm "${NAME}-gateway" >/dev/null 2>&1 || true
+fi
 run docker run -d --name "$NAME" --restart unless-stopped \
   "${PORTS[@]}" \
   ${DOCKER_ENV[@]+"${DOCKER_ENV[@]}"} \
+  ${MOUNTS[@]+"${MOUNTS[@]}"} \
+  ${NETWORK[@]+"${NETWORK[@]}"} \
   --add-host=host.docker.internal:host-gateway \
   -v "$(pwd)/$OUT_DIR/config.yaml:/app/config.yaml:ro" \
   "$IMAGE" --config /app/config.yaml --port 4000
@@ -162,6 +258,8 @@ if [ "$DRY" = 0 ]; then
     sleep 2
   done
 fi
+# A dependent layer restarting the router reports for itself.
+[ "$REUSE" = 1 ] && exit 0
 
 cat <<DONE
 
@@ -175,7 +273,10 @@ cat <<DONE
 Roster or backends changed? Re-run this script.
 DONE
 
-if [ "$KEYED" = 1 ]; then
+if [ "$KEYED" = 1 ] && [ ${#NETWORK[@]} -gt 0 ]; then
+  echo "Proxy auth is on (gateway backends): agents call http://${NAME}:4000 through the"
+  echo "OneCLI gateway, which adds the master key; webchat assigns that secret."
+elif [ "$KEYED" = 1 ]; then
   cat <<'KEYED_DONE'
 Keyed mode — the router now requires "Authorization: Bearer <master key>"
 (data/litellm/master.key). Give agents access the sanctioned way — register

@@ -1,8 +1,17 @@
 diff --git a/src/cli/resources/groups.test.ts b/src/cli/resources/groups.test.ts
-index 62e836f3..3546d42a 100644
+index 62e836f3..1c325afe 100644
 --- a/src/cli/resources/groups.test.ts
 +++ b/src/cli/resources/groups.test.ts
-@@ -301,6 +301,90 @@ describe('groups CLI delete cascades dependent rows (#2525)', () => {
+@@ -36,6 +36,8 @@ const TEST_DIR = '/tmp/nanoclaw-test-cli-groups';
+ import { initTestDb, closeDb, runMigrations, createAgentGroup, getDb } from '../../db/index.js';
+ import { createSession } from '../../db/sessions.js';
+ import { dispatch } from '../dispatch.js';
++import { lookup } from '../registry.js';
++import { killContainer } from '../../container-runner.js';
+ import { ensureContainerConfig, getContainerConfig } from '../../db/container-configs.js';
+ import { restartAgentGroupContainers } from '../../container-restart.js';
+ import { configFromDb } from '../../container-config.js';
+@@ -301,6 +303,132 @@ describe('groups CLI delete cascades dependent rows (#2525)', () => {
    });
  });
  
@@ -87,6 +96,48 @@ index 62e836f3..3546d42a 100644
 +  it('rejects an invalid --type', async () => {
 +    const resp = await addMcp({ id: GID, name: 'bad2', url: 'http://x', type: 'ws' });
 +    expect(resp.ok).toBe(false);
++  });
++});
++
++describe('groups config update --model from an agent', () => {
++  const GID = 'ag-model';
++  const agent = { caller: 'agent' as const, sessionId: 'sess-m', agentGroupId: GID, messagingGroupId: 'mg-m' };
++  const update = (args: Record<string, unknown>) =>
++    lookup('groups-config-update')!.handler({ id: GID, ...args }, agent);
++
++  beforeEach(async () => {
++    await runMigrations(await initTestDb());
++    await createAgentGroup({ id: GID, name: 'm', folder: 'm', agent_provider: null, created_at: now() });
++    await ensureContainerConfig(GID);
++    vi.mocked(killContainer).mockClear();
++    vi.mocked(restartAgentGroupContainers).mockClear();
++  });
++  afterEach(async () => {
++    await closeDb();
++  });
++
++  it('restarts the group on the new model when idle, so no second restart card is needed', async () => {
++    const r = (await update({ model: 'claude-opus-5-5' })) as Record<string, unknown>;
++    expect((await getContainerConfig(GID))!.model).toBe('claude-opus-5-5');
++    // Through the turn-aware restart (no container is mid-turn here), never a bare kill.
++    expect(restartAgentGroupContainers).toHaveBeenCalledWith(GID, 'model switched via ncl');
++    expect(killContainer).not.toHaveBeenCalled();
++    expect(r.restarted).toMatch(/no `ncl groups restart` needed/);
++  });
++
++  it('restarts nothing when the model is the one already set', async () => {
++    await update({ model: 'claude-opus-5-5' });
++    vi.mocked(restartAgentGroupContainers).mockClear();
++    const r = (await update({ model: 'claude-opus-5-5' })) as Record<string, unknown>;
++    expect(restartAgentGroupContainers).not.toHaveBeenCalled();
++    expect(r.restarted).toBeUndefined();
++  });
++
++  it('leaves other changes to `ncl groups restart`', async () => {
++    const r = (await update({ effort: 'high' })) as Record<string, unknown>;
++    expect(killContainer).not.toHaveBeenCalled();
++    expect(restartAgentGroupContainers).not.toHaveBeenCalled();
++    expect(r.restarted).toBeUndefined();
 +  });
 +});
 +

@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/destinations.ts b/container/agent-runner/src/destinations.ts
-index a03049d5..73e5bdaf 100644
+index 79408352..e917ac31 100644
 --- a/container/agent-runner/src/destinations.ts
 +++ b/container/agent-runner/src/destinations.ts
 @@ -12,6 +12,7 @@
@@ -10,7 +10,7 @@ index a03049d5..73e5bdaf 100644
  import type { Destination } from './mailbox/types.js';
  
  export interface DestinationEntry {
-@@ -61,19 +62,23 @@ export function findByRouting(
+@@ -61,14 +62,18 @@ export function findByRouting(
   * per-agent-group and changes when the operator renames an agent, while
   * the shared base is identical across all agents.
   */
@@ -28,8 +28,11 @@ index a03049d5..73e5bdaf 100644
  
 -  sections.push(buildDestinationsSection(mode));
 +  sections.push(buildDestinationsSection(mode, capabilities.mcpTools === true));
+   if (mode.kind === 'chat') sections.push(buildReadingSection());
  
    return sections.join('\n\n');
+@@ -90,7 +95,7 @@ function buildReadingSection(): string {
+   ].join('\n');
  }
  
 -function buildDestinationsSection(mode: SessionMode): string {
@@ -37,7 +40,7 @@ index a03049d5..73e5bdaf 100644
    const all = getAllDestinations();
    const lines = ['## Sending messages', ''];
  
-@@ -94,9 +99,17 @@ function buildDestinationsSection(mode: SessionMode): string {
+@@ -111,9 +116,17 @@ function buildDestinationsSection(mode: SessionMode): string {
  
    if (mode.kind === 'task') {
      lines.push(
@@ -57,7 +60,7 @@ index a03049d5..73e5bdaf 100644
      if (channelDestinations.length > 0) {
        const channelNames = channelDestinations.map((destination) => `\`${destination.name}\``).join(', ');
        lines.push(
-@@ -118,15 +131,17 @@ function buildDestinationsSection(mode: SessionMode): string {
+@@ -135,15 +148,17 @@ function buildDestinationsSection(mode: SessionMode): string {
    lines.push(
      'When replying to an incoming message, default to addressing the destination it came `from` (every inbound `<message>` tag carries a `from="name"` attribute). Pick a different destination when the request asks for it (e.g., "tell Laura that…").',
    );

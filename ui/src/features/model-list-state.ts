@@ -10,6 +10,8 @@ export interface ModelRow {
   badgeText: string;
   title: string;
   host: string | null;
+  /** The Ollama host whose health check this row shows, or null. */
+  healthKey: string | null;
   hint: string | null;
   uses: number;
   active: boolean;

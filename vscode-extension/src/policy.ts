@@ -1,26 +1,13 @@
 // Which project on this machine the agent's tools work on, decided HERE.
 //
 // Central names the slot /workspace/project; only the laptop can say which
-// local directory that is. An explicit `nanoclaw.slots` entry always wins; the
-// slot is otherwise the open workspace folder, so an agent placed on this
-// machine works on the code in front of the developer without any
-// configuration. `workspaceMount: 'off'` withholds it — the tools then refuse
-// with "slot not bound", never a silent fallback.
+// local directory that is: the open workspace folder, so an agent placed on
+// this machine works on the code in front of the developer. No folder open,
+// no slot — the tools then refuse with "slot not bound", never a fallback.
 export const WORKSPACE_SLOT = '/workspace/project';
 
-export type WorkspaceMount = 'workspace' | 'off';
-
-export function effectiveSlots(
-  configured: Record<string, string>,
-  workspaceFolders: readonly string[],
-  workspaceMount: WorkspaceMount,
-  activeFile?: string,
-): Record<string, string> {
-  const auto: Record<string, string> = {};
-  if (workspaceMount === 'workspace' && workspaceFolders.length > 0) {
-    auto[WORKSPACE_SLOT] = pickWorkspaceFolder(workspaceFolders, activeFile);
-  }
-  return { ...auto, ...configured };
+export function workspaceSlots(workspaceFolders: readonly string[], activeFile?: string): Record<string, string> {
+  return workspaceFolders.length > 0 ? { [WORKSPACE_SLOT]: pickWorkspaceFolder(workspaceFolders, activeFile) } : {};
 }
 
 /**

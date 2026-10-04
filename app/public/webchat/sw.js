@@ -110,6 +110,36 @@ self.addEventListener('notificationclick', (e) => {
   );
 });
 
+/** How long a page load waits for the server before the cached shell is served instead. */
+const NAV_TIMEOUT_MS = 3000;
+
+/**
+ * A page load asks the server first, because only the server (or the sign-in
+ * front door before it — App Service EasyAuth, an identity-aware proxy) can
+ * say the session has ended. Served from cache, an expired session never
+ * reached the login page: a normal refresh showed the cached app, stuck
+ * reconnecting, and only a hard refresh (which skips this worker) got out.
+ *
+ * - A redirect, 401 or 403 goes to the browser as it came: the sign-in.
+ * - Any other answer: the CACHED shell, when there is one, so the page always
+ *   matches the cached scripts (a fresh index.html beside an older app.js
+ *   could disagree until the next worker activates).
+ * - No answer within NAV_TIMEOUT_MS, or none at all: the cached shell.
+ */
+async function navigate(request, cacheKey) {
+  let res;
+  try {
+    res = await Promise.race([
+      fetch(request),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('slow')), NAV_TIMEOUT_MS)),
+    ]);
+  } catch {
+    return (await caches.match(cacheKey || '/')) || offlineResponse();
+  }
+  if (res.type === 'opaqueredirect' || res.status === 401 || res.status === 403) return res;
+  return (cacheKey && (await caches.match(cacheKey))) || res;
+}
+
 /** A real Response for a request we could not fetch and have not cached. */
 function offlineResponse() {
   return new Response('', { status: 503, statusText: 'Offline' });
@@ -119,6 +149,13 @@ self.addEventListener('fetch', (e) => {
   if (e.request.url.includes('/api/') || e.request.url.includes('/ws')) return;
 
   const url = new URL(e.request.url);
+  // The sign-in front door's own endpoints (EasyAuth's /.auth/login, /.auth/refresh, …): never ours to answer.
+  if (url.pathname.startsWith('/.auth/')) return;
+
+  if (e.request.mode === 'navigate') {
+    e.respondWith(navigate(e.request, ASSETS.includes(url.pathname) ? url.pathname : null));
+    return;
+  }
 
   // Vendored libs: cache-first (they never change)
   if (VENDORED.has(url.pathname)) {
@@ -159,16 +196,10 @@ self.addEventListener('fetch', (e) => {
           // auth proxy: an expired session turned /manifest.json into a
           // cross-origin login redirect, which the page CSP then blocked.
           //
-          // Degrade instead. Any cached copy beats a hard failure, a navigation
-          // can still be served the app shell, and everything else gets a real
-          // Response so the caller sees a status rather than an exception.
-          return caches.match(e.request).then((stale) => {
-            if (stale) return stale;
-            if (e.request.mode === 'navigate') {
-              return caches.match('/').then((shell) => shell || offlineResponse());
-            }
-            return offlineResponse();
-          });
+          // Degrade instead. Any cached copy beats a hard failure, and
+          // everything else gets a real Response so the caller sees a status
+          // rather than an exception. (Page loads are navigate(), above.)
+          return caches.match(e.request).then((stale) => stale || offlineResponse());
         });
     }),
   );

@@ -11,11 +11,18 @@ import { showToast } from '../core/toast.js';
 import { routingClassifierModel } from './routing-state.js';
 import { apiJson, authFetch } from '../core/api.js';
 import { probeRoutingAvailability } from './routing.js';
-import { loadOllamaHostModels } from './models.js';
+import { fetchModels, loadOllamaHostModels } from './models.js';
 import { cancelOllamaPull, pollOllamaPulls, previewOllamaPull, startOllamaPull } from './installers.js';
 import { createApp } from 'vue';
 import OllamaHostCards from './OllamaHostCards.vue';
-import { hostModels, hosts as hostList, syncOpenCards } from './ollama-cards-state.js';
+import {
+  fitContext,
+  fitJobs,
+  hostHealth,
+  hostModels,
+  hosts as hostList,
+  syncOpenCards,
+} from './ollama-cards-state.js';
 
 let cardsApp: ReturnType<typeof createApp> | null = null;
 
@@ -27,6 +34,7 @@ function mountOllamaHostCards(): void {
       onRemove: (h: string, model: string) => void removeHostModel(h, model),
       onCancel: (h: string, model: string) => void cancelOllamaPull(h, model),
       onPreview: (h: string, model: string) => previewOllamaPull(h, model),
+      onFitContext: (on: boolean) => void setFitContext(on),
     }),
   );
 }
@@ -63,6 +71,7 @@ export async function loadOllamaHosts() {
     mountOllamaHostCards();
     for (const host of hosts) loadOllamaHostModels(host);
     pollOllamaPulls(); // pick up any pull still running from a previous visit
+    void loadModelHosts();
   } catch (err) {
     console.error('Failed to load servers:', err);
     wrap.hidden = true;
@@ -103,5 +112,46 @@ async function removeHostModel(host: string, model: string): Promise<void> {
     void loadOllamaHostModels(host);
   } catch (err: any) {
     showToast('Remove failed: ' + (err?.message || err), { kind: 'error' });
+  }
+}
+
+let hostsPoller: ReturnType<typeof setTimeout> | null = null;
+/** Fits seen running, so each one's finish refreshes the lists once. */
+const fitsRunning = new Set<string>();
+
+/**
+ * Host health, the GPU fits and the fit setting. Polled while a fit runs; a
+ * finished fit may have registered a variant, so the model list is re-read.
+ */
+export async function loadModelHosts(): Promise<void> {
+  if (hostsPoller) clearTimeout(hostsPoller);
+  hostsPoller = null;
+  try {
+    const body = await apiJson('/api/models/hosts');
+    hostHealth.value = body.health || {};
+    fitJobs.value = body.fits || [];
+    fitContext.value = !!body.fitContext;
+  } catch {
+    return;
+  }
+  const running = fitJobs.value.filter((j) => j.status === 'queued' || j.status === 'fitting');
+  const finished = [...fitsRunning].filter((k) => !running.some((j) => j.host + '\u0000' + j.model === k));
+  for (const j of running) fitsRunning.add(j.host + '\u0000' + j.model);
+  for (const k of finished) fitsRunning.delete(k);
+  if (finished.length) {
+    void fetchModels();
+    return; // fetchModels reloads the hosts, which reads this again
+  }
+  if (running.length) hostsPoller = setTimeout(() => void loadModelHosts(), 2000);
+}
+
+async function setFitContext(on: boolean): Promise<void> {
+  const prev = fitContext.value;
+  fitContext.value = on;
+  try {
+    await apiJson('/api/models/fit-context', { method: 'PUT', body: { enabled: on } });
+  } catch (err: any) {
+    fitContext.value = prev;
+    showToast('Could not save: ' + (err?.message || err), { kind: 'error' });
   }
 }

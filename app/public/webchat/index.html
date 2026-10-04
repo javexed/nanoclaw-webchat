@@ -5,10 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#1a1a2e" />
     <title>NanoClaw Chat</title>
-    <link rel="manifest" href="/manifest.json" />
+    <link rel="manifest" href="/manifest.json" crossorigin="use-credentials" />
     <!-- Declare an icon so the browser doesn't fall back to a (404) /favicon.ico -->
     <link rel="icon" type="image/png" href="/icon-192.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="stylesheet" href="/style.css" />
@@ -667,6 +668,7 @@
                          provider hasn't registered a container config. -->
                     <button type="button" class="setting-option" data-provider="grok">Grok</button>
                   </div>
+                  <pre id="agent-harness-install" class="wizard-code" aria-live="polite" hidden></pre>
                 </div>
                 <!-- MCP servers attached to this agent — a compact list + shared
                      attach picker over the registry (the MCP tab defines servers;
@@ -750,6 +752,7 @@
                         <p class="cred-hint" id="agent-secret-reach-help"></p>
                       </div>
                       <button id="agent-secret-save" class="btn btn-primary" type="button">Add secret</button>
+                      <button id="agent-secret-cancel" class="btn btn-secondary" type="button" hidden>Cancel</button>
                     </div>
                   </div>
                 </details>
@@ -1192,6 +1195,8 @@
                 <p id="model-detail-rooms" class="room-prime-note" hidden></p>
                 <div class="agent-detail-actions">
                   <button type="submit" class="btn btn-primary">Save</button>
+                  <button type="button" id="model-test-btn" class="btn btn-secondary" hidden>Test</button>
+                  <span id="model-test-result" class="model-test-result" aria-live="polite"></span>
                 </div>
                 <div class="agent-detail-danger">
                   <button type="button" id="model-delete" class="btn btn-danger">Delete this model</button>
@@ -1575,6 +1580,23 @@
               <div class="ollama-hosts-title">Servers</div>
               <div id="ollama-host-cards"></div>
             </div>
+            <!-- Cloud model (owners): key to the OneCLI vault, router installs or reloads (cloud-models.ts). -->
+            <div id="cloud-models" class="ollama-hosts" hidden>
+              <div class="setting-group install-row">
+                <span class="setting-label">Cloud model</span>
+                <span id="cloud-router-badge" class="install-badge" hidden>
+                  <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;Router
+                </span>
+              </div>
+              <form id="cloud-model-form" class="secret-form">
+                <select id="cloud-provider" aria-label="Provider"></select>
+                <input id="cloud-model-id" type="text" list="cloud-model-options" placeholder="Model" spellcheck="false" autocomplete="off" aria-label="Model" />
+                <datalist id="cloud-model-options"></datalist>
+                <input id="cloud-api-key" type="password" placeholder="API key" spellcheck="false" autocomplete="new-password" aria-label="API key" />
+                <button id="cloud-model-add" class="btn btn-primary btn-sm" type="submit">Install</button>
+              </form>
+              <pre id="cloud-model-log" class="roster-refresh-log" hidden></pre>
+            </div>
                       </div>
           <div id="mtab-runners" class="manage-pane" role="tabpanel" hidden>
             <ul id="runner-list"></ul>
@@ -1586,7 +1608,7 @@
           </div>
           <div id="mtab-network" class="manage-pane" role="tabpanel" hidden>
             <h3 class="runners-h">Allowlist</h3>
-            <p class="runners-note">Every agent on Allowlist: <code>host</code>, <code>*.domain</code>, <code>:port</code> optional.</p>
+            <p class="runners-note">Every agent on Allowlist: <code>host</code>, <code>*.domain</code>, <code>:port</code> optional. Other than 443 or 80, a port connects directly (SSH).</p>
             <div id="runner-egress-hosts" class="runner-egress">
               <div class="secret-list" data-hosts></div>
               <div class="secret-form">
@@ -2114,6 +2136,7 @@
                     <input id="secret-custom-format" type="text" placeholder="Bearer {value}" autocomplete="off" spellcheck="false" />
                   </label>
                   <button id="secret-save" class="btn btn-primary" type="button">Add secret</button>
+                  <button id="secret-cancel" class="btn btn-secondary" type="button" hidden>Cancel</button>
               <button class="feature-info-btn" type="button" aria-expanded="false"
                     aria-controls="system-secrets-info" aria-label="About secrets for all agents">
                 <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
@@ -2183,6 +2206,32 @@
                   <span class="setting-label">Classifier model</span>
                   <select id="autolearn-classifier-select" class="stt-cleanup-select" aria-label="Learning classifier model">
                     <option value="">None — busy-turn heuristic</option>
+                  </select>
+                </div>
+              </div>
+              <div id="settings-agent-activity" class="settings-feature" hidden>
+                <div class="setting-group install-row">
+                  <span class="setting-label">Record agent activity</span>
+                  <button class="feature-info-btn" type="button" aria-expanded="false"
+                    aria-controls="agent-activity-info" aria-label="About recording agent activity">
+                    <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+                  </button>
+                  <label class="setting-toggle">
+                    <input id="agent-activity-toggle" type="checkbox" aria-label="Record agent activity" />
+                  </label>
+                </div>
+                <p class="cred-hint feature-info" id="agent-activity-info" hidden>
+                  Keeps each reply's Thoughts — the tools the agent used, its reasoning and the model it ran on — so
+                  they still show after a reload or on another device. Secrets are redacted before anything is stored,
+                  and deleting a room or thread deletes its activity.
+                </p>
+                <div class="setting-group">
+                  <span class="setting-label">Keep</span>
+                  <select id="agent-activity-keep" class="stt-cleanup-select" aria-label="Keep agent activity for">
+                    <option value="30">30 days</option>
+                    <option value="90">90 days</option>
+                    <option value="365">1 year</option>
+                    <option value="0">Forever</option>
                   </select>
                 </div>
               </div>

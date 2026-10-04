@@ -7,7 +7,8 @@ import { restartAgentGroupContainers } from '../../../container-restart.js';
 import { getAllAgentGroups } from '../../../db/agent-groups.js';
 import { getContainerConfig } from '../../../db/container-configs.js';
 import { log } from '../../../log.js';
-import { getAssignedModelForAgent } from '../db.js';
+import { getAssignedModelForAgent, getEffectiveModelForAgent } from '../db.js';
+import { isRouterEndpoint } from '../cloud-models.js';
 import { syncAgentProviderForAssignedModel, writeAgentSettingsForAssignedModel } from '../models.js';
 
 /**
@@ -72,5 +73,17 @@ export async function refreshUnassignedGroupsForDefaultModel(reason: string): Pr
     } catch (err) {
       log.warn('Webchat: container restart for default-model change failed', { agentGroupId: g.id, reason, err });
     }
+  }
+}
+
+/**
+ * The router moved between direct and gateway (its first cloud model added,
+ * its last removed): the groups whose model it serves dial it at another
+ * address now, so their env is re-materialized and their containers respawn.
+ */
+export async function reloadRouterModelAgents(reason: string): Promise<void> {
+  for (const g of await getAllAgentGroups()) {
+    const model = await getEffectiveModelForAgent(g.id).catch(() => null);
+    if (isRouterEndpoint(model?.endpoint)) await reloadAgentModelEnv(g.id, reason);
   }
 }

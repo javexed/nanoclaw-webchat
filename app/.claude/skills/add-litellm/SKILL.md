@@ -25,9 +25,9 @@ on top of this.
   `master_key` and no request auth. That is safe only because the router is
   never publicly reachable: it binds `127.0.0.1` and the docker bridge IP, so
   binding is the perimeter. TLS is owed before the endpoint leaves the machine.
-- **Proxy auth arms itself** the moment a keyed backend exists — an
-  unauthenticated endpoint in front of a paid key would be a free credential
-  proxy (see *Keyed backends*).
+- **Proxy auth arms itself** the moment any declared backend exists, keyed
+  or gateway — an unauthenticated endpoint in front of a paid key would be a
+  free credential proxy, wherever the key is added (see *Keyed backends*).
 - **Agent → router credentials go through OneCLI**, like every other agent
   credential; the keyless local path is the sanctioned plaintext `NO_PROXY`
   case. On webchat installs `webchat_models.credential_ref` is reserved but
@@ -56,7 +56,9 @@ does:
 
 1. **Discovers** models on every `--hosts` entry — Ollama hosts via
    `GET /api/tags`, OpenAI-compatible hosts via `GET /v1/models` (probed
-   automatically, no per-host configuration).
+   automatically, no per-host configuration). A host that does not answer is
+   skipped (it stays in the `# hosts:` header; the next rebuild serves it), as
+   long as one does.
 2. **Generates `data/litellm/config.yaml`** — one deployment per
    (host, model): `ollama_chat/<tag>` for Ollama hosts, `openai/<id>` for
    OpenAI-compatible hosts; the same model name on several hosts
@@ -68,6 +70,9 @@ does:
    containers at `http://host.docker.internal:<port>/v1`, from nowhere else.
    **Never expose this port publicly.**
 4. **Health-checks** `/v1/models` (with auth, in keyed mode).
+
+A second install on the host: `--port`/`--name` (or
+`LITELLM_PORT`/`LITELLM_CONTAINER`).
 
 ## Verify
 
@@ -158,11 +163,49 @@ stays localhost + bridge; **TLS is owed before this endpoint ever leaves the
 machine**. Keyed-only installs (no local servers) are supported:
 `--hosts ''`.
 
+## Gateway backends (OneCLI)
+
+A backend may instead say `"gateway": true` (no `api_key_env`): its key lives
+in the OneCLI vault, and the container's traffic goes through the OneCLI
+gateway, which adds it per request. LiteLLM holds a placeholder; no provider
+key on disk. Needs `data/litellm/onecli.env` (proxy URL, CA trust) and
+`data/litellm/onecli-ca.pem`; webchat's Manage → Models → Cloud model writes
+both and the vault secret, scoped to the provider's inference and model-list
+paths so LiteLLM's pass-through routes (`/cohere/*`, `/mistral/*`) never carry
+it. A key stored before path scoping is narrowed to the inference path on the
+next cloud-model add or roster refresh; enter the key once more in the Cloud
+model form to restore the model list.
+
+A gateway backend still puts a paid key behind the port, so proxy auth is on
+(`master_key`, as for keyed backends). Agents never hold the master key:
+
+- the container shares a Docker network (`<container>-gateway`) with OneCLI's
+  container only, not OneCLI's own network where the vault's database lives.
+  It is an ordinary routable network (never an internal one, such as the
+  egress filter's: no published port, no route out). Agents call the router
+  by container name (`http://<container>:4000`) **through** the gateway, not
+  past it. Recreating OneCLI's container drops the attachment; this installer
+  and webchat (at agent spawn) attach it again;
+- the master key is a vault secret for that host name, **on inference paths
+  only** (`/v1/messages*`, `/v1/chat/completions*`, `/v1/models*`, one secret
+  each; `*` is a prefix match): it is LiteLLM's admin credential too, and
+  admin routes include ones that run commands by design, so an agent's
+  request to any other route arrives without it and is refused. Webchat
+  assigns the secrets, with the tool secrets, only to the agents whose model
+  the router serves (checked again at each spawn, so a model change follows);
+- a filtered agent may reach that host as its model host, nothing more;
+- central's own calls (model Test, health checks) go to loopback and send it.
+
+`install-routing.sh` restarts the container through this installer, so the
+proxy settings and network stay. The router's own `NO_PROXY` keeps the local
+model servers and the routing classifier direct.
+
 ## For dependent skills
 
 Import `generate()` from `resources/gen-config.mjs` and post-process, then
-re-run the container with extra mounts/env (superseding this one). Keep the
-invariants: local-only binding, key values only ever in `data/litellm/env`
-(never in generated config), proxy auth on whenever a keyed backend exists,
-and `data/litellm/` as the config home. Restoring the base state is always:
-re-run this installer.
+restart the container through this installer with
+`--reuse-config --mount <src:dst> …` so its port, name, proxy auth and gateway
+settings stay the ones it owns. Keep the invariants: local-only binding, key
+values only ever in `data/litellm/env` (never in generated config), proxy auth
+on whenever a backend is declared, and `data/litellm/` as the config home.
+Restoring the base state is always: re-run this installer.

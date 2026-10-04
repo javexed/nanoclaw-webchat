@@ -45,7 +45,12 @@
 import { log } from '../../log.js';
 import { getAgentGroup, getAllAgentGroups } from '../../db/agent-groups.js';
 import { getContainerConfig } from '../../db/container-configs.js';
-import { listGroupMemberEnrollments, getUserCredential, getUserCredsCredential } from '../user-credentials/db.js';
+import {
+  listGroupMemberEnrollments,
+  getUserCredential,
+  getUserCredsCredential,
+  setUserCredsStatus,
+} from '../user-credentials/db.js';
 import { WORKSPACE_DEFAULT_USER_ID, userCredsAgentIdentifier, userSlug } from '../user-credentials/identity.js';
 import {
   isToolSecret,
@@ -64,6 +69,14 @@ export interface ToolSecretInfo {
   id: string;
   label: string;
   hostPattern: string;
+  /**
+   * How it was entered, read back from how it goes on the wire: the host's own
+   * scheme ('token'), HTTP Basic from a username and password ('basic'), or a
+   * stated header ('custom', with that header and template). Never the value.
+   */
+  kind?: 'token' | 'basic' | 'custom';
+  headerName?: string;
+  valueFormat?: string;
 }
 
 /** Whether a group's credentials are isolated, and why it matters to the UI. */
@@ -90,6 +103,38 @@ export type Scope =
   | { kind: 'user'; agentGroupId: string; userId: string };
 
 export const WORKSPACE: Scope = { kind: 'workspace' };
+
+/**
+ * Secrets some agents of this install hold besides their tool secrets, from
+ * other modules (the cloud-model router's master key: cloud-models.ts, held
+ * only by agents whose model the router serves). The reconcile below writes
+ * each agent's full list, so a secret assigned outside it would be dropped at
+ * the next tool-secret change; a source here is part of the list instead.
+ * `ids` names every secret the source manages, so one an agent should no
+ * longer hold is dropped too; `wants` says which agent groups hold them.
+ */
+export interface AssignedSecretSource {
+  ids(admin: OnecliAdmin): Promise<string[]>;
+  wants(agentGroupId: string): Promise<boolean>;
+}
+const assignedSources: AssignedSecretSource[] = [];
+export function registerAssignedSecretSource(source: AssignedSecretSource): void {
+  assignedSources.push(source);
+}
+/** Every source-managed id, and the ones this group's agents should hold. */
+async function assignedSourceIds(
+  admin: OnecliAdmin,
+  agentGroupId: string,
+): Promise<{ managed: Set<string>; wanted: string[] }> {
+  const managed = new Set<string>();
+  const wanted: string[] = [];
+  for (const source of assignedSources) {
+    const ids = await source.ids(admin);
+    for (const id of ids) managed.add(id);
+    if (ids.length && (await source.wants(agentGroupId).catch(() => false))) wanted.push(...ids);
+  }
+  return { managed, wanted };
+}
 
 /** Stable segment embedded in the vault name — also the scope's identity. */
 function scopeKey(scope: Scope): string {
@@ -157,6 +202,7 @@ async function desiredMemberSecrets(
   ]);
   const ids = winners.map((w) => w.secretId);
   if (modelCredId) ids.push(modelCredId);
+  ids.push(...(await assignedSourceIds(admin, agentGroupId)).wanted);
   return Array.from(new Set(ids));
 }
 
@@ -181,6 +227,23 @@ export async function effectiveSecretsFor(
   return winnersByHost(admin, [...own, { kind: 'agent', agentGroupId }, WORKSPACE]);
 }
 
+/** Of these agent groups, the ones this person holds personal secrets for. */
+export async function groupsWithPersonalSecrets(
+  admin: OnecliAdmin,
+  userId: string,
+  agentGroupIds: string[],
+): Promise<string[]> {
+  const out: string[] = [];
+  for (const agentGroupId of agentGroupIds)
+    if ((await listToolSecrets(admin, { kind: 'user', agentGroupId, userId })).length) out.push(agentGroupId);
+  return out;
+}
+
+/** Re-apply one member agent's assignment (after its enrollment changed hands). */
+export function reconcileMemberSecrets(admin: OnecliAdmin, agentGroupId: string, userId: string): Promise<void> {
+  return reconcileMember(admin, agentGroupId, userId);
+}
+
 /** Re-apply precedence for one member agent (no-op if they aren't enrolled). */
 async function reconcileMember(admin: OnecliAdmin, agentGroupId: string, userId: string): Promise<void> {
   const identifier = userCredsAgentIdentifier(agentGroupId, userId);
@@ -196,7 +259,10 @@ async function reconcileMember(admin: OnecliAdmin, agentGroupId: string, userId:
   // The enrollment names the member's credential by id. Without it: a
   // provider-typed secret, then a `generic` one that isn't a tool secret by
   // name (a Grok credential is `generic`, the same type as a PAT).
-  const known = assigned.filter((id) => byId.has(id));
+  // Nor ids another module manages (the router's key is `generic` too): those
+  // follow the source's own rule, in desiredMemberSecrets.
+  const { managed } = await assignedSourceIds(admin, agentGroupId);
+  const known = assigned.filter((id) => byId.has(id) && !managed.has(id));
   const enrolled = (await getUserCredsCredential(userId, agentGroupId))?.secret_id ?? null;
   const modelCred =
     (enrolled && known.includes(enrolled) ? enrolled : null) ??
@@ -212,9 +278,10 @@ async function reconcileGroupAgent(admin: OnecliAdmin, agentGroupId: string): Pr
   if (!agentId) return;
   const assigned = await admin.listAgentSecretIds(agentId);
   const byId = new Map((await admin.listAllSecrets()).map((x) => [x.id, x]));
+  const { managed } = await assignedSourceIds(admin, agentGroupId);
   const keep = assigned.filter((id) => {
     const x = byId.get(id);
-    return x !== undefined && !isToolSecret(x);
+    return x !== undefined && !isToolSecret(x) && !managed.has(id);
   });
   await admin.setSecrets(agentId, Array.from(new Set([...keep, ...(await groupToolSecretIds(admin, agentGroupId))])));
 }
@@ -225,7 +292,17 @@ async function groupToolSecretIds(admin: OnecliAdmin, agentGroupId: string): Pro
   for (const sec of await listToolSecrets(admin, { kind: 'agent', agentGroupId })) byHost.set(sec.hostPattern, sec.id);
   for (const sec of await listToolSecrets(admin, WORKSPACE))
     if (!byHost.has(sec.hostPattern)) byHost.set(sec.hostPattern, sec.id);
-  return [...byHost.values()];
+  return [...byHost.values(), ...(await assignedSourceIds(admin, agentGroupId)).wanted];
+}
+
+/** Re-apply every agent's assignment: after a registered source's secret was added or removed. */
+export function reconcileAllAgents(admin: OnecliAdmin): Promise<void> {
+  return reconcile(admin, WORKSPACE);
+}
+
+/** Re-apply one group's assignments, its own agent's and its members': after what a source wants for it changed. */
+export function reconcileGroupAgents(admin: OnecliAdmin, agentGroupId: string): Promise<void> {
+  return reconcile(admin, { kind: 'agent', agentGroupId });
 }
 
 /**
@@ -263,7 +340,9 @@ export async function isolateGroup(admin: OnecliAdmin, agentGroupId: string): Pr
   if (!agentId) throw new Error('No OneCLI agent for this group yet');
   if ((await admin.getSecretMode(agentId)) === 'selective') return;
 
-  const assigned = await admin.listAgentSecretIds(agentId);
+  // Source-managed ids are re-added below only if the group should hold them.
+  const { managed } = await assignedSourceIds(admin, agentGroupId);
+  const assigned = (await admin.listAgentSecretIds(agentId)).filter((id) => !managed.has(id));
   const wantType = await providerSecretType(agentGroupId);
   const all = await admin.listAllSecrets();
   const typeById = await new Map(all.map((s) => [s.id, s.type]));
@@ -458,9 +537,22 @@ export async function listToolSecrets(admin: OnecliAdmin, scope: Scope): Promise
     if (s.type !== 'generic') continue;
     const label = labelFromName(scope, s.name);
     if (label === null) continue;
-    out.push({ id: s.id, label, hostPattern: s.hostPattern ?? '' });
+    out.push({ id: s.id, label, hostPattern: s.hostPattern ?? '', ...secretKindOf(s.hostPattern ?? '', s) });
   }
   return out.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** Which form a stored secret came from. A row with no wire settings read back counts as a token. */
+function secretKindOf(
+  host: string,
+  wire: { headerName?: string; valueFormat?: string },
+): Pick<ToolSecretInfo, 'kind' | 'headerName' | 'valueFormat'> {
+  if (!wire.headerName || !wire.valueFormat) return { kind: 'token' };
+  const usual = injectionForHost(host);
+  if (wire.headerName === usual.headerName && wire.valueFormat === usual.valueFormat) return { kind: 'token' };
+  if (wire.headerName.toLowerCase() === 'authorization' && wire.valueFormat === 'Basic {value}')
+    return { kind: 'basic' };
+  return { kind: 'custom', headerName: wire.headerName, valueFormat: wire.valueFormat };
 }
 
 /**
@@ -503,9 +595,10 @@ export async function createToolSecret(
     if (!isolated) throw new Error('Could not isolate this agent — refusing to add a shared-visible secret');
   }
   if (scope.kind === 'user') {
-    // A per-member agent exists only after UserCreds enrollment. Without it
-    // there is no identity to attach the credential to, and silently falling
-    // back to the group would make Person A's PAT everyone's PAT.
+    // A personal secret needs the person's own agent: falling back to the
+    // group's would make Person A's PAT everyone's PAT. Connecting a model
+    // credential creates one, and so does the route before a first personal
+    // secret (user-credentials ensurePersonalEnrollment, on the workspace's).
     const enrolled = (await listGroupMemberEnrollments(scope.agentGroupId)).some((r) => r.user_id === scope.userId);
     if (!enrolled) throw new Error('This person has not connected their credentials for this agent yet');
   }
@@ -535,6 +628,37 @@ export async function createToolSecret(
 }
 
 /**
+ * Give a tool secret a new value — and, when the kind changed, a new way on
+ * the wire — in place: the same vault secret, so every assignment stands and
+ * there is no moment without a credential. The host stays: it is what the
+ * credential is (another host is remove and add). Refuses ids outside the
+ * scope, as delete does. Null when the id is not this scope's.
+ */
+export async function updateToolSecret(
+  admin: OnecliAdmin,
+  scope: Scope,
+  secretId: string,
+  value: string,
+  scheme?: AuthScheme,
+): Promise<ToolSecretInfo | null> {
+  const current = (await listToolSecrets(admin, scope)).find((s) => s.id === secretId);
+  if (!current) return null;
+  const inferred = injectionForHost(current.hostPattern, scheme);
+  const wireValue = inferred.encodeBasic ? basicAuthValue('', value) : value;
+  await admin.updateGenericSecret(secretId, wireValue, {
+    headerName: inferred.headerName,
+    valueFormat: inferred.valueFormat,
+  });
+  log.info('Tool secret updated', { scope: scopeKey(scope), hostPattern: current.hostPattern });
+  return {
+    id: secretId,
+    label: current.label,
+    hostPattern: current.hostPattern,
+    ...secretKindOf(current.hostPattern, inferred),
+  };
+}
+
+/**
  * Unwire and delete a tool secret. Refuses ids outside the given scope, so a
  * crafted request can't delete another group's (or a provider) secret out of
  * the shared vault.
@@ -546,6 +670,13 @@ export async function deleteToolSecret(admin: OnecliAdmin, scope: Scope, secretI
   // Reconcile AFTER deletion so a now-uncovered host falls through to the next
   // scope (a member losing their own PAT goes back to the group's, if any).
   await reconcile(admin, scope);
+  // Their last personal secret, and no credential of their own behind the
+  // enrollment: back to the shared session.
+  if (scope.kind === 'user' && (await listToolSecrets(admin, scope)).length === 0) {
+    const row = await getUserCredsCredential(scope.userId, scope.agentGroupId);
+    if (row?.status === 'active' && !row.secret_id)
+      await setUserCredsStatus(scope.userId, scope.agentGroupId, 'revoked');
+  }
   await refreshNotes(admin, scope);
   log.info('Tool secret deleted', { scope: scopeKey(scope), secretId });
   return true;

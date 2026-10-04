@@ -132,6 +132,83 @@ describe('credential endpoints — scope-based authorization', () => {
     });
   });
 
+  // ── personal secrets without a Claude credential of one's own ────────────
+  describe('tool-secrets, a first personal secret', () => {
+    const post = (name: string, q: string) =>
+      httpRequest(
+        port,
+        'POST',
+        `/api/tool-secrets?${q}`,
+        csrf(name),
+        JSON.stringify({ hostPattern: 'dev.azure.com', value: 'v' }),
+      );
+
+    it('is refused for an agent the person does not use, before anything changes', async () => {
+      const r = await post('nobody', 'agentGroupId=ag-test-a&userId=webchat%3Anobody');
+      expect(r.status).toBe(403);
+      expect(r.body).toContain('agents you use');
+    });
+
+    it('passes the gate for an agent the person uses, with no Claude credential connected', async () => {
+      const r = await post('admina', 'agentGroupId=ag-test-a&userId=webchat%3Aadmina');
+      // Past authorization; the vault is not wired up in tests.
+      expect(r.status).not.toBe(403);
+    });
+  });
+
+  describe('My credentials', () => {
+    it('lists no agents for a person who uses none', async () => {
+      const r = await httpRequest(port, 'GET', '/api/tool-secrets/mine', as('nobody'));
+      expect(r.status).toBe(200);
+      expect(JSON.parse(r.body).groups).toEqual([]);
+    });
+  });
+
+  // ── /api/tool-secrets — updating a secret ─────────────────────────────────
+  // One write per test: tool-secret writes are rate-limited per user. These are
+  // refused before the vault is touched, so no vault is needed.
+  describe('tool-secrets, update (PUT)', () => {
+    const put = (who: string, query: string, body: unknown) =>
+      httpRequest(port, 'PUT', `/api/tool-secrets?${query}`, csrf(who), JSON.stringify(body));
+
+    it('follows the same scope rules as adding: a scoped admin is refused on another agent', async () => {
+      const r = await put('admina', 'agentGroupId=ag-test-b&id=sec-1', { value: 'v' });
+      expect(r.status).toBe(403);
+    });
+
+    it("nobody may update someone else's personal credential", async () => {
+      const r = await put('owner', 'agentGroupId=ag-test-a&userId=webchat%3Anobody&id=sec-1', { value: 'v' });
+      expect(r.status).toBe(403);
+      expect(r.body).toContain('your own credentials');
+    });
+
+    it('refuses a new host: the host is what the credential is', async () => {
+      const r = await put('owner', 'agentGroupId=ag-test-a&id=sec-1', { value: 'v', hostPattern: 'evil.example' });
+      expect(r.status).toBe(400);
+      expect(r.body).toContain('does not change');
+    });
+
+    it('needs a value, and validates a username + password as adding does', async () => {
+      const r = await put('owner', 'agentGroupId=ag-test-a&id=sec-1', {
+        basic: { username: 'who:ami', password: 'x' },
+      });
+      expect(r.status).toBe(400);
+      expect(r.body).toContain('colon');
+      expect(r.body).not.toMatch(/who|ami/);
+    });
+
+    it('needs the CSRF header', async () => {
+      const r = await httpRequest(
+        port,
+        'PUT',
+        '/api/tool-secrets?agentGroupId=ag-test-a&id=sec-1',
+        as('owner'),
+        '{"value":"v"}',
+      );
+      expect(r.status).toBe(403);
+    });
+  });
+
   // ── /api/tool-secrets — username + password body ──────────────────────────
   describe('tool-secrets, username + password', () => {
     const post = (body: unknown) =>

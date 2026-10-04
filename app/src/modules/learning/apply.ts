@@ -19,7 +19,7 @@ import path from 'path';
 
 import { DATA_DIR } from '../../config.js';
 import { readSkillDraftBody, resolveSkillDraft, type SkillDraft } from '../../db/skill-drafts.js';
-import { restartAgentGroupContainers } from '../../container-restart.js';
+import { restartAgentGroupContainersWhenIdle } from '../../container-restart-idle.js';
 import {
   assertPlainDir,
   mkdirNoFollow,
@@ -131,7 +131,7 @@ export async function applySkillDraft(draft: SkillDraft, restartReason: string):
     return { ok: false, status: 500, error: 'Write failed: ' + (err instanceof Error ? err.message : String(err)) };
   }
   await resolveSkillDraft(draft.id, 'kept');
-  const restarted = await restartAgentGroupContainers(draft.agent_group_id, restartReason);
+  const restarted = await restartAgentGroupContainersWhenIdle(draft.agent_group_id, restartReason);
   return { ok: true, status: 200, name, patched: isPatch, forkedFromPool, restarted: await restarted };
 }
 

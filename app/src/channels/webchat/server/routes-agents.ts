@@ -8,6 +8,7 @@ import { json, readJsonObject } from './http.js';
 import { requireAgentAdmin } from './route-guards.js';
 import { GROUPS_DIR } from '../../../config.js';
 import { restartAgentGroupContainers } from '../../../container-restart.js';
+import { restartAgentGroupContainersWhenIdle } from '../../../container-restart-idle.js';
 import {
   createAgentGroup,
   deleteAgentGroup,
@@ -112,7 +113,6 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import type { RouteCtx } from '../server.js';
-import { isRemotelyPlaced } from '../extensions.js';
 import {
   effectiveEgressMode,
   forgetGroupEgressMode,
@@ -481,7 +481,10 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
   if (codexAvailable()) allowed.add('codex');
   if (grokAvailable()) allowed.add('grok');
   if (!allowed.has(provider)) {
+    const known = ['opencode', 'pi', 'codex', 'grok'].includes(provider);
     return json(res, 400, {
+      // A known harness that is not loaded yet: the panel offers its install (owners).
+      ...(known ? { code: 'not-installed' } : {}),
       error:
         provider === 'opencode'
           ? 'OpenCode harness is not installed — install the OpenCode stack first.'
@@ -559,11 +562,10 @@ export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): 
  *   install allowlist.
  * `none` ("Model only") — the model and central's own services.
  *
- * A runner agent's traffic is checked per connection by central's relay, so a
- * change applies at once. A local agent in either filtered mode sits on the
- * lockdown network behind central's egress filter: switching between those two
- * applies at once too, but moving to or from Open changes the container's
- * network and so waits for its next start.
+ * An agent in either filtered mode sits on the lockdown network behind
+ * central's egress filter: switching between those two applies at once, but
+ * moving to or from Open changes the container's network and so waits for its
+ * next start.
  */
 export async function rAgentEgressPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
@@ -581,8 +583,7 @@ export async function rAgentEgressPut(ctx: RouteCtx, m: RegExpMatchArray): Promi
   const before = effectiveEgressMode((await getContainerConfig(group.id))?.egress);
   await updateContainerConfigScalars(group.id, { egress });
   forgetGroupEgressMode(group.id);
-  const placed = await isRemotelyPlaced(group.id);
-  const appliesNow = placed || (before !== 'open' && egress !== 'open');
+  const appliesNow = before !== 'open' && egress !== 'open';
   log.info('Agent egress changed', { agentGroupId: group.id, egress, by: userId, appliesNow });
   return json(res, 200, { ok: true, egress, appliesNow });
 }
@@ -1272,7 +1273,7 @@ export async function setAgentSkillsHandler(
   // Persist the explicit selection (switches the agent off the 'all' default) and
   // respawn so syncSkillSymlinks re-points .claude/skills before the next turn.
   await updateContainerConfigJson(agentGroupId, 'skills', skills);
-  const restarted = await restartAgentGroupContainers(agentGroupId, 'Webchat skills changed');
+  const restarted = await restartAgentGroupContainersWhenIdle(agentGroupId, 'Webchat skills changed');
   return json(res, 200, { ok: true, skills, restarted });
 }
 
@@ -1353,7 +1354,7 @@ export async function importScopedSkillHandler(
     }
     return json(res, 500, { error: 'Write failed: ' + (err instanceof Error ? err.message : String(err)) });
   }
-  const restarted = await restartAgentGroupContainers(agentGroupId, 'Webchat scoped skill added');
+  const restarted = await restartAgentGroupContainersWhenIdle(agentGroupId, 'Webchat scoped skill added');
   const inspection = inspectSkillFiles(skillName, files, { official: origin.official });
   return json(res, 200, { ok: true, name: skillName, files: files.length, restarted, warnings: inspection.warnings });
 }
@@ -1376,7 +1377,7 @@ export async function deleteScopedSkillHandler(res: ServerResponse, agentGroupId
   } catch (err) {
     return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
   }
-  const restarted = await restartAgentGroupContainers(agentGroupId, 'Webchat scoped skill removed');
+  const restarted = await restartAgentGroupContainersWhenIdle(agentGroupId, 'Webchat scoped skill removed');
   return json(res, 200, { ok: true, restarted });
 }
 

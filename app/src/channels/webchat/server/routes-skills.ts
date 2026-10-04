@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 
 import { json, readJsonBody, readJsonObject } from './http.js';
 import { requireAgentAdmin } from './route-guards.js';
-import { restartAgentGroupContainers } from '../../../container-restart.js';
+import { restartAgentGroupContainersWhenIdle } from '../../../container-restart-idle.js';
 import { getAgentGroup } from '../../../db/agent-groups.js';
 import { listSkillDrafts } from '../../../db/skill-drafts.js';
 import { revertLastRevision, snapshotRevision } from '../../../modules/learning/apply.js';
@@ -185,7 +185,7 @@ export async function rSkillsPromotePost(ctx: RouteCtx, _m: RegExpMatchArray): P
   let restarted = 0;
   for (const g of await listAgentsForUser(userId)) {
     if (dup?.agents.includes(g.id))
-      restarted += await restartAgentGroupContainers(g.id, 'Skill promoted to shared pool');
+      restarted += await restartAgentGroupContainersWhenIdle(g.id, 'Skill promoted to shared pool');
   }
   return json(res, 200, { ok: true, restarted });
 }
@@ -212,7 +212,7 @@ export async function rSkillRevertPost(ctx: RouteCtx, m: RegExpMatchArray): Prom
   if (!name) return json(res, 400, { error: 'Invalid skill name' });
   const r = revertLastRevision(scopedSkillsDir(group.id), name);
   if (!r.ok) return json(res, 409, { error: r.error });
-  const restarted = await restartAgentGroupContainers(group.id, 'Skill revision reverted');
+  const restarted = await restartAgentGroupContainersWhenIdle(group.id, 'Skill revision reverted');
   return json(res, 200, { ok: true, restarted });
 }
 
@@ -225,7 +225,7 @@ export async function rSkillRestorePost(ctx: RouteCtx, m: RegExpMatchArray): Pro
   if (!name) return json(res, 400, { error: 'Invalid skill name' });
   const r = restoreArchivedSkill(group.id, name);
   if (!r.ok) return json(res, 409, { error: r.error });
-  const restarted = await restartAgentGroupContainers(group.id, 'Webchat archived skill restored');
+  const restarted = await restartAgentGroupContainersWhenIdle(group.id, 'Webchat archived skill restored');
   return json(res, 200, { ok: true, restarted });
 }
 

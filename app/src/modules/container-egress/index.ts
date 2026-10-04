@@ -36,12 +36,15 @@ import {
   defaultFilterDeps,
   ensureEgressFilter,
   registerFilteredContainer,
+  serveModelPort,
   serveProxyClient,
   type Caller,
+  type ModelListener,
 } from '../../channels/webchat/egress-filter.js';
 import { registerRelayedContainer } from '../../channels/webchat/exec-relay.js';
 import { groupEgressMode, modelPassthroughs, type EgressMode } from '../../channels/webchat/egress-policy.js';
 import { mcpRelayTarget } from '../../channels/webchat/mcp-relay.js';
+import { modelRelays, type ModelRelay } from '../../channels/webchat/model-relay.js';
 import { gatewayHostForCentral } from '../../channels/webchat/gateway-connect.js';
 
 /**
@@ -61,14 +64,34 @@ const modes = new Map<string, EgressMode>();
  * address that forward to the host — the allowlist alone would never reach
  * them. Each connection is held to the caller's own policy (egress-filter.ts).
  */
-let passthroughs: Array<{ port: number; target: { host: string; port: number } }> = [];
+let passthroughs: Array<{ port: number; target: { host: string; port: number }; ollama?: boolean }> = [];
 
-registerSessionPrepareHook(async (agentGroupId): Promise<void> => {
+/** Models on another machine, each relayed on its own bridge port (model-relay.ts); refreshed with the pass-throughs. */
+let relays: ModelRelay[] = [];
+
+/** Read both from the model registry; on failure keep what is known. */
+async function refreshModelListeners(): Promise<void> {
   try {
     passthroughs = await modelPassthroughs();
   } catch (err) {
     log.warn('Egress: could not read the model registry; keeping the known pass-throughs', { err: String(err) });
   }
+  try {
+    relays = await modelRelays();
+  } catch (err) {
+    log.warn('Egress: could not read the model registry; keeping the known model relays', { err: String(err) });
+  }
+}
+
+/** The filter's model listeners. The proxy and relay ports are spoken for; a model on one of them is misconfigured. */
+function modelListeners(gatewayPort: number, relayPort: number): ModelListener[] {
+  return [...passthroughs, ...relays.map((r) => ({ ...r, remote: true }))].filter(
+    (p) => p.port !== gatewayPort && p.port !== relayPort,
+  );
+}
+
+registerSessionPrepareHook(async (agentGroupId): Promise<void> => {
+  await refreshModelListeners();
   // The relay's own decision, so both paths agree (and both fail closed).
   modes.set(agentGroupId, await groupEgressMode(agentGroupId));
 });
@@ -94,11 +117,16 @@ export function gatewayFromSpec(env: Record<string, string> | undefined): { host
  */
 export const execRelayEnabled = (): boolean => (process.env.WEBCHAT_EXEC_RELAY ?? '').trim() === '1';
 
-/** Serve one relayed stream: the proxy port through the filter's own logic, central's services straight through. */
+/**
+ * Serve one relayed stream: the proxy port through the filter's own logic, a
+ * model on another machine behind the filter's per-caller check, central's
+ * services straight through.
+ */
 function relayRoute(
   caller: Caller,
   gateway: { host: string; port: number },
   services: Map<number, { host: string; port: number }>,
+  models: Map<number, { remote: boolean; ollama: boolean }>,
 ) {
   const deps = { ...defaultFilterDeps(EGRESS_NETWORK, () => gateway), identify: async () => caller };
   return (port: number, stream: Duplex): void => {
@@ -108,6 +136,15 @@ function relayRoute(
     }
     const target = services.get(port);
     if (!target) return void stream.destroy();
+    // A model, host-local or on another machine: the per-caller check the
+    // lockdown filter applies (its own model, the allowlist where the mode
+    // allows it). Straight through, a Model-only agent reached every model in
+    // the registry, and Ollama's whole API (pull, delete, create) with it.
+    const model = models.get(port);
+    if (model) {
+      void serveModelPort(stream, port, target, deps, model.remote, model.ollama).catch(() => stream.destroy());
+      return;
+    }
     const up = net.connect(target);
     up.on('error', () => stream.destroy());
     stream.on('error', () => up.destroy());
@@ -116,12 +153,29 @@ function relayRoute(
   };
 }
 
-/** Central's own services a relayed container dials directly: the MCP relay and host-local models. */
-function relayServices(gatewayPort: number): Map<number, { host: string; port: number }> {
+/**
+ * Central's own services a relayed container dials directly: the MCP relay
+ * (straight through: it authenticates each request with its own token) and
+ * models, host-local or relayed (`remote`), each behind the per-caller check.
+ */
+function relayServices(gatewayPort: number): {
+  services: Map<number, { host: string; port: number }>;
+  models: Map<number, { remote: boolean; ollama: boolean }>;
+} {
   const relay = mcpRelayTarget();
   const services = new Map<number, { host: string; port: number }>([[relay.port, relay]]);
-  for (const p of passthroughs) if (p.port !== gatewayPort && !services.has(p.port)) services.set(p.port, p.target);
-  return services;
+  const models = new Map<number, { remote: boolean; ollama: boolean }>();
+  for (const p of passthroughs) {
+    if (p.port === gatewayPort || services.has(p.port)) continue;
+    services.set(p.port, p.target);
+    models.set(p.port, { remote: false, ollama: !!p.ollama });
+  }
+  for (const r of relays) {
+    if (r.port === gatewayPort || services.has(r.port)) continue;
+    services.set(r.port, r.target);
+    models.set(r.port, { remote: true, ollama: !!r.ollama });
+  }
+  return { services, models };
 }
 
 /** The network arguments for an exec-relayed agent; exported for tests. Throws when there is no gateway to relay to. */
@@ -131,11 +185,11 @@ export function execRelayNetworkArgs(
   const agent = spec.containers.find((c) => c.role === 'agent') ?? spec.containers[0];
   const gateway = gatewayFromSpec({ ...(agent?.contributedEnv ?? {}), ...(agent?.env ?? {}) });
   if (!gateway) throw new Error('the agent has no proxy URL to relay (the credential gateway contributed none)');
-  const services = relayServices(gateway.port);
+  const { services, models } = relayServices(gateway.port);
   const caller = { agentGroupId: spec.key.agentGroupId, sessionId: spec.key.sessionId ?? '' };
   registerRelayedContainer(agentContainerName(spec), {
     ports: [gateway.port, ...services.keys()],
-    route: relayRoute(caller, gateway, services),
+    route: relayRoute(caller, gateway, services, models),
   });
   // The endpoint name the proxy URL uses now means the container's own loopback, where the forwarder listens.
   return ['--network', 'none', `--add-host=${spec.networkAccess.endpoint}:127.0.0.1`];
@@ -186,17 +240,89 @@ function adoptRelayedContainers(): void {
       const env = Object.fromEntries(envList.map((e) => [e.slice(0, e.indexOf('=')), e.slice(e.indexOf('=') + 1)]));
       const gateway = gatewayFromSpec(env);
       if (!gateway) continue;
-      const services = relayServices(gateway.port);
+      const { services, models } = relayServices(gateway.port);
       const caller = { agentGroupId: group, sessionId: session && session !== '<no value>' ? session : '' };
       registerRelayedContainer(name, {
         ports: [gateway.port, ...services.keys()],
-        route: relayRoute(caller, gateway, services),
+        route: relayRoute(caller, gateway, services, models),
       });
       log.info('Exec relay: adopted a running container', { container: name });
     }
   })().catch((err: unknown) => log.warn('Exec relay: adoption scan failed', { err: String(err) }));
 }
 if (execRelayEnabled()) setTimeout(adoptRelayedContainers, 0).unref?.();
+
+/**
+ * After a restart, running agents behind the egress filter have no filter:
+ * it starts listening only when a filtered agent is spawned, so an adopted one
+ * had its every model call refused (ECONNREFUSED) until some other filtered
+ * agent spawned. Find them on the egress network and start the filter again,
+ * from their proxy URL, as the spawn path does. Delayed a little so the model
+ * registry the pass-throughs come from is readable.
+ */
+export const ADOPT_FILTERED_DELAY_MS = 3_000;
+const runtime = (args: string[]): Promise<string> =>
+  new Promise((resolve) =>
+    execFile(CONTAINER_RUNTIME_BIN, args, { timeout: 15_000 }, (err, out) => resolve(err ? '' : String(out))),
+  );
+/** Exported for tests, which pass their own `run` for the container runtime. */
+export function adoptFilteredContainers(run: (args: string[]) => Promise<string> = runtime): Promise<void> {
+  return (async () => {
+    const names = (
+      await run([
+        'ps',
+        '--filter',
+        `label=nanoclaw-install=${INSTALL_SLUG}`,
+        '--filter',
+        'label=nanoclaw-role=agent',
+        '--filter',
+        `network=${EGRESS_NETWORK}`,
+        '--format',
+        '{{.Names}}',
+      ])
+    )
+      .split('\n')
+      .map((n) => n.trim())
+      .filter(Boolean);
+    if (!names.length) return;
+    await refreshModelListeners();
+    const bridge = egressBridgeAddress();
+    const relay = mcpRelayTarget();
+    for (const name of names) {
+      const out = await run([
+        'inspect',
+        '--format',
+        '{{index .Config.Labels "nanoclaw-group"}}\t{{index .Config.Labels "nanoclaw-session"}}\t{{json .Config.Env}}',
+        name,
+      ]);
+      const [group, session, envJson] = out.trim().split('\t');
+      let envList: string[] = [];
+      try {
+        envList = (JSON.parse(envJson) as string[] | null) ?? [];
+      } catch {
+        continue;
+      }
+      if (!group || group === '<no value>') continue;
+      const env = Object.fromEntries(envList.map((e) => [e.slice(0, e.indexOf('=')), e.slice(e.indexOf('=') + 1)]));
+      const gateway = gatewayFromSpec(env);
+      if (!gateway) continue;
+      ensureEgressFilter(
+        bridge,
+        gateway.port,
+        defaultFilterDeps(EGRESS_NETWORK, () => gateway),
+        [{ port: relay.port, target: relay }],
+        modelListeners(gateway.port, relay.port),
+      );
+      registerFilteredContainer(name, {
+        agentGroupId: group,
+        sessionId: session && session !== '<no value>' ? session : '',
+      });
+      log.info('Egress filter: adopted a running container', { container: name });
+    }
+  })().catch((err: unknown) => log.warn('Egress filter: adoption scan failed', { err: String(err) }));
+}
+if (!execRelayEnabled() && !process.env.VITEST)
+  setTimeout(() => void adoptFilteredContainers(), ADOPT_FILTERED_DELAY_MS).unref?.();
 
 /** The network arguments for a filtered agent; exported for tests. Throws on any failure (the resolver turns that into no network). */
 export function filteredNetworkArgs(
@@ -216,9 +342,8 @@ export function filteredNetworkArgs(
     gateway.port,
     defaultFilterDeps(EGRESS_NETWORK, () => gateway),
     [{ port: relay.port, target: relay }],
-    // Held to each caller's policy, not open to every agent on the network. The
-    // proxy and relay ports are spoken for; a model on one of them is misconfigured.
-    passthroughs.filter((p) => p.port !== gateway.port && p.port !== relay.port),
+    // Held to each caller's policy, not open to every agent on the network.
+    modelListeners(gateway.port, relay.port),
   );
   registerFilteredContainer(agentContainerName(spec), {
     agentGroupId: spec.key.agentGroupId,

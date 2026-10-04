@@ -648,6 +648,50 @@ describe('authenticateRequest — OIDC bearer / EasyAuth id token', () => {
     expect(calls()).toBe(1);
   });
 
+  it('keeps one name per person: the header fallback uses the name a verified sign-in recorded', async () => {
+    const auth = await loadAuthWithEnv({ ...OIDC_ONLY, WEBCHAT_TRUSTED_PROXY_IPS: '10.0.0.5' });
+    const conn = await import('../../db/connection.js');
+    await (await import('../../db/migrations/index.js')).runMigrations(conn.getDb());
+    const first = await auth.authenticateRequest(bearer(mint(baseClaims())));
+    expect(first.ok && first.displayName).toBe('Jane Doe');
+    // An hour later the token has expired; EasyAuth's headers carry the request.
+    const fallback = await auth.authenticateRequest(
+      fakeReq({
+        remoteAddress: '10.0.0.5',
+        headers: {
+          'x-ms-client-principal-name': 'Jane.Doe@Example.com',
+          'x-ms-client-principal': 'eyJjbGFpbXMiOltdfQ==',
+        },
+      }),
+    );
+    expect(fallback.ok).toBe(true);
+    if (fallback.ok) {
+      expect(fallback.source).toBe('proxy-header');
+      expect(fallback.userId).toBe('webchat:jane.doe@example.com');
+      expect(fallback.displayName).toBe('Jane Doe');
+    }
+  });
+
+  it('takes a new spelling of the principal the header itself recorded', async () => {
+    const auth = await loadAuthWithEnv({ ...OIDC_ONLY, WEBCHAT_TRUSTED_PROXY_IPS: '10.0.0.5' });
+    const conn = await import('../../db/connection.js');
+    await (await import('../../db/migrations/index.js')).runMigrations(conn.getDb());
+    const viaHeader = (principal: string) =>
+      auth.authenticateRequest(
+        fakeReq({
+          remoteAddress: '10.0.0.5',
+          headers: { 'x-ms-client-principal-name': principal, 'x-ms-client-principal': 'eyJjbGFpbXMiOltdfQ==' },
+        }),
+      );
+    const before = await viaHeader('jane.doe@example.com');
+    expect(before.ok && before.displayName).toBe('jane.doe@example.com');
+    const after = await viaHeader('Jane.Doe@Example.com');
+    expect(after.ok && after.userId).toBe('webchat:jane.doe@example.com');
+    expect(after.ok && after.displayName).toBe('Jane.Doe@Example.com');
+    const { getUser } = await import('../../modules/permissions/db/users.js');
+    expect((await getUser('webchat:jane.doe@example.com'))?.display_name).toBe('Jane.Doe@Example.com');
+  });
+
   it('accepts the same token forwarded by EasyAuth in x-ms-token-aad-id-token', async () => {
     const auth = await loadAuthWithEnv(OIDC_ONLY);
     const req = fakeReq({ remoteAddress: '203.0.113.7', headers: { 'x-ms-token-aad-id-token': mint(baseClaims()) } });

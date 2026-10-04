@@ -72,3 +72,27 @@ export function setCardOpen(host: string, open: boolean): void {
 export function syncOpenCards(list: string[]): void {
   openCards.value = new Set(list.filter(isCardOpen));
 }
+
+export interface HostHealth {
+  status: 'up' | 'down';
+  lastOk: number | null;
+  lastError: string | null;
+}
+
+/** host → its last health check (GET /api/models/hosts). Absent = not checked yet. */
+export const hostHealth = ref<Record<string, HostHealth>>({});
+
+export interface FitJob {
+  host: string;
+  model: string;
+  status: 'queued' | 'fitting' | 'fitted' | 'no-fit' | 'skipped' | 'error';
+  ctx?: number;
+  detail?: string;
+  startedAt: number;
+}
+
+/** The GPU fits running or just finished, newest last. */
+export const fitJobs = ref<FitJob[]>([]);
+
+/** The owner's "Fit context to GPU" setting; null until loaded. */
+export const fitContext = ref<boolean | null>(null);

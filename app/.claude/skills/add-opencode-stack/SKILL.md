@@ -66,7 +66,10 @@ Easy to get wrong:
   sessions — and OpenCode rejects a `limit` block with only one key
   (`limit.output: "Missing key"`), so a session never opens at all; the
   container log shows nothing but `Query error`. Use the model's real context
-  window; webchat writes both when a model is picked, set-if-absent.
+  window; webchat writes both when a model is picked, set-if-absent. Left at
+  these defaults, each spawn replaces them with the window Ollama actually
+  serves the agent's model with (`num_ctx`, else the loaded window, else 4096);
+  any other value is yours and stands.
 - **Leave `OPENCODE_AUTH_MODE` unset.** It exists for the ChatGPT stub; local
   endpoints use the API-key path with the placeholder.
 

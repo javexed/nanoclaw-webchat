@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
-import { upsertUserCredsCredential, upsertUserCredential } from '../user-credentials/db.js';
+import { getUserCredsCredential, upsertUserCredsCredential, upsertUserCredential } from '../user-credentials/db.js';
 import { userCredsAgentIdentifier, WORKSPACE_DEFAULT_USER_ID } from '../user-credentials/identity.js';
 import type { OnecliAdmin } from '../user-credentials/onecli-admin.js';
 import {
@@ -11,6 +11,9 @@ import {
   listToolSecrets,
   createToolSecret,
   deleteToolSecret,
+  groupsWithPersonalSecrets,
+  updateToolSecret,
+  basicAuthValue,
   getGroupIsolation,
   isolateGroup,
   unisolateGroup,
@@ -18,6 +21,9 @@ import {
   resolveAuthScheme,
   resolveBasicCredential,
   parseCustomScheme,
+  reconcileAllAgents,
+  reconcileGroupAgents,
+  registerAssignedSecretSource,
 } from './index.js';
 
 /**
@@ -79,9 +85,14 @@ function fakeAdmin(opts: { failSetSecrets?: boolean } = {}) {
     async updateSecretValue(secretId, value) {
       secrets.set(secretId, { ...secrets.get(secretId)!, value });
     },
+    async updateGenericSecret(secretId, value, spec) {
+      secrets.set(secretId, { ...secrets.get(secretId)!, value, ...spec });
+    },
     async deleteSecret(secretId) {
       secrets.delete(secretId);
     },
+    async updateSecretPathPattern() {},
+    async deleteAgent() {},
     async setSecretMode(uuid, mode) {
       const a = byUuid(uuid);
       if (a) a.mode = mode;
@@ -93,7 +104,15 @@ function fakeAdmin(opts: { failSetSecrets?: boolean } = {}) {
       return [...(byUuid(uuid)?.secretIds ?? [])];
     },
     async listAllSecrets() {
-      return [...secrets].map(([id, v]) => ({ id, type: v.type, name: v.name, hostPattern: v.hostPattern }));
+      // With the wire settings, as the real listing reads them back from injectionConfig.
+      return [...secrets].map(([id, v]) => ({
+        id,
+        type: v.type,
+        name: v.name,
+        hostPattern: v.hostPattern,
+        headerName: v.headerName,
+        valueFormat: v.valueFormat,
+      }));
     },
     async setSecrets(uuid, ids) {
       if (opts.failSetSecrets) throw new Error('vault unreachable');
@@ -148,7 +167,9 @@ describe('workspace-scoped secrets', () => {
     const { admin } = fakeAdmin();
     await createToolSecret(admin, WORKSPACE, 'dev.azure.com', 'super-secret-pat');
     const listed = await listToolSecrets(admin, WORKSPACE);
-    expect(listed).toEqual([{ id: expect.any(String), label: 'dev.azure.com', hostPattern: 'dev.azure.com' }]);
+    expect(listed).toEqual([
+      { id: expect.any(String), label: 'dev.azure.com', hostPattern: 'dev.azure.com', kind: 'token' },
+    ]);
     expect(JSON.stringify(listed)).not.toContain('super-secret-pat');
   });
 
@@ -311,6 +332,63 @@ describe('getGroupIsolation', () => {
   it('reports unavailable when the group has no OneCLI agent', async () => {
     const { admin } = fakeAdmin();
     expect(await getGroupIsolation(admin, 'ag-none')).toEqual({ isolated: false, available: false });
+  });
+});
+
+describe('updateToolSecret', () => {
+  it('gives a secret a new value in place: same id, still assigned, no second secret', async () => {
+    const { admin, secrets, agents } = fakeAdmin();
+    await seedWorkspaceDefault();
+    await seedGroupAgent(admin, 'ag-1');
+    const aliceIdent = await seedMember(admin, 'ag-1', 'webchat:alice');
+    await isolateGroup(admin, 'ag-1');
+    const scope = { kind: 'agent' as const, agentGroupId: 'ag-1' };
+    const created = await createToolSecret(admin, scope, 'api.github.com', 'old-pat');
+    const updated = await updateToolSecret(admin, scope, created.id, 'new-pat');
+    expect(updated).toMatchObject({ id: created.id, hostPattern: 'api.github.com', kind: 'token' });
+    expect(secrets.get(created.id)).toMatchObject({ value: 'new-pat', valueFormat: 'Bearer {value}' });
+    expect(agents.get(aliceIdent)!.secretIds).toContain(created.id);
+    expect(await listToolSecrets(admin, scope)).toHaveLength(1);
+  });
+
+  it('changes the kind in place — a token becomes a username + password, and back — and reads it back', async () => {
+    const { admin, secrets } = fakeAdmin();
+    const created = await createToolSecret(admin, WORKSPACE, 'caldav.example.com', 'tok');
+    const basic = resolveBasicCredential({ username: 'me', password: 'hunter2' });
+    if ('error' in basic) throw new Error(basic.error);
+    await updateToolSecret(admin, WORKSPACE, created.id, basic.value, basic.scheme);
+    expect(secrets.get(created.id)).toMatchObject({ headerName: 'Authorization', valueFormat: 'Basic {value}' });
+    expect(secrets.get(created.id)!.value).toBe(Buffer.from('me:hunter2').toString('base64'));
+    expect((await listToolSecrets(admin, WORKSPACE))[0]).toMatchObject({ id: created.id, kind: 'basic' });
+    await updateToolSecret(admin, WORKSPACE, created.id, 'tok2');
+    expect(secrets.get(created.id)).toMatchObject({ value: 'tok2', valueFormat: 'Bearer {value}' });
+    expect((await listToolSecrets(admin, WORKSPACE))[0].kind).toBe('token');
+  });
+
+  it('reads a custom header back with its header and template, and keeps a host’s own encoding', async () => {
+    const { admin, secrets } = fakeAdmin();
+    const custom = await createToolSecret(admin, WORKSPACE, 'api.example.org', 'k', {
+      headerName: 'X-Api-Key',
+      valueFormat: '{value}',
+    });
+    expect((await listToolSecrets(admin, WORKSPACE)).find((s) => s.id === custom.id)).toMatchObject({
+      kind: 'custom',
+      headerName: 'X-Api-Key',
+      valueFormat: '{value}',
+    });
+    // Azure DevOps takes a PAT as HTTP Basic: an update encodes it exactly as adding did.
+    const ado = await createToolSecret(admin, WORKSPACE, 'dev.azure.com', 'pat1');
+    await updateToolSecret(admin, WORKSPACE, ado.id, 'pat2');
+    expect(secrets.get(ado.id)!.value).toBe(basicAuthValue('', 'pat2'));
+  });
+
+  it('refuses a secret outside the scope, and changes nothing', async () => {
+    const { admin, secrets } = fakeAdmin();
+    await seedGroupAgent(admin, 'ag-1');
+    const shared = await createToolSecret(admin, WORKSPACE, 'api.github.com', 'v');
+    expect(await updateToolSecret(admin, { kind: 'agent', agentGroupId: 'ag-1' }, shared.id, 'hijack')).toBeNull();
+    expect(await updateToolSecret(admin, WORKSPACE, 'sec-nope', 'x')).toBeNull();
+    expect(secrets.get(shared.id)!.value).toBe('v');
   });
 });
 
@@ -686,5 +764,154 @@ describe('Grok members (their model credential is `generic`, like a tool secret)
     await createToolSecret(admin, agent, 'api.github.com', 'v2');
     expect(injectedFor(ident, 'cli-chat-proxy.grok.com')).toEqual([grok]);
     expect(injectedFor(ident, 'dev.azure.com')).toEqual([pat.id]);
+  });
+});
+
+describe('a registered secret source (the cloud-model router key)', () => {
+  // Module-global registry: the source answers only while a test sets the id,
+  // and wants it for the groups in `served` (the router serves their model).
+  let routerSecret: string | null = null;
+  const served = new Set<string>();
+  registerAssignedSecretSource({
+    ids: async () => (routerSecret ? [routerSecret] : []),
+    wants: async (agentGroupId) => served.has(agentGroupId),
+  });
+  afterEach(() => {
+    routerSecret = null;
+    served.clear();
+  });
+
+  async function routerKey(admin: OnecliAdmin): Promise<string> {
+    return admin.createGenericSecret('LiteLLM inst router', 'sk-x', {
+      hostPattern: 'nanoclaw-litellm',
+      headerName: 'Authorization',
+      valueFormat: 'Bearer {value}',
+    });
+  }
+
+  it('reaches the isolated agents it serves, members included, and survives a later tool-secret change', async () => {
+    const { admin, injectedFor } = fakeAdmin();
+    await seedWorkspaceDefault();
+    await getDb().run(`INSERT INTO agent_groups (id,name,folder,created_at) VALUES (?,?,?,?)`, 'ag-1', 'a', 'a', '');
+    await seedGroupAgent(admin, 'ag-1');
+    const aliceIdent = await seedMember(admin, 'ag-1', 'webchat:alice');
+    await isolateGroup(admin, 'ag-1');
+    served.add('ag-1');
+    routerSecret = await routerKey(admin);
+    await reconcileAllAgents(admin);
+    expect(injectedFor('ag-1', 'nanoclaw-litellm')).toEqual([routerSecret]);
+    expect(injectedFor(aliceIdent, 'nanoclaw-litellm')).toEqual([routerSecret]);
+    // A member's list is rewritten whole on a tool-secret change: the router key stays in it.
+    await createToolSecret(admin, { kind: 'agent', agentGroupId: 'ag-1' }, 'dev.azure.com', 'v');
+    expect(injectedFor(aliceIdent, 'nanoclaw-litellm')).toEqual([routerSecret]);
+    expect(injectedFor('ag-1', 'nanoclaw-litellm')).toEqual([routerSecret]);
+  });
+
+  it('stays off agents on another model, and leaves once their model moves off the router', async () => {
+    const { admin, injectedFor } = fakeAdmin();
+    await seedWorkspaceDefault();
+    for (const g of ['ag-1', 'ag-2']) {
+      await getDb().run(`INSERT INTO agent_groups (id,name,folder,created_at) VALUES (?,?,?,?)`, g, g, g, '');
+      await seedGroupAgent(admin, g);
+      await isolateGroup(admin, g);
+    }
+    const aliceIdent = await seedMember(admin, 'ag-2', 'webchat:alice');
+    served.add('ag-1');
+    routerSecret = await routerKey(admin);
+    await reconcileAllAgents(admin);
+    expect(injectedFor('ag-1', 'nanoclaw-litellm')).toEqual([routerSecret]);
+    expect(injectedFor('ag-2', 'nanoclaw-litellm')).toEqual([]);
+    expect(injectedFor(aliceIdent, 'nanoclaw-litellm')).toEqual([]);
+    // ag-1 moves to a local model: the next reconcile of its group drops the key.
+    served.delete('ag-1');
+    await reconcileGroupAgents(admin, 'ag-1');
+    expect(injectedFor('ag-1', 'nanoclaw-litellm')).toEqual([]);
+    // A member holding the key with no credential of their own: the key is
+    // `generic` and not a tool secret, yet it is not mistaken for their model
+    // credential and kept.
+    await upsertUserCredsCredential('webchat:alice', 'ag-2', aliceIdent, null, 'api_key', 'claude');
+    await admin.setSecrets(`uuid-${aliceIdent}`, [routerSecret]);
+    await reconcileGroupAgents(admin, 'ag-2');
+    expect(injectedFor(aliceIdent, 'nanoclaw-litellm')).toEqual([]);
+  });
+
+  it('isolating a group the router does not serve does not carry a held router key over', async () => {
+    const { admin, injectedFor } = fakeAdmin();
+    await seedWorkspaceDefault();
+    await getDb().run(`INSERT INTO agent_groups (id,name,folder,created_at) VALUES (?,?,?,?)`, 'ag-1', 'a', 'a', '');
+    await seedGroupAgent(admin, 'ag-1');
+    routerSecret = await routerKey(admin);
+    await admin.setSecrets('uuid-ag-1', [routerSecret]);
+    await isolateGroup(admin, 'ag-1');
+    expect(injectedFor('ag-1', 'nanoclaw-litellm')).toEqual([]);
+  });
+
+  it('is gone from every agent once the source stops naming it', async () => {
+    const { admin, injectedFor } = fakeAdmin();
+    await seedWorkspaceDefault();
+    await getDb().run(`INSERT INTO agent_groups (id,name,folder,created_at) VALUES (?,?,?,?)`, 'ag-1', 'a', 'a', '');
+    await seedGroupAgent(admin, 'ag-1');
+    const aliceIdent = await seedMember(admin, 'ag-1', 'webchat:alice');
+    await isolateGroup(admin, 'ag-1');
+    served.add('ag-1');
+    routerSecret = await routerKey(admin);
+    await reconcileAllAgents(admin);
+    await admin.deleteSecret(routerSecret);
+    routerSecret = null;
+    await reconcileAllAgents(admin);
+    expect(injectedFor('ag-1', 'nanoclaw-litellm')).toEqual([]);
+    expect(injectedFor(aliceIdent, 'nanoclaw-litellm')).toEqual([]);
+  });
+});
+
+describe('personal secrets without a Claude credential of their own', () => {
+  /** A member enrolled for personal secrets alone (user-credentials ensurePersonalEnrollment): no key of theirs. */
+  async function seedPersonalMember(admin: OnecliAdmin, agentGroupId: string, userId: string) {
+    const ident = userCredsAgentIdentifier(agentGroupId, userId);
+    await admin.ensureAgent(`${userId} (UserCreds)`, ident);
+    await admin.setSecretMode(`uuid-${ident}`, 'selective');
+    await upsertUserCredsCredential(userId, agentGroupId, ident, null, 'api_key', 'claude');
+    return ident;
+  }
+  const alice = { kind: 'user' as const, agentGroupId: 'ag-1', userId: 'webchat:alice' };
+
+  it('their PAT reaches only them, and their last one removed takes them back to the shared session', async () => {
+    const { admin, injectedFor } = fakeAdmin();
+    await seedWorkspaceDefault();
+    await seedGroupAgent(admin, 'ag-1');
+    const ident = await seedPersonalMember(admin, 'ag-1', 'webchat:alice');
+    // The route isolates the fleet before a personal secret (ensureFleetIsolation):
+    // an `all`-mode agent would be offered her PAT too.
+    await isolateGroup(admin, 'ag-1');
+    const a = await createToolSecret(admin, alice, 'dev.azure.com', 'pat-a');
+    const b = await createToolSecret(admin, alice, 'github.com', 'pat-b');
+    expect(injectedFor(ident, 'dev.azure.com')).toEqual([a.id]);
+    expect(injectedFor('ag-1', 'dev.azure.com')).toEqual([]);
+
+    await deleteToolSecret(admin, alice, a.id);
+    expect((await getUserCredsCredential('webchat:alice', 'ag-1'))!.status).toBe('active'); // one left
+    await deleteToolSecret(admin, alice, b.id);
+    expect((await getUserCredsCredential('webchat:alice', 'ag-1'))!.status).toBe('revoked');
+  });
+
+  it("removing the last one leaves an enrollment on the member's own key alone", async () => {
+    const { admin } = fakeAdmin();
+    await seedWorkspaceDefault();
+    await seedGroupAgent(admin, 'ag-1');
+    await seedMember(admin, 'ag-1', 'webchat:alice');
+    const a = await createToolSecret(admin, alice, 'dev.azure.com', 'pat-a');
+    await deleteToolSecret(admin, alice, a.id);
+    expect((await getUserCredsCredential('webchat:alice', 'ag-1'))!.status).toBe('active');
+  });
+
+  it('groupsWithPersonalSecrets names the agents a person holds personal secrets for', async () => {
+    const { admin } = fakeAdmin();
+    await seedWorkspaceDefault();
+    await seedGroupAgent(admin, 'ag-1');
+    await seedGroupAgent(admin, 'ag-2');
+    await seedPersonalMember(admin, 'ag-1', 'webchat:alice');
+    await createToolSecret(admin, alice, 'dev.azure.com', 'pat-a');
+    expect(await groupsWithPersonalSecrets(admin, 'webchat:alice', ['ag-1', 'ag-2'])).toEqual(['ag-1']);
+    expect(await groupsWithPersonalSecrets(admin, 'webchat:bob', ['ag-1', 'ag-2'])).toEqual([]);
   });
 });

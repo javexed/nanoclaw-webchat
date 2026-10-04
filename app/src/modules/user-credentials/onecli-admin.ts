@@ -10,11 +10,12 @@
  *   agents secrets --id → { data: [{ id, type, hostPattern, ... }] }
  *   secrets create / agents create → the created row (id) under data
  *
- * NOTE: `secrets create --value <secret>` passes the value in argv (briefly
- * visible in the host process list) — this covers API keys AND Claude OAuth
- * subscription tokens (both go via --value; only Codex auth.json uses --file).
- * onecli has no stdin value input as of 1.2.x; the host is single-user so the
- * exposure window is small — documented residual.
+ * SECRET VALUES stay out of argv (which any local user can read in the
+ * process list) wherever the CLI allows: a value goes in a 0600 temp file and
+ * `--file` when the subcommand takes one (`secrets create` does from onecli
+ * 2.x; probed once from its --help, see valueArgs). An older CLI, and
+ * `secrets update` (no `--file` in any release so far), still take
+ * `--value <secret>`: a residual exposure for the life of that one process.
  */
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -36,10 +37,9 @@ const LIST_MAX = '1000';
 const TIMEOUT_MS = 20_000;
 
 /**
- * Run `fn` with a path to a 0600 temp file holding `content`, then shred it.
- * Used for Codex OAuth credentials — the whole `auth.json` is too large/sensitive
- * to pass via `--value` (which lands in argv / the host process list); onecli's
- * `secrets create/update --file` reads it off disk instead.
+ * Run `fn` with a path to a 0600 temp file holding `content`, then remove it.
+ * A secret value passed via `--value` lands in argv (the host process list);
+ * onecli's `--file` reads it off disk instead (valueArgs).
  */
 async function withSecretFile<T>(content: string, fn: (path: string) => Promise<T>): Promise<T> {
   const path = join(tmpdir(), `user-creds-${randomBytes(12).toString('hex')}.json`);
@@ -51,7 +51,56 @@ async function withSecretFile<T>(content: string, fn: (path: string) => Promise<
   }
 }
 
+/**
+ * Does `onecli secrets <sub>` take `--file`? Read from its --help, once per
+ * process (a failed probe is retried next time, never cached as "no").
+ */
+const takesFile = new Map<'create' | 'update', Promise<boolean>>();
+function secretsTakesFile(sub: 'create' | 'update'): Promise<boolean> {
+  let known = takesFile.get(sub);
+  if (!known) {
+    known = onecli(['secrets', sub, '--help'])
+      .then((help) => JSON.stringify(help).includes('"--file"'))
+      .catch(() => {
+        takesFile.delete(sub);
+        return false;
+      });
+    takesFile.set(sub, known);
+  }
+  return known;
+}
+export function __resetCliProbeForTest(): void {
+  takesFile.clear();
+}
+
+/**
+ * Run `fn` with the args that hand onecli a secret value: `--file <0600 temp
+ * file>` when the subcommand takes one, else `--value <secret>`. The CLI trims
+ * what it reads from a file, so a value with surrounding whitespace keeps
+ * `--value` rather than change on the way in.
+ */
+async function valueArgs<T>(sub: 'create' | 'update', value: string, fn: (args: string[]) => Promise<T>): Promise<T> {
+  if (value && value === value.trim() && (await secretsTakesFile(sub)))
+    return withSecretFile(value, (path) => fn(['--file', path]));
+  return fn(['--value', value]);
+}
+
+/**
+ * Under the test runner the real CLI is refused: it talks to whatever vault
+ * this machine is configured for, and a test that reached it (a spawn hook
+ * enrolling a fake member) left identities in a developer's live vault. A test
+ * that stubs child_process says so with __allowOnecliForTest().
+ */
+let allowedInTests = false;
+export function __allowOnecliForTest(): void {
+  allowedInTests = true;
+}
+
 async function onecli(args: string[]): Promise<unknown> {
+  if (process.env.VITEST && !allowedInTests)
+    throw new Error(
+      `onecli-admin: no real vault calls under the test runner (onecli ${args[0] ?? ''} ${args[1] ?? ''})`,
+    );
   // A bare systemd service env carries neither of the two things onecli needs:
   //   • HOME — onecli reads its auth token from $HOME/.config; unset → every call
   //     comes back "Unauthorized" (exit 2).
@@ -106,7 +155,12 @@ export interface SecretRow {
   id: string;
   type?: string;
   hostPattern?: string;
+  /** Null/absent: the secret is injected on every path of its host. */
+  pathPattern?: string | null;
   name?: string;
+  /** How a generic secret goes on the wire (its injectionConfig); absent for other types. */
+  headerName?: string;
+  valueFormat?: string;
 }
 
 /** Vault-name prefix of every tool secret (see modules/tool-secrets). */
@@ -174,7 +228,16 @@ export interface OnecliAdmin {
   /** Update a secret's value. `asFile=true` writes the value (e.g. a refreshed
    *  Codex auth.json) via `--file` instead of `--value`. */
   updateSecretValue(secretId: string, value: string, asFile?: boolean): Promise<void>;
+  /** Update a generic secret in place: its value and how it goes on the wire (same id, same assignments). */
+  updateGenericSecret(
+    secretId: string,
+    value: string,
+    spec: Pick<GenericSecretSpec, 'headerName' | 'valueFormat'>,
+  ): Promise<void>;
   deleteSecret(secretId: string): Promise<void>;
+  /** Narrow (or change) the request paths a secret is injected on. */
+  updateSecretPathPattern(secretId: string, pathPattern: string): Promise<void>;
+  deleteAgent(agentId: string): Promise<void>;
   setSecretMode(agentId: string, mode: 'selective' | 'all'): Promise<void>;
   /**
    * An agent's current secret mode. Load-bearing for credential scoping: in
@@ -214,18 +277,9 @@ export const realOnecliAdmin: OnecliAdmin = {
     return id;
   },
   async createAnthropicSecret(name, value) {
-    const r = await onecli([
-      'secrets',
-      'create',
-      '--name',
-      name,
-      '--type',
-      'anthropic',
-      '--value',
-      value,
-      '--host-pattern',
-      'api.anthropic.com',
-    ]);
+    const r = await valueArgs('create', value, (v) =>
+      onecli(['secrets', 'create', '--name', name, '--type', 'anthropic', ...v, '--host-pattern', 'api.anthropic.com']),
+    );
     const id = createdId(r);
     if (!id) throw new Error('onecli: secrets create returned no id');
     return id;
@@ -250,31 +304,32 @@ export const realOnecliAdmin: OnecliAdmin = {
               'chatgpt.com',
             ]),
           )
-        : await onecli([
-            'secrets',
-            'create',
-            '--name',
-            name,
-            '--type',
-            'openai',
-            '--value',
-            value,
-            '--host-pattern',
-            'api.openai.com',
-          ]);
+        : await valueArgs('create', value, (v) =>
+            onecli(['secrets', 'create', '--name', name, '--type', 'openai', ...v, '--host-pattern', 'api.openai.com']),
+          );
     const id = createdId(r);
     if (!id) throw new Error('onecli: secrets create returned no id');
     return id;
   },
-  async updateSecretValue(secretId, value, asFile = false) {
-    if (asFile) {
-      await withSecretFile(value, (path) => onecli(['secrets', 'update', '--id', secretId, '--file', path]));
-      return;
-    }
-    await onecli(['secrets', 'update', '--id', secretId, '--value', value]);
+  // `asFile` (a Codex auth.json) asks for the file path too; valueArgs gives it
+  // whenever the CLI takes one, so the flag no longer changes anything.
+  async updateSecretValue(secretId, value, _asFile = false) {
+    await valueArgs('update', value, (v) => onecli(['secrets', 'update', '--id', secretId, ...v]));
+  },
+  async updateGenericSecret(secretId, value, spec) {
+    const extra: string[] = [];
+    if (spec.headerName) extra.push('--header-name', spec.headerName);
+    if (spec.valueFormat) extra.push('--value-format', spec.valueFormat);
+    await valueArgs('update', value, (v) => onecli(['secrets', 'update', '--id', secretId, ...v, ...extra]));
   },
   async deleteSecret(secretId) {
     await onecli(['secrets', 'delete', '--id', secretId]);
+  },
+  async updateSecretPathPattern(secretId, pathPattern) {
+    await onecli(['secrets', 'update', '--id', secretId, '--path-pattern', pathPattern]);
+  },
+  async deleteAgent(agentId) {
+    await onecli(['agents', 'delete', '--id', agentId]);
   },
   async getSecretMode(agentId) {
     const rows = dataArray(await onecli(['agents', 'list', '--max', LIST_MAX]));
@@ -289,34 +344,33 @@ export const realOnecliAdmin: OnecliAdmin = {
     return Array.isArray(d.data) ? d.data.filter((x): x is string => typeof x === 'string') : [];
   },
   async createGenericSecret(name, value, spec) {
-    const args = [
-      'secrets',
-      'create',
-      '--name',
-      name,
-      '--type',
-      'generic',
-      '--value',
-      value,
-      '--host-pattern',
-      spec.hostPattern,
-    ];
-    if (spec.pathPattern) args.push('--path-pattern', spec.pathPattern);
-    if (spec.headerName) args.push('--header-name', spec.headerName);
-    if (spec.valueFormat) args.push('--value-format', spec.valueFormat);
-    if (spec.paramName) args.push('--param-name', spec.paramName);
-    if (spec.paramFormat) args.push('--param-format', spec.paramFormat);
-    const id = createdId(await onecli(args));
+    const extra = ['--host-pattern', spec.hostPattern];
+    if (spec.pathPattern) extra.push('--path-pattern', spec.pathPattern);
+    if (spec.headerName) extra.push('--header-name', spec.headerName);
+    if (spec.valueFormat) extra.push('--value-format', spec.valueFormat);
+    if (spec.paramName) extra.push('--param-name', spec.paramName);
+    if (spec.paramFormat) extra.push('--param-format', spec.paramFormat);
+    const id = createdId(
+      await valueArgs('create', value, (v) =>
+        onecli(['secrets', 'create', '--name', name, '--type', 'generic', ...v, ...extra]),
+      ),
+    );
     if (!id) throw new Error('onecli: secrets create returned no id');
     return id;
   },
   async listAllSecrets() {
-    return dataArray(await onecli(['secrets', 'list', '--max', LIST_MAX])).map((s) => ({
-      id: s.id as string,
-      type: s.type as string | undefined,
-      hostPattern: s.hostPattern as string | undefined,
-      name: s.name as string | undefined,
-    }));
+    return dataArray(await onecli(['secrets', 'list', '--max', LIST_MAX])).map((s) => {
+      const inj = (s.injectionConfig ?? null) as { headerName?: unknown; valueFormat?: unknown } | null;
+      return {
+        id: s.id as string,
+        type: s.type as string | undefined,
+        hostPattern: s.hostPattern as string | undefined,
+        pathPattern: (s.pathPattern as string | null | undefined) ?? null,
+        name: s.name as string | undefined,
+        ...(typeof inj?.headerName === 'string' ? { headerName: inj.headerName } : {}),
+        ...(typeof inj?.valueFormat === 'string' ? { valueFormat: inj.valueFormat } : {}),
+      };
+    });
   },
   async setSecrets(agentId, secretIds) {
     await onecli(['agents', 'set-secrets', '--id', agentId, '--secret-ids', secretIds.join(',')]);

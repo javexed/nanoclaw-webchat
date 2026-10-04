@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * The user's own per-agent credentials, mounted into <div id="my-credentials-list">; the
- * section hides when nothing is connected. One add-form per agent, worded like the agent
+ * The user's own per-agent credentials, mounted into <div id="my-credentials-list">, for
+ * every agent they use; the section hides when there is none. One add-form per agent, worded like the agent
  * panel's "Only you" rows. Fields are uncontrolled and read at click time. The token field
  * uses autocomplete="new-password" so browsers do not offer a saved login.
  */

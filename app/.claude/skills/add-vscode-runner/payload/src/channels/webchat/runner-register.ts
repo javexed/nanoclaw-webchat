@@ -7,8 +7,9 @@
 import { log } from '../../log.js';
 import { onChannelStart, onServerStart, registerFeature, registerRoutes, registerSigninSection } from './extensions.js';
 import { derivedClientConfig, getClientOverrides } from './runner-client-config.js';
-import { startRelayForToolsPlacements } from './runner-tools.js';
-import { RUNNER_ID } from './runner-registry.js';
+import { registerSessionPrepareHook } from '../../seam/index.js';
+import { ensureSessionKeys, startRelayForToolsPlacements } from './runner-tools.js';
+import { getPlacement, RUNNER_ID } from './runner-registry.js';
 import { RUNNER_ENABLED, RUNNER_WS_PATHS, setupRunnerWebSocket } from './runner-ws.js';
 import { json } from './server/http.js';
 import {
@@ -29,6 +30,12 @@ import {
 const RE_RUNNER_PLACEMENT = /^\/api\/runners\/placements\/([^/]+)$/;
 
 registerFeature('vscode');
+
+// A placed group's sessions each get the key that ties ReadAttachment to their
+// own inbox, before the container that sends it starts.
+registerSessionPrepareHook(async (agentGroupId) => {
+  if ((await getPlacement(agentGroupId))?.mode === 'tools') await ensureSessionKeys(agentGroupId);
+});
 
 registerRoutes([
   { method: 'GET', path: '/api/runners', guards: ['globalAdmin'], h: rRunnersGet },

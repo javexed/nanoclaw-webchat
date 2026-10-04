@@ -79,20 +79,6 @@ export function runChannelStart(): void {
   }
 }
 
-// ── Placement ───────────────────────────────────────────────────────────────
-
-let placementResolver: ((agentGroupId: string) => Promise<boolean>) | null = null;
-
-/** Tell core whether an agent runs away from this host (on a paired machine). */
-export function registerPlacementResolver(fn: (agentGroupId: string) => Promise<boolean>): void {
-  placementResolver = fn;
-}
-
-/** True when an installed extension runs this agent somewhere other than here. */
-export async function isRemotelyPlaced(agentGroupId: string): Promise<boolean> {
-  return placementResolver ? placementResolver(agentGroupId) : false;
-}
-
 // ── Sign-in settings sections ───────────────────────────────────────────────
 
 const signinSections = new Map<string, () => Promise<Record<string, unknown>>>();

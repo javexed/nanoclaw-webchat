@@ -35,7 +35,7 @@ import {
 import { audit } from '../../audit.js';
 import { hasTable, getDb } from '../../db/connection.js';
 import { log } from '../../log.js';
-import { upsertUser } from '../../modules/permissions/db/users.js';
+import { getUser, upsertUser } from '../../modules/permissions/db/users.js';
 import { getBearerTokenDisabled, getPromoteFirstTailscaleOwner, setPromoteFirstTailscaleOwner } from './db.js';
 import { ensureOwnerRoleOnFirstLogin, grantOwnerRole, isOwner } from './roles.js';
 import { lookupSigninSession, resolveLinkedUserId, sessionTokenFromCookie } from './signins.js';
@@ -1052,12 +1052,25 @@ async function finalize(args: {
   //
   // Guarded behind hasTable so a deployment without the permissions module
   // still authenticates instead of throwing on a missing FK.
+  //
+  // One name per person, whichever path carried this request. The header
+  // fallback names people by their principal (Jane.Doe@example.com) where a
+  // verified sign-in names them by display name (Jane Doe); with tokens
+  // expiring hourly a user flipped between the two — two names in the
+  // history, and the web app, which recognised its own messages by name,
+  // showed each one twice. The header path keeps the name already on record,
+  // unless that is only another spelling of the header's own principal.
+  let displayName = args.displayName;
   if (await hasTable(getDb(), 'users')) {
     try {
+      if (args.source === 'proxy-header') {
+        const known = (await getUser(args.userId))?.display_name;
+        if (known && normalizeId(known) !== normalizeId(args.displayName)) displayName = known;
+      }
       await upsertUser({
         id: args.userId,
         kind: 'webchat',
-        display_name: args.displayName || null,
+        display_name: displayName || null,
         created_at: new Date().toISOString(),
       });
     } catch (err) {
@@ -1075,5 +1088,5 @@ async function finalize(args: {
     // owner to re-arm it.
     if (granted || (await isOwner(args.userId))) await setPromoteFirstTailscaleOwner(false);
   }
-  return { ok: true, userId: args.userId, displayName: args.displayName, source: args.source };
+  return { ok: true, userId: args.userId, displayName, source: args.source };
 }

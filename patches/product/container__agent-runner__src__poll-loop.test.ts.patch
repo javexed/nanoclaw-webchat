@@ -1,16 +1,16 @@
 diff --git a/container/agent-runner/src/poll-loop.test.ts b/container/agent-runner/src/poll-loop.test.ts
-index ec3c45c6..c9643a62 100644
+index 73c2689e..955989c7 100644
 --- a/container/agent-runner/src/poll-loop.test.ts
 +++ b/container/agent-runner/src/poll-loop.test.ts
-@@ -3,10 +3,21 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+@@ -3,10 +3,21 @@ import { describe, it, expect, beforeEach, afterEach, spyOn } from 'bun:test';
  import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from './mailbox/sqlite/connection.js';
- import { getPendingMessages, markCompleted } from './db/messages-in.js';
+ import { getPendingMessages, markCompleted, type MessageInRow } from './db/messages-in.js';
  import { getUndeliveredMessages } from './db/messages-out.js';
--import { formatMessages, extractRouting } from './formatter.js';
+-import { formatMessages, extractRouting, isClearCommand, isRunnerCommand } from './formatter.js';
 -import { processQuery } from './poll-loop.js';
 +import { appendStatusEvent, clearStatusEvents } from './status-feed.js';
 +import { findByRouting } from './destinations.js';
-+import { formatMessages, extractRouting, originOf } from './formatter.js';
++import { formatMessages, extractRouting, isClearCommand, isRunnerCommand, originOf } from './formatter.js';
 +// Corruption detection moved into the mailbox SQLite driver upstream
 +// (mailbox/sqlite/index.ts); the fork's isCorruptionError copy and its tests
 +// are retired rather than duplicated.
@@ -63,7 +63,7 @@ index ec3c45c6..c9643a62 100644
  });
  
  describe('origin metadata (from= attribute)', () => {
-@@ -632,3 +673,277 @@ describe('task-run turn wiring (real processQuery)', () => {
+@@ -809,3 +850,277 @@ describe('task-run turn wiring (real processQuery)', () => {
      // diagnostic throw above (observed consistently on CI-hosted runners).
    }, 20_000);
  });

@@ -8,12 +8,21 @@ import ToolSecretList from './ToolSecretList.vue';
 import { userDisplayName } from './perms-user-info.js';
 import { selectedRoomId } from './room-list-state.js';
 import { allModels } from './model-list-state.js';
-import { agentMcpServers, allMcpServers, lastMcpProbe, lastMcpProbeToken, mcpAddInProgress, mcpAgentForAdd, selectedMcpId } from './mcp-list-state.js';
+import {
+  agentMcpServers,
+  allMcpServers,
+  lastMcpProbe,
+  lastMcpProbeToken,
+  mcpAddInProgress,
+  mcpAgentForAdd,
+  selectedMcpId,
+} from './mcp-list-state.js';
 import { permsAgents, permsMyUserId } from './perms-list-state.js';
 import RoomWiredAgents from './RoomWiredAgents.vue';
 import { roomWiredRows } from './room-wired-state.js';
 import AgentList from './AgentList.vue';
 import { selectedAgentId } from './agent-list-state.js';
+import { installProgressLine } from './installer-state.js';
 import { agentSecretEffective } from './agent-lists-state.js';
 import AgentWiredRooms from './AgentWiredRooms.vue';
 import AgentSessions from './AgentSessions.vue';
@@ -31,7 +40,19 @@ import {
   agentEnvNames,
   agentEnvDeleting,
 } from './agent-lists-state.js';
-import { agentDetailBaseline, agentDetailRooms, archivedAgentsCount, canManageRooms, roomDetailWiredAgents, sessions, sessionsError, sessionsPhase, showArchivedAgents, turnElapsedTimer, wiredRooms } from './agent-detail-state.js';
+import {
+  agentDetailBaseline,
+  agentDetailRooms,
+  archivedAgentsCount,
+  canManageRooms,
+  roomDetailWiredAgents,
+  sessions,
+  sessionsError,
+  sessionsPhase,
+  showArchivedAgents,
+  turnElapsedTimer,
+  wiredRooms,
+} from './agent-detail-state.js';
 import { $, esc } from '../core/dom.js';
 import { mountIsland } from '../core/island.js';
 import { closeModelDetail, openModelPicker } from './models.js';
@@ -45,7 +66,14 @@ import { isAdminView } from '../core/state.js';
 import { appendSystem } from './transcript.js';
 import { ensureTurn, removeTurn } from './thinking.js';
 import { thinkingTurns, turnFor } from './transcript-state.js';
-import { closeMcpDetail, fetchMcpServers, renderAgentMcp, renderMcpServers, setAgentMcp, syncMcpCreateTransportFields } from './mcp.js';
+import {
+  closeMcpDetail,
+  fetchMcpServers,
+  renderAgentMcp,
+  renderMcpServers,
+  setAgentMcp,
+  syncMcpCreateTransportFields,
+} from './mcp.js';
 import { renderAgentSkills, renderRoomSkills } from './skills.js';
 import { renderAgentTemplateRow } from './agent-templates.js';
 import { closeAttachPicker, openAttachPicker } from './files.js';
@@ -262,21 +290,19 @@ export function renderAgents(): void {
 /**
  * Every agent has three network modes: Open, Allowlist (the default; the
  * install list lives in Manage → Network, and the agent's own hosts below the
- * control) and Model only. A runner agent's change applies at
- * once (central checks each connection); a local agent's move to or from Open
- * waits for its next start (it changes the container's network).
+ * control) and Model only. A move to or from Open waits for the agent's next
+ * start (it changes the container's network).
  */
-export function setAgentEgressControl(egress?: any, placed = false) {
+export function setAgentEgressControl(egress?: any) {
   const mode = egress || 'host-only';
   const ctl = $('#agent-egress-control');
   if (!ctl) return;
-  (ctl as HTMLElement).dataset.placed = placed ? '1' : '';
   ctl.querySelectorAll<HTMLElement>('.setting-option').forEach((b) => {
     b.classList.toggle('active', b.dataset.egress === mode);
   });
   const info = $('#agent-egress-info');
   if (info) {
-    info.textContent = placed ? 'Applies at once.' : 'Open ↔ the others: next start.';
+    info.textContent = 'Open ↔ the others: next start.';
   }
   const badge = $('#agent-egress-badge');
   if (badge) badge.textContent = mode === 'open' ? 'Open' : mode === 'none' ? 'Model only' : '';
@@ -352,14 +378,14 @@ export async function openAgentDetail(id?: any) {
   // Template origin + update check. Fire-and-forget: it hides its own row when
   // the agent was not stamped, so it never blocks the rest of the detail view.
   void renderAgentTemplateRow(agent.id);
-  setAgentEgressControl(agent.egress, !!agent.runner_placed);
+  setAgentEgressControl(agent.egress);
   void renderAgentEgressHosts(agent.id, agent.egress);
   void renderAgentEnv(id);
 
   // Load instructions (instructions.prepend.md — the provider-neutral standing
   // instructions composed into every provider's CLAUDE.md at spawn).
   try {
-    const { content, legacyBytes } = await apiJson(`/api/agents/${encodeURIComponent(id ?? "")}/instructions`);
+    const { content, legacyBytes } = await apiJson(`/api/agents/${encodeURIComponent(id ?? '')}/instructions`);
     $<HTMLInputElement>('#agent-instructions')!.value = content;
     // A group can hold a pre-cutover CLAUDE.local.md this editor does not
     // write; say so rather than showing an empty box.
@@ -426,7 +452,7 @@ function captureAgentDetailBaseline() {
 export function refreshAgentSaveDirty() {
   // By id: the form also contains #agent-skills-save (.btn-primary too), which
   // a first-match class query would grab instead.
-  const btn = ($('#agent-save-btn')!) as HTMLInputElement;
+  const btn = $('#agent-save-btn')! as HTMLInputElement;
   if (!btn || !agentDetailBaseline.value) return;
   // Don't fight the transient "Saving…" / "✓ Saved" button states.
   if (btn.classList.contains('success') || btn.textContent === 'Saving…') return;
@@ -442,7 +468,7 @@ let canManageAgentRooms = false;
 
 export async function loadAgentRooms(agentId?: any) {
   try {
-    agentDetailRooms.value = await apiJson(`/api/agents/${encodeURIComponent(agentId ?? "")}/rooms`);
+    agentDetailRooms.value = await apiJson(`/api/agents/${encodeURIComponent(agentId ?? '')}/rooms`);
     canManageAgentRooms = true;
   } catch {
     canManageAgentRooms = false;
@@ -525,7 +551,7 @@ async function renderAgentSessions(agentId?: any) {
   mountAgentSessions();
   let rows = [];
   try {
-    rows = (await apiJson(`/api/agents/${encodeURIComponent(agentId ?? "")}/sessions`)).sessions || [];
+    rows = (await apiJson(`/api/agents/${encodeURIComponent(agentId ?? '')}/sessions`)).sessions || [];
   } catch (err) {
     // Bound as text, so the binding escapes it.
     sessionsError.value = `Sessions unavailable: ${(err as any)?.message}`;
@@ -575,7 +601,8 @@ export async function continueAgentImport(up?: any) {
   if (roomsMiss.length) line(`⚠ Rooms not on this install (skipped): ${roomsMiss.join(', ')}`, 'import-warning');
   const mcpMiss = p.mcpServers.filter((m: any) => !m.found).map((m: any) => m.name);
   if (mcpMiss.length) line(`⚠ MCP servers to recreate: ${mcpMiss.join(', ')}`, 'import-warning');
-  if (!p.modelFound && p.manifest.references.model) line(`⚠ Model not found here: ${p.manifest.references.model.model_id}`, 'import-warning');
+  if (!p.modelFound && p.manifest.references.model)
+    line(`⚠ Model not found here: ${p.manifest.references.model.model_id}`, 'import-warning');
   for (const c of p.manifest.requiredCredentials) line(`⚠ Needs: ${c}`, 'import-warning');
   const ok = await deps.showConfirmModal({ title: 'Import this agent?', body: el, confirmLabel: 'Import' });
   if (!ok) return;
@@ -602,7 +629,7 @@ async function renderAgentLearning(agentId?: any) {
   }
   let cfg = null;
   try {
-    cfg = await apiJson(`/api/agents/${encodeURIComponent(agentId ?? "")}/learning`);
+    cfg = await apiJson(`/api/agents/${encodeURIComponent(agentId ?? '')}/learning`);
   } catch {}
   if (!cfg) {
     if (accordion) accordion.hidden = true;
@@ -622,7 +649,7 @@ async function renderAgentLearning(agentId?: any) {
       b.onclick = async () => {
         const on = b.dataset.on === '1';
         try {
-          await apiJson(`/api/agents/${encodeURIComponent(agentId ?? "")}/learning`, {
+          await apiJson(`/api/agents/${encodeURIComponent(agentId ?? '')}/learning`, {
             method: 'PUT',
             body: { [key]: on },
           });
@@ -638,14 +665,14 @@ async function renderAgentLearning(agentId?: any) {
   wire($('#agent-learning-keep'), 'autoKeep');
 
   const put = async (patch: any) => {
-    await apiJson(`/api/agents/${encodeURIComponent(agentId ?? "")}/learning`, { method: 'PUT', body: patch });
+    await apiJson(`/api/agents/${encodeURIComponent(agentId ?? '')}/learning`, { method: 'PUT', body: patch });
   };
 
   // Review model — the agent's own model by default, or a roster entry / a
   // fixed Claude id (so Claude-only installs with an empty roster still have
   // choices). Roster options carry the roster id; the fixed entries carry
   // the raw Claude model id. Dormant until the digest review lands.
-  const reviewSel = ($('#agent-learning-review-model')) as HTMLInputElement;
+  const reviewSel = $('#agent-learning-review-model') as HTMLInputElement;
   if (reviewSel) {
     reviewSel.innerHTML = '';
     const addOpt = (value?: any, label?: any) => {
@@ -662,12 +689,13 @@ async function renderAgentLearning(agentId?: any) {
       /* roster unavailable — the default + Claude entries still render */
     }
     for (const id of ['claude-haiku-4-5', 'claude-sonnet-5']) {
-      if (![...((reviewSel as unknown as HTMLSelectElement).options)].some((o) => o.value === id)) addOpt(id, id);
+      if (![...(reviewSel as unknown as HTMLSelectElement).options].some((o) => o.value === id)) addOpt(id, id);
     }
     let stored = cfg.reviewModel || '';
     // A stored value no longer in the roster still shows as itself rather
     // than silently reading as the default.
-    if (stored && ![...((reviewSel as unknown as HTMLSelectElement).options)].some((o) => o.value === stored)) addOpt(stored, stored);
+    if (stored && ![...(reviewSel as unknown as HTMLSelectElement).options].some((o) => o.value === stored))
+      addOpt(stored, stored);
     (reviewSel as HTMLInputElement).value = stored;
     reviewSel.onchange = async () => {
       try {
@@ -802,7 +830,7 @@ function mountAddAgentPicker(): void {
 
 function updateAddAgentSubmitLabel() {
   const checked = $('#room-add-agent-list')!.querySelectorAll('input[type=checkbox]:checked');
-  const btn = ($('#room-add-agent-existing-submit')!) as HTMLInputElement;
+  const btn = $('#room-add-agent-existing-submit')! as HTMLInputElement;
   const n = checked.length;
   btn.textContent = n > 0 ? `Wire selected (${n})` : 'Wire selected';
   btn!.disabled = n === 0;
@@ -859,9 +887,12 @@ async function removeAgentFromRoom(agentId?: any, agentName?: any) {
   });
   if (!confirmed) return;
   try {
-    await apiJson(`/api/rooms/${encodeURIComponent(selectedRoomId.value)}/agents/${encodeURIComponent(agentId ?? "")}`, {
-      method: 'DELETE',
-    });
+    await apiJson(
+      `/api/rooms/${encodeURIComponent(selectedRoomId.value)}/agents/${encodeURIComponent(agentId ?? '')}`,
+      {
+        method: 'DELETE',
+      },
+    );
     showToast(`Removed "${agentName}" from the room.`, { kind: 'success' });
     await refreshRoomWiredAgents(selectedRoomId.value);
   } catch (err) {
@@ -888,6 +919,8 @@ export function beginAgentTurn(name?: any) {
   turn.startedAt = Date.now();
   turn.lastActivityAt = turn.startedAt;
   turn.reasoningLog.length = 0;
+  turn.tools.length = 0;
+  turn.notes.length = 0;
   // Owned by an active status turn, so the typing-heartbeat path won't clear it
   // during a quiet stretch; cleared with the turn on 'done'.
   turn.statusLive = true;
@@ -940,9 +973,12 @@ function mountAgentEnv(): void {
       onRemove: async (name: string) => {
         agentEnvDeleting.value = new Set(agentEnvDeleting.value).add(name);
         try {
-          await apiJson(`/api/agents/${encodeURIComponent(agentEnvGroupId ?? '')}/env?name=${encodeURIComponent(name)}`, {
-            method: 'DELETE',
-          });
+          await apiJson(
+            `/api/agents/${encodeURIComponent(agentEnvGroupId ?? '')}/env?name=${encodeURIComponent(name)}`,
+            {
+              method: 'DELETE',
+            },
+          );
           showToast(`Removed $${name} — applies when the agent restarts`);
           void renderAgentEnv(agentEnvGroupId);
         } catch {
@@ -966,12 +1002,12 @@ async function renderAgentEnv(agentGroupId?: any) {
   agentEnvGroupId = agentGroupId;
   let names = [];
   try {
-    names = (await apiJson(`/api/agents/${encodeURIComponent(agentGroupId ?? "")}/env`)).names || [];
+    names = (await apiJson(`/api/agents/${encodeURIComponent(agentGroupId ?? '')}/env`)).names || [];
   } catch {}
   $('#agent-env-count')!.textContent = names.length ? String(names.length) : '';
   agentEnvNames.value = names;
   mountAgentEnv();
-  const save = ($('#agent-env-save')) as HTMLInputElement;
+  const save = $('#agent-env-save') as HTMLInputElement;
   if (save && !save.dataset.wired) {
     save.dataset.wired = '1';
     save.addEventListener('click', async () => {
@@ -984,7 +1020,7 @@ async function renderAgentEnv(agentGroupId?: any) {
       }
       (save as HTMLInputElement).disabled = true;
       try {
-        const r = await authFetch(`/api/agents/${encodeURIComponent(id ?? "")}/env`, {
+        const r = await authFetch(`/api/agents/${encodeURIComponent(id ?? '')}/env`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json', 'X-Webchat-CSRF': '1' },
           body: JSON.stringify({ name, value }),
@@ -1046,9 +1082,11 @@ export async function renderAgentSecrets(agentGroupId?: any) {
     $('#agent-secret-save')!.addEventListener('click', () => {
       const agentGroupId = $('#agent-secrets-section')!.dataset.agentId;
       const choice = reachChoice();
-      const scope = choice === 'me' ? { agentGroupId, userId: permsMyUserId.value } : choice === 'agent' ? agentGroupId : null;
+      const scope =
+        choice === 'me' ? { agentGroupId, userId: permsMyUserId.value } : choice === 'agent' ? agentGroupId : null;
       void saveToolSecret(scope, '#agent-secret');
     });
+    $('#agent-secret-cancel')!.addEventListener('click', () => endSecretUpdate('#agent-secret'));
     // Greyed-but-clickable when unavailable (same idiom as the credential
     // providers); the reason is already on the help line, so a click just
     // leaves the current choice — nothing else is needed to confirm it.
@@ -1061,6 +1099,8 @@ export async function renderAgentSecrets(agentGroupId?: any) {
     });
     wireSecretKind('#agent-secret');
   }
+  // The form is shared by every agent's panel: an update begun on another agent ends here.
+  if (section.dataset.agentId !== agentGroupId) endSecretUpdate('#agent-secret');
   section.dataset.agentId = agentGroupId;
 
   let isolation = null;
@@ -1119,6 +1159,7 @@ function mountAgentSecretList(): void {
     createApp(AgentSecretList, {
       onRemove: (r: { scope: unknown; sec: unknown }) =>
         void removeToolSecret(r.scope, r.sec, '#agent-secrets-list', agentSecretsGroupId),
+      onUpdate: (r: { scope: unknown; sec: unknown }) => startSecretUpdate('#agent-secret', r.scope, r.sec),
     }),
   );
 }
@@ -1217,7 +1258,7 @@ async function renderAgentKeys(agentGroupId?: any) {
 
   let keys = [];
   try {
-    keys = (await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? "")}`)).keys || [];
+    keys = (await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? '')}`)).keys || [];
   } catch {}
 
   agentKeysGroupId = agentGroupId;
@@ -1239,10 +1280,10 @@ async function createAgentKey() {
     showToast('Name is required', { kind: 'error' });
     return;
   }
-  const btn = ($('#agent-key-create')!) as HTMLInputElement;
+  const btn = $('#agent-key-create')! as HTMLInputElement;
   (btn as HTMLInputElement).disabled = true;
   try {
-    const body = await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? "")}`, {
+    const body = await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? '')}`, {
       method: 'POST',
       // target (user@host) rides in the key's comment: it tells the agent who to log in as.
       body: target ? { name, target } : { name },
@@ -1274,7 +1315,7 @@ export async function removeAgentKey(agentGroupId?: any, key?: any) {
   });
   if (!ok) return;
   const r = await authFetch(
-    `/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? "")}&name=${encodeURIComponent(key.name)}`,
+    `/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? '')}&name=${encodeURIComponent(key.name)}`,
     { method: 'DELETE', headers: { 'X-Webchat-CSRF': '1' } },
   );
   if (!r.ok) {
@@ -1338,6 +1379,66 @@ export const AGENT_STATUS_HINTS: Record<string, string> = {
 // status and egress controls, the archived toggle and room attachment.
 // Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
+const HARNESS_LABEL: Record<string, string> = { claude: 'Claude', opencode: 'OpenCode', pi: 'pi', codex: 'Codex', grok: 'Grok' };
+
+/**
+ * A harness that is not installed: offer the install (owners), follow it
+ * through the host restart it ends with, then make the switch that was asked.
+ */
+// An image build plus restart takes minutes; past this the page stops watching.
+const HARNESS_INSTALL_WATCH_MS = 10 * 60_000;
+
+async function offerHarnessInstall(agentId: string, provider: string): Promise<void> {
+  const label = HARNESS_LABEL[provider] ?? provider;
+  const ok = await showConfirmModal({
+    title: `Install ${label}?`,
+    body: 'Rebuilds the agent image, then restarts. A few minutes.',
+    confirmLabel: 'Install',
+  });
+  if (!ok) return;
+  // The wizard's install window: progress line, then the install's own log.
+  const line = $('#agent-harness-install')!;
+  line.hidden = false;
+  line.textContent = 'Installing…';
+  const url = `/api/install/${encodeURIComponent(provider)}`;
+  try {
+    const res = await authFetch(url, { method: 'POST' });
+    if (!res.ok && res.status !== 202) {
+      const err = await res.json().catch(() => ({}));
+      if (err.code !== 'already-installed') throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    const started = Date.now();
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 3000));
+      if (Date.now() - started > HARNESS_INSTALL_WATCH_MS)
+        throw new Error('Still installing after 10 minutes: check back in Settings later');
+      // The install ends with a host restart: a failed poll is the restart, not the end.
+      const st = await authFetch(url)
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
+      if (!st) {
+        line.textContent = `Restarting… ${Math.round((Date.now() - started) / 1000)}s`;
+        continue;
+      }
+      const tail: string[] = Array.isArray(st.lines) ? st.lines.slice(-14) : [];
+      if (st.installed && !st.running) break;
+      if (!st.running && st.exitCode && st.exitCode !== 0) {
+        line.textContent = ['Install failed:', ...tail].join('\n');
+        throw new Error('Install failed');
+      }
+      line.textContent = st.running ? [installProgressLine(st), ...tail].join('\n') : tail.join('\n') || 'Restarting…';
+    }
+    line.hidden = true;
+    await apiJson(`/api/agents/${encodeURIComponent(agentId)}/provider`, { method: 'PUT', body: { provider } });
+    showToast(`${label} installed`, { kind: 'success' });
+    await fetchAgents();
+    if (selectedAgentId.value === agentId) setAgentHarnessControl(provider);
+  } catch (err) {
+    if (!line.textContent?.startsWith('Install failed')) line.textContent = String((err as Error)?.message || err);
+    toastError(err, `${label} not installed`);
+  }
+}
+
 export function wireAgentsPanel(): void {
   $('#agent-harness-control')?.addEventListener('click', async (e) => {
     const btn = (e.target as Element | null)?.closest<HTMLButtonElement>('.setting-option');
@@ -1357,6 +1458,10 @@ export function wireAgentsPanel(): void {
       await fetchAgents();
     } catch (err) {
       setAgentHarnessControl(agent.provider); // revert
+      if ((err as { body?: { code?: string } })?.body?.code === 'not-installed' && state.isOwnerView && provider) {
+        void offerHarnessInstall(selectedAgentId.value, provider);
+        return;
+      }
       toastError(err, 'Could not change harness');
     }
   });
@@ -1413,20 +1518,19 @@ export function wireAgentsPanel(): void {
     const current = (agent && agent.egress) || 'host-only';
     if (current === egress) return;
 
-    const placed = !!agent?.runner_placed;
     if (egress === 'open') {
       // Loosening is the direction that needs a second look: open egress leaves
       // from central's address, past the organisation's own network controls.
       const ok = await showConfirmModal({
         title: 'Open network for this agent?',
-        body: 'Any host. ' + (placed ? 'Applies at once.' : 'Next start.'),
+        body: 'Any host. Next start.',
         confirmLabel: 'Open',
         destructive: true,
       });
       if (!ok) return;
     }
 
-    setAgentEgressControl(egress, placed); // optimistic
+    setAgentEgressControl(egress); // optimistic
     try {
       const out = await apiJson(`/api/agents/${encodeURIComponent(selectedAgentId.value)}/egress`, {
         method: 'PUT',
@@ -1439,7 +1543,7 @@ export function wireAgentsPanel(): void {
     } catch (err) {
       console.error('Failed to set agent egress:', err);
       showToast('Could not change network mode', { kind: 'error' });
-      setAgentEgressControl(current, placed); // revert
+      setAgentEgressControl(current); // revert
     }
   });
 
@@ -1518,7 +1622,7 @@ export function wireAgentDetail1(): void {
       await authFetch(`/api/agents/${encodeURIComponent(selectedAgentId.value)}/instructions`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: ($<HTMLTextAreaElement>('#agent-instructions')?.value ?? '') }),
+        body: JSON.stringify({ content: $<HTMLTextAreaElement>('#agent-instructions')?.value ?? '' }),
       });
       // Update model assignment (empty string in the select = unassign).
       const selectedModel = ($<HTMLInputElement>('#agent-model')?.value ?? '') || null;
@@ -1553,8 +1657,8 @@ export function wireAgentDetail1(): void {
             /* keep the status */
           }
           // don't leave a lie on screen
-        const cfgModel = $<HTMLInputElement>('#agent-config-model');
-        if (cfgModel) cfgModel.value = currentConfigModel;
+          const cfgModel = $<HTMLInputElement>('#agent-config-model');
+          if (cfgModel) cfgModel.value = currentConfigModel;
           throw new Error(detail);
         }
       }
@@ -1622,7 +1726,9 @@ export function wireAgentControls1(): void {
 }
 
 export function wireAgentControls2(): void {
-  $<HTMLButtonElement>('#import-agent-btn')?.addEventListener('click', () => $<HTMLInputElement>('#import-agent-file')?.click());
+  $<HTMLButtonElement>('#import-agent-btn')?.addEventListener('click', () =>
+    $<HTMLInputElement>('#import-agent-file')?.click(),
+  );
   $<HTMLInputElement>('#import-agent-file')?.addEventListener('change', async (e) => {
     const file = (e.target as HTMLInputElement).files?.[0];
     (e.target as HTMLInputElement).value = '';
@@ -1659,7 +1765,11 @@ export function wireAgentControls3(): void {
       meta: (s: any) => `${s.transport} · ${s.target}`,
       isAttached: (s: any) => agentMcpServers.value.some((a: any) => a.id === s.id),
       onToggle: (s: any, add: any) =>
-        setAgentMcp(agentId, add ? { add: [s.id] } : { remove: [s.id] }, add ? `Attached ${s.name}` : `Detached ${s.name}`),
+        setAgentMcp(
+          agentId,
+          add ? { add: [s.id] } : { remove: [s.id] },
+          add ? `Attached ${s.name}` : `Detached ${s.name}`,
+        ),
       onAddNew: () => {
         mcpAddInProgress.value = true;
         mcpAgentForAdd.value = agentId;
@@ -1696,7 +1806,9 @@ export function wireAgentControls5(): void {
   $<HTMLButtonElement>('#room-add-agent-new-submit')?.addEventListener('click', addNewAgentToRoom);
   document.querySelectorAll<HTMLElement>('.room-agent-picker-tab').forEach((tab) => {
     tab.addEventListener('click', () => {
-      document.querySelectorAll<HTMLElement>('.room-agent-picker-tab').forEach((t: any) => t.classList.remove('active'));
+      document
+        .querySelectorAll<HTMLElement>('.room-agent-picker-tab')
+        .forEach((t: any) => t.classList.remove('active'));
       tab.classList.add('active');
       const which = tab.dataset.picker;
       const existing = $('#room-add-agent-existing');
@@ -1718,7 +1830,7 @@ export function wireAgentCreate1(): void {
     const el2 = $('#agent-create-view');
     if (el2) el2.hidden = false;
     const _el1 = $<HTMLInputElement>('#agent-create-name');
-      if (_el1) _el1.value = '';
+    if (_el1) _el1.value = '';
     const el3 = $('#agent-detail');
     if (el3) el3.hidden = false;
     const el4 = $('#members-panel');
@@ -1741,31 +1853,31 @@ export function wireAgentCreate2(): void {
     if (el6) el6.hidden = false;
     // Reset the probe block + manual form between opens.
     const _el2 = $<HTMLInputElement>('#mcp-probe-url');
-      if (_el2) _el2.value = '';
+    if (_el2) _el2.value = '';
     const el7 = $('#mcp-probe-status');
     if (el7) el7.hidden = true;
     const el8 = $('#mcp-probe-results');
     if (el8) el8.hidden = true;
     const _el3 = $<HTMLInputElement>('#mcp-probe-name');
-      if (_el3) _el3.value = '';
+    if (_el3) _el3.value = '';
     const _el4 = $<HTMLInputElement>('#mcp-probe-token');
-      if (_el4) _el4.value = '';
+    if (_el4) _el4.value = '';
     const h1 = $<HTMLLabelElement>('#mcp-probe-token-label');
     if (h1) h1.hidden = true;
     lastMcpProbe.value = null;
     lastMcpProbeToken.value = '';
     const _el5 = $<HTMLInputElement>('#mcp-create-name');
-      if (_el5) _el5.value = '';
+    if (_el5) _el5.value = '';
     const _el6 = $<HTMLInputElement>('#mcp-create-url');
-      if (_el6) _el6.value = '';
+    if (_el6) _el6.value = '';
     const _el7 = $<HTMLInputElement>('#mcp-create-command');
-      if (_el7) _el7.value = '';
+    if (_el7) _el7.value = '';
     const _el8 = $<HTMLTextAreaElement>('#mcp-create-args');
-      if (_el8) _el8.value = '';
+    if (_el8) _el8.value = '';
     const _el9 = $<HTMLInputElement>('#mcp-create-token');
-      if (_el9) _el9.value = '';
+    if (_el9) _el9.value = '';
     const _el10 = $<HTMLSelectElement>('#mcp-create-transport');
-      if (_el10) _el10.value = 'http';
+    if (_el10) _el10.value = 'http';
     syncMcpCreateTransportFields();
     const el9 = $('#mcp-detail');
     if (el9) el9.hidden = false;
@@ -1917,6 +2029,7 @@ export async function renderToolSecrets() {
   if (!secretsWired) {
     secretsWired = true;
     $('#secret-save')!.addEventListener('click', () => void saveToolSecret());
+    $('#secret-cancel')!.addEventListener('click', () => endSecretUpdate('#secret'));
     wireSecretKind('#secret');
   }
   await loadToolSecretList();
@@ -1930,6 +2043,7 @@ function mountToolSecrets() {
   toolSecretsApp ??= mountIsland('#secrets-list', () =>
     createApp(ToolSecretList, {
       onRemove: (secret: any) => void removeToolSecret(toolSecretsScope, secret, '#secrets-list'),
+      onUpdate: (secret: any) => startSecretUpdate('#secret', toolSecretsScope, secret),
     }),
   );
 }
@@ -1950,7 +2064,63 @@ export async function loadToolSecretList(scope: any = null, listSel: string | nu
   mountToolSecrets();
 }
 
+/**
+ * A form in update mode: the secret it will overwrite, and the scope it lives
+ * in. Keyed by form (the agent panel's, Settings'), since both can be open.
+ */
+const secretUpdates: Record<string, { scope: any; secret: any } | undefined> = {};
+
+/**
+ * Update an existing secret with the form it was added with: its host filled
+ * in and fixed (the host is what the credential is — another host is remove
+ * and add), who uses it fixed too, its current kind chosen (a custom header's
+ * fields filled in), and the value empty: the server never sends it back.
+ */
+export function startSecretUpdate(p: string, scope: any, secret: any) {
+  secretUpdates[p] = { scope, secret };
+  const host = $<HTMLInputElement>(`${p}-host`)!;
+  host.value = secret.hostPattern;
+  host.readOnly = true;
+  const kind: SecretKind = secret.kind === 'basic' || secret.kind === 'custom' ? secret.kind : 'token';
+  $<HTMLElement>(`${p}-kind [data-value="${kind}"]`)?.click();
+  if (kind === 'custom') {
+    $<HTMLInputElement>(`${p}-custom-header`)!.value = secret.headerName ?? '';
+    $<HTMLInputElement>(`${p}-custom-format`)!.value = secret.valueFormat ?? '';
+  }
+  for (const f of ['value', 'username', 'password']) $<HTMLInputElement>(`${p}-${f}`)!.value = '';
+  const reach = $(`${p}-reach`)?.closest<HTMLElement>('.secret-reach');
+  if (reach) reach.hidden = true;
+  $(`${p}-save`)!.textContent = 'Update secret';
+  $(`${p}-cancel`)!.hidden = false;
+  const first = $<HTMLInputElement>(kind === 'basic' ? `${p}-username` : `${p}-value`);
+  first?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  first?.focus({ preventScroll: true });
+}
+
+/** Back to adding: the form as it was, its fields cleared. */
+export function endSecretUpdate(p: string) {
+  if (!secretUpdates[p]) return;
+  secretUpdates[p] = undefined;
+  const host = $<HTMLInputElement>(`${p}-host`);
+  if (host) {
+    host.readOnly = false;
+    host.value = '';
+  }
+  for (const f of ['value', 'username', 'password', 'custom-header', 'custom-format']) {
+    const el = $<HTMLInputElement>(`${p}-${f}`);
+    if (el) el.value = '';
+  }
+  const reach = $(`${p}-reach`)?.closest<HTMLElement>('.secret-reach');
+  if (reach) reach.hidden = false;
+  const save = $(`${p}-save`);
+  if (save) save.textContent = 'Add secret';
+  const cancel = $(`${p}-cancel`);
+  if (cancel) cancel.hidden = true;
+}
+
 export async function saveToolSecret(scope: any = null, p = '#secret') {
+  const update = secretUpdates[p];
+  if (update) scope = update.scope;
   const hostPattern = $<HTMLInputElement>(`${p}-host`)!.value.trim();
   const kind = secretKind(p);
   let body: Record<string, unknown>;
@@ -1989,7 +2159,11 @@ export async function saveToolSecret(scope: any = null, p = '#secret') {
   const btn = $<HTMLButtonElement>(`${p}-save`);
   btn!.disabled = true;
   try {
-    await apiJson(toolSecretUrl(scope), { method: 'POST', body });
+    if (update) {
+      // The host is the secret's own and is not sent: the server keeps it.
+      delete body.hostPattern;
+      await apiJson(toolSecretUrl(scope, `&id=${encodeURIComponent(update.secret.id)}`), { method: 'PUT', body });
+    } else await apiJson(toolSecretUrl(scope), { method: 'POST', body });
     // Clear the sensitive fields first and always — they must not linger in
     // the DOM after a successful write.
     $<HTMLInputElement>(`${p}-value`)!.value = '';
@@ -1998,20 +2172,28 @@ export async function saveToolSecret(scope: any = null, p = '#secret') {
     $<HTMLInputElement>(`${p}-host`)!.value = '';
     if ($(`${p}-custom-header`)) $<HTMLInputElement>(`${p}-custom-header`)!.value = '';
     if ($(`${p}-custom-format`)) $<HTMLInputElement>(`${p}-custom-format`)!.value = '';
-    showToast(`Added ${hostPattern}`);
+    showToast(update ? `Updated ${hostPattern}` : `Added ${hostPattern}`);
+    if (update) endSecretUpdate(p);
     // The agent panel's form can add at any reach, including all-agents — so
     // it repaints by which FORM was used, not by the scope written.
     if (p === '#agent-secret') await renderAgentSecrets($('#agent-secrets-section')!.dataset.agentId);
     else if (scope) await renderAgentSecrets(typeof scope === 'object' ? scope.agentGroupId : scope);
     if (!scope) await loadToolSecretList(null, '#secrets-list');
   } catch (err) {
-    showToast((err as any)?.body?.error || 'Could not add secret', { kind: 'error' });
+    showToast((err as any)?.body?.error || (update ? 'Could not update secret' : 'Could not add secret'), {
+      kind: 'error',
+    });
   } finally {
     btn!.disabled = false;
   }
 }
 
-export async function removeToolSecret(scope: any, secret: any, listSel: string | null = '#secrets-list', agentGroupId = null) {
+export async function removeToolSecret(
+  scope: any,
+  secret: any,
+  listSel: string | null = '#secrets-list',
+  agentGroupId = null,
+) {
   const ok = await showConfirmModal({
     title: 'Remove secret',
     body: `Delete the credential for ${secret.hostPattern}? Requests that rely on it will start failing.`,

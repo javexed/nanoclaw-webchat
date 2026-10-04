@@ -10,6 +10,11 @@ const ensureEgressFilter = vi.fn();
 const registerFilteredContainer = vi.fn();
 const registerRelayedContainer = vi.fn();
 const serveProxyClient = vi.fn(async () => {});
+const serveModelPort = vi.fn(async () => {});
+/** Models on another machine the registry holds, as relays (model-relay.ts). */
+let relays: Array<{ port: number; target: { host: string; port: number } }> = [];
+/** Host-local models the registry holds, as filter pass-throughs (egress-policy.ts). */
+let passthroughs: Array<{ port: number; target: { host: string; port: number }; ollama?: boolean }> = [];
 let bridgeFails = false;
 let lockdown = false;
 
@@ -33,7 +38,13 @@ vi.mock('../../channels/webchat/egress-filter.js', () => ({
   ensureEgressFilter,
   registerFilteredContainer,
   serveProxyClient,
+  serveModelPort,
   defaultFilterDeps: () => ({}),
+}));
+vi.mock('../../channels/webchat/model-relay.js', () => ({ modelRelays: async () => relays }));
+vi.mock('../../channels/webchat/egress-policy.js', async (orig) => ({
+  ...(await orig<object>()),
+  modelPassthroughs: async () => passthroughs,
 }));
 vi.mock('../../channels/webchat/exec-relay.js', () => ({ registerRelayedContainer }));
 vi.mock('../../channels/webchat/mcp-relay.js', () => ({ mcpRelayTarget: () => ({ host: '172.17.0.1', port: 3302 }) }));
@@ -66,6 +77,9 @@ beforeEach(async () => {
   registerFilteredContainer.mockClear();
   registerRelayedContainer.mockClear();
   serveProxyClient.mockClear();
+  serveModelPort.mockClear();
+  relays = [];
+  passthroughs = [];
   delete process.env.WEBCHAT_EXEC_RELAY;
   sidecarCheck = null;
   const seam = await import('../../seam/index.js');
@@ -117,6 +131,24 @@ describe('per-group egress', () => {
       agentGroupId: 'ag-default',
       sessionId: 's1',
     });
+  });
+
+  it('a model on another machine gets a relay port on the bridge, held to each caller like a host-local model', async () => {
+    relays = [{ port: 47123, target: { host: '192.0.2.9', port: 11434 } }];
+    getContainerConfig.mockResolvedValue({ egress: null });
+    await prepare('ag-lan', null);
+    expect(resolve(specFor('ag-lan'))).toEqual(FILTERED);
+    expect((ensureEgressFilter.mock.calls[0] as unknown[])[4]).toEqual([
+      { port: 47123, target: { host: '192.0.2.9', port: 11434 }, remote: true },
+    ]);
+  });
+
+  it('an open agent gets no relay: it dials its model directly, as before', async () => {
+    relays = [{ port: 47123, target: { host: '192.0.2.9', port: 11434 } }];
+    getContainerConfig.mockResolvedValue({ egress: 'open' });
+    await prepare('ag-open-lan', null);
+    expect(resolve(specFor('ag-open-lan'))).toBeNull();
+    expect(ensureEgressFilter).not.toHaveBeenCalled();
   });
 
   it("finds the gateway's proxy URL where the gateway puts it — the contributed env", async () => {
@@ -219,6 +251,55 @@ describe('exec relay (WEBCHAT_EXEC_RELAY=1)', () => {
     expect(stream.destroy).toHaveBeenCalled();
   });
 
+  it("relays a model on another machine too, behind the filter's per-caller check", async () => {
+    process.env.WEBCHAT_EXEC_RELAY = '1';
+    relays = [{ port: 47123, target: { host: '192.0.2.9', port: 11434 } }];
+    getContainerConfig.mockResolvedValue({ egress: null });
+    await prepare('ag-relayed-lan', null);
+    resolve(specFor('ag-relayed-lan'));
+    const { ports, route } = registerRelayedContainer.mock.calls[0][1] as {
+      ports: number[];
+      route: (port: number, s: unknown) => void;
+    };
+    expect(ports).toEqual([10255, 3302, 47123]);
+    const stream = { destroy: vi.fn(), on: vi.fn(), pipe: vi.fn() };
+    route(47123, stream);
+    expect(serveModelPort).toHaveBeenCalledWith(
+      stream,
+      47123,
+      { host: '192.0.2.9', port: 11434 },
+      expect.anything(),
+      true,
+      false,
+    );
+  });
+
+  it('relays a host-local model behind the same per-caller check, not straight through', async () => {
+    process.env.WEBCHAT_EXEC_RELAY = '1';
+    passthroughs = [{ port: 11434, target: { host: '127.0.0.1', port: 11434 }, ollama: true }];
+    getContainerConfig.mockResolvedValue({ egress: 'none' });
+    await prepare('ag-local', null);
+    resolve(specFor('ag-local'));
+    const { ports, route } = registerRelayedContainer.mock.calls[0][1] as {
+      ports: number[];
+      route: (port: number, s: unknown) => void;
+    };
+    expect(ports).toEqual([10255, 3302, 11434]);
+    const stream = { destroy: vi.fn(), on: vi.fn(), pipe: vi.fn() };
+    route(11434, stream);
+    // Its own model passes, any other is refused, there (egress-filter.ts serveModelPort).
+    expect(serveModelPort).toHaveBeenCalledWith(
+      stream,
+      11434,
+      { host: '127.0.0.1', port: 11434 },
+      expect.anything(),
+      false,
+      true, // an Ollama server: inference only (ollama-filter.ts)
+    );
+    const deps = (serveModelPort.mock.calls[0] as unknown[])[3] as { identify: (ip: string) => Promise<unknown> };
+    expect(await deps.identify('')).toEqual({ agentGroupId: 'ag-local', sessionId: 's1' });
+  });
+
   it('leaves an open group on an ordinary network, and fails closed without a proxy URL', async () => {
     process.env.WEBCHAT_EXEC_RELAY = '1';
     getContainerConfig.mockResolvedValue({ egress: 'open' });
@@ -228,5 +309,50 @@ describe('exec relay (WEBCHAT_EXEC_RELAY=1)', () => {
     await prepare('ag-noproxy', null);
     expect(resolve(specFor('ag-noproxy', null))).toEqual(['--network', 'none']);
     expect(registerRelayedContainer).not.toHaveBeenCalled();
+  });
+});
+
+describe('adopting filtered agents after a restart', () => {
+  const env = (proxy?: string) => JSON.stringify(proxy ? [`HTTPS_PROXY=${proxy}`, 'TZ=UTC'] : ['TZ=UTC']);
+  const runtime = (ps: string, inspect: Record<string, string>) =>
+    vi.fn(async (args: string[]) => (args[0] === 'ps' ? ps : (inspect[args[args.length - 1]!] ?? '')));
+
+  it('restarts the filter for each labelled agent on the egress network and registers it', async () => {
+    const { adoptFilteredContainers } = await import('./index.js');
+    const run = runtime('ncl-a\nncl-b\nncl-c\nncl-d\n', {
+      'ncl-a': `ag-1\ts-1\t${env('http://x:tok@host.docker.internal:10255')}`,
+      'ncl-b': `ag-2\t<no value>\t${env('http://x:tok@host.docker.internal:10255')}`,
+      'ncl-c': `<no value>\ts-3\t${env('http://x:tok@host.docker.internal:10255')}`, // not an agent group's
+      'ncl-d': `ag-4\ts-4\t${env()}`, // no proxy URL, so no gateway to filter for
+    });
+    await adoptFilteredContainers(run);
+    const ps = run.mock.calls[0]![0];
+    expect(ps).toEqual(expect.arrayContaining(['ps', 'label=nanoclaw-role=agent']));
+    expect(ps.some((a) => a.startsWith('network='))).toBe(true);
+    expect(registerFilteredContainer.mock.calls).toEqual([
+      ['ncl-a', { agentGroupId: 'ag-1', sessionId: 's-1' }],
+      ['ncl-b', { agentGroupId: 'ag-2', sessionId: '' }],
+    ]);
+    expect(ensureEgressFilter).toHaveBeenCalledTimes(2);
+    expect((ensureEgressFilter.mock.calls[0] as unknown[]).slice(0, 2)).toEqual(['203.0.113.1', 10255]);
+  });
+
+  it('starts the relay to a model on another machine again, so an adopted agent keeps reaching its model', async () => {
+    relays = [{ port: 47123, target: { host: '192.0.2.9', port: 11434 } }];
+    const { adoptFilteredContainers } = await import('./index.js');
+    await adoptFilteredContainers(
+      runtime('ncl-a\n', { 'ncl-a': `ag-1\ts-1\t${env('http://x:tok@host.docker.internal:10255')}` }),
+    );
+    expect((ensureEgressFilter.mock.calls[0] as unknown[])[4]).toEqual([
+      { port: 47123, target: { host: '192.0.2.9', port: 11434 }, remote: true },
+    ]);
+  });
+
+  it('does nothing when no agent is running, and survives an unreadable inspect', async () => {
+    const { adoptFilteredContainers } = await import('./index.js');
+    await adoptFilteredContainers(runtime('', {}));
+    await adoptFilteredContainers(runtime('ncl-x\n', { 'ncl-x': 'ag-1\ts-1\tnot json' }));
+    expect(ensureEgressFilter).not.toHaveBeenCalled();
+    expect(registerFilteredContainer).not.toHaveBeenCalled();
   });
 });

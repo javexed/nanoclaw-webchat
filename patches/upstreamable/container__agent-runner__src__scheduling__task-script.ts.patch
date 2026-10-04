@@ -1,22 +1,22 @@
 diff --git a/container/agent-runner/src/scheduling/task-script.ts b/container/agent-runner/src/scheduling/task-script.ts
-index 1f5c964b..22549914 100644
+index 584ecb4c..58e36319 100644
 --- a/container/agent-runner/src/scheduling/task-script.ts
 +++ b/container/agent-runner/src/scheduling/task-script.ts
 @@ -1,4 +1,5 @@
- import { execFile } from 'node:child_process';
+ import { spawn } from 'node:child_process';
 +import { randomUUID } from 'node:crypto';
  import fs from 'node:fs';
  import path from 'node:path';
  import type { MessageInRow } from '../db/messages-in.js';
-@@ -21,7 +22,13 @@ export async function runScript(
+@@ -28,7 +29,13 @@ export async function runScript(
    taskId: string,
    timeoutMs: number = SCRIPT_TIMEOUT_MS,
  ): Promise<ScriptResult | null> {
 -  const scriptPath = path.join('/tmp', `task-script-${taskId}.sh`);
 +  // taskId alone is not a safe filename key: two invocations sharing one
 +  // (concurrent callers, or a retry racing the original) would write, exec
-+  // and unlink the SAME path — one's unlink firing while the other's execFile
-+  // is about to spawn bash on it fails as ENOENT, indistinguishable from a
++  // and unlink the SAME path — one's unlink firing while the other is about
++  // to spawn bash on it fails as ENOENT, indistinguishable from a
 +  // real script error. taskId stays in the name for readability under
 +  // `ps`/logs; the UUID is what actually guarantees no collision.
 +  const scriptPath = path.join('/tmp', `task-script-${taskId}-${randomUUID()}.sh`);

@@ -26,6 +26,7 @@ import { DATA_DIR } from '../../config.js';
 import { readEnvFile } from '../../env.js';
 import { log } from '../../log.js';
 import { listSkillDrafts, readSkillDraftBody, type SkillDraft } from '../../db/skill-drafts.js';
+import { routerAuthHeaders } from '../../channels/webchat/cloud-models.js';
 
 export interface OverlapCandidate {
   name: string;
@@ -184,7 +185,13 @@ async function llmJudge(
   try {
     const r = await fetch(`${url}/v1/messages`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': 'sk-local', 'anthropic-version': '2023-06-01' },
+      // The router's master key once it serves a cloud model (it then refuses keyless calls).
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': 'sk-local',
+        'anthropic-version': '2023-06-01',
+        ...routerAuthHeaders(`${url}/v1/messages`),
+      },
       body: JSON.stringify({ model, max_tokens: 300, messages: [{ role: 'user', content: prompt }] }),
       // Keep is interactive — a cold local model must not hang the button.
       // The heuristic verdict is the backstop; a warm model answers in ~2-5s.

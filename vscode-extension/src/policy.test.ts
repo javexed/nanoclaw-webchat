@@ -7,25 +7,15 @@ import {
   DEFAULT_WORKSPACE_EXCLUDES,
   UNTRACKED_SECRET_EXCLUDES,
   WORKSPACE_SLOT,
-  effectiveSlots,
   matchesExclude,
   pickWorkspaceFolder,
+  workspaceSlots,
 } from './policy.js';
 
-describe('effectiveSlots', () => {
-  it('fills the workspace slot with the first open folder, lets an explicit binding win, and honours off', () => {
-    expect(effectiveSlots({}, ['/home/dev/proj', '/home/dev/other'], 'workspace')).toEqual({
-      [WORKSPACE_SLOT]: '/home/dev/proj',
-    });
-    expect(effectiveSlots({ [WORKSPACE_SLOT]: '/elsewhere' }, ['/home/dev/proj'], 'workspace')).toEqual({
-      [WORKSPACE_SLOT]: '/elsewhere',
-    });
-    expect(effectiveSlots({ '/workspace/extra': '/x' }, ['/home/dev/proj'], 'workspace')).toEqual({
-      [WORKSPACE_SLOT]: '/home/dev/proj',
-      '/workspace/extra': '/x',
-    });
-    expect(effectiveSlots({}, [], 'workspace')).toEqual({});
-    expect(effectiveSlots({}, ['/home/dev/proj'], 'off')).toEqual({});
+describe('workspaceSlots', () => {
+  it('binds the workspace slot to the open folder, and nothing when no folder is open', () => {
+    expect(workspaceSlots(['/home/dev/proj', '/home/dev/other'])).toEqual({ [WORKSPACE_SLOT]: '/home/dev/proj' });
+    expect(workspaceSlots([])).toEqual({});
   });
 
   it('in a multi-root workspace binds the folder holding the file being edited, most specific first', () => {
@@ -34,7 +24,7 @@ describe('effectiveSlots', () => {
     expect(pickWorkspaceFolder(roots, '/home/dev/web/pkg/x.ts')).toBe('/home/dev/web/pkg'); // nested root wins
     expect(pickWorkspaceFolder(roots, 'C:\\elsewhere\\x.ts')).toBe('/home/dev/api'); // outside: the first
     expect(pickWorkspaceFolder(roots)).toBe('/home/dev/api');
-    expect(effectiveSlots({}, roots, 'workspace', '/home/dev/api/main.go')).toEqual({
+    expect(workspaceSlots(roots, '/home/dev/api/main.go')).toEqual({
       [WORKSPACE_SLOT]: '/home/dev/api',
     });
   });

@@ -13,7 +13,6 @@ describe('extension points with nothing installed', () => {
     const ext = await import('./extensions.js');
     expect(ext.extensionRoutes()).toEqual([]);
     expect(ext.installedFeatures()).toEqual([]);
-    expect(await ext.isRemotelyPlaced('ag-1')).toBe(false);
     expect(await ext.extensionSigninSections()).toEqual({});
     expect(() => ext.runServerStart({ chatInbound: () => {} })).not.toThrow();
     expect(() => ext.runChannelStart()).not.toThrow();

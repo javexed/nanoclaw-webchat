@@ -48,3 +48,5 @@ moduleWebchatRunnerMachineKey
 moduleWebchatRunnerKeylessAllowed
 moduleWebchatRunnerPlacementMode
 moduleWebchatDropThreadEngaged
+moduleWebchatFitContext
+moduleWebchatTurnTraces

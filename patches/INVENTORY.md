@@ -16,8 +16,22 @@
 #   scripts/regen-patches.sh <composed-tree> <file> ...
 
 
-## UPSTREAMABLE — candidate upstream PRs (69)
+## UPSTREAMABLE — candidate upstream PRs (72)
 
+.claude/skills/add-onecli/scripts/setup.ts
+    keep OneCLI's management API and Postgres off the docker bridge on Linux.
+    OneCLI's compose file binds every port to ONECLI_BIND_HOST, which setup
+    sets to the bridge so containers reach the gateway; that also exposed the
+    API (no auth in a local install) and Postgres (compose default password)
+    to every container on the host. Fresh installs now bind the API to
+    loopback, add a loopback gateway port beside the bridge one, publish no
+    Postgres port, and write ONECLI_URL / api-host / APP_URL on loopback;
+    `--private-ports` migrates an existing install; updates run it
+    (deploy/onecli-private-ports.sh). DELETE when upstream ships an
+    equivalent, or OneCLI's compose file binds the API and database privately
+    itself.
+.claude/skills/add-onecli/scripts/setup.private-ports.test.ts
+    tests for the above (the compose rewrite, idempotence, loopback URL).
 setup/verify.ts
     exports CHANNEL_ENV_KEYS so a test can neutralise exactly the credential
     env vars that mark a channel configured: an ambient GITHUB_TOKEN (every
@@ -115,6 +129,11 @@ src/drivers/docker-driver.ts
     not "ensure Docker is installed and running" — which sends the operator
     to check the one thing that already works in their shell. Conservative
     match; anything unrecognised keeps the generic advice.
+    Also: a stop whose `rm --force` loses the race with the daemon's own `--rm`
+    removal ("removal ... already in progress", or `ps -a` still listing the
+    container while it is removed) is a completed teardown, not a failure; a
+    container still listed gets a 3s window to disappear before the probe
+    reports it. Coverage in app/src/drivers/docker-driver.removal.test.ts.
 src/drivers/docker-driver.test.ts
     coverage for the above: permission-denied on an existing socket names the
     group and not the daemon.
@@ -139,13 +158,18 @@ src/backfill-container-configs.ts
 src/cli/resources/destinations.ts
     destination-change refresh: force active sessions to see the new map (silent-bug path)
 src/cli/resources/groups.test.ts
-    tests for FK-aware deletion
+    tests for FK-aware deletion; an agent's --model update restarts its session
 src/cli/resources/groups.ts
-    FK-aware group deletion for module-installed tables
+    FK-aware group deletion for module-installed tables; an agent's approved
+    `config update --model` restarts its session, so no second restart card
 src/container-runner.test.ts
     test for the memory-cap default
 src/container-runner.ts
-    root-host chown, user-skills mount, memory cap default, bun cache, per-group egress
+    root-host chown, user-skills mount, memory cap default, bun cache, per-group egress;
+    killContainer issues one stop per runtime (a repeat call only adds its exit
+    callback) and isContainerStopping() lets the reconcile leave a stop in
+    flight, or a teardown awaiting retry, alone. Coverage in
+    app/src/container-runner.stop-once.test.ts.
 src/db/agent-groups.ts
     lifecycle status setter with validation
 src/db/db-v2.test.ts
@@ -160,6 +184,9 @@ src/group-init.ts
     rtk bash-output compression hook; upstream memory-reconcile coexistence
 src/host-sweep.test.ts
     tests for the sweep fixes
+src/host-sweep-grace.test.ts
+    adds isContainerStopping to the container-runner mock: the reconcile now
+    asks it before enforcing the SLA (see src/reconcile-session.ts).
 src/host-sweep.ts
     bloated-continuation self-heal + sweep hygiene
 src/modules/agent-to-agent/agent-route.test.ts
@@ -187,7 +214,12 @@ src/reconcile-session.ts
     UTC-safe claim-timestamp parsing (zone-less SQLite stamps read as local
     made the claim-stuck check kill fresh claims on a non-UTC host), plus the
     bloated-continuation self-heal: after two ceiling kills with no output,
-    clear the stored continuation so the next turn starts fresh.
+    clear the stored continuation so the next turn starts fresh. Only a kill
+    with processing claims open (a stuck turn) counts, once per container
+    incarnation (every kill when the incarnation is unknown); an idle container
+    reaped at the ceiling never does. The reconcile skips a container already
+    being stopped. Coverage in
+    app/src/reconcile-session.ceiling.test.ts.
 src/router.ts
     agent lifecycle gate (active/paused/archived) + prime negative-lookahead
 src/session-manager.attachments.test.ts
@@ -205,7 +237,7 @@ src/templates/local-dir.ts
 src/types.ts
     agent-group lifecycle status type
 
-## PRODUCT — shrink via seam registries (37)
+## PRODUCT — shrink via seam registries (40)
 
 src/mailbox/model.ts
     add the 'interrupt' inbound kind — the webchat stop button writes a control
@@ -235,6 +267,15 @@ src/provider-contracts/realize.ts
     imported); dangling links for deleted skills are removed
 src/provider-surfaces.test.ts
     expects the imported-user-skills mount
+container/agent-runner/src/cross-session-echo.test.ts
+    a mirrored context row (trigger 0, not an echo) is never a command.
+.claude/skills/add-opencode/SKILL.md
+    the agent-runner provider barrel imports OpenCode guarded: a group's own
+    image built on an older base lacks @opencode-ai/sdk, and the plain import
+    made every such agent die at start.
+.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode.ts
+    the event pump hands each event to opencode-feed.ts, which forwards tool
+    calls and reasoning to the thinking bubble (the provider-message seam).
 .claude/skills/add-onecli/payload/src/gateway-providers/onecli.ts
     map a derived agent identity (per-member credentials) to its agent group
     before the ownership check and the core approval request
@@ -246,7 +287,7 @@ container/agent-runner/src/index.ts
     module imports (status feed, learning, send-file hint); the prompt addendum
     is built after the provider so it can consult supportsMcpTools
 container/agent-runner/src/mcp-tools/cli.instructions.md
-    agent-facing CLI instructions
+    agent-facing CLI instructions; --model needs no `groups restart`
 container/agent-runner/src/mcp-tools/core.instructions.md
     agent-facing core instructions
 container/agent-runner/src/poll-loop.test.ts
@@ -283,8 +324,6 @@ src/drivers/index.ts
     early return: an agent a module filters is refused rather than started on
     the sidecar's unfiltered network (moving the seam call above upstream's
     return would retire this)
-src/drivers/types.ts
-    slot mounts carry `exclude` globs and `propose` (runner placements)
 src/modules/approvals/index.ts
     approval-TTL expiry on the sweep seam
     re-exports checkApprovalClick for channels that answer their caller
@@ -295,14 +334,8 @@ src/modules/typing/index.test.ts
 src/modules/typing/index.ts
     agentName on the typing indicator (multi-agent rooms)
 
-## LOCAL — install-local, expected to persist (6)
+## LOCAL — install-local, expected to persist (5)
 
-setup/lib/restart-readiness.test.ts
-    skips two tests behind NANOCLAW_WEBCHAT_SKIP_RESTART_FALLBACK, which only
-    this repo's CI sets: both exercise restart.sh's nohup fallback and hang on
-    one CI runner while passing everywhere else. Unlike the rest of this folder
-    it is NOT expected to persist: delete it when that runner is replaced. If
-    the fallback proves genuinely broken somewhere, report it upstream.
 .claude/skills/add-karpathy-llm-wiki/llm-wiki.md
     OpenCode-removal reference sweep
 .claude/skills/add-mnemon/SKILL.md

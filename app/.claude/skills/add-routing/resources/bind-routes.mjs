@@ -156,8 +156,21 @@ export function routers(cfg) {
 
 // ── CLI ────────────────────────────────────────────────────────────────────
 
+/** The router's master key as a header, when its config turns proxy auth on (add-litellm). */
+export function routerAuthHeaders(dir = 'data/litellm') {
+  try {
+    if (!/^\s*master_key:/m.test(fs.readFileSync(path.join(dir, 'config.yaml'), 'utf8'))) return {};
+    return { Authorization: `Bearer ${fs.readFileSync(path.join(dir, 'master.key'), 'utf8').trim()}` };
+  } catch {
+    return {};
+  }
+}
+
 async function fetchRoster() {
-  const res = await fetch('http://127.0.0.1:4000/v1/models', { signal: AbortSignal.timeout(5000) });
+  const res = await fetch('http://127.0.0.1:4000/v1/models', {
+    headers: routerAuthHeaders(),
+    signal: AbortSignal.timeout(5000),
+  });
   if (!res.ok) throw new Error(`router /v1/models returned ${res.status}`);
   const body = await res.json();
   return (body.data ?? []).map((m) => m.id).filter((x) => typeof x === 'string');

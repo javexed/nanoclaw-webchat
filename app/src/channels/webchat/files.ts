@@ -4,10 +4,10 @@
  * group folder: a multi-agent room has no single one.
  */
 import http from 'http';
-import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { randomUUID } from 'crypto';
+import { once } from 'events';
 
 import Busboy from 'busboy';
 
@@ -24,8 +24,50 @@ import {
 } from './db.js';
 import { broadcast } from './state.js';
 
-const MAX_UPLOAD_SIZE = 1024 * 1024 * 1024; // 1GB
-const CHUNK_UPLOAD_TIMEOUT = 5 * 60 * 1000; // 5 minutes to complete a chunked upload
+const MAX_UPLOAD_SIZE = 8 * 1024 * 1024 * 1024; // 8GB: files and chunks live on the data disk
+// An upload is dropped after this long WITHOUT a chunk. Counted from the first
+// chunk, it cut every upload longer than five minutes in two: the first part
+// was deleted, the rest was taken for a new upload that could never complete.
+const CHUNK_UPLOAD_TIMEOUT = 5 * 60 * 1000;
+
+/**
+ * Where chunks wait: under DATA_DIR (the large disk), not os.tmpdir() (the
+ * root disk, which a gigabyte upload can fill). An upload's state lives in
+ * memory only, so chunks left from before a restart can never complete: the
+ * first upload after start clears them.
+ */
+function chunkRoot(): string {
+  return path.join(DATA_DIR, 'webchat', 'chunks');
+}
+/**
+ * Whether the data disk can take an upload of `size` bytes: its chunks and the
+ * file put together from them are on disk at the same time (twice the size),
+ * with a margin left for everything else. Up to 8 GB per file, a few at once
+ * per person: without this, one person could fill the disk.
+ */
+export const UPLOAD_DISK_MARGIN = 512 * 1024 * 1024;
+export function uploadFits(size: number, freeBytes: number): boolean {
+  return freeBytes >= 2 * size + UPLOAD_DISK_MARGIN;
+}
+function freeDataBytes(): number {
+  try {
+    const st = fs.statfsSync(DATA_DIR);
+    return st.bavail * st.bsize;
+  } catch {
+    return Number.POSITIVE_INFINITY; // cannot tell: do not refuse on that
+  }
+}
+
+let staleChunksCleared = false;
+function clearStaleChunks(): void {
+  if (staleChunksCleared) return;
+  staleChunksCleared = true;
+  try {
+    fs.rmSync(chunkRoot(), { recursive: true, force: true });
+  } catch {
+    // best-effort
+  }
+}
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -62,6 +104,8 @@ const pendingChunkedUploads = new Map<
     senderUserId: string;
     timer: ReturnType<typeof setTimeout>;
     cumulativeSize: number;
+    /** Each stored chunk's size: the running total stays exact when a chunk is sent again. */
+    chunkSizes: Map<number, number>;
   }
 >();
 
@@ -399,6 +443,8 @@ export async function handleChunkedUpload(
     mime: string;
     data: string;
     caption?: string;
+    /** The whole file's size, sent with each chunk: an oversized file is refused at its first. */
+    size?: number;
   };
   try {
     parsed = JSON.parse(body) as typeof parsed;
@@ -439,7 +485,27 @@ export async function handleChunkedUpload(
     uploadId,
     async (): Promise<{ status: number; body: unknown } | { kind: 'reassemble' }> => {
       let upload = pendingChunkedUploads.get(uploadId);
+      if (!upload && chunkIndex > 0) {
+        // Its state is gone (timed out, or central restarted): starting over
+        // from here would accept chunks for an upload that can never complete.
+        return { status: 410, body: { error: 'Upload expired. Try again.' } };
+      }
+      if (!upload && typeof parsed.size === 'number' && parsed.size > MAX_UPLOAD_SIZE) {
+        return {
+          status: 413,
+          body: { error: `File exceeds ${(MAX_UPLOAD_SIZE / 1024 / 1024 / 1024).toFixed(1)}GB limit` },
+        };
+      }
       if (!upload) {
+        // The whole file, as the page states it; an older page that does not:
+        // the chunk count times this chunk's size.
+        const expected =
+          typeof parsed.size === 'number' && parsed.size > 0
+            ? parsed.size
+            : totalChunks * Buffer.byteLength(data, 'base64');
+        if (!uploadFits(expected, freeDataBytes())) {
+          return { status: 507, body: { error: 'Not enough disk space on the server for this file.' } };
+        }
         // First chunk: reserve a per-user slot (MAX_OPEN_UPLOADS_PER_USER).
         if (!reserveUploadSlot(senderUserId, uploadId)) {
           return {
@@ -449,7 +515,8 @@ export async function handleChunkedUpload(
             },
           };
         }
-        const tempDir = path.join(os.tmpdir(), `nanoclaw-webchat-chunk-${uploadId}`);
+        clearStaleChunks();
+        const tempDir = path.join(chunkRoot(), uploadId);
         fs.mkdirSync(tempDir, { recursive: true });
         upload = {
           roomId,
@@ -462,24 +529,23 @@ export async function handleChunkedUpload(
           senderUserId,
           timer: setTimeout(() => cleanupChunkedUpload(uploadId), CHUNK_UPLOAD_TIMEOUT),
           cumulativeSize: 0,
+          chunkSizes: new Map(),
         };
         pendingChunkedUploads.set(uploadId, upload);
       } else if (totalChunks !== upload.totalChunks) {
         return { status: 400, body: { error: 'totalChunks mismatch' } };
+      } else {
+        clearTimeout(upload.timer);
+        upload.timer = setTimeout(() => cleanupChunkedUpload(uploadId), CHUNK_UPLOAD_TIMEOUT);
       }
 
       const chunkBuf = Buffer.from(data, 'base64');
 
-      // Authoritative size check: stat-sum of the temp dir + the new chunk,
-      // exact under the per-uploadId lock.
-      let onDisk = 0;
-      for (const idx of upload.receivedChunks) {
-        try {
-          onDisk += fs.statSync(path.join(upload.tempDir, String(idx))).size;
-        } catch {
-          // chunk missing — ignore, treat as 0
-        }
-      }
+      // Authoritative size check: the running total of what this upload has
+      // written, exact under the per-uploadId lock. (Stat-summing every stored
+      // chunk on each chunk grew with the square of the count: millions of
+      // stats, on the event loop, for a multi-gigabyte file.)
+      const onDisk = upload.cumulativeSize - (upload.chunkSizes.get(chunkIndex) ?? 0);
       if (onDisk + chunkBuf.length > MAX_UPLOAD_SIZE) {
         cleanupChunkedUpload(uploadId);
         return {
@@ -489,7 +555,8 @@ export async function handleChunkedUpload(
       }
       fs.writeFileSync(path.join(upload.tempDir, String(chunkIndex)), chunkBuf);
       upload.receivedChunks.add(chunkIndex);
-      upload.cumulativeSize = onDisk + chunkBuf.length; // keep field in sync for any external observers
+      upload.chunkSizes.set(chunkIndex, chunkBuf.length);
+      upload.cumulativeSize = onDisk + chunkBuf.length;
 
       if (upload.receivedChunks.size < upload.totalChunks) {
         return {
@@ -538,10 +605,12 @@ export async function handleChunkedUpload(
   const safeFilename = `${id}${ext}`;
   const finalPath = path.join(dir, safeFilename);
 
+  // Each write waits for the stream to drain: queued without waiting, a
+  // multi-gigabyte file sat in memory whole before it reached the disk.
   const writeStream = fs.createWriteStream(finalPath);
   for (let i = 0; i < totalChunks; i++) {
     const chunkPath = path.join(upload.tempDir, String(i));
-    writeStream.write(fs.readFileSync(chunkPath));
+    if (!writeStream.write(fs.readFileSync(chunkPath))) await once(writeStream, 'drain');
   }
   await new Promise<void>((resolve, reject) => {
     writeStream.on('finish', () => resolve());

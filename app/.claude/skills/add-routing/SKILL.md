@@ -15,8 +15,8 @@ in **shadow mode**: every completion through LiteLLM is classified and logged,
 later live phase (the virtual `auto` model).
 
 Depends on **`/add-litellm`** (the router must be installed). Layered exactly
-per its "For dependent skills" contract: this installer re-runs the container
-with extra mounts, superseding the base run.
+per its "For dependent skills" contract: this installer restarts the container
+through the add-litellm installer with the hook mounts added.
 
 ## Prerequisites
 
@@ -101,7 +101,9 @@ Semantics:
 - **Fallback, never failure**: classifier unreachable / timeout / bad JSON /
   route `other` or unknown → the request runs on the `default_route` binding.
   `live.timeout_ms` (default 5000) bounds how long a request can wait on the
-  classifier — keep it tight; the fallback is always available.
+  classifier — keep it tight; the fallback is always available. A classifier
+  host that refused or never accepted the connection is skipped for 30s, so
+  while it is off requests fall back at once instead of waiting each time.
 - Requests naming a **concrete roster model are never rewritten**, flag or no
   flag. Shadow logging continues for them unchanged.
 - Every live decision is logged to the same JSONL with `"mode":"live"` and a

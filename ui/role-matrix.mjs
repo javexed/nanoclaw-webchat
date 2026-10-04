@@ -44,6 +44,7 @@ const MATRIX = {
     'settings-selftest': false, // same probe as the wizard
     'settings-backup': false, // /api/system/export|import  guards:['owner']
     'settings-audit': false, // GET /api/webchat/audit-syslog  owner|globalAdmin
+    'settings-agent-activity': false, // GET /api/webchat/turn-traces  guards:['owner']
     'settings-secrets': false, // state.isOwnerView
     'settings-about': false, // GET /api/system/versions  anyAdmin
     'overflow-admin': false, // revealed on /api/users success — 403s for them
@@ -59,6 +60,7 @@ const MATRIX = {
     'settings-selftest': true,
     'settings-backup': true,
     'settings-audit': true,
+    'settings-agent-activity': true,
     'settings-secrets': true,
     'settings-about': true,
     'overflow-admin': true,
@@ -77,6 +79,7 @@ const MATRIX = {
     'settings-selftest': false,
     'settings-backup': false,
     'settings-audit': false,
+    'settings-agent-activity': false,
     // anyAdmin, not owner — a scoped admin SEES this one. The row exists to
     // catch a future change that re-gates it on isOwnerView by mistake.
     'settings-about': true,
@@ -207,6 +210,11 @@ async function runPersona(browser, persona) {
       ? r.fulfill({ status: 200, contentType: 'application/json',
           body: JSON.stringify({ target: '', status: { sentCount: 0, droppedCount: 0, lastSentAt: null, lastError: null } }) })
       : r.fulfill({ status: 403, contentType: 'application/json', body: '{"error":"Forbidden"}' }),
+  );
+  await page.route('**/api/webchat/turn-traces*', (r) =>
+    persona === 'owner'
+      ? r.fulfill({ status: 200, contentType: 'application/json', body: '{"enabled":true,"days":90}' })
+      : r.fulfill({ status: 403, contentType: 'application/json', body: '{"error":"Owner only"}' }),
   );
   // stub-serve reports a FIRST-RUN install, which auto-opens the wizard overlay
   // over the whole app and makes every control unclickable. That is right for

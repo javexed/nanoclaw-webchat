@@ -5,7 +5,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ensureProposalClone, recoverProposal, type Proposal } from './git-changes.js';
+import {
+  ensureProposalClone,
+  proposalChanges,
+  recoverProposal,
+  workingTreeStamp,
+  type Proposal,
+} from './git-changes.js';
 import { LaptopTools, toolDefinitions } from './laptop-tools.js';
 import { DEFAULT_WORKSPACE_EXCLUDES, UNTRACKED_SECRET_EXCLUDES, WORKSPACE_SLOT } from './policy.js';
 
@@ -36,8 +42,11 @@ export interface AgentDeps {
   /**
    * Whether the developer lets the agent work on this folder (a real path).
    * Asked before a folder is first served; without it every bound folder is served.
+   * A string is a refusal with its reason (a folder VS Code does not trust).
    */
-  approveFolder?: (folder: string) => Promise<boolean>;
+  approveFolder?: (folder: string) => Promise<boolean | string>;
+  /** test seam: how often a tool call may check the developer's folder (STAMP_CHECK_MS). */
+  stampCheckMs?: number;
 }
 
 /** A request this machine will not carry out; `failure` goes back to central as is. */
@@ -56,6 +65,14 @@ export class RunnerAgent {
   private readonly proposals = new Map<string, Proposal>();
   /** Laptop tools by agent group: one proposal copy of the bound project per group on this machine. */
   readonly #laptopTools = new Map<string, LaptopTools>();
+  /** The developer's working tree as each group's copy last saw it (workingTreeStamp), and when it was checked. */
+  readonly #stamps = new Map<string, { stamp: string; checkedAt: number }>();
+  /** One refresh of a group's copy at a time: concurrent tool calls would race on its git index. */
+  readonly #busy = new Map<string, Promise<unknown>>();
+  /** A folder that moved on while its copy held a proposal: said once until the copy catches up. */
+  readonly #behindNoted = new Set<string>();
+  /** Each group's copy as taken at its agent's start: tool calls wait for it; a failed one is dropped, and the next call takes it again. */
+  readonly #started = new Map<string, Promise<unknown>>();
 
   constructor(private readonly d: AgentDeps) {}
 
@@ -86,9 +103,21 @@ export class RunnerAgent {
         detail: `the developer stopped all agents on this machine (${halt}); nothing is served until they resume`,
       });
     if (op === 'tools.list') {
-      await this.laptopTools(payload, true);
+      // The list is fixed; the copy is not needed to answer it. A large project
+      // takes longer to copy than the agent waits for its tools to connect.
+      this.checkRequest(payload);
+      const key = String(payload.agentGroupId);
+      const copy = this.laptopTools(payload, true);
+      this.#started.set(key, copy);
+      copy.catch((err) => {
+        // A failed copy (a refusal, dismissed consent, a transient git error) is
+        // not kept: the next tool call takes it again rather than failing with it.
+        if (this.#started.get(key) === copy) this.#started.delete(key);
+        this.d.log(`laptop tools: copy failed: ${err instanceof Error ? err.message : String(err)}`);
+      });
       return { tools: toolDefinitions() };
     }
+    await this.#started.get(String(payload.agentGroupId ?? ''))?.catch(() => {});
     const tools = await this.laptopTools(payload, false);
     return { ...(await tools.call(String(payload.name ?? ''), payload.input ?? {})) };
   }
@@ -99,24 +128,58 @@ export class RunnerAgent {
    * `refresh` (at each agent start, when central lists the tools) re-takes the
    * copy when it holds no unapplied proposal.
    */
-  private async laptopTools(payload: Record<string, unknown>, refresh: boolean): Promise<LaptopTools> {
+  private laptopTools(payload: Record<string, unknown>, refresh: boolean): Promise<LaptopTools> {
+    const key = String(payload.agentGroupId ?? '');
+    const run = (this.#busy.get(key) ?? Promise.resolve()).then(() => this.laptopToolsNow(payload, refresh));
+    this.#busy.set(
+      key,
+      run.catch(() => {}),
+    );
+    return run;
+  }
+
+  /**
+   * Whether the developer's folder moved on (a pull, a checkout, an edit)
+   * since the group's copy was taken. Checked at most every few seconds.
+   */
+  private async folderMoved(agentGroupId: string, repoRoot: string): Promise<boolean> {
+    const seen = this.#stamps.get(agentGroupId);
+    if (!seen || Date.now() - seen.checkedAt < (this.d.stampCheckMs ?? STAMP_CHECK_MS)) return false;
+    seen.checkedAt = Date.now();
+    const now = await workingTreeStamp(repoRoot).catch(() => seen.stamp);
+    return now !== seen.stamp;
+  }
+
+  /** The install and group a request names are well formed, or it is refused. */
+  private checkRequest(payload: Record<string, unknown>): void {
     const why = this.installRefusal(payload.installSlug);
     if (why) throw new RefusedError({ kind: 'spec-invalid', retryable: false, detail: why });
-    const agentGroupId = String(payload.agentGroupId ?? '');
-    if (!GROUP_ID.test(agentGroupId))
+    if (!GROUP_ID.test(String(payload.agentGroupId ?? '')))
       throw new RefusedError({ kind: 'spec-invalid', retryable: false, detail: 'bad agent group id' });
+  }
+
+  private async laptopToolsNow(payload: Record<string, unknown>, refresh: boolean): Promise<LaptopTools> {
+    this.checkRequest(payload);
+    const agentGroupId = String(payload.agentGroupId ?? '');
     const known = this.#laptopTools.get(agentGroupId);
-    if (known && !refresh) return known;
+    const had = this.proposals.get(agentGroupId);
+    // The copy is re-taken when the agent starts, and between starts when the
+    // developer's folder has moved on — a pull mid-session must reach the agent.
+    const moved = !!known && !refresh && !!had && (await this.folderMoved(agentGroupId, had.repoRoot));
+    if (known && !refresh && !moved) return known;
     const policy = this.d.policy();
     const real = boundSlot(policy, WORKSPACE_SLOT);
-    if (this.d.approveFolder && !(await this.d.approveFolder(real)))
+    const allowed = this.d.approveFolder ? await this.d.approveFolder(real) : true;
+    if (allowed !== true)
       throw new RefusedError({
         kind: 'denied-by-policy',
         retryable: false,
-        detail: `the developer has not allowed the agent to work on ${real}`,
+        detail: typeof allowed === 'string' ? allowed : `the developer has not allowed the agent to work on ${real}`,
       });
     const excludes = [...new Set(policy.excludes ?? DEFAULT_WORKSPACE_EXCLUDES)];
     let proposal: Proposal;
+    // Stamped before the copy: a change made while it is taken shows as a move next time.
+    const stamp = await workingTreeStamp(real).catch(() => '');
     try {
       proposal = await ensureProposalClone(real, this.proposalDir(agentGroupId), excludes);
     } catch (err) {
@@ -125,6 +188,23 @@ export class RunnerAgent {
         retryable: false,
         detail: `could not copy ${real} for the agent (it needs a git repository there): ${String((err as Error).message).slice(0, 240)}`,
       });
+    }
+    // A copy kept for its unapplied proposal keeps the stamp it was taken at:
+    // the folder stays "moved" until that proposal is applied or rejected, and
+    // the next check after that takes the copy again.
+    const kept = !!had && proposal.base === had.base && (await proposalChanges(proposal)).length > 0;
+    if (!kept || !this.#stamps.has(agentGroupId)) this.#stamps.set(agentGroupId, { stamp, checkedAt: Date.now() });
+    if (moved && kept) {
+      // A clone holding an unapplied proposal is never refreshed under it.
+      if (!this.#behindNoted.has(agentGroupId)) {
+        this.#behindNoted.add(agentGroupId);
+        this.d.log(
+          `laptop tools: ${real} changed since the agent's copy was taken; the copy holds a proposal, so it stays as it is until that is applied or rejected`,
+        );
+      }
+    } else {
+      this.#behindNoted.delete(agentGroupId);
+      if (moved) this.d.log(`laptop tools: ${real} changed; the agent's copy was taken again`);
     }
     this.proposals.delete(agentGroupId);
     this.proposals.set(agentGroupId, proposal);
@@ -188,6 +268,8 @@ export async function recoverLaptopToolsProposal(storageRoot: string, policy: Ag
   return found[0]?.p ?? null;
 }
 
+/** How often a tool call may check whether the developer's folder moved on. */
+const STAMP_CHECK_MS = 10_000;
 const GROUP_ID = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
 const INSTALL_SLUG = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const safe = (x: string) => x.replace(/[^A-Za-z0-9._-]/g, '_');
@@ -199,7 +281,7 @@ function boundSlot(policy: AgentPolicy, slotPath: string): string {
     throw new RefusedError({
       kind: 'denied-by-policy',
       retryable: false,
-      detail: `slot ${slotPath} is not bound on this machine (set nanoclaw.slots)`,
+      detail: `slot ${slotPath} is not bound on this machine (open the project folder in VS Code)`,
     });
   const real = safeRealpath(bound);
   if (!real || !fs.statSync(real).isDirectory())
@@ -213,7 +295,7 @@ function boundSlot(policy: AgentPolicy, slotPath: string): string {
     throw new RefusedError({
       kind: 'denied-by-policy',
       retryable: false,
-      detail: `slot ${slotPath}: ${real} is outside the mount allowlist`,
+      detail: `slot ${slotPath}: ${real} is outside the folders open in VS Code`,
     });
   return real;
 }

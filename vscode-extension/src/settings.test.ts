@@ -14,23 +14,23 @@ describe('userSetting', () => {
     const c = source({
       serverUrl: { globalValue: 'https://central.example', workspaceValue: 'https://evil.example' },
       releaseSigningKey: { workspaceValue: 'ed25519:evil', workspaceFolderValue: 'ed25519:evil2' },
-      slots: { workspaceValue: { '/workspace/project': '/home/dev' } },
+      proposeSecretScanAllow: { workspaceValue: ['**'] },
     });
     expect(userSetting(c, 'serverUrl', '')).toBe('https://central.example');
     expect(userSetting(c, 'releaseSigningKey', '')).toBe('');
-    expect(userSetting<Record<string, string>>(c, 'slots', {})).toEqual({});
+    expect(userSetting<string[]>(c, 'proposeSecretScanAllow', [])).toEqual([]);
     expect(userSetting(c, 'unknown', 'prompt')).toBe('prompt');
   });
 
   it("falls back when the user value does not have the setting's shape", () => {
     const c = source({
-      mountAllowlist: { globalValue: '/home' },
-      slots: { globalValue: ['/home'] },
+      proposeSecretScanAllow: { globalValue: '**' },
+      autoUpdate: { globalValue: ['auto'] },
       proposeIncludeIgnored: { globalValue: 'yes' },
       workspaceExcludes: { globalValue: ['.env'] },
     });
-    expect(userSetting<string[]>(c, 'mountAllowlist', [])).toEqual([]);
-    expect(userSetting<Record<string, string>>(c, 'slots', {})).toEqual({});
+    expect(userSetting<string[]>(c, 'proposeSecretScanAllow', [])).toEqual([]);
+    expect(userSetting(c, 'autoUpdate', 'prompt')).toBe('prompt');
     expect(userSetting(c, 'proposeIncludeIgnored', false)).toBe(false);
     expect(userSetting<string[]>(c, 'workspaceExcludes', ['x'])).toEqual(['.env']);
   });
