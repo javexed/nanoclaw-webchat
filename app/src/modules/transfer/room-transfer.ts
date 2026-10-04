@@ -28,7 +28,8 @@ import { insertWithSchemaIntersection } from './agent-transfer.js';
 export const ROOM_FORMAT = 'nanoclaw-room-export';
 export const ROOM_VERSION = 1;
 
-/** Room-scoped tables exported wholesale (keyed by room_id). */
+/** Room-scoped tables exported wholesale (keyed by room_id). webchat_turn_traces
+ *  stays home: it points at message ids, which an import re-mints. */
 const ROOM_TABLES = [
   'webchat_messages',
   'webchat_threads',

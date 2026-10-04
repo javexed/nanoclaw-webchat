@@ -28,14 +28,16 @@ replacement) instead.
 
 ## 1. Install the provider files
 
-Copy the three bundled provider files into place. The extension is not
-optional: without it pi has no `message` tool, and the provider passes
-`--extension` pointing at that path on every spawn.
+Copy the three bundled provider files and their tests into place. The
+extension is not optional: without it pi has no `message` tool, and the
+provider passes `--extension` pointing at that path on every spawn.
 
 ```nc:copy
 files/pi.container.ts -> container/agent-runner/src/providers/pi.ts
 files/pi.host.ts -> src/providers/pi.ts
 files/pi-message-extension.ts -> container/agent-runner/src/providers/pi-message-extension.ts
+files/pi.container.test.ts -> container/agent-runner/src/providers/pi.test.ts
+files/pi.host.test.ts -> src/providers/pi.test.ts
 ```
 
 It lands under `container/agent-runner/src` because that tree is the only one
@@ -94,8 +96,9 @@ journalctl -u ollama --since "-2 min" | grep /v1/chat  # POST from 172.17.0.x �
 ```
 A clean reply with no `Unknown provider: pi` means the stack is live. Thinking
 models stream reasoning into the webchat bubble (pi emits structured
-thinking_delta events); a reasoning-only stall auto-retries with `/no_think`
-(same recovery as the OpenCode provider).
+thinking_delta events); a reasoning-only stall auto-retries with `/no_think`.
+A backend failure (model server down, model missing) fails the turn with an
+error notice; pi's own retries run first.
 
 ## Tuning: tools and thinking level
 
@@ -140,7 +143,23 @@ blaming the harness.
   survive container respawns.
 - **models.json is host-written per spawn** from the agent's current local
   model, so switching the model in the webchat UI re-targets pi automatically.
+  It declares the window Ollama runs the model with (`num_ctx` from
+  `/api/show`, else the loaded model's window from `/api/ps`, else Ollama's
+  default 4096 — capped by the model's own limit; 32768 only when the server
+  does not answer) and a quarter of
+  it as the output budget, and `settings.json` scales pi's compaction to
+  match — pi compacts before Ollama truncates. Vision models (Ollama's
+  `vision` capability) also get image attachments, as `@file` arguments.
+- **Only local models.** An agent assigned a cloud model fails each turn with
+  a notice to assign a local model or switch harness; the `.env` fallback
+  applies only to an agent with no model assigned.
+- **Memory** (the shared memory index and definition) is appended to the
+  system prompt on every spawn while tools are on, trimmed to
+  `PI_MEMORY_MAX_CHARS` (default 8000) for small models.
+- **Stop** sends pi SIGTERM so it can reap tool processes and close its
+  session, then SIGKILL after `PI_STOP_GRACE_MS` (default 3000).
 - **No MCP.** The bundled `message` extension covers delivery; bridging
   NanoClaw's MCP server would need another pi extension.
 - **To remove:** switch the harness back (`--provider opencode` or default),
-  restart; delete the three provider files + barrel lines + the cli-tools entry.
+  restart; delete the three provider files, their two tests, the barrel
+  lines and the cli-tools entry.

@@ -16,13 +16,16 @@ const { DATA, draftBody } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../config.js', () => ({ DATA_DIR: DATA }));
-vi.mock('../../container-restart.js', () => ({ restartAgentGroupContainers: () => 0 }));
+vi.mock('../../container-restart.js', () => ({ restartAgentGroupContainers: vi.fn(() => 0) }));
+vi.mock('../../container-restart-idle.js', () => ({ restartAgentGroupContainersWhenIdle: vi.fn(async () => 0) }));
 vi.mock('../../db/skill-drafts.js', () => ({
   readSkillDraftBody: () => draftBody.value,
   resolveSkillDraft: () => {},
 }));
 
 const { applySkillDraft } = await import('./apply.js');
+const { restartAgentGroupContainers } = await import('../../container-restart.js');
+const { restartAgentGroupContainersWhenIdle } = await import('../../container-restart-idle.js');
 
 const AG = 'ag-apply-test';
 const scoped = path.join(DATA, 'v2-sessions', AG, '.claude-shared', 'skills');
@@ -70,5 +73,14 @@ describe('applySkillDraft — update existing skill (patch)', () => {
     await applySkillDraft(draft as Parameters<typeof applySkillDraft>[0], 'test update');
     // No skill created under the draft's own name.
     expect(fs.existsSync(path.join(scoped, 'newly-learned'))).toBe(false);
+  });
+});
+
+describe('applySkillDraft — restart', () => {
+  it('restarts the agent between turns, never mid-turn (auto-keep can fire while it is answering)', async () => {
+    const draft = { id: 'd3', agent_group_id: AG, kind: 'patch' as const, target_skill: 'existing-skill' };
+    await applySkillDraft(draft as Parameters<typeof applySkillDraft>[0], 'Webchat learned skill kept');
+    expect(restartAgentGroupContainersWhenIdle).toHaveBeenCalledWith(AG, 'Webchat learned skill kept');
+    expect(restartAgentGroupContainers).not.toHaveBeenCalled();
   });
 });

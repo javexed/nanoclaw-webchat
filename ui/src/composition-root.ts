@@ -187,6 +187,7 @@ import {
   wireModelCreate,
   wireModelsPanel,
 } from './features/models.js';
+import { wireCloudModels } from './features/cloud-models.js';
 
 import {
   closeRoomDetail,
@@ -285,6 +286,7 @@ import {
 } from './features/wizard.js';
 
 import { authFetch } from './core/api.js';
+import { checkSessionExpired, provideDraftCheck } from './core/session-expiry.js';
 
 import { showToast } from './core/toast.js';
 import { cancelDictation, isDictationActive, startDictation, stopDictation } from './features/voice.js';
@@ -293,7 +295,11 @@ import { toggleThinkingExpanded } from './features/thinking.js';
 
 async function initApp() {
   const verdict = await checkAuth();
-  if (verdict === 'ok' || verdict === 'unreachable') {
+  if (verdict === 'expired') {
+    // The page came from the cache while the front door's session had ended: say so, and sign in.
+    enterAuthedApp();
+    void checkSessionExpired();
+  } else if (verdict === 'ok' || verdict === 'unreachable') {
     // 'unreachable' enters the app deliberately: the session is probably fine and
     // the WS reconnect + connection banner explain the state far better than a
     // token prompt would. If it turns out we really are unauthenticated, the
@@ -594,7 +600,10 @@ $('#system-export-btn')?.addEventListener('click', async () => {
     checks: [checked, withSecrets],
   } = await confirmWithToggle({
     title: 'Download system backup?',
-    toggleLabels: ['Lean (skip conversation history — much smaller)', 'Include secrets (API keys, deploy keys, MCP tokens)'],
+    toggleLabels: [
+      'Lean (skip conversation history — much smaller)',
+      'Include secrets (API keys, deploy keys, MCP tokens)',
+    ],
     note: 'Without secrets, a restore keeps this install’s own. Host identity never travels.',
     confirmLabel: 'Download',
   });
@@ -823,6 +832,8 @@ if (!document.hidden) clearBadgeCount();
 
 // ── Init ──────────────────────────────────────────────────────────────────
 wireServiceWorker(() => Array.isArray(pendingFiles.value) && pendingFiles.value.length > 0);
+// An expired sign-in goes back to the login page by itself only when nothing unsent would be lost.
+provideDraftCheck(() => Array.isArray(pendingFiles.value) && pendingFiles.value.length > 0);
 
 $('#router-select')?.addEventListener('change', (e) => {
   routingCurrentRouter.value = (e.target as HTMLInputElement).value;
@@ -873,6 +884,7 @@ bindDiscover(
   '#model-create-discover-select',
 );
 wireModelsPanel();
+wireCloudModels();
 
 wireMcpCatalog();
 

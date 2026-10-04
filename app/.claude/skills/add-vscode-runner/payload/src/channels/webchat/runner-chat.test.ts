@@ -121,7 +121,7 @@ describe('runner chat bridge', () => {
     await settle();
     sent.length = 0;
     handleChatFrame(me, { type: 'chat.send', text: '   ' });
-    handleChatFrame(me, { type: 'chat.send', text: 'x'.repeat(40_000) });
+    handleChatFrame(me, { type: 'chat.send', text: 'x'.repeat(256_001) });
     await settle();
     expect(frames(FP, 'chat.error').map((f) => f.message)).toEqual([
       'empty message',

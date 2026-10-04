@@ -1,7 +1,8 @@
 // The sign-in settings central hands out (Manage → Runners), so a developer
 // only has to click "Connect VS Code" in webchat. They arrive two ways: in the
 // connect link itself, and from GET /api/runners/client-config on every
-// connect. A value the user set in their own settings always wins.
+// connect. They are central's to set (Manage → Runners); there is no local
+// override.
 import { secureOrigin, type SignIn } from './protocol.js';
 import { parsePublicKey } from './release-signing.js';
 
@@ -17,7 +18,6 @@ const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Only an app's own `api://` URI. An https one also names Microsoft's own
 // APIs (https://management.azure.com): a link or a server that could set it
 // would get the developer a token for those, sent to a server of its choosing.
-// A verified-domain https URI still works as the user's own setting.
 const APP_ID_URI = /^api:\/\/[^\s?#]{1,200}$/;
 
 /** Only well-formed values survive: a bad link or response can't plant anything else. */
@@ -54,16 +54,18 @@ export function parseConnectQuery(
   return { serverUrl, config: sanitizeClientConfig(Object.fromEntries(q)), ...(releaseKey ? { releaseKey } : {}) };
 }
 
-/** Per key: the user's own setting, else central's, else the built-in default. */
-export function resolveClientConfig(
-  own: ClientConfig,
-  central: ClientConfig,
-): { signIn: SignIn; tenantId: string; appIdUri: string; clientId: string } {
+/** Per key: central's value, else the built-in default. */
+export function resolveClientConfig(central: ClientConfig): {
+  signIn: SignIn;
+  tenantId: string;
+  appIdUri: string;
+  clientId: string;
+} {
   return {
-    signIn: own.signIn ?? central.signIn ?? 'microsoft',
-    tenantId: own.tenantId ?? central.tenantId ?? '',
-    appIdUri: own.appIdUri ?? central.appIdUri ?? '',
-    clientId: own.clientId ?? central.clientId ?? '',
+    signIn: central.signIn ?? 'microsoft',
+    tenantId: central.tenantId ?? '',
+    appIdUri: central.appIdUri ?? '',
+    clientId: central.clientId ?? '',
   };
 }
 

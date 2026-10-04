@@ -274,6 +274,9 @@ export async function deleteWebchatRoom(id: string): Promise<void> {
   if (await hasTable(db, 'webchat_thread_sync')) {
     await db.run(`DELETE FROM webchat_thread_sync WHERE room_id = ?`, id);
   }
+  if (await hasTable(db, 'webchat_turn_traces')) {
+    await db.run(`DELETE FROM webchat_turn_traces WHERE room_id = ?`, id);
+  }
   // Drop any agent_destinations rows pointing at this room. target_id has no
   // FK so they wouldn't block, just rot. Guarded — a2a module may not be installed.
   if (await hasTable(db, 'agent_destinations')) {
@@ -699,6 +702,12 @@ export const setSttCleanupPrompt = settingsSetter('stt_cleanup_prompt', encodeNu
 export const getReadAloudEnabled = settingsGetter('read_aloud_enabled', decodeBool);
 export const setReadAloudEnabled = settingsSetter('read_aloud_enabled', encodeBool);
 
+// Fit context to GPU (model-autofit.ts): off (column default 0) until the owner turns it on;
+// while off, the UI offers a fit after an add when fit-context/check says it would help.
+// A read that fails (or finds no row) is off too.
+export const getFitContextToGpu = settingsGetter('fit_context_to_gpu', decodeBool);
+export const setFitContextToGpu = settingsSetter('fit_context_to_gpu', encodeBool);
+
 /**
  * Approval pre-judge model (webchat_models.id) that triages opted-in holds
  * before a human sees them. NULL = off (default). See docs/webchat/approval-prejudge.md.
@@ -731,6 +740,15 @@ export const getAuditSyslogTarget = settingsGetter('audit_syslog_target', decode
 export const getAuditRetentionRaw = settingsGetter('audit_retention', decodeNullableString);
 export const setAuditRetentionRaw = settingsSetter('audit_retention', encodeNullableString);
 export const setAuditSyslogTarget = settingsSetter('audit_syslog_target', (v: string) => v || null);
+
+// Turn traces (turn-traces.ts): NULL = recording on, kept TURN_TRACE_DEFAULT_DAYS days (0 = forever).
+export const TURN_TRACE_DEFAULT_DAYS = 90;
+export const getTurnTracesEnabled = settingsGetter('turn_traces_enabled', (v) => v !== 0);
+export const setTurnTracesEnabled = settingsSetter('turn_traces_enabled', encodeBool);
+export const getTurnTraceDays = settingsGetter('turn_trace_days', (v) =>
+  typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : TURN_TRACE_DEFAULT_DAYS,
+);
+export const setTurnTraceDays = settingsSetter('turn_trace_days', (v: number) => v);
 
 // One-shot: the next tailscale identity to authenticate becomes owner, then the
 // flag clears. See moduleWebchatTailscaleOwner + auth.ts finalize().
@@ -1498,6 +1516,9 @@ export async function deleteWebchatThread(roomId: string, threadId: string): Pro
   await db.run(`DELETE FROM webchat_thread_reads WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
   await db.run(`DELETE FROM webchat_thread_sync WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
   await db.run(`DELETE FROM webchat_threads WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
+  if (await hasTable(db, 'webchat_turn_traces')) {
+    await db.run(`DELETE FROM webchat_turn_traces WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
+  }
 }
 
 // ── Thread context sync (pull / push) ──

@@ -1,0 +1,26 @@
+diff --git a/container/agent-runner/src/cross-session-echo.test.ts b/container/agent-runner/src/cross-session-echo.test.ts
+index a8a2ce04..16b1215f 100644
+--- a/container/agent-runner/src/cross-session-echo.test.ts
++++ b/container/agent-runner/src/cross-session-echo.test.ts
+@@ -204,6 +204,21 @@ describe('command classification', () => {
+     expect(messages.some((m) => isRunnerCommand(m, 'claude'))).toBe(false);
+   });
+ 
++  it('a mirrored context row (trigger 0, not an echo) is never a command either', () => {
++    // The shape a member-credential turn mirrors into the base session.
++    getInboundDb()
++      .prepare(
++        `INSERT INTO messages_in (id, seq, kind, timestamp, status, "trigger", channel_type, thread_id, content)
++         VALUES ('uc1', 2, 'chat', ?, 'pending', 0, NULL, NULL, ?)`,
++      )
++      .run(new Date().toISOString(), JSON.stringify({ text: '/clear', sender: 'Vishnu', senderId: '' }));
++    const [msg] = getPendingMessages();
++    expect(isSessionEcho(msg)).toBe(false);
++    expect(categorizeMessage(msg, 'claude').category).toBe('none');
++    expect(isRunnerCommand(msg, 'claude')).toBe(false);
++    expect(isClearCommand(msg)).toBe(false);
++  });
++
+   it('a real /clear in the same batch still classifies normally', () => {
+     insertEcho('e1', { seq: 2, text: '/clear' });
+     insertMessage('m1', 'chat', { sender: 'Alice', text: '/clear' }, { seq: 4 });

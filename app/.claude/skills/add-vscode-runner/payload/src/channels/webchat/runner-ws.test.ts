@@ -75,7 +75,8 @@ const fakeRegistry: RunnerRegistryPort = {
 };
 const pendingSeen: string[] = [];
 
-import { __resetUpgradeHandlersForTest, setupWebSocket } from './ws.js';
+import { log } from '../../log.js';
+import { __resetPreAuthLogForTest, __resetUpgradeHandlersForTest, setupWebSocket } from './ws.js';
 
 const fakeAuth = async (req: http.IncomingMessage): Promise<AuthResult | AuthFailure> => {
   const who = req.headers['x-test-auth'];
@@ -253,6 +254,18 @@ describe('runner endpoint', () => {
     expect(await rejectedWith(open(RUNNER_WS_PATH))).toBe(401);
   });
 
+  it('logs unauthenticated attempts within the shared pre-auth budget', async () => {
+    __resetPreAuthLogForTest();
+    const warn = vi.spyOn(log, 'warn');
+    try {
+      for (let i = 0; i < 40; i++) expect(await rejectedWith(open(RUNNER_WS_PATH))).toBe(401);
+      expect(warn.mock.calls.filter(([m]) => m === 'Runner connection refused: not signed in')).toHaveLength(30);
+    } finally {
+      warn.mockRestore();
+      __resetPreAuthLogForTest();
+    }
+  });
+
   it('admits a person by any personal source: a verified Entra token, Tailscale, or proxy headers', async () => {
     for (const who of ['oidc', 'tailscale', 'proxy']) {
       const ws = open(RUNNER_WS_PATH, who);
@@ -384,6 +397,47 @@ describe('runner endpoint', () => {
     await welcomed(b);
     await aClosed;
     expect(listRunners()).toHaveLength(1);
+  });
+
+  it('a standby hello does not take the machine from a live window; it gets it once that window is gone', async () => {
+    const a = open(RUNNER_WS_PATH, 'oidc');
+    await opened(a);
+    answerPings(a);
+    await sayHello(a, 'fp-same');
+    expect((await welcomed(a)).standby).toBe(true);
+    const b = open(RUNNER_WS_PATH, 'oidc');
+    await opened(b);
+    const bClosed = closedWith(b);
+    b.send(JSON.stringify({ ...JSON.parse(hello('fp-same')), standby: true }));
+    const c = await frameOf(b, 'challenge');
+    b.send(
+      JSON.stringify({
+        type: 'challenge.response',
+        origin: originOf(),
+        signature: signed(machineKey, 'fp-same', originOf(), String(c.nonce)),
+      }),
+    );
+    expect(await bClosed).toEqual({ code: 4409, error: 'held' });
+    expect(a.readyState).toBe(WebSocket.OPEN);
+    const aClosed = new Promise<void>((r) => a.once('close', () => r()));
+    a.close();
+    await aClosed;
+    await new Promise((r) => setTimeout(r, 50));
+    const d = open(RUNNER_WS_PATH, 'oidc');
+    await opened(d);
+    answerPings(d);
+    d.send(JSON.stringify({ ...JSON.parse(hello('fp-same')), standby: true }));
+    const c2 = await frameOf(d, 'challenge');
+    d.send(
+      JSON.stringify({
+        type: 'challenge.response',
+        origin: originOf(),
+        signature: signed(machineKey, 'fp-same', originOf(), String(c2.nonce)),
+      }),
+    );
+    await welcomed(d);
+    expect(listRunners()).toHaveLength(1);
+    d.close();
   });
 
   it('the chat endpoint /ws is still dispatched, and an unknown path is still destroyed', async () => {

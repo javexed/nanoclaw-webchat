@@ -104,8 +104,10 @@ a group, `ensureGroupEnrollment` ensures the per-member agent, sets it to
 `selective` secret mode, and calls `setSecrets` with the merged set
 `{ member secret } ∪ { group tool secrets }` (reconstructed each time, so
 siblings are never clobbered), then records the mapping in
-`user_credential_members`. Credentials are never logged; `onecli` exec errors
-are scrubbed of their argv so a key can't leak through an error message.
+`user_credential_members`. Credentials are never logged; a new secret's value
+reaches `onecli` in a 0600 temp file (`--file`), not on its command line, when
+the installed CLI takes one (2.x); `onecli` exec errors are scrubbed of their
+argv so a key can't leak through an error message.
 
 **Route + spawn** — the session-key resolver keys the session to the member (§3);
 `container-runner.ts` spawns the container under the member's OneCLI agent, and
@@ -180,8 +182,9 @@ custody; an expired token surfaces as a 401 and the member reconnects.
   credential, so it cannot spend or exfiltrate anyone else's.
 - The per-member identity is fixed **at spawn from `session.thread_id`**, not
   from any agent-controllable input.
-- Residual operational risks: onboarding argv exposure to local processes, and
-  OneCLI as the trust anchor.
+- Residual operational risks: argv exposure to local processes where the CLI
+  has no `--file` (a 1.x CLI, and `secrets update`, which replaces a value in
+  place), and OneCLI as the trust anchor.
 
 ## 11. Touch points
 

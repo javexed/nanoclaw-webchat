@@ -1,0 +1,74 @@
+diff --git a/.claude/skills/add-onecli/scripts/setup.private-ports.test.ts b/.claude/skills/add-onecli/scripts/setup.private-ports.test.ts
+new file mode 100644
+index 00000000..4ca196cf
+--- /dev/null
++++ b/.claude/skills/add-onecli/scripts/setup.private-ports.test.ts
+@@ -0,0 +1,68 @@
++import { describe, expect, it } from 'vitest';
++
++import { privateApiUrl, servicesExposed, withPrivateServicePorts } from './setup.js';
++
++// The ports sections of OneCLI's own compose file, as its installer writes it.
++const COMPOSE = `name: onecli
++
++services:
++  postgres:
++    image: postgres:18-alpine
++    volumes:
++      - pgdata:/var/lib/postgresql
++    ports:
++      - "\${ONECLI_BIND_HOST:-127.0.0.1}:\${POSTGRES_PORT:-5432}:5432"
++    healthcheck:
++      test: ["CMD-SHELL", "pg_isready"]
++
++  onecli:
++    image: ghcr.io/onecli/onecli:\${ONECLI_VERSION:-latest}
++    container_name: onecli
++    ports:
++      - "\${ONECLI_BIND_HOST:-127.0.0.1}:\${ONECLI_APP_PORT:-10254}:10254"
++      - "\${ONECLI_BIND_HOST:-127.0.0.1}:\${ONECLI_GATEWAY_PORT:-10255}:10255"
++    environment:
++      INTERNAL_API_URL: http://localhost:10254
++`;
++
++describe("OneCLI's API and database off the docker bridge", () => {
++  const out = withPrivateServicePorts(COMPOSE, '172.17.0.1');
++
++  it('publishes no Postgres port, the API on loopback only, the gateway on the bridge and loopback', () => {
++    expect(out).not.toContain('POSTGRES_PORT');
++    expect(out).toContain('- "127.0.0.1:${ONECLI_APP_PORT:-10254}:10254"');
++    expect(out).not.toContain('${ONECLI_BIND_HOST:-127.0.0.1}:${ONECLI_APP_PORT');
++    expect(out).toContain('- "${ONECLI_BIND_HOST:-127.0.0.1}:${ONECLI_GATEWAY_PORT:-10255}:10255"');
++    expect(out).toContain('- "127.0.0.1:${ONECLI_GATEWAY_PORT:-10255}:10255"');
++    expect(servicesExposed(COMPOSE)).toBe(true);
++    expect(servicesExposed(out)).toBe(false);
++    // The rest of the file is untouched.
++    expect(out).toContain('    healthcheck:\n      test: ["CMD-SHELL", "pg_isready"]');
++    expect(out).toContain('INTERNAL_API_URL: http://localhost:10254');
++  });
++
++  it('is idempotent', () => {
++    expect(withPrivateServicePorts(out, '172.17.0.1')).toBe(out);
++  });
++
++  it('adds no second loopback gateway port when the bind host is loopback already', () => {
++    const loop = withPrivateServicePorts(COMPOSE, '127.0.0.1');
++    expect(loop.match(/:10255"/g)).toHaveLength(1);
++  });
++
++  it('leaves an unrecognised compose file alone, and says it is still exposed', () => {
++    const other = COMPOSE.replace(/\$\{ONECLI_BIND_HOST:-127\.0\.0\.1\}/g, '${BIND:-0.0.0.0}');
++    expect(withPrivateServicePorts(other, '172.17.0.1')).toBe(other);
++  });
++});
++
++describe('the API URL central uses', () => {
++  it('moves to loopback on Linux, keeping the port', () => {
++    expect(privateApiUrl('http://172.17.0.1:10254', 'linux')).toBe('http://127.0.0.1:10254');
++    expect(privateApiUrl('http://172.17.0.1:20254/', 'linux')).toBe('http://127.0.0.1:20254');
++  });
++
++  it('stays as it is elsewhere (Docker Desktop binds loopback already)', () => {
++    expect(privateApiUrl('http://127.0.0.1:10254', 'darwin')).toBe('http://127.0.0.1:10254');
++  });
++});

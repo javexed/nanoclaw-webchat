@@ -23,6 +23,7 @@ import {
 } from './install-engine.js';
 import { listProviderContainerConfigNames } from '../../providers/provider-container-registry.js';
 import { listWebchatModels } from './db.js';
+import { cloudModelNames, restrictCloudSecrets, routerSettings } from './cloud-models.js';
 import { ELEVENLABS_API_HOST } from './stt.js';
 import { getSystemdUnit, getLaunchdLabel } from '../../install-slug.js';
 
@@ -299,6 +300,12 @@ const refreshState: RosterRefreshState = {
   stepLabel: null,
 };
 
+/** The router's port and container name for the installer (cloud-models.ts routerSettings). */
+function routerArgs(root: string): string[] {
+  const { port, container } = routerSettings(root);
+  return ['--port', String(port), '--name', container];
+}
+
 function litellmInstallerPath(root: string): string {
   return path.join(root, '.claude/skills/add-litellm/resources/install-litellm.sh');
 }
@@ -313,6 +320,8 @@ function bindRoutesPath(root: string): string {
 export function parseConfiguredHosts(configText: string): string | null {
   const m = configText.match(/^# hosts:\s*(.+)$/m);
   if (!m) return null;
+  // A cloud-only router (gateway backends, no local servers).
+  if (m[1].trim() === '(none)') return '';
   const hosts = m[1]
     .split(',')
     .map((s) => s.trim())
@@ -361,6 +370,92 @@ export function getRosterRefreshState(root = process.cwd()): RosterRefreshState 
 export { restartPending, type InstallState, type InstallStep } from './install-engine.js';
 
 /**
+ * The `--hosts` list for a router rebuild: fixed, or worked out when the
+ * rebuild actually runs (see routerChainSteps).
+ */
+export type HostsSource = string | (() => string | Promise<string>);
+
+/** Every chain that replaces the router container takes this lock. */
+const ROUTER_LOCK = 'litellm-router';
+
+/**
+ * The whole router rebuild: the litellm installer (which regenerates
+ * config.yaml), then — when routing is installed — its installer, which puts
+ * the hook back, and route binding. Every path that reinstalls the router
+ * runs this, or the regenerated config loses the routing callback.
+ */
+export function routerChainSteps(root: string, hosts: HostsSource): InstallStep[] {
+  const steps: InstallStep[] = [];
+  // Cloud keys stay scoped to inference and model-list paths, also for keys stored before that rule.
+  if (cloudModelNames(root).length > 0) {
+    steps.push({ call: () => restrictCloudSecrets(), label: 'Scoping cloud keys to inference paths' });
+  }
+  const installerArgs = [
+    litellmInstallerPath(root),
+    '--hosts',
+    typeof hosts === 'string' ? hosts : '',
+    ...routerArgs(root),
+  ];
+  if (typeof hosts !== 'string') {
+    // Router chains run one at a time behind ROUTER_LOCK, so the host list is
+    // read here, when this one's turn comes: a rebuild queued ahead of it may
+    // have rewritten config.yaml's header since this one was queued.
+    steps.push({
+      call: async () => {
+        installerArgs[2] = await hosts();
+      },
+      label: 'Reading the model hosts',
+    });
+  }
+  steps.push({ run: ['bash', installerArgs], label: 'Installing the LiteLLM router' });
+  if (fs.existsSync(path.join(root, 'data/litellm/router_hook.py')) && fs.existsSync(routingInstallerPath(root))) {
+    steps.push({ run: ['bash', [routingInstallerPath(root), ...routerArgs(root)]] });
+  }
+  // Capability auto-binding: a refreshed roster re-binds unpinned routes so a
+  // freshly pulled model joins routing on its own (see the routing skill's
+  // bind-routes.mjs — pins and descriptions are never touched).
+  if (fs.existsSync(path.join(root, 'data/litellm/routing/routes.json')) && fs.existsSync(bindRoutesPath(root))) {
+    steps.push({ run: ['node', [bindRoutesPath(root), '--apply']] });
+    // A refreshed roster may cover a capability no route handles yet — create it,
+    // so a freshly pulled model brings its route with it (not just rebinding).
+    steps.push({
+      call: async () => {
+        await applyRouteSuggestions(root);
+      },
+      label: 'Adding auto-routing routes for new models',
+    });
+  }
+  return steps;
+}
+
+const reinstallState: InstallState = {
+  running: false,
+  lines: [],
+  exitCode: null,
+  startedAt: null,
+  finishedAt: null,
+  stepIndex: 0,
+  stepCount: 0,
+  stepLabel: null,
+};
+
+/**
+ * Rebuild the router in the background after its backends changed (a cloud
+ * model removed). Queued behind any router install in flight rather than
+ * refused, so the change is never dropped.
+ */
+export function startRouterReinstall(root: string, hosts: HostsSource, after?: () => Promise<void>): void {
+  reinstallState.running = true;
+  reinstallState.lines = [];
+  reinstallState.exitCode = null;
+  reinstallState.startedAt = Date.now();
+  reinstallState.finishedAt = null;
+  const steps = routerChainSteps(root, hosts);
+  if (after) steps.push({ call: after, label: 'Updating agents on router models' });
+  runInstallChain(reinstallState, steps, root, 'litellm-reinstall', { lock: ROUTER_LOCK });
+}
+
+/**
  * Re-run the litellm installer with the hosts the current config was built
  * from, then the routing layer's installer when its hook is installed
  * (the documented ordering: add-litellm first, then add-routing).
@@ -384,25 +479,9 @@ export function startRosterRefresh(root = process.cwd()): boolean {
   refreshState.startedAt = Date.now();
   refreshState.finishedAt = null;
 
-  const steps: InstallStep[] = [{ run: ['bash', [installer, '--hosts', hosts]] }];
-  if (fs.existsSync(path.join(root, 'data/litellm/router_hook.py')) && fs.existsSync(routingInstallerPath(root))) {
-    steps.push({ run: ['bash', [routingInstallerPath(root)]] });
-  }
-  // Capability auto-binding: a refreshed roster re-binds unpinned routes so a
-  // freshly pulled model joins routing on its own (see the routing skill's
-  // bind-routes.mjs — pins and descriptions are never touched).
-  if (fs.existsSync(bindRoutesPath(root))) {
-    steps.push({ run: ['node', [bindRoutesPath(root), '--apply']] });
-    // A refreshed roster may cover a capability no route handles yet — create it,
-    // so a freshly pulled model brings its route with it (not just rebinding).
-    steps.push({
-      call: async () => {
-        await applyRouteSuggestions(root);
-      },
-      label: 'auto-routing: add routes for new models',
-    });
-  }
-  runInstallChain(refreshState, steps, root);
+  // Re-read when the refresh runs: a rebuild queued ahead may change the header.
+  const current = (): string => parseConfiguredHosts(fs.readFileSync(configPath, 'utf8')) ?? hosts;
+  runInstallChain(refreshState, routerChainSteps(root, current), root, undefined, { lock: ROUTER_LOCK });
   return true;
 }
 
@@ -439,6 +518,7 @@ function configureClassifierHost(root: string): void {
 registerFeatureInstall('routing', {
   label: 'Auto routing',
   idempotent: true,
+  lock: ROUTER_LOCK,
   installed: (root) => fs.existsSync(routesPathFor(root)),
   status: (root) => ({
     // routes.json exists — routing is scaffolded and the Routing tab can show.
@@ -464,8 +544,8 @@ registerFeatureInstall('routing', {
     });
   },
   steps: (root) => [
-    { run: ['bash', [routingInstallerPath(root)]], label: 'Installing the routing layer' },
-    { call: () => configureClassifierHost(root), label: 'configure classifier host' },
+    { run: ['bash', [routingInstallerPath(root), ...routerArgs(root)]], label: 'Installing the routing layer' },
+    { call: () => configureClassifierHost(root), label: 'Configuring the classifier host' },
     { run: ['node', [bindRoutesPath(root), '--apply']], label: 'Binding routes to the roster' },
     // Seed only general, then auto-create a route for each capability
     // the current roster covers — routes derive from your models, not a fixed set.
@@ -473,7 +553,7 @@ registerFeatureInstall('routing', {
       call: async () => {
         await applyRouteSuggestions(root);
       },
-      label: 'auto-routing: create routes from your models',
+      label: 'Creating auto-routing routes from your models',
     },
   ],
 });
@@ -838,14 +918,25 @@ registerFeatureInstall<{ token?: string }>('cloudflared', {
 // ── LiteLLM install (routing's prerequisite, one-click from Settings) ───────
 
 /**
+ * A cloud model being added: registered once the router serves it, and its
+ * backend withdrawn again if the router install fails (routes-models.ts).
+ */
+export interface CloudModelStep {
+  register: () => Promise<void>;
+  /** Never rejects: it logs its own failure. */
+  rollback: () => Promise<void>;
+}
+
+/**
  * One-click LiteLLM router install — routing's prerequisite, run from Settings
  * so the operator never has to drop to a shell for `/add-litellm`. The
  * installer is idempotent and defaults to the local Ollama host; the roster
  * refresh path re-runs it later with the configured hosts.
  */
-registerFeatureInstall<{ hosts?: string }>('litellm', {
+registerFeatureInstall<{ hosts?: HostsSource; cloud?: CloudModelStep }>('litellm', {
   label: 'LiteLLM router',
   idempotent: true,
+  lock: ROUTER_LOCK,
   installed: (root) => fs.existsSync(path.join(root, 'data/litellm/config.yaml')),
   status: (root) => ({ installerPresent: fs.existsSync(litellmInstallerPath(root)) }),
   preflight: (root) =>
@@ -853,11 +944,12 @@ registerFeatureInstall<{ hosts?: string }>('litellm', {
       ? null
       : { code: 'installer-missing', error: 'The add-litellm skill is not present in this checkout.' },
   steps: (root, args) => [
-    {
-      run: ['bash', [litellmInstallerPath(root), '--hosts', args?.hosts ?? 'http://localhost:11434']],
-      label: 'Installing the LiteLLM router',
-    },
+    ...routerChainSteps(root, args?.hosts ?? 'http://localhost:11434'),
+    ...(args?.cloud ? [{ call: args.cloud.register, label: 'Registering the cloud model' }] : []),
   ],
+  onFinish: (_root, args, ok) => {
+    if (!ok && args?.cloud) void args.cloud.rollback();
+  },
 });
 
 // ── Local Ollama install (wizard) ──────────────────────────────────────────
@@ -1049,6 +1141,43 @@ export function scheduleHostRestart(): void {
  * install.sh runs the same script at compose time; this step gives a provider
  * installed from Settings the same changes.
  */
+/**
+ * After container/build.sh: the image must carry the checkout's agent-runner
+ * lock (its dev.nanoclaw.agent-runner-lock-sha256 label). A build served
+ * whole from a stale build cache tags the old image again and exits 0, and
+ * the new harness then dies at spawn ("Cannot find module '@opencode-ai/sdk'").
+ * Stale: build once more with --no-cache (through a runtime wrapper, as
+ * build.sh takes no build flags) so only this build skips the cache, and the
+ * host's shared build cache is left alone; still stale: fail, so the chain
+ * stops before the restart. Only the base image is checked: a group image
+ * built on it for added packages keeps its old layers until
+ * `ncl groups restart --rebuild` rebuilds it.
+ */
+export const IMAGE_LOCK_CHECK = `
+set -e
+rt="\${CONTAINER_RUNTIME:-docker}"
+PROJECT_ROOT="$PWD"; . setup/lib/install-slug.sh; img="$(container_image_base):latest"
+if command -v shasum >/dev/null 2>&1; then want="$(shasum -a 256 container/agent-runner/bun.lock | cut -c1-64)"
+else want="$(sha256sum container/agent-runner/bun.lock | cut -c1-64)"; fi
+have() { "$rt" image inspect --format '{{index .Config.Labels "dev.nanoclaw.agent-runner-lock-sha256"}}' "$img" 2>/dev/null || true; }
+if [ "$(have)" = "$want" ]; then echo "agent image matches the agent-runner lock"; exit 0; fi
+echo "agent image is stale (lock $(have) != $want): rebuilding without the build cache"
+nocache="$(mktemp)"; trap 'rm -f "$nocache"' EXIT
+cat > "$nocache" <<'SH'
+#!/bin/sh
+if [ "$1" = build ]; then shift; exec "$NOCACHE_RT" build --no-cache "$@"; fi
+exec "$NOCACHE_RT" "$@"
+SH
+chmod +x "$nocache"
+NOCACHE_RT="$rt" CONTAINER_RUNTIME="$nocache" bash container/build.sh
+if [ "$(have)" != "$want" ]; then echo "agent image still does not match the agent-runner lock" >&2; exit 1; fi
+echo "agent image matches the agent-runner lock"
+`;
+export const imageLockStep: InstallStep = {
+  run: ['bash', ['-c', IMAGE_LOCK_CHECK]],
+  label: 'Checking the agent image',
+};
+
 export const providerOverlaysStep: InstallStep = {
   run: ['bash', ['provider-overlays/apply.sh']],
   label: 'Applying webchat provider overlays',
@@ -1086,6 +1215,7 @@ function harnessInstallSteps(root: string, name: string, label: string): Install
         ]
       : []),
     { run: ['bash', ['container/build.sh']], label: 'Rebuilding the agent image' },
+    imageLockStep,
     { call: () => scheduleHostRestart(), label: `installed — restarting to load ${label}` },
   ];
 }

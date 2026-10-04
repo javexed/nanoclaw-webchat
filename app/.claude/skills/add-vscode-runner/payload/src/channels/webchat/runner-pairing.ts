@@ -11,11 +11,12 @@ import type { AgentGroup } from '../../types.js';
 import { updateContainerConfigScalars } from '../../db/container-configs.js';
 import { grantCreatorAdmin, provisionWebchatAgentWithRoom } from './server/routes-agents.js';
 import { broadcastRooms } from './state.js';
-import { getPendingApproval } from '../../db/sessions.js';
+import { deletePendingApproval, getPendingApproval } from '../../db/sessions.js';
 import { log } from '../../log.js';
 import { registerSessionlessApprovalHandler, requestSessionlessApproval } from '../../modules/approvals/sessionless.js';
 import {
   approveMachine,
+  getMachine,
   listPlacements,
   revokeMachine,
   setMachineApprovalId,
@@ -112,8 +113,11 @@ export interface ApprovalOutcome {
  * second one — the group's room, memory and history belong to that laptop.
  */
 export async function completeApproval(fingerprint: string, by: string): Promise<ApprovalOutcome> {
+  const card = (await getMachine(fingerprint))?.approval_id;
   const machine = await approveMachine(fingerprint, by);
   if (!machine) return { machine: undefined };
+  // However the machine was approved, its card is closed: a row left open would expire into a reject.
+  if (card) await deletePendingApproval(card);
   audit({
     type: 'runner.pair.approve',
     actor: `human:${by}`,
@@ -216,6 +220,9 @@ export function registerPairingApprovalHandler(): void {
   registerSessionlessApprovalHandler(PAIRING_ACTION, async ({ payload, outcome, userId }) => {
     const fingerprint = String(payload.fingerprint ?? '');
     if (!fingerprint) return;
+    // A card decides a pending machine only. Once it was approved or revoked another way, a late
+    // click or the expiry sweep changes nothing (revoking is the Runners tab's job).
+    if ((await getMachine(fingerprint))?.status !== 'pending') return;
     if (outcome === 'approve') {
       await completeApproval(fingerprint, userId);
     } else {

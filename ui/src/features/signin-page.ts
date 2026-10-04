@@ -125,11 +125,13 @@ async function saveOidc(): Promise<void> {
   };
   const secret = input('#si-secret').value.trim();
   if (secret) body.clientSecret = secret;
+  // Read before the first save: its answer re-renders the form from the server,
+  // which would put the stored (old) VS Code values back first.
+  const appIdUri = input('#si-appiduri').value.trim();
+  const clientId = input('#si-vscode-client').value.trim();
   (document.activeElement as HTMLElement | null)?.blur();
   if (!(await send('oidc', 'PUT', body))) return;
   if (provider === 'microsoft') {
-    const appIdUri = input('#si-appiduri').value.trim();
-    const clientId = input('#si-vscode-client').value.trim();
     if (appIdUri !== view?.vscode.appIdUri || clientId !== view?.vscode.clientId) {
       try {
         await apiJson('/api/runners/client-config', { method: 'PUT', headers: CSRF, body: { appIdUri, clientId } });

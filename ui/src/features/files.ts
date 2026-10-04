@@ -65,11 +65,12 @@ export function clearStagedFiles() {
   for (const url of pendingThumbUrls.values()) URL.revokeObjectURL(url);
   pendingThumbUrls.clear();
   pendingFiles.value = [];
+  // Empty the island's rows, never its host's HTML: wiping that left the
+  // mounted component patching nodes no longer in the page, so every later
+  // file showed as an empty bar.
+  previewRows.value = [];
   const preview = $('#file-preview');
-  if (preview) {
-    preview.hidden = true;
-    preview.innerHTML = '';
-  }
+  if (preview) preview.hidden = true;
   $<HTMLInputElement>('#message-input')!.placeholder = 'Message…';
 }
 
@@ -154,6 +155,7 @@ async function uploadFileChunked(file?: any, caption?: any) {
       filename: file.name,
       mime: file.type || 'application/octet-stream',
       data: b64,
+      size: file.size,
     } as any;
     // Include caption on the last chunk
     if (i === totalChunks - 1 && caption) body.caption = caption;
@@ -164,7 +166,10 @@ async function uploadFileChunked(file?: any, caption?: any) {
         { method: 'POST', body },
       );
     } catch (err) {
-      if (statusMsg) statusMsg.text = `Upload failed: ${(err as any)?.message}`;
+      // The row goes when the room is redrawn (a reconnect): the toast says it too.
+      const msg = `Upload failed: ${(err as any)?.message}`;
+      if (statusMsg) statusMsg.text = msg;
+      showToast(msg, { kind: 'error' });
       return;
     }
     if (statusMsg) statusMsg.text = `Uploading ${file.name} (${i + 1}/${totalChunks})…`;

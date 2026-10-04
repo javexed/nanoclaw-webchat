@@ -24,6 +24,7 @@ import { isContainerRunning } from '../../container-runner.js';
 import { registerContainerExitObserver } from '../../seam/index.js';
 import { onDeliveryAdapterReady } from '../../delivery.js';
 import { registerSessionDeliveryObserver } from '../../seam/index.js';
+import { notifyStatusObservers, registerUnforwardedStartCheck } from './observers.js';
 
 interface StatusAdapter {
   sendStatus?(
@@ -158,6 +159,12 @@ export async function forwardSessionStatus(session: Session): Promise<void> {
           } catch {
             // Per-event best-effort.
           }
+          await notifyStatusObservers(session, {
+            kind,
+            text: ev.text,
+            detail: ev.detail,
+            createdAt: ev.created_at ?? null,
+          });
         }
       }
     }
@@ -185,6 +192,7 @@ export async function forwardSessionStatus(session: Session): Promise<void> {
 export async function notifySessionStopped(session: Session): Promise<void> {
   if (!turnActive.has(session.id)) return; // clean exit, or already handled
   turnActive.delete(session.id);
+  await notifyStatusObservers(session, { kind: 'stalled', text: null, detail: null, createdAt: null });
   if (!adapter?.sendStatus) return;
 
   const mg = await (session.messaging_group_id ? getMessagingGroup(session.messaging_group_id) : undefined);
@@ -219,6 +227,28 @@ export function stopSessionStatus(sessionId: string): void {
 onDeliveryAdapterReady((a) => setStatusAdapter(a));
 registerSessionDeliveryObserver(forwardSessionStatus);
 registerContainerExitObserver((session) => notifySessionStopped(session));
+registerUnforwardedStartCheck(hasUnforwardedStart);
+
+/** Whether the session's feed holds a 'start' past what has been forwarded. */
+export function hasUnforwardedStart(agentGroupId: string, sessionId: string): boolean {
+  const seen = watermarks.get(sessionId);
+  if (seen === undefined) return false;
+  let outDb: ReturnType<typeof openOutboundDb> | undefined;
+  try {
+    outDb = openOutboundDb(agentGroupId, sessionId);
+    return (
+      outDb.prepare("SELECT 1 FROM status_events WHERE seq > ? AND kind = 'start' LIMIT 1").get(seen) !== undefined
+    );
+  } catch {
+    return false;
+  } finally {
+    try {
+      outDb?.close();
+    } catch {
+      // ignore
+    }
+  }
+}
 
 // ── status_events readers ────────────────────────────────────────────────────
 // The table is created container-side on first write (status-feed.ts). All
@@ -228,6 +258,7 @@ export interface StatusEvent {
   kind: string;
   text: string | null;
   detail: string | null;
+  created_at?: string;
 }
 
 /**
@@ -239,7 +270,7 @@ export interface StatusEvent {
 export function getStatusEventsSince(outDb: Database.Database, sinceSeq: number): StatusEvent[] {
   try {
     return outDb
-      .prepare('SELECT seq, kind, text, detail FROM status_events WHERE seq > ? ORDER BY seq ASC')
+      .prepare('SELECT seq, kind, text, detail, created_at FROM status_events WHERE seq > ? ORDER BY seq ASC')
       .all(sinceSeq) as StatusEvent[];
   } catch {
     // Table not present on older session DBs — nothing to forward.

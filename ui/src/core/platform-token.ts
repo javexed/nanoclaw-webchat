@@ -37,10 +37,11 @@ export function refreshPlatformTokenIfHinted(): void {
   if (Date.now() - lastHintAt < HINT_MEMORY_MS) void refreshPlatformToken();
 }
 
-export function refreshPlatformToken(): Promise<void> {
+/** `force`: try now, whatever the interval (the session looks expired; this is the last thing to try). */
+export function refreshPlatformToken(force = false): Promise<void> {
   const now = Date.now();
   if (inFlight) return inFlight;
-  if (now < unsupportedUntil || now - lastAttemptAt < MIN_INTERVAL_MS) return Promise.resolve();
+  if (now < unsupportedUntil || (!force && now - lastAttemptAt < MIN_INTERVAL_MS)) return Promise.resolve();
   lastAttemptAt = now;
   inFlight = fetch('/.auth/refresh', { credentials: 'same-origin', cache: 'no-store' })
     .then((r) => {

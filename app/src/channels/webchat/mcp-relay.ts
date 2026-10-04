@@ -241,9 +241,9 @@ function dockerBridgeHost(): string | null {
 }
 
 /**
- * Where central's own process should connect to reach this relay. A placed
- * agent addresses it as `host.docker.internal:<port>` exactly as a local one
- * does; the relay hop resolves that name to this address on central.
+ * Where central's own process should connect to reach this relay. An agent
+ * addresses it as `host.docker.internal:<port>`; the exec relay resolves that
+ * name to this address on central.
  */
 export function mcpRelayTarget(): { host: string; port: number } {
   if (execRelayed()) return { host: LOOPBACK, port: MCP_RELAY_PORT };

@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/poll-loop.ts b/container/agent-runner/src/poll-loop.ts
-index 7be3c182..aa315473 100644
+index db8504e2..512dd431 100644
 --- a/container/agent-runner/src/poll-loop.ts
 +++ b/container/agent-runner/src/poll-loop.ts
 @@ -1,4 +1,4 @@
@@ -16,7 +16,7 @@ index 7be3c182..aa315473 100644
  import { clearStaleProcessingAcks } from './db/container-state.js';
  import { resolveDestinationThread } from './db/session-routing.js';
  import { touchHeartbeat } from './heartbeat.js';
-@@ -25,13 +26,16 @@ import {
+@@ -26,13 +27,16 @@ import {
    isClearCommand,
    isRunnerCommand,
    isSessionEcho,
@@ -33,7 +33,7 @@ index 7be3c182..aa315473 100644
  
  const POLL_INTERVAL_MS = 1000;
  const ACTIVE_POLL_INTERVAL_MS = 500;
-@@ -39,11 +43,12 @@ const ACTIVE_POLL_INTERVAL_MS = 500;
+@@ -40,11 +44,12 @@ const ACTIVE_POLL_INTERVAL_MS = 500;
  import { notifyProviderExchange, notifyProviderMessage } from './providers/hooks.js';
  import {
    notifyTurnCompletion,
@@ -47,7 +47,7 @@ index 7be3c182..aa315473 100644
  } from './runner-hooks.js';
  
  /** Consecutive driver-classified failures before a fresh runner is required. */
-@@ -71,14 +76,22 @@ export interface PollLoopConfig {
+@@ -72,14 +77,22 @@ export interface PollLoopConfig {
    systemContext?: {
      instructions?: string;
    };
@@ -70,7 +70,7 @@ index 7be3c182..aa315473 100644
  /**
   * Main poll loop. Runs indefinitely until the process is killed.
   *
-@@ -135,7 +148,14 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -136,7 +149,14 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
    while (true) {
      if (config.signal?.aborted) return;
      // Skip system messages — they're responses for MCP tools (e.g., ask_user_question)
@@ -86,7 +86,7 @@ index 7be3c182..aa315473 100644
      isFirstPoll = false;
      pollCount++;
  
-@@ -183,9 +203,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -184,9 +204,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
          await writeMessageOut({
            id: generateId(),
            kind: 'chat',
@@ -97,7 +97,12 @@ index 7be3c182..aa315473 100644
            content: JSON.stringify({ text: 'Session cleared.' }),
          });
          commandIds.push(msg.id);
-@@ -270,6 +288,10 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -268,9 +286,15 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+     // Format messages: passthrough commands get raw text (only if the
+     // provider natively handles slash commands), others get XML.
+     const prompt = formatMessagesWithCommands(keep, nativeSlashCommands, config.providerName);
++    // A slash-command batch (/compact, /cost, …) may legitimately end with an empty result.
++    const commandQuery = keep.some((m) => isRunnerCommand(m, config.providerName));
  
      log(`Processing ${keep.length} message(s), kinds: ${[...new Set(keep.map((m) => m.kind))].join(',')}`);
  
@@ -108,7 +113,7 @@ index 7be3c182..aa315473 100644
      const query = config.provider.query({
        prompt,
        continuation,
-@@ -284,6 +306,78 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -285,6 +309,79 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
      // a2a return-path routing. Re-published at every turn boundary inside
      // processQuery as later messages are answered.
      publishReplyRoute(routing);
@@ -175,6 +180,7 @@ index 7be3c182..aa315473 100644
 +              turnContext,
 +              originDests,
 +              config.lenientOutput ?? false,
++              commandQuery,
 +            );
 +          } catch (retryErr) {
 +            log(
@@ -187,7 +193,7 @@ index 7be3c182..aa315473 100644
      // Forward a loop stop to the ACTIVE query. The stream deliberately stays
      // open between turns, so the loop can be parked inside processQuery when
      // config.signal fires; without this, the "stopped" loop's query — and its
-@@ -294,9 +388,8 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -295,9 +392,8 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
      const abortActiveQuery = () => query.abort();
      if (config.signal?.aborted) abortActiveQuery();
      else config.signal?.addEventListener('abort', abortActiveQuery, { once: true });
@@ -198,12 +204,13 @@ index 7be3c182..aa315473 100644
          query,
          routing,
          processingIds,
-@@ -307,11 +400,88 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -308,11 +404,90 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
          midTurnCompleteDelivery,
          config.signal,
          turnContext, // seam
 +        originDests,
 +        config.lenientOutput ?? false,
++        commandQuery,
        );
 +
 +      // Shutdown, not turn failure: when the stop signal aborted the query
@@ -240,6 +247,7 @@ index 7be3c182..aa315473 100644
 +          turnContext,
 +          originDests,
 +          config.lenientOutput ?? false,
++          commandQuery,
 +        );
 +      }
 +
@@ -287,7 +295,7 @@ index 7be3c182..aa315473 100644
      } catch (err) {
        const errMsg = err instanceof Error ? err.message : String(err);
        log(`Query error: ${errMsg}`);
-@@ -325,29 +495,11 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -326,29 +501,11 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
          clearContinuation(config.providerName);
        }
  
@@ -322,7 +330,7 @@ index 7be3c182..aa315473 100644
        if (retried) {
          if (retried.continuation && retried.continuation !== continuation) {
            continuation = retried.continuation;
-@@ -379,6 +531,37 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -380,6 +537,37 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
    }
  }
  
@@ -360,7 +368,7 @@ index 7be3c182..aa315473 100644
  /**
   * Format messages, handling passthrough commands differently.
   * When the provider handles slash commands natively (Claude Code),
-@@ -417,8 +600,26 @@ function formatMessagesWithCommands(
+@@ -418,8 +606,26 @@ function formatMessagesWithCommands(
    return parts.join('\n\n');
  }
  
@@ -387,7 +395,7 @@ index 7be3c182..aa315473 100644
  }
  
  export async function processQuery(
-@@ -440,7 +641,15 @@ export async function processQuery(
+@@ -441,7 +647,16 @@ export async function processQuery(
     */
    midTurnCompleteDelivery = false,
    signal?: AbortSignal,
@@ -401,10 +409,22 @@ index 7be3c182..aa315473 100644
 +  turnContext?: RunnerTurnContext,
 +  originDests: DestinationEntry[] = [],
 +  lenient = false,
++  commandQuery = false,
  ): Promise<QueryResult> {
    // adoptTurn mutates routing in place; keep the caller's batch route intact.
    routing = { ...routing };
-@@ -484,6 +693,15 @@ export async function processQuery(
+@@ -451,6 +666,10 @@ export async function processQuery(
+   // Once-per-turn guard for the task-run "<message> block was not delivered"
+   // nudge — mirrors unwrappedNudged for chat turns.
+   let taskBlockNudged = false;
++  // Once-per-turn guard for the empty-result nudge (see the result handler).
++  let emptyNudged = false;
++  // The turn answers a slash command, not a message: no empty-result nudge.
++  let commandTurn = commandQuery;
+   // How many <message> blocks were delivered from 'text' events this turn
+   // (chat runs, mid-turn delivery providers only). A frame-local count, never
+   // keyed by content: it feeds the result door's nudge decision ("did this
+@@ -485,6 +704,15 @@ export async function processQuery(
    // oldest unanswered prompt. Retries append the original user prompt at
    // their position in the provider input queue.
    const archivePrompts: string[] = initialPrompt ? [initialPrompt] : [];
@@ -420,7 +440,33 @@ index 7be3c182..aa315473 100644
    // Where replies go is a property of the TURN, not the query. The query
    // stays open across turns (below), so a message pushed after the previous
    // answer finished is a new turn and replies go to ITS thread; a message
-@@ -526,6 +744,16 @@ export async function processQuery(
+@@ -497,12 +725,16 @@ export async function processQuery(
+     routing: RoutingContext;
+     unwrappedNudged: boolean;
+     taskBlockNudged: boolean;
++    emptyNudged?: boolean;
++    commandTurn?: boolean;
+   };
+   const queuedTurns: QueuedTurn[] = [];
+   const adoptTurn = (next: QueuedTurn): void => {
+     Object.assign(routing, next.routing);
+     unwrappedNudged = next.unwrappedNudged;
+     taskBlockNudged = next.taskBlockNudged;
++    emptyNudged = next.emptyNudged ?? false;
++    commandTurn = next.commandTurn ?? false;
+     publishReplyRoute(routing);
+     answering = true;
+   };
+@@ -510,7 +742,7 @@ export async function processQuery(
+   // Preserve its original route, prompt and retry guards until it is answered.
+   const pushRetry = (prompt: string): void => {
+     query.push(prompt);
+-    queuedTurns.push({ routing: { ...routing }, unwrappedNudged, taskBlockNudged });
++    queuedTurns.push({ routing: { ...routing }, unwrappedNudged, taskBlockNudged, emptyNudged, commandTurn });
+     archivePrompts.push(archivePrompts[0] ?? initialPrompt);
+   };
+ 
+@@ -527,6 +759,16 @@ export async function processQuery(
    let endedForCommand = false;
    let mailboxFailureStreak = 0;
    const pollHandle = setInterval(() => {
@@ -437,7 +483,7 @@ index 7be3c182..aa315473 100644
      if (done || pollInFlight || endedForCommand) return;
      pollInFlight = true;
  
-@@ -533,6 +761,24 @@ export async function processQuery(
+@@ -534,6 +776,24 @@ export async function processQuery(
        try {
          const pending = getPendingMessages();
  
@@ -462,7 +508,7 @@ index 7be3c182..aa315473 100644
          // Slash commands need a fresh query: /clear resets the SDK's
          // resume id (fixed at sdkQuery() time); admin/passthrough commands
          // (/compact, /cost, …) only dispatch when they're the first input
-@@ -669,6 +915,32 @@ export async function processQuery(
+@@ -670,6 +930,32 @@ export async function processQuery(
            midTurnSent += scan.delivered;
            midTurnTail = scan.tail;
          }
@@ -495,7 +541,7 @@ index 7be3c182..aa315473 100644
        } else if (event.type === 'result') {
          // A result — with or without text — means the turn is done. Mark
          // the initial batch completed now so the host sweep doesn't see
-@@ -695,6 +967,11 @@ export async function processQuery(
+@@ -696,6 +982,11 @@ export async function processQuery(
              // carries content, the wrap-nudge fires so the model re-sends
              // and the retry streams through the mid-turn door.
              turnDelivered: midTurnCompleteDelivery ? midTurnSent > 0 || chatRowWrittenSince(turnStartSeq) : undefined,
@@ -507,7 +553,47 @@ index 7be3c182..aa315473 100644
            });
            // Completed partial output remains deliverable, but an explicit
            // provider failure must keep its status and never trigger a retry.
-@@ -811,7 +1088,13 @@ export async function processQuery(
+@@ -749,7 +1040,38 @@ export async function processQuery(
+           // Each result consumes one input; retries carry their original
+           // user prompt at their own position in the FIFO queue.
+           archivePrompts.shift();
+-        } else archivePrompts.shift();
++        } else {
++          // An empty result with nothing delivered this turn. It has come back
++          // while the model was still working (a turn whose answer then landed
++          // 11 s later, after the turn had been closed — its tool calls refused,
++          // its reply dropped, and the empty-turn net telling the caller the
++          // agent had failed). Keep the query open with one nudge instead: a
++          // late reply still delivers, and a model with nothing to say answers
++          // <internal>. Only an empty nudge as well reaches the empty-turn net.
++          const delivered = midTurnSent > 0 || chatRowWrittenSince(turnStartSeq);
++          // Not after a Stop or a pending command: that query is being aborted.
++          // Not for a lenient (local) model, whose answer would reach the room as
++          // unwrapped prose, an agent-to-agent turn, or a slash command.
++          if (
++            !delivered &&
++            !emptyNudged &&
++            !routing.taskRun &&
++            !signal?.aborted &&
++            !endedForCommand &&
++            !lenient &&
++            !commandTurn &&
++            routing.channelType !== 'agent'
++          ) {
++            emptyNudged = true;
++            log('Empty result with nothing delivered — nudging once before giving up on the turn');
++            pushRetry(
++              '<system>Your turn ended without a reply. If you have already sent it, or there is nothing to send, ' +
++                'answer with <internal>done</internal>. Otherwise send your reply now.</system>',
++            );
++          }
++          // After the retry is queued: pushRetry archives the prompt this turn answered.
++          archivePrompts.shift();
++        }
+         // Turn boundary: reset the per-turn sent count after the result's
+         // nudge decision has used it. A nudge retry re-counts via its own
+         // text events before the retry result, so resetting on every result
+@@ -818,7 +1140,13 @@ export async function processQuery(
      clearInterval(pollHandle);
    }
  
@@ -522,7 +608,7 @@ index 7be3c182..aa315473 100644
  }
  
  function notifyExchangeComplete(
-@@ -850,6 +1133,7 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
+@@ -866,6 +1194,7 @@ function sendsFailureNotice(routing: RoutingContext): boolean {
  /** Send the dedicated provider error or a generic failure notice. */
  async function deliverErrorResult(routing: RoutingContext, text: string): Promise<void> {
    log('Error result notice — delivering to channel');
@@ -530,7 +616,7 @@ index 7be3c182..aa315473 100644
    await writeMessageOut({
      id: generateId(),
      in_reply_to: routing.inReplyTo,
-@@ -869,6 +1153,27 @@ async function deliverErrorResult(routing: RoutingContext, text: string): Promis
+@@ -885,6 +1214,27 @@ async function deliverErrorResult(routing: RoutingContext, text: string): Promis
   * The agent must always wrap output in <message to="name">...</message>
   * blocks, even with a single destination. Bare text is scratchpad only.
   */
@@ -558,7 +644,7 @@ index 7be3c182..aa315473 100644
  export interface TaskMessageBlock {
    to: string;
    body: string;
-@@ -883,6 +1188,19 @@ export interface ResultDispatchOptions {
+@@ -899,6 +1249,19 @@ export interface ResultDispatchOptions {
     * undelivered reply.
     */
    midTurnSent?: number;
@@ -578,7 +664,7 @@ index 7be3c182..aa315473 100644
    /**
     * Providers declaring `textDelivery: 'mid-turn-complete'`: the result door NEVER delivers
     * content. Mid-turn streaming (parse-time block delivery plus cross-
-@@ -1130,6 +1448,30 @@ export async function dispatchResultText(
+@@ -1146,6 +1509,30 @@ export async function dispatchResultText(
    text = text.replace(INTERNAL_SPAN_RE, '');
    const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
  
@@ -609,7 +695,7 @@ index 7be3c182..aa315473 100644
    let match: RegExpExecArray | null;
    // Blocks delivered mid-turn count toward this turn's sent total — a final
    // text with no (new) blocks after a mid-turn delivery is scratchpad, not an
-@@ -1140,7 +1482,6 @@ export async function dispatchResultText(
+@@ -1156,7 +1543,6 @@ export async function dispatchResultText(
    const taskBlocks: TaskMessageBlock[] = [];
    let lastIndex = 0;
    const scratchpadParts: string[] = [];
@@ -617,7 +703,7 @@ index 7be3c182..aa315473 100644
    while ((match = MESSAGE_RE.exec(text)) !== null) {
      if (match.index > lastIndex) {
        scratchpadParts.push(text.slice(lastIndex, match.index));
-@@ -1161,7 +1502,7 @@ export async function dispatchResultText(
+@@ -1177,7 +1563,7 @@ export async function dispatchResultText(
        taskBlocks.push({ to: toName, body });
        continue;
      }
@@ -626,7 +712,7 @@ index 7be3c182..aa315473 100644
      if (!dest) {
        log(`Unknown destination in <message to="${toName}">, dropping block`);
        scratchpadParts.push(`[dropped: unknown destination "${toName}"] ${body}`);
-@@ -1193,9 +1534,37 @@ export async function dispatchResultText(
+@@ -1209,9 +1595,37 @@ export async function dispatchResultText(
        }
        continue;
      }
@@ -664,7 +750,7 @@ index 7be3c182..aa315473 100644
    if (lastIndex < text.length) {
      scratchpadParts.push(text.slice(lastIndex));
    }
-@@ -1212,7 +1581,31 @@ export async function dispatchResultText(
+@@ -1228,7 +1642,31 @@ export async function dispatchResultText(
    // turnDelivered (door deliveries + DB-visible sends like MCP send_message);
    // otherwise by this dispatch's own send count.
    const anythingDelivered = options?.suppressDelivery ? options.turnDelivered === true : sent > 0;

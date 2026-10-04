@@ -45,7 +45,8 @@ export interface ChatDeps {
   activeTurns: (roomId: string) => string[];
 }
 
-const MAX_TEXT = 32_000;
+/** One panel message; the extension checks the same limit before sending (chat-view.ts MAX_MESSAGE). */
+const MAX_TEXT = 256_000;
 const HISTORY = 100;
 
 let deps: ChatDeps = defaultDeps();

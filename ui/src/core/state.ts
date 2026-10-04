@@ -34,7 +34,6 @@ export interface Thread {
  *  room wiring and ws dispatcher actually read. */
 export interface Agent {
   /** Placed on a developer's machine: Network offers Open / Allowlist / Model only. */
-  runner_placed?: boolean;
   id: string;
   name?: string;
   folder?: string;

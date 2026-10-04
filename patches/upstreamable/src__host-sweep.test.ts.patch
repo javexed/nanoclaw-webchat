@@ -1,5 +1,5 @@
 diff --git a/src/host-sweep.test.ts b/src/host-sweep.test.ts
-index c43c8955..0cc3659a 100644
+index c43c8955..850f719b 100644
 --- a/src/host-sweep.test.ts
 +++ b/src/host-sweep.test.ts
 @@ -11,6 +11,8 @@ import {
@@ -11,7 +11,7 @@ index c43c8955..0cc3659a 100644
    shouldCloseTaskSession,
  } from './host-sweep.js';
  import type { Session } from './types.js';
-@@ -282,6 +284,51 @@ describe('deleteOrphanProcessingClaims', () => {
+@@ -282,6 +284,80 @@ describe('deleteOrphanProcessingClaims', () => {
    });
  });
  
@@ -30,40 +30,69 @@ index c43c8955..0cc3659a 100644
 +    const r = db.prepare("SELECT value FROM session_state WHERE key = '_ceiling_heal'").get() as
 +      | { value: string }
 +      | undefined;
-+    return r ? (JSON.parse(r.value) as { lastMaxOut: number; streak: number }) : undefined;
++    return r ? (JSON.parse(r.value) as { lastMaxOut: number; streak: number; incarnation?: string }) : undefined;
 +  };
 +  const hasContinuation = (db: Database.Database) =>
 +    db.prepare("SELECT 1 FROM session_state WHERE key = 'continuation:claude'").get() !== undefined;
 +
++  const stuck = (incarnation: string) => ({ hadClaims: true, incarnation });
++
 +  it('does not clear on the first no-output ceiling kill — just records streak=1', async () => {
 +    const db = outDbWith(2409);
-+    expect(selfHealBloatedContinuation(fakeSession(), db)).toBe(false);
++    expect(selfHealBloatedContinuation(fakeSession(), stuck('1:100'), db)).toBe(false);
 +    expect(hasContinuation(db)).toBe(true);
-+    expect(healRow(db)).toEqual({ lastMaxOut: 2409, streak: 1 });
++    expect(healRow(db)).toEqual({ lastMaxOut: 2409, streak: 1, incarnation: '1:100' });
 +  });
 +
 +  it('clears the continuation on the SECOND consecutive no-output ceiling kill', async () => {
 +    const db = outDbWith(2409);
-+    expect(selfHealBloatedContinuation(fakeSession(), db)).toBe(false); // 1st
-+    expect(selfHealBloatedContinuation(fakeSession(), db)).toBe(true); // 2nd, no new output
++    expect(selfHealBloatedContinuation(fakeSession(), stuck('1:100'), db)).toBe(false); // 1st
++    expect(selfHealBloatedContinuation(fakeSession(), stuck('2:200'), db)).toBe(true); // 2nd, no new output
 +    expect(hasContinuation(db)).toBe(false);
 +    expect(healRow(db)).toBeUndefined(); // heal state reset
 +  });
 +
 +  it('resets the streak when a reply landed between kills — never clears a productive session', async () => {
 +    const db = outDbWith(2409);
-+    expect(selfHealBloatedContinuation(fakeSession(), db)).toBe(false);
++    expect(selfHealBloatedContinuation(fakeSession(), stuck('1:100'), db)).toBe(false);
 +    db.prepare('INSERT INTO messages_out (seq) VALUES (2411)').run(); // a real reply advanced the seq
-+    expect(selfHealBloatedContinuation(fakeSession(), db)).toBe(false); // output advanced → streak restarts
++    expect(selfHealBloatedContinuation(fakeSession(), stuck('2:200'), db)).toBe(false); // output advanced → streak restarts
 +    expect(hasContinuation(db)).toBe(true);
-+    expect(healRow(db)).toEqual({ lastMaxOut: 2411, streak: 1 });
++    expect(healRow(db)).toEqual({ lastMaxOut: 2411, streak: 1, incarnation: '2:200' });
++  });
++
++  it('never counts an idle reap — no open claims means nothing was stuck', async () => {
++    const db = outDbWith(2409);
++    const idle = (incarnation: string) => ({ hadClaims: false, incarnation });
++    expect(selfHealBloatedContinuation(fakeSession(), idle('1:100'), db)).toBe(false);
++    expect(selfHealBloatedContinuation(fakeSession(), idle('2:200'), db)).toBe(false);
++    expect(selfHealBloatedContinuation(fakeSession(), idle('3:300'), db)).toBe(false);
++    expect(hasContinuation(db)).toBe(true);
++    expect(healRow(db)).toBeUndefined();
++  });
++
++  it('an idle reap between two stuck kills neither counts nor resets the streak', async () => {
++    const db = outDbWith(2409);
++    expect(selfHealBloatedContinuation(fakeSession(), stuck('1:100'), db)).toBe(false);
++    expect(selfHealBloatedContinuation(fakeSession(), { hadClaims: false, incarnation: '2:200' }, db)).toBe(false);
++    expect(healRow(db)).toEqual({ lastMaxOut: 2409, streak: 1, incarnation: '1:100' });
++    expect(selfHealBloatedContinuation(fakeSession(), stuck('3:300'), db)).toBe(true);
++  });
++
++  it('repeat kills of the same container count once', async () => {
++    const db = outDbWith(2409);
++    expect(selfHealBloatedContinuation(fakeSession(), stuck('1:100'), db)).toBe(false);
++    expect(selfHealBloatedContinuation(fakeSession(), stuck('1:100'), db)).toBe(false);
++    expect(selfHealBloatedContinuation(fakeSession(), stuck('1:100'), db)).toBe(false);
++    expect(hasContinuation(db)).toBe(true);
++    expect(healRow(db)).toEqual({ lastMaxOut: 2409, streak: 1, incarnation: '1:100' });
 +  });
 +});
 +
  describe('resetStuckProcessingRows — orphan claim cleanup', () => {
    it('deletes orphan processing_ack rows so next sweep tick does not see them', () => {
      const { inDb, outDb } = makeSessionDbs();
-@@ -340,6 +387,47 @@ describe('resetStuckProcessingRows — orphan claim cleanup', () => {
+@@ -340,6 +416,47 @@ describe('resetStuckProcessingRows — orphan claim cleanup', () => {
    });
  });
  

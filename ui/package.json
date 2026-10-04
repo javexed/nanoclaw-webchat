@@ -10,7 +10,8 @@
     "check:deps": "bash check-deps.sh",
     "check:props": "bash check-props.sh",
     "trace:boot": "node boot-trace.mjs",
-    "trace:diff": "node boot-diff.mjs"
+    "trace:diff": "node boot-diff.mjs",
+    "probe:reauth": "node reauth-probe.mjs"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "6.0.8",

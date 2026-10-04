@@ -76,6 +76,10 @@ container/agent-runner/src/status-feed.ts
 container/agent-runner/src/status-feed.pi-tools.test.ts
 container/agent-runner/src/status-feed.redaction.test.ts
 container/agent-runner/src/send-file-hint.ts
+container/agent-runner/src/runner-log.ts
+container/agent-runner/src/poll-loop.empty-result.test.ts
+container/agent-runner/src/providers/opencode-feed.ts
+container/agent-runner/src/providers/opencode-feed.test.ts
 docs/webchat
 e2e
 playwright.config.ts
@@ -124,3 +128,11 @@ src/db/add-column-if-missing.ts
 src/module-sweep.test.ts
 container/agent-runner/src/mcp-tools/api-access.instructions.md
 src/api-access-note.test.ts
+container/agent-runner/src/runner-log.test.ts
+src/container-restart-idle.ts
+src/container-restart-idle.test.ts
+src/container-runner.stop-once.test.ts
+src/reconcile-session.ceiling.test.ts
+src/drivers/docker-driver.removal.test.ts
+deploy/onecli-private-ports.sh
+scripts/onecli-private-ports.test.ts

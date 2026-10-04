@@ -12,7 +12,7 @@
  *
  * A third, independent of the sign-in: the operator's release signing key
  * (public half), which the extension offers to pin for this server so it can
- * verify runner updates and the agent image (runner-extension.ts).
+ * verify runner updates (runner-extension.ts).
  */
 import { log } from '../../log.js';
 import { oidcCfg } from './auth.js';

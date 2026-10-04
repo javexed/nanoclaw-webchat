@@ -4,15 +4,26 @@ import { closeDb, getDb, initTestDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { getContainerConfig } from '../../db/container-configs.js';
+import { createPendingApproval, getPendingApproval } from '../../db/sessions.js';
+import { resolveSessionlessApproval } from '../../modules/approvals/sessionless.js';
 
-import { completeApproval, ensureDedicatedGroup, runnerAutoGroupEnabled, runnerGroupFolder } from './runner-pairing.js';
 import {
+  PAIRING_ACTION,
+  completeApproval,
+  ensureDedicatedGroup,
+  registerPairingApprovalHandler,
+  runnerAutoGroupEnabled,
+  runnerGroupFolder,
+} from './runner-pairing.js';
+import {
+  approveMachine,
   deletePlacement,
   getMachine,
   getPlacement,
   listPlacements,
   recordMachineSeen,
   revokeMachine,
+  setMachineApprovalId,
 } from './runner-registry.js';
 
 vi.mock('./state.js', async (importOriginal) => ({
@@ -107,6 +118,54 @@ describe('completeApproval', () => {
     const out = await ensureDedicatedGroup((await getMachine(seen.fingerprint))!, 'webchat:owner', { reconnect: true });
     expect(out.groupCreated).toBe(true);
     expect(out.placement?.fingerprint).toBe(seen.fingerprint);
+  });
+
+  /** The pairing card as requestSessionlessApproval leaves it (delivery is not under test). */
+  async function openCard(): Promise<string> {
+    const id = `appr-test-${Math.random().toString(36).slice(2, 8)}`;
+    await createPendingApproval({
+      approval_id: id,
+      session_id: null,
+      request_id: id,
+      action: PAIRING_ACTION,
+      payload: JSON.stringify({ fingerprint: seen.fingerprint }),
+      created_at: new Date().toISOString(),
+      instance: null,
+      title: 'Runner pairing request',
+      question: 'pair?',
+      options_json: '[]',
+      approver_user_id: null,
+    });
+    await setMachineApprovalId(seen.fingerprint, id);
+    return id;
+  }
+
+  it('approving from the Runners tab closes the open card, so it cannot expire into a revoke', async () => {
+    await recordMachineSeen(seen);
+    const card = await openCard();
+    await completeApproval(seen.fingerprint, 'webchat:owner');
+    expect(await getPendingApproval(card)).toBeUndefined();
+  });
+
+  it('a late reject or the expiry sweep leaves an approved machine approved', async () => {
+    registerPairingApprovalHandler();
+    await recordMachineSeen(seen);
+    const card = (await getPendingApproval(await openCard()))!;
+    // A row left open by an earlier release: the machine was approved without closing it.
+    await approveMachine(seen.fingerprint, 'webchat:owner');
+    releasePlacement.mockClear();
+    expect(await resolveSessionlessApproval(card, 'reject', 'system:expiry')).toBe(true);
+    expect((await getMachine(seen.fingerprint))?.status).toBe('approved');
+    expect(releasePlacement).not.toHaveBeenCalled();
+    expect(await getPendingApproval(card.approval_id)).toBeUndefined();
+  });
+
+  it('a reject on the card of a pending machine still revokes it', async () => {
+    registerPairingApprovalHandler();
+    await recordMachineSeen(seen);
+    const card = (await getPendingApproval(await openCard()))!;
+    await resolveSessionlessApproval(card, 'reject', 'webchat:owner');
+    expect((await getMachine(seen.fingerprint))?.status).toBe('revoked');
   });
 
   it('with auto-group off, approve is just approve', async () => {

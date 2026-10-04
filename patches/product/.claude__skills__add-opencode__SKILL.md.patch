@@ -1,0 +1,29 @@
+diff --git a/.claude/skills/add-opencode/SKILL.md b/.claude/skills/add-opencode/SKILL.md
+index f8dfc1ad..95c4739f 100644
+--- a/.claude/skills/add-opencode/SKILL.md
++++ b/.claude/skills/add-opencode/SKILL.md
+@@ -116,7 +116,7 @@ payload/src/providers/opencode.ts -> src/providers/opencode.ts
+ ```
+ 
+ Append `import './opencode.js';` once to each of the five setup, provider, and contract
+-barrels below. Keep all existing imports.
++barrels below (the agent-runner provider barrel imports it guarded). Keep all existing imports.
+ 
+ ```nc:append to:src/providers/index.ts when:opencode_core_ready=yes
+ import './opencode.js';
+@@ -127,7 +127,14 @@ import './opencode.js';
+ ```
+ 
+ ```nc:append to:container/agent-runner/src/providers/index.ts when:opencode_core_ready=yes
+-import './opencode.js';
++// OpenCode needs @opencode-ai/sdk, baked into the agent image. A group's own
++// image built on an older base lacks it, and a static import made every such
++// agent die at start: load it only where it is there.
++try {
++  await import('./opencode.js');
++} catch (err) {
++  console.error(`[providers] OpenCode not loaded: ${err instanceof Error ? err.message : String(err)}`);
++}
+ ```
+ 
+ ```nc:append to:container/agent-runner/src/provider-contracts/index.ts when:opencode_core_ready=yes

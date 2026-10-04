@@ -21,6 +21,7 @@
  * optionally `:port`; without a port, 443 and 80.
  */
 import net from 'net';
+import os from 'os';
 
 import { audit } from '../../audit.js';
 import { EGRESS_EXTRA_DEFAULTS } from '../../config.js';
@@ -36,6 +37,9 @@ import {
   setRunnerEgressAllowlistRaw,
   type WebchatModel,
 } from './db.js';
+import { agentRouterBase } from './cloud-models.js';
+import { spawnModel } from './model-host-health.js';
+import { relayKey, remoteModelTarget } from './model-relay.js';
 import { containerReachableUrl } from './models.js';
 
 export type EgressMode = 'open' | 'host-only' | 'none';
@@ -50,6 +54,14 @@ export const ALWAYS_ALLOWED = ['api.anthropic.com'];
 /** The model's host as the container dials it (`host.docker.internal:11434`, `llm.example.org:4000`), or null. */
 export function modelHostPattern(model: Pick<WebchatModel, 'endpoint'> | null | undefined): string | null {
   if (!model?.endpoint) return null;
+  // The router behind the gateway is dialed by its container name (models.ts
+  // envForModel): a single label, which an operator's pattern may not be, and
+  // ours, so it is not held to parsePattern.
+  const router = agentRouterBase(model.endpoint);
+  if (router) {
+    const r = new URL(router);
+    return `${r.hostname}:${r.port}`;
+  }
   try {
     const u = new URL(containerReachableUrl(model.endpoint));
     const port = Number(u.port || (u.protocol === 'https:' ? 443 : 80));
@@ -80,11 +92,17 @@ export function modelPassthrough(
  * Read at spawn (the prepare hook) so a model added later gets its listener
  * at the next start; the filter's listeners are idempotent per port.
  */
-export async function modelPassthroughs(): Promise<Array<{ port: number; target: { host: string; port: number } }>> {
-  const out = new Map<number, { port: number; target: { host: string; port: number } }>();
+export async function modelPassthroughs(): Promise<
+  Array<{ port: number; target: { host: string; port: number }; ollama: boolean }>
+> {
+  const out = new Map<number, { port: number; target: { host: string; port: number }; ollama: boolean }>();
   for (const m of await listWebchatModels()) {
     const p = modelPassthrough(m);
-    if (p && !out.has(p.port)) out.set(p.port, p);
+    if (!p) continue;
+    // An Ollama server (any Ollama model on the port): its requests are filtered to inference.
+    const seen = out.get(p.port);
+    if (seen) seen.ollama ||= m.kind === 'ollama';
+    else out.set(p.port, { ...p, ollama: m.kind === 'ollama' });
   }
   return [...out.values()];
 }
@@ -98,8 +116,12 @@ export async function modelHostsFor(agentGroupId: string): Promise<string[]> {
   if (hit && Date.now() - hit.at < TTL_MS) return hit.hosts;
   let hosts = [...ALWAYS_ALLOWED];
   try {
-    const p = modelHostPattern(await getEffectiveModelForAgent(agentGroupId));
-    if (p && !hosts.includes(p)) hosts.push(p);
+    const model = await getEffectiveModelForAgent(agentGroupId);
+    // The host it spawns on while its own is down, too (model-host-health.ts).
+    for (const m of [model, spawnModel(model, agentGroupId)]) {
+      const p = modelHostPattern(m);
+      if (p && !hosts.includes(p)) hosts.push(p);
+    }
   } catch (err) {
     log.warn('Egress: could not read the agent model — allowing the provider floor only', {
       agentGroupId,
@@ -110,6 +132,27 @@ export async function modelHostsFor(agentGroupId: string): Promise<string[]> {
   return hosts;
 }
 
+/** This agent's model on another machine, as host:port — what its relay admits it to (egress-filter.ts). */
+export async function ownModelTargetsFor(agentGroupId: string): Promise<string[]> {
+  const hit = targetsCache.get(agentGroupId);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.targets;
+  let targets: string[] = [];
+  try {
+    const model = await getEffectiveModelForAgent(agentGroupId);
+    for (const m of [model, spawnModel(model, agentGroupId)]) {
+      const t = remoteModelTarget(m?.endpoint);
+      if (t && !targets.includes(relayKey(t))) targets.push(relayKey(t));
+    }
+  } catch (err) {
+    log.warn('Egress: could not read the agent model — admitting it to no model relay', {
+      agentGroupId,
+      err: String(err),
+    });
+  }
+  targetsCache.set(agentGroupId, { at: Date.now(), targets });
+  return targets;
+}
+
 /**
  * A model was added or changed: re-read model hosts on the next connection.
  * Each agent already reaches its own model's host (modelHostsFor); nothing is
@@ -117,6 +160,7 @@ export async function modelHostsFor(agentGroupId: string): Promise<string[]> {
  */
 export function forgetModelHosts(): void {
   hostsCache.clear();
+  targetsCache.clear();
 }
 
 export const BUILTIN_ALLOWLIST = [
@@ -184,8 +228,8 @@ const DNS_NAME =
 
 /**
  * A destination host fit to go into a CONNECT line: a DNS name or an IP
- * literal (IPv6 without brackets), nothing else. The host arrives from a
- * runner frame or an agent's proxy request, and the allowlist check is a
+ * literal (IPv6 without brackets), nothing else. The host arrives from an
+ * agent's proxy request, and the allowlist check is a
  * suffix match, so anything that could carry CR, LF or spaces into the
  * gateway request has to be refused before it is matched or forwarded.
  */
@@ -219,6 +263,70 @@ export function egressAllowed(
   return allowlist.some((p) => hostMatches(host, port, p));
 }
 
+/**
+ * A tunnel the filter makes itself instead of through the gateway: a port other
+ * than 443 or 80 that an entry of the INSTALL allowlist names explicitly
+ * (`host:22` for SSH, a database port). The gateway reads every tunnel as TLS,
+ * to inject credentials, which breaks any other protocol, and it has nothing to
+ * inject there. Allowlist mode only. Only the install list (global admins): an
+ * agent's own hosts are its scoped admins' to edit, and a direct tunnel gives
+ * the agent central's own network position, past the gateway. Never to this
+ * machine (loopback, any of its own addresses, the docker bridge gateway where
+ * host services listen) or a link-local address (the cloud metadata service),
+ * and to a private (RFC 1918 / ULA) address only when the entry names that
+ * address itself: by name here, and by resolved address when the filter
+ * connects (directAddressAllowed).
+ */
+export function directTunnel(mode: EgressMode, host: string, port: number, installAllowlist: string[]): boolean {
+  if (mode !== 'host-only' || port === 443 || port === 80) return false;
+  const h = host
+    .toLowerCase()
+    .replace(/\.$/, '')
+    .replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h === 'host.docker.internal') return false;
+  if (net.isIP(h) && !directAddressAllowed(h, true)) return false;
+  return installAllowlist.some((p) => p.includes(':') && hostMatches(host, port, p));
+}
+
+/** The docker bridge's usual gateway: host services listen there even when this host does not list it. */
+const DOCKER_BRIDGE_GATEWAY = '172.17.0.1';
+
+/** This machine's own addresses (every interface, the docker bridges' gateways among them). */
+export function hostOwnAddresses(): Set<string> {
+  const own = new Set<string>([DOCKER_BRIDGE_GATEWAY]);
+  try {
+    for (const list of Object.values(os.networkInterfaces()))
+      for (const i of list ?? []) own.add(i.address.toLowerCase().replace(/%.*$/, ''));
+  } catch {
+    /* none readable: the fixed ones still apply */
+  }
+  return own;
+}
+
+/** RFC 1918 IPv4, or an IPv6 unique-local address (fc00::/7). */
+function isPrivateAddress(a: string): boolean {
+  if (net.isIPv4(a)) return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a);
+  return net.isIPv6(a) && /^f[cd][0-9a-f]{2}:/.test(a);
+}
+
+/**
+ * Whether a direct tunnel may go to this address. Never loopback, link-local
+ * (the metadata service), unspecified, or this machine itself (its own
+ * addresses, the docker bridge gateway): in IPv4, IPv6 or IPv4-mapped IPv6.
+ * A private address only when `literal`, the allowlist entry being that
+ * address: a NAME that resolves there is refused, so a public-looking entry
+ * (or a DNS answer someone else controls) cannot reach into the LAN. Checked
+ * on the address a name resolves to, which a name check cannot see.
+ */
+export function directAddressAllowed(address: string, literal = false, own: Set<string> = hostOwnAddresses()): boolean {
+  const a = address.toLowerCase().replace(/^::ffff:/, '');
+  if (!net.isIP(a)) return false;
+  if (own.has(a)) return false;
+  if (net.isIPv4(a) && /^(127\.|169\.254\.|0\.)/.test(a)) return false;
+  if (net.isIPv6(a) && (a === '::1' || a === '::' || /^fe[89ab][0-9a-f]:/.test(a))) return false;
+  return literal || !isPrivateAddress(a);
+}
+
 // ── configuration, cached briefly: this is on every relayed connection ─────────
 
 const TTL_MS = 15_000;
@@ -226,6 +334,7 @@ let listCache: { at: number; list: string[] } | null = null;
 const modeCache = new Map<string, { at: number; mode: EgressMode }>();
 const agentListCache = new Map<string, { at: number; list: string[] }>();
 const hostsCache = new Map<string, { at: number; hosts: string[] }>();
+const targetsCache = new Map<string, { at: number; targets: string[] }>();
 
 export async function getRunnerEgressAllowlist(): Promise<string[]> {
   if (listCache && Date.now() - listCache.at < TTL_MS) return listCache.list;
@@ -316,6 +425,7 @@ export async function groupEgressMode(agentGroupId: string): Promise<EgressMode>
 export function forgetGroupEgressMode(agentGroupId: string): void {
   modeCache.delete(agentGroupId);
   hostsCache.delete(agentGroupId);
+  targetsCache.delete(agentGroupId);
   agentListCache.delete(agentGroupId);
 }
 
@@ -410,6 +520,7 @@ export function __resetRunnerEgressForTest(): void {
   listCache = null;
   modeCache.clear();
   hostsCache.clear();
+  targetsCache.clear();
   agentListCache.clear();
   blocked.clear();
   auditedAt.clear();

@@ -45,8 +45,11 @@ import {
   proposalBaseContent,
   proposalChanges,
   proposalGitDir,
+  projectRelative,
   recoverProposal,
   rejectProposal,
+  workingTreeFiles,
+  workingTreeStamp,
 } from './git-changes.js';
 
 describe('host git hardening', () => {
@@ -565,5 +568,86 @@ describe('alignCase (Windows path spelling)', () => {
   });
   it('leaves case alone where it matters', () => {
     expect(alignCase('/home/dev/proj', '/home/dev/Proj', 'linux')).toBe('/home/dev/Proj');
+  });
+});
+
+describe('include paths', () => {
+  const put = (rel: string, text = 'x\n') => {
+    fs.mkdirSync(path.dirname(path.join(repo, rel)), { recursive: true });
+    fs.writeFileSync(path.join(repo, rel), text);
+  };
+  beforeEach(() => {
+    fs.writeFileSync(path.join(repo, '.gitignore'), 'site-theme\nbackups\n');
+    sh(['add', '.gitignore']);
+    sh(['commit', '-qm', 'ignore']);
+    put('site-theme/css/page.css');
+    put('site-theme/vendor/lib.js');
+    put('site-theme/.env');
+    put('backups/db.sql');
+  });
+
+  it('takes in a listed gitignored folder only, by the usual rules', async () => {
+    const without = await workingTreeFiles(repo, ['.env']);
+    expect(without.filter((f) => f.startsWith('site-theme'))).toEqual([]);
+    const files = await workingTreeFiles(repo, ['.env'], false, ['./site-theme/']);
+    expect(files).toContain('site-theme/css/page.css');
+    expect(files).not.toContain('site-theme/vendor/lib.js');
+    expect(files).not.toContain('site-theme/.env');
+    expect(files.some((f) => f.startsWith('backups'))).toBe(false);
+  });
+
+  it('never follows an include path through a linked folder out of the project', async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'outside-'));
+    try {
+      fs.mkdirSync(path.join(outside, 'keys'));
+      fs.writeFileSync(path.join(outside, 'keys', 'id_ed25519.txt'), 'private\n');
+      fs.symlinkSync(outside, path.join(repo, 'site-theme', 'linked'), 'junction');
+      const files = await workingTreeFiles(repo, [], false, [
+        'site-theme/linked/keys',
+        'site-theme/linked/keys/id_ed25519.txt',
+      ]);
+      expect(files.some((f) => f.includes('id_ed25519'))).toBe(false);
+      // A folder inside the project is still taken in by the same path shape.
+      expect(await workingTreeFiles(repo, [], false, ['site-theme/css'])).toContain('site-theme/css/page.css');
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('never reaches outside the project', () => {
+    for (const p of ['../other', 'a/../../b', '/etc', 'C:\\Users', ' ']) expect(projectRelative(p)).toBeNull();
+    expect(projectRelative('site-theme\\css')).toBe('site-theme/css');
+  });
+
+  it('follows an edit in a listed folder that is a repository of its own', async () => {
+    const theme = path.join(repo, 'site-theme');
+    const git = (...a: string[]) =>
+      execFileSync('git', ['-c', 'user.email=a@a', '-c', 'user.name=a', ...a], { cwd: theme, stdio: 'pipe' });
+    git('init', '-q');
+    git('add', '-A');
+    git('commit', '-qm', 'theme');
+    const before = await workingTreeStamp(repo, ['site-theme']);
+    expect(await workingTreeStamp(repo, [])).toBe(await workingTreeStamp(repo, ['missing']));
+    const plain = await workingTreeStamp(repo, []);
+    put('site-theme/css/page.css', 'changed\n');
+    expect(await workingTreeStamp(repo, ['site-theme'])).not.toBe(before);
+    expect(await workingTreeStamp(repo, [])).toBe(plain);
+  });
+});
+
+describe('workingTreeStamp', () => {
+  it("reads a staged rename's old name as part of the record, not as a path of its own", async () => {
+    // `R  new\0abcdef.txt`: cut like a status line, the old name read as `def.txt`.
+    fs.writeFileSync(path.join(repo, 'abcdef.txt'), 'a\n');
+    fs.writeFileSync(path.join(repo, '.gitignore'), 'def.txt\n');
+    sh(['add', 'abcdef.txt', '.gitignore']);
+    sh(['commit', '-qm', 'rename source']);
+    sh(['mv', 'abcdef.txt', 'renamed.txt']);
+    fs.writeFileSync(path.join(repo, 'def.txt'), 'ignored\n');
+    const before = await workingTreeStamp(repo, []);
+    fs.writeFileSync(path.join(repo, 'def.txt'), 'ignored, and longer now\n'); // gitignored: not the tree's
+    expect(await workingTreeStamp(repo, [])).toBe(before);
+    fs.writeFileSync(path.join(repo, 'renamed.txt'), 'edited after the rename\n');
+    expect(await workingTreeStamp(repo, [])).not.toBe(before);
   });
 });

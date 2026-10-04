@@ -1,9 +1,9 @@
 diff --git a/container/agent-runner/src/scheduling/task-script.test.ts b/container/agent-runner/src/scheduling/task-script.test.ts
-index c43cc8f8..c7031d52 100644
+index bd7e235d..d33eacc9 100644
 --- a/container/agent-runner/src/scheduling/task-script.test.ts
 +++ b/container/agent-runner/src/scheduling/task-script.test.ts
-@@ -115,3 +115,26 @@ describe('a timed-out script is reported as a timeout', () => {
-     expect(joined).not.toContain('timed out');
+@@ -215,3 +215,26 @@ describe('a timed-out script takes its children down with it', () => {
+     expect(lines.join('\n')).toContain('stdout maxBuffer length exceeded');
    });
  });
 +

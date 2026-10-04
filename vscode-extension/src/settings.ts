@@ -1,5 +1,5 @@
-// Settings that decide where the sign-in token goes, which binary runs and what
-// is mounted are read from the user's own settings only. A workspace folder's
+// Settings that decide where the sign-in token goes and what the agent may see
+// are read from the user's own settings only. A workspace folder's
 // `.vscode/settings.json` may be the agent's writing, applied from a
 // proposal; package.json marks these `machine` scope, and this reads past any
 // workspace or folder value that still shows up.

@@ -7,6 +7,7 @@
  *   2. External I/O — Ollama discovery + health checks, best-effort and
  *      fail-soft so an unreachable endpoint doesn't block save/discover.
  */
+import { createHash } from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import dns from 'node:dns/promises';
@@ -18,7 +19,11 @@ import { listProviderContainerConfigNames } from '../../providers/provider-conta
 import { log } from '../../log.js';
 import { readEnvFile } from '../../env.js';
 import { getAssignedModelForAgent, getEffectiveModelForAgent, type WebchatModel } from './db.js';
+import { agentRouterBase, CLOUD_PROVIDERS, cloudModelMaxOutput, routerAuthHeaders } from './cloud-models.js';
 import { upsertEnv } from './env-write.js';
+import { isMovedOffHost, spawnModel } from './model-host-health.js';
+import { agentModelUrl, RELAY_HOST, remoteModelTarget } from './model-relay.js';
+import { fetchOllamaModelMeta, servedModelLimits } from './ollama-context.js';
 import { refreshOllamaLenient } from './ollama-lenient.js';
 
 // ─── SSRF defense for owner-supplied probe/discover/validate URLs ─────────
@@ -217,6 +222,61 @@ export function hostReachableUrl(url: string): string {
  * loopback first — an operator can paste either form and both probe and
  * save-validation just work.
  */
+/**
+ * The provider's own complaint inside an error body, in a few words: LiteLLM
+ * wraps it ("…Exception - {"message":"model 'x' not found…"}"), others give
+ * error.message or a bare string.
+ */
+export function shortModelError(status: number, text: string): string {
+  let msg = text;
+  try {
+    const j = JSON.parse(text) as { error?: unknown; message?: unknown };
+    const e = j.error as { message?: unknown } | string | undefined;
+    msg = String((typeof e === 'object' && e?.message) || (typeof e === 'string' && e) || j.message || text);
+  } catch {
+    /* plain text */
+  }
+  const inner = [...msg.matchAll(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/g)].pop()?.[1];
+  if (inner) msg = inner.replace(/\\"/g, '"');
+  msg = msg.replace(/^litellm\.\w+:\s*/i, '').replace(/^\w+Exception\s*-\s*/, '');
+  msg = msg
+    .split(/(?<=[a-z0-9'])\.\s/i)[0]
+    .trim()
+    .replace(/\.$/, '');
+  return (msg || `HTTP ${status}`).slice(0, 120);
+}
+
+/**
+ * One tiny completion through a model's endpoint (OpenAI chat shape, which
+ * Ollama and LiteLLM both serve): proof the model answers, the key included.
+ */
+export async function testModel(m: { kind: string; endpoint: string | null; model_id: string }): Promise<{
+  ok: boolean;
+  ms?: number;
+  error?: string;
+}> {
+  if (m.kind === 'anthropic' || !m.endpoint) return { ok: false, error: 'Not testable' };
+  const base = m.endpoint.replace(/\/+$/, '');
+  const url = `${/\/v1$/.test(base) ? base : `${base}/v1`}/chat/completions`;
+  const started = Date.now();
+  try {
+    const res = await safeFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: m.model_id, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (res.ok) return { ok: true, ms: Date.now() - started };
+    return { ok: false, error: shortModelError(res.status, await res.text()) };
+  } catch (err) {
+    return { ok: false, error: shortModelError(0, String((err as Error)?.message ?? err)) };
+  }
+}
+
+function headersObject(h: RequestInit['headers']): Record<string, string> {
+  return h ? Object.fromEntries(new Headers(h).entries()) : {};
+}
+
 export async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
   const MAX_HOPS = 5;
   let target = hostReachableUrl(url);
@@ -227,7 +287,10 @@ export async function safeFetch(url: string, init?: RequestInit): Promise<Respon
     // check — the whole point of the gate. (Node/undici exposes the redirect
     // status + Location header under 'manual'.)
     await assertSafeOutboundUrl(target);
-    const res = await fetch(target, { ...reqInit, redirect: 'manual' });
+    // The router on loopback wants its master key (cloud models); nothing else gets it.
+    const auth = routerAuthHeaders(target);
+    const headers = Object.keys(auth).length ? { ...headersObject(reqInit.headers), ...auth } : reqInit.headers;
+    const res = await fetch(target, { ...reqInit, headers, redirect: 'manual' });
     if (res.status < 300 || res.status >= 400) return res; // not a redirect → done
     const location = res.headers.get('location');
     if (!location) throw new Error(`safeFetch: refusing an un-inspectable redirect from ${target}`);
@@ -329,6 +392,20 @@ export function envForModel(model: WebchatModel | null): Record<string, string> 
     // suffix; strip it — the SDK appends the full `/v1/messages` path itself
     // (LiteLLM serves it at the root, like Ollama).
     if (!model.endpoint) return {};
+    // A cloud model (Models → Cloud model) refuses a reply longer than its
+    // provider allows, and Claude Code asks for 32k unless told.
+    const maxOutput = cloudModelMaxOutput(model.model_id, model.endpoint);
+    // The router behind the gateway (it serves cloud models): dialed by its
+    // container name THROUGH the gateway, which adds the router's key. No
+    // bypass, or the request would go out without it.
+    const viaGateway = agentRouterBase(model.endpoint);
+    if (viaGateway) {
+      return {
+        ANTHROPIC_BASE_URL: viaGateway,
+        ANTHROPIC_MODEL: model.model_id,
+        ...(maxOutput ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxOutput) } : {}),
+      };
+    }
     const base = containerReachableUrl(model.endpoint.replace(/\/+$/, '').replace(/\/v1$/, ''));
     let host = 'host.docker.internal';
     try {
@@ -343,9 +420,56 @@ export function envForModel(model: WebchatModel | null): Record<string, string> 
       // requirement (and same failure mode) as the ollama kind.
       NO_PROXY: host,
       no_proxy: host,
+      ...(maxOutput ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxOutput) } : {}),
     };
   }
   return {};
+}
+
+function agentSettingsPath(agentGroupId: string): string {
+  return path.join(DATA_DIR, 'v2-sessions', agentGroupId, '.claude-shared', 'settings.json');
+}
+
+/** The model env settings.json should carry for this agent now, and the model it is for. */
+async function modelSettingsEnv(
+  agentGroupId: string,
+): Promise<{ model: WebchatModel | null; overrides: Record<string, string> }> {
+  // Per-agent assignment wins; a claude-family group WITHOUT one falls back to
+  // the workspace default model (wizard "default engine = Ollama"). Groups on
+  // a non-default provider (e.g. codex) never inherit the fallback — their
+  // harness doesn't read the ANTHROPIC_* env this writes.
+  let model = await getAssignedModelForAgent(agentGroupId);
+  if (!model) {
+    const provider = (await getContainerConfig(agentGroupId))?.provider;
+    if (!provider || provider === 'claude') model = await getEffectiveModelForAgent(agentGroupId);
+  }
+  const overrides = envForModel(spawnModel(model, agentGroupId));
+  // Behind the egress filter a model on another machine is reached through its relay.
+  if (overrides.ANTHROPIC_BASE_URL && overrides.NO_PROXY) {
+    const base = await agentModelUrl(agentGroupId, overrides.ANTHROPIC_BASE_URL);
+    if (base !== overrides.ANTHROPIC_BASE_URL)
+      Object.assign(overrides, { ANTHROPIC_BASE_URL: base, NO_PROXY: RELAY_HOST, no_proxy: RELAY_HOST });
+  }
+  return { model, overrides };
+}
+
+/**
+ * Whether settings.json names another model URL or model than the agent
+ * should dial now. A failover host written while its own host was down is
+ * persistent, but what restores it (model-host-health.ts) is not: after a
+ * host restart nothing else would put the agent back on its own host.
+ */
+async function modelSettingsStale(agentGroupId: string): Promise<boolean> {
+  const { model, overrides } = await modelSettingsEnv(agentGroupId);
+  if (!model) return false; // nothing assigned: keys there are the operator's
+  let env: Record<string, unknown> = {};
+  try {
+    const raw = JSON.parse(fs.readFileSync(agentSettingsPath(agentGroupId), 'utf8')) as { env?: unknown };
+    if (raw.env && typeof raw.env === 'object') env = raw.env as Record<string, unknown>;
+  } catch {
+    return false; // no settings yet: the first write comes with the folder
+  }
+  return env.ANTHROPIC_BASE_URL !== overrides.ANTHROPIC_BASE_URL || env.ANTHROPIC_MODEL !== overrides.ANTHROPIC_MODEL;
 }
 
 /**
@@ -367,18 +491,9 @@ export async function writeAgentSettingsForAssignedModel(agentGroupId: string): 
   // First, and even for a group with no folder yet: the spawn path reads this
   // before its prepare hooks run (./ollama-lenient.ts).
   await refreshOllamaLenient(agentGroupId);
-  // Per-agent assignment wins; a claude-family group WITHOUT one falls back to
-  // the workspace default model (wizard "default engine = Ollama"). Groups on
-  // a non-default provider (e.g. codex) never inherit the fallback — their
-  // harness doesn't read the ANTHROPIC_* env this writes.
-  let model = await getAssignedModelForAgent(agentGroupId);
-  if (!model) {
-    const provider = (await getContainerConfig(agentGroupId))?.provider;
-    if (!provider || provider === 'claude') model = await getEffectiveModelForAgent(agentGroupId);
-  }
-  const overrides = envForModel(model);
+  const { overrides } = await modelSettingsEnv(agentGroupId);
 
-  const settingsPath = path.join(DATA_DIR, 'v2-sessions', agentGroupId, '.claude-shared', 'settings.json');
+  const settingsPath = agentSettingsPath(agentGroupId);
   if (!fs.existsSync(path.dirname(settingsPath))) {
     // Folder hasn't been initialized yet — nothing to write. The first
     // resolveSession will create it; we'll re-run this then.
@@ -409,9 +524,61 @@ export async function writeAgentSettingsForAssignedModel(agentGroupId: string): 
   delete cleaned.OPENAI_MODEL;
   delete cleaned.NO_PROXY;
   delete cleaned.no_proxy;
+  // Only when this writer put it there: an operator's own output cap stays, and wins.
+  const ownedPath = path.join(path.dirname(settingsPath), OWNED_ENV_FILE);
+  const owned = readOwnedEnv(ownedPath);
+  for (const k of OWNED_ENV_KEYS) {
+    const v = cleaned[k];
+    if (v === undefined) continue;
+    if (owned[k] ? owned[k] === envHash(v) : legacyOwned(k, v)) delete cleaned[k];
+    else if (k === 'CLAUDE_CODE_MAX_OUTPUT_TOKENS') delete overrides[k];
+  }
 
   const merged = { ...existing, env: { ...cleaned, ...overrides } };
   fs.writeFileSync(settingsPath, JSON.stringify(merged, null, 2) + '\n');
+  const nextOwned: Record<string, string> = {};
+  for (const k of OWNED_ENV_KEYS) if (overrides[k] !== undefined) nextOwned[k] = envHash(overrides[k]);
+  if (Object.keys(nextOwned).length) fs.writeFileSync(ownedPath, JSON.stringify(nextOwned) + '\n');
+  else fs.rmSync(ownedPath, { force: true });
+}
+
+/**
+ * At spawn: whether a model on another machine is dialed directly or through
+ * its relay follows the agent's network mode, which may have changed since
+ * the model was picked — so its settings are written again. So are those of
+ * a model whose host is down, or was at the last spawn (model-host-health.ts),
+ * and of any model whose written URL is not the one it should dial now.
+ */
+export async function refreshRemoteModelSettings(agentGroupId: string): Promise<void> {
+  const wasMoved = isMovedOffHost(agentGroupId);
+  const model = await getEffectiveModelForAgent(agentGroupId);
+  if (
+    remoteModelTarget(model?.endpoint) ||
+    wasMoved ||
+    spawnModel(model, agentGroupId) !== model ||
+    (await modelSettingsStale(agentGroupId))
+  )
+    await writeAgentSettingsForAssignedModel(agentGroupId);
+}
+
+/** settings.json env keys written only for some models, and removed only when this writer wrote them. */
+const OWNED_ENV_KEYS = ['CLAUDE_CODE_MAX_OUTPUT_TOKENS'] as const;
+/** Beside settings.json: a hash of each such value as written (the agent can read this folder). */
+const OWNED_ENV_FILE = 'model-env-owned.json';
+const envHash = (v: string): string => createHash('sha256').update(v).digest('hex');
+
+function readOwnedEnv(file: string): Record<string, string> {
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
+    return raw && typeof raw === 'object' ? (raw as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Before ownership was recorded, a provider's cap was the only output cap this writer set. */
+function legacyOwned(key: string, value: string): boolean {
+  return key === 'CLAUDE_CODE_MAX_OUTPUT_TOKENS' && CLOUD_PROVIDERS.some((p) => String(p.maxOutput) === value);
 }
 
 /** OpenCode is installed iff its provider container-config is registered. */
@@ -452,17 +619,26 @@ export const OPENCODE_DEFAULT_OUTPUT_LIMIT = 8192;
  * `openai` — upstream pins the OpenAI-compatible transport to that id — not
  * `ollama`.
  */
-export function openCodeBackendEnv(model: WebchatModel): { env: Record<string, string>; proxyHost: string } | null {
-  if (model.kind !== 'ollama' || !model.endpoint) return null;
+export function openCodeBackendEnv(
+  model: WebchatModel,
+): { env: Record<string, string>; proxyHost: string | null } | null {
+  // An Ollama model, or a cloud model the router serves (Models → Cloud model):
+  // both speak OpenAI chat. Other openai-compatible registrations (routing
+  // backends) stay off this path.
+  const cloudCap = model.kind === 'openai-compatible' ? cloudModelMaxOutput(model.model_id, model.endpoint) : null;
+  if (!model.endpoint || (model.kind !== 'ollama' && cloudCap === null)) return null;
   // OpenCode speaks OpenAI-compat at /v1/chat/completions, so the base URL
   // takes the /v1 suffix; registry endpoints may already carry it.
-  const base = containerReachableUrl(model.endpoint.replace(/\/+$/, '').replace(/\/v1$/, '')) + '/v1';
-  let proxyHost = 'host.docker.internal';
+  // The router behind the gateway: through it, by container name, never bypassed.
+  const viaGateway = agentRouterBase(model.endpoint);
+  const base = (viaGateway ?? containerReachableUrl(model.endpoint.replace(/\/+$/, '').replace(/\/v1$/, ''))) + '/v1';
+  let proxyHost: string | null = 'host.docker.internal';
   try {
     proxyHost = new URL(base).hostname;
   } catch {
     /* keep the alias */
   }
+  if (viaGateway) proxyHost = null;
   return {
     env: {
       OPENCODE_PROVIDER: 'openai',
@@ -473,6 +649,8 @@ export function openCodeBackendEnv(model: WebchatModel): { env: Record<string, s
       // that setup, so left alone the small model (titles, summaries) would stay
       // on whatever setup chose, which this endpoint may not serve.
       OPENCODE_SMALL_MODEL: `openai/${model.model_id}`,
+      // A provider refuses a reply over its cap (Cohere: 8192), so it is set outright.
+      ...(cloudCap ? { OPENCODE_MODEL_OUTPUT_LIMIT: String(cloudCap) } : {}),
     },
     proxyHost,
   };
@@ -507,11 +685,59 @@ export function syncOpenCodeBackendEnv(model: WebchatModel, root = process.cwd()
   if (!have.OPENCODE_MODEL_OUTPUT_LIMIT) {
     upsertEnv(root, 'OPENCODE_MODEL_OUTPUT_LIMIT', String(OPENCODE_DEFAULT_OUTPUT_LIMIT));
   }
-  upsertEnv(root, 'NO_PROXY', mergeNoProxy(have.NO_PROXY, backend.proxyHost));
-  process.env.NO_PROXY = mergeNoProxy(process.env.NO_PROXY, backend.proxyHost);
-  process.env.no_proxy = process.env.NO_PROXY;
+  if (backend.proxyHost) {
+    upsertEnv(root, 'NO_PROXY', mergeNoProxy(have.NO_PROXY, backend.proxyHost));
+    process.env.NO_PROXY = mergeNoProxy(process.env.NO_PROXY, backend.proxyHost);
+    process.env.no_proxy = process.env.NO_PROXY;
+  }
   log.info('Webchat: OpenCode backend set', { base: backend.env.OPENCODE_BASE_URL, model: backend.env.OPENCODE_MODEL });
   return true;
+}
+
+/**
+ * Per-agent OpenCode env at spawn, over the install-wide keys above (the
+ * container-env seam wins a collision):
+ *
+ *   - the window Ollama serves the model with (ollama-context.ts), unless the
+ *     operator set the limits: values other than the defaults written above;
+ *   - for an agent behind the egress filter, a model on another machine
+ *     through its relay (model-relay.ts).
+ *
+ * Empty for any other provider or model.
+ */
+export async function openCodeSpawnEnv(agentGroupId: string): Promise<Record<string, string>> {
+  if ((await getContainerConfig(agentGroupId))?.provider !== 'opencode') return {};
+  const own = await getEffectiveModelForAgent(agentGroupId);
+  // OpenCode's model id is the container config's: a down host is left for another serving the same id only.
+  const moved = spawnModel(own, agentGroupId);
+  const model = moved?.model_id === own?.model_id ? moved : own;
+  const base = model?.kind === 'ollama' ? openCodeBackendEnv(model)?.env.OPENCODE_BASE_URL : undefined;
+  if (!model?.endpoint || !base) return {};
+  const ownBase = model === own ? base : own && openCodeBackendEnv(own)?.env.OPENCODE_BASE_URL;
+  const out: Record<string, string> = {};
+  const file = readEnvFile(['OPENCODE_MODEL_CONTEXT_LIMIT', 'OPENCODE_MODEL_OUTPUT_LIMIT']);
+  const context = process.env.OPENCODE_MODEL_CONTEXT_LIMIT ?? file.OPENCODE_MODEL_CONTEXT_LIMIT;
+  const output = process.env.OPENCODE_MODEL_OUTPUT_LIMIT ?? file.OPENCODE_MODEL_OUTPUT_LIMIT;
+  const ours = (v: string | undefined, d: number): boolean => !v || v === String(d);
+  if (ours(context, OPENCODE_DEFAULT_CONTEXT_LIMIT) && ours(output, OPENCODE_DEFAULT_OUTPUT_LIMIT)) {
+    const meta = await fetchOllamaModelMeta(model.endpoint, model.model_id);
+    if (meta) {
+      const limits = servedModelLimits(meta);
+      out.OPENCODE_MODEL_CONTEXT_LIMIT = String(limits.contextWindow);
+      out.OPENCODE_MODEL_OUTPUT_LIMIT = String(limits.maxTokens);
+    }
+  }
+  const relayed = await agentModelUrl(agentGroupId, base);
+  if (relayed !== ownBase) {
+    out.OPENCODE_BASE_URL = relayed;
+    // Upstream's provider exempts loopback only; the relay (or the other host) is dialed by name.
+    const noProxy = ['127.0.0.1', 'localhost', new URL(relayed).hostname].reduce(
+      mergeNoProxy,
+      process.env.NO_PROXY ?? '',
+    );
+    out.NO_PROXY = out.no_proxy = noProxy;
+  }
+  return out;
 }
 
 /**

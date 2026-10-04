@@ -45,7 +45,7 @@ pnpm exec playwright test --project smoke     # smoke tier only, no rebuild
 ```
 
 Requires the dev-only toolchain — deliberately **not** installed by
-`install.sh` and not per-PR CI (the runner host is disk-constrained):
+`install.sh` and not run in per-PR CI (browsers are large):
 
 ```bash
 pnpm add -D @playwright/test

@@ -6,11 +6,12 @@
  */
 import { toolSecretRows } from './tool-secrets-state.js';
 
-const props = defineProps<{ onRemove: (secret: any) => void }>();
+const props = defineProps<{ onRemove: (secret: any) => void; onUpdate: (secret: any) => void }>();
 
 const EMPTY = 'No all-agents secrets yet';
 const SHARED = 'all agents';
 const REMOVE = 'Remove';
+const UPDATE = 'Update';
 </script>
 
 <template>
@@ -18,9 +19,11 @@ const REMOVE = 'Remove';
   <li v-for="(s, i) in toolSecretRows" :key="i" class="skill-source-row secret-row">
     <div class="skill-info">
       <div class="skill-head">
-        <span>{{ s.hostPattern }}</span><span class="skill-badge secret-scope">{{ SHARED }}</span>
+        <span>{{ s.hostPattern }}</span
+        ><span class="skill-badge secret-scope">{{ SHARED }}</span>
       </div>
     </div>
+    <button class="btn btn-secondary" type="button" @click="props.onUpdate(s)">{{ UPDATE }}</button>
     <button class="btn btn-danger" type="button" @click="props.onRemove(s)">{{ REMOVE }}</button>
   </li>
 </template>

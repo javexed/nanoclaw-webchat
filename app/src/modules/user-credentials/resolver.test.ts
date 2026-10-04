@@ -11,7 +11,7 @@ import { runMigrations } from '../../db/migrations/index.js';
 import { consultTurnGates, resolveSessionKeyOverride } from '../../seam/index.js';
 import { resolveAgentIdentity, resolveContainerEnv, runSessionPrepareHooks } from '../../seam/index.js';
 import { setRoomModeOverride, setCredentialsConfig } from '../../channels/webchat/db.js';
-import { upsertUserCredential, setUserCredentialStatus } from './db.js';
+import { upsertUserCredential, setUserCredentialStatus, upsertUserCredsCredential } from './db.js';
 import { userCredsAgentIdentifier, WORKSPACE_DEFAULT_USER_ID } from './identity.js';
 import './index.js'; // registers the resolvers
 
@@ -189,5 +189,58 @@ describe('userCreds agent-identity resolver (spawn)', () => {
     await upsertUserCredential('webchat:alice', 'claude', 'sec-1', 'api_key');
     await setUserCredentialStatus('webchat:alice', 'claude', 'revoked');
     expect(await preparedIdentity('ag-1', 'webchat:alice')).toBeNull();
+  });
+});
+
+describe('personal secrets without a Claude credential of their own', () => {
+  // As ensurePersonalEnrollment records it: an enrollment holding no key of hers.
+  const personal = () =>
+    upsertUserCredsCredential(
+      'webchat:alice',
+      'ag-1',
+      userCredsAgentIdentifier('ag-1', 'webchat:alice'),
+      null,
+      'api_key',
+      'claude',
+    );
+  const perMember = { sessionMode: 'per-thread', threadId: 'webchat:alice::main' };
+
+  it('routes the member to their own session in an optional room', async () => {
+    await setRoomModeOverride('room-1', 'optional');
+    await personal();
+    expect(await resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', 'webchat:alice')).toEqual(perMember);
+  });
+
+  it('and where User credentials are Off: that setting is about the model credential', async () => {
+    await setRoomModeOverride('room-1', 'disabled');
+    await personal();
+    expect(await resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', 'webchat:alice')).toEqual(perMember);
+    expect(await resolveSessionKeyOverride(webchatMg('room-x'), 'ag-1', 'webchat:alice')).toEqual(perMember);
+  });
+
+  it('a Required room still turns them away: personal secrets are no model credential', async () => {
+    await setRoomModeOverride('room-1', 'required');
+    await personal();
+    expect(await resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', 'webchat:alice')).toBeNull();
+    expect(await consultTurnGates(webchatMg('room-1'), 'ag-1', 'webchat:alice')).toEqual({
+      reason: 'user-creds-required-no-key',
+    });
+  });
+
+  it('their session spawns under their own identity, with the workspace OAuth sentinel when that is the default', async () => {
+    await personal();
+    await upsertUserCredential(WORKSPACE_DEFAULT_USER_ID, 'claude', 'sec-ws', 'oauth_token');
+    expect(await preparedIdentity('ag-1', 'webchat:alice')).toBe(userCredsAgentIdentifier('ag-1', 'webchat:alice'));
+    expect(resolveContainerEnv('ag-1', 'webchat:alice')).toEqual({
+      CLAUDE_CODE_OAUTH_TOKEN: 'placeholder',
+      ANTHROPIC_API_KEY: '',
+    });
+  });
+
+  it('other members, and other agents, stay on the shared session', async () => {
+    await setRoomModeOverride('room-1', 'optional');
+    await personal();
+    expect(await resolveSessionKeyOverride(webchatMg('room-1'), 'ag-1', 'webchat:bob')).toBeNull();
+    expect(await resolveSessionKeyOverride(webchatMg('room-1'), 'ag-2', 'webchat:alice')).toBeNull();
   });
 });

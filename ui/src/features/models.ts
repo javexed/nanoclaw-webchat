@@ -13,12 +13,21 @@ import { routingAvailable, routingClassifierModel } from './routing-state.js';
 import ModelList from './ModelList.vue';
 import { allModels, lastProbeResult, modelRows, modelSortAz, selectedModelId } from './model-list-state.js';
 import { $ } from '../core/dom.js';
+import { cloudModelNames } from './cloud-models-state.js';
 import { mountIsland } from '../core/island.js';
 import { showConfirmModal } from './modals.js';
+import { offerFitContext } from './fit-context-offer.js';
 import { showToast } from '../core/toast.js';
 import { apiJson, authFetch } from '../core/api.js';
 import { state } from '../core/state.js';
-import { closeAgentDetail, endpointHost, fetchAgents, openAgentDetail, refreshAgentModelTrigger, refreshAgentSaveDirty } from './agents.js';
+import {
+  closeAgentDetail,
+  endpointHost,
+  fetchAgents,
+  openAgentDetail,
+  refreshAgentModelTrigger,
+  refreshAgentSaveDirty,
+} from './agents.js';
 import { closeMcpDetail } from './mcp.js';
 import { closeRoomDetail, openRoomDetail } from './rooms.js';
 import './select-toggle.js';
@@ -42,7 +51,7 @@ export function provideModelsDeps(provided: Partial<ModelsDeps>): void {
 }
 
 export function sttPopulateModelSelect(st?: any) {
-  const select = ($('#stt-model-select')) as HTMLInputElement;
+  const select = $('#stt-model-select') as HTMLInputElement;
   if (!select || !Array.isArray(st.models)) return;
   if ((select as unknown as HTMLSelectElement).options.length === 0) {
     for (const m of st.models) {
@@ -103,7 +112,12 @@ export async function loadOllamaHostModels(host?: any) {
       error: '',
     };
   } catch (err: any) {
-    hostModels.value[host] = { phase: 'error', selectable: [], system: [], error: 'Unreachable: ' + (err as any)?.message };
+    hostModels.value[host] = {
+      phase: 'error',
+      selectable: [],
+      system: [],
+      error: 'Unreachable: ' + (err as any)?.message,
+    };
   }
 }
 
@@ -122,6 +136,8 @@ export function modelKindLabel(kind?: any) {
 // model (also :4000) is the exception: it IS the selectable routing entry.
 export function isRouterBackendModel(m?: any) {
   if (m.kind !== 'openai-compatible' || m.model_id === 'auto') return false;
+  // A cloud model (Models → Cloud model) is served by the router but selectable.
+  if (cloudModelNames.has(m.model_id)) return false;
   const host = (m.endpoint || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
   return /:4000(\/v1)?$/.test(host);
 }
@@ -217,6 +233,7 @@ export function renderModels(): void {
       badgeText: isAuto ? 'auto' : modelKindLabel(model.kind),
       title: parts.title,
       host: isAuto ? null : (parts.host ?? null),
+      healthKey: model.kind === 'ollama' && model.endpoint ? model.endpoint.replace(/\/+$/, '') : null,
       hint: isAuto ? 'Manage in Auto routing →' : null,
       uses: model.agents_assigned ?? 0,
       active: model.id === selectedModelId.value,
@@ -246,6 +263,11 @@ export async function openModelDetail(id?: any) {
 
   const parts = modelDisplayParts(model);
   $('#model-detail-title')!.textContent = parts.title;
+  // Test: one tiny completion through the endpoint (not for the built-in Anthropic path).
+  const testBtn = $<HTMLButtonElement>('#model-test-btn')!;
+  testBtn.hidden = model.kind === 'anthropic' || !state.isOwnerView;
+  testBtn.dataset.id = model.id;
+  $('#model-test-result')!.textContent = '';
   const badge = $('#model-detail-badge')!;
   badge.textContent = modelKindLabel(model.kind);
   badge.className = `model-kind-badge kind-${model.kind}`;
@@ -412,13 +434,38 @@ export function bindDiscover(
 // reachability probe.
 // Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
+async function testSelectedModel(): Promise<void> {
+  const btn = $<HTMLButtonElement>('#model-test-btn')!;
+  const out = $('#model-test-result')!;
+  const id = btn.dataset.id;
+  if (!id) return;
+  btn.disabled = true;
+  out.textContent = '…';
+  out.className = 'model-test-result';
+  try {
+    const r = (await apiJson(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' })) as {
+      ok: boolean;
+      ms?: number;
+      error?: string;
+    };
+    if (btn.dataset.id !== id) return;
+    out.textContent = r.ok ? `OK · ${((r.ms ?? 0) / 1000).toFixed(1)}s` : (r.error ?? 'Failed');
+    out.classList.add(r.ok ? 'ok' : 'bad');
+  } catch (err: any) {
+    out.textContent = String(err?.message || err);
+    out.classList.add('bad');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 export function wireModelsPanel(): void {
+  $('#model-test-btn')?.addEventListener('click', () => void testSelectedModel());
   bindDiscover(
     '#model-discover-btn',
     // Raw kind from the data attribute — the visible value is the display label,
     // which the discover API wouldn't recognize.
-    () =>
-      $<HTMLInputElement>('#model-kind')?.dataset.kind || ($<HTMLInputElement>('#model-kind')?.value ?? ''),
+    () => $<HTMLInputElement>('#model-kind')?.dataset.kind || ($<HTMLInputElement>('#model-kind')?.value ?? ''),
     () => ($<HTMLInputElement>('#model-endpoint')?.value ?? '').trim(),
     '#model-model-id',
     '#model-discover-select',
@@ -427,7 +474,7 @@ export function wireModelsPanel(): void {
     e.preventDefault();
     const body = {
       name: ($<HTMLInputElement>('#model-create-name')?.value ?? '').trim(),
-      kind: ($<HTMLSelectElement>('#model-create-kind')?.value ?? ''),
+      kind: $<HTMLSelectElement>('#model-create-kind')?.value ?? '',
       model_id: ($<HTMLInputElement>('#model-create-model-id')?.value ?? '').trim(),
       endpoint: ($<HTMLInputElement>('#model-create-endpoint')?.value ?? '').trim() || null,
     };
@@ -439,6 +486,8 @@ export function wireModelsPanel(): void {
       const out = await apiJson('/api/models', { method: 'POST', body });
       warnIfUnreachable(out.reachability);
       await fetchModels();
+      // After the refresh, and not awaited: the list must not wait on the modal.
+      if (out.model) void offerFitContext([out.model]);
       closeModelDetail();
       // If the picker kicked off this add, auto-assign + return to agent.
       const createdId = out.model && out.model.id;
@@ -542,20 +591,20 @@ export function wireModelCreate(): void {
     const el2 = $('#model-create-view');
     if (el2) el2.hidden = false;
     const _el1 = $<HTMLInputElement>('#model-create-name');
-      if (_el1) _el1.value = '';
+    if (_el1) _el1.value = '';
     const _el2 = $<HTMLInputElement>('#model-create-endpoint');
-      if (_el2) _el2.value = '';
+    if (_el2) _el2.value = '';
     const _el3 = $<HTMLInputElement>('#model-create-model-id');
-      if (_el3) _el3.value = '';
+    if (_el3) _el3.value = '';
     const h1 = $<HTMLSelectElement>('#model-create-discover-select');
     if (h1) h1.hidden = true;
     // Reset kind to default + sync conditional fields
     const _el4 = $<HTMLSelectElement>('#model-create-kind');
-      if (_el4) _el4.value = 'anthropic';
+    if (_el4) _el4.value = 'anthropic';
     syncCreateFormToKind();
     // Reset the probe block (used between successive opens)
     const _el5 = $<HTMLInputElement>('#model-probe-url');
-      if (_el5) _el5.value = '';
+    if (_el5) _el5.value = '';
     const el3 = $('#model-probe-status');
     if (el3) el3.hidden = true;
     const el4 = $('#model-probe-results');
@@ -615,8 +664,8 @@ export function warnIfUnreachable(result: any) {
 // Render (or refresh) the reachability panel inside the open model detail.
 // Bumped on every model-detail open so a slow (container-spawning) probe that
 // returns after the operator switched models can't paint the wrong panel.
-let reachabilityReqSeq : any = 0;
-let reachabilityApp : any = null;
+let reachabilityReqSeq: any = 0;
+let reachabilityApp: any = null;
 
 export function mountReachability(panel: any) {
   if (reachabilityApp) return;
@@ -686,9 +735,9 @@ export async function renderReachabilityPanel(model: any) {
 // create flow with a flag set so the new model is auto-assigned on success.
 
 export let pickerAddInProgress = false;
-export let pickerAgentForAdd : any = null;
+export let pickerAgentForAdd: any = null;
 
-let modelPickerApp : any = null;
+let modelPickerApp: any = null;
 
 export function mountModelPicker() {
   modelPickerApp ??= mountIsland('#model-picker-list', () =>
@@ -865,6 +914,7 @@ export async function addSelectedFromProbe() {
       showToast(`Added ${out.created_count}, ${out.failed.length} failed:\n${lines}`, { kind: 'error' });
     }
     await fetchModels();
+    void offerFitContext(out.created || []);
     closeModelDetail();
     // If the picker kicked off this add, return user to the agent detail
     // and auto-assign the new model when there's exactly one.

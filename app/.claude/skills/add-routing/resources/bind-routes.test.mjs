@@ -2,7 +2,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseParamB, matchCatalog, scoreModel, chooseBindings, applyDecisions, mergeCatalog, routers } from './bind-routes.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {
+  parseParamB,
+  matchCatalog,
+  scoreModel,
+  chooseBindings,
+  applyDecisions,
+  mergeCatalog,
+  routers,
+  routerAuthHeaders,
+} from './bind-routes.mjs';
 
 const CATALOG = {
   max_comfortable_b: 14,
@@ -144,4 +156,17 @@ test('annotateContext leaves models missing from the ctx map alone (probe failur
 test('annotateContext is idempotent (no change → 0)', () => {
   const router = { routes: [{ name: 'general', model: 'm', max_prompt_tokens: 8192 }] };
   assert.equal(annotateContext(router, { m: 16384 }), 0);
+});
+
+test('the roster read carries the master key only when the router config turns auth on', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bind-routes-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'master.key'), 'sk-abc\n');
+    fs.writeFileSync(path.join(dir, 'config.yaml'), 'model_list: []\n# no master_key here\n');
+    assert.deepEqual(routerAuthHeaders(dir), {});
+    fs.writeFileSync(path.join(dir, 'config.yaml'), 'general_settings:\n  master_key: os.environ/LITELLM_MASTER_KEY\n');
+    assert.deepEqual(routerAuthHeaders(dir), { Authorization: 'Bearer sk-abc' });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

@@ -44,6 +44,17 @@ from litellm.integrations.custom_logger import CustomLogger
 ROUTES_PATH = "/app/routing/routes.json"
 LOG_PATH = "/app/routing/routing-shadow.jsonl"
 
+# A classifier host that refused the connection or never accepted it is not
+# asked again for this long: each request falls back at once instead of
+# waiting out the timeout. Keyed by URL, so a host change in routes.json
+# (the operator's, or the host's failover) is tried right away.
+DOWN_COOLDOWN_S = 30
+_down_until = {}
+
+
+class ClassifierDown(Exception):
+    pass
+
 TASK_INSTRUCTION = """You are a helpful assistant designed to find the best suited route.
 You are provided with route description within <routes></routes> XML tags:
 <routes>
@@ -200,21 +211,29 @@ async def _classify(cfg, router, prompt_text, timeout_ms=None):
     )
     if timeout_ms is None:
         timeout_ms = cfg.get("classifier", {}).get("timeout_ms", 15000)
-    async with httpx.AsyncClient(timeout=timeout_ms / 1000) as client:
-        resp = await client.post(
-            cfg["classifier"]["url"],
-            json={
-                "model": cfg["classifier"]["model"],
-                "stream": False,
-                "options": {"temperature": 0, "num_predict": 64},
-                # Pin the ~1GB classifier in GPU memory — a cold load adds
-                # seconds to each classify.
-                "keep_alive": cfg.get("classifier", {}).get("keep_alive", "60m"),
-                "messages": [{"role": "user", "content": content}],
-            },
-        )
-        resp.raise_for_status()
-        raw = resp.json()["message"]["content"]
+    url = cfg["classifier"]["url"]
+    if _down_until.get(url, 0) > time.monotonic():
+        raise ClassifierDown(f"{url} unreachable a moment ago")
+    try:
+        async with httpx.AsyncClient(timeout=timeout_ms / 1000) as client:
+            resp = await client.post(
+                url,
+                json={
+                    "model": cfg["classifier"]["model"],
+                    "stream": False,
+                    "options": {"temperature": 0, "num_predict": 64},
+                    # Pin the ~1GB classifier in GPU memory — a cold load adds
+                    # seconds to each classify.
+                    "keep_alive": cfg.get("classifier", {}).get("keep_alive", "60m"),
+                    "messages": [{"role": "user", "content": content}],
+                },
+            )
+            resp.raise_for_status()
+            raw = resp.json()["message"]["content"]
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        _down_until[url] = time.monotonic() + DOWN_COOLDOWN_S
+        raise
+    _down_until.pop(url, None)
     return _parse_route(raw)
 
 

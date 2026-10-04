@@ -505,6 +505,15 @@ else
   echo "  = skipping container image rebuild (SKIP_CONTAINER_BUILD=1)"
 fi
 
+# ── 9a. OneCLI's private ports (an existing install) ─────────────────────────
+# An install made before OneCLI's API and database were bound privately moves
+# them off the docker bridge on this update. Skips a fresh compose (no .env), a
+# remote gateway, and a host where another install still dials the bridge
+# (deploy/onecli-private-ports.sh). Never fails the update.
+if [ -f deploy/onecli-private-ports.sh ]; then
+  bash deploy/onecli-private-ports.sh || true
+fi
+
 # ── 10. Surface conflicts ─────────────────────────────────────────────────────
 if [ "${#CONFLICTS[@]}" -gt 0 ]; then
   echo "" >&2

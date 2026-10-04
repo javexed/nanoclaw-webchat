@@ -156,6 +156,88 @@ class LiveRouting(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(out["model"], "gemma4:latest")
 
 
+class _FakeClient:
+    """Stands in for httpx.AsyncClient: counts posts, raises or answers."""
+
+    calls = 0
+    error = None
+
+    def __init__(self, *a, **kw):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def post(self, url, json=None):
+        type(self).calls += 1
+        if type(self).error:
+            raise type(self).error
+
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"message": {"content": '{"route": "code"}'}}
+
+        return _Resp()
+
+
+class DownHostCooldown(unittest.IsolatedAsyncioTestCase):
+    """A classifier host that does not answer costs one timeout, not one per request."""
+
+    def setUp(self):
+        router_hook._down_until.clear()
+        _FakeClient.calls = 0
+        _FakeClient.error = None
+        self.cfg = {**LIVE_CFG, "classifier": {"url": "http://203.0.113.9:11434/api/chat", "model": "m"}}
+        self.router = router_hook._routers(self.cfg)["auto"]
+
+    async def _classify(self):
+        with mock.patch.object(router_hook.httpx, "AsyncClient", _FakeClient):
+            return await router_hook._classify(self.cfg, self.router, "hi", timeout_ms=5000)
+
+    async def test_unreachable_host_is_skipped_until_the_cooldown_ends(self):
+        _FakeClient.error = router_hook.httpx.ConnectTimeout("no route")
+        with self.assertRaises(router_hook.httpx.ConnectTimeout):
+            await self._classify()
+        with self.assertRaises(router_hook.ClassifierDown):
+            await self._classify()
+        self.assertEqual(_FakeClient.calls, 1)
+        _FakeClient.error = None
+        with mock.patch.object(router_hook.time, "monotonic", return_value=10**9):
+            self.assertEqual(await self._classify(), "code")
+        self.assertEqual(_FakeClient.calls, 2)
+
+    async def test_another_url_is_tried_at_once(self):
+        _FakeClient.error = router_hook.httpx.ConnectError("refused")
+        with self.assertRaises(router_hook.httpx.ConnectError):
+            await self._classify()
+        _FakeClient.error = None
+        self.cfg["classifier"]["url"] = "http://203.0.113.8:11434/api/chat"
+        self.assertEqual(await self._classify(), "code")
+
+    async def test_a_slow_answer_is_not_a_down_host(self):
+        _FakeClient.error = router_hook.httpx.ReadTimeout("slow")
+        with self.assertRaises(router_hook.httpx.ReadTimeout):
+            await self._classify()
+        _FakeClient.error = None
+        self.assertEqual(await self._classify(), "code")
+
+    async def test_live_request_falls_back_without_waiting(self):
+        router_hook._down_until[self.cfg["classifier"]["url"]] = router_hook.time.monotonic() + 30
+        with mock.patch.object(router_hook, "_load_routes", return_value=self.cfg), \
+             mock.patch.object(router_hook.httpx, "AsyncClient", _FakeClient), \
+             mock.patch.object(router_hook, "_append_log") as logged:
+            out = await router_hook.proxy_handler_instance.async_pre_call_hook({}, None, _req(), "acompletion")
+        self.assertEqual(out["model"], "gemma4:latest")
+        self.assertEqual(_FakeClient.calls, 0)
+        self.assertIn("ClassifierDown", logged.call_args[0][0]["error"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -78,6 +78,13 @@ implementation notes that matter here:
   separate message rows.
 - **Live agent activity** — redacted `status` frames stream a per-turn thinking
   bubble (`start` / `tool` / `progress` / `reasoning` / `done` / `stalled`).
+  When turn traces are on (Settings), each turn's feed is also stored with its
+  reply as **Thoughts**: tool inputs and outputs included, readable by everyone
+  who can open the room, members who join later included, until the retention
+  window ends. Redaction masks known key shapes, not the data a tool fetched.
+  A per-member session's turns (one running on a member's own credentials,
+  whose tools may fetch with that member's personal secrets) are shown live
+  but never stored.
 - **Search** — an SQLite **FTS5** external-content table with sync triggers,
   prefix matching and `snippet()` highlighting.
 - **PWA** — Web Push (VAPID) with an SSRF-allowlisted endpoint set; a service

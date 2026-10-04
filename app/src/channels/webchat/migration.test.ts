@@ -63,6 +63,7 @@ describe('moduleWebchat migration', () => {
       'webchat_thread_reads',
       'webchat_thread_sync',
       'webchat_threads',
+      'webchat_turn_traces',
       'webchat_user_handles',
       'webchat_user_room_hides',
     ]);
@@ -87,6 +88,9 @@ describe('moduleWebchat migration', () => {
         'idx_webchat_runner_machines_user',
         'idx_webchat_runner_placements_fp',
         'idx_webchat_signin_sessions_user',
+        'idx_webchat_turn_traces_message',
+        'idx_webchat_turn_traces_room',
+        'idx_webchat_turn_traces_started',
         'idx_webchat_identity_links_primary',
         'idx_webchat_user_handles_handle',
         'idx_webchat_user_hides_user',
@@ -117,6 +121,7 @@ describe('moduleWebchat migration', () => {
       'webchat-drop-rooms',
       'webchat-drop-thread-engaged',
       'webchat-egress-existing-open',
+      'webchat-fit-context',
       'webchat-initial',
       'webchat-marketplace-toggle',
       'webchat-mcp-hardening',
@@ -149,6 +154,7 @@ describe('moduleWebchat migration', () => {
       'webchat-thread-context-sync',
       'webchat-thread-engaged',
       'webchat-threads',
+      'webchat-turn-traces',
       'webchat-user-archives',
       'webchat-user-handles',
     ]);

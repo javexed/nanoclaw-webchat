@@ -1163,6 +1163,75 @@ body {
   color: var(--text-dim);
   line-height: 1.4;
 }
+/* One turn's activity (TraceView) — the expanded bubble and a reply's Thoughts share it. */
+.trace-view {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  line-height: 1.4;
+  min-width: 0;
+}
+.trace-meta {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
+.trace-tools {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.trace-tool {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.trace-tool-ok {
+  color: var(--success-strong);
+}
+.trace-tool-failed {
+  color: var(--danger);
+}
+.trace-tool-name {
+  color: var(--text);
+  flex-shrink: 0;
+}
+.trace-tool-target {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trace-tool-ms {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.trace-note-error,
+.trace-note-stalled {
+  color: var(--warning-strong);
+}
+.trace-reasoning {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.trace-truncated {
+  font-size: var(--fs-xs);
+  font-style: italic;
+}
 .msg.system {
   align-self: center;
   color: var(--text-dim);
@@ -2257,6 +2326,11 @@ a.lightbox-btn {
   margin-left: 4px;
   color: var(--text-dim);
   transition: transform 0.15s ease;
+  /* A button for the keyboard; it looks like the glyph it replaced. */
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
 }
 .thinking-bubble .thinking-chevron .icon {
   width: 14px;
@@ -2792,6 +2866,29 @@ a.lightbox-btn {
   display: flex;
   gap: 8px;
   margin-top: 4px;
+}
+/* Save stays in view at the bottom of a long detail panel (the panel scrolls);
+   not a form nested in a collapsible section, whose row the panel edge doesn't frame. */
+.agent-detail .agent-detail-actions:not(details .agent-detail-actions) {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  align-items: center;
+  margin: 4px -14px -14px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.model-test-result {
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+.model-test-result.ok {
+  color: var(--success);
+}
+.model-test-result.bad {
+  color: var(--danger);
 }
 /* UserCreds enablement section in the room-settings panel. */
 .room-cred-section {
@@ -3615,16 +3712,21 @@ a.lightbox-btn {
   cursor: pointer;
 }
 /* On/off switch — the toggle affordance across settings (replaces the bare
-   checkbox). Native checkbox restyled so .checked wiring keeps working. */
+   checkbox). Native checkbox restyled so .checked wiring keeps working. The
+   same switch as Permissions' .perms-switch, size and colours alike: one
+   switch across the app. The knob is --text-dim when off and white when on —
+   never --surface, which drew a dark knob on a dark track (invisible when off,
+   a hole when on). */
 .setting-toggle input[type='checkbox'] {
   appearance: none;
   -webkit-appearance: none;
   position: relative;
   flex: none;
-  width: 38px;
-  height: 22px;
+  width: 44px;
+  height: 24px;
+  margin: 0;
   border-radius: var(--radius-pill);
-  background: var(--border);
+  background: var(--surface2);
   border: 1px solid var(--border);
   cursor: pointer;
   transition: background var(--transition);
@@ -3634,22 +3736,29 @@ a.lightbox-btn {
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  background: var(--surface);
-  transition: transform var(--transition);
+  background: var(--text-dim);
+  transition:
+    transform var(--transition),
+    background var(--transition);
 }
 .setting-toggle input[type='checkbox']:checked {
   background: var(--accent);
   border-color: var(--accent);
 }
 .setting-toggle input[type='checkbox']:checked::after {
-  transform: translateX(16px);
+  transform: translateX(20px);
+  background: var(--on-accent);
 }
 .setting-toggle input[type='checkbox']:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+.setting-toggle input[type='checkbox']:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Members overlay — mobile only */
@@ -6210,6 +6319,10 @@ a.skill-badge-origin:hover {
   opacity: 0.5;
   cursor: not-allowed;
 }
+.perms-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 /* Matrix table */
 .perms-matrix-header {
@@ -7018,7 +7131,7 @@ a.skill-badge-origin:hover {
   text-decoration: underline;
 }
 .ollama-pull-cancel:hover {
-  color: var(--danger, #f85149);
+  color: var(--danger);
 }
 /* What the typed ref would cost. Sits directly under the input it describes —
    the whole point of retiring the centre-screen confirm it replaced. */
@@ -7034,7 +7147,7 @@ a.skill-badge-origin:hover {
   color: var(--success-strong);
 }
 .ollama-pull-line.err {
-  color: var(--danger, #f85149);
+  color: var(--danger);
 }
 .ollama-pull-bar {
   height: 4px;
@@ -7210,7 +7323,7 @@ a.skill-badge-origin:hover {
   border-radius: var(--radius-sm);
 }
 .select-toggle.on {
-  color: var(--danger, #f85149);
+  color: var(--danger);
   border-color: var(--danger, #f85149);
 }
 .select-toggle:not(.on) {
@@ -9121,3 +9234,20 @@ button[data-draft-id] {
   text-align: center;
 }
 .vscode-start .settings-vscode-actions { justify-content: center; }
+
+/* Model host health (GET /api/models/hosts): a dot before the host name. */
+.host-dot {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.host-dot.up {
+  background: var(--success);
+}
+.host-dot.down {
+  background: var(--danger);
+}

@@ -2,7 +2,7 @@
  * Request/response and upstream frames over the runner socket.
  *
  * Central → runner:  { type: 'req', id, op, ...payload }   the laptop tools: tools.list / tools.call
- * Runner  → central: { type: 'res', id, ok: true, ...result } | { type: 'res', id, ok: false, error, failure? }
+ * Runner  → central: { type: 'res', id, ok: true, ...result } | { type: 'res', id, ok: false, error }
  *                    { type: 'log', level, message }      runner diagnostics, surfaced in central's log
  *
  * The transport is deliberately dumb: it does not know what a tool is.
@@ -11,7 +11,6 @@
  */
 import type { WebSocket } from 'ws';
 
-import type { SessionFailure } from '../../drivers/types.js';
 import { log } from '../../log.js';
 
 export interface RunnerLink {
@@ -24,7 +23,6 @@ export class RunnerRequestError extends Error {
   constructor(
     readonly code: 'not-connected' | 'timeout' | 'refused' | 'disconnected',
     message: string,
-    readonly failure?: SessionFailure,
   ) {
     super(message);
     this.name = 'RunnerRequestError';
@@ -107,13 +105,7 @@ export function handleRunnerFrame(fingerprint: string, frame: Record<string, unk
         const { type: _t, id: _i, ok: _o, ...rest } = frame;
         p.resolve(rest);
       } else {
-        p.reject(
-          new RunnerRequestError(
-            'refused',
-            String(frame.error ?? 'runner refused the request'),
-            frame.failure as SessionFailure | undefined,
-          ),
-        );
+        p.reject(new RunnerRequestError('refused', String(frame.error ?? 'runner refused the request')));
       }
       return true;
     }

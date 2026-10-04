@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { generate as genConfig } from './gen-config.mjs';
+import { generate as genConfig, opt } from './gen-config.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const fixtures = JSON.parse(readFileSync(join(HERE, 'fixtures/rosters.json'), 'utf8'));
@@ -57,6 +57,11 @@ test('keyless + agentic obligations: no master_key setting, generous timeouts', 
   assert.doesNotMatch(yaml, /^\s*database_url\s*:/im);
   assert.match(yaml, /request_timeout: 600/);
   assert.match(yaml, /num_retries: 2/);
+});
+
+test('Claude-harness /v1/messages goes to chat/completions, not the Responses API', async () => {
+  const yaml = await genConfig({ hosts: ['http://10.0.0.7:8000'], fixtures });
+  assert.match(yaml, /^ {2}use_chat_completions_url_for_anthropic_messages: true$/m);
 });
 
 test('no classifier coupling in the minimal skill (dependent layers own that)', async () => {
@@ -131,4 +136,57 @@ test('keyless path is byte-identical with backends absent vs empty', async () =>
   const b = await genConfig({ hosts: OLLAMA_HOSTS, fixtures, backends: [] });
   assert.equal(a, b);
   assert.doesNotMatch(a, /general_settings/);
+});
+
+test('gateway backend: placeholder key, proxy auth on, no env-file key name; cloud-only with no hosts', async () => {
+  const yaml = await genConfig({
+    hosts: [],
+    backends: [{ model_name: 'command-a', model: 'cohere_chat/command-a-03-2025', gateway: true }],
+  });
+  assert.match(yaml, /model: cohere_chat\/command-a-03-2025/);
+  assert.match(yaml, /api_key: gateway-managed/);
+  // The gateway adds the provider key on the way out: whoever reaches the port spends it.
+  assert.match(yaml, /^\s*master_key: os\.environ\/LITELLM_MASTER_KEY$/m);
+  assert.doesNotMatch(yaml, /api_key: os\.environ/);
+});
+
+test('a gateway backend may not also name an env key; a keyed one still turns proxy auth on', async () => {
+  await assert.rejects(
+    genConfig({ hosts: [], backends: [{ model_name: 'm', model: 'openai/m', gateway: true, api_key_env: 'K' }] }),
+    /exclusive/,
+  );
+  const yaml = await genConfig({
+    hosts: [],
+    backends: [
+      { model_name: 'a', model: 'cohere_chat/a', gateway: true },
+      { model_name: 'b', model: 'openai/b', api_key_env: 'OPENAI_API_KEY' },
+    ],
+  });
+  assert.match(yaml, /master_key: os\.environ\/LITELLM_MASTER_KEY/);
+});
+
+test('a host that does not answer is skipped, the others still served, the header keeps it', async () => {
+  const fetchImpl = async (url) => {
+    if (url.startsWith('http://10.0.0.9:11434')) throw new TypeError('fetch failed');
+    return new Response(JSON.stringify({ models: [{ name: 'qwen3:8b' }] }), { status: 200 });
+  };
+  const yaml = await genConfig({ hosts: ['http://10.0.0.9:11434', 'http://10.0.0.5:11434'], fetchImpl });
+  assert.match(yaml, /^# hosts: http:\/\/10\.0\.0\.9:11434, http:\/\/10\.0\.0\.5:11434$/m);
+  assert.match(yaml, /api_base: "?http:\/\/10\.0\.0\.5:11434"?/);
+  assert.doesNotMatch(yaml, /api_base: "?http:\/\/10\.0\.0\.9/);
+});
+
+test('every host down and nothing else declared is still an error', async () => {
+  const fetchImpl = async () => {
+    throw new TypeError('fetch failed');
+  };
+  await assert.rejects(genConfig({ hosts: ['http://10.0.0.9:11434'], fetchImpl }), /no models discovered/);
+});
+
+test('a flag never takes the next flag as its value; an empty value is still a value', () => {
+  assert.equal(opt(['--hosts', 'http://a:11434', '--out', 'x'], 'hosts', 'd'), 'http://a:11434');
+  assert.equal(opt(['--hosts', '', '--out', 'x'], 'hosts', 'd'), '');
+  assert.equal(opt(['--out', 'x'], 'hosts', 'd'), 'd');
+  assert.throws(() => opt(['--hosts', '--out', 'x'], 'hosts', 'd'), /--hosts needs a value/);
+  assert.throws(() => opt(['--out'], 'out', null), /--out needs a value/);
 });

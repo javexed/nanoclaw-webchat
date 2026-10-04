@@ -31,7 +31,9 @@ import { execFile } from 'child_process';
 import { homedir } from 'os';
 const mockExecFile = vi.mocked(execFile);
 
-const { realOnecliAdmin } = await import('./onecli-admin.js');
+const { realOnecliAdmin, __allowOnecliForTest } = await import('./onecli-admin.js');
+// child_process is stubbed above: the real CLI is never reached.
+__allowOnecliForTest();
 
 const SECRET = 'sk-ant-api03-REGRESSION-SECRET-DO-NOT-LEAK-000';
 

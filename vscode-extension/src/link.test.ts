@@ -1,7 +1,7 @@
 // The link against a real ws server on an ephemeral port — the same shape the
 // staging endpoint speaks — without any VS Code API.
 import http from 'node:http';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer } from 'ws';
 import { RunnerLink, type LinkState } from './link.js';
 
@@ -28,6 +28,16 @@ async function serve(
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
   return `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 }
+/** Wait for a condition instead of a fixed time: the socket round trips take what they take. */
+const until = (cond: () => boolean, timeout = 5000) =>
+  vi.waitFor(
+    () => {
+      if (!cond()) throw new Error('not yet');
+    },
+    { timeout, interval: 5 },
+  );
+/** Let pending callbacks and promise continuations run (no timer involved). */
+const settle = () => new Promise<void>((r) => setImmediate(r));
 const machine = { fingerprint: 'fp', hostname: 'h', os: 'linux', arch: 'x64', runner: 'test' };
 
 describe('RunnerLink', () => {
@@ -55,7 +65,7 @@ describe('RunnerLink', () => {
       events: { state: (s) => states.push(s), log: () => {} },
     });
     link.start();
-    await new Promise((r) => setTimeout(r, 200));
+    await until(() => seen.length >= 2 && states.includes('connected'));
     expect(auth).toBe('Bearer tok-1');
     expect(seen.slice(0, 2)).toEqual(['hello', 'pong']);
     expect(states).toContain('connected');
@@ -86,7 +96,7 @@ describe('RunnerLink', () => {
       events: { state: (s) => states.push(s), log: () => {} },
     });
     link.start();
-    await new Promise((r) => setTimeout(r, 200));
+    await until(() => response !== null && states.includes('connected'));
     expect(response).toEqual({
       type: 'challenge.response',
       origin: url,
@@ -112,8 +122,7 @@ describe('RunnerLink', () => {
       events: { state: (s) => states.push(s), log: () => {} },
     });
     link.start();
-    await new Promise((r) => setTimeout(r, 300));
-    expect(states.at(-1)).toBe('unauthorized');
+    await until(() => states.at(-1) === 'unauthorized'); // stops the link: nothing is scheduled after it
     expect(attempts).toBe(1);
     link.stop();
   });
@@ -132,8 +141,7 @@ describe('RunnerLink', () => {
       events: { state: (s) => states.push(s), log: () => {} },
     });
     link.start();
-    await new Promise((r) => setTimeout(r, 100));
-    expect(states.at(-1)).toBe('unauthorized');
+    await until(() => states.at(-1) === 'unauthorized');
     expect(hit).toBe(0);
     link.stop();
   });
@@ -161,16 +169,14 @@ describe('RunnerLink', () => {
       events: { state: (s) => states.push(s), log: (l) => logs.push(l) },
     });
     link.start();
-    await new Promise((r) => setTimeout(r, 30));
+    await until(() => states.includes('connected'));
     tokenOk = false; // the silent refresh fails while the network is still coming back
-    await new Promise((r) => setTimeout(r, 1200));
+    await until(() => logs.some((l) => l.startsWith('no token yet'))); // the retry after the lid closed
     expect(states).not.toContain('unauthorized');
     expect(logs.filter((l) => l.startsWith('no token yet'))).toHaveLength(1);
     tokenOk = true;
     link.nudge(); // the developer is back at the window
-    await new Promise((r) => setTimeout(r, 200));
-    expect(conns).toBe(2);
-    expect(states.at(-1)).toBe('connected');
+    await until(() => conns === 2 && states.at(-1) === 'connected');
     expect(logs.some((l) => l.includes('available again'))).toBe(true);
     link.stop();
   });
@@ -194,10 +200,11 @@ describe('RunnerLink', () => {
       events: { state: () => {}, log: () => {} },
     });
     link.start();
-    await new Promise((r) => setTimeout(r, 20));
+    await until(() => release !== undefined);
     link.stop(); // as extension.connect() does before building a new link
     release('tok-late'); // token arrives after the stop
-    await new Promise((r) => setTimeout(r, 100));
+    await settle(); // a socket would be opened as soon as the token is in hand
+    expect((link as unknown as { ws: unknown }).ws).toBeNull();
     expect(upgrades).toBe(0);
   });
   it('stands by instead of fighting when another window takes the connection', async () => {
@@ -211,10 +218,66 @@ describe('RunnerLink', () => {
       events: { state: (s, d) => states.push([s, d]), log: (l) => logs.push(l) },
     });
     link.start();
-    await new Promise((r) => setTimeout(r, 200));
+    await until(() => states.at(-1)?.[1] === 'another window holds this machine');
     expect(logs.some((l) => l.includes('another VS Code window'))).toBe(true);
-    // A five-minute wait, not the one-second retry that made two windows trade forever.
-    expect(logs.some((l) => /reconnecting in 300s/.test(l))).toBe(true);
+    expect(states.at(-1)).toEqual(['disconnected', 'another window holds this machine']);
+    link.stop();
+  });
+
+  it('while another window holds the machine, retries say standby every poll and never take it; then connects', async () => {
+    let held = true;
+    const hellos: Array<Record<string, unknown>> = [];
+    const url = await serve((ws) => {
+      ws.on('message', (d) => {
+        const f = JSON.parse(String(d));
+        if (f.type !== 'hello') return;
+        hellos.push(f);
+        if (held && f.standby) {
+          ws.send(JSON.stringify({ type: 'error', code: 'held', message: 'x' }));
+          ws.close(4409, 'held');
+        } else
+          ws.send(
+            JSON.stringify({ type: 'welcome', v: 1, userId: 'u', displayName: 'D', keepaliveMs: 30000, standby: true }),
+          );
+      });
+    });
+    const logs: string[] = [];
+    const link = new RunnerLink({
+      serverUrl: url,
+      machine,
+      standby: true, // a connect nobody asked for: startup
+      standbyPollMs: 40,
+      getToken: async () => 'tok',
+      events: { state: () => {}, log: (l) => logs.push(l) },
+    });
+    link.start();
+    await until(() => hellos.length >= 2);
+    expect(hellos.every((h) => h.standby === true)).toBe(true);
+    // Said once, not on every poll.
+    expect(logs.filter((l) => l.includes('standing by'))).toHaveLength(1);
+    expect(logs.some((l) => l.includes('disconnected (4409 held)') || l.includes('server: held'))).toBe(false);
+    held = false; // the other window closed
+    await until(() => link.welcome?.userId === 'u');
+    link.stop();
+  });
+
+  it('an explicit connect says no standby, so it takes the connection', async () => {
+    const hellos: Array<Record<string, unknown>> = [];
+    const url = await serve((ws) => {
+      ws.on('message', (d) => {
+        const f = JSON.parse(String(d));
+        if (f.type === 'hello') hellos.push(f);
+      });
+    });
+    const link = new RunnerLink({
+      serverUrl: url,
+      machine,
+      getToken: async () => 'tok',
+      events: { state: () => {}, log: () => {} },
+    });
+    link.start();
+    await until(() => hellos.length >= 1);
+    expect(hellos[0]?.standby).toBeUndefined();
     link.stop();
   });
 
@@ -231,6 +294,7 @@ describe('RunnerLink', () => {
 
   it('logs one line per distinct refusal, not one per attempt', async () => {
     const logs: string[] = [];
+    let calls = 0;
     const server = new WebSocketServer({ port: 0 });
     const port = (server.address() as any).port;
     server.on('connection', (ws) => {
@@ -247,12 +311,14 @@ describe('RunnerLink', () => {
       machine: { fingerprint: 'f'.repeat(64), hostname: 'h', os: 'linux', arch: 'x64', runner: 't' },
       getToken: async () => 't',
       onRequest: async () => {
+        calls++;
         throw new Error('runtime-unavailable: Cannot connect to Podman');
       },
       events: { state: () => {}, log: (l) => logs.push(l) },
     });
     link.start();
-    await new Promise((r) => setTimeout(r, 300));
+    await until(() => calls === 4);
+    await settle(); // the fourth refusal is logged once its rejection is handled
     link.stop();
     server.close();
     const refusals = logs.filter((l) => l.includes('refused:'));

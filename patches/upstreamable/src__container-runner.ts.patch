@@ -1,5 +1,5 @@
 diff --git a/src/container-runner.ts b/src/container-runner.ts
-index 703a19a9..b7b445f7 100644
+index 9e8c83ac..3abcd9d0 100644
 --- a/src/container-runner.ts
 +++ b/src/container-runner.ts
 @@ -28,6 +28,8 @@ import { CONTAINER_PLUGINS_DIR, materializeContainerJson } from './container-con
@@ -21,7 +21,20 @@ index 703a19a9..b7b445f7 100644
  import type { AgentGroup, Session } from './types.js';
  
  /**
-@@ -344,9 +348,13 @@ export function wakeContainer(session: Session): Promise<boolean> {
+@@ -225,6 +229,12 @@ export function getContainerStartedAtMs(sessionId: string): number | undefined {
+   return activeContainers.get(sessionId)?.startedAtMs;
+ }
+ 
++/** A stop was requested for this session's container, or its teardown awaits a retry. */
++export function isContainerStopping(sessionId: string): boolean {
++  const entry = activeContainers.get(sessionId);
++  return entry !== undefined && (entry.stopReason !== undefined || entry.teardownIncomplete === true);
++}
++
+ /** Stop host-local observation without revoking resources that may survive restart. */
+ export async function abortGatewaySessionObservers(reason = 'host-shutdown'): Promise<void> {
+   await Promise.all(
+@@ -344,9 +354,13 @@ export function wakeContainer(session: Session): Promise<boolean> {
      return existing;
    }
    const promise = spawnContainer(session)
@@ -36,7 +49,7 @@ index 703a19a9..b7b445f7 100644
        return false;
      })
      .finally(() => {
-@@ -356,6 +364,81 @@ export function wakeContainer(session: Session): Promise<boolean> {
+@@ -356,6 +370,77 @@ export function wakeContainer(session: Session): Promise<boolean> {
    return promise;
  }
  
@@ -87,27 +100,23 @@ index 703a19a9..b7b445f7 100644
 +
 +/**
 + * The room notice for a spawn that keeps failing. "Runtime unavailable" is
-+ * the machine the agent runs on not answering — for a session placed on a
-+ * developer's laptop, that laptop being asleep or offline — and blaming the
-+ * credential gateway for it sent people looking in the wrong place.
++ * the container runtime not answering, and blaming the credential gateway for
++ * it sent people looking in the wrong place.
 + */
 +export function spawnFailureNotice(err: unknown): string {
 +  const kind = (err as { kind?: unknown } | null | undefined)?.kind;
-+  // A refusal carries its reason, but that reason can name paths on the
-+  // machine that refused; every room member reads this line. So the room gets
++  // A refusal carries its reason, but that reason can name paths on this
++  // host; every room member reads this line. So the room gets
 +  // a short category, and the full reason goes to the log (noteSpawnFailure).
 +  if (kind === 'image-unavailable') {
-+    return `⚠️ I couldn't start to handle that — the agent image isn't ready on the machine I run on yet. I'll start once it is.`;
++    return `⚠️ I couldn't start to handle that — the agent image isn't ready yet. I'll start once it is.`;
 +  }
 +  if (kind === 'denied-by-policy' || kind === 'spec-invalid') {
 +    const category = kind === 'denied-by-policy' ? 'policy' : 'invalid session setup';
 +    return `⚠️ I couldn't start to handle that — my start was refused (${category}). An admin can find the reason in the logs; I'll keep retrying.`;
 +  }
 +  if (kind === 'runtime-unavailable') {
-+    return (
-+      "⚠️ I couldn't start to handle that — the machine I run on isn't reachable right now (if I run on a " +
-+      'developer’s laptop, it may be asleep or offline). I’ll start as soon as it’s back.'
-+    );
++    return "⚠️ I couldn't start to handle that — the container runtime isn't reachable right now. I’ll start as soon as it’s back.";
 +  }
 +  return (
 +    "⚠️ I couldn't start to handle that — this usually means the credential gateway is " +
@@ -118,7 +127,7 @@ index 703a19a9..b7b445f7 100644
  async function spawnContainer(session: Session): Promise<void> {
    if (pendingAdoptions.has(session.id)) {
      // A running container is waiting to be re-fenced after a failed adoption
-@@ -376,6 +459,13 @@ async function spawnContainer(session: Session): Promise<void> {
+@@ -376,6 +461,13 @@ async function spawnContainer(session: Session): Promise<void> {
      const { writeDestinations } = await import('./modules/agent-to-agent/write-destinations.js');
      await writeDestinations(agentGroup.id, session.id);
    }
@@ -132,7 +141,17 @@ index 703a19a9..b7b445f7 100644
    await writeSessionRouting(agentGroup.id, session.id);
    const mailboxKey = { agentGroupId: agentGroup.id, sessionId: session.id };
    const mailbox = getAgentMailbox();
-@@ -1155,6 +1245,12 @@ export async function buildMounts(
+@@ -773,6 +865,9 @@ export function killContainer(sessionId: string, reason: string, onExit?: () =>
+     entry.exitCallbacks.push(onExit);
+   }
+ 
++  // One stop per runtime: a second races the first, and finalization retries a failed one.
++  if (entry.stopReason !== undefined) return;
++
+   entry.stopReason = reason;
+   log.info('Killing container', { sessionId, reason, containerName: entry.containerName });
+   void entry.handle.stop(reason).then(
+@@ -1183,6 +1278,12 @@ export async function buildMounts(
        }
      }
    } else if (defaultSurfaces) {
@@ -145,7 +164,7 @@ index 703a19a9..b7b445f7 100644
      mounts.push({
        hostPath: claudeDir,
        containerPath: '/home/node/.claude',
-@@ -1185,6 +1281,19 @@ export async function buildMounts(
+@@ -1213,6 +1314,19 @@ export async function buildMounts(
        scope,
      });
    }
@@ -165,7 +184,7 @@ index 703a19a9..b7b445f7 100644
  
    // Additional mounts from container config — already vetted by the allowlist.
    if (containerConfig.additionalMounts && containerConfig.additionalMounts.length > 0) {
-@@ -1337,12 +1446,23 @@ export function composeSessionSpec(input: ComposeSessionSpecInput): SessionSpec
+@@ -1365,12 +1479,23 @@ export function composeSessionSpec(input: ComposeSessionSpecInput): SessionSpec
      // The gateway's auxiliary containers ride beside the agent; capability-
      // gated in the spawn path before composition ever runs.
      containers: [agent, ...(gateway.containers ?? [])],
@@ -191,7 +210,7 @@ index 703a19a9..b7b445f7 100644
        pidsLimit: parsePidsLimit(CONTAINER_PIDS_LIMIT),
        shmSizeMb: SHM_SIZE_MB,
      },
-@@ -1429,16 +1549,8 @@ export function syncSkillSymlinks(
+@@ -1457,16 +1582,8 @@ export function syncSkillSymlinks(
   * from `container/skills/` so newly-added upstream skills appear automatically.
   */
  function selectedSkillNames(containerConfig: import('./container-config.js').ContainerConfig): string[] {

@@ -22,14 +22,20 @@ import { getAgentGroup } from '../../db/agent-groups.js';
 import { createMessagingGroup, getMessagingGroup, getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { getPendingApproval } from '../../db/sessions.js';
 import { registerLearningClassifierResolver } from '../../container-runtime-extras.js';
-import { registerContainerConfigAugmentor, registerSessionPrepareHook } from '../../seam/index.js';
+import {
+  registerContainerConfigAugmentor,
+  registerContainerEnvResolver,
+  registerSessionPrepareHook,
+} from '../../seam/index.js';
 import { registerA2aRouteObserver } from '../../seam/index.js';
-import { classifierParamsForModel } from './models.js';
+import { classifierParamsForModel, openCodeSpawnEnv, refreshRemoteModelSettings } from './models.js';
+import { stagedEnv } from './staged-env.js';
 import { registerChannelAdapter } from '../channel-registry.js';
 import type { ChannelAdapter, ChannelSetup, OutboundMessage } from '../adapter.js';
 import type { AgentActivityStatus } from '../../seam/index.js';
 import { runChannelStart } from './extensions.js';
 import { isOllamaLenient, primeOllamaLenient, refreshOllamaLenient } from './ollama-lenient.js';
+import { ensureRouterNetwork, syncRouterSecretHold } from './cloud-models.js';
 // Registers every installed extension before the server starts.
 import './extensions-installed.js';
 import { pruneSigninSessions } from './signins.js';
@@ -37,6 +43,7 @@ import { pruneAuditFiles } from '../../audit.js';
 import { redactSensitiveData } from './redact.js';
 import { startWebchatServer, stopWebchatServer, type WebchatServer } from './server.js';
 import { sweepMcpHealth } from './mcp-health.js';
+import { startModelHostSweep, stopModelHostSweep } from './model-host-sync.js';
 import { startMcpRelayIfAssigned, stopMcpRelay } from './mcp-relay.js';
 import {
   APPROVAL_INBOX_PREFIX,
@@ -69,8 +76,10 @@ import {
 import { registerApprovalResolvedHandler } from '../../modules/approvals/primitive.js';
 import { registerApprovalIntercept, registerApprovalRequestedListener } from '../../seam/index.js';
 import { buildApprovalTriageView, maybePrejudgeApproval } from '../../modules/approvals/prejudge.js';
+import { approveAdminModelSwitch, noteHumanMessage } from './admin-model-switch.js';
 import { startReconcileLoop, stopReconcileLoop } from './reconcile.js';
 import { deliveryKey, storeAgentDelivery } from './agent-delivery.js';
+import { failureNoticeText, recordTurnMessage } from './turn-traces.js';
 import {
   registerSkillDraftProposedListener,
   registerSkillDraftResolvedListener,
@@ -110,6 +119,10 @@ function createAdapter(): ChannelAdapter {
             // Standard inbound — userId resolution + access gating happens in
             // the router/permissions module via the `senderId` field that the
             // server attaches to message.content. threadId is the session key.
+            const senderId = (message.content as { senderId?: unknown } | undefined)?.senderId;
+            const text = (message.content as { text?: unknown } | undefined)?.text;
+            if (typeof senderId === 'string')
+              noteHumanMessage(roomId, threadId ?? null, senderId, typeof text === 'string' ? text : '');
             await config.onInbound(roomId, threadId, message);
           })().catch((err) => log.error('Webchat inbound failed', { roomId, err }));
         },
@@ -151,6 +164,8 @@ function createAdapter(): ChannelAdapter {
       primeOllamaLenient().catch((err) => log.warn('Ollama lenient-mode prime failed', { err }));
       // Installed extensions' own background services (./extensions.ts).
       runChannelStart();
+      // Which model hosts answer: failover at spawn, the classifier's host, the router's host list.
+      startModelHostSweep();
       mcpHealthTimer = setInterval(
         () => {
           sweepMcpHealth().catch((err) => log.error('MCP health sweep failed', { err }));
@@ -167,6 +182,7 @@ function createAdapter(): ChannelAdapter {
 
     async teardown(): Promise<void> {
       stopReconcileLoop();
+      stopModelHostSweep();
       stopMcpRelay();
       if (mcpHealthTimer) {
         clearInterval(mcpHealthTimer);
@@ -263,6 +279,14 @@ function createAdapter(): ChannelAdapter {
         files: message.files,
         thread: storeThread,
       });
+      // Awaited so the turn's trace links this reply before the same tick reads its 'done'.
+      if (storedMessageId)
+        await recordTurnMessage(
+          message.senderSessionId,
+          storedMessageId,
+          failureNoticeText(message.content),
+          roomId,
+        ).catch((err) => log.warn('Turn trace link failed', { roomId, err: String(err) }));
       // Loop-back fan-out: re-enter the router so other wired agents in this
       // room can react to the producer's text (matches the "agents talk in
       // the room" mental model). Guarded by:
@@ -408,9 +432,20 @@ registerChannelAdapter('webchat', {
 // The prepare hook is a safety net; the cache is primed at boot and refreshed
 // on every model write, because the augmentor runs before prepare hooks.
 registerSessionPrepareHook((agentGroupId) => refreshOllamaLenient(agentGroupId));
+// The router's route through the gateway: re-attach OneCLI's container to the
+// router's network if a recreate dropped it (cloud-models.ts; throttled, no-op without cloud models).
+registerSessionPrepareHook(() => ensureRouterNetwork());
+// The router's key goes only to agents whose model it serves; a model change applies at the next spawn.
+registerSessionPrepareHook((agentGroupId) => syncRouterSecretHold(agentGroupId));
 registerContainerConfigAugmentor((agentGroupId) =>
   isOllamaLenient(agentGroupId) ? { lenientOutput: true, lenientPrompt: true } : {},
 );
+// A model on another machine: direct, or through its relay behind the egress filter (model-relay.ts).
+registerSessionPrepareHook((agentGroupId) => refreshRemoteModelSettings(agentGroupId));
+// OpenCode's per-agent window and model URL. The env seam is sync: the prepare hook stages, the resolver reads.
+const openCodeEnv = stagedEnv(openCodeSpawnEnv);
+registerSessionPrepareHook((agentGroupId) => openCodeEnv.prepare(agentGroupId));
+registerContainerEnvResolver((agentGroupId) => openCodeEnv.resolve(agentGroupId));
 
 // Auto-default the learning classifier to the agent's OWN model when it runs on
 // a local endpoint (ollama/openai-compatible) — zero setup. Claude agents have
@@ -422,11 +457,16 @@ registerLearningClassifierResolver(async (agentGroupId) =>
 
 // Side-channel a2a visibility: a read-only copy of each routed message in every
 // room both agents share. The observer wrapper isolates failures from routing.
-registerA2aRouteObserver(({ fromAgentGroupId, toAgentGroupId, content }) => {
-  surfaceA2aMessage(fromAgentGroupId, toAgentGroupId, content).catch((err) =>
+// The route's sessions (the seam passes them): the copy lands in the
+// originating thread, else main.
+registerA2aRouteObserver(({ fromAgentGroupId, toAgentGroupId, content, sourceSessionId, targetSessionId }) => {
+  surfaceA2aMessage(fromAgentGroupId, toAgentGroupId, content, [sourceSessionId, targetSessionId]).catch((err) =>
     log.warn('a2a surface failed', { err: String(err) }),
   );
 });
+
+// A model switch the agent's admins asked for: approved as them, no card.
+registerApprovalIntercept((approvalId, session) => approveAdminModelSwitch(approvalId, session));
 
 // Optional LLM approval pre-judge (off by default): may auto-approve an opted-in
 // low-stakes action via the human Approve path. Returning true skips the card.
