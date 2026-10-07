@@ -5,7 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { redactSensitiveData } from './redact.js';
+import { redactMessageContent, redactSensitiveData } from './redact.js';
 
 describe('redactSensitiveData — sensitive patterns', () => {
   it.each([
@@ -78,5 +78,26 @@ describe('redactSensitiveData — masking shape', () => {
     const out = redactSensitiveData(`my key is ${key} please`);
     // ANTHROPIC_KEY keeps prefix=14, suffix=4 — shape `[ANTHROPIC_KEY:<head>****<tail>]`
     expect(out).toMatch(/\[ANTHROPIC_KEY:sk-ant-api03-X\*+AAAA\]/);
+  });
+});
+
+describe('redactMessageContent', () => {
+  it('keeps a JSON card parseable when a value inside it is redacted', () => {
+    const card = JSON.stringify({
+      skillName: 'ansible-become-false-needs-both-keys',
+      description: 'Stop a play failing with "sudo: a password is required" at the group level',
+    });
+    const out = redactMessageContent(card);
+    const parsed = JSON.parse(out) as { skillName: string; description: string };
+    expect(parsed.skillName).toBe('ansible-become-false-needs-both-keys');
+    expect(parsed.description).toBe(redactSensitiveData('Stop a play failing with "sudo: a password is required" at the group level'));
+  });
+
+  it('redacts secrets inside JSON values, and plain text as before', () => {
+    const key = 'sk-ant-api03-' + 'a'.repeat(40);
+    expect(redactMessageContent(JSON.stringify({ text: `key ${key}` }))).not.toContain(key);
+    expect(redactMessageContent(`key ${key}`)).toBe(redactSensitiveData(`key ${key}`));
+    // Not JSON after all: redacted as text.
+    expect(redactMessageContent(`{ not json ${key}`)).toBe(redactSensitiveData(`{ not json ${key}`));
   });
 });

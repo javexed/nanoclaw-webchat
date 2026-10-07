@@ -306,7 +306,7 @@ import { recordInstructionBaseline } from '../../modules/instruction-guard/store
 import { syncAgentProviderForAssignedModel, classifierParamsForModel } from './models.js';
 import { handleChunkedUpload, handleFileServe, handleHtmlFrame, handleMultipartUpload } from './files.js';
 import { initWebPush, isValidPushEndpoint } from './push.js';
-import { redactSensitiveData } from './redact.js';
+import { redactMessageContent, redactSensitiveData } from './redact.js';
 import { withTraceFlags } from './turn-traces.js';
 import { withLimitRetries } from './limit-retry.js';
 import { rLimitRetryDelete, rLimitRetryPost } from './server/routes-limit-retry.js';
@@ -1733,7 +1733,7 @@ async function rHistGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
     200,
     (await withLimitRetries(await withTraceFlags(msgs))).map((m) => ({
       ...m,
-      content: redactSensitiveData(m.content),
+      content: redactMessageContent(m.content),
     })),
   );
 }

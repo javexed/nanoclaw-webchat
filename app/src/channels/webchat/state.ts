@@ -32,7 +32,7 @@ import {
   sessionKeyToThread,
 } from './db.js';
 import { sendPushForMessage } from './push.js';
-import { redactSensitiveData } from './redact.js';
+import { redactMessageContent, redactSensitiveData } from './redact.js';
 
 export interface WSClient {
   id: string;
@@ -196,7 +196,7 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string,
   const isMessage = (msg as { type?: string }).type === 'message';
   if ((msg as { type?: string }).type === 'status') notifyRoomStatus(roomId, msg as Record<string, unknown>);
   const outgoing = isMessage
-    ? { ...msg, content: redactSensitiveData((msg as { content?: string }).content || '') }
+    ? { ...msg, content: redactMessageContent((msg as { content?: string }).content || '') }
     : msg;
   if (isMessage) notifyRoomMessage(roomId, outgoing as Record<string, unknown>);
   const payload = JSON.stringify(outgoing);

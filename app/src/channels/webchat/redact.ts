@@ -114,3 +114,32 @@ export function redactSensitiveData(text: string): string {
   }
   return result;
 }
+
+/**
+ * Redact a message's content. Structured messages (approval and skill-draft
+ * cards, a2a copies) store JSON: run the redaction over each string inside it,
+ * never over the raw JSON, where a masked value could swallow an escaped quote
+ * ("password is required\"" became "password is [PASSWORD:****]"") and leave
+ * the client unable to parse the card. Anything else is redacted as text.
+ */
+export function redactMessageContent(content: string): string {
+  const t = content.trimStart();
+  if (t.startsWith('{') || t.startsWith('[')) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      return redactSensitiveData(content);
+    }
+    const walk = (v: unknown): unknown =>
+      typeof v === 'string'
+        ? redactSensitiveData(v)
+        : Array.isArray(v)
+          ? v.map(walk)
+          : v && typeof v === 'object'
+            ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]))
+            : v;
+    return JSON.stringify(walk(parsed));
+  }
+  return redactSensitiveData(content);
+}
