@@ -1420,6 +1420,8 @@ export interface WebchatThread {
   kind: 'main' | 'agent' | 'topic';
   created_at: number;
   updated_at: number;
+  /** Who started a topic thread; null for main/agent lanes and older threads. */
+  created_by?: string | null;
 }
 
 /** Ensure a thread row exists; idempotent (never clobbers an existing title).
@@ -1468,7 +1470,11 @@ export function sanitizeThreadTitle(raw: unknown): string | null {
 }
 
 /** Create a manual topic thread (uuid). Returns the new thread. */
-export async function createWebchatThread(roomId: string, title: string): Promise<WebchatThread> {
+export async function createWebchatThread(
+  roomId: string,
+  title: string,
+  createdBy: string | null = null,
+): Promise<WebchatThread> {
   const now = Date.now();
   const thread: WebchatThread = {
     room_id: roomId,
@@ -1477,10 +1483,11 @@ export async function createWebchatThread(roomId: string, title: string): Promis
     kind: 'topic',
     created_at: now,
     updated_at: now,
+    created_by: createdBy,
   };
   await getDb().run(
-    `INSERT INTO webchat_threads (room_id, thread_id, title, kind, created_at, updated_at)
-       VALUES (@room_id, @thread_id, @title, @kind, @created_at, @updated_at)`,
+    `INSERT INTO webchat_threads (room_id, thread_id, title, kind, created_at, updated_at, created_by)
+       VALUES (@room_id, @thread_id, @title, @kind, @created_at, @updated_at, @created_by)`,
     thread,
   );
   return thread;

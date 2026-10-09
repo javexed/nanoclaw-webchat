@@ -120,6 +120,12 @@ export function updateThreadSyncControls() {
   }
   const sync = $('#thread-sync');
   if (sync) sync.hidden = !inThread;
+  // Delete: owners, or whoever started the thread (server sends can_delete).
+  const del = $('#thread-delete');
+  if (del) {
+    const thread = roomThreads().find((t) => t.thread_id === state.currentThread);
+    del.hidden = !(thread?.can_delete ?? state.isOwnerView);
+  }
   const crumb = $('#thread-crumb');
   if (crumb) {
     crumb.hidden = !inThread;

@@ -2748,7 +2748,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: RE_ROOM_THREADS, h: rRoomThreadsGet },
   { method: 'POST', path: RE_ROOM_THREADS, guards: ['csrf'], h: rRoomThreadsPost },
   { method: 'PATCH', path: RE_ROOM_THREAD, guards: ['csrf'], h: rRoomThreadPatch },
-  { method: 'DELETE', path: RE_ROOM_THREAD, guards: ['csrf', 'owner'], h: rRoomThreadDelete },
+  { method: 'DELETE', path: RE_ROOM_THREAD, guards: ['csrf'], h: rRoomThreadDelete },
   { method: 'POST', path: RE_ROOM_THREAD_PULL, guards: ['csrf'], h: rRoomThreadPullPost },
   { method: 'GET', path: '/api/docs', h: rDocsGet },
   { method: 'GET', path: RE_DOC_ASSET, h: rDocAssetGet },

@@ -7,7 +7,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'crypto';
 
-import { loadServer, LOOPBACK_ENV, noopHooks, portOf, resetServerModules } from './test-server.js';
+import { loadServer, LOOPBACK_ENV, noopHooks, portOf, resetServerModules, seeder } from './test-server.js';
 
 // The loopback no-auth path authenticates as this identity (auth.ts).
 const LOCAL_OWNER = 'webchat:local-owner';
@@ -59,7 +59,7 @@ async function boot() {
   );
 
   const wc = await server.startWebchatServer(noopHooks);
-  return { server, wc, db };
+  return { server, wc, db, conn };
 }
 
 const CSRF = { 'content-type': 'application/json', 'x-webchat-csrf': '1' };
@@ -137,6 +137,47 @@ describe('thread endpoints — HTTP/authz', () => {
       // deleting a nonexistent topic thread → 404
       res = await fetch(`${base}/ghost`, { method: 'DELETE', headers: CSRF });
       expect(res.status).toBe(404);
+    } finally {
+      await server.stopWebchatServer(wc);
+    }
+  });
+
+  it('a non-owner can delete only a thread they started', async () => {
+    const { server, wc, db, conn } = await boot();
+    try {
+      const p = portOf(wc);
+      const base = `http://127.0.0.1:${p}/api/rooms/room-1/threads`;
+      // Someone else owns the install (else the first login is made owner again).
+      const seed = seeder(conn.getDb(), new Date().toISOString());
+      await seed.role('webchat:the-owner', 'owner', null);
+      await conn.getDb().run(`DELETE FROM user_roles WHERE user_id = ?`, LOCAL_OWNER);
+      await conn
+        .getDb()
+        .run(
+          `INSERT INTO agent_group_members (user_id, agent_group_id, added_by, added_at) VALUES (?, 'ag-1', NULL, ?)`,
+          LOCAL_OWNER,
+          new Date().toISOString(),
+        );
+
+      let res = await fetch(base, { method: 'POST', headers: CSRF, body: JSON.stringify({ title: 'Mine' }) });
+      expect(res.status).toBe(200);
+      const mine = (await res.json()) as { thread_id: string; created_by: string; can_delete: boolean };
+      expect(mine.created_by).toBe(LOCAL_OWNER);
+      expect(mine.can_delete).toBe(true);
+      const theirs = await db.createWebchatThread('room-1', 'Theirs', 'webchat:someone-else');
+      const old = await db.createWebchatThread('room-1', 'Old');
+
+      res = await fetch(base);
+      const list = (await res.json()) as Array<{ thread_id: string; can_delete: boolean }>;
+      const can = Object.fromEntries(list.map((t) => [t.thread_id, t.can_delete]));
+      expect(can).toMatchObject({ main: false, [mine.thread_id]: true, [theirs.thread_id]: false, [old.thread_id]: false });
+
+      res = await fetch(`${base}/${theirs.thread_id}`, { method: 'DELETE', headers: CSRF });
+      expect(res.status).toBe(403);
+      res = await fetch(`${base}/${old.thread_id}`, { method: 'DELETE', headers: CSRF });
+      expect(res.status).toBe(403);
+      res = await fetch(`${base}/${mine.thread_id}`, { method: 'DELETE', headers: CSRF });
+      expect(res.status).toBe(200);
     } finally {
       await server.stopWebchatServer(wc);
     }
