@@ -27367,8 +27367,18 @@ document.addEventListener("click", (e) => {
 	const menu = $("#overflow-menu");
 	if (menu && !menu.hidden && !menu.contains(e.target) && e.target !== $("#overflow-btn")) closeOverflowMenu();
 });
+var closeRowMenus = () => {
+	openMenuRoomId.value = null;
+	openThreadMenuId.value = null;
+};
+document.addEventListener("click", (e) => {
+	if (!e.target?.closest?.(".room-menu, .thread-menu")) closeRowMenus();
+});
 document.addEventListener("keydown", (e) => {
-	if (e.key === "Escape") closeOverflowMenu();
+	if (e.key === "Escape") {
+		closeOverflowMenu();
+		closeRowMenus();
+	}
 });
 $("#settings-close").addEventListener("click", closeSettings);
 wireSettingsPanel1();
