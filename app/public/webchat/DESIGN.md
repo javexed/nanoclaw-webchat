@@ -117,6 +117,7 @@ Text buttons use a `.btn` base plus one role modifier. Built and in use:
 | Secondary | `.btn .btn-secondary` | `create-agent-btn` (×12) | secondary actions (Probe, Browse, + New …) |
 | Ghost | `.btn .btn-ghost` | `dash-refresh-btn`, `drafter-btn` | low-emphasis (refresh, suggest-from-prompt) |
 | Danger | `.btn .btn-danger` | `btn-delete` (×4 + confirm modal) | destructive actions |
+| Icon | `.btn-icon` | `CopyIconButton` | one label-less row action, chiefly "copy this value" (a deploy key, a pairing code). A square glyph button; pairs with its result shown in place (copy glyph → check), never a toast. Reusable — unlike the older bespoke icon buttons below. |
 
 Filled-surface text colors route through `--on-accent` (primary) and
 `--on-danger` (danger hover), not hardcoded `#000`/`#fff`.
@@ -129,7 +130,8 @@ One severity → one weight. **All** delete buttons (agent/room/model/user) and
 the confirm-modal destructive button share `.btn-danger` — keep that uniformity;
 don't reintroduce a "quiet" delete variant.
 
-**Not part of this set** (bespoke components — leave as-is): the icon buttons
+**Not part of this set** (bespoke, pre-date the `.btn-icon` role — leave as-is,
+don't fold them in): the icon buttons
 `.lightbox-btn` (circular media-overlay), `.settings-btn`, `.file-picker-btn`;
 and `.btn-cancel` (the confirm-modal
 cancel). `.drafter-btn` is retained only as a JS hook + layout — its visual role
@@ -258,7 +260,8 @@ that starts async work shows its wait *on the pressed control* — `wizardBusy(b
 restore fn for the `finally`. A list that's fetching shows the same ring inline
 as its first row ("Loading catalog…", "Searching…"), not a blank pane or a
 toast. One spinner primitive (`.btn-spinner`, a `currentColor` ring on the
-`lightbox-spin` keyframe) so every wait reads identically. Toasts are for
+`lightbox-spin` keyframe) so every wait reads identically (longer jobs:
+"Long-running operations" below). Toasts are for
 *outcomes*; a spinner is the *wait* — don't announce "Loading…" in a toast.
 
 Rule of thumb: if it isn't part of the *conversation*, it does not belong in the
@@ -476,6 +479,36 @@ wizard puts badges outside a row). Keep both rules — a missing one shows
 via `hidden` needs its own `[hidden]{display:none}` restate.
 
 ---
+
+## Long-running operations — one pattern
+
+Anything a press starts and the user waits on uses the same three pieces,
+wherever it lives (Settings, the wizard, a detail panel, Add model). Like the
+prose budget, this is the default, not a suggestion.
+
+1. **The pressed control shows the wait**: spinner, verb, disabled.
+   `buttonBusy(btn, 'Saving…')` (`ui/src/core/busy.ts`; `wizardBusy` is the
+   same) in imperative code, `<BusyLabel :busy label busy-label>` in a Vue
+   template. Never a bare label swap (`textContent = 'Saving…'`,
+   `{{ busy ? 'Saving…' : 'Save' }}`) and never a separate "…" or "Working…"
+   line elsewhere.
+2. **An install-engine job shows the progress box** below the control:
+   `<InstallProgress :text>` (or a `pre.wizard-code`) fed by
+   `installLogText(st)` — "Step N of M — label · elapsed", then the log tail,
+   refreshed on each poll. The elapsed time is what shows a silent step is not
+   hung. It never sits under a sticky `.agent-detail-actions` bar: put it above
+   the bar. A model pull uses `OllamaPullStatus.vue` (bar + Cancel) instead.
+3. **The outcome is a toast** (or the panel closing on success). A failed
+   install keeps its log in the box; a request refused before anything started
+   shows only the toast.
+
+No other prose: no "This may take a minute" hint, no status sentence. The
+spinner, the progress line and the toast say it.
+
+Enforced by `ui/check-busy-labels.mjs` (CI): a busy verb ("Saving…") set as a
+control's label, switched to in a template ternary, or toasted fails the build.
+A deliberate exception carries `busy-ok` and its reason on the line or the line
+above.
 
 ## Scroll containment
 

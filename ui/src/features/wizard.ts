@@ -11,6 +11,7 @@ import {
   codexInstallActive,
   opencodeGateFromServer,
   opencodeGatePoll,
+  installLogText,
   opencodeInstallActive,
   tailscaleInstallActive,
 } from './installer-state.js';
@@ -29,8 +30,8 @@ import {
   runInstall,
   CODEX_WIZARD_ELS,
   GROK_WIZARD_ELS,
-  installProgressLine,
 } from './installers.js';
+import { buttonBusy } from '../core/busy.js';
 
 /** Supplied by provideWizardDeps in composition-root.ts. `any` marks a signature not
  *  yet typed, not an opt-out of checking. */
@@ -94,9 +95,14 @@ let wizardCred: any = null; // last /api/workspace-credential snapshot — gates
 
 // A recommendation, not a gate: an Ollama model answers on the built-in harness
 // too (Ollama speaks the Anthropic API), it just follows tools worse. Same text
-// as the markup's initial hint; restored after the line has shown progress.
+// as the markup's initial hint; hidden while the install shows its progress.
 const OPENCODE_RECOMMENDED =
   'Recommended: small local models follow tools far better on OpenCode. Rebuilds and restarts NanoClaw — a few minutes.';
+
+// The reload-painted busy state of the install button: its restore fn and verb,
+// so the 3s re-render only re-applies it when the verb changes.
+let opencodeReloadBusy: (() => void) | null = null;
+let opencodeReloadVerb: string | null = null;
 
 export async function renderWizardOpencodeInstall() {
   const row = $('#wizard-opencode-install-row');
@@ -128,17 +134,22 @@ export async function renderWizardOpencodeInstall() {
   // pane; only a tab that arrived mid-install (a reload) paints them from here.
   if (btn && !opencodeInstallActive.value) {
     btn.hidden = installed;
-    btn.disabled = running || restarting;
-    btn.textContent = restarting ? 'Restarting…' : running ? 'Installing…' : 'Install OpenCode harness…';
+    const verb = restarting ? 'Restarting…' : running ? 'Installing…' : null;
+    if (verb !== opencodeReloadVerb) {
+      opencodeReloadBusy?.();
+      opencodeReloadBusy = verb ? wizardBusy(btn, verb) : null;
+      opencodeReloadVerb = verb;
+    }
+    const log = $('#wizard-opencode-install-log');
+    if (log && running) {
+      log.hidden = false;
+      log.textContent = installLogText(st);
+    }
   }
   if (hint) {
-    hint.hidden = installed;
+    hint.hidden = installed || (running && !opencodeInstallActive.value);
     if (!opencodeInstallActive.value)
-      hint.textContent = running
-        ? installProgressLine(st)
-        : restarting
-          ? 'Installed — restarting to load it.'
-          : OPENCODE_RECOMMENDED;
+      hint.textContent = restarting ? 'Installed — restarting to load it.' : OPENCODE_RECOMMENDED;
   }
   // Gate Next/Finish from server truth so a page reload mid-install can't slip
   // past the client flag; re-poll while it's still running so the gate lifts on
@@ -366,7 +377,8 @@ async function wizardCheckLocalOllama() {
 async function wizardFollowPull(host?: any, model?: any) {
   const btn = $('#wizard-ollama-dl')!;
   const bar = $('#wizard-ollama-pull-bar')!;
-  const done = wizardBusy(btn, 'Downloading…');
+  let done = wizardBusy(btn, 'Downloading…');
+  $('#wizard-ollama-dl-status')!.hidden = true; // the bar shows the progress; the line is for the outcome
   bar.hidden = false;
   try {
     for (;;) {
@@ -376,10 +388,10 @@ async function wizardFollowPull(host?: any, model?: any) {
       if (!job) continue;
       const pct = job.total > 0 ? Math.round((job.completed / job.total) * 100) : 0;
       (bar.querySelector('span') as HTMLElement | null)!.style.width = pct + '%';
-      wizardSetStatus('#wizard-ollama-dl-status', `${job.detail || 'downloading…'} (${pct}%)`, null);
       if (job.status === 'success') {
         bar.hidden = true;
-        wizardSetStatus('#wizard-ollama-dl-status', `${model} downloaded — setting it as the default…`, 'ok');
+        done();
+        done = wizardBusy(btn, 'Setting default…');
         // A pull is a deliberate "I want this model" — probe, then set it as the
         // workspace default so Next unlocks without a separate pick step.
         const probed = await wizardProbeOllama();
@@ -458,7 +470,7 @@ async function wizardProbeOllama() {
 // the same endpoint+model so repeated selection never spawns duplicates (the
 // roster has no uniqueness constraint). Other probed models stay unregistered —
 // Manage → Models covers the rest.
-export async function wizardSelectOllamaModel(modelId?: any) {
+export async function wizardSelectOllamaModel(modelId?: any, control?: HTMLElement | null) {
   if (!wizardOllamaProbe || !modelId) return;
   const endpoint = String(wizardOllamaProbe.endpoint || '').replace(/\/+$/, '');
   const host = (() => {
@@ -468,7 +480,8 @@ export async function wizardSelectOllamaModel(modelId?: any) {
       return wizardOllamaProbe.endpoint;
     }
   })();
-  wizardSetStatus('#wizard-ollama-status', `Setting ${modelId} as the default…`, null);
+  $('#wizard-ollama-status')!.hidden = true; // stale result out of the way; the picked row shows the wait
+  const done = control ? wizardBusy(control, 'Setting default…') : null;
   try {
     let id = null;
     try {
@@ -518,6 +531,8 @@ export async function wizardSelectOllamaModel(modelId?: any) {
     await refreshWizardCredState(); // swaps the picker for the ✓ <model> · default card
   } catch {
     wizardSetStatus('#wizard-ollama-status', 'Setting the default failed.', 'err');
+  } finally {
+    done?.();
   }
 }
 
@@ -634,16 +649,20 @@ function showWizardStep(i?: any) {
 // finishing before that settles drops the operator into chat just as their first
 // message gets killed mid-turn. opencodeInstallActive.value stays true across the whole
 // build + restart poll, so this holds Next/Finish until the harness is stable.
+let nextGateBusy: (() => void) | null = null;
+
 export function refreshWizardNextGate() {
   const btn = $('#wizard-next')! as HTMLInputElement;
   if (!btn) return;
   if (opencodeInstallActive.value || opencodeGateFromServer.value) {
-    (btn as HTMLInputElement).disabled = true;
     btn.dataset.gated = '1';
-    btn.textContent = 'Installing OpenCode…';
+    // Busy once per gate; showWizardStep relabels Next (dropping the spinner), so re-apply then.
+    if (!btn.querySelector('.btn-spinner')) nextGateBusy = wizardBusy(btn, 'Installing OpenCode…');
     btn.title = 'Hang tight — finishing now would interrupt your first message when the harness restarts.';
   } else if (btn.dataset.gated) {
     delete btn.dataset.gated;
+    nextGateBusy?.();
+    nextGateBusy = null;
     btn.disabled = false;
     btn.title = '';
     btn.textContent = wizardStep === WIZARD_STEPS - 1 ? 'Finish' : 'Next';
@@ -682,18 +701,7 @@ async function finishWizard() {
  * user just pressed. Returns a restore function for the finally block.
  */
 export function wizardBusy(btn?: any, busyLabel?: any) {
-  const original = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '';
-  const spin = document.createElement('span');
-  spin.className = 'btn-spinner';
-  spin.setAttribute('aria-hidden', 'true');
-  btn.appendChild(spin);
-  btn.appendChild(document.createTextNode(busyLabel));
-  return () => {
-    btn.disabled = false;
-    btn.textContent = original;
-  };
+  return buttonBusy(btn, busyLabel);
 }
 
 function wizardSetStatus(id?: any, text?: any, kind?: any) {
@@ -737,9 +745,7 @@ async function wizardProbeHttps() {
 
 async function wizardEnableHttps() {
   const btn = $('#wizard-https-btn')! as HTMLInputElement;
-  (btn as HTMLInputElement).disabled = true;
-  const restore = btn.textContent;
-  btn.textContent = 'Enabling…';
+  const done = wizardBusy(btn, 'Enabling…');
   try {
     const r = await authFetch('/api/webchat/tailscale-https', { method: 'POST', headers: { 'X-Webchat-CSRF': '1' } });
     const data = await r.json().catch(() => ({}));
@@ -774,8 +780,7 @@ async function wizardEnableHttps() {
   } catch {
     wizardSetStatus('#wizard-https-status', 'Connection failed.', 'err');
   } finally {
-    btn.disabled = false;
-    if (!btn.hidden) btn.textContent = restore;
+    done();
   }
 }
 
@@ -998,10 +1003,7 @@ async function runTailscaleInstall() {
     log.hidden = false;
     log.textContent = 'Starting…';
   }
-  if (btn) {
-    (btn as HTMLInputElement).disabled = true;
-    btn.textContent = 'Installing…';
-  }
+  const done = btn ? wizardBusy(btn, 'Installing…') : null;
   try {
     const res = await authFetch('/api/webchat/tailscale/install', {
       method: 'POST',
@@ -1011,19 +1013,14 @@ async function runTailscaleInstall() {
       const err = await res.json().catch(() => ({}));
       if (log) log.textContent = err.error || 'Install failed to start.';
       showToast(err.error || 'Tailscale install failed', { kind: 'error', timeout: 9000 });
-      if (btn) {
-        (btn as HTMLInputElement).disabled = false;
-        btn.textContent = 'Install Tailscale…';
-      }
+      done?.();
       return;
     }
+    done?.();
     pollTailscaleInstall();
   } catch (err) {
     if (log) log.textContent = 'Install failed: ' + (err as any)?.message;
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = 'Install Tailscale…';
-    }
+    done?.();
   }
 }
 
@@ -1033,12 +1030,12 @@ async function pollTailscaleInstall() {
   const btn = $('#wizard-ts-install-btn') as HTMLInputElement;
   const log = $('#wizard-ts-install-log')!;
   if (log) log.hidden = false;
-  if (btn) (btn as HTMLInputElement).disabled = true;
+  const done = btn ? wizardBusy(btn, 'Installing…') : null;
   try {
     for (;;) {
       const st = await (await authFetch('/api/webchat/tailscale/install')).json();
       if (log) {
-        log.textContent = (st.lines || []).slice(-14).join('\n') || 'Starting…';
+        log.textContent = installLogText(st);
         log.scrollTop = log.scrollHeight;
       }
       if (!st.running) {
@@ -1052,10 +1049,7 @@ async function pollTailscaleInstall() {
     showToast('Tailscale install error: ' + (err as any)?.message, { kind: 'error' });
   } finally {
     tailscaleInstallActive.value = false;
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = 'Install Tailscale…';
-    }
+    done?.();
     void renderWizardAccess(); // re-check health → flip to the connected note when up
   }
 }
@@ -1086,7 +1080,11 @@ async function runCloudflaredBinaryInstall() {
       return;
     }
     done?.();
-    pollCloudflared({ btn: '#wizard-cf-install-btn', success: 'cloudflared installed — paste your tunnel token' });
+    pollCloudflared({
+      btn: '#wizard-cf-install-btn',
+      verb: 'Installing…',
+      success: 'cloudflared installed — paste your tunnel token',
+    });
   } catch (err) {
     if (log) log.textContent = 'Install failed: ' + (err as any)?.message;
     done?.();
@@ -1122,25 +1120,25 @@ async function runCloudflaredConnect() {
     }
     if (tokenEl) tokenEl.value = ''; // don't leave the secret sitting in the field
     done?.();
-    pollCloudflared({ btn: '#wizard-cf-connect-btn', success: 'Cloudflare Tunnel connected' });
+    pollCloudflared({ btn: '#wizard-cf-connect-btn', verb: 'Connecting…', success: 'Cloudflare Tunnel connected' });
   } catch (err) {
     if (log) log.textContent = 'Connect failed: ' + (err as any)?.message;
     done?.();
   }
 }
 
-async function pollCloudflared({ btn: btnSel, success }: any) {
+async function pollCloudflared({ btn: btnSel, verb, success }: any) {
   if (cloudflaredInstallActive.value) return;
   cloudflaredInstallActive.value = true;
   const btn = btnSel ? $(btnSel) : null;
   const log = $('#wizard-cf-install-log')!;
   if (log) log.hidden = false;
-  const done = btn ? wizardBusy(btn, 'Working…') : null;
+  const done = btn ? wizardBusy(btn, verb) : null;
   try {
     for (;;) {
       const st = await (await authFetch('/api/webchat/cloudflared')).json();
       if (log) {
-        log.textContent = (st.lines || []).slice(-14).join('\n') || 'Starting…';
+        log.textContent = installLogText(st);
         log.scrollTop = log.scrollHeight;
       }
       if (!st.running) {
@@ -1644,7 +1642,7 @@ function wireWizard() {
       // Keep the ref in step with the DOM the user just changed, or the next
       // render would reset the radio the click had selected.
       wizardOllamaSelected.value = t.value;
-      void wizardSelectOllamaModel(t.value);
+      void wizardSelectOllamaModel(t.value, t.parentElement?.querySelector('span'));
     }
   });
   // "Change" on the connected card reopens the picker (mirrors Disconnect).
@@ -1676,7 +1674,7 @@ function wireWizard() {
       for (;;) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
         const st = await (await authFetch('/api/ollama/local')).json();
-        log.textContent = (st.lines || []).join('\n') || 'Working…';
+        log.textContent = installLogText(st);
         log.scrollTop = log.scrollHeight;
         if (!st.running) {
           if (st.exitCode === 0 && st.reachable) {

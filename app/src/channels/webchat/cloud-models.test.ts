@@ -46,6 +46,9 @@ import {
   CloudModelError,
   cloudModelMaxOutput,
   cloudModelNames,
+  cloudModelProviders,
+  connectProvider,
+  disconnectProvider,
   isRouterEndpoint,
   listProviderModels,
   prepareCloudModel,
@@ -157,7 +160,10 @@ describe('prepareCloudModel', () => {
     expect(fs.readFileSync(path.join(dir, 'onecli.env'), 'utf8')).toMatch(/^NO_PROXY=.*host\.docker\.internal/m);
     for (const f of allFiles(root)) expect(fs.readFileSync(f, 'utf8')).not.toContain(KEY);
     expect(fs.statSync(path.join(dir, 'onecli.env')).mode & 0o777).toBe(0o600);
-    expect(fs.readFileSync(path.join(dir, 'onecli.env'), 'utf8')).toMatch(/^HTTPS_PROXY=http:\/\/x:tok@/m);
+    // OneCLI's container by name, on the network the router shares with it: the
+    // host.docker.internal address OneCLI hands out is unreachable from there.
+    expect(fs.readFileSync(path.join(dir, 'onecli.env'), 'utf8')).toMatch(/^HTTPS_PROXY=http:\/\/x:tok@onecli:10255$/m);
+    expect(fs.readFileSync(path.join(dir, 'onecli.env'), 'utf8')).toMatch(/^HTTP_PROXY=http:\/\/x:tok@onecli:10255$/m);
     expect(fs.readFileSync(path.join(dir, 'onecli-ca.pem'), 'utf8')).toContain('ONECLI');
     expect(JSON.parse(fs.readFileSync(path.join(dir, 'backends.json'), 'utf8'))).toEqual([
       {
@@ -169,6 +175,8 @@ describe('prepareCloudModel', () => {
       },
     ]);
     expect(cloudModelNames(root)).toEqual(['command-a-03-2025']);
+    // The Models list names the provider, not the router's address.
+    expect(cloudModelProviders(root)).toEqual({ 'command-a-03-2025': 'Cohere' });
   });
 
   it('a second key for the same provider replaces the vault values, not second secrets', async () => {
@@ -463,5 +471,46 @@ describe('the router behind the gateway', () => {
     expect(toolSecrets.reconcileAllAgents).toHaveBeenCalledWith(admin);
     expect(fs.existsSync(path.join(root, 'data/litellm/onecli.env'))).toBe(false);
     expect(admin.deleteAgent).toHaveBeenCalledWith('agent-1');
+  });
+});
+
+describe('connecting a provider before a model is picked', () => {
+  it('stores the key for the router identity and writes the gateway files, with no backend', async () => {
+    const { admin, assigned } = fakeAdmin();
+    const p = await connectProvider({ provider: 'cohere', api_key: KEY }, root, { admin, containerConfig });
+    expect(p.id).toBe('cohere');
+    expect(assigned.length).toBeGreaterThan(0);
+    expect(fs.existsSync(path.join(root, 'data/litellm/onecli.env'))).toBe(true);
+    expect(cloudModelNames(root)).toEqual([]);
+    for (const f of allFiles(root)) expect(fs.readFileSync(f, 'utf8')).not.toContain(KEY);
+  });
+
+  it('needs a key unless one is stored', async () => {
+    const { admin } = fakeAdmin();
+    await expect(
+      connectProvider({ provider: 'cohere', api_key: '' }, root, { admin, containerConfig }),
+    ).rejects.toThrow(/Invalid key/);
+    await expect(connectProvider({ provider: 'nope', api_key: KEY }, root, { admin, containerConfig })).rejects.toThrow(
+      CloudModelError,
+    );
+  });
+
+  it("disconnecting removes the provider's secrets, and is refused while one of its models is registered", async () => {
+    const { admin } = fakeAdmin([
+      { id: 's1', name: 'LiteLLM inst cohere' },
+      { id: 's2', name: 'LiteLLM inst cohere 2' },
+      { id: 'other', name: 'LiteLLM inst mistral' },
+    ]);
+    upsertBackend(root, { model_name: 'command-r', model: 'openai/command-r', gateway: true, provider: 'cohere' });
+    await expect(disconnectProvider('cohere', root, admin)).rejects.toThrow(/In use/);
+    expect(admin.deleteSecret).not.toHaveBeenCalled();
+    fs.writeFileSync(path.join(root, 'data/litellm/backends.json'), '[]\n');
+    await disconnectProvider('cohere', root, admin);
+    expect(
+      vi
+        .mocked(admin.deleteSecret)
+        .mock.calls.map((c) => c[0])
+        .sort(),
+    ).toEqual(['s1', 's2']);
   });
 });

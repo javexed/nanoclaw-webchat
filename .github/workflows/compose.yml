@@ -20,8 +20,11 @@ on:
   push:
     branches: [main]
 
+# A newer push to a PR cancels that PR's stale run. A push to main never
+# cancels another: each gets its own group (by commit), so every merge keeps
+# a real verdict instead of a cancellation that some CI hosts report as a failure.
 concurrency:
-  group: compose-${{ github.ref }}
+  group: compose-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -105,6 +108,447 @@ jobs:
           key: bun-${{ hashFiles('versions.json') }}
           restore-keys: bun-
 
+      # The pinned upstream base, as a bare mirror kept in the runner cache: the
+      # clone from the upstream host was the slowest part of Compose. install.sh
+      # takes the base repo from NANOCLAW_WEBCHAT_BASE_REPO, so a local path is a
+      # drop-in. The pin is checked out exactly as before; a mirror that lacks
+      # it is fetched (or re-cloned), never trusted.
+      - name: Cache — upstream base mirror
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/nanoclaw-base.git
+          key: base-${{ hashFiles('versions.json') }}
+          restore-keys: base-
+
+      - name: Upstream base mirror (has the pinned ref)
+        run: |
+          echo "Upstream base mirror (has the pinned ref)" > "$RUNNER_TEMP/ci-step"
+          REPO=$(python3 -c "import json;print(json.load(open('versions.json'))['nanoclaw']['upstreamRepo'])")
+          REF=$(python3 -c "import json;print(json.load(open('versions.json'))['nanoclaw']['upstreamRef'])")
+          M="$HOME/.cache/nanoclaw-base.git"
+          if [ -d "$M" ] && git -C "$M" cat-file -e "$REF^{commit}" 2>/dev/null; then
+            echo "mirror has ${REF:0:12}"
+          elif [ -d "$M" ] && git -C "$M" fetch -q "$REPO" "+refs/heads/*:refs/heads/*" 2>/dev/null \
+            && git -C "$M" cat-file -e "$REF^{commit}" 2>/dev/null; then
+            echo "mirror updated to include ${REF:0:12}"
+          else
+            rm -rf "$M"; git clone -q --bare "$REPO" "$M"
+            echo "mirror cloned"
+          fi
+          echo "NANOCLAW_WEBCHAT_BASE_REPO=$M" >> "$GITHUB_ENV"
+
+      - name: Compose (clone base + seam, overlay, patch, register, build)
+        env:
+          # Where the seam is fetched from: the NANOCLAW_SEAM_REPO repository
+          # variable if set (a fork's own seam repo), else versions.json's
+          # seamRepo. No location is hardcoded here.
+          #
+          # Releases always compose from versions.json's seamRepo: release.sh
+          # refuses a pin that is not reachable from its pub/module-hooks.
+          NANOCLAW_WEBCHAT_SEAM_REPO: ${{ vars.NANOCLAW_SEAM_REPO }}
+          SKIP_CONTAINER_BUILD: '1'
+          # The runner image ships Node 24; .nvmrc pins 22. That combination is
+          # proven here — it installs, passes install.sh's own better-sqlite3
+          # native-binding verification, and runs both suites green. There is no
+          # actions/setup-node to change it (broken on some runners) and no
+          # mise in the image, so opt out of the .nvmrc major check explicitly.
+          # The binding verification remains the real gate.
+          NANOCLAW_ALLOW_NODE_MISMATCH: '1'
+        run: |
+          echo "Compose (clone base + seam, overlay, patch, register, build)" > "$RUNNER_TEMP/ci-step"
+          bash install.sh --dir "$RUNNER_TEMP/composed"
+
+      - name: Manifest guard self-test (proves it still detects faults)
+        if: steps.scope.outputs.guards == 'true'
+        # Runs against throwaway fixtures, never the repo's own tree. A guard
+        # only ever seen to pass is not evidence.
+        run: |
+          echo "Manifest guard self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-manifest.selftest.sh
+
+      - name: Manifest integrity (migrations register; dev tree matches)
+        # Reference-free. Catches the silent one: a migration file with no
+        # manifest entry ships into installs and never runs. This replaced the
+        # fork-diff coverage guard when channels-webchat was decommissioned —
+        # see docs/coverage-guards.md.
+        run: |
+          echo "Manifest integrity (migrations register; dev tree matches)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-manifest.sh
+
+      - name: Patch header self-test (proves it still detects faults)
+        if: steps.scope.outputs.guards == 'true'
+        # Throwaway fixture patches, never the repo's own. A guard only ever seen
+        # to pass is not evidence.
+        run: |
+          echo "Patch header self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-patch-headers.selftest.sh
+
+      - name: Patch headers (a/ b/, no escape codes, names match paths)
+        # A regenerated patch carries the regenerator's git diff config. c/ w/
+        # headers are churn; a missing prefix or escape codes make install.sh's
+        # git apply fail with an error that never says why.
+        run: |
+          echo "Patch headers (a/ b/, no escape codes, names match paths)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-patch-headers.sh
+
+      - name: Subset selector self-test (proves it still refuses to under-select)
+        if: steps.scope.outputs.guards == 'true'
+        # Throwaway fixtures, never the repo's own tree. The failure that matters
+        # for a test SELECTOR is quietly picking too little; this proves it maps
+        # a changed file to its sibling tests and refuses an empty selection.
+        run: |
+          echo "Subset selector self-test (proves it still refuses to under-select)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/ci-host-test-subset.selftest.sh
+
+      - name: Async self-test (proves it still detects faults)
+        if: steps.scope.outputs.guards == 'true'
+        run: |
+          echo "Async self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-async.selftest.sh "$RUNNER_TEMP/composed"
+
+      - name: Unused self-test (proves it still detects faults)
+        if: steps.scope.outputs.guards == 'true'
+        run: |
+          echo "Unused self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-unused.selftest.sh "$RUNNER_TEMP/composed"
+
+      - name: Owned code — format, async, unused (in parallel)
+        # Three independent read-only checks over the same composed tree, each
+        # scoped to the files and patch lines this repo owns:
+        #   format  the composed tree carries upstream's format:fix pre-commit
+        #           hook; a payload that is not already clean gets rewritten
+        #           during a deploy commit and stops matching the artifact.
+        #   async   a missed await on the async DB driver fails silently.
+        #   unused  nothing else runs the unused-vars rule on our files.
+        # Run together and reported apart: each log is printed under its own
+        # name, and the step fails if any of them does.
+        run: |
+          echo "Owned code — format, async, unused (in parallel)" > "$RUNNER_TEMP/ci-step"
+          C="$RUNNER_TEMP/composed"; L="$RUNNER_TEMP/owned-checks"; mkdir -p "$L"
+          bash scripts/check-format.sh "$C" > "$L/format.log" 2>&1 & F=$!
+          bash scripts/check-async.sh "$C" > "$L/async.log" 2>&1 & A=$!
+          bash scripts/check-unused.sh "$C" > "$L/unused.log" 2>&1 & U=$!
+          rc=0
+          for c in format:$F async:$A unused:$U; do
+            n=${c%%:*}; p=${c#*:}
+            if wait "$p"; then r=ok; else r=FAILED; rc=1; fi
+            echo "::group::$n — $r"; cat "$L/$n.log"; echo "::endgroup::"
+            [ "$r" = ok ] || echo "::error::$n check failed (log above)"
+          done
+          exit $rc
+
+      - name: Setup prompts self-test (proves it still detects faults)
+        if: steps.scope.outputs.guards == 'true'
+        run: |
+          echo "Setup prompts self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/check-setup-prompts.selftest.sh "$RUNNER_TEMP/composed"
+
+      - name: Setup prompts (headless installers cover upstream's questions)
+        # The installers run setup:auto without a TTY; a question they cannot
+        # answer cancels and setup exits 0 part-way. Fails on a new upstream
+        # step or prompt until it has been reviewed (ci/setup-prompts.txt).
+        run: |
+          echo "Setup prompts (headless installers cover upstream's questions)" > "$RUNNER_TEMP/ci-step"
+          node scripts/check-setup-prompts.mjs "$RUNNER_TEMP/composed"
+
+      - name: Host tests (composed tree)
+        working-directory: ${{ runner.temp }}/composed
+        # GITHUB_TOKEN is no longer cleared here. Actions runners export one
+        # into every job, and verify()'s `has()` reads process.env before the
+        # install's own env, so an ambient token invented a github channel and
+        # failed five tests in setup/verify-slack.test.ts. Clearing it was a
+        # workaround for this CI only; the real fix now rides in
+        # patches/upstreamable/setup__verify{,-slack.test}.ts.patch, so every
+        # install gets it and a developer with `gh` in their shell stops
+        # hitting it too. Both patches DELETE when upstream merges the PR they
+        # carry. Proven: with an ambient GITHUB_TOKEN the patched tree passes
+        # 18/18 where an unpatched one fails exactly those five.
+        # vitest's 5s default is tuned for a developer machine. These suites do
+        # real SQLite file IO (journal_mode=DELETE is load-bearing for
+        # cross-mount visibility), and inside a contended runner container the
+        # same tests that pass in ~2.5-4s locally cross 5s and time out — 22 of
+        # them in one observed run, every failure a timeout and not one a failed
+        # assertion. Raising the ceiling here (this workflow is fork-owned, so
+        # it needs no patch against upstream) removes the false red without
+        # weakening a single assertion.
+        run: |
+          echo "Host tests (composed tree)" > "$RUNNER_TEMP/ci-step"
+
+          # Run the suite as an unprivileged user, as the seam's own CI does.
+          # Upstream forces failures with chmod (0o555 folders it cannot delete,
+          # 0o000 files it cannot read), and root ignores permission bits, so as
+          # root those tests watch the "failure" succeed and go red. It is a class
+          # upstream keeps adding to (four more in scripts/update/ at once), so
+          # patching each test to be uid-independent does not keep up; a non-root
+          # run lets every one of them run as written. Locally the suite already
+          # runs as an ordinary user, so this also makes CI match a developer.
+          AS=()
+          if [ "$(id -u)" = 0 ]; then
+            id ci >/dev/null 2>&1 || useradd -m -u 1001 ci
+            chown -R ci:ci .
+            # pnpm/action-setup (and any other root-installed tool) lives under
+            # root's home, which is 700. Let other users TRAVERSE it, not list
+            # it, so ci runs the very same toolchain; the job container is
+            # discarded afterwards.
+            chmod o+x "$HOME"
+            : > "$RUNNER_TEMP/host-tests.log"
+            chown ci:ci "$RUNNER_TEMP/host-tests.log"
+            # -E keeps the job's env (TMPDIR, NODE_OPTIONS); PATH is passed
+            # explicitly because sudo's secure_path would drop the toolchain.
+            AS=(sudo -u ci -H -E env PATH="$PATH")
+          fi
+
+          # Node 26 deprecates `module.register()` (DEP0205). Upstream's lockfile
+          # pins tsx 4.21.0, which calls it, so on such a Node every
+          # `node --import tsx` spawn prints the warning to stderr — and three
+          # upstream CLI tests (src/cli/stdin-json{,.e2e}.test.ts) assert stderr
+          # is exactly empty or exactly one line, and fail.
+          #
+          # NOT what is red today: these runners ship Node 24, where DEP0205 does
+          # not exist. This is forward insurance only, for the day the image moves
+          # — the job pins no Node, so that day arrives without warning.
+          #
+          # PROBED, not assumed: --disable-warning does not exist before Node
+          # 21.3, where passing it would make every node invocation fail and turn
+          # a warning into a much worse red. Set it only if this Node takes it.
+          #
+          # DELETE once the composed tree resolves tsx >= 4.23.13, which no longer
+          # calls module.register(). Verified both ways: 4.21.0 warns, 4.23.13 is
+          # silent.
+          if node --disable-warning=DEP0205 -e '' 2>/dev/null; then
+            export NODE_OPTIONS="--disable-warning=DEP0205${NODE_OPTIONS:+ $NODE_OPTIONS}"
+          fi
+
+          # Tee to a file the failure reporter can quote. Some CI hosts serve no
+          # log API and no artifacts, so an un-captured failure is
+          # a failure nobody can read: three separate investigations have ended
+          # in inference because the only signal was a step name.
+          set -o pipefail
+          # full: every test in the composed tree. subset: this repo's own tests
+          # plus upstream tests for the files the seam, a patch, or an app/
+          # overwrite changes — see scripts/ci-host-test-subset.sh. The selector
+          # refuses to pick nothing, and its self-test ran just above.
+          if [ "${{ steps.scope.outputs.host }}" = "subset" ]; then
+            bash "$GITHUB_WORKSPACE/scripts/ci-host-test-subset.sh" "$GITHUB_WORKSPACE" . > "$RUNNER_TEMP/host-tests.files"
+            echo "::notice::Host tests: SUBSET — $(wc -l < "$RUNNER_TEMP/host-tests.files") files (this repo's tests + upstream tests for the files it changes). The full suite runs when versions.json, patches/, install.sh, scripts/ or the workflow change, and on every push to main."
+            "${AS[@]}" bash "$GITHUB_WORKSPACE/scripts/ci-run-host-tests.sh" "$RUNNER_TEMP/host-tests.log" "$RUNNER_TEMP/host-tests.files"
+          else
+            "${AS[@]}" bash "$GITHUB_WORKSPACE/scripts/ci-run-host-tests.sh" "$RUNNER_TEMP/host-tests.log"
+          fi
+
+      # Does this change reach the container tree at all? A CSS-only PR ran the
+      # full bun suite for nothing — real minutes on a serial runner.
+      #
+      # FAILS OPEN on purpose: push events, a missing base, an unresolvable
+      # merge-base, or any error all answer "yes, run it". The only way to skip
+      # is to positively prove the diff misses every path that can affect the
+      # container. Skipping on uncertainty would trade minutes for the chance of
+      # landing an untested runner change.
+      #
+      # patches/ and versions.json count: the container tree is upstream code at
+      # a pinned ref plus patches, so either can change what gets tested without
+      # container/ itself appearing in the diff.
+      - name: Does this touch the container tree?
+        id: touched
+        run: |
+          echo "Does this touch the container tree?" > "$RUNNER_TEMP/ci-step"
+          set -uo pipefail
+          decide() { echo "container=$1" >> "$GITHUB_OUTPUT"; echo "container tests: $1"; exit 0; }
+          [ "${{ github.event_name }}" = "pull_request" ] || decide true
+          BASE_REF="${{ github.base_ref }}"
+          [ -n "$BASE_REF" ] || decide true
+          git fetch -q --depth 50 origin "$BASE_REF" 2>/dev/null || decide true
+          BASE_SHA=$(git rev-parse FETCH_HEAD)
+          # Same defect the scope step had: the checkout is --depth 1, so HEAD
+          # has no ancestry and merge-base always failed → this gate had never
+          # actually skipped a run. Deepen HEAD too.
+          git fetch -q --depth 50 origin "$(git rev-parse HEAD)" 2>/dev/null || decide true
+          MB=$(git merge-base "$BASE_SHA" HEAD 2>/dev/null) || decide true
+          [ -n "$MB" ] || decide true
+          CHANGED=$(git diff --name-only "$MB"..HEAD 2>/dev/null) || decide true
+          if printf '%s\n' "$CHANGED" | grep -qE '^(container/|app/container/|app/provider-overlays/|patches/|versions\.json)'; then
+            decide true
+          fi
+          decide false
+
+      - name: Container typecheck + tests (composed tree)
+        if: steps.touched.outputs.container == 'true'
+        working-directory: ${{ runner.temp }}/composed/container/agent-runner
+        run: |
+          echo "Container typecheck + tests (composed tree)" > "$RUNNER_TEMP/ci-step"
+          # Plain install (not --frozen-lockfile): the composed tree carries
+          # upstream's bun.lock while the app tree adds runner sources; the
+          # proven local compose flow installs the same way.
+          bun install
+          bun run typecheck
+          bun test
+
+      - name: Say what this run skipped
+        # A green run that silently did less is the kind of silence that gets
+        # mistaken for coverage later. Name it.
+        if: steps.scope.outputs.guards != 'true' || steps.scope.outputs.runner != 'true'
+        run: |
+          echo "Say what this run skipped" > "$RUNNER_TEMP/ci-step"
+          if [ "${{ steps.scope.outputs.guards }}" != "true" ]; then
+            echo "::notice::Guard SELF-TESTS skipped — this change touches no guard, probe, fixture, baseline or workflow. Every guard itself ran; the proofs that they still catch their faults run when a guard changes and on every push to main."
+          fi
+          if [ "${{ steps.scope.outputs.runner }}" != "true" ]; then
+            echo "::notice::VS Code runner skill check skipped — this change touches neither the skill, the webchat server it plugs into, nor how the tree is composed."
+          fi
+
+      - name: Pack composed tarball
+        run: |
+          echo "Pack composed tarball" > "$RUNNER_TEMP/ci-step"
+          cd "$RUNNER_TEMP"
+          # Ship sources, not installs: node_modules re-materialize from the
+          # lockfile on the target; .git stays out of release artifacts.
+          tar --exclude='./composed/node_modules' \
+              --exclude='./composed/container/agent-runner/node_modules' \
+              --exclude='./composed/.git' \
+              -czf nanoclaw-webchat-composed.tar.gz ./composed
+          ls -lh nanoclaw-webchat-composed.tar.gz
+
+      # Two Actions implementations need DIFFERENT major versions here, and no
+      # single version satisfies both:
+      #
+      #   GitHub          hard-blocks v3 (deprecated April 2024). A run using it
+      #                   fails at admission, before any step executes.
+      #   Other runners   may implement only the v3 artifact protocol. v4 needs
+      #                   ACTIONS_RESULTS_URL; without it the action dies with
+      #                   `TypeError: Invalid URL … input: '/api/v1'`.
+      #
+      # `uses:` cannot take an expression, so the choice has to be `if:` across
+      # two steps. Keep their inputs in step with each other.
+      # ONE upload step, v4. The previous split (v4 for GitHub, v3 for the
+      # the other runner) auto-failed every GitHub run: GitHub resolves EVERY
+      # action referenced in the workflow during "Set up job", BEFORE any `if:`
+      # is evaluated, so the skipped v3 step still tripped the deprecation block
+      # ("This request has been automatically failed because it uses a
+      # deprecated version of actions/upload-artifact: v3"). A condition cannot
+      # hide a deprecated action from that check — the reference has to go.
+      - name: Upload composed tarball
+        # GitHub only. `actions/artifact` v2+ — which upload-artifact@v4 depends
+        # on — refuses to run against a GHES-style API, and a self-hosted
+        # runner commonly presents as exactly that. It does not degrade; it fails the job:
+        #   GHESNotSupportedError: @actions/artifact v2.0.0+, upload-artifact@v4+
+        #   and download-artifact@v4+ are not currently supported on GHES.
+        #
+        # v3 is not the escape hatch it looks like. GitHub resolves EVERY action
+        # referenced by the workflow during "Set up job", BEFORE any `if:` is
+        # evaluated, and hard-blocks deprecated ones — so merely NAMING v3
+        # auto-fails every GitHub run, even in a step that would be skipped. The
+        # earlier two-step v4/v3 split died on precisely that. The reference
+        # itself is the problem, so there can only be one upload step, at v4,
+        # and it has to be the runner that opts out rather than the version.
+        if: github.server_url == 'https://github.com'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nanoclaw-webchat-composed
+          path: ${{ runner.temp }}/nanoclaw-webchat-composed.tar.gz
+          retention-days: 14
+
+      - name: Artifact upload skipped (unsupported on this runner)
+        # Say it out loud. Everything above — compose, both suites, the guards —
+        # ran in full; only retention is skipped. A job that quietly produces no
+        # artifact while reporting green is the kind of silence that gets
+        # mistaken for coverage later.
+        if: github.server_url != 'https://github.com'
+        run: |
+          echo "Artifact upload skipped (unsupported on this runner)" > "$RUNNER_TEMP/ci-step"
+          echo "::notice::Composed tarball was built, packed and verified, but NOT uploaded."
+          echo "::notice::upload-artifact@v4 needs actions/artifact v2+, which refuses GHES-style APIs."
+          echo "::notice::Every gate above ran; artifact retention is a GitHub-only convenience."
+
+
+      # ── Make a failure readable without opening the web UI ──────────────────
+      #
+      # WHY. Artifacts do not work on this runner (see the upload step above),
+      # the per-job and per-log API routes 404 on this instance, and the web log
+      # route will not take token auth. So for anyone working through the API a
+      # red compose has been a status and a duration and nothing else.
+      #
+      # That is not a theoretical gap. Failures here cluster at two durations,
+      # and one of those clusters was read as infrastructure flake for hours
+      # while it was actually a new guard crashing with ENOENT — visible in the
+      # step log the whole time, which nobody could fetch. Naming the step turns
+      # "compose is red again" into "go read this one step".
+      #
+      # Each run step writes its own name to $RUNNER_TEMP/ci-step as its first
+      # line, so this reports the last step to START — which is the one that
+      # died. `uses:` steps (the setup and cache actions) are not instrumented,
+      # so a failure inside one of those reports the previous run step; the
+      # wording below says "at or after" rather than pretending otherwise.
+      - name: VS Code runner skill (applies, builds, its tests pass)
+        if: steps.scope.outputs.runner == 'true'
+        # The runner ships as a skill (app/.claude/skills/add-vscode-runner), so
+        # the host tests above ran without it. Install it the way an operator
+        # would and run its own validation. After the tarball is packed: the
+        # shipped tree stays without it.
+        working-directory: ${{ runner.temp }}/composed
+        run: |
+          echo "VS Code runner skill (applies, builds, its tests pass)" > "$RUNNER_TEMP/ci-step"
+          pnpm exec tsx - <<'TS'
+          import { applySkill, fullyApplied } from './scripts/skill-apply.js';
+          import { execSync } from 'node:child_process';
+          const res = await applySkill('.claude/skills/add-vscode-runner', process.cwd(), {
+            exec: (c) => execSync(c, { stdio: 'inherit' }),
+            emit: () => {},
+          });
+          if (!fullyApplied(res)) {
+            console.error('add-vscode-runner did not fully apply', res);
+            process.exit(1);
+          }
+          TS
+          # Its code is ours: hold it to the same no-dropped-Promise gate, now
+          # that it sits at its installed paths.
+          bash "$GITHUB_WORKSPACE/scripts/check-async.sh" "$RUNNER_TEMP/composed"
+          bash "$GITHUB_WORKSPACE/scripts/check-unused.sh" "$RUNNER_TEMP/composed"
+
+      - name: Name the failing step in a PR comment
+        if: failure() && github.event_name == 'pull_request'
+        # Never let the reporter change the build's verdict: the job has already
+        # failed and this only adds information.
+        continue-on-error: true
+        env:
+          FORGE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/ci-report-failure.sh compose
+
+  # The UI phase as its own job: it builds and probes ui/ and the committed
+  # bundle, and needs nothing from the composed tree, so it runs beside compose
+  # instead of in front of it. Skipped steps cost nothing when a change does not
+  # touch the UI (the scope step decides, the same way as in compose).
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout (anonymous)
+        run: |
+          echo "checkout (anonymous)" > "$RUNNER_TEMP/ci-step"
+          git init -q .
+          git remote add origin ${{ github.server_url }}/${{ github.repository }}.git
+          git fetch -q --depth 1 origin ${{ github.sha }}
+          git checkout -q FETCH_HEAD
+          { echo "node $(node -v)"; echo "image $(cat /etc/os-release 2>/dev/null | sed -n 's/^PRETTY_NAME=//p')"; } \
+            > "$RUNNER_TEMP/ci-env" 2>/dev/null || true
+
+      - name: Scope (what this change touches)
+        id: scope
+        run: |
+          echo "Scope (what this change touches)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/ci-scope.sh "${{ github.event_name }}" "${{ github.base_ref }}" origin | tee -a "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v4
+        if: steps.scope.outputs.ui == 'true'
+        with:
+          version: 10.34.5
+
+      - name: Cache — pnpm store
+        if: steps.scope.outputs.ui == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-${{ hashFiles('ui/pnpm-lock.yaml', 'versions.json') }}
+          restore-keys: pnpm-
+
       # The single biggest item: the browser binary. Keyed on the playwright
       # version in the lockfile so a bump repopulates rather than silently
       # running an old browser against new bindings.
@@ -134,11 +578,35 @@ jobs:
           echo "UI — typecheck" > "$RUNNER_TEMP/ci-step"
           pnpm --dir ui run typecheck
 
+      - name: UI — unit tests (pure logic — decisions, derivations, formatting)
+        if: steps.scope.outputs.ui == 'true'
+        # Node, not a browser: what needs the DOM is the browser probes' job
+        # below. Seconds, so a logic slip fails here before any Chromium starts.
+        run: |
+          echo "UI — unit tests (pure logic — decisions, derivations, formatting)" > "$RUNNER_TEMP/ci-step"
+          pnpm --dir ui run test
+
       - name: UI — shadowed-ref guard self-test (proves it still detects faults)
         if: steps.scope.outputs.ui == 'true'
         run: |
           echo "UI — shadowed-ref guard self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
           node ui/check-shadowed-refs.mjs --selftest
+
+      - name: UI — busy-label guard self-test (proves it still detects faults)
+        if: steps.scope.outputs.ui == 'true'
+        run: |
+          echo "UI — busy-label guard self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
+          node ui/check-busy-labels.mjs --selftest
+
+      - name: UI — every wait is on its control
+        if: steps.scope.outputs.ui == 'true'
+        # DESIGN.md "Long-running operations": a wait is the pressed control's
+        # spinner (buttonBusy / BusyLabel). A bare "Saving…" label, a template
+        # ternary to one, or an "Uploading…" toast fails here; a 2026-10 sweep
+        # removed 45 of them.
+        run: |
+          echo "UI — every wait is on its control" > "$RUNNER_TEMP/ci-step"
+          node ui/check-busy-labels.mjs
 
       - name: UI — no parameter shadows an imported ref
         if: steps.scope.outputs.ui == 'true'
@@ -348,398 +816,18 @@ jobs:
             exit 1
           fi
 
-      - name: Compose (clone base + seam, overlay, patch, register, build)
-        env:
-          # Where the seam is fetched from: the NANOCLAW_SEAM_REPO repository
-          # variable if set (a fork's own seam repo), else versions.json's
-          # seamRepo. No location is hardcoded here.
-          #
-          # Releases always compose from versions.json's seamRepo: release.sh
-          # refuses a pin that is not reachable from its pub/module-hooks.
-          NANOCLAW_WEBCHAT_SEAM_REPO: ${{ vars.NANOCLAW_SEAM_REPO }}
-          SKIP_CONTAINER_BUILD: '1'
-          # The runner image ships Node 24; .nvmrc pins 22. That combination is
-          # proven here — it installs, passes install.sh's own better-sqlite3
-          # native-binding verification, and runs both suites green. There is no
-          # actions/setup-node to change it (broken on some runners) and no
-          # mise in the image, so opt out of the .nvmrc major check explicitly.
-          # The binding verification remains the real gate.
-          NANOCLAW_ALLOW_NODE_MISMATCH: '1'
-        run: |
-          echo "Compose (clone base + seam, overlay, patch, register, build)" > "$RUNNER_TEMP/ci-step"
-          bash install.sh --dir "$RUNNER_TEMP/composed"
-
-      - name: Manifest guard self-test (proves it still detects faults)
-        # Runs against throwaway fixtures, never the repo's own tree. A guard
-        # only ever seen to pass is not evidence.
-        run: |
-          echo "Manifest guard self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
-          bash scripts/check-manifest.selftest.sh
-
-      - name: Manifest integrity (migrations register; dev tree matches)
-        # Reference-free. Catches the silent one: a migration file with no
-        # manifest entry ships into installs and never runs. This replaced the
-        # fork-diff coverage guard when channels-webchat was decommissioned —
-        # see docs/coverage-guards.md.
-        run: |
-          echo "Manifest integrity (migrations register; dev tree matches)" > "$RUNNER_TEMP/ci-step"
-          bash scripts/check-manifest.sh
-
-      - name: Patch header self-test (proves it still detects faults)
-        # Throwaway fixture patches, never the repo's own. A guard only ever seen
-        # to pass is not evidence.
-        run: |
-          echo "Patch header self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
-          bash scripts/check-patch-headers.selftest.sh
-
-      - name: Patch headers (a/ b/, no escape codes, names match paths)
-        # A regenerated patch carries the regenerator's git diff config. c/ w/
-        # headers are churn; a missing prefix or escape codes make install.sh's
-        # git apply fail with an error that never says why.
-        run: |
-          echo "Patch headers (a/ b/, no escape codes, names match paths)" > "$RUNNER_TEMP/ci-step"
-          bash scripts/check-patch-headers.sh
-
-      - name: Subset selector self-test (proves it still refuses to under-select)
-        # Throwaway fixtures, never the repo's own tree. The failure that matters
-        # for a test SELECTOR is quietly picking too little; this proves it maps
-        # a changed file to its sibling tests and refuses an empty selection.
-        run: |
-          echo "Subset selector self-test (proves it still refuses to under-select)" > "$RUNNER_TEMP/ci-step"
-          bash scripts/ci-host-test-subset.selftest.sh
-
-      - name: Format (owned files are prettier-clean)
-        # The composed tree carries upstream's format:fix pre-commit hook. If our
-        # payload is not already clean, that hook rewrites files during a deploy
-        # commit and the running install stops matching the released artifact.
-        # Scoped to paths this repo owns, so upstream drift can never redden a
-        # gate we cannot fix.
-        run: |
-          echo "Format (owned files are prettier-clean)" > "$RUNNER_TEMP/ci-step"
-          bash scripts/check-format.sh "$RUNNER_TEMP/composed"
-
-      - name: Async self-test (proves it still detects faults)
-        run: |
-          echo "Async self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
-          bash scripts/check-async.selftest.sh "$RUNNER_TEMP/composed"
-
-      - name: Async (no dropped Promises in owned code)
-        # A missed await on the async DB driver fails silently: writes race
-        # their reads, rejections escape their try, a Promise serializes as {}.
-        # Scoped like Format: our files, and only the lines our patches add.
-        run: |
-          echo "Async (no dropped Promises in owned code)" > "$RUNNER_TEMP/ci-step"
-          bash scripts/check-async.sh "$RUNNER_TEMP/composed"
-
-      - name: Unused self-test (proves it still detects faults)
-        run: |
-          echo "Unused self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
-          bash scripts/check-unused.selftest.sh "$RUNNER_TEMP/composed"
-
-      - name: Unused (no dead imports or locals in owned code)
-        # Nothing ran the unused-vars rule on our files; 300-odd unused imports
-        # piled up in one module. Same scope as Async: our files, our patch lines.
-        run: |
-          echo "Unused (no dead imports or locals in owned code)" > "$RUNNER_TEMP/ci-step"
-          bash scripts/check-unused.sh "$RUNNER_TEMP/composed"
-
-      - name: Setup prompts self-test (proves it still detects faults)
-        run: |
-          echo "Setup prompts self-test (proves it still detects faults)" > "$RUNNER_TEMP/ci-step"
-          bash scripts/check-setup-prompts.selftest.sh "$RUNNER_TEMP/composed"
-
-      - name: Setup prompts (headless installers cover upstream's questions)
-        # The installers run setup:auto without a TTY; a question they cannot
-        # answer cancels and setup exits 0 part-way. Fails on a new upstream
-        # step or prompt until it has been reviewed (ci/setup-prompts.txt).
-        run: |
-          echo "Setup prompts (headless installers cover upstream's questions)" > "$RUNNER_TEMP/ci-step"
-          node scripts/check-setup-prompts.mjs "$RUNNER_TEMP/composed"
-
-      - name: Host tests (composed tree)
-        working-directory: ${{ runner.temp }}/composed
-        # GITHUB_TOKEN is no longer cleared here. Actions runners export one
-        # into every job, and verify()'s `has()` reads process.env before the
-        # install's own env, so an ambient token invented a github channel and
-        # failed five tests in setup/verify-slack.test.ts. Clearing it was a
-        # workaround for this CI only; the real fix now rides in
-        # patches/upstreamable/setup__verify{,-slack.test}.ts.patch, so every
-        # install gets it and a developer with `gh` in their shell stops
-        # hitting it too. Both patches DELETE when upstream merges the PR they
-        # carry. Proven: with an ambient GITHUB_TOKEN the patched tree passes
-        # 18/18 where an unpatched one fails exactly those five.
-        # vitest's 5s default is tuned for a developer machine. These suites do
-        # real SQLite file IO (journal_mode=DELETE is load-bearing for
-        # cross-mount visibility), and inside a contended runner container the
-        # same tests that pass in ~2.5-4s locally cross 5s and time out — 22 of
-        # them in one observed run, every failure a timeout and not one a failed
-        # assertion. Raising the ceiling here (this workflow is fork-owned, so
-        # it needs no patch against upstream) removes the false red without
-        # weakening a single assertion.
-        run: |
-          echo "Host tests (composed tree)" > "$RUNNER_TEMP/ci-step"
-
-          # Node 26 deprecates `module.register()` (DEP0205). Upstream's lockfile
-          # pins tsx 4.21.0, which calls it, so on such a Node every
-          # `node --import tsx` spawn prints the warning to stderr — and three
-          # upstream CLI tests (src/cli/stdin-json{,.e2e}.test.ts) assert stderr
-          # is exactly empty or exactly one line, and fail.
-          #
-          # NOT what is red today: these runners ship Node 24, where DEP0205 does
-          # not exist. This is forward insurance only, for the day the image moves
-          # — the job pins no Node, so that day arrives without warning.
-          #
-          # PROBED, not assumed: --disable-warning does not exist before Node
-          # 21.3, where passing it would make every node invocation fail and turn
-          # a warning into a much worse red. Set it only if this Node takes it.
-          #
-          # DELETE once the composed tree resolves tsx >= 4.23.13, which no longer
-          # calls module.register(). Verified both ways: 4.21.0 warns, 4.23.13 is
-          # silent.
-          if node --disable-warning=DEP0205 -e '' 2>/dev/null; then
-            export NODE_OPTIONS="--disable-warning=DEP0205${NODE_OPTIONS:+ $NODE_OPTIONS}"
-          fi
-
-          # Tee to a file the failure reporter can quote. Some CI hosts serve no
-          # log API and no artifacts, so an un-captured failure is
-          # a failure nobody can read: three separate investigations have ended
-          # in inference because the only signal was a step name.
-          set -o pipefail
-          # full: every test in the composed tree. subset: this repo's own tests
-          # plus upstream tests for the files the seam, a patch, or an app/
-          # overwrite changes — see scripts/ci-host-test-subset.sh. The selector
-          # refuses to pick nothing, and its self-test ran just above.
-          if [ "${{ steps.scope.outputs.host }}" = "subset" ]; then
-            bash "$GITHUB_WORKSPACE/scripts/ci-host-test-subset.sh" "$GITHUB_WORKSPACE" . > "$RUNNER_TEMP/host-tests.files"
-            echo "::notice::Host tests: SUBSET — $(wc -l < "$RUNNER_TEMP/host-tests.files") files (this repo's tests + upstream tests for the files it changes). The full suite runs when versions.json, patches/, install.sh, scripts/ or the workflow change, and on every push to main."
-            bash "$GITHUB_WORKSPACE/scripts/ci-run-host-tests.sh" "$RUNNER_TEMP/host-tests.log" "$RUNNER_TEMP/host-tests.files"
-          else
-            bash "$GITHUB_WORKSPACE/scripts/ci-run-host-tests.sh" "$RUNNER_TEMP/host-tests.log"
-          fi
-
-      # Does this change reach the container tree at all? A CSS-only PR ran the
-      # full bun suite for nothing — real minutes on a serial runner.
-      #
-      # FAILS OPEN on purpose: push events, a missing base, an unresolvable
-      # merge-base, or any error all answer "yes, run it". The only way to skip
-      # is to positively prove the diff misses every path that can affect the
-      # container. Skipping on uncertainty would trade minutes for the chance of
-      # landing an untested runner change.
-      #
-      # patches/ and versions.json count: the container tree is upstream code at
-      # a pinned ref plus patches, so either can change what gets tested without
-      # container/ itself appearing in the diff.
-      - name: Does this touch the container tree?
-        id: touched
-        run: |
-          echo "Does this touch the container tree?" > "$RUNNER_TEMP/ci-step"
-          set -uo pipefail
-          decide() { echo "container=$1" >> "$GITHUB_OUTPUT"; echo "container tests: $1"; exit 0; }
-          [ "${{ github.event_name }}" = "pull_request" ] || decide true
-          BASE_REF="${{ github.base_ref }}"
-          [ -n "$BASE_REF" ] || decide true
-          git fetch -q --depth 50 origin "$BASE_REF" 2>/dev/null || decide true
-          BASE_SHA=$(git rev-parse FETCH_HEAD)
-          # Same defect the scope step had: the checkout is --depth 1, so HEAD
-          # has no ancestry and merge-base always failed → this gate had never
-          # actually skipped a run. Deepen HEAD too.
-          git fetch -q --depth 50 origin "$(git rev-parse HEAD)" 2>/dev/null || decide true
-          MB=$(git merge-base "$BASE_SHA" HEAD 2>/dev/null) || decide true
-          [ -n "$MB" ] || decide true
-          CHANGED=$(git diff --name-only "$MB"..HEAD 2>/dev/null) || decide true
-          if printf '%s\n' "$CHANGED" | grep -qE '^(container/|app/container/|app/provider-overlays/|patches/|versions\.json)'; then
-            decide true
-          fi
-          decide false
-
-      - name: Container typecheck + tests (composed tree)
-        if: steps.touched.outputs.container == 'true'
-        working-directory: ${{ runner.temp }}/composed/container/agent-runner
-        run: |
-          echo "Container typecheck + tests (composed tree)" > "$RUNNER_TEMP/ci-step"
-          # Plain install (not --frozen-lockfile): the composed tree carries
-          # upstream's bun.lock while the app tree adds runner sources; the
-          # proven local compose flow installs the same way.
-          bun install
-          bun run typecheck
-          bun test
-
       - name: Say what this run skipped
-        # A green run that silently did less is the kind of silence that gets
-        # mistaken for coverage later. Name it.
+        # The UI self-tests are not gated on guard changes like compose's are:
+        # several plant their fault inside the built bundle, so a UI change can
+        # break them. Running beside compose, they add no wall time.
         if: steps.scope.outputs.ui != 'true'
         run: |
           echo "Say what this run skipped" > "$RUNNER_TEMP/ci-step"
-          echo "::notice::UI phase SKIPPED — this change touches neither ui/ nor app/public/webchat/. The committed bundle was composed as-is; the bundle-drift guard, boot-order, role-matrix, first-open and wiring-remount probes did not run."
-
-      - name: Pack composed tarball
-        run: |
-          echo "Pack composed tarball" > "$RUNNER_TEMP/ci-step"
-          cd "$RUNNER_TEMP"
-          # Ship sources, not installs: node_modules re-materialize from the
-          # lockfile on the target; .git stays out of release artifacts.
-          tar --exclude='./composed/node_modules' \
-              --exclude='./composed/container/agent-runner/node_modules' \
-              --exclude='./composed/.git' \
-              -czf nanoclaw-webchat-composed.tar.gz ./composed
-          ls -lh nanoclaw-webchat-composed.tar.gz
-
-      # Two Actions implementations need DIFFERENT major versions here, and no
-      # single version satisfies both:
-      #
-      #   GitHub          hard-blocks v3 (deprecated April 2024). A run using it
-      #                   fails at admission, before any step executes.
-      #   Other runners   may implement only the v3 artifact protocol. v4 needs
-      #                   ACTIONS_RESULTS_URL; without it the action dies with
-      #                   `TypeError: Invalid URL … input: '/api/v1'`.
-      #
-      # `uses:` cannot take an expression, so the choice has to be `if:` across
-      # two steps. Keep their inputs in step with each other.
-      # ONE upload step, v4. The previous split (v4 for GitHub, v3 for the
-      # the other runner) auto-failed every GitHub run: GitHub resolves EVERY
-      # action referenced in the workflow during "Set up job", BEFORE any `if:`
-      # is evaluated, so the skipped v3 step still tripped the deprecation block
-      # ("This request has been automatically failed because it uses a
-      # deprecated version of actions/upload-artifact: v3"). A condition cannot
-      # hide a deprecated action from that check — the reference has to go.
-      - name: Upload composed tarball
-        # GitHub only. `actions/artifact` v2+ — which upload-artifact@v4 depends
-        # on — refuses to run against a GHES-style API, and a self-hosted
-        # runner commonly presents as exactly that. It does not degrade; it fails the job:
-        #   GHESNotSupportedError: @actions/artifact v2.0.0+, upload-artifact@v4+
-        #   and download-artifact@v4+ are not currently supported on GHES.
-        #
-        # v3 is not the escape hatch it looks like. GitHub resolves EVERY action
-        # referenced by the workflow during "Set up job", BEFORE any `if:` is
-        # evaluated, and hard-blocks deprecated ones — so merely NAMING v3
-        # auto-fails every GitHub run, even in a step that would be skipped. The
-        # earlier two-step v4/v3 split died on precisely that. The reference
-        # itself is the problem, so there can only be one upload step, at v4,
-        # and it has to be the runner that opts out rather than the version.
-        if: github.server_url == 'https://github.com'
-        uses: actions/upload-artifact@v4
-        with:
-          name: nanoclaw-webchat-composed
-          path: ${{ runner.temp }}/nanoclaw-webchat-composed.tar.gz
-          retention-days: 14
-
-      - name: Artifact upload skipped (unsupported on this runner)
-        # Say it out loud. Everything above — compose, both suites, the guards —
-        # ran in full; only retention is skipped. A job that quietly produces no
-        # artifact while reporting green is the kind of silence that gets
-        # mistaken for coverage later.
-        if: github.server_url != 'https://github.com'
-        run: |
-          echo "Artifact upload skipped (unsupported on this runner)" > "$RUNNER_TEMP/ci-step"
-          echo "::notice::Composed tarball was built, packed and verified, but NOT uploaded."
-          echo "::notice::upload-artifact@v4 needs actions/artifact v2+, which refuses GHES-style APIs."
-          echo "::notice::Every gate above ran; artifact retention is a GitHub-only convenience."
-
-
-      # ── Make a failure readable without opening the web UI ──────────────────
-      #
-      # WHY. Artifacts do not work on this runner (see the upload step above),
-      # the per-job and per-log API routes 404 on this instance, and the web log
-      # route will not take token auth. So for anyone working through the API a
-      # red compose has been a status and a duration and nothing else.
-      #
-      # That is not a theoretical gap. Failures here cluster at two durations,
-      # and one of those clusters was read as infrastructure flake for hours
-      # while it was actually a new guard crashing with ENOENT — visible in the
-      # step log the whole time, which nobody could fetch. Naming the step turns
-      # "compose is red again" into "go read this one step".
-      #
-      # Each run step writes its own name to $RUNNER_TEMP/ci-step as its first
-      # line, so this reports the last step to START — which is the one that
-      # died. `uses:` steps (the setup and cache actions) are not instrumented,
-      # so a failure inside one of those reports the previous run step; the
-      # wording below says "at or after" rather than pretending otherwise.
-      - name: VS Code runner skill (applies, builds, its tests pass)
-        # The runner ships as a skill (app/.claude/skills/add-vscode-runner), so
-        # the host tests above ran without it. Install it the way an operator
-        # would and run its own validation. After the tarball is packed: the
-        # shipped tree stays without it.
-        working-directory: ${{ runner.temp }}/composed
-        run: |
-          echo "VS Code runner skill (applies, builds, its tests pass)" > "$RUNNER_TEMP/ci-step"
-          pnpm exec tsx - <<'TS'
-          import { applySkill, fullyApplied } from './scripts/skill-apply.js';
-          import { execSync } from 'node:child_process';
-          const res = await applySkill('.claude/skills/add-vscode-runner', process.cwd(), {
-            exec: (c) => execSync(c, { stdio: 'inherit' }),
-            emit: () => {},
-          });
-          if (!fullyApplied(res)) {
-            console.error('add-vscode-runner did not fully apply', res);
-            process.exit(1);
-          }
-          TS
-          # Its code is ours: hold it to the same no-dropped-Promise gate, now
-          # that it sits at its installed paths.
-          bash "$GITHUB_WORKSPACE/scripts/check-async.sh" "$RUNNER_TEMP/composed"
-          bash "$GITHUB_WORKSPACE/scripts/check-unused.sh" "$RUNNER_TEMP/composed"
+          echo "::notice::UI phase SKIPPED — this change touches neither ui/ nor app/public/webchat/. The committed bundle was composed as-is; the bundle-drift guard and the browser probes did not run."
 
       - name: Name the failing step in a PR comment
         if: failure() && github.event_name == 'pull_request'
-        # Never let the reporter change the build's verdict: the job has already
-        # failed and this only adds information. Any error here is printed and
-        # swallowed.
         continue-on-error: true
         env:
           FORGE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          STEP="$(cat "$RUNNER_TEMP/ci-step" 2>/dev/null || echo '<none recorded — failed before the first run step>')"
-          echo "::error::compose failed at or after: $STEP"
-          CIENV="$(cat "$RUNNER_TEMP/ci-env" 2>/dev/null || echo 'not recorded')"
-          # Failing test names only — never the whole log. Enough to tell a real
-          # break from the boot-order/timeout flake without pasting a novel.
-          # STRIP ANSI FIRST, then match. vitest colours its output, so an
-          # anchored ^FAIL never matches a raw line — the first cut of this
-          # reported totals only and no test names, which is half a diagnosis.
-          CLEAN="$(mktemp)"
-          sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/host-tests.log" > "$CLEAN" 2>/dev/null || true
-          NAMES="$(grep -aE "^ *(FAIL|×|✕)|Test Files|^ *Tests " "$CLEAN" | sort -u | head -20)"
-          # Names say WHICH broke; the assertion says WHY. Without it, a red that
-          # does not reproduce locally costs a day of permutations — which is what
-          # setup/verify-slack.test.ts cost before this line existed.
-          # -A12 so the object diff that follows an AssertionError comes too:
-          # vitest elides the payload in the headline ("…(13)"), so the headline
-          # alone says two objects differ without saying in which field.
-          WHY="$(grep -a -A12 -E "AssertionError" "$CLEAN" | cut -c1-200 | head -60)"
-          EVIDENCE="$(printf '%s\n' "$NAMES"; [ -n "$WHY" ] && printf '%s\n%s\n' "--- why ---" "$WHY")"
-
-          if [ -z "${FORGE_TOKEN:-}" ]; then
-            echo "::warning::No token available, so the failing step could not be posted to the PR."
-            exit 0
-          fi
-          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_number }}"
-          python3 - "$STEP" "$RUN_URL" "$CIENV" "$EVIDENCE" <<'PY' || echo "::warning::could not post the failure comment"
-          import json, os, sys, urllib.request, urllib.error
-          step, run_url, cienv, evidence = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-          detail = ""
-          if evidence.strip():
-              detail = "\n```\n%s\n```\n" % evidence.strip()
-          body = (
-              "**compose failed at or after:** `%s`\n\n"
-              "ran on: `%s`\n" % (step, cienv.replace("\n", " · ")) +
-              detail +
-              "\n[run %s](%s)\n\n"
-              "<sub>Posted by the compose job because artifacts and the log API are "
-              "unavailable on this runner. `uses:` steps are not instrumented, so a "
-              "failure inside a setup or cache action reports the run step before it."
-              "</sub>" % (os.environ["GITHUB_RUN_NUMBER"], run_url)
-          )
-          url = "%s/api/v1/repos/%s/issues/%s/comments" % (
-              os.environ["GITHUB_SERVER_URL"], os.environ["GITHUB_REPOSITORY"],
-              json.load(open(os.environ["GITHUB_EVENT_PATH"]))["pull_request"]["number"])
-          req = urllib.request.Request(
-              url, data=json.dumps({"body": body}).encode(),
-              headers={"Authorization": "token " + os.environ["FORGE_TOKEN"],
-                       "Content-Type": "application/json"}, method="POST")
-          try:
-              urllib.request.urlopen(req, timeout=30)
-              print("posted the failing step to the PR")
-          except urllib.error.HTTPError as e:
-              print("HTTP %s: %s" % (e.code, e.read()[:200].decode()))
-              sys.exit(1)
-          PY
+        run: bash scripts/ci-report-failure.sh ui

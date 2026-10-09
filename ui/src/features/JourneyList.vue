@@ -75,7 +75,7 @@ function onKey(e: KeyboardEvent, ev: any) {
 </script>
 
 <template>
-  <template v-if="journeyPhase === 'loading'">{{ LOADING }}</template>
+  <template v-if="journeyPhase === 'loading'"><span class="btn-spinner" aria-hidden="true"></span>{{ LOADING }}</template>
   <template v-else-if="journeyPhase === 'error'">{{ FAILED }}</template>
   <div v-else-if="journeyPhase === 'empty'" class="journey-empty">{{ EMPTY }}</div>
   <template v-else>

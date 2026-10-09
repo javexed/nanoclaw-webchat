@@ -24,6 +24,7 @@
  */
 import { type IncomingMessage } from 'http';
 import { execFile } from 'child_process';
+import net from 'net';
 import {
   createPublicKey,
   timingSafeEqual,
@@ -39,7 +40,8 @@ import { getUser, upsertUser } from '../../modules/permissions/db/users.js';
 import { getBearerTokenDisabled, getPromoteFirstTailscaleOwner, setPromoteFirstTailscaleOwner } from './db.js';
 import { ensureOwnerRoleOnFirstLogin, grantOwnerRole, isOwner } from './roles.js';
 import { lookupSigninSession, resolveLinkedUserId, sessionTokenFromCookie } from './signins.js';
-import { serveFrontedHosts } from './tailscale-serve.js';
+import { DEFAULT_PORT } from './server/constants.js';
+import { serveRouting } from './tailscale-serve.js';
 
 const WEBCHAT_TOKEN = process.env.WEBCHAT_TOKEN || '';
 const tailscaleEnabled = (): boolean => process.env.WEBCHAT_TAILSCALE === 'true';
@@ -516,13 +518,13 @@ async function authenticate(req: IncomingMessage): Promise<AuthResult | AuthFail
   if (tailscaleEnabled()) {
     // 3a. Tailscale Serve (HTTPS front). `tailscale serve` terminates TLS on
     //     the *.ts.net name and forwards to loopback, injecting
-    //     Tailscale-User-Login. Honor it ONLY from a loopback source — serve is
-    //     always localhost→localhost, so the same header from any other IP is a
-    //     forgery (a direct :PORT hit impersonating a tailnet user) and is
-    //     ignored. Minting the SAME `webchat:tailscale:<login>` id that whois
-    //     produces keeps identity continuous across the http-tailnet → https-
-    //     serve switch, so an owner claimed over http stays owner over https.
-    const serveLogin = isLocalhost(remoteIp) ? tailscaleServeIdentity(req, remoteIp, await serveFrontedHosts()) : null;
+    //     Tailscale-User-Login. The header is believed only on a connection
+    //     that arrived on the dedicated Serve listener (see serveLoginOf), so
+    //     no other loopback forwarder can assert it. Minting the SAME
+    //     `webchat:tailscale:<login>` id that whois produces keeps identity
+    //     continuous across the http-tailnet → https-serve switch, so an owner
+    //     claimed over http stays owner over https.
+    const serveLogin = await serveLoginOf(req, remoteIp);
     if (serveLogin) {
       return withHint(
         await finalize({
@@ -551,7 +553,13 @@ async function authenticate(req: IncomingMessage): Promise<AuthResult | AuthFail
   //    tailnet/internet traffic would otherwise bypass auth and be granted
   //    owner. With explicit auth configured, the proxy must surface the
   //    upstream identity via headers / token / tailscale whois.
-  if (isLocalhost(remoteIp) && !(await hasExplicitAuth())) {
+  //
+  //    Even then, only a request that came straight from a browser on this
+  //    machine: one carrying forwarding headers was relayed by something on
+  //    loopback (a Cloudflare tunnel, a reverse proxy, Tailscale Serve), and
+  //    its visitor is not the person at this keyboard. Neither is anything
+  //    that arrived on the Serve listener.
+  if (isLocalhost(remoteIp) && !arrivedOnServeListener(req) && !relayedRequest(req) && !(await hasExplicitAuth())) {
     const localUser = process.env.USER || process.env.USERNAME || 'user';
     return finalize({ source: 'localhost', userId: 'webchat:local-owner', displayName: localUser });
   }
@@ -842,24 +850,56 @@ function isLocalhost(ip: string): boolean {
   return clean === '127.0.0.1' || clean === '::1' || clean === 'localhost';
 }
 
-function ipToInt(ip: string): number {
-  return ip.split('.').reduce((acc, octet) => (acc << 8) + parseInt(octet, 10), 0) >>> 0;
+/**
+ * A socket address in one canonical spelling: brackets and an IPv6 zone
+ * dropped, lowercase, and an IPv4-mapped IPv6 address (`::ffff:10.0.0.5`,
+ * what a dual-stack listener reports for an IPv4 peer) reduced to its IPv4.
+ */
+function canonicalIp(raw: string): string {
+  const ip = raw
+    .trim()
+    .replace(/^\[|\]$/g, '')
+    .replace(/%.*$/, '')
+    .toLowerCase();
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(ip);
+  return mapped ? mapped[1] : ip;
 }
 
-function isIpInCidr(ip: string, cidr: string): boolean {
-  const [network, prefixStr] = cidr.split('/');
-  const prefix = parseInt(prefixStr, 10);
-  const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
-  return (ipToInt(ip) & mask) === (ipToInt(network) & mask);
+/**
+ * One trusted-proxy entry as a subnet: an IPv4 or IPv6 address, optionally
+ * with a CIDR prefix. An IPv4-mapped entry is taken as the IPv4 it maps
+ * (`::ffff:10.0.0.0/104` is `10.0.0.0/8`). Null when it is not one.
+ */
+export function parseProxyEntry(entry: string): { address: string; prefix: number; family: 'ipv4' | 'ipv6' } | null {
+  const [rawAddr, rawPrefix, extra] = entry.trim().split('/');
+  if (extra !== undefined || !rawAddr) return null;
+  const address = canonicalIp(rawAddr);
+  const fam = net.isIP(address);
+  if (!fam) return null;
+  const max = fam === 4 ? 32 : 128;
+  let prefix = max;
+  if (rawPrefix !== undefined) {
+    if (!/^\d{1,3}$/.test(rawPrefix)) return null;
+    prefix = Number(rawPrefix);
+    // A mapped spelling counts its prefix over 128 bits; 96 of them are the ::ffff: part.
+    if (fam === 4 && address !== rawAddr.trim().toLowerCase()) prefix -= 96;
+    if (prefix < 0 || prefix > max) return null;
+  }
+  return { address, prefix, family: fam === 4 ? 'ipv4' : 'ipv6' };
 }
 
-function isTrustedProxyIp(ip: string, entries: string[]): boolean {
+/** The peer address is one of the trusted-proxy entries (address or CIDR, IPv4 or IPv6). */
+export function isTrustedProxyIp(ip: string, entries: string[]): boolean {
+  const addr = canonicalIp(ip);
+  const fam = net.isIP(addr);
+  if (!fam) return false;
+  const family = fam === 4 ? 'ipv4' : 'ipv6';
   for (const entry of entries) {
-    if (entry.includes('/')) {
-      if (isIpInCidr(ip, entry)) return true;
-    } else {
-      if (ip === entry) return true;
-    }
+    const subnet = parseProxyEntry(entry);
+    if (!subnet || subnet.family !== family) continue;
+    const list = new net.BlockList();
+    list.addSubnet(subnet.address, subnet.prefix, subnet.family);
+    if (list.check(addr, family)) return true;
   }
   return false;
 }
@@ -906,16 +946,87 @@ function authenticateTrustedProxy(req: IncomingMessage, remoteIp: string): { ide
   return { identity: user };
 }
 
+// ── Tailscale Serve listener ────────────────────────────────────────────────
+//
+// Serve's login header proves nothing by itself: any process that can reach
+// the port can send it. The boundary is the connection. server.ts opens a
+// second, loopback-only listener for Serve (WEBCHAT_SERVE_PORT) and marks each
+// socket it accepts; the header is believed on those sockets and nowhere else.
+// Nothing but Serve should be pointed at that port.
+//
+// Installs that pointed Serve at the main port before the listener existed
+// keep working: while Serve's own config still proxies to the main port, and
+// to nothing on the Serve port, a main-port request from loopback addressed
+// to that Serve name is believed as before. That legacy path trusts the Host
+// header, which a tunnel or reverse proxy on this machine can forward as-is,
+// so startup warns and names the command that moves Serve over; it closes the
+// moment Serve points at the Serve listener.
+
+const serveSockets = new WeakSet<object>();
+let serveListenerPort: number | null = null;
+
+/** The Serve listener is up on this port (null: not running). Called by server.ts. */
+export function setServeListenerPort(port: number | null): void {
+  serveListenerPort = port;
+}
+
+/** The Serve listener's port, or null when it is not running. */
+export function currentServeListenerPort(): number | null {
+  return serveListenerPort;
+}
+
+/** Mark a socket accepted on the Serve listener. Called by server.ts. */
+export function markServeSocket(socket: object): void {
+  serveSockets.add(socket);
+}
+
+/** The request's connection arrived on the dedicated Serve listener. */
+export function arrivedOnServeListener(req: IncomingMessage): boolean {
+  return serveSockets.has(req.socket);
+}
+
+/** Headers that only something relaying a visitor adds. */
+const RELAY_HEADERS = [
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'forwarded',
+  'x-real-ip',
+  'cf-connecting-ip',
+  'cf-ray',
+  'tailscale-user-login',
+];
+
+/** The request was relayed by a proxy or tunnel rather than sent by a local browser. */
+export function relayedRequest(req: IncomingMessage): boolean {
+  return RELAY_HEADERS.some((h) => req.headers[h] !== undefined);
+}
+
+function mainPort(): number {
+  return Number(process.env.WEBCHAT_PORT || DEFAULT_PORT);
+}
+
+function headerLogin(req: IncomingMessage): string | null {
+  const raw = req.headers['tailscale-user-login'];
+  const login = Array.isArray(raw) ? raw[0] : raw;
+  return typeof login === 'string' && login.trim() ? login.trim() : null;
+}
+
+/** The Serve login this request carries, if it may be believed. */
+async function serveLoginOf(req: IncomingMessage, remoteIp: string): Promise<string | null> {
+  if (!isLocalhost(remoteIp)) return null;
+  if (arrivedOnServeListener(req)) return headerLogin(req);
+  if (!req.headers['tailscale-user-login']) return null;
+  const routing = await serveRouting(mainPort(), serveListenerPort);
+  if (routing.dedicated) return null;
+  return tailscaleServeIdentity(req, remoteIp, routing.legacyHosts);
+}
+
 /**
- * Identity from a `tailscale serve` HTTPS front. Serve proxies from loopback
- * and injects `Tailscale-User-Login` — the tailnet login, the same string
- * whois returns as `UserProfile.LoginName`, so both paths mint an identical
- * `webchat:tailscale:<login>` id. Honor it ONLY when the request arrives on
- * loopback AND is addressed to a name Serve is fronting (`serveHosts`, from
- * serveFrontedHosts): serve is always localhost→localhost under its .ts.net
- * name, while a direct :PORT hit, or a tunnel or reverse proxy forwarding
- * from loopback under its own name, can send the same header as a spoof.
- * Exported so that security boundary is unit-tested directly.
+ * The legacy Serve check, for a request on the MAIN port: Serve's
+ * `Tailscale-User-Login` is honored only when the request arrives on loopback
+ * AND is addressed to a name Serve fronts at the main port (`serveHosts`).
+ * Weaker than the Serve listener, because Host is the client's to choose; see
+ * the section comment above. Exported so the boundary is unit-tested directly.
  */
 export function tailscaleServeIdentity(
   req: IncomingMessage,
@@ -927,13 +1038,47 @@ export function tailscaleServeIdentity(
     .toLowerCase()
     .replace(/:443$/, '');
   if (!host || !serveHosts.has(host)) return null;
-  const raw = req.headers['tailscale-user-login'];
-  const login = Array.isArray(raw) ? raw[0] : raw;
-  return typeof login === 'string' && login.trim() ? login.trim() : null;
+  return headerLogin(req);
 }
+
+/**
+ * `tailscale whois` answers, briefly remembered per peer address. Every request
+ * from a tailnet peer authenticates, and spawning the CLI for each one (a page
+ * load is dozens) costs more than the request. Short on purpose: a peer whose
+ * tailnet access is revoked, or whose node is reassigned, is re-asked within
+ * WHOIS_TTL_MS. A miss (not a tailnet address) is remembered too, for less
+ * time, so a scanner cannot make the server spawn a process per request.
+ */
+const WHOIS_TTL_MS = 30_000;
+const WHOIS_MISS_TTL_MS = 10_000;
+const WHOIS_CACHE_MAX = 1000;
+const whoisCache = new Map<string, { login: string | null; at: number }>();
+const whoisInFlight = new Map<string, Promise<string | null>>();
 
 async function tailscaleWhois(ip: string): Promise<string | null> {
   const cleanIp = ip.replace(/^::ffff:/, '');
+  const hit = whoisCache.get(cleanIp);
+  if (hit && Date.now() - hit.at < (hit.login ? WHOIS_TTL_MS : WHOIS_MISS_TTL_MS)) return hit.login;
+  const pending = whoisInFlight.get(cleanIp);
+  if (pending) return pending;
+  const lookup = runWhois(cleanIp).then((login) => {
+    if (whoisCache.size >= WHOIS_CACHE_MAX) whoisCache.clear();
+    whoisCache.set(cleanIp, { login, at: Date.now() });
+    whoisInFlight.delete(cleanIp);
+    return login;
+  });
+  whoisInFlight.set(cleanIp, lookup);
+  return lookup;
+}
+
+/** Drop remembered whois answers and user writes. */
+export function forgetAuthCaches(): void {
+  whoisCache.clear();
+  whoisInFlight.clear();
+  recentUserWrites.clear();
+}
+
+function runWhois(cleanIp: string): Promise<string | null> {
   return new Promise((resolve) => {
     execFile('tailscale', ['whois', '--json', cleanIp], { timeout: 3000 }, (err, stdout) => {
       if (err) {
@@ -1020,7 +1165,7 @@ function sameOriginRequest(req: IncomingMessage): boolean {
 export async function tailscaleIdentityOf(req: IncomingMessage): Promise<{ userId: string; login: string } | null> {
   if (!tailscaleEnabled()) return null;
   const remoteIp = (req.socket.remoteAddress ?? '127.0.0.1').replace(/^::ffff:/, '');
-  const serveLogin = isLocalhost(remoteIp) ? tailscaleServeIdentity(req, remoteIp, await serveFrontedHosts()) : null;
+  const serveLogin = await serveLoginOf(req, remoteIp);
   const login = serveLogin ?? (await tailscaleWhois(remoteIp));
   return login ? { userId: `webchat:tailscale:${normalizeId(login)}`, login } : null;
 }
@@ -1029,6 +1174,9 @@ export async function tailscaleIdentityOf(req: IncomingMessage): Promise<{ userI
 export function oidcUserId(identity: string): string {
   return `webchat:${normalizeId(identity)}`;
 }
+
+const USER_WRITE_TTL_MS = 60_000;
+const recentUserWrites = new Map<string, { name: string; at: number }>();
 
 async function finalize(args: {
   source: AuthResult['source'];
@@ -1067,13 +1215,23 @@ async function finalize(args: {
         const known = (await getUser(args.userId))?.display_name;
         if (known && normalizeId(known) !== normalizeId(args.displayName)) displayName = known;
       }
-      await upsertUser({
-        id: args.userId,
-        kind: 'webchat',
-        display_name: displayName || null,
-        created_at: new Date().toISOString(),
-      });
+      // The row only changes when the name does: skip the write when this
+      // exact (id, name) was written moments ago. Bounded staleness — a row
+      // removed meanwhile comes back within USER_WRITE_TTL_MS.
+      const last = recentUserWrites.get(args.userId);
+      // Recorded before the write so a burst of concurrent requests writes once.
+      if (!last || last.name !== displayName || Date.now() - last.at >= USER_WRITE_TTL_MS) {
+        if (recentUserWrites.size >= WHOIS_CACHE_MAX) recentUserWrites.clear();
+        recentUserWrites.set(args.userId, { name: displayName, at: Date.now() });
+        await upsertUser({
+          id: args.userId,
+          kind: 'webchat',
+          display_name: displayName || null,
+          created_at: new Date().toISOString(),
+        });
+      }
     } catch (err) {
+      recentUserWrites.delete(args.userId);
       log.warn('Webchat: upsertUser failed during auth finalize', { userId: args.userId, err });
     }
   }

@@ -5,3 +5,14 @@
 import { reactive } from 'vue';
 
 export const cloudModelNames = reactive(new Set<string>());
+/** Which provider serves each of them ("Cohere"): the Models list shows that, not the router's address. */
+export const cloudModelProviders = reactive(new Map<string, string>());
+
+/**
+ * The provider a cloud model runs at ("Cohere"), or null for any other model.
+ * Its endpoint is the local router that fronts it, which says nothing useful.
+ */
+export function cloudProviderOf(model: { kind?: string; model_id?: string }): string | null {
+  if (model.kind !== 'openai-compatible' || !model.model_id || !cloudModelNames.has(model.model_id)) return null;
+  return cloudModelProviders.get(model.model_id) ?? 'Cloud';
+}

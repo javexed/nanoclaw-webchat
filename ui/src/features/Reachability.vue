@@ -26,7 +26,7 @@ async function copy(fix: string) {
 </script>
 
 <template>
-  <div v-if="reachPhase === 'checking'" class="model-reachability-result">{{ CHECKING }}</div>
+  <div v-if="reachPhase === 'checking'" class="model-reachability-result"><span class="btn-spinner" aria-hidden="true"></span>{{ CHECKING }}</div>
   <div v-else-if="reachPhase === 'error'" class="model-reachability-result warn">{{ reachError }}</div>
   <div v-else-if="reachOutcome" :class="reachOutcome.warn ? 'model-reachability-result warn' : 'model-reachability-result'">
     <div class="model-reachability-verdict">

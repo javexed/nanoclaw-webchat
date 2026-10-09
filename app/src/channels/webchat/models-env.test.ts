@@ -99,6 +99,10 @@ describe('the router behind the gateway', () => {
     expect(envForModel(cloud)).toEqual({
       ANTHROPIC_BASE_URL: 'http://nanoclaw-litellm:4000',
       ANTHROPIC_MODEL: 'command-a',
+      // A pinned alias (a runner's "sonnet") and the background calls land on it too.
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'command-a',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'command-a',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'command-a',
       CLAUDE_CODE_MAX_OUTPUT_TOKENS: '8192',
     });
   });

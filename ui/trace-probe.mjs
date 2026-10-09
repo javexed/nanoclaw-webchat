@@ -24,6 +24,7 @@ const T0 = Date.now() - 60_000;
 const HISTORY = [
   { id: 'm-user', room_id: 'gardens', thread_id: 'main', sender: ME, sender_type: 'user', content: 'Read my notes', message_type: 'text', created_at: T0 },
   { id: 'm-hist', room_id: 'gardens', thread_id: 'main', sender: 'AG', sender_type: 'agent', content: 'Done reading.', message_type: 'text', created_at: T0 + 1000, has_trace: true },
+  { id: 'm-bare', room_id: 'gardens', thread_id: 'main', sender: 'AG', sender_type: 'agent', content: 'Hi.', message_type: 'text', created_at: T0 + 1500, has_trace: true },
   { id: 'm-plain', room_id: 'gardens', thread_id: 'main', sender: 'AG', sender_type: 'agent', content: 'Anything else?', message_type: 'text', created_at: T0 + 2000 },
 ];
 
@@ -33,6 +34,12 @@ const STORED = {
     startedAt: T0, endedAt: T0 + 12_300, durationMs: 12_300, outcome: 'done',
     tools: [{ name: 'Read', target: 'notes.md', at: T0 + 100, ms: 850, ok: true }],
     notes: [], reasoning: ['The notes are in notes.md, so read them first.'], truncated: false,
+  },
+  // Most short replies: a header, and no tools, notes or reasoning.
+  'm-bare': {
+    v: 1, agent: 'AG', harness: 'opencode', model: 'mistral:7b', host: 'localhost:11434',
+    startedAt: T0, endedAt: T0 + 8000, durationMs: 8000, outcome: 'done',
+    tools: [], notes: [], reasoning: [], truncated: false,
   },
   'm-live': {
     v: 1, agent: 'AG', harness: 'pi', model: 'example-model:4b', host: 'models.example:11434',
@@ -228,6 +235,22 @@ async function main() {
   await page.waitForTimeout(300);
   const stored = await page.evaluate((sel) => document.querySelector(sel)?.querySelector('.trace-reasoning')?.textContent ?? null, live);
   check('after the trace frame it shows the stored copy', traceFetches.join() === 'm-hist,m-live' && stored === 'STORED live reasoning', { traceFetches, stored });
+
+  // ── A header-only trace ──
+  // It opened to an empty panel, which read as "Thoughts will not open".
+  console.log('header-only trace');
+  const bare = '[data-message-id="m-bare"] details.thoughts';
+  await page.click(`${bare} > summary`);
+  await page.waitForSelector(`${bare} .trace-meta`, { timeout: 5000 }).catch(() => {});
+  const bareOpened = await page.evaluate((sel) => {
+    const d = document.querySelector(sel);
+    return {
+      meta: d?.querySelector('.trace-meta')?.textContent ?? null,
+      line: d?.querySelector('.thoughts-line')?.textContent ?? null,
+    };
+  }, bare);
+  check('shows its header', bareOpened.meta === 'opencode · mistral:7b · localhost:11434 · 8.0s', bareOpened.meta);
+  check('says nothing was captured', bareOpened.line === 'No reasoning captured for this turn', bareOpened.line);
 
   if (pageErrors.length) {
     failures++;

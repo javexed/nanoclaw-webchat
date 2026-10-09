@@ -8,6 +8,8 @@ import ToolSecretList from './ToolSecretList.vue';
 import { userDisplayName } from './perms-user-info.js';
 import { selectedRoomId } from './room-list-state.js';
 import { allModels } from './model-list-state.js';
+import { cloudModelNames, cloudProviderOf } from './cloud-models-state.js';
+import { harnessFields, harnessRuns } from './harness-fit.js';
 import {
   agentMcpServers,
   allMcpServers,
@@ -22,7 +24,7 @@ import RoomWiredAgents from './RoomWiredAgents.vue';
 import { roomWiredRows } from './room-wired-state.js';
 import AgentList from './AgentList.vue';
 import { selectedAgentId } from './agent-list-state.js';
-import { installProgressLine } from './installer-state.js';
+import { installLogText } from './installer-state.js';
 import { agentSecretEffective } from './agent-lists-state.js';
 import AgentWiredRooms from './AgentWiredRooms.vue';
 import AgentSessions from './AgentSessions.vue';
@@ -53,6 +55,7 @@ import {
   turnElapsedTimer,
   wiredRooms,
 } from './agent-detail-state.js';
+import { buttonBusy } from '../core/busy.js';
 import { $, esc } from '../core/dom.js';
 import { mountIsland } from '../core/island.js';
 import { closeModelDetail, openModelPicker } from './models.js';
@@ -327,11 +330,46 @@ const HARNESS_OPTIONS = ['claude', 'opencode', 'pi', 'codex', 'grok'] as const;
 
 export function setAgentHarnessControl(provider?: any) {
   const p = HARNESS_OPTIONS.includes(provider) ? (provider as string) : 'claude';
+  agentHarness = p;
   document.querySelectorAll('#agent-harness-control .setting-option').forEach((b) => {
     const on = (b as HTMLElement).dataset.provider === p;
     b.classList.toggle('active', on);
     b.setAttribute('aria-pressed', String(on));
   });
+  refreshHarnessOptions();
+  applyHarnessFields(p);
+}
+
+/** The harness the open agent is on (as the Harness control shows it). */
+let agentHarness = 'claude';
+
+/** The Harness control offers what can run the agent's model, and always the one it is on (harness-fit.ts). */
+function refreshHarnessOptions(): void {
+  const id = $<HTMLInputElement>('#agent-model')?.value || '';
+  const m = id ? allModels.value.find((x: any) => x.id === id) : null;
+  const model = m ? { kind: String(m.kind), model_id: String(m.model_id) } : null;
+  document.querySelectorAll<HTMLElement>('#agent-harness-control .setting-option').forEach((b) => {
+    const h = b.dataset.provider || '';
+    b.hidden = h !== agentHarness && !harnessRuns(h, model, cloudModelNames);
+  });
+}
+
+/** Codex and Grok take their own model (the model field) instead of a registry one; OpenCode and pi only the latter. */
+function applyHarnessFields(p: string): void {
+  const f = harnessFields(p);
+  const picker = $('#agent-model-trigger')?.closest('label');
+  if (picker) picker.hidden = !f.picker;
+  const pin = $<HTMLInputElement>('#agent-config-model');
+  const pinLabel = pin?.closest('label');
+  if (!pin || !pinLabel) return;
+  pinLabel.hidden = !f.pin;
+  const title = pinLabel.querySelector('.form-label');
+  if (title && f.pinLabel) title.textContent = f.pinLabel;
+  if (f.pinSuggestions === null) void deps.populateKnownModelOptions();
+  else {
+    const list = $('#agent-config-model-options');
+    if (list) list.replaceChildren(...f.pinSuggestions.map((v) => Object.assign(document.createElement('option'), { value: v })));
+  }
 }
 
 export function setAgentSubtab(name?: any) {
@@ -367,10 +405,10 @@ export async function openAgentDetail(id?: any) {
   if (allModels.value.length === 0) await deps.fetchModels();
   populateAgentModelSelect(agent.assigned_model_id);
 
-  // Pinned Anthropic model (container_configs.model). Suggestions are
-  // best-effort — the field stays usable if the fetch fails.
+  // The harness's own model (container_configs.model): Anthropic for Claude,
+  // Codex's or Grok's for theirs. Its label and suggestions follow the harness
+  // (applyHarnessFields, from setAgentHarnessControl below).
   $<HTMLInputElement>('#agent-config-model')!.value = agent.config_model || '';
-  void deps.populateKnownModelOptions();
 
   setAgentStatusControl(agent.status);
   setAgentHarnessControl(agent.provider);
@@ -454,7 +492,7 @@ export function refreshAgentSaveDirty() {
   // a first-match class query would grab instead.
   const btn = $('#agent-save-btn')! as HTMLInputElement;
   if (!btn || !agentDetailBaseline.value) return;
-  // Don't fight the transient "Saving…" / "✓ Saved" button states.
+  // Don't fight the transient "Saving…" (buttonBusy: spinner + that text) / "✓ Saved" button states.
   if (btn.classList.contains('success') || btn.textContent === 'Saving…') return;
   const now = agentDetailSnapshot();
   btn.disabled =
@@ -571,16 +609,14 @@ async function resetAgentSession(agentId?: any, sessionId?: any, btn?: any) {
     confirmLabel: 'Reset',
   });
   if (!ok) return;
-  btn!.disabled = true;
-  btn.textContent = 'Resetting…';
+  const restore = buttonBusy(btn, 'Resetting…');
   try {
     await apiJson(`/api/sessions/${encodeURIComponent(sessionId)}/reset`, { method: 'POST' });
     showToast('Session reset — /clear queued', { kind: 'success' });
     renderAgentSessions(agentId);
   } catch (err) {
     showToast('Could not reset: ' + (err as any)?.message, { kind: 'error' });
-    btn!.disabled = false;
-    btn.textContent = 'Reset';
+    restore();
   }
 }
 
@@ -1234,14 +1270,6 @@ let agentKeysGroupId: any = null;
 function mountAgentKeyList(): void {
   agentKeysApp ??= mountIsland('#agent-keys-list', () =>
     createApp(AgentKeyList, {
-      onCopy: async (r: { publicKey: string }) => {
-        try {
-          await navigator.clipboard.writeText(r.publicKey);
-          showToast('Public key copied');
-        } catch {
-          showToast('Could not copy', { kind: 'error' });
-        }
-      },
       onRemove: (r: { key: unknown }) => void removeAgentKey(agentKeysGroupId, r.key),
     }),
   );
@@ -1341,6 +1369,7 @@ function populateAgentModelSelect(currentModelId?: any) {
  * No selection → "Default" / "Built-in Anthropic".
  */
 export function refreshAgentModelTrigger() {
+  refreshHarnessOptions();
   const trigger = $('#agent-model-trigger');
   if (!trigger) return;
   const id = $<HTMLInputElement>('#agent-model')!.value;
@@ -1361,10 +1390,11 @@ export function refreshAgentModelTrigger() {
     return;
   }
   nameEl.textContent = m.name ?? '';
-  const host = endpointHost(m.endpoint);
-  metaEl.textContent = host
-    ? `${deps.modelKindLabel(m.kind)} · ${m.model_id} · ${host}`
-    : `${deps.modelKindLabel(m.kind)} · ${m.model_id}`;
+  // A cloud model's endpoint is the local router: name its provider instead.
+  const provider = cloudProviderOf(m);
+  const host = provider ?? endpointHost(m.endpoint);
+  const kind = provider ? 'cloud' : deps.modelKindLabel(m.kind);
+  metaEl.textContent = host ? `${kind} · ${m.model_id} · ${host}` : `${kind} · ${m.model_id}`;
 }
 
 // Status labels + the one-line hint shown under the detail control.
@@ -1426,7 +1456,7 @@ async function offerHarnessInstall(agentId: string, provider: string): Promise<v
         line.textContent = ['Install failed:', ...tail].join('\n');
         throw new Error('Install failed');
       }
-      line.textContent = st.running ? [installProgressLine(st), ...tail].join('\n') : tail.join('\n') || 'Restarting…';
+      line.textContent = installLogText(st) || 'Restarting…';
     }
     line.hidden = true;
     await apiJson(`/api/agents/${encodeURIComponent(agentId)}/provider`, { method: 'PUT', body: { provider } });
@@ -1452,7 +1482,7 @@ export function wireAgentsPanel(): void {
         method: 'PUT',
         body: { provider },
       });
-      showToast(`Harness → ${provider === 'opencode' ? 'OpenCode' : 'Claude'} — restarting the agent…`, {
+      showToast(`Harness → ${HARNESS_LABEL[provider ?? 'claude'] ?? provider} — restarting the agent…`, {
         kind: 'success',
       });
       await fetchAgents();
@@ -1605,8 +1635,7 @@ export function wireAgentDetail1(): void {
     const btn = $<HTMLButtonElement>('#agent-save-btn');
     if (!btn) return;
     const originalLabel = btn.textContent;
-    btn!.disabled = true;
-    btn.textContent = 'Saving…';
+    buttonBusy(btn, 'Saving…');
     btn.classList.remove('success');
     const updates = {
       name: ($<HTMLInputElement>('#agent-name')?.value ?? '').trim(),
@@ -1733,7 +1762,7 @@ export function wireAgentControls2(): void {
     const file = (e.target as HTMLInputElement).files?.[0];
     (e.target as HTMLInputElement).value = '';
     if (!file) return;
-    showToast('Uploading bundle…', { kind: 'info' });
+    const restore = buttonBusy($<HTMLButtonElement>('#import-agent-btn')!, 'Uploading…');
     let up;
     try {
       const fd = new FormData();
@@ -1744,6 +1773,8 @@ export function wireAgentControls2(): void {
     } catch (err: any) {
       showToast('Import failed: ' + (err?.message || err), { kind: 'error' });
       return;
+    } finally {
+      restore();
     }
     return continueAgentImport(up);
   });

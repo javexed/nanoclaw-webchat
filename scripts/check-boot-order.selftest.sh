@@ -125,21 +125,36 @@ if check_against "$TMP/short.json"; then
 fi
 echo "  truncated baseline: rejected ✓"
 
-# The connectivity probe fires on a reconnect timer (ui/boot-order.mjs TIMED):
+# The connectivity probe and the reconnect path's session check fire on a
+# reconnect timer (ui/boot-order.mjs TIMED):
 # moved, it must still pass; missing, it must still fail. Skipped when this
 # baseline never drops the socket (no probe recorded).
 if grep -q 'generate_204' "$BASELINE"; then
   python3 - "$BASELINE" "$TMP/probe-moved.json" "$TMP/probe-gone.json" <<'PY'
 import json, sys
 b = json.load(open(sys.argv[1]))
-probe = [e for e in b if e.endswith('/generate_204')]
-rest = [e for e in b if not e.endswith('/generate_204')]
+# The timer-driven events, as ui/boot-order.mjs TIMED reads them: the probe
+# fetches and anything the reconnect path fetched (tagged "(reconnect)").
+import re
+timed = re.compile(r'^fetch:(https://(derp1\.tailscale\.com|www\.gstatic\.com)/generate_204|\S+ \(reconnect\))$')
+probe = [e for e in b if timed.match(e)]
+rest = [e for e in b if not timed.match(e)]
 json.dump(probe + rest, open(sys.argv[2], 'w'))
-json.dump(rest + probe[1:], open(sys.argv[3], 'w'))
+# Missing means every occurrence of one of them (they are checked as a set).
+gone = probe[0]
+json.dump(rest + [e for e in probe if e != gone], open(sys.argv[3], 'w'))
 PY
+  # A must-PASS case, so it can race the server exactly as the sanity check
+  # can (seen 2026-10-04 on a hosted runner: the stubbed run rejected it, a
+  # re-run of the job passed). Same rule: one retry, announced, never silent.
   if ! check_against "$TMP/probe-moved.json"; then
-    echo "❌ selftest: the guard REJECTED a baseline whose timer-driven probe moved." >&2
-    exit 1
+    if check_against "$TMP/probe-moved.json"; then
+      echo "  ⚠ probe moved: accepted on RETRY — the first probe raced the server." >&2
+    else
+      echo "❌ selftest: the guard REJECTED a baseline whose timer-driven probe moved." >&2
+      ( cd "$HERE/ui" && node boot-order.mjs check "http://127.0.0.1:$PORT/" "$TMP/probe-moved.json" ) >&2 || true
+      exit 1
+    fi
   fi
   echo "  probe moved: accepted ✓"
   if check_against "$TMP/probe-gone.json"; then

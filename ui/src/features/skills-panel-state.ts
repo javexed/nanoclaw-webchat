@@ -97,7 +97,7 @@ export type DraftPhase =
   | { phase: 'kept'; name: string; patched: boolean; agentGroupId: string; agentName: string }
   | { phase: 'discarding' }
   | { phase: 'discarded'; skillName: string }
-  | { phase: 'undoing' }
+  | { phase: 'undoing'; from: DraftPhase }
   | { phase: 'undone'; name: string }
   | { phase: 'restored' }
   | { phase: 'error'; error: string };

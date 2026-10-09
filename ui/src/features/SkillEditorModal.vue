@@ -6,6 +6,7 @@
  * has no `value` attribute); nothing re-reads it after open.
  */
 import { computed, onMounted, onUnmounted, ref } from 'vue';
+import BusyLabel from './BusyLabel.vue';
 
 const props = defineProps<{
   name: string;
@@ -24,7 +25,6 @@ const TITLE_ID = 'skill-edit-modal-title';
 const dialog = ref<HTMLElement | null>(null);
 const ta = ref<HTMLTextAreaElement | null>(null);
 const saving = ref(false);
-const saveLabel = ref(SAVE);
 
 const closeLabel = computed(() => (props.editable ? 'Cancel' : 'Close'));
 
@@ -52,15 +52,12 @@ function onKey(e: KeyboardEvent) {
 
 async function save() {
   saving.value = true;
-  const prev = saveLabel.value;
-  saveLabel.value = SAVING;
   try {
     await props.onSave(ta.value?.value ?? '');
     props.onClose();
   } catch (err) {
     // Toasting stays with the caller; this only restores the button.
     saving.value = false;
-    saveLabel.value = prev;
     throw err;
   }
 }
@@ -106,7 +103,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey));
         class="btn btn-primary"
         :disabled="saving || undefined"
         @click="save()"
-      >{{ saveLabel }}</button>
+      ><BusyLabel :busy="saving" :label="SAVE" :busy-label="SAVING" /></button>
     </div>
   </div>
 </template>

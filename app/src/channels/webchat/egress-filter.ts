@@ -42,7 +42,7 @@ import {
   recordBlocked,
   type EgressMode,
 } from './egress-policy.js';
-import { connectThroughGateway } from './gateway-connect.js';
+import { connectThroughGateway, connectToGateway } from './gateway-connect.js';
 import { serveOllamaFiltered } from './ollama-filter.js';
 
 const MAX_HEAD = 64 * 1024;
@@ -136,6 +136,15 @@ interface ParsedRequest {
   port: number;
   /** For an absolute-form request: the request re-written in origin form, proxy headers dropped. */
   originHead?: string;
+  /**
+   * For an absolute-form request: the head as the gateway is sent it, still
+   * absolute-form, proxy and connection headers dropped and `Connection: close`
+   * added (the caller adds the credentials). One request per connection: a
+   * kept-alive one would carry the next request, to any host, past the check.
+   */
+  gatewayHead?: string;
+  /** Its body's length: Content-Length, 0 without one, null when chunked (streamed, bounded by the close). */
+  bodyLength?: number | null;
   username: string;
   password: string;
 }
@@ -143,6 +152,10 @@ interface ParsedRequest {
 /** Parse a proxy request head (CONNECT, or absolute-form plain HTTP). */
 export function parseProxyHead(head: string): ParsedRequest | { error: string; status: string } {
   const lines = head.split('\r\n');
+  // Every line ends in CRLF and nothing else. A bare CR or LF inside a line is a
+  // header the checks below would not see but a lenient parser downstream would
+  // (a hidden Transfer-Encoding, a second request): refuse the request outright.
+  if (lines.some((l) => /[\r\n\0]/.test(l))) return { error: 'malformed request head', status: '400 Bad Request' };
   const first = lines[0] ?? '';
   let username = '';
   let password = '';
@@ -170,11 +183,23 @@ export function parseProxyHead(head: string): ParsedRequest | { error: string; s
   if (abs) {
     const [, method, host, port, pathPart, version] = abs;
     if (!isSafeEgressHost(host)) return bad;
+    const authority = port ? `${host}:${port}` : host;
+    // The policy checked the request line's host, so that is the host the
+    // request goes as: the client's own Host header is replaced, never trusted.
+    // A Host that disagreed with the checked target could otherwise steer
+    // whatever reads it (the gateway choosing a credential, a virtual host)
+    // to somewhere the allowlist never approved.
+    const headers = [`Host: ${authority}`, ...kept.filter((l) => !/^host:/i.test(l))];
+    const chunked = headers.some((l) => /^transfer-encoding:.*chunked/i.test(l));
+    const length = /^content-length:\s*(\d+)\s*$/im.exec(headers.join('\n'));
+    const forGateway = headers.filter((l) => !/^connection:/i.test(l));
     return {
       kind: 'absolute',
       host,
       port: port ? Number(port) : 80,
-      originHead: `${method} ${pathPart || '/'} ${version}\r\n${kept.join('\r\n')}\r\n\r\n`,
+      originHead: `${method} ${pathPart || '/'} ${version}\r\n${headers.join('\r\n')}\r\n\r\n`,
+      gatewayHead: `${method} http://${authority}${pathPart || '/'} ${version}\r\n${[...forGateway, 'Connection: close'].join('\r\n')}\r\n`,
+      bodyLength: chunked ? null : length ? Number(length[1]) : 0,
       username,
       password,
     };
@@ -193,6 +218,11 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
       const end = buf.indexOf('\r\n\r\n');
       if (end >= 0) {
         client.off('data', onData);
+        // Held until a forwarder is attached: the checks below await, and a
+        // flowing socket with no listener drops what arrives meanwhile — a
+        // plain-HTTP body past its first chunk, so the gateway waited forever
+        // for the rest (a resumed Claude session hung for an hour).
+        client.pause();
         resolve({ head: buf.subarray(0, end).toString('latin1'), rest: buf.subarray(end + 4) });
       } else if (buf.length > MAX_HEAD) {
         client.off('data', onData);
@@ -246,6 +276,49 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
       );
     }
     log.info('Egress filter: direct tunnel', { agentGroupId: caller.agentGroupId, host: req.host, port: req.port });
+  } else if (req.kind === 'absolute') {
+    // Plain HTTP (the router behind the gateway, a package index): sent to the
+    // gateway as to any proxy, with the agent's own credentials, so it adds
+    // what it holds for that host. One request, then the connection closes.
+    try {
+      upstream = await connectToGateway(deps.gateway());
+    } catch (err) {
+      return answer(
+        client,
+        '502 Bad Gateway',
+        `the credential gateway is unreachable: ${String((err as Error).message).slice(0, 200)}`,
+      );
+    }
+    const auth = Buffer.from(`${req.username}:${req.password}`).toString('base64');
+    upstream.on('error', () => client.destroy());
+    client.on('error', () => upstream.destroy());
+    upstream.write(`${req.gatewayHead!}Proxy-Authorization: Basic ${auth}\r\n\r\n`);
+    upstream.pipe(client);
+    if (req.bodyLength === null || req.bodyLength === undefined) {
+      if (head.rest.length) upstream.write(head.rest);
+      client.pipe(upstream);
+      return;
+    }
+    // This request's body and nothing after it: a second request on the same
+    // connection would reach the gateway unchecked.
+    let left = req.bodyLength;
+    // A client that goes away mid-body must not leave the gateway waiting on
+    // the rest; and a body faster than the gateway drains it waits for the
+    // drain instead of piling up in this process.
+    client.once('close', () => upstream.destroy());
+    const forward = (chunk: Buffer): void => {
+      if (left <= 0) return;
+      const part = chunk.subarray(0, left);
+      left -= part.length;
+      if (!upstream.write(part)) {
+        client.pause();
+        upstream.once('drain', () => client.resume());
+      }
+    };
+    forward(head.rest);
+    client.on('data', forward);
+    client.resume();
+    return;
   } else {
     try {
       const gw = deps.gateway();

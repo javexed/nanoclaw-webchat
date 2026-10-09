@@ -72,8 +72,11 @@ import {
   unassignMcpServerFromAgent,
 } from '../mcp-registry.js';
 import {
+  harnessSwitchRefusal,
   isPlausibleAnthropicModelId,
+  OWN_MODEL_HARNESSES,
   syncAgentProviderForAssignedModel,
+  syncHarnessModel,
   writeAgentSettingsForAssignedModel,
   writeLocalModelForAgent,
 } from '../models.js';
@@ -490,9 +493,16 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
           ? 'OpenCode harness is not installed — install the OpenCode stack first.'
           : provider === 'grok'
             ? 'Grok harness is not installed — run /add-grok, rebuild the image, then authenticate.'
-            : `Unknown harness: ${provider}`,
+            : provider === 'codex'
+              ? 'Codex harness is not installed — an owner can install it from this panel.'
+              : provider === 'pi'
+                ? 'pi harness is not installed — an owner can install it from this panel.'
+                : `Unknown harness: ${provider}`,
     });
   }
+  // A harness runs its own vendor's models: Claude is not offered another's.
+  const refusal = harnessSwitchRefusal(provider, await getEffectiveModelForAgent(group.id));
+  if (refusal) return json(res, 409, { error: refusal, code: 'harness-model-mismatch' });
   await ensureContainerConfig(group.id);
   await updateContainerConfigScalars(group.id, { provider: provider === 'claude' ? null : provider });
   // (Re)write the local-model wiring for the NEW harness before the respawn —
@@ -500,6 +510,10 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
   // after the next boot convergence or model change.
   try {
     await writeLocalModelForAgent(group.id);
+    // The new harness reads the assigned model its own way: OpenCode from its
+    // config model, Claude from settings.json. Both rewritten for it.
+    await syncHarnessModel(group.id);
+    await writeAgentSettingsForAssignedModel(group.id);
   } catch (err) {
     log.warn('Webchat: wiring write after harness switch failed', { agentGroupId: group.id, err });
   }
@@ -1211,6 +1225,11 @@ export async function assignAgentModelHandler(
     }
     const model = await getWebchatModel(body.modelId.trim());
     if (!model) return json(res, 404, { error: 'Model not found' });
+    // Codex and Grok pick their own model (the agent's model field); a registry
+    // model would be shown as the agent's while it ran another.
+    const harness = (await getContainerConfig(agentGroupId))?.provider ?? null;
+    if (harness && OWN_MODEL_HARNESSES.has(harness))
+      return json(res, 409, { error: 'This harness uses its own model', code: 'harness-model-mismatch' });
     await assignModelToAgent(agentGroupId, body.modelId.trim());
   }
   await reloadAgentModelEnv(agentGroupId, 'Webchat model reassigned');

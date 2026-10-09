@@ -25,7 +25,8 @@
 # deliberately does not live in the runner. Same rule as the mirror publish.
 #
 # The release gate is: composed from pins, manifest integrity, both suites run
-# inside the artifact. The old fork-diff coverage guard retired with
+# inside the artifact, and the same pins installing on a stock fresh box
+# (scripts/fresh-box-check.sh). The old fork-diff coverage guard retired with
 # channels-webchat (archived 2026-07-28) — it asked "does the split still
 # deliver everything the fork had?", which stops having an answer once the fork
 # stops moving. See docs/coverage-guards.md.
@@ -93,6 +94,15 @@ say "container suite"
 (cd "$WORK/composed/container/agent-runner" && bun install --silent && bun run typecheck && bun test >"$WORK/bun.log" 2>&1) \
   || { tail -15 "$WORK/bun.log"; echo "container suite FAILED — not releasing" >&2; exit 1; }
 
+# The gates above run on THIS host, where the toolchain is already installed, so
+# they cannot see an install.sh that assumes something a new machine lacks (a
+# fresh-box install once died at "pnpm: command not found" with every gate
+# green). Install the same pins on a stock Node box, as a user would. It runs
+# under --dry-run too: it changes nothing, and a rehearsal should find this.
+say "fresh box (a stock Node image, no pnpm, an ordinary user)"
+bash "$HERE/scripts/fresh-box-check.sh" >"$WORK/fresh-box.log" 2>&1 \
+  || { tail -20 "$WORK/fresh-box.log"; echo "fresh-box install FAILED — not releasing" >&2; exit 1; }
+
 # ── 4. pack (sources only — node_modules re-materialize on the target) ──────
 say "packing $ASSET"
 tar --exclude='./composed/node_modules' \
@@ -116,7 +126,7 @@ Pins: upstream \`${UPSTREAM_REF:0:9}\` · seam \`${SEAM_REF:0:9}\`.
 
 **Install:** download \`$ASSET\`, extract, then run
 \`bash deploy/webchat-deploy.sh --dir /opt/nanoclaw --port 3100\`.
-Gated on release: composed from pins, coverage guard, and both test suites.}"
+Gated on release: composed from pins, coverage guard, both test suites, and a fresh-box install.}"
 # Tag staging on the real commit — internal history belongs there.
 run git tag -a "$VERSION" -m "release $VERSION"
 run git push -q "$STAGING_REMOTE" "$VERSION"

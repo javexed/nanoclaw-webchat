@@ -82,3 +82,27 @@ export function connectThroughGateway(target: RelayTarget, host: string, port: n
     socket.on('data', onData);
   });
 }
+
+/**
+ * A plain connection to the gateway, for an absolute-form HTTP request sent to
+ * it as to any proxy. Not a CONNECT tunnel: the gateway reads every tunnel as
+ * TLS (to add credentials), so plain HTTP inside one came back as garbage.
+ */
+export function connectToGateway(target: Pick<RelayTarget, 'host' | 'port'>): Promise<net.Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect({ host: gatewayHostForCentral(target.host), port: target.port });
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error('gateway did not answer in time'));
+    }, CONNECT_TIMEOUT_MS);
+    socket.once('error', (err) => {
+      clearTimeout(timer);
+      socket.destroy();
+      reject(err);
+    });
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      resolve(socket);
+    });
+  });
+}

@@ -47,3 +47,15 @@ export function installProgressLine(st: {
   const elapsed = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;
   return `${step}${label} · ${elapsed}`;
 }
+
+/**
+ * The progress box's text (InstallProgress.vue, and the harness installs'
+ * <pre>): while running, installProgressLine then the log tail; after, the tail.
+ */
+export function installLogText(
+  st: Parameters<typeof installProgressLine>[0] & { running?: boolean; lines?: unknown },
+  tailLines = 14,
+): string {
+  const tail: string[] = Array.isArray(st.lines) ? st.lines.slice(-tailLines) : [];
+  return st.running ? [installProgressLine(st), ...tail].join('\n') : tail.join('\n');
+}

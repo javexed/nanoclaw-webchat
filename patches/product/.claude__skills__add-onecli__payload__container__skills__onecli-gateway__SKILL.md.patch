@@ -1,5 +1,5 @@
 diff --git a/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md b/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
-index 2e77d450..ebcc2178 100644
+index 2e77d450..8b488af3 100644
 --- a/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
 +++ b/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
 @@ -6,7 +6,8 @@ description: >-
@@ -12,7 +12,22 @@ index 2e77d450..ebcc2178 100644
  compatibility: Requires HTTPS_PROXY set in environment (automatic when launched via `onecli run`)
  metadata:
    author: onecli
-@@ -70,14 +71,65 @@ OneCLI dashboard and connect the service there.
+@@ -66,18 +67,80 @@ error response:
+ If there is no `connect_url` in the error, tell the user to open the
+ OneCLI dashboard and connect the service there.
+ 
++**A credential this agent has no secret for (`credential_not_found`,
++"No credentials configured for <host>") is different: do not pass on its
++`secret_url`.** That link opens the OneCLI dashboard on the gateway's own
++address, which a room participant cannot reach. Send them to webchat instead:
++**Agents → (this agent) → Secrets**, and name exactly what to enter — the
++`Host` from the error, the path if only part of the site needs it, and for a
++header that is not a plain bearer token, the header name and value format
++(for example `Authorization` with `Token {value}` for InfluxDB). Never put the
++value in your message, and never use a token you found elsewhere as the
++secret's value without telling the user where it came from.
++
+ **Step 2 — Retry after the user connects.** Let the user know you will
  retry once they have connected. When they confirm, retry the original
  request. If the retry still fails, ask if they need help with the setup.
  

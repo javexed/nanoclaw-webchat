@@ -19,6 +19,7 @@ import { joinRoom } from './rooms.js';
 import { closeView } from './views.js';
 import { isLearnUrlToken, pickLearnTarget, promptLearnSource } from './learn.js';
 import { showToast, toastError } from '../core/toast.js';
+import { buttonBusy } from '../core/busy.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { UNDO_SECONDS } from '../core/constants.js';
 import { state } from '../core/state.js';
@@ -581,7 +582,7 @@ async function discardDraftFromCard(id: string, d: any): Promise<void> {
 
 /** Undo a discard: the draft comes back with its own id and body. */
 async function restoreDiscardedDraft(id: string, d: any): Promise<void> {
-  setPhase(id, { phase: 'undoing' });
+  setPhase(id, { phase: 'undoing', from: { phase: 'discarded', skillName: d.skillName } });
   try {
     await apiJson(`/api/skill-drafts/${encodeURIComponent(d.id)}/restore`, { method: 'POST' });
     // Back to no phase at all: the server also un-resolves the stored card, so
@@ -605,7 +606,7 @@ async function restoreDiscardedDraft(id: string, d: any): Promise<void> {
 async function undoKeptSkill(id: string, d: any): Promise<void> {
   const kept = draftAction.value[id];
   if (!kept || kept.phase !== 'kept') return;
-  setPhase(id, { phase: 'undoing' });
+  setPhase(id, { phase: 'undoing', from: kept });
   const agent = encodeURIComponent(kept.agentGroupId || d.agentGroupId);
   const name = encodeURIComponent(kept.name);
   try {
@@ -1226,8 +1227,7 @@ function mountAgentScopedSkills(): void {
 async function importAgentScopedSkill(agentId?: any, btn?: any, urlInput?: any) {
   const url = (urlInput?.value || '').trim();
   if (!url) return showToast('Paste a GitHub repo or folder URL', { kind: 'error' });
-  btn.disabled = true;
-  btn.textContent = 'Importing…';
+  const restore = buttonBusy(btn, 'Importing…');
   try {
     const body = await apiJson(`/api/agents/${encodeURIComponent(agentId)}/skills/import`, {
       method: 'POST',
@@ -1239,14 +1239,13 @@ async function importAgentScopedSkill(agentId?: any, btn?: any, urlInput?: any) 
   } catch (err) {
     showToast('Import failed: ' + ((err as any)?.message || err), { kind: 'error' });
   } finally {
-    btn.disabled = false;
-    btn.textContent = 'Import';
+    restore();
   }
 }
 
 async function removeAgentScopedSkill(agentId?: any, name?: any, btn?: any, onDone?: any) {
   if (!(await deps.showConfirmModal({ title: `Remove ${name}?`, body: 'Unwires it from this agent.', confirmLabel: 'Remove', destructive: true }))) return;
-  btn.disabled = true;
+  if (btn) btn.disabled = true;
   try {
     await apiJson(`/api/agents/${encodeURIComponent(agentId)}/skills/scoped/${encodeURIComponent(name)}`, {
       method: 'DELETE',
@@ -1256,7 +1255,7 @@ async function removeAgentScopedSkill(agentId?: any, name?: any, btn?: any, onDo
     else renderAgentSkills(agentId);
   } catch (err) {
     showToast('Remove failed: ' + ((err as any)?.message || err), { kind: 'error' });
-    btn.disabled = false;
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -1709,14 +1708,19 @@ export function wireSkillsRegistry(): void {
       // Import any checked suggested skills — new agents default to "all skills",
       // so imports attach automatically on the agent's first spawn.
       const checked = [...document.querySelectorAll<HTMLElement>('#agent-create-skills-list .agent-create-skill-check:checked')];
-      if (checked.length) showToast(`Adding ${checked.length} suggested skill(s)…`, { kind: 'info' });
-      for (const c of checked) {
-        try {
-          await apiJson('/api/skills/import', { method: 'POST', body: { url: c.dataset.url } });
-          showToast(`Added skill ${c.dataset.name}`, { kind: 'success' });
-        } catch (err: any) {
-          showToast(`Skill ${c.dataset.name} failed: ` + (err?.message || err), { kind: 'error' });
+      const submit = (e as SubmitEvent).submitter as HTMLButtonElement | null;
+      const restore = checked.length && submit ? buttonBusy(submit, 'Adding skills…') : null;
+      try {
+        for (const c of checked) {
+          try {
+            await apiJson('/api/skills/import', { method: 'POST', body: { url: c.dataset.url } });
+            showToast(`Added skill ${c.dataset.name}`, { kind: 'success' });
+          } catch (err: any) {
+            showToast(`Skill ${c.dataset.name} failed: ` + (err?.message || err), { kind: 'error' });
+          }
         }
+      } finally {
+        restore?.();
       }
       const skillsWrap = $('#agent-create-skills');
       const skillsList = $('#agent-create-skills-list');

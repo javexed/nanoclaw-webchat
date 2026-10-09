@@ -78,6 +78,7 @@ describe('onecli() wrapper scrubs credentials from errors', () => {
   });
 
   it('updateSecretValue rejection never exposes the plaintext key', async () => {
+    delete process.env.ONECLI_URL; // the CLI path (a local gateway's update goes to its API)
     let caught: unknown;
     try {
       await realOnecliAdmin.updateSecretValue('sec-1', SECRET);

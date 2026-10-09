@@ -27,7 +27,11 @@
     loopback, add a loopback gateway port beside the bridge one, publish no
     Postgres port, and write ONECLI_URL / api-host / APP_URL on loopback;
     `--private-ports` migrates an existing install; updates run it
-    (deploy/onecli-private-ports.sh). DELETE when upstream ships an
+    (deploy/onecli-private-ports.sh). Before that recreate it records the
+    running OneCLI version in ~/.onecli/.env when none is recorded: the
+    compose file falls back to `latest`, and an install that never saved its
+    pin would otherwise be upgraded (irreversible database migrations) by a
+    port change. DELETE when upstream ships an
     equivalent, or OneCLI's compose file binds the API and database privately
     itself.
 .claude/skills/add-onecli/scripts/setup.private-ports.test.ts
@@ -237,7 +241,7 @@ src/templates/local-dir.ts
 src/types.ts
     agent-group lifecycle status type
 
-## PRODUCT — shrink via seam registries (40)
+## PRODUCT — shrink via seam registries (38)
 
 src/mailbox/model.ts
     add the 'interrupt' inbound kind — the webchat stop button writes a control

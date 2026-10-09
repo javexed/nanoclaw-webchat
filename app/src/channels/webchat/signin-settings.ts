@@ -17,7 +17,7 @@
  * The client secret is write-only: it can be set, replaced or cleared, never
  * read back.
  */
-import { DEFAULT_PROXY_HEADER, oidcCfg, type OidcProvider } from './auth.js';
+import { DEFAULT_PROXY_HEADER, oidcCfg, parseProxyEntry, type OidcProvider } from './auth.js';
 import { removeEnv, upsertEnv } from './env-write.js';
 
 type Env = NodeJS.ProcessEnv;
@@ -105,12 +105,11 @@ export function applyTailscale(root: string, enabled: boolean, env: Env = proces
 
 // ── Trusted proxy ───────────────────────────────────────────────────────────
 
-const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 const HEADER = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /**
- * The proxy's address(es), IPv4 or IPv4/CIDR (what auth.ts matches), and the
- * identity header. "auto" / "*" — trust ANY caller's headers — is refused here:
+ * The proxy's address(es), IPv4 or IPv6, each optionally a CIDR (what auth.ts
+ * matches), and the identity header. "auto" / "*" — trust ANY caller's headers — is refused here:
  * it is safe only when nothing but the proxy can reach the port, which this
  * page cannot check, and one click would otherwise hand the install to anyone
  * who can send a header. It stays possible in .env for those who can check.
@@ -129,10 +128,7 @@ export function validateProxyInput(input: {
     return { ok: false, error: 'Name the proxy’s address; trusting any address is .env-only.' };
   if (entries.length > 50) return { ok: false, error: 'At most 50 addresses.' };
   for (const e of entries) {
-    const [ip, prefix, extra] = e.split('/');
-    const okPrefix = prefix === undefined || (/^\d{1,2}$/.test(prefix) && Number(prefix) <= 32);
-    if (extra !== undefined || !IPV4.test(ip) || !okPrefix)
-      return { ok: false, error: `${e} is not an IPv4 address or CIDR.` };
+    if (!parseProxyEntry(e)) return { ok: false, error: `${e} is not an IP address or CIDR.` };
   }
   const header = (typeof input.header === 'string' ? input.header : '').trim().toLowerCase() || DEFAULT_PROXY_HEADER;
   if (!HEADER.test(header)) return { ok: false, error: 'That header name is not valid.' };

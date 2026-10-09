@@ -61,6 +61,8 @@ interface WebchatMessageRow {
   message_type: 'text' | 'file' | 'a2a' | 'approval' | 'approval_resolved' | 'skill_draft';
   file_meta: string | null;
   created_at: number;
+  /** Stable user id of a human sender (null for agents, system rows, and rows stored before it existed). */
+  sender_user_id?: string | null;
 }
 
 export interface WebchatPushSubscription {
@@ -789,8 +791,10 @@ export async function getEffectiveRoomMode(roomId: string): Promise<CredentialMo
 // ── Messages ──
 
 function rowToMessage(row: WebchatMessageRow): WebchatMessage {
+  // sender_user_id is the delete-ownership key, not a display field: it stays server-side.
+  const { sender_user_id: _senderUserId, ...rest } = row;
   return {
-    ...row,
+    ...rest,
     file_meta: row.file_meta ? (JSON.parse(row.file_meta) as FileMeta) : null,
   };
 }
@@ -801,6 +805,8 @@ export async function storeWebchatMessage(
   senderType: string,
   content: string,
   threadId = 'main',
+  /** The human sender's user id: what decides who may delete the message. */
+  senderUserId: string | null = null,
 ): Promise<WebchatMessage> {
   const msg: WebchatMessage = {
     id: randomUUID(),
@@ -814,9 +820,9 @@ export async function storeWebchatMessage(
     created_at: Date.now(),
   };
   await getDb().run(
-    `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at)
-       VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at)`,
-    { ...msg, file_meta: null },
+    `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at, sender_user_id)
+       VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at, @sender_user_id)`,
+    { ...msg, file_meta: null, sender_user_id: senderUserId },
   );
   return msg;
 }
@@ -1145,6 +1151,8 @@ export async function storeWebchatFileMessage(
   caption: string,
   fileMeta: FileMeta,
   threadId = 'main',
+  /** The human sender's user id: what decides who may delete the message. */
+  senderUserId: string | null = null,
 ): Promise<WebchatMessage> {
   const msg: WebchatMessage = {
     id: randomUUID(),
@@ -1158,9 +1166,9 @@ export async function storeWebchatFileMessage(
     created_at: Date.now(),
   };
   await getDb().run(
-    `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at)
-       VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at)`,
-    { ...msg, file_meta: JSON.stringify(fileMeta) },
+    `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at, sender_user_id)
+       VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at, @sender_user_id)`,
+    { ...msg, file_meta: JSON.stringify(fileMeta), sender_user_id: senderUserId },
   );
   return msg;
 }
@@ -1184,23 +1192,31 @@ export async function getWebchatMessages(roomId: string, limit = 200, threadId?:
 }
 
 /**
- * Delete a message — only the original sender (matched on `sender` text)
- * may delete their own, AND only within the room they're connected to.
- * The room scope prevents a client connected to room A from deleting a
- * message in room B (especially relevant in shared-bearer auth where
- * every client carries the same `webchat:owner` identity). Returns true
- * on success.
+ * Delete a message: only its sender may, matched on the stable user id stored
+ * with it (`sender_user_id`) — never on the display name, which two users can
+ * share — and only within the room they are connected to.
+ *
+ * A row stored before sender ids existed has none. It can be deleted only by a
+ * caller who passes `legacyIdentity` — which the caller does only for an owner
+ * or admin of the room — and only when it is a user message whose `sender`
+ * matches that identity. Everyone else is refused. Returns true on success.
  */
 export async function deleteWebchatMessage(
   messageId: string,
-  requesterIdentity: string,
+  requesterUserId: string,
   roomId: string,
+  legacyIdentity?: string,
 ): Promise<boolean> {
   const result = await getDb().run(
-    `DELETE FROM webchat_messages WHERE id = ? AND sender = ? AND room_id = ?`,
+    `DELETE FROM webchat_messages
+       WHERE id = ? AND room_id = ?
+         AND (sender_user_id = ?
+              OR (sender_user_id IS NULL AND sender_type = 'user' AND ? IS NOT NULL AND sender = ?))`,
     messageId,
-    requesterIdentity,
     roomId,
+    requesterUserId,
+    legacyIdentity ?? null,
+    legacyIdentity ?? null,
   );
   return result.changes > 0;
 }
@@ -1622,8 +1638,8 @@ export async function insertSyncedMessages(
   // prepared statement. It still binds by NAME — the driver detects a single
   // object argument and passes it through to better-sqlite3's named binding.
   const INSERT_MESSAGE = `INSERT INTO webchat_messages
-       (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at, origin)
-     VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at, @origin)`;
+       (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at, origin, sender_user_id)
+     VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at, @origin, @sender_user_id)`;
   const out: WebchatMessage[] = [];
   await db.transaction(async () => {
     const divider: WebchatMessage = {
@@ -1638,7 +1654,7 @@ export async function insertSyncedMessages(
       created_at: base,
       origin,
     };
-    await db.run(INSERT_MESSAGE, { ...divider, file_meta: null });
+    await db.run(INSERT_MESSAGE, { ...divider, file_meta: null, sender_user_id: null });
     out.push(divider);
     for (const [i, r] of rows.entries()) {
       const copy: WebchatMessage = {
@@ -1657,7 +1673,13 @@ export async function insertSyncedMessages(
         created_at: base + i + 1,
         origin,
       };
-      await db.run(INSERT_MESSAGE, { ...copy, file_meta: copy.file_meta ? JSON.stringify(copy.file_meta) : null });
+      // The copy keeps its author's sender id (so they can still delete it), but
+      // the returned copy, which is broadcast, does not carry it.
+      await db.run(INSERT_MESSAGE, {
+        ...copy,
+        file_meta: copy.file_meta ? JSON.stringify(copy.file_meta) : null,
+        sender_user_id: (r as { sender_user_id?: string | null }).sender_user_id ?? null,
+      });
       out.push(copy);
     }
   });

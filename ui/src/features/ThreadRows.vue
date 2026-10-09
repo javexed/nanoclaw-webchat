@@ -57,7 +57,7 @@ function stopUndoClick(e: MouseEvent): void {
 </script>
 
 <template>
-  <div v-if="rows === null" class="thread-loading">Loading…</div>
+  <div v-if="rows === null" class="thread-loading"><span class="btn-spinner" aria-hidden="true"></span>Loading…</div>
   <template v-else>
     <template v-for="(t, i) in rows" :key="t.thread_id">
       <div

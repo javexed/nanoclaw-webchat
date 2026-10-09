@@ -72,9 +72,14 @@ export class BodyTooLargeError extends Error {
   }
 }
 
+/**
+ * The request body as UTF-8, refused past `maxBytes`. Decoded once, whole: a
+ * multi-byte character split across two network chunks would turn into
+ * replacement characters if each chunk were decoded on its own.
+ */
 export function readBody(req: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES): Promise<string> {
   return new Promise((resolve, reject) => {
-    let body = '';
+    const chunks: Buffer[] = [];
     let size = 0;
     req.on('data', (d: Buffer) => {
       size += d.length;
@@ -83,9 +88,9 @@ export function readBody(req: IncomingMessage, maxBytes = MAX_JSON_BODY_BYTES): 
         reject(new BodyTooLargeError());
         return;
       }
-      body += d;
+      chunks.push(d);
     });
-    req.on('end', () => resolve(body));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', (err) => reject(err));
   });
 }

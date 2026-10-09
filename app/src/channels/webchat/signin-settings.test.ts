@@ -43,6 +43,13 @@ describe('trusted proxy input', () => {
     expect(validateProxyInput({ ips: '10.0.0.5' })).toMatchObject({ ok: true, header: 'x-forwarded-user' });
   });
 
+  it('takes IPv6 addresses and prefixes too', () => {
+    expect(validateProxyInput({ ips: '2001:db8::5 fd7a:115c:a1e0::/48, ::1' })).toMatchObject({
+      ok: true,
+      ips: '2001:db8::5,fd7a:115c:a1e0::/48,::1',
+    });
+  });
+
   it('refuses auto / * (trust anyone), and anything that is not an address', () => {
     for (const ips of [
       'auto',
@@ -52,7 +59,7 @@ describe('trusted proxy input', () => {
       'proxy.local',
       '10.0.0.256',
       '10.0.0.0/33',
-      '::1',
+      '2001:db8::/129',
       '1.2.3.4/8/9',
     ])
       expect(validateProxyInput({ ips }).ok, ips).toBe(false);

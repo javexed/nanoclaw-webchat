@@ -297,3 +297,53 @@ describe('startWebchatServer — boot gate', () => {
     }
   });
 });
+
+describe('the Tailscale Serve listener', () => {
+  const freePort = async (): Promise<number> => {
+    const net = await import('net');
+    return new Promise((resolve) => {
+      const s = net.createServer().listen(0, '127.0.0.1', () => {
+        const p = (s.address() as { port: number }).port;
+        s.close(() => resolve(p));
+      });
+    });
+  };
+
+  it("believes Serve's login header on its own port and not on the main one", async () => {
+    const servePort = await freePort();
+    const { server } = await loadServer({
+      WEBCHAT_HOST: '127.0.0.1',
+      WEBCHAT_PORT: '0',
+      WEBCHAT_TOKEN: '',
+      WEBCHAT_TAILSCALE: 'true',
+      WEBCHAT_TRUSTED_PROXY_IPS: '',
+      WEBCHAT_SERVE_PORT: String(servePort),
+    });
+    const wc = await server.startWebchatServer(noopHooks);
+    try {
+      expect(wc.serveListener?.listening).toBe(true);
+      const login = { 'tailscale-user-login': 'alice@example.com' };
+      expect((await httpRequest(servePort, 'GET', '/api/me/handle', login)).status).toBe(200);
+      // The main port is where a tunnel or local proxy would forward a forged header.
+      expect((await httpRequest(portOf(wc), 'GET', '/api/me/handle', login)).status).toBe(401);
+    } finally {
+      await server.stopWebchatServer(wc);
+    }
+    expect(wc.serveListener?.listening).toBe(false);
+  });
+
+  it('can be turned off', async () => {
+    const { server } = await loadServer({
+      WEBCHAT_HOST: '127.0.0.1',
+      WEBCHAT_PORT: '0',
+      WEBCHAT_TOKEN: '',
+      WEBCHAT_SERVE_PORT: 'off',
+    });
+    const wc = await server.startWebchatServer(noopHooks);
+    try {
+      expect(wc.serveListener).toBeNull();
+    } finally {
+      await server.stopWebchatServer(wc);
+    }
+  });
+});

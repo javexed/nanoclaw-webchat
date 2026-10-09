@@ -2,6 +2,7 @@ src/**
 out/**
 node_modules/**
 esbuild.mjs
+vitest.config.ts
 tsconfig.json
 **/*.map
 **/*.test.*
