@@ -64,6 +64,26 @@ export function removeClient(id: string): WSClient | undefined {
   return c;
 }
 
+/**
+ * Drop a client's binding to a room it may no longer see (member removed, role
+ * revoked, room gone): it stops receiving the room's traffic, is told why, and
+ * leaves the room's member list. Its socket stays open for the rooms it keeps.
+ */
+export async function unbindClientFromRoom(c: WSClient, roomId: string): Promise<void> {
+  if (c.room_id !== roomId) return;
+  c.room_id = undefined;
+  c.thread_id = undefined;
+  log.warn('Webchat: room access lost on an open socket', { roomId, userId: c.userId });
+  if (c.ws.readyState === WebSocket.OPEN) {
+    try {
+      c.ws.send(JSON.stringify({ type: 'error', room_id: roomId, error: 'Access denied' }));
+    } catch {
+      // Socket closed between the check and the send — nothing to tell.
+    }
+  }
+  await broadcast(roomId, { type: 'members', room_id: roomId, members: await getMemberList(roomId) });
+}
+
 interface MemberInfo {
   identity: string;
   identity_type: 'user' | 'agent';
@@ -381,18 +401,10 @@ export async function broadcastRooms(): Promise<void> {
   const threadCounts = await getTopicThreadCounts(); // global, computed once per broadcast
   for (const c of clients.values()) {
     if (c.ws.readyState !== WebSocket.OPEN) continue;
-    c.ws.send(
-      JSON.stringify({
-        type: 'rooms',
-        rooms: await annotateRoomsForUser(
-          c.userId,
-          await allRooms,
-          await archivedSet,
-          await activityMap,
-          await threadCounts,
-        ),
-      }),
-    );
+    const rooms = await annotateRoomsForUser(c.userId, allRooms, archivedSet, activityMap, threadCounts);
+    c.ws.send(JSON.stringify({ type: 'rooms', rooms }));
+    // A room that left this user's list also stops reaching their open socket.
+    if (c.room_id && !rooms.some((r) => r.id === c.room_id)) await unbindClientFromRoom(c, c.room_id);
   }
 }
 

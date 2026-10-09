@@ -50,3 +50,4 @@ moduleWebchatRunnerPlacementMode
 moduleWebchatDropThreadEngaged
 moduleWebchatFitContext
 moduleWebchatTurnTraces
+moduleWebchatMessageSenderUserId

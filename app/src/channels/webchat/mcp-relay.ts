@@ -29,6 +29,7 @@ import { log } from '../../log.js';
 import { getDb } from '../../db/connection.js';
 import { effectiveAuthHeader, parseMcpAuth, refreshOAuthToken } from './mcp-auth.js';
 import { getWebchatMcpServer, MCP_RELAY_PORT } from './mcp-registry.js';
+import { safeFetch } from './models.js';
 
 export { MCP_RELAY_PORT };
 const RELAY_TOKEN_HEADER = 'x-nanoclaw-relay';
@@ -55,6 +56,47 @@ export function registerRelayRoute(prefix: string, route: RelayRoute): void {
   relayRoutes.set(prefix, route);
 }
 
+/** Repeated percent-decoding stops here; anything still encoded past it is refused. */
+const MAX_DECODE_ROUNDS = 4;
+
+/**
+ * The upstream URL for a relayed request, or null when it would leave the
+ * configured server. The relay injects a credential, so the agent may only
+ * reach paths UNDER the server's configured URL, on its origin: no dot
+ * segments (literal or percent-encoded, at any encoding depth), no
+ * backslashes, and the URL as parsed must stay below the base path.
+ */
+export function relayTargetUrl(serverUrl: string, subPath: string, query: string): string | null {
+  let base: URL;
+  try {
+    base = new URL(serverUrl);
+  } catch {
+    return null;
+  }
+  let decoded = subPath;
+  for (let round = 0; ; round++) {
+    if (decoded.includes('\\')) return null;
+    if (decoded.split('/').some((seg) => seg === '.' || seg === '..')) return null;
+    if (!/%[0-9a-f]{2}/i.test(decoded)) break;
+    if (round === MAX_DECODE_ROUNDS) return null;
+    try {
+      decoded = decodeURIComponent(decoded);
+    } catch {
+      return null;
+    }
+  }
+  const basePath = base.pathname.replace(/\/+$/, '');
+  let target: URL;
+  try {
+    target = new URL(`${base.origin}${basePath}${subPath}${query}`);
+  } catch {
+    return null;
+  }
+  if (target.origin !== base.origin) return null;
+  if (basePath && target.pathname !== basePath && !target.pathname.startsWith(`${basePath}/`)) return null;
+  return target.toString();
+}
+
 async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const url = req.url || '';
   for (const [prefix, route] of relayRoutes) {
@@ -77,6 +119,13 @@ async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse):
     res.writeHead(502).end('server has no URL');
     return;
   }
+  // Confine before any credential is looked up: a path that would leave the
+  // configured server is refused outright.
+  const target = relayTargetUrl(server.url, subPath, query);
+  if (!target) {
+    res.writeHead(400).end('relay path outside the configured server');
+    return;
+  }
 
   const headers: Record<string, string> = {};
   for (const [k, v] of Object.entries(req.headers)) {
@@ -93,16 +142,22 @@ async function handleRelay(req: http.IncomingMessage, res: http.ServerResponse):
   const authHeader = await effectiveAuthHeader(server);
   if (authHeader) headers['authorization'] = authHeader;
 
-  const target = server.url.replace(/\/$/, '') + subPath + query;
   const hasBody = req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'DELETE';
 
+  // safeFetch: the SSRF gate runs on the target, and a redirect is refused
+  // rather than followed, so the credential never reaches a host the server
+  // points it at. Never the router's master key either.
   const forward = async (): Promise<Response> =>
-    fetch(target, {
-      method: req.method,
-      headers,
-      ...(hasBody ? { body: Readable.toWeb(req) as unknown as RequestInit['body'], duplex: 'half' } : {}),
-      signal: AbortSignal.timeout(10 * 60 * 1000), // long-poll friendly
-    } as RequestInit);
+    safeFetch(
+      target,
+      {
+        method: req.method,
+        headers,
+        ...(hasBody ? { body: Readable.toWeb(req) as unknown as RequestInit['body'], duplex: 'half' } : {}),
+        signal: AbortSignal.timeout(10 * 60 * 1000), // long-poll friendly
+      } as RequestInit,
+      { redirects: 'refuse', routerAuth: false },
+    );
 
   try {
     let upstream = await forward();

@@ -182,9 +182,10 @@ custody; an expired token surfaces as a 401 and the member reconnects.
   credential, so it cannot spend or exfiltrate anyone else's.
 - The per-member identity is fixed **at spawn from `session.thread_id`**, not
   from any agent-controllable input.
-- Residual operational risks: argv exposure to local processes where the CLI
-  has no `--file` (a 1.x CLI, and `secrets update`, which replaces a value in
-  place), and OneCLI as the trust anchor.
+- Residual operational risks: argv exposure to local processes where neither
+  `--file` nor the gateway's own API is available (a 1.x CLI's create, and an
+  update against a remote or keyed gateway; a local gateway's update goes to
+  its API as a request body), and OneCLI as the trust anchor.
 
 ## 11. Touch points
 

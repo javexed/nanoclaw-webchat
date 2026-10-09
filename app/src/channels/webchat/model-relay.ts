@@ -10,8 +10,12 @@
  * host-local model's already does. An agent on Open dials the model directly.
  */
 import { createHash } from 'crypto';
+import fs from 'fs';
+import net from 'net';
+import path from 'path';
 
-import { EGRESS_LOCKDOWN } from '../../config.js';
+import { DATA_DIR, EGRESS_LOCKDOWN } from '../../config.js';
+import { log } from '../../log.js';
 import { getContainerConfig } from '../../db/container-configs.js';
 
 import { listWebchatModels } from './db.js';
@@ -29,7 +33,28 @@ export interface ModelRelay {
 /** The name a container dials central by; on the lockdown network it is the filter's bridge address. */
 export const RELAY_HOST = 'host.docker.internal';
 
-const LOCAL_HOSTS = ['localhost', '127.0.0.1', RELAY_HOST];
+/** Loopback in every spelling a URL can carry it: 127.0.0.0/8, ::1, and IPv4-mapped 127.x. */
+const LOOPBACK = new net.BlockList();
+LOOPBACK.addSubnet('127.0.0.0', 8, 'ipv4');
+LOOPBACK.addAddress('::1', 'ipv6');
+
+/**
+ * Whether a URL hostname names this machine: localhost, the relay name, any
+ * loopback address (127.0.0.0/8, ::1, ::ffff:127.x, bracketed or not) or an
+ * unspecified one (0.0.0.0, ::), which a connect also lands on here. Such an
+ * endpoint is host-local, never a model on another machine.
+ */
+export function isLoopbackHost(hostname: string): boolean {
+  const h = hostname
+    .toLowerCase()
+    .replace(/\.$/, '')
+    .replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h.endsWith('.localhost') || h === RELAY_HOST) return true;
+  if (h === '0.0.0.0' || h === '::') return true;
+  if (net.isIPv4(h)) return LOOPBACK.check(h, 'ipv4');
+  if (net.isIPv6(h)) return LOOPBACK.check(h, 'ipv6');
+  return false;
+}
 const RELAY_PORT_BASE = 47100;
 const RELAY_PORT_SPAN = 800;
 
@@ -46,7 +71,7 @@ export function remoteModelTarget(endpoint: string | null | undefined): { host: 
   if (!endpoint) return null;
   try {
     const u = new URL(endpoint);
-    if (u.protocol !== 'http:' || !u.hostname || LOCAL_HOSTS.includes(u.hostname)) return null;
+    if (u.protocol !== 'http:' || !u.hostname || isLoopbackHost(u.hostname)) return null;
     return { host: u.hostname.replace(/^\[|\]$/g, ''), port: Number(u.port || 80) };
   } catch {
     return null;
@@ -58,8 +83,46 @@ function relayedTarget(m: ModelEndpoint): { host: string; port: number } | null 
   return RELAYED_KINDS.includes(m.kind) ? remoteModelTarget(m.endpoint) : null;
 }
 
-/** Ports this process has handed out, by host: a host keeps its port while it is registered. */
+/**
+ * Ports handed out, by host: a host keeps its port while it is registered,
+ * across restarts too. Without the record, a host that moved off a collision
+ * would move back once the host it collided with is gone and central restarts,
+ * and every agent already dialing it would be refused until it respawned.
+ */
 const assigned = new Map<string, number>();
+let storePath: string | null = process.env.VITEST ? null : path.join(DATA_DIR, 'webchat-relay-ports.json');
+let loaded = false;
+let saved = '';
+
+function loadAssigned(): void {
+  if (loaded) return;
+  loaded = true;
+  if (!storePath) return;
+  try {
+    const raw = fs.readFileSync(storePath, 'utf8');
+    saved = raw;
+    for (const [key, port] of Object.entries(JSON.parse(raw) as Record<string, unknown>)) {
+      if (typeof port === 'number' && port >= RELAY_PORT_BASE && port < RELAY_PORT_BASE + RELAY_PORT_SPAN)
+        assigned.set(key, port);
+    }
+  } catch {
+    /* none yet, or unreadable: ports come from the hash, as before */
+  }
+}
+
+function saveAssigned(): void {
+  if (!storePath) return;
+  const raw = JSON.stringify(Object.fromEntries([...assigned].sort(([a], [b]) => (a < b ? -1 : 1))));
+  if (raw === saved) return;
+  try {
+    const tmp = `${storePath}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, raw);
+    fs.renameSync(tmp, storePath);
+    saved = raw;
+  } catch (err) {
+    log.warn('Model relay: could not record relay ports', { err: String(err) });
+  }
+}
 
 /**
  * One listener port per distinct model host, from a hash of host:port so it
@@ -70,11 +133,12 @@ const assigned = new Map<string, number>();
  * when a host it collided with goes away.
  */
 export function modelRelaysFor(models: ModelEndpoint[]): ModelRelay[] {
+  loadAssigned();
   const used = new Set<number>();
   for (const m of models) {
     try {
       const u = new URL(m.endpoint ?? '');
-      if (LOCAL_HOSTS.includes(u.hostname)) used.add(Number(u.port || (u.protocol === 'https:' ? 443 : 80)));
+      if (isLoopbackHost(u.hostname)) used.add(Number(u.port || (u.protocol === 'https:' ? 443 : 80)));
     } catch {
       /* not a URL */
     }
@@ -118,12 +182,16 @@ export function modelRelaysFor(models: ModelEndpoint[]): ModelRelay[] {
       ...(ollamaTargets.has(key) ? { ollama: true } : {}),
     });
   }
+  saveAssigned();
   return out;
 }
 
-/** Test hook: forget the ports handed out. */
-export function _resetRelayPortsForTest(): void {
+/** Test hook: forget the ports handed out; optionally record them at `file` (null: in memory only). */
+export function _resetRelayPortsForTest(file: string | null = null): void {
   assigned.clear();
+  storePath = file;
+  loaded = false;
+  saved = '';
 }
 
 /** Every relay the model registry needs. */

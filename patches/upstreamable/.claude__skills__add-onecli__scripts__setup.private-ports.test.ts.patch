@@ -1,12 +1,12 @@
 diff --git a/.claude/skills/add-onecli/scripts/setup.private-ports.test.ts b/.claude/skills/add-onecli/scripts/setup.private-ports.test.ts
 new file mode 100644
-index 00000000..4ca196cf
+index 00000000..bac9caac
 --- /dev/null
 +++ b/.claude/skills/add-onecli/scripts/setup.private-ports.test.ts
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,86 @@
 +import { describe, expect, it } from 'vitest';
 +
-+import { privateApiUrl, servicesExposed, withPrivateServicePorts } from './setup.js';
++import { privateApiUrl, servicesExposed, withPrivateServicePorts, withRunningVersion } from './setup.js';
 +
 +// The ports sections of OneCLI's own compose file, as its installer writes it.
 +const COMPOSE = `name: onecli
@@ -70,5 +70,23 @@ index 00000000..4ca196cf
 +
 +  it('stays as it is elsewhere (Docker Desktop binds loopback already)', () => {
 +    expect(privateApiUrl('http://127.0.0.1:10254', 'darwin')).toBe('http://127.0.0.1:10254');
++  });
++});
++
++describe('the OneCLI version a recreate keeps', () => {
++  it('pins the running version when .env records none, so `latest` cannot replace it', () => {
++    expect(withRunningVersion('ONECLI_BIND_HOST=172.17.0.1\n', '1.41.0')).toBe(
++      'ONECLI_BIND_HOST=172.17.0.1\nONECLI_VERSION=1.41.0\n',
++    );
++  });
++
++  it('leaves a recorded pin alone', () => {
++    const env = 'ONECLI_VERSION=1.36.0\nONECLI_BIND_HOST=172.17.0.1\n';
++    expect(withRunningVersion(env, '1.41.0')).toBe(env);
++  });
++
++  it('writes nothing when the version is unknown or not a release', () => {
++    expect(withRunningVersion('', undefined)).toBe('');
++    expect(withRunningVersion('', 'latest')).toBe('');
 +  });
 +});

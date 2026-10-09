@@ -7,6 +7,7 @@
  * discarded draft leaves those lists, so an Undo would have nowhere to live.
  */
 import { computed } from 'vue';
+import BusyLabel from './BusyLabel.vue';
 import OriginBadge from './OriginBadge.vue';
 import { draftAction } from './skills-panel-state.js';
 import type { OverlapDecision } from './skills.js';
@@ -42,34 +43,43 @@ const busy = computed(() => {
   const p = draftAction.value[props.draftId]?.phase;
   return p === 'saving' || p === 'checking' || p === 'discarding';
 });
+const keepBusyLabel = computed(() => (draftAction.value[props.draftId]?.phase === 'checking' ? CHECKING : SAVING));
+// An undo in flight keeps the outcome it is reversing on screen, with Undo busy.
+const undoing = computed(() => draftAction.value[props.draftId]?.phase === 'undoing');
+const shown = computed(() => {
+  const p = draftAction.value[props.draftId];
+  return p?.phase === 'undoing' ? p.from : p;
+});
 </script>
 
 <template>
   <!-- Terminal states. The server's resolve re-broadcast lands here too, but the
        phase gets us there first, so the card never sits on a stale Keep. -->
-  <div v-if="draftAction[draftId]?.phase === 'kept'" class="skill-draft-card resolved">
+  <div v-if="shown?.phase === 'kept'" class="skill-draft-card resolved">
     <div class="skill-head">
       <span class="skill-name"
-        >✅ {{ (draftAction[draftId] as any).patched ? 'Updated' : 'Kept as' }}
-        {{ (draftAction[draftId] as any).name }}</span
+        >✅ {{ shown.patched ? 'Updated' : 'Kept as' }}
+        {{ shown.name }}</span
       ><OriginBadge v-if="agentName" :origin="{ label: `wired to ${agentName}`, official: false }" />
     </div>
     <div class="skill-draft-actions">
       <button type="button" class="btn btn-ghost" @click="props.onView()">{{ VIEW }}</button>
-      <button type="button" class="btn btn-secondary" @click="props.onUndoKeep()">{{ UNDO }}</button>
+      <button type="button" class="btn btn-secondary" :disabled="undoing || undefined" @click="props.onUndoKeep()">
+        <BusyLabel :busy="undoing" :label="UNDO" :busy-label="UNDOING" />
+      </button>
     </div>
   </div>
 
-  <div v-else-if="draftAction[draftId]?.phase === 'discarded'" class="approval-inroom-note resolved">
-    <span>🗑 {{ (draftAction[draftId] as any).skillName || title }} — discarded</span>
-    <button type="button" class="btn btn-ghost" @click="props.onUndoDiscard()">{{ UNDO }}</button>
+  <div v-else-if="shown?.phase === 'discarded'" class="approval-inroom-note resolved">
+    <span>🗑 {{ shown.skillName || title }} — discarded</span>
+    <button type="button" class="btn btn-ghost" :disabled="undoing || undefined" @click="props.onUndoDiscard()">
+      <BusyLabel :busy="undoing" :label="UNDO" :busy-label="UNDOING" />
+    </button>
   </div>
 
   <div v-else-if="draftAction[draftId]?.phase === 'undone'" class="approval-inroom-note resolved">
     ↩ {{ (draftAction[draftId] as any).name }} — undone
   </div>
-
-  <div v-else-if="draftAction[draftId]?.phase === 'undoing'" class="approval-inroom-note">{{ UNDOING }}</div>
 
   <!-- A draft resolved by someone else (or before this tab loaded): the stored
        card carries the outcome, and there is no local phase to show. -->
@@ -123,16 +133,14 @@ const busy = computed(() => {
         :disabled="busy || undefined"
         @click="props.onKeep()"
       >
-        {{
-          draftAction[draftId]?.phase === 'saving'
-            ? SAVING
-            : draftAction[draftId]?.phase === 'checking'
-              ? CHECKING
-              : KEEP
-        }}
+        <BusyLabel
+          :busy="draftAction[draftId]?.phase === 'saving' || draftAction[draftId]?.phase === 'checking'"
+          :label="KEEP"
+          :busy-label="keepBusyLabel"
+        />
       </button>
       <button type="button" class="skill-delete" :disabled="busy || undefined" @click="props.onDiscard()">
-        {{ draftAction[draftId]?.phase === 'discarding' ? DISCARDING : DISCARD }}
+        <BusyLabel :busy="draftAction[draftId]?.phase === 'discarding'" :label="DISCARD" :busy-label="DISCARDING" />
       </button>
     </div>
 

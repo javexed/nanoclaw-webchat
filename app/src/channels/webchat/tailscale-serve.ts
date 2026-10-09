@@ -6,10 +6,12 @@
  * local webchat on the node's `*.ts.net` MagicDNS name, using Tailscale's
  * automatic Let's Encrypt cert. The result is `https://<node>.ts.net` with a
  * valid cert (a real browser secure context → PWA install / push / voice work)
- * proxying to `http://127.0.0.1:<port>`. Serve injects `Tailscale-User-Login`,
- * which auth.ts maps back to the same `webchat:tailscale:<login>` identity the
- * whois path produces (see `tailscaleServeIdentity`), so an owner claimed over
- * plain http-tailnet stays owner once HTTPS is on.
+ * proxying to `http://127.0.0.1:<port>`, where <port> is webchat's dedicated
+ * Serve listener (WEBCHAT_SERVE_PORT, see servePortFor), not its main port.
+ * Serve injects `Tailscale-User-Login`, which auth.ts believes only on that
+ * listener and maps back to the same `webchat:tailscale:<login>` identity the
+ * whois path produces, so an owner claimed over plain http-tailnet stays owner
+ * once HTTPS is on.
  *
  * Two external prerequisites this module can only *report*, not fix:
  *   - HTTPS certificates must be enabled once, tailnet-wide, in the Tailscale
@@ -97,33 +99,121 @@ export async function getTailscaleServeState(runner: TailscaleRunner = defaultRu
 }
 
 /**
- * The hostnames `tailscale serve` is fronting (its Web config keys, `:443`
- * dropped), which is the Host header Serve's own requests carry. Serve's login
- * header is only believed on a request addressed to one of these: a tunnel or
- * reverse proxy on the same box forwards from loopback too, but under its own
- * name. Cached briefly; enabling Serve here clears it.
+ * The port of webchat's dedicated Serve listener: WEBCHAT_SERVE_PORT, else the
+ * main port + 10000 (3100 → 13100). Not main + 1: neighbouring ports are where
+ * a second install on the same machine, and this one's other listeners, live.
+ * `off` (or 0) disables the listener. Null when disabled or out of range.
  */
-const SERVE_HOSTS_TTL_MS = 60_000;
-let serveHostsCache: { hosts: ReadonlySet<string>; at: number } | null = null;
-
-export async function serveFrontedHosts(runner: TailscaleRunner = defaultRunner): Promise<ReadonlySet<string>> {
-  if (serveHostsCache && Date.now() - serveHostsCache.at < SERVE_HOSTS_TTL_MS) return serveHostsCache.hosts;
-  const hosts = new Set<string>();
-  const serve = await runner(['serve', 'status', '--json']);
-  if (serve.ok) {
-    try {
-      const cfg = JSON.parse(serve.stdout) as { Web?: Record<string, unknown> };
-      for (const hostPort of Object.keys(cfg.Web ?? {})) hosts.add(hostPort.toLowerCase().replace(/:443$/, ''));
-    } catch {
-      /* no config → no fronted hosts */
-    }
-  }
-  serveHostsCache = { hosts, at: Date.now() };
-  return hosts;
+export function servePortFor(mainPort: number, env: NodeJS.ProcessEnv = process.env): number | null {
+  const raw = (env.WEBCHAT_SERVE_PORT || '').trim().toLowerCase();
+  if (raw === 'off' || raw === '0' || raw === 'false') return null;
+  // An ephemeral main port (0, as tests use) has no fixed neighbour to derive from.
+  if (!raw && mainPort === 0) return null;
+  const port = raw ? Number(raw) : mainPort + 10_000;
+  return Number.isInteger(port) && port > 0 && port < 65_536 && port !== mainPort ? port : null;
 }
 
-export function forgetServeHosts(): void {
-  serveHostsCache = null;
+/** One Serve web mapping: the `host:port` it answers on and the local port it proxies to. */
+interface ServeMapping {
+  hostPort: string;
+  host: string;
+  httpsPort: string;
+  target: number;
+}
+
+/** The Serve web mappings whose root handler proxies to a port on loopback. */
+export function serveMappings(serveStatusJson: string): ServeMapping[] {
+  let cfg: { Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }> };
+  try {
+    cfg = JSON.parse(serveStatusJson);
+  } catch {
+    return [];
+  }
+  const out: ServeMapping[] = [];
+  for (const [hostPort, web] of Object.entries(cfg?.Web ?? {})) {
+    const proxy = web?.Handlers?.['/']?.Proxy ?? '';
+    let target: URL;
+    try {
+      // `tailscale serve 3100` stores `http://127.0.0.1:3100`; a bare host:port is tolerated.
+      target = new URL(/^[a-z+]+:\/\//i.test(proxy) ? proxy : `http://${proxy}`);
+    } catch {
+      continue;
+    }
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname)) continue;
+    const [host, p] = hostPort.toLowerCase().split(':');
+    out.push({
+      hostPort,
+      host,
+      httpsPort: p || '443',
+      target: Number(target.port || (target.protocol === 'https:' ? 443 : 80)),
+    });
+  }
+  return out;
+}
+
+export interface ServeRouting {
+  /** Serve proxies to the dedicated Serve listener. Once true, the legacy path is closed. */
+  dedicated: boolean;
+  /** Names Serve fronts at the MAIN port (the legacy setup), as Serve's Host header carries them. */
+  legacyHosts: ReadonlySet<string>;
+}
+
+/**
+ * Where Serve sends this install's traffic, read from `tailscale serve status
+ * --json`. Cached briefly; enabling Serve here clears it.
+ */
+const SERVE_ROUTING_TTL_MS = 60_000;
+let routingCache: { key: string; routing: ServeRouting; at: number } | null = null;
+
+export async function serveRouting(
+  mainPort: number,
+  servePort: number | null,
+  runner: TailscaleRunner = defaultRunner,
+): Promise<ServeRouting> {
+  const key = `${mainPort}|${servePort}`;
+  if (routingCache && routingCache.key === key && Date.now() - routingCache.at < SERVE_ROUTING_TTL_MS)
+    return routingCache.routing;
+  const serve = await runner(['serve', 'status', '--json']);
+  const mappings = serve.ok ? serveMappings(serve.stdout) : [];
+  const routing: ServeRouting = {
+    dedicated: servePort !== null && mappings.some((m) => m.target === servePort),
+    // As Host arrives: bare on 443, `name:port` otherwise. The bare name alone
+    // matched no front but 443 (refusing a runner behind :8443), and would let
+    // one port's front vouch for a request addressed to another.
+    legacyHosts: new Set(
+      mappings
+        .filter((m) => m.target === mainPort)
+        .map((m) => (m.httpsPort === '443' ? m.host : `${m.host}:${m.httpsPort}`)),
+    ),
+  };
+  routingCache = { key, routing, at: Date.now() };
+  return routing;
+}
+
+export function forgetServeRouting(): void {
+  routingCache = null;
+}
+
+/**
+ * The commands that move an existing Serve mapping from the main port to the
+ * Serve listener, one per HTTPS port Serve answers on for this install. Empty
+ * when nothing points at the main port, or Serve already uses the listener.
+ */
+export function serveMigrationCommands(serveStatusJson: string, mainPort: number, servePort: number): string[] {
+  const mappings = serveMappings(serveStatusJson);
+  if (mappings.some((m) => m.target === servePort)) return [];
+  const ports = new Set(mappings.filter((m) => m.target === mainPort).map((m) => m.httpsPort));
+  return [...ports].map((p) => `tailscale serve --bg --https=${p} ${servePort}`);
+}
+
+/** Read Serve's config and return serveMigrationCommands for it. */
+export async function pendingServeMigration(
+  mainPort: number,
+  servePort: number,
+  runner: TailscaleRunner = defaultRunner,
+): Promise<string[]> {
+  const serve = await runner(['serve', 'status', '--json']);
+  return serve.ok ? serveMigrationCommands(serve.stdout, mainPort, servePort) : [];
 }
 
 /**
@@ -145,7 +235,7 @@ export async function enableTailscaleServe(
   }
 
   const run = await runner(['serve', '--bg', String(port)]);
-  forgetServeHosts();
+  forgetServeRouting();
   if (run.ok) {
     const after = await getTailscaleServeState(runner);
     return { ok: true, url: after.url ?? state.url ?? undefined };
@@ -183,28 +273,15 @@ export async function enableTailscaleServe(
 /**
  * The HTTPS address Tailscale Serve publishes THIS install at, read from
  * `tailscale serve status --json`: the `host:port` whose root handler proxies to
- * our local port. `:443` is left off. Null when Serve does not front this port
+ * one of our local ports (the Serve listener, or the main port on an install
+ * not yet moved over). `:443` is left off. Null when Serve does not front us
  * (another install may own the default 443 mapping on the same machine).
  */
-export function serveUrlForPort(serveStatusJson: string, port: number): string | null {
-  let cfg: { Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }> };
-  try {
-    cfg = JSON.parse(serveStatusJson);
-  } catch {
-    return null;
-  }
-  for (const [hostPort, web] of Object.entries(cfg.Web ?? {})) {
-    const proxy = web?.Handlers?.['/']?.Proxy ?? '';
-    let target: URL;
-    try {
-      target = new URL(proxy);
-    } catch {
-      continue;
-    }
-    const local = ['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname);
-    if (!local || Number(target.port || 80) !== port) continue;
-    const [host, p] = hostPort.split(':');
-    return p && p !== '443' ? `https://${host}:${p}` : `https://${host}`;
+export function serveUrlForPort(serveStatusJson: string, port: number | readonly number[]): string | null {
+  const mappings = serveMappings(serveStatusJson);
+  for (const p of typeof port === 'number' ? [port] : port) {
+    const hit = mappings.find((m) => m.target === p);
+    if (hit) return hit.httpsPort !== '443' ? `https://${hit.host}:${hit.httpsPort}` : `https://${hit.host}`;
   }
   return null;
 }
@@ -218,10 +295,11 @@ export async function tailnetUrlForPort(
   port: number,
   listensBeyondLoopback: boolean,
   runner: TailscaleRunner = defaultRunner,
+  servePort: number | null = null,
 ): Promise<string | null> {
   const serve = await runner(['serve', 'status', '--json']);
   if (serve.ok) {
-    const viaServe = serveUrlForPort(serve.stdout, port);
+    const viaServe = serveUrlForPort(serve.stdout, servePort === null ? [port] : [servePort, port]);
     if (viaServe) return viaServe;
   }
   if (!listensBeyondLoopback) return null;

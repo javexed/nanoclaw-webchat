@@ -38,7 +38,11 @@ TREE="$(cd "$TREE" && pwd)"
 
 # owned.tsv: <path>\t<added line numbers, comma-separated | * for the whole file>
 OWNED="$(mktemp)"
-trap 'rm -f "$OWNED" "$TREE/.eslint-async.config.js" "$TREE/.eslint-async.out"' EXIT
+# Per-run file names: check-unused.sh runs this same script with other rules,
+# and CI runs the two at the same time over the same tree.
+CFG=".eslint-owned-$$.config.js"
+OUT=".eslint-owned-$$.out"
+trap 'rm -f "$OWNED" "$TREE/$CFG" "$TREE/$OUT"' EXIT
 while IFS= read -r f; do printf '%s\t*\n' "${f#"$HERE/app/"}"; done \
   < <(find "$HERE/app/src" "$HERE/app/container" -name '*.ts' -type f 2>/dev/null) >> "$OWNED"
 # A skill's payload is ours too, checked where it lands once installed
@@ -73,7 +77,7 @@ if [ "${#FILES[@]}" -eq 0 ]; then
 fi
 
 # The config has to live in the tree: that is where typescript-eslint resolves.
-cat > "$TREE/.eslint-async.config.js" <<EOF
+cat > "$TREE/$CFG" <<EOF
 import tseslint from 'typescript-eslint'
 import noCatchAll from 'eslint-plugin-no-catch-all'
 export default [
@@ -92,8 +96,8 @@ export default [
 EOF
 
 cd "$TREE" || exit 2
-pnpm exec eslint --no-config-lookup -c .eslint-async.config.js -f json "${FILES[@]}" > .eslint-async.out 2> /dev/null
-node - "$OWNED" "$TREE" .eslint-async.out <<'EOF'
+pnpm exec eslint --no-config-lookup -c "$CFG" -f json "${FILES[@]}" > "$OUT" 2> /dev/null
+node - "$OWNED" "$TREE" "$OUT" <<'EOF'
 const fs = require('fs');
 const [owned, tree, out] = process.argv.slice(2);
 const scope = new Map();

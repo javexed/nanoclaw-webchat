@@ -17,6 +17,7 @@ import Preflight from './Preflight.vue';
 import { sttChosenBackend } from './settings-state.js';
 import { codexInstallActive, opencodeInstallActive } from './installer-state.js';
 import { showToast } from '../core/toast.js';
+import { buttonBusy } from '../core/busy.js';
 import { renderSignins } from './signins.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
@@ -762,7 +763,6 @@ export async function renderSttSetupSettings() {
       if (!sttLastState?.installed || sttLastState.provider !== 'local') return;
       const model = $<HTMLInputElement>('#stt-model-select')!.value;
       if (!model || model === sttLastState.model) return;
-      showToast(`Switching to ${model}…`, { kind: 'info' });
       runSttInstall({ provider: 'local', model });
     });
     $('#stt-connect-btn')?.addEventListener('click', () => {
@@ -1001,10 +1001,15 @@ export async function renderRoutingSetup() {
   }
   badge.hidden = true;
   btn!.hidden = false;
-  btn!.textContent = busy ? 'Installing…' : 'Install';
   // The Install flow sets up the LiteLLM router first if it's missing, so the
-  // button stays live either way.
-  (btn as HTMLButtonElement)!.disabled = busy;
+  // button stays live either way. Busy = spinner; the poll's closing re-render
+  // takes this branch's else, which is the restore.
+  if (busy) {
+    if (!btn.querySelector('.btn-spinner')) buttonBusy(btn, 'Installing…');
+  } else {
+    btn.textContent = 'Install';
+    btn.disabled = false;
+  }
   desc.hidden = true;
   if (busy) {
     progress.hidden = false;
@@ -1196,8 +1201,7 @@ export function wireSettingsPanel2(): void {
 export async function enableTailscaleHttps() {
   const hint = $<HTMLInputElement>('#access-https-hint');
   const btn = $<HTMLButtonElement>('#access-https-btn');
-  (btn as HTMLButtonElement)!.disabled = true;
-  btn!.textContent = 'Enabling…';
+  const done = buttonBusy(btn!, 'Enabling…');
   try {
     const r = await authFetch('/api/webchat/tailscale-https', {
       method: 'POST',
@@ -1219,6 +1223,7 @@ export async function enableTailscaleHttps() {
   } catch {
     showToast('Connection failed', { kind: 'error' });
   } finally {
+    done();
     renderHttpsSettings();
   }
 }
@@ -1294,12 +1299,10 @@ export async function renderSelfTest() {
   }
 
   btn?.addEventListener('click', async () => {
-    (btn as HTMLButtonElement)!.disabled = true;
-    const orig = btn.textContent;
-    btn!.textContent = 'Running…';
+    const done = buttonBusy(btn!, 'Running…');
     out!.hidden = false;
-    // The wait line, the error and the rows are one island's phases.
-    preflightMessage.value = 'Running checks (this may spin a probe container)…';
+    // The error and the rows are one island's phases; the button shows the wait.
+    preflightMessage.value = '';
     preflightPhase.value = 'running';
     mountPreflight();
     try {
@@ -1320,8 +1323,7 @@ export async function renderSelfTest() {
       preflightMessage.value = String((err as any)?.message || err);
       preflightPhase.value = 'message';
     } finally {
-      (btn as HTMLButtonElement)!.disabled = false;
-      btn!.textContent = orig;
+      done();
     }
   });
 }

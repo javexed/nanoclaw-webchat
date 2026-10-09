@@ -12,6 +12,7 @@ import { $ } from '../core/dom.js';
 import { mountIsland } from '../core/island.js';
 import { showConfirmModal } from './modals.js';
 import { showToast, toastError } from '../core/toast.js';
+import { buttonBusy } from '../core/busy.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
 import McpSources from './McpSources.vue';
@@ -473,10 +474,11 @@ export async function runMcpProbe() {
   const status = $('#mcp-probe-status')!;
   const results = $('#mcp-probe-results')!;
   status.classList.remove('error');
-  status.textContent = 'Probing… (connects to the server and lists its tools)';
-  status.hidden = false;
+  // The button shows the wait; the status line only ever holds an outcome.
+  status.textContent = '';
+  status.hidden = true;
   results.hidden = true;
-  ($('#mcp-probe-btn')! as HTMLInputElement).disabled = true;
+  const done = buttonBusy($('#mcp-probe-btn')!, 'Probing…');
   try {
     const headers = mcpProbeAuthHeaders();
     const res = await authFetch('/api/mcp-servers/probe', {
@@ -510,13 +512,13 @@ export async function runMcpProbe() {
     }
     lastMcpProbe.value = body;
     lastMcpProbeToken.value = $<HTMLInputElement>('#mcp-probe-token')!.value.trim();
-    status.hidden = true;
     renderMcpProbeResults(body);
   } catch (err: any) {
     status.textContent = 'Probe failed: ' + err.message;
     status.classList.add('error');
   } finally {
-    ($('#mcp-probe-btn')! as HTMLInputElement).disabled = false;
+    status.hidden = !status.textContent;
+    done();
   }
 }
 

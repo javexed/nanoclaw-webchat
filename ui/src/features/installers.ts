@@ -6,6 +6,7 @@
 import { $ } from '../core/dom.js';
 import {
   harnessInstallActive,
+  installLogText,
   installProgressLine,
   ollamaPullPoller,
   routingInstallActive,
@@ -122,9 +123,8 @@ export async function runInstall(feature: string, els: Record<string, string>) {
         restarting = true; // host went down — the restart is underway
         break;
       }
-      const tail: string[] = Array.isArray(st.lines) ? st.lines.slice(-14) : [];
-      if (st.running) log.textContent = [installProgressLine(st), ...tail].join('\n');
-      else if (tail.length) log.textContent = tail.join('\n');
+      const text = installLogText(st);
+      if (text) log.textContent = text;
       if (st.installed) {
         finish();
         return;
@@ -220,12 +220,14 @@ async function pollInstall(spec: PollSpec): Promise<void> {
   const log = $(spec.els.log);
   const progress = $(spec.els.progress);
   if (progress) progress.hidden = false;
-  if (btn) btn.disabled = true;
+  // A resumed poll (panel reopened mid-install) puts the button busy itself;
+  // a run* caller already has.
+  const done = btn && !btn.querySelector('.btn-spinner') ? deps.wizardBusy(btn, 'Installing…') : null;
   try {
     for (;;) {
       const st = await (await authFetch(spec.endpoint)).json();
       if (log) {
-        log.textContent = (st.lines || []).slice(-12).join('\n') || 'Starting…';
+        log.textContent = installLogText(st, 12);
         log.scrollTop = log.scrollHeight;
       }
       if (!st.running) {
@@ -242,6 +244,7 @@ async function pollInstall(spec: PollSpec): Promise<void> {
   } catch (err: any) {
     showToast(spec.errPrefix + (err as any)?.message, { kind: 'error' });
   } finally {
+    done?.();
     spec.setActive(false);
     if (spec.onFinally) spec.onFinally();
   }
@@ -344,32 +347,11 @@ export async function runSttInstall(payload?: any, els = STT_SETTINGS_ELS, onDon
 // just targets whichever set it's handed.
 const ROUTING_ELS_SETTINGS: Record<string, string> = { log: '#routing-install-log', bar: '#routing-pull-bar', label: '#routing-pull-label' };
 
-/**
- * The current step, read out of the installer's own output.
- *
- * Both install scripts share a marker vocabulary: `→ ` opens a step, `✓` and
- * `✗` close one, `= ` is an aside. So the most recent line carrying one of
- * those glyphs IS the current step — no parsing beyond a prefix match, and it
- * degrades to '' rather than guessing when the output is something else.
- * Deliberately NOT a percentage: docker's per-layer byte counts cannot be
- * honestly summed into one, and the log already shows the real bytes.
- */
-export function installStepLabel(lines?: unknown): string {
-  if (!Array.isArray(lines)) return '';
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = String(lines[i] ?? '').trim();
-    // Keep ✓/✗ verbatim — the glyph is the status. Strip the arrow from a step.
-    if (line.startsWith('✓') || line.startsWith('✗')) return line;
-    if (line.startsWith('→')) return line.slice(1).trim();
-  }
-  return '';
-}
-
 export function renderRoutingInstallProgress(st?: any, els = ROUTING_ELS_SETTINGS) {
   const log = $(els.log)!;
   const bar = $(els.bar)!;
   const label = $(els.label)!;
-  log.textContent = (st.lines || []).slice(-12).join('\n') || 'Starting…';
+  log.textContent = installLogText(st, 12);
   log.scrollTop = log.scrollHeight;
   const pull = st.pull;
   if (pull) {
@@ -381,11 +363,10 @@ export function renderRoutingInstallProgress(st?: any, els = ROUTING_ELS_SETTING
     else if (pull.status === 'success') label.textContent = 'Classifier model ready.';
     else label.textContent = 'Classifier model pull failed: ' + (pull.error || '');
   } else {
-    // No model pull in flight, so no honest percentage: show WHICH STEP is running.
+    // No model pull in flight, so no honest percentage; the log's first line
+    // already says which step is running.
     bar.hidden = true;
-    const step = installStepLabel(st.lines);
-    label.hidden = !step;
-    if (step) label.textContent = step;
+    label.hidden = true;
   }
 }
 
@@ -437,40 +418,27 @@ export async function pollRoutingInstall() {
 // the shared routing-install box, resolving true on success.
 async function installLitellmPhase(els: Record<string, string> = ROUTING_ELS_SETTINGS) {
   const log = $(els.log)!;
-  const label = $(els.label)!;
-  // This phase has no `pull`, so renderRoutingInstallProgress's bar path never
-  // applies — but the step label does, and it is the only at-a-glance signal
-  // available while docker pulls the image. Driven here rather than by calling
-  // that function, because the two phases poll different endpoints.
-  const setStep = (text: string) => {
-    label.hidden = !text;
-    if (text) label.textContent = text;
-  };
-  log.textContent = 'Installing the LiteLLM router…';
-  setStep('Installing the LiteLLM router…');
+  // This phase has no `pull`, so the bar and its label stay hidden; the log's
+  // first line carries the step and elapsed time while docker pulls the image.
+  $(els.label)!.hidden = true;
+  log.textContent = '';
   let res;
   try {
     res = await authFetch('/api/router/litellm-install', { method: 'POST' });
   } catch (err: any) {
     log.textContent = 'LiteLLM install failed: ' + err.message;
-    setStep('✗ LiteLLM install failed');
     showToast('LiteLLM install failed', { kind: 'error' });
     return false;
   }
   if (!res.ok && res.status !== 202) {
     const err = await res.json().catch(() => ({}));
     log.textContent = 'LiteLLM install failed: ' + (err.error || res.status);
-    setStep('✗ LiteLLM install failed');
     showToast('LiteLLM install failed', { kind: 'error' });
     return false;
   }
   while (true) {
     const st = await (await authFetch('/api/router/litellm-install')).json();
-    if (Array.isArray(st.lines) && st.lines.length) log.textContent = st.lines.slice(-12).join('\n');
-    // Keep the last known step when a poll returns no marker yet, rather than
-    // blanking the label between steps.
-    const step = installStepLabel(st.lines);
-    if (step) setStep(step);
+    log.textContent = installLogText(st, 12);
     if (!st.running) {
       if (st.exitCode === 0) {
         showToast('LiteLLM router installed', { kind: 'success' });
@@ -487,9 +455,9 @@ export async function runRoutingInstall() {
   const btn = ($('#routing-install-btn')!) as HTMLInputElement;
   const log = $('#routing-install-log')!;
   $('#routing-install-progress')!.hidden = false;
-  btn.disabled = true;
-  btn.textContent = 'Installing…';
-  log.textContent = 'Starting…';
+  // On success pollRoutingInstall's closing renderRoutingSetup restores the button.
+  const done = deps.wizardBusy(btn, 'Installing…');
+  log.textContent = '';
   try {
     // Ensure the LiteLLM router is present. If it's missing, install
     // it here and wait for it to finish before layering routing on top.
@@ -497,8 +465,7 @@ export async function runRoutingInstall() {
     if (!pre.litellmReady) {
       const ok = await installLitellmPhase(ROUTING_ELS_SETTINGS);
       if (!ok) {
-        btn.disabled = false;
-        btn.textContent = 'Install';
+        done();
         return;
       }
     }
@@ -508,8 +475,7 @@ export async function runRoutingInstall() {
   } catch (err: any) {
     log.textContent = 'Install failed: ' + err.message;
     showToast('Auto routing setup failed', { kind: 'error' });
-    btn.disabled = false;
-    btn.textContent = 'Install';
+    done();
   }
 }
 
@@ -619,6 +585,8 @@ function renderOllamaPulls(pulls?: any) {
       pct,
       verdict: prev && prev.model === job.model ? prev.verdict : undefined,
     };
+    // A pull started again (a retry after a failure or a cancel) is announced again.
+    if (job.status === 'pulling') pullsDone.delete(job.host + '\u0000' + job.model);
     if (job.status !== 'pulling' && !pullsDone.has(job.host + '\u0000' + job.model)) {
       pullsDone.add(job.host + '\u0000' + job.model);
       // A cancel is an outcome the operator chose, so it gets a neutral

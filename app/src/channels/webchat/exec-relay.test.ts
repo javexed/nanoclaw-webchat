@@ -3,7 +3,7 @@ import http from 'http';
 import net, { type AddressInfo } from 'net';
 import type { Duplex } from 'stream';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ATTACH_SCRIPT,
@@ -21,6 +21,11 @@ class FakeRuntime implements RelayRuntime {
   daemons = 0;
   daemonUp = false;
   received: Array<Record<string, unknown>> = [];
+  /** While set, the pipe reports itself backed up. */
+  blocked = false;
+  /** The last sequence number this daemon sent, as its ready frame reports it. */
+  seq = 0;
+  #drain: (() => void) | null = null;
   #toRelay: ((line: string) => void) | null = null;
   #end: ((code: number | null) => void) | null = null;
 
@@ -42,19 +47,49 @@ class FakeRuntime implements RelayRuntime {
         for (const l of line.split('\n').filter(Boolean)) {
           const f = JSON.parse(l) as Record<string, unknown>;
           this.received.push(f);
-          if (f.t === 'hello') setTimeout(() => onLine(JSON.stringify({ t: 'ready', v: 1, seq: 0, inSeq: 0 })), 0);
+          if (f.t === 'hello')
+            setTimeout(() => onLine(JSON.stringify({ t: 'ready', v: 1, seq: this.seq, inSeq: 0 })), 0);
         }
+        return !this.blocked;
       },
+      onDrain: (cb: () => void) => (this.#drain = cb),
       kill: () => end(null),
       done,
     };
   }
   daemonSays(f: Record<string, unknown>): void {
+    if (f.t !== 'ack' && typeof f.seq === 'number') this.seq = Math.max(this.seq, f.seq);
     this.#toRelay?.(JSON.stringify(f));
   }
   dropPipe(): void {
     this.#end?.(0);
   }
+  drain(): void {
+    this.blocked = false;
+    this.#drain?.();
+  }
+  /** Acknowledge every sequenced frame the relay has sent so far. */
+  ackAll(): void {
+    for (const f of this.received)
+      if (f.t !== 'hello' && f.t !== 'ack' && typeof f.seq === 'number') this.daemonSays({ t: 'ack', seq: f.seq });
+  }
+  dataFrames(id: string): Array<Record<string, unknown>> {
+    return this.received.filter((f) => f.t === 'data' && f.id === id);
+  }
+}
+
+const SMALL = { highWaterBytes: 2_000, lowWaterBytes: 500, maxBufferBytes: 20_000 };
+
+/** A relay with one open stream on the fake, and the route's end of it. */
+async function openRelay(rt: FakeRuntime, limits = SMALL): Promise<{ relay: ContainerRelay; stream: Duplex }> {
+  rt.daemonUp = true;
+  const routed: Duplex[] = [];
+  const relay = new ContainerRelay('ncl-x', { ports: [10255], route: (_p, s) => routed.push(s) }, rt, limits);
+  void relay.run();
+  await tick();
+  rt.daemonSays({ t: 'open', id: 's0', port: 10255, seq: 1 });
+  await tick();
+  return { relay, stream: routed[0] };
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 20));
@@ -153,6 +188,128 @@ describe('ContainerRelay', () => {
     const replayed = rt.received.filter((f) => f.t === 'data' && f.id === 's0');
     expect(Buffer.from(String(replayed.at(-1)?.b64), 'base64').toString()).toBe('while detached');
     relay.close();
+  });
+});
+
+describe('ContainerRelay backpressure', () => {
+  it('pauses the streams past the high-water mark and resumes them once acks bring it under the low one', async () => {
+    const rt = new FakeRuntime();
+    const { relay, stream } = await openRelay(rt);
+    for (let i = 0; i < 10; i++) stream.write(Buffer.alloc(600, 65 + i));
+    await tick();
+    expect(relay.paused).toBe(true);
+    // One frame of overshoot at most; the rest waits in the stream.
+    expect(relay.pendingBytes).toBeLessThan(SMALL.highWaterBytes + 1_000);
+    const sent = rt.dataFrames('s0').length;
+    expect(sent).toBeLessThan(10);
+    await tick();
+    expect(rt.dataFrames('s0').length).toBe(sent);
+
+    // Each round of acks lets more through, until everything has gone.
+    for (let i = 0; i < 10 && rt.dataFrames('s0').length < 10; i++) {
+      rt.ackAll();
+      await tick();
+    }
+    expect(rt.dataFrames('s0').length).toBe(10);
+    rt.ackAll();
+    await tick();
+    expect(relay.pendingBytes).toBe(0);
+    expect(relay.paused).toBe(false);
+    relay.close();
+  });
+
+  it('holds the streams while the pipe is backed up, until it drains', async () => {
+    const rt = new FakeRuntime();
+    const { relay, stream } = await openRelay(rt);
+    rt.blocked = true;
+    stream.write('first');
+    await tick();
+    expect(relay.paused).toBe(true);
+    stream.write('second');
+    await tick();
+    expect(rt.dataFrames('s0').map((f) => Buffer.from(String(f.b64), 'base64').toString())).toEqual(['first']);
+
+    rt.drain();
+    await tick();
+    expect(relay.paused).toBe(false);
+    expect(rt.dataFrames('s0').map((f) => Buffer.from(String(f.b64), 'base64').toString())).toEqual([
+      'first',
+      'second',
+    ]);
+    relay.close();
+  });
+
+  it('resets the tunnels rather than queue past the hard cap', async () => {
+    const rt = new FakeRuntime();
+    const { relay, stream } = await openRelay(rt);
+    let closed = false;
+    stream.on('close', () => (closed = true));
+    stream.write(Buffer.alloc(SMALL.maxBufferBytes, 66));
+    await tick();
+    expect(closed).toBe(true);
+    expect(relay.streamCount).toBe(0);
+    // Only the close frame telling the daemon is left in the queue.
+    expect(relay.pendingBytes).toBeLessThan(100);
+    expect(rt.received.at(-1)).toMatchObject({ t: 'close', id: 's0' });
+    expect(relay.paused).toBe(false);
+    relay.close();
+  });
+
+  it('replays in order across a re-attach while held, then resumes once the replay is acknowledged', async () => {
+    const rt = new FakeRuntime();
+    const { relay, stream } = await openRelay(rt);
+    const chunks = Array.from({ length: 8 }, (_, i) => Buffer.alloc(700, 97 + i));
+    for (const c of chunks) stream.write(c);
+    await tick();
+    expect(relay.paused).toBe(true);
+    const before = rt.dataFrames('s0').length;
+
+    rt.dropPipe();
+    await new Promise((r) => setTimeout(r, 400));
+    expect(relay.ready).toBe(true);
+    // Everything unacknowledged went again, in order, and the streams stay held.
+    const hello = rt.received.map((f) => f.t).lastIndexOf('hello');
+    const replay = rt.received.slice(hello).filter((f) => f.t === 'data');
+    expect(replay.length).toBe(before);
+    const seqs = replay.map((f) => Number(f.seq));
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(relay.paused).toBe(true);
+
+    for (let i = 0; i < 10 && relay.pendingBytes > 0; i++) {
+      rt.ackAll();
+      await tick();
+    }
+    expect(relay.paused).toBe(false);
+    const bySeq = new Map(rt.dataFrames('s0').map((f) => [Number(f.seq), String(f.b64)]));
+    const all = [...bySeq.entries()].sort((a, b) => a[0] - b[0]).map(([, b64]) => Buffer.from(b64, 'base64'));
+    expect(Buffer.concat(all).equals(Buffer.concat(chunks))).toBe(true);
+    relay.close();
+  });
+});
+
+describe('the container ticker', () => {
+  it('skips a container whose probe is still out, without holding back the others', async () => {
+    vi.useFakeTimers();
+    try {
+      const calls: Record<string, number> = {};
+      let releaseSlow!: () => void;
+      __resetExecRelayForTest((name) => {
+        calls[name] = (calls[name] ?? 0) + 1;
+        if (name === 'slow' && calls[name] === 1) return new Promise((r) => (releaseSlow = () => r('other')));
+        return Promise.resolve('other');
+      });
+      const route = () => {};
+      registerRelayedContainer('slow', { ports: [1], route });
+      registerRelayedContainer('fast', { ports: [1], route });
+      for (let i = 0; i < 5; i++) await vi.advanceTimersByTimeAsync(1_000);
+      expect(calls.slow).toBe(1);
+      expect(calls.fast).toBe(5);
+      releaseSlow();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(calls.slow).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

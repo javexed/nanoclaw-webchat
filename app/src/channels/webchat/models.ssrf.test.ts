@@ -7,6 +7,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { assertSafeOutboundUrl, safeFetch } from './models.js';
 
+/** The local router, as routerAuthHeaders sees it: loopback port 4000, with a master key. */
+vi.mock('./cloud-models.js', async (orig) => ({
+  ...(await orig<object>()),
+  routerAuthHeaders: (url: string): Record<string, string> => {
+    const u = new URL(url);
+    return ['127.0.0.1', 'localhost'].includes(u.hostname) && u.port === '4000'
+      ? { Authorization: 'Bearer MASTER' }
+      : {};
+  },
+}));
+
 describe('assertSafeOutboundUrl', () => {
   const originalEnv = process.env.WEBCHAT_BLOCK_PRIVATE_IPS;
   beforeEach(async () => {
@@ -166,5 +177,46 @@ describe('safeFetch — redirect re-validation', () => {
     // A self-redirect to an allowed host would loop; the hop cap must break it.
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(resp(302, { location: 'http://8.8.8.8/next' }));
     await expect(safeFetch('http://8.8.8.8/')).rejects.toThrow(/too many redirects/);
+  });
+});
+
+describe('safeFetch — the router master key', () => {
+  afterEach(() => vi.restoreAllMocks());
+  const resp = (status: number, headers: Record<string, string> = {}) =>
+    ({ status, headers: { get: (k: string) => headers[k.toLowerCase()] ?? null } }) as unknown as Response;
+  const authOf = (call: unknown[]) => new Headers((call[1] as RequestInit).headers).get('authorization');
+
+  it('goes to the router when the caller asked for the router', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(resp(200));
+    await safeFetch('http://127.0.0.1:4000/v1/models');
+    expect(authOf(fetchMock.mock.calls[0])).toBe('Bearer MASTER');
+  });
+
+  it('is never added on a redirect from elsewhere that lands on the router port', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(resp(307, { location: 'http://127.0.0.1:4000/key/generate' }))
+      .mockResolvedValueOnce(resp(200));
+    await safeFetch('http://8.8.8.8/');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toBe('http://127.0.0.1:4000/key/generate');
+    expect(authOf(fetchMock.mock.calls[0])).toBeNull();
+    expect(authOf(fetchMock.mock.calls[1])).toBeNull();
+  });
+
+  it('carries no key on a redirect away from the router', async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(resp(307, { location: 'http://8.8.8.8/collect' }))
+      .mockResolvedValueOnce(resp(200));
+    await safeFetch('http://127.0.0.1:4000/v1/models');
+    expect(authOf(fetchMock.mock.calls[0])).toBe('Bearer MASTER');
+    expect(authOf(fetchMock.mock.calls[1])).toBeNull();
+  });
+
+  it('routerAuth:false never adds it, even to the router', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(resp(200));
+    await safeFetch('http://127.0.0.1:4000/v1/models', undefined, { routerAuth: false });
+    expect(authOf(fetchMock.mock.calls[0])).toBeNull();
   });
 });

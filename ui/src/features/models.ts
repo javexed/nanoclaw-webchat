@@ -12,8 +12,9 @@ import { reachError, reachOutcome, reachPhase } from './reachability-state.js';
 import { routingAvailable, routingClassifierModel } from './routing-state.js';
 import ModelList from './ModelList.vue';
 import { allModels, lastProbeResult, modelRows, modelSortAz, selectedModelId } from './model-list-state.js';
+import { buttonBusy } from '../core/busy.js';
 import { $ } from '../core/dom.js';
-import { cloudModelNames } from './cloud-models-state.js';
+import { cloudModelNames, cloudProviderOf } from './cloud-models-state.js';
 import { mountIsland } from '../core/island.js';
 import { showConfirmModal } from './modals.js';
 import { offerFitContext } from './fit-context-offer.js';
@@ -144,8 +145,14 @@ export function isRouterBackendModel(m?: any) {
 
 // One identity convention everywhere (list rows, detail header, host cards):
 // kind badge + bare model name + dim host meta. A "host · " prefix in the stored
-// name is stripped for DISPLAY when it matches the endpoint.
+// name is stripped for DISPLAY when it matches the endpoint. A cloud model's
+// meta is its provider, and the "<Provider> " its name starts with is dropped.
 function modelDisplayParts(model?: any) {
+  const provider = cloudProviderOf(model);
+  if (provider) {
+    const title = model.name.startsWith(provider + ' ') ? model.name.slice(provider.length + 1) : model.name;
+    return { title, host: provider };
+  }
   const host = model.endpoint ? model.endpoint.replace(/^https?:\/\//, '').replace(/\/+$/, '') : null;
   let title = model.name;
   if (host && title.startsWith(host + ' \u00b7 ')) title = title.slice(host.length + 3);
@@ -230,7 +237,7 @@ export function renderModels(): void {
     return {
       id: model.id,
       badgeKind: isAuto ? 'auto' : model.kind,
-      badgeText: isAuto ? 'auto' : modelKindLabel(model.kind),
+      badgeText: isAuto ? 'auto' : cloudProviderOf(model) ? 'cloud' : modelKindLabel(model.kind),
       title: parts.title,
       host: isAuto ? null : (parts.host ?? null),
       healthKey: model.kind === 'ollama' && model.endpoint ? model.endpoint.replace(/\/+$/, '') : null,
@@ -269,7 +276,7 @@ export async function openModelDetail(id?: any) {
   testBtn.dataset.id = model.id;
   $('#model-test-result')!.textContent = '';
   const badge = $('#model-detail-badge')!;
-  badge.textContent = modelKindLabel(model.kind);
+  badge.textContent = cloudProviderOf(model) ? 'cloud' : modelKindLabel(model.kind);
   badge.className = `model-kind-badge kind-${model.kind}`;
   badge.hidden = false;
   const kindExplainer = modelKindExplainer(model.kind);
@@ -398,8 +405,7 @@ export function bindDiscover(
       return;
     }
     const original = btn!.textContent;
-    btn!.disabled = true;
-    btn!.textContent = '…';
+    buttonBusy(btn!, 'Discovering…');
     try {
       const models = await discoverModels(kind, endpoint);
       const select = $<HTMLSelectElement>(selectEl);
@@ -439,8 +445,8 @@ async function testSelectedModel(): Promise<void> {
   const out = $('#model-test-result')!;
   const id = btn.dataset.id;
   if (!id) return;
-  btn.disabled = true;
-  out.textContent = '…';
+  const restore = buttonBusy(btn, 'Testing…');
+  out.textContent = '';
   out.className = 'model-test-result';
   try {
     const r = (await apiJson(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' })) as {
@@ -455,7 +461,7 @@ async function testSelectedModel(): Promise<void> {
     out.textContent = String(err?.message || err);
     out.classList.add('bad');
   } finally {
-    btn.disabled = false;
+    restore();
   }
 }
 
@@ -505,8 +511,7 @@ export function wireModelsPanel(): void {
     const btn = $<HTMLButtonElement>('#model-detail-form button.btn-primary');
     if (!btn) return;
     const original = btn!.textContent;
-    btn!.disabled = true;
-    btn!.textContent = 'Saving…';
+    buttonBusy(btn!, 'Saving…');
     btn!.classList.remove('success');
     const patch = {
       name: ($<HTMLInputElement>('#model-name')?.value ?? '').trim(),
@@ -905,8 +910,7 @@ export async function addSelectedFromProbe() {
   });
   const btn = $<HTMLButtonElement>('#model-probe-add-selected');
   const original = btn!.textContent;
-  btn!.disabled = true;
-  btn!.textContent = `Adding ${items.length}…`;
+  buttonBusy(btn!, `Adding ${items.length}…`);
   try {
     const out = await apiJson('/api/models/bulk', { method: 'POST', body: { models: items } });
     if (out.failed && out.failed.length > 0) {
@@ -943,11 +947,16 @@ export async function runProbe() {
   }
   const status = $<HTMLInputElement>('#model-probe-status');
   const results = $<HTMLElement>('#model-probe-results');
+  // The wait is on the Probe button; this line only ever says why a probe failed.
+  const failed = (text: string) => {
+    status!.textContent = text;
+    status!.classList.add('error');
+    status!.hidden = false;
+  };
   status!.classList.remove('error');
-  status!.textContent = 'Probing…';
-  status!.hidden = false;
+  status!.hidden = true;
   results!.hidden = true;
-  $<HTMLButtonElement>('#model-probe-btn')!.disabled = true;
+  const restore = buttonBusy($<HTMLButtonElement>('#model-probe-btn')!, 'Probing…');
   try {
     const res = await authFetch('/api/models/probe', {
       method: 'POST',
@@ -956,22 +965,18 @@ export async function runProbe() {
     });
     const body = await res.json();
     if (!res.ok) {
-      status!.textContent = body.error || `Probe failed (${res.status})`;
-      status!.classList.add('error');
+      failed(body.error || `Probe failed (${res.status})`);
       return;
     }
     lastProbeResult.value = body;
     if (!body.kind) {
-      status!.textContent = body.reason || 'No known provider responded.';
-      status!.classList.add('error');
+      failed(body.reason || 'No known provider responded.');
       return;
     }
-    status!.hidden = true;
     renderProbeResults(body);
   } catch (err) {
-    status!.textContent = 'Probe failed: ' + (err as any)?.message;
-    status!.classList.add('error');
+    failed('Probe failed: ' + (err as any)?.message);
   } finally {
-    $<HTMLButtonElement>('#model-probe-btn')!.disabled = false;
+    restore();
   }
 }

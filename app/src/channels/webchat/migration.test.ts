@@ -127,6 +127,7 @@ describe('moduleWebchat migration', () => {
       'webchat-mcp-hardening',
       'webchat-mcp-servers',
       'webchat-message-fts',
+      'webchat-message-sender-user-id',
       'webchat-models',
       'webchat-onboarding',
       'webchat-read-aloud',

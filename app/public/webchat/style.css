@@ -7977,6 +7977,44 @@ body {
   gap: 6px;
   flex: 0 0 auto;
 }
+
+/* Icon button — a compact, label-less control for a single row action, most
+   often "copy this value" (CopyIconButton). A documented role (DESIGN.md §2),
+   unlike the older one-off icon buttons. Colour from tokens so both themes
+   hold; the copied state borrows the accent as a brief success tint. */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition:
+    background var(--transition),
+    border-color var(--transition),
+    color var(--transition);
+}
+.btn-icon:hover {
+  color: var(--accent);
+  background: var(--surface2);
+}
+.btn-icon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.btn-icon.copied {
+  color: var(--accent);
+}
+.btn-icon.error {
+  color: var(--text-dim);
+  border-color: var(--border);
+}
 .secret-scope {
   margin-left: 8px;
 }
@@ -9251,3 +9289,28 @@ button[data-draft-id] {
 .host-dot.down {
   background: var(--danger);
 }
+
+/* Add model wizard (AddModel.vue) */
+.model-add-modes {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.model-add-step {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.model-add-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.model-add-tag {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.model-add-row input {
+  flex: 1;
+}
+

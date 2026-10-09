@@ -9,6 +9,9 @@ import os from 'os';
 import {
   getTailscaleServeState,
   enableTailscaleServe,
+  serveMigrationCommands,
+  servePortFor,
+  serveRouting,
   serveUrlForPort,
   tailnetUrlForPort,
   type RunResult,
@@ -186,5 +189,62 @@ describe('the tailnet address of this install', () => {
             stderr: '',
           };
     expect(await tailnetUrlForPort(3101, true, runner)).toBe('https://node-1.example.ts.net:8443');
+  });
+});
+
+describe('the dedicated Serve listener', () => {
+  it('takes WEBCHAT_SERVE_PORT, else main + 10000, and can be turned off', () => {
+    expect(servePortFor(3100, {})).toBe(13100);
+    expect(servePortFor(3100, { WEBCHAT_SERVE_PORT: '3199' })).toBe(3199);
+    expect(servePortFor(3100, { WEBCHAT_SERVE_PORT: 'off' })).toBeNull();
+    expect(servePortFor(3100, { WEBCHAT_SERVE_PORT: '0' })).toBeNull();
+    expect(servePortFor(3100, { WEBCHAT_SERVE_PORT: '3100' })).toBeNull(); // the main port itself
+    expect(servePortFor(3100, { WEBCHAT_SERVE_PORT: '70000' })).toBeNull();
+    expect(servePortFor(60000, {})).toBeNull(); // out of range
+    expect(servePortFor(0, {})).toBeNull(); // ephemeral main port
+  });
+
+  const legacy = JSON.stringify({
+    Web: { 'node-1.example.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:3100' } } } },
+  });
+  const moved = JSON.stringify({
+    Web: { 'node-1.example.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:13100' } } } },
+  });
+  const otherPort = JSON.stringify({
+    Web: { 'node-1.example.ts.net:8443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:3100' } } } },
+  });
+
+  it('names the command that moves Serve off the main port', () => {
+    expect(serveMigrationCommands(legacy, 3100, 13100)).toEqual(['tailscale serve --bg --https=443 13100']);
+    expect(serveMigrationCommands(otherPort, 3100, 13100)).toEqual(['tailscale serve --bg --https=8443 13100']);
+    expect(serveMigrationCommands(moved, 3100, 13100)).toEqual([]);
+    expect(serveMigrationCommands('{}', 3100, 13100)).toEqual([]);
+  });
+
+  it('reports the legacy names only while Serve proxies to the main port', async () => {
+    const at =
+      (json: string): TailscaleRunner =>
+      async () =>
+        ok(json);
+    const before = await serveRouting(3100, 13100, at(legacy));
+    expect(before.dedicated).toBe(false);
+    expect([...before.legacyHosts]).toEqual(['node-1.example.ts.net']);
+    // Different port pair → not served from the cache above.
+    const after = await serveRouting(3100, 13101, at(legacy.replace('3100', '13101')));
+    expect(after.dedicated).toBe(true);
+    expect(after.legacyHosts.size).toBe(0);
+  });
+
+  // Serve forwards Host with its port when the front is not on 443; the bare
+  // name matched nothing there, so a runner behind :8443 got 401 on upgrade.
+  it('names a front on another port as Host carries it, port included', async () => {
+    const routing = await serveRouting(3100, 13102, async () => ok(otherPort));
+    expect([...routing.legacyHosts]).toEqual(['node-1.example.ts.net:8443']);
+  });
+
+  it('finds the HTTPS address whichever of our ports Serve proxies to', () => {
+    expect(serveUrlForPort(moved, [13100, 3100])).toBe('https://node-1.example.ts.net');
+    expect(serveUrlForPort(legacy, [13100, 3100])).toBe('https://node-1.example.ts.net');
+    expect(serveUrlForPort(otherPort, [13100, 3100])).toBe('https://node-1.example.ts.net:8443');
   });
 });

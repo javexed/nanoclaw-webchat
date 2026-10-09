@@ -1,6 +1,8 @@
+import { Readable } from 'stream';
+
 import { describe, expect, it, vi } from 'vitest';
 
-import { json } from './http.js';
+import { BodyTooLargeError, json, readBody } from './http.js';
 
 // json()'s `unknown` parameter hides a missing await from tsc, so json()
 // resolves a thenable before serializing and turns a rejection into a 500
@@ -63,5 +65,24 @@ describe('json()', () => {
     expect(res.body).toBe('{"ok":true,"handle":"ada"}');
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('unawaited Promise'), 'handle');
     warn.mockRestore();
+  });
+});
+
+describe('readBody()', () => {
+  it('decodes a multi-byte character split across two chunks', async () => {
+    const text = JSON.stringify({ text: 'naïve — 日本 😀' });
+    const bytes = Buffer.from(text, 'utf8');
+    // Cut inside the 4-byte emoji, and inside the 3-byte em dash.
+    const emoji = bytes.indexOf(Buffer.from('😀', 'utf8'));
+    const dash = bytes.indexOf(Buffer.from('—', 'utf8'));
+    const parts = [bytes.subarray(0, dash + 1), bytes.subarray(dash + 1, emoji + 2), bytes.subarray(emoji + 2)];
+    const got = await readBody(Readable.from(parts) as never);
+    expect(got).toBe(text);
+    expect(got).not.toContain('\ufffd');
+  });
+
+  it('still refuses a body over the limit', async () => {
+    const parts = [Buffer.alloc(600), Buffer.alloc(600)];
+    await expect(readBody(Readable.from(parts) as never, 1000)).rejects.toBeInstanceOf(BodyTooLargeError);
   });
 });

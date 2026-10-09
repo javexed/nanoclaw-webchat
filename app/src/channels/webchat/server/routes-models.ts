@@ -32,6 +32,9 @@ import {
   CLOUD_PROVIDERS,
   CloudModelError,
   cloudModelNames,
+  cloudModelProviders,
+  connectProvider,
+  disconnectProvider,
   isRouterEndpoint,
   listProviderModels,
   prepareCloudModel,
@@ -86,16 +89,69 @@ export async function rCloudModelsGet(ctx: RouteCtx, _m: RegExpMatchArray): Prom
     providers: CLOUD_PROVIDERS.map(({ id, label }) => ({ id, label })),
     router: { installed: routerInstalled(), endpoint: routerEndpoint() },
     models: cloudModelNames(),
+    modelProviders: cloudModelProviders(),
     stored: await storedProviders().catch(() => []),
   });
 }
 
 /** The provider's model ids, read with the key the vault holds. */
 export async function rCloudModelsListGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const provider = ctx.url.searchParams.get('provider');
   try {
-    return json(ctx.res, 200, { models: await listProviderModels(ctx.url.searchParams.get('provider')) });
+    return json(ctx.res, 200, { models: await listProviderModels(provider) });
   } catch (err) {
+    // The router's gateway files go with the last cloud model; a provider still
+    // connected gets them back, and its list with them.
+    if (
+      err instanceof CloudModelError &&
+      err.message === 'No router' &&
+      (await storedProviders()).includes(String(provider))
+    ) {
+      try {
+        await connectProvider({ provider, api_key: '' });
+        return json(ctx.res, 200, { models: await listProviderModels(provider) });
+      } catch {
+        /* fall through */
+      }
+    }
     return json(ctx.res, err instanceof CloudModelError ? 409 : 502, { error: 'No list' });
+  }
+}
+
+/**
+ * POST /api/models/cloud/connect — { provider, api_key }: store the key and
+ * answer the provider's model list, so a model is picked from it. A key the
+ * provider refuses (no list) is not kept, unless it was already stored.
+ */
+export async function rCloudProviderConnectPost(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  const { req, res } = ctx;
+  const body = await readJsonObject<{ provider?: unknown; api_key?: unknown }>(req, res);
+  if (body === undefined) return;
+  const wasStored = (await storedProviders().catch(() => [] as string[])).includes(String(body.provider));
+  try {
+    await connectProvider({ provider: body.provider, api_key: body.api_key });
+  } catch (err) {
+    if (err instanceof CloudModelError) return json(res, 400, { error: err.message });
+    log.warn('Cloud model: vault step failed', { err: String((err as Error)?.message ?? err).slice(0, 300) });
+    return json(res, 502, { error: 'OneCLI failed' });
+  }
+  try {
+    return json(res, 200, { models: await listProviderModels(body.provider) });
+  } catch {
+    if (!wasStored) await disconnectProvider(body.provider).catch(() => {});
+    return json(res, 400, { error: 'Key not accepted' });
+  }
+}
+
+/** DELETE /api/models/cloud/connect?provider= — remove the provider's key (refused while one of its models is in use). */
+export async function rCloudProviderConnectDelete(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  try {
+    await disconnectProvider(ctx.url.searchParams.get('provider'));
+    return json(ctx.res, 200, { ok: true });
+  } catch (err) {
+    if (err instanceof CloudModelError)
+      return json(ctx.res, err.message === 'In use' ? 409 : 400, { error: err.message });
+    return json(ctx.res, 502, { error: 'OneCLI failed' });
   }
 }
 

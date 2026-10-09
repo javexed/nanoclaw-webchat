@@ -8,9 +8,12 @@
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 
+// What `tailscale serve status` reports, per test: by default the legacy shape
+// (Serve proxies to the main port under node-1's name).
+const serve = vi.hoisted(() => ({ dedicated: false, legacyHosts: new Set(['node-1.example.ts.net']) }));
 vi.mock('./tailscale-serve.js', async (orig) => ({
   ...(await orig<typeof import('./tailscale-serve.js')>()),
-  serveFrontedHosts: async () => new Set(['node-1.example.ts.net']),
+  serveRouting: async () => ({ dedicated: serve.dedicated, legacyHosts: serve.legacyHosts }),
 }));
 import { createHmac, generateKeyPairSync, sign as cryptoSign } from 'crypto';
 import type { IncomingMessage } from 'http';
@@ -31,6 +34,7 @@ function fakeReq(
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  serve.dedicated = false;
   // Close whichever connection module is currently loaded, then drop the
   // module cache so the next test starts clean.
   try {
@@ -237,6 +241,22 @@ describe('tailscaleServeIdentity — serve HTTPS header, loopback-gated', () => 
     ).toBe('alice@github');
   });
 
+  it('matches a front on another port by name and port, and only that port', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    const at8443 = new Set(['node-1.example.ts.net:8443']);
+    expect(
+      auth.tailscaleServeIdentity(
+        serveReq('127.0.0.1', 'node-1.example.ts.net:8443', 'alice@github'),
+        '127.0.0.1',
+        at8443,
+      ),
+    ).toBe('alice@github');
+    // The same name on 443 is another front (here, another install's).
+    expect(
+      auth.tailscaleServeIdentity(serveReq('127.0.0.1', 'node-1.example.ts.net', 'alice@github'), '127.0.0.1', at8443),
+    ).toBeNull();
+  });
+
   it('rejects the header from a non-loopback source (spoof guard)', async () => {
     const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
     // A LAN attacker hitting :PORT directly and forging the header must NOT be trusted.
@@ -303,13 +323,86 @@ describe('authenticateRequest — tailscale serve header path', () => {
     expect(result.ok).toBe(false);
   });
 
-  it('ignores the serve header entirely when WEBCHAT_TAILSCALE is off', async () => {
+  it('ignores the serve header when WEBCHAT_TAILSCALE is off, and does not hand its visitor the localhost owner', async () => {
     const auth = await loadAuthWithEnv({});
     const req = fakeReq({ remoteAddress: '127.0.0.1', headers: { 'tailscale-user-login': 'alice@github' } });
+    // Serve relayed a tailnet visitor: not a tailscale id (Tailscale sign-in
+    // is off), and not the person at this machine either.
+    expect((await auth.authenticateRequest(req)).ok).toBe(false);
+  });
+});
+
+describe('the dedicated Tailscale Serve listener', () => {
+  const onListener = async (auth: typeof import('./auth.js'), headers: Record<string, string>) => {
+    const socket = { remoteAddress: '127.0.0.1' };
+    auth.markServeSocket(socket);
+    return { socket, headers } as unknown as IncomingMessage;
+  };
+
+  it("believes Serve's header on a connection that arrived on the listener, whatever the Host", async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    serve.dedicated = true;
+    const req = await onListener(auth, { host: 'anything.example', 'tailscale-user-login': 'Alice@Github' });
     const result = await auth.authenticateRequest(req);
-    // No tailscale mode + no other explicit auth → plain loopback auto-pass, not a tailscale id.
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.source).toBe('localhost');
+    expect(result.ok && result.userId).toBe('webchat:tailscale:alice@github');
+  });
+
+  it('refuses the header on the MAIN port once Serve points at the listener, even under the Serve name', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    serve.dedicated = true;
+    const req = fakeReq({
+      remoteAddress: '127.0.0.1',
+      headers: { host: 'node-1.example.ts.net', 'tailscale-user-login': 'owner@github' },
+    });
+    // A loopback forwarder that kept the Serve name as Host is exactly the forgery.
+    expect((await auth.authenticateRequest(req)).ok).toBe(false);
+  });
+
+  it('keeps the legacy main-port path only while Serve still proxies there', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true' });
+    const req = () =>
+      fakeReq({
+        remoteAddress: '127.0.0.1',
+        headers: { host: 'node-1.example.ts.net', 'tailscale-user-login': 'a@b' },
+      });
+    serve.dedicated = false;
+    expect((await auth.authenticateRequest(req())).ok).toBe(true);
+    serve.legacyHosts = new Set();
+    try {
+      expect((await auth.authenticateRequest(req())).ok).toBe(false);
+    } finally {
+      serve.legacyHosts = new Set(['node-1.example.ts.net']);
+    }
+  });
+
+  it('never grants the localhost owner on the listener, even with no auth method configured', async () => {
+    const auth = await loadAuthWithEnv({});
+    const req = await onListener(auth, { host: 'node-1.example.ts.net' });
+    expect((await auth.authenticateRequest(req)).ok).toBe(false);
+  });
+});
+
+describe('localhost owner — only for a browser on this machine', () => {
+  // A Cloudflare tunnel (cloudflared) or reverse proxy on this machine dials
+  // in from loopback; the edge's headers say a visitor was relayed.
+  it.each([
+    ['x-forwarded-for', '198.51.100.7'],
+    ['cf-connecting-ip', '198.51.100.7'],
+    ['cf-ray', '8a1b2c3d4e5f-AMS'],
+    ['forwarded', 'for=198.51.100.7'],
+    ['x-real-ip', '198.51.100.7'],
+    ['x-forwarded-host', 'chat.example.com'],
+  ])('refuses a loopback request relayed with %s', async (header, value) => {
+    const auth = await loadAuthWithEnv({});
+    const req = fakeReq({ remoteAddress: '127.0.0.1', headers: { host: 'chat.example.com', [header]: value } });
+    expect((await auth.authenticateRequest(req)).ok).toBe(false);
+  });
+
+  it('still signs in the local browser', async () => {
+    const auth = await loadAuthWithEnv({});
+    const req = fakeReq({ remoteAddress: '127.0.0.1', headers: { host: 'localhost:3100' } });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok && result.source).toBe('localhost');
   });
 });
 
@@ -447,6 +540,42 @@ describe('authenticateRequest — trusted proxy header', () => {
     const result = await auth.authenticateRequest(req);
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.userId).toBe('webchat:erin@example.com');
+  });
+});
+
+describe('trusted proxy addresses — IPv4, IPv6, mapped, CIDR', () => {
+  it('matches IPv6 addresses and prefixes', async () => {
+    const auth = await loadAuthWithEnv({});
+    const list = ['2001:db8::5', 'fd7a:115c:a1e0::/48'];
+    expect(auth.isTrustedProxyIp('2001:db8::5', list)).toBe(true);
+    expect(auth.isTrustedProxyIp('2001:DB8:0:0::5', list)).toBe(true);
+    expect(auth.isTrustedProxyIp('fd7a:115c:a1e0:ab12::1', list)).toBe(true);
+    expect(auth.isTrustedProxyIp('fd7a:115c:a1e1::1', list)).toBe(false);
+    expect(auth.isTrustedProxyIp('2001:db8::6', list)).toBe(false);
+  });
+
+  it('treats IPv4-mapped IPv6 as the IPv4 it maps, on either side', async () => {
+    const auth = await loadAuthWithEnv({});
+    expect(auth.isTrustedProxyIp('::ffff:10.0.0.5', ['10.0.0.0/8'])).toBe(true);
+    expect(auth.isTrustedProxyIp('10.0.2.3', ['::ffff:10.0.0.0/104'])).toBe(true);
+    expect(auth.isTrustedProxyIp('11.0.0.1', ['::ffff:10.0.0.0/104'])).toBe(false);
+    expect(auth.isTrustedProxyIp('10.0.0.5', ['::ffff:10.0.0.5'])).toBe(true);
+  });
+
+  it('keeps families apart and skips entries that are not addresses', async () => {
+    const auth = await loadAuthWithEnv({});
+    expect(auth.isTrustedProxyIp('10.0.0.5', ['::/0'])).toBe(false);
+    expect(auth.isTrustedProxyIp('::1', ['0.0.0.0/0'])).toBe(false);
+    expect(auth.isTrustedProxyIp('10.0.0.5', ['proxy.local', '10.0.0.0/33', '10.0.0.5/8/1', '10.0.0.5'])).toBe(true);
+    expect(auth.isTrustedProxyIp('10.0.0.6', ['proxy.local', '10.0.0.0/33'])).toBe(false);
+    expect(auth.isTrustedProxyIp('not-an-ip', ['0.0.0.0/0'])).toBe(false);
+  });
+
+  it('authenticates through an IPv6 proxy hop', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TRUSTED_PROXY_IPS: '2001:db8::/32' });
+    const req = fakeReq({ remoteAddress: '2001:db8::10', headers: { 'x-forwarded-user': 'alice@example.com' } });
+    const result = await auth.authenticateRequest(req);
+    expect(result.ok && result.source).toBe('proxy-header');
   });
 });
 
