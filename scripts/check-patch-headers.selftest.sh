@@ -151,5 +151,22 @@ P
 )
 expect 0 "an overlay is not held to the residue naming rule" "$root" "patch headers OK"
 
+# INVENTORY.md section counts must match their folders.
+inv_root() { # inv_root <fixture> <stated-count>
+  local root=$(mk "$1" patches/product src__x.ts.patch <<'P'
+diff --git a/src/x.ts b/src/x.ts
+--- a/src/x.ts
++++ b/src/x.ts
+@@ -1,1 +1,2 @@
+ x
++y
+P
+)
+  printf '# inventory\n\n## PRODUCT — shrink via seam registries (%s)\n\nsrc/x.ts\n    why\n' "$2" > "$root/patches/INVENTORY.md"
+  echo "$root"
+}
+expect 1 "an INVENTORY section count that drifted from its folder is caught" "$(inv_root inv-stale 2)" "says (2) but patches/product/ has 1"
+expect 0 "an INVENTORY section count that matches its folder passes" "$(inv_root inv-ok 1)" "patch headers OK"
+
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

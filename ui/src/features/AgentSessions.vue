@@ -29,7 +29,7 @@ function reset(id: string, e: MouseEvent) {
 </script>
 
 <template>
-  <li v-if="sessionsPhase === 'loading'" class="agent-session-row muted">{{ LOADING }}</li>
+  <li v-if="sessionsPhase === 'loading'" class="agent-session-row muted"><span class="btn-spinner" aria-hidden="true"></span>{{ LOADING }}</li>
   <li v-else-if="sessionsPhase === 'error'" class="agent-session-row muted">{{ sessionsError }}</li>
   <li v-else-if="rows.length === 0" class="agent-session-row muted">{{ EMPTY }}</li>
   <template v-else>

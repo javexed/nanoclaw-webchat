@@ -143,7 +143,7 @@ export async function openDoc(slug: string, hash = ''): Promise<void> {
   if (!article || !landing) return;
 
   const entry = docs.find((d) => d.slug === slug);
-  article.innerHTML = `<p class="docs-loading">Loading ${esc(entry?.title ?? slug)}…</p>`;
+  article.innerHTML = `<p class="docs-loading"><span class="btn-spinner" aria-hidden="true"></span>Loading ${esc(entry?.title ?? slug)}…</p>`;
   landing.hidden = true;
   article.hidden = false;
 

@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/index.ts b/container/agent-runner/src/index.ts
-index 1e5595e3..fd80edac 100644
+index 811a5838..d39d8e7f 100644
 --- a/container/agent-runner/src/index.ts
 +++ b/container/agent-runner/src/index.ts
 @@ -19,6 +19,8 @@
@@ -11,7 +11,7 @@ index 1e5595e3..fd80edac 100644
  import fs from 'fs';
  import path from 'path';
  import { fileURLToPath } from 'url';
-@@ -38,6 +40,13 @@ import './providers/index.js';
+@@ -39,6 +41,13 @@ import './providers/index.js';
  // registration on import. Provider skills append imports to
  // provider-contracts/index.ts alongside the providers barrel line.
  import './provider-contracts/index.js';
@@ -25,9 +25,9 @@ index 1e5595e3..fd80edac 100644
  import { createProvider } from './providers/factory.js';
  import { getProviderRuntimeContract, requireProviderName } from './providers/provider-registry.js';
  import { resolvePluginServer } from './plugin-mcp.js';
-@@ -63,17 +72,7 @@ async function main(): Promise<void> {
-   // operator-run migration and never happen in this normal startup path.
-   ensureMemoryScaffold();
+@@ -67,17 +76,7 @@ async function main(): Promise<void> {
+   // The agent browser trusts only NSS, not the gateway CA env vars.
+   trustGatewayCaForChromium({ log });
  
 -  // Runtime-generated system-prompt addendum: agent identity (name) plus
 -  // the live destinations map. Everything else (capabilities, per-module
@@ -43,7 +43,7 @@ index 1e5595e3..fd80edac 100644
  
    // Discover additional directories mounted at /workspace/extra/*
    const additionalDirectories: string[] = [];
-@@ -107,11 +106,8 @@ async function main(): Promise<void> {
+@@ -111,11 +110,8 @@ async function main(): Promise<void> {
      // Plugin-shipped servers get ${PLUGIN_ROOT}/${PLUGIN_DATA} expansion and
      // the two injected env vars; everything else passes through untouched.
      mcpServers[name] = resolvePluginServer(serverConfig);
@@ -57,7 +57,7 @@ index 1e5595e3..fd80edac 100644
    }
  
    const provider = createProvider(providerName, {
-@@ -122,9 +118,28 @@ async function main(): Promise<void> {
+@@ -126,9 +122,28 @@ async function main(): Promise<void> {
      model: config.model,
      effort: config.effort,
      speed: config.speed,
@@ -86,7 +86,7 @@ index 1e5595e3..fd80edac 100644
    try {
      await runPollLoop({
        provider,
-@@ -132,6 +147,8 @@ async function main(): Promise<void> {
+@@ -136,6 +151,8 @@ async function main(): Promise<void> {
        providerName,
        cwd: CWD,
        systemContext: { instructions },

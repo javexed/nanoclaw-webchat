@@ -61,23 +61,33 @@ bash scripts/leak-scan.sh --selftest    # 20 passed, 0 failed
 
 ## What CI requires
 
-`main` is protected: PRs only, and both checks must pass.
+`main` is protected: PRs only, and these checks must pass.
 
 - **`leak-gate`** — the same scan as the hooks, plus a self-test. Unbypassable;
   `--no-verify` skips the hooks, not this.
 - **`compose`** — the real gate. It composes a full nanoclaw+webchat tree from
   your branch against the pinned base + seam, then runs the tests in that
-  composed tree, the manifest integrity guard, and a prettier-clean check on
-  owned files. A PR runs the host tests its change can reach (and the container
-  suite only when it touches the container); a push to `main` runs everything.
+  composed tree, the manifest integrity guard, and the owned-code checks
+  (prettier, no dropped Promises, no unused code). A PR runs the host tests its
+  change can reach, the container suite only when it touches the container, and
+  the guards' own self-tests only when a guard or the workflow changes; a push
+  to `main` runs everything.
+- **`ui`** — runs beside `compose`: builds `ui/`, runs its unit tests
+  (`pnpm --dir ui test`, pure logic in Node), checks the committed bundle
+  matches, and drives the built app in a browser (boot order, role matrix, first
+  open, wiring, Thoughts). Skipped when a change touches neither `ui/` nor
+  `app/public/webchat/`.
+
+Each skip is announced in the run, and decided by `scripts/ci-scope.sh`, which
+runs everything whenever it cannot prove a step is unaffected.
 
 Two failures that surprise people:
 
 - **Manifest** — a new file under `app/` needs an entry in `app-manifest.txt`,
   or `compose-dev.sh` omits it while installs carry it. `scripts/check-manifest.sh`
   catches this; tests cannot.
-- **Format** — `scripts/check-format.sh` gates owned `src/*.ts`. Run prettier
-  before pushing.
+- **Format** — `scripts/check-format.sh` gates owned `src/*.ts`. The pre-push
+  hook checks the files you changed when it can find a prettier (`PRETTIER=…`).
 
 ## Pull requests
 

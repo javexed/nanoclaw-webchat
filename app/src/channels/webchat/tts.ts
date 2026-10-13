@@ -27,6 +27,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 import { getReadAloudEnabled } from './db.js';
+import { readBody } from './server/http.js';
 
 import { log } from '../../log.js';
 
@@ -58,24 +59,6 @@ function defaultVoice(): string {
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(data));
-}
-
-function readBoundedBody(req: IncomingMessage, maxBytes: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    let size = 0;
-    req.on('data', (d: Buffer) => {
-      size += d.length;
-      if (size > maxBytes) {
-        req.destroy();
-        reject(new Error('body too large'));
-        return;
-      }
-      body += d;
-    });
-    req.on('end', () => resolve(body));
-    req.on('error', reject);
-  });
 }
 
 /**
@@ -117,7 +100,7 @@ export async function maybeHandleTts(
 
     let raw: string;
     try {
-      raw = await readBoundedBody(req, REQUEST_BODY_LIMIT);
+      raw = await readBody(req, REQUEST_BODY_LIMIT);
     } catch {
       sendJson(res, 413, { error: 'Request body too large' });
       return true;

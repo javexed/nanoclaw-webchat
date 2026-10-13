@@ -1,5 +1,5 @@
 diff --git a/.claude/skills/add-onecli/scripts/setup.ts b/.claude/skills/add-onecli/scripts/setup.ts
-index 958a3e2a..8ac02082 100644
+index 958a3e2a..0dce4edb 100644
 --- a/.claude/skills/add-onecli/scripts/setup.ts
 +++ b/.claude/skills/add-onecli/scripts/setup.ts
 @@ -13,6 +13,7 @@
@@ -10,7 +10,7 @@ index 958a3e2a..8ac02082 100644
  import os from 'os';
  import path from 'path';
  import { fileURLToPath } from 'url';
-@@ -163,19 +164,146 @@ export function withLinuxHostGateway(compose: string, platform = process.platfor
+@@ -163,19 +164,174 @@ export function withLinuxHostGateway(compose: string, platform = process.platfor
    return compose.replace(marker, `${marker}    extra_hosts:\n      - "host.docker.internal:host-gateway"\n`);
  }
  
@@ -92,6 +92,29 @@ index 958a3e2a..8ac02082 100644
    });
  }
  
++/**
++ * The OneCLI version a compose recreate must keep. Its compose file reads
++ * `${ONECLI_VERSION:-latest}`, so an install whose .env never recorded the
++ * version recreates onto whatever `latest` image is cached locally: an upgrade
++ * nobody chose, whose database migrations do not roll back. Pinned to the
++ * version already running, so the recreate changes ports and nothing else
++ * (upgrades stay with docs/onecli-upgrades.md). A recorded pin is left alone.
++ */
++export function withRunningVersion(env: string, running: string | undefined): string {
++  if (/^ONECLI_VERSION=/m.test(env) || !running || !/^\d+\.\d+\.\d+$/.test(running)) return env;
++  return withEnvVar(env, 'ONECLI_VERSION', running);
++}
++
++/** The version a running OneCLI reports, or undefined when it does not answer. */
++async function runningVersion(url: string): Promise<string | undefined> {
++  try {
++    const res = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(5000) });
++    return res.ok ? ((await res.json()) as { version?: string }).version : undefined;
++  } catch {
++    return undefined;
++  }
++}
++
 +/** Does anything accept a TCP connection at host:port? */
 +function tcpOpen(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
 +  return new Promise((resolve) => {
@@ -134,6 +157,11 @@ index 958a3e2a..8ac02082 100644
 +    (fs.existsSync(onecliEnv) && /^ONECLI_BIND_HOST=(.+)$/m.exec(fs.readFileSync(onecliEnv, 'utf-8'))?.[1]?.trim()) ||
 +    new URL(current).hostname;
 +  const apiUrl = privateApiUrl(current);
++  const envNow = fs.existsSync(onecliEnv) ? fs.readFileSync(onecliEnv, 'utf-8') : '';
++  const version = await runningVersion(current);
++  const pinned = withRunningVersion(envNow, version);
++  if (pinned !== envNow) fs.writeFileSync(onecliEnv, pinned);
++  else if (!/^ONECLI_VERSION=/m.test(envNow)) log.warn('OneCLI version unknown: a recreate may change it', { current });
 +  ensureLocalGatewayHostAccess(bindHost, apiUrl);
 +  try {
 +    execFileSync('onecli', ['config', 'set', 'api-host', apiUrl], { stdio: 'ignore', env: childEnv() });
@@ -162,7 +190,7 @@ index 958a3e2a..8ac02082 100644
  function installOnecli(): { stdout: string; ok: boolean } {
    let stdout = '';
  
-@@ -199,7 +327,7 @@ function installOnecli(): { stdout: string; ok: boolean } {
+@@ -199,7 +355,7 @@ function installOnecli(): { stdout: string; ok: boolean } {
      const onecliEnv = path.join(os.homedir(), '.onecli', '.env');
      writeEnvVar('ONECLI_VERSION', ONECLI_GATEWAY_VERSION, onecliEnv);
      writeEnvVar('ONECLI_BIND_HOST', new URL(gatewayUrl).hostname, onecliEnv);
@@ -171,7 +199,7 @@ index 958a3e2a..8ac02082 100644
    } catch (err) {
      log.error('OneCLI gateway host mapping failed', { err });
      return { stdout, ok: false };
-@@ -350,6 +478,7 @@ export async function pollHealth(url: string, timeoutMs: number): Promise<boolea
+@@ -350,6 +506,7 @@ export async function pollHealth(url: string, timeoutMs: number): Promise<boolea
  }
  
  export async function run(args: string[]): Promise<void> {
@@ -179,7 +207,7 @@ index 958a3e2a..8ac02082 100644
    const requestedRemote = process.env.NANOCLAW_ONECLI_API_HOST?.trim();
    if (requestedRemote && !args.includes('--remote-url')) args = [...args, '--remote-url', requestedRemote];
    const reuse = args.includes('--reuse') || (!requestedRemote && !!onecliVersion() && !!getOnecliApiHost());
-@@ -484,7 +613,9 @@ export async function run(args: string[]): Promise<void> {
+@@ -484,7 +641,9 @@ export async function run(args: string[]): Promise<void> {
      process.exit(1);
    }
  

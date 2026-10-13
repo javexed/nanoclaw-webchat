@@ -22,6 +22,7 @@ import {
   resolveBoundedThread,
   type FileMeta,
 } from './db.js';
+import { BodyTooLargeError, readBody } from './server/http.js';
 import { broadcast } from './state.js';
 
 const MAX_UPLOAD_SIZE = 8 * 1024 * 1024 * 1024; // 8GB: files and chunks live on the data disk
@@ -182,30 +183,6 @@ function json(res: http.ServerResponse, status: number, data: unknown): void {
 
 // JSON envelope cap per chunk request (a 512 KB chunk is ≈ 700 KB base64 + JSON).
 const MAX_CHUNK_BODY_BYTES = 2 * 1024 * 1024;
-
-class BodyTooLargeError extends Error {
-  constructor() {
-    super('Request body too large');
-  }
-}
-
-function readBody(req: http.IncomingMessage, maxBytes = MAX_CHUNK_BODY_BYTES): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    let size = 0;
-    req.on('data', (d: Buffer) => {
-      size += d.length;
-      if (size > maxBytes) {
-        req.destroy();
-        reject(new BodyTooLargeError());
-        return;
-      }
-      body += d;
-    });
-    req.on('end', () => resolve(body));
-    req.on('error', (err) => reject(err));
-  });
-}
 
 // At or below: inlined as base64 `attachments[].data`, which session-manager
 // stages to `<sessionDir>/inbox/<msgId>/`. Above: a `hostPath` attachment it
@@ -388,7 +365,15 @@ export async function handleMultipartUpload(
           mime: finishedFileInfo.mime,
           size: finishedFileInfo.size,
         };
-        const stored = await storeWebchatFileMessage(roomId, senderIdentity, 'user', caption, fileMeta, threadId);
+        const stored = await storeWebchatFileMessage(
+          roomId,
+          senderIdentity,
+          'user',
+          caption,
+          fileMeta,
+          threadId,
+          senderUserId,
+        );
         await broadcast(roomId, { type: 'message', ...stored });
         hooks.onInbound(
           roomId,
@@ -419,6 +404,11 @@ export async function handleMultipartUpload(
   req.pipe(busboy);
 }
 
+/** A chunk (or the completion) counts only from the user who started the upload, in its room. */
+function ownsUpload(upload: { senderUserId: string; roomId: string }, senderUserId: string, roomId: string): boolean {
+  return upload.senderUserId === senderUserId && upload.roomId === roomId;
+}
+
 export async function handleChunkedUpload(
   req: http.IncomingMessage,
   res: http.ServerResponse,
@@ -430,7 +420,7 @@ export async function handleChunkedUpload(
 ): Promise<void> {
   let body: string;
   try {
-    body = await readBody(req);
+    body = await readBody(req, MAX_CHUNK_BODY_BYTES);
   } catch (err) {
     if (err instanceof BodyTooLargeError) return json(res, 413, { error: 'Request body too large' });
     throw err;
@@ -532,6 +522,10 @@ export async function handleChunkedUpload(
           chunkSizes: new Map(),
         };
         pendingChunkedUploads.set(uploadId, upload);
+      } else if (!ownsUpload(upload, senderUserId, roomId)) {
+        // Another user (or another room) naming this uploadId: refused, and
+        // the upload is left as it was, its timer included.
+        return { status: 403, body: { error: 'Not your upload' } };
       } else if (totalChunks !== upload.totalChunks) {
         return { status: 400, body: { error: 'totalChunks mismatch' } };
       } else {
@@ -577,6 +571,9 @@ export async function handleChunkedUpload(
   const upload = pendingChunkedUploads.get(uploadId);
   if (!upload) {
     return json(res, 410, { error: 'Upload state lost during reassemble' });
+  }
+  if (!ownsUpload(upload, senderUserId, roomId)) {
+    return json(res, 403, { error: 'Not your upload' });
   }
   clearTimeout(upload.timer);
 
@@ -632,7 +629,15 @@ export async function handleChunkedUpload(
   // Bound the client-supplied thread_id (same rule as the WS path) before it
   // keys a session — applied at finalize so it runs once, not per chunk.
   threadId = await resolveBoundedThread(roomId, threadId);
-  const stored = await storeWebchatFileMessage(roomId, upload.sender, 'user', caption, fileMeta, threadId);
+  const stored = await storeWebchatFileMessage(
+    roomId,
+    upload.sender,
+    'user',
+    caption,
+    fileMeta,
+    threadId,
+    upload.senderUserId,
+  );
   await broadcast(roomId, { type: 'message', ...stored });
   hooks.onInbound(
     roomId,

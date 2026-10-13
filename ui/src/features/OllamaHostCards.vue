@@ -5,6 +5,7 @@
  * the pull status OUTSIDE the body so progress stays visible while collapsed.
  */
 import { computed } from 'vue';
+import OllamaPullStatus from './OllamaPullStatus.vue';
 import SelectToggle from './SelectToggle.vue';
 import {
   fitContext,
@@ -34,7 +35,6 @@ const SYS_HEADING = 'System — not selectable';
 const CLASSIFIER = 'classifier';
 const CLASSIFIER_TITLE = 'Auto-routing classifier — infrastructure, not selectable as an agent model';
 const PULL = 'Pull';
-const CANCEL = 'Cancel';
 const PULL_PLACEHOLDER = 'Model to pull, e.g. qwen3.5:4b…';
 const CHEVRON = '›';
 const DOTS = '…';
@@ -149,7 +149,7 @@ function preview(host: string, e: Event) {
     </div>
     <div :hidden="!c.open">
       <ul class="ollama-model-list">
-        <li v-if="c.phase === 'loading'" class="ollama-muted">{{ LOADING }}</li>
+        <li v-if="c.phase === 'loading'" class="ollama-muted"><span class="btn-spinner" aria-hidden="true"></span>{{ LOADING }}</li>
         <li v-else-if="c.phase === 'error'" class="ollama-muted">{{ c.error }}</li>
         <li v-else-if="c.selectable.length === 0 && c.system.length === 0" class="ollama-muted">{{ NO_MODELS }}</li>
         <template v-else>
@@ -193,32 +193,6 @@ function preview(host: string, e: Event) {
     <div v-if="c.fit" class="ollama-pull-status">
       <div :class="`ollama-pull-line ${c.fit.cls}`">{{ c.fit.text }}</div>
     </div>
-    <div class="ollama-pull-status" :hidden="!c.pull">
-      <template v-if="c.pull">
-        <template v-if="c.pull.status === 'pulling'">
-          <div class="ollama-pull-line progress">
-            <span class="ollama-pull-text">Pulling {{ c.pull.model }} — {{ c.pull.detail }}</span>
-            <!-- The way out, at the point where it is wanted: mid-download,
-                 not in a dialog before one. Ollama keeps the blobs it already
-                 has, so a later re-pull resumes. -->
-            <button class="ollama-pull-cancel" type="button" @click="props.onCancel(c.host, c.pull.model)">
-              {{ CANCEL }}
-            </button>
-          </div>
-          <div class="ollama-pull-bar"><span :style="{ width: c.pull.pct + '%' }"></span></div>
-        </template>
-        <template v-else-if="c.pull.status === 'success'">
-          <div class="ollama-pull-line ok">Pulled {{ c.pull.model }}</div>
-          <!-- Fitness at pull time — data, not prose: the three facts that
-               decide whether this model works on THIS hardware right now. -->
-          <div v-for="v in c.pull.verdict || []" :key="v" class="ollama-pull-line pull-verdict">{{ v }}</div>
-        </template>
-        <!-- Cancelled is neutral, not an error: the operator asked for it. -->
-        <div v-else-if="c.pull.status === 'cancelled'" class="ollama-pull-line">
-          Cancelled pull of {{ c.pull.model }}
-        </div>
-        <div v-else class="ollama-pull-line err">Pull of {{ c.pull.model }} failed: {{ c.pull.error }}</div>
-      </template>
-    </div>
+    <OllamaPullStatus :pull="c.pull" :on-cancel="(m: string) => props.onCancel(c.host, m)" />
   </div>
 </template>

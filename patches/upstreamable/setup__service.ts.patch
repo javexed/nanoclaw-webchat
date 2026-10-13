@@ -1,10 +1,10 @@
 diff --git a/setup/service.ts b/setup/service.ts
-index 3e46ebf3..c17b40c3 100644
+index 8fd0a546..cf10334d 100644
 --- a/setup/service.ts
 +++ b/setup/service.ts
-@@ -303,6 +303,12 @@ async function setupSystemd(projectRoot: string, nodePath: string, homeDir: stri
-     systemctlPrefix = 'systemctl --user';
-   }
+@@ -451,6 +451,12 @@ export function renderSystemdUnit(
+     ? `\nEnvironmentFile=${proxyEnvFile.replace(/%/g, '%%').replace(/[[\]*?\\]/g, '\\$&')}`
+     : '';
  
 +  // /snap/bin is on the PATH so snap-packaged CLIs the host shells out to
 +  // resolve — notably `tailscale` on Ubuntu, where the snap is the default
@@ -12,19 +12,19 @@ index 3e46ebf3..c17b40c3 100644
 +  // systemd service gets none of that, so an omitted entry means the host
 +  // can't exec `tailscale` and webchat reports HTTPS-over-Tailscale as
 +  // unavailable even while the tailnet is up.
-   const unit = `[Unit]
+   return `[Unit]
  Description=NanoClaw Personal Assistant
  After=network.target
-@@ -315,7 +321,7 @@ Restart=always
+@@ -463,7 +469,7 @@ Restart=always
  RestartSec=5
  KillMode=process
  Environment=HOME=${homeDir}
--Environment=PATH=/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin
-+Environment=PATH=/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin:/snap/bin
+-Environment=PATH=/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin${proxyLine}
++Environment=PATH=/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin:/snap/bin${proxyLine}
  StandardOutput=append:${projectRoot}/logs/nanoclaw.log
  StandardError=append:${projectRoot}/logs/nanoclaw.error.log
  
-@@ -347,22 +353,78 @@ WantedBy=${runningAsRoot ? 'multi-user.target' : 'default.target'}`;
+@@ -526,22 +532,78 @@ async function setupSystemd(projectRoot: string, nodePath: string, homeDir: stri
          log.warn('Failed to apply setfacl workaround', { err });
        }
      } else {
@@ -108,10 +108,10 @@ index 3e46ebf3..c17b40c3 100644
    }
  
    // Enable and start
-@@ -406,7 +468,7 @@ WantedBy=${runningAsRoot ? 'multi-user.target' : 'default.target'}`;
-     UNIT_PATH: unitPath,
+@@ -586,7 +648,7 @@ async function setupSystemd(projectRoot: string, nodePath: string, homeDir: stri
      SERVICE_LOADED: serviceLoaded,
      ...(dockerGroupStale ? { DOCKER_GROUP_STALE: true } : {}),
+     ...proxyStatusFields,
 -    LINGER_ENABLED: !runningAsRoot,
 +    LINGER_ENABLED: lingerEnabled,
      STATUS: 'success',

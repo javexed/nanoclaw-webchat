@@ -121,35 +121,39 @@ export const execRelayEnabled = (): boolean => (process.env.WEBCHAT_EXEC_RELAY ?
  * Serve one relayed stream: the proxy port through the filter's own logic, a
  * model on another machine behind the filter's per-caller check, central's
  * services straight through.
+ *
+ * Which ports are models is read from the registry per connection, not
+ * captured at start: a model removed from the registry stops being reachable
+ * through a running container's relay at once, not at its next restart.
  */
-function relayRoute(
-  caller: Caller,
-  gateway: { host: string; port: number },
-  services: Map<number, { host: string; port: number }>,
-  models: Map<number, { remote: boolean; ollama: boolean }>,
-) {
+function relayRoute(caller: Caller, gateway: { host: string; port: number }) {
   const deps = { ...defaultFilterDeps(EGRESS_NETWORK, () => gateway), identify: async () => caller };
   return (port: number, stream: Duplex): void => {
     if (port === gateway.port) {
       void serveProxyClient(stream, deps).catch(() => stream.destroy());
       return;
     }
-    const target = services.get(port);
-    if (!target) return void stream.destroy();
-    // A model, host-local or on another machine: the per-caller check the
-    // lockdown filter applies (its own model, the allowlist where the mode
-    // allows it). Straight through, a Model-only agent reached every model in
-    // the registry, and Ollama's whole API (pull, delete, create) with it.
-    const model = models.get(port);
-    if (model) {
-      void serveModelPort(stream, port, target, deps, model.remote, model.ollama).catch(() => stream.destroy());
-      return;
-    }
-    const up = net.connect(target);
-    up.on('error', () => stream.destroy());
-    stream.on('error', () => up.destroy());
-    stream.pipe(up);
-    up.pipe(stream);
+    void (async () => {
+      const relay = mcpRelayTarget();
+      const { services, models } =
+        port === relay.port ? relayServices(gateway.port, [], []) : await currentRelayServices(gateway.port);
+      const target = services.get(port);
+      if (!target) return void stream.destroy();
+      // A model, host-local or on another machine: the per-caller check the
+      // lockdown filter applies (its own model, the allowlist where the mode
+      // allows it). Straight through, a Model-only agent reached every model in
+      // the registry, and Ollama's whole API (pull, delete, create) with it.
+      const model = models.get(port);
+      if (model) {
+        await serveModelPort(stream, port, target, deps, model.remote, model.ollama);
+        return;
+      }
+      const up = net.connect(target);
+      up.on('error', () => stream.destroy());
+      stream.on('error', () => up.destroy());
+      stream.pipe(up);
+      up.pipe(stream);
+    })().catch(() => stream.destroy());
   };
 }
 
@@ -158,24 +162,44 @@ function relayRoute(
  * (straight through: it authenticates each request with its own token) and
  * models, host-local or relayed (`remote`), each behind the per-caller check.
  */
-function relayServices(gatewayPort: number): {
+function relayServices(
+  gatewayPort: number,
+  local: typeof passthroughs = passthroughs,
+  remote: ModelRelay[] = relays,
+): {
   services: Map<number, { host: string; port: number }>;
   models: Map<number, { remote: boolean; ollama: boolean }>;
 } {
   const relay = mcpRelayTarget();
   const services = new Map<number, { host: string; port: number }>([[relay.port, relay]]);
   const models = new Map<number, { remote: boolean; ollama: boolean }>();
-  for (const p of passthroughs) {
+  for (const p of local) {
     if (p.port === gatewayPort || services.has(p.port)) continue;
     services.set(p.port, p.target);
     models.set(p.port, { remote: false, ollama: !!p.ollama });
   }
-  for (const r of relays) {
+  for (const r of remote) {
     if (r.port === gatewayPort || services.has(r.port)) continue;
     services.set(r.port, r.target);
     models.set(r.port, { remote: true, ollama: !!r.ollama });
   }
   return { services, models };
+}
+
+/**
+ * relayServices from the registry as it is now. Fails closed: a registry that
+ * cannot be read serves no model port (the MCP relay stays up).
+ */
+async function currentRelayServices(gatewayPort: number): Promise<ReturnType<typeof relayServices>> {
+  try {
+    const [local, remote] = [await modelPassthroughs(), await modelRelays()];
+    passthroughs = local;
+    relays = remote;
+    return relayServices(gatewayPort, local, remote);
+  } catch (err) {
+    log.warn('Exec relay: could not read the model registry; refusing model ports', { err: String(err) });
+    return relayServices(gatewayPort, [], []);
+  }
 }
 
 /** The network arguments for an exec-relayed agent; exported for tests. Throws when there is no gateway to relay to. */
@@ -185,11 +209,11 @@ export function execRelayNetworkArgs(
   const agent = spec.containers.find((c) => c.role === 'agent') ?? spec.containers[0];
   const gateway = gatewayFromSpec({ ...(agent?.contributedEnv ?? {}), ...(agent?.env ?? {}) });
   if (!gateway) throw new Error('the agent has no proxy URL to relay (the credential gateway contributed none)');
-  const { services, models } = relayServices(gateway.port);
+  const { services } = relayServices(gateway.port);
   const caller = { agentGroupId: spec.key.agentGroupId, sessionId: spec.key.sessionId ?? '' };
   registerRelayedContainer(agentContainerName(spec), {
     ports: [gateway.port, ...services.keys()],
-    route: relayRoute(caller, gateway, services, models),
+    route: relayRoute(caller, gateway),
   });
   // The endpoint name the proxy URL uses now means the container's own loopback, where the forwarder listens.
   return ['--network', 'none', `--add-host=${spec.networkAccess.endpoint}:127.0.0.1`];
@@ -220,6 +244,8 @@ function adoptRelayedContainers(): void {
       .split('\n')
       .map((n) => n.trim())
       .filter(Boolean);
+    // The model ports to listen on come from the registry, unread in a fresh process.
+    if (names.length) await refreshModelListeners();
     for (const name of names) {
       const out = await run([
         'inspect',
@@ -240,11 +266,11 @@ function adoptRelayedContainers(): void {
       const env = Object.fromEntries(envList.map((e) => [e.slice(0, e.indexOf('=')), e.slice(e.indexOf('=') + 1)]));
       const gateway = gatewayFromSpec(env);
       if (!gateway) continue;
-      const { services, models } = relayServices(gateway.port);
+      const { services } = relayServices(gateway.port);
       const caller = { agentGroupId: group, sessionId: session && session !== '<no value>' ? session : '' };
       registerRelayedContainer(name, {
         ports: [gateway.port, ...services.keys()],
-        route: relayRoute(caller, gateway, services, models),
+        route: relayRoute(caller, gateway),
       });
       log.info('Exec relay: adopted a running container', { container: name });
     }

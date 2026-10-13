@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# Pre-push: two gates, in order.
+# Pre-push gates, in order.
 #   1. LEAK gate (always) — scan the range(s) being pushed for secrets +
 #      operator identifiers before anything leaves the machine. Not skippable by
 #      SKIP_PR_PREFLIGHT (only `git push --no-verify` bypasses, git-standard).
-#   2. Freshness preflight (skippable via SKIP_PR_PREFLIGHT) — the existing
+#   2. Seam pin — a moved pin must name a published seam.
+#   3. Format — owned app/src files the push changes are prettier-clean, the
+#      check CI's compose job would otherwise fail ~7 minutes in.
+#      SKIP_FORMAT_PREFLIGHT=1 skips it.
+#   4. Freshness preflight (skippable via SKIP_PR_PREFLIGHT) — the existing
 #      rebase-before-PR check, delegated unchanged.
 set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
@@ -48,6 +52,35 @@ for lsha in $PUSHED; do
     *) echo "pre-push: could not check the seam pin (offline?) — push continues." >&2 ;;
   esac
 done
+
+# Format: the same scope as CI's format gate (owned TypeScript under app/src),
+# limited to files this push changes, against the repo's own .prettierrc. Uses
+# $PRETTIER, else a prettier on PATH, else ui/node_modules; with none, it says
+# so and moves on — CI still checks.
+if [ "${SKIP_FORMAT_PREFLIGHT:-}" != "1" ] && [ -n "$PUSHED" ]; then
+  P="${PRETTIER:-$(command -v prettier || true)}"
+  [ -n "$P" ] || { [ -x "$ROOT/ui/node_modules/.bin/prettier" ] && P="$ROOT/ui/node_modules/.bin/prettier"; }
+  FILES=""
+  for lsha in $PUSHED; do
+    base=$(git merge-base "$REMOTE/main" "$lsha" 2>/dev/null || true)
+    [ -n "$base" ] || continue
+    FILES="$FILES $(git diff --name-only --diff-filter=ACMR "$base" "$lsha" -- 'app/src/*.ts' 2>/dev/null)"
+  done
+  FILES=$(printf '%s\n' $FILES | sort -u | while read -r f; do [ -f "$ROOT/$f" ] && echo "$f"; done)
+  if [ -z "$FILES" ]; then
+    :
+  elif [ -z "$P" ]; then
+    echo "pre-push: no prettier found (set PRETTIER=…) — format not checked here; CI will." >&2
+  else
+    # shellcheck disable=SC2086
+    if ! BAD=$(cd "$ROOT" && "$P" --config .prettierrc --list-different $FILES 2>&1); then
+      echo "pre-push: blocked — not prettier-clean (CI's format gate would fail):" >&2
+      printf '  %s\n' $BAD >&2
+      echo "  fix: (cd $ROOT && $P --config .prettierrc --write <files>)   or SKIP_FORMAT_PREFLIGHT=1" >&2
+      exit 1
+    fi
+  fi
+fi
 
 # Freshness preflight — ADVISORY since 2026-08-21. "Behind main" is worth a
 # heads-up, but blocking on it fought every legitimate push during history

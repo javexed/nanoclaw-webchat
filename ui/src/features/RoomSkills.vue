@@ -6,6 +6,7 @@
  * dimmed archive. Proposals use UndoTimer, measuring width BEFORE the swap.
  */
 import { computed } from 'vue';
+import BusyLabel from './BusyLabel.vue';
 import OriginBadge from './OriginBadge.vue';
 import UndoTimer from './UndoTimer.vue';
 import { roomSkillRows, roomSkillUndo, roomSkillsReviewing } from './skills-panel-state.js';
@@ -61,7 +62,7 @@ const rows = computed(() => roomSkillRows.value);
             :data-draft-id="r.id"
             :disabled="roomSkillsReviewing.has(r.id) || undefined"
             @click="props.onKeep(r)"
-          >{{ roomSkillsReviewing.has(r.id) ? REVIEWING : KEEP }}</button>
+          ><BusyLabel :busy="roomSkillsReviewing.has(r.id)" :label="KEEP" :busy-label="REVIEWING" /></button>
           <button type="button" class="skill-delete" @click="props.onDiscard(r)">{{ DISCARD }}</button>
         </template>
       </div>

@@ -475,7 +475,7 @@ export function applyJourneyFilters() {
 export async function refreshTopology() {
   const canvas = $('#topology-canvas');
   if (!canvas) return;
-  canvas.textContent = 'Loading…';
+  canvas.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Loading…';
   try {
     renderTopology(await apiJson('/api/topology'));
   } catch {
@@ -748,7 +748,7 @@ export async function refreshMatrix() {
   // `#matrix-canvas` is BOTH the placeholder target and the island's mount host,
   // and mountMatrix() will not rebuild while matrixApp is set — so paint the
   // placeholder only when nothing is mounted, and unmount first on text paths.
-  if (!matrixApp) canvas.textContent = 'Loading…';
+  if (!matrixApp) canvas.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Loading…';
   const fail = () => {
     unmountMatrix();
     canvas.textContent = 'Could not load wiring.';

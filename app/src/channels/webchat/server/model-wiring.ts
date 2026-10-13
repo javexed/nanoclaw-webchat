@@ -9,6 +9,7 @@ import { getContainerConfig } from '../../../db/container-configs.js';
 import { log } from '../../../log.js';
 import { getAssignedModelForAgent, getEffectiveModelForAgent } from '../db.js';
 import { isRouterEndpoint } from '../cloud-models.js';
+import { forgetGroupEgressMode, forgetModelHosts } from '../egress-policy.js';
 import { syncAgentProviderForAssignedModel, writeAgentSettingsForAssignedModel } from '../models.js';
 
 /**
@@ -24,6 +25,10 @@ import { syncAgentProviderForAssignedModel, writeAgentSettingsForAssignedModel }
  * isolated so a failure in one agent group doesn't abort the rest of the batch.
  */
 export async function reloadAgentModelEnv(agentGroupId: string, reason: string): Promise<void> {
+  // The network filter caches the hosts this agent may reach, its model's among
+  // them: the new model's host must pass from the first message, not after the
+  // cache times out (a cloud model was refused for 15s after the switch).
+  forgetGroupEgressMode(agentGroupId);
   try {
     await writeAgentSettingsForAssignedModel(agentGroupId);
   } catch (err) {
@@ -53,6 +58,7 @@ export async function reloadAgentModelEnv(agentGroupId: string, reason: string):
  * (Codex) groups (their harness ignores the ANTHROPIC_* env this writes).
  */
 export async function refreshUnassignedGroupsForDefaultModel(reason: string): Promise<void> {
+  forgetModelHosts(); // the default model's host, for every group that inherits it
   for (const g of await getAllAgentGroups()) {
     if (await getAssignedModelForAgent(g.id)) continue;
     const provider = (await getContainerConfig(g.id))?.provider;

@@ -15,6 +15,8 @@ import { $, esc } from '../core/dom.js';
 import { mountIsland } from '../core/island.js';
 import { showConfirmModal, showInputModal } from './modals.js';
 import { showToast } from '../core/toast.js';
+import { buttonBusy } from '../core/busy.js';
+import { installLogText } from './installer-state.js';
 import { apiJson, authFetch } from '../core/api.js';
 import { state } from '../core/state.js';
 import { fetchModels } from './models.js';
@@ -296,12 +298,12 @@ export function wireRoutingPanel(): void {
 
   // The classify bench appears at the top of both the Rules and Logs sub-tabs, so
   // tuning and log-reading each have the tester at hand. One helper, two mounts.
-  async function runBench(inputEl: HTMLInputElement, outEl: HTMLElement): Promise<void> {
+  async function runBench(inputEl: HTMLInputElement, outEl: HTMLElement, runBtn: HTMLButtonElement | null): Promise<void> {
     const prompt = inputEl.value.trim();
-    if (!prompt) return;
-    outEl.hidden = false;
+    if (!prompt || runBtn?.disabled) return;
+    outEl.hidden = true;
     outEl.classList.remove('err');
-    outEl.textContent = 'Classifying…';
+    const done = runBtn ? buttonBusy(runBtn, 'Classifying…') : null;
     try {
       const body = await apiJson('/api/router/classify', { method: 'POST', body: { prompt } });
       outEl.textContent = `→ ${body.route} · ${body.model ?? '(no binding)'} · ${body.ms} ms`;
@@ -309,15 +311,19 @@ export function wireRoutingPanel(): void {
       // Errors must not read like a green success — flip to the warning colour.
       outEl.classList.add('err');
       outEl.textContent = 'Could not classify — ' + ((err as any)?.message || 'classifier unavailable');
+    } finally {
+      outEl.hidden = false;
+      done?.();
     }
   }
   function wireBench(inputId: string, runId: string, outId: string): void {
     const input = document.getElementById(inputId) as HTMLInputElement | null;
     const out = document.getElementById(outId);
     if (!input || !out) return;
-    document.getElementById(runId)?.addEventListener('click', () => runBench(input, out));
+    const run = document.getElementById(runId) as HTMLButtonElement | null;
+    run?.addEventListener('click', () => runBench(input, out, run));
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') runBench(input, out);
+      if (e.key === 'Enter') runBench(input, out, run);
     });
   }
   wireBench('routing-bench-input', 'routing-bench-run', 'routing-bench-result');
@@ -429,15 +435,16 @@ async function createRouteFromSuggestion(s: any) {
 async function runRosterRefresh() {
   const btn = $<HTMLButtonElement>('#roster-refresh-btn');
   const log = $<HTMLElement>('#roster-refresh-log');
+  // Icon-only button: a spinner label would replace the icon, so it only
+  // disables and the log box shows the wait from the first response.
   btn!.disabled = true;
-  log!.hidden = false;
-  log!.textContent = 'Starting…';
   try {
-    await apiJson('/api/router/roster-refresh', { method: 'POST' });
+    log!.textContent = installLogText(await apiJson('/api/router/roster-refresh', { method: 'POST' }), 12);
+    log!.hidden = false;
     while (true) {
       await new Promise((r: any) => setTimeout(r, 2000));
       const st = await (await authFetch('/api/router/roster-refresh')).json();
-      log!.textContent = st.lines.slice(-12).join('\n');
+      log!.textContent = installLogText(st, 12);
       log!.scrollTop = log!.scrollHeight;
       if (!st.running) {
         if (st.exitCode === 0) {
@@ -451,6 +458,7 @@ async function runRosterRefresh() {
       }
     }
   } catch (err) {
+    log!.hidden = false;
     log!.textContent = 'Refresh failed: ' + (err as any)?.message;
     showToast('Roster refresh failed', { kind: 'error' });
   } finally {

@@ -128,14 +128,120 @@ describe('egress filter', () => {
     expect(seen).toEqual([]);
   });
 
-  it('a plain-HTTP request goes out as origin form through the gateway, proxy headers dropped', async () => {
+  // Not a CONNECT tunnel with the request inside: the gateway reads every
+  // tunnel as TLS, and Claude Code's calls to the router behind it (plain HTTP)
+  // came back as garbage ("Received HTTP/0.9"), so a cloud model never answered.
+  it('a plain-HTTP request goes to the gateway as to any proxy: absolute form, the agent credentials, one request', async () => {
+    deps.allowlist = async () => ['plain.example'];
+    await ask(
+      `GET http://plain.example/pkg?x=1 HTTP/1.1\r\nHost: plain.example\r\n${cred}\r\nProxy-Connection: keep-alive\r\nConnection: keep-alive\r\n\r\n`,
+    );
+    expect(seen[0]).toBe(
+      `GET http://plain.example/pkg?x=1 HTTP/1.1\r\nHost: plain.example\r\nConnection: close\r\n${cred}`,
+    );
+  });
+
+  it('forwards the request body and nothing after it on the connection', async () => {
     deps.allowlist = async () => ['plain.example'];
     const got = await ask(
-      `GET http://plain.example/pkg?x=1 HTTP/1.1\r\nHost: plain.example\r\n${cred}\r\nProxy-Connection: keep-alive\r\n\r\n`,
+      `POST http://plain.example/x HTTP/1.1\r\nHost: plain.example\r\nContent-Length: 4\r\n${cred}\r\n\r\nbody` +
+        `GET http://evil.example/ HTTP/1.1\r\nHost: evil.example\r\n\r\n`,
     );
-    expect(seen[0]).toContain('CONNECT plain.example:80 HTTP/1.1');
-    expect(got).toContain('echo:GET /pkg?x=1 HTTP/1.1\r\nHost: plain.example\r\n\r\n');
-    expect(got).not.toContain('Proxy-');
+    expect(got).toContain('echo:body');
+    expect(got).not.toContain('evil.example');
+  });
+
+  // The policy checks the request line's host; a different Host header must not
+  // travel with it, or whatever reads Host (the gateway picking a credential to
+  // inject, a virtual host) could be steered somewhere the allowlist never saw.
+  it("sends the checked host as Host, never the client's own", async () => {
+    deps.allowlist = async () => ['plain.example'];
+    await ask(`GET http://plain.example/x HTTP/1.1\r\nHost: router:4000\r\n${cred}\r\n\r\n`);
+    expect(seen[0]).toContain('GET http://plain.example/x HTTP/1.1\r\nHost: plain.example\r\n');
+    expect(seen[0]).not.toContain('router:4000');
+  });
+
+  it('a head with a bare LF, a bare CR or a NUL inside a line is refused before the gateway', async () => {
+    deps.allowlist = async () => ['plain.example'];
+    for (const sneak of ['X-A: b\nTransfer-Encoding: chunked', 'X-A: b\rTransfer-Encoding: chunked', 'X-A: b\0c']) {
+      const got = await ask(
+        `POST http://plain.example/x HTTP/1.1\r\nHost: plain.example\r\n${sneak}\r\nContent-Length: 4\r\n${cred}\r\n\r\nbody`,
+      );
+      expect(got).toMatch(/^HTTP\/1.1 400 Bad Request/);
+    }
+    expect(seen).toEqual([]);
+  });
+
+  it('a client that goes away mid-body closes the gateway side too', async () => {
+    deps.allowlist = async () => ['plain.example'];
+    const gatewayClosed = new Promise<boolean>((resolve) => {
+      gateway.on('connection', (sock) => sock.on('close', () => resolve(true)));
+      setTimeout(() => resolve(false), 3000);
+    });
+    const c = net.connect(filterPort, '127.0.0.1', () =>
+      c.write(
+        `POST http://plain.example/x HTTP/1.1\r\nHost: plain.example\r\nContent-Length: 100000\r\n${cred}\r\n\r\npartial`,
+      ),
+    );
+    c.on('error', () => {});
+    for (let i = 0; i < 100 && seen.length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+    expect(seen).toHaveLength(1);
+    c.destroy();
+    expect(await gatewayClosed).toBe(true);
+  });
+
+  // The body of a resumed Claude session (hundreds of KB) arrives in many
+  // chunks while the filter still awaits its checks; those chunks were dropped
+  // and the gateway waited for the rest until the turn timed out.
+  it('forwards a body that arrives in pieces while the checks run, every byte of it', async () => {
+    const SIZE = 200_000;
+    let received = 0;
+    let done!: () => void;
+    const all = new Promise<void>((r) => (done = r));
+    const sink = net.createServer((sock) => {
+      let inHead = true;
+      let pending = Buffer.alloc(0);
+      sock.on('data', (d: Buffer) => {
+        if (inHead) {
+          pending = Buffer.concat([pending, d]);
+          const end = pending.indexOf('\r\n\r\n');
+          if (end < 0) return;
+          inHead = false;
+          received += pending.length - end - 4;
+        } else received += d.length;
+        if (received >= SIZE) done();
+      });
+      sock.on('error', () => {});
+    });
+    const sinkPort = await new Promise<number>((r) =>
+      sink.listen(0, '127.0.0.1', () => r((sink.address() as net.AddressInfo).port)),
+    );
+    deps.gateway = () => ({ host: '127.0.0.1', port: sinkPort });
+    // Slow checks: the body keeps arriving while they run.
+    deps.allowlist = () => new Promise((r) => setTimeout(() => r(['plain.example']), 150));
+    const c = net.connect(filterPort, '127.0.0.1');
+    c.on('error', () => {});
+    await new Promise((r) => c.once('connect', r));
+    c.write(
+      `POST http://plain.example/big HTTP/1.1\r\nHost: plain.example\r\nContent-Length: ${SIZE}\r\n${cred}\r\n\r\n`,
+    );
+    const piece = Buffer.alloc(10_000, 'x');
+    for (let sent = 0; sent < SIZE; sent += piece.length) {
+      c.write(piece);
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    await Promise.race([all, new Promise((r) => setTimeout(r, 4000))]);
+    c.destroy();
+    sink.close();
+    expect(received).toBe(SIZE);
+  });
+
+  it('a non-default port stays in the request the gateway is sent', async () => {
+    deps.always = async () => ['nanoclaw-litellm:4000'];
+    await ask(
+      `POST http://nanoclaw-litellm:4000/v1/messages HTTP/1.1\r\nHost: nanoclaw-litellm:4000\r\n${cred}\r\n\r\n`,
+    );
+    expect(seen[0]).toMatch(/^POST http:\/\/nanoclaw-litellm:4000\/v1\/messages HTTP\/1\.1\r\n/);
   });
 
   it('parses what it is given and refuses what it cannot proxy', () => {
@@ -337,7 +443,7 @@ describe('which addresses a direct tunnel may reach', () => {
       '::ffff:127.0.0.1',
     ])
       for (const literal of [false, true]) expect(directAddressAllowed(a, literal, own), a).toBe(false);
-    for (const a of ['203.0.113.7', '2001:db8::1', '100.96.1.2'])
+    for (const a of ['203.0.113.7', '2001:db8::1', '100.63.255.255', '100.128.0.1'])
       expect(directAddressAllowed(a, false, own), a).toBe(true);
   });
 
@@ -359,6 +465,17 @@ describe('which addresses a direct tunnel may reach', () => {
     }
     // 172.32.x is not RFC 1918.
     expect(directAddressAllowed('172.32.0.1', false, own)).toBe(true);
+  });
+
+  it('treats 100.64.0.0/10 (CGNAT, tailnet addresses) as private: a literal entry only', async () => {
+    const { directAddressAllowed } = await import('./egress-policy.js');
+    for (const a of ['100.64.0.0', '100.96.1.2', '100.96.255.254', '::ffff:100.96.0.9', '::FFFF:100.64.0.0']) {
+      expect(directAddressAllowed(a, false, own), a).toBe(false);
+      expect(directAddressAllowed(a, true, own), a).toBe(true);
+    }
+    // Either side of the /10 is ordinary public space.
+    for (const a of ['100.63.255.255', '100.128.0.1', '::ffff:100.128.0.1'])
+      expect(directAddressAllowed(a, false, own), a).toBe(true);
   });
 
   it('decides by the install list alone, and refuses a literal loopback, metadata or bridge address', async () => {

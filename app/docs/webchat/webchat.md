@@ -189,9 +189,37 @@ Localhost auto-pass is off once any explicit method is set.
 |---|---|---|---|
 | Bearer | `WEBCHAT_TOKEN` (≥24) | `Authorization: Bearer` or WS subprotocol `bearer.<t>`; constant-time compare | `webchat:owner` |
 | OIDC (Microsoft Entra ID or any provider) | `WEBCHAT_OIDC_ISSUER`, `WEBCHAT_OIDC_AUDIENCE`, and the endpoints from discovery (below) | A signed id token — the web app's own sign-in, App Service's `x-ms-token-aad-id-token`, or a JWT presented as `Authorization: Bearer` (the VS Code extension). RS256 or ES256, pinned to the key's type; signature, issuer, audience, expiry checked against the issuer's keys. A token that fails falls through to the methods below; an expired one adds `X-Webchat-Auth-Hint: token-stale` and the browser renews it via `/.auth/refresh` | Microsoft: `webchat:<preferred_username>`; other providers: `webchat:<email>`, only when `email_verified` |
-| Trusted-proxy / SSO | `WEBCHAT_TRUSTED_PROXY_IPS` (`auto`/`*`/CIDR list), `WEBCHAT_TRUSTED_PROXY_HEADER` | The mode is only an IP gate: `auto`/`*` accepts any source, a CIDR list requires the hop to match. Either way the same headers are read — Azure EasyAuth / Cloudflare Access paired headers first (presence only, unsigned), then `WEBCHAT_TRUSTED_PROXY_HEADER` | `webchat:<identity>` |
-| Tailscale | `WEBCHAT_TAILSCALE=true` | `tailscale whois --json <ip>` → `LoginName` | `webchat:tailscale:<email>` |
-| Localhost | _(none)_ | remote is loopback **and** no explicit method configured | `webchat:local-owner` |
+| Trusted-proxy / SSO | `WEBCHAT_TRUSTED_PROXY_IPS` (`auto`/`*`/CIDR list), `WEBCHAT_TRUSTED_PROXY_HEADER` | The mode is only an IP gate: `auto`/`*` accepts any source, a list (IPv4 or IPv6 addresses or CIDRs; an IPv4-mapped IPv6 peer matches its IPv4) requires the hop to match. Either way the same headers are read — Azure EasyAuth / Cloudflare Access paired headers first (presence only, unsigned), then `WEBCHAT_TRUSTED_PROXY_HEADER` | `webchat:<identity>` |
+| Tailscale | `WEBCHAT_TAILSCALE=true` | `tailscale whois --json <ip>` → `LoginName` (remembered 30 s per peer address); behind HTTPS over Tailscale, Serve's `Tailscale-User-Login` header, believed only on the Serve listener (below) | `webchat:tailscale:<email>` |
+| Localhost | _(none)_ | remote is loopback, the request carries no forwarding headers (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`, `Cf-Connecting-IP`, `Cf-Ray`, `Tailscale-User-Login`, `X-Forwarded-Host`) and did not arrive on the Serve listener, **and** no explicit method configured | `webchat:local-owner` |
+
+### HTTPS over Tailscale and the Serve listener
+
+`tailscale serve` terminates HTTPS on the node's `*.ts.net` name and proxies
+to webchat over loopback, adding the visitor's tailnet login as
+`Tailscale-User-Login`. Webchat opens a second listener for it,
+`127.0.0.1:WEBCHAT_SERVE_PORT` (default: the main port + 10000, so 13100),
+and believes that header only on connections that arrive there. Every route
+and WebSocket path is served on it as on the main port. **Enable HTTPS** in
+Settings points Serve at it. Point nothing else at that port: anything that
+connects to it can claim a tailnet identity.
+
+An install that turned Serve on before the listener existed still has Serve
+proxying to the main port. It keeps working: while Serve's config proxies to
+the main port and not to the Serve listener, a main-port request from
+loopback addressed to Serve's name is still believed. That legacy check
+trusts the `Host` header, which a tunnel or reverse proxy on the same machine
+can forward unchanged, so startup logs a warning with the command that moves
+Serve over, for the default HTTPS port:
+
+```bash
+tailscale serve --bg --https=443 13100
+```
+
+(use the HTTPS port and `WEBCHAT_SERVE_PORT` of your setup, e.g.
+`--https=8443`). Clicking **Enable HTTPS** again does the same. The legacy
+check stops the moment Serve points at the listener (within a minute; Serve's
+config is re-read at most once a minute).
 
 ### Admin → Sign-in
 
@@ -213,7 +241,7 @@ on the same page.
   Microsoft also takes the VS Code extension's optional **App ID URI** and
   **client ID**; the extension signs in with Microsoft only, so with another
   provider it signs in over the network (Tailscale).
-- **Trusted proxy**: the proxy's IPv4 address(es) or CIDRs and the identity
+- **Trusted proxy**: the proxy's IPv4 or IPv6 address(es) or CIDRs and the identity
   header. `auto` / `*` (trust any source) is `.env`-only: it is safe only when
   nothing but the proxy can reach the port, which the page cannot check.
 - **Lockout rules**: you cannot turn off, or re-point, the method you are
@@ -261,7 +289,8 @@ Loaded from `.env` into `process.env` (if unset) by the adapter's `env-load.ts`
 | `WEBCHAT_PORT` | Bind port | `3100` |
 | `WEBCHAT_TOKEN` | Bearer secret (≥24 chars) | `''` |
 | `WEBCHAT_TAILSCALE` | `=true` enables Tailscale-whois auth | off |
-| `WEBCHAT_TRUSTED_PROXY_IPS` | `auto`/`*` or CSV IP/CIDR allowlist → enables proxy/SSO auth | `''` |
+| `WEBCHAT_SERVE_PORT` | Loopback port Tailscale Serve proxies to; the only place its login header is believed. `off` disables it | main port + 10000 |
+| `WEBCHAT_TRUSTED_PROXY_IPS` | `auto`/`*` or CSV IP/CIDR allowlist (IPv4 or IPv6) → enables proxy/SSO auth | `''` |
 | `WEBCHAT_TRUSTED_PROXY_HEADER` | Header carrying the proxy identity | `x-forwarded-user` |
 | `WEBCHAT_OIDC_PROVIDER` | `microsoft` or `other` | `microsoft` for a login.microsoftonline.com issuer |
 | `WEBCHAT_OIDC_NAME` | The provider's name on the login button (other providers) | `SSO` |

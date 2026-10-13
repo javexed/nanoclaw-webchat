@@ -25,6 +25,7 @@ import { createHash, randomBytes } from 'crypto';
 
 import { log } from '../../log.js';
 import { getWebchatMcpServer, setMcpServerAuth, type WebchatMcpServer } from './mcp-registry.js';
+import { safeFetch } from './models.js';
 
 export interface McpAuthBearer {
   kind: 'bearer';
@@ -46,6 +47,51 @@ export interface McpAuthOAuth {
 }
 
 export type McpAuth = McpAuthBearer | McpAuthOAuth;
+
+// ── Outbound policy ──────────────────────────────────────────────────────────
+//
+// Every URL below except the MCP server's own comes from metadata the server
+// (or the authorization server it names) publishes, so each fetch goes through
+// safeFetch: the SSRF gate runs on every hop (cloud metadata and link-local
+// always refused; private ranges too under WEBCHAT_BLOCK_PRIVATE_IPS), and the
+// local router's key is never attached. Requests that carry a credential (a
+// token grant, a client registration) refuse redirects outright.
+//
+// Credential endpoints must be https. The one exception keeps a plain-http
+// MCP server on the LAN or tailnet working, which is how such servers are
+// usually registered: when the server's own URL is http, an http endpoint on
+// that SAME host is accepted — the operator already trusts that host in the
+// clear. Any other host, or an https server naming an http endpoint, is
+// refused. Checked when the flow starts and again before every grant, so a
+// stored token_endpoint is re-judged against the server's current URL.
+
+const GET_OPTS = { redirects: 'follow', routerAuth: false } as const;
+const CREDENTIAL_OPTS = { redirects: 'refuse', routerAuth: false } as const;
+
+/** Throws unless `endpoint` may receive credentials for the server at `serverUrl`. */
+export function assertCredentialEndpoint(endpoint: string, serverUrl: string | null | undefined, what: string): void {
+  let u: URL;
+  try {
+    u = new URL(endpoint);
+  } catch {
+    throw new Error(`The ${what} is not a valid URL`);
+  }
+  if (u.protocol === 'https:') return;
+  if (u.protocol === 'http:' && serverUrl) {
+    try {
+      const s = new URL(serverUrl);
+      if (s.protocol === 'http:' && s.hostname.toLowerCase() === u.hostname.toLowerCase()) return;
+    } catch {
+      /* fall through to the refusal */
+    }
+  }
+  throw new Error(`The ${what} must use https (http only on the MCP server's own http host)`);
+}
+
+/** The server's URL, for re-judging a stored endpoint. Null if the row is gone. */
+async function serverUrlFor(serverId: string): Promise<string | null> {
+  return (await getWebchatMcpServer(serverId))?.url ?? null;
+}
 
 export function parseMcpAuth(row: Pick<WebchatMcpServer, 'auth'>): McpAuth | null {
   if (!row.auth) return null;
@@ -84,12 +130,17 @@ export async function refreshOAuthToken(serverId: string, auth: McpAuthOAuth): P
       resource: auth.resource,
     });
     if (auth.client_secret) body.set('client_secret', auth.client_secret);
-    const r = await fetch(auth.token_endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-      signal: AbortSignal.timeout(10_000),
-    });
+    assertCredentialEndpoint(auth.token_endpoint, await serverUrlFor(serverId), 'token endpoint');
+    const r = await safeFetch(
+      auth.token_endpoint,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        signal: AbortSignal.timeout(10_000),
+      },
+      CREDENTIAL_OPTS,
+    );
     if (!r.ok) {
       log.warn('MCP OAuth refresh failed', { serverId, status: r.status });
       return null;
@@ -153,7 +204,11 @@ export async function discoverAuthServer(serverUrl: string): Promise<AsMetadata 
   let asUrls: string[] = [];
   let resource = serverUrl;
   try {
-    const r = await fetch(`${origin}/.well-known/oauth-protected-resource`, { signal: AbortSignal.timeout(8000) });
+    const r = await safeFetch(
+      `${origin}/.well-known/oauth-protected-resource`,
+      { signal: AbortSignal.timeout(8000) },
+      GET_OPTS,
+    );
     if (r.ok) {
       const prm = (await r.json()) as { authorization_servers?: string[]; resource?: string };
       asUrls = prm.authorization_servers || [];
@@ -167,7 +222,7 @@ export async function discoverAuthServer(serverUrl: string): Promise<AsMetadata 
     const base = as.replace(/\/$/, '');
     for (const wk of ['/.well-known/oauth-authorization-server', '/.well-known/openid-configuration']) {
       try {
-        const r = await fetch(`${base}${wk}`, { signal: AbortSignal.timeout(8000) });
+        const r = await safeFetch(`${base}${wk}`, { signal: AbortSignal.timeout(8000) }, GET_OPTS);
         if (!r.ok) continue;
         const meta = (await r.json()) as AsMetadata;
         if (meta.authorization_endpoint && meta.token_endpoint) return { ...meta, resource };
@@ -183,25 +238,34 @@ export async function discoverAuthServer(serverUrl: string): Promise<AsMetadata 
 async function registerClient(
   meta: AsMetadata,
   redirectUri: string,
+  serverUrl: string,
 ): Promise<{ client_id: string; client_secret?: string } | null> {
   if (!meta.registration_endpoint) return null;
+  // The endpoint that answers here hands back a client_secret; it is held to
+  // the same rule as the token endpoint.
+  assertCredentialEndpoint(meta.registration_endpoint, serverUrl, 'registration endpoint');
   try {
-    const r = await fetch(meta.registration_endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_name: 'NanoClaw',
-        redirect_uris: [redirectUri],
-        grant_types: ['authorization_code', 'refresh_token'],
-        response_types: ['code'],
-        token_endpoint_auth_method: 'none',
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
+    const r = await safeFetch(
+      meta.registration_endpoint,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: 'NanoClaw',
+          redirect_uris: [redirectUri],
+          grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'],
+          token_endpoint_auth_method: 'none',
+        }),
+        signal: AbortSignal.timeout(10_000),
+      },
+      CREDENTIAL_OPTS,
+    );
     if (!r.ok) return null;
     const c = (await r.json()) as { client_id?: string; client_secret?: string };
     return c.client_id ? { client_id: c.client_id, client_secret: c.client_secret } : null;
-  } catch {
+  } catch (err) {
+    log.warn('MCP OAuth client registration failed', { err: String(err) });
     return null;
   }
 }
@@ -219,7 +283,12 @@ export async function startOAuthFlow(
   const server = await getWebchatMcpServer(serverId);
   if (!server?.url) throw new Error('Not a remote MCP server');
   const meta = await discoverAuthServer(server.url);
-  const client = staticClient?.client_id ? staticClient : await registerClient(meta, redirectUri);
+  assertCredentialEndpoint(meta.token_endpoint!, server.url, 'token endpoint');
+  // The admin's browser is sent here, never the host — but only to a web URL.
+  if (!/^https?:$/.test(new URL(meta.authorization_endpoint!).protocol)) {
+    throw new Error('The authorization endpoint must be an http(s) URL');
+  }
+  const client = staticClient?.client_id ? staticClient : await registerClient(meta, redirectUri, server.url);
   if (!client) {
     throw new Error('The authorization server does not support dynamic registration — supply a client ID');
   }
@@ -273,13 +342,23 @@ export async function finishOAuthFlow(state: string, code: string, userId: strin
     resource: p.meta.resource,
   });
   if (p.meta.client_secret) body.set('client_secret', p.meta.client_secret);
-  const r = await fetch(p.meta.token_endpoint, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (!r.ok) throw new Error(`Token exchange failed (${r.status}): ${(await r.text()).slice(0, 200)}`);
+  assertCredentialEndpoint(p.meta.token_endpoint, await serverUrlFor(p.serverId), 'token endpoint');
+  const r = await safeFetch(
+    p.meta.token_endpoint,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: AbortSignal.timeout(10_000),
+    },
+    CREDENTIAL_OPTS,
+  );
+  if (!r.ok) {
+    // The body is the remote server's text, and this message reaches the
+    // browser: report the status only, and log only the status here too.
+    log.warn('MCP OAuth token exchange failed', { serverId: p.serverId, status: r.status });
+    throw new Error(`Token exchange failed (HTTP ${r.status})`);
+  }
   const tok = (await r.json()) as { access_token?: string; refresh_token?: string; expires_in?: number };
   if (!tok.access_token) throw new Error('Token endpoint returned no access_token');
   const auth: McpAuthOAuth = {

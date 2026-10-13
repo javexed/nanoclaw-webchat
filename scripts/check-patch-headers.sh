@@ -88,6 +88,19 @@ if os.path.isdir(overlays):
         if n.endswith('.patch'):
             check(os.path.join(overlays, n), False)
 
+# patches/INVENTORY.md heads each destiny section with its patch count,
+# "## PRODUCT — … (38)". Hand-kept, and it drifted twice; hold it to the folders.
+inventory = os.path.join(patches, 'INVENTORY.md')
+if os.path.isfile(inventory):
+    for line in open(inventory, encoding='utf8'):
+        m = re.match(r'^## ([A-Z]+)\b.*\((\d+)\)\s*$', line)
+        if not m:
+            continue
+        d = os.path.join(patches, m.group(1).lower())
+        have = len([n for n in os.listdir(d) if n.endswith('.patch')]) if os.path.isdir(d) else 0
+        if have != int(m.group(2)):
+            problems.append(f"patches/INVENTORY.md: '{m.group(1)}' says ({m.group(2)}) but patches/{m.group(1).lower()}/ has {have}")
+
 if problems:
     print("patch headers: FAIL", file=sys.stderr)
     for p in problems:

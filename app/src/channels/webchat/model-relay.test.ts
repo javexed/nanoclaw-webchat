@@ -2,6 +2,10 @@
  * Models on another machine for agents behind the egress filter: which
  * endpoints get a relay, on which port, and which agents dial it.
  */
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
 import { createHash } from 'crypto';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -22,7 +26,13 @@ vi.mock('../../db/container-configs.js', () => ({
 }));
 vi.mock('./db.js', () => ({ listWebchatModels: async () => state.models }));
 
-import { _resetRelayPortsForTest, agentModelUrl, modelRelaysFor, remoteModelTarget } from './model-relay.js';
+import {
+  _resetRelayPortsForTest,
+  agentModelUrl,
+  isLoopbackHost,
+  modelRelaysFor,
+  remoteModelTarget,
+} from './model-relay.js';
 
 const LAN = { kind: 'ollama', endpoint: 'http://192.0.2.9:11434' };
 const LAN2 = { kind: 'ollama', endpoint: 'http://192.0.2.10:11434' };
@@ -43,6 +53,40 @@ describe('which models are relayed', () => {
       expect(remoteModelTarget(local)).toBeNull();
     expect(remoteModelTarget('https://llm.example.org/v1')).toBeNull();
     expect(remoteModelTarget(null)).toBeNull();
+  });
+
+  it('loopback in any spelling is host-local, never relayed', () => {
+    for (const local of [
+      'http://[::1]:11434',
+      'http://127.0.0.2:11434',
+      'http://127.255.255.254:4000/v1',
+      'http://[::ffff:127.0.0.1]:11434',
+      'http://[0:0:0:0:0:0:0:1]:11434',
+      'http://0.0.0.0:11434',
+      'http://LOCALHOST:11434',
+      'http://ollama.localhost:11434',
+    ])
+      expect(remoteModelTarget(local)).toBeNull();
+    for (const h of ['::1', '[::1]', '127.0.0.1', '127.9.9.9', '::ffff:127.0.0.3', 'localhost', 'host.docker.internal'])
+      expect(isLoopbackHost(h)).toBe(true);
+    for (const h of [
+      '128.0.0.1',
+      '192.0.2.9',
+      '::2',
+      '[fe80::1]',
+      'gpubox',
+      '::ffff:192.0.2.9',
+      'localhost.example.com',
+    ])
+      expect(isLoopbackHost(h)).toBe(false);
+  });
+
+  it('a host-local model on [::1] keeps its port from the relays', () => {
+    _resetRelayPortsForTest();
+    const [alone] = modelRelaysFor([LAN]);
+    _resetRelayPortsForTest();
+    const [beside] = modelRelaysFor([{ kind: 'ollama', endpoint: `http://[::1]:${alone.port}` }, LAN]);
+    expect(beside.port).not.toBe(alone.port);
   });
 
   it('one port per model host, stable whatever the registry order, never a host-local model port', () => {
@@ -92,6 +136,44 @@ describe('relay ports stay put', () => {
     const [old, added] = collidingHosts();
     const port = portOf(modelRelaysFor([model(old, 1), model(added, 2)]), added);
     expect(portOf(modelRelaysFor([model(added, 2)]), added)).toBe(port);
+  });
+
+  it('…and keeps it across a restart, from the recorded ports', () => {
+    const [old, added] = collidingHosts();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-ports-'));
+    const file = path.join(dir, 'relay-ports.json');
+    try {
+      _resetRelayPortsForTest(file);
+      const port = portOf(modelRelaysFor([model(old, 1), model(added, 2)]), added);
+      modelRelaysFor([model(added, 2)]); // the host it collided with is removed
+      _resetRelayPortsForTest(file); // central restarts: memory gone, the record stays
+      expect(portOf(modelRelaysFor([model(added, 2)]), added)).toBe(port);
+      // Without the record, the hash alone would have moved it back.
+      _resetRelayPortsForTest();
+      expect(portOf(modelRelaysFor([model(added, 2)]), added)).not.toBe(port);
+      // A removed host is forgotten, so its port is free again.
+      _resetRelayPortsForTest(file);
+      modelRelaysFor([]);
+      expect(JSON.parse(fs.readFileSync(file, 'utf8'))).toEqual({});
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a damaged record falls back to the hash, never to a port outside the relay range', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'relay-ports-'));
+    const file = path.join(dir, 'relay-ports.json');
+    try {
+      fs.writeFileSync(file, JSON.stringify({ '192.0.2.9:11434': 22 }));
+      _resetRelayPortsForTest(file);
+      const port = portOf(modelRelaysFor([LAN]), '192.0.2.9')!;
+      expect(port).toBeGreaterThanOrEqual(47100);
+      fs.writeFileSync(file, '{not json');
+      _resetRelayPortsForTest(file);
+      expect(portOf(modelRelaysFor([LAN]), '192.0.2.9')).toBe(port);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

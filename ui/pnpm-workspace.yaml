@@ -1,0 +1,4 @@
+# Same supply-chain rule as the host tree: a new package version must have been
+# on the registry for 3 days before pnpm resolves it. ui/ is its own pnpm
+# project (own lockfile), so it does not inherit the host's setting.
+minimumReleaseAge: 4320

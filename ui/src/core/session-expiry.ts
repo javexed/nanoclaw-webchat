@@ -57,6 +57,21 @@ export async function checkSessionExpired(): Promise<boolean> {
   return true;
 }
 
+/**
+ * When the stored time of the last automatic sign-in is junk (a hand-edited or
+ * truncated value), Number() gives NaN, and `now - NaN > limit` is false for
+ * ever: the tab would never go to the sign-in by itself again. Treat it as never.
+ */
+export function lastAutoSignIn(stored: string | null): number {
+  const n = Number(stored ?? 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** Go to the sign-in without a click: only in view, with nothing unsent, and not twice in a row. */
+export function autoSignInDue(o: { visible: boolean; draft: boolean; now: number; last: number }): boolean {
+  return o.visible && !o.draft && o.now - o.last > AUTO_EVERY_MS;
+}
+
 function hasDraft(): boolean {
   const input = $<HTMLTextAreaElement>('#message-input');
   return !!input?.value.trim() || draftPending();
@@ -77,11 +92,12 @@ function showSignInAgain(): void {
   }
   let last = 0;
   try {
-    last = Number(sessionStorage.getItem(AUTO_KEY) ?? 0);
+    last = lastAutoSignIn(sessionStorage.getItem(AUTO_KEY));
   } catch {
     /* storage blocked: fall through to the button */
   }
-  if (document.visibilityState === 'visible' && !hasDraft() && Date.now() - last > AUTO_EVERY_MS) signInAgain();
+  if (autoSignInDue({ visible: document.visibilityState === 'visible', draft: hasDraft(), now: Date.now(), last }))
+    signInAgain();
 }
 
 /** A page load reaches the server (sw.js navigate), so the front door can send it to the sign-in. */

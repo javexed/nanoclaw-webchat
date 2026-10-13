@@ -1,5 +1,5 @@
-# A CI job image with Chromium's Linux libraries already in it, for the UI
-# guards (boot order, role matrix, first open, wiring).
+# A CI job image with Chromium and its Linux libraries already in it, for the
+# UI guards (boot order, role matrix, first open, wiring).
 #
 # Without them each UI run's compose job installs them itself (apt-get update
 # plus ~70 MB of packages): about 2 minutes and 120 MB. The workflow probes with
@@ -18,6 +18,11 @@ ARG BASE=catthehacker/ubuntu:act-22.04
 FROM ${BASE}
 
 ARG PLAYWRIGHT_VERSION
+# The browser too, at a fixed shared path, so a job finds it without a cache
+# restore or a download. Readable by any user: jobs may run unprivileged.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN test -n "$PLAYWRIGHT_VERSION" \
  && npx -y "playwright@${PLAYWRIGHT_VERSION}" install-deps chromium \
+ && npx -y "playwright@${PLAYWRIGHT_VERSION}" install chromium \
+ && chmod -R a+rX /ms-playwright \
  && rm -rf /var/lib/apt/lists/* /root/.npm

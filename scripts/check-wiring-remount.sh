@@ -59,7 +59,9 @@ s = open(p).read()
 # Note `matrixApp$1` — the bundler renames it, since the permissions matrix has
 # its own `matrixApp`, and `$` is not \w. A \w+ pattern silently matches
 # nothing here, which is exactly how a selftest rots into a meaningless green.
-pat = re.compile(r'if \(![\w$]*[Mm]atrix[\w$]*\) (canvas\.textContent = "Loading…";)')
+# The placeholder is markup (spinner + "Loading…") since the long-running sweep;
+# either form of the write matches.
+pat = re.compile(r'if \(![\w$]*[Mm]atrix[\w$]*\) (canvas\.(?:textContent|innerHTML) = "(?:[^"\\]|\\.)*Loading…";)')
 s2, n = pat.subn(r'\1', s)
 if n == 0:
     sys.exit('selftest: could not find the guarded placeholder write — update the pattern')

@@ -58,7 +58,18 @@ done
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 say() { printf '\033[1;36m[nanoclaw-webchat]\033[0m %s\n' "$*"; }
-jsonval() { python3 -c "import json,sys;d=json.load(open('$HERE/versions.json'));print(d$1)"; }
+# Node, not python3: Node is a prerequisite anyway, and a stock Node box has no
+# python3 (a fresh-box install died here). The argument keeps the old
+# ['a']['b'] form so every call site reads the same.
+jsonval() {
+  node -e '
+    const d = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    const keys = [...process.argv[2].matchAll(/\[\x27([^\x27]+)\x27\]/g)].map((m) => m[1]);
+    const v = keys.reduce((o, k) => (o == null ? undefined : o[k]), d);
+    if (v === undefined) process.exit(1);
+    console.log(v);
+  ' "$HERE/versions.json" "$1"
+}
 
 BASE_REPO="${NANOCLAW_WEBCHAT_BASE_REPO:-$(jsonval "['nanoclaw']['upstreamRepo']")}"
 BASE_REF=$(jsonval "['nanoclaw']['upstreamRef']")
@@ -126,6 +137,39 @@ if [ -n "$REQUIRED_NODE_MAJOR" ]; then
   else
     say "Node $CURRENT_NODE_MAJOR OK (matches .nvmrc)"
   fi
+fi
+
+# ── 1c. pnpm ─────────────────────────────────────────────────────────────────
+# Every step below runs pnpm, and on a fresh box nothing has installed it yet
+# (upstream's setup.sh does, but it runs after this script). Same order as
+# setup.sh: a shim already in ~/.local/bin, then corepack, then corepack into
+# ~/.local/bin (system-wide Node puts shims beside a root-owned binary), then a
+# pinned npm install. The version is package.json's packageManager pin.
+if ! command -v pnpm >/dev/null 2>&1; then
+  PNPM_VERSION="$(node -p "(require('./package.json').packageManager||'').replace(/^pnpm@/,'')" 2>/dev/null)"
+  export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+  USER_BIN="$HOME/.local/bin"
+  if [ -x "$USER_BIN/pnpm" ]; then
+    export PATH="$USER_BIN:$PATH"
+  elif command -v corepack >/dev/null 2>&1; then
+    corepack enable >/dev/null 2>&1 || true
+    if ! command -v pnpm >/dev/null 2>&1; then
+      mkdir -p "$USER_BIN" && corepack enable --install-directory "$USER_BIN" pnpm >/dev/null 2>&1 \
+        && export PATH="$USER_BIN:$PATH"
+    fi
+  fi
+  if ! command -v pnpm >/dev/null 2>&1 && [ -n "$PNPM_VERSION" ] && command -v npm >/dev/null 2>&1; then
+    npm install -g "pnpm@$PNPM_VERSION" --prefix "$HOME/.local" >/dev/null 2>&1 \
+      && export PATH="$USER_BIN:$PATH"
+  fi
+  hash -r 2>/dev/null || true
+  if ! command -v pnpm >/dev/null 2>&1; then
+    echo "ERROR: pnpm is not installed and could not be set up (corepack and npm both failed)." >&2
+    echo "       Install pnpm ${PNPM_VERSION:-(see package.json packageManager)} and re-run, e.g." >&2
+    echo "       npm install -g pnpm@${PNPM_VERSION:-latest} --prefix ~/.local && export PATH=~/.local/bin:\$PATH" >&2
+    exit 1
+  fi
+  say "pnpm $(pnpm -v 2>/dev/null) set up (in $(dirname "$(command -v pnpm)"))"
 fi
 
 # ── 2. The hook seam ─────────────────────────────────────────────────────────
@@ -263,6 +307,7 @@ rm -f "$TMPFILE"
 FILE_MIGRATIONS=()
 while IFS= read -r p; do
   case "$p" in
+    src/db/migrations/*.test.ts) ;;  # tests ship beside migrations; nothing to register
     src/db/migrations/*.ts) [ -f "$p" ] && FILE_MIGRATIONS+=("$p") ;;
   esac
 done < "$HERE/app-manifest.txt"
@@ -390,21 +435,21 @@ say "Stamping webchat provenance"
 WEBCHAT_SHA="$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo '')"
 WEBCHAT_DIRTY="false"
 [ -n "$WEBCHAT_SHA" ] && [ -n "$(git -C "$HERE" status --porcelain 2>/dev/null)" ] && WEBCHAT_DIRTY="true"
-python3 - "$DIR/.webchat-provenance.json" "$WEBCHAT_SHA" "$WEBCHAT_DIRTY" \
+node - "$DIR/.webchat-provenance.json" "$WEBCHAT_SHA" "$WEBCHAT_DIRTY" \
          "$(jsonval "['nanoclaw']['upstreamRef']" 2>/dev/null || echo '')" \
-         "$(jsonval "['nanoclaw']['seamRef']" 2>/dev/null || echo '')" <<'PY' || echo "  !! could not write the provenance stamp (non-fatal)"
-import json, sys, datetime
-out, sha, dirty, upstream, seam = sys.argv[1:6]
-json.dump({
-    "webchatRef": sha or None,
-    # An install composed from a dirty checkout is NOT the commit it names, and
-    # silently reporting the SHA would be a lie the operator cannot detect.
-    "webchatDirty": dirty == "true",
-    "upstreamRef": upstream or None,
-    "seamRef": seam or None,
-    "composedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-}, open(out, "w"), indent=2)
-PY
+         "$(jsonval "['nanoclaw']['seamRef']" 2>/dev/null || echo '')" <<'JS' || echo "  !! could not write the provenance stamp (non-fatal)"
+const [out, sha, dirty, upstream, seam] = process.argv.slice(2);
+const now = new Date().toISOString().replace(/\.\d{3}Z$/, '+00:00');
+require('fs').writeFileSync(out, JSON.stringify({
+  webchatRef: sha || null,
+  // An install composed from a dirty checkout is NOT the commit it names, and
+  // silently reporting the SHA would be a lie the operator cannot detect.
+  webchatDirty: dirty === 'true',
+  upstreamRef: upstream || null,
+  seamRef: seam || null,
+  composedAt: now,
+}, null, 2));
+JS
 
 # ── Payload fingerprint ───────────────────────────────────────────
 # What the composition actually wrote, hashed, so the install can later answer
@@ -419,58 +464,58 @@ PY
 # every file a patch rewrites. Upstream files nobody touched are already pinned
 # by commit, so hashing them would add runtime and no signal.
 say "Fingerprinting the composed payload"
-python3 - "$DIR" "$HERE" <<'FINGERPRINT' || echo "  !! could not write the payload fingerprint (non-fatal)"
-import hashlib, json, os, sys, datetime
+node - "$DIR" "$HERE" <<'FINGERPRINT' || echo "  !! could not write the payload fingerprint (non-fatal)"
+const fs = require('fs'), path = require('path'), crypto = require('crypto');
+const [dest, here] = process.argv.slice(2);
+const paths = new Set();
+const isDir = (p) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } };
 
-dest, here = sys.argv[1], sys.argv[2]
-paths = set()
+// Walk like os.walk: descend real directories only; a symlink to a directory is
+// listed but not followed, a symlink to a file counts as a file.
+function walk(dir) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) walk(full);
+    else if (!(e.isSymbolicLink() && isDir(full))) paths.add(path.relative(dest, full));
+  }
+}
 
-# app-manifest entries are paths relative to app/ — files or whole directories.
-man = os.path.join(here, "app-manifest.txt")
-if os.path.exists(man):
-    for raw in open(man):
-        rel = raw.strip()
-        if not rel or rel.startswith("#"):
-            continue
-        full = os.path.join(dest, rel)
-        if os.path.isdir(full):
-            for root, _dirs, files in os.walk(full):
-                for f in files:
-                    paths.add(os.path.relpath(os.path.join(root, f), dest))
-        elif os.path.exists(full):
-            paths.add(rel)
+// app-manifest entries are paths relative to app/ — files or whole directories.
+const man = path.join(here, 'app-manifest.txt');
+if (fs.existsSync(man)) {
+  for (const raw of fs.readFileSync(man, 'utf8').split('\n')) {
+    const rel = raw.trim();
+    if (!rel || rel.startsWith('#')) continue;
+    const full = path.join(dest, rel);
+    if (isDir(full)) walk(full);
+    else if (fs.existsSync(full)) paths.add(rel);
+  }
+}
 
-# Patch filenames encode their target: src__channels__x.ts.patch -> src/channels/x.ts
-for sub in ("upstreamable", "product", "local"):
-    d = os.path.join(here, "patches", sub)
-    if not os.path.isdir(d):
-        continue
-    for name in os.listdir(d):
-        if not name.endswith(".patch"):
-            continue
-        rel = name[: -len(".patch")].replace("__", "/")
-        if os.path.exists(os.path.join(dest, rel)):
-            paths.add(rel)
+// Patch filenames encode their target: src__channels__x.ts.patch -> src/channels/x.ts
+for (const sub of ['upstreamable', 'product', 'local']) {
+  const d = path.join(here, 'patches', sub);
+  if (!isDir(d)) continue;
+  for (const name of fs.readdirSync(d)) {
+    if (!name.endsWith('.patch')) continue;
+    const rel = name.slice(0, -'.patch'.length).replaceAll('__', '/');
+    if (fs.existsSync(path.join(dest, rel))) paths.add(rel);
+  }
+}
 
-files = {}
-for rel in sorted(paths):
-    try:
-        with open(os.path.join(dest, rel), "rb") as fh:
-            files[rel] = hashlib.sha256(fh.read()).hexdigest()
-    except OSError:
-        continue
-
-json.dump(
-    {
-        "algorithm": "sha256",
-        "composedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-        "files": files,
-    },
-    open(os.path.join(dest, ".webchat-payload.json"), "w"),
-    indent=0,
-    sort_keys=True,
-)
-print("  fingerprinted %d payload file(s)" % len(files))
+const files = {};
+for (const rel of [...paths].sort()) {
+  try {
+    files[rel] = crypto.createHash('sha256').update(fs.readFileSync(path.join(dest, rel))).digest('hex');
+  } catch {
+    /* unreadable: skip, as before */
+  }
+}
+fs.writeFileSync(
+  path.join(dest, '.webchat-payload.json'),
+  JSON.stringify({ algorithm: 'sha256', composedAt: new Date().toISOString().replace(/\.\d{3}Z$/, '+00:00'), files }, null, 0),
+);
+console.log(`  fingerprinted ${Object.keys(files).length} payload file(s)`);
 FINGERPRINT
 
 # ── 8b. Local turnkey hand-off ───────────────────────────────────────────────

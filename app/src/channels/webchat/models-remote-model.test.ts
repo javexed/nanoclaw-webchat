@@ -138,12 +138,26 @@ describe('OpenCode on a model on another machine', () => {
     expect(out.NO_PROXY.split(',')).toEqual(expect.arrayContaining(['127.0.0.1', 'localhost', 'host.docker.internal']));
   });
 
-  it('on Open: no URL override, only the served window (here the loaded one)', async () => {
+  it('on Open: the model dialed directly, and the served window (here the loaded one)', async () => {
     await updateContainerConfigScalars(GROUP, { egress: 'open' });
     stubOllama(SHOW, { models: [{ name: 'qwen3:8b', context_length: 16384 }] });
-    expect(await openCodeSpawnEnv(GROUP)).toEqual({
+    expect(await openCodeSpawnEnv(GROUP)).toMatchObject({
+      OPENCODE_BASE_URL: `${LAN}/v1`,
       OPENCODE_MODEL_CONTEXT_LIMIT: '16384',
       OPENCODE_MODEL_OUTPUT_LIMIT: '4096',
+    });
+  });
+
+  // .env is one file for every agent: it held another agent's Ollama model, and
+  // an agent on a cloud model was sent that name ("model … not found").
+  it("always carries this agent's own backend, whatever the install-wide keys say", async () => {
+    await updateContainerConfigScalars(GROUP, { egress: 'open' });
+    stubOllama(SHOW, { models: [] });
+    vi.stubEnv('OPENCODE_MODEL', 'openai/someone-elses:7b');
+    expect(await openCodeSpawnEnv(GROUP)).toMatchObject({
+      OPENCODE_PROVIDER: 'openai',
+      OPENCODE_MODEL: 'openai/qwen3:8b',
+      OPENCODE_SMALL_MODEL: 'openai/qwen3:8b',
     });
   });
 
@@ -155,7 +169,7 @@ describe('OpenCode on a model on another machine', () => {
     expect(await openCodeSpawnEnv(GROUP)).toMatchObject({ OPENCODE_MODEL_CONTEXT_LIMIT: '8192' });
     clearOllamaModelMetaCache();
     vi.stubEnv('OPENCODE_MODEL_CONTEXT_LIMIT', '65536');
-    expect(await openCodeSpawnEnv(GROUP)).toEqual({});
+    expect(await openCodeSpawnEnv(GROUP)).not.toHaveProperty('OPENCODE_MODEL_CONTEXT_LIMIT');
   });
 
   it('nothing for an agent on another provider', async () => {

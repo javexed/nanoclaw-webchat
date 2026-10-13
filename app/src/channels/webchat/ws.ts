@@ -23,6 +23,7 @@ import {
   annotateRoomsForUser,
   markRoomReadForUser,
   getActiveTurns,
+  unbindClientFromRoom,
 } from './state.js';
 import {
   deleteWebchatMessage,
@@ -36,7 +37,7 @@ import {
   resolveBoundedThread,
 } from './db.js';
 import { hostAllowed, originAllowed } from './request-guard.js';
-import { canAccessRoom } from './access.js';
+import { canAccessRoom, canArchiveRoom } from './access.js';
 import { redactSensitiveData } from './redact.js';
 import { withTraceFlags } from './turn-traces.js';
 import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
@@ -298,6 +299,18 @@ export function setupWebSocket(
       }
     };
 
+    // The room this client may still act in, re-checked on every room-scoped
+    // frame rather than trusted from `join`: a user removed from the room
+    // (member removed, role revoked, room gone) must not keep acting through a
+    // socket opened before. On a failed check the binding is dropped.
+    const currentRoom = async (): Promise<string | null> => {
+      const roomId = client.room_id;
+      if (!roomId) return null;
+      if (await canAccessRoom(client.userId, roomId)) return roomId;
+      await unbindClientFromRoom(client, roomId);
+      return null;
+    };
+
     // Frames must process IN ARRIVAL ORDER: an async listener interleaves at every
     // await, so a `message` right after `join` would see no room yet. Chain them.
     let frameChain: Promise<void> = Promise.resolve();
@@ -376,12 +389,13 @@ export function setupWebSocket(
 
       // ── TYPING ───────────────────────────────────────────────────────────
       if (msg.type === 'typing') {
-        if (!client.room_id) return;
+        const roomId = await currentRoom();
+        if (!roomId) return;
         await broadcast(
-          client.room_id,
+          roomId,
           {
             type: 'typing',
-            room_id: client.room_id,
+            room_id: roomId,
             identity: client.identity,
             identity_type: client.identity_type,
             is_typing: !!msg.is_typing,
@@ -413,6 +427,9 @@ export function setupWebSocket(
           send({ type: 'error', error: 'Join a room first' });
           return;
         }
+        // Lost access already answers the client (unbindClientFromRoom).
+        const roomId = await currentRoom();
+        if (!roomId) return;
         const text = typeof msg.content === 'string' ? msg.content : '';
         if (!text.trim()) return;
 
@@ -432,8 +449,15 @@ export function setupWebSocket(
         let storeThread: string;
         let stored: Awaited<ReturnType<typeof storeWebchatMessage>>;
         try {
-          storeThread = await resolveBoundedThread(client.room_id, msg.thread_id);
-          stored = await storeWebchatMessage(client.room_id, client.identity, client.identity_type, text, storeThread);
+          storeThread = await resolveBoundedThread(roomId, msg.thread_id);
+          stored = await storeWebchatMessage(
+            roomId,
+            client.identity,
+            client.identity_type,
+            text,
+            storeThread,
+            client.userId,
+          );
         } catch (err) {
           // Nothing was stored: release the claim so a resend of this client_id
           // goes through, and tell the sender, whose bubble would otherwise sit
@@ -448,14 +472,14 @@ export function setupWebSocket(
         }
         // The sender has by definition read their own message — advance their
         // marker (and sync their other devices) so it never self-unreads.
-        markRoomReadForUser(client.userId, client.room_id, stored.created_at, clientId);
+        markRoomReadForUser(client.userId, roomId, stored.created_at, clientId);
         const outgoing: Record<string, unknown> = { type: 'message', ...stored };
         if (typeof msg.client_id === 'string') outgoing.client_id = msg.client_id;
-        await broadcast(client.room_id, outgoing, clientId);
+        await broadcast(roomId, outgoing, clientId);
 
         // threadId is the SESSION key (null for main).
         hooks.onInbound(
-          client.room_id,
+          roomId,
           {
             id: stored.id,
             kind: 'chat',
@@ -477,9 +501,10 @@ export function setupWebSocket(
 
       // ── INTERRUPT (GUI "stop", the ESC equivalent) ───────────────────────
       if (msg.type === 'interrupt') {
-        if (!client.room_id) return;
+        const roomId = await currentRoom();
+        if (!roomId) return;
         const agentName = typeof msg.agent_name === 'string' ? msg.agent_name : undefined;
-        await interruptRoomSessions(client.room_id, agentName);
+        await interruptRoomSessions(roomId, agentName);
         return;
       }
 
@@ -491,11 +516,17 @@ export function setupWebSocket(
           send({ type: 'error', error: 'message_id required' });
           return;
         }
-        const deleted = await deleteWebchatMessage(messageId, client.identity, client.room_id);
-        if (await deleted) {
-          await broadcast(client.room_id, {
+        const roomId = await currentRoom();
+        if (!roomId) return;
+        // A message is deleted by its sender's user id. One stored before sender
+        // ids existed has none, and may be deleted only by an owner or admin of
+        // the room whose display name matches its sender (deleteWebchatMessage).
+        const legacyIdentity = (await canArchiveRoom(client.userId, roomId)) ? client.identity : undefined;
+        const deleted = await deleteWebchatMessage(messageId, client.userId, roomId, legacyIdentity);
+        if (deleted) {
+          await broadcast(roomId, {
             type: 'delete_message',
-            room_id: client.room_id,
+            room_id: roomId,
             message_id: messageId,
           });
         }

@@ -277,21 +277,40 @@ function headersObject(h: RequestInit['headers']): Record<string, string> {
   return h ? Object.fromEntries(new Headers(h).entries()) : {};
 }
 
-export async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+export interface SafeFetchOptions {
+  /**
+   * 'refuse' treats any 3xx as an error instead of following it. For requests
+   * that carry a credential (a token grant, a client registration): even a
+   * re-validated 307/308 would replay that body to a host the caller never
+   * chose.
+   */
+  redirects?: 'follow' | 'refuse';
+  /** false never adds the local router's master key, whatever the target. */
+  routerAuth?: boolean;
+}
+
+export async function safeFetch(url: string, init?: RequestInit, opts: SafeFetchOptions = {}): Promise<Response> {
   const MAX_HOPS = 5;
   let target = hostReachableUrl(url);
   let reqInit: RequestInit = { ...init };
+  // The router on loopback wants its master key (cloud models); nothing else
+  // gets it. Decided once, from the URL the caller chose: a redirect hop never
+  // carries it, wherever it points — the router's port included, so a
+  // redirect from elsewhere cannot steer the key there, and one from the
+  // router cannot carry it away.
+  const routerAuth = opts.routerAuth === false ? {} : routerAuthHeaders(target);
   for (let hop = 0; hop <= MAX_HOPS; hop++) {
     // Re-run the SSRF gate on EVERY hop. `redirect: 'manual'` stops fetch from
     // silently following a 3xx to 169.254.169.254 / a private host without a
     // check — the whole point of the gate. (Node/undici exposes the redirect
     // status + Location header under 'manual'.)
     await assertSafeOutboundUrl(target);
-    // The router on loopback wants its master key (cloud models); nothing else gets it.
-    const auth = routerAuthHeaders(target);
+    const auth = hop === 0 ? routerAuth : {};
     const headers = Object.keys(auth).length ? { ...headersObject(reqInit.headers), ...auth } : reqInit.headers;
     const res = await fetch(target, { ...reqInit, headers, redirect: 'manual' });
     if (res.status < 300 || res.status >= 400) return res; // not a redirect → done
+    if (opts.redirects === 'refuse')
+      throw new Error(`safeFetch: refusing a redirect (HTTP ${res.status}) from ${target}`);
     const location = res.headers.get('location');
     if (!location) throw new Error(`safeFetch: refusing an un-inspectable redirect from ${target}`);
     target = new URL(location, target).toString();
@@ -347,6 +366,21 @@ export function classifierParamsForModel(model: WebchatModel | null): { url: str
 }
 
 /**
+ * Claude Code's model aliases, all pointed at a local or cloud model. A pinned
+ * alias (a runner's "sonnet", container_configs.model) reaches the SDK as an
+ * explicit model and outranks ANTHROPIC_MODEL, and the background calls go to
+ * the haiku alias: unmapped, both ask this endpoint for a Claude model it does
+ * not serve.
+ */
+function aliasEnv(modelId: string): Record<string, string> {
+  return {
+    ANTHROPIC_DEFAULT_OPUS_MODEL: modelId,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: modelId,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: modelId,
+  };
+}
+
+/**
  * The env-var overrides for a model; empty when nothing needs to change (the
  * caller uses that to wipe the env block).
  *
@@ -355,6 +389,7 @@ export function classifierParamsForModel(model: WebchatModel | null): { url: str
  *                        Anthropic API at /v1/messages) + ANTHROPIC_MODEL + NO_PROXY.
  *   openai-compatible  → ANTHROPIC_BASE_URL at the router (LiteLLM serves the
  *                        Anthropic spec) + ANTHROPIC_MODEL + NO_PROXY.
+ * Both endpoint kinds also map Claude Code's aliases to the model (aliasEnv).
  */
 export function envForModel(model: WebchatModel | null): Record<string, string> {
   if (!model) return {};
@@ -380,6 +415,7 @@ export function envForModel(model: WebchatModel | null): Record<string, string> 
     return {
       ANTHROPIC_BASE_URL: base,
       ANTHROPIC_MODEL: model.model_id,
+      ...aliasEnv(model.model_id),
       NO_PROXY: host,
       no_proxy: host,
     };
@@ -403,6 +439,7 @@ export function envForModel(model: WebchatModel | null): Record<string, string> 
       return {
         ANTHROPIC_BASE_URL: viaGateway,
         ANTHROPIC_MODEL: model.model_id,
+        ...aliasEnv(model.model_id),
         ...(maxOutput ? { CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(maxOutput) } : {}),
       };
     }
@@ -416,6 +453,7 @@ export function envForModel(model: WebchatModel | null): Record<string, string> 
     return {
       ANTHROPIC_BASE_URL: base,
       ANTHROPIC_MODEL: model.model_id,
+      ...aliasEnv(model.model_id),
       // Bypass the OneCLI credential proxy for the local router — same
       // requirement (and same failure mode) as the ollama kind.
       NO_PROXY: host,
@@ -524,14 +562,14 @@ export async function writeAgentSettingsForAssignedModel(agentGroupId: string): 
   delete cleaned.OPENAI_MODEL;
   delete cleaned.NO_PROXY;
   delete cleaned.no_proxy;
-  // Only when this writer put it there: an operator's own output cap stays, and wins.
+  // Only when this writer put it there: an operator's own value (an output cap, an alias) stays, and wins.
   const ownedPath = path.join(path.dirname(settingsPath), OWNED_ENV_FILE);
   const owned = readOwnedEnv(ownedPath);
   for (const k of OWNED_ENV_KEYS) {
     const v = cleaned[k];
     if (v === undefined) continue;
     if (owned[k] ? owned[k] === envHash(v) : legacyOwned(k, v)) delete cleaned[k];
-    else if (k === 'CLAUDE_CODE_MAX_OUTPUT_TOKENS') delete overrides[k];
+    else delete overrides[k];
   }
 
   const merged = { ...existing, env: { ...cleaned, ...overrides } };
@@ -562,7 +600,12 @@ export async function refreshRemoteModelSettings(agentGroupId: string): Promise<
 }
 
 /** settings.json env keys written only for some models, and removed only when this writer wrote them. */
-const OWNED_ENV_KEYS = ['CLAUDE_CODE_MAX_OUTPUT_TOKENS'] as const;
+const OWNED_ENV_KEYS = [
+  'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
+  'ANTHROPIC_DEFAULT_OPUS_MODEL',
+  'ANTHROPIC_DEFAULT_SONNET_MODEL',
+  'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+] as const;
 /** Beside settings.json: a hash of each such value as written (the agent can read this folder). */
 const OWNED_ENV_FILE = 'model-env-owned.json';
 const envHash = (v: string): string => createHash('sha256').update(v).digest('hex');
@@ -589,6 +632,56 @@ function opencodeInstalled(): boolean {
 /** pi (the minimal local harness, add-pi-stack) — same registration test. */
 function piInstalled(): boolean {
   return listProviderContainerConfigNames().includes('pi');
+}
+
+/**
+ * The harness a model runs on by default: Ollama on pi or OpenCode; a cloud
+ * model on OpenCode (through the router; pi is for small local models); null,
+ * the Claude harness, for an Anthropic model, the routing model, or when no
+ * local harness is installed. Claude Code under another vendor's model told
+ * it that it was Claude, from its own system prompt.
+ */
+export function providerForModel(
+  model: Pick<WebchatModel, 'kind' | 'endpoint' | 'model_id'> | null | undefined,
+): 'opencode' | 'pi' | null {
+  if (!model) return null;
+  if (model.kind === 'ollama') return providerForModelKind('ollama');
+  if (model.kind === 'openai-compatible' && openCodeBackendEnv(model as WebchatModel) && opencodeInstalled())
+    return 'opencode';
+  return null;
+}
+
+/** Harnesses that bring their own model and sign-in: the registry's models do not apply to them. */
+export const OWN_MODEL_HARNESSES: ReadonlySet<string> = new Set(['codex', 'grok']);
+
+/**
+ * Whether a harness can run this model (null: none assigned, its own default).
+ * Claude: Anthropic models, and anything no local harness here can run (the
+ * routing model, a cloud model without OpenCode). OpenCode: local and cloud
+ * models. pi: local models. Codex and Grok: no registry model at all.
+ */
+export function harnessFits(
+  provider: string | null | undefined,
+  model: Pick<WebchatModel, 'kind' | 'endpoint' | 'model_id'> | null | undefined,
+): boolean {
+  const p = provider || 'claude';
+  if (!model) return true;
+  if (OWN_MODEL_HARNESSES.has(p)) return false;
+  if (p === 'claude') return model.kind === 'anthropic' || providerForModel(model) === null;
+  if (p === 'opencode') return !!openCodeBackendEnv(model as WebchatModel);
+  if (p === 'pi') return model.kind === 'ollama';
+  return true;
+}
+
+/** Why a switch to `provider` is refused for this model, or null. Codex and Grok ignore the registry model. */
+export function harnessSwitchRefusal(
+  provider: string,
+  model: Pick<WebchatModel, 'kind' | 'endpoint' | 'model_id' | 'name'> | null | undefined,
+): string | null {
+  if (OWN_MODEL_HARNESSES.has(provider) || harnessFits(provider, model)) return null;
+  if (provider === 'claude') return `Claude runs Anthropic models only, and this agent's model is ${model!.name}`;
+  if (provider === 'pi') return `pi runs local models only, and this agent's model is ${model!.name}`;
+  return `${provider === 'opencode' ? 'OpenCode' : provider} cannot run ${model!.name}`;
 }
 
 /**
@@ -698,6 +791,9 @@ export function syncOpenCodeBackendEnv(model: WebchatModel, root = process.cwd()
  * Per-agent OpenCode env at spawn, over the install-wide keys above (the
  * container-env seam wins a collision):
  *
+ *   - this agent's own backend (provider, base URL, model, small model), for
+ *     any model OpenCode can use: the install-wide keys are one .env for every
+ *     agent, so they hold whichever agent synced last;
  *   - the window Ollama serves the model with (ollama-context.ts), unless the
  *     operator set the limits: values other than the defaults written above;
  *   - for an agent behind the egress filter, a model on another machine
@@ -711,10 +807,14 @@ export async function openCodeSpawnEnv(agentGroupId: string): Promise<Record<str
   // OpenCode's model id is the container config's: a down host is left for another serving the same id only.
   const moved = spawnModel(own, agentGroupId);
   const model = moved?.model_id === own?.model_id ? moved : own;
-  const base = model?.kind === 'ollama' ? openCodeBackendEnv(model)?.env.OPENCODE_BASE_URL : undefined;
-  if (!model?.endpoint || !base) return {};
+  const backend = model ? openCodeBackendEnv(model) : null;
+  if (!model?.endpoint || !backend) return {};
+  // A cloud agent was sent an Ollama model's name and URL another agent's sync
+  // had left in .env: "model 'qwen3:8b-ctx12k' not found".
+  const out: Record<string, string> = { ...backend.env };
+  if (model.kind !== 'ollama') return out;
+  const base = backend.env.OPENCODE_BASE_URL;
   const ownBase = model === own ? base : own && openCodeBackendEnv(own)?.env.OPENCODE_BASE_URL;
-  const out: Record<string, string> = {};
   const file = readEnvFile(['OPENCODE_MODEL_CONTEXT_LIMIT', 'OPENCODE_MODEL_OUTPUT_LIMIT']);
   const context = process.env.OPENCODE_MODEL_CONTEXT_LIMIT ?? file.OPENCODE_MODEL_CONTEXT_LIMIT;
   const output = process.env.OPENCODE_MODEL_OUTPUT_LIMIT ?? file.OPENCODE_MODEL_OUTPUT_LIMIT;
@@ -758,23 +858,38 @@ export async function syncAgentProviderForAssignedModel(agentGroupId: string): P
   const row = await getContainerConfig(agentGroupId);
   const current = row?.provider;
   const managed = !current || current === 'claude' || current === 'opencode' || current === 'pi';
-  const sticky = (current === 'opencode' && opencodeInstalled()) || (current === 'pi' && piInstalled());
   // Decide on the EFFECTIVE model so a workspace-default local model (wizard
   // "default engine = Ollama") auto-uses OpenCode too, not only per-agent picks.
   const model = await getEffectiveModelForAgent(agentGroupId);
+  // Sticky only while it can run the model: pi given a cloud model moves on.
+  const sticky =
+    ((current === 'opencode' && opencodeInstalled()) || (current === 'pi' && piInstalled())) &&
+    harnessFits(current, model);
   await ensureContainerConfig(agentGroupId);
   let provider = current ?? null;
   if (managed && !sticky) {
-    provider = providerForModelKind(model?.kind);
+    provider = providerForModel(model);
     await updateContainerConfigScalars(agentGroupId, { provider });
   }
-  if (provider === 'opencode' && model && syncOpenCodeBackendEnv(model)) {
+  await syncHarnessModel(agentGroupId);
+  await writeLocalModelForAgent(agentGroupId);
+}
+
+/**
+ * The harness's own model field, from the effective model: on OpenCode,
+ * `openai/<id>` (it reads container_configs.model first, so a runner's
+ * "sonnet" there would win); off it, the one this module wrote is cleared,
+ * never an operator's ncl-set model. Also run on a harness switch, which
+ * changes the provider without a model change.
+ */
+export async function syncHarnessModel(agentGroupId: string): Promise<void> {
+  const row = await getContainerConfig(agentGroupId);
+  const model = await getEffectiveModelForAgent(agentGroupId);
+  if (row?.provider === 'opencode' && model && syncOpenCodeBackendEnv(model)) {
     await updateContainerConfigScalars(agentGroupId, { model: `openai/${model.model_id}` });
   } else if (row?.model?.startsWith('openai/')) {
-    // Ours — never an operator's ncl-set model.
     await updateContainerConfigScalars(agentGroupId, { model: null });
   }
-  await writeLocalModelForAgent(agentGroupId);
 }
 
 /**

@@ -16,7 +16,7 @@ import { getDb } from '../../db/connection.js';
 import { getContainerConfig } from '../../db/container-configs.js';
 import { registerProviderContainerConfig } from '../../providers/provider-container-registry.js';
 import { assignModelToAgent, createWebchatModel, unassignModelFromAgent, type WebchatModelKind } from './db.js';
-import { providerForModelKind, syncAgentProviderForAssignedModel } from './models.js';
+import { providerForModelKind, syncAgentProviderForAssignedModel, syncHarnessModel } from './models.js';
 
 // The sync writes the OpenCode backend into the install's .env; capture the
 // writes instead of touching the tree the tests run in.
@@ -153,6 +153,20 @@ describe('with OpenCode installed', () => {
     expect(env.NO_PROXY).toContain('host.docker.internal');
   });
 
+  // A runner is paired with model "sonnet"; switching its harness to OpenCode
+  // used to leave that in place, and OpenCode failed: "Model not found: sonnet/.".
+  it('a harness switch to OpenCode replaces the pinned model with the assigned one', async () => {
+    await makeModel('ollama', 'm-ol');
+    await assignModelToAgent('ag-1', 'm-ol');
+    await syncAgentProviderForAssignedModel('ag-1');
+    // As a runner arrives: paired on Claude with "sonnet", then switched to OpenCode.
+    await getDb().run(
+      `UPDATE container_configs SET provider = 'opencode', model = 'sonnet' WHERE agent_group_id = 'ag-1'`,
+    );
+    await syncHarnessModel('ag-1');
+    expect((await getContainerConfig('ag-1'))?.model).toBe('openai/gemma4:latest');
+  });
+
   it('clears the model it wrote when the group leaves opencode, never an operator-set one', async () => {
     await makeModel('ollama', 'm-ol');
     await makeModel('anthropic', 'm-an');
@@ -162,9 +176,9 @@ describe('with OpenCode installed', () => {
 
     await assignModelToAgent('ag-1', 'm-an');
     await syncAgentProviderForAssignedModel('ag-1');
-    // The explicit opencode harness is sticky (above); the model this module
-    // wrote for it is not — a stale local id must not outlive the pick.
-    expect((await getContainerConfig('ag-1'))?.provider).toBe('opencode');
+    // OpenCode is sticky only while it can run the model: an Anthropic one goes
+    // back to Claude, and the local id this module wrote goes with it.
+    expect((await getContainerConfig('ag-1'))?.provider).toBeNull();
     expect((await getContainerConfig('ag-1'))?.model).toBeNull();
 
     await getDb().run(`UPDATE container_configs SET model = 'claude-opus-5' WHERE agent_group_id = 'ag-1'`);

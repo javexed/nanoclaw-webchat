@@ -368,7 +368,6 @@
           <button id="hidden-toggle" class="archived-toggle" type="button" hidden></button>
           <button id="archived-toggle" class="archived-toggle" type="button" hidden></button>
           <button id="create-room-btn" class="btn btn-secondary btn-list-footer" hidden>+ New room</button>
-          <input id="import-room-file" type="file" accept=".tgz,.gz,application/gzip" hidden />
           <input id="import-any-file" type="file" accept=".tgz,.gz,application/gzip" hidden />
         </div>
       </nav>
@@ -662,6 +661,10 @@
                     <!-- pi (add-pi-stack): the minimal local harness. Server rejects the
                          switch with a clear error when the stack isn't installed. -->
                     <button type="button" class="setting-option" data-provider="pi">pi</button>
+                    <!-- codex (add-codex): OpenAI's harness, signed in with ChatGPT or an
+                         OpenAI key; it runs its own model (the model field), never a
+                         registry one. Not installed yet: the switch offers the install. -->
+                    <button type="button" class="setting-option" data-provider="codex">Codex</button>
                     <!-- grok (add-grok): xAI's harness, driven by a SuperGrok /
                          X Premium+ subscription. Same contract as pi above — the
                          server rejects the switch with a clear error when the
@@ -1212,6 +1215,9 @@
                 </button>
               </div>
               <div class="agent-detail-form">
+                <!-- Add model: Cloud / Server / Custom (AddModel.vue); Custom shows the probe and manual form below. -->
+                <div id="model-add"></div>
+                <div id="model-add-custom" hidden>
                 <!-- Probe section: paste a URL, classify the provider, bulk-add discovered models -->
                 <div class="model-probe-block">
                   <label>
@@ -1288,6 +1294,7 @@
                     </div>
                   </form>
                 </details>
+                </div>
               </div>
             </div>
           </aside>
@@ -1575,27 +1582,10 @@
           </div>
           <div id="mtab-models" class="manage-pane" role="tabpanel" hidden>
             <ul id="model-list"></ul>
-            <button id="create-model-btn" class="btn btn-secondary btn-list-footer" hidden>+ Add model endpoint…</button>
+            <button id="create-model-btn" class="btn btn-secondary btn-list-footer" hidden>+ Add model</button>
             <div id="ollama-hosts" class="ollama-hosts" hidden>
               <div class="ollama-hosts-title">Servers</div>
               <div id="ollama-host-cards"></div>
-            </div>
-            <!-- Cloud model (owners): key to the OneCLI vault, router installs or reloads (cloud-models.ts). -->
-            <div id="cloud-models" class="ollama-hosts" hidden>
-              <div class="setting-group install-row">
-                <span class="setting-label">Cloud model</span>
-                <span id="cloud-router-badge" class="install-badge" hidden>
-                  <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;Router
-                </span>
-              </div>
-              <form id="cloud-model-form" class="secret-form">
-                <select id="cloud-provider" aria-label="Provider"></select>
-                <input id="cloud-model-id" type="text" list="cloud-model-options" placeholder="Model" spellcheck="false" autocomplete="off" aria-label="Model" />
-                <datalist id="cloud-model-options"></datalist>
-                <input id="cloud-api-key" type="password" placeholder="API key" spellcheck="false" autocomplete="new-password" aria-label="API key" />
-                <button id="cloud-model-add" class="btn btn-primary btn-sm" type="submit">Install</button>
-              </form>
-              <pre id="cloud-model-log" class="roster-refresh-log" hidden></pre>
             </div>
                       </div>
           <div id="mtab-runners" class="manage-pane" role="tabpanel" hidden>

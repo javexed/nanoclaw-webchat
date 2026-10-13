@@ -6,6 +6,7 @@
  * owns expansion, and a section with no matches hides its header.
  */
 import { computed } from 'vue';
+import BusyLabel from './BusyLabel.vue';
 import OriginBadge from './OriginBadge.vue';
 import {
   skillSections,
@@ -53,7 +54,7 @@ const anyMatch = computed(() => !!skillsFilter.value && view.value.some((s) => !
 </script>
 
 <template>
-  <li v-if="skillsPhase === 'loading'" class="skills-empty">{{ LOADING }}</li>
+  <li v-if="skillsPhase === 'loading'" class="skills-empty"><span class="btn-spinner" aria-hidden="true"></span>{{ LOADING }}</li>
   <li v-else-if="skillsPhase === 'empty'" class="skills-empty">{{ EMPTY }}</li>
   <template v-else>
     <template v-for="s in view" :key="s.key">
@@ -127,7 +128,7 @@ const anyMatch = computed(() => !!skillsFilter.value && view.value.some((s) => !
             :title="UPDATE_TITLE"
             :disabled="skillUpdating.has(r.name) || undefined"
             @click="props.onUpdate(r.name)"
-          >{{ skillUpdating.has(r.name) ? UPDATING : UPDATE }}</button
+          ><BusyLabel :busy="skillUpdating.has(r.name)" :label="UPDATE" :busy-label="UPDATING" /></button
           ><button type="button" class="skill-delete" @click="props.onDelete(r)">{{ REMOVE }}</button>
         </template>
         <template v-else-if="r.source === 'scoped'">

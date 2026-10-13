@@ -321,6 +321,27 @@ describe('handleChunkedUpload — lifetime', () => {
     expect(stored.equals(Buffer.concat(parts))).toBe(true);
   });
 
+  it('takes chunks only from the user who started the upload, in its room', async () => {
+    await createWebchatRoom('Other', 'other-room');
+    const id = '77777777-7777-7777-7777-777777777777';
+    const owner = 'webchat:test-owner';
+    expect((await send(body(id, 0, 3), owner)).status).toBe(200);
+    // Another user who knows the uploadId: neither a middle chunk nor the last one.
+    const intruder = await send(body(id, 1, 3), 'webchat:test-intruder');
+    expect(intruder.status).toBe(403);
+    expect((await send(body(id, 2, 3), 'webchat:test-intruder')).status).toBe(403);
+    // The same user, but naming another room.
+    const { res, captured } = fakeRes();
+    await handleChunkedUpload(fakeReq(body(id, 1, 3)), res, 'other-room', 'alice', owner, noopHooks);
+    expect(captured.status).toBe(403);
+    // The upload is untouched: its owner finishes it, nothing counted from the refused chunks.
+    const mid = await send(body(id, 1, 3), owner);
+    expect(JSON.parse(mid.body!)).toMatchObject({ received: 2, total: 3 });
+    const last = await send(body(id, 2, 3), owner);
+    expect(last.status).toBe(200);
+    expect(JSON.parse(last.body!)).toMatchObject({ filename: 'big.bin', size: 3 });
+  });
+
   it('keeps an upload that is still sending chunks past five minutes', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {

@@ -429,10 +429,33 @@ export async function prepareCloudModel(
   root = process.cwd(),
   deps: CloudModelDeps = { admin: realOnecliAdmin, containerConfig: defaultContainerConfig },
 ): Promise<{ provider: CloudProvider; modelId: string; added: boolean }> {
-  const provider = CLOUD_PROVIDERS.find((p) => p.id === input.provider);
-  if (!provider) throw new CloudModelError('Unknown provider');
   const modelId = typeof input.model_id === 'string' ? input.model_id.trim() : '';
   if (!MODEL_ID.test(modelId)) throw new CloudModelError('Invalid model');
+  const provider = await connectProvider({ provider: input.provider, api_key: input.api_key }, root, deps);
+  const added = !cloudModelNames(root).includes(modelId);
+  upsertBackend(root, {
+    model_name: modelId,
+    model: `${provider.prefix}${modelId}`,
+    gateway: true,
+    provider: provider.id,
+    ...(provider.apiBase ? { api_base: provider.apiBase } : {}),
+  });
+  return { provider, modelId, added };
+}
+
+/**
+ * Store a provider's key for the router's identity and point the router's
+ * traffic at the gateway, without adding a model: what lets the provider's
+ * own model list be read before one is picked. With no key, the one in the
+ * vault stays (re-scoped if needed).
+ */
+export async function connectProvider(
+  input: { provider: unknown; api_key: unknown },
+  root = process.cwd(),
+  deps: CloudModelDeps = { admin: realOnecliAdmin, containerConfig: defaultContainerConfig },
+): Promise<CloudProvider> {
+  const provider = CLOUD_PROVIDERS.find((p) => p.id === input.provider);
+  if (!provider) throw new CloudModelError('Unknown provider');
   const apiKey = typeof input.api_key === 'string' ? input.api_key.trim() : '';
   if (apiKey.length > MAX_KEY || /\s/.test(apiKey)) throw new CloudModelError('Invalid key');
 
@@ -450,15 +473,28 @@ export async function prepareCloudModel(
 
   writeGatewayFiles(root, await deps.containerConfig(identity));
   await ensureRouterSecret(admin, root);
-  const added = !cloudModelNames(root).includes(modelId);
-  upsertBackend(root, {
-    model_name: modelId,
-    model: `${provider.prefix}${modelId}`,
-    gateway: true,
-    provider: provider.id,
-    ...(provider.apiBase ? { api_base: provider.apiBase } : {}),
-  });
-  return { provider, modelId, added };
+  return provider;
+}
+
+/** Remove a provider's key: refused while a model of it is registered with the router. */
+export async function disconnectProvider(
+  providerId: unknown,
+  root = process.cwd(),
+  admin: OnecliAdmin = realOnecliAdmin,
+): Promise<void> {
+  const provider = CLOUD_PROVIDERS.find((p) => p.id === providerId);
+  if (!provider) throw new CloudModelError('Unknown provider');
+  let backends: Backend[] = [];
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(root, DIR, 'backends.json'), 'utf8'));
+    if (Array.isArray(raw)) backends = raw as Backend[];
+  } catch {
+    /* none */
+  }
+  if (backends.some((b) => b.gateway === true && providerOf(b)?.id === provider.id))
+    throw new CloudModelError('In use');
+  for (const sec of await admin.listAllSecrets())
+    if (isProviderSecret(provider, sec.name)) await admin.deleteSecret(sec.id);
 }
 
 /** One vault secret per injected path; the first keeps the name keys stored before paths were scoped. */
@@ -528,12 +564,16 @@ const gatewayGet: GatewayGet = (url, root) =>
     } catch {
       /* default bridge */
     }
+    // The router names OneCLI's container; from here, the published port on the host.
+    const hostProxy = new URL(proxy);
+    hostProxy.hostname = host;
+    hostProxy.port = String(onecliGatewayHostPort(root));
     execFile(
       'curl',
       ['-sS', '--max-time', '20', '--cacert', path.join(root, DIR, 'onecli-ca.pem'), url],
       // The proxy URL carries the identity's token: in the environment, not argv.
       {
-        env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HTTPS_PROXY: proxy.replace('host.docker.internal', host) },
+        env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HTTPS_PROXY: hostProxy.toString().replace(/\/$/, '') },
         maxBuffer: 8 << 20,
       },
       (err, out) => (err ? reject(err) : resolve(String(out))),
@@ -620,6 +660,28 @@ export async function removeRouter(
   if (agentId) await admin.deleteAgent(agentId);
 }
 
+/** The gateway's port inside OneCLI's container (its entrypoint's GATEWAY_PORT default). */
+const ONECLI_GATEWAY_CONTAINER_PORT = 10255;
+
+/** Where the gateway is published on the host (OneCLI's compose: ONECLI_GATEWAY_PORT). */
+function onecliGatewayHostPort(root: string): number {
+  const env = readEnvFile(['ONECLI_GATEWAY_PORT'], root);
+  return Number(env.ONECLI_GATEWAY_PORT || process.env.ONECLI_GATEWAY_PORT) || ONECLI_GATEWAY_CONTAINER_PORT;
+}
+
+/**
+ * The proxy URL as the router reaches the gateway: OneCLI's container by name,
+ * on the network the two share. OneCLI hands out a host.docker.internal URL,
+ * which is the host's bridge address, and the router's own network cannot
+ * reach that (the connection times out, and every cloud call with it).
+ */
+export function routerProxyUrl(proxy: string): string {
+  const u = new URL(proxy);
+  u.hostname = onecliContainer();
+  u.port = String(ONECLI_GATEWAY_CONTAINER_PORT);
+  return u.toString().replace(/\/$/, '');
+}
+
 const SYSTEM_BUNDLES = ['/etc/ssl/certs/ca-certificates.crt', '/etc/pki/tls/certs/ca-bundle.crt'];
 
 /** The router container's proxy settings (onecli.env, 0600) and CA trust: system roots plus OneCLI's CA. */
@@ -628,7 +690,7 @@ export function writeGatewayFiles(root: string, cfg: GatewayConfig): void {
   fs.mkdirSync(dir, { recursive: true });
   const lines: string[] = [];
   for (const k of ['HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy']) {
-    if (cfg.env[k]) lines.push(`${k}=${cfg.env[k]}`);
+    if (cfg.env[k]) lines.push(`${k}=${routerProxyUrl(cfg.env[k])}`);
   }
   if (!lines.length) throw new CloudModelError('OneCLI gave no proxy');
   lines.push('SSL_CERT_FILE=/etc/onecli/ca.pem', 'REQUESTS_CA_BUNDLE=/etc/onecli/ca.pem');
@@ -670,6 +732,19 @@ export function cloudModelNames(root = process.cwd()): string[] {
     return Array.isArray(raw) ? (raw as Backend[]).filter((b) => b.gateway === true).map((b) => b.model_name) : [];
   } catch {
     return [];
+  }
+}
+
+/** Which provider serves each cloud model, by model name: the Models list shows "Cohere", not the router's address. */
+export function cloudModelProviders(root = process.cwd()): Record<string, string> {
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(root, DIR, 'backends.json'), 'utf8'));
+    if (!Array.isArray(raw)) return {};
+    return Object.fromEntries(
+      (raw as Backend[]).filter((b) => b.gateway === true).map((b) => [b.model_name, providerOf(b)?.label ?? '']),
+    );
+  } catch {
+    return {};
   }
 }
 

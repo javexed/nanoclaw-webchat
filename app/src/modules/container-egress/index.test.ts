@@ -41,7 +41,13 @@ vi.mock('../../channels/webchat/egress-filter.js', () => ({
   serveModelPort,
   defaultFilterDeps: () => ({}),
 }));
-vi.mock('../../channels/webchat/model-relay.js', () => ({ modelRelays: async () => relays }));
+let registryFails = false;
+vi.mock('../../channels/webchat/model-relay.js', () => ({
+  modelRelays: async () => {
+    if (registryFails) throw new Error('registry unreadable');
+    return relays;
+  },
+}));
 vi.mock('../../channels/webchat/egress-policy.js', async (orig) => ({
   ...(await orig<object>()),
   modelPassthroughs: async () => passthroughs,
@@ -80,6 +86,7 @@ beforeEach(async () => {
   serveModelPort.mockClear();
   relays = [];
   passthroughs = [];
+  registryFails = false;
   delete process.env.WEBCHAT_EXEC_RELAY;
   sidecarCheck = null;
   const seam = await import('../../seam/index.js');
@@ -248,7 +255,7 @@ describe('exec relay (WEBCHAT_EXEC_RELAY=1)', () => {
     expect(await deps.identify('')).toEqual({ agentGroupId: 'ag-model-only', sessionId: 's1' });
     // A port it was not given is closed.
     route(22, stream);
-    expect(stream.destroy).toHaveBeenCalled();
+    await vi.waitFor(() => expect(stream.destroy).toHaveBeenCalled());
   });
 
   it("relays a model on another machine too, behind the filter's per-caller check", async () => {
@@ -264,6 +271,7 @@ describe('exec relay (WEBCHAT_EXEC_RELAY=1)', () => {
     expect(ports).toEqual([10255, 3302, 47123]);
     const stream = { destroy: vi.fn(), on: vi.fn(), pipe: vi.fn() };
     route(47123, stream);
+    await vi.waitFor(() => expect(serveModelPort).toHaveBeenCalled());
     expect(serveModelPort).toHaveBeenCalledWith(
       stream,
       47123,
@@ -287,6 +295,7 @@ describe('exec relay (WEBCHAT_EXEC_RELAY=1)', () => {
     expect(ports).toEqual([10255, 3302, 11434]);
     const stream = { destroy: vi.fn(), on: vi.fn(), pipe: vi.fn() };
     route(11434, stream);
+    await vi.waitFor(() => expect(serveModelPort).toHaveBeenCalled());
     // Its own model passes, any other is refused, there (egress-filter.ts serveModelPort).
     expect(serveModelPort).toHaveBeenCalledWith(
       stream,
@@ -298,6 +307,34 @@ describe('exec relay (WEBCHAT_EXEC_RELAY=1)', () => {
     );
     const deps = (serveModelPort.mock.calls[0] as unknown[])[3] as { identify: (ip: string) => Promise<unknown> };
     expect(await deps.identify('')).toEqual({ agentGroupId: 'ag-local', sessionId: 's1' });
+  });
+
+  it('a model removed from the registry is refused on a running relay, without a restart', async () => {
+    process.env.WEBCHAT_EXEC_RELAY = '1';
+    relays = [{ port: 47123, target: { host: '192.0.2.9', port: 11434 } }];
+    getContainerConfig.mockResolvedValue({ egress: null });
+    await prepare('ag-removed', null);
+    resolve(specFor('ag-removed'));
+    const { route } = registerRelayedContainer.mock.calls[0][1] as { route: (port: number, s: unknown) => void };
+    relays = [];
+    const stream = { destroy: vi.fn(), on: vi.fn(), pipe: vi.fn() };
+    route(47123, stream);
+    await vi.waitFor(() => expect(stream.destroy).toHaveBeenCalled());
+    expect(serveModelPort).not.toHaveBeenCalled();
+  });
+
+  it('fails closed: refuses model ports while the registry cannot be read', async () => {
+    process.env.WEBCHAT_EXEC_RELAY = '1';
+    relays = [{ port: 47123, target: { host: '192.0.2.9', port: 11434 } }];
+    getContainerConfig.mockResolvedValue({ egress: null });
+    await prepare('ag-unreadable', null);
+    resolve(specFor('ag-unreadable'));
+    const { route } = registerRelayedContainer.mock.calls[0][1] as { route: (port: number, s: unknown) => void };
+    registryFails = true;
+    const stream = { destroy: vi.fn(), on: vi.fn(), pipe: vi.fn() };
+    route(47123, stream);
+    await vi.waitFor(() => expect(stream.destroy).toHaveBeenCalled());
+    expect(serveModelPort).not.toHaveBeenCalled();
   });
 
   it('leaves an open group on an ordinary network, and fails closed without a proxy URL', async () => {

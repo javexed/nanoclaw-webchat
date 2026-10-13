@@ -273,7 +273,7 @@ export function egressAllowed(
  * the agent central's own network position, past the gateway. Never to this
  * machine (loopback, any of its own addresses, the docker bridge gateway where
  * host services listen) or a link-local address (the cloud metadata service),
- * and to a private (RFC 1918 / ULA) address only when the entry names that
+ * and to a private (RFC 1918 / CGNAT / ULA) address only when the entry names that
  * address itself: by name here, and by resolved address when the filter
  * connects (directAddressAllowed).
  */
@@ -303,9 +303,14 @@ export function hostOwnAddresses(): Set<string> {
   return own;
 }
 
-/** RFC 1918 IPv4, or an IPv6 unique-local address (fc00::/7). */
+/**
+ * RFC 1918 IPv4, shared address space 100.64.0.0/10 (carrier-grade NAT, and
+ * the addresses a Tailscale tailnet hands out), or an IPv6 unique-local
+ * address (fc00::/7).
+ */
 function isPrivateAddress(a: string): boolean {
-  if (net.isIPv4(a)) return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a);
+  if (net.isIPv4(a))
+    return /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(a);
   return net.isIPv6(a) && /^f[cd][0-9a-f]{2}:/.test(a);
 }
 

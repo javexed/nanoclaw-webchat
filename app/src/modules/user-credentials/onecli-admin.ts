@@ -11,10 +11,12 @@
  *   secrets create / agents create → the created row (id) under data
  *
  * SECRET VALUES stay out of argv (which any local user can read in the
- * process list) wherever the CLI allows: a value goes in a 0600 temp file and
+ * process list) wherever possible: a value goes in a 0600 temp file and
  * `--file` when the subcommand takes one (`secrets create` does from onecli
- * 2.x; probed once from its --help, see valueArgs). An older CLI, and
- * `secrets update` (no `--file` in any release so far), still take
+ * 2.x; probed once from its --help, see valueArgs). `secrets update` has no
+ * `--file` in any release, so an update to a LOCAL gateway goes to its own
+ * management API as a request body instead (patchSecretLocally). Only an older
+ * CLI's create, and an update to a remote or keyed gateway, still take
  * `--value <secret>`: a residual exposure for the life of that one process.
  */
 import { execFile } from 'child_process';
@@ -83,6 +85,50 @@ async function valueArgs<T>(sub: 'create' | 'update', value: string, fn: (args: 
   if (value && value === value.trim() && (await secretsTakesFile(sub)))
     return withSecretFile(value, (path) => fn(['--file', path]));
   return fn(['--value', value]);
+}
+
+/**
+ * The local gateway's management API, when an update can go there instead of
+ * argv: a loopback ONECLI_URL and no ONECLI_API_KEY (a local gateway's API
+ * takes no key; it is kept off the docker bridge for exactly that reason).
+ * Anything else — a remote or keyed gateway — keeps the CLI.
+ */
+function localSecretsApi(): string | null {
+  if (process.env.ONECLI_API_KEY) return null;
+  try {
+    const u = new URL(process.env.ONECLI_URL ?? '');
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname)) return null;
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Update a secret through the local gateway's API: the value travels in the
+ * request body, never in a process's arguments. The body is the CLI's own
+ * update input (`{ value, pathPattern, injectionConfig }`). False on anything
+ * short of success, and the caller falls back to the CLI, whose error then
+ * explains a real failure (an unknown id, say).
+ */
+async function patchSecretLocally(secretId: string, input: Record<string, unknown>): Promise<boolean> {
+  const base = localSecretsApi();
+  if (!base) return false;
+  if (process.env.VITEST && !allowedInTests)
+    throw new Error('onecli-admin: no real vault calls under the test runner (PATCH /api/secrets)');
+  try {
+    const res = await fetch(`${base}/api/secrets/${encodeURIComponent(secretId)}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!res.ok) return false;
+    const body = (await res.json().catch(() => ({}))) as { success?: unknown };
+    return body.success !== false;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -314,12 +360,18 @@ export const realOnecliAdmin: OnecliAdmin = {
   // `asFile` (a Codex auth.json) asks for the file path too; valueArgs gives it
   // whenever the CLI takes one, so the flag no longer changes anything.
   async updateSecretValue(secretId, value, _asFile = false) {
+    if (await patchSecretLocally(secretId, { value })) return;
     await valueArgs('update', value, (v) => onecli(['secrets', 'update', '--id', secretId, ...v]));
   },
   async updateGenericSecret(secretId, value, spec) {
     const extra: string[] = [];
     if (spec.headerName) extra.push('--header-name', spec.headerName);
     if (spec.valueFormat) extra.push('--value-format', spec.valueFormat);
+    const injectionConfig = {
+      ...(spec.headerName ? { headerName: spec.headerName } : {}),
+      ...(spec.valueFormat ? { valueFormat: spec.valueFormat } : {}),
+    };
+    if (await patchSecretLocally(secretId, { value, ...(extra.length ? { injectionConfig } : {}) })) return;
     await valueArgs('update', value, (v) => onecli(['secrets', 'update', '--id', secretId, ...v, ...extra]));
   },
   async deleteSecret(secretId) {

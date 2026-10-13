@@ -14,6 +14,7 @@ const props = defineProps<{ row: MsgRow }>();
 const THOUGHTS = 'Thoughts';
 const LOADING = 'Loading…';
 const UNAVAILABLE = 'Activity unavailable';
+const NO_ACTIVITY = 'No reasoning captured for this turn';
 
 const load = computed(() => (props.row.id ? traceLoads.get(props.row.id) : undefined));
 
@@ -48,6 +49,12 @@ const status = computed(() => {
   return '';
 });
 
+/**
+ * Fetched, but only its header: a turn with no tools, notes or reasoning (most
+ * short replies). Without this the panel opened to nothing and read as stuck.
+ */
+const empty = computed(() => load.value?.status === 'ok' && !traceHasContent(view.value));
+
 const isOpen = ref(false);
 
 function onToggle(e: Event): void {
@@ -72,8 +79,9 @@ watchEffect(() => {
     >
     <!-- Focusable: it is the scroll container, so the keyboard can scroll a long trace. -->
     <div class="thoughts-body" tabindex="0" :aria-busy="load?.status === 'loading' ? 'true' : undefined">
-      <div v-if="status" class="thoughts-line">{{ status }}</div>
-      <TraceView v-if="view && traceHasContent(view)" :view="view" />
+      <div v-if="status" class="thoughts-line"><span v-if="status === LOADING" class="btn-spinner" aria-hidden="true"></span>{{ status }}</div>
+      <TraceView v-if="view && (traceHasContent(view) || empty)" :view="view" />
+      <div v-if="empty" class="thoughts-line">{{ NO_ACTIVITY }}</div>
     </div>
   </details>
 </template>

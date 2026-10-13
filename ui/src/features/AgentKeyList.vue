@@ -2,17 +2,16 @@
 /**
  * An agent's SSH deploy keys, mounted into <ul id="agent-keys-list">; rows are shaped in
  * renderAgentKeys, including the one-string meta line (ssh command, or path plus note).
- * The private key never reaches the client, so "Copy public key" is the whole workflow and
- * takes the prominent button.
+ * The private key never reaches the client, so copying the public key is the whole
+ * workflow; it uses the .btn-icon copy control (CopyIconButton), paired with Remove.
  */
 import { agentKeyRows } from './agent-lists-state.js';
+import CopyIconButton from './CopyIconButton.vue';
 
 const props = defineProps<{
-  onCopy: (row: { publicKey: string }) => void;
   onRemove: (row: { key: unknown }) => void;
 }>();
 
-const COPY = 'Copy public key';
 const REMOVE = 'Remove';
 </script>
 
@@ -23,8 +22,11 @@ const REMOVE = 'Remove';
       <span class="skill-desc">{{ r.meta }}</span>
     </div>
     <div class="secret-actions">
-      <button class="btn btn-secondary" type="button" @click="props.onCopy(r)">{{ COPY }}</button
-      ><button class="btn btn-danger" type="button" @click="props.onRemove(r)">{{ REMOVE }}</button>
+      <CopyIconButton :text="r.publicKey" label="Copy public key" /><button
+        class="btn btn-danger"
+        type="button"
+        @click="props.onRemove(r)"
+      >{{ REMOVE }}</button>
     </div>
   </li>
 </template>

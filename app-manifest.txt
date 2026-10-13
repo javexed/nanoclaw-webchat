@@ -16,6 +16,8 @@ container/agent-runner/src/mention-human.ts
 container/agent-runner/src/mention-human.test.ts
 container/agent-runner/src/noop-tool-cap.ts
 container/agent-runner/src/noop-tool-cap.test.ts
+container/agent-runner/src/failure-notice.ts
+container/agent-runner/src/failure-notice.test.ts
 src/modules/agent-status
 container/agent-runner/src/db/status-events.test.ts
 container/agent-runner/src/providers/summarize-thinking.test.ts
@@ -136,3 +138,4 @@ src/reconcile-session.ceiling.test.ts
 src/drivers/docker-driver.removal.test.ts
 deploy/onecli-private-ports.sh
 scripts/onecli-private-ports.test.ts
+src/channels/webchat/ws-room-access.test.ts

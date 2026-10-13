@@ -6,6 +6,7 @@
  * is harmless.
  */
 import { computed } from 'vue';
+import BusyLabel from './BusyLabel.vue';
 import UndoTimer from './UndoTimer.vue';
 import { draftUndo, draftsReviewing, skillDrafts } from './skills-panel-state.js';
 
@@ -71,7 +72,7 @@ const rows = computed(() =>
           :data-draft-id="r.id"
           :disabled="draftsReviewing.has(r.id) || undefined"
           @click="props.onKeep(r)"
-        >{{ draftsReviewing.has(r.id) ? REVIEWING : KEEP }}</button>
+        ><BusyLabel :busy="draftsReviewing.has(r.id)" :label="KEEP" :busy-label="REVIEWING" /></button>
         <button type="button" class="skill-delete" @click="props.onDiscard(r)">{{ DISCARD }}</button>
       </template>
     </span>

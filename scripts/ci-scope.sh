@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 # What does this change touch? Decides how much of the compose job a PR has
-# to pay for. Prints two lines for $GITHUB_OUTPUT:
+# to pay for. Prints four lines for $GITHUB_OUTPUT:
 #
-#   ui=true|false     run the UI phase (install, guards, Chromium, browser
-#                     probes, bundle-drift) — ~5 minutes of a ~7 minute job
-#   host=full|subset  run upstream's whole host suite, or only the tests that
-#                     can be affected by what this repo changes (see
-#                     ci-host-test-subset.sh)
+#   ui=true|false      run the UI phase (install, guards, Chromium, browser
+#                      probes, bundle-drift)
+#   host=full|subset   run upstream's whole host suite, or only the tests that
+#                      can be affected by what this repo changes (see
+#                      ci-host-test-subset.sh)
+#   guards=true|false  run compose's guard SELF-TESTS — the steps that prove each
+#                      guard still catches the fault it exists for. That proof
+#                      depends on the guard (its script, probe, fixtures and
+#                      baselines) and the workflow, not on product code, so a
+#                      PR that touches none of those skips them. The guards
+#                      themselves always run.
+#   runner=true|false  apply the VS Code runner skill to the composed tree and
+#                      re-check it: only when the skill, the webchat server it
+#                      plugs into, or how the tree is composed changes
 #
 # FAILS OPEN on purpose, same shape as the container-tree gate: a push event,
 # a missing base, an unresolvable merge-base, or any error all answer "run
@@ -22,8 +31,8 @@ EVENT="${1:-}"
 BASE_REF="${2:-}"
 REMOTE="${3:-origin}"
 
-decide() { printf 'ui=%s\nhost=%s\n' "$1" "$2"; exit 0; }
-everything() { echo "ci-scope: $1 — running everything" >&2; decide true full; }
+decide() { printf 'ui=%s\nhost=%s\nguards=%s\nrunner=%s\n' "$1" "$2" "$3" "$4"; exit 0; }
+everything() { echo "ci-scope: $1 — running everything" >&2; decide true full true true; }
 
 [ "$EVENT" = "pull_request" ] || everything "event is '$EVENT', not pull_request"
 [ -n "$BASE_REF" ] || everything "no base ref"
@@ -51,9 +60,16 @@ FULL_RE='^(versions\.json$|patches/|install\.sh$|scripts/|\.github/workflows/)'
 # browser probes are driven by scripts/, which FULL_RE already covers.
 UI_RE='^(ui/|app/public/webchat/|scripts/|\.github/workflows/)'
 
-ui=false; host=subset
+# Guards and their self-tests live in scripts/ and ui/ (the browser probes,
+# their servers and the recorded baselines); ci/ holds their fixtures.
+GUARDS_RE='^(scripts/|ui/[^/]+\.(mjs|sh|json)$|ci/|\.github/workflows/)'
+RUNNER_RE='^(app/\.claude/skills/add-vscode-runner/|app/src/channels/webchat/|app/src/modules/|patches/|versions\.json$|install\.sh$|scripts/|\.github/workflows/)'
+
+ui=false; host=subset; guards=false; runner=false
 printf '%s\n' "$CHANGED" | grep -qE "$UI_RE" && ui=true
 printf '%s\n' "$CHANGED" | grep -qE "$FULL_RE" && host=full
+printf '%s\n' "$CHANGED" | grep -qE "$GUARDS_RE" && guards=true
+printf '%s\n' "$CHANGED" | grep -qE "$RUNNER_RE" && runner=true
 
-echo "ci-scope: $(printf '%s\n' "$CHANGED" | wc -l) changed path(s) since $MB → ui=$ui host=$host" >&2
-decide "$ui" "$host"
+echo "ci-scope: $(printf '%s\n' "$CHANGED" | wc -l) changed path(s) since $MB → ui=$ui host=$host guards=$guards runner=$runner" >&2
+decide "$ui" "$host" "$guards" "$runner"

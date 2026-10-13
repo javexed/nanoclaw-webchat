@@ -45,6 +45,7 @@ import { isGlobalAdmin, isOwner } from '../roles.js';
 import { DEFAULT_PORT, MARKETPLACE_ID } from './constants.js';
 import { MCP_REGISTRY_ID, mcpRegistryRemovedKey } from './mcp-registry.js';
 import { codexAvailable, grokAvailable, opencodeAvailable, piAvailable } from './providers.js';
+import { currentServeListenerPort } from '../auth.js';
 import { enableTailscaleServe, getTailscaleServeState } from '../tailscale-serve.js';
 import { computeUsageRollup } from '../usage.js';
 import type { RouteCtx } from '../server.js';
@@ -292,9 +293,9 @@ export async function rWebchatAuditRetention(ctx: RouteCtx, _m: RegExpMatchArray
 // ── Enable HTTPS over Tailscale (`tailscale serve`) ─────────────────────────
 // Owner/global-admin only. GET reports whether tailscaled is up, the https
 // URL, and whether serve is already on. POST runs `tailscale serve --bg
-// <port>` so webchat is reachable at https://<node>.ts.net with a real cert.
-// Identity continuity across the http→https switch lives in auth.ts
-// (tailscaleServeIdentity maps Serve's header back to the whois id).
+// <serve port>` so webchat is reachable at https://<node>.ts.net with a real
+// cert. Identity continuity across the http→https switch lives in auth.ts
+// (Serve's header maps back to the whois id, on the Serve listener only).
 export async function rWebchatTailscaleHttps(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const { req, res, method, userId } = ctx;
   if (!(await isOwner(userId)) && !(await isGlobalAdmin(userId))) return json(res, 403, { error: 'Forbidden' });
@@ -323,7 +324,10 @@ export async function rWebchatTailscaleHttps(ctx: RouteCtx, _m: RegExpMatchArray
       error: 'HTTPS is already enabled (native TLS certificate) — nothing to set up.',
     });
   }
-  const port = Number(process.env.WEBCHAT_PORT || DEFAULT_PORT);
+  // Serve goes to the dedicated Serve listener: only connections arriving
+  // there may carry a believed Tailscale-User-Login. The main port is the
+  // fallback for an install whose listener could not bind.
+  const port = currentServeListenerPort() ?? Number(process.env.WEBCHAT_PORT || DEFAULT_PORT);
   const result = await enableTailscaleServe(port);
   return json(res, result.ok ? 200 : 400, result);
 }

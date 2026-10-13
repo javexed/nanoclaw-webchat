@@ -26,7 +26,7 @@ vi.mock('./cloud-models.js', async (orig) => ({
 import { closeDb, initDb } from '../../db/index.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { getDb } from '../../db/connection.js';
-import { assignModelToAgent, createWebchatModel } from './db.js';
+import { assignModelToAgent, createWebchatModel, unassignModelFromAgent } from './db.js';
 import { writeAgentSettingsForAssignedModel } from './models.js';
 
 const GROUP = 'ag-1';
@@ -89,6 +89,36 @@ describe('env keys this writer owns', () => {
     await assignModelToAgent(GROUP, 'cloud');
     await writeAgentSettingsForAssignedModel(GROUP);
     expect(settingsEnv().CLAUDE_CODE_MAX_OUTPUT_TOKENS).toBe('4096');
+  });
+
+  // A runner pins "sonnet" (container_configs.model), which reaches the SDK as an
+  // explicit model and outranks ANTHROPIC_MODEL: unmapped, it asked the router
+  // for a Claude model it does not serve.
+  it("maps Claude Code's aliases to the model, follows a change, and goes with the assignment", async () => {
+    await assignModelToAgent(GROUP, 'cloud');
+    await writeAgentSettingsForAssignedModel(GROUP);
+    expect(settingsEnv()).toMatchObject({
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'command-a',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'command-a',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'command-a',
+    });
+
+    await assignModelToAgent(GROUP, 'local');
+    await writeAgentSettingsForAssignedModel(GROUP);
+    expect(settingsEnv().ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('qwen3:8b');
+
+    await unassignModelFromAgent(GROUP);
+    await writeAgentSettingsForAssignedModel(GROUP);
+    expect(settingsEnv()).not.toHaveProperty('ANTHROPIC_DEFAULT_SONNET_MODEL');
+    expect(settingsEnv()).not.toHaveProperty('ANTHROPIC_DEFAULT_HAIKU_MODEL');
+  });
+
+  it("keeps an operator's own alias mapping, and lets it win", async () => {
+    fs.writeFileSync(settingsPath, JSON.stringify({ env: { ANTHROPIC_DEFAULT_HAIKU_MODEL: 'their-small' } }));
+    await assignModelToAgent(GROUP, 'cloud');
+    await writeAgentSettingsForAssignedModel(GROUP);
+    expect(settingsEnv().ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('their-small');
+    expect(settingsEnv().ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('command-a');
   });
 
   it('a cap written before ownership was recorded still counts as ours', async () => {

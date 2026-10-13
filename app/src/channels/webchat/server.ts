@@ -109,6 +109,8 @@ import {
   rModelFitStartPost,
   rModelsContextVariantPost,
   rCloudModelsGet,
+  rCloudProviderConnectPost,
+  rCloudProviderConnectDelete,
   rCloudModelsListGet,
   rCloudModelsPost,
   rModelTestPost,
@@ -240,6 +242,7 @@ import { createHash, randomUUID, randomBytes } from 'crypto';
 import zlib from 'node:zlib';
 import { execFileSync } from 'child_process';
 import fs from 'fs';
+import net from 'net';
 import os from 'os';
 import path from 'path';
 
@@ -258,11 +261,13 @@ import {
   loopbackVisitorWithoutSignIn,
   getAuthManagementInfo,
   hasExplicitAuth,
+  markServeSocket,
   probeTailscaleHealth,
   requiresExplicitAuth,
+  setServeListenerPort,
   warnIfAutoProxyTrust,
 } from './auth.js';
-import { tailnetUrlForPort } from './tailscale-serve.js';
+import { pendingServeMigration, servePortFor, tailnetUrlForPort } from './tailscale-serve.js';
 import { scheduleHostRestart } from './ollama-manage.js';
 import { upsertEnv } from './env-write.js';
 import {
@@ -453,6 +458,8 @@ export interface WebchatServer {
   port: number;
   tls: boolean;
   http: HttpServer;
+  /** The loopback listener Tailscale Serve proxies to (null when not running). */
+  serveListener: net.Server | null;
   wss: import('ws').WebSocketServer;
   broadcast: (roomId: string, payload: unknown) => void;
   persistOutboundFile: (roomId: string, file: OutboundFile) => string;
@@ -560,17 +567,65 @@ export async function startWebchatServer(hooks: WebchatServerHooks): Promise<Web
     });
   });
 
+  const serveListener = tlsEnabled ? null : await startServeListener(httpServer, port);
+
   return {
     host,
     port,
     tls: tlsEnabled,
     http: httpServer,
+    serveListener,
     wss,
     broadcast: (roomId, payload) => {
       broadcast(roomId, payload as object).catch((err) => log.warn('Broadcast failed', { roomId, err: String(err) }));
     },
     persistOutboundFile: (roomId, file) => persistOutboundFile(roomId, file),
   };
+}
+
+/**
+ * The listener Tailscale Serve proxies to: loopback only, on its own port
+ * (servePortFor). Its connections are handed to the main HTTP server, so every
+ * route, WebSocket path and extension behaves the same, but each socket is
+ * marked first: auth.ts believes Serve's `Tailscale-User-Login` header on
+ * those sockets and on no others. Plain HTTP only — Serve terminates TLS, and
+ * an install with its own certificate does not use Serve.
+ *
+ * Failing to bind is not fatal: the main server is already up, and an install
+ * whose Serve still points at the main port keeps working through the legacy
+ * path. Startup also warns, once, when Serve still points at the main port.
+ */
+async function startServeListener(httpServer: HttpServer, mainPort: number): Promise<net.Server | null> {
+  const servePort = servePortFor(mainPort);
+  if (servePort === null) return null;
+  const listener = net.createServer((socket) => {
+    markServeSocket(socket);
+    httpServer.emit('connection', socket);
+  });
+  const ok = await new Promise<boolean>((resolve) => {
+    listener.once('error', (err: NodeJS.ErrnoException) => {
+      log.warn('Webchat: Tailscale Serve listener could not bind — Serve sign-in stays on the main port', {
+        port: servePort,
+        code: err.code,
+      });
+      resolve(false);
+    });
+    listener.listen(servePort, '127.0.0.1', () => resolve(true));
+  });
+  if (!ok) return null;
+  setServeListenerPort(servePort);
+  log.info('Webchat Tailscale Serve listener', { host: '127.0.0.1', port: servePort });
+  void pendingServeMigration(mainPort, servePort)
+    .then((commands) => {
+      if (!commands.length) return;
+      log.warn(
+        `Webchat: Tailscale Serve proxies to the main port ${mainPort}. Its sign-in header is still honored there ` +
+          'for now, but that path trusts the Host header, which any tunnel or reverse proxy on this machine can ' +
+          `forward. Point Serve at the dedicated listener: ${commands.join(' && ')}`,
+      );
+    })
+    .catch(() => undefined);
+  return listener;
 }
 
 export async function stopWebchatServer(server: WebchatServer): Promise<void> {
@@ -581,6 +636,10 @@ export async function stopWebchatServer(server: WebchatServer): Promise<void> {
   for (const client of server.wss.clients) client.terminate();
   server.wss.close();
   server.http.closeAllConnections?.();
+  if (server.serveListener) {
+    setServeListenerPort(null);
+    await new Promise<void>((resolve) => server.serveListener!.close(() => resolve()));
+  }
   await new Promise<void>((resolve) => {
     server.http.close(() => resolve());
   });
@@ -593,12 +652,15 @@ export async function stopWebchatServer(server: WebchatServer): Promise<void> {
 // http://<node>.ts.net:<port>). Asked of tailscaled at most once a minute.
 let tailnetUrlCache: { at: number; port: number; url: string | null } | null = null;
 async function tailnetUrlFor(req: IncomingMessage): Promise<string | null> {
-  const port = req.socket.localPort ?? Number(process.env.WEBCHAT_PORT || 3100);
+  const port = Number(process.env.WEBCHAT_PORT || DEFAULT_PORT);
   if (tailnetUrlCache && tailnetUrlCache.port === port && Date.now() - tailnetUrlCache.at < 60_000)
     return tailnetUrlCache.url;
-  const url = await tailnetUrlForPort(port, requiresExplicitAuth(process.env.WEBCHAT_HOST || '127.0.0.1')).catch(
-    () => null,
-  );
+  const url = await tailnetUrlForPort(
+    port,
+    requiresExplicitAuth(process.env.WEBCHAT_HOST || '127.0.0.1'),
+    undefined,
+    servePortFor(port),
+  ).catch(() => null);
   tailnetUrlCache = { at: Date.now(), port, url };
   return url;
 }
@@ -2801,6 +2863,20 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/models/cloud/models', guards: ['owner'], h: rCloudModelsListGet },
   { method: 'POST', path: RE_MODEL_TEST, guards: ['owner', 'csrf'], h: rModelTestPost },
   { method: 'POST', path: '/api/models/cloud', guards: ['csrf', 'owner'], h: rCloudModelsPost, audit: 'model.cloud' },
+  {
+    method: 'POST',
+    path: '/api/models/cloud/connect',
+    guards: ['csrf', 'owner'],
+    h: rCloudProviderConnectPost,
+    audit: 'model.cloud.connect',
+  },
+  {
+    method: 'DELETE',
+    path: '/api/models/cloud/connect',
+    guards: ['csrf', 'owner'],
+    h: rCloudProviderConnectDelete,
+    audit: 'model.cloud.disconnect',
+  },
   { method: 'GET', path: '/api/models/known', h: rModelsKnownGet },
   { method: 'POST', path: '/api/models/discover', guards: ['csrf', 'owner'], h: rModelsDiscoverPost },
   { method: 'POST', path: '/api/models/probe', guards: ['csrf', 'owner'], h: rModelsProbePost },

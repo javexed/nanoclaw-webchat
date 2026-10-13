@@ -1254,3 +1254,16 @@ export const moduleWebchatTurnTraces: Migration = {
     `);
   },
 };
+
+/**
+ * The stable user id of a message's human sender. Deleting a message matches
+ * on it rather than on `sender`, a display name two users can share. Rows from
+ * before it stay NULL: a display name cannot be mapped back to one user.
+ */
+export const moduleWebchatMessageSenderUserId: Migration = {
+  version: 225,
+  name: 'webchat-message-sender-user-id',
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_messages ADD COLUMN sender_user_id TEXT;`);
+  },
+};

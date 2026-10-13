@@ -188,10 +188,10 @@ import {
   wireModelsPanel,
 } from './features/models.js';
 import { wireCloudModels } from './features/cloud-models.js';
+import { openAddModel } from './features/add-model.js';
 
 import {
   closeRoomDetail,
-  continueRoomImport,
   deleteCurrentRoom,
   joinRoom,
   openRoomCreate,
@@ -286,6 +286,7 @@ import {
 } from './features/wizard.js';
 
 import { authFetch } from './core/api.js';
+import { buttonBusy } from './core/busy.js';
 import { checkSessionExpired, provideDraftCheck } from './core/session-expiry.js';
 
 import { showToast } from './core/toast.js';
@@ -574,25 +575,6 @@ $('#room-export-btn')?.addEventListener('click', () => {
 // Settings → "Import…" routes by bundle type into the room/agent import flows.
 wireFileControls1();
 
-$('#import-room-file')?.addEventListener('change', async (e) => {
-  const file = (e.target as HTMLInputElement).files?.[0];
-  (e.target as HTMLInputElement).value = '';
-  if (!file) return;
-  showToast('Uploading room bundle…', { kind: 'info' });
-  let up;
-  try {
-    const fd = new FormData();
-    fd.append('bundle', file);
-    const res = await authFetch('/api/rooms/import', { method: 'POST', body: fd });
-    up = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(up.error || res.statusText);
-  } catch (err) {
-    showToast('Import failed: ' + ((err as any)?.message || err), { kind: 'error' });
-    return;
-  }
-  return continueRoomImport(up);
-});
-
 // ── System backup ──
 $('#system-export-btn')?.addEventListener('click', async () => {
   const {
@@ -610,7 +592,7 @@ $('#system-export-btn')?.addEventListener('click', async () => {
   if (!ok) return;
   // Fetch, not an <a> navigation: an anchor has no status check, so a refusal
   // would be saved to disk as the backup and reported as success.
-  showToast('Preparing backup — this can take a while for large installs', { kind: 'info' });
+  const restore = buttonBusy($<HTMLButtonElement>('#system-export-btn')!, 'Preparing…');
   let blob: Blob;
   try {
     const q = new URLSearchParams();
@@ -626,6 +608,8 @@ $('#system-export-btn')?.addEventListener('click', async () => {
   } catch (e) {
     showToast('Backup failed: ' + ((e as Error)?.message || 'network error'), { kind: 'error' });
     return;
+  } finally {
+    restore();
   }
   // An object URL has no name of its own; without this the file lands as a bare uuid.
   const url = URL.createObjectURL(blob);
@@ -858,6 +842,7 @@ $('#model-detail-close')!.addEventListener('click', closeModelDetail);
 $('#model-create-close')!.addEventListener('click', closeModelDetail);
 
 wireModelCreate();
+$('#create-model-btn')!.addEventListener('click', openAddModel);
 
 $('#model-create-kind')!.addEventListener('change', syncCreateFormToKind);
 

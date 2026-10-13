@@ -9,6 +9,7 @@ import { attachEmptyText, attachPickerCfg, attachRows, pendingFiles } from './at
 import { $ } from '../core/dom.js';
 import { mountIsland } from '../core/island.js';
 import { showToast } from '../core/toast.js';
+import { buttonBusy } from '../core/busy.js';
 import { authFetch, apiJson } from '../core/api.js';
 import { state } from '../core/state.js';
 import { showConfirmModal } from './modals.js';
@@ -270,12 +271,18 @@ export function wireFileControls1(): void {
       const body = await res.json().catch(() => ({}));
       return { ok: res.ok, body };
     };
-    showToast('Uploading bundle…', { kind: 'info' });
+    const btn = $<HTMLButtonElement>('#import-any-btn');
+    const restore = btn ? buttonBusy(btn, 'Uploading…') : () => {};
     let kind = 'room';
-    let up = await tryUpload('/api/rooms/import');
-    if (!up.ok && /room export/i.test(up.body.error || '')) {
-      kind = 'agent';
-      up = await tryUpload('/api/agents/import');
+    let up;
+    try {
+      up = await tryUpload('/api/rooms/import');
+      if (!up.ok && /room export/i.test(up.body.error || '')) {
+        kind = 'agent';
+        up = await tryUpload('/api/agents/import');
+      }
+    } finally {
+      restore();
     }
     if (!up.ok) {
       showToast('Import failed: ' + (up.body.error || 'unrecognized bundle'), { kind: 'error' });
@@ -292,7 +299,8 @@ export function wireFileControls2(): void {
     const file = (e.target as HTMLInputElement).files?.[0];
     (e.target as HTMLInputElement).value = '';
     if (!file) return;
-    showToast('Uploading backup…', { kind: 'info' });
+    const btn = $<HTMLButtonElement>('#system-import-btn');
+    const restore = btn ? buttonBusy(btn, 'Uploading…') : () => {};
     let up;
     try {
       const fd = new FormData();
@@ -303,6 +311,8 @@ export function wireFileControls2(): void {
     } catch (err: any) {
       showToast('Restore failed: ' + (err?.message || err), { kind: 'error' });
       return;
+    } finally {
+      restore();
     }
     const m = up.preview.manifest;
     const el = document.createElement('div');
@@ -320,6 +330,7 @@ export function wireFileControls2(): void {
     if (!ok) return;
     try {
       await apiJson('/api/system/import/apply', { method: 'POST', body: { token: up.token } });
+      // busy-ok: an outcome — the restore is applied and the host is going down; nothing here waits on it.
       showToast('Restoring — the host is restarting…', { kind: 'info' });
     } catch (err: any) {
       showToast('Restore failed: ' + (err?.message || err), { kind: 'error' });

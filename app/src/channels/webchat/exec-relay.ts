@@ -39,6 +39,25 @@ export const EXEC_RELAY_VERSION = 2;
 const START_WINDOW_MS = 5 * 60_000;
 const TICK_MS = 1_000;
 
+/**
+ * Bounds on what central holds for one container's pipe: frames sent but not
+ * yet acknowledged by the daemon, which are kept for replay across a
+ * re-attach. Above the high-water mark every stream feeding the pipe is
+ * paused (so backpressure reaches whoever serves the port), and they resume
+ * once acks bring it below the low-water mark. The hard cap mirrors the
+ * daemon's own: past it the tunnels are reset rather than the queue grown.
+ */
+export interface RelayLimits {
+  highWaterBytes: number;
+  lowWaterBytes: number;
+  maxBufferBytes: number;
+}
+export const DEFAULT_RELAY_LIMITS: RelayLimits = {
+  highWaterBytes: 8 * 1024 * 1024,
+  lowWaterBytes: 2 * 1024 * 1024,
+  maxBufferBytes: 64 * 1024 * 1024,
+};
+
 /** The in-container daemon for these ports. Runs under Bun, detached, as root. */
 export function daemonScript(ports: readonly number[]): string {
   return `
@@ -204,7 +223,10 @@ export interface RelayedContainer {
 }
 
 interface Pipe {
-  write: (line: string) => void;
+  /** False when the pipe is backed up: hold the sources until it drains. */
+  write: (line: string) => boolean | void;
+  /** Called each time a backed-up pipe drains. */
+  onDrain?: (cb: () => void) => void;
   kill: () => void;
   done: Promise<number | null>;
 }
@@ -242,7 +264,8 @@ export const dockerRelayRuntime: RelayRuntime = {
     child.stderr.on('data', (d: Buffer) => onLine(`stderr: ${d.toString('utf8').trim()}`));
     child.stdin.on('error', () => {});
     return {
-      write: (line) => void child.stdin.write(line),
+      write: (line) => child.stdin.write(line),
+      onDrain: (cb) => void child.stdin.on('drain', cb),
       kill: () => child.kill('SIGKILL'),
       done: new Promise((resolve) => child.on('close', (code) => resolve(code))),
     };
@@ -259,13 +282,21 @@ export class ContainerRelay {
   #closed = false;
   #outSeq = 0;
   readonly #pending = new Map<number, string>();
+  #pendingBytes = 0;
+  /** The current pipe reported itself backed up and has not drained yet. */
+  #pipeBlocked = false;
+  /** Whether the streams feeding the pipe are paused. */
+  #paused = false;
   #inSeq = 0;
   readonly #streams = new Map<string, Duplex>();
+  /** Each stream's other end, the one handed to the route. */
+  readonly #peers = new WeakMap<Duplex, Duplex>();
 
   constructor(
     readonly container: string,
     private readonly c: RelayedContainer,
     private readonly rt: RelayRuntime = dockerRelayRuntime,
+    private readonly limits: RelayLimits = DEFAULT_RELAY_LIMITS,
   ) {}
 
   get ready(): boolean {
@@ -274,6 +305,13 @@ export class ContainerRelay {
   get streamCount(): number {
     return this.#streams.size;
   }
+  /** Bytes sent but not yet acknowledged, held for replay. */
+  get pendingBytes(): number {
+    return this.#pendingBytes;
+  }
+  get paused(): boolean {
+    return this.#paused;
+  }
 
   /** Attach until closed: start the daemon when there is none, re-attach when the pipe ends. */
   async run(): Promise<void> {
@@ -281,11 +319,19 @@ export class ContainerRelay {
     while (!this.#closed) {
       const pipe = this.rt.attach(this.container, (l) => this.#onLine(l));
       this.#pipe = pipe;
-      pipe.write(`${JSON.stringify({ t: 'hello', ack: this.#inSeq, seq: this.#outSeq })}\n`);
+      this.#pipeBlocked = false;
+      pipe.onDrain?.(() => {
+        if (this.#pipe !== pipe || !this.#pipeBlocked) return;
+        this.#pipeBlocked = false;
+        this.#flow();
+      });
+      this.#write(`${JSON.stringify({ t: 'hello', ack: this.#inSeq, seq: this.#outSeq })}\n`);
       const code = await pipe.done;
       if (this.#pipe === pipe) {
         this.#pipe = null;
         this.#ready = false;
+        this.#pipeBlocked = false;
+        this.#flow();
       }
       if (this.#closed) return;
       if (code === NO_DAEMON_EXIT) {
@@ -302,11 +348,63 @@ export class ContainerRelay {
     }
   }
 
+  #write(line: string): void {
+    if (this.#pipe?.write(line) === false) this.#pipeBlocked = true;
+  }
+
   #send(o: Record<string, unknown>): void {
     const seq = ++this.#outSeq;
     const line = `${JSON.stringify({ ...o, seq })}\n`;
     this.#pending.set(seq, line);
-    if (this.#ready) this.#pipe?.write(line);
+    this.#pendingBytes += line.length;
+    if (this.#ready) this.#write(line);
+    this.#flow();
+  }
+
+  #acked(seq: number): void {
+    const line = this.#pending.get(seq);
+    if (line === undefined) return;
+    this.#pending.delete(seq);
+    this.#pendingBytes -= line.length;
+  }
+
+  #clearPending(): void {
+    this.#pending.clear();
+    this.#pendingBytes = 0;
+  }
+
+  /**
+   * Pause or resume the streams feeding the pipe: held while detached, while
+   * the pipe is backed up, or while too much is unacknowledged; past the hard
+   * cap the tunnels are reset instead.
+   */
+  #flow(): void {
+    if (this.#pendingBytes > this.limits.maxBufferBytes) {
+      this.#overflow();
+      return;
+    }
+    const hold = !this.#ready || this.#pipeBlocked;
+    if (!this.#paused && (hold || this.#pendingBytes > this.limits.highWaterBytes)) {
+      this.#paused = true;
+      for (const s of this.#streams.values()) s.pause();
+    } else if (this.#paused && !hold && this.#pendingBytes <= this.limits.lowWaterBytes) {
+      this.#paused = false;
+      for (const s of this.#streams.values()) s.resume();
+    }
+  }
+
+  /** As the daemon does on overflow: drop the queue and close every tunnel. */
+  #overflow(): void {
+    log.warn('Exec relay: replay buffer overflow, resetting tunnels', {
+      container: this.container,
+      pendingBytes: this.#pendingBytes,
+      streams: this.#streams.size,
+    });
+    this.#clearPending();
+    const ids = [...this.#streams.keys()];
+    this.#dropStreams();
+    this.#paused = false;
+    for (const id of ids) this.#send({ t: 'close', id });
   }
 
   #onLine(line: string): void {
@@ -326,29 +424,32 @@ export class ContainerRelay {
         // with the old one, so our replay queue refers to nothing.
         if (Number(f.seq ?? 0) < this.#inSeq) {
           this.#inSeq = Number(f.seq ?? 0);
-          this.#pending.clear();
+          this.#clearPending();
           this.#dropStreams();
         }
         const saw = Number(f.inSeq ?? 0);
         for (const [seq, l] of [...this.#pending.entries()].sort((a, b) => a[0] - b[0])) {
-          if (seq <= saw) this.#pending.delete(seq);
-          else this.#pipe?.write(l);
+          if (seq <= saw) this.#acked(seq);
+          else this.#write(l);
         }
+        this.#flow();
         return;
       }
       case 'ack':
-        this.#pending.delete(Number(f.seq));
+        this.#acked(Number(f.seq));
+        this.#flow();
         return;
       case 'reset':
-        this.#pending.clear();
+        this.#clearPending();
         this.#inSeq = 0;
         this.#dropStreams();
+        this.#flow();
         return;
     }
     const seq = Number(f.seq);
     if (Number.isFinite(seq)) {
       if (seq <= this.#inSeq) {
-        this.#pipe?.write(`${JSON.stringify({ t: 'ack', seq })}\n`);
+        this.#write(`${JSON.stringify({ t: 'ack', seq })}\n`);
         return;
       }
       this.#inSeq = seq;
@@ -361,7 +462,7 @@ export class ContainerRelay {
       this.#streams.delete(id);
       s?.end();
     } else return;
-    if (Number.isFinite(seq)) this.#pipe?.write(`${JSON.stringify({ t: 'ack', seq })}\n`);
+    if (Number.isFinite(seq)) this.#write(`${JSON.stringify({ t: 'ack', seq })}\n`);
   }
 
   #open(id: string, port: number): void {
@@ -369,7 +470,9 @@ export class ContainerRelay {
     if (!this.c.ports.includes(port)) return void this.#send({ t: 'close', id });
     const [ours, theirs] = duplexPair();
     this.#streams.set(id, ours);
+    this.#peers.set(ours, theirs);
     ours.on('data', (d: Buffer) => this.#send({ t: 'data', id, b64: d.toString('base64') }));
+    if (this.#paused) ours.pause();
     const closed = (): void => {
       if (this.#streams.get(id) === ours) {
         this.#streams.delete(id);
@@ -393,7 +496,12 @@ export class ContainerRelay {
   }
 
   #dropStreams(): void {
-    for (const s of this.#streams.values()) s.destroy();
+    // Both ends: destroying ours does not tell the route's end, which would
+    // otherwise hold whatever it serves the port with open.
+    for (const s of this.#streams.values()) {
+      s.destroy();
+      this.#peers.get(s)?.destroy();
+    }
     this.#streams.clear();
   }
 
@@ -403,6 +511,7 @@ export class ContainerRelay {
     this.#pipe = null;
     this.#ready = false;
     this.#dropStreams();
+    this.#clearPending();
   }
 }
 
@@ -432,24 +541,44 @@ function containerState(name: string): Promise<'running' | 'gone' | 'other'> {
   );
 }
 
-async function tick(): Promise<void> {
-  for (const [name, reg] of registered) {
-    const state = await containerState(name);
-    if (state === 'running') {
-      reg.seenRunning = true;
-      if (!relays.has(name)) {
-        const relay = new ContainerRelay(name, reg);
-        relays.set(name, relay);
-        log.info('Exec relay: attaching', { container: name, ports: reg.ports });
-        void relay
-          .run()
-          .catch((err: unknown) => log.warn('Exec relay: stopped', { container: name, err: String(err) }));
-      }
-    } else if (state === 'gone' && (reg.seenRunning || Date.now() - reg.since > START_WINDOW_MS)) {
-      relays.get(name)?.close();
-      relays.delete(name);
-      registered.delete(name);
+/** The state probe; tests swap in a fake runtime. */
+let probeState: (name: string) => Promise<'running' | 'gone' | 'other'> = containerState;
+/**
+ * Containers whose probe is still out. A probe can take up to its 10 s
+ * timeout while the ticker fires every second: a container with a probe in
+ * flight is skipped rather than probed again, so slow probes never pile up,
+ * and each container is probed on its own so one slow engine call does not
+ * hold back the rest.
+ */
+const probing = new Set<string>();
+
+async function checkContainer(name: string, reg: RelayedContainer & { since: number; seenRunning: boolean }) {
+  const state = await probeState(name);
+  // Re-registered (a new spawn under the same name) while the probe was out:
+  // this answer is about the old one.
+  if (registered.get(name) !== reg) return;
+  if (state === 'running') {
+    reg.seenRunning = true;
+    if (!relays.has(name)) {
+      const relay = new ContainerRelay(name, reg);
+      relays.set(name, relay);
+      log.info('Exec relay: attaching', { container: name, ports: reg.ports });
+      void relay.run().catch((err: unknown) => log.warn('Exec relay: stopped', { container: name, err: String(err) }));
     }
+  } else if (state === 'gone' && (reg.seenRunning || Date.now() - reg.since > START_WINDOW_MS)) {
+    relays.get(name)?.close();
+    relays.delete(name);
+    registered.delete(name);
+  }
+}
+
+function tick(): void {
+  for (const [name, reg] of registered) {
+    if (probing.has(name)) continue;
+    probing.add(name);
+    void checkContainer(name, reg)
+      .catch(() => {})
+      .finally(() => probing.delete(name));
   }
   if (registered.size === 0 && ticker) {
     clearInterval(ticker);
@@ -468,7 +597,7 @@ export function registerRelayedContainer(name: string, c: RelayedContainer): voi
   // A new spawn under the same name replaces any relay from before.
   relays.get(name)?.close();
   relays.delete(name);
-  ticker ??= setInterval(() => void tick().catch(() => {}), TICK_MS);
+  ticker ??= setInterval(tick, TICK_MS);
   ticker.unref?.();
 }
 
@@ -477,10 +606,14 @@ export function relayReady(name: string): boolean {
   return relays.get(name)?.ready ?? false;
 }
 
-export function __resetExecRelayForTest(): void {
+export function __resetExecRelayForTest(
+  probe: (name: string) => Promise<'running' | 'gone' | 'other'> = containerState,
+): void {
   for (const r of relays.values()) r.close();
   relays.clear();
   registered.clear();
+  probing.clear();
+  probeState = probe;
   if (ticker) clearInterval(ticker);
   ticker = null;
 }

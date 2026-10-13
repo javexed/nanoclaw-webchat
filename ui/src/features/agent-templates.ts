@@ -308,7 +308,7 @@ async function browseSelectedSource(): Promise<void> {
   if (!sel || !list || !sel.value) return;
   list.innerHTML = '';
   const pending = document.createElement('li');
-  pending.textContent = 'Loading…';
+  pending.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>Loading…';
   list.appendChild(pending);
   try {
     // A remote source can fail for reasons the operator cannot fix locally; the catch says why.

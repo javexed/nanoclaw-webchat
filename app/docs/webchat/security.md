@@ -136,9 +136,11 @@ the repo. Recently blocked offers one-click Allow.
 443/80 (`git.example.com:22`) is tunnelled by the filter itself, past the
 gateway (which would read it as TLS). Never to this machine (loopback, any of
 its own addresses, the docker bridge gateway `172.17.0.1` where host services
-listen) or a link-local address. A private address (RFC 1918, IPv6 ULA) only
-when the entry is that address (`10.0.0.5:22`): a name that resolves to one is
-refused, so a name whose DNS someone else controls cannot reach into the LAN.
+listen) or a link-local address. A private address (RFC 1918, the
+100.64.0.0/10 shared space that carrier-grade NAT and Tailscale tailnets use,
+IPv6 ULA) only when the entry is that address (`10.0.0.5:22`,
+`100.96.1.2:22`): a name that resolves to one is refused, so a name whose
+DNS someone else controls cannot reach into the LAN or other tailnet machines.
 
 **Setting a mode:** agent panel → Network (Open / Allowlist / Model only; only
 opening asks for confirmation; `PUT /api/agents/:id/egress` reports
@@ -335,11 +337,12 @@ installed CLI exposes only `--header-name` / `--value-format`.
 
 ## Host listeners
 
-Two, and only one of them is meant for you:
+Three, and only one of them is meant for you:
 
 | Port | Bound to | Who dials it |
 | --- | --- | --- |
 | `WEBCHAT_PORT` (3100) | `WEBCHAT_HOST`, default `127.0.0.1` | browsers; refuses a non-loopback bind until an auth method is configured |
+| `WEBCHAT_SERVE_PORT` (main + 10000, 13100) | `127.0.0.1` | Tailscale Serve only |
 | `WEBCHAT_MCP_RELAY_PORT` (3102) | the `docker0` bridge IP (e.g. `172.17.0.1`) | agent containers, via `host.docker.internal` |
 
 The relay is the host-side hop that keeps MCP server credentials out of
@@ -373,6 +376,34 @@ written down:
 gateway rather than the host — so relay-backed MCP servers are expected to be
 unreachable for a group set to `host-only`, in the same way host-local LiteLLM
 and Ollama are. Not measured; treat it as unreachable until it is.
+
+### The Tailscale Serve listener
+
+Serve forwards each tailnet visitor over loopback with their login in
+`Tailscale-User-Login`. Being on loopback proves nothing about who sent that
+header: a Cloudflare tunnel, a reverse proxy or any local process connects
+from loopback too, and can set both the header and `Host`. So the header is
+believed only on connections accepted by the Serve listener, which is bound to
+`127.0.0.1` and which only Serve should be pointed at. On the main port it is
+never believed, with one transitional exception: while Serve's own config
+still proxies to the main port (an install set up before the listener), a
+loopback request addressed to Serve's name is believed as before, and startup
+warns with the `tailscale serve --bg --https=<port> <serve port>` command
+that ends it. See [HTTPS over Tailscale](webchat.md#https-over-tailscale-and-the-serve-listener).
+
+Two related rules:
+
+- **The localhost owner is for a browser on this machine only.** With no
+  sign-in method configured, a loopback request is the owner — unless it
+  carries a forwarding header (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`,
+  `Cf-Connecting-IP`, `Cf-Ray`, `Tailscale-User-Login`, `X-Forwarded-Host`) or
+  arrived on the Serve listener. A tunnel to a loopback-only install therefore
+  reaches a login screen, not the owner's session; give it a sign-in method
+  (the trusted proxy for Cloudflare Access, OIDC, or a token).
+- **Tailnet lookups are remembered briefly.** `tailscale whois` answers are
+  kept 30 seconds per peer address (a miss, 10), and the users-row write is
+  skipped while nothing about the identity changed (re-written at least once a
+  minute). A peer removed from the tailnet is refused within 30 seconds.
 
 ### OneCLI's own ports
 

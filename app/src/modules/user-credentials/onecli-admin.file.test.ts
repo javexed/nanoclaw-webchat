@@ -33,6 +33,10 @@ const SECRET = 'value-that-must-stay-out-of-argv';
 const last = () => cli.calls.at(-1)!;
 
 beforeEach(() => {
+  // The CLI path: no local gateway URL, so updates are not sent to its API.
+  delete process.env.ONECLI_URL;
+  delete process.env.ONECLI_API_KEY;
+  vi.unstubAllGlobals();
   cli.calls.length = 0;
   cli.createTakesFile = true;
   cli.updateTakesFile = false;
@@ -79,5 +83,65 @@ describe('secret values stay out of argv where the CLI allows', () => {
   it('keeps --value for a value the CLI would trim on the way in', async () => {
     await realOnecliAdmin.createGenericSecret('n', ' padded ', { hostPattern: 'h' });
     expect(last().args).toContain(' padded ');
+  });
+});
+
+describe('an update to a local gateway goes to its API, not argv', () => {
+  const sent: Array<{ url: string; method?: string; body: unknown }> = [];
+  const respond = (fn: () => Promise<Response> | Response) =>
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        sent.push({ url, method: init?.method, body: JSON.parse(String(init?.body ?? 'null')) });
+        return fn();
+      }),
+    );
+  const ok = () => new Response(JSON.stringify({ success: true }), { status: 200 });
+
+  beforeEach(() => {
+    sent.length = 0;
+    process.env.ONECLI_URL = 'http://127.0.0.1:10254';
+  });
+
+  it('sends the value in a PATCH body to the loopback API and never runs the CLI', async () => {
+    respond(ok);
+    await realOnecliAdmin.updateSecretValue('sec-1', SECRET);
+    expect(sent).toEqual([
+      { url: 'http://127.0.0.1:10254/api/secrets/sec-1', method: 'PATCH', body: { value: SECRET } },
+    ]);
+    expect(cli.calls).toEqual([]);
+  });
+
+  it('carries the header settings as the injection config', async () => {
+    respond(ok);
+    await realOnecliAdmin.updateGenericSecret('sec-2', SECRET, { headerName: 'X-Key', valueFormat: 'Bearer {value}' });
+    expect(sent[0]!.body).toEqual({
+      value: SECRET,
+      injectionConfig: { headerName: 'X-Key', valueFormat: 'Bearer {value}' },
+    });
+    expect(cli.calls).toEqual([]);
+  });
+
+  it('falls back to the CLI when the API refuses or cannot be reached', async () => {
+    respond(() => new Response('{}', { status: 500 }));
+    await realOnecliAdmin.updateSecretValue('sec-3', SECRET);
+    expect(last().args).toEqual(['secrets', 'update', '--id', 'sec-3', '--value', SECRET]);
+    respond(() => Promise.reject(new Error('ECONNREFUSED')));
+    await realOnecliAdmin.updateSecretValue('sec-4', SECRET);
+    expect(last().args).toContain('sec-4');
+    respond(() => new Response(JSON.stringify({ success: false }), { status: 200 }));
+    await realOnecliAdmin.updateSecretValue('sec-5', SECRET);
+    expect(last().args).toContain('sec-5');
+  });
+
+  it('keeps the CLI for a keyed or remote gateway', async () => {
+    respond(ok);
+    process.env.ONECLI_API_KEY = 'k';
+    await realOnecliAdmin.updateSecretValue('sec-6', SECRET);
+    delete process.env.ONECLI_API_KEY;
+    process.env.ONECLI_URL = 'https://vault.example.com';
+    await realOnecliAdmin.updateSecretValue('sec-7', SECRET);
+    expect(sent).toEqual([]);
+    expect(cli.calls.map((c) => c.args[3])).toEqual(['sec-6', 'sec-7']);
   });
 });
