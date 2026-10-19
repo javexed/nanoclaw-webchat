@@ -64,6 +64,32 @@ describe('redactSensitiveData — false-positive guards', () => {
     expect(redactSensitiveData(text)).toBe(text);
   });
 
+  it('leaves variable references alone in key=value secrets', () => {
+    const cmd = [
+      'az deployment group create --name AppDeployment \\',
+      '  --parameters dbPassword="$DB_PASSWORD" hashSalt="$HASH_SALT" \\',
+      '               containerRegistryPassword="$ACR_PASSWORD" \\',
+      '               openidConnectClientSecret="${OIDC_SECRET}"',
+    ].join('\n');
+    expect(redactSensitiveData(cmd)).toBe(cmd);
+    for (const t of [
+      'API_KEY=$env:API_KEY',
+      'TOKEN=%GITHUB_TOKEN%',
+      'SECRET={{ client_secret }}',
+      'password: <your-password>',
+      'password=$DB_PASSWORD',
+      'DB_PASSWORD=$(az keyvault secret show --name db)',
+    ])
+      expect(redactSensitiveData(t)).toBe(t);
+  });
+
+  it('still masks a literal value next to a variable', () => {
+    const out = redactSensitiveData('dbPassword="Hunter2Hunter2" hashSalt="$HASH_SALT" password=$ecretValue!');
+    expect(out).not.toContain('Hunter2Hunter2');
+    expect(out).toContain('hashSalt="$HASH_SALT"');
+    expect(out).not.toContain('$ecretValue!');
+  });
+
   it('preserves a full message when nothing matches', async () => {
     const text = 'Hello world — completely innocuous content with no secrets.';
     expect(redactSensitiveData(text)).toBe(text);

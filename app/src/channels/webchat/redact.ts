@@ -71,6 +71,14 @@ const PATTERNS: RedactPattern[] = [
   },
 ];
 
+/**
+ * A value that names a secret rather than holding one: a shell or PowerShell
+ * variable, command substitution, %VAR%, {{template}} or <placeholder>. The
+ * key=value rules leave these alone (`dbPassword="$DB_PASSWORD"`).
+ */
+const REFERENCE =
+  /^(?:\$\{?[A-Za-z_]\w*\}?|\$\(.*|\$env:[A-Za-z_]\w*|%[A-Za-z_]\w*%|\{\{.*\}\}|<[^<>]+>)['"]?[,;)]?$/i;
+
 function maskValue(value: string, label: string, keep?: { prefix?: number; suffix?: number }): string {
   const prefix = keep?.prefix ?? 0;
   const suffix = keep?.suffix ?? 0;
@@ -88,7 +96,8 @@ export function redactSensitiveData(text: string): string {
   let result = text;
   for (const { pattern, label, keep } of PATTERNS) {
     pattern.lastIndex = 0;
-    result = result.replace(pattern, (match) => {
+    result = result.replace(pattern, (match, value?: unknown) => {
+      if (typeof value === 'string' && REFERENCE.test(value)) return match;
       if (label === 'CONN_PASSWORD') {
         const colonAt = match.indexOf(':', 3);
         const atSign = match.lastIndexOf('@');
