@@ -79,8 +79,23 @@ describe('redactSensitiveData — false-positive guards', () => {
       'password: <your-password>',
       'password=$DB_PASSWORD',
       'DB_PASSWORD=$(az keyvault secret show --name db)',
+      "PG_ADMIN_PASSWORD='<psqladmin password>' bash scripts/provision-site-db.sh",
+      "--settings DB_PASSWORD='<the role password>'",
     ])
       expect(redactSensitiveData(t)).toBe(t);
+  });
+
+  it('reads "password is <word>" as prose, but masks a password-like value', () => {
+    for (const t of [
+      'the password is blank:',
+      'If admin is enabled and the password is real — then',
+      'the token is expired.',
+      '**Blocker: client secret is expired**',
+      '(the pin is gone), fillpdf',
+    ])
+      expect(redactSensitiveData(t)).toBe(t);
+    expect(redactSensitiveData('my password is Hunter2!')).not.toContain('Hunter2');
+    expect(redactSensitiveData('password: sunshine')).not.toContain('sunshine');
   });
 
   it('still masks a literal value next to a variable', () => {
@@ -116,7 +131,9 @@ describe('redactMessageContent', () => {
     const out = redactMessageContent(card);
     const parsed = JSON.parse(out) as { skillName: string; description: string };
     expect(parsed.skillName).toBe('ansible-become-false-needs-both-keys');
-    expect(parsed.description).toBe(redactSensitiveData('Stop a play failing with "sudo: a password is required" at the group level'));
+    expect(parsed.description).toBe(
+      redactSensitiveData('Stop a play failing with "sudo: a password is required" at the group level'),
+    );
   });
 
   it('redacts secrets inside JSON values, and plain text as before', () => {

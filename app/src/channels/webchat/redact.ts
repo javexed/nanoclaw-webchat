@@ -77,7 +77,10 @@ const PATTERNS: RedactPattern[] = [
  * key=value rules leave these alone (`dbPassword="$DB_PASSWORD"`).
  */
 const REFERENCE =
-  /^(?:\$\{?[A-Za-z_]\w*\}?|\$\(.*|\$env:[A-Za-z_]\w*|%[A-Za-z_]\w*%|\{\{.*\}\}|<[^<>]+>)['"]?[,;)]?$/i;
+  /^(?:\$\{?[A-Za-z_]\w*\}?|\$\(.*|\$env:[A-Za-z_]\w*|%[A-Za-z_]\w*%|\{\{.*\}\}|<[^<>]*>?)['"]?[,;)]?$/i;
+
+/** "the password is blank": after "is", a plain lowercase word is prose, not a password. */
+const PROSE_WORD = /^[a-z]+[^\w\s]*$/;
 
 function maskValue(value: string, label: string, keep?: { prefix?: number; suffix?: number }): string {
   const prefix = keep?.prefix ?? 0;
@@ -116,6 +119,7 @@ export function redactSensitiveData(text: string): string {
       }
       if (label === 'PASSWORD' || label === 'SECRET') {
         const sep = match.match(/^(.+?(?::|is|=)\s*['"]?)(.+?)(['"]?)$/i);
+        if (sep && /\bis\s*['"]?$/i.test(sep[1]) && PROSE_WORD.test(sep[2])) return match;
         if (sep) return sep[1] + maskValue(sep[2], label, { prefix: 0, suffix: 0 }) + sep[3];
       }
       return maskValue(match, label, keep);
