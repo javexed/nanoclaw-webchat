@@ -1478,3 +1478,49 @@ export const moduleWebchatThreadCreator: Migration = {
     await db.exec(`ALTER TABLE webchat_threads ADD COLUMN created_by TEXT;`);
   },
 };
+
+/**
+ * Agent machines (modules/machines): sites (a backend plus its sizes and
+ * caps) and the machines built on them. Deleted machines keep their row, so
+ * the record of who had what outlives the VM.
+ */
+export const moduleWebchatMachines: Migration = {
+  version: 236,
+  name: 'webchat-machines',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS machine_sites (
+        id             TEXT PRIMARY KEY,
+        backend        TEXT NOT NULL,
+        label          TEXT NOT NULL,
+        config_json    TEXT NOT NULL DEFAULT '{}',
+        sizes_json     TEXT NOT NULL DEFAULT '{}',
+        per_agent_cap  INTEGER NOT NULL DEFAULT 2,
+        install_cap    INTEGER NOT NULL DEFAULT 6,
+        auto_stop_at   TEXT,
+        enabled        INTEGER NOT NULL DEFAULT 1,
+        created_at     INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS machines (
+        id              TEXT PRIMARY KEY,
+        agent_group_id  TEXT NOT NULL,
+        site_id         TEXT NOT NULL,
+        name            TEXT NOT NULL,
+        size            TEXT NOT NULL,
+        state           TEXT NOT NULL,
+        handle          TEXT,
+        private_ip      TEXT,
+        op_id           TEXT NOT NULL,
+        last_error      TEXT,
+        expires_at      INTEGER,
+        created_by      TEXT,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_machines_group ON machines (agent_group_id, state);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_machines_group_name_live
+        ON machines (agent_group_id, name) WHERE state <> 'deleted';
+    `);
+  },
+};

@@ -182,3 +182,4 @@ src/modules/approvals/words.test.ts
 src/modules/approvals/resend.ts
 src/modules/approvals/resend.test.ts
 container/agent-runner/src/learning-loop.test.ts
+src/modules/machines
