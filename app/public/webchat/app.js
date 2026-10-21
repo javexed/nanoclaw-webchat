@@ -311,11 +311,11 @@ function showSignInAgain() {
 	shown = true;
 	const banner = $("#connection-banner");
 	if (banner) {
-		banner.replaceChildren(document.createTextNode("Your sign-in expired."));
+		banner.replaceChildren(document.createTextNode("Signed out"));
 		const btn = document.createElement("button");
 		btn.type = "button";
 		btn.className = "banner-action";
-		btn.textContent = "Sign in again";
+		btn.textContent = "Reload";
 		btn.addEventListener("click", () => signInAgain());
 		banner.appendChild(btn);
 		banner.classList.add("visible");
@@ -397,13 +397,28 @@ function authFetch(url, opts = {}) {
 	const headers = { ...opts.headers };
 	if (authToken && !headers["Authorization"] && !headers["authorization"]) headers["Authorization"] = `Bearer ${authToken}`;
 	headers["X-Webchat-CSRF"] = "1";
+	if (sessionExpiredShown()) return PAUSED();
 	return fetch(url, {
 		...opts,
 		headers
 	}).then((res) => {
 		noteAuthHint(res);
 		return res;
+	}, async (err) => {
+		if (url.startsWith("/") && !url.startsWith("//") && await expiredOnce()) return PAUSED();
+		throw err;
 	});
+}
+/** A request that never settles: callers stay quiet while the banner is up. */
+var PAUSED = () => new Promise(() => {});
+/** One check at a time: a burst of failed polls shares it. */
+var checking = null;
+function expiredOnce() {
+	if (sessionExpiredShown()) return Promise.resolve(true);
+	checking ??= checkSessionExpired().finally(() => {
+		checking = null;
+	});
+	return checking;
 }
 /** authFetch + JSON ceremony in one call. Sends a JSON body when `body` is
 * given, parses the JSON response (tolerating empty/non-JSON), and throws
