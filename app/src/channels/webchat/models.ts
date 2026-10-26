@@ -18,6 +18,7 @@ import { ensureContainerConfig, getContainerConfig, updateContainerConfigScalars
 import { listProviderContainerConfigNames } from '../../providers/provider-container-registry.js';
 import { log } from '../../log.js';
 import { readEnvFile } from '../../env.js';
+import { recordInstructionEdit } from '../../modules/instruction-guard/store.js';
 import { getAssignedModelForAgent, getEffectiveModelForAgent, type WebchatModel } from './db.js';
 import { agentRouterBase, CLOUD_PROVIDERS, cloudModelMaxOutput, routerAuthHeaders } from './cloud-models.js';
 import { upsertEnv } from './env-write.js';
@@ -539,9 +540,11 @@ export async function writeAgentSettingsForAssignedModel(agentGroupId: string): 
   }
 
   let existing: Record<string, unknown> = {};
+  let before: string | null = null;
   if (fs.existsSync(settingsPath)) {
     try {
-      existing = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      before = fs.readFileSync(settingsPath, 'utf-8');
+      existing = JSON.parse(before);
     } catch {
       // corrupt — start fresh, log so the operator notices
       log.warn('Webchat: settings.json unparseable, rewriting from scratch', { agentGroupId });
@@ -573,7 +576,15 @@ export async function writeAgentSettingsForAssignedModel(agentGroupId: string): 
   }
 
   const merged = { ...existing, env: { ...cleaned, ...overrides } };
-  fs.writeFileSync(settingsPath, JSON.stringify(merged, null, 2) + '\n');
+  const after = JSON.stringify(merged, null, 2) + '\n';
+  fs.writeFileSync(settingsPath, after);
+  // The file is guarded (modules/instruction-guard): the host's own write is
+  // approved, unless an unapproved agent edit was already in it.
+  try {
+    recordInstructionEdit(agentGroupId, 'claude-user-settings-json', before, after);
+  } catch (err) {
+    log.warn('Webchat: could not record the settings write as approved', { agentGroupId, err });
+  }
   const nextOwned: Record<string, string> = {};
   for (const k of OWNED_ENV_KEYS) if (overrides[k] !== undefined) nextOwned[k] = envHash(overrides[k]);
   if (Object.keys(nextOwned).length) fs.writeFileSync(ownedPath, JSON.stringify(nextOwned) + '\n');

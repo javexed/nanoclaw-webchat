@@ -187,7 +187,9 @@ src/container-runner.ts
     Product touchpoint: the instruction guard's spawn check
     (guardStandingInstructions) runs after initGroupFilesystem, before
     buildMounts composes the project document; it needs the session to card
-    the right approvers and tell the agent its edit is held.
+    the right approvers and tell the agent its edit is held. buildMounts also
+    mounts the guard's approved snapshot read-only at /app/.instruction-baseline
+    for the runner's per-turn check.
 src/db/agent-groups.ts
     lifecycle status setter with validation
 src/db/db-v2.test.ts
@@ -310,7 +312,7 @@ container/CLAUDE.md
 container/agent-runner/src/config.ts
     lenientOutput + learning config surface read by the runner
 container/agent-runner/src/index.ts
-    module imports (status feed, learning, send-file hint, task-run marks); the prompt addendum
+    module imports (status feed, learning, send-file hint, task-run marks, instruction guard); the prompt addendum
     is built after the provider so it can consult supportsMcpTools; records the
     built addendum and memory section in session state (context-snapshot.ts)
 container/agent-runner/src/mcp-tools/cli.instructions.md

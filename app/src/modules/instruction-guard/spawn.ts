@@ -14,14 +14,40 @@ import { guard } from '../../guard/index.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
 import type { AgentGroup, PendingApproval, Session } from '../../types.js';
-import { compactDiff } from './diff.js';
+import { fencedDiff } from './diff.js';
 import { INSTRUCTION_CHANGE_ACTION, instructionChange, parsePayload, sameChange } from './guard.js';
-import { checkInstructionFiles, dropHeld, groupStore, readJson, type Held, type InstructionChange } from './store.js';
+import {
+  checkInstructionFiles,
+  displayContent,
+  dropHeld,
+  groupStore,
+  ingestRuntimeProposals,
+  readJson,
+  REJECT_COOLDOWN_MS,
+  type Held,
+  type InstructionChange,
+} from './store.js';
 
 /** A held copy with no pending approval behind it is dropped after this long. */
 const ORPHAN_HELD_MS = 60 * 60 * 1000;
 
 const inflight = new Set<string>();
+
+/** Drop reject records past their cooldown. */
+function pruneRejected(agentGroupId: string): void {
+  const dir = path.join(groupStore(agentGroupId), 'rejected');
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const row = readJson<{ rejectedAt: string }>(path.join(dir, name));
+    if (row && Date.now() - Date.parse(row.rejectedAt) < REJECT_COOLDOWN_MS) continue;
+    fs.rmSync(path.join(dir, name), { force: true });
+  }
+}
 
 function pruneOrphanHeld(agentGroupId: string, pending: PendingApproval[], keep: string): void {
   const dir = path.join(groupStore(agentGroupId), 'held');
@@ -64,7 +90,9 @@ async function raiseApproval(group: AgentGroup, session: Session, change: Instru
       `${group.name} edited ${change.file.label}. The approved version stays in effect until you decide; ` +
       'approving applies this edit and restarts the agent once it is idle.';
     const budget = MAX_CARD_QUESTION_LENGTH - title.length - intro.length - 32;
-    const question = `${intro}\n\n\`\`\`diff\n${compactDiff(change.before, change.after, budget)}\n\`\`\``;
+    const before = displayContent(change.file, change.before);
+    const after = displayContent(change.file, change.after);
+    const question = `${intro}\n\n${fencedDiff(before, after, budget)}`;
     const { requestApproval } = await import('../approvals/index.js');
     await requestApproval({
       session,
@@ -81,6 +109,12 @@ async function raiseApproval(group: AgentGroup, session: Session, change: Instru
 }
 
 function noticeText(change: InstructionChange): string {
+  if (change.rejected) {
+    return (
+      `Your edit to ${change.file.label} was not applied: an owner rejected this exact change within the last day. ` +
+      'The approved version is back in place.'
+    );
+  }
   if (change.outcome === 'refused') {
     return (
       `${change.file.label} was reset to its approved version (${change.detail}). ` +
@@ -102,7 +136,14 @@ function noticeText(change: InstructionChange): string {
  * this session's own spawn would wait on that spawn.
  */
 export async function guardStandingInstructions(group: AgentGroup, session: Session): Promise<void> {
-  const changes = checkInstructionFiles(group);
+  pruneRejected(group.id);
+  // Edits the agent-runner already reverted between turns, then the files as they are now.
+  const proposals = ingestRuntimeProposals(group);
+  const current = checkInstructionFiles(group, session.id);
+  const changes = [
+    ...proposals,
+    ...current.filter((c) => !proposals.some((p) => p.file.id === c.file.id && p.sha256 === c.sha256)),
+  ];
   for (const change of changes) {
     try {
       await writeSessionMessage(group.id, session.id, {
@@ -118,7 +159,7 @@ export async function guardStandingInstructions(group: AgentGroup, session: Sess
     } catch (err) {
       log.warn('Could not tell the agent its instruction change is held', { agentGroupId: group.id, err });
     }
-    if (change.outcome !== 'held') continue;
+    if (change.outcome !== 'held' || change.rejected) continue;
     void raiseApproval(group, session, change).catch((err: unknown) => {
       log.error('Instruction change approval could not be raised', {
         agentGroupId: group.id,
