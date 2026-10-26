@@ -1,5 +1,5 @@
 diff --git a/src/channels/adapter.ts b/src/channels/adapter.ts
-index 136014df..cc16f16c 100644
+index 3aef0b41..8d61ccf7 100644
 --- a/src/channels/adapter.ts
 +++ b/src/channels/adapter.ts
 @@ -1,3 +1,4 @@
@@ -7,7 +7,7 @@ index 136014df..cc16f16c 100644
  /**
   * v2 Channel Adapter interface.
   *
-@@ -231,13 +232,28 @@ export interface ChannelAdapter {
+@@ -241,13 +242,28 @@ export interface ChannelAdapter {
    // Outbound delivery — returns the platform message ID if available
    deliver(platformId: string, threadId: string | null, message: OutboundMessage): Promise<string | undefined>;
  

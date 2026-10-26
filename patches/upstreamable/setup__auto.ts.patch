@@ -1,8 +1,8 @@
 diff --git a/setup/auto.ts b/setup/auto.ts
-index 6c0d7828..a4111751 100644
+index 8ac67c1b..3771efee 100644
 --- a/setup/auto.ts
 +++ b/setup/auto.ts
-@@ -165,8 +165,13 @@ async function main(): Promise<void> {
+@@ -179,8 +179,13 @@ async function main(): Promise<void> {
    // Welcome menu — default path or open advanced overrides before any setup
    // work begins. Default lands on standard so Enter is the happy path.
    // On sg re-exec, the user already chose — skip straight to standard.
@@ -17,7 +17,7 @@ index 6c0d7828..a4111751 100644
      startChoice = ensureAnswer(
        await brightSelect<'default' | 'advanced'>({
          message: 'How would you like to begin?',
-@@ -958,6 +963,15 @@ function sendChatMessage(message: string): Promise<void> {
+@@ -986,6 +991,15 @@ function sendChatMessage(message: string): Promise<void> {
  
  // ─── auth step (select → branch) ────────────────────────────────────────
  

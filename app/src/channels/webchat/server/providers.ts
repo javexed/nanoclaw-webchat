@@ -21,6 +21,11 @@ export function grokAvailable(): boolean {
   return listProviderContainerConfigNames().includes('grok');
 }
 
+/** The GitHub Copilot harness (add-copilot) — same registration test. */
+export function copilotAvailable(): boolean {
+  return listProviderContainerConfigNames().includes('copilot');
+}
+
 /**
  * Every non-default harness this install can actually run. The one list every
  * call site consults, so the picker and room creation cannot disagree.
@@ -31,5 +36,6 @@ export function availableProviders(): string[] {
     ...(piAvailable() ? ['pi'] : []),
     ...(codexAvailable() ? ['codex'] : []),
     ...(grokAvailable() ? ['grok'] : []),
+    ...(copilotAvailable() ? ['copilot'] : []),
   ];
 }

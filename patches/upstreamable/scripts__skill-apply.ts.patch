@@ -1,5 +1,5 @@
 diff --git a/scripts/skill-apply.ts b/scripts/skill-apply.ts
-index a4332813..132c6ea6 100644
+index 12a37032..22ca4c9a 100644
 --- a/scripts/skill-apply.ts
 +++ b/scripts/skill-apply.ts
 @@ -23,8 +23,18 @@
@@ -22,7 +22,7 @@ index a4332813..132c6ea6 100644
  import { gitFetchBranchCommand } from './git-fetch-branch.js';
  import { gitShowToFileCommand } from './git-show-to-file.js';
  import { parseDirectives, promptVar, type Directive } from './skill-directives.js';
-@@ -578,6 +588,20 @@ function substitute(value: string, vars: Map<string, { value: string; secret: bo
+@@ -593,6 +603,20 @@ function substitute(value: string, vars: Map<string, { value: string; secret: bo
    });
  }
  
@@ -43,7 +43,7 @@ index a4332813..132c6ea6 100644
  // A `when:<var>=<value>` guard: the directive applies only when an earlier
  // prompt/capture bound <var> to exactly <value>. Unmet — including the var still
  // unresolved (a deferred prompt) — skips the directive, so a guarded prompt is
-@@ -643,7 +667,7 @@ async function applyOne(
+@@ -665,7 +689,7 @@ async function applyOne(
    ctx: {
      root: string;
      skillDir: string;
@@ -52,7 +52,7 @@ index a4332813..132c6ea6 100644
      execStream?: (c: string) => Promise<StepOutcome>;
      resolveRemote: (b: string) => string;
      resolveDependencyCommand?: (request: DependencyCommandRequest) => string;
-@@ -661,14 +685,58 @@ async function applyOne(
+@@ -683,14 +707,58 @@ async function applyOne(
        if (lines.length === 0) break;
        if (d.attrs['from-branch']) {
          const b = String(d.attrs['from-branch']);
@@ -119,7 +119,7 @@ index a4332813..132c6ea6 100644
          }
        } else {
          for (const l of lines) {
-@@ -774,7 +842,7 @@ async function applyOne(
+@@ -796,7 +864,7 @@ async function applyOne(
          // call `ncl ... {{owner_email}}` to wire from collected input. A command
          // with no {{...}} (build/test) is returned unchanged; an unresolved var
          // throws → caught → deferred (the prompt hasn't been answered yet).
@@ -128,7 +128,7 @@ index a4332813..132c6ea6 100644
          // Last command wins for capture (a capture run should be a single command).
          // bindCapture binds stdout-as-is OR a multi-field JSON spec, and enforces
          // validate:<re> — a mismatch / unparseable JSON throws → bounced to an agent.
-@@ -876,7 +944,23 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
+@@ -902,7 +970,23 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
      res.agentTasks.push({ kind: d.kind, line: d.line, reason, prose: proseFor(md, d.line) });
    };
  
@@ -152,9 +152,9 @@ index a4332813..132c6ea6 100644
      // Tracks an in-flight step so the catch can always close a matching
      // step-end (start/end stay balanced even when applyOne throws — a consumer's
      // spinner is never orphaned). Set only after step-start fires.
-@@ -1038,7 +1122,12 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
-       }
-       if (/unresolved \{\{/.test(msg))
+@@ -1069,7 +1153,12 @@ export async function applySkill(skillDir: string, root: string, opts: ApplyOpti
+       if (e instanceof StepFailure && e.reported) bounce(d, msg);
+       else if (/unresolved \{\{/.test(msg))
          res.deferred.push(msg); // blocked on a prompt input
 -      else bounce(d, `engine could not apply (${msg}) — an agent applies it from the prose`);
 +      else {

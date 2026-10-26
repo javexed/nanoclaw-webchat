@@ -1,17 +1,8 @@
 diff --git a/scripts/update/transaction.e2e.test.ts b/scripts/update/transaction.e2e.test.ts
-index 697ce8ca..92b40bdd 100644
+index c4e1b0ac..acc8711c 100644
 --- a/scripts/update/transaction.e2e.test.ts
 +++ b/scripts/update/transaction.e2e.test.ts
-@@ -3,7 +3,7 @@ import fs from 'node:fs';
- import os from 'node:os';
- import path from 'node:path';
- 
--import { afterEach, describe, expect, it } from 'vitest';
-+import { afterEach, describe, expect, it, vi } from 'vitest';
- 
- import {
-   acknowledgeRequirement,
-@@ -603,7 +603,23 @@ describe('update-nanoclaw transaction end to end', () => {
+@@ -1319,7 +1319,23 @@ describe('update-nanoclaw transaction end to end', () => {
      // run an automatic rollback — which must see a COMPLETE snapshot.
      failTargetBuild = false;
      write(fixture.install, 'data/aaa-unreadable', 'secret');
@@ -36,7 +27,7 @@ index 697ce8ca..92b40bdd 100644
      try {
        await expect(cutoverUpdate(fixture.install, state.id, runtime)).rejects.toThrow(/EACCES|permission denied/i);
  
-@@ -615,10 +631,7 @@ describe('update-nanoclaw transaction end to end', () => {
+@@ -1331,10 +1347,7 @@ describe('update-nanoclaw transaction end to end', () => {
        expect(fs.existsSync(snapshotDb)).toBe(true);
        expect(fs.existsSync(path.join(state.transactionRoot, 'snapshot.prev'))).toBe(false);
      } finally {

@@ -1,8 +1,8 @@
 diff --git a/src/host-sweep.test.ts b/src/host-sweep.test.ts
-index c43c8955..850f719b 100644
+index bacbbb9a..695c6529 100644
 --- a/src/host-sweep.test.ts
 +++ b/src/host-sweep.test.ts
-@@ -11,6 +11,8 @@ import {
+@@ -19,6 +19,8 @@ import {
    CLAIM_STUCK_MS,
    _resetStuckProcessingRowsForTesting,
    decideStuckAction,
@@ -11,7 +11,7 @@ index c43c8955..850f719b 100644
    shouldCloseTaskSession,
  } from './host-sweep.js';
  import type { Session } from './types.js';
-@@ -282,6 +284,80 @@ describe('deleteOrphanProcessingClaims', () => {
+@@ -295,6 +297,80 @@ describe('deleteOrphanProcessingClaims', () => {
    });
  });
  
@@ -92,7 +92,7 @@ index c43c8955..850f719b 100644
  describe('resetStuckProcessingRows — orphan claim cleanup', () => {
    it('deletes orphan processing_ack rows so next sweep tick does not see them', () => {
      const { inDb, outDb } = makeSessionDbs();
-@@ -340,6 +416,47 @@ describe('resetStuckProcessingRows — orphan claim cleanup', () => {
+@@ -353,6 +429,47 @@ describe('resetStuckProcessingRows — orphan claim cleanup', () => {
    });
  });
  

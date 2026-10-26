@@ -7,11 +7,18 @@ import type { ServerResponse } from 'http';
 
 import { json, readJsonObject } from './http.js';
 import { defaultProviderChanges, readDefaultProvider } from './default-provider.js';
+import {
+  cancelCopilotLogin,
+  copilotStatus,
+  disconnectCopilot,
+  getCopilotLoginProgress,
+  startCopilotLogin,
+} from './copilot-connect.js';
 import { cancelGrokLogin, getGrokLoginProgress, startGrokLogin } from './grok-auth-flow.js';
 import { grokStatus } from './grok-status.js';
 import { scheduleHostRestart } from '../ollama-manage.js';
 import { upsertEnv } from '../env-write.js';
-import { availableProviders, grokAvailable } from './providers.js';
+import { availableProviders, copilotAvailable, grokAvailable } from './providers.js';
 import { hasFeatureInstall, installStatus, startFeatureInstall } from '../install-engine.js';
 import type { RouteCtx } from '../server.js';
 
@@ -63,6 +70,7 @@ export const { get: rCodexInstallGet, post: rCodexInstallPost } = bound('codex')
 export const { get: rGrokInstallGet, post: rGrokInstallPost } = bound('grok');
 export const { get: rOpencodeInstallGet, post: rOpencodeInstallPost } = bound('opencode');
 export const { get: rPiInstallGet, post: rPiInstallPost } = bound('pi');
+export const { get: rCopilotInstallGet, post: rCopilotInstallPost } = bound('copilot');
 
 export const { get: rWebchatTtsInstallGet, post: rWebchatTtsInstallPost } = bound('tts');
 
@@ -110,6 +118,39 @@ export async function rGrokLoginPost(ctx: RouteCtx, m: RegExpMatchArray): Promis
 }
 
 /**
+ * GitHub Copilot connection — the Grok contract (GET reports, POST start /
+ * cancel) plus disconnect, since the sign-in stores gateway credentials that
+ * Settings can also remove. GET carries the connection status, so one poll
+ * answers both "is the sign-in done" and "what is connected".
+ */
+export async function rCopilotLoginGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
+  return json(ctx.res, 200, { ...getCopilotLoginProgress(), ...copilotStatus() });
+}
+
+export async function rCopilotLoginPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { res } = ctx;
+  const verb = m[1];
+  if (verb === 'cancel') return json(res, 200, { ...cancelCopilotLogin(), ...getCopilotLoginProgress() });
+  if (!copilotAvailable())
+    return json(res, 409, {
+      error: 'GitHub Copilot is not installed — install it first, then connect.',
+      code: 'not-installed',
+    });
+  if (verb === 'disconnect') {
+    try {
+      await disconnectCopilot();
+    } catch {
+      // The gateway's own errors can quote request details; never relay them.
+      return json(res, 502, { error: 'Could not remove the Copilot credential — check the gateway is running.' });
+    }
+    return json(res, 200, { ...getCopilotLoginProgress(), ...copilotStatus() });
+  }
+  const r = startCopilotLogin();
+  if (r.error === 'already-running') return json(res, 200, { ...getCopilotLoginProgress(), started: false });
+  return json(res, 202, { ...getCopilotLoginProgress(), started: true });
+}
+
+/**
  * The install-wide default provider for NEW agents — what the wizard's engine
  * choice should actually mean beyond its own create step.
  */
@@ -134,6 +175,12 @@ export async function rWorkspaceProviderPut(ctx: RouteCtx, _m: RegExpMatchArray)
   if (provider === 'grok' && !grokStatus().connected)
     return json(res, 409, {
       error: 'Grok is not connected — finish the sign-in before making it the default.',
+      code: 'not-connected',
+    });
+
+  if (provider === 'copilot' && !copilotStatus().connected)
+    return json(res, 409, {
+      error: 'GitHub Copilot is not connected — finish the sign-in before making it the default.',
       code: 'not-connected',
     });
 

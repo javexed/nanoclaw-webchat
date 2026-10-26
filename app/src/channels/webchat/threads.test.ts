@@ -22,7 +22,8 @@ import {
   renameWebchatThread,
   deleteWebchatThread,
   markThreadRead,
-  getUnreadThreadIdsForRoom,
+  getUnreadThreadCountsForRoom,
+  getThreadReadMarker,
   threadToSessionKey,
   sessionKeyToThread,
   sanitizeThreadTitle,
@@ -223,10 +224,33 @@ describe('per-thread read markers', () => {
     await storeWebchatMessage('room-1', 'Alice', 'user', 'b', t.thread_id);
 
     // nothing read yet → both unread
-    expect(await getUnreadThreadIdsForRoom('u1', 'room-1')).toEqual(new Set([MAIN_THREAD, t.thread_id]));
+    expect(await getUnreadThreadCountsForRoom('u1', 'room-1')).toEqual(
+      new Map([
+        [MAIN_THREAD, 1],
+        [t.thread_id, 1],
+      ]),
+    );
 
     await markThreadRead('u1', 'room-1', MAIN_THREAD, Date.now() + 1000);
-    expect(await getUnreadThreadIdsForRoom('u1', 'room-1')).toEqual(new Set([t.thread_id]));
+    expect(await getUnreadThreadCountsForRoom('u1', 'room-1')).toEqual(new Map([[t.thread_id, 1]]));
+  });
+
+  it('counts only the messages past the thread marker', async () => {
+    await storeWebchatMessage('room-1', 'Alice', 'user', 'a', MAIN_THREAD);
+    const marker = Date.now() + 1000;
+    await markThreadRead('u1', 'room-1', MAIN_THREAD, marker);
+    for (const text of ['b', 'c', 'd']) {
+      const m = await storeWebchatMessage('room-1', 'Alice', 'user', text, MAIN_THREAD);
+      await getDb().run(`UPDATE webchat_messages SET created_at = ? WHERE id = ?`, marker + 1, m.id);
+    }
+    expect((await getUnreadThreadCountsForRoom('u1', 'room-1')).get(MAIN_THREAD)).toBe(3);
+  });
+
+  it('reports where the user left off, or null for a thread never opened', async () => {
+    expect(await getThreadReadMarker('u1', 'room-1', MAIN_THREAD)).toBeNull();
+    await markThreadRead('u1', 'room-1', MAIN_THREAD, 5000);
+    expect(await getThreadReadMarker('u1', 'room-1', MAIN_THREAD)).toBe(5000);
+    expect(await getThreadReadMarker('u2', 'room-1', MAIN_THREAD)).toBeNull();
   });
 
   it('marker is monotonic (never moves backward)', async () => {

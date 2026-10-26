@@ -51,3 +51,5 @@ moduleWebchatDropThreadEngaged
 moduleWebchatFitContext
 moduleWebchatTurnTraces
 moduleWebchatMessageSenderUserId
+moduleWebchatLimitRetries
+moduleWebchatServedModel

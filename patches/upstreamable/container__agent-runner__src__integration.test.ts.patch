@@ -1,8 +1,8 @@
 diff --git a/container/agent-runner/src/integration.test.ts b/container/agent-runner/src/integration.test.ts
-index e9b4759f..af93b2ce 100644
+index 88ae479a..caed1638 100644
 --- a/container/agent-runner/src/integration.test.ts
 +++ b/container/agent-runner/src/integration.test.ts
-@@ -232,17 +232,56 @@ describe('poll loop integration', () => {
+@@ -236,17 +236,56 @@ describe('poll loop integration', () => {
        { platformId: 'chan-1', channelType: 'discord', threadId: 'discord-thread' },
      );
  
@@ -62,7 +62,7 @@ index e9b4759f..af93b2ce 100644
  
      await loopPromise.catch(() => {});
    });
-@@ -342,11 +381,16 @@ describe('poll loop integration', () => {
+@@ -346,11 +385,16 @@ describe('poll loop integration', () => {
  });
  
  // Helper: run poll loop until aborted or timeout

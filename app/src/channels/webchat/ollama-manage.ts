@@ -1224,6 +1224,8 @@ export const grokInstallSteps = (root: string): InstallStep[] => harnessInstallS
 export const codexInstallSteps = (root: string): InstallStep[] => harnessInstallSteps(root, 'codex', 'Codex');
 export const opencodeInstallSteps = (root: string): InstallStep[] => harnessInstallSteps(root, 'opencode', 'OpenCode');
 export const piInstallSteps = (root: string): InstallStep[] => harnessInstallSteps(root, 'pi', 'pi');
+export const copilotInstallSteps = (root: string): InstallStep[] =>
+  harnessInstallSteps(root, 'copilot', 'GitHub Copilot');
 
 // ── The four harness installs, on the engine ────────────────────────────────
 // Each is its steps builder plus the two facts that differ: which skill must be
@@ -1236,6 +1238,7 @@ for (const [name, label, skill, steps] of [
   ['grok', 'Grok', 'add-grok', grokInstallSteps],
   ['opencode', 'OpenCode', 'add-opencode', opencodeInstallSteps],
   ['pi', 'pi', 'add-pi-stack', piInstallSteps],
+  ['copilot', 'GitHub Copilot', 'add-copilot', copilotInstallSteps],
 ] as const) {
   registerFeatureInstall(name, {
     restarts: true,
@@ -1412,6 +1415,9 @@ export function mergeRoutesUpdate(
   routerName?: string,
 ): Record<string, unknown> {
   if (!Array.isArray(update.routes) || update.routes.length === 0) throw new Error('at least one route is required');
+  // A router's name is a virtual model, not one the operator opted into: the
+  // routing hook refuses it as a target, so the editor refuses to bind it.
+  const virtualModels = new Set(listRouters(existing));
   const seen = new Set<string>();
   for (const r of update.routes) {
     if (typeof r.name !== 'string' || !/^[a-z0-9_-]{1,32}$/i.test(r.name)) {
@@ -1424,6 +1430,9 @@ export function mergeRoutesUpdate(
     }
     if (typeof r.model !== 'string' || !r.model.trim()) {
       throw new Error(`route "${r.name}" needs a model binding`);
+    }
+    if (virtualModels.has(r.model.trim())) {
+      throw new Error(`route "${r.name}" is bound to the router "${r.model.trim()}" — bind it to a model`);
     }
   }
   const merged: Record<string, unknown> = { ...existing };
@@ -1722,7 +1731,52 @@ export async function getRouteSuggestions(root = process.cwd()): Promise<RouteSu
   if (!cfg || !cat) return [];
   const info = await getRouterInfo(root);
   if (!info.available || info.models.length === 0) return [];
-  return computeRouteSuggestions(primaryRouter(cfg).routes, info.models, cat);
+  // Routes are only ever suggested (and auto-added) for local models: a keyed
+  // cloud model is the operator's explicit choice, never the classifier's.
+  const local = localRouterModels(readRouterConfigText(root));
+  return computeRouteSuggestions(
+    primaryRouter(cfg).routes,
+    info.models.filter((m) => local.has(m)),
+    cat,
+  );
+}
+
+function readRouterConfigText(root: string): string {
+  try {
+    return fs.readFileSync(path.join(root, 'data/litellm/config.yaml'), 'utf8');
+  } catch {
+    return ''; // no config: nothing is known to be local
+  }
+}
+
+/**
+ * The router models served only by local, keyless backends, from the
+ * generated data/litellm/config.yaml: an Ollama host (no api_key) or a keyless
+ * OpenAI-compatible host. A name with any keyed deployment (an os.environ key,
+ * or one the credential gateway adds) is a cloud model, never local.
+ * KEEP-IN-SYNC with localModels() in bind-routes.mjs and _local_models() in
+ * router_hook.py.
+ */
+export function localRouterModels(configYaml: string): Set<string> {
+  const keys = new Map<string, Array<string | null>>();
+  let name: string | null = null;
+  const unquote = (v: string) => v.trim().replace(/^(['"])(.*)\1$/, '$2');
+  for (const line of configYaml.split('\n')) {
+    const entry = line.match(/^\s*-\s+model_name:\s*(.+?)\s*$/);
+    if (entry) {
+      name = unquote(entry[1]);
+      if (!keys.has(name)) keys.set(name, []);
+      keys.get(name)!.push(null);
+      continue;
+    }
+    if (/^\S/.test(line)) name = null;
+    const key = name ? line.match(/^\s+api_key:\s*(.+?)\s*$/) : null;
+    if (name && key) {
+      const list = keys.get(name)!;
+      list[list.length - 1] = unquote(key[1]);
+    }
+  }
+  return new Set([...keys].filter(([, ks]) => ks.every((k) => k === null || k === 'keyless')).map(([n]) => n));
 }
 
 /** Pure core (exported for tests): uncovered-capability suggestions from the

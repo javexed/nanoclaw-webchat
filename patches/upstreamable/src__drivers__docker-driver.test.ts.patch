@@ -1,8 +1,8 @@
 diff --git a/src/drivers/docker-driver.test.ts b/src/drivers/docker-driver.test.ts
-index b9f37d6e..e46d894e 100644
+index 7e578a67..2790b9ab 100644
 --- a/src/drivers/docker-driver.test.ts
 +++ b/src/drivers/docker-driver.test.ts
-@@ -671,4 +671,30 @@ describe('ensureDockerRunning', () => {
+@@ -801,6 +801,32 @@ describe('ensureDockerRunning', () => {
      expect(() => ensureDockerRunning(cli)).toThrow('Container runtime is required but failed to start');
      expect(log.error).toHaveBeenCalled();
    });
@@ -33,3 +33,5 @@ index b9f37d6e..e46d894e 100644
 +    }
 +  });
  });
+ 
+ it('refuses a session-container target without its auxiliary before creating containers', async () => {

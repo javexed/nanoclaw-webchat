@@ -24,6 +24,7 @@
  *
  *   node bind-routes.mjs [--apply] [--routing-dir data/litellm/routing]
  *                        [--roster a,b,c]  (test override, skips the fetch)
+ *                        [--config data/litellm/config.yaml]  (which models are local)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -55,12 +56,48 @@ export function scoreModel(modelId, route, catalog) {
 }
 
 /**
+ * The roster names served only by local, keyless backends, from add-litellm's
+ * generated config.yaml: an Ollama host (no api_key) or a keyless
+ * OpenAI-compatible host (`api_key: keyless`). A name with any keyed
+ * deployment — an `os.environ/` key, or `gateway-managed` — is a cloud model
+ * and never local. KEEP-IN-SYNC with _local_models() in router_hook.py.
+ */
+export function localModels(configYaml) {
+  const keys = new Map();
+  let name = null;
+  const unquote = (v) => v.trim().replace(/^(['"])(.*)\1$/, '$2');
+  for (const line of configYaml.split('\n')) {
+    const entry = line.match(/^\s*-\s+model_name:\s*(.+?)\s*$/);
+    if (entry) {
+      name = unquote(entry[1]);
+      if (!keys.has(name)) keys.set(name, []);
+      keys.get(name).push(null);
+      continue;
+    }
+    if (/^\S/.test(line)) name = null; // left model_list
+    const key = name && line.match(/^\s+api_key:\s*(.+?)\s*$/);
+    if (key) {
+      const list = keys.get(name);
+      list[list.length - 1] = unquote(key[1]);
+    }
+  }
+  return new Set([...keys].filter(([, ks]) => ks.every((k) => k === null || k === 'keyless')).map(([n]) => n));
+}
+
+/**
  * Decide bindings for every unpinned route. Returns
  * { decisions: [{route, current, chosen, score, changed, pinned}], unknown: [...] }.
+ *
+ * `local` (a Set, from localModels) limits candidates to local models: a keyed
+ * cloud model is never auto-bound, even when the catalog scores it, and an
+ * unpinned route already bound to one loses that binding. A cloud model is
+ * reachable only by the operator pinning it. Omitted, every roster model counts.
  */
-export function chooseBindings(routesCfg, roster, catalog) {
+export function chooseBindings(routesCfg, roster, catalog, local) {
   const decisions = [];
-  const unknown = roster.filter((m) => !matchCatalog(m, catalog.entries));
+  const isLocal = (m) => !local || local.has(m);
+  const candidates = roster.filter(isLocal);
+  const unknown = candidates.filter((m) => !matchCatalog(m, catalog.entries));
   for (const r of routesCfg.routes) {
     if (r.pinned) {
       decisions.push({ route: r.name, current: r.model, chosen: r.model, score: null, changed: false, pinned: true });
@@ -68,15 +105,16 @@ export function chooseBindings(routesCfg, roster, catalog) {
     }
     let best = null;
     let bestScore = -Infinity;
-    for (const m of roster) {
+    for (const m of candidates) {
       const s = scoreModel(m, r.name, catalog);
       if (s != null && s > bestScore) {
         best = m;
         bestScore = s;
       }
     }
-    // No scored candidate → keep the current binding (never leave a route dangling).
-    const chosen = best ?? r.model;
+    // No scored candidate → keep the current binding (never leave a route
+    // dangling) — unless it is not local, which an unpinned route may not keep.
+    const chosen = best ?? (r.model && isLocal(r.model) ? r.model : null);
     decisions.push({
       route: r.name,
       current: r.model,
@@ -93,7 +131,9 @@ export function applyDecisions(routesCfg, decisions) {
   const byName = new Map(decisions.map((d) => [d.route, d]));
   for (const r of routesCfg.routes) {
     const d = byName.get(r.name);
-    if (d && !d.pinned && d.chosen && d.chosen !== r.model) r.model = d.chosen;
+    if (!d || d.pinned || d.chosen === r.model) continue;
+    if (d.chosen) r.model = d.chosen;
+    else delete r.model; // a non-local binding, unpinned: the route falls back to the default
   }
   return routesCfg;
 }
@@ -218,9 +258,21 @@ async function main() {
   const local = fs.existsSync(localPath) ? JSON.parse(fs.readFileSync(localPath, 'utf8')) : null;
   const catalog = mergeCatalog(stock, local);
 
+  // Only local models are bound. No readable router config → none are known to
+  // be, so every unpinned route would lose its model: refuse to apply that.
+  const configPath = opt('--config', path.join(path.dirname(routingDir), 'config.yaml'));
+  if (flag('--apply') && !fs.existsSync(configPath)) {
+    throw new Error(
+      `router config not found: ${configPath} — without it no model is known to be local, ` +
+        'so --apply would unbind every unpinned route. Pass --config <path>, or run without --apply to preview.',
+    );
+  }
   const routesCfg = JSON.parse(fs.readFileSync(routesPath, 'utf8'));
   const rosterArg = opt('--roster', null);
   const roster = rosterArg ? rosterArg.split(',').map((s) => s.trim()) : await fetchRoster();
+  const localSet = fs.existsSync(configPath) ? localModels(fs.readFileSync(configPath, 'utf8')) : new Set();
+  const cloud = roster.filter((m) => !localSet.has(m));
+  if (cloud.length > 0) console.log(`not local (never auto-bound — pin to choose one): ${cloud.join(', ')}`);
 
   // Bind every router independently (each draws from the same shared roster).
   // applyDecisions mutates the router's routes in place; for the old format
@@ -231,9 +283,13 @@ async function main() {
   let totalChanges = 0;
   for (const [name, router] of Object.entries(routerMap)) {
     if (multi) console.log(`\n[${name}]`);
-    const { decisions, unknown } = chooseBindings(router, roster, catalog);
+    const { decisions, unknown } = chooseBindings(router, roster, catalog, localSet);
     for (const d of decisions) {
-      const mark = d.pinned ? 'pinned' : d.changed ? `→ ${d.chosen} (score ${d.score})` : `= ${d.chosen ?? '(none)'}`;
+      const mark = d.pinned
+        ? 'pinned'
+        : d.changed
+          ? `→ ${d.chosen ?? '(unbound: not local)'}${d.chosen ? ` (score ${d.score})` : ''}`
+          : `= ${d.chosen ?? '(none)'}`;
       console.log(`${d.route.padEnd(10)} ${d.pinned ? '' : (d.current ?? '(none)') + ' '}${mark}`);
     }
     if (unknown.length > 0) {

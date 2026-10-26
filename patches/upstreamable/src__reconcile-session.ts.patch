@@ -1,9 +1,9 @@
 diff --git a/src/reconcile-session.ts b/src/reconcile-session.ts
-index 8c6d796c..2cac4215 100644
+index 41b6d2ff..3f87f149 100644
 --- a/src/reconcile-session.ts
 +++ b/src/reconcile-session.ts
-@@ -36,7 +36,10 @@ import { getSession, isTaskThread, updateSession } from './db/sessions.js';
- import { getAgentGroup } from './db/agent-groups.js';
+@@ -37,10 +37,14 @@ import { getAgentGroup } from './db/agent-groups.js';
+ import { ABSOLUTE_CEILING_MS_RAW, CLAIM_STUCK_MS_RAW } from './config.js';
  import { log } from './log.js';
  import { heartbeatPath, withExistingMailboxSession } from './session-manager.js';
 +import { openOutboundDbRw } from './mailbox/sqlite/session-db.js';
@@ -13,7 +13,11 @@ index 8c6d796c..2cac4215 100644
  import { requestWake } from './request-wake.js';
  import type { Session } from './types.js';
  import type { ContainerState, InboundMailbox, OutboundMailbox } from './mailbox/index.js';
-@@ -98,7 +101,7 @@ export function decideStuckAction(args: {
++import { skipMailboxBusy } from './mailbox-busy.js';
+ 
+ const DAY_MS = 24 * 60 * 60 * 1000;
+ 
+@@ -121,7 +125,7 @@ export function decideStuckAction(args: {
  
    const tolerance = Math.max(CLAIM_STUCK_MS, declaredBashMs ?? 0);
    for (const claim of claims) {
@@ -22,7 +26,27 @@ index 8c6d796c..2cac4215 100644
      if (Number.isNaN(claimedAt)) continue;
      const claimAge = now - claimedAt;
      if (claimAge <= tolerance) continue;
-@@ -233,17 +236,19 @@ async function enforceRunningContainerSla(
+@@ -153,6 +157,11 @@ async function reconcileActiveSession(session: Session): Promise<void> {
+   if (!agentGroup) return;
+ 
+   try {
++    // Task-run verdicts first: a run that died is still pending, and the wake
++    // below would otherwise just run it again (src/modules/task-health).
++    if (isTaskThread(session.thread_id)) {
++      await (await import('./modules/task-health/index.js')).applyTaskRunPolicy(session);
++    }
+     let dueCount = 0;
+     let shouldWake = false;
+     const exists = await withExistingMailboxSession(agentGroup.id, session.id, async (mailbox) => {
+@@ -178,6 +187,7 @@ async function reconcileActiveSession(session: Session): Promise<void> {
+       await maintainSessionMailbox(mailbox, session, agentGroup.id);
+     });
+   } catch (err) {
++    if (skipMailboxBusy('sweep', agentGroup.id, session.id, err)) return; // busy lock: the next sweep retries
+     log.error('Session mailbox sweep failed', {
+       agentGroupId: agentGroup.id,
+       sessionId: session.id,
+@@ -256,17 +266,19 @@ async function enforceRunningContainerSla(
    session: Session,
    agentGroupId: string,
  ): Promise<void> {
@@ -44,8 +68,31 @@ index 8c6d796c..2cac4215 100644
      if (Number.isNaN(claimedAt) || claimedAt >= incarnationStartMs) return claim;
      return { ...claim, statusChanged: new Date(incarnationStartMs).toISOString() };
    });
-@@ -266,6 +271,10 @@ async function enforceRunningContainerSla(
-     });
+@@ -282,13 +294,28 @@ async function enforceRunningContainerSla(
+   if (decision.action === 'ok') return;
+ 
+   if (decision.action === 'kill-ceiling') {
+-    log.warn('Killing container past absolute ceiling', {
+-      sessionId: session.id,
+-      heartbeatAgeMs: decision.heartbeatAgeMs,
+-      ceilingMs: decision.ceilingMs,
+-    });
++    // The heartbeat only ticks while a turn produces output, so every idle
++    // container reaches the ceiling; reaping one with nothing in flight is
++    // routine. Only a kill with processing claims open is a stuck turn.
++    if (gatedClaims.length > 0) {
++      log.warn('Killing container past absolute ceiling', {
++        sessionId: session.id,
++        heartbeatAgeMs: decision.heartbeatAgeMs,
++        ceilingMs: decision.ceilingMs,
++      });
++    } else {
++      log.info('Reaping idle container past absolute ceiling', {
++        sessionId: session.id,
++        heartbeatAgeMs: decision.heartbeatAgeMs,
++        ceilingMs: decision.ceilingMs,
++      });
++    }
      killContainer(session.id, 'absolute-ceiling');
      resetStuckProcessingRows(inDb, outDb, session, 'absolute-ceiling');
 +    selfHealBloatedContinuation(session, {
@@ -55,7 +102,7 @@ index 8c6d796c..2cac4215 100644
      return;
    }
  
-@@ -338,3 +347,105 @@ function resetStuckProcessingRows(
+@@ -361,3 +388,105 @@ function resetStuckProcessingRows(
      log.warn('Failed to clear orphan processing claims', { sessionId: session.id, err });
    }
  }

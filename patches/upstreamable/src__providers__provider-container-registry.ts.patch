@@ -1,5 +1,5 @@
 diff --git a/src/providers/provider-container-registry.ts b/src/providers/provider-container-registry.ts
-index 49c59a59..632c5e01 100644
+index 8e73ca80..d624796f 100644
 --- a/src/providers/provider-container-registry.ts
 +++ b/src/providers/provider-container-registry.ts
 @@ -82,6 +82,25 @@ export interface ProviderHostCapabilities {

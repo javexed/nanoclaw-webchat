@@ -62,6 +62,14 @@ export interface MsgRow {
   payload?: any;
   approvalState?: 'resolved' | 'eligible' | 'awaiting';
   note?: string;
+  /** A rate-limit notice: when the limit resets, and the pending retry (LimitRetry.vue). */
+  limitResetsAt?: number | null;
+  limitRetryAt?: number | null;
+  /** Who scheduled the pending retry (their sender name): they, or a room admin, can cancel it. */
+  limitRetryBy?: string | null;
+  limitThread?: string | null;
+  /** The model that answered an agent reply, when the server knows it (served-model.ts). */
+  servedModel?: string | null;
 }
 
 /** The transcript, oldest first. Prepends (pagination) unshift. */
@@ -118,6 +126,9 @@ export interface ThinkingTurn {
   /** Owned by an active status stream, so the typing heartbeat must not clear
    *  it during a quiet stretch. */
   statusLive: boolean;
+  /** The reply the agent is still writing (plain text, '' when none). The
+   *  delivered message replaces it: the bubble goes when the reply lands. */
+  preview: string;
 }
 
 /** Live thinking bubbles, keyed by agent name. Rendered AFTER the message list,

@@ -652,7 +652,7 @@ export function providerForModel(
 }
 
 /** Harnesses that bring their own model and sign-in: the registry's models do not apply to them. */
-export const OWN_MODEL_HARNESSES: ReadonlySet<string> = new Set(['codex', 'grok']);
+export const OWN_MODEL_HARNESSES: ReadonlySet<string> = new Set(['codex', 'grok', 'copilot']);
 
 /**
  * Whether a harness can run this model (null: none assigned, its own default).

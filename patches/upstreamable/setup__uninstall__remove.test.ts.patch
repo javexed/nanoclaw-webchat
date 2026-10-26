@@ -1,5 +1,5 @@
 diff --git a/setup/uninstall/remove.test.ts b/setup/uninstall/remove.test.ts
-index 4d40f3b9..060d7b02 100644
+index 16d40f6d..ea426b10 100644
 --- a/setup/uninstall/remove.test.ts
 +++ b/setup/uninstall/remove.test.ts
 @@ -1,4 +1,4 @@

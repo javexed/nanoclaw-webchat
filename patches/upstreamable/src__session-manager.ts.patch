@@ -1,16 +1,16 @@
 diff --git a/src/session-manager.ts b/src/session-manager.ts
-index 2d4f2ff7..e4a4bda5 100644
+index ad84b648..24df8716 100644
 --- a/src/session-manager.ts
 +++ b/src/session-manager.ts
-@@ -13,6 +13,7 @@ import { DATA_DIR } from './config.js';
- import { ensureContainedInboxDir, isPathInside } from './inbox-safety.js';
+@@ -13,6 +13,7 @@ import type { OutboundFile } from './channels/adapter.js';
+ import { DATA_DIR } from './config.js';
  import { getMessagingGroup } from './db/messaging-groups.js';
  import { isUniqueViolation } from './db/errors.js';
 +import { makeContainerWritable } from './container-runtime-extras.js';
  import {
+   bindUnboundSession,
    createSession,
-   findSystemSession,
-@@ -203,6 +204,11 @@ export function initSessionFolder(agentGroupId: string, sessionId: string): void
+@@ -219,6 +220,11 @@ export function initSessionFolder(agentGroupId: string, sessionId: string): void
    const dir = sessionDir(agentGroupId, sessionId);
    fs.mkdirSync(dir, { recursive: true });
    fs.mkdirSync(path.join(dir, 'outbox'), { recursive: true });
@@ -22,7 +22,7 @@ index 2d4f2ff7..e4a4bda5 100644
    getAgentMailbox().prepare(mailboxKey(agentGroupId, sessionId));
  }
  
-@@ -249,6 +255,7 @@ export async function writeSessionRouting(agentGroupId: string, sessionId: strin
+@@ -265,6 +271,7 @@ export async function writeSessionRouting(agentGroupId: string, sessionId: strin
    log.debug('Session routing written', { sessionId, channelType, platformId, threadId: session.thread_id });
  }
  
@@ -30,65 +30,96 @@ index 2d4f2ff7..e4a4bda5 100644
  /**
   * Write a message to a session's inbound mailbox. Host-only.
   */
-@@ -337,7 +344,7 @@ export async function writeSessionMessage(
-  *   4. `wx` flag on writeFileSync to refuse following a pre-existing symlink
-  *      at the target file path or overwriting any existing file.
+@@ -353,7 +360,7 @@ export async function writeSessionMessage(
+  *      of either name cannot redirect a write.
+  *   3. exclusive create: never follows or overwrites an existing entry.
   */
 -function extractAttachmentFiles(
 +export function extractAttachmentFiles(
    agentGroupId: string,
    sessionId: string,
    messageId: string,
-@@ -368,7 +375,28 @@ function extractAttachmentFiles(
- 
+@@ -382,7 +389,26 @@ function extractAttachmentFiles(
    let changed = false;
-   for (const att of attachments) {
--    if (typeof att.data !== 'string') continue;
-+    // Two delivery forms. `data` is inline base64. `hostPath` points at a file
-+    // the adapter already staged on disk — webchat uses it above 25MB so a
-+    // large upload is never base64-encoded. Only `data` was handled here, so
-+    // every hostPath attachment was silently skipped: the row kept a bare
-+    // filename, no bytes reached the container, and nothing logged. Two
-+    // production uploads (28MB, 45MB) were lost that way.
-+    const inlineData = typeof att.data === 'string' ? (att.data as string) : null;
-+    const rawHostPath = typeof att.hostPath === 'string' ? (att.hostPath as string) : null;
-+    if (inlineData === null && rawHostPath === null) continue;
+   try {
+     for (const att of attachments) {
+-      if (typeof att.data !== 'string') continue;
++      // Two delivery forms. `data` is inline base64. `hostPath` points at a file
++      // the adapter already staged on disk — webchat uses it above 25MB so a
++      // large upload is never base64-encoded (without this, uploads over 25MB
++      // were dropped).
++      const inlineData = typeof att.data === 'string' ? (att.data as string) : null;
++      const rawHostPath = typeof att.hostPath === 'string' ? (att.hostPath as string) : null;
++      if (inlineData === null && rawHostPath === null) continue;
 +
-+    // A hostPath is a stronger primitive than supplied bytes — it copies
-+    // whatever the path names. Legitimate producers stage into DATA_DIR, so
-+    // require that: an adapter may hand over files it staged, nothing else.
-+    let hostPath: string | null = null;
-+    if (rawHostPath !== null) {
-+      const resolved = path.resolve(rawHostPath);
-+      if (!isPathInside(path.resolve(DATA_DIR), resolved)) {
-+        log.warn('Refused attachment hostPath outside the data dir', { messageId, hostPath: rawHostPath });
-+        continue;
++      // A hostPath is a stronger primitive than supplied bytes — it copies
++      // whatever the path names. Legitimate producers stage into DATA_DIR, so
++      // require that: an adapter may hand over files it staged, nothing else.
++      let hostPath: string | null = null;
++      if (rawHostPath !== null) {
++        const resolved = path.resolve(rawHostPath);
++        if (!isInsideDataDir(resolved)) {
++          log.warn('Refused attachment hostPath outside the data dir', { messageId, hostPath: rawHostPath });
++          continue;
++        }
++        hostPath = resolved;
 +      }
-+      hostPath = resolved;
-+    }
  
-     const rawName = deriveAttachmentName(att);
-     const filename = isSafeAttachmentName(rawName) ? rawName : `attachment-${Date.now()}`;
-@@ -392,7 +420,13 @@ function extractAttachmentFiles(
-       // wx = exclusive create. Refuses to follow a pre existing symlink or
-       // overwrite any existing file. The host expects to be the sole writer
-       // of these attachments.
--      fs.writeFileSync(filePath, Buffer.from(att.data as string, 'base64'), { flag: 'wx' });
-+      if (inlineData !== null) {
-+        fs.writeFileSync(filePath, Buffer.from(inlineData, 'base64'), { flag: 'wx' });
-+      } else {
-+        // COPYFILE_EXCL mirrors the `wx` guarantee: fail rather than follow a
-+        // pre-placed symlink or overwrite an existing file.
-+        fs.copyFileSync(hostPath as string, filePath, fs.constants.COPYFILE_EXCL);
+       const rawName = deriveAttachmentName(att);
+       const filename = isSafeAttachmentName(rawName) ? rawName : `attachment-${Date.now()}`;
+@@ -406,7 +432,8 @@ function extractAttachmentFiles(
+       if (!inbox) break;
+ 
+       try {
+-        inbox.writeNewFile(filename, Buffer.from(att.data as string, 'base64'));
++        if (inlineData !== null) inbox.writeNewFile(filename, Buffer.from(inlineData, 'base64'));
++        else copyIntoInbox(inbox, filename, hostPath as string);
+       } catch (err: unknown) {
+         const e = err as NodeJS.ErrnoException;
+         if (e.code === 'EEXIST') {
+@@ -422,6 +449,7 @@ function extractAttachmentFiles(
+       att.name = filename;
+       att.localPath = `inbox/${folder}/${filename}`;
+       delete att.data;
++      delete att.hostPath;
+       changed = true;
+       log.debug('Saved attachment to inbox', { messageId, filename, size: att.size });
+     }
+@@ -432,6 +460,37 @@ function extractAttachmentFiles(
+   return changed ? JSON.stringify(parsed) : contentStr;
+ }
+ 
++/** A path strictly inside DATA_DIR, compared lexically (both sides resolved). */
++function isInsideDataDir(p: string): boolean {
++  const rel = path.relative(path.resolve(DATA_DIR), path.resolve(p));
++  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
++}
++
++/**
++ * Copy a staged upload into the inbox through the anchored handle, so it gets
++ * the same guarantees as inline bytes: the target is created exclusively and
++ * never through a symlink, in the directory that was checked. The source must
++ * be a regular file (no symlink, no FIFO), and is streamed rather than read
++ * whole — these are the uploads too large to inline.
++ */
++function copyIntoInbox(inbox: AnchoredDir, filename: string, source: string): void {
++  const src = fs.openSync(source, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
++  try {
++    if (!fs.fstatSync(src).isFile()) throw new Error(`refusing attachment source '${source}': not a regular file`);
++    const dst = inbox.openNewFd(filename);
++    try {
++      const buf = Buffer.allocUnsafe(1 << 20);
++      for (let n = fs.readSync(src, buf, 0, buf.length, null); n > 0; n = fs.readSync(src, buf, 0, buf.length, null)) {
++        fs.writeSync(dst, buf, 0, n);
 +      }
-     } catch (err: unknown) {
-       const e = err as NodeJS.ErrnoException;
-       if (e.code === 'EEXIST') {
-@@ -408,6 +442,7 @@ function extractAttachmentFiles(
-     att.name = filename;
-     att.localPath = `inbox/${messageId}/${filename}`;
-     delete att.data;
-+    delete att.hostPath;
-     changed = true;
-     log.debug('Saved attachment to inbox', { messageId, filename, size: att.size });
-   }
++    } finally {
++      fs.closeSync(dst);
++    }
++  } finally {
++    fs.closeSync(src);
++  }
++}
++
+ /**
+  * Detects same-key session() nesting, which is forbidden: implementations may
+  * serialize session() per key, so a nested call may deadlock. Tracked per async context so

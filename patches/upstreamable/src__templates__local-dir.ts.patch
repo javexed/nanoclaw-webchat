@@ -1,8 +1,8 @@
 diff --git a/src/templates/local-dir.ts b/src/templates/local-dir.ts
-index 6a8a0ea2..b0500b29 100644
+index 2991fc06..023ef731 100644
 --- a/src/templates/local-dir.ts
 +++ b/src/templates/local-dir.ts
-@@ -31,3 +31,90 @@ export function resolveLocalTemplate(ref: string, base: string = TEMPLATES_DIR):
+@@ -45,3 +45,90 @@ export function resolveLocalTemplate(ref: string, base: string = TEMPLATES_DIR):
    }
    return candidate;
  }

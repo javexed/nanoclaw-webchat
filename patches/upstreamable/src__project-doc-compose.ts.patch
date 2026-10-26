@@ -1,5 +1,5 @@
 diff --git a/src/project-doc-compose.ts b/src/project-doc-compose.ts
-index 74612c7b..62ba2dba 100644
+index be984f9a..b796606e 100644
 --- a/src/project-doc-compose.ts
 +++ b/src/project-doc-compose.ts
 @@ -21,6 +21,7 @@ import path from 'path';
@@ -10,7 +10,53 @@ index 74612c7b..62ba2dba 100644
  import { readGroupPersona } from './group-persona.js';
  import { log } from './log.js';
  import type { AgentGroup } from './types.js';
-@@ -210,6 +211,13 @@ export async function composeGroupProjectDoc(group: AgentGroup, groupDir: string
+@@ -159,6 +160,21 @@ const NCL_DEPENDENT_MODULES = new Set(['cli', 'scheduling']);
+ const MCP_TOOLS_HOST_SUBPATH = path.join('container', 'agent-runner', 'src', 'mcp-tools');
+ const SKILLS_HOST_SUBPATH = path.join('container', 'skills');
+ 
++/**
++ * Watches one composition without changing it: what each source contributed,
++ * or why it was left out. Passing one makes the call a dry run: the document
++ * goes to `composed` instead of being written, so an inspector reports exactly
++ * what the next spawn would write, from this code path rather than a copy of it.
++ */
++export interface ProjectDocObserver {
++  /** A source reached the document builder; `empty` when its body trimmed to nothing. */
++  considered(name: string, empty: boolean): void;
++  /** A source the group's config or provider switched off, and why. */
++  excluded(name: string, reason: string): void;
++  /** The final document, its header, and each section block that survived the size cap, in order. */
++  composed(content: string, header: string, blocks: readonly { name: string; text: string }[]): void;
++}
++
+ /**
+  * Regenerate `groups/<folder>/<spec.fileName>` from every instruction source
+  * the group has switched on. Deterministic: same inputs, same file.
+@@ -171,6 +187,7 @@ export async function composeGroupProjectDoc(
+   groupDir: string,
+   spec: ProjectDocSpec,
+   runtimeSkills?: readonly string[],
++  observer?: ProjectDocObserver,
+ ): Promise<void> {
+   if (!fs.existsSync(groupDir)) fs.mkdirSync(groupDir, { recursive: true });
+ 
+@@ -182,6 +199,7 @@ export async function composeGroupProjectDoc(
+ 
+   const sections: ProjectDocSection[] = [];
+   const push = (name: string, body: string, droppable = false): void => {
++    observer?.considered(name, !body.trim());
+     const trimmed = body.trim();
+     if (trimmed) sections.push({ name, body: trimmed, droppable });
+   };
+@@ -200,6 +218,7 @@ export async function composeGroupProjectDoc(
+     // Tolerated (a partial checkout has no template yet) but never silent:
+     // losing the runtime contract with no signal is the exact shape of the bug
+     // this composer replaced, and it is also what a wrong-cwd host looks like.
++    observer?.excluded(BASE_DOC_SECTION, 'base document not found');
+     log.warn('Project document composed without its base document', {
+       file: spec.fileName,
+       group: group.name,
+@@ -215,13 +234,29 @@ export async function composeGroupProjectDoc(
    // Module instructions — every MCP/CLI module shipping a sibling
    // `<name>.instructions.md`, describing how to use that module's tools.
    const cliDisabled = configRow?.cli_scope === 'disabled';
@@ -24,17 +70,33 @@ index 74612c7b..62ba2dba 100644
    const mcpToolsHostDir = path.join(process.cwd(), MCP_TOOLS_HOST_SUBPATH);
    if (fs.existsSync(mcpToolsHostDir)) {
      for (const entry of fs.readdirSync(mcpToolsHostDir).sort()) {
-@@ -217,6 +225,9 @@ export async function composeGroupProjectDoc(group: AgentGroup, groupDir: string
+       const match = entry.match(/^(.+)\.instructions\.md$/);
        if (!match) continue;
        const moduleName = match[1];
++      if (cliDisabled && NCL_DEPENDENT_MODULES.has(moduleName)) {
++        observer?.excluded(`NanoClaw Module: ${moduleName}`, 'cli_scope is disabled');
++      }
        if (cliDisabled && NCL_DEPENDENT_MODULES.has(moduleName)) continue;
 +      // A NEW module defaults to MCP-dependent: losing a usable instruction is a
 +      // smaller harm than promising an uncallable tool.
++      if (noMcpTools && !NCL_DEPENDENT_MODULES.has(moduleName)) {
++        observer?.excluded(`NanoClaw Module: ${moduleName}`, 'provider has no MCP client');
++      }
 +      if (noMcpTools && !NCL_DEPENDENT_MODULES.has(moduleName)) continue;
        push(`NanoClaw Module: ${moduleName}`, fs.readFileSync(path.join(mcpToolsHostDir, entry), 'utf-8'), true);
      }
    }
-@@ -236,8 +247,13 @@ export async function composeGroupProjectDoc(group: AgentGroup, groupDir: string
+@@ -233,6 +268,9 @@ export async function composeGroupProjectDoc(
+   const skillsHostDir = path.join(process.cwd(), SKILLS_HOST_SUBPATH);
+   if (fs.existsSync(skillsHostDir)) {
+     for (const skillName of fs.readdirSync(skillsHostDir).sort()) {
++      if (selectedSkills !== 'all' && !selectedSkills.includes(skillName)) {
++        observer?.excluded(`NanoClaw Skill: ${skillName}`, 'skill not selected for this group');
++      }
+       if (selectedSkills !== 'all' && !selectedSkills.includes(skillName)) continue;
+       const hostFragment = path.join(skillsHostDir, skillName, 'instructions.md');
+       if (!fs.existsSync(hostFragment)) continue;
+@@ -241,12 +279,30 @@ export async function composeGroupProjectDoc(
    }
  
    // Inline instructions from container.json for user-added external MCP servers.
@@ -43,6 +105,11 @@ index 74612c7b..62ba2dba 100644
 +  // Gated like the module fragments: no MCP client means an external server is
 +  // as unreachable as the built-in one. Configuring it stays allowed — it just
 +  // is not documented to a model that cannot call it.
++  if (noMcpTools) {
++    for (const [name, mcp] of Object.entries(mcpServers)) {
++      if (mcp.instructions) observer?.excluded(`MCP Server: ${name}`, 'provider has no MCP client');
++    }
++  }
 +  if (!noMcpTools) {
 +    for (const [name, mcp] of Object.entries(mcpServers)) {
 +      if (mcp.instructions) push(`MCP Server: ${name}`, mcp.instructions, true);
@@ -50,3 +117,15 @@ index 74612c7b..62ba2dba 100644
    }
  
    const content =
+     spec.maxBytes === undefined ? render(sections) : fitToCap(sections, spec.maxBytes, spec.fileName, group.name);
++  if (observer) {
++    observer.composed(
++      content,
++      COMPOSED_HEADER,
++      sections.map((s) => ({ name: s.name, text: block(s) })),
++    );
++    return;
++  }
+   writeAtomic(path.join(groupDir, spec.fileName), content);
+ }
+ 

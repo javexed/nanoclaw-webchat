@@ -63,6 +63,8 @@ const MAX_REASON_CHARS = 300;
 //     (in-memory promise) path that this dispatcher cannot drive.
 //   - install_packages   — supply chain: new code baked into the image.
 //   - add_mcp_server     — new tool/capability surface for the agent.
+//   - instruction_change — the agent rewriting its own standing instructions;
+//     the gate exists because the text may come from a prompt injection.
 // Payload patterns (matched against the RAW payload JSON, any action). A
 // cli_command approval's payload is {"frame":{"command":"roles-grant",
 // "args":{"cli-scope":…}},…}, so each pattern takes the hyphenated command
@@ -74,6 +76,7 @@ export const NEVER_AUTO_APPROVE_ACTIONS: ReadonlySet<string> = new Set([
   'onecli_credential',
   'install_packages',
   'add_mcp_server',
+  'instruction_change',
 ]);
 
 /** Each never-list payload shape, with the triage flag it implies. */
@@ -147,6 +150,7 @@ export function heuristicFlags(action: string, payloadJson: string): TriageFlag[
   if (action === 'onecli_credential') out.add('credentials');
   if (action === 'install_packages') out.add('install');
   if (action === 'add_mcp_server') out.add('capability');
+  if (action === 'instruction_change') out.add('capability');
   for (const { re, flag } of NEVER_PAYLOAD_SHAPES) if (re.test(payloadJson)) out.add(flag);
   return [...out];
 }

@@ -6,7 +6,14 @@
 import { $ } from '../core/dom.js';
 import { checkSessionExpired, clearSessionExpired, sessionExpiredShown } from './session-expiry.js';
 import { learnTurnToolCount, roomAutoLearn, roomsReceived } from '../features/room-list-state.js';
-import { pushReasoning, pushTool, setThinkingMilestone, setTurnMeta, updateThinkingBubble } from '../features/thinking.js';
+import {
+  pushReasoning,
+  pushTool,
+  setReplyPreview,
+  setThinkingMilestone,
+  setTurnMeta,
+  updateThinkingBubble,
+} from '../features/thinking.js';
 import { forgetTrace } from '../features/turn-trace-view.js';
 import { renderCredentialIsolation } from '../features/settings.js';
 import { isAdminView, isWorkspaceAdminView } from './state.js';
@@ -25,7 +32,10 @@ import {
 import { showToast } from '../core/toast.js';
 import { apiJson, authFetch, getWsUrl, getWsProtocols } from '../core/api.js';
 import { state } from '../core/state.js';
-import { messages, readdRow, transcriptEmpty, type MsgRow } from '../features/transcript-state.js';
+import { bumpUnread, firstUnreadIndex, seedUnread } from './unread.js';
+import { messages, readdRow, transcriptEmpty, turnFor, type MsgRow } from '../features/transcript-state.js';
+import { replyPreviewApplies } from '../features/reply-preview.js';
+import { autoReadReply } from '../features/voice.js';
 import {
   appendMessage,
   appendSystem,
@@ -36,6 +46,8 @@ import {
   incrementMissedMessages,
   messageMentionsMe,
   jumpToMessage,
+  appendUnreadDivider,
+  scrollToUnreadDivider,
   endTranscriptSwitch,
 } from '../features/transcript.js';
 import { fetchApprovals, handleApprovalEvent, handleApprovalResolvedEvent } from '../features/approvals.js';
@@ -163,7 +175,7 @@ export function connect() {
         // so messages that arrived while away surface on reconnect — not just
         // live ones. Never dot the open room (the join that follows reads it).
         msg.rooms.forEach((r: any) => {
-          if (r.unread && r.id !== state.currentRoom) state.unreadRooms.add(r.id);
+          if (r.unread && r.id !== state.currentRoom) seedUnread(state.unreadRooms, r.id, r.unread_count);
           if (r.mention && r.id !== state.currentRoom) state.mentionedRooms.add(r.id);
           else if (!r.mention) state.mentionedRooms.delete(r.id);
           else state.unreadRooms.delete(r.id);
@@ -241,7 +253,14 @@ export function connect() {
         }
         setMessages([]);
         transcriptEmpty.value = null;
-        msg.messages.forEach((m: any) => appendMessage(m));
+        // "New" divider before the first message that arrived since this user
+        // last read the thread (the server sends their marker as it stood
+        // before this join advanced it).
+        const firstUnread = firstUnreadIndex(msg.messages, msg.last_read_at, state.myIdentity);
+        msg.messages.forEach((m: any, i: number) => {
+          if (i === firstUnread) appendUnreadDivider();
+          appendMessage(m);
+        });
         for (const [clientId, row] of carried) {
           // The echo may have raced us and the server may already have included
           // it — re-adding then would double the message.
@@ -277,6 +296,9 @@ export function connect() {
           // Arrived from a search result — center + flash that message instead of
           // scrolling to the bottom (paging older history in if it's not loaded).
           void jumpToMessage(jumpTo);
+        } else if (firstUnread !== -1) {
+          // Unread messages: land on where the user left off, not the bottom.
+          scrollToUnreadDivider();
         } else {
           scrollToBottom(true);
           requestAnimationFrame(() => scrollToBottom(true));
@@ -308,7 +330,7 @@ export function connect() {
         const msgThread = msg.thread_id || 'main';
         if ((msg.room_id || state.currentRoom) === state.currentRoom && msgThread !== state.currentThread) {
           if (msg.sender !== state.myIdentity) {
-            state.threadUnread.add(msgThread);
+            bumpUnread(state.threadUnread, msgThread);
             // The thread list repaints from this flag; its inline input is keyed,
             // so a rename in progress survives the patch.
           }
@@ -346,7 +368,11 @@ export function connect() {
           state.pendingMessages.delete(msg.client_id);
           if (msg.id) row.id = msg.id;
         } else {
-          appendMessage(msg);
+          // A repeat delivery (reconnect catch-up) returns the existing row —
+          // only a reply seen for the first time is read aloud.
+          const seen = !!msg.id && messages.value.some((r) => r.id === msg.id);
+          const row = appendMessage(msg);
+          if (row && !seen && row.isAgent) autoReadReply(row.key, row.ttsText, msg.room_id || state.currentRoom);
         }
         if (msg.id && msg.room_id === state.currentRoom) {
           setLastSeenMessageId(msg.id);
@@ -399,9 +425,19 @@ export function connect() {
         if (row) row.hasTrace = true;
         break;
       }
+      case 'limit_retry': {
+        // A thread's retry at a limit reset was scheduled, cancelled or sent.
+        if (msg.room_id !== state.currentRoom || !msg.notice_id) break;
+        const row = messages.value.find((r) => r.id === msg.notice_id);
+        if (row) {
+          row.limitRetryAt = typeof msg.retry_at === 'number' ? msg.retry_at : null;
+          row.limitRetryBy = typeof msg.by === 'string' ? msg.by : null;
+        }
+        break;
+      }
       case 'unread':
         if (msg.room_id && msg.room_id !== state.currentRoom) {
-          state.unreadRooms.add(msg.room_id);
+          bumpUnread(state.unreadRooms, msg.room_id);
           updateUnreadDots();
         }
         break;
@@ -410,7 +446,7 @@ export function connect() {
         // Distinct, higher-signal badge than plain unread.
         if (msg.room_id && msg.room_id !== state.currentRoom) {
           state.mentionedRooms.add(msg.room_id);
-          state.unreadRooms.add(msg.room_id);
+          bumpUnread(state.unreadRooms, msg.room_id);
           updateUnreadDots();
         }
         break;
@@ -553,7 +589,7 @@ export async function probeIsOwner() {
       // Resolved before the reveal below, which depends on it.
       const list = await users.json().catch(() => []);
       if (superseded()) return isAdminView.value;
-      const me =Array.isArray(list) ? list.find((u) => u.id === permsMyUserId.value) : null;
+      const me = Array.isArray(list) ? list.find((u) => u.id === permsMyUserId.value) : null;
       state.isOwnerView = !!(me && userIsOwner(me));
       // Sign-in: owner or global admin, the same audience its endpoint allows.
       isWorkspaceAdminView.value = state.isOwnerView || !!(me && userIsGlobalAdmin(me));
@@ -612,6 +648,7 @@ export async function probeIsOwner() {
 //   tool      → text = tool name, detail = target (file/command/query)
 //   progress  → text = milestone message
 //   reasoning → text = a reasoning summary line (rendered by the fading feed)
+//   preview   → text = the reply so far (null clears); never stored
 //   done      → turn finished cleanly; clear the bubble
 //   stalled   → turn ended abnormally (agent died/killed); notice + clear
 export function handleStatusEvent(msg: any) {
@@ -639,6 +676,11 @@ export function handleStatusEvent(msg: any) {
     case 'reasoning':
       markTurnActivity(name);
       if (msg.text) pushReasoning(name, msg.text, msg.detail ?? undefined);
+      break;
+    case 'preview':
+      if (!replyPreviewApplies(msg, state.currentThread, !!turnFor(name))) break;
+      if (msg.text) markTurnActivity(name);
+      setReplyPreview(name, msg.text ?? null);
       break;
     case 'done':
       endAgentTurn(name);

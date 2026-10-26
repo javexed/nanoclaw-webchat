@@ -27,6 +27,7 @@ import { audit } from '../../audit.js';
 import { EGRESS_EXTRA_DEFAULTS } from '../../config.js';
 import { getContainerConfig } from '../../db/container-configs.js';
 import { log } from '../../log.js';
+import { getProviderHostContract } from '../../provider-contracts/registry.js';
 
 import {
   getAgentEgressHostsRaw,
@@ -40,7 +41,7 @@ import {
 import { agentRouterBase } from './cloud-models.js';
 import { spawnModel } from './model-host-health.js';
 import { relayKey, remoteModelTarget } from './model-relay.js';
-import { containerReachableUrl } from './models.js';
+import { containerReachableUrl, OWN_MODEL_HARNESSES } from './models.js';
 
 export type EgressMode = 'open' | 'host-only' | 'none';
 
@@ -50,6 +51,33 @@ export type EgressMode = 'open' | 'host-only' | 'none';
  * LiteLLM, any OpenAI-compatible server) gets that host too: modelHostsFor().
  */
 export const ALWAYS_ALLOWED = ['api.anthropic.com'];
+
+/**
+ * Hosts a harness that brings its own model needs beyond its contract's model
+ * domains. GitHub Copilot checks the seat on api.github.com before every
+ * session (the gateway limits the credential there to that one path).
+ */
+const HARNESS_EXTRA_HOSTS: Record<string, readonly string[]> = { copilot: ['api.github.com'] };
+
+/**
+ * The floor for a harness that brings its own model (Codex, Grok, Copilot):
+ * its model host is not in the webchat model registry, so modelHostPattern
+ * cannot supply it. Taken from the provider's declared model domains (the
+ * apex and its subdomains), plus HARNESS_EXTRA_HOSTS. Empty for every other
+ * provider, whose floor is the registry model's host.
+ */
+export function harnessFloorHosts(provider: string | null | undefined): string[] {
+  if (!provider || !OWN_MODEL_HARNESSES.has(provider)) return [];
+  const out: string[] = [];
+  for (const raw of [
+    ...(getProviderHostContract(provider)?.modelDomains ?? []).flatMap((d) => [d, `*.${d}`]),
+    ...(HARNESS_EXTRA_HOSTS[provider] ?? []),
+  ]) {
+    const p = parsePattern(raw);
+    if (p.ok && !out.includes(p.pattern)) out.push(p.pattern);
+  }
+  return out;
+}
 
 /** The model's host as the container dials it (`host.docker.internal:11434`, `llm.example.org:4000`), or null. */
 export function modelHostPattern(model: Pick<WebchatModel, 'endpoint'> | null | undefined): string | null {
@@ -116,6 +144,9 @@ export async function modelHostsFor(agentGroupId: string): Promise<string[]> {
   if (hit && Date.now() - hit.at < TTL_MS) return hit.hosts;
   let hosts = [...ALWAYS_ALLOWED];
   try {
+    for (const h of harnessFloorHosts((await getContainerConfig(agentGroupId))?.provider)) {
+      if (!hosts.includes(h)) hosts.push(h);
+    }
     const model = await getEffectiveModelForAgent(agentGroupId);
     // The host it spawns on while its own is down, too (model-host-health.ts).
     for (const m of [model, spawnModel(model, agentGroupId)]) {

@@ -1,11 +1,11 @@
 diff --git a/setup/providers/install.ts b/setup/providers/install.ts
-index 9a74308a..ed425d5b 100644
+index 84870d4d..eb1e5eb2 100644
 --- a/setup/providers/install.ts
 +++ b/setup/providers/install.ts
-@@ -91,12 +91,41 @@ export async function applyProviderSkill(
+@@ -90,12 +90,41 @@ export async function applyProviderSkill(
          // Fork-aware: reuse the existing resolver (handles upstream/fork remotes and
          // the auto-add-upstream fallback) instead of assuming `origin` — same call
-         // setup/channels/slack.ts makes for the `channels` branch.
+         // setup/lib/skill-driver.ts makes for the `channels` branch.
 -        resolveRemote: () =>
 -          execSync('source setup/lib/channels-remote.sh; resolve_channels_remote', {
 +        // Resolve the remote FOR THE BRANCH BEING COPIED. This used to call

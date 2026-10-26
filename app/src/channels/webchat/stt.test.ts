@@ -124,6 +124,30 @@ describe('transcribeSegment', () => {
     await expect(transcribeSegment(WAV, fn)).rejects.toThrow(/500/);
   });
 
+  it('returns empty for a silence hallucination on a silent clip, but keeps real speech', async () => {
+    process.env.WEBCHAT_STT_URL = 'http://127.0.0.1:8080';
+    // 2 s of digital silence, 16 kHz mono PCM16.
+    const samples = 32000;
+    const silent = Buffer.alloc(44 + samples * 2);
+    silent.write('RIFF', 0, 'ascii');
+    silent.writeUInt32LE(36 + samples * 2, 4);
+    silent.write('WAVEfmt ', 8, 'ascii');
+    silent.writeUInt32LE(16, 16);
+    silent.writeUInt16LE(1, 20);
+    silent.writeUInt16LE(1, 22);
+    silent.writeUInt32LE(16000, 24);
+    silent.writeUInt32LE(32000, 28);
+    silent.writeUInt16LE(2, 32);
+    silent.writeUInt16LE(16, 34);
+    silent.write('data', 36, 'ascii');
+    silent.writeUInt32LE(samples * 2, 40);
+    expect(await transcribeSegment(silent, fakeFetch(() => ({ body: ' Thank you. ' })).fn)).toBe('');
+    expect(await transcribeSegment(WAV, fakeFetch(() => ({ body: '[BLANK_AUDIO]' })).fn)).toBe('');
+    expect(await transcribeSegment(silent, fakeFetch(() => ({ body: 'thank you for that' })).fn)).toBe(
+      'thank you for that',
+    );
+  });
+
   it('throws when WEBCHAT_STT_URL is unset', async () => {
     const { fn } = fakeFetch(() => ({ body: 'x' }));
     await expect(transcribeSegment(WAV, fn)).rejects.toThrow(/not configured/);

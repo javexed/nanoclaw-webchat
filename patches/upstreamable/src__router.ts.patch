@@ -1,8 +1,8 @@
 diff --git a/src/router.ts b/src/router.ts
-index fdda9646..6fb97685 100644
+index 467309d1..5898fc5c 100644
 --- a/src/router.ts
 +++ b/src/router.ts
-@@ -383,6 +383,11 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
+@@ -384,6 +384,11 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
      const agentGroup = await getAgentGroup(agent.agent_group_id);
      if (!agentGroup) continue;
  
@@ -14,7 +14,7 @@ index fdda9646..6fb97685 100644
      // Effective thread id for THIS wiring: the event-derived address is
      // policy-stripped when the wiring (or its channel declaration) opts out
      // of threads. event.replyTo is operator intent from the CLI admin
-@@ -424,6 +429,13 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
+@@ -425,6 +430,13 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
        continue;
      }
  
@@ -28,7 +28,7 @@ index fdda9646..6fb97685 100644
      const engages = await evaluateEngage(agent, messageText, isMention, mg, effectiveThreadId);
  
      const accessOk = engages && (!accessGate || (await accessGate(event, userId, mg, agent.agent_group_id)).allowed);
-@@ -508,6 +520,26 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
+@@ -509,6 +521,26 @@ export async function routeInbound(event: InboundEvent): Promise<void> {
   *                      a thread has engaged us once, follow-ups arrive
   *                      with no mention and should still fire.
   */
@@ -55,7 +55,7 @@ index fdda9646..6fb97685 100644
  async function evaluateEngage(
    agent: MessagingGroupAgent,
    text: string,
-@@ -520,7 +552,12 @@ async function evaluateEngage(
+@@ -521,7 +553,12 @@ async function evaluateEngage(
        const pat = agent.engage_pattern ?? '.';
        if (pat === '.') return true;
        try {
@@ -69,7 +69,7 @@ index fdda9646..6fb97685 100644
        } catch {
          // Bad regex: fail open so admin sees the agent responding + can fix.
          return true;
-@@ -683,6 +720,7 @@ async function deliverToAgent(
+@@ -696,6 +733,7 @@ async function deliverToAgent(
      startTypingRefresh(
        session.id,
        session.agent_group_id,

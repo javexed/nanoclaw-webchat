@@ -90,6 +90,52 @@ function proxyCfg(): { raw: string; header: string; trustAny: boolean; entries: 
 }
 const proxyEnabled = (): boolean => proxyCfg().raw.length > 0;
 
+/**
+ * Cloudflare Access verification. Cf-Access-Jwt-Assertion is a JWT Cloudflare
+ * signs for the application; with these set, the identity comes from that
+ * verified token, never from the bare email header beside it:
+ *
+ *   WEBCHAT_CF_ACCESS_TEAM_DOMAIN  e.g. myteam.cloudflareaccess.com (the token's issuer)
+ *   WEBCHAT_CF_ACCESS_AUD          the Access application's AUD tag
+ *
+ * Set, a verified assertion is the only identity the proxy path accepts (the
+ * Azure pair and WEBCHAT_TRUSTED_PROXY_HEADER are ignored). Unset, the header
+ * pair is trusted as before (network position only).
+ */
+export function cfAccessCfg(env: NodeJS.ProcessEnv = process.env): {
+  enabled: boolean;
+  issuer: string;
+  audience: string;
+  jwksUri: string;
+} {
+  const team = (env.WEBCHAT_CF_ACCESS_TEAM_DOMAIN || '')
+    .trim()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/+$/, '');
+  const audience = (env.WEBCHAT_CF_ACCESS_AUD || '').trim();
+  const issuer = team ? `https://${team}` : '';
+  return {
+    enabled: Boolean(team && audience),
+    issuer,
+    audience,
+    jwksUri: issuer ? `${issuer}/cdn-cgi/access/certs` : '',
+  };
+}
+
+/** A Cloudflare Access assertion's email, or null when it does not verify. */
+async function verifyCfAccess(assertion: string, headerEmail: string, remoteIp: string): Promise<string | null> {
+  const r = await verifyJwt(assertion, cfAccessCfg());
+  if (!r.ok) {
+    warnOidcFallThrough(remoteIp, r);
+    return null;
+  }
+  const email = typeof r.claims.email === 'string' ? r.claims.email : '';
+  // The header must name the person the token does: a mismatch is a forged or
+  // mis-routed header, and neither may pick the identity.
+  if (!email || email.toLowerCase() !== headerEmail.toLowerCase()) return null;
+  return email;
+}
+
 const PLATFORM_HEADERS: Array<{ identity: string; verify: string; name: string }> = [
   // Azure App Service EasyAuth — x-ms-client-principal is a signed blob the platform injects.
   { identity: 'x-ms-client-principal-name', verify: 'x-ms-client-principal', name: 'Azure EasyAuth' },
@@ -192,18 +238,33 @@ interface SigningKey {
   key: KeyObject;
   alg: 'RS256' | 'ES256';
 }
-let jwksKeys: Map<string, SigningKey> | null = null;
-/** The key set's source. A different tenant means different keys: never serve the old set for it. */
-let jwksUriLoaded = '';
-let jwksFetchedAt = 0; // last SUCCESS — drives TTL staleness; stale keys keep serving through an outage
-let jwksLastAttemptAt = 0; // last ATTEMPT — drives the rate limit
-let jwksInFlight: Promise<void> | null = null;
+/**
+ * One key set per source URI (the OIDC provider's, Cloudflare Access's). A
+ * different tenant or team is a different URI, so its keys never serve another.
+ */
+interface JwksState {
+  keys: Map<string, SigningKey> | null;
+  fetchedAt: number; // last SUCCESS — drives TTL staleness; stale keys keep serving through an outage
+  lastAttemptAt: number; // last ATTEMPT — drives the rate limit
+  inFlight: Promise<void> | null;
+}
+const jwksStates = new Map<string, JwksState>();
+function jwksState(uri: string): JwksState {
+  let st = jwksStates.get(uri);
+  if (!st) {
+    // Settings can change the URI at runtime; a handful of stale entries is fine, an unbounded map is not.
+    if (jwksStates.size >= 8) jwksStates.clear();
+    st = { keys: null, fetchedAt: 0, lastAttemptAt: 0, inFlight: null };
+    jwksStates.set(uri, st);
+  }
+  return st;
+}
 
-async function fetchJwks(): Promise<void> {
-  if (jwksInFlight) return jwksInFlight;
-  jwksLastAttemptAt = Date.now();
-  const uri = oidcCfg().jwksUri;
-  jwksInFlight = (async () => {
+async function fetchJwks(uri: string): Promise<void> {
+  const st = jwksState(uri);
+  if (st.inFlight) return st.inFlight;
+  st.lastAttemptAt = Date.now();
+  st.inFlight = (async () => {
     try {
       const res = await fetch(uri, { signal: AbortSignal.timeout(5000) });
       if (!res.ok) throw new Error(`JWKS HTTP ${res.status}`);
@@ -221,37 +282,32 @@ async function fetchJwks(): Promise<void> {
         }
       }
       if (next.size > 0) {
-        jwksKeys = next;
-        jwksUriLoaded = uri;
-        jwksFetchedAt = Date.now();
+        st.keys = next;
+        st.fetchedAt = Date.now();
         log.info('Webchat OIDC: JWKS loaded', { keys: next.size });
       }
     } catch (err) {
       log.warn('Webchat OIDC: JWKS fetch failed', { err, uri });
     } finally {
-      jwksInFlight = null;
+      st.inFlight = null;
     }
   })();
-  return jwksInFlight;
+  return st.inFlight;
 }
 
-async function jwksKey(kid: string): Promise<SigningKey | null> {
-  // Settings changed the tenant: the cached keys belong to the old one.
-  if (jwksKeys && jwksUriLoaded !== oidcCfg().jwksUri) {
-    jwksKeys = null;
-    jwksLastAttemptAt = 0;
-  }
-  const mayFetch = (): boolean => Date.now() - jwksLastAttemptAt > JWKS_MIN_REFETCH_MS;
-  const stale = !jwksKeys || Date.now() - jwksFetchedAt > JWKS_TTL_MS;
-  if (stale && mayFetch()) await fetchJwks();
-  const hit = jwksKeys?.get(kid);
+async function jwksKey(uri: string, kid: string): Promise<SigningKey | null> {
+  const st = jwksState(uri);
+  const mayFetch = (): boolean => Date.now() - st.lastAttemptAt > JWKS_MIN_REFETCH_MS;
+  const stale = !st.keys || Date.now() - st.fetchedAt > JWKS_TTL_MS;
+  if (stale && mayFetch()) await fetchJwks(uri);
+  const hit = st.keys?.get(kid);
   if (hit) return hit;
   // Unknown kid — the provider rotated, or a forgery. One refetch if the window allows;
   // a refresh that just ran (and missed) has closed it, so this is never two
   // outbound calls for one request.
   if (mayFetch()) {
-    await fetchJwks();
-    return jwksKeys?.get(kid) ?? null;
+    await fetchJwks(uri);
+    return st.keys?.get(kid) ?? null;
   }
   return null;
 }
@@ -293,6 +349,27 @@ export type OidcResult =
 export async function verifyOidcTokenDetailed(token: string, opts: { nonce?: string } = {}): Promise<OidcResult> {
   const cfg = oidcCfg();
   if (!cfg.enabled) return { ok: false, reason: 'disabled' };
+  const v = await verifyJwt(token, cfg);
+  if (!v.ok) return v;
+  const claims = v.claims;
+  if (opts.nonce !== undefined && claims.nonce !== opts.nonce) return { ok: false, reason: 'nonce' };
+
+  const identity = oidcIdentityClaim(cfg.provider, claims);
+  if (!identity) return { ok: false, reason: 'no-identity' };
+  const name = typeof claims.name === 'string' && claims.name ? claims.name : identity;
+  return { ok: true, identity: { identity, displayName: name } };
+}
+
+type JwtResult = { ok: true; claims: Record<string, unknown> } | Extract<OidcResult, { ok: false }>;
+
+/**
+ * Signature (RS256/ES256 pinned to the key's type) plus exp/nbf/iss/aud, against
+ * the key set at `jwksUri`. Shared by OIDC sign-in and Cloudflare Access.
+ */
+async function verifyJwt(
+  token: string,
+  cfg: { issuer: string; audience: string; jwksUri: string },
+): Promise<JwtResult> {
   if (!JWT_SHAPE.test(token)) return { ok: false, reason: 'malformed' };
   const [h, p, sig] = token.split('.');
   let header: Record<string, unknown>;
@@ -310,7 +387,7 @@ export async function verifyOidcTokenDetailed(token: string, opts: { nonce?: str
   // of that type.
   if ((header.alg !== 'RS256' && header.alg !== 'ES256') || typeof header.kid !== 'string')
     return { ok: false, reason: 'alg' };
-  const key = await jwksKey(header.kid);
+  const key = await jwksKey(cfg.jwksUri, header.kid);
   if (!key) return { ok: false, reason: 'unknown-kid' };
   if (key.alg !== header.alg) return { ok: false, reason: 'alg' };
   const signed = Buffer.from(`${h}.${p}`);
@@ -330,12 +407,7 @@ export async function verifyOidcTokenDetailed(token: string, opts: { nonce?: str
   const aud = claims.aud;
   const audOk = Array.isArray(aud) ? aud.includes(cfg.audience) : aud === cfg.audience;
   if (!audOk) return { ok: false, reason: 'audience' };
-  if (opts.nonce !== undefined && claims.nonce !== opts.nonce) return { ok: false, reason: 'nonce' };
-
-  const identity = oidcIdentityClaim(cfg.provider, claims);
-  if (!identity) return { ok: false, reason: 'no-identity' };
-  const name = typeof claims.name === 'string' && claims.name ? claims.name : identity;
-  return { ok: true, identity: { identity, displayName: name } };
+  return { ok: true, claims };
 }
 
 /**
@@ -503,7 +575,7 @@ async function authenticate(req: IncomingMessage): Promise<AuthResult | AuthFail
   }
 
   // 2. Trusted proxy header — proxy is the auth authority.
-  const proxy = authenticateTrustedProxy(req, remoteIp);
+  const proxy = await authenticateTrustedProxy(req, remoteIp);
   if (proxy) {
     return withHint(
       await finalize({
@@ -817,13 +889,21 @@ export function viaTrustedProxy(req: IncomingMessage): boolean {
 
 /** Emit a startup warning if "auto" proxy mode is on — headers aren't verified. */
 export function warnIfAutoProxyTrust(): void {
-  if (proxyCfg().raw === 'auto') {
+  if (proxyCfg().raw !== 'auto') return;
+  if (cfAccessCfg().enabled) {
     log.warn(
-      'Webchat: WEBCHAT_TRUSTED_PROXY_IPS=auto — headers are NOT cryptographically verified. ' +
-        'Ensure this server is ONLY reachable through your proxy (Azure/Cloudflare). ' +
-        'Direct access allows header forgery. Use explicit IP/CIDR for defense-in-depth.',
+      'Webchat: WEBCHAT_TRUSTED_PROXY_IPS=auto with Cloudflare Access verification — only a verified ' +
+        'Cf-Access-Jwt-Assertion is accepted; other proxy identity headers are ignored. ' +
+        'Use explicit IP/CIDR for defense-in-depth.',
     );
+    return;
   }
+  log.warn(
+    'Webchat: WEBCHAT_TRUSTED_PROXY_IPS=auto — headers are NOT cryptographically verified. ' +
+      'Ensure this server is ONLY reachable through your proxy (Azure/Cloudflare). ' +
+      'Direct access allows header forgery. Use explicit IP/CIDR for defense-in-depth, and behind ' +
+      'Cloudflare Access set WEBCHAT_CF_ACCESS_TEAM_DOMAIN + WEBCHAT_CF_ACCESS_AUD to verify its token.',
+  );
 }
 
 // ── Internals ─────────────────────────────────────────────────────────────
@@ -904,7 +984,7 @@ export function isTrustedProxyIp(ip: string, entries: string[]): boolean {
   return false;
 }
 
-function authenticateTrustedProxy(req: IncomingMessage, remoteIp: string): { identity: string } | null {
+async function authenticateTrustedProxy(req: IncomingMessage, remoteIp: string): Promise<{ identity: string } | null> {
   const cleanIp = remoteIp.replace(/^::ffff:/, '');
   const cfg = proxyCfg();
   if (!cfg.raw) return null;
@@ -921,6 +1001,27 @@ function authenticateTrustedProxy(req: IncomingMessage, remoteIp: string): { ide
 
   // Step 2 — identity. BOTH modes read the same headers: pinning the proxy IP
   // narrows *who may assert* an identity, never *which headers carry one*.
+  //
+  // With Cloudflare Access verification configured, a verified assertion is
+  // the ONLY identity source. The Azure pair and the generic header are
+  // unsigned; honouring either beside a verified path would let a caller skip
+  // the verification simply by sending those headers instead.
+  if (cfAccessCfg().enabled) {
+    const identity = req.headers['cf-access-authenticated-user-email'];
+    const proof = req.headers['cf-access-jwt-assertion'];
+    const user = Array.isArray(identity) ? identity[0] : identity;
+    const assertion = Array.isArray(proof) ? proof[0] : proof;
+    if (typeof user !== 'string' || !user || typeof assertion !== 'string' || !assertion) return null;
+    const email = await verifyCfAccess(assertion, user, cleanIp);
+    if (!email) return null;
+    log.debug('Webchat platform proxy auth', {
+      identity: email,
+      platform: 'Cloudflare Access (verified)',
+      remoteIp: cleanIp,
+    });
+    return { identity: email };
+  }
+
   for (const ph of PLATFORM_HEADERS) {
     const identity = req.headers[ph.identity];
     const proof = req.headers[ph.verify];

@@ -1163,3 +1163,144 @@ describe('Tailscale and the trusted proxy apply without a restart', () => {
     expect((await auth.getAuthInfo()).methods.tailscale).toBe(true);
   });
 });
+
+describe('Cloudflare Access: the assertion is verified when configured', () => {
+  const TEAM = 'myteam.cloudflareaccess.com';
+  const ISS = `https://${TEAM}`;
+  const AUD = 'cf-app-aud-tag';
+  const CERTS = `${ISS}/cdn-cgi/access/certs`;
+  const KID = 'cf-kid-1';
+  const key = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const other = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const b64u = (x: string | Buffer): string => Buffer.from(x).toString('base64url');
+  const nowS = () => Math.floor(Date.now() / 1000);
+  const claims = (over: Record<string, unknown> = {}) => ({
+    iss: ISS,
+    aud: [AUD],
+    exp: nowS() + 600,
+    email: 'dave@example.com',
+    ...over,
+  });
+  const mint = (c: Record<string, unknown>, signer = key): string => {
+    const h = b64u(JSON.stringify({ alg: 'RS256', kid: KID, typ: 'JWT' }));
+    const p = b64u(JSON.stringify(c));
+    return `${h}.${p}.${b64u(cryptoSign('sha256', Buffer.from(`${h}.${p}`), signer.privateKey))}`;
+  };
+  const ENV = {
+    WEBCHAT_TOKEN: '',
+    WEBCHAT_TAILSCALE: '',
+    WEBCHAT_TRUSTED_PROXY_IPS: '10.0.0.5',
+    WEBCHAT_CF_ACCESS_TEAM_DOMAIN: TEAM,
+    WEBCHAT_CF_ACCESS_AUD: AUD,
+  };
+  const cfReq = (email: string, assertion: string) =>
+    fakeReq({
+      remoteAddress: '10.0.0.5',
+      headers: { 'cf-access-authenticated-user-email': email, 'cf-access-jwt-assertion': assertion },
+    });
+
+  beforeEach(() => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        if (String(url) !== CERTS) throw new Error(`unexpected fetch: ${String(url)}`);
+        const jwk = { ...(key.publicKey.export({ format: 'jwk' }) as object), kid: KID, alg: 'RS256', use: 'sig' };
+        return { ok: true, status: 200, json: async () => ({ keys: [jwk] }) };
+      }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('accepts a valid assertion and takes the identity from the token', async () => {
+    const auth = await loadAuthWithEnv(ENV);
+    const r = await auth.authenticateRequest(cfReq('dave@example.com', mint(claims())));
+    expect(r.ok && r.userId).toBe('webchat:dave@example.com');
+  });
+
+  it('refuses a forged assertion (wrong key), whatever the email header says', async () => {
+    const auth = await loadAuthWithEnv(ENV);
+    const r = await auth.authenticateRequest(cfReq('dave@example.com', mint(claims(), other)));
+    expect(r.ok).toBe(false);
+  });
+
+  it('refuses the old "any non-empty assertion" bypass', async () => {
+    const auth = await loadAuthWithEnv(ENV);
+    const r = await auth.authenticateRequest(cfReq('dave@example.com', 'header.payload.sig'));
+    expect(r.ok).toBe(false);
+  });
+
+  it('refuses a token for another Access application or team', async () => {
+    const auth = await loadAuthWithEnv(ENV);
+    expect((await auth.authenticateRequest(cfReq('dave@example.com', mint(claims({ aud: ['other-app'] }))))).ok).toBe(
+      false,
+    );
+    expect(
+      (
+        await auth.authenticateRequest(
+          cfReq('dave@example.com', mint(claims({ iss: 'https://evil.cloudflareaccess.com' }))),
+        )
+      ).ok,
+    ).toBe(false);
+  });
+
+  it('refuses an expired token', async () => {
+    const auth = await loadAuthWithEnv(ENV);
+    const r = await auth.authenticateRequest(cfReq('dave@example.com', mint(claims({ exp: nowS() - 3600 }))));
+    expect(r.ok).toBe(false);
+  });
+
+  it('refuses when the email header names someone other than the token', async () => {
+    const auth = await loadAuthWithEnv(ENV);
+    const r = await auth.authenticateRequest(cfReq('admin@example.com', mint(claims())));
+    expect(r.ok).toBe(false);
+  });
+
+  it('with the settings, the unsigned Azure EasyAuth pair cannot stand in for a verified token', async () => {
+    const auth = await loadAuthWithEnv(ENV);
+    const r = await auth.authenticateRequest(
+      fakeReq({
+        remoteAddress: '10.0.0.5',
+        headers: { 'x-ms-client-principal-name': 'admin@example.com', 'x-ms-client-principal': 'e30=' },
+      }),
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('with the settings, the generic proxy header cannot stand in for a verified token', async () => {
+    const auth = await loadAuthWithEnv(ENV);
+    const r = await auth.authenticateRequest(
+      fakeReq({ remoteAddress: '10.0.0.5', headers: { 'x-forwarded-user': 'admin@example.com' } }),
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('without the settings, the Azure pair and the generic header still work', async () => {
+    const auth = await loadAuthWithEnv({ ...ENV, WEBCHAT_CF_ACCESS_TEAM_DOMAIN: '', WEBCHAT_CF_ACCESS_AUD: '' });
+    const azure = await auth.authenticateRequest(
+      fakeReq({
+        remoteAddress: '10.0.0.5',
+        headers: { 'x-ms-client-principal-name': 'erin@example.com', 'x-ms-client-principal': 'e30=' },
+      }),
+    );
+    expect(azure.ok && azure.userId).toBe('webchat:erin@example.com');
+    const generic = await auth.authenticateRequest(
+      fakeReq({ remoteAddress: '10.0.0.5', headers: { 'x-forwarded-user': 'frank' } }),
+    );
+    expect(generic.ok && generic.userId).toBe('webchat:frank');
+  });
+
+  it('without the settings, the header pair is trusted as before', async () => {
+    const auth = await loadAuthWithEnv({ ...ENV, WEBCHAT_CF_ACCESS_TEAM_DOMAIN: '', WEBCHAT_CF_ACCESS_AUD: '' });
+    const r = await auth.authenticateRequest(cfReq('dave@example.com', 'header.payload.sig'));
+    expect(r.ok && r.userId).toBe('webchat:dave@example.com');
+  });
+
+  it('cfAccessCfg accepts a team domain with or without scheme and slash', async () => {
+    const auth = await loadAuthWithEnv(ENV);
+    const c = auth.cfAccessCfg({
+      WEBCHAT_CF_ACCESS_TEAM_DOMAIN: 'https://myteam.cloudflareaccess.com/',
+      WEBCHAT_CF_ACCESS_AUD: 'a',
+    });
+    expect(c).toEqual({ enabled: true, issuer: ISS, audience: 'a', jwksUri: CERTS });
+  });
+});

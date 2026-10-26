@@ -53,3 +53,36 @@ export function hasUnforwardedTurnStart(agentGroupId: string, sessionId: string)
     return false;
   }
 }
+
+/**
+ * Where a live reply preview goes: the text of a reply the agent is still
+ * writing (kind 'preview' on the feed; null text clears it). Ephemeral — it is
+ * never stored, never recorded on a turn, and only a channel that registers a
+ * sink (webchat) ever sees it.
+ */
+export interface ReplyPreview {
+  channelType: string;
+  platformId: string;
+  instance?: string;
+  agentName: string | null;
+  /** The writing session's thread key (sessions.thread_id); null for a chat's main session. */
+  threadId: string | null;
+  text: string | null;
+}
+
+type ReplyPreviewSink = (preview: ReplyPreview) => void | Promise<void>;
+let replyPreviewSink: ReplyPreviewSink | null = null;
+
+/** The channel that renders reply previews registers here (one sink). */
+export function registerReplyPreviewSink(fn: ReplyPreviewSink): void {
+  replyPreviewSink = fn;
+}
+
+export async function notifyReplyPreview(preview: ReplyPreview): Promise<void> {
+  if (!replyPreviewSink) return;
+  try {
+    await replyPreviewSink(preview);
+  } catch {
+    // Cosmetic — never break the feed.
+  }
+}

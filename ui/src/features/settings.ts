@@ -42,7 +42,7 @@ export function provideSettingsDeps(provided: Partial<SettingsDeps>): void {
   Object.assign(deps, provided);
 }
 
-const DEFAULTS = { theme: 'dark', font: 'medium', sendKey: 'enter', notifications: true,
+const DEFAULTS = { theme: 'dark', font: 'medium', sendKey: 'enter', notifications: true, showModel: false,
 };
 
 export function loadSettings() {
@@ -87,6 +87,8 @@ export function renderSettingsModal() {
   });
   // Notifications
   $<HTMLInputElement>('#notif-toggle')!.checked = state.settings!.notifications;
+  const showModel = $<HTMLInputElement>('#show-model-toggle');
+  if (showModel) showModel.checked = state.settings!.showModel === true;
 
 }
 
@@ -175,12 +177,22 @@ export async function renderCredentialsSettings() {
   if (grokInstallBtn && !opencodeInstallActive.value) grokInstallBtn.hidden = !!cfg.grokAvailable;
   if (grokBadge) grokBadge.hidden = !cfg.grokAvailable;
 
+  // GitHub Copilot install-row — same pattern; connecting happens on its
+  // setup-wizard card, where the other engines connect.
+  const copilotRow = $('#settings-copilot-install');
+  if (copilotRow) copilotRow.hidden = false;
+  const copilotInstallBtn = $('#copilot-install-btn');
+  const copilotBadge = $('#copilot-installed-badge');
+  if (copilotInstallBtn && !opencodeInstallActive.value) copilotInstallBtn.hidden = !!cfg.copilotAvailable;
+  if (copilotBadge) copilotBadge.hidden = !cfg.copilotAvailable;
+
   if (credConfigWired) return;
   credConfigWired = true;
   $('#codex-install-btn')?.addEventListener('click', () => runInstall('codex', CODEX_SETTINGS_ELS));
   $('#opencode-install-btn')?.addEventListener('click', () => runInstall('opencode', OPENCODE_SETTINGS_ELS));
   $('#pi-install-btn')?.addEventListener('click', () => runInstall('pi', PI_SETTINGS_ELS));
   $('#grok-install-btn')?.addEventListener('click', () => runInstall('grok', GROK_SETTINGS_ELS));
+  $('#copilot-install-btn')?.addEventListener('click', () => runInstall('copilot', COPILOT_SETTINGS_ELS));
   const putConfig = async (patch: any) => {
     const r = await authFetch('/api/webchat/credentials-config', {
       method: 'PUT',
@@ -297,6 +309,13 @@ const GROK_SETTINGS_ELS = {
   log: '#grok-install-log',
   progress: '#grok-install-progress',
   doneMsg: 'Grok installed — sign in with a device code under Credentials.',
+} as Record<string, string>;
+
+const COPILOT_SETTINGS_ELS = {
+  btn: '#copilot-install-btn',
+  log: '#copilot-install-log',
+  progress: '#copilot-install-progress',
+  doneMsg: 'GitHub Copilot installed — connect it in the setup wizard.',
 } as Record<string, string>;
 
 const PI_SETTINGS_ELS = {
@@ -1173,6 +1192,15 @@ export function wireSettingsPanel2(): void {
     } finally {
       readAloud.disabled = false;
     }
+  });
+
+  // Which model answered, on each reply. A new object, so the transcript (which reads
+  // state.settings through a shallowReactive) re-renders.
+  const showModelToggle = $<HTMLInputElement>('#show-model-toggle');
+  showModelToggle?.addEventListener('change', () => {
+    if (!state.settings) return;
+    state.settings = { ...state.settings, showModel: showModelToggle.checked };
+    saveSettings(state.settings);
   });
 
   // Notifications toggle — handles both foreground Notifications and Web Push

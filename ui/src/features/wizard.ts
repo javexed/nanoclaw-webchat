@@ -29,8 +29,10 @@ import {
   pollSttInstall,
   runInstall,
   CODEX_WIZARD_ELS,
+  COPILOT_WIZARD_ELS,
   GROK_WIZARD_ELS,
 } from './installers.js';
+import { copilotConnectedText, copilotStatusLine } from './copilot-state.js';
 import { buttonBusy } from '../core/busy.js';
 
 /** Supplied by provideWizardDeps in composition-root.ts. `any` marks a signature not
@@ -168,7 +170,7 @@ export async function renderWizardOpencodeInstall() {
 // sessionStorage: same tab only, the only place a reload lands; an hour old
 // means abandoned.
 const RESUME_KEY = 'nanoclaw-wizard-resume';
-const WIZARD_ENGINES = ['claude', 'codex', 'grok', 'ollama'];
+const WIZARD_ENGINES = ['claude', 'codex', 'grok', 'copilot', 'ollama'];
 
 function saveResume(): void {
   try {
@@ -326,6 +328,22 @@ export async function refreshWizardCredState() {
     $('#wizard-grok-connected-text')!.textContent = grok.email
       ? `Grok connected — ${grok.email}`
       : 'Grok connected — subscription';
+
+  // GitHub Copilot: install → connect (device code) → ✓, like Grok, plus
+  // Disconnect — the sign-in stored gateway credentials Settings can remove.
+  const copilot = s.copilot;
+  const copilotInstalled = copilot?.available === true;
+  const copilotChip = $('#wizard-chip-copilot');
+  if (copilotChip) {
+    copilotChip.hidden = false;
+    copilotChip.textContent = copilot?.connected ? '✓ connected' : copilotInstalled ? 'not connected' : 'not installed';
+    copilotChip.classList.toggle('ok', !!copilot?.connected);
+  }
+  const copilotInstallRow = $('#wizard-copilot-install-row');
+  if (copilotInstallRow && !opencodeInstallActive.value) copilotInstallRow.hidden = copilotInstalled;
+  $('#wizard-copilot-connect')!.hidden = !copilotInstalled || !!copilot?.connected;
+  $('#wizard-copilot-connected')!.hidden = !copilot?.connected;
+  if (copilot?.connected) $('#wizard-copilot-connected-text')!.textContent = copilotConnectedText(copilot);
 
   // An Ollama model is the workspace default only when the default row's kind is
   // 'ollama' — authoritative, so the chip/card never claims "set" for a Claude/Codex
@@ -617,6 +635,7 @@ function wizardEngineConnected() {
   const s: any = wizardCred || {};
   if (wizardEngine === 'codex') return !!s.codex?.connected;
   if (wizardEngine === 'grok') return !!s.grok?.connected;
+  if (wizardEngine === 'copilot') return !!s.copilot?.connected;
   if (wizardEngine === 'ollama') return !!s.defaultModelId;
   return !!s.connected; // claude (default)
 }
@@ -1480,9 +1499,11 @@ function wireWizard() {
   if (wizardWired) return;
   wizardWired = true;
   wireGrokLogin();
+  wireCopilotLogin();
   // A login started before this page loaded (another tab, or a reload mid-flow)
   // is still running server-side — pick it back up rather than stranding it.
   void resumeGrokLogin();
+  void resumeCopilotLogin();
   $('#wizard-next')?.addEventListener('click', async () => {
     // The Access step won't advance until the chosen exposure method is actually
     // live — Tailscale signed in, or a reverse proxy configured. Bearer (the
@@ -1516,6 +1537,10 @@ function wireWizard() {
           ? 'set a default Ollama model'
           : wizardEngine === 'grok'
             ? 'authenticate Grok from a terminal (the command is on the card), then reload'
+            : wizardEngine === 'copilot'
+              ? wizardCred?.copilot?.available
+                ? 'connect GitHub Copilot'
+                : 'install then connect GitHub Copilot'
             : wizardEngine === 'codex' && !wizardCodexAvailable
               ? 'install then connect Codex'
               : `connect ${wizardEngine === 'codex' ? 'Codex' : 'Claude'}`;
@@ -1568,6 +1593,7 @@ function wireWizard() {
   $('#wizard-claude-oauth')?.addEventListener('click', () => deps.openOauthMintModal('workspace'));
   $('#wizard-codex-install')?.addEventListener('click', () => runInstall('codex', CODEX_WIZARD_ELS));
   $('#wizard-grok-install')?.addEventListener('click', () => runInstall('grok', GROK_WIZARD_ELS));
+  $('#wizard-copilot-install')?.addEventListener('click', () => runInstall('copilot', COPILOT_WIZARD_ELS));
   $('#wizard-codex-oauth')?.addEventListener('click', () => deps.openOauthMintModal('workspace-codex'));
   // Step 1 (codex panel) — paste an OpenAI API key as the workspace Codex default.
   $('#wizard-codex-save')?.addEventListener('click', async () => {
@@ -1800,7 +1826,7 @@ async function wizardCreateAndFinish() {
       // harness is derived from it elsewhere. Best-effort, and deliberately
       // LAST: a changed default schedules a host restart on a short fuse, so
       // everything the wizard still needed to do has already happened.
-      if (wizardEngine === 'claude' || wizardEngine === 'codex' || wizardEngine === 'grok') {
+      if (['claude', 'codex', 'grok', 'copilot'].includes(wizardEngine)) {
         try {
           await apiJson('/api/workspace-provider', {
             method: 'PUT',
@@ -1926,5 +1952,100 @@ async function resumeGrokLogin() {
     }
   } catch {
     /* status is best-effort; the card still renders from the credential probe */
+  }
+}
+
+// ── GitHub Copilot device sign-in ───────────────────────────────────────────
+// Grok's shape: the server runs the sign-in, this polls it. The token never
+// reaches the page — only the code, the link and the outcome do.
+let copilotPollTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopCopilotPoll() {
+  if (copilotPollTimer) clearInterval(copilotPollTimer);
+  copilotPollTimer = null;
+}
+
+function renderCopilotLogin(p: any) {
+  const device = $('#wizard-copilot-device');
+  const row = $('#wizard-copilot-login-row');
+  if (!device || !row) return;
+  device.hidden = !p?.running;
+  row.hidden = !!p?.running;
+  if (p?.running) {
+    const url = $('#wizard-copilot-url') as HTMLAnchorElement | null;
+    if (url && p.verificationUrl) {
+      url.textContent = p.verificationUrl;
+      url.href = p.verificationUrl;
+    }
+    $('#wizard-copilot-code')!.textContent = p.userCode ?? 'waiting for a code…';
+  }
+  const line = copilotStatusLine(p);
+  const status = $('#wizard-copilot-status');
+  if (status) {
+    status.textContent = line ?? '';
+    status.hidden = !line;
+  }
+}
+
+async function pollCopilotLogin() {
+  const r = await authFetch('/api/workspace-credential/copilot');
+  if (!r.ok) return stopCopilotPoll();
+  const p = await r.json();
+  renderCopilotLogin(p);
+  if (!p.running) {
+    stopCopilotPoll();
+    if (p.outcome === 'complete') await refreshWizardCredState();
+  }
+}
+
+function startCopilotPoll() {
+  stopCopilotPoll();
+  void pollCopilotLogin();
+  copilotPollTimer = setInterval(() => void pollCopilotLogin(), 2000);
+}
+
+function wireCopilotLogin() {
+  $('#wizard-copilot-login')?.addEventListener('click', async () => {
+    const btn = $('#wizard-copilot-login') as HTMLButtonElement | null;
+    const done = btn ? buttonBusy(btn, 'Starting…') : () => {};
+    try {
+      const r = await authFetch('/api/workspace-credential/copilot/start', { method: 'POST' });
+      const p = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        renderCopilotLogin({ outcome: 'failed', error: p?.error ?? 'Could not start the sign-in.' });
+        return;
+      }
+      renderCopilotLogin(p);
+      startCopilotPoll();
+    } finally {
+      done();
+    }
+  });
+  $('#wizard-copilot-cancel')?.addEventListener('click', async () => {
+    await authFetch('/api/workspace-credential/copilot/cancel', { method: 'POST' });
+    stopCopilotPoll();
+    void pollCopilotLogin();
+  });
+  $('#wizard-copilot-disconnect')?.addEventListener('click', async () => {
+    const r = await authFetch('/api/workspace-credential/copilot/disconnect', { method: 'POST' });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      showToast('Failed to disconnect: ' + (err.error || r.statusText), { kind: 'error' });
+      return;
+    }
+    await refreshWizardCredState();
+  });
+}
+
+/** Resume a sign-in started before this page loaded (or in another tab). */
+async function resumeCopilotLogin() {
+  try {
+    const p = await apiJson('/api/workspace-credential/copilot');
+    if (p.running) {
+      renderCopilotLogin(p);
+      startCopilotPoll();
+    }
+  } catch {
+    /* not an admin, or not installed — the card renders from the credential probe */
   }
 }

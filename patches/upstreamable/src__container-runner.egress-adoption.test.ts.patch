@@ -1,0 +1,65 @@
+diff --git a/src/container-runner.egress-adoption.test.ts b/src/container-runner.egress-adoption.test.ts
+index ef872b94..76ddb8ec 100644
+--- a/src/container-runner.egress-adoption.test.ts
++++ b/src/container-runner.egress-adoption.test.ts
+@@ -20,6 +20,8 @@ const state = vi.hoisted(() => ({
+   /** Runs when the adopted container's networks are read (after it is registered). */
+   onNetworksRead: undefined as (() => void) | undefined,
+   cli: undefined as unknown,
++  /** The gateway is on the egress network until lockdown disconnects it. */
++  gatewayAttached: true,
+ }));
+ 
+ class ScriptedCli extends FakeCli {
+@@ -60,9 +62,13 @@ vi.mock('child_process', async (importOriginal) => {
+       bin === 'docker'
+         ? args.includes('{{.Internal}}')
+           ? 'true'
+-          : args.includes('--format')
+-            ? 'fixture-gateway '
+-            : ''
++          : args[0] === 'network' && args[1] === 'disconnect'
++            ? ((state.gatewayAttached = false), '')
++            : args.includes('--format')
++              ? state.gatewayAttached
++                ? 'fixture-gateway '
++                : ''
++              : ''
+         : actual.execFileSync(bin, args, opts as never)) as typeof actual.execFileSync,
+   };
+ });
+@@ -84,9 +90,11 @@ import {
+   wakeContainer,
+ } from './container-runner.js';
+ import { resetSessionDriver } from './drivers/index.js';
++import { removalWaitClock } from './drivers/docker-driver.js';
+ import { initTestDb, closeDb, runMigrations, createAgentGroup, createSession, getSession } from './db/index.js';
+ import { resetGatewayProvider } from './gateway-providers/index.js';
+ 
++const realRemovalClock = { ...removalWaitClock };
+ const release = vi.fn(async () => {});
+ 
+ function now(): string {
+@@ -109,6 +117,14 @@ beforeEach(async () => {
+   state.alive = true;
+   state.stopFails = false;
+   state.onNetworksRead = undefined;
++  state.gatewayAttached = true;
++  // A refused stop waits out the daemon's own removal; run that wait on
++  // virtual time so the retries here stay fast.
++  let clock = 0;
++  removalWaitClock.now = () => clock;
++  removalWaitClock.sleep = async (ms) => {
++    clock += ms;
++  };
+   state.cli = new ScriptedCli('docker');
+   release.mockClear();
+   resetSessionDriver();
+@@ -153,6 +169,7 @@ beforeEach(async () => {
+ 
+ afterEach(async () => {
+   vi.restoreAllMocks();
++  Object.assign(removalWaitClock, realRemovalClock);
+   state.stopFails = false;
+   if (isContainerRunning('sess-1')) {
+     killContainer('sess-1', 'test-teardown');

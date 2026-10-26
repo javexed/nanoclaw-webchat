@@ -1,12 +1,13 @@
 <script setup lang="ts">
 /**
  * The sidebar room list, mounted into <ul id="room-list">. Row child order is exact:
- * [chevron], name, [mention|unread], [pin], [thread input], actions, [thread list],
+ * [chevron], name, [mention], [unread count], [pin], [thread input], actions, [thread list],
  * [kebab menu last].
  */
 import { computed } from 'vue';
 import { state } from '../core/state.js';
 import { lucide } from '../core/dom.js';
+import { formatUnreadCount } from '../core/unread.js';
 import ThreadRows from './ThreadRows.vue';
 import ThreadNameInput from './ThreadNameInput.vue';
 import { draggedPinId, dropMarker, openMenuRoomId, roomFilter, roomSortAz, showArchived, showHidden } from './room-list-state.js';
@@ -35,6 +36,8 @@ const PIN_ICON = lucide('pin');
 const PLUS = '+';
 const NEW_THREAD = 'New thread';
 const MENTION = '@';
+/** Read after the count by screen readers ("3 unread"); the badge itself is a bare number. */
+const UNREAD = ' unread';
 /** Empty list: a label, not an explanation (DESIGN.md's label-only default). */
 const EMPTY = 'No rooms yet.';
 /** A filter that matches nothing is a different state from an empty install. */
@@ -218,7 +221,9 @@ const activeHasThreads = computed(() =>
       >{{ expanded(room) ? '▾' : '▸' }}</button>
       <span class="room-row-name">#{{ room.id }}</span>
       <span v-if="state.mentionedRooms.has(room.id)" class="mention-dot" title="You were mentioned here">{{ MENTION }}</span>
-      <span v-else-if="state.unreadRooms.has(room.id)" class="unread-dot" :style="{ background: color(room.id) }"></span>
+      <span v-if="state.unreadRooms.has(room.id)" class="unread-badge"
+        >{{ formatUnreadCount(state.unreadRooms.get(room.id)) }}<span class="visually-hidden">{{ UNREAD }}</span></span
+      >
       <span v-if="room.pinned" class="room-pin-indicator" aria-label="Pinned" v-html="PIN_ICON"></span>
       <div v-if="adding(room)" class="thread-list">
         <ThreadNameInput

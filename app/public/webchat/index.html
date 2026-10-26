@@ -89,6 +89,11 @@
         <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
         <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
       </symbol>
+      <symbol id="i-external-link" viewBox="0 0 24 24">
+        <path d="M15 3h6v6" />
+        <path d="M10 14 21 3" />
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+      </symbol>
       <symbol id="i-folder" viewBox="0 0 24 24">
         <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
       </symbol>
@@ -371,6 +376,17 @@
           <input id="import-any-file" type="file" accept=".tgz,.gz,application/gzip" hidden />
         </div>
       </nav>
+      <!-- Sidebar width: drag, arrow keys, Home/End; a click cycles narrow/default/wide.
+           aria-value* are kept current by core/resizer.ts. -->
+      <div
+        id="sidebar-resizer"
+        class="panel-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-controls="sidebar"
+        aria-label="Resize sidebar"
+        tabindex="0"
+      ></div>
       <div id="approval-toasts" class="approval-toasts" aria-live="polite"></div>
       <div id="toasts" class="toasts" aria-live="polite"></div>
       <main id="chat">
@@ -511,6 +527,8 @@
             </div>
             <div id="typing-indicator" class="typing-indicator" aria-hidden="true"></div>
             <div id="file-preview" class="file-preview" hidden></div>
+            <!-- Where pre-filled composer text came from (an HTML attachment). -->
+            <div id="compose-origin" class="compose-origin" role="status" hidden></div>
             <!-- Learn nudge: appears only after a turn that looked skill-worthy
                  (tool-heavy). Human-gated — it suggests, you tap, nothing runs on its
                  own. Dismiss hides it until the next qualifying turn. -->
@@ -670,6 +688,9 @@
                          server rejects the switch with a clear error when the
                          provider hasn't registered a container config. -->
                     <button type="button" class="setting-option" data-provider="grok">Grok</button>
+                    <!-- copilot (add-copilot): GitHub Copilot through the Copilot SDK,
+                         signed in once per install from the setup wizard. -->
+                    <button type="button" class="setting-option" data-provider="copilot">GitHub Copilot</button>
                   </div>
                   <pre id="agent-harness-install" class="wizard-code" aria-live="polite" hidden></pre>
                 </div>
@@ -981,6 +1002,10 @@
                 </button>
               </div>
               <div class="agent-detail-form">
+                <label id="room-autoread-field" class="setting-toggle" hidden>
+                  <span>Read replies aloud</span>
+                  <input id="room-autoread-toggle" type="checkbox" role="switch" />
+                </label>
                 <label id="room-rename-field" hidden>
                   <span class="form-label">Room name</span>
                   <span class="room-rename-row">
@@ -1504,7 +1529,7 @@
             </div>
           </aside>
         </div>
-        <button id="scroll-bottom" class="scroll-bottom" hidden aria-label="Jump to bottom">
+        <button id="scroll-bottom" class="scroll-bottom" hidden aria-label="Jump to latest" title="Jump to latest">
           <svg class="icon" aria-hidden="true"><use href="#i-arrow-down"></use></svg
           ><span id="unread-badge" class="unread-count"></span>
         </button>
@@ -2081,6 +2106,18 @@
                 <div id="grok-install-progress" hidden>
                   <pre id="grok-install-log" class="roster-refresh-log"></pre>
                 </div>
+                <!-- GitHub Copilot provider install — the same two-phase (build → host
+                     restart) flow as the others. Connecting is on its setup-wizard card. -->
+                <div class="setting-group install-row" id="settings-copilot-install" hidden>
+                  <span class="setting-label">GitHub Copilot</span>
+                  <button id="copilot-install-btn" class="btn btn-secondary" type="button">Install GitHub Copilot…</button>
+                  <span id="copilot-installed-badge" class="install-badge" hidden>
+                    <svg class="icon" aria-hidden="true"><use href="#i-check"></use></svg>&nbsp;Installed
+                  </span>
+                </div>
+                <div id="copilot-install-progress" hidden>
+                  <pre id="copilot-install-log" class="roster-refresh-log"></pre>
+                </div>
                 <!-- pi harness install — the minimal local harness (add-pi-stack).
                      Same two-phase (build → restart) flow via the shared runner;
                      on success piAvailable flips and Agent → Harness gains pi. -->
@@ -2573,6 +2610,9 @@
            Mobile-only (CSS hides it on desktop where panels live in their own column). -->
       <div id="detail-overlay" class="detail-overlay" hidden></div>
 
+      <!-- Attachment preview drawer (Vue island; empty until a file is opened) -->
+      <div id="attachment-drawer-root"></div>
+
       <!-- Image lightbox — fullscreen viewer for attachment images.
            Tap backdrop, tap ×, ESC, device back gesture all close it.
            Supports pinch-zoom/drag-pan, prev/next nav, and download. -->
@@ -2634,6 +2674,12 @@
               <label class="setting-toggle">
                 <span>Desktop notifications</span>
                 <input id="notif-toggle" type="checkbox" />
+              </label>
+            </div>
+            <div class="setting-group">
+              <label class="setting-toggle">
+                <span>Show model on replies</span>
+                <input id="show-model-toggle" type="checkbox" role="switch" />
               </label>
             </div>
             <!-- Re-open the first-run setup wizard — owner/global-admin only. -->
@@ -2965,6 +3011,46 @@
                   <div class="wizard-connected" id="wizard-grok-connected" hidden>
                     <span class="wizard-connected-check" aria-hidden="true">✓</span>
                     <span id="wizard-grok-connected-text">Connected</span>
+                  </div>
+                </div>
+              </div>
+              <div class="wizard-engine" id="wizard-engine-copilot">
+                <label class="wizard-engine-head">
+                  <input type="radio" name="wizard-engine" value="copilot" />
+                  <span>GitHub Copilot</span>
+                  <span class="wizard-engine-chip" id="wizard-chip-copilot" hidden></span>
+                </label>
+                <div class="wizard-engine-body" data-engine="copilot" hidden>
+                  <!-- A Copilot seat, signed in with a device code: no key path. The
+                       sign-in runs on the server (scripts/copilot-login.ts) and the
+                       token goes straight to the credential gateway; this card only
+                       ever sees the code, the link and the outcome. -->
+                  <div class="setting-group install-row" id="wizard-copilot-install-row" hidden>
+                    <button id="wizard-copilot-install" class="btn btn-primary" type="button">Install GitHub Copilot…</button>
+                  </div>
+                  <pre id="wizard-copilot-install-log" class="wizard-code" hidden></pre>
+                  <div id="wizard-copilot-connect">
+                    <div class="setting-group install-row" id="wizard-copilot-login-row">
+                      <button id="wizard-copilot-login" class="btn btn-primary" type="button">Connect GitHub Copilot…</button>
+                    </div>
+                    <!-- The one line of prose here is forced by the flow: the sign-in
+                         happens on another page, through the organization's login. -->
+                    <div id="wizard-copilot-device" aria-live="polite" hidden>
+                      <p class="cred-hint">
+                        Sign in with your work account at
+                        <a id="wizard-copilot-url" target="_blank" rel="noopener noreferrer"></a>
+                      </p>
+                      <pre class="wizard-code" id="wizard-copilot-code" aria-label="Device code"></pre>
+                      <div class="setting-group install-row">
+                        <button id="wizard-copilot-cancel" class="btn btn-secondary" type="button">Cancel</button>
+                      </div>
+                    </div>
+                    <p class="cred-hint" id="wizard-copilot-status" role="status" hidden></p>
+                  </div>
+                  <div class="wizard-connected" id="wizard-copilot-connected" hidden>
+                    <span class="wizard-connected-check" aria-hidden="true">✓</span>
+                    <span id="wizard-copilot-connected-text">Connected</span>
+                    <button id="wizard-copilot-disconnect" class="btn btn-secondary" type="button">Disconnect</button>
                   </div>
                 </div>
               </div>

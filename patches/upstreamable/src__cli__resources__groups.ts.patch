@@ -1,5 +1,5 @@
 diff --git a/src/cli/resources/groups.ts b/src/cli/resources/groups.ts
-index 88deac77..fe19be67 100644
+index 9879168d..9aea1ab2 100644
 --- a/src/cli/resources/groups.ts
 +++ b/src/cli/resources/groups.ts
 @@ -11,6 +11,7 @@ import {
@@ -10,7 +10,23 @@ index 88deac77..fe19be67 100644
  import { createAgentGroup, getAgentGroupByFolder } from '../../db/agent-groups.js';
  import { getDb, hasTable } from '../../db/connection.js';
  import { getSession } from '../../db/sessions.js';
-@@ -271,6 +272,8 @@ registerResource({
+@@ -23,6 +24,7 @@ import {
+ import { getSessionDriver } from '../../drivers/index.js';
+ import { assertValidGroupFolder, groupFolderExistsOnDisk } from '../../group-folder.js';
+ import { initGroupFilesystem } from '../../group-init.js';
++import { recordRestampedInstructions } from '../../modules/instruction-guard/store.js';
+ import { getProviderHostContract } from '../../provider-contracts/registry.js';
+ import { resolveProviderName } from '../../providers/provider-name.js';
+ import { createAgentFromTemplate } from '../../templates/create-agent.js';
+@@ -175,6 +177,7 @@ registerResource({
+             const targetId = args.id ? String(args.id) : carriers[0]?.id;
+             if (targetId) {
+               const result = await restampAgentFromTemplate(ref, targetId, { apply: args.yes === true });
++              recordRestampedInstructions(result); // the restamp's persona is the approved one
+               return result.applied
+                 ? result
+                 : { ...result, note: `${result.note} Pass --new to stamp a separate agent instead.` };
+@@ -276,6 +279,8 @@ registerResource({
              agent_group_members: 0,
              user_roles: 0,
              container_configs: 0,
@@ -19,7 +35,7 @@ index 88deac77..fe19be67 100644
            };
  
            if (hasAgentDestinations) {
-@@ -310,6 +313,21 @@ registerResource({
+@@ -333,6 +338,21 @@ registerResource({
              await db.run('DELETE FROM agent_group_members WHERE agent_group_id = ?', id)
            ).changes;
            counts.user_roles = (await db.run('DELETE FROM user_roles WHERE agent_group_id = ?', id)).changes;
@@ -41,7 +57,7 @@ index 88deac77..fe19be67 100644
            // migration-014 has ON DELETE CASCADE on container_configs.agent_group_id;
            // the explicit delete here mirrors the other tables and surfaces the count.
            counts.container_configs = (
-@@ -400,11 +418,13 @@ registerResource({
+@@ -426,11 +446,13 @@ registerResource({
      'config update': {
        access: 'approval',
        description:
@@ -58,7 +74,7 @@ index 88deac77..fe19be67 100644
          const id = args.id as string;
          if (!id) throw new Error('--id is required');
          const row = await getContainerConfig(id);
-@@ -422,6 +442,7 @@ registerResource({
+@@ -448,6 +470,7 @@ registerResource({
              | 'max_messages_per_prompt'
              | 'cli_scope'
              | 'timezone'
@@ -66,7 +82,7 @@ index 88deac77..fe19be67 100644
            >
          > = {};
          if (args.provider !== undefined) updates.provider = args.provider as string;
-@@ -449,15 +470,31 @@ registerResource({
+@@ -475,15 +498,31 @@ registerResource({
            updates.cli_scope = scope;
          }
  
@@ -99,7 +115,7 @@ index 88deac77..fe19be67 100644
          return presentConfig(updated);
        },
      },
-@@ -466,7 +503,7 @@ registerResource({
+@@ -492,7 +531,7 @@ registerResource({
        description:
          'Add an MCP server to a group. Requires `ncl groups restart` to take effect. ' +
          'Use --id <group-id> --name <server-name> with either --command <cmd> [--args <json-array>] [--env <json-object>] ' +
@@ -108,7 +124,7 @@ index 88deac77..fe19be67 100644
        handler: async (args) => {
          const id = args.id as string;
          if (!id) throw new Error('--id is required');
-@@ -487,6 +524,7 @@ registerResource({
+@@ -513,6 +552,7 @@ registerResource({
          }
          servers[name] = parseMcpServerConfig({
            command: args.command,

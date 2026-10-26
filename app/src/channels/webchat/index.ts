@@ -31,7 +31,7 @@ import { registerA2aRouteObserver } from '../../seam/index.js';
 import { classifierParamsForModel, openCodeSpawnEnv, refreshRemoteModelSettings } from './models.js';
 import { stagedEnv } from './staged-env.js';
 import { registerChannelAdapter } from '../channel-registry.js';
-import type { ChannelAdapter, ChannelSetup, OutboundMessage } from '../adapter.js';
+import type { ChannelAdapter, ChannelSetup, InboundMessage, OutboundMessage } from '../adapter.js';
 import type { AgentActivityStatus } from '../../seam/index.js';
 import { runChannelStart } from './extensions.js';
 import { isOllamaLenient, primeOllamaLenient, refreshOllamaLenient } from './ollama-lenient.js';
@@ -43,6 +43,7 @@ import { pruneAuditFiles } from '../../audit.js';
 import { redactSensitiveData } from './redact.js';
 import { startWebchatServer, stopWebchatServer, type WebchatServer } from './server.js';
 import { sweepMcpHealth } from './mcp-health.js';
+import { sweepOrphanedCopilotLogins } from './server/copilot-connect.js';
 import { startModelHostSweep, stopModelHostSweep } from './model-host-sync.js';
 import { startMcpRelayIfAssigned, stopMcpRelay } from './mcp-relay.js';
 import {
@@ -74,11 +75,15 @@ import {
   surfaceA2aMessage,
 } from './state.js';
 import { registerApprovalResolvedHandler } from '../../modules/approvals/primitive.js';
+import { registerReplyPreviewSink } from '../../modules/agent-status/observers.js';
 import { registerApprovalIntercept, registerApprovalRequestedListener } from '../../seam/index.js';
 import { buildApprovalTriageView, maybePrejudgeApproval } from '../../modules/approvals/prejudge.js';
 import { approveAdminModelSwitch, noteHumanMessage } from './admin-model-switch.js';
 import { startReconcileLoop, stopReconcileLoop } from './reconcile.js';
 import { deliveryKey, storeAgentDelivery } from './agent-delivery.js';
+import { limitResetsAtOf, setLimitRetryInbound } from './limit-retry.js';
+import { replyPreviewFrame } from './reply-preview.js';
+import { servedModelOf } from './served-model.js';
 import { failureNoticeText, recordTurnMessage } from './turn-traces.js';
 import {
   registerSkillDraftProposedListener,
@@ -98,6 +103,15 @@ function createAdapter(): ChannelAdapter {
   // the router. Null before setup, immutable after.
   let adapterConfig: ChannelSetup | null = null;
 
+  // A reply the agent is still writing, shown in its thinking bubble until
+  // the delivered message replaces it. Broadcast only — never stored, never on
+  // the turn's record.
+  registerReplyPreviewSink(async (preview) => {
+    if (!server || preview.channelType !== CHANNEL_TYPE) return;
+    const frame = await replyPreviewFrame(preview);
+    server?.broadcast(preview.platformId, frame);
+  });
+
   const adapter: ChannelAdapter = {
     name: 'webchat',
     channelType: CHANNEL_TYPE,
@@ -107,25 +121,28 @@ function createAdapter(): ChannelAdapter {
 
     async setup(config: ChannelSetup): Promise<void> {
       adapterConfig = config;
+      const onInbound = (roomId: string, message: InboundMessage, threadId: string | null): void => {
+        void (async () => {
+          // Surface the room's display name to the router so messaging_groups
+          // gets a friendly label on first sight (mirrors discord/slack).
+          const room = await getWebchatRoom(roomId);
+          if (room) {
+            config.onMetadata(roomId, room.name, true);
+          }
+          // Standard inbound — userId resolution + access gating happens in
+          // the router/permissions module via the `senderId` field that the
+          // server attaches to message.content. threadId is the session key.
+          const senderId = (message.content as { senderId?: unknown } | undefined)?.senderId;
+          const text = (message.content as { text?: unknown } | undefined)?.text;
+          if (typeof senderId === 'string')
+            noteHumanMessage(roomId, threadId ?? null, senderId, typeof text === 'string' ? text : '');
+          await config.onInbound(roomId, threadId, message);
+        })().catch((err) => log.error('Webchat inbound failed', { roomId, err }));
+      };
+      // A retry scheduled at a rate-limit reset re-enters exactly as a typed message.
+      setLimitRetryInbound(onInbound);
       server = await startWebchatServer({
-        onInbound: (roomId, message, threadId) => {
-          void (async () => {
-            // Surface the room's display name to the router so messaging_groups
-            // gets a friendly label on first sight (mirrors discord/slack).
-            const room = await getWebchatRoom(roomId);
-            if (room) {
-              config.onMetadata(roomId, room.name, true);
-            }
-            // Standard inbound — userId resolution + access gating happens in
-            // the router/permissions module via the `senderId` field that the
-            // server attaches to message.content. threadId is the session key.
-            const senderId = (message.content as { senderId?: unknown } | undefined)?.senderId;
-            const text = (message.content as { text?: unknown } | undefined)?.text;
-            if (typeof senderId === 'string')
-              noteHumanMessage(roomId, threadId ?? null, senderId, typeof text === 'string' ? text : '');
-            await config.onInbound(roomId, threadId, message);
-          })().catch((err) => log.error('Webchat inbound failed', { roomId, err }));
-        },
+        onInbound,
         onAction: (questionId, selectedOption, userId) => {
           config.onAction(questionId, selectedOption, userId);
         },
@@ -166,6 +183,9 @@ function createAdapter(): ChannelAdapter {
       runChannelStart();
       // Which model hosts answer: failover at spawn, the classifier's host, the router's host list.
       startModelHostSweep();
+      // A GitHub Copilot sign-in killed with the last host leaves a 0600 token
+      // file in a temp dir, and maybe its login container.
+      sweepOrphanedCopilotLogins().catch((err) => log.warn('Copilot sign-in sweep failed', { err: String(err) }));
       mcpHealthTimer = setInterval(
         () => {
           sweepMcpHealth().catch((err) => log.error('MCP health sweep failed', { err }));
@@ -181,6 +201,7 @@ function createAdapter(): ChannelAdapter {
     },
 
     async teardown(): Promise<void> {
+      setLimitRetryInbound(null);
       stopReconcileLoop();
       stopModelHostSweep();
       stopMcpRelay();
@@ -278,6 +299,8 @@ function createAdapter(): ChannelAdapter {
         text,
         files: message.files,
         thread: storeThread,
+        limitResetsAt: limitResetsAtOf(message.content),
+        servedModel: servedModelOf(message.content),
       });
       // Awaited so the turn's trace links this reply before the same tick reads its 'done'.
       if (storedMessageId)

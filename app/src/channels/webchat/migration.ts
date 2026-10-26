@@ -1267,3 +1267,46 @@ export const moduleWebchatMessageSenderUserId: Migration = {
     await db.exec(`ALTER TABLE webchat_messages ADD COLUMN sender_user_id TEXT;`);
   },
 };
+
+/**
+ * "Retry when the limit lifts". `limit_resets_at` is when a rate-limit notice
+ * says the limit resets (epoch ms; NULL on every other message). A row in
+ * `webchat_limit_retries` is one scheduled re-send of a user's last message,
+ * at most one per room thread.
+ */
+export const moduleWebchatLimitRetries: Migration = {
+  version: 226,
+  name: 'webchat-limit-retries',
+  async up(db) {
+    await db.exec(`
+      ALTER TABLE webchat_messages ADD COLUMN limit_resets_at INTEGER;
+      CREATE TABLE IF NOT EXISTS webchat_limit_retries (
+        id             TEXT PRIMARY KEY,
+        room_id        TEXT NOT NULL,
+        thread_id      TEXT NOT NULL DEFAULT 'main',
+        notice_id      TEXT NOT NULL,
+        user_id        TEXT NOT NULL,
+        sender         TEXT NOT NULL,
+        sender_type    TEXT NOT NULL,
+        content        TEXT NOT NULL,
+        retry_at       INTEGER NOT NULL,
+        created_at     INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_webchat_limit_retries_thread ON webchat_limit_retries (room_id, thread_id);
+      CREATE INDEX IF NOT EXISTS idx_webchat_limit_retries_due ON webchat_limit_retries (retry_at);
+    `);
+  },
+};
+
+/**
+ * The model that answered an agent reply (`served_model`), when the runner
+ * reported one: under 'auto' routing it is not the agent's configured model.
+ * NULL on every other message and on replies stored before it existed.
+ */
+export const moduleWebchatServedModel: Migration = {
+  version: 227,
+  name: 'webchat-served-model',
+  async up(db) {
+    await db.exec(`ALTER TABLE webchat_messages ADD COLUMN served_model TEXT;`);
+  },
+};

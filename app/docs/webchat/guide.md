@@ -54,16 +54,21 @@ agents.
 
 - **Rooms & the lobby** — each room is its own conversation. Route to an agent with
   an `@mention`; rooms are mention-only, with an optional **"prime"** catch-all
-  agent per room. Pin / archive / hide / drag-reorder; per-room color.
+  agent per room. Pin / archive / hide / drag-reorder; per-room color. Unread
+  counts per room and thread; opening one lands on a "New" divider at the first
+  unread message. The sidebar is resizable (drag its edge, or focus it and use
+  the arrow keys / Home / End; a click on the edge cycles narrow / default / wide).
 - **Per-agent DMs** — a direct 1:1 room per agent.
 - **Threads** — a thread *is* its own agent session (isolated context and memory)
   inside a room. Sidebar-nested; `main` is pinned; create / rename / delete;
   per-thread unread. **Context sync** pulls or pushes a verbatim slice of one
   thread's history into another without duplicating.
 - **Markdown, attachments, live activity** — GFM with code-copy; drag-and-drop
-  uploads (chunked/resumable for large files) with an image lightbox; a per-turn
-  **"thinking" bubble** streaming the agent's tool/reasoning feed, with an
-  **interrupt** button.
+  uploads (chunked/resumable for large files) with an image lightbox and a
+  preview drawer for other files (code, CSV, JSON, Markdown, PDF, video, audio,
+  and agent-made HTML pages, which run sandboxed and can pre-fill the composer); a per-turn
+  **"thinking" bubble** streaming the agent's tool/reasoning feed and, for Claude
+  agents, the reply as it is written, with an **interrupt** button.
 - **Search** — full-text (SQLite FTS5) across the rooms you can see.
 - **PWA** — installable, offline-capable, with Web Push notifications and light /
   dark / system themes.

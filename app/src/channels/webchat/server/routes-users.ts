@@ -51,6 +51,7 @@ import {
 } from './grok-member-login.js';
 import { realOnecliAdmin } from '../../../modules/user-credentials/onecli-admin.js';
 import { canAccessRoom } from '../access.js';
+import { broadcastRooms } from '../state.js';
 import { canonicalizeWebchatUserId } from '../auth.js';
 import { getAgentsForWebchatRoom, getCredentialsConfig, getEffectiveRoomMode, getWebchatRoom } from '../db.js';
 import { MAX_ACTIVE_MINTS, activeMintCount, cancelMint, mintClaudeToken, startClaudeMint } from '../oauth-mint.js';
@@ -559,6 +560,9 @@ export async function revokePermissionHandler(res: ServerResponse, body: GrantBo
     await permsRevokeRole(targetUserId, kind, agentGroupId);
     log.info('Webchat: revoked role', { targetUserId, role: kind, agentGroupId });
   }
+  // A socket bound to a room the user just lost keeps receiving it until the
+  // room list is recomputed: push it now, which unbinds those sockets.
+  await broadcastRooms();
   return json(res, 200, { ok: true });
 }
 

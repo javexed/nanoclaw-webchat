@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/index.ts b/container/agent-runner/src/index.ts
-index 811a5838..d39d8e7f 100644
+index 811a5838..0e8335f8 100644
 --- a/container/agent-runner/src/index.ts
 +++ b/container/agent-runner/src/index.ts
 @@ -19,6 +19,8 @@
@@ -11,7 +11,7 @@ index 811a5838..d39d8e7f 100644
  import fs from 'fs';
  import path from 'path';
  import { fileURLToPath } from 'url';
-@@ -39,6 +41,13 @@ import './providers/index.js';
+@@ -39,6 +41,18 @@ import './providers/index.js';
  // registration on import. Provider skills append imports to
  // provider-contracts/index.ts alongside the providers barrel line.
  import './provider-contracts/index.js';
@@ -22,10 +22,15 @@ index 811a5838..d39d8e7f 100644
 +// Send-file hint — registers a destinations prompt section (seam R4).
 +import './send-file-hint.js';
 +import './mention-human.js';
++// Task-run marks — records whether a task run reached the model and how its
++// turn ended, for the host's retry and alert policy (see the module header).
++import './task-run-marks.js';
++// Context snapshot — records the addendum and memory section for `ncl groups context`.
++import { recordContextSnapshot } from './context-snapshot.js';
  import { createProvider } from './providers/factory.js';
  import { getProviderRuntimeContract, requireProviderName } from './providers/provider-registry.js';
  import { resolvePluginServer } from './plugin-mcp.js';
-@@ -67,17 +76,7 @@ async function main(): Promise<void> {
+@@ -67,17 +78,7 @@ async function main(): Promise<void> {
    // The agent browser trusts only NSS, not the gateway CA env vars.
    trustGatewayCaForChromium({ log });
  
@@ -43,7 +48,7 @@ index 811a5838..d39d8e7f 100644
  
    // Discover additional directories mounted at /workspace/extra/*
    const additionalDirectories: string[] = [];
-@@ -111,11 +110,8 @@ async function main(): Promise<void> {
+@@ -111,11 +112,8 @@ async function main(): Promise<void> {
      // Plugin-shipped servers get ${PLUGIN_ROOT}/${PLUGIN_DATA} expansion and
      // the two injected env vars; everything else passes through untouched.
      mcpServers[name] = resolvePluginServer(serverConfig);
@@ -57,7 +62,7 @@ index 811a5838..d39d8e7f 100644
    }
  
    const provider = createProvider(providerName, {
-@@ -126,9 +122,28 @@ async function main(): Promise<void> {
+@@ -126,9 +124,29 @@ async function main(): Promise<void> {
      model: config.model,
      effort: config.effort,
      speed: config.speed,
@@ -82,11 +87,12 @@ index 811a5838..d39d8e7f 100644
 +    taskId ? { kind: 'task', taskId } : { kind: 'chat' },
 +    { mcpTools: provider.supportsMcpTools === true },
 +  );
++  recordContextSnapshot(providerName, instructions, { mcpTools: provider.supportsMcpTools === true });
 +
    try {
      await runPollLoop({
        provider,
-@@ -136,6 +151,8 @@ async function main(): Promise<void> {
+@@ -136,6 +154,8 @@ async function main(): Promise<void> {
        providerName,
        cwd: CWD,
        systemContext: { instructions },

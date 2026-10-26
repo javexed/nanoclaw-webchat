@@ -1,5 +1,5 @@
 diff --git a/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md b/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
-index 2e77d450..8b488af3 100644
+index 2e77d450..116471e7 100644
 --- a/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
 +++ b/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
 @@ -6,7 +6,8 @@ description: >-
@@ -12,7 +12,7 @@ index 2e77d450..8b488af3 100644
  compatibility: Requires HTTPS_PROXY set in environment (automatic when launched via `onecli run`)
  metadata:
    author: onecli
-@@ -66,18 +67,80 @@ error response:
+@@ -66,18 +67,81 @@ error response:
  If there is no `connect_url` in the error, tell the user to open the
  OneCLI dashboard and connect the service there.
  
@@ -62,9 +62,10 @@ index 2e77d450..8b488af3 100644
 +  expects `$FOO_TOKEN` in its environment instead of making an outbound HTTPS
 +  call the gateway can see
 +
-+The environment is fixed at container start, so a new variable applies at this
-+agent's NEXT start, not immediately. When a user adds one, offer to restart
-+(`ncl groups restart --message "…"`), then retry.
++The environment is fixed at container start, but you do not need to restart
++anything: saving a variable restarts this agent on its own once it is idle, so
++the variable is there from your next turn. If a user adds one while you are
++answering, finish the turn and ask them to send the next message, then retry.
 +
 +**An SSH deploy key has its own place:** Agents → (this agent) → Deploy keys.
 +Never put a private key in Environment or Secrets.

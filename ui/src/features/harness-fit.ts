@@ -2,12 +2,12 @@
 // The agent panel's mirror of the server's rule (models.ts harnessFits): a
 // vendor harness runs its vendor's models. Claude: Anthropic models and the
 // routing model. OpenCode: local and cloud models. pi: local models. Codex and
-// Grok: their own model (the model field), never a registry one. The model
+// Grok, Copilot: their own model (the model field), never a registry one. The model
 // leads: picking one moves the agent to a harness that runs it (server side),
 // and the Harness control offers only those.
 
 /** Harnesses that bring their own model and sign-in. */
-export const OWN_MODEL_HARNESSES: ReadonlySet<string> = new Set(['codex', 'grok']);
+export const OWN_MODEL_HARNESSES: ReadonlySet<string> = new Set(['codex', 'grok', 'copilot']);
 
 export interface FitModel {
   kind: string;
@@ -34,6 +34,8 @@ export function harnessFields(provider: string | null | undefined): {
   const p = provider || 'claude';
   if (p === 'grok')
     return { picker: false, pin: true, pinLabel: 'Grok model', pinSuggestions: ['grok-4.6', 'grok-4.5'] };
+  // Copilot's models depend on the seat; `auto` lets Copilot choose one it allows.
+  if (p === 'copilot') return { picker: false, pin: true, pinLabel: 'Copilot model', pinSuggestions: ['auto'] };
   if (p === 'codex') return { picker: false, pin: true, pinLabel: 'Codex model', pinSuggestions: [] };
   if (p === 'claude') return { picker: true, pin: true, pinLabel: 'Anthropic model', pinSuggestions: null };
   return { picker: true, pin: false, pinLabel: '', pinSuggestions: [] };

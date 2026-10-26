@@ -252,8 +252,13 @@ describe('pi provider — stopping', () => {
   it('SIGKILLs a pi that ignores SIGTERM after the grace, and resolves once it has exited', async () => {
     process.env.PI_STOP_GRACE_MS = '100';
     const ready = path.join(dir, 'ready');
+    // process.execPath, not 'bun' from PATH: where Bun comes from a package
+    // manager (pnpm dlx, an npm shim) PATH's `bun` is a /bin/sh launcher that
+    // runs the binary as its child without exec, so the signal lands on the
+    // shell, which has no handler and dies of the SIGTERM. The test then read
+    // the launcher's death as pi's, every time.
     const child = spawn(
-      'bun',
+      process.execPath,
       [
         '-e',
         `process.on('SIGTERM', () => {}); require('fs').writeFileSync(${JSON.stringify(ready)}, ''); setInterval(() => {}, 1000);`,

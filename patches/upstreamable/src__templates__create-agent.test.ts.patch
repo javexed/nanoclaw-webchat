@@ -1,8 +1,8 @@
 diff --git a/src/templates/create-agent.test.ts b/src/templates/create-agent.test.ts
-index 83097e88..553849ce 100644
+index 678829eb..3a696397 100644
 --- a/src/templates/create-agent.test.ts
 +++ b/src/templates/create-agent.test.ts
-@@ -28,6 +28,12 @@ import { NANOCLAW_EXTENSION_NS } from './extension.js';
+@@ -29,6 +29,12 @@ import { NANOCLAW_EXTENSION_NS } from './extension.js';
  import { MCP_SCHEMA_URL, PLUGIN_SCHEMA_URL } from './manifest.js';
  import { createAgentFromTemplate } from './create-agent.js';
  

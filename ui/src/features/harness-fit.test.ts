@@ -27,6 +27,7 @@ describe('harnessRuns', () => {
   it('Codex and Grok ignore the registry model; no model fits anything', () => {
     expect(harnessRuns('codex', cohere, cloud)).toBe(true);
     expect(harnessRuns('grok', sonnet, cloud)).toBe(true);
+    expect(harnessRuns('copilot', qwen, cloud)).toBe(true);
     expect(harnessRuns('claude', null, cloud)).toBe(true);
   });
 });
@@ -40,6 +41,12 @@ describe('harnessFields', () => {
       pinSuggestions: ['grok-4.6', 'grok-4.5'],
     });
     expect(harnessFields('codex')).toMatchObject({ picker: false, pin: true, pinLabel: 'Codex model' });
+    expect(harnessFields('copilot')).toEqual({
+      picker: false,
+      pin: true,
+      pinLabel: 'Copilot model',
+      pinSuggestions: ['auto'],
+    });
   });
 
   it('Claude keeps both; OpenCode and pi the picker only (their model field is written for them)', () => {

@@ -5,6 +5,7 @@ import { $, cssEscape } from '../core/dom.js';
 import { beginTranscriptSwitch } from './transcript.js';
 import { UNDO_SECONDS } from '../core/constants.js';
 import { state } from '../core/state.js';
+import { seedUnread } from '../core/unread.js';
 import { showToast } from '../core/toast.js';
 import { apiJson } from '../core/api.js';
 import { createApp } from 'vue';
@@ -63,7 +64,9 @@ export async function loadThreadList(roomId?: any) {
     if (roomId !== state.currentRoom) return; // raced past a room switch
     const list = Array.isArray(threads) ? threads : [];
     state.threadCache.set(roomId, list);
-    for (const t of list) if (t.unread && t.thread_id !== state.currentThread) state.threadUnread.add(t.thread_id);
+    for (const t of list) {
+      if (t.unread && t.thread_id !== state.currentThread) seedUnread(state.threadUnread, t.thread_id, t.unread_count);
+    }
     updateThreadSyncControls(); // refresh the breadcrumb title (covers rename + late load)
   } catch (err: any) {
     if (roomId !== state.currentRoom) return;

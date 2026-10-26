@@ -15,7 +15,10 @@ deployment. Every router shares the one classifier and the one roster; they
 differ only in their routes (rules) and bindings (models). Failure posture:
 any classifier problem (host asleep, timeout, bad JSON, unknown route, route
 "other") falls back to that router's default_route binding — a routed request
-never fails because of routing.
+never fails because of routing. Whatever the classifier says, a request is
+only ever sent to one of that router's own bindings (the operator's opt-in in
+routes.json), and only to a local model unless the operator pinned that
+binding; with none admissible it is rejected before it reaches a model.
 
 Config shape (routes.json):
   { "classifier": {...},              # shared — one Arch-Router
@@ -42,6 +45,9 @@ from fastapi import HTTPException
 from litellm.integrations.custom_logger import CustomLogger
 
 ROUTES_PATH = "/app/routing/routes.json"
+# The router's own config (add-litellm mounts it read-only): which models are
+# local and which carry a key.
+CONFIG_PATH = "/app/config.yaml"
 LOG_PATH = "/app/routing/routing-shadow.jsonl"
 
 # A classifier host that refused the connection or never accepted it is not
@@ -151,6 +157,42 @@ def _bindings(router):
 
 def _default_binding(router):
     return _bindings(router).get(router.get("default_route"))
+
+
+def _local_models():
+    """Model names served only by local, keyless backends — an Ollama or
+    OpenAI-compatible host add-litellm discovered — read from the router's
+    config. A name with any keyed deployment (an `os.environ/` key, or one the
+    credential gateway adds) is not local: a request to it spends a paid key.
+    An unreadable config means nothing is known to be local (fail closed)."""
+    try:
+        import yaml
+
+        with open(CONFIG_PATH) as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception:
+        return set()
+    keys = {}
+    for m in cfg.get("model_list") or []:
+        if not isinstance(m, dict) or not m.get("model_name"):
+            continue
+        params = m.get("litellm_params") or {}
+        keys.setdefault(m["model_name"], []).append(params.get("api_key"))
+    return {name for name, ks in keys.items() if all(k in (None, "keyless") for k in ks)}
+
+
+def _admitted(router, routers, model, local):
+    """May THIS router send a request to `model`? Only to one of its own
+    bindings: routes.json is where the operator opts models into routing, so
+    nothing else — not a model the classifier names, not one a hand edit or
+    a stale binding left behind — ever receives a routed request. And only to
+    a LOCAL model, unless the operator pinned that binding: a keyed cloud model
+    is reached by the operator's explicit choice, never by the classifier's.
+    A router's virtual name is never a target either: it is not a model."""
+    if not model or model in routers or model not in _bindings(router).values():
+        return False
+    pinned = {r.get("model") for r in router.get("routes", []) if r.get("pinned")}
+    return model in local or model in pinned
 
 
 def _est_tokens(messages):
@@ -298,7 +340,8 @@ async def _route_live(cfg, router, router_name, data, prompt_text):
         guarded, reason = _fit_override(router, target, est)
         if reason:
             entry["ctx_guard"] = reason
-        if guarded is None:
+        # No target at all (no bindings) is the admission check's to refuse below.
+        if guarded is None and reason:
             entry["final_model"] = None
             entry["ms"] = int((time.time() - t0) * 1000)
             _append_log(entry)
@@ -311,8 +354,26 @@ async def _route_live(cfg, router, router_name, data, prompt_text):
         raise
     except Exception as e:
         entry["ctx_guard_error"] = f"{type(e).__name__}: {e}"[:200]
-    if target:
-        data["model"] = target
+    # Invariant, checked last so no path above can skip it: the request leaves
+    # on one of this router's bindings or not at all. A refused target falls
+    # back to the default binding; with no admissible model the request is
+    # rejected here — before LiteLLM picks a deployment, so nothing is billed.
+    routers = _routers(cfg)
+    local = _local_models()
+    if not _admitted(router, routers, target, local):
+        if target:
+            entry["refused_model"] = target
+        fallback = _default_binding(router)
+        target = fallback if _admitted(router, routers, fallback, local) else None
+    if target is None:
+        entry["final_model"] = None
+        entry["ms"] = int((time.time() - t0) * 1000)
+        _append_log(entry)
+        raise HTTPException(
+            status_code=400,
+            detail=f"no_admitted_model: router {router_name!r} has no bound model to send this request to",
+        )
+    data["model"] = target
     entry["final_model"] = data.get("model")
     entry["ms"] = int((time.time() - t0) * 1000)
     _append_log(entry)

@@ -48,13 +48,14 @@ export interface AgentForUI extends AgentGroup {
 /**
  * Derive a display label for an agent with NO assigned webchat model, from its
  * runtime provider. Returns null for the built-in Claude path (caller shows the
- * Anthropic default). Only a non-Claude harness (Codex, Grok) gets an explicit label.
+ * Anthropic default). Only a non-Claude harness (Codex, Grok, Copilot) gets an explicit label.
  */
 export async function deriveEffectiveModelLabel(agentGroupId: string): Promise<string | null> {
   const cfg = await getContainerConfig(agentGroupId);
   const provider = cfg?.provider ?? 'claude';
   if (provider === 'codex') return 'Codex';
   if (provider === 'grok') return 'Grok';
+  if (provider === 'copilot') return 'GitHub Copilot';
   // Claude family with no assignment: the group may still run on the WORKSPACE
   // DEFAULT model (the wizard's Ollama engine). Label it honestly — showing
   // "anthropic" for an agent that answers via Ollama misleads the operator.

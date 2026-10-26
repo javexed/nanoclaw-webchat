@@ -106,8 +106,8 @@ Threads render **nested under their room** in the left sidebar, not as a top
 tab strip.
 
 ```
-▾ #eng                •   ← room row = the main thread (unread dot)
-    @ Sarah            •   ← per-thread unread dot
+▾ #eng                4   ← room row = the main thread (unread count)
+    @ Sarah            2   ← per-thread unread count
     @ Max
     # Q3 planning  +       ← "+" sits inside the last thread row
   ▸ #design
@@ -125,8 +125,14 @@ tab strip.
 - `agent:*` lane threads appear with the agent glyph + name; `main` has no row
   of its own (the room row is main) and is not deletable; topic threads sort by
   last activity.
-- **Unread** is per-thread (`webchat_thread_reads`), shown as dots; the room row
-  shows a dot, not a count.
+- **Unread** is per-thread (`webchat_thread_reads`) and shown as a count (capped
+  at 99+); the room row counts messages past the room marker. Counts come from
+  the server's read markers, so they survive a reload and agree across devices.
+  An `@` marker beside the count means one of them mentions you.
+- **Opening** a thread with unread messages lands on a "New" divider above the
+  first one (the join's `history` frame carries the user's marker as it stood
+  before the join, `last_read_at`), not at the bottom; the jump-to-latest button
+  takes you down.
 - Active-thread state persists per session (like `lastRoom`).
 
 ## 6. The `main` thread + migration

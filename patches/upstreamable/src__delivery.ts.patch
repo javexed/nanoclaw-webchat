@@ -1,0 +1,20 @@
+diff --git a/src/delivery.ts b/src/delivery.ts
+index f951d61f..e09f3685 100644
+--- a/src/delivery.ts
++++ b/src/delivery.ts
+@@ -38,6 +38,7 @@ import { pauseTypingRefreshAfterDelivery, setTypingAdapter } from './modules/typ
+ import type { OutboundFile } from './channels/adapter.js';
+ import type { PendingApproval, Session } from './types.js';
+ import type { OutboundMessage } from './mailbox/index.js';
++import { skipMailboxBusy } from './mailbox-busy.js';
+ 
+ const ACTIVE_POLL_MS = 1000;
+ const SWEEP_POLL_MS = 60_000;
+@@ -277,6 +278,7 @@ async function drainSession(session: Session): Promise<void> {
+     if (!existing) return;
+     ({ delivered, pending } = existing);
+   } catch (err) {
++    if (skipMailboxBusy('delivery', agentGroup.id, session.id, err)) return; // busy lock: the next poll retries
+     log.error('Session mailbox delivery failed', {
+       agentGroupId: agentGroup.id,
+       sessionId: session.id,

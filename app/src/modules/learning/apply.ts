@@ -20,6 +20,7 @@ import path from 'path';
 import { DATA_DIR } from '../../config.js';
 import { readSkillDraftBody, resolveSkillDraft, type SkillDraft } from '../../db/skill-drafts.js';
 import { restartAgentGroupContainersWhenIdle } from '../../container-restart-idle.js';
+import { log } from '../../log.js';
 import {
   assertPlainDir,
   mkdirNoFollow,
@@ -28,6 +29,7 @@ import {
   skipLinks,
   writeNoFollow,
 } from '../../no-follow-fs.js';
+import { sanitizeSkillFrontmatter } from './skill-frontmatter.js';
 
 export function sanitizeSkillName(raw: string): string {
   return raw
@@ -75,12 +77,21 @@ export interface ApplyResult {
  * container-restart log stays attributable.
  */
 export async function applySkillDraft(draft: SkillDraft, restartReason: string): Promise<ApplyResult> {
-  const body = readSkillDraftBody(draft.id);
-  if (!body) return { ok: false, status: 410, error: 'Draft body missing' };
-
+  const raw = readSkillDraftBody(draft.id);
+  if (!raw) return { ok: false, status: 410, error: 'Draft body missing' };
   const isPatch = draft.kind === 'patch' && !!draft.target_skill;
   const name = sanitizeSkillName(isPatch ? String(draft.target_skill) : draft.skill_name);
   if (!name) return { ok: false, status: 400, error: 'Invalid skill name' };
+  const clean = sanitizeSkillFrontmatter(raw, { name, description: draft.description });
+  if (!clean.ok) return { ok: false, status: 422, error: clean.error };
+  const { body, dropped } = clean;
+  if (dropped.length > 0) {
+    log.warn('Kept skill: frontmatter keys a learned skill may not set were dropped', {
+      draftId: draft.id,
+      agentGroupId: draft.agent_group_id,
+      dropped,
+    });
+  }
 
   const dir0 = scopedSkillsDir(draft.agent_group_id);
   const dest = path.join(dir0, name);

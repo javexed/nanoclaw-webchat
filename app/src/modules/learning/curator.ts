@@ -24,7 +24,8 @@ import path from 'path';
 
 import { DATA_DIR } from '../../config.js';
 import { log } from '../../log.js';
-import { assertPlainDir, mkdirNoFollow, skipLinks, writeNoFollow } from '../../no-follow-fs.js';
+import { assertPlainDir, mkdirNoFollow, readNoFollow, skipLinks, writeNoFollow } from '../../no-follow-fs.js';
+import { sanitizeSkillFrontmatter } from './skill-frontmatter.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** Directory name inside a scoped-skills dir. Dot-prefixed: skill scanners skip it. */
@@ -276,9 +277,28 @@ export function promoteScopedSkill(
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+  // The pool loads into every agent, so its SKILL.md gets the same rebuilt
+  // frontmatter a kept draft does — an agent-written copy may not carry
+  // `model`, `allowed-tools` or `hooks` into the whole install.
+  let skillMd: string | null;
+  try {
+    skillMd = readNoFollow(newestSkills, path.join(name, 'SKILL.md'));
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+  if (skillMd === null) return { ok: false, error: 'No SKILL.md to promote' };
+  const clean = sanitizeSkillFrontmatter(skillMd, { name });
+  if (!clean.ok) return { ok: false, error: clean.error };
+  if (clean.dropped.length > 0) {
+    log.warn('Promoted skill: frontmatter keys a shared skill may not set were dropped', {
+      name,
+      dropped: clean.dropped,
+    });
+  }
   fs.mkdirSync(path.dirname(poolDest), { recursive: true });
   // Every agent reads the pool: links from one agent's copy stay behind.
   fs.cpSync(newest, poolDest, { recursive: true, filter: skipLinks });
+  fs.writeFileSync(path.join(poolDest, 'SKILL.md'), clean.body);
   for (const agent of dup.agents) {
     const skillsDir = path.join(dataDir, 'v2-sessions', agent, '.claude-shared', 'skills');
     try {

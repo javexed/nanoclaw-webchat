@@ -25,6 +25,8 @@ const INSTALL_SKILLS: Record<string, string> = {
   // branch, which the skill's nc:copy resolves through whichever remote carries
   // it — so a fresh install needs no private remote.
   grok: '.claude/skills/add-grok',
+  // GitHub Copilot: the payload ships inside the skill, like the pi stack.
+  copilot: '.claude/skills/add-copilot',
 };
 
 export async function run(args: string[]): Promise<void> {

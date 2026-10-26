@@ -1,8 +1,8 @@
 diff --git a/.claude/skills/update-skills/SKILL.md b/.claude/skills/update-skills/SKILL.md
-index cd2746e8..86048109 100644
+index 7ad6b78d..7f3b1783 100644
 --- a/.claude/skills/update-skills/SKILL.md
 +++ b/.claude/skills/update-skills/SKILL.md
-@@ -47,6 +47,13 @@ fully refreshed.
+@@ -51,6 +51,13 @@ fully refreshed.
  - Never record a failed skill and continue toward an upgrade completion stamp.
  - Preserve the full report in the update summary.
  

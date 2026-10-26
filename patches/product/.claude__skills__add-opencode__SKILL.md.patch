@@ -1,8 +1,8 @@
 diff --git a/.claude/skills/add-opencode/SKILL.md b/.claude/skills/add-opencode/SKILL.md
-index f8dfc1ad..95c4739f 100644
+index 72908461..38394532 100644
 --- a/.claude/skills/add-opencode/SKILL.md
 +++ b/.claude/skills/add-opencode/SKILL.md
-@@ -116,7 +116,7 @@ payload/src/providers/opencode.ts -> src/providers/opencode.ts
+@@ -123,7 +123,7 @@ payload/src/providers/opencode.ts -> src/providers/opencode.ts
  ```
  
  Append `import './opencode.js';` once to each of the five setup, provider, and contract
@@ -11,7 +11,7 @@ index f8dfc1ad..95c4739f 100644
  
  ```nc:append to:src/providers/index.ts when:opencode_core_ready=yes
  import './opencode.js';
-@@ -127,7 +127,14 @@ import './opencode.js';
+@@ -134,7 +134,14 @@ import './opencode.js';
  ```
  
  ```nc:append to:container/agent-runner/src/providers/index.ts when:opencode_core_ready=yes

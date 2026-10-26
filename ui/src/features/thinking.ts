@@ -42,6 +42,7 @@ function ensureTurn(name?: string): ThinkingTurn {
       expanded: false,
       elapsed: '',
       statusLive: false,
+      preview: '',
     },
   ];
   if (shouldScroll) scrollToBottom();
@@ -155,6 +156,23 @@ function pushReasoning(name: string, text: string, full?: string) {
   if (shouldScroll) scrollToBottom();
 }
 
+/**
+ * Show (or clear, on empty text) the reply an agent is still writing. Neither
+ * opens a bubble: a preview can trail the delivered reply, or the 'done' or
+ * 'stalled' that already closed the turn (reply-preview.ts).
+ */
+function setReplyPreview(name: string, text: string | null) {
+  const turn = turnFor(name);
+  if (!turn) return;
+  if (!text) {
+    turn.preview = '';
+    return;
+  }
+  const shouldScroll = isNearBottom() || isForcedScroll();
+  turn.preview = text;
+  if (shouldScroll) scrollToBottom();
+}
+
 /** Per-line fade timers, keyed by feed-line key — cancellable when the buffer
  *  trims a line early. */
 const feedTimers = new Map<number, ReturnType<typeof setTimeout>>();
@@ -176,6 +194,7 @@ export {
   setThinkingMilestone,
   pushReasoning,
   pushTool,
+  setReplyPreview,
   setTurnMeta,
   toggleThinkingExpanded,
 };

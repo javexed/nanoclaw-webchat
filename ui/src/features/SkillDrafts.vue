@@ -33,7 +33,7 @@ const rows = computed(() =>
     id: d.id,
     raw: d,
     name: d.kind === 'patch' ? `${d.targetSkill || d.skillName} (change)` : d.skillName,
-    badge: `learned · ${d.agentName}`,
+    badge: `loads in every ${d.agentName} session`,
     desc: d.description || '',
     roomId: d.roomId || null,
     keepTitle: `Wire to ${d.agentName}`,

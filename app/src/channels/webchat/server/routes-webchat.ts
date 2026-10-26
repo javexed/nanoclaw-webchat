@@ -44,7 +44,7 @@ import { runPreflight } from '../preflight.js';
 import { isGlobalAdmin, isOwner } from '../roles.js';
 import { DEFAULT_PORT, MARKETPLACE_ID } from './constants.js';
 import { MCP_REGISTRY_ID, mcpRegistryRemovedKey } from './mcp-registry.js';
-import { codexAvailable, grokAvailable, opencodeAvailable, piAvailable } from './providers.js';
+import { codexAvailable, copilotAvailable, grokAvailable, opencodeAvailable, piAvailable } from './providers.js';
 import { currentServeListenerPort } from '../auth.js';
 import { enableTailscaleServe, getTailscaleServeState } from '../tailscale-serve.js';
 import { computeUsageRollup } from '../usage.js';
@@ -60,6 +60,7 @@ export async function rWebchatCredentialsConfig(ctx: RouteCtx, _m: RegExpMatchAr
       ...(await getCredentialsConfig()),
       codexAvailable: codexAvailable(),
       grokAvailable: grokAvailable(),
+      copilotAvailable: copilotAvailable(),
       opencodeAvailable: opencodeAvailable(),
       piAvailable: piAvailable(),
       canEdit: await isOwner(userId),

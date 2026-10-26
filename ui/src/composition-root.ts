@@ -261,6 +261,9 @@ import {
 import { provideWsDeps } from './core/ws.js';
 
 import { provideTranscriptDeps, wireScrollTracking, wireTranscriptPanel } from './features/transcript.js';
+import { wireResizer } from './core/resizer.js';
+import { mountAttachmentDrawer } from './features/attachment-drawer.js';
+import { attachmentDrawerPopstate } from './features/attachment-drawer-state.js';
 
 import { fetchApprovals, wireApprovalsPanel } from './features/approvals.js';
 import { provideSelectToggleDeps } from './features/select-toggle.js';
@@ -393,6 +396,8 @@ window.addEventListener('popstate', (e) => {
     closeLightbox(true);
     return;
   }
+  // The attachment drawer has its own entry too, under any lightbox.
+  if (attachmentDrawerPopstate(e.state)) return;
   // Unwind overlay surfaces down to the depth the restored history state implies.
   const targetDepth = (e.state && e.state.viewDepth) || 0;
   while (viewStack.length > targetDepth) {
@@ -474,6 +479,17 @@ wireUserCredsOauth();
 
 wireScrollTracking();
 wireTranscriptPanel();
+wireResizer({
+  handle: $('#sidebar-resizer')!,
+  target: $('#sidebar')!,
+  cssVar: '--sidebar-width',
+  min: 180,
+  max: 480,
+  initial: 220,
+  presets: [180, 220, 360],
+  storageKey: 'webchat-sidebar-width',
+});
+mountAttachmentDrawer();
 wireComposer();
 
 $('#members-toggle')!.addEventListener('click', toggleMembersPanel);

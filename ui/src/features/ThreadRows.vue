@@ -9,6 +9,7 @@ import { computed } from 'vue';
 import { state } from '../core/state.js';
 import ThreadNameInput from './ThreadNameInput.vue';
 import { lucide } from '../core/dom.js';
+import { formatUnreadCount } from '../core/unread.js';
 import { openThreadMenuId, threadUndo } from './room-list-state.js';
 import UndoTimer from './UndoTimer.vue';
 
@@ -16,6 +17,8 @@ const KEBAB = lucide('ellipsis');
 /** Bound, not template text — template text carries the surrounding newlines. */
 const RENAME = 'Rename';
 const DELETE = 'Delete';
+/** Read after the count by screen readers ("3 unread"). */
+const UNREAD = ' unread';
 
 const props = defineProps<{
   roomId: string;
@@ -112,8 +115,8 @@ function stopUndoClick(e: MouseEvent): void {
         ><span class="thread-label">{{ t.title ?? '' }}</span
         ><span
           v-if="active && t.thread_id !== state.currentThread && state.threadUnread.has(t.thread_id)"
-          class="thread-unread"
-        ></span
+          class="unread-badge thread-unread"
+          >{{ formatUnreadCount(state.threadUnread.get(t.thread_id)) }}<span class="visually-hidden">{{ UNREAD }}</span></span
         ><button
           v-if="active && t.kind !== 'main'"
           class="thread-kebab"

@@ -1,17 +1,17 @@
 diff --git a/src/cli/resources/groups.test.ts b/src/cli/resources/groups.test.ts
-index 62e836f3..1c325afe 100644
+index 9961b651..03cee6d1 100644
 --- a/src/cli/resources/groups.test.ts
 +++ b/src/cli/resources/groups.test.ts
-@@ -36,6 +36,8 @@ const TEST_DIR = '/tmp/nanoclaw-test-cli-groups';
- import { initTestDb, closeDb, runMigrations, createAgentGroup, getDb } from '../../db/index.js';
- import { createSession } from '../../db/sessions.js';
+@@ -40,6 +40,8 @@ import { inboundDbPath } from '../../mailbox/sqlite/paths.js';
+ import { initSessionFolder } from '../../session-manager.js';
  import { dispatch } from '../dispatch.js';
+ import { projectDestinationsToSessions } from './destinations.js';
 +import { lookup } from '../registry.js';
 +import { killContainer } from '../../container-runner.js';
  import { ensureContainerConfig, getContainerConfig } from '../../db/container-configs.js';
  import { restartAgentGroupContainers } from '../../container-restart.js';
  import { configFromDb } from '../../container-config.js';
-@@ -301,6 +303,132 @@ describe('groups CLI delete cascades dependent rows (#2525)', () => {
+@@ -402,6 +404,132 @@ describe('groups CLI delete cascades dependent rows (#2525)', () => {
    });
  });
  

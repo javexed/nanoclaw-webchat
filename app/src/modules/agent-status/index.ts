@@ -24,7 +24,7 @@ import { isContainerRunning } from '../../container-runner.js';
 import { registerContainerExitObserver } from '../../seam/index.js';
 import { onDeliveryAdapterReady } from '../../delivery.js';
 import { registerSessionDeliveryObserver } from '../../seam/index.js';
-import { notifyStatusObservers, registerUnforwardedStartCheck } from './observers.js';
+import { notifyReplyPreview, notifyStatusObservers, registerUnforwardedStartCheck } from './observers.js';
 
 interface StatusAdapter {
   sendStatus?(
@@ -140,6 +140,21 @@ export async function forwardSessionStatus(session: Session): Promise<void> {
         watermarks.set(session.id, events[events.length - 1]!.seq);
 
         for (const ev of events) {
+          if (ev.kind === 'preview') {
+            // A reply still being written. Only into the session's own room:
+            // the row names its room, and one that names any other is dropped.
+            if (ev.detail === mg.platform_id) {
+              await notifyReplyPreview({
+                channelType: mg.channel_type,
+                platformId: mg.platform_id,
+                instance: mg.instance,
+                agentName,
+                threadId: session.thread_id ?? null,
+                text: ev.text,
+              });
+            }
+            continue;
+          }
           const kind = ev.kind as AgentActivityStatus['kind'];
           if (!VALID_KINDS.has(kind)) continue;
           // Track turn boundaries so a mid-turn container death can be told from
