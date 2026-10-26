@@ -1969,9 +1969,11 @@ function renderCopilotLogin(p: any) {
   const device = $('#wizard-copilot-device');
   const row = $('#wizard-copilot-login-row');
   if (!device || !row) return;
-  device.hidden = !p?.running;
+  // Another admin's sign-in: no code here (the server withholds it), just who.
+  const mine = p?.mine !== false;
+  device.hidden = !p?.running || !mine;
   row.hidden = !!p?.running;
-  if (p?.running) {
+  if (p?.running && mine) {
     const url = $('#wizard-copilot-url') as HTMLAnchorElement | null;
     if (url && p.verificationUrl) {
       url.textContent = p.verificationUrl;
@@ -2030,7 +2032,8 @@ function wireCopilotLogin() {
     const r = await authFetch('/api/workspace-credential/copilot/disconnect', { method: 'POST' });
     if (!r.ok) {
       const err = await r.json().catch(() => ({}));
-      showToast('Failed to disconnect: ' + (err.error || r.statusText), { kind: 'error' });
+      showToast(err.error || 'Disconnect failed', { kind: 'error', timeout: 9000 });
+      await refreshWizardCredState();
       return;
     }
     await refreshWizardCredState();

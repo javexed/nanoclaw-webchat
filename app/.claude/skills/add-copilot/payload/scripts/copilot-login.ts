@@ -70,7 +70,9 @@ export type CopilotLoginErrorCode =
   | 'no-token'
   | 'rejected'
   | 'no-seat'
-  | 'gateway';
+  | 'gateway'
+  /** A cancel landed while the credential was being stored: it is in the gateway, nothing else is. */
+  | 'saved-cancelled';
 
 export class CopilotLoginError extends Error {
   constructor(
@@ -425,6 +427,12 @@ export async function connectCopilot(deps: CopilotLoginDeps, signal?: AbortSigna
         'gateway',
         `Could not store the credential in the gateway: ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
+    // A cancel during the save: record nothing, so status stays "not
+    // connected"; the gateway entry is removed by Disconnect (webchat does it
+    // on its own when it sees this code).
+    if (signal?.aborted) {
+      throw new CopilotLoginError('saved-cancelled', 'Cancelled. Disconnect Copilot to remove the saved credential.');
     }
     deps.writeEnv('COPILOT_API_URL', account.apiUrl);
     const record: CopilotAccountRecord = { ...account, login: found.login, connectedAt: new Date().toISOString() };

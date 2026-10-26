@@ -4,12 +4,43 @@
  * payload, so a permitted start answers "not installed" — which is also the
  * proof nothing was spawned.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { WebchatServer } from './server.js';
 import { httpRequest, PROXY_ENV, resetServerModules, seeder, startServer } from './test-server.js';
 
-afterEach(resetServerModules);
+// Off by default (the tree has no payload); the cases below switch them on.
+let copilotInstalled = false;
+let grokInstalled = false;
+vi.mock('./server/providers.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./server/providers.js')>()),
+  copilotAvailable: () => copilotInstalled,
+  grokAvailable: () => grokInstalled,
+}));
+
+// The sign-in state the routes see: whether one is busy, and which viewer
+// each progress read was made for.
+let loginBusy = false;
+const progressViewers: (string | undefined)[] = [];
+vi.mock('./server/copilot-connect.js', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./server/copilot-connect.js')>();
+  return {
+    ...real,
+    copilotLoginBusy: () => loginBusy,
+    getCopilotLoginProgress: (viewerId?: string) => {
+      progressViewers.push(viewerId);
+      return real.getCopilotLoginProgress(viewerId);
+    },
+  };
+});
+
+afterEach(async () => {
+  copilotInstalled = false;
+  grokInstalled = false;
+  loginBusy = false;
+  progressViewers.length = 0;
+  await resetServerModules();
+});
 
 describe('copilot connection routes', () => {
   let server: typeof import('./server.js');
@@ -90,6 +121,47 @@ describe('copilot connection routes', () => {
       JSON.stringify({ provider: 'copilot' }),
     );
     expect(r.status).toBe(400);
+  });
+
+  describe('with the provider installed', () => {
+    beforeEach(() => {
+      copilotInstalled = true;
+      grokInstalled = true;
+    });
+
+    const putHarness = (who: string, provider: string) =>
+      httpRequest(
+        port,
+        'PUT',
+        '/api/agents/ag-a/provider',
+        { ...csrf(who), 'content-type': 'application/json' },
+        JSON.stringify({ provider }),
+      );
+
+    it('putting an agent on Copilot is authorized exactly like any other harness', async () => {
+      for (const who of ['owner', 'admin', 'scoped', 'nobody']) {
+        const statuses: Record<string, number> = {};
+        for (const provider of ['copilot', 'grok']) {
+          statuses[provider] = (await putHarness(who, provider)).status;
+          await putHarness('owner', 'claude');
+        }
+        expect(statuses.copilot, who).toBe(statuses.grok);
+        expect(statuses.copilot, who).toBe(who === 'nobody' ? 403 : 200);
+      }
+    });
+
+    it('disconnect is refused while a sign-in is in progress', async () => {
+      loginBusy = true;
+      const r = await httpRequest(port, 'POST', '/api/workspace-credential/copilot/disconnect', csrf('admin'));
+      expect(r.status).toBe(409);
+      expect(JSON.parse(r.body)).toMatchObject({ code: 'login-running' });
+    });
+  });
+
+  it('sign-in progress is read for the requesting admin', async () => {
+    await httpRequest(port, 'GET', '/api/workspace-credential/copilot', as('admin'));
+    await httpRequest(port, 'POST', '/api/workspace-credential/copilot/cancel', csrf('owner'));
+    expect(progressViewers).toEqual(['webchat:admin', 'webchat:owner']);
   });
 
   it('the install status is owner-only', async () => {

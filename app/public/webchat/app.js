@@ -17368,6 +17368,7 @@ function copilotConnectedText(s) {
 /** The status line under the card: progress while it runs, the reason when it did not complete, else nothing. */
 function copilotStatusLine(p) {
 	if (!p) return null;
+	if (p.running && p.mine === false) return `In progress by ${p.startedBy || "another admin"}`;
 	if (p.running) return p.message ?? null;
 	if (p.outcome && p.outcome !== "complete") return p.error || "The sign-in did not complete.";
 	return null;
@@ -18869,9 +18870,10 @@ function renderCopilotLogin(p) {
 	const device = $("#wizard-copilot-device");
 	const row = $("#wizard-copilot-login-row");
 	if (!device || !row) return;
-	device.hidden = !p?.running;
+	const mine = p?.mine !== false;
+	device.hidden = !p?.running || !mine;
 	row.hidden = !!p?.running;
-	if (p?.running) {
+	if (p?.running && mine) {
 		const url = $("#wizard-copilot-url");
 		if (url && p.verificationUrl) {
 			url.textContent = p.verificationUrl;
@@ -18929,7 +18931,11 @@ function wireCopilotLogin() {
 	$("#wizard-copilot-disconnect")?.addEventListener("click", async () => {
 		const r = await authFetch("/api/workspace-credential/copilot/disconnect", { method: "POST" });
 		if (!r.ok) {
-			showToast("Failed to disconnect: " + ((await r.json().catch(() => ({}))).error || r.statusText), { kind: "error" });
+			showToast((await r.json().catch(() => ({}))).error || "Disconnect failed", {
+				kind: "error",
+				timeout: 9e3
+			});
+			await refreshWizardCredState();
 			return;
 		}
 		await refreshWizardCredState();
