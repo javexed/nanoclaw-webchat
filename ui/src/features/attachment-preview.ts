@@ -13,6 +13,8 @@ export interface AttachmentFile {
   filename: string;
   mime?: string;
   size?: number;
+  /** Sent by an agent. Only agents' HTML renders; a member's stays a download. */
+  fromAgent?: boolean;
 }
 
 export type PreviewKind = 'pdf' | 'video' | 'audio' | 'html' | 'markdown' | 'csv' | 'json' | 'code' | 'text';
@@ -37,8 +39,12 @@ const PLAIN_TEXT = new Set(['txt', 'log', 'text', 'out']);
  * Which renderer the drawer uses, or null for "no preview" (the chip stays a
  * download). The extension decides first: agents' files often arrive typed
  * application/octet-stream, so the MIME type is only a fallback.
+ *
+ * HTML is the exception: it runs scripts in the frame, so it renders only when an
+ * agent sent it (`fromAgent`), and only by extension, matching the server's frame
+ * route, which serves .html/.htm alone. Anything else is shown as text or not at all.
  */
-export function previewKind(filename: string, mime = ''): PreviewKind | null {
+export function previewKind(filename: string, mime = '', fromAgent = false): PreviewKind | null {
   const ext = fileExt(filename);
   const m = (mime || '').toLowerCase();
   if (ext === 'pdf' || m === 'application/pdf') return 'pdf';
@@ -47,7 +53,7 @@ export function previewKind(filename: string, mime = ''): PreviewKind | null {
   if (ext === 'md' || ext === 'markdown' || m === 'text/markdown') return 'markdown';
   if (ext === 'csv' || ext === 'tsv' || m === 'text/csv') return 'csv';
   if (ext === 'json' || m === 'application/json') return 'json';
-  if (ext === 'html' || ext === 'htm' || m === 'text/html') return 'html';
+  if (ext === 'html' || ext === 'htm') return fromAgent ? 'html' : null;
   if (codeLanguage(filename)) return 'code';
   if (PLAIN_TEXT.has(ext) || m.startsWith('text/')) return 'text';
   if (ext === '' && /^(readme|license|copying|notice|authors|changelog)$/i.test(filename)) return 'text';
@@ -575,8 +581,10 @@ export function formatSize(n: number | undefined): string {
 /**
  * Where the drawer's frame loads an HTML attachment from: the same file, served
  * for a frame under a CSP of its own. A srcdoc or blob: frame would inherit the
- * app's CSP, whose script-src 'self' blocks the page's inline scripts.
+ * app's CSP, whose script-src 'self' blocks the page's inline scripts. The
+ * open's compose nonce rides in the fragment (never sent to the server); the
+ * page reads it from location.hash.
  */
-export function htmlFrameUrl(url: string): string {
-  return `${url}${url.includes('?') ? '&' : '?'}view=frame`;
+export function htmlFrameUrl(url: string, nonce = ''): string {
+  return `${url}${url.includes('?') ? '&' : '?'}view=frame${nonce ? `#${nonce}` : ''}`;
 }

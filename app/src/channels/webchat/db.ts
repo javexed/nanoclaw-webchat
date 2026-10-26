@@ -1205,6 +1205,35 @@ export async function storeWebchatFileMessage(
   return msg;
 }
 
+/**
+ * Whether the file at `url` in this room came in on an agent's message. Only
+ * agents' HTML renders in the drawer's frame (files.ts handleHtmlFrame); a
+ * member's .html stays a download. False when no message carries the file.
+ */
+export async function isAgentFileInRoom(roomId: string, url: string): Promise<boolean> {
+  const like = '%' + url.replace(/[\\%_]/g, (c) => '\\' + c) + '%';
+  const rows = (await getDb().all(
+    `SELECT sender_type, file_meta FROM webchat_messages
+       WHERE room_id = ? AND message_type = 'file' AND file_meta LIKE ? ESCAPE '\\'`,
+    roomId,
+    like,
+  )) as { sender_type: string; file_meta: string | null }[];
+  let found = false;
+  for (const r of rows) {
+    let meta: FileMeta | null = null;
+    try {
+      meta = r.file_meta ? (JSON.parse(r.file_meta) as FileMeta) : null;
+    } catch {
+      meta = null;
+    }
+    if (meta?.url !== url) continue;
+    // Any member's message carrying the same file makes it not an agent's.
+    if (r.sender_type !== 'agent') return false;
+    found = true;
+  }
+  return found;
+}
+
 export async function getWebchatMessages(roomId: string, limit = 200, threadId?: string): Promise<WebchatMessage[]> {
   const rows = (
     threadId === undefined

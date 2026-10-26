@@ -17,6 +17,7 @@ import type { InboundMessage } from '../adapter.js';
 import {
   storeWebchatFileMessage,
   getWebchatRoom,
+  isAgentFileInRoom,
   MAIN_THREAD,
   threadToSessionKey,
   resolveBoundedThread,
@@ -727,13 +728,17 @@ export const HTML_FRAME_CSP =
  * Only for a frame: a request whose Sec-Fetch-Dest is anything but `iframe`
  * (a top-level visit, a fetch, a browser too old to say) is refused, so this
  * URL never renders as a page of its own.
+ *
+ * Only an agent's file: the page runs its scripts, so HTML a member uploaded
+ * (anyone in the room) is refused and stays a download.
  */
-export function handleHtmlFrame(
+export async function handleHtmlFrame(
   res: http.ServerResponse,
   roomId: string,
   filename: string,
   fetchDest: string | undefined,
-): void {
+  sentByAgent: (roomId: string, url: string) => Promise<boolean> = isAgentFileInRoom,
+): Promise<void> {
   if (filename.includes('..') || filename.includes('/') || roomId.includes('..') || roomId.includes('/')) {
     res.writeHead(403);
     res.end();
@@ -750,6 +755,14 @@ export function handleHtmlFrame(
   }
   if (!stat.isFile()) return json(res, 404, { error: 'File not found' });
   if (stat.size > HTML_FRAME_MAX) return json(res, 413, { error: 'Too large to render' });
+  let agents: boolean;
+  try {
+    agents = await sentByAgent(roomId, `/api/files/${encodeURIComponent(sanitizeId(roomId))}/${filename}`);
+  } catch (err) {
+    log.warn('HTML frame sender lookup failed', { roomId, err: String(err) });
+    return json(res, 500, { error: 'Lookup failed' });
+  }
+  if (!agents) return json(res, 403, { error: 'Renders agent files only' });
   res.writeHead(200, {
     'Content-Type': 'text/html; charset=utf-8',
     'Content-Length': stat.size,
@@ -760,7 +773,21 @@ export function handleHtmlFrame(
     'Cross-Origin-Resource-Policy': 'same-origin',
     'Cache-Control': 'private, no-store',
   });
-  fs.createReadStream(filePath).pipe(res);
+  pipeFile(res, filePath);
+}
+
+/**
+ * Stream a file into the response. A read error (the file removed or
+ * unreadable mid-stream) ends that response; unhandled, it would take the
+ * whole process down.
+ */
+function pipeFile(res: http.ServerResponse, filePath: string, range?: { start: number; end: number }): void {
+  const stream = fs.createReadStream(filePath, range);
+  stream.on('error', (err) => {
+    log.warn('File stream failed', { filePath, err: String(err) });
+    res.destroy();
+  });
+  stream.pipe(res);
 }
 
 export function handleFileServe(
@@ -786,6 +813,7 @@ export function handleFileServe(
   } catch {
     return json(res, 404, { error: 'File not found' });
   }
+  if (!stat.isFile()) return json(res, 404, { error: 'File not found' });
   // Strip CR/LF/quote/backslash from the filename before inlining into a
   // header — guards header injection at the response surface.
   const safeName = filename.replace(/[\r\n"\\]/g, '_');
@@ -798,9 +826,15 @@ export function handleFileServe(
     // Sandbox the response into an opaque origin so HTML/SVG uploads cannot
     // read the PWA's localStorage token. nosniff stops MIME sniffing.
     // frame-ancestors 'self' (with X-Frame-Options to match, replacing the
-    // app-wide DENY) lets the attachment drawer frame a PDF: the frame is
-    // still a sandboxed document, and only this app can embed it.
-    'Content-Security-Policy': "sandbox; frame-ancestors 'self'",
+    // app-wide DENY) lets the attachment drawer frame a PDF; only this app
+    // can embed it.
+    //
+    // PDFs alone go unsandboxed: Chromium refuses its PDF viewer in a
+    // sandboxed document (blank frame, and a blocked page in a new tab). That
+    // is safe because the type comes from the .pdf extension, never the
+    // upload, and nosniff holds it: the browser hands the bytes to its PDF
+    // viewer or nothing, so they never run as a page in the app's origin.
+    'Content-Security-Policy': mime === 'application/pdf' ? "frame-ancestors 'self'" : "sandbox; frame-ancestors 'self'",
     'X-Frame-Options': 'SAMEORIGIN',
     'X-Content-Type-Options': 'nosniff',
     // Media players (iOS Safari will not play an mp4 without this) seek by
@@ -819,9 +853,9 @@ export function handleFileServe(
       'Content-Range': `bytes ${range.start}-${range.end}/${stat.size}`,
       'Content-Length': range.end - range.start + 1,
     });
-    fs.createReadStream(filePath, { start: range.start, end: range.end }).pipe(res);
+    pipeFile(res, filePath, range);
     return;
   }
   res.writeHead(200, { ...headers, 'Content-Length': stat.size });
-  fs.createReadStream(filePath).pipe(res);
+  pipeFile(res, filePath);
 }
