@@ -220,15 +220,21 @@ export async function rRoomCredModeGet(ctx: RouteCtx, m: RegExpMatchArray): Prom
   });
 }
 
+/**
+ * Room credential settings: the owner, or an admin of an agent wired to the
+ * room who can also access the room (every agent in it).
+ */
+async function canSetRoomCreds(userId: string, roomId: string): Promise<boolean> {
+  if (await isOwner(userId)) return true;
+  if (!(await canAccessRoom(userId, roomId))) return false;
+  return someAsync(await getAgentsForWebchatRoom(roomId), (a) => hasAdminPrivilege(userId, a.id));
+}
+
 export async function rRoomCredModePut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  // Owner, or an admin over ANY agent wired to this room.
-  const allowed =
-    (await isOwner(userId)) ||
-    (await someAsync(await getAgentsForWebchatRoom(roomId), (a) => hasAdminPrivilege(userId, a.id)));
-  if (!allowed) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await canSetRoomCreds(userId, roomId))) return json(res, 403, { error: 'Admin privilege required' });
   const body = await readJsonObject<{ mode?: unknown }>(req, res);
   if (body === undefined) return;
   if (body.mode !== 'inherit' && body.mode !== 'disabled' && body.mode !== 'optional' && body.mode !== 'required') {
@@ -251,10 +257,7 @@ export async function rRoomOauthPut(ctx: RouteCtx, m: RegExpMatchArray): Promise
   const { req, res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!(await getWebchatRoom(roomId))) return json(res, 404, { error: 'Room not found' });
-  const allowed =
-    (await isOwner(userId)) ||
-    (await someAsync(await getAgentsForWebchatRoom(roomId), (a) => hasAdminPrivilege(userId, a.id)));
-  if (!allowed) return json(res, 403, { error: 'Admin privilege required' });
+  if (!(await canSetRoomCreds(userId, roomId))) return json(res, 403, { error: 'Admin privilege required' });
   const body = await readJsonObject<{ allowed?: unknown }>(req, res);
   if (body === undefined) return;
   if (typeof body.allowed !== 'boolean') return json(res, 400, { error: 'allowed must be a boolean' });

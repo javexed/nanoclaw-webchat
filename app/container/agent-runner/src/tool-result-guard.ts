@@ -19,7 +19,12 @@
  * What it does with a hit is deliberately small:
  *   - credentials are REDACTED in place (`[REDACTED:<type>]`) through
  *     `updatedToolOutput`, keeping the tool_response's shape; nothing else is
- *     ever rewritten;
+ *     ever rewritten. Object keys are never rewritten (only flagged), and the
+ *     file tools' results (FLAG_ONLY_TOOLS) are only flagged: a redacted
+ *     `Read` would have the agent write the marker back over the real secret,
+ *     and an `Edit` whose old_string carries it would never match;
+ *   - a write that would put a marker into a file is refused
+ *     (`refuseRedactedWrite`, the Claude provider's PreToolUse hook);
  *   - anything flagged adds an advisory to the model's context, written
  *     entirely from the fixed vocabulary above. Matched text and detector
  *     detail never reach the model: echoing an injection back is how it lands.
@@ -512,6 +517,8 @@ export interface ScreenResult extends Verdict {
 }
 
 export interface ScreenOptions {
+  /** Flag credentials but rewrite nothing (file tools). */
+  flagOnly?: boolean;
   /** Absolute ms timestamp the scan must stop by. Default: now + TIME_BUDGET_MS. */
   deadline?: number;
   /** Characters to scan before the remainder is reported unscreened. */
@@ -539,7 +546,20 @@ export function screenToolResponse(response: unknown, opts: ScreenOptions = {}):
   };
 
   let stopped = false;
-  const screenString = (s: string): string => {
+  /**
+   * Screen one string. Returns it with credentials replaced, or unchanged when
+   * `redact` is false; the detectors after redaction see the redacted text
+   * either way, so the flags do not depend on it.
+   */
+  const screenString = (s: string, redact: boolean): string => {
+    const local = { n: 0 };
+    const text = screenInto(s, local);
+    if (local.n > 0) flags.add('credentials');
+    if (!redact) return s;
+    counter.n += local.n;
+    return text;
+  };
+  const screenInto = (s: string, counter: { n: number }): string => {
     if (s.length === 0) return s;
     // A big pure base64/hex string (an image, a file body) is judged by its
     // decoded prefix: binary there means binary throughout, for the text
@@ -550,7 +570,6 @@ export function screenToolResponse(response: unknown, opts: ScreenOptions = {}):
         flags.add('unscreened');
         return s;
       }
-      const before = counter.n;
       let text = s;
       try {
         for (const rule of CREDENTIAL_RULES) {
@@ -562,7 +581,6 @@ export function screenToolResponse(response: unknown, opts: ScreenOptions = {}):
         stopped = true;
         flags.add('unscreened');
       }
-      if (counter.n > before) flags.add('credentials');
       return text;
     }
     if (stopped || scan.left <= 0) {
@@ -578,7 +596,6 @@ export function screenToolResponse(response: unknown, opts: ScreenOptions = {}):
     }
     scan.left -= text.length;
 
-    const before = counter.n;
     try {
       text = redactPrivateKeys(text, counter);
       for (const rule of CREDENTIAL_RULES) {
@@ -597,12 +614,12 @@ export function screenToolResponse(response: unknown, opts: ScreenOptions = {}):
       stopped = true;
       flags.add('unscreened');
     }
-    if (counter.n > before) flags.add('credentials');
     return text + tail;
   };
 
+  const redact = !opts.flagOnly;
   const walk = (value: unknown, depth: number): unknown => {
-    if (typeof value === 'string') return screenString(value);
+    if (typeof value === 'string') return screenString(value, redact);
     if (value === null || typeof value !== 'object') return value;
     if (depth >= MAX_DEPTH) {
       flags.add('unscreened');
@@ -611,8 +628,12 @@ export function screenToolResponse(response: unknown, opts: ScreenOptions = {}):
     if (Array.isArray(value)) return value.map((v) => walk(v, depth + 1));
     const out: Record<string, unknown> = {};
     // Keys are tool output too: a JSON object keyed by a fetched page's text
-    // reaches the model exactly as its values do.
-    for (const [k, v] of Object.entries(value)) out[screenString(k)] = walk(v, depth + 1);
+    // reaches the model exactly as its values do. Screened for flags, never
+    // rewritten: two keys redacted alike would collapse into one.
+    for (const [k, v] of Object.entries(value)) {
+      screenString(k, false);
+      out[k] = walk(v, depth + 1);
+    }
     return out;
   };
 
@@ -713,13 +734,76 @@ function logFlagged(toolName: string, result: Pick<ScreenResult, 'flags' | 'reda
   }
 }
 
+/**
+ * Tools whose result is a workspace file's own text (or its edit): flagged,
+ * never rewritten, so what the agent reads back is what is on disk.
+ */
+export const FLAG_ONLY_TOOLS: ReadonlySet<string> = new Set(['Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+
+const REDACTION_MARKER = /\[REDACTED:[a-z_]{1,40}\]/g;
+const countMarkers = (s: unknown): number => (typeof s === 'string' ? (s.match(REDACTION_MARKER)?.length ?? 0) : 0);
+
+export const REDACTED_WRITE_REFUSAL =
+  'Blocked: [REDACTED:…] hides a secret; it is not the value. Keep the original text.';
+
+/**
+ * PreToolUse check: the refusal when a file write would add a redaction
+ * marker the file does not already carry, else null. Counted, not just
+ * matched, so a file that documents the marker can still be edited.
+ */
+export function refuseRedactedWrite(
+  toolName: string,
+  input: unknown,
+  readFile: (p: string) => string = (p) => fs.readFileSync(p, 'utf8'),
+): string | null {
+  if (input === null || typeof input !== 'object') return null;
+  const i = input as Record<string, unknown>;
+  const onDisk = (p: unknown): number => {
+    if (typeof p !== 'string') return 0;
+    try {
+      return countMarkers(readFile(p));
+    } catch {
+      return 0;
+    }
+  };
+  const adds = (next: unknown, before: () => number): boolean => {
+    const n = countMarkers(next);
+    return n > 0 && n > before();
+  };
+  let refused = false;
+  switch (toolName) {
+    case 'Write':
+      refused = adds(i.content, () => onDisk(i.file_path));
+      break;
+    case 'NotebookEdit':
+      refused = adds(i.new_source, () => onDisk(i.notebook_path));
+      break;
+    case 'Edit':
+      refused = adds(i.new_string, () => countMarkers(i.old_string));
+      break;
+    case 'MultiEdit':
+      refused =
+        Array.isArray(i.edits) &&
+        i.edits.some(
+          (e) =>
+            e !== null &&
+            typeof e === 'object' &&
+            adds((e as Record<string, unknown>).new_string, () =>
+              countMarkers((e as Record<string, unknown>).old_string),
+            ),
+        );
+      break;
+  }
+  return refused ? REDACTED_WRITE_REFUSAL : null;
+}
+
 /** Run the hook over one stdin payload. Exported for the contract test. */
 export function handleHookInput(raw: string, opts: ScreenOptions = {}): HookOutput | null {
   let toolName = '?';
   try {
     const input = JSON.parse(raw) as { tool_name?: unknown; tool_response?: unknown };
     if (typeof input.tool_name === 'string') toolName = input.tool_name;
-    const result = screenToolResponse(input.tool_response, opts);
+    const result = screenToolResponse(input.tool_response, { flagOnly: FLAG_ONLY_TOOLS.has(toolName), ...opts });
     if (result.flags.size > 0) logFlagged(toolName, result);
     return buildHookOutput(result);
   } catch {
