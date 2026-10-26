@@ -17,6 +17,7 @@ import RoomList from './RoomList.vue';
 import { learnTurnToolCount, roomAutoLearn, roomFilter, selectedRoomId, showArchived, showHidden } from './room-list-state.js';
 import { transcriptEmpty } from './transcript-state.js';
 import { beginTranscriptSwitch } from './transcript.js';
+import { autoReadEnabled, setAutoRead, ttsOffered } from './voice.js';
 
 /** Supplied by provideRoomsDeps in composition-root.ts. `any` marks a signature not
  *  yet typed, not an opt-out of checking. */
@@ -380,6 +381,11 @@ export async function openRoomDetail(roomId?: any) {
   // Rename field — owner-only (the server also enforces). Prefilled with the
   // current name; saving PUTs /name and the server's broadcastRooms refreshes
   // the sidebar + this panel's title.
+  // Auto-read: a per-viewer switch, offered wherever read aloud is.
+  const autoRead = $<HTMLInputElement>('#room-autoread-toggle');
+  $('#room-autoread-field')!.hidden = !ttsOffered();
+  if (autoRead) autoRead.checked = autoReadEnabled(roomId);
+
   const renameField = $('#room-rename-field')!;
   if (state.isOwnerView && room) {
     renameField.hidden = false;
@@ -657,6 +663,9 @@ export function wireRoomDetail1(): void {
 }
 
 export function wireRoomDetail2(): void {
+  $<HTMLInputElement>('#room-autoread-toggle')?.addEventListener('change', (e) => {
+    if (selectedRoomId.value) setAutoRead(selectedRoomId.value, (e.target as HTMLInputElement).checked);
+  });
   $('#room-credential-modes')?.addEventListener('click', async (e) => {
     const btn = (e.target as Element | null)?.closest<HTMLElement>('.setting-option');
     if (!btn || !selectedRoomId.value) return;

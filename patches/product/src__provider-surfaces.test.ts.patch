@@ -1,8 +1,8 @@
 diff --git a/src/provider-surfaces.test.ts b/src/provider-surfaces.test.ts
-index 97893df3..934d968e 100644
+index 9962a23a..58f7cf65 100644
 --- a/src/provider-surfaces.test.ts
 +++ b/src/provider-surfaces.test.ts
-@@ -467,6 +467,8 @@ describe('buildMounts agent surfaces', () => {
+@@ -533,6 +533,8 @@ describe('buildMounts agent surfaces', () => {
        '/workspace/agent/plugins',
        '/app/src',
        '/app/skills',

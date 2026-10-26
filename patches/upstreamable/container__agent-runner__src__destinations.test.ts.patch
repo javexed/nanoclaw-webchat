@@ -1,8 +1,35 @@
 diff --git a/container/agent-runner/src/destinations.test.ts b/container/agent-runner/src/destinations.test.ts
-index af175537..0652967a 100644
+index a6767cfe..15a74267 100644
 --- a/container/agent-runner/src/destinations.test.ts
 +++ b/container/agent-runner/src/destinations.test.ts
-@@ -64,7 +64,11 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
+@@ -25,7 +25,8 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
+     seedDestination('casa', 'Casa', 'whatsapp', 'group-1@g.us');
+     seedDestination('whatsapp-mg-17780', 'whatsapp-mg-17780', 'whatsapp', 'phone-2@s.whatsapp.net');
+ 
+-    const prompt = buildSystemPromptAddendum('Casa');
++    // The send_message sentence is only promised to a provider that has the tool.
++    const prompt = buildSystemPromptAddendum('Casa', { kind: 'chat' }, { mcpTools: true });
+ 
+     expect(prompt).toContain('default to addressing the destination it came `from`');
+     expect(prompt).toContain('your answer still has to be sent after it');
+@@ -34,6 +35,16 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
+     expect(prompt).toContain('`whatsapp-mg-17780`');
+   });
+ 
++  it('never promises send_message to a provider without MCP tools', () => {
++    seedDestination('casa', 'Casa', 'whatsapp', 'group-1@g.us');
++    seedDestination('whatsapp-mg-17780', 'whatsapp-mg-17780', 'whatsapp', 'phone-2@s.whatsapp.net');
++
++    const prompt = buildSystemPromptAddendum('Casa');
++
++    expect(prompt).toContain('default to addressing the destination it came `from`');
++    expect(prompt).not.toContain('`send_message`');
++  });
++
+   it('describes message wrapping for a single destination', () => {
+     seedDestination('casa', 'Casa', 'whatsapp', 'group-1@g.us');
+ 
+@@ -65,7 +76,11 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
    it('gives task sessions only explicit-tool delivery instructions', () => {
      seedDestination('casa', 'Casa', 'whatsapp', 'group-1@g.us');
  
@@ -15,7 +42,7 @@ index af175537..0652967a 100644
  
      expect(prompt).toContain('isolated task run');
      expect(prompt).toContain('send_message({ to: "name"');
-@@ -83,7 +87,9 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
+@@ -84,7 +99,9 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
        )
        .run();
  
@@ -26,7 +53,7 @@ index af175537..0652967a 100644
  
      expect(prompt).toContain(
        'For user-visible escalation output, default to your own channel destination(s): `casa`',
-@@ -102,7 +108,9 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
+@@ -103,7 +120,9 @@ describe('buildSystemPromptAddendum — multi-destination routing guidance', ()
        )
        .run();
  
@@ -37,7 +64,7 @@ index af175537..0652967a 100644
  
      expect(prompt).toContain('Always pass the explicit named destination.');
      expect(prompt).not.toContain('For user-visible escalation output, default to');
-@@ -131,3 +139,67 @@ describe('buildSystemPromptAddendum — reading messages', () => {
+@@ -132,3 +151,67 @@ describe('buildSystemPromptAddendum — reading messages', () => {
      expect(prompt).not.toContain('cross-session-context');
    });
  });

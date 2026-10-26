@@ -55,7 +55,7 @@ import {
   getRoomOauthAllowed,
   getSyncDelta,
   getThreadSyncMarks,
-  getUnreadThreadIdsForRoom,
+  getUnreadThreadCountsForRoom,
   getWebchatHandleUsers,
   getWebchatRoom,
   getWebchatThread,
@@ -425,11 +425,15 @@ export async function rRoomThreadsGet(ctx: RouteCtx, m: RegExpMatchArray): Promi
   const roomId = await requireRoomAccess(ctx, m);
   if (roomId === undefined) return;
   await ensureMainThread(roomId); // every room has a main thread once listed
-  const unread = await getUnreadThreadIdsForRoom(userId, roomId);
+  const unread = await getUnreadThreadCountsForRoom(userId, roomId);
   return json(
     res,
     200,
-    (await listWebchatThreads(roomId)).map((t) => ({ ...t, unread: unread.has(t.thread_id) })),
+    (await listWebchatThreads(roomId)).map((t) => ({
+      ...t,
+      unread: unread.has(t.thread_id),
+      unread_count: unread.get(t.thread_id) ?? 0,
+    })),
   );
 }
 

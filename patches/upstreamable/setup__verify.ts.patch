@@ -1,5 +1,5 @@
 diff --git a/setup/verify.ts b/setup/verify.ts
-index 73d871be..5f65b300 100644
+index 052258a5..a19c1f37 100644
 --- a/setup/verify.ts
 +++ b/setup/verify.ts
 @@ -18,6 +18,34 @@ import { getPlatform, getServiceManager, hasSystemd, isRoot } from './platform.j
@@ -37,7 +37,7 @@ index 73d871be..5f65b300 100644
  export async function run(_args: string[]): Promise<void> {
    const projectRoot = process.cwd();
    const platform = getPlatform();
-@@ -135,24 +163,7 @@ export async function run(_args: string[]): Promise<void> {
+@@ -137,24 +165,7 @@ export async function run(_args: string[]): Promise<void> {
    }
  
    // 4. Check channel auth (detect configured channels by credentials)

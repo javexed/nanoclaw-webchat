@@ -49,6 +49,10 @@ export interface WebchatMessage {
   /** Provenance for thread context sync: null=native, 'pulled' (from main),
    *  'pushed' (up from a thread). See docs/webchat/threads.md §8. */
   origin?: 'pulled' | 'pushed' | null;
+  /** On a rate-limit notice only: when the limit resets (epoch ms). See limit-retry.ts. */
+  limit_resets_at?: number;
+  /** On an agent reply only: the model that answered it, when known. See served-model.ts. */
+  served_model?: string;
 }
 
 interface WebchatMessageRow {
@@ -63,6 +67,8 @@ interface WebchatMessageRow {
   created_at: number;
   /** Stable user id of a human sender (null for agents, system rows, and rows stored before it existed). */
   sender_user_id?: string | null;
+  limit_resets_at?: number | null;
+  served_model?: string | null;
 }
 
 export interface WebchatPushSubscription {
@@ -792,9 +798,13 @@ export async function getEffectiveRoomMode(roomId: string): Promise<CredentialMo
 
 function rowToMessage(row: WebchatMessageRow): WebchatMessage {
   // sender_user_id is the delete-ownership key, not a display field: it stays server-side.
-  const { sender_user_id: _senderUserId, ...rest } = row;
+  const { sender_user_id: _senderUserId, limit_resets_at: limitResetsAt, served_model: servedModel, ...rest } = row;
   return {
     ...rest,
+    // Only a rate-limit notice carries it; every other message leaves it out.
+    ...(limitResetsAt != null ? { limit_resets_at: limitResetsAt } : {}),
+    // Only an agent reply whose model was reported carries it.
+    ...(servedModel ? { served_model: servedModel } : {}),
     file_meta: row.file_meta ? (JSON.parse(row.file_meta) as FileMeta) : null,
   };
 }
@@ -807,6 +817,10 @@ export async function storeWebchatMessage(
   threadId = 'main',
   /** The human sender's user id: what decides who may delete the message. */
   senderUserId: string | null = null,
+  /** A rate-limit notice's reset instant (epoch ms). */
+  limitResetsAt: number | null = null,
+  /** An agent reply's served model (served-model.ts). */
+  servedModel: string | null = null,
 ): Promise<WebchatMessage> {
   const msg: WebchatMessage = {
     id: randomUUID(),
@@ -818,11 +832,19 @@ export async function storeWebchatMessage(
     message_type: 'text',
     file_meta: null,
     created_at: Date.now(),
+    ...(limitResetsAt != null ? { limit_resets_at: limitResetsAt } : {}),
+    ...(servedModel ? { served_model: servedModel } : {}),
   };
   await getDb().run(
-    `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at, sender_user_id)
-       VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at, @sender_user_id)`,
-    { ...msg, file_meta: null, sender_user_id: senderUserId },
+    `INSERT INTO webchat_messages (id, room_id, thread_id, sender, sender_type, content, message_type, file_meta, created_at, sender_user_id, limit_resets_at, served_model)
+       VALUES (@id, @room_id, @thread_id, @sender, @sender_type, @content, @message_type, @file_meta, @created_at, @sender_user_id, @limit_resets_at, @served_model)`,
+    {
+      ...msg,
+      file_meta: null,
+      sender_user_id: senderUserId,
+      limit_resets_at: limitResetsAt,
+      served_model: servedModel,
+    },
   );
   return msg;
 }
@@ -1535,6 +1557,9 @@ export async function deleteWebchatThread(roomId: string, threadId: string): Pro
   if (await hasTable(db, 'webchat_turn_traces')) {
     await db.run(`DELETE FROM webchat_turn_traces WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
   }
+  if (await hasTable(db, 'webchat_limit_retries')) {
+    await db.run(`DELETE FROM webchat_limit_retries WHERE room_id = ? AND thread_id = ?`, roomId, threadId);
+  }
 }
 
 // ── Thread context sync (pull / push) ──
@@ -1705,21 +1730,32 @@ export async function markThreadRead(
   );
 }
 
-/** Thread ids in a room with unread messages for this user (newest message
- * newer than the user's per-thread marker; no marker = unread if any message). */
-export async function getUnreadThreadIdsForRoom(userId: string, roomId: string): Promise<Set<string>> {
+/** Unread-message count per thread of a room for this user (messages newer than
+ * the user's per-thread marker; no marker = every message). Threads with
+ * nothing unread are absent. */
+export async function getUnreadThreadCountsForRoom(userId: string, roomId: string): Promise<Map<string, number>> {
   const rows = (await getDb().all(
-    `SELECT m.thread_id AS thread_id
+    `SELECT m.thread_id AS thread_id, COUNT(*) AS n
          FROM webchat_messages m
          LEFT JOIN webchat_thread_reads r
            ON r.room_id = m.room_id AND r.thread_id = m.thread_id AND r.user_id = ?
-        WHERE m.room_id = ?
-        GROUP BY m.thread_id
-       HAVING MAX(m.created_at) > COALESCE(MAX(r.last_read_at), 0)`,
+        WHERE m.room_id = ? AND m.created_at > COALESCE(r.last_read_at, 0)
+        GROUP BY m.thread_id`,
     userId,
     roomId,
-  )) as { thread_id: string }[];
-  return new Set(rows.map((r) => r.thread_id));
+  )) as { thread_id: string; n: number }[];
+  return new Map(rows.map((r) => [r.thread_id, Number(r.n)]));
+}
+
+/** A user's read marker for one thread, or null when they never opened it. */
+export async function getThreadReadMarker(userId: string, roomId: string, threadId: string): Promise<number | null> {
+  const row = (await getDb().get(
+    `SELECT last_read_at FROM webchat_thread_reads WHERE user_id = ? AND room_id = ? AND thread_id = ?`,
+    userId,
+    roomId,
+    threadId,
+  )) as { last_read_at: number } | undefined;
+  return row ? Number(row.last_read_at) : null;
 }
 
 // ── Push subscriptions ──
@@ -2005,20 +2041,21 @@ export async function markRoomRead(userId: string, roomId: string, ts: number = 
 }
 
 /**
- * Room ids with a message newer than this user's read marker (no marker: any
- * message). Approval/a2a rows count, as in the live `unread` path.
+ * Unread-message count per room for this user: messages newer than their read
+ * marker (no marker: every message). Rooms with nothing unread are absent, so
+ * `has()` is the old boolean. Approval/a2a rows count, as in the live `unread` path.
  */
-export async function getUnreadRoomIdsForUser(userId: string): Promise<Set<string>> {
+export async function getUnreadRoomCountsForUser(userId: string): Promise<Map<string, number>> {
   const rows = (await getDb().all(
-    `SELECT m.room_id AS room_id
+    `SELECT m.room_id AS room_id, COUNT(*) AS n
          FROM webchat_messages m
          LEFT JOIN webchat_room_reads r
            ON r.room_id = m.room_id AND r.user_id = ?
-        GROUP BY m.room_id
-       HAVING MAX(m.created_at) > COALESCE(MAX(r.last_read_at), 0)`,
+        WHERE m.created_at > COALESCE(r.last_read_at, 0)
+        GROUP BY m.room_id`,
     userId,
-  )) as { room_id: string }[];
-  return new Set(rows.map((r) => r.room_id));
+  )) as { room_id: string; n: number }[];
+  return new Map(rows.map((r) => [r.room_id, Number(r.n)]));
 }
 
 /** Drop a room's read markers — called from deleteWebchatRoom's cascade. */

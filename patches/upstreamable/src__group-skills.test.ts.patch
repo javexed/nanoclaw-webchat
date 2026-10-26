@@ -1,0 +1,13 @@
+diff --git a/src/group-skills.test.ts b/src/group-skills.test.ts
+index 75afbd16..6e7671d8 100644
+--- a/src/group-skills.test.ts
++++ b/src/group-skills.test.ts
+@@ -19,6 +19,8 @@ function templateSkill(groupId: string, name: string, file: string, content: str
+   const dir = path.join(DATA_DIR, 'v2-sessions', groupId, '.claude-shared', 'skills', name);
+   fs.mkdirSync(dir, { recursive: true });
+   fs.writeFileSync(path.join(dir, file), content);
++  // A fixed mode, not the process umask's: the copy preserves it and tests assert it.
++  fs.chmodSync(path.join(dir, file), 0o644);
+ }
+ 
+ beforeEach(() => {

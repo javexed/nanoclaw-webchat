@@ -1,8 +1,8 @@
 diff --git a/container/agent-runner/src/providers/claude-config.ts b/container/agent-runner/src/providers/claude-config.ts
-index 8c1eada2..7c4e3bdd 100644
+index 3d4b6d28..6a8f4c19 100644
 --- a/container/agent-runner/src/providers/claude-config.ts
 +++ b/container/agent-runner/src/providers/claude-config.ts
-@@ -78,6 +78,16 @@ export function mcpAllowPattern(serverName: string): string {
+@@ -77,6 +77,16 @@ export function mcpAllowPattern(serverName: string): string {
    return `mcp__${serverName.replace(/[^a-zA-Z0-9_-]/g, '_')}__*`;
  }
  
@@ -19,7 +19,7 @@ index 8c1eada2..7c4e3bdd 100644
  /**
   * Claude runs unrestricted inside the container: NanoClaw's container
   * isolation and the OneCLI allow-list are the security boundary, not the
-@@ -127,7 +137,10 @@ export function resolveClaudeMcpServers(
+@@ -134,7 +144,10 @@ export function resolveClaudeMcpServers(
    const mcpServers = Object.fromEntries(Object.entries(input).map(([name, server]) => [name, shimCwd(server)]));
    return {
      mcpServers,

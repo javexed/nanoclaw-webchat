@@ -225,6 +225,11 @@ export function appendMessage(msg?: any, statusText?: any, prepend?: boolean): M
     thoughts: thoughtsForThisMsg,
     liveTrace,
     hasTrace: msg.has_trace === true,
+    limitResetsAt: isAgent && typeof msg.limit_resets_at === 'number' ? msg.limit_resets_at : null,
+    limitRetryAt: typeof msg.limit_retry_at === 'number' ? msg.limit_retry_at : null,
+    limitRetryBy: typeof msg.limit_retry_by === 'string' ? msg.limit_retry_by : null,
+    limitThread: msg.thread_id || 'main',
+    servedModel: isAgent && typeof msg.served_model === 'string' ? msg.served_model : null,
     ttsText: isAgent && msg.content ? msg.content : null,
     timeStr,
     timeTitle: msg.created_at ? new Date(msg.created_at).toLocaleString() : undefined,
@@ -236,6 +241,30 @@ export function appendMessage(msg?: any, statusText?: any, prepend?: boolean): M
     body: isMine,
   };
   return pushRow(row, prepend);
+}
+
+/** The "New" divider: where the messages this user has not seen begin. */
+export function appendUnreadDivider(): void {
+  pushRow({ key: nextKey(), kind: 'divider', cls: 'unread-divider', text: 'New' });
+}
+
+/**
+ * Land on the "New" divider instead of the bottom. Run twice, like the bottom
+ * scroll on a room open, because mobile layout is still settling on the first.
+ */
+export function scrollToUnreadDivider(): void {
+  const land = () => {
+    const el = $('#messages')?.querySelector('.unread-divider');
+    if (!el) return;
+    clearUserScrollMarkers();
+    el.scrollIntoView({ block: 'start' });
+    // Reading from here: live messages must not yank the view to the bottom,
+    // and the jump-to-latest button shows while there is more below.
+    state.userScrolledAway = !isNearBottom();
+    updateScrollButton();
+  };
+  requestAnimationFrame(land);
+  setTimeout(land, 100);
 }
 
 /** Append, or PREPEND for older-message pagination. */

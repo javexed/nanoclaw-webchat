@@ -1,8 +1,8 @@
 diff --git a/.claude/skills/add-onecli/payload/src/gateway-providers/onecli.ts b/.claude/skills/add-onecli/payload/src/gateway-providers/onecli.ts
-index 264f4821..92be0088 100644
+index 50a951e4..fcc4f362 100644
 --- a/.claude/skills/add-onecli/payload/src/gateway-providers/onecli.ts
 +++ b/.claude/skills/add-onecli/payload/src/gateway-providers/onecli.ts
-@@ -15,6 +15,7 @@ import {
+@@ -26,6 +26,7 @@ import {
    type GatewaySessionInput,
    type GatewaySessionLease,
  } from './gateway-provider-registry.js';
@@ -10,7 +10,7 @@ index 264f4821..92be0088 100644
  
  const env = readEnvFile([
    'ONECLI_URL',
-@@ -166,12 +167,15 @@ async function subscribeApprovals(
+@@ -358,12 +359,15 @@ async function subscribeApprovals(
        // pinned SDK callback submits no decision and leaves the request pending.
        // Keep this outside the deny-on-translation-error block, even for stale
        // requests: this copy has no authority over another copy's requests.
@@ -28,7 +28,7 @@ index 264f4821..92be0088 100644
        } catch (err) {
          log.error('OneCLI approval translation failed closed', { requestId: request.id, err });
          return 'deny';
-@@ -183,12 +187,12 @@ async function subscribeApprovals(
+@@ -375,12 +379,12 @@ async function subscribeApprovals(
    }
  }
  

@@ -12,6 +12,8 @@ import { ensureTurn, removeTurn } from './thinking.js';
 import { thinkingTurns } from './transcript-state.js';
 import { appendMessage, clearUserScrollMarkers, scrollToBottom } from './transcript.js';
 import { clearStagedFiles, uploadFile } from './files.js';
+import { stopTts } from './voice.js';
+import { clearComposeOrigin } from './compose-prefill.js';
 import { createApp } from 'vue';
 import SlashMenu from './SlashMenu.vue';
 import { slashActiveIndex, slashRows } from './slash-menu-state.js';
@@ -278,12 +280,15 @@ export function sendCurrentMessage() {
   if (!input) return;
   const text = input.value.trimEnd(); // trimEnd not trim — preserves leading indentation
   if (!state.currentRoom) return;
+  // Barge-in: the user is talking — stop reading the last reply aloud.
+  if (text || pendingFiles.value.length > 0) stopTts();
 
   // Files + optional caption (caption attaches to the first upload)
   if (pendingFiles.value.length > 0) {
     const files = pendingFiles.value.map((p: any) => p.file);
     const caption = text;
     clearStagedFiles();
+    clearComposeOrigin();
     input.value = '';
     input.style.height = 'auto';
     (async () => {
@@ -331,6 +336,7 @@ export function sendCurrentMessage() {
   // user-driven by a stale wheel/touch immediately before send.
   clearUserScrollMarkers();
   scrollToBottom();
+  clearComposeOrigin();
   input.value = '';
   input.style.height = 'auto';
 }

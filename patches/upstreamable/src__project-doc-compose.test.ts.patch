@@ -1,8 +1,8 @@
 diff --git a/src/project-doc-compose.test.ts b/src/project-doc-compose.test.ts
-index fd964370..f2166735 100644
+index 91b45604..2d7ef73b 100644
 --- a/src/project-doc-compose.test.ts
 +++ b/src/project-doc-compose.test.ts
-@@ -10,8 +10,8 @@ vi.mock('./log.js', () => ({
+@@ -11,8 +11,8 @@ vi.mock('./log.js', () => ({
  
  import {
    ensureContainerConfig,
@@ -12,7 +12,7 @@ index fd964370..f2166735 100644
  } from './db/container-configs.js';
  import { closeDb, createAgentGroup, getDb, initTestDb, runMigrations } from './db/index.js';
  import { PERSONA_PREPEND_FILE } from './group-persona.js';
-@@ -24,6 +24,7 @@ import {
+@@ -25,6 +25,7 @@ import {
    renderBaseInstructions,
    type ProjectDocSpec,
  } from './project-doc-compose.js';
@@ -20,7 +20,7 @@ index fd964370..f2166735 100644
  import type { AgentGroup } from './types.js';
  
  const CLAUDE_SPEC: ProjectDocSpec = {
-@@ -443,3 +444,88 @@ describe('composeGroupProjectDoc size cap', () => {
+@@ -453,3 +454,88 @@ describe('composeGroupProjectDoc size cap', () => {
      expect(log.error).not.toHaveBeenCalled();
    });
  });

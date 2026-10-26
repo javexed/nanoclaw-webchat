@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/poll-loop.ts b/container/agent-runner/src/poll-loop.ts
-index db8504e2..c97aad3a 100644
+index 1cf008ef..bfb7a272 100644
 --- a/container/agent-runner/src/poll-loop.ts
 +++ b/container/agent-runner/src/poll-loop.ts
 @@ -1,4 +1,4 @@
@@ -11,12 +11,12 @@ index db8504e2..c97aad3a 100644
 @@ -7,6 +7,7 @@ import {
    type MessageInRow,
  } from './db/messages-in.js';
- import { getUndeliveredMessages, writeMessageOut } from './db/messages-out.js';
+ import { getUndeliveredMessages, writeMessageOut, type MessageOutRow } from './db/messages-out.js';
 +import { getMaxOutboundSeq } from './outbound-seq.js';
  import { clearStaleProcessingAcks } from './db/container-state.js';
  import { resolveDestinationThread } from './db/session-routing.js';
  import { touchHeartbeat } from './heartbeat.js';
-@@ -26,25 +27,30 @@ import {
+@@ -27,25 +28,32 @@ import {
    isClearCommand,
    isRunnerCommand,
    isSessionEcho,
@@ -35,7 +35,9 @@ index db8504e2..c97aad3a 100644
  const ACTIVE_POLL_INTERVAL_MS = 500;
  
  import { notifyProviderExchange, notifyProviderMessage } from './providers/hooks.js';
-+import { failureNotice, GENERIC_FAILURE } from './failure-notice.js';
++import { failureNotice } from './failure-notice.js';
++import { LIMIT_RESETS_AT_FIELD, limitResetsAt } from './limit-reset.js';
++import { resetServedModel, servedModelField, withoutServedModel } from './served-model.js';
  import {
    notifyTurnCompletion,
 -  retryTurnAfterFailure,
@@ -48,7 +50,7 @@ index db8504e2..c97aad3a 100644
  } from './runner-hooks.js';
  
  /** Consecutive driver-classified failures before a fresh runner is required. */
-@@ -72,14 +78,22 @@ export interface PollLoopConfig {
+@@ -73,14 +81,22 @@ export interface PollLoopConfig {
    systemContext?: {
      instructions?: string;
    };
@@ -71,7 +73,46 @@ index db8504e2..c97aad3a 100644
  /**
   * Main poll loop. Runs indefinitely until the process is killed.
   *
-@@ -136,7 +150,14 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -91,6 +107,23 @@ export interface PollLoopConfig {
+  * 5. Mark messages completed
+  * 6. Loop
+  */
++/**
++ * Whether a turn's <message> blocks deliver as they close (mid-turn) or only
++ * at the result. The provider contract decides (a contractless legacy
++ * provider: its own flag), except that a lenient (small local) model always
++ * keeps the result door: the single-reply misfire guard there redirects a
++ * lone reply it addressed away from the turn's origin, which needs the turn's
++ * block count. Everyone else's replies don't wait for a long turn to end.
++ */
++export function deliversMidTurn(
++  contractDelivery: 'mid-turn-complete' | 'result' | undefined,
++  legacyEmitsMidTurnText: boolean | undefined,
++  lenientOutput: boolean | undefined,
++): boolean {
++  if (lenientOutput) return false;
++  return contractDelivery ? contractDelivery === 'mid-turn-complete' : (legacyEmitsMidTurnText ?? false);
++}
++
+ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+   // Contract providers declare these; a contractless (legacy payload)
+   // provider keeps declaring them as instance flags, exactly as before.
+@@ -98,9 +131,11 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+   const nativeSlashCommands = config.providerContract
+     ? config.providerContract.commands.formatting === 'native'
+     : (legacy.supportsNativeSlashCommands ?? false);
+-  const midTurnCompleteDelivery = config.providerContract
+-    ? config.providerContract.textDelivery === 'mid-turn-complete'
+-    : (legacy.emitsMidTurnText ?? false);
++  const midTurnCompleteDelivery = deliversMidTurn(
++    config.providerContract?.textDelivery,
++    legacy.emitsMidTurnText,
++    config.lenientOutput,
++  );
+ 
+   // Resume the agent's prior session from a previous container run if one
+   // was persisted. The continuation is opaque to the poll-loop — the
+@@ -137,7 +172,14 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
    while (true) {
      if (config.signal?.aborted) return;
      // Skip system messages — they're responses for MCP tools (e.g., ask_user_question)
@@ -87,7 +128,7 @@ index db8504e2..c97aad3a 100644
      isFirstPoll = false;
      pollCount++;
  
-@@ -184,9 +205,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -185,9 +227,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
          await writeMessageOut({
            id: generateId(),
            kind: 'chat',
@@ -98,7 +139,7 @@ index db8504e2..c97aad3a 100644
            content: JSON.stringify({ text: 'Session cleared.' }),
          });
          commandIds.push(msg.id);
-@@ -268,9 +287,15 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -269,9 +309,16 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
      // Format messages: passthrough commands get raw text (only if the
      // provider natively handles slash commands), others get XML.
      const prompt = formatMessagesWithCommands(keep, nativeSlashCommands, config.providerName);
@@ -110,11 +151,12 @@ index db8504e2..c97aad3a 100644
 +    // A real query runs from here — observers see the turn start (and the
 +    // matching turn_done after completion below).
 +    notifyProviderMessage({ kind: 'turn_start' });
++    resetServedModel();
 +
      const query = config.provider.query({
        prompt,
        continuation,
-@@ -285,6 +310,79 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -286,6 +333,79 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
      // a2a return-path routing. Re-published at every turn boundary inside
      // processQuery as later messages are answered.
      publishReplyRoute(routing);
@@ -194,7 +236,7 @@ index db8504e2..c97aad3a 100644
      // Forward a loop stop to the ACTIVE query. The stream deliberately stays
      // open between turns, so the loop can be parked inside processQuery when
      // config.signal fires; without this, the "stopped" loop's query — and its
-@@ -295,9 +393,8 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -296,9 +416,8 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
      const abortActiveQuery = () => query.abort();
      if (config.signal?.aborted) abortActiveQuery();
      else config.signal?.addEventListener('abort', abortActiveQuery, { once: true });
@@ -205,7 +247,7 @@ index db8504e2..c97aad3a 100644
          query,
          routing,
          processingIds,
-@@ -308,11 +405,90 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -309,11 +428,90 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
          midTurnCompleteDelivery,
          config.signal,
          turnContext, // seam
@@ -294,15 +336,15 @@ index db8504e2..c97aad3a 100644
 +        );
 +      }
      } catch (err) {
-       const errMsg = err instanceof Error ? err.message : String(err);
-       log(`Query error: ${errMsg}`);
-@@ -326,29 +502,11 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+       log(`Query error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+ 
+@@ -326,29 +524,11 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
          clearContinuation(config.providerName);
        }
  
 -      // Seam: a module may re-run this turn on another provider; a claimed retry replaces the error path.
 -      const retried = await retryTurnAfterFailure({
--        failure: { message: errMsg },
+-        failure: { message: err instanceof Error ? err.message : String(err) },
 -        prompt,
 -        routing,
 -        config,
@@ -327,11 +369,11 @@ index db8504e2..c97aad3a 100644
 +      // the shared helper. Upstream this is the ONLY reachable site; in this
 +      // tree it is the rarer one, because claude.ts converts thrown SDK
 +      // failures into error events.
-+      const retried = await consultTurnRetry({ message: errMsg });
++      const retried = await consultTurnRetry({ message: err instanceof Error ? err.message : String(err) });
        if (retried) {
          if (retried.continuation && retried.continuation !== continuation) {
            continuation = retried.continuation;
-@@ -380,6 +538,37 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
+@@ -380,6 +560,37 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
    }
  }
  
@@ -369,7 +411,7 @@ index db8504e2..c97aad3a 100644
  /**
   * Format messages, handling passthrough commands differently.
   * When the provider handles slash commands natively (Claude Code),
-@@ -418,8 +607,26 @@ function formatMessagesWithCommands(
+@@ -418,8 +629,26 @@ function formatMessagesWithCommands(
    return parts.join('\n\n');
  }
  
@@ -396,7 +438,7 @@ index db8504e2..c97aad3a 100644
  }
  
  export async function processQuery(
-@@ -441,7 +648,16 @@ export async function processQuery(
+@@ -441,7 +670,16 @@ export async function processQuery(
     */
    midTurnCompleteDelivery = false,
    signal?: AbortSignal,
@@ -414,7 +456,7 @@ index db8504e2..c97aad3a 100644
  ): Promise<QueryResult> {
    // adoptTurn mutates routing in place; keep the caller's batch route intact.
    routing = { ...routing };
-@@ -451,6 +667,10 @@ export async function processQuery(
+@@ -451,6 +689,10 @@ export async function processQuery(
    // Once-per-turn guard for the task-run "<message> block was not delivered"
    // nudge — mirrors unwrappedNudged for chat turns.
    let taskBlockNudged = false;
@@ -425,7 +467,7 @@ index db8504e2..c97aad3a 100644
    // How many <message> blocks were delivered from 'text' events this turn
    // (chat runs, mid-turn delivery providers only). A frame-local count, never
    // keyed by content: it feeds the result door's nudge decision ("did this
-@@ -485,6 +705,15 @@ export async function processQuery(
+@@ -488,6 +730,15 @@ export async function processQuery(
    // oldest unanswered prompt. Retries append the original user prompt at
    // their position in the provider input queue.
    const archivePrompts: string[] = initialPrompt ? [initialPrompt] : [];
@@ -441,33 +483,34 @@ index db8504e2..c97aad3a 100644
    // Where replies go is a property of the TURN, not the query. The query
    // stays open across turns (below), so a message pushed after the previous
    // answer finished is a new turn and replies go to ITS thread; a message
-@@ -497,12 +726,16 @@ export async function processQuery(
+@@ -500,6 +751,8 @@ export async function processQuery(
      routing: RoutingContext;
      unwrappedNudged: boolean;
      taskBlockNudged: boolean;
 +    emptyNudged?: boolean;
 +    commandTurn?: boolean;
+     nudgedWindow?: SeqWindow;
    };
    const queuedTurns: QueuedTurn[] = [];
-   const adoptTurn = (next: QueuedTurn): void => {
+@@ -511,6 +764,8 @@ export async function processQuery(
      Object.assign(routing, next.routing);
      unwrappedNudged = next.unwrappedNudged;
      taskBlockNudged = next.taskBlockNudged;
 +    emptyNudged = next.emptyNudged ?? false;
 +    commandTurn = next.commandTurn ?? false;
+     nudgedWindow = next.nudgedWindow;
      publishReplyRoute(routing);
      answering = true;
-   };
-@@ -510,7 +743,7 @@ export async function processQuery(
+@@ -519,7 +774,7 @@ export async function processQuery(
    // Preserve its original route, prompt and retry guards until it is answered.
-   const pushRetry = (prompt: string): void => {
+   const pushRetry = (prompt: string, retryOf?: SeqWindow): void => {
      query.push(prompt);
--    queuedTurns.push({ routing: { ...routing }, unwrappedNudged, taskBlockNudged });
-+    queuedTurns.push({ routing: { ...routing }, unwrappedNudged, taskBlockNudged, emptyNudged, commandTurn });
+-    queuedTurns.push({ routing: { ...routing }, unwrappedNudged, taskBlockNudged, nudgedWindow: retryOf });
++    queuedTurns.push({ routing: { ...routing }, unwrappedNudged, taskBlockNudged, nudgedWindow: retryOf, emptyNudged, commandTurn });
      archivePrompts.push(archivePrompts[0] ?? initialPrompt);
    };
  
-@@ -527,6 +760,16 @@ export async function processQuery(
+@@ -536,6 +791,16 @@ export async function processQuery(
    let endedForCommand = false;
    let mailboxFailureStreak = 0;
    const pollHandle = setInterval(() => {
@@ -484,7 +527,7 @@ index db8504e2..c97aad3a 100644
      if (done || pollInFlight || endedForCommand) return;
      pollInFlight = true;
  
-@@ -534,6 +777,24 @@ export async function processQuery(
+@@ -543,6 +808,24 @@ export async function processQuery(
        try {
          const pending = getPendingMessages();
  
@@ -509,8 +552,8 @@ index db8504e2..c97aad3a 100644
          // Slash commands need a fresh query: /clear resets the SDK's
          // resume id (fixed at sdkQuery() time); admin/passthrough commands
          // (/compact, /cost, …) only dispatch when they're the first input
-@@ -670,6 +931,32 @@ export async function processQuery(
-           midTurnSent += scan.delivered;
+@@ -680,6 +963,34 @@ export async function processQuery(
+           midTurnReplied += scan.replied;
            midTurnTail = scan.tail;
          }
 +      } else if (event.type === 'error' && (event.classification === 'rate_limit' || event.classification === 'quota')) {
@@ -524,13 +567,15 @@ index db8504e2..c97aad3a 100644
 +        const text = rateLimited
 +          ? `I've hit the API rate limit — it's temporary and resets on its own${resetDetail ? ` ${resetDetail}` : ''}. Send that again in a bit and I'll pick it up.`
 +          : "I've hit an API usage limit. You may have run out of credits on your Anthropic account — check console.anthropic.com/settings/billing.";
++        // The reset as a field too, for a channel that offers to retry then.
++        const resetsAt = rateLimited ? limitResetsAt(event.message) : null;
 +        await writeMessageOut({
 +          id: generateId(),
 +          kind: 'chat',
 +          platform_id: routing.platformId,
 +          channel_type: routing.channelType,
 +          thread_id: routing.threadId,
-+          content: JSON.stringify({ text }),
++          content: JSON.stringify(resetsAt ? { text, [LIMIT_RESETS_AT_FIELD]: resetsAt } : { text }),
 +        });
 +      } else if (event.type === 'error' && !event.retryable) {
 +        // A non-retryable, non-quota terminal error (model not found, backend
@@ -542,10 +587,10 @@ index db8504e2..c97aad3a 100644
        } else if (event.type === 'result') {
          // A result — with or without text — means the turn is done. Mark
          // the initial batch completed now so the host sweep doesn't see
-@@ -696,6 +983,11 @@ export async function processQuery(
-             // carries content, the wrap-nudge fires so the model re-sends
-             // and the retry streams through the mid-turn door.
-             turnDelivered: midTurnCompleteDelivery ? midTurnSent > 0 || chatRowWrittenSince(turnStartSeq) : undefined,
+@@ -701,6 +1012,11 @@ export async function processQuery(
+             // content: mid-turn streaming is the single content door. The
+             // result door's remaining job is the nudge decision.
+             suppressDelivery: midTurnCompleteDelivery,
 +            // Fork additions, carried onto upstream's options object. The
 +            // origin guard needs the batch's rooms; lenient relaxes the
 +            // unwrapped-text rules for small local models.
@@ -554,17 +599,17 @@ index db8504e2..c97aad3a 100644
            });
            // Completed partial output remains deliverable, but an explicit
            // provider failure must keep its status and never trigger a retry.
-@@ -711,7 +1003,8 @@ export async function processQuery(
+@@ -716,7 +1032,8 @@ export async function processQuery(
              // A failed turn needs a visible notice even after a partial reply.
              // Only the provider's dedicated error field is channel content;
              // unwrapped model output and raw diagnostics remain private.
--            const notice = event.error ?? 'The agent run failed. Check the logs for details.';
+-            const notice = event.error ?? GENERIC_FAILURE_NOTICE;
 +            // A cause the user can act on (the model is gone from its server) says so.
-+            const notice = failureNotice(event.error) ?? event.error ?? GENERIC_FAILURE;
++            const notice = failureNotice(event.error) ?? event.error ?? GENERIC_FAILURE_NOTICE;
              if (sendsFailureNotice(routing)) await deliverErrorResult(routing, notice);
              // Keep the reason in the runner log, since the skipped notice may
              // be the only place it would have been recorded.
-@@ -749,7 +1042,38 @@ export async function processQuery(
+@@ -766,7 +1083,38 @@ export async function processQuery(
            // Each result consumes one input; retries carry their original
            // user prompt at their own position in the FIFO queue.
            archivePrompts.shift();
@@ -577,7 +622,7 @@ index db8504e2..c97aad3a 100644
 +          // agent had failed). Keep the query open with one nudge instead: a
 +          // late reply still delivers, and a model with nothing to say answers
 +          // <internal>. Only an empty nudge as well reaches the empty-turn net.
-+          const delivered = midTurnSent > 0 || chatRowWrittenSince(turnStartSeq);
++          const delivered = midTurnSent > 0 || chatRowsInWindow(turnStartSeq).length > 0;
 +          // Not after a Stop or a pending command: that query is being aborted.
 +          // Not for a lenient (local) model, whose answer would reach the room as
 +          // unwrapped prose, an agent-to-agent turn, or a slash command.
@@ -604,16 +649,16 @@ index db8504e2..c97aad3a 100644
          // Turn boundary: reset the per-turn sent count after the result's
          // nudge decision has used it. A nudge retry re-counts via its own
          // text events before the retry result, so resetting on every result
-@@ -802,7 +1126,7 @@ export async function processQuery(
+@@ -821,7 +1169,7 @@ export async function processQuery(
            continue;
          noticed.push(target);
          try {
--          await deliverErrorResult(target, 'The agent run failed. Check the logs for details.');
-+          await deliverErrorResult(target, failureNotice(errMsg) ?? GENERIC_FAILURE);
+-          await deliverErrorResult(target, GENERIC_FAILURE_NOTICE);
++          await deliverErrorResult(target, failureNotice(errMsg) ?? GENERIC_FAILURE_NOTICE);
          } catch (noticeError) {
            log(
              `Failed to deliver query error notice: ${noticeError instanceof Error ? noticeError.message : String(noticeError)}`,
-@@ -818,7 +1142,13 @@ export async function processQuery(
+@@ -837,7 +1185,13 @@ export async function processQuery(
      clearInterval(pollHandle);
    }
  
@@ -628,7 +673,7 @@ index db8504e2..c97aad3a 100644
  }
  
  function notifyExchangeComplete(
-@@ -866,6 +1196,7 @@ function sendsFailureNotice(routing: RoutingContext): boolean {
+@@ -885,6 +1239,7 @@ function sendsFailureNotice(routing: RoutingContext): boolean {
  /** Send the dedicated provider error or a generic failure notice. */
  async function deliverErrorResult(routing: RoutingContext, text: string): Promise<void> {
    log('Error result notice — delivering to channel');
@@ -636,7 +681,7 @@ index db8504e2..c97aad3a 100644
    await writeMessageOut({
      id: generateId(),
      in_reply_to: routing.inReplyTo,
-@@ -885,6 +1216,27 @@ async function deliverErrorResult(routing: RoutingContext, text: string): Promis
+@@ -904,6 +1259,27 @@ async function deliverErrorResult(routing: RoutingContext, text: string): Promis
   * The agent must always wrap output in <message to="name">...</message>
   * blocks, even with a single destination. Bare text is scratchpad only.
   */
@@ -664,10 +709,10 @@ index db8504e2..c97aad3a 100644
  export interface TaskMessageBlock {
    to: string;
    body: string;
-@@ -899,6 +1251,19 @@ export interface ResultDispatchOptions {
-    * undelivered reply.
-    */
-   midTurnSent?: number;
+@@ -926,6 +1302,19 @@ interface ResultDispatchCounts {
+   midTurnReplied?: number;
+   /** On a wrap-nudge retry: rows the nudged turn wrote. An exact repeat of one is not sent again. */
+   nudgedWindow?: SeqWindow;
 +  /**
 +   * Destinations the batch came from. Feeds the single-reply misfire guard
 +   * below: a LONE reply resolving to a channel the turn did not come from is
@@ -684,7 +729,18 @@ index db8504e2..c97aad3a 100644
    /**
     * Providers declaring `textDelivery: 'mid-turn-complete'`: the result door NEVER delivers
     * content. Mid-turn streaming (parse-time block delivery plus cross-
-@@ -1146,6 +1511,30 @@ export async function dispatchResultText(
+@@ -1223,7 +1612,9 @@ function wasWrittenInSeqWindow(dest: DestinationEntry, body: string, afterSeq: n
+   // delivery, and the write surfaces any real DB breakage loudly.
+   return chatRowsInWindow(afterSeq, uptoSeq).some(
+     (message) =>
+-      message.platform_id === platformId && message.channel_type === channelType && message.content === content,
++      message.platform_id === platformId &&
++      message.channel_type === channelType &&
++      withoutServedModel(message.content) === content,
+   );
+ }
+ 
+@@ -1260,6 +1651,30 @@ export async function dispatchResultText(
    text = text.replace(INTERNAL_SPAN_RE, '');
    const MESSAGE_RE = /<message\s+to="([^"]+)"\s*>([\s\S]*?)<\/message>/g;
  
@@ -715,7 +771,7 @@ index db8504e2..c97aad3a 100644
    let match: RegExpExecArray | null;
    // Blocks delivered mid-turn count toward this turn's sent total — a final
    // text with no (new) blocks after a mid-turn delivery is scratchpad, not an
-@@ -1156,7 +1545,6 @@ export async function dispatchResultText(
+@@ -1274,7 +1689,6 @@ export async function dispatchResultText(
    const taskBlocks: TaskMessageBlock[] = [];
    let lastIndex = 0;
    const scratchpadParts: string[] = [];
@@ -723,7 +779,7 @@ index db8504e2..c97aad3a 100644
    while ((match = MESSAGE_RE.exec(text)) !== null) {
      if (match.index > lastIndex) {
        scratchpadParts.push(text.slice(lastIndex, match.index));
-@@ -1177,7 +1565,7 @@ export async function dispatchResultText(
+@@ -1295,7 +1709,7 @@ export async function dispatchResultText(
        taskBlocks.push({ to: toName, body });
        continue;
      }
@@ -732,11 +788,10 @@ index db8504e2..c97aad3a 100644
      if (!dest) {
        log(`Unknown destination in <message to="${toName}">, dropping block`);
        scratchpadParts.push(`[dropped: unknown destination "${toName}"] ${body}`);
-@@ -1209,9 +1597,37 @@ export async function dispatchResultText(
-       }
+@@ -1337,6 +1751,30 @@ export async function dispatchResultText(
+       log(`<message to="${toName}"> repeats a message the nudged turn already sent — not sent again`);
        continue;
      }
-+
 +    // Single-reply misfire guard. A lone reply to a channel the turn did NOT
 +    // come from is usually the model mis-picking a destination. Redirect to the
 +    // origin: the batch's room (primaryOrigin), or — for a weak (lenient) agent
@@ -763,43 +818,41 @@ index db8504e2..c97aad3a 100644
 +    }
      await sendToDestination(dest, body, routing);
      sent++;
-   }
-+  // Text after the last block is scratchpad too — dropping it loses the very
-+  // content the wrap-nudge exists to notice. (Upstream line; it sat between
-+  // the two loops during the merge and went with the duplicate's deletion.)
-   if (lastIndex < text.length) {
-     scratchpadParts.push(text.slice(lastIndex));
-   }
-@@ -1228,7 +1644,31 @@ export async function dispatchResultText(
-   // turnDelivered (door deliveries + DB-visible sends like MCP send_message);
-   // otherwise by this dispatch's own send count.
-   const anythingDelivered = options?.suppressDelivery ? options.turnDelivered === true : sent > 0;
--  const hasUnwrapped = !routing.taskRun && !anythingDelivered && !!scratchpad;
-+  let hasUnwrapped = !routing.taskRun && !anythingDelivered && !!scratchpad;
+     if (answersBatch(dest, routing)) replied++;
+@@ -1353,7 +1791,25 @@ export async function dispatchResultText(
+ 
+   // In a task run, plain final text is the NORMAL ending (it becomes the run
+   // log) — never treat it as an undelivered reply or nudge the agent to wrap it.
+-  const hasUnwrapped = !routing.taskRun && (missed > 0 || (replied === 0 && !!scratchpad));
++  let hasUnwrapped = !routing.taskRun && (missed > 0 || (replied === 0 && !!scratchpad));
 +  // Lenient output (small local models): a weak model often can't emit the
 +  // <message to="..."> envelope, so its plain prose is captured as scratchpad
 +  // and dropped — the room stays silent turn after turn. When lenient mode is on
-+  // (the host sets it for ollama-backed agents) and there's an unambiguous
-+  // origin room, deliver the prose to that room instead of dropping it. This
-+  // also clears hasUnwrapped, which suppresses the upstream re-wrap nudge — a
-+  // model that can't wrap would only fail it again, re-hammering a slow local
-+  // endpoint. Purely-internal output (only an <internal> block) strips to an
-+  // empty scratchpad above, so this never sends an empty message.
-+  // Deliver unwrapped prose back to whoever triggered the turn — the a2a caller
-+  // when that's the source, NOT a room the small model never came from (channel-
-+  // only primaryOrigin would leak an a2a reply to a room). Falls back to the
-+  // batch's room for a normal channel turn.
-+  //
-+  // Also gated on suppressDelivery: for an emitsMidTurnText provider the result
-+  // door never sends content, and this is content. Our claude.ts leaves that
-+  // flag false precisely so this path stays live.
++  // (the host sets it for ollama-backed agents) and nothing answered the batch,
++  // deliver the prose back to whoever triggered the turn — the a2a caller when
++  // that's the source, NOT a room the small model never came from — falling
++  // back to the batch's room. This also clears hasUnwrapped, which suppresses
++  // the re-wrap nudge: a model that can't wrap would only fail it again,
++  // re-hammering a slow local endpoint. Purely-internal output strips to an
++  // empty scratchpad above, so this never sends an empty message. Gated on
++  // suppressDelivery too: when the result door must not send content, it doesn't.
 +  const lenientTarget = triggerOrigin ?? primaryOrigin;
-+  if (hasUnwrapped && lenient && !options?.suppressDelivery && !routing.taskRun && lenientTarget) {
++  if (hasUnwrapped && lenient && replied === 0 && !!scratchpad && !options?.suppressDelivery && lenientTarget) {
 +    log(`Lenient output: no <message> envelope — delivering prose to origin "${lenientTarget.name}"`);
 +    await sendToDestination(lenientTarget, scratchpad, routing);
 +    sent++;
 +    hasUnwrapped = false;
 +  }
    if (hasUnwrapped) {
-     log(`WARNING: agent output had no <message to="..."> blocks — nothing was sent`);
-   }
+     log(
+       replied > 0
+@@ -1438,7 +1894,8 @@ async function sendToDestination(dest: DestinationEntry, body: string, routing:
+     platform_id: platformId,
+     channel_type: channelType,
+     thread_id: destRouting?.threadId ?? null,
+-    content: JSON.stringify({ text: body }),
++    // A channel reply names the model that answered, when the provider reported one.
++    content: JSON.stringify({ text: body, ...(dest.type === 'channel' ? servedModelField() : {}) }),
+   });
+ }
+ 

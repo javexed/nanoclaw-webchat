@@ -1,8 +1,8 @@
 diff --git a/src/host-sweep-grace.test.ts b/src/host-sweep-grace.test.ts
-index c5a94301..c013a90a 100644
+index 635e4b80..b377768c 100644
 --- a/src/host-sweep-grace.test.ts
 +++ b/src/host-sweep-grace.test.ts
-@@ -27,6 +27,7 @@ vi.mock('./config.js', async () => {
+@@ -33,6 +33,7 @@ vi.mock('./config.js', async () => {
  vi.mock('./container-runner.js', () => ({
    getContainerStartedAtMs: vi.fn(() => Date.now()),
    isContainerRunning: vi.fn().mockReturnValue(false),

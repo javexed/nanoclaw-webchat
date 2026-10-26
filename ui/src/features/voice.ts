@@ -10,20 +10,25 @@ import { ref } from 'vue';
 import { $ } from '../core/dom.js';
 import { showToast } from '../core/toast.js';
 import { apiJson, authFetch } from '../core/api.js';
+import { STT_RMS_FLOOR, frameRms, segmentWorthSending } from './stt-gate.js';
+import { ReadAloudQueue, splitSentences, type ReadAloudBackend } from './tts-queue.js';
 
 // ── Text-to-speech ─────────────────────────────────────────────────────────
 // Agent replies get a "read aloud" control. Two backends, one affordance:
 // server-side synthesis (Kokoro / any OpenAI-compatible endpoint) when the host
 // has WEBCHAT_TTS_ENABLED, else the browser's built-in Web Speech API (device
 // voices, no backend). See src/channels/webchat/tts.ts and /add-webchat-tts.
+//
+// Playback is sentence by sentence (tts-queue.ts): the first sentence starts
+// while the rest synthesize, and with auto-read on, replies delivered mid-turn
+// queue behind the one speaking. Dictating or sending stops it all (barge-in).
 let ttsServerEnabled = false; // set by loadTtsConfig from /api/tts/config
 let ttsReadAloudEnabled = false; // workspace-level (owner-set) — gates the speaker
-let ttsCurrentAudio: HTMLAudioElement | null = null; // the Audio element currently playing (server mode)
-/** Which message is playing, and how far along. The row key is compared through
- *  speak(), so a later click supersedes an in-flight fetch. */
+/** Which message is playing, and how far along. */
 export const ttsActiveKey = ref<string | number | null>(null);
 export const ttsPhase = ref<'loading' | 'playing' | null>(null);
 async function loadTtsConfig() {
+  armAudioUnlock();
   try {
     const r = await authFetch('/api/tts/config');
     if (r.ok) {
@@ -35,9 +40,12 @@ async function loadTtsConfig() {
     ttsServerEnabled = false;
   }
 }
+function speechAvailable() {
+  return typeof window !== 'undefined' && 'speechSynthesis' in window;
+}
 // True when we can speak at all — server TTS on, or the browser has Web Speech.
 function ttsAvailable() {
-  return ttsServerEnabled || (typeof window !== 'undefined' && 'speechSynthesis' in window);
+  return ttsServerEnabled || speechAvailable();
 }
 // Markdown → speakable plain text. Strips syntax so the voice reads prose, not
 // backticks and brackets; fenced code collapses to a short placeholder rather
@@ -54,15 +62,152 @@ function ttsPlainText(md?: any) {
     .replace(/\s+/g, ' ')
     .trim();
 }
-export function stopTts() {
-  if (ttsCurrentAudio) {
-    ttsCurrentAudio.pause();
-    if (ttsCurrentAudio.src) URL.revokeObjectURL(ttsCurrentAudio.src);
-    ttsCurrentAudio = null;
+
+// ── Playback backend ───────────────────────────────────────────────────────
+// One <audio> element for every clip: iOS only lets an element play without a
+// fresh gesture once a gesture has started it, so the element is unlocked on
+// the first tap and reused from then on.
+type Clip = { kind: 'audio'; url: string } | { kind: 'speech'; text: string };
+let ttsPlayer: HTMLAudioElement | null = null;
+function player(): HTMLAudioElement {
+  if (!ttsPlayer) ttsPlayer = new Audio();
+  return ttsPlayer;
+}
+/** A 10 ms silent 8 kHz WAV: what the unlock gesture plays. */
+const SILENT_WAV = 'data:audio/wav;base64,UklGRsQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0Ya' + 'A'.repeat(218);
+let audioUnlocked = false;
+let unlockArmed = false;
+
+/** Inside a user gesture: let later, gesture-less playback through (iOS). */
+export function unlockAudio(): void {
+  if (!audioUnlocked && ttsQueue.current.phase !== 'playing') {
+    const a = player();
+    a.src = SILENT_WAV;
+    a.play().then(
+      () => {
+        audioUnlocked = true;
+      },
+      () => {},
+    );
+    // Web Speech is gated the same way on iOS; an empty utterance opens it.
+    if (speechAvailable()) window.speechSynthesis.speak(new SpeechSynthesisUtterance(''));
   }
-  if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
-  ttsActiveKey.value = null;
-  ttsPhase.value = null;
+  ttsQueue.resume();
+}
+/** The first tap or key anywhere unlocks audio, so auto-read can start on its own. */
+function armAudioUnlock() {
+  if (unlockArmed || typeof document === 'undefined') return;
+  unlockArmed = true;
+  const onGesture = () => {
+    unlockAudio();
+    // Stay armed while audio is still locked or a sentence waits on a gesture.
+    if (audioUnlocked && ttsQueue.current.phase !== 'blocked') {
+      document.removeEventListener('pointerdown', onGesture, true);
+      document.removeEventListener('keydown', onGesture, true);
+    }
+  };
+  document.addEventListener('pointerdown', onGesture, true);
+  document.addEventListener('keydown', onGesture, true);
+}
+
+const backend: ReadAloudBackend<Clip> = {
+  async synth(text, signal) {
+    if (ttsServerEnabled) {
+      try {
+        const r = await authFetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+          signal,
+        });
+        if (!r.ok) throw new Error(`tts ${r.status}`);
+        return { kind: 'audio', url: URL.createObjectURL(await r.blob()) };
+      } catch (err) {
+        if (signal.aborted) throw err;
+        console.error('Server TTS failed; falling back to Web Speech', err);
+      }
+    }
+    if (speechAvailable()) return { kind: 'speech', text };
+    throw new Error('No speech backend');
+  },
+  play(clip, signal) {
+    return new Promise<void>((resolve, reject) => {
+      if (signal.aborted) return resolve();
+      if (clip.kind === 'speech') {
+        const utter = new SpeechSynthesisUtterance(clip.text);
+        const onAbort = () => window.speechSynthesis.cancel();
+        const finish = () => {
+          signal.removeEventListener('abort', onAbort);
+          resolve();
+        };
+        utter.addEventListener('end', finish);
+        utter.addEventListener('error', (e) => {
+          signal.removeEventListener('abort', onAbort);
+          if (e.error === 'not-allowed') reject(Object.assign(new Error('not allowed'), { name: 'NotAllowedError' }));
+          else resolve(); // 'interrupted' / 'canceled' — a stop, not a failure
+        });
+        signal.addEventListener('abort', onAbort, { once: true });
+        window.speechSynthesis.speak(utter);
+        return;
+      }
+      const a = player();
+      const cleanup = () => {
+        a.onended = null;
+        a.onerror = null;
+        signal.removeEventListener('abort', onAbort);
+      };
+      const onAbort = () => {
+        a.pause();
+        cleanup();
+        resolve();
+      };
+      a.onended = () => {
+        cleanup();
+        resolve();
+      };
+      a.onerror = () => {
+        cleanup();
+        reject(new Error('Audio playback failed'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      a.src = clip.url;
+      a.play().then(
+        () => {
+          audioUnlocked = true;
+        },
+        (err) => {
+          cleanup();
+          reject(err);
+        },
+      );
+    });
+  },
+  release(clip) {
+    if (clip.kind === 'audio') URL.revokeObjectURL(clip.url);
+  },
+};
+
+let ttsErrorShown = false;
+const ttsQueue = new ReadAloudQueue<Clip>(
+  backend,
+  (s) => {
+    ttsActiveKey.value = s.key;
+    // 'blocked' (waiting on a tap to unlock audio) reads as still loading.
+    ttsPhase.value = s.phase === 'blocked' ? 'loading' : s.phase;
+  },
+  (err) => {
+    console.error('Read aloud failed', err);
+    if (!ttsErrorShown) {
+      ttsErrorShown = true;
+      showToast('Audio playback failed', { kind: 'error' });
+    }
+  },
+);
+
+/** Stop reading and drop anything queued — also the barge-in for dictation and send. */
+export function stopTts() {
+  ttsQueue.stop();
+  if (speechAvailable()) window.speechSynthesis.cancel();
 }
 /** Is the read-aloud affordance offered at all? Workspace-gated by the OWNER in
  *  Settings → Features; per-device switches confused shared rooms. */
@@ -79,55 +224,43 @@ export function toggleTts(key: string | number, getText: () => string): void {
   }
   stopTts();
   const text = (getText() || '').trim();
-  if (text) void speak(text, key);
+  if (text) speak(text, key);
 }
 
-async function speak(text: string, key: string | number) {
-  ttsActiveKey.value = key;
-  if (ttsServerEnabled) {
-    ttsPhase.value = 'loading';
-    try {
-      const r = await authFetch('/api/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      if (!r.ok) throw new Error(`tts ${r.status}`);
-      const blob = await r.blob();
-      if (ttsActiveKey.value !== key) return; // a later click superseded us mid-fetch
-      const audio = new Audio(URL.createObjectURL(blob));
-      ttsCurrentAudio = audio;
-      audio.addEventListener('ended', () => {
-        if (ttsActiveKey.value === key) stopTts();
-      });
-      audio.addEventListener('error', () => {
-        if (ttsActiveKey.value === key) stopTts();
-      });
-      ttsPhase.value = 'playing';
-      await audio.play();
-      return;
-    } catch (err) {
-      console.error('Server TTS failed; falling back to Web Speech', err);
-      // fall through to the Web Speech path below — unless a later click
-      // superseded this one mid-fetch, in which case stale audio must not
-      // start speaking over the newer playback.
-      if (ttsActiveKey.value !== key) return;
-    }
+function speak(text: string, key: string | number) {
+  unlockAudio(); // a click: the gesture iOS wants before audio
+  ttsErrorShown = false;
+  ttsQueue.start(key, splitSentences(text));
+}
+
+// ── Auto-read (per viewer, per room) ──────────────────────────────────────────
+// Hands-free mode: each agent reply in the open room is read as it arrives.
+// A device preference, so localStorage — the same shape as `lastThread:<room>`.
+const AUTO_READ_PREFIX = 'autoRead:';
+export function autoReadEnabled(roomId: string | null | undefined): boolean {
+  if (!roomId) return false;
+  try {
+    return localStorage.getItem(AUTO_READ_PREFIX + roomId) === '1';
+  } catch {
+    return false;
   }
-  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-    const utter = new SpeechSynthesisUtterance(text);
-    utter.addEventListener('end', () => {
-      if (ttsActiveKey.value === key) stopTts();
-    });
-    utter.addEventListener('error', () => {
-      if (ttsActiveKey.value === key) stopTts();
-    });
-    ttsPhase.value = 'playing';
-    window.speechSynthesis.speak(utter);
-  } else {
-    stopTts();
-    showToast('Audio playback failed', { kind: 'error' });
+}
+export function setAutoRead(roomId: string, on: boolean): void {
+  try {
+    if (on) localStorage.setItem(AUTO_READ_PREFIX + roomId, '1');
+    else localStorage.removeItem(AUTO_READ_PREFIX + roomId);
+  } catch {
+    /* private mode: the switch just won't persist */
   }
+  if (on) unlockAudio(); // flipping the switch is a gesture
+  else stopTts();
+}
+/** A freshly delivered agent reply in the open room: queue it if auto-read is on.
+ *  Skipped while dictating — the mic would hear the speaker. */
+export function autoReadReply(key: string | number, markdown: string | null | undefined, roomId: string | null): void {
+  if (!markdown || sttActive || !ttsOffered() || !autoReadEnabled(roomId)) return;
+  ttsErrorShown = false;
+  ttsQueue.enqueue(key, splitSentences(ttsPlainText(markdown)));
 }
 // mic → getUserMedia → AudioContext(16k) + pcm-worklet → PCM16 frames.
 // RMS silence detection cuts a segment (~700ms pause or 5s max) → WAV built
@@ -150,13 +283,13 @@ let sttSegments: any[] = []; // Int16Array frames of the current segment
 let sttSegmentMs = 0;
 let sttSilenceMs = 0;
 let sttSpeechInSegment = false;
+let sttVoicedMs = 0; // time in the current segment above the speech floor
 let sttNoSpeechMs = 0; // total silence since last speech — drives auto-stop
 let sttInFlight: any[] = []; // promises of in-flight segment POSTs
 let sttToastShown = false;
 const STT_SAMPLE_RATE = 16000;
 const STT_SILENCE_CUT_MS = 700; // pause that closes a segment
 const STT_MAX_SEGMENT_MS = 5000; // hard cut so long speech still streams
-const STT_RMS_FLOOR = 0.012; // below this a frame counts as silence
 const STT_AUTOSTOP_MS = 12000; // this much continuous silence ends dictation
 let sttElapsedTimer: any = null;
 let sttStartedAt = 0;
@@ -231,12 +364,14 @@ function sttRenderInput() {
 /** Close the current segment and ship it for transcription (if it held speech). */
 function sttCutSegment() {
   const frames = sttSegments;
-  const hadSpeech = sttSpeechInSegment;
+  const worth = segmentWorthSending(sttVoicedMs, sttSegmentMs);
   sttSegments = [];
   sttSegmentMs = 0;
   sttSilenceMs = 0;
   sttSpeechInSegment = false;
-  if (!hadSpeech || frames.length === 0) return;
+  sttVoicedMs = 0;
+  // A click or a breath: whisper would only invent text for it.
+  if (!worth || frames.length === 0) return;
   const wav = sttBuildWav(frames);
   sttPending++;
   sttRenderInput();
@@ -269,17 +404,13 @@ function sttCutSegment() {
 /** Per-frame handler: RMS gate → segment bookkeeping → cut on pause/length. */
 function sttOnFrame(int16?: any) {
   if (!sttActive) return;
-  let sum = 0;
-  for (let i = 0; i < int16.length; i++) {
-    const s = int16[i] / 0x8000;
-    sum += s * s;
-  }
-  const rms = Math.sqrt(sum / int16.length);
+  const rms = frameRms(int16);
   const frameMs = (int16.length / STT_SAMPLE_RATE) * 1000;
   sttSegments.push(int16);
   sttSegmentMs += frameMs;
   if (rms >= STT_RMS_FLOOR) {
     sttSpeechInSegment = true;
+    sttVoicedMs += frameMs;
     sttSilenceMs = 0;
     sttNoSpeechMs = 0;
   } else {
@@ -297,6 +428,7 @@ function sttOnFrame(int16?: any) {
 }
 async function startDictation() {
   if (sttActive) return;
+  stopTts(); // barge-in: the user is talking now
   const input = ($('#message-input')) as HTMLInputElement;
   if (!input || (input as HTMLInputElement).disabled) return;
   try {
@@ -327,6 +459,7 @@ async function startDictation() {
   sttSegmentMs = 0;
   sttSilenceMs = 0;
   sttSpeechInSegment = false;
+  sttVoicedMs = 0;
   sttNoSpeechMs = 0;
   sttInFlight = [];
   const mic = $('#mic-btn');
@@ -369,9 +502,12 @@ async function stopDictation() {
   sttAnnounce('Transcribing…');
   await Promise.allSettled(sttInFlight);
   sttRenderInput();
+  // Nothing survived (silence, or only hallucinations the server dropped):
+  // say so to screen readers only — the unchanged composer shows it already.
+  const heard = sttCommitted.trim() !== '';
   await sttCleanupPass();
   sttStopping = false;
-  sttAnnounce('');
+  sttAnnounce(heard || sttToastShown ? '' : 'Nothing heard');
 }
 
 /** Esc = cancel: discard everything dictated, restore the prior composer text. */

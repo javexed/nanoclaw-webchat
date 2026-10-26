@@ -1,16 +1,16 @@
 diff --git a/src/config.ts b/src/config.ts
-index 812e2e96..fe4e2220 100644
+index f790b2f8..d71c235b 100644
 --- a/src/config.ts
 +++ b/src/config.ts
-@@ -18,6 +18,7 @@ const envConfig = readEnvFile([
+@@ -19,6 +19,7 @@ const envConfig = readEnvFile([
    'CONTAINER_PIDS_LIMIT',
    'NANOCLAW_EGRESS_LOCKDOWN',
    'NANOCLAW_EGRESS_NETWORK',
 +  'NANOCLAW_EGRESS_EXTRA_DEFAULTS',
    'WEBHOOK_PORT',
- ]);
- 
-@@ -104,8 +105,21 @@ export const CONTAINER_PIDS_LIMIT = process.env.CONTAINER_PIDS_LIMIT ?? envConfi
+   'WEBHOOK_HOST',
+   'NANOCLAW_ABSOLUTE_CEILING_MS',
+@@ -108,8 +109,21 @@ export const CONTAINER_PIDS_LIMIT = process.env.CONTAINER_PIDS_LIMIT ?? envConfi
  // Egress lockdown — force all agent traffic through the selected gateway on a
  // no-internet Docker network. Off by default; consumed by src/egress-lockdown.ts.
  export const EGRESS_LOCKDOWN = (process.env.NANOCLAW_EGRESS_LOCKDOWN || envConfig.NANOCLAW_EGRESS_LOCKDOWN) === 'true';
@@ -31,5 +31,5 @@ index 812e2e96..fe4e2220 100644
 +  .map((s) => s.trim())
 +  .filter(Boolean);
  
- // Resolve when the listener starts so a late process override still wins.
- export function getWebhookPort(): number {
+ // Global overrides for the host sweep's two stuck-container timers (see
+ // src/reconcile-session.ts). Raw strings: parsed and range-checked where they

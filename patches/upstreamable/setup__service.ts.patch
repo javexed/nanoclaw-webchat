@@ -1,8 +1,8 @@
 diff --git a/setup/service.ts b/setup/service.ts
-index 8fd0a546..cf10334d 100644
+index b372412e..fb3e3cbb 100644
 --- a/setup/service.ts
 +++ b/setup/service.ts
-@@ -451,6 +451,12 @@ export function renderSystemdUnit(
+@@ -476,6 +476,12 @@ export function renderSystemdUnit(
      ? `\nEnvironmentFile=${proxyEnvFile.replace(/%/g, '%%').replace(/[[\]*?\\]/g, '\\$&')}`
      : '';
  
@@ -15,16 +15,16 @@ index 8fd0a546..cf10334d 100644
    return `[Unit]
  Description=NanoClaw Personal Assistant
  After=network.target
-@@ -463,7 +469,7 @@ Restart=always
+@@ -488,7 +494,7 @@ Restart=always
  RestartSec=5
  KillMode=process
  Environment=HOME=${homeDir}
--Environment=PATH=/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin${proxyLine}
-+Environment=PATH=/usr/local/bin:/usr/bin:/bin:${homeDir}/.local/bin:/snap/bin${proxyLine}
+-Environment=PATH=${servicePath(nodePath, ['/usr/local/bin', '/usr/bin', '/bin', `${homeDir}/.local/bin`])}${proxyLine}
++Environment=PATH=${servicePath(nodePath, ['/usr/local/bin', '/usr/bin', '/bin', `${homeDir}/.local/bin`, '/snap/bin'])}${proxyLine}
  StandardOutput=append:${projectRoot}/logs/nanoclaw.log
  StandardError=append:${projectRoot}/logs/nanoclaw.error.log
  
-@@ -526,22 +532,78 @@ async function setupSystemd(projectRoot: string, nodePath: string, homeDir: stri
+@@ -551,22 +557,78 @@ async function setupSystemd(projectRoot: string, nodePath: string, homeDir: stri
          log.warn('Failed to apply setfacl workaround', { err });
        }
      } else {
@@ -108,7 +108,7 @@ index 8fd0a546..cf10334d 100644
    }
  
    // Enable and start
-@@ -586,7 +648,7 @@ async function setupSystemd(projectRoot: string, nodePath: string, homeDir: stri
+@@ -611,7 +673,7 @@ async function setupSystemd(projectRoot: string, nodePath: string, homeDir: stri
      SERVICE_LOADED: serviceLoaded,
      ...(dockerGroupStale ? { DOCKER_GROUP_STALE: true } : {}),
      ...proxyStatusFields,

@@ -53,6 +53,7 @@ vi.mock('./modules/cross-session-context/index.js', () => ({ pruneEchoBacklog: (
 
 import { isContainerStopping, killContainer } from './container-runner.js';
 import { incarnationKey, reconcileSession } from './reconcile-session.js';
+import { log } from './log.js';
 
 function fakeMailbox() {
   return {
@@ -90,6 +91,8 @@ beforeEach(() => {
   state.noIds = false;
   state.heartbeat = '/nonexistent/heartbeat';
   vi.mocked(killContainer).mockClear();
+  vi.mocked(log.warn).mockClear();
+  vi.mocked(log.info).mockClear();
   vi.mocked(isContainerStopping).mockReturnValue(false);
   state.db = new Database(':memory:');
   state.db.exec(`
@@ -110,6 +113,18 @@ describe('reconcile — absolute ceiling', () => {
     expect(killContainer).toHaveBeenCalledTimes(3);
     expect(killContainer).toHaveBeenCalledWith('sess-1', 'absolute-ceiling');
     expect(hasContinuation()).toBe(true);
+  });
+
+  it('logs an idle reap at info, not as a warning', async () => {
+    await ceilingPass(1, false);
+    expect(log.info).toHaveBeenCalledWith('Reaping idle container past absolute ceiling', expect.any(Object));
+    expect(vi.mocked(log.warn).mock.calls.some(([m]) => String(m).includes('absolute ceiling'))).toBe(false);
+  });
+
+  it('still warns when the kill interrupts a turn in flight', async () => {
+    await ceilingPass(1, true);
+    expect(log.warn).toHaveBeenCalledWith('Killing container past absolute ceiling', expect.any(Object));
+    expect(vi.mocked(log.info).mock.calls.some(([m]) => String(m).includes('Reaping idle'))).toBe(false);
   });
 
   it('still clears a continuation after two stuck turns with no output', async () => {

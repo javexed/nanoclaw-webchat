@@ -187,6 +187,7 @@ export function blockingOverlayOpen() {
   const others = [
     'model-picker',
     'lightbox',
+    'attachment-drawer',
     'members-overlay',
     'handle-popover',
     'overflow-menu',

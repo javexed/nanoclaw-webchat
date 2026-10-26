@@ -1,8 +1,8 @@
 diff --git a/docs/SECURITY.md b/docs/SECURITY.md
-index c047be8..f458a47 100644
+index 13a9f074..daa74785 100644
 --- a/docs/SECURITY.md
 +++ b/docs/SECURITY.md
-@@ -126,6 +126,11 @@ Each NanoClaw group gets its own OneCLI agent identity. This allows different cr
+@@ -178,6 +178,11 @@ install's `data/gateway-trust/` root so a private key cannot borrow the class.
  
  ### 5. Egress Lockdown (Forced Proxy)
  

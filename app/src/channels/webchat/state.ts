@@ -22,7 +22,7 @@ import {
   getPinnedPositionsForUser,
   getRoomLastActivity,
   getTopicThreadCounts,
-  getUnreadRoomIdsForUser,
+  getUnreadRoomCountsForUser,
   getWebchatRoom,
   getWebchatUserHandle,
   markRoomRead,
@@ -185,7 +185,14 @@ export function notifyRoomStatus(roomId: string, msg: Record<string, unknown>): 
   }
 }
 
-export async function broadcast(roomId: string, msg: object, excludeId?: string): Promise<void> {
+/**
+ * Fan a frame out to the room's clients, and for a message, an `unread` (or
+ * `mention`) signal to everyone elsewhere. `senderUserId` names the user who
+ * wrote it: their own clients in other rooms get no unread for it — they wrote
+ * it, so it was read — and they get no push. Kept a parameter, never put on the
+ * frame: a sender's user id stays server-side.
+ */
+export async function broadcast(roomId: string, msg: object, excludeId?: string, senderUserId?: string): Promise<void> {
   const isMessage = (msg as { type?: string }).type === 'message';
   if ((msg as { type?: string }).type === 'status') notifyRoomStatus(roomId, msg as Record<string, unknown>);
   const outgoing = isMessage
@@ -212,6 +219,7 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string)
         inRoom += 1;
         c.ws.send(payload);
       } else if (isMessage) {
+        if (senderUserId && c.userId === senderUserId) continue;
         elsewhere += 1;
         c.ws.send(mentionedUserIds.has(c.userId) ? mentionPayload : notifyPayload);
       }
@@ -239,7 +247,7 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string)
       roomName: room?.name || roomId,
       sender: m.sender || 'unknown',
       // Subscriptions are keyed by user id; `sender` is a display name.
-      senderUserId: excludeId ? clients.get(excludeId)?.userId : undefined,
+      senderUserId: senderUserId ?? (excludeId ? clients.get(excludeId)?.userId : undefined),
       content: redactSensitiveData(m.content || ''),
       messageId: m.id,
     }).catch((err) => log.warn('sendPushForMessage failed', { err: err instanceof Error ? err.message : err }));
@@ -352,6 +360,7 @@ export async function annotateRoomsForUser(
       hidden: boolean;
       canArchive: boolean;
       unread: boolean;
+      unread_count: number;
       mention: boolean;
       pinned: boolean;
       pin_position: number | null;
@@ -366,7 +375,7 @@ export async function annotateRoomsForUser(
   const threadCounts = threadCountsIn ?? (await getTopicThreadCounts());
   const visible = await filterRoomsForUser(userId, allRooms);
   const hiddenSet = await getHiddenRoomIdsForUser(userId); // per-user
-  const unreadSet = await getUnreadRoomIdsForUser(userId); // per-user
+  const unreadCounts = await getUnreadRoomCountsForUser(userId); // per-user
   const mentionSet = await getMentionedRoomIdsForUser(userId, (await getWebchatUserHandle(userId)) ?? ''); // per-user
   const pinnedPos = await getPinnedPositionsForUser(userId); // per-user: room → manual order
   return Promise.all(
@@ -375,7 +384,9 @@ export async function annotateRoomsForUser(
       archived: archivedSet.has(r.id),
       hidden: hiddenSet.has(r.id),
       canArchive: await canArchiveRoom(userId, r.id),
-      unread: unreadSet.has(r.id),
+      unread: unreadCounts.has(r.id),
+      // Messages newer than this user's marker — the sidebar's count badge.
+      unread_count: unreadCounts.get(r.id) ?? 0,
       mention: mentionSet.has(r.id),
       pinned: pinnedPos.has(r.id),
       // Manual pin order (lower = higher); null when unpinned. The client sorts the

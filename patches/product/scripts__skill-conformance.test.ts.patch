@@ -1,5 +1,5 @@
 diff --git a/scripts/skill-conformance.test.ts b/scripts/skill-conformance.test.ts
-index d70765fa..f2545a7f 100644
+index cb5f623e..de36fcf2 100644
 --- a/scripts/skill-conformance.test.ts
 +++ b/scripts/skill-conformance.test.ts
 @@ -120,6 +120,22 @@ function scratchRoot(): string {

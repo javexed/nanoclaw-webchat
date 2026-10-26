@@ -80,6 +80,7 @@ function onClick(e: MouseEvent): void {
           :class="l.fading ? 'thinking-feed-line fading' : 'thinking-feed-line'"
         >{{ l.text }}</div>
       </div>
+      <div class="thinking-preview" :hidden="!turn.preview">{{ turn.preview }}</div>
       <div ref="trace" class="thinking-fulltrace">{{ traceEmpty
         }}<TraceView v-if="liveView && !traceEmpty" :view="liveView" /></div>
       <span class="dots"><span></span><span></span><span></span></span>

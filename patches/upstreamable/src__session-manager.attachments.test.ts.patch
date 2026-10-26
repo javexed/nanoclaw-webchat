@@ -1,5 +1,5 @@
 diff --git a/src/session-manager.attachments.test.ts b/src/session-manager.attachments.test.ts
-index 2afd9d73..d71283c0 100644
+index 4e698110..eb144082 100644
 --- a/src/session-manager.attachments.test.ts
 +++ b/src/session-manager.attachments.test.ts
 @@ -30,6 +30,7 @@ vi.mock('./config.js', async () => {
@@ -10,8 +10,34 @@ index 2afd9d73..d71283c0 100644
  import type { Session } from './types.js';
  
  const TEST_DIR = '/tmp/nanoclaw-test-saveatt-gap';
-@@ -68,6 +69,72 @@ afterEach(async () => {
-   if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
+@@ -114,6 +115,25 @@ function attachmentMessage(id: string, names: string[]) {
+ }
+ 
+ describe('extractAttachmentFiles — inbox dir swapped after the checks', () => {
++  it('copies a hostPath attachment into the directory it checked, too', async () => {
++    const staged = path.join(TEST_DIR, 'uploads', 'race-big.pdf');
++    fs.mkdirSync(path.dirname(staged), { recursive: true });
++    fs.writeFileSync(staged, 'LARGE-FILE-BYTES');
++    const canaryDir = path.join(TEST_DIR, 'canary-hostpath');
++    fs.mkdirSync(canaryDir, { recursive: true });
++    swapBeforeCreate('race-big.pdf', swapInboxDir('race-hostpath', canaryDir));
++
++    await writeSessionMessage(AG, SESS, {
++      ...attachmentMessage('race-hostpath', []),
++      content: JSON.stringify({
++        text: '',
++        attachments: [{ name: 'race-big.pdf', type: 'file', hostPath: staged, size: 16, mime: 'application/pdf' }],
++      }),
++    });
++
++    expect(fs.readdirSync(canaryDir)).toHaveLength(0);
++  });
++
+   it('writes a single attachment into the directory it checked', async () => {
+     const canaryDir = path.join(TEST_DIR, 'canary-single');
+     fs.mkdirSync(canaryDir, { recursive: true });
+@@ -143,6 +163,72 @@ describe('extractAttachmentFiles — inbox dir swapped after the checks', () =>
+   });
  });
  
 +describe('extractAttachmentFiles — hostPath attachments', () => {

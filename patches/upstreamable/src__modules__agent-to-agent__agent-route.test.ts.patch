@@ -1,8 +1,8 @@
 diff --git a/src/modules/agent-to-agent/agent-route.test.ts b/src/modules/agent-to-agent/agent-route.test.ts
-index a5d63192..8217d334 100644
+index 9cf89ab4..88c57020 100644
 --- a/src/modules/agent-to-agent/agent-route.test.ts
 +++ b/src/modules/agent-to-agent/agent-route.test.ts
-@@ -223,6 +223,37 @@ describe('routeAgentMessage return-path', () => {
+@@ -277,6 +277,37 @@ describe('routeAgentMessage return-path', () => {
      expect(s2Rows).toHaveLength(0);
    });
  

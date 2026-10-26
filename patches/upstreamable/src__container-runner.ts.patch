@@ -1,5 +1,5 @@
 diff --git a/src/container-runner.ts b/src/container-runner.ts
-index 9e8c83ac..3abcd9d0 100644
+index e6eed3c5..230df406 100644
 --- a/src/container-runner.ts
 +++ b/src/container-runner.ts
 @@ -28,6 +28,8 @@ import { CONTAINER_PLUGINS_DIR, materializeContainerJson } from './container-con
@@ -11,7 +11,15 @@ index 9e8c83ac..3abcd9d0 100644
  import {
    notifyContainerExit,
    resolveContainerEnv,
-@@ -95,7 +97,9 @@ import {
+@@ -63,6 +65,7 @@ import {
+ } from './gateway-providers/index.js';
+ import { releaseGatewaySession, type GatewaySessionControl } from './gateway-session-lifecycle.js';
+ import { initGroupFilesystem } from './group-init.js';
++import { guardStandingInstructions } from './modules/instruction-guard/spawn.js';
+ import { getAgentMailbox } from './mailbox/index.js';
+ import { stopTypingRefresh } from './modules/typing/index.js';
+ import { log } from './log.js';
+@@ -95,7 +98,9 @@ import {
    sessionDir,
    writeSessionContext,
    writeSessionRouting,
@@ -21,7 +29,7 @@ index 9e8c83ac..3abcd9d0 100644
  import type { AgentGroup, Session } from './types.js';
  
  /**
-@@ -225,6 +229,12 @@ export function getContainerStartedAtMs(sessionId: string): number | undefined {
+@@ -231,6 +236,12 @@ export function getContainerStartedAtMs(sessionId: string): number | undefined {
    return activeContainers.get(sessionId)?.startedAtMs;
  }
  
@@ -34,7 +42,7 @@ index 9e8c83ac..3abcd9d0 100644
  /** Stop host-local observation without revoking resources that may survive restart. */
  export async function abortGatewaySessionObservers(reason = 'host-shutdown'): Promise<void> {
    await Promise.all(
-@@ -344,9 +354,13 @@ export function wakeContainer(session: Session): Promise<boolean> {
+@@ -422,9 +433,13 @@ export function wakeContainer(session: Session): Promise<boolean> {
      return existing;
    }
    const promise = spawnContainer(session)
@@ -49,7 +57,7 @@ index 9e8c83ac..3abcd9d0 100644
        return false;
      })
      .finally(() => {
-@@ -356,6 +370,77 @@ export function wakeContainer(session: Session): Promise<boolean> {
+@@ -434,6 +449,77 @@ export function wakeContainer(session: Session): Promise<boolean> {
    return promise;
  }
  
@@ -127,7 +135,7 @@ index 9e8c83ac..3abcd9d0 100644
  async function spawnContainer(session: Session): Promise<void> {
    if (pendingAdoptions.has(session.id)) {
      // A running container is waiting to be re-fenced after a failed adoption
-@@ -376,6 +461,13 @@ async function spawnContainer(session: Session): Promise<void> {
+@@ -456,6 +542,13 @@ async function spawnContainer(session: Session): Promise<void> {
      const { writeDestinations } = await import('./modules/agent-to-agent/write-destinations.js');
      await writeDestinations(agentGroup.id, session.id);
    }
@@ -141,7 +149,17 @@ index 9e8c83ac..3abcd9d0 100644
    await writeSessionRouting(agentGroup.id, session.id);
    const mailboxKey = { agentGroupId: agentGroup.id, sessionId: session.id };
    const mailbox = getAgentMailbox();
-@@ -773,6 +865,9 @@ export function killContainer(sessionId: string, reason: string, onExit?: () =>
+@@ -468,6 +561,9 @@ async function spawnContainer(session: Session): Promise<void> {
+ 
+   const providerName = resolveProviderName(session.agent_provider, containerConfig.provider);
+   await initGroupFilesystem(agentGroup, { provider: providerName });
++  // An agent's edits to its standing instructions are reverted and held for
++  // approval here, before buildMounts composes the project document.
++  await guardStandingInstructions(agentGroup, session);
+ 
+   // Resolve the effective provider + any host-side contribution it declares
+   // (extra mounts, env passthrough). Computed once and threaded through both
+@@ -881,6 +977,9 @@ export function killContainer(sessionId: string, reason: string, onExit?: () =>
      entry.exitCallbacks.push(onExit);
    }
  
@@ -151,7 +169,7 @@ index 9e8c83ac..3abcd9d0 100644
    entry.stopReason = reason;
    log.info('Killing container', { sessionId, reason, containerName: entry.containerName });
    void entry.handle.stop(reason).then(
-@@ -1183,6 +1278,12 @@ export async function buildMounts(
+@@ -1317,6 +1416,12 @@ export async function buildMounts(
        }
      }
    } else if (defaultSurfaces) {
@@ -164,7 +182,7 @@ index 9e8c83ac..3abcd9d0 100644
      mounts.push({
        hostPath: claudeDir,
        containerPath: '/home/node/.claude',
-@@ -1213,6 +1314,19 @@ export async function buildMounts(
+@@ -1347,6 +1452,19 @@ export async function buildMounts(
        scope,
      });
    }
@@ -184,7 +202,7 @@ index 9e8c83ac..3abcd9d0 100644
  
    // Additional mounts from container config — already vetted by the allowlist.
    if (containerConfig.additionalMounts && containerConfig.additionalMounts.length > 0) {
-@@ -1365,12 +1479,23 @@ export function composeSessionSpec(input: ComposeSessionSpecInput): SessionSpec
+@@ -1499,12 +1617,23 @@ export function composeSessionSpec(input: ComposeSessionSpecInput): SessionSpec
      // The gateway's auxiliary containers ride beside the agent; capability-
      // gated in the spawn path before composition ever runs.
      containers: [agent, ...(gateway.containers ?? [])],
@@ -210,7 +228,7 @@ index 9e8c83ac..3abcd9d0 100644
        pidsLimit: parsePidsLimit(CONTAINER_PIDS_LIMIT),
        shmSizeMb: SHM_SIZE_MB,
      },
-@@ -1457,16 +1582,8 @@ export function syncSkillSymlinks(
+@@ -1586,16 +1715,8 @@ export function syncSkillSymlinks(
   * from `container/skills/` so newly-added upstream skills appear automatically.
   */
  function selectedSkillNames(containerConfig: import('./container-config.js').ContainerConfig): string[] {

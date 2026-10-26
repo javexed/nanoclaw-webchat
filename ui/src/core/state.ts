@@ -55,6 +55,8 @@ export interface Settings {
   font: string;
   sendKey: string;
   notifications: boolean;
+  /** Show which model answered on each agent reply. Off by default. */
+  showModel?: boolean;
   [key: string]: unknown;
 }
 
@@ -82,7 +84,9 @@ export interface AppState {
   pendingMessages: Map<string, any>;
   /** identity → typing-indicator timer state */
   typingUsers: Map<string, unknown>;
-  unreadRooms: Set<string>;
+  /** room id → unread message count (absent = read); seeded from the server's
+   *  read markers, bumped live. See core/unread.ts. */
+  unreadRooms: Map<string, number>;
   /** rooms with an unread @-mention of me (distinct badge) */
   mentionedRooms: Set<string>;
   agentName: string;
@@ -98,8 +102,8 @@ export interface AppState {
   threadAddRoom: string | null;
   /** thread_id whose row is showing the inline rename input */
   threadRenaming: string | null;
-  /** thread_ids with unread activity in the open room */
-  threadUnread: Set<string>;
+  /** thread_id → unread message count in the open room (absent = read) */
+  threadUnread: Map<string, number>;
   /** rooms whose thread tree is expanded (the active room is added on join) */
   expandedRooms: Set<string>;
   /** room id → its loaded thread list */
@@ -154,7 +158,7 @@ export const state: AppState = shallowReactive({
   myHandle: '',
   pendingMessages: new Map(),
   typingUsers: new Map(),
-  unreadRooms: shallowReactive(new Set<string>()),
+  unreadRooms: shallowReactive(new Map<string, number>()),
   mentionedRooms: shallowReactive(new Set<string>()), // rooms with an unread @-mention of me (distinct badge)
   agentName: '',
   lastSeenMessageId: sessionStorage.getItem('lastSeenMessageId') || null,
@@ -165,7 +169,7 @@ export const state: AppState = shallowReactive({
   threadCreating: false, // true while the inline "new thread" input is open
   threadAddRoom: null, // room id whose row is showing the inline new-thread input
   threadRenaming: null, // thread_id whose row is showing the inline rename input
-  threadUnread: shallowReactive(new Set<string>()), // thread_ids with unread activity in the open room
+  threadUnread: shallowReactive(new Map<string, number>()), // thread_id → unread count in the open room
   expandedRooms: shallowReactive(new Set<string>()), // rooms whose thread tree is expanded in the sidebar (the active room is added on join)
   threadCache: shallowReactive(new Map<string, Thread[]>()),
   pendingJumpMessageId: null,

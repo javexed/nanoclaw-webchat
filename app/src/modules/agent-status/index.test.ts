@@ -51,10 +51,20 @@ vi.mock('../../db/agent-groups.js', () => ({
 }));
 
 import { forwardSessionStatus, notifySessionStopped, setStatusAdapter, stopSessionStatus } from './index.js';
-import { hasUnforwardedTurnStart, registerStatusEventObserver, type ObservedStatusEvent } from './observers.js';
+import {
+  hasUnforwardedTurnStart,
+  registerReplyPreviewSink,
+  registerStatusEventObserver,
+  type ObservedStatusEvent,
+  type ReplyPreview,
+} from './observers.js';
 
 // Observers are a process-wide registry: register once, reset per test.
 const observed: ObservedStatusEvent[] = [];
+const previews: ReplyPreview[] = [];
+registerReplyPreviewSink((p) => {
+  previews.push(p);
+});
 registerStatusEventObserver((_s, ev) => {
   observed.push(ev);
 });
@@ -111,6 +121,7 @@ beforeEach(async () => {
   stubAdapter();
   stopSessionStatus('sess-1'); // reset watermark between tests
   observed.length = 0;
+  previews.length = 0;
 });
 
 afterEach(async () => {
@@ -283,5 +294,57 @@ describe('hasUnforwardedTurnStart', () => {
     expect(hasUnforwardedTurnStart('ag-1', 'sess-1')).toBe(true);
     await forwardSessionStatus(session);
     expect(hasUnforwardedTurnStart('ag-1', 'sess-1')).toBe(false);
+  });
+});
+
+describe('reply previews', () => {
+  it("go to the preview sink only — never the status adapter or the turn's observers", async () => {
+    await forwardSessionStatus(session); // seed
+    append('start', null);
+    append('preview', 'Half a reply', 'room-1');
+    append('preview', null, 'room-1');
+    await forwardSessionStatus(session);
+
+    expect(captured.map((c) => c.status.kind)).toEqual(['start']);
+    expect(observed.map((e) => e.kind)).toEqual(['start']);
+    expect(previews).toEqual([
+      {
+        channelType: 'webchat',
+        platformId: 'room-1',
+        instance: 'webchat',
+        agentName: 'TestAgent',
+        threadId: null,
+        text: 'Half a reply',
+      },
+      {
+        channelType: 'webchat',
+        platformId: 'room-1',
+        instance: 'webchat',
+        agentName: 'TestAgent',
+        threadId: null,
+        text: null,
+      },
+    ]);
+  });
+
+  it("name the writing session's thread", async () => {
+    const threaded = {
+      id: 'sess-thread',
+      agent_group_id: 'ag-1',
+      messaging_group_id: 'mg-1',
+      thread_id: 't1',
+    } as never;
+    await forwardSessionStatus(threaded); // seed
+    append('preview', 'In a thread', 'room-1');
+    await forwardSessionStatus(threaded);
+    expect(previews).toMatchObject([{ threadId: 't1', text: 'In a thread' }]);
+  });
+
+  it("a preview naming any room but the session's own is dropped", async () => {
+    await forwardSessionStatus(session); // seed
+    append('preview', 'Elsewhere', 'room-2');
+    append('preview', 'Nowhere', null);
+    await forwardSessionStatus(session);
+    expect(previews).toEqual([]);
   });
 });

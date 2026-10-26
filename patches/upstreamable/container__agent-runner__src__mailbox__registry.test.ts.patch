@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/mailbox/registry.test.ts b/container/agent-runner/src/mailbox/registry.test.ts
-index d8d0c1c2..02ad2dbc 100644
+index e887a738..3b4d60b1 100644
 --- a/container/agent-runner/src/mailbox/registry.test.ts
 +++ b/container/agent-runner/src/mailbox/registry.test.ts
 @@ -1,4 +1,4 @@
@@ -8,7 +8,7 @@ index d8d0c1c2..02ad2dbc 100644
  import { randomUUID } from 'node:crypto';
  import fs from 'node:fs';
  import os from 'node:os';
-@@ -96,10 +96,28 @@ describe('agent mailbox context', () => {
+@@ -102,10 +102,28 @@ describe('agent mailbox context', () => {
      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-mailbox-context-'));
      const file = path.join(dir, 'context.json');
      try {

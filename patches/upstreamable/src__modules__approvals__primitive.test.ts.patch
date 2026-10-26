@@ -1,8 +1,8 @@
 diff --git a/src/modules/approvals/primitive.test.ts b/src/modules/approvals/primitive.test.ts
-index b6051f64..a5d770ee 100644
+index c4738d9d..46004e7f 100644
 --- a/src/modules/approvals/primitive.test.ts
 +++ b/src/modules/approvals/primitive.test.ts
-@@ -153,4 +153,49 @@ describe('requestApproval delivery failure', () => {
+@@ -156,6 +156,51 @@ describe('requestApproval delivery failure', () => {
      expect(await getPendingApprovalsByAction('test_action')).toHaveLength(1);
      expect(vi.mocked(writeSessionMessage)).not.toHaveBeenCalled();
    });
@@ -52,3 +52,5 @@ index b6051f64..a5d770ee 100644
 +    expect(row.approver_user_id).toBe('slack:admin-1');
 +  });
  });
+ 
+ describe('requestApproval card length', () => {

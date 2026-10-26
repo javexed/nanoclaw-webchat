@@ -34,12 +34,14 @@ import {
   MAIN_THREAD,
   threadToSessionKey,
   markThreadRead,
+  getThreadReadMarker,
   resolveBoundedThread,
 } from './db.js';
 import { hostAllowed, originAllowed } from './request-guard.js';
 import { canAccessRoom, canArchiveRoom } from './access.js';
 import { redactSensitiveData } from './redact.js';
 import { withTraceFlags } from './turn-traces.js';
+import { withLimitRetries } from './limit-retry.js';
 import { getMessagingGroupByPlatform } from '../../db/messaging-groups.js';
 import { getRunningSessions } from '../../db/sessions.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
@@ -361,6 +363,9 @@ export function setupWebSocket(
         // messages still arrive room-wide and the client routes them by thread.
         const joinThread = typeof msg.thread_id === 'string' && msg.thread_id ? msg.thread_id : MAIN_THREAD;
         client.thread_id = joinThread;
+        // Where this user left off, read BEFORE the join advances it: the client
+        // places its "New" divider at the first message after it.
+        const lastReadAt = await getThreadReadMarker(client.userId, room.id, joinThread);
         // Opening reads it: advance the room marker (clears the room dot + syncs
         // devices) and the per-thread marker.
         markRoomReadForUser(client.userId, room.id, Date.now(), clientId);
@@ -369,7 +374,10 @@ export function setupWebSocket(
           type: 'history',
           room_id: room.id,
           thread_id: joinThread,
-          messages: (await withTraceFlags(await getWebchatMessages(room.id, 50, joinThread))).map((m) => ({
+          last_read_at: lastReadAt,
+          messages: (
+            await withLimitRetries(await withTraceFlags(await getWebchatMessages(room.id, 50, joinThread)))
+          ).map((m) => ({
             ...m,
             content: redactSensitiveData(m.content),
           })),
@@ -473,9 +481,12 @@ export function setupWebSocket(
         // The sender has by definition read their own message — advance their
         // marker (and sync their other devices) so it never self-unreads.
         markRoomReadForUser(client.userId, roomId, stored.created_at, clientId);
+        // The thread marker too, or the next open would place its "New" divider
+        // above the sender's own message.
+        await markThreadRead(client.userId, roomId, storeThread, stored.created_at);
         const outgoing: Record<string, unknown> = { type: 'message', ...stored };
         if (typeof msg.client_id === 'string') outgoing.client_id = msg.client_id;
-        await broadcast(roomId, outgoing, clientId);
+        await broadcast(roomId, outgoing, clientId, client.userId);
 
         // threadId is the SESSION key (null for main).
         hooks.onInbound(

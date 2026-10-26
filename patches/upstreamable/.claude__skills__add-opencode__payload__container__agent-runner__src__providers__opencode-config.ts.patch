@@ -1,8 +1,8 @@
 diff --git a/.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode-config.ts b/.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode-config.ts
-index 88e7656d..785c8598 100644
+index 9d9f0e6e..ba26ccd5 100644
 --- a/.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode-config.ts
 +++ b/.claude/skills/add-opencode/payload/container/agent-runner/src/providers/opencode-config.ts
-@@ -40,7 +40,24 @@ export function resolveOpenCodeInference(
+@@ -41,7 +41,24 @@ export function resolveOpenCodeInference(
  ): Record<string, unknown> {
    const provider = environment.OPENCODE_PROVIDER || 'anthropic';
    const model = input.model ?? environment.OPENCODE_MODEL;

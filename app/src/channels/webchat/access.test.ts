@@ -131,14 +131,37 @@ describe('canAccessRoom', () => {
     expect(await canAccessRoom('webchat:member', 'room-1')).toBe(true);
   });
 
-  it('grants access to a multi-agent room if the user can reach any one agent', async () => {
+  it('refuses a multi-agent room when the user can reach only some of its agents', async () => {
     await insertAgentGroup('ag-mine');
     await insertAgentGroup('ag-other');
     await insertRoom('shared-room');
     await wire('shared-room', 'ag-mine');
     await wire('shared-room', 'ag-other');
     await grantRole('webchat:admin', 'admin', 'ag-mine');
-    expect(await canAccessRoom('webchat:admin', 'shared-room')).toBe(true);
+    expect(await canAccessRoom('webchat:admin', 'shared-room')).toBe(false);
+    await grantRole('webchat:member', 'member', 'ag-mine');
+    expect(await canAccessRoom('webchat:member', 'shared-room')).toBe(false);
+  });
+
+  it('grants a multi-agent room when the user can reach every agent in it', async () => {
+    await insertAgentGroup('ag-a');
+    await insertAgentGroup('ag-b');
+    await insertRoom('shared-room');
+    await wire('shared-room', 'ag-a');
+    await wire('shared-room', 'ag-b');
+    await grantRole('webchat:mixed', 'admin', 'ag-a');
+    await grantRole('webchat:mixed', 'member', 'ag-b');
+    expect(await canAccessRoom('webchat:mixed', 'shared-room')).toBe(true);
+  });
+
+  it('grants the global owner a multi-agent room regardless of per-agent grants', async () => {
+    await insertAgentGroup('ag-a');
+    await insertAgentGroup('ag-b');
+    await insertRoom('shared-room');
+    await wire('shared-room', 'ag-a');
+    await wire('shared-room', 'ag-b');
+    await grantRole('webchat:owner', 'owner', null);
+    expect(await canAccessRoom('webchat:owner', 'shared-room')).toBe(true);
   });
 });
 

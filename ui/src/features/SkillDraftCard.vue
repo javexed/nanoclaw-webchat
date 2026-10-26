@@ -90,7 +90,7 @@ const shown = computed(() => {
   <div v-else class="skill-draft-card">
     <div class="skill-head">
       <span class="skill-name">{{ title }}</span
-      ><OriginBadge v-if="agentName" :origin="{ label: `learned · ${agentName}`, official: false }" />
+      ><OriginBadge v-if="agentName" :origin="{ label: `loads in every ${agentName} session`, official: false }" />
     </div>
     <div class="skill-desc">{{ desc }}</div>
 

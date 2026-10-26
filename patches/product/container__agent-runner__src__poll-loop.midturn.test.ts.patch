@@ -1,0 +1,28 @@
+diff --git a/container/agent-runner/src/poll-loop.midturn.test.ts b/container/agent-runner/src/poll-loop.midturn.test.ts
+index c0683daf..d4fced66 100644
+--- a/container/agent-runner/src/poll-loop.midturn.test.ts
++++ b/container/agent-runner/src/poll-loop.midturn.test.ts
+@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+ 
+ import { initTestSessionDb, closeSessionDb, getInboundDb, getOutboundDb } from './mailbox/sqlite/connection.js';
+ import { getUndeliveredMessages } from './db/messages-out.js';
+-import { processQuery } from './poll-loop.js';
++import { deliversMidTurn, processQuery } from './poll-loop.js';
+ import { MockProvider } from './providers/mock.js';
+ import type { AgentQuery, ProviderEvent } from './providers/types.js';
+ import { GENERIC_FAILURE_NOTICE } from './formatter.js';
+@@ -418,3 +418,14 @@ describe('mock provider mid-turn text events', () => {
+     expect(texts[0].text).toBe('ok');
+   });
+ });
++
++describe('which door a turn delivers by', () => {
++  it('follows the contract, the legacy flag without one, and keeps lenient models on the result door', () => {
++    expect(deliversMidTurn('mid-turn-complete', undefined, false)).toBe(true);
++    expect(deliversMidTurn('result', true, false)).toBe(false);
++    expect(deliversMidTurn(undefined, true, undefined)).toBe(true);
++    expect(deliversMidTurn(undefined, undefined, undefined)).toBe(false);
++    // The misfire guard needs the turn's block count: lenient never streams.
++    expect(deliversMidTurn('mid-turn-complete', true, true)).toBe(false);
++  });
++});

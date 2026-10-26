@@ -305,7 +305,7 @@ export function setAgentEgressControl(egress?: any) {
   });
   const info = $('#agent-egress-info');
   if (info) {
-    info.textContent = 'Open ↔ the others: next start.';
+    info.textContent = 'Open ↔ the others: restarts the agent when idle.';
   }
   const badge = $('#agent-egress-badge');
   if (badge) badge.textContent = mode === 'open' ? 'Open' : mode === 'none' ? 'Model only' : '';
@@ -326,7 +326,7 @@ export function setAgentStatusControl(status?: any) {
 // uninstalled or retired provider) falls back to the built-in default rather
 // than lighting nothing up, so the group of buttons always has exactly one
 // pressed — an unpressed group reads as "no harness", which is never true.
-const HARNESS_OPTIONS = ['claude', 'opencode', 'pi', 'codex', 'grok'] as const;
+const HARNESS_OPTIONS = ['claude', 'opencode', 'pi', 'codex', 'grok', 'copilot'] as const;
 
 export function setAgentHarnessControl(provider?: any) {
   const p = HARNESS_OPTIONS.includes(provider) ? (provider as string) : 'claude';
@@ -1003,19 +1003,24 @@ let agentEnvApp: ReturnType<typeof createApp> | null = null;
 /** Whose env is mounted — the app is created once, the panel is reopened. */
 let agentEnvGroupId: any = null;
 
+/** When a change that needs a fresh container lands: the server restarts a running agent once it is idle. */
+function envApplies(restarted: unknown): string {
+  return typeof restarted === 'number' && restarted > 0 ? 'applies when the agent is idle' : 'applies at its next start';
+}
+
 function mountAgentEnv(): void {
   agentEnvApp ??= mountIsland('#agent-env-list', () =>
     createApp(AgentEnvList, {
       onRemove: async (name: string) => {
         agentEnvDeleting.value = new Set(agentEnvDeleting.value).add(name);
         try {
-          await apiJson(
+          const out = await apiJson(
             `/api/agents/${encodeURIComponent(agentEnvGroupId ?? '')}/env?name=${encodeURIComponent(name)}`,
             {
               method: 'DELETE',
             },
           );
-          showToast(`Removed $${name} — applies when the agent restarts`);
+          showToast(`Removed $${name} — ${envApplies(out?.restarted)}`);
           void renderAgentEnv(agentEnvGroupId);
         } catch {
           showToast('Could not remove variable', { kind: 'error' });
@@ -1068,7 +1073,8 @@ async function renderAgentEnv(agentGroupId?: any) {
         // Clear the value first and always — it is the sensitive field.
         $<HTMLInputElement>('#agent-env-value')!.value = '';
         $<HTMLInputElement>('#agent-env-name')!.value = '';
-        showToast(`Added $${name} — applies when the agent restarts`);
+        const out = await r.json().catch(() => ({}));
+        showToast(`Added $${name} — ${envApplies(out?.restarted)}`);
         void renderAgentEnv(id);
       } finally {
         save.disabled = false;
@@ -1409,7 +1415,14 @@ export const AGENT_STATUS_HINTS: Record<string, string> = {
 // status and egress controls, the archived toggle and room attachment.
 // Called from composition-root.ts at its place in boot order rather than run at module scope (check-boot-order.sh).
 
-const HARNESS_LABEL: Record<string, string> = { claude: 'Claude', opencode: 'OpenCode', pi: 'pi', codex: 'Codex', grok: 'Grok' };
+const HARNESS_LABEL: Record<string, string> = {
+  claude: 'Claude',
+  opencode: 'OpenCode',
+  pi: 'pi',
+  codex: 'Codex',
+  grok: 'Grok',
+  copilot: 'GitHub Copilot',
+};
 
 /**
  * A harness that is not installed: offer the install (owners), follow it
@@ -1569,7 +1582,7 @@ export function wireAgentsPanel(): void {
       if (agent) agent.egress = egress;
       const label = egress === 'open' ? 'Open' : egress === 'none' ? 'Model only' : 'Allowlist';
       const now = out?.appliesNow;
-      showToast(`${label} — ${now ? 'applies now' : 'applies at next start'}`);
+      showToast(`${label} — ${now ? 'applies now' : envApplies(out?.restarted)}`);
     } catch (err) {
       console.error('Failed to set agent egress:', err);
       showToast('Could not change network mode', { kind: 'error' });

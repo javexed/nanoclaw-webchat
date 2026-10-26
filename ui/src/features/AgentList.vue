@@ -54,6 +54,9 @@ const botIcon = lucide('bot');
       <span v-else-if="agent.provider === 'grok'" class="agent-harness-badge" title="Runs on the Grok harness"
         >Grok</span
       >
+      <span v-else-if="agent.provider === 'copilot'" class="agent-harness-badge" title="Runs on GitHub Copilot"
+        >Copilot</span
+      >
     </span>
   </li>
 </template>

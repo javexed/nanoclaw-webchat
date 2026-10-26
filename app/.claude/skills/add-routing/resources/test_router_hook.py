@@ -17,6 +17,12 @@ sys.path.insert(0, "/t")
 import router_hook  # noqa: E402
 from router_hook import _last_user_text, _parse_route  # noqa: E402
 
+# The models the tests bind are local unless a test says otherwise: the
+# container has no router config, which would (correctly) admit nothing.
+LOCAL = {"qwen3-coder:30b", "gemma4:latest", "llava:7b"}
+LOCAL_MODELS_IMPL = router_hook._local_models
+router_hook._local_models = lambda: set(LOCAL)
+
 
 class LastUserText(unittest.TestCase):
     def test_plain_string_content(self):
@@ -321,6 +327,162 @@ class AnthropicMessagesRouting(unittest.IsolatedAsyncioTestCase):
     async def test_anthropic_messages_classifier_error_falls_back(self):
         out, _ = await self._call(LIVE_CFG, _req(), mock.AsyncMock(side_effect=RuntimeError("down")))
         self.assertEqual(out["model"], "gemma4:latest")
+
+
+class AdmissionInvariant(unittest.IsolatedAsyncioTestCase):
+    """'auto' only ever sends a request to a model the operator bound in
+    routes.json. Whatever the classifier answers — a roster model, a paid
+    cloud model, another router — the request is refused there and falls back
+    to the default binding; with nothing admissible it never reaches a model."""
+
+    async def _call(self, cfg, classify):
+        with mock.patch.object(router_hook, "_load_routes", return_value=cfg), \
+             mock.patch.object(router_hook, "_classify", classify), \
+             mock.patch.object(router_hook, "_append_log") as logged:
+            out = await router_hook.proxy_handler_instance.async_pre_call_hook(
+                {}, None, _req(), "anthropic_messages"
+            )
+            for _ in range(3):
+                await asyncio.sleep(0)
+        return out, logged
+
+    async def test_classifier_naming_an_unbound_model_falls_back(self):
+        for answer in ("gpt-4o", "anthropic/claude-opus", "qwen3.5:4b", "auto", "", "general "):
+            out, logged = await self._call(LIVE_CFG, mock.AsyncMock(return_value=answer))
+            self.assertEqual(out["model"], "gemma4:latest", answer)
+            self.assertEqual(logged.call_args[0][0]["final_model"], "gemma4:latest")
+
+    async def test_every_answer_lands_on_a_binding(self):
+        bound = {r["model"] for r in LIVE_CFG["routes"]}
+        for answer in ("code", "general", "other", "gemma4:latest", "qwen3-coder:30b", "x" * 300):
+            out, _ = await self._call(LIVE_CFG, mock.AsyncMock(return_value=answer))
+            self.assertIn(out["model"], bound, answer)
+
+    async def test_binding_to_another_router_is_refused(self):
+        cfg = {
+            "classifier": LIVE_CFG["classifier"],
+            "live": {"enabled": True},
+            "routers": {
+                "auto": {
+                    "default_route": "general",
+                    "routes": [
+                        {"name": "vision", "description": "d", "model": "auto-vision"},
+                        {"name": "general", "description": "d", "model": "gemma4:latest"},
+                    ],
+                },
+                "auto-vision": {"default_route": "v", "routes": [{"name": "v", "description": "d", "model": "llava:7b"}]},
+            },
+        }
+        out, logged = await self._call(cfg, mock.AsyncMock(return_value="vision"))
+        self.assertEqual(out["model"], "gemma4:latest")
+        self.assertEqual(logged.call_args[0][0]["refused_model"], "auto-vision")
+
+    async def test_nothing_admissible_rejects_before_any_model(self):
+        cfg = {**LIVE_CFG, "routes": [{"name": "general", "description": "d"}]}  # no bindings at all
+        data = _req()
+        with mock.patch.object(router_hook, "_load_routes", return_value=cfg), \
+             mock.patch.object(router_hook, "_classify", mock.AsyncMock(return_value="general")), \
+             mock.patch.object(router_hook, "_append_log") as logged:
+            with self.assertRaises(router_hook.HTTPException) as ctx:
+                await router_hook.proxy_handler_instance.async_pre_call_hook({}, None, data, "acompletion")
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("no_admitted_model", ctx.exception.detail)
+        self.assertEqual(data["model"], "auto")
+        self.assertIsNone(logged.call_args[0][0]["final_model"])
+
+
+class LocalOnly(unittest.IsolatedAsyncioTestCase):
+    """The classifier only ever reaches local models. A keyed cloud binding is
+    reachable only when the operator pinned it — never by classification."""
+
+    CFG = {
+        **LIVE_CFG,
+        "routes": [
+            {"name": "reasoning", "description": "d", "model": "deepseek-r1"},
+            {"name": "code", "description": "d", "model": "qwen3-coder:30b"},
+            {"name": "general", "description": "d", "model": "gemma4:latest"},
+        ],
+    }
+
+    async def _call(self, cfg, answer):
+        with mock.patch.object(router_hook, "_load_routes", return_value=cfg), \
+             mock.patch.object(router_hook, "_classify", mock.AsyncMock(return_value=answer)), \
+             mock.patch.object(router_hook, "_append_log") as logged:
+            out = await router_hook.proxy_handler_instance.async_pre_call_hook({}, None, _req(), "acompletion")
+            for _ in range(3):
+                await asyncio.sleep(0)
+        return out, logged
+
+    async def test_unpinned_cloud_binding_is_refused(self):
+        out, logged = await self._call(self.CFG, "reasoning")
+        self.assertEqual(out["model"], "gemma4:latest")
+        self.assertEqual(logged.call_args[0][0]["refused_model"], "deepseek-r1")
+
+    async def test_local_binding_still_routes(self):
+        out, _ = await self._call(self.CFG, "code")
+        self.assertEqual(out["model"], "qwen3-coder:30b")
+
+    async def test_pinned_cloud_binding_is_the_operators_choice(self):
+        cfg = {**self.CFG, "routes": [{**self.CFG["routes"][0], "pinned": True}] + self.CFG["routes"][1:]}
+        out, _ = await self._call(cfg, "reasoning")
+        self.assertEqual(out["model"], "deepseek-r1")
+
+    async def test_cloud_default_is_not_a_fallback(self):
+        cfg = {**self.CFG, "default_route": "reasoning"}
+        with self.assertRaises(router_hook.HTTPException):
+            await self._call(cfg, "other")
+
+
+class LocalModels(unittest.TestCase):
+    """Which roster names are local, read from add-litellm's generated config."""
+
+    def _local(self, yaml_text):
+        import os
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            f.write(yaml_text)
+        try:
+            with mock.patch.object(router_hook, "CONFIG_PATH", f.name):
+                return LOCAL_MODELS_IMPL()
+        finally:
+            os.unlink(f.name)
+
+    def test_keyless_hosts_are_local_keyed_and_gateway_are_not(self):
+        got = self._local(
+            """model_list:
+  - model_name: gemma4:latest
+    litellm_params:
+      model: ollama_chat/gemma4:latest
+      api_base: http://gpu:11434
+  - model_name: qwen-vllm
+    litellm_params:
+      model: openai/qwen-vllm
+      api_base: http://gpu:8000/v1
+      api_key: keyless
+  - model_name: deepseek-r1
+    litellm_params:
+      model: deepseek/deepseek-reasoner
+      api_key: os.environ/DEEPSEEK_API_KEY
+  - model_name: mistral-large
+    litellm_params:
+      model: mistral/mistral-large-latest
+      api_key: gateway-managed
+  - model_name: minimax
+    litellm_params:
+      model: ollama_chat/minimax
+      api_base: http://gpu:11434
+  - model_name: minimax
+    litellm_params:
+      model: minimax/abab
+      api_key: os.environ/MINIMAX_API_KEY
+"""
+        )
+        self.assertEqual(got, {"gemma4:latest", "qwen-vllm"})
+
+    def test_unreadable_config_admits_nothing(self):
+        with mock.patch.object(router_hook, "CONFIG_PATH", "/nonexistent/config.yaml"):
+            self.assertEqual(LOCAL_MODELS_IMPL(), set())
 
 
 class EstTokens(unittest.TestCase):

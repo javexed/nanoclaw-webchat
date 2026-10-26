@@ -1,8 +1,17 @@
 diff --git a/container/agent-runner/src/providers/claude.ts b/container/agent-runner/src/providers/claude.ts
-index f457394b..210c4c6c 100644
+index 3c3faa42..14b69493 100644
 --- a/container/agent-runner/src/providers/claude.ts
 +++ b/container/agent-runner/src/providers/claude.ts
-@@ -115,6 +115,27 @@ class MessageStream {
+@@ -20,6 +20,8 @@ import {
+ // read the SDK's on-disk .jsonl, which no other provider has.
+ import { archiveClaudeTranscript, rotateClaudeContinuation } from './claude-history.js';
+ import { registerProvider } from './provider-registry.js';
++import { noteServedModel } from '../served-model.js';
++import { TOOL_RESULT_GUARD_HOOK } from '../tool-result-guard.js';
+ import type { AgentProvider, AgentQuery, ProviderEvent, ProviderOptions, QueryInput } from './types.js';
+ 
+ function log(msg: string): void {
+@@ -115,6 +116,27 @@ class MessageStream {
    }
  }
  
@@ -30,7 +39,7 @@ index f457394b..210c4c6c 100644
  /**
   * PreToolUse hook: record the current tool + its declared timeout so the host
   * sweep can widen its stuck tolerance while Bash is running a long-declared
-@@ -193,7 +214,60 @@ const CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WIN
+@@ -210,7 +232,60 @@ const CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WIN
   */
  const STALE_SESSION_RE = /no conversation found|ENOENT.*\.jsonl|session.*not found/i;
  
@@ -91,7 +100,7 @@ index f457394b..210c4c6c 100644
    private assistantName?: string;
    private mcp: ReturnType<typeof resolveClaudeMcpServers>;
    private inference: ReturnType<typeof resolveClaudeInference>;
-@@ -209,6 +283,8 @@ export class ClaudeProvider implements AgentProvider {
+@@ -226,6 +301,8 @@ export class ClaudeProvider implements AgentProvider {
     */
    constructor(options: ProviderOptions, configuration: ResolvedRuntimeConfiguration) {
      this.assistantName = options.assistantName;
@@ -100,7 +109,7 @@ index f457394b..210c4c6c 100644
      this.mcp = configuration.mcpServers as ReturnType<typeof resolveClaudeMcpServers>;
      this.additionalDirectories = options.additionalDirectories;
      this.inference = configuration.inference as ReturnType<typeof resolveClaudeInference>;
-@@ -264,8 +340,16 @@ export class ClaudeProvider implements AgentProvider {
+@@ -281,8 +358,16 @@ export class ClaudeProvider implements AgentProvider {
          // session's first request and resends that record on every resume, so
          // a resumed agent would keep its old name and destination list until
          // compaction. snapshot: false renders it fresh each time.
@@ -118,7 +127,7 @@ index f457394b..210c4c6c 100644
            : undefined,
          allowedTools: [...this.mcp.allowedTools],
          disallowedTools: [...this.executionPolicy.disallowedTools],
-@@ -275,7 +359,7 @@ export class ClaudeProvider implements AgentProvider {
+@@ -297,12 +382,31 @@ export class ClaudeProvider implements AgentProvider {
          effort: this.inference.effort as any,
          permissionMode: this.executionPolicy.permissionMode,
          allowDangerouslySkipPermissions: this.executionPolicy.allowDangerouslySkipPermissions,
@@ -127,7 +136,60 @@ index f457394b..210c4c6c 100644
          // Flag-level settings: `fastMode` only when the install turns it on,
          // then the execution policy's fixed keys, spread last so per-group
          // input can never override them. Both are Settings members rather
-@@ -324,9 +408,34 @@ export class ClaudeProvider implements AgentProvider {
+         // than query options, which is why they ride `settings`.
+-        settings: { ...this.inference.settings, ...this.executionPolicy.settings },
++        //
++        // First, thinking summaries: newer models return thinking blocks with
++        // the text omitted unless a summary is requested, which left the
++        // thinking bubble's reasoning feed empty for every Claude agent. This
++        // asks for the summary only; the thinking type stays the CLI's per-model
++        // default (forcing `adaptive` would break a model older than Opus 4.6).
++        // Anthropic's API only: a custom ANTHROPIC_BASE_URL (a local or routed
++        // model) may not accept the parameter.
++        settings: {
++          ...(this.env.ANTHROPIC_BASE_URL ? {} : { showThinkingSummaries: true }),
++          ...this.inference.settings,
++          ...this.executionPolicy.settings,
++          // The tool-result guard, declared again at flag level. The group's
++          // settings files are agent-writable: there the hook can be removed
++          // or every hook switched off with `disableAllHooks`. Flag settings
++          // outrank them, and Claude Code runs the identical file-carried
++          // copy once.
++          disableAllHooks: false,
++          hooks: { PostToolUse: [TOOL_RESULT_GUARD_HOOK] },
++        },
+         mcpServers: this.mcp.mcpServers,
+         hooks: {
+           PreToolUse: [{ hooks: [preToolUseHook] }],
+@@ -328,6 +425,10 @@ export class ClaudeProvider implements AgentProvider {
+         // is working. Deltas arrive per token and carry no content for us, so
+         // they count at most once per second, and not as messages.
+         if (message.type === 'stream_event') {
++          // The live reply preview (status-feed.ts) reads the text deltas.
++          notifyProviderMessage({ kind: 'sdk_stream', event: message } as unknown as Parameters<
++            typeof notifyProviderMessage
++          >[0]); // seam
+           const now = Date.now();
+           if (now - lastStreamActivityAt < STREAM_ACTIVITY_INTERVAL_MS) continue;
+           lastStreamActivityAt = now;
+@@ -340,6 +441,16 @@ export class ClaudeProvider implements AgentProvider {
+         if (message.type === 'system' && message.subtype === 'init') {
+           yield { type: 'init', continuation: message.session_id };
+         } else if (message.type === 'assistant') {
++          // Which model answered: behind a routing proxy it is not the configured one.
++          // A subagent's messages (parent_tool_use_id set) name the subagent's model,
++          // not the one that writes the reply.
++          if (!(message as { parent_tool_use_id?: unknown }).parent_tool_use_id) {
++            noteServedModel((message as { message?: { model?: unknown } }).message?.model);
++          }
++          // Complete: its preview clears before the text below is delivered.
++          notifyProviderMessage({ kind: 'assistant_message' } as unknown as Parameters<
++            typeof notifyProviderMessage
++          >[0]); // seam
+           // Surface each assistant message's text as it streams in. The final
+           // `result` event only carries the LAST assistant text — a wrapped
+           // <message> block composed between tool calls would otherwise be
+@@ -356,9 +467,34 @@ export class ClaudeProvider implements AgentProvider {
            // result reports. Blocks split across ASSISTANT MESSAGES (a tool
            // call between them) remain unparseable mid-turn by design; the
            // poll-loop's midTurnSent===0 fallback and wrap-nudge cover that.

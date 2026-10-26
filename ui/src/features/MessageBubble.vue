@@ -10,6 +10,8 @@ import { ref } from 'vue';
 import type { MsgRow } from './transcript-state.js';
 import TtsButton from './TtsButton.vue';
 import { ttsOffered, ttsPlainText } from './voice.js';
+import { previewKind } from './attachment-preview.js';
+import { openAttachmentDrawer } from './attachment-drawer-state.js';
 
 const props = defineProps<{
   row: MsgRow;
@@ -30,6 +32,17 @@ const fileIcon = (m: any) =>
   m.mime?.startsWith('image/') ? IMAGE : m.mime?.includes('pdf') ? FILE_TEXT : PAPERCLIP;
 const fileSize = (n: number) =>
   n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`;
+
+// Images have the inline preview + lightbox; other files open the drawer when it
+// can render them, and stay a plain name + download when it cannot.
+const previewable = (m: any) => !m.mime?.startsWith('image/') && previewKind(m.filename, m.mime) !== null;
+function openPreview(e: MouseEvent): void {
+  const f = props.row.file;
+  openAttachmentDrawer(
+    { url: f.url, filename: f.filename, mime: f.mime, size: f.size },
+    e.currentTarget as HTMLElement,
+  );
+}
 
 const showTts = () => props.row.isAgent && !!props.row.ttsText && ttsOffered();
 
@@ -54,14 +67,22 @@ function bind(el: any): void {
         @click="props.onOpenLightbox(row.file.url, row.file.filename)"
       />
       <div class="file-info">
-        <span class="file-icon" v-html="fileIcon(row.file)"></span><span class="file-name">{{
-          row.file.filename
-        }}</span><span class="file-size">{{ fileSize(row.file.size) }}</span
+        <span class="file-icon" v-html="fileIcon(row.file)"></span
+        ><button
+          v-if="previewable(row.file)"
+          type="button"
+          class="file-name file-open"
+          :title="row.file.filename"
+          @click="openPreview"
+        >
+          {{ row.file.filename }}</button
+        ><span v-else class="file-name">{{ row.file.filename }}</span><span class="file-size">{{ fileSize(row.file.size) }}</span
         ><a
           :href="row.file.url"
           :download="row.file.filename"
           class="file-download"
           :title="DOWNLOAD_TITLE"
+          :aria-label="`${DOWNLOAD_TITLE} ${row.file.filename}`"
           v-html="DOWNLOAD"
         ></a>
       </div>

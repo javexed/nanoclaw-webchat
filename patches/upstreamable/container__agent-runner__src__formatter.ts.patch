@@ -1,39 +1,39 @@
 diff --git a/container/agent-runner/src/formatter.ts b/container/agent-runner/src/formatter.ts
-index 0e154fd9..10d84c41 100644
+index 6ef87ab1..5e7ef7f3 100644
 --- a/container/agent-runner/src/formatter.ts
 +++ b/container/agent-runner/src/formatter.ts
-@@ -103,8 +103,12 @@ export function categorizeMessage(msg: MessageInRow, providerName: string): Comm
+@@ -107,9 +107,13 @@ export function categorizeMessage(msg: MessageInRow, providerName: string): Comm
  
    // Cross-session echo rows are ambient copies of another conversation —
    // a copied "/clear" etc. must never execute here. Nor may a failure
 -  // notice whose error text happens to start with a slash.
--  if (isSessionEcho(msg) || isFailureNotice(msg) || !text.startsWith('/')) {
 +  // notice whose error text happens to start with a slash, or any other
 +  // context row (trigger 0): a member-credential turn's exchange is mirrored
 +  // into the base session as one, and a mirrored "/clear" left pending made
 +  // every later turn of that session abort for it, answering only with the
 +  // empty-turn net.
-+  if (isSessionEcho(msg) || isFailureNotice(msg) || msg.trigger === 0 || !text.startsWith('/')) {
+   // The host gate names commands with the same parse (slash-command.generated.ts).
+-  const command = isSessionEcho(msg) || isFailureNotice(msg) ? null : slashCommandName(text);
++  const command = isSessionEcho(msg) || isFailureNotice(msg) || msg.trigger === 0 ? null : slashCommandName(text);
+   if (command === null) {
      return { category: 'none', command: '', text, senderId };
    }
- 
-@@ -129,12 +133,14 @@ export function categorizeMessage(msg: MessageInRow, providerName: string): Comm
+@@ -133,11 +137,13 @@ export function categorizeMessage(msg: MessageInRow, providerName: string): Comm
   * before messages reach the container.
   */
  export function isClearCommand(msg: MessageInRow): boolean {
 -  if (isSessionEcho(msg) || isFailureNotice(msg)) return false;
 +  // A context row (trigger 0) never runs, as in categorizeMessage.
 +  if (isSessionEcho(msg) || isFailureNotice(msg) || msg.trigger === 0) return false;
-   const content = parseContent(msg.content);
-   const text = (content.text || '').trim();
-   return text.toLowerCase().startsWith('/clear');
+   // Exact name, never a prefix: the host gate only admin-checks '/clear'.
+   return slashCommandName(commandText(msg.content)) === '/clear';
  }
  
 +
  /**
   * True for any chat that needs the outer loop's command path: /clear plus
   * admin/passthrough slash commands the SDK can only dispatch when they are
-@@ -185,6 +191,23 @@ export interface RoutingContext {
+@@ -188,6 +194,23 @@ export interface RoutingContext {
   * notice routes by its first real waking message instead, so a failure
   * answers the requester, not the agent that failed.
   */
@@ -57,7 +57,7 @@ index 0e154fd9..10d84c41 100644
  export function extractRouting(messages: MessageInRow[]): RoutingContext {
    const nonEcho = messages.filter((m) => !isSessionEcho(m));
    const waking = nonEcho.filter((m) => m.trigger !== 0);
-@@ -449,3 +472,31 @@ function escapeXml(str: string): string {
+@@ -452,3 +475,31 @@ function escapeXml(str: string): string {
  export function stripInternalTags(text: string): string {
    return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
  }

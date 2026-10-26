@@ -53,6 +53,10 @@ export async function storeAgentDelivery(
     text: string | null;
     files: OutboundFile[] | undefined;
     thread: string;
+    /** A rate-limit notice's reset instant (epoch ms), stored with its text. */
+    limitResetsAt?: number | null;
+    /** The model that answered, stored with the text (served-model.ts). */
+    servedModel?: string | null;
   },
 ): Promise<string | null> {
   const now = Date.now();
@@ -60,7 +64,16 @@ export async function storeAgentDelivery(
   const progress = pending.get(d.key) ?? { textId: null, filesDone: 0, at: now };
   pending.set(d.key, progress);
   if (d.text !== null && d.text.length > 0 && progress.textId === null) {
-    const stored = await storeWebchatMessage(d.roomId, d.senderName, 'agent', d.text, d.thread);
+    const stored = await storeWebchatMessage(
+      d.roomId,
+      d.senderName,
+      'agent',
+      d.text,
+      d.thread,
+      null,
+      d.limitResetsAt ?? null,
+      d.servedModel ?? null,
+    );
     progress.textId = stored.id;
     sink.broadcast(d.roomId, { type: 'message', ...stored });
   }
@@ -96,6 +109,8 @@ export function guessMime(filename: string): string {
     txt: 'text/plain',
     md: 'text/markdown',
     json: 'application/json',
+    html: 'text/html',
+    htm: 'text/html',
   };
   return map[ext] ?? 'application/octet-stream';
 }

@@ -1,8 +1,8 @@
 diff --git a/container/agent-runner/src/cross-session-echo.test.ts b/container/agent-runner/src/cross-session-echo.test.ts
-index a8a2ce04..16b1215f 100644
+index 66ad3e96..777e576f 100644
 --- a/container/agent-runner/src/cross-session-echo.test.ts
 +++ b/container/agent-runner/src/cross-session-echo.test.ts
-@@ -204,6 +204,21 @@ describe('command classification', () => {
+@@ -242,6 +242,21 @@ describe('command classification', () => {
      expect(messages.some((m) => isRunnerCommand(m, 'claude'))).toBe(false);
    });
  

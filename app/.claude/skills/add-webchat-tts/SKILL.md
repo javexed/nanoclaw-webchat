@@ -91,6 +91,14 @@ hover it — a speaker icon appears in the bubble's bottom-left corner; click to
 hear it, click again to stop. Until an owner flips that switch, no control
 appears for anyone — that is expected, not a broken install.
 
+Playback is sentence by sentence: the first sentence plays while the next one
+synthesizes. For hands-free use, each person can turn on **Read replies aloud**
+in a room's settings (per device, per room, off by default): agent replies in
+that room are then read as they arrive, queued one after another. Starting
+dictation or sending a message stops playback and drops the queue. On iOS the
+first tap anywhere in the app unlocks audio, so a reply that arrives before any
+tap waits for one.
+
 ## Choosing a voice
 
 List what the backend serves: `curl -s http://127.0.0.1:8880/v1/audio/voices`.

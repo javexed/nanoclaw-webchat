@@ -1,8 +1,8 @@
 diff --git a/container/Dockerfile b/container/Dockerfile
-index cee038e9..cc8f2532 100644
+index d2889333..a19912ab 100644
 --- a/container/Dockerfile
 +++ b/container/Dockerfile
-@@ -119,6 +119,24 @@ COPY cli-tools.json install-cli-tools.sh /tmp/
+@@ -117,6 +117,24 @@ COPY cli-tools.json install-cli-tools.sh /tmp/
  RUN --mount=type=cache,target=/root/.cache/pnpm \
      sh /tmp/install-cli-tools.sh /tmp/cli-tools.json
  
@@ -27,7 +27,7 @@ index cee038e9..cc8f2532 100644
  # ---- ncl CLI wrapper ----------------------------------------------------------
  # Actual script lives in the mounted source at /app/src/cli/ncl.ts.
  RUN printf '#!/bin/sh\nexec bun /app/src/cli/ncl.ts "$@"\n' > /usr/local/bin/ncl && \
-@@ -133,6 +151,14 @@ RUN mkdir -p /workspace/group /workspace/extra && \
+@@ -131,6 +149,14 @@ RUN mkdir -p /workspace/group /workspace/extra && \
      chown -R node:node /workspace && \
      chmod 777 /home/node
  

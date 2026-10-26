@@ -4,6 +4,7 @@
  * patcher backfills pre-existing groups on init; if that wiring is deleted
  * or drifts, these go red.
  */
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -58,5 +59,30 @@ describe('ensureRtkHook (backfill for pre-existing groups)', () => {
     const f = tmpSettings({});
     fs.writeFileSync(f, '{not json');
     expect(() => ensureRtkHook(f, [])).not.toThrow();
+  });
+
+  // settings.json is container-writable: by the next spawn it may be a
+  // symlink to a host file or a FIFO.
+  it('never reads or writes through a symlink planted as settings.json', async () => {
+    const f = tmpSettings({});
+    const hostFile = path.join(path.dirname(f), 'host-file.json');
+    fs.writeFileSync(hostFile, '{}');
+    fs.rmSync(f);
+    fs.symlinkSync(hostFile, f);
+    const initialized: string[] = [];
+    ensureRtkHook(f, initialized);
+    expect(fs.readFileSync(hostFile, 'utf-8')).toBe('{}');
+    expect(fs.lstatSync(f).isSymbolicLink()).toBe(true);
+    expect(initialized).toEqual([]);
+  });
+
+  it('refuses a FIFO planted as settings.json without blocking', async () => {
+    const f = tmpSettings({});
+    fs.rmSync(f);
+    execFileSync('mkfifo', [f]);
+    const initialized: string[] = [];
+    ensureRtkHook(f, initialized);
+    expect(fs.lstatSync(f).isFIFO()).toBe(true);
+    expect(initialized).toEqual([]);
   });
 });

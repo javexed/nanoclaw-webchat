@@ -1,10 +1,10 @@
 diff --git a/setup/index.ts b/setup/index.ts
-index 4bf93ea3..1360a8f7 100644
+index b1c3ffd9..f159f651 100644
 --- a/setup/index.ts
 +++ b/setup/index.ts
-@@ -23,6 +23,7 @@ const STEPS: Record<string, () => Promise<{ run: (args: string[]) => Promise<voi
-   onecli: () => import('./onecli.js'),
-   auth: () => import('./auth.js'),
+@@ -21,6 +21,7 @@ const STEPS: Record<string, () => Promise<{ run: (args: string[]) => Promise<voi
+   service: () => import('./service.js'),
+   verify: () => import('./verify.js'),
    'provider-auth': () => import('./provider-auth.js'),
 +  'provider-install': () => import('./provider-install.js'),
    'cli-agent': () => import('./cli-agent.js'),

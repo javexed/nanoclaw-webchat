@@ -4,8 +4,9 @@
  * These tests pin the server-side semantics:
  *
  *   - markRoomRead is a monotonic high-water mark (never moves backward).
- *   - getUnreadRoomIdsForUser flags a room iff its newest message is newer
- *     than the user's marker — per-user, and strictly newer at the boundary.
+ *   - getUnreadRoomCountsForUser lists a room iff its newest message is newer
+ *     than the user's marker — per-user, and strictly newer at the boundary —
+ *     with the number of messages past the marker.
  *   - the marker cascades away with the room (clearReadsForRoom / delete).
  *   - annotateRoomsForUser surfaces the per-user `unread` flag in the rooms
  *     payload (the thing that lets the badge reconstruct on reconnect).
@@ -17,7 +18,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { initTestDb, closeDb, getDb } from '../../db/connection.js';
 import { runMigrations } from '../../db/migrations/index.js';
 import { annotateRoomsForUser } from './state.js';
-import { clearReadsForRoom, deleteWebchatRoom, getUnreadRoomIdsForUser, markRoomRead } from './db.js';
+import { clearReadsForRoom, deleteWebchatRoom, getUnreadRoomCountsForUser, markRoomRead } from './db.js';
 
 beforeEach(async () => {
   await initTestDb();
@@ -96,76 +97,93 @@ async function insertMessage(roomId: string, createdAt: number): Promise<void> {
 describe('markRoomRead', () => {
   it('marks a room with unseen messages as read', async () => {
     await insertMessage('room-1', 1000);
-    expect((await getUnreadRoomIdsForUser('webchat:alice')).has('room-1')).toBe(true);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).has('room-1')).toBe(true);
     await markRoomRead('webchat:alice', 'room-1', 1000);
-    expect((await getUnreadRoomIdsForUser('webchat:alice')).has('room-1')).toBe(false);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).has('room-1')).toBe(false);
   });
 
   it('is monotonic — a later call with an older ts does not move the marker backward', async () => {
     await insertMessage('room-1', 1800);
     await markRoomRead('webchat:alice', 'room-1', 2000); // marker ahead of the message → read
-    expect((await getUnreadRoomIdsForUser('webchat:alice')).has('room-1')).toBe(false);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).has('room-1')).toBe(false);
     // A stale read (e.g. a backgrounded tab catching up) must NOT lower the
     // marker to 1500 — that would re-expose the 1800 message as unread.
     await markRoomRead('webchat:alice', 'room-1', 1500);
-    expect((await getUnreadRoomIdsForUser('webchat:alice')).has('room-1')).toBe(false);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).has('room-1')).toBe(false);
   });
 
   it('advances forward when a newer ts arrives', async () => {
     await insertMessage('room-1', 2000);
     await markRoomRead('webchat:alice', 'room-1', 1000); // behind the message → still unread
-    expect((await getUnreadRoomIdsForUser('webchat:alice')).has('room-1')).toBe(true);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).has('room-1')).toBe(true);
     await markRoomRead('webchat:alice', 'room-1', 3000); // ahead of the message → read
-    expect((await getUnreadRoomIdsForUser('webchat:alice')).has('room-1')).toBe(false);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).has('room-1')).toBe(false);
   });
 });
 
-describe('getUnreadRoomIdsForUser', () => {
+describe('getUnreadRoomCountsForUser', () => {
   it('a room with messages and no marker is unread (the away-and-return case)', async () => {
     await insertMessage('room-1', 1000);
-    expect((await getUnreadRoomIdsForUser('webchat:alice')).has('room-1')).toBe(true);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).has('room-1')).toBe(true);
   });
 
   it('a marker older than the newest message → unread', async () => {
     await insertMessage('room-1', 1000);
     await insertMessage('room-1', 3000);
     await markRoomRead('webchat:alice', 'room-1', 2000); // between the two messages
-    expect((await getUnreadRoomIdsForUser('webchat:alice')).has('room-1')).toBe(true);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).has('room-1')).toBe(true);
   });
 
   it('a marker at the newest message timestamp → read (boundary is strict >)', async () => {
     await insertMessage('room-1', 1000);
     await markRoomRead('webchat:alice', 'room-1', 1000);
-    expect((await getUnreadRoomIdsForUser('webchat:alice')).has('room-1')).toBe(false);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).has('room-1')).toBe(false);
   });
 
   it('a new message after reading makes the room unread again', async () => {
     await insertMessage('room-1', 1000);
     await markRoomRead('webchat:alice', 'room-1', 1000);
-    expect((await getUnreadRoomIdsForUser('webchat:alice')).has('room-1')).toBe(false);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).has('room-1')).toBe(false);
     await insertMessage('room-1', 2000);
-    expect((await getUnreadRoomIdsForUser('webchat:alice')).has('room-1')).toBe(true);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).has('room-1')).toBe(true);
   });
 
   it('a room with no messages is never unread', async () => {
     await markRoomRead('webchat:alice', 'empty-room', 1000);
-    expect((await getUnreadRoomIdsForUser('webchat:alice')).has('empty-room')).toBe(false);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).has('empty-room')).toBe(false);
   });
 
   it('is per-user — alice reading does not clear bob', async () => {
     await insertMessage('room-1', 1000);
     await markRoomRead('webchat:alice', 'room-1', 1000);
-    expect((await getUnreadRoomIdsForUser('webchat:alice')).has('room-1')).toBe(false);
-    expect((await getUnreadRoomIdsForUser('webchat:bob')).has('room-1')).toBe(true);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).has('room-1')).toBe(false);
+    expect((await getUnreadRoomCountsForUser('webchat:bob')).has('room-1')).toBe(true);
   });
 
   it('returns only the rooms newer than the marker (per-room resolution)', async () => {
     await insertMessage('room-read', 1000);
     await insertMessage('room-unread', 1000);
     await markRoomRead('webchat:alice', 'room-read', 1000);
-    const unread = await getUnreadRoomIdsForUser('webchat:alice');
+    const unread = await getUnreadRoomCountsForUser('webchat:alice');
     expect(unread.has('room-read')).toBe(false);
     expect(unread.has('room-unread')).toBe(true);
+  });
+});
+
+describe('unread counts', () => {
+  it('counts the messages past the marker, not the room total', async () => {
+    await insertMessage('room-1', 1000);
+    await insertMessage('room-1', 2000);
+    await insertMessage('room-1', 3000);
+    await insertMessage('room-1', 4000);
+    await markRoomRead('webchat:alice', 'room-1', 2000);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).get('room-1')).toBe(2);
+  });
+
+  it('counts every message when there is no marker', async () => {
+    await insertMessage('room-1', 1000);
+    await insertMessage('room-1', 2000);
+    expect((await getUnreadRoomCountsForUser('webchat:alice')).get('room-1')).toBe(2);
   });
 });
 
@@ -199,6 +217,7 @@ describe('annotateRoomsForUser — unread flag', () => {
     const rooms = await annotateRoomsForUser('webchat:owner');
     const room = rooms.find((r) => r.id === 'room-1');
     expect(room?.unread).toBe(true);
+    expect(room?.unread_count).toBe(1);
   });
 
   it('clears the unread flag once the marker advances', async () => {
@@ -211,6 +230,7 @@ describe('annotateRoomsForUser — unread flag', () => {
 
     const room = (await annotateRoomsForUser('webchat:owner')).find((r) => r.id === 'room-1');
     expect(room?.unread).toBe(false);
+    expect(room?.unread_count).toBe(0);
   });
 
   it('is per-user — one user reading does not clear another’s badge', async () => {

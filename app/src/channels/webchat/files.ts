@@ -23,7 +23,7 @@ import {
   type FileMeta,
 } from './db.js';
 import { BodyTooLargeError, readBody } from './server/http.js';
-import { broadcast } from './state.js';
+import { broadcast, markRoomReadForUser } from './state.js';
 
 const MAX_UPLOAD_SIZE = 8 * 1024 * 1024 * 1024; // 8GB: files and chunks live on the data disk
 // An upload is dropped after this long WITHOUT a chunk. Counted from the first
@@ -72,6 +72,7 @@ function clearStaleChunks(): void {
 
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
   '.js': 'application/javascript',
   '.css': 'text/css',
   '.json': 'application/json',
@@ -90,6 +91,14 @@ const MIME: Record<string, string> = {
   '.mp3': 'audio/mpeg',
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
+  '.m4v': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.ogv': 'video/ogg',
+  '.m4a': 'audio/mp4',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.oga': 'audio/ogg',
+  '.flac': 'audio/flac',
 };
 
 const pendingChunkedUploads = new Map<
@@ -374,7 +383,10 @@ export async function handleMultipartUpload(
           threadId,
           senderUserId,
         );
-        await broadcast(roomId, { type: 'message', ...stored });
+        // The uploader read their own file: advance their marker (and clear the
+        // badge on their other devices), as a typed message does.
+        markRoomReadForUser(senderUserId, roomId, stored.created_at);
+        await broadcast(roomId, { type: 'message', ...stored }, undefined, senderUserId);
         hooks.onInbound(
           roomId,
           inboundForFile(
@@ -638,7 +650,8 @@ export async function handleChunkedUpload(
     threadId,
     upload.senderUserId,
   );
-  await broadcast(roomId, { type: 'message', ...stored });
+  markRoomReadForUser(upload.senderUserId, roomId, stored.created_at);
+  await broadcast(roomId, { type: 'message', ...stored }, undefined, upload.senderUserId);
   hooks.onInbound(
     roomId,
     inboundForFile(roomId, stored.id, fileMeta, caption, upload.sender, upload.senderUserId, finalPath),
@@ -648,7 +661,114 @@ export async function handleChunkedUpload(
   return json(res, 200, { ...fileMeta, caption });
 }
 
-export function handleFileServe(res: http.ServerResponse, roomId: string, filename: string): void {
+/**
+ * One byte range out of a `Range` header, for a file of `size` bytes.
+ *
+ * Returns the inclusive range to send, `'unsatisfiable'` (answer 416), or null
+ * when the header should be ignored and the whole file sent: a header that is
+ * not a `bytes=` range we understand, or one asking for several ranges. RFC 9110
+ * lets a server ignore Range, and a multipart/byteranges reply is not worth it
+ * here: media players ask for one range at a time.
+ */
+export function parseByteRange(
+  header: string | undefined,
+  size: number,
+): { start: number; end: number } | 'unsatisfiable' | null {
+  if (!header) return null;
+  const m = /^\s*bytes\s*=\s*(\d*)\s*-\s*(\d*)\s*$/i.exec(header);
+  if (!m) return null; // other units, several ranges, or garbage
+  const [, first, last] = m;
+  if (first === '' && last === '') return null;
+  if (first === '') {
+    // Suffix form: the last N bytes.
+    const n = Number(last);
+    if (n === 0 || size === 0) return 'unsatisfiable';
+    return { start: Math.max(0, size - n), end: size - 1 };
+  }
+  const start = Number(first);
+  const end = last === '' ? size - 1 : Math.min(Number(last), size - 1);
+  if (!Number.isSafeInteger(start) || start >= size) return 'unsatisfiable';
+  if (last !== '' && Number(last) < start) return null; // invalid range: ignore the header
+  return { start, end };
+}
+
+/**
+ * HTML files never render as a page of their own: opened top-level they are a
+ * download. The CSP sandbox already keeps such a page out of the app's origin,
+ * but an agent-written page on the app's own URL could still dress itself up
+ * as the app. They render only framed, through handleHtmlFrame.
+ */
+const HTML_EXTS = new Set(['.html', '.htm']);
+
+/** The largest HTML attachment handleHtmlFrame will render. */
+export const HTML_FRAME_MAX = 5 * 1024 * 1024;
+
+/**
+ * CSP for a rendered HTML attachment. `sandbox allow-scripts` without
+ * allow-same-origin gives the page an opaque origin: no cookies, no storage,
+ * no reach into the app. Scripts and styles may be inline (that is what an
+ * agent writes); nothing may load from or talk to the network, so the page
+ * cannot fetch more code or send what it shows anywhere. Only this app may
+ * frame it.
+ */
+export const HTML_FRAME_CSP =
+  'sandbox allow-scripts; ' +
+  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+  'img-src data: blob:; font-src data:; media-src data: blob:; ' +
+  "connect-src 'none'; frame-src 'none'; worker-src 'none'; " +
+  "base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+
+/**
+ * Serve an HTML attachment to the drawer's frame. A frame of a srcdoc or blob:
+ * document inherits the app's own CSP (script-src 'self'), which blocks every
+ * inline script an agent's page has; a document the server sends gets the
+ * policy above instead.
+ *
+ * Only for a frame: a request whose Sec-Fetch-Dest is anything but `iframe`
+ * (a top-level visit, a fetch, a browser too old to say) is refused, so this
+ * URL never renders as a page of its own.
+ */
+export function handleHtmlFrame(
+  res: http.ServerResponse,
+  roomId: string,
+  filename: string,
+  fetchDest: string | undefined,
+): void {
+  if (filename.includes('..') || filename.includes('/') || roomId.includes('..') || roomId.includes('/')) {
+    res.writeHead(403);
+    res.end();
+    return;
+  }
+  if (!HTML_EXTS.has(path.extname(filename).toLowerCase())) return json(res, 404, { error: 'Not an HTML file' });
+  if (fetchDest !== 'iframe') return json(res, 403, { error: 'Renders only inside the app' });
+  const filePath = path.join(uploadsDir(roomId), filename);
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(filePath);
+  } catch {
+    return json(res, 404, { error: 'File not found' });
+  }
+  if (!stat.isFile()) return json(res, 404, { error: 'File not found' });
+  if (stat.size > HTML_FRAME_MAX) return json(res, 413, { error: 'Too large to render' });
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': stat.size,
+    'Content-Security-Policy': HTML_FRAME_CSP,
+    'X-Frame-Options': 'SAMEORIGIN',
+    'X-Content-Type-Options': 'nosniff',
+    'Referrer-Policy': 'no-referrer',
+    'Cross-Origin-Resource-Policy': 'same-origin',
+    'Cache-Control': 'private, no-store',
+  });
+  fs.createReadStream(filePath).pipe(res);
+}
+
+export function handleFileServe(
+  res: http.ServerResponse,
+  roomId: string,
+  filename: string,
+  rangeHeader?: string,
+): void {
   // Path-traversal guard: the URL roomId is sanitized at write time, so
   // refuse anything that looks unsafe here too. Filenames are uuid+ext we
   // generated; reject suspicious shapes.
@@ -669,16 +789,39 @@ export function handleFileServe(res: http.ServerResponse, roomId: string, filena
   // Strip CR/LF/quote/backslash from the filename before inlining into a
   // header — guards header injection at the response surface.
   const safeName = filename.replace(/[\r\n"\\]/g, '_');
-  res.writeHead(200, {
+  const disposition = HTML_EXTS.has(ext.toLowerCase()) ? 'attachment' : 'inline';
+  const headers: http.OutgoingHttpHeaders = {
     'Content-Type': mime,
-    'Content-Length': stat.size,
-    'Content-Disposition': `inline; filename="${safeName}"`,
+    'Content-Disposition': `${disposition}; filename="${safeName}"`,
     // private: uploads are per-room data, never for a shared proxy cache.
     'Cache-Control': 'private, max-age=31536000, immutable',
     // Sandbox the response into an opaque origin so HTML/SVG uploads cannot
     // read the PWA's localStorage token. nosniff stops MIME sniffing.
-    'Content-Security-Policy': 'sandbox',
+    // frame-ancestors 'self' (with X-Frame-Options to match, replacing the
+    // app-wide DENY) lets the attachment drawer frame a PDF: the frame is
+    // still a sandboxed document, and only this app can embed it.
+    'Content-Security-Policy': "sandbox; frame-ancestors 'self'",
+    'X-Frame-Options': 'SAMEORIGIN',
     'X-Content-Type-Options': 'nosniff',
-  });
+    // Media players (iOS Safari will not play an mp4 without this) seek by
+    // asking for byte ranges.
+    'Accept-Ranges': 'bytes',
+  };
+  const range = parseByteRange(rangeHeader, stat.size);
+  if (range === 'unsatisfiable') {
+    res.writeHead(416, { ...headers, 'Content-Range': `bytes */${stat.size}`, 'Content-Length': 0 });
+    res.end();
+    return;
+  }
+  if (range) {
+    res.writeHead(206, {
+      ...headers,
+      'Content-Range': `bytes ${range.start}-${range.end}/${stat.size}`,
+      'Content-Length': range.end - range.start + 1,
+    });
+    fs.createReadStream(filePath, { start: range.start, end: range.end }).pipe(res);
+    return;
+  }
+  res.writeHead(200, { ...headers, 'Content-Length': stat.size });
   fs.createReadStream(filePath).pipe(res);
 }

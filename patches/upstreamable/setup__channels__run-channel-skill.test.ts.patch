@@ -1,5 +1,5 @@
 diff --git a/setup/channels/run-channel-skill.test.ts b/setup/channels/run-channel-skill.test.ts
-index 2ce8b0ed..8992fd00 100644
+index dc7520ad..43513f11 100644
 --- a/setup/channels/run-channel-skill.test.ts
 +++ b/setup/channels/run-channel-skill.test.ts
 @@ -1,4 +1,4 @@
@@ -82,16 +82,16 @@ index 2ce8b0ed..8992fd00 100644
      mkdirSync(join(root, 'src/channels'), { recursive: true });
      writeFileSync(join(root, 'src/channels/index.ts'), '// barrel\n');
      writeFileSync(join(root, '.env'), '');
-@@ -432,7 +445,7 @@ describe('runChannelSkill adapter (Option A)', () => {
-   afterEach(() => rmSync(wireSkillDir, { recursive: true, force: true }));
+@@ -437,7 +450,7 @@ describe('runChannelSkill adapter (Option A)', () => {
+   const wireChannel = 'wiretest';
  
    it('wireIfResolved: a run that resolves owner_handle + platform_id wires through init-first-agent', async () => {
 -    const root = mkdtempSync(join(tmpdir(), 'rcs-wiretest-'));
 +    const root = scratchDir('rcs-wiretest-');
      writeFileSync(join(root, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(root, '.env'), '');
-     mkdirSync(wireSkillDir, { recursive: true });
-@@ -503,7 +516,7 @@ describe('runChannelSkill adapter (Option A)', () => {
+     const wireSkillDir = join(root, '.claude/skills', `add-${wireChannel}`);
+@@ -505,7 +518,7 @@ describe('runChannelSkill adapter (Option A)', () => {
    // prose becomes the dimmed hint (which fail() also forwards to the Claude
    // handoff). Asserted via an injected fail spy (the real fail() process.exits).
    it('threads the bounced step prose into fail() when the skill does not fully apply', async () => {

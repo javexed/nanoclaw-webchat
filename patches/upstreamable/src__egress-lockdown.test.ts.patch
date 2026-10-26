@@ -1,43 +1,38 @@
 diff --git a/src/egress-lockdown.test.ts b/src/egress-lockdown.test.ts
-index 41641fec..5d37dc3c 100644
+index 8708bb87..435c6ab2 100644
 --- a/src/egress-lockdown.test.ts
 +++ b/src/egress-lockdown.test.ts
-@@ -25,48 +25,60 @@ vi.mock('./log.js', () => ({
+@@ -28,6 +28,12 @@ vi.mock('./log.js', () => ({
  
  import { ensureEgressNetwork } from './egress-lockdown.js';
  
--describe('gateway egress attachment', () => {
-+// The fork inverts upstream's topology: the gateway is kept OFF the locked
-+// network and central's egress filter (on the bridge address) is the only way
-+// out, because a gateway forwards to any host. See egress-lockdown.ts.
-+const mockDocker = (): void => {
-+  state.execFileSync.mockReset().mockImplementation((_bin: string, args: string[]) => {
-+    if (args[0] === 'network' && args[1] === 'connect') state.attached = true;
-+    if (args[0] === 'network' && args[1] === 'disconnect') state.attached = false;
-+    if (args.includes('--format')) return state.attached ? 'fixture-gateway ' : '';
-+    return '';
-+  });
-+};
 +const called = (verb: string): boolean =>
-+  state.execFileSync.mock.calls.some(
-+    ([, args]) => (args as string[])[0] === 'network' && (args as string[])[1] === verb,
-+  );
++  state.execFileSync.mock.calls.some((call: unknown[]) => {
++    const args = call[1] as string[];
++    return args[0] === 'network' && args[1] === verb;
++  });
 +
-+describe('gateway egress detachment', () => {
+ describe('gateway egress attachment', () => {
    beforeEach(() => {
--    state.attached = false;
-+    state.attached = true;
+     state.attached = false;
+@@ -36,6 +42,7 @@ describe('gateway egress attachment', () => {
      state.access = { endpoint: 'gateway.internal', target: { kind: 'runtime', identity: 'fixture-gateway' } };
--    state.execFileSync.mockReset().mockImplementation((_bin: string, args: string[]) => {
--      if (args[0] === 'network' && args[1] === 'connect') state.attached = true;
--      if (args.includes('--format')) return state.attached ? 'fixture-gateway ' : '';
--      return '';
--    });
-+    mockDocker();
+     state.execFileSync.mockReset().mockImplementation((_bin: string, args: string[]) => {
+       if (args[0] === 'network' && args[1] === 'connect') state.attached = true;
++      if (args[0] === 'network' && args[1] === 'disconnect') state.attached = false;
+       if (args.includes('{{.Internal}}')) {
+         if (state.inspectError) throw state.inspectError;
+         return String(state.internal);
+@@ -45,20 +52,28 @@ describe('gateway egress attachment', () => {
+     });
    });
  
 -  it('attaches the selected provider target under its declared endpoint', () => {
++  // This fork keeps the gateway OFF the locked network (upstream attaches it):
++  // the egress filter is the agents' only way out, the gateway's endpoint is
++  // pointed at the filter's bridge address instead.
 +  it('keeps the selected provider target off the locked network', () => {
++    state.attached = true; // e.g. the gateway's own compose stack joined it
      expect(ensureEgressNetwork(state.access)).toBe(true);
      expect(state.execFileSync).toHaveBeenCalledWith(
        'docker',
@@ -62,17 +57,23 @@ index 41641fec..5d37dc3c 100644
 +    expect(ensureEgressNetwork({ endpoint: 'gateway.internal', target: { kind: 'host' } })).toBe(true);
 +    expect(called('connect') || called('disconnect')).toBe(false);
    });
+ 
+   it('creates the egress network when the inspect says it does not exist', () => {
+@@ -97,9 +112,10 @@ describe('gateway egress attachment', () => {
+   });
  });
  
 -it('heals a recreated gateway after restoring the adopted session network intent', () => {
--  state.execFileSync.mockImplementation((_bin: string, args: string[]) => {
--    if (args[0] === 'network' && args[1] === 'connect') state.attached = true;
--    if (args.includes('--format')) return state.attached ? 'fixture-gateway ' : '';
--    return '';
--  });
 +it('re-detaches a gateway something reattached, using the remembered access', () => {
-+  mockDocker();
+   state.execFileSync.mockImplementation((_bin: string, args: string[]) => {
+     if (args[0] === 'network' && args[1] === 'connect') state.attached = true;
++    if (args[0] === 'network' && args[1] === 'disconnect') state.attached = false;
+     if (args.includes('{{.Internal}}')) return String(state.internal);
+     if (args.includes('--format')) return state.attached ? 'fixture-gateway ' : '';
+     return '';
+@@ -107,12 +123,12 @@ it('heals a recreated gateway after restoring the adopted session network intent
    state.attached = false;
+   state.internal = true;
    ensureEgressNetwork(state.access);
 -  state.attached = false;
 +  state.attached = true; // e.g. `docker compose up` on the gateway's stack

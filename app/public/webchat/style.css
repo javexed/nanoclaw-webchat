@@ -307,7 +307,10 @@ body {
 
 /* Sidebar */
 #sidebar {
-  width: 220px;
+  /* --sidebar-width: this viewer's dragged width (core/resizer.ts). The cap
+     keeps a remembered width from crowding out the chat in a narrow window. */
+  width: var(--sidebar-width, 220px);
+  max-width: 50vw;
   background: var(--surface);
   border-right: 1px solid var(--border);
   display: flex;
@@ -507,15 +510,28 @@ body {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
-#room-list li .unread-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  display: inline-block;
+/* Unread count — a compact pill (capped at 99+) after the name, and after the
+   mention "@" when there is one, so the two signals never merge. Rooms and
+   threads share it. */
+.unread-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
   margin-left: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
   flex-shrink: 0;
-  vertical-align: middle;
+}
+#room-list li .mention-dot + .unread-badge {
+  margin-left: 4px;
 }
 /* Mention badge — higher signal than the plain unread dot. A small "@" pill in
    the warning colour so a room you were named in reads at a glance. */
@@ -626,6 +642,10 @@ body {
     height: 1.2rem;
     margin-left: 0;
     transition: opacity 0.15s;
+  }
+  /* The out-of-flow pin sits over the row's right edge — keep the count clear of it. */
+  #room-list li .unread-badge:has(+ .room-pin-indicator) {
+    margin-right: 18px;
   }
   #room-list li:hover .room-pin-indicator,
   #room-list li:focus-within .room-pin-indicator,
@@ -1111,6 +1131,18 @@ body {
 .msg.a2a .a2a-more:hover {
   text-decoration: underline;
 }
+/* "Retry at <time>" on a rate-limit notice, or the pending retry with Cancel. */
+.msg .limit-retry {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: var(--fs-sm);
+}
+.msg .limit-retry-at {
+  color: var(--text-dim);
+}
 /* "Thoughts" disclosure folded onto an agent reply — the full reasoning trace. */
 .msg .thoughts {
   margin-top: 6px;
@@ -1531,8 +1563,37 @@ button:focus-visible {
   border: 1px solid var(--border);
 }
 
+/* Panel separator — an 8px strip centred on the panel's border (the negative
+   margins keep it from taking layout width). Shows as an accent line on hover,
+   drag and keyboard focus. */
+.panel-resizer {
+  flex: 0 0 auto;
+  width: 8px;
+  margin: 0 -4px;
+  position: relative;
+  z-index: 2;
+  cursor: col-resize;
+  touch-action: none;
+  background: linear-gradient(var(--accent), var(--accent)) center / 2px 100% no-repeat;
+  background-size: 0 100%;
+  transition: background-size var(--transition);
+}
+.panel-resizer:hover,
+.panel-resizer.dragging,
+.panel-resizer:focus-visible {
+  background-size: 2px 100%;
+}
+.panel-resizer:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 /* Mobile */
 @media (max-width: 600px) {
+  /* The sidebar is full width here; there is nothing to resize. */
+  .panel-resizer {
+    display: none;
+  }
   /* Mobile narrows the inherited base (em/inherited text) for density. The rem
      base stays the root value above, so rem-sized chrome is unchanged here. */
   [data-font='small'] #app {
@@ -2001,6 +2062,295 @@ a.lightbox-btn {
   line-height: 1.4;
 }
 
+/* A previewable file's name opens the attachment drawer. Same footprint as the
+   plain .file-name span it replaces. */
+.file-open {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+}
+.file-open:hover {
+  text-decoration: underline;
+}
+.file-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ── Attachment drawer ─────────────────────────────────────────────────────
+   A right-hand panel over the chat on wide screens, resized from its left
+   edge; a full-screen sheet on a phone. Below modals and the lightbox. */
+.attachment-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--attachment-drawer-w, 560px);
+  max-width: 100vw;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--text);
+  border-left: 1px solid var(--border);
+  box-shadow: -4px 0 16px var(--shadow);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.attachment-drawer-sep {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 1;
+}
+.attachment-drawer-sep::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+  transition: background var(--transition);
+}
+.attachment-drawer-sep:hover::after,
+.attachment-drawer.dragging .attachment-drawer-sep::after {
+  background: var(--accent);
+}
+.attachment-drawer-sep:focus-visible {
+  outline: none;
+}
+.attachment-drawer-sep:focus-visible::after {
+  background: var(--accent);
+  width: 4px;
+  left: 2px;
+}
+/* A framed PDF would swallow the pointer mid-drag. */
+.attachment-drawer.dragging iframe {
+  pointer-events: none;
+}
+.attachment-drawer-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 8px 8px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.attachment-drawer-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-base);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.attachment-drawer-size {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+.attachment-drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.attachment-drawer-status {
+  margin: 16px;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+.attachment-drawer-frame {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: var(--surface2);
+}
+.attachment-drawer-video {
+  width: 100%;
+  max-height: 100%;
+  background: #000;
+}
+.attachment-drawer-audio {
+  width: calc(100% - 32px);
+  margin: 16px;
+}
+.attachment-drawer-code {
+  margin: 0;
+  padding: 12px 16px;
+  flex: 1;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  tab-size: 4;
+  background: var(--pre-bg);
+}
+.attachment-drawer-code code {
+  white-space: pre;
+}
+.attachment-drawer-md {
+  padding: 12px 20px;
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.attachment-drawer-md pre {
+  background: var(--pre-bg);
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+}
+.attachment-drawer-md code {
+  font-family: var(--font-mono);
+}
+.attachment-drawer-md img {
+  max-width: 100%;
+}
+.attachment-drawer-md table,
+.attachment-drawer-table table {
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+.attachment-drawer-md th,
+.attachment-drawer-md td,
+.attachment-drawer-table th,
+.attachment-drawer-table td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.attachment-drawer-table {
+  overflow: auto;
+  flex: 1;
+  padding: 12px 16px;
+}
+.attachment-drawer-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface2);
+  font-weight: 600;
+}
+.attachment-drawer-table td {
+  white-space: pre-wrap;
+  max-width: 40ch;
+}
+.attachment-drawer-json {
+  padding: 12px 16px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}
+.json-node > summary {
+  cursor: pointer;
+}
+.json-node > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
+}
+.json-children {
+  padding-left: 18px;
+  border-left: 1px solid var(--border);
+  margin-left: 4px;
+}
+.json-leaf {
+  padding-left: 14px;
+  overflow-wrap: anywhere;
+}
+.json-key {
+  color: var(--text);
+  font-weight: 600;
+  margin-right: 8px;
+}
+.json-key::after {
+  content: ':';
+}
+.json-count,
+.json-more {
+  color: var(--text-dim);
+}
+/* Syntax colours: theme tokens only, so both themes keep their contrast. */
+.hl-k,
+.hl-t {
+  color: var(--accent);
+}
+.hl-s {
+  color: var(--success-strong);
+}
+.hl-n {
+  color: var(--warning-strong);
+}
+.hl-c {
+  color: var(--text-dim);
+  font-style: italic;
+}
+.hl-a {
+  color: var(--accent2);
+}
+.hl-add {
+  color: var(--success-strong);
+}
+.hl-del {
+  color: var(--danger);
+}
+.hl-meta {
+  color: var(--text-dim);
+}
+/* A page's own canvas: HTML defaults to black text on white, and a frame is
+   transparent, so without this an unstyled page is unreadable in dark mode. */
+.attachment-drawer-page {
+  background: #fff;
+}
+/* "From page.html" above the composer while its pre-filled text is unsent. */
+.compose-origin {
+  padding: 4px 20px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Wide screens: the app column shrinks beside the drawer instead of sitting
+   under it. Narrower ones keep the overlay; phones get the full sheet. */
+@media (min-width: 1000px) {
+  body:has(#attachment-drawer) #app {
+    padding-right: var(--attachment-drawer-w, 560px);
+  }
+}
+.attachment-drawer-md a {
+  color: var(--accent);
+}
+@media (max-width: 600px) {
+  .attachment-drawer {
+    width: 100vw;
+    left: 0;
+    border-left: none;
+    box-shadow: none;
+  }
+  .attachment-drawer-sep {
+    display: none;
+  }
+}
+
 /* Typing indicator bar (user typing) */
 .typing-indicator {
   /* Collapsed by default (max-height, not display:none) so showing/hiding it
@@ -2339,6 +2689,14 @@ a.lightbox-btn {
 .thinking-bubble.expanded .thinking-chevron {
   transform: rotate(90deg);
 }
+/* The reply as it is being written; the delivered message replaces it. */
+.thinking-bubble .thinking-preview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
 /* Expanded view: swap the fading feed for the full scrollable trace. */
 .thinking-bubble .thinking-fulltrace {
   display: none;
@@ -2597,6 +2955,17 @@ a.lightbox-btn {
 }
 .context-divider span {
   white-space: nowrap;
+}
+/* "New": where this user's unread messages begin. Opening the room lands here,
+   with a little of what was already read still in view above it. */
+.context-divider.unread-divider {
+  color: var(--accent-strong);
+  font-weight: 600;
+  scroll-margin-top: 4rem;
+}
+.context-divider.unread-divider::before,
+.context-divider.unread-divider::after {
+  background: var(--accent);
 }
 /* The @handle chip — visual sibling of .members-toggle. */
 .handle-chip {
@@ -6913,11 +7282,6 @@ a.skill-badge-origin:hover {
   white-space: nowrap;
 }
 .thread-unread {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  flex: 0 0 auto;
   margin-left: 0.4rem;
 }
 .thread-kebab {
@@ -7782,6 +8146,9 @@ body {
 .routing-decisions-list,
 .routing-subpane,
 .slash-menu,
+.attachment-drawer-body,
+.attachment-drawer-code,
+.attachment-drawer-table,
 .topology-canvas {
   overscroll-behavior: contain;
 }

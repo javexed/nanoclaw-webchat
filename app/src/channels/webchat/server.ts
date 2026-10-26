@@ -216,8 +216,13 @@ import {
 } from './server/routes-router.js';
 import { codexAvailable } from './server/providers.js';
 import { grokStatus } from './server/grok-status.js';
+import { copilotStatus } from './server/copilot-connect.js';
 import {
   rCodexInstallGet,
+  rCopilotInstallGet,
+  rCopilotInstallPost,
+  rCopilotLoginGet,
+  rCopilotLoginPost,
   rGrokInstallGet,
   rGrokInstallPost,
   rCodexInstallPost,
@@ -296,11 +301,14 @@ import {
   setApprovalPrejudgeActions,
 } from './db.js';
 import { PERSONA_PREPEND_FILE, readGroupPersona } from '../../group-persona.js';
+import { recordInstructionBaseline } from '../../modules/instruction-guard/store.js';
 import { syncAgentProviderForAssignedModel, classifierParamsForModel } from './models.js';
-import { handleChunkedUpload, handleFileServe, handleMultipartUpload } from './files.js';
+import { handleChunkedUpload, handleFileServe, handleHtmlFrame, handleMultipartUpload } from './files.js';
 import { initWebPush, isValidPushEndpoint } from './push.js';
 import { redactSensitiveData } from './redact.js';
 import { withTraceFlags } from './turn-traces.js';
+import { withLimitRetries } from './limit-retry.js';
+import { rLimitRetryDelete, rLimitRetryPost } from './server/routes-limit-retry.js';
 import { rMessageTraceGet, rTurnTracesGet, rTurnTracesPut } from './server/routes-traces.js';
 import {
   grantOwnerRole,
@@ -992,6 +1000,7 @@ const RE_TEMPLATE_SOURCE = /^\/api\/template-sources\/([^/]+)$/;
 const RE_ROOM_AGENTS = /^\/api\/rooms\/([^/]+)\/agents$/;
 const RE_ROOM_MENTIONABLE = /^\/api\/rooms\/([^/]+)\/mentionable$/;
 const RE_ROOM_REASONING = /^\/api\/rooms\/([^/]+)\/reasoning$/;
+const RE_ROOM_LIMIT_RETRY = /^\/api\/rooms\/([^/]+)\/limit-retry$/;
 const RE_MESSAGE_TRACE = /^\/api\/messages\/([^/]+)\/trace$/;
 const RE_ROOM_CRED_MODE = /^\/api\/rooms\/([^/]+)\/credential-mode$/;
 const RE_ROOM_OAUTH = /^\/api\/rooms\/([^/]+)\/oauth-allowed$/;
@@ -1002,6 +1011,8 @@ const RE_WS_CODEX_MINT = /^\/api\/workspace-credential\/codex\/(start|finish|can
 // Grok's device login: POST start|cancel drives it, GET reports it. Polling is a
 // GET so it stays cache-neutral and needs no CSRF header on every tick.
 const RE_WS_GROK_LOGIN = /^\/api\/workspace-credential\/grok\/(start|cancel)$/;
+// GitHub Copilot's device sign-in: the Grok pair plus disconnect.
+const RE_WS_COPILOT_LOGIN = /^\/api\/workspace-credential\/copilot\/(start|cancel|disconnect)$/;
 // The MEMBER equivalent. Not owner-guarded — any member the workspace lets
 // bring a credential must be able to mint one, which is the whole point.
 const RE_MEMBER_GROK_LOGIN = /^\/api\/user-credentials\/grok\/(start|cancel|status)$/;
@@ -1443,6 +1454,9 @@ async function rWorkspaceCredential(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       // Grok resolves from a host credential file, not a user_credentials row
       // or a vault secret — see server/grok-status.ts for why.
       grok: grokStatus(),
+      // GitHub Copilot: the gateway holds the token; status is the non-secret
+      // record the sign-in leaves (server/copilot-connect.ts).
+      copilot: copilotStatus(),
       defaultModelId: defaultModel?.id ?? null,
       defaultModelName: defaultModel ? `${defaultModel.name} (${defaultModel.model_id})` : null,
       // Real fields so the wizard's Ollama card only claims "set" when an Ollama
@@ -1694,7 +1708,10 @@ async function rHistGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   return json(
     res,
     200,
-    (await withTraceFlags(msgs)).map((m) => ({ ...m, content: redactSensitiveData(m.content) })),
+    (await withLimitRetries(await withTraceFlags(msgs))).map((m) => ({
+      ...m,
+      content: redactSensitiveData(m.content),
+    })),
   );
 }
 
@@ -1759,7 +1776,13 @@ async function rFileGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { res, userId } = ctx;
   const roomId = decodeURIComponent(m[1]);
   if (!(await canAccessRoom(userId, roomId))) return json(res, 403, { error: 'Access denied' });
-  return handleFileServe(res, roomId, decodeURIComponent(m[2]));
+  const filename = decodeURIComponent(m[2]);
+  // ?view=frame: an HTML attachment rendered for the drawer's frame.
+  if (ctx.url.searchParams.get('view') === 'frame') {
+    const dest = ctx.req.headers['sec-fetch-dest'];
+    return handleHtmlFrame(res, roomId, filename, typeof dest === 'string' ? dest : undefined);
+  }
+  return handleFileServe(res, roomId, filename, ctx.req.headers.range);
 }
 
 async function rInstrGet(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
@@ -2573,6 +2596,8 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: RE_ROOM_AGENTS, h: rRoomAgentsGet },
   { method: 'GET', path: RE_ROOM_MENTIONABLE, h: rRoomMentionableGet },
   { method: 'GET', path: RE_ROOM_REASONING, h: rRoomReasoningGet },
+  { method: 'POST', path: RE_ROOM_LIMIT_RETRY, guards: ['csrf'], h: rLimitRetryPost },
+  { method: 'DELETE', path: RE_ROOM_LIMIT_RETRY, guards: ['csrf'], h: rLimitRetryDelete },
   { method: 'POST', path: RE_ROOM_AGENTS, guards: ['csrf'], h: rRoomAgentsPost },
   { method: 'GET', path: RE_ROOM_CRED_MODE, h: rRoomCredModeGet },
   { method: 'PUT', path: RE_ROOM_CRED_MODE, guards: ['csrf'], h: rRoomCredModePut },
@@ -2591,6 +2616,14 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: RE_WS_CODEX_MINT, h: rWsCodexMintPost },
   { method: 'POST', path: RE_WS_GROK_LOGIN, guards: ['csrf', 'owner'], h: rGrokLoginPost },
   { method: 'GET', path: '/api/workspace-credential/grok', guards: ['owner'], h: rGrokLoginGet },
+  {
+    method: 'POST',
+    path: RE_WS_COPILOT_LOGIN,
+    guards: ['csrf', 'globalAdmin'],
+    h: rCopilotLoginPost,
+    audit: 'provider.credential',
+  },
+  { method: 'GET', path: '/api/workspace-credential/copilot', guards: ['globalAdmin'], h: rCopilotLoginGet },
   { method: ['GET', 'POST'], path: RE_MEMBER_GROK_LOGIN, h: rGrokMemberLoginRoute },
   { method: 'PUT', path: '/api/workspace-model', h: rWorkspaceModelPut },
   { method: 'GET', path: '/api/workspace-provider', guards: ['owner'], h: rWorkspaceProviderGet },
@@ -2622,7 +2655,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/webchat/cloudflared', h: rWebchatCloudflaredGet },
   { method: 'POST', path: '/api/webchat/cloudflared/install', guards: ['csrf'], h: rWebchatCloudflaredInstallPost },
   { method: 'POST', path: '/api/webchat/cloudflared/connect', guards: ['csrf'], h: rWebchatCloudflaredConnectPost },
-  { method: 'DELETE', path: RE_ROOM_AGENT, h: rRoomAgentDelete },
+  { method: 'DELETE', path: RE_ROOM_AGENT, guards: ['csrf'], h: rRoomAgentDelete },
   { method: 'PUT', path: RE_ROOM_PRIME, guards: ['owner', 'csrf'], h: rRoomPrimePut },
   { method: 'DELETE', path: RE_ROOM_PRIME, guards: ['owner', 'csrf'], h: rRoomPrimeDelete },
   { method: 'POST', path: RE_ROOM_ARCHIVE, guards: ['csrf'], h: rRoomArchivePost },
@@ -2679,7 +2712,7 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'POST', path: '/api/agents/from-template', guards: ['csrf'], h: rAgentsFromTemplatePost },
   { method: 'POST', path: '/api/agents', guards: ['csrf'], h: rAgentsPost },
   { method: 'PUT', path: RE_AGENT, h: rAgentPut },
-  { method: 'DELETE', path: RE_AGENT, h: rAgentDelete },
+  { method: 'DELETE', path: RE_AGENT, guards: ['csrf'], h: rAgentDelete },
   { method: 'GET', path: RE_INSTR, h: rInstrGet },
   { method: 'PUT', path: RE_INSTR, h: rInstrPut },
   { method: 'GET', path: RE_AGENT_ROOMS, h: rAgentRoomsGet },
@@ -2801,6 +2834,14 @@ const API_ROUTES: ApiRoute[] = [
     audit: 'provider.install',
   },
   { method: 'GET', path: '/api/grok/install', guards: ['owner'], h: rGrokInstallGet },
+  { method: 'GET', path: '/api/copilot/install', guards: ['owner'], h: rCopilotInstallGet },
+  {
+    method: 'POST',
+    path: '/api/copilot/install',
+    guards: ['csrf', 'owner'],
+    h: rCopilotInstallPost,
+    audit: 'provider.install',
+  },
   {
     method: 'POST',
     path: '/api/grok/install',
@@ -3165,6 +3206,9 @@ async function writeInstructions(req: IncomingMessage, res: ServerResponse, id: 
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
   }
+  // The owner's save is the approved version: the next spawn must not hold it
+  // as an agent edit (modules/instruction-guard).
+  recordInstructionBaseline(group.id, 'persona', text.trimEnd() ? `${text.trimEnd()}\n` : null);
   return json(res, 200, { ok: true });
 }
 

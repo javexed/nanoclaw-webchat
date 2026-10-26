@@ -7,6 +7,10 @@
 import { getOutboundDb } from './mailbox/sqlite/connection.js';
 import { redactSecrets } from './formatter.js';
 import { registerProviderMessageObserver } from './providers/hooks.js';
+import { findByName } from './destinations.js';
+import { getCurrentReplyRoute } from './db/session-state.js';
+import { getMessageIn } from './db/messages-in.js';
+import { ReplyPreviewStream, readStreamEvent } from './reply-preview.js';
 
 /**
  * Pull a short, human-meaningful target out of a tool's input for the feed —
@@ -58,6 +62,24 @@ export function summarizeToolTarget(toolName: string, input: Record<string, unkn
 }
 
 registerProviderMessageObserver((ev) => {
+  // The live reply preview's two events ride as kinds upstream's event type
+  // does not list (cast in claude.ts), so they are read before the switch.
+  const extra = (ev as { kind: string }).kind;
+  if (extra === 'sdk_stream') {
+    if (sideQueryDepth > 0) return; // a side query's text is never a reply
+    const s = readStreamEvent((ev as { event?: unknown }).event);
+    if (s && 'reset' in s) replyPreview.end();
+    else if (s) replyPreview.delta(s.text);
+    return;
+  }
+  if (extra === 'assistant_message') {
+    replyPreview.end();
+    return;
+  }
+  // Every turn boundary drops a preview still showing: an errored or
+  // interrupted turn must not leave half a reply behind. Before 'done' is
+  // appended, so 'done' stays the turn's last feed event.
+  if (ev.kind === 'batch_start' || ev.kind === 'turn_start' || ev.kind === 'turn_done') replyPreview.end();
   switch (ev.kind) {
     case 'tool_use':
       appendStatusEvent('tool', ev.toolName, summarizeToolTarget(ev.toolName, ev.toolInput));
@@ -189,5 +211,50 @@ export function clearStatusEvents(): void {
     db.prepare(`DELETE FROM status_events`).run();
   } catch {
     // ignore — see appendStatusEvent
+  }
+}
+
+/**
+ * The room a `<message to>` block may preview into: a webchat room that is the
+ * current turn's origin, never a task run (its blocks are not delivered).
+ * Anything else — another agent, another channel, another room — never
+ * previews; the host checks the room against the session's own again.
+ */
+function resolvePreviewRoom(toName: string): string | null {
+  const dest = findByName(toName);
+  if (!dest || dest.type !== 'channel' || dest.channelType !== 'webchat' || !dest.platformId) return null;
+  const route = getCurrentReplyRoute();
+  if (!route || route.channelType !== dest.channelType || route.platformId !== dest.platformId) return null;
+  if (getMessageIn(route.inReplyTo)?.kind === 'task') return null;
+  return dest.platformId;
+}
+
+const replyPreview = new ReplyPreviewStream({
+  resolveRoom: resolvePreviewRoom,
+  write: writeReplyPreview,
+  now: () => Date.now(),
+});
+
+/**
+ * Replace the reply preview on the feed: kind 'preview', `text` the preview
+ * (null clears it), `detail` the room. Older preview rows are deleted first so
+ * the table holds at most one — the host only needs the latest, and a long
+ * reply must not push real activity past the row cap. Best-effort, like every
+ * feed write.
+ */
+export function writeReplyPreview(text: string | null, room: string | null): void {
+  try {
+    const db = getOutboundDb();
+    ensureStatusTable(db);
+    db.prepare(`DELETE FROM status_events WHERE kind = 'preview'`).run();
+    db.prepare(`INSERT INTO status_events (kind, text, detail, created_at) VALUES ('preview', $text, $room, $now)`).run(
+      {
+        $text: text === null ? null : redactSecrets(text),
+        $room: room,
+        $now: new Date().toISOString(),
+      },
+    );
+  } catch {
+    // Cosmetic feed — never let it disrupt the turn.
   }
 }

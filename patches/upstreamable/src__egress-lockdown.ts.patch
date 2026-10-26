@@ -1,5 +1,5 @@
 diff --git a/src/egress-lockdown.ts b/src/egress-lockdown.ts
-index 8277bd7a..733a32df 100644
+index 8a341fbe..90e6b486 100644
 --- a/src/egress-lockdown.ts
 +++ b/src/egress-lockdown.ts
 @@ -1,8 +1,11 @@
@@ -18,7 +18,7 @@ index 8277bd7a..733a32df 100644
   *
   * Fail-fast: when the flag is on but the network/gateway can't be set up, throw
   * rather than silently spawn an agent with open egress.
-@@ -52,19 +55,49 @@ function gatewayAttached(identity: string): boolean {
+@@ -76,19 +79,49 @@ function gatewayAttached(identity: string): boolean {
    }
  }
  
@@ -76,8 +76,8 @@ index 8277bd7a..733a32df 100644
 +    );
    }
  
-   if (
-@@ -74,26 +107,26 @@ export function ensureEgressNetwork(access = selectedAccess): boolean {
+   // The name alone proves nothing: a network made by hand, or a setting naming
+@@ -101,28 +134,28 @@ export function ensureEgressNetwork(access = selectedAccess): boolean {
      throw new EgressLockdownError(`the "${EGRESS_NETWORK}" internal network could not be created`);
    }
  
@@ -121,3 +121,5 @@ index 8277bd7a..733a32df 100644
 +  const endpoint = access?.endpoint || 'host.docker.internal';
 +  return ['--network', EGRESS_NETWORK, `--add-host=${endpoint}:${egressBridgeAddress()}`];
  }
+ 
+ /** Whether a container attached to these networks is on the egress network alone. */

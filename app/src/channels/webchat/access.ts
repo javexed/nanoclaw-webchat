@@ -2,10 +2,13 @@
  * Per-room access control.
  *
  * Webchat rooms are messaging_groups rows wired to one or more agent groups
- * via messaging_group_agents. A user has access to a room if they have
- * access to *any* of the agents wired to it. Agent-group access is
- * delegated to the cross-channel permissions module so the policy stays
- * consistent with command-gate, approvals, etc.
+ * via messaging_group_agents. A user has access to a room only if they have
+ * access to EVERY agent wired to it. A room carries every wired agent's
+ * replies (and, with turn traces on, their stored tool inputs and outputs),
+ * and a message sent into it reaches every wired agent — so reaching one
+ * agent must not open a room shared with an agent the user may not use.
+ * Agent-group access is delegated to the cross-channel permissions module so
+ * the policy stays consistent with command-gate, approvals, etc.
  */
 import { canAccessAgentGroup } from '../../modules/permissions/access.js';
 import { getAgentsForWebchatRoom } from './db.js';
@@ -17,9 +20,9 @@ export async function canAccessRoom(userId: string, roomId: string): Promise<boo
   const agents = await getAgentsForWebchatRoom(roomId);
   if (agents.length === 0) return false;
   for (const a of agents) {
-    if ((await canAccessAgentGroup(userId, a.id)).allowed) return true;
+    if (!(await canAccessAgentGroup(userId, a.id)).allowed) return false;
   }
-  return false;
+  return true;
 }
 
 export async function filterRoomsForUser<T extends WebchatRoom>(userId: string, rooms: T[]): Promise<T[]> {

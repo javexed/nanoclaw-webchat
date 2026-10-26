@@ -1,5 +1,5 @@
 diff --git a/container/agent-runner/src/formatter.test.ts b/container/agent-runner/src/formatter.test.ts
-index da7d09cc..29ec2026 100644
+index c321e81a..d9d48080 100644
 --- a/container/agent-runner/src/formatter.test.ts
 +++ b/container/agent-runner/src/formatter.test.ts
 @@ -13,7 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
@@ -11,7 +11,7 @@ index da7d09cc..29ec2026 100644
  import { TIMEZONE, formatLocalTime } from './timezone.js';
  
  beforeEach(() => {
-@@ -327,3 +327,15 @@ describe('app_context rendering (Slack agent mode, contract C4)', () => {
+@@ -342,3 +342,15 @@ describe('app_context rendering (Slack agent mode, contract C4)', () => {
      expect(result).toContain('(viewing: channel C1&lt;&amp;&gt;)');
    });
  });

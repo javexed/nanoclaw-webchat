@@ -13,6 +13,9 @@ import MsgDeleteButton from './MsgDeleteButton.vue';
 import ApprovalCard from './ApprovalCard.vue';
 import SkillDraftCard from './SkillDraftCard.vue';
 import TurnThoughts from './TurnThoughts.vue';
+import LimitRetry from './LimitRetry.vue';
+import { servedModelShown } from './served-model.js';
+import { state } from '../core/state.js';
 
 const props = defineProps<{
   decorate: (bubble: HTMLElement) => void;
@@ -35,7 +38,7 @@ const props = defineProps<{
     <template v-for="row in messages" :key="row.key">
       <div v-if="row.kind === 'system'" class="msg system">{{ row.text }}</div>
 
-      <div v-else-if="row.kind === 'divider'" class="context-divider"><span>{{ row.text }}</span></div>
+      <div v-else-if="row.kind === 'divider'" class="context-divider" :class="row.cls"><span>{{ row.text }}</span></div>
 
       <div v-else-if="row.kind === 'approval'" class="msg approval-msg" :data-question-id="row.id || ''">
         <div v-if="row.approvalState === 'resolved'" class="approval-inroom-note resolved">{{ row.note }}</div>
@@ -90,8 +93,12 @@ const props = defineProps<{
         />
 
         <TurnThoughts v-if="row.isAgent" :row="row" />
+        <LimitRetry v-if="row.limitResetsAt != null" :row="row" />
 
-        <div v-if="row.timeStr" class="timestamp" :title="row.timeTitle || undefined">{{ row.timeStr }}</div>
+        <div v-if="row.timeStr" class="timestamp" :title="row.timeTitle || undefined">{{ row.timeStr
+          }}<span v-if="servedModelShown(row, state.settings)" class="served-model">{{
+            ' · ' + servedModelShown(row, state.settings)
+          }}</span></div>
         <div v-if="row.isMine && row.status" :class="row.status === '✓✓' ? 'status delivered' : 'status'">{{
           row.status
         }}</div>

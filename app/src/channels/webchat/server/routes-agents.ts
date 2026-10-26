@@ -100,7 +100,7 @@ import {
 import { pendingAgentImports, spawnTar, spoolUploadToTmp, sweepPendingImports } from './archive.js';
 import { mcpServerForUI, reloadAgentMcpServers } from './mcp-registry.js';
 import { reloadAgentModelEnv } from './model-wiring.js';
-import { codexAvailable, grokAvailable, opencodeAvailable, piAvailable } from './providers.js';
+import { codexAvailable, copilotAvailable, grokAvailable, opencodeAvailable, piAvailable } from './providers.js';
 import { fetchGithubDir, latestCommitSha, resolveDiscoveredSkillUrl, resolveSourceUrl } from './skill-sources.js';
 import {
   SkillOrigin,
@@ -483,8 +483,9 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
   if (piAvailable()) allowed.add('pi');
   if (codexAvailable()) allowed.add('codex');
   if (grokAvailable()) allowed.add('grok');
+  if (copilotAvailable()) allowed.add('copilot');
   if (!allowed.has(provider)) {
-    const known = ['opencode', 'pi', 'codex', 'grok'].includes(provider);
+    const known = ['opencode', 'pi', 'codex', 'grok', 'copilot'].includes(provider);
     return json(res, 400, {
       // A known harness that is not loaded yet: the panel offers its install (owners).
       ...(known ? { code: 'not-installed' } : {}),
@@ -493,11 +494,13 @@ export async function rAgentProviderPut(ctx: RouteCtx, m: RegExpMatchArray): Pro
           ? 'OpenCode harness is not installed — install the OpenCode stack first.'
           : provider === 'grok'
             ? 'Grok harness is not installed — run /add-grok, rebuild the image, then authenticate.'
-            : provider === 'codex'
-              ? 'Codex harness is not installed — an owner can install it from this panel.'
-              : provider === 'pi'
-                ? 'pi harness is not installed — an owner can install it from this panel.'
-                : `Unknown harness: ${provider}`,
+            : provider === 'copilot'
+              ? 'GitHub Copilot is not installed — an owner can install it from Settings.'
+              : provider === 'codex'
+                ? 'Codex harness is not installed — an owner can install it from this panel.'
+                : provider === 'pi'
+                  ? 'pi harness is not installed — an owner can install it from this panel.'
+                  : `Unknown harness: ${provider}`,
     });
   }
   // A harness runs its own vendor's models: Claude is not offered another's.
@@ -578,8 +581,10 @@ export async function rAgentConfigModelPut(ctx: RouteCtx, m: RegExpMatchArray): 
  *
  * An agent in either filtered mode sits on the lockdown network behind
  * central's egress filter: switching between those two applies at once, but
- * moving to or from Open changes the container's network and so waits for its
- * next start.
+ * moving to or from Open changes the container's network, which only a new
+ * container gets. So that change restarts the agent's containers once it is
+ * idle (never mid-turn); an agent with nothing running just starts on the new
+ * network next time.
  */
 export async function rAgentEgressPut(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, userId } = ctx;
@@ -598,8 +603,10 @@ export async function rAgentEgressPut(ctx: RouteCtx, m: RegExpMatchArray): Promi
   await updateContainerConfigScalars(group.id, { egress });
   forgetGroupEgressMode(group.id);
   const appliesNow = before !== 'open' && egress !== 'open';
-  log.info('Agent egress changed', { agentGroupId: group.id, egress, by: userId, appliesNow });
-  return json(res, 200, { ok: true, egress, appliesNow });
+  const restarted =
+    !appliesNow && before !== egress ? await restartAgentGroupContainersWhenIdle(group.id, 'Network mode changed') : 0;
+  log.info('Agent egress changed', { agentGroupId: group.id, egress, by: userId, appliesNow, restarted });
+  return json(res, 200, { ok: true, egress, appliesNow, restarted });
 }
 
 /**
@@ -645,7 +652,9 @@ export async function rAgentEgressHostsPut(ctx: RouteCtx, m: RegExpMatchArray): 
  * container. This tier is for what the gateway cannot inject: query-parameter
  * API keys, SSH passwords.
  *
- * Applies at the agent's next spawn; env is fixed at container start.
+ * Env is fixed at container start, so a change restarts the agent's
+ * containers once it is idle (never mid-turn, so no reply is cut off); an agent
+ * with nothing running picks it up at its next spawn.
  */
 export async function rAgentEnv(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   const { req, res, url, method, userId } = ctx;
@@ -655,9 +664,9 @@ export async function rAgentEnv(ctx: RouteCtx, m: RegExpMatchArray): Promise<voi
   if (req.headers['x-webchat-csrf'] !== '1') return json(res, 403, { error: 'Missing X-Webchat-CSRF header' });
   if (method === 'DELETE') {
     const name = url.searchParams.get('name') ?? '';
-    return deleteAgentEnv(group.id, name)
-      ? json(res, 200, { ok: true, names: listAgentEnvNames(group.id) })
-      : json(res, 404, { error: 'No such variable' });
+    if (!deleteAgentEnv(group.id, name)) return json(res, 404, { error: 'No such variable' });
+    const restarted = await restartAgentGroupContainersWhenIdle(group.id, 'Environment changed');
+    return json(res, 200, { ok: true, names: listAgentEnvNames(group.id), restarted });
   }
   const body = await readJsonObject<{ name?: unknown; value?: unknown }>(req, res);
   if (body === undefined) return;
@@ -668,7 +677,8 @@ export async function rAgentEnv(ctx: RouteCtx, m: RegExpMatchArray): Promise<voi
   setAgentEnv(group.id, body.name, body.value as string);
   // Name only — the value must not reach the log.
   log.info('Agent env var set', { agentGroupId: group.id, name: body.name, by: userId });
-  return json(res, 200, { ok: true, names: listAgentEnvNames(group.id) });
+  const restarted = await restartAgentGroupContainersWhenIdle(group.id, 'Environment changed');
+  return json(res, 200, { ok: true, names: listAgentEnvNames(group.id), restarted });
 }
 
 export async function rAgentMcp(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {

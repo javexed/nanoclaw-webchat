@@ -1,5 +1,5 @@
 diff --git a/src/container-runner.test.ts b/src/container-runner.test.ts
-index b97d236c..fc4bac91 100644
+index ac3bff3d..4f8f1581 100644
 --- a/src/container-runner.test.ts
 +++ b/src/container-runner.test.ts
 @@ -341,14 +341,16 @@ describe('composeSessionSpec', () => {

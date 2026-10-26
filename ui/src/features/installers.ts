@@ -74,7 +74,19 @@ export const GROK_WIZARD_ELS: Record<string, string> = {
   doneMsg: 'Grok installed — sign in with a device code below.',
 };
 
-const HARNESS_NAME: Record<string, string> = { codex: 'Codex', opencode: 'OpenCode', pi: 'pi', grok: 'Grok' };
+export const COPILOT_WIZARD_ELS: Record<string, string> = {
+  btn: '#wizard-copilot-install',
+  log: '#wizard-copilot-install-log',
+  doneMsg: 'GitHub Copilot installed — connect it below.',
+};
+
+const HARNESS_NAME: Record<string, string> = {
+  codex: 'Codex',
+  opencode: 'OpenCode',
+  pi: 'pi',
+  grok: 'Grok',
+  copilot: 'GitHub Copilot',
+};
 
 /** Install a harness through /api/install/:feature, rendering into `els`. */
 export async function runInstall(feature: string, els: Record<string, string>) {

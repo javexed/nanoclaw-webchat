@@ -11,6 +11,8 @@ import { realOnecliAdmin } from '../user-credentials/onecli-admin.js';
 import { log } from '../../log.js';
 import { preflightOneCLI } from '../../onecli-preflight.js';
 import { resetCircuitBreaker } from '../../circuit-breaker.js';
+// Opt-in retention for sessions nobody can resume (NANOCLAW_SESSION_KEEP_DAYS).
+import '../session-retention/index.js';
 
 onHostStart(() => {
   // Fire-and-forget: prime the host page cache for the agent image so the

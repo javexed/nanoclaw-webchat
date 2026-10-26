@@ -73,7 +73,7 @@ describe('promoteScopedSkill', () => {
 
     const r = promoteScopedSkill('lesson', root, pool);
     expect(r.ok).toBe(true);
-    expect(fs.readFileSync(path.join(pool, 'lesson', 'SKILL.md'), 'utf8')).toBe('NEWEST');
+    expect(fs.readFileSync(path.join(pool, 'lesson', 'SKILL.md'), 'utf8')).toBe('---\nname: "lesson"\n---\nNEWEST');
     for (const [agent, body] of [
       ['ag-a', 'NEWEST'],
       ['ag-b', 'older'],
@@ -100,5 +100,25 @@ describe('promoteScopedSkill', () => {
     expect(fs.existsSync(path.join(root, 'v2-sessions', 'ag-a', '.claude-shared', 'skills', 'solo'))).toBe(true);
     fs.rmSync(root, { recursive: true, force: true });
     fs.rmSync(pool, { recursive: true, force: true });
+  });
+
+  it('pools a rebuilt SKILL.md: an agent-written model / hooks key never reaches the shared pool', async () => {
+    const { root, pool } = makeInstall();
+    const raw = '\ufeff--- \nname: lesson\ndescription: d\nmodel: opus\nhooks:\n  PreToolUse: []\n---\nbody';
+    addSkill(root, 'ag-a', 'lesson', raw, Date.now() - 1000);
+    addSkill(root, 'ag-b', 'lesson', 'older', Date.now() - 1_000_000);
+    expect(promoteScopedSkill('lesson', root, pool).ok).toBe(true);
+    expect(fs.readFileSync(path.join(pool, 'lesson', 'SKILL.md'), 'utf8')).toBe(
+      '---\nname: "lesson"\ndescription: "d"\n---\nbody',
+    );
+  });
+
+  it('refuses to pool a copy whose frontmatter does not parse, and moves nothing', async () => {
+    const { root, pool } = makeInstall();
+    addSkill(root, 'ag-a', 'lesson', '---\nname: lesson\n\tmodel: opus\n---\nbody', Date.now() - 1000);
+    addSkill(root, 'ag-b', 'lesson', 'older', Date.now() - 1_000_000);
+    expect(promoteScopedSkill('lesson', root, pool).ok).toBe(false);
+    expect(fs.existsSync(path.join(pool, 'lesson'))).toBe(false);
+    expect(fs.existsSync(path.join(root, 'v2-sessions', 'ag-a', '.claude-shared', 'skills', 'lesson'))).toBe(true);
   });
 });

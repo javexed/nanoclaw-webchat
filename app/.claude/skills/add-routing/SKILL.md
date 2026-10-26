@@ -106,6 +106,15 @@ Semantics:
   while it is off requests fall back at once instead of waiting each time.
 - Requests naming a **concrete roster model are never rewritten**, flag or no
   flag. Shadow logging continues for them unchanged.
+- **Only bound, local models**: a routed request is sent only to one of that
+  router's own bindings in `routes.json`, and only to a **local** model — one
+  served by a keyless Ollama or OpenAI-compatible host in the router's
+  `config.yaml`. A keyed cloud model (an `api_key_env` or gateway backend) is
+  reached only if you **pin** its binding (`"pinned": true`): your explicit
+  choice, never the classifier's. Whatever the classifier answers, any other
+  target is refused (`refused_model` in the log) and the default binding is
+  used; if nothing is admissible the request is rejected with
+  `no_admitted_model` before it reaches any model, so nothing is billed.
 - Every live decision is logged to the same JSONL with `"mode":"live"` and a
   `final_model` field — `grep '"mode": "live"'` to audit what `auto` did.
 
@@ -173,6 +182,11 @@ modest hardware. Operator layer: `data/litellm/routing/capabilities.local.json`
 (same shape, matched first, can raise `max_comfortable_b` on big-GPU hosts).
 Rules: pinned routes (`"pinned": true`) are never touched; descriptions are never touched; unknown roster models are reported,
 never auto-bound; a route with no scored candidate keeps its current binding.
+Only **local** models are candidates (keyless hosts in `data/litellm/config.yaml`):
+a keyed cloud model is never auto-bound, even when the catalog scores it, and an
+unpinned route already bound to one loses that binding (it then uses the
+default). Route suggestions in webchat follow the same rule. To route to a cloud
+model, bind it yourself and pin it.
 Runs automatically after the webchat "Refresh roster…" action and in the
 nightly recalibration timer — pull a model, refresh, and it joins routing by
 capability on its own.

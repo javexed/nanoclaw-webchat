@@ -1,5 +1,5 @@
 diff --git a/scripts/skill-apply.test.ts b/scripts/skill-apply.test.ts
-index 61aed68b..2da29c7f 100644
+index 791e4efa..3e25cafc 100644
 --- a/scripts/skill-apply.test.ts
 +++ b/scripts/skill-apply.test.ts
 @@ -1,4 +1,4 @@
@@ -198,7 +198,7 @@ index 61aed68b..2da29c7f 100644
      writeFileSync(join(mroot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(mroot, '.env'), '');
    });
-@@ -640,8 +731,8 @@ describe('nc:operator', () => {
+@@ -643,8 +734,8 @@ describe('nc:operator', () => {
    let oroot: string;
    let oskill: string;
    beforeEach(() => {
@@ -209,7 +209,7 @@ index 61aed68b..2da29c7f 100644
      writeFileSync(join(oroot, 'package.json'), '{"name":"scratch"}');
    });
  
-@@ -694,8 +785,8 @@ describe('programmatic apply via inputs', () => {
+@@ -697,8 +788,8 @@ describe('programmatic apply via inputs', () => {
    let proot: string;
    let pskill: string;
    beforeEach(() => {
@@ -220,7 +220,7 @@ index 61aed68b..2da29c7f 100644
      writeFileSync(join(proot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(proot, '.env'), '');
    });
-@@ -807,8 +898,8 @@ IMESSAGE_LOCAL=true
+@@ -810,8 +901,8 @@ IMESSAGE_LOCAL=true
  `;
  
  function modeScratch(): { sdir: string; rdir: string } {
@@ -231,7 +231,7 @@ index 61aed68b..2da29c7f 100644
    writeFileSync(join(sdir, 'SKILL.md'), MODE_SKILL);
    writeFileSync(join(rdir, '.env'), '');
    writeFileSync(join(rdir, 'package.json'), '{"name":"scratch"}');
-@@ -866,8 +957,8 @@ DEMO_PLATFORM={{platform_id}}
+@@ -869,8 +960,8 @@ DEMO_PLATFORM={{platform_id}}
  `;
  
  function stepScratch(): { sdir: string; rdir: string } {
@@ -242,7 +242,7 @@ index 61aed68b..2da29c7f 100644
    writeFileSync(join(sdir, 'SKILL.md'), STEP_SKILL);
    writeFileSync(join(rdir, '.env'), '');
    writeFileSync(join(rdir, 'package.json'), '{"name":"scratch"}');
-@@ -951,8 +1042,8 @@ describe('run-health gate (a bounce blocks later side effects)', () => {
+@@ -1010,8 +1101,8 @@ describe('run-health gate (a bounce blocks later side effects)', () => {
    let groot: string;
    let gskill: string;
    beforeEach(() => {
@@ -253,7 +253,7 @@ index 61aed68b..2da29c7f 100644
      writeFileSync(join(groot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(groot, '.env'), '');
    });
-@@ -1096,8 +1187,8 @@ describe('nc:run effect:check (precondition gate)', () => {
+@@ -1194,8 +1285,8 @@ describe('nc:run effect:check (precondition gate)', () => {
    let chkSkill: string;
    let chkRoot: string;
    beforeEach(() => {
@@ -264,7 +264,7 @@ index 61aed68b..2da29c7f 100644
      writeFileSync(join(chkRoot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(chkRoot, '.env'), '');
    });
-@@ -1174,8 +1265,8 @@ describe('onEvent (core event seam)', () => {
+@@ -1272,8 +1363,8 @@ describe('onEvent (core event seam)', () => {
    let eroot: string;
    let eskill: string;
    beforeEach(() => {
@@ -275,7 +275,7 @@ index 61aed68b..2da29c7f 100644
      writeFileSync(join(eroot, '.env'), '');
      writeFileSync(join(eroot, 'package.json'), '{"name":"scratch"}');
    });
-@@ -1358,8 +1449,8 @@ describe('firstFailureHint', () => {
+@@ -1456,8 +1547,8 @@ describe('firstFailureHint', () => {
    let froot: string;
    let fskill: string;
    beforeEach(() => {
@@ -286,7 +286,7 @@ index 61aed68b..2da29c7f 100644
      writeFileSync(join(froot, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(froot, '.env'), '');
    });
-@@ -1404,8 +1495,8 @@ describe('nc:prompt normalize at bind + InputMeta declaration', () => {
+@@ -1502,8 +1593,8 @@ describe('nc:prompt normalize at bind + InputMeta declaration', () => {
    let nroot: string;
    let nskill: string;
    beforeEach(() => {
@@ -297,7 +297,7 @@ index 61aed68b..2da29c7f 100644
      writeFileSync(join(nskill, 'SKILL.md'), NORMALIZE_SKILL);
      writeFileSync(join(nroot, '.env'), '');
      writeFileSync(join(nroot, 'package.json'), '{"name":"scratch"}');
-@@ -1462,8 +1553,8 @@ describe('resolveInput (core input seam)', () => {
+@@ -1560,8 +1651,8 @@ describe('resolveInput (core input seam)', () => {
    let iroot: string;
    let iskill: string;
    beforeEach(() => {
@@ -308,7 +308,7 @@ index 61aed68b..2da29c7f 100644
      writeFileSync(join(iroot, '.env'), '');
      writeFileSync(join(iroot, 'package.json'), '{"name":"scratch"}');
    });
-@@ -1547,8 +1638,8 @@ describe('validate-at-bind (inputs + resolveInput answers)', () => {
+@@ -1645,8 +1736,8 @@ describe('validate-at-bind (inputs + resolveInput answers)', () => {
    let vroot: string;
    let vskill: string;
    beforeEach(() => {
@@ -319,7 +319,7 @@ index 61aed68b..2da29c7f 100644
      writeFileSync(join(vskill, 'SKILL.md'), VALIDATE_BIND_SKILL);
      writeFileSync(join(vroot, '.env'), '');
      writeFileSync(join(vroot, 'package.json'), '{"name":"scratch"}');
-@@ -1720,8 +1811,8 @@ describe('referenceProse (reference-floor slice)', () => {
+@@ -1818,8 +1909,8 @@ describe('referenceProse (reference-floor slice)', () => {
    });
  
    it('is carried on ApplyResult.referenceProse through a real apply', async () => {
@@ -330,7 +330,7 @@ index 61aed68b..2da29c7f 100644
      writeFileSync(join(rdir, 'package.json'), '{"name":"scratch"}');
      writeFileSync(join(rdir, '.env'), '');
      writeFileSync(join(sdir, 'SKILL.md'), REFERENCE_SKILL);
-@@ -1731,3 +1822,20 @@ describe('referenceProse (reference-floor slice)', () => {
+@@ -1829,3 +1920,20 @@ describe('referenceProse (reference-floor slice)', () => {
      expect(res.referenceProse).not.toContain('## Apply');
    });
  });

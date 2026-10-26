@@ -28,6 +28,7 @@
 import { log } from '../../log.js';
 import { getSttCleanupModelId, getSttCleanupPrompt, getWebchatModel } from './db.js';
 import { safeFetch } from './models.js';
+import { filterHallucination, wavStats } from './stt-hallucination.js';
 
 /** Matches safeFetch's signature (string URL); plain fetch also satisfies it. */
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -71,6 +72,8 @@ function segmentForm(wav: Buffer): FormData {
  *                  `response_format=text` → text body
  *   elevenlabs:    /v1/speech-to-text — multipart `file` + `model_id`,
  *                  `xi-api-key` header → JSON { text }
+ * Silence hallucinations ("Thank you.", "[BLANK_AUDIO]" — see
+ * stt-hallucination.ts) come back as '', which the PWA treats as nothing heard.
  * Throws on failure — the endpoint maps that to a 502 for the client to toast.
  */
 export async function transcribeSegment(wav: Buffer, fetchFn: FetchLike = safeFetch): Promise<string> {
@@ -113,11 +116,16 @@ export async function transcribeSegment(wav: Buffer, fetchFn: FetchLike = safeFe
     log.warn('Webchat STT: backend error', { provider, status: res.status, detail: detail.slice(0, 200) });
     throw new Error(`STT backend returned ${res.status}`);
   }
+  let text: string;
   if (provider === 'elevenlabs') {
     const body = (await res.json().catch(() => ({}))) as { text?: string };
-    return (body.text ?? '').trim();
+    text = (body.text ?? '').trim();
+  } else {
+    text = (await res.text()).trim();
   }
-  return (await res.text()).trim();
+  const kept = filterHallucination(text, wavStats(wav));
+  if (text && !kept) log.debug('Webchat STT: dropped a silence hallucination', { provider, chars: text.length });
+  return kept;
 }
 
 export const DEFAULT_CLEANUP_PROMPT = [

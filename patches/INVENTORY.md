@@ -16,7 +16,7 @@
 #   scripts/regen-patches.sh <composed-tree> <file> ...
 
 
-## UPSTREAMABLE — candidate upstream PRs (72)
+## UPSTREAMABLE — candidate upstream PRs (75)
 
 .claude/skills/add-onecli/scripts/setup.ts
     keep OneCLI's management API and Postgres off the docker bridge on Linux.
@@ -54,6 +54,8 @@ container/agent-runner/package.json
     no minimumReleaseAge policy, so a caret held only by bun.lock lets one
     non-frozen install float the SDK; upstream's CLAUDE.md already says to bump
     it deliberately. No lockfile change.
+src/delivery.ts
+    a busy SQLite lock on a session mailbox read skips that session for one poll (warned once a minute) instead of logging an error; see app/src/mailbox-busy.ts
 src/providers/provider-container-registry.ts
     lacksMcpTools capability. NEGATIVE polarity on purpose: this registry is
     sparse (a provider with no host-side container needs never registers, and
@@ -63,6 +65,10 @@ src/project-doc-compose.ts
     provider has no MCP client. Covers both the built-in module fragments and
     user-added external MCP servers; `cli` and `scheduling` survive the cut
     because they teach `ncl`, which rides the session DB rather than MCP.
+    Also an optional ProjectDocObserver: told what each source contributed or
+    why it was left out, and handed the final document instead of it being
+    written (a dry run). `ncl groups context` reads the composition through it
+    rather than re-deriving the rules. Insertions only; no observer, no change.
 src/project-doc-compose.test.ts
     coverage for the above, including the polarity (an unregistered or
     undeclared provider is unaffected)
@@ -166,6 +172,10 @@ src/cli/resources/groups.test.ts
 src/cli/resources/groups.ts
     FK-aware group deletion for module-installed tables; an agent's approved
     `config update --model` restarts its session, so no second restart card
+    Product touchpoint: a template restamp that writes the persona records it
+    as the approved baseline (instruction guard).
+src/container-runner.egress-adoption.test.ts
+    upstream's adoption fixtures taught that lockdown detaches the gateway, and the refused-stop removal wait run on virtual time
 src/container-runner.test.ts
     test for the memory-cap default
 src/container-runner.ts
@@ -174,6 +184,10 @@ src/container-runner.ts
     callback) and isContainerStopping() lets the reconcile leave a stop in
     flight, or a teardown awaiting retry, alone. Coverage in
     app/src/container-runner.stop-once.test.ts.
+    Product touchpoint: the instruction guard's spawn check
+    (guardStandingInstructions) runs after initGroupFilesystem, before
+    buildMounts composes the project document; it needs the session to card
+    the right approvers and tell the agent its edit is held.
 src/db/agent-groups.ts
     lifecycle status setter with validation
 src/db/db-v2.test.ts
@@ -185,7 +199,9 @@ src/egress-lockdown.test.ts
 src/egress-lockdown.ts
     per-group lockdown (`force`) alongside the install-wide flag; the selected gateway kept OFF the network and its endpoint pointed at central's egress filter on the bridge
 src/group-init.ts
-    rtk bash-output compression hook; upstream memory-reconcile coexistence
+    rtk bash-output compression hook; upstream memory-reconcile coexistence; settings.json read and replaced by descriptor (a planted symlink or FIFO is refused)
+src/group-skills.test.ts
+    template fixture file written with a fixed mode, so the mode assertion holds under any umask
 src/host-sweep.test.ts
     tests for the sweep fixes
 src/host-sweep-grace.test.ts
@@ -224,6 +240,15 @@ src/reconcile-session.ts
     reaped at the ceiling never does. The reconcile skips a container already
     being stopped. Coverage in
     app/src/reconcile-session.ceiling.test.ts.
+    ONE PRODUCT HUNK rides here too, because a file has one patch: for a task
+    session the reconcile first runs the task-health policy
+    (app/src/modules/task-health), BEFORE it counts due messages and wakes a
+    container — a run that died is still pending, and the wake would otherwise
+    re-run it. Not upstreamable; it moves to a seam registry (a pre-wake
+    reconcile hook) if one ever exists, and must be dropped from any upstream PR
+    made from this patch.
+    a busy mailbox lock skips the session for one sweep instead of logging an error (mailbox-busy.ts)
+    an absolute-ceiling kill with no processing claims (an idle container) logs at info as a reap; a kill with claims open stays a warning
 src/router.ts
     agent lifecycle gate (active/paused/archived) + prime negative-lookahead
 src/session-manager.attachments.test.ts
@@ -241,7 +266,7 @@ src/templates/local-dir.ts
 src/types.ts
     agent-group lifecycle status type
 
-## PRODUCT — shrink via seam registries (38)
+## PRODUCT — shrink via seam registries (37)
 
 src/mailbox/model.ts
     add the 'interrupt' inbound kind — the webchat stop button writes a control
@@ -250,17 +275,8 @@ src/mailbox/model.ts
 container/agent-runner/src/mailbox/model.generated.ts
     the same change, byte-identical: `pnpm mailbox-model:check` cmp's the two
     copies, so this patch must always mirror src/mailbox/model.ts exactly.
-container/agent-runner/src/provider-contracts/claude.ts
-    keep Claude's textDelivery at the result door (upstream: mid-turn-complete)
-    so the single-reply misfire guard can see the turn's block count
-container/agent-runner/src/provider-contracts/registry.test.ts
-    asserts the result-door contract above
 container/agent-runner/src/providers/claude-config.ts
     per-server MCP tool allowlist (`enabledTools`) → SDK `allowedTools`
-container/agent-runner/src/providers/claude.errors.test.ts
-    error-path assertion follows the active textDelivery contract
-container/agent-runner/src/providers/claude.midturn-text.test.ts
-    asserts the result-door contract
 src/db/migrations/portability.test.ts
     grandfathers the webchat module's pre-async-driver migrations
 src/modules/cross-session-context/backfill.ts
@@ -288,8 +304,9 @@ container/agent-runner/src/cross-session-echo.test.ts
 container/agent-runner/src/config.ts
     lenientOutput + learning config surface read by the runner
 container/agent-runner/src/index.ts
-    module imports (status feed, learning, send-file hint); the prompt addendum
-    is built after the provider so it can consult supportsMcpTools
+    module imports (status feed, learning, send-file hint, task-run marks); the prompt addendum
+    is built after the provider so it can consult supportsMcpTools; records the
+    built addendum and memory section in session state (context-snapshot.ts)
 container/agent-runner/src/mcp-tools/cli.instructions.md
     agent-facing CLI instructions; --model needs no `groups restart`
 container/agent-runner/src/mcp-tools/core.instructions.md
@@ -297,9 +314,17 @@ container/agent-runner/src/mcp-tools/core.instructions.md
 container/agent-runner/src/poll-loop.test.ts
     coverage for the poll-loop product behaviour
 container/agent-runner/src/poll-loop.ts
-    interrupt handling, lenient output, origin guard, terminal-error surfacing, empty-turn net
+    interrupt handling, lenient output, origin guard, terminal-error surfacing, empty-turn net;
+    a lenient (small local) model keeps the result door for the misfire guard, everyone
+    else takes the provider's mid-turn delivery (deliversMidTurn)
+container/agent-runner/src/poll-loop.midturn.test.ts
+    deliversMidTurn
 container/agent-runner/src/providers/claude.ts
-    thinking/reasoning stream taps, restricted-review support, rate-limit classification
+    thinking/reasoning stream taps (and a request for thinking summaries, which newer
+    models omit by default), text-delta and message-complete taps for the live reply
+    preview, restricted-review support, rate-limit classification
+container/agent-runner/src/providers/claude.fast-mode.test.ts
+    its exact-settings assertions include the thinking-summaries request
 container/agent-runner/src/providers/types.ts
     provider capability flags (supportsRestrictedReview, settings scopes,
     supportsMcpTools)
@@ -337,6 +362,9 @@ src/modules/typing/index.test.ts
     tests for the typing attribution
 src/modules/typing/index.ts
     agentName on the typing indicator (multi-agent rooms)
+container/skills/self-customize/SKILL.md
+    standing instructions are approval-gated in this fork (instruction guard);
+    the skill no longer tells agents the edit applies without approval
 
 ## LOCAL — install-local, expected to persist (5)
 

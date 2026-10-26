@@ -12,6 +12,7 @@ docs cover the harder subsystems in depth:
 - Message path: [message-path.md](message-path.md), [architecture-diagram.md](architecture-diagram.md)
 - Threads and context sync: [threads.md](threads.md), [threads-qa.md](threads-qa.md)
 - User credentials (per-member): [user-credentials.md](user-credentials.md)
+- GitHub Copilot as an agent harness: [copilot.md](copilot.md)
 - Local-model routing: [llm-router.md](design/llm-router.md), [auto-routing.md](design/auto-routing.md)
 
 Ships **disabled by default** — the adapter factory returns `null` unless
@@ -75,9 +76,36 @@ implementation notes that matter here:
   thread and main. See [threads.md](threads.md).
 - **Markdown** — GFM via vendored `marked` + `DOMPurify`.
 - **Attachments** — chunked/resumable uploads above ~512 KB; files are stored as
-  separate message rows.
+  separate message rows. Images open in the lightbox; other files open in a
+  preview drawer (full-screen on a phone), resized by dragging its edge, by
+  clicking it to step through narrow / default / wide, or from the keyboard: highlighted code and text,
+  CSV as a table, JSON as a collapsible tree, Markdown rendered through the same
+  `DOMPurify` settings as messages, PDF in the browser's viewer, video and audio
+  in native players. Text previews stop at 2 MB (download instead). Files are
+  served with `CSP: sandbox` (an opaque origin, even when framed) and
+  `frame-ancestors 'self'`, and answer single `Range` requests with `206` so
+  media can seek — iOS Safari will not play an mp4 without that.
+  **HTML attachments** render interactively in the drawer, in an iframe with
+  `sandbox="allow-scripts"` only (no `allow-same-origin`, no popups), loaded
+  from `?view=frame` — a response with its own CSP (`sandbox allow-scripts`,
+  inline script/style only, `connect-src 'none'`, nothing from the network,
+  `frame-ancestors 'self'`) that the server sends only when the browser says
+  the request is for a frame (`Sec-Fetch-Dest: iframe`). A `srcdoc` or `blob:`
+  frame is not used because it would inherit the app's CSP and its
+  `script-src 'self'` would block the page's inline scripts. Opened as a file,
+  an `.html` attachment is a download. The page can pre-fill the composer —
+  never send — with `parent.postMessage({ type: 'nanoclaw:compose', text }, '*')`:
+  accepted only from the drawer's own frame (and not after the page navigates
+  away), only in exactly that shape, control and bidi characters stripped,
+  cut at 4,000 characters. A "From page.html" note shows above the composer
+  until the text is sent or cleared.
 - **Live agent activity** — redacted `status` frames stream a per-turn thinking
   bubble (`start` / `tool` / `progress` / `reasoning` / `done` / `stalled`).
+  A `preview` frame carries a reply still being written (Claude agents only —
+  other providers stream no text deltas): only a `<message>` block bound for
+  this room, never `<internal>` text or a block to another agent, at most four
+  updates a second container-side and once a second at the host's delivery
+  poll. It is never stored; the delivered message replaces it.
   When turn traces are on (Settings), each turn's feed is also stored with its
   reply as **Thoughts**: tool inputs and outputs included, readable by everyone
   who can open the room, members who join later included, until the retention
@@ -189,7 +217,7 @@ Localhost auto-pass is off once any explicit method is set.
 |---|---|---|---|
 | Bearer | `WEBCHAT_TOKEN` (≥24) | `Authorization: Bearer` or WS subprotocol `bearer.<t>`; constant-time compare | `webchat:owner` |
 | OIDC (Microsoft Entra ID or any provider) | `WEBCHAT_OIDC_ISSUER`, `WEBCHAT_OIDC_AUDIENCE`, and the endpoints from discovery (below) | A signed id token — the web app's own sign-in, App Service's `x-ms-token-aad-id-token`, or a JWT presented as `Authorization: Bearer` (the VS Code extension). RS256 or ES256, pinned to the key's type; signature, issuer, audience, expiry checked against the issuer's keys. A token that fails falls through to the methods below; an expired one adds `X-Webchat-Auth-Hint: token-stale` and the browser renews it via `/.auth/refresh` | Microsoft: `webchat:<preferred_username>`; other providers: `webchat:<email>`, only when `email_verified` |
-| Trusted-proxy / SSO | `WEBCHAT_TRUSTED_PROXY_IPS` (`auto`/`*`/CIDR list), `WEBCHAT_TRUSTED_PROXY_HEADER` | The mode is only an IP gate: `auto`/`*` accepts any source, a list (IPv4 or IPv6 addresses or CIDRs; an IPv4-mapped IPv6 peer matches its IPv4) requires the hop to match. Either way the same headers are read — Azure EasyAuth / Cloudflare Access paired headers first (presence only, unsigned), then `WEBCHAT_TRUSTED_PROXY_HEADER` | `webchat:<identity>` |
+| Trusted-proxy / SSO | `WEBCHAT_TRUSTED_PROXY_IPS` (`auto`/`*`/CIDR list), `WEBCHAT_TRUSTED_PROXY_HEADER`; for Cloudflare Access also `WEBCHAT_CF_ACCESS_TEAM_DOMAIN` + `WEBCHAT_CF_ACCESS_AUD` | The mode is only an IP gate: `auto`/`*` accepts any source, a list (IPv4 or IPv6 addresses or CIDRs; an IPv4-mapped IPv6 peer matches its IPv4) requires the hop to match. Either way the same headers are read — Azure EasyAuth / Cloudflare Access paired headers first, then `WEBCHAT_TRUSTED_PROXY_HEADER`. EasyAuth's pair is trusted on presence (unsigned). With the two Cloudflare settings, a verified `Cf-Access-Jwt-Assertion` is the only identity accepted (issuer, the application's AUD tag, expiry, same email as the header) — the EasyAuth pair and `WEBCHAT_TRUSTED_PROXY_HEADER` are ignored and a request without a valid assertion is refused; without them that pair is trusted on presence too — set them whenever Cloudflare Access fronts webchat | `webchat:<identity>` |
 | Tailscale | `WEBCHAT_TAILSCALE=true` | `tailscale whois --json <ip>` → `LoginName` (remembered 30 s per peer address); behind HTTPS over Tailscale, Serve's `Tailscale-User-Login` header, believed only on the Serve listener (below) | `webchat:tailscale:<email>` |
 | Localhost | _(none)_ | remote is loopback, the request carries no forwarding headers (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`, `Cf-Connecting-IP`, `Cf-Ray`, `Tailscale-User-Login`, `X-Forwarded-Host`) and did not arrive on the Serve listener, **and** no explicit method configured | `webchat:local-owner` |
 
@@ -312,6 +340,7 @@ Loaded from `.env` into `process.env` (if unset) by the adapter's `env-load.ts`
 | `WEBCHAT_MCP_RELAY_PORT` | Port for the MCP auth relay (see below) | `3102` |
 | `WEBCHAT_MCP_RELAY_HOST` | Interface the relay binds — the address agent containers reach as `host.docker.internal`. Required on hosts with no `docker0` | auto (docker0 IP) |
 | `OLLAMA_HOST` | Dashboard "is Ollama up" probe only | `''` |
+| `NANOCLAW_SESSION_KEEP_DAYS` | Remove sessions idle this many days that nothing can resume (see [security.md](security.md#session-retention)) | off |
 
 ## HTTP API
 
