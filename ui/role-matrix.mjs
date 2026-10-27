@@ -46,6 +46,7 @@ const MATRIX = {
     'settings-audit': false, // GET /api/webchat/audit-syslog  owner|globalAdmin
     'settings-agent-activity': false, // GET /api/webchat/turn-traces  guards:['owner']
     'settings-secrets': false, // state.isOwnerView
+    'settings-publishing': false, // GET /api/publishing  guards:['owner']
     'settings-about': false, // GET /api/system/versions  anyAdmin
     'overflow-admin': false, // revealed on /api/users success — 403s for them
     // Marketplace off and not an owner → no route to either registry.
@@ -62,6 +63,7 @@ const MATRIX = {
     'settings-audit': true,
     'settings-agent-activity': true,
     'settings-secrets': true,
+    'settings-publishing': true,
     'settings-about': true,
     'overflow-admin': true,
     // The regression this pins: with marketplace OFF an owner still reaches
@@ -80,6 +82,8 @@ const MATRIX = {
     'settings-backup': false,
     'settings-audit': false,
     'settings-agent-activity': false,
+    // Owner only: a scoped admin administers agents, not the install's publishing routes.
+    'settings-publishing': false,
     // anyAdmin, not owner — a scoped admin SEES this one. The row exists to
     // catch a future change that re-gates it on isOwnerView by mistake.
     'settings-about': true,
@@ -214,6 +218,26 @@ async function runPersona(browser, persona) {
   await page.route('**/api/webchat/turn-traces*', (r) =>
     persona === 'owner'
       ? r.fulfill({ status: 200, contentType: 'application/json', body: '{"enabled":true,"days":90}' })
+      : r.fulfill({ status: 403, contentType: 'application/json', body: '{"error":"Owner only"}' }),
+  );
+  await page.route('**/api/publishing*', (r) =>
+    persona === 'owner'
+      ? r.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            gate: null,
+            tailnet: { on: false, domain: '', status: { text: 'Off', ok: false, warnings: [] } },
+            cloudflare: {
+              on: false,
+              domain: '',
+              accountId: '',
+              zoneId: '',
+              teamDomain: '',
+              status: { text: 'Off', ok: false, warnings: [] },
+            },
+          }),
+        })
       : r.fulfill({ status: 403, contentType: 'application/json', body: '{"error":"Owner only"}' }),
   );
   // stub-serve reports a FIRST-RUN install, which auto-opens the wizard overlay

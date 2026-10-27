@@ -41,9 +41,10 @@ export function rememberServerAuthHint(methods?: any) {
 }
 
 // ── UserCreds: per-member key banner ───────────────────────────────────────────
-// Shown in a room whose credential_mode is optional/required when the current
-// user hasn't connected their own Anthropic key. Connecting onboards the key
-// into the OneCLI vault (host-side) so the member's turns bill their account.
+// Shown in a Required room when the current user hasn't connected their own
+// account; in an Optional room they connect from the @handle menu instead.
+// Connecting onboards the key into the OneCLI vault (host-side) so the
+// member's turns bill their account.
 // The room's model provider decides the connect vocabulary + which mint runs.
 export async function updateUserCredsBanner(roomId?: any) {
   const banner = $('#user-creds-banner');
@@ -84,7 +85,12 @@ export async function updateUserCredsBanner(roomId?: any) {
       return;
     }
 
-    // Not connected → show the actionable banner.
+    // Not connected. Optional rooms: the @handle menu is the way in, no banner.
+    // Required rooms: the banner, since nothing runs until they connect.
+    if (mode !== 'required') {
+      banner.hidden = true;
+      return;
+    }
     const connectBtn = $('#user-creds-connect-btn')!;
     const oauthBtn = $('#user-creds-oauth-btn');
     const input = ($('#user-creds-key-input')!) as HTMLElement;
@@ -250,8 +256,8 @@ export async function deleteUser(targetUserId?: any) {
 export function wireMembersPanel(): void {
   $<HTMLButtonElement>('#handle-creds-action')?.addEventListener('click', async () => {
     if (!userCredsState.value) return;
-    closeHandlePopover();
     if (userCredsState.value.connected) {
+      closeHandlePopover();
       const confirmed = await showConfirmModal({
         title: `Disconnect ${userCredsWords(userCredsState.value?.provider as string | undefined).name}?`,
         confirmLabel: 'Disconnect',
@@ -259,20 +265,31 @@ export function wireMembersPanel(): void {
       });
       if (confirmed) await disconnectUserCreds();
     } else if (userCredsState.value.oauthAllowed) {
-      // Subscriptions allowed → open the sign-in helper directly (what users expect
-      // from a "Connect" action), rather than just surfacing the banner.
+      closeHandlePopover();
+      // The sign-in helper (its button lives in the banner, which may be hidden).
       $<HTMLButtonElement>('#user-creds-oauth-btn')?.click();
-    } else {
-      // API-key-only room → reveal the banner and its key input.
-      const banner = $('#user-creds-banner');
-      if (banner) {
-        banner.hidden = false;
-        banner.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        banner.classList.add('user-creds-banner-flash');
-        setTimeout(() => banner.classList.remove('user-creds-banner-flash'), 1200);
-      }
-      $<HTMLButtonElement>('#user-creds-connect-btn')?.click(); // reveal the key input
     }
+  });
+
+  $<HTMLButtonElement>('#handle-creds-key-btn')?.addEventListener('click', () => {
+    const row = $('#handle-creds-key');
+    if (!row) return;
+    row.hidden = !row.hidden;
+    if (!row.hidden) $<HTMLInputElement>('#handle-creds-key-input')?.focus();
+  });
+
+  const saveMenuKey = async (): Promise<void> => {
+    const input = $<HTMLInputElement>('#handle-creds-key-input');
+    const apiKey = input?.value.trim();
+    if (!input || !apiKey) return;
+    if (await saveUserCredsKey(apiKey, $<HTMLButtonElement>('#handle-creds-key-save'))) {
+      input.value = '';
+      closeHandlePopover();
+    }
+  };
+  $<HTMLButtonElement>('#handle-creds-key-save')?.addEventListener('click', () => void saveMenuKey());
+  $<HTMLInputElement>('#handle-creds-key-input')?.addEventListener('keydown', (e: any) => {
+    if (e.key === 'Enter') void saveMenuKey();
   });
 
   $<HTMLButtonElement>('#user-creds-connect-btn')?.addEventListener('click', async (e: any) => {
@@ -286,22 +303,7 @@ export function wireMembersPanel(): void {
     }
     const apiKey = input.value.trim();
     if (!apiKey) return;
-    // Busy-guard + try/catch so a network failure surfaces instead of rejecting silently.
-    const btn = e.currentTarget as HTMLButtonElement;
-    btn!.disabled = true;
-    try {
-      await apiJson('/api/user-credentials/credential', {
-        method: 'POST',
-        headers: { 'X-Webchat-CSRF': '1' },
-        body: { roomId: state.currentRoom, apiKey },
-      });
-      showToast(`Connected your ${userCredsWords(userCredsProvider.value).keyWord}.`, { kind: 'success' });
-      await updateUserCredsBanner(state.currentRoom);
-    } catch (err: any) {
-      showToast('Failed to connect key: ' + (err?.message || 'network error'), { kind: 'error' });
-    } finally {
-      btn!.disabled = false;
-    }
+    await saveUserCredsKey(apiKey, e.currentTarget as HTMLButtonElement);
   });
 
   $<HTMLInputElement>('#user-creds-key-input')?.addEventListener('keydown', (e: any) => {
@@ -363,7 +365,42 @@ export function updateHandleCreds() {
     statusEl.textContent = `${name} — ${userCredsState.value.connected ? 'connected' : 'not connected'}`;
     statusEl.classList.toggle('is-connected', !!userCredsState.value?.connected);
   }
-  if (actionBtn) actionBtn.textContent = userCredsState.value.connected ? 'Disconnect' : 'Connect';
+  const connected = !!userCredsState.value.connected;
+  const oauth = !!userCredsState.value.oauthAllowed;
+  const api = !!userCredsState.value.apiOffered;
+  // Connected: Disconnect. Otherwise one button per method the workspace allows.
+  if (actionBtn) {
+    actionBtn.hidden = !connected && !oauth;
+    actionBtn.textContent = connected ? 'Disconnect' : 'Sign in';
+  }
+  const keyBtn = $('#handle-creds-key-btn');
+  if (keyBtn) keyBtn.hidden = connected || !api;
+  const keyRow = $('#handle-creds-key');
+  if (keyRow && (connected || !api)) keyRow.hidden = true;
+  const keyInput = $<HTMLInputElement>('#handle-creds-key-input');
+  if (keyInput) {
+    keyInput.placeholder = userCredsWords(userCredsState.value.provider as string | undefined).keyPlaceholder;
+  }
+}
+
+/** Store the member's API key for the open room's provider (menu or banner). */
+async function saveUserCredsKey(apiKey: string, btn: HTMLButtonElement | null): Promise<boolean> {
+  if (btn) btn.disabled = true;
+  try {
+    await apiJson('/api/user-credentials/credential', {
+      method: 'POST',
+      headers: { 'X-Webchat-CSRF': '1' },
+      body: { roomId: state.currentRoom, apiKey },
+    });
+    showToast(`Connected your ${userCredsWords(userCredsProvider.value).keyWord}.`, { kind: 'success' });
+    await updateUserCredsBanner(state.currentRoom);
+    return true;
+  } catch (err: any) {
+    showToast('Failed to connect key: ' + (err?.message || 'network error'), { kind: 'error' });
+    return false;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 // ── Header @handle chip + popover ────────────────────────────────────────────

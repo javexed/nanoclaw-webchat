@@ -22,11 +22,13 @@
  * (sync, called by the driver) reads the cache.
  */
 import { execFile } from 'child_process';
+import fs from 'fs';
 import net from 'net';
+import path from 'path';
 import type { Duplex } from 'stream';
 
 import { registerNetworkPolicyResolver, registerSessionPrepareHook } from '../../seam/index.js';
-import { EGRESS_LOCKDOWN, EGRESS_NETWORK, INSTALL_SLUG } from '../../config.js';
+import { DATA_DIR, EGRESS_LOCKDOWN, EGRESS_NETWORK, INSTALL_SLUG } from '../../config.js';
 import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
 import { ensureEgressNetwork, egressBridgeAddress, egressNetworkArgs } from '../../egress-lockdown.js';
 import { log } from '../../log.js';
@@ -332,6 +334,7 @@ export function adoptFilteredContainers(run: (args: string[]) => Promise<string>
       const env = Object.fromEntries(envList.map((e) => [e.slice(0, e.indexOf('=')), e.slice(e.indexOf('=') + 1)]));
       const gateway = gatewayFromSpec(env);
       if (!gateway) continue;
+      rememberGateway(gateway);
       ensureEgressFilter(
         bridge,
         gateway.port,
@@ -350,6 +353,58 @@ export function adoptFilteredContainers(run: (args: string[]) => Promise<string>
 if (!execRelayEnabled() && !process.env.VITEST)
   setTimeout(() => void adoptFilteredContainers(), ADOPT_FILTERED_DELAY_MS).unref?.();
 
+/**
+ * The credential gateway's port as the last filtered agent's proxy URL named
+ * it (the filter listens on that port). Kept on disk too, so a workload build
+ * still finds the filter after NanoClaw restarts and before any agent has
+ * started again.
+ */
+const gatewayFile = (): string => path.join(DATA_DIR, 'egress-filter-gateway.json');
+let lastGateway: { host: string; port: number } | null = null;
+function loadGateway(): { host: string; port: number } | null {
+  if (lastGateway || process.env.VITEST) return lastGateway;
+  try {
+    const g = JSON.parse(fs.readFileSync(gatewayFile(), 'utf-8')) as { host?: unknown; port?: unknown };
+    if (typeof g.host === 'string' && Number.isInteger(g.port)) lastGateway = { host: g.host, port: g.port as number };
+  } catch {
+    /* none recorded yet */
+  }
+  return lastGateway;
+}
+function rememberGateway(g: { host: string; port: number }): void {
+  if (lastGateway?.host === g.host && lastGateway.port === g.port) return;
+  lastGateway = g;
+  if (process.env.VITEST) return;
+  try {
+    fs.writeFileSync(gatewayFile(), JSON.stringify(g), { mode: 0o600 });
+  } catch {
+    /* memory is enough until the next restart */
+  }
+}
+
+/**
+ * Where a non-agent container on the lockdown network (an agent's workload
+ * builder, modules/workloads/builder.ts) reaches the filter: ensures the
+ * network and the listener, and returns the network, the bridge address and
+ * the port. Null when no filtered agent has started since the gateway was
+ * last recorded, or under the exec relay (no lockdown network).
+ */
+export function filterEndpointForBuilds(): { network: string; host: string; port: number } | null {
+  const gateway = loadGateway();
+  if (execRelayEnabled() || !gateway) return null;
+  ensureEgressNetwork(undefined, true);
+  const bridge = egressBridgeAddress();
+  const relay = mcpRelayTarget();
+  ensureEgressFilter(
+    bridge,
+    gateway.port,
+    defaultFilterDeps(EGRESS_NETWORK, () => gateway),
+    [{ port: relay.port, target: relay }],
+    modelListeners(gateway.port, relay.port),
+  );
+  return { network: EGRESS_NETWORK, host: bridge, port: gateway.port };
+}
+
 /** The network arguments for a filtered agent; exported for tests. Throws on any failure (the resolver turns that into no network). */
 export function filteredNetworkArgs(
   spec: Parameters<Parameters<typeof registerNetworkPolicyResolver>[0]>[0],
@@ -363,6 +418,7 @@ export function filteredNetworkArgs(
   ensureEgressNetwork(spec.networkAccess, true);
   const bridge = egressBridgeAddress();
   const relay = mcpRelayTarget();
+  rememberGateway(gateway);
   ensureEgressFilter(
     bridge,
     gateway.port,

@@ -77,6 +77,8 @@ export const NEVER_AUTO_APPROVE_ACTIONS: ReadonlySet<string> = new Set([
   'install_packages',
   'add_mcp_server',
   'instruction_change',
+  // A person asking to publish an agent's app wider (modules/workloads/gui.ts).
+  'workloads_publish',
 ]);
 
 /** Each never-list payload shape, with the triage flag it implies. */
@@ -88,6 +90,11 @@ const NEVER_PAYLOAD_SHAPES: ReadonlyArray<{ re: RegExp; flag: TriageFlag }> = [
   { re: /\bconfig[\s-]+(add|remove)-package\b/i, flag: 'install' },
   { re: /\bconfig[\s-]+(add|remove)-(mcp-server|mount)\b/i, flag: 'capability' },
   { re: /\bconfig[\s-]+update\b/i, flag: 'capability' },
+  // Agent workloads: a deploy runs the agent's code on this host; delete and restore destroy data.
+  { re: /\bworkloads[\s-]+up\b/i, flag: 'capability' },
+  { re: /\bworkloads[\s-]+(delete|restore)\b/i, flag: 'destructive' },
+  // Publishing opens an agent's app to people; the approver becomes its "only me".
+  { re: /\bworkloads[\s-]+expose\b/i, flag: 'capability' },
 ];
 
 export const NEVER_AUTO_APPROVE_PATTERNS: readonly RegExp[] = NEVER_PAYLOAD_SHAPES.map((s) => s.re);
@@ -151,6 +158,7 @@ export function heuristicFlags(action: string, payloadJson: string): TriageFlag[
   if (action === 'install_packages') out.add('install');
   if (action === 'add_mcp_server') out.add('capability');
   if (action === 'instruction_change') out.add('capability');
+  if (action === 'workloads_publish') out.add('capability');
   for (const { re, flag } of NEVER_PAYLOAD_SHAPES) if (re.test(payloadJson)) out.add(flag);
   return [...out];
 }

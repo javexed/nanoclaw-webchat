@@ -154,6 +154,8 @@ export interface PendingApprovalRow {
   title: string;
   options_json: string;
   payload: string;
+  /** The card's text, what the approver reads. Empty on rows older than the column. */
+  question: string;
   created_at: string;
 }
 
@@ -217,7 +219,7 @@ export async function getWebchatPendingApprovalsForUser(userId: string): Promise
   const platformId = approvalInboxForUser(userId);
   if (!platformId) return [];
   return (await getDb().all(
-    `SELECT pa.approval_id, pa.action, pa.title, pa.options_json, pa.payload, pa.created_at
+    `SELECT pa.approval_id, pa.action, pa.title, pa.options_json, pa.payload, pa.question, pa.created_at
          FROM pending_approvals pa
          JOIN webchat_approvals_index wai ON wai.approval_id = pa.approval_id
         WHERE wai.platform_id = ?

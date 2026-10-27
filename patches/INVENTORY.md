@@ -266,7 +266,7 @@ src/templates/local-dir.ts
 src/types.ts
     agent-group lifecycle status type
 
-## PRODUCT — shrink via seam registries (37)
+## PRODUCT — shrink via seam registries (43)
 
 src/mailbox/model.ts
     add the 'interrupt' inbound kind — the webchat stop button writes a control
@@ -300,7 +300,13 @@ container/agent-runner/src/cross-session-echo.test.ts
     map a derived agent identity (per-member credentials) to its agent group
     before the ownership check and the core approval request
 .claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
-    secret intake points at the webchat Agents → Secrets UI, not the OneCLI dashboard
+    secret intake points at the webchat Agents → Secrets UI, not the OneCLI dashboard;
+    an access_restricted manage_url (an internal address) is never relayed
+.claude/skills/add-onecli/payload/container/skills/onecli-gateway/instructions.md
+    the resident note's one exception: never show an access_restricted manage_url;
+    a room admin grants access in Agents → Secrets
+container/CLAUDE.md
+    search conversations/ before saying there is no record of an earlier exchange
 container/agent-runner/src/config.ts
     lenientOutput + learning config surface read by the runner
 container/agent-runner/src/index.ts
@@ -353,6 +359,23 @@ src/drivers/index.ts
     early return: an agent a module filters is refused rather than started on
     the sidecar's unfiltered network (moving the seam call above upstream's
     return would retire this)
+src/cli/registry.ts
+    `precheck` on a command and the PrecheckResult it may return: an approval
+    verb checks its arguments before any card is made, adds plain-language
+    text above the command line, and pins values (hashes, digests) into the
+    approved arguments. Used by `ncl workloads up|delete|restore`. A seam
+    registry for card text would retire the three cli patches.
+src/cli/crud.ts
+    passes a custom operation's `precheck` through registerResource
+src/cli/dispatch.ts
+    runs the precheck in the hold branch: a refusal answers the agent before a
+    card; pinned values join the args (shown in the fenced command line, carried
+    by the approved replay); the precheck's title/summary/detail go above the
+    unchanged command line through a spread-last override of title/question,
+    with its own card-length check
+src/cli/dispatch.test.ts
+    tests for the precheck: refusal before a card, words above the full
+    command line, pinned args overriding the agent's own
 src/modules/approvals/index.ts
     approval-TTL expiry on the sweep seam
     re-exports checkApprovalClick for channels that answer their caller

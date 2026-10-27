@@ -1,0 +1,55 @@
+diff --git a/src/cli/dispatch.ts b/src/cli/dispatch.ts
+index b59f4808..aaf70deb 100644
+--- a/src/cli/dispatch.ts
++++ b/src/cli/dispatch.ts
+@@ -27,6 +27,7 @@ import { localizeIsoTimestamps } from './format.js';
+ import { getResource } from './crud.js';
+ import { listVerbs, renderVerbHelp } from './help-render.js';
+ import { commandGuard, listCommands, lookup } from './registry.js';
++import type { PrecheckResult } from './registry.js';
+ 
+ type DispatchOptions = {
+   /** Verified approval row when a command is replayed after approval. */
+@@ -154,6 +155,19 @@ export async function dispatch(
+       // fail closed rather than card a ghost.
+       return err(req.id, 'forbidden', decision.reason);
+     }
++    // A command may check its arguments before an owner is asked (see
++    // CommandDef.precheck): a refusal answers the agent at once, and pinned
++    // values join the arguments, so the card shows them and the approved
++    // replay carries them.
++    let precheck: PrecheckResult | void = undefined;
++    if (cmd.precheck) {
++      try {
++        precheck = await cmd.precheck(cmd.parseArgs(req.args), ctx);
++      } catch (e) {
++        return err(req.id, 'handler-error', errMsg(e));
++      }
++      if (precheck?.pin) req = { ...req, args: { ...req.args, ...precheck.pin } };
++    }
+     const session = await getSession(ctx.sessionId);
+     if (!session) {
+       return err(req.id, 'handler-error', 'Session not found.');
+@@ -174,6 +188,14 @@ export async function dispatch(
+     // carding a command that can't be shown in full.
+     const tooLong = cardQuestionTooLong(title, question);
+     if (tooLong) return err(req.id, 'invalid-args', `${tooLong}. Shorten the arguments and try again.`);
++    // The precheck's words go above the command line, which stays in full.
++    const cardTitle = precheck?.title ?? title;
++    const cardQuestion = precheck?.summary
++      ? `${precheck.summary.replace(/\{agent\}/g, quoteForCard(agentName))}` +
++        `${precheck.detail ? `\n\n${precheck.detail}` : ''}\n\n${question}`
++      : question;
++    const cardTooLong = cardQuestionTooLong(cardTitle, cardQuestion);
++    if (cardTooLong) return err(req.id, 'invalid-args', `${cardTooLong}. Shorten the arguments and try again.`);
+ 
+     await requestApproval({
+       session,
+@@ -182,6 +204,7 @@ export async function dispatch(
+       payload: { frame: { id: req.id, command: req.command, args: req.args }, callerContext: ctx },
+       title,
+       question,
++      ...(precheck ? { title: cardTitle, question: cardQuestion } : {}),
+     });
+ 
+     return err(req.id, 'approval-pending', 'Approval request sent to admin. You will be notified of the result.');

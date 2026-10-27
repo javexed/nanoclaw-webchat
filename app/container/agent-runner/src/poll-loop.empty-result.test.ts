@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 
 import { initTestSessionDb, closeSessionDb, getInboundDb } from './mailbox/sqlite/connection.js';
-import { getUndeliveredMessages } from './db/messages-out.js';
+import { getUndeliveredMessages, writeMessageOut } from './db/messages-out.js';
 import { processQuery, runPollLoop } from './poll-loop.js';
 import type { AgentProvider, AgentQuery, ProviderEvent, ProviderExchange } from './providers/types.js';
 
@@ -75,6 +75,24 @@ describe('an empty result with nothing delivered', () => {
     const b = stub(task());
     await processQuery(b.query, { ...CHAT, taskRun: true }, ['m1'], 'claude', undefined, 'prompt', undefined, false);
     expect(emptyNudges(b.pushes)).toHaveLength(0);
+  });
+
+  it('still nudges when the turn only reacted: a reaction is not a reply', async () => {
+    async function* events(): AsyncGenerator<ProviderEvent> {
+      yield { type: 'init', continuation: 's1' };
+      await writeMessageOut({
+        id: 'react-1',
+        kind: 'chat',
+        platform_id: 'chan-1',
+        channel_type: 'discord',
+        thread_id: null,
+        content: JSON.stringify({ operation: 'reaction', messageId: 'm1', emoji: 'eyes' }),
+      });
+      yield { type: 'result', text: '' };
+    }
+    const { query, pushes } = stub(events());
+    await processQuery(query, CHAT, ['m1'], 'claude', undefined, 'prompt', undefined, false);
+    expect(emptyNudges(pushes)).toHaveLength(1);
   });
 
   it("archives the nudge's answer against the prompt it answers, not a follow-up queued meanwhile", async () => {

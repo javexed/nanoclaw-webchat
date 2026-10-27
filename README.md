@@ -161,6 +161,7 @@ never runs. See [docs/coverage-guards.md](docs/coverage-guards.md).
 [learning loop](app/docs/webchat/learning-loop.md) ·
 [approval pre-judge](app/docs/webchat/approval-prejudge.md) ·
 [task failures](app/docs/webchat/task-failures.md) ·
+[agent workloads](app/docs/webchat/workloads.md) ·
 [security](app/docs/webchat/security.md)
 
 **Working on it:** [docs index](docs/README.md) ·

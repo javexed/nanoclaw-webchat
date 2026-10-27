@@ -53,3 +53,8 @@ moduleWebchatTurnTraces
 moduleWebchatMessageSenderUserId
 moduleWebchatLimitRetries
 moduleWebchatServedModel
+moduleWebchatWorkloads
+moduleWebchatWorkloadShape
+moduleWebchatWorkloadBuilds
+moduleWebchatWorkloadAppRoutes
+moduleWebchatWorkloadAppRouteEmails

@@ -1,8 +1,8 @@
 diff --git a/src/modules/index.ts b/src/modules/index.ts
-index f88885c5..805984e8 100644
+index f88885c5..e37d501d 100644
 --- a/src/modules/index.ts
 +++ b/src/modules/index.ts
-@@ -24,4 +24,34 @@ import './interactive/index.js';
+@@ -24,4 +24,37 @@ import './interactive/index.js';
  import './permissions/index.js';
  import './agent-to-agent/index.js';
  import './self-mod/index.js';
@@ -36,4 +36,7 @@ index f88885c5..805984e8 100644
 +// Screens tool output before the model reads it: declares the guard hook in
 +// every Claude group's settings — see the module header.
 +import './tool-result-guard/index.js';
++// Agent workloads: an agent's own Compose stacks, `ncl workloads` (off unless
++// NANOCLAW_WORKLOADS=1 and the host passes the preflight — see the module).
++import './workloads/index.js';
  import './community-portal/index.js';

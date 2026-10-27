@@ -1,0 +1,72 @@
+diff --git a/src/cli/dispatch.test.ts b/src/cli/dispatch.test.ts
+index ee05ec06..ab111d42 100644
+--- a/src/cli/dispatch.test.ts
++++ b/src/cli/dispatch.test.ts
+@@ -188,6 +188,24 @@ register({
+   },
+ });
+ 
++register({
++  name: 'prechecked-command',
++  description: 'approval command with a precheck',
++  resource: 'groups',
++  access: 'approval',
++  parseArgs: (raw) => raw,
++  precheck: async (args) => {
++    if ((args as Record<string, unknown>).ok !== true) throw new Error('would fail');
++    return {
++      title: 'Deploy web',
++      summary: '{agent} wants to deploy web.',
++      detail: 'Runs: web',
++      pin: { approved: 'h1' },
++    };
++  },
++  handler: async () => ({}),
++});
++
+ // Commands that return data shaped like real resources (for post-handler filtering tests)
+ register({
+   name: 'groups-list-data',
+@@ -606,6 +624,42 @@ describe('CLI scope enforcement', () => {
+     expect(mockGetContainerConfig).not.toHaveBeenCalled();
+   });
+ 
++  it('a failing precheck refuses before any approval card is made', async () => {
++    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
++    mockGetSession.mockReturnValue({ id: 's1', agent_group_id: 'g1', messaging_group_id: 'mg1' });
++    mockGetAgentGroup.mockReturnValue({ id: 'g1', name: 'Group One' });
++
++    const bad = await dispatch({ id: '1', command: 'prechecked-command', args: {} }, agentCtx());
++    expect(bad.ok).toBe(false);
++    if (!bad.ok) expect(bad.error).toMatchObject({ code: 'handler-error', message: 'would fail' });
++    expect(approvalState.requestApproval).not.toHaveBeenCalled();
++  });
++
++  it('a precheck adds words above the full command line and pins values into the approved args', async () => {
++    mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
++    mockGetSession.mockReturnValue({ id: 's1', agent_group_id: 'g1', messaging_group_id: 'mg1' });
++    mockGetAgentGroup.mockReturnValue({ id: 'g1', name: 'Group\nOne' });
++
++    const good = await dispatch(
++      { id: '2', command: 'prechecked-command', args: { ok: true, approved: 'forged' } },
++      agentCtx(),
++    );
++    if (!good.ok) expect(good.error.code).toBe('approval-pending');
++    expect(approvalState.requestApproval).toHaveBeenCalledTimes(1);
++    const card = approvalState.requestApproval.mock.calls[0][0] as {
++      title: string;
++      question: string;
++      payload: { frame: { args: Record<string, unknown> } };
++    };
++    expect(card.title).toBe('Deploy web');
++    // The agent's name is quoted (one line), the precheck's words come first,
++    // and the command line with every argument is still there.
++    expect(card.question.startsWith('"Group\\nOne" wants to deploy web.\n\nRuns: web\n\n')).toBe(true);
++    expect(card.question).toContain('--approved "h1"');
++    expect(card.question).toContain('--ok true');
++    expect(card.payload.frame.args).toMatchObject({ ok: true, approved: 'h1' });
++  });
++
+   it('approval replay preserves the original agent caller context', async () => {
+     mockGetContainerConfig.mockReturnValue({ cli_scope: 'group' });
+     mockGetSession.mockReturnValue({ id: 's1', agent_group_id: 'g1', messaging_group_id: 'mg1' });

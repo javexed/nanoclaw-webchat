@@ -5,6 +5,7 @@
  * module refs keyed by questionId, because one approval can be on screen twice. A
  * request with no options, or an empty array, falls back to Approve/Reject.
  */
+import { approvalCardText, approvalRawPayload } from './approval-card-text.js';
 import { approvalBusy, approvalErrors } from './approvals-state.js';
 
 /**
@@ -58,6 +59,8 @@ const options = () =>
   Array.isArray(props.approval.options) && props.approval.options.length ? props.approval.options : FALLBACK;
 
 const payloadText = (p: any) => (typeof p === 'string' ? p : JSON.stringify(p, null, 2));
+const cardText = () => approvalCardText(props.approval);
+const rawPayload = () => approvalRawPayload(props.approval);
 const btnClass = (v: string) => (v === 'approve' ? 'approve' : v === 'reject' ? 'reject' : '');
 </script>
 
@@ -74,7 +77,11 @@ const btnClass = (v: string) => (v === 'approve' ? 'approve' : v === 'reject' ? 
       >{{ c.flag }}</span>
       <span v-if="triageNote()" class="triage-note">{{ triageNote() }}</span>
     </div>
-    <pre v-if="approval.payload" class="approval-payload">{{ payloadText(approval.payload) }}</pre>
+    <p v-if="cardText()" class="approval-text">{{ cardText() }}</p>
+    <details v-if="rawPayload()" class="approval-details">
+      <summary>Details</summary>
+      <pre class="approval-payload">{{ payloadText(rawPayload()) }}</pre>
+    </details>
     <div class="approval-actions">
       <button
         v-for="(o, i) in options()"

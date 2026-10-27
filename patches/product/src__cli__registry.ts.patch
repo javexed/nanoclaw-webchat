@@ -1,0 +1,44 @@
+diff --git a/src/cli/registry.ts b/src/cli/registry.ts
+index ec4c7de8..93865634 100644
+--- a/src/cli/registry.ts
++++ b/src/cli/registry.ts
+@@ -57,6 +57,13 @@ export type CommandDef<TArgs = unknown, TData = unknown> = {
+   /** Validates `frame.args` and produces the typed handler input. Throws on invalid. */
+   parseArgs: (raw: Record<string, unknown>) => TArgs;
+   handler: (args: TArgs, ctx: CallerContext) => Promise<TData>;
++  /**
++   * Optional, for approval-gated commands: runs on the parsed args before an
++   * approval card is made. Throwing refuses the command at once, so an owner
++   * is never asked to approve something that would only fail. What it returns
++   * goes on the card (see PrecheckResult).
++   */
++  precheck?: (args: TArgs, ctx: CallerContext) => Promise<void | PrecheckResult>;
+   /**
+    * Optional presentational renderer. When set, dispatch attaches its output
+    * as the response frame's `human` field (server-rendered once, printed
+@@ -67,6 +74,25 @@ export type CommandDef<TArgs = unknown, TData = unknown> = {
+   formatHuman?: (data: TData) => string;
+ };
+ 
++/**
++ * What a precheck may add to an approval card. The command line with every
++ * argument stays on the card below it; this only adds words above.
++ */
++export interface PrecheckResult {
++  /** Card title in place of `CLI: <command>`. */
++  title?: string;
++  /** Plain-language card text; `{agent}` becomes the agent's quoted name. Untrusted values must be quoted already. */
++  summary?: string;
++  /** More lines under the summary (what will run). */
++  detail?: string;
++  /**
++   * Values joined into the approved arguments (they win over the agent's own
++   * and show on the card), so the handler can refuse when what it is about to
++   * do is not what the card showed.
++   */
++  pin?: Record<string, unknown>;
++}
++
+ const registry = new Map<string, CommandDef>();
+ const commandGuards = new Map<string, GuardedAction>();
+ 

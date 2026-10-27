@@ -430,6 +430,20 @@ import {
 } from '../../modules/transfer/system-transfer.js';
 import { closeDb } from '../../db/connection.js';
 import { rEgressGet, rEgressPut } from './server/routes-egress.js';
+import {
+  RE_AGENT_APPS,
+  RE_AGENT_WORKLOAD,
+  RE_AGENT_WORKLOAD_ACTION,
+  rAgentAppsGet,
+  rAgentAppsPut,
+  rAgentWorkloadAction,
+  rAgentWorkloadDelete,
+  rPublishingCloudflareConnect,
+  rPublishingCloudflarePut,
+  rPublishingGet,
+  rPublishingTailnetConnect,
+  rPublishingTailnetPut,
+} from './server/routes-workloads.js';
 import { handleAccountRoutes, handlePreAuthSignin } from './server/routes-signin.js';
 import { handleSigninSettings } from './server/routes-signin-settings.js';
 
@@ -2515,9 +2529,9 @@ async function rApprovalsPendingGet(ctx: RouteCtx, _m: RegExpMatchArray): Promis
       action: r.action,
       title: r.title,
       options: JSON.parse(r.options_json),
-      // Payload is action-specific (apt list / mcp config / etc). The PWA
-      // renders it as a JSON-pretty block so the user can review what
-      // they're approving without us having to ship per-action templates.
+      // The card's text leads; the action-specific payload (apt list, MCP
+      // config, ...) stays available under a collapsed Details block.
+      question: r.question || undefined,
       payload: safeParseJson(r.payload),
       created_at: r.created_at,
     })),
@@ -2723,6 +2737,24 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: RE_AGENT_EGRESS_HOSTS, h: rAgentEgressHostsGet },
   { method: 'PUT', path: RE_AGENT_EGRESS_HOSTS, h: rAgentEgressHostsPut, audit: 'agent.egress.hosts.set' },
   { method: ['GET', 'PUT', 'DELETE'], path: RE_AGENT_ENV, h: rAgentEnv },
+  // Agent → Apps (server/routes-workloads.ts): the agent's admins; widening raises a card.
+  { method: 'GET', path: RE_AGENT_APPS, h: rAgentAppsGet },
+  { method: 'PUT', path: RE_AGENT_APPS, guards: ['csrf'], h: rAgentAppsPut, audit: 'workload.app.change' },
+  { method: 'GET', path: RE_AGENT_WORKLOAD_ACTION, h: rAgentWorkloadAction },
+  {
+    method: 'POST',
+    path: RE_AGENT_WORKLOAD_ACTION,
+    guards: ['csrf'],
+    h: rAgentWorkloadAction,
+    audit: 'workload.person.action',
+  },
+  {
+    method: 'DELETE',
+    path: RE_AGENT_WORKLOAD,
+    guards: ['csrf'],
+    h: rAgentWorkloadDelete,
+    audit: 'workload.person.delete',
+  },
   { method: 'GET', path: '/api/mcp-servers', guards: ['anyAdmin'], h: rMcpServersGet },
   { method: 'POST', path: '/api/mcp-servers', guards: ['csrf', 'anyAdmin'], h: rMcpServersPost, audit: 'mcp.create' },
   { method: 'GET', path: '/api/mcp-sources', guards: ['anyAdmin'], h: rMcpSourcesGet },
@@ -2936,6 +2968,36 @@ const API_ROUTES: ApiRoute[] = [
   },
   { method: 'POST', path: RE_APPROVE, guards: ['csrf'], h: rApprovePost },
   { method: 'GET', path: '/api/users', h: rUsersGet },
+  // Admin → Publishing (server/routes-workloads.ts): owner only.
+  { method: 'GET', path: '/api/publishing', guards: ['owner'], h: rPublishingGet },
+  {
+    method: 'PUT',
+    path: '/api/publishing/tailnet',
+    guards: ['csrf', 'owner'],
+    h: rPublishingTailnetPut,
+    audit: 'publishing.tailnet.set',
+  },
+  {
+    method: 'POST',
+    path: '/api/publishing/tailnet/connect',
+    guards: ['csrf', 'owner'],
+    h: rPublishingTailnetConnect,
+    audit: 'publishing.tailnet.connect',
+  },
+  {
+    method: 'PUT',
+    path: '/api/publishing/cloudflare',
+    guards: ['csrf', 'owner'],
+    h: rPublishingCloudflarePut,
+    audit: 'publishing.cloudflare.set',
+  },
+  {
+    method: 'POST',
+    path: '/api/publishing/cloudflare/connect',
+    guards: ['csrf', 'owner'],
+    h: rPublishingCloudflareConnect,
+    audit: 'publishing.cloudflare.connect',
+  },
   // Install-wide egress allowlist (server/routes-egress.ts).
   { method: 'GET', path: '/api/egress', guards: ['globalAdmin'], h: rEgressGet },
   { method: 'PUT', path: '/api/egress', guards: ['csrf', 'globalAdmin'], h: rEgressPut, audit: 'egress.allowlist.set' },

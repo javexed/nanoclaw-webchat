@@ -163,6 +163,11 @@ describe('moduleWebchat migration', () => {
       'webchat-turn-traces',
       'webchat-user-archives',
       'webchat-user-handles',
+      'webchat-workload-app-route-emails',
+      'webchat-workload-app-routes',
+      'webchat-workload-builds',
+      'webchat-workload-shape',
+      'webchat-workloads',
     ]);
   });
 

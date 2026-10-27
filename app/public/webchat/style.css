@@ -6093,6 +6093,17 @@ a.skill-badge-origin:hover {
   color: var(--text-dim);
 }
 
+.approval-card .approval-text {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.approval-card .approval-details > summary {
+  cursor: pointer;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
 .approval-card .approval-payload {
   font-family: ui-monospace, Menlo, monospace;
   font-size: var(--fs-xs);
@@ -6999,8 +7010,8 @@ a.skill-badge-origin:hover {
   color: var(--success, var(--accent));
 }
 
-/* @handle popover → user-credentials shortcut (discoverability for the
-   in-room connect banner; acts on the open room). */
+/* @handle popover → user credentials for the open room: where a member
+   connects their own account (the banner is only for Required rooms). */
 .handle-creds-divider {
   height: 1px;
   background: var(--border);
@@ -7012,7 +7023,12 @@ a.skill-badge-origin:hover {
   justify-content: space-between;
   gap: 8px;
 }
+.handle-creds-key {
+  margin-top: 8px;
+}
 .handle-creds-status {
+  /* Status left, the method buttons (Sign in, API key) grouped right. */
+  margin-right: auto;
   font-size: var(--fs-sm);
   color: var(--text);
   display: inline-flex;
@@ -7029,20 +7045,6 @@ a.skill-badge-origin:hover {
 }
 .handle-creds-status.is-connected::before {
   background: var(--success);
-}
-
-/* Brief highlight when the banner is summoned from the @handle popover. */
-.user-creds-banner-flash {
-  animation: user-creds-banner-flash 1.2s ease;
-}
-@keyframes user-creds-banner-flash {
-  0%,
-  100% {
-    box-shadow: none;
-  }
-  20% {
-    box-shadow: 0 0 0 2px var(--accent);
-  }
 }
 
 /* Settings → User credentials (workspace policy, owner only). */
@@ -9681,3 +9683,270 @@ button[data-draft-id] {
   flex: 1;
 }
 
+
+/* Agent → Apps (AgentApps.vue): one surface card per app — name, state,
+   Open ↗ and ⋯ on the first line; route and who-can-open below, wrapping on
+   a phone. Drawers (logs, restore, people) open inside the card. */
+.agent-apps-section .apps {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.apps-disk {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+.apps-disk-warn {
+  color: var(--warning);
+}
+.apps-disk-over {
+  color: var(--danger);
+}
+.apps-empty {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-dim);
+}
+.apps-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.app-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+.app-row[aria-busy='true'] {
+  opacity: 0.7;
+}
+.app-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.app-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--text);
+}
+.app-state {
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.app-state-running {
+  color: var(--success-strong);
+  border-color: color-mix(in srgb, var(--success) 50%, transparent);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.app-state-needs-approval {
+  color: var(--warning-strong);
+  border-color: color-mix(in srgb, var(--warning) 50%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+}
+.app-open {
+  flex-shrink: 0;
+  font-size: var(--fs-sm);
+  color: var(--accent);
+  text-decoration: none;
+}
+.app-open:hover {
+  text-decoration: underline;
+}
+.app-kebab {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  line-height: 0;
+}
+.app-kebab:hover,
+.app-kebab:focus-visible,
+.app-kebab[aria-expanded='true'] {
+  color: var(--text);
+  background: var(--surface);
+}
+.app-row-controls,
+.app-drawer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.app-row select,
+.app-drawer-row input[type='text'] {
+  flex: 1 1 140px;
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-input);
+}
+.app-row select:disabled {
+  color: var(--text-dim);
+}
+.app-row .btn {
+  flex: 0 0 auto;
+}
+.app-menu {
+  position: absolute;
+  top: 36px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 0;
+  box-shadow: 0 2px 8px var(--shadow);
+}
+.app-menu button {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 6px 14px;
+  text-align: left;
+  font-size: var(--fs-sm);
+}
+.app-menu button:hover,
+.app-menu button:focus-visible {
+  background: var(--surface2);
+}
+.app-menu .app-menu-danger {
+  color: var(--danger);
+}
+.app-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.app-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.app-logs {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Admin → Publishing (PublishingPanel.vue): one block per route. */
+.publishing {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.publishing-gate {
+  margin: 0;
+}
+.publishing-route {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.publishing-route + .publishing-route {
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.publishing-route .cred-hint {
+  margin: 0;
+}
+.publishing-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.publishing-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warning);
+}
+.publishing-status.ok .publishing-dot {
+  background: var(--success);
+}
+.publishing-connect {
+  align-self: flex-start;
+}
+.publishing-actions {
+  display: flex;
+  gap: 6px;
+}
+.publishing .secret-form input {
+  min-width: 0;
+}
+/* Cloudflare's fields one per row, so a 32-character ID is never cut off. */
+.publishing-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.publishing-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.publishing-field input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 7px 10px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-input);
+}
+.publishing-save {
+  align-self: flex-start;
+}
+.app-row .feature-info-btn {
+  flex: 0 0 auto;
+}
+.app-row > .cred-hint {
+  margin: 0;
+}
