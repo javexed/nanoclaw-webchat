@@ -7,8 +7,10 @@ import net from 'net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  __setOllamaTargetsForTest,
   BUILD_SESSION,
   inOwnNetwork,
+  isOllamaTarget,
   parseProxyHead,
   serveModelPort,
   serveProxyClient,
@@ -61,6 +63,7 @@ afterEach(() => {
   filter.close();
   gateway.close();
   __resetRunnerEgressForTest();
+  __setOllamaTargetsForTest([]);
 });
 
 const cred = `Proxy-Authorization: Basic ${Buffer.from('x:aoc_tok').toString('base64')}`;
@@ -254,6 +257,21 @@ describe('egress filter', () => {
   it('parses what it is given and refuses what it cannot proxy', () => {
     expect(parseProxyHead('CONNECT [::1]:443 HTTP/1.1')).toMatchObject({ kind: 'connect', host: '::1', port: 443 });
     expect(parseProxyHead('GET /local HTTP/1.1')).toMatchObject({ status: '501 Not Implemented' });
+  });
+
+  it('refuses a body whose length is stated twice, badly, or two ways', () => {
+    const h = (extra: string) =>
+      parseProxyHead(`POST http://registry.npmjs.org/x HTTP/1.1\r\nProxy-Authorization: Basic eDp5\r\n${extra}`);
+    for (const extra of [
+      'Content-Length: 5\r\nContent-Length: 50',
+      'Content-Length: 5\r\nTransfer-Encoding: chunked',
+      'Transfer-Encoding: chunked\r\nTransfer-Encoding: identity',
+      'Content-Length: 5x',
+    ]) {
+      expect(h(extra)).toMatchObject({ error: 'ambiguous body length', status: '400 Bad Request' });
+    }
+    expect(h('Content-Length: 5')).toMatchObject({ kind: 'absolute', bodyLength: 5 });
+    expect(h('Transfer-Encoding: chunked')).toMatchObject({ kind: 'absolute', bodyLength: null });
   });
 
   it('refuses a destination that would smuggle a second line into the gateway request', () => {
@@ -570,5 +588,82 @@ describe('which addresses a direct tunnel may reach', () => {
     expect(directTunnel('host-only', '172.17.0.1', 5432, ['172.17.0.1:5432'])).toBe(false);
     expect(directTunnel('host-only', '10.0.0.5', 22, ['10.0.0.5:22'])).toBe(true);
     expect(directTunnel('none', 'git.example', 22, ['git.example:22'])).toBe(false);
+  });
+});
+
+describe('a plain-HTTP body that arrives while the filter is still checking the caller', () => {
+  it('reaches the gateway whole', async () => {
+    const BODY = 512 * 1024;
+    let got = 0;
+    let headSeen = false;
+    const gw = net.createServer((sock) => {
+      let buf = Buffer.alloc(0);
+      sock.on('data', (d: Buffer) => {
+        if (headSeen) return void (got += d.length);
+        buf = Buffer.concat([buf, d]);
+        const end = buf.indexOf('\r\n\r\n');
+        if (end < 0) return;
+        headSeen = true;
+        got += buf.length - end - 4;
+      });
+      sock.on('error', () => {});
+    });
+    const port = await new Promise<number>((r) =>
+      gw.listen(0, '127.0.0.1', () => r((gw.address() as net.AddressInfo).port)),
+    );
+    const identify = deps.identify;
+    deps.gateway = () => ({ host: '127.0.0.1', port });
+    deps.allowlist = async () => ['router.internal:4000'];
+    // Slow checks: the body's later chunks arrive before the gateway is dialled.
+    deps.identify = async (ip) => {
+      await new Promise((r) => setTimeout(r, 150));
+      return identify(ip);
+    };
+    const c = net.connect(filterPort, '127.0.0.1');
+    await new Promise((r) => c.once('connect', r));
+    c.write(
+      `POST http://router.internal:4000/v1/chat/completions HTTP/1.1\r\nHost: router.internal:4000\r\nContent-Length: ${BODY}\r\n${cred}\r\n\r\n`,
+    );
+    for (let i = 0; i < 8; i++) {
+      c.write(Buffer.alloc(BODY / 8, 120));
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    for (let i = 0; i < 50 && got < BODY; i++) await new Promise((r) => setTimeout(r, 20));
+    c.destroy();
+    gw.close();
+    expect(got).toBe(BODY);
+  });
+});
+
+describe('Ollama through the general proxy', () => {
+  const own = new Set(['172.17.0.1', '10.0.0.4']);
+  const local = [{ host: '127.0.0.1', port: 11434 }];
+  const remote = [{ host: '192.0.2.50', port: 11434 }];
+
+  it('names an Ollama server by its address, or as this host for a local one', async () => {
+    expect(await isOllamaTarget('192.0.2.50', 11434, remote, own)).toBe(true);
+    expect(await isOllamaTarget('host.docker.internal', 11434, local, own)).toBe(true);
+    expect(await isOllamaTarget('172.17.0.1', 11434, local, own)).toBe(true);
+    expect(await isOllamaTarget('localhost', 11434, local, own)).toBe(true);
+  });
+
+  it('leaves other ports and other hosts alone', async () => {
+    expect(await isOllamaTarget('192.0.2.50', 443, remote, own)).toBe(false);
+    expect(await isOllamaTarget('192.0.2.51', 11434, remote, own)).toBe(false);
+    expect(await isOllamaTarget('192.0.2.50', 11434, local, own)).toBe(false);
+  });
+
+  it('refuses it even when the agent may reach that host, and never dials the gateway', async () => {
+    __setOllamaTargetsForTest(remote);
+    deps.mode = async () => 'host-only';
+    deps.allowlist = async () => ['192.0.2.50:11434'];
+    const viaConnect = await ask(`CONNECT 192.0.2.50:11434 HTTP/1.1\r\n${cred}\r\n\r\n`);
+    expect(viaConnect).toMatch(/^HTTP\/1.1 403 Forbidden/);
+    expect(viaConnect).toContain('only through its model port');
+    const viaHttp = await ask(
+      `POST http://192.0.2.50:11434/api/pull HTTP/1.1\r\nHost: 192.0.2.50:11434\r\n${cred}\r\nContent-Length: 2\r\n\r\n{}`,
+    );
+    expect(viaHttp).toMatch(/^HTTP\/1.1 403 Forbidden/);
+    expect(seen).toEqual([]);
   });
 });

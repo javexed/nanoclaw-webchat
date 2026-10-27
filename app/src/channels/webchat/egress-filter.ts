@@ -36,6 +36,7 @@ import {
   egressAllowed,
   getRunnerEgressAllowlist,
   groupEgressMode,
+  hostOwnAddresses,
   isSafeEgressHost,
   modelHostsFor,
   ownModelTargetsFor,
@@ -270,7 +271,15 @@ export function parseProxyHead(head: string): ParsedRequest | { error: string; s
     // whatever reads it (the gateway choosing a credential, a virtual host)
     // to somewhere the allowlist never approved.
     const headers = [`Host: ${authority}`, ...kept.filter((l) => !/^host:/i.test(l))];
-    const chunked = headers.some((l) => /^transfer-encoding:.*chunked/i.test(l));
+    // One framing, stated once: two Content-Lengths, one that is not a number,
+    // or Content-Length beside Transfer-Encoding let this side and the far end
+    // disagree on where the body ends — a second request hidden in the first.
+    const lengths = headers.filter((l) => /^content-length:/i.test(l));
+    const encodings = headers.filter((l) => /^transfer-encoding:/i.test(l));
+    const framing = { error: 'ambiguous body length', status: '400 Bad Request' };
+    if (lengths.length > 1 || encodings.length > 1 || (lengths.length && encodings.length)) return framing;
+    if (lengths.length && !/^content-length:\s*\d+\s*$/i.test(lengths[0])) return framing;
+    const chunked = encodings.some((l) => /chunked/i.test(l));
     const length = /^content-length:\s*(\d+)\s*$/im.exec(headers.join('\n'));
     const forGateway = headers.filter((l) => !/^connection:/i.test(l));
     return {
@@ -335,6 +344,14 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
       '403 Forbidden',
       'blocked by NanoClaw network policy: this container is not known to NanoClaw',
     );
+  }
+  if (await isOllamaTarget(req.host, req.port)) {
+    log.warn('Egress filter: Ollama refused through the proxy (model port only)', {
+      agentGroupId: caller.agentGroupId,
+      host: req.host,
+      port: req.port,
+    });
+    return answer(client, '403 Forbidden', 'Ollama is reachable only through its model port');
   }
   const building = caller.sessionId === BUILD_SESSION;
   // The agent's own workload services: on its own network, so dialled directly
@@ -536,6 +553,57 @@ export async function serveModelPort(
   up.pipe(client);
 }
 
+/**
+ * Ollama servers behind a model port (host:port as the host reaches them). The
+ * model port filters each request to inference; the general proxy must not be
+ * a second, unfiltered way in (pull, delete, create), whatever the agent's
+ * egress allows — so it refuses these targets outright.
+ */
+const ollamaTargets = new Map<string, Array<{ host: string; port: number }>>();
+
+export function __setOllamaTargetsForTest(targets: Array<{ host: string; port: number }>): void {
+  ollamaTargets.clear();
+  if (targets.length) ollamaTargets.set('test', targets);
+}
+
+const LOCAL_NAMES = new Set([HOST_NAME, 'localhost']);
+const isLocal = (host: string, own: Set<string>): boolean => {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, '');
+  return LOCAL_NAMES.has(h) || h === '::1' || h.startsWith('127.') || own.has(h);
+};
+
+async function addressesOf(host: string): Promise<string[]> {
+  if (net.isIP(host)) return [host];
+  try {
+    return (await dns.lookup(host, { all: true })).map((a) => a.address);
+  } catch {
+    return [];
+  }
+}
+
+/** Whether a proxy request names an Ollama server (by name, address, or as this host for a local one). */
+export async function isOllamaTarget(
+  host: string,
+  port: number,
+  targets: Array<{ host: string; port: number }> = [...ollamaTargets.values()].flat(),
+  own: Set<string> = hostOwnAddresses(),
+): Promise<boolean> {
+  const same = targets.filter((t) => t.port === port);
+  if (!same.length) return false;
+  const h = host.toLowerCase().replace(/\.$/, '');
+  for (const t of same) {
+    if (t.host.toLowerCase() === h) return true;
+    if (isLocal(t.host, own) && isLocal(h, own)) return true;
+  }
+  const mine = await addressesOf(h);
+  if (same.some((t) => isLocal(t.host, own)) && mine.some((a) => isLocal(a, own))) return true;
+  for (const t of same) {
+    const theirs = await addressesOf(t.host);
+    if (mine.some((a) => theirs.includes(a))) return true;
+  }
+  return false;
+}
+
 /** Model listeners by bridge (port → target), so one whose model was removed or moved is closed at the next spawn. */
 const modelPorts = new Map<string, Map<number, string>>();
 
@@ -566,6 +634,10 @@ export function ensureEgressFilter(
       `passthrough:${p.port}`,
     );
   }
+  ollamaTargets.set(
+    bridgeIp,
+    models.filter((m) => m.ollama).map((m) => m.target),
+  );
   // Keyed with the Ollama flag too: a port whose filtering changed is reopened.
   const wanted = new Map(models.map((m) => [m.port, `${m.target.host}:${m.target.port}${m.ollama ? ' ollama' : ''}`]));
   const had = modelPorts.get(bridgeIp) ?? new Map<number, string>();

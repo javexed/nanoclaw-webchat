@@ -9,7 +9,7 @@ import { userDisplayName } from './perms-user-info.js';
 import { selectedRoomId } from './room-list-state.js';
 import { allModels } from './model-list-state.js';
 import { cloudModelNames, cloudProviderOf } from './cloud-models-state.js';
-import { harnessFields, harnessRuns } from './harness-fit.js';
+import { harnessFields, harnessRuns, type LocalHarnesses } from './harness-fit.js';
 import {
   agentMcpServers,
   allMcpServers,
@@ -344,14 +344,31 @@ export function setAgentHarnessControl(provider?: any) {
 /** The harness the open agent is on (as the Harness control shows it). */
 let agentHarness = 'claude';
 
+/** Which local harnesses this install has (credentials-config); null until loaded. */
+let localHarnesses: LocalHarnesses | null = null;
+let localHarnessesLoading = false;
+
+function loadLocalHarnesses(): void {
+  if (localHarnesses || localHarnessesLoading) return;
+  localHarnessesLoading = true;
+  apiJson('/api/webchat/credentials-config')
+    .then((cfg: any) => {
+      localHarnesses = { opencode: !!cfg?.opencodeAvailable, pi: !!cfg?.piAvailable };
+      refreshHarnessOptions();
+    })
+    .catch(() => {})
+    .finally(() => (localHarnessesLoading = false));
+}
+
 /** The Harness control offers what can run the agent's model, and always the one it is on (harness-fit.ts). */
 function refreshHarnessOptions(): void {
+  loadLocalHarnesses();
   const id = $<HTMLInputElement>('#agent-model')?.value || '';
   const m = id ? allModels.value.find((x: any) => x.id === id) : null;
   const model = m ? { kind: String(m.kind), model_id: String(m.model_id) } : null;
   document.querySelectorAll<HTMLElement>('#agent-harness-control .setting-option').forEach((b) => {
     const h = b.dataset.provider || '';
-    b.hidden = h !== agentHarness && !harnessRuns(h, model, cloudModelNames);
+    b.hidden = h !== agentHarness && !harnessRuns(h, model, cloudModelNames, localHarnesses);
   });
 }
 
@@ -369,7 +386,10 @@ function applyHarnessFields(p: string): void {
   if (f.pinSuggestions === null) void deps.populateKnownModelOptions();
   else {
     const list = $('#agent-config-model-options');
-    if (list) list.replaceChildren(...f.pinSuggestions.map((v) => Object.assign(document.createElement('option'), { value: v })));
+    if (list)
+      list.replaceChildren(
+        ...f.pinSuggestions.map((v) => Object.assign(document.createElement('option'), { value: v })),
+      );
   }
 }
 

@@ -375,6 +375,13 @@ describe('the dedicated Tailscale Serve listener', () => {
     }
   });
 
+  it('ignores a trusted-proxy header there, even when loopback is a trusted proxy', async () => {
+    const auth = await loadAuthWithEnv({ WEBCHAT_TAILSCALE: 'true', WEBCHAT_TRUSTED_PROXY_IPS: '127.0.0.1' });
+    serve.dedicated = true;
+    const req = await onListener(auth, { host: 'node-1.example.ts.net', 'x-forwarded-user': 'owner@example.com' });
+    expect((await auth.authenticateRequest(req)).ok).toBe(false);
+  });
+
   it('never grants the localhost owner on the listener, even with no auth method configured', async () => {
     const auth = await loadAuthWithEnv({});
     const req = await onListener(auth, { host: 'node-1.example.ts.net' });
@@ -1302,5 +1309,15 @@ describe('Cloudflare Access: the assertion is verified when configured', () => {
       WEBCHAT_CF_ACCESS_AUD: 'a',
     });
     expect(c).toEqual({ enabled: true, issuer: ISS, audience: 'a', jwksUri: CERTS });
+  });
+});
+
+describe('trusted-proxy entries', () => {
+  it('refuses a /0 entry, which would trust every address', async () => {
+    const auth = await import('./auth.js');
+    expect(auth.parseProxyEntry('0.0.0.0/0')).toBeNull();
+    expect(auth.parseProxyEntry('::/0')).toBeNull();
+    expect(auth.isTrustedProxyIp('203.0.113.9', ['0.0.0.0/0'])).toBe(false);
+    expect(auth.parseProxyEntry('10.0.0.0/8')).toEqual({ address: '10.0.0.0', prefix: 8, family: 'ipv4' });
   });
 });

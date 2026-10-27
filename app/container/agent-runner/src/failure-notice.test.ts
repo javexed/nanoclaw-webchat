@@ -9,7 +9,7 @@ describe('failureNotice', () => {
       failureNotice(
         'OpenCode prompt failed: {"name":"APIError","data":{"message":"model \'qwen3:8b-ctx12k\' not found","statusCode":404}}',
       ),
-    ).toBe('The model “qwen3:8b-ctx12k” is no longer available. Pick another model for this agent, or reinstall it.');
+    ).toBe('Model “qwen3:8b-ctx12k” is gone. Pick another or reinstall it.');
     // Claude Code → Ollama's Anthropic API, quotes escaped inside the body.
     expect(failureNotice('API Error: 404 {"error":{"message":"model \\"mistral:7b\\" not found"}}')).toContain(
       '“mistral:7b”',

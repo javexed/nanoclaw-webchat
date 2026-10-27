@@ -29,6 +29,10 @@ NAMES="$(grep -aE "^ *(FAIL|×|✕)|Test Files|^ *Tests " "$CLEAN" | sort -u | h
 # alone says two objects differ without saying in which field.
 WHY="$(grep -a -A12 -E "AssertionError" "$CLEAN" | cut -c1-200 | head -60)"
 EVIDENCE="$(printf '%s\n' "$NAMES"; [ -n "$WHY" ] && printf '%s\n%s\n' "--- why ---" "$WHY")"
+# The comment is public: mask this job's own tokens and anything token-shaped
+# that a test printed. On a redaction failure, post names only — never the raw text.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+EVIDENCE="$(printf '%s' "$EVIDENCE" | python3 "$HERE/ci-redact.py" FORGE_TOKEN GITHUB_TOKEN ACTIONS_RUNTIME_TOKEN 2>/dev/null)" || EVIDENCE="$NAMES"
 
 if [ -z "${FORGE_TOKEN:-}" ]; then
   echo "::warning::No token available, so the failing step could not be posted to the PR."

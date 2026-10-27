@@ -175,6 +175,12 @@ jobs:
           echo "Manifest integrity (migrations register; dev tree matches)" > "$RUNNER_TEMP/ci-step"
           bash scripts/check-manifest.sh
 
+      - name: Failure-comment redaction self-test (proves it still masks tokens)
+        if: steps.scope.outputs.guards == 'true'
+        run: |
+          echo "Failure-comment redaction self-test (proves it still masks tokens)" > "$RUNNER_TEMP/ci-step"
+          bash scripts/ci-redact.selftest.sh
+
       - name: Patch header self-test (proves it still detects faults)
         if: steps.scope.outputs.guards == 'true'
         # Throwaway fixture patches, never the repo's own. A guard only ever seen

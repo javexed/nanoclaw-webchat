@@ -14,11 +14,33 @@ export interface FitModel {
   model_id: string;
 }
 
-/** Whether `provider` can run `model` (null: none assigned). `cloud`: the model ids the router serves. */
-export function harnessRuns(provider: string, model: FitModel | null, cloud: ReadonlySet<string>): boolean {
+/** Which local harnesses are installed; null (not known yet) is read as both, the stricter answer for Claude. */
+export interface LocalHarnesses {
+  opencode: boolean;
+  pi: boolean;
+}
+
+/**
+ * Whether `provider` can run `model` (null: none assigned). `cloud`: the model
+ * ids the router serves. Mirrors the server's harnessFits (models.ts): Claude
+ * runs Anthropic models and anything no installed local harness takes — an
+ * Ollama model when neither OpenCode nor pi is installed, a cloud model when
+ * OpenCode is not.
+ */
+export function harnessRuns(
+  provider: string,
+  model: FitModel | null,
+  cloud: ReadonlySet<string>,
+  local: LocalHarnesses | null = null,
+): boolean {
   if (!model || OWN_MODEL_HARNESSES.has(provider)) return true;
+  const installed = local ?? { opencode: true, pi: true };
   const isCloud = model.kind === 'openai-compatible' && cloud.has(model.model_id);
-  if (provider === 'claude') return model.kind === 'anthropic' || (model.kind === 'openai-compatible' && !isCloud);
+  if (provider === 'claude') {
+    if (model.kind === 'ollama') return !installed.opencode && !installed.pi;
+    if (isCloud) return !installed.opencode;
+    return true;
+  }
   if (provider === 'opencode') return model.kind === 'ollama' || isCloud;
   if (provider === 'pi') return model.kind === 'ollama';
   return true;
