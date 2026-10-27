@@ -20,7 +20,7 @@ import { DATA_DIR, INSTALL_SLUG } from '../../config.js';
 import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
 import { log } from '../../log.js';
 import { HELPER_IMAGE } from './images.js';
-import { buildOverride, subnetFor } from './override.js';
+import { buildOverride, overlappingIndexes, subnetFor } from './override.js';
 import { workloadSetting } from './settings.js';
 import type { Workload } from './store.js';
 
@@ -73,6 +73,34 @@ export const groupKey = (agentGroupId: string): string => sha256(agentGroupId).s
 /** Compose project names: lowercase letters, digits, - and _. */
 export function projectName(w: Pick<Workload, 'agentGroupId' | 'name'>): string {
   return `nc-${INSTALL_SLUG}-${groupKey(w.agentGroupId)}-${w.name}`;
+}
+
+/**
+ * Network indexes this install must not use: their subnet is already held by a
+ * Docker network that isn't one of ours (another install's workloads, or
+ * anything else on the host). A failed listing returns none — the create then
+ * fails loudly as before, rather than guessing.
+ */
+export async function foreignIndexes(): Promise<Set<number>> {
+  try {
+    const { stdout: names } = await run(CONTAINER_RUNTIME_BIN, ['network', 'ls', '--format', '{{.Name}}']);
+    const others = names
+      .split('\n')
+      .map((n) => n.trim())
+      .filter((n) => n && !n.startsWith(`nc-wl-${INSTALL_SLUG}-`));
+    if (!others.length) return new Set();
+    const { stdout } = await run(CONTAINER_RUNTIME_BIN, [
+      'network',
+      'inspect',
+      '--format',
+      '{{range .IPAM.Config}}{{.Subnet}} {{end}}',
+      ...others,
+    ]);
+    return overlappingIndexes(stdout.split(/\s+/).filter(Boolean));
+  } catch (err) {
+    log.warn('Workload networks: could not list host networks', { err: String(err) });
+    return new Set();
+  }
 }
 
 /** The tag a built service's image is loaded under: nothing else is ever loaded from a build. */

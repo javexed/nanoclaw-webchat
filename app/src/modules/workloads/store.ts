@@ -192,19 +192,26 @@ export async function networkRow(agentGroupId: string): Promise<{ idx: number; n
   return r ?? null;
 }
 
-/** Claim the lowest free network index for an agent. */
+/**
+ * Claim the lowest free network index for an agent, skipping `busy` ones (their
+ * subnet is held by a network that isn't ours, see foreignIndexes). A claim on a
+ * busy index can only be one whose network was never created — Docker would not
+ * have let ours and the other share a subnet — so it is dropped and re-claimed.
+ */
 export async function claimNetwork(
   agentGroupId: string,
   name: (idx: number) => string,
   max: number,
+  busy: ReadonlySet<number> = new Set(),
 ): Promise<{ idx: number; network: string }> {
   const existing = await networkRow(agentGroupId);
-  if (existing) return existing;
+  if (existing && !busy.has(existing.idx)) return existing;
+  if (existing) await getDb().run(`DELETE FROM workload_networks WHERE agent_group_id = ?`, agentGroupId);
   const used = new Set(
     ((await getDb().all(`SELECT idx FROM workload_networks`)) as { idx: number }[]).map((r) => r.idx),
   );
   let idx = 0;
-  while (used.has(idx)) idx++;
+  while (used.has(idx) || busy.has(idx)) idx++;
   if (idx >= max) throw new Error('no workload networks left on this node');
   await getDb().run(
     `INSERT INTO workload_networks (agent_group_id, idx, network, created_at) VALUES (?, ?, ?, ?)`,
