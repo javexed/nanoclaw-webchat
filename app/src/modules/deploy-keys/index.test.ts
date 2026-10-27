@@ -52,3 +52,18 @@ describe('deploy keys and planted links', () => {
     expect(fs.readFileSync(hostFile, 'utf-8')).toBe('WEBCHAT_TOKEN=secret\n');
   });
 });
+
+describe('editing a key target', () => {
+  it('changes only the target: same key', async () => {
+    await createDeployKey('ag-1', 'app', 'deploy@old-alias');
+    const before = fs.readFileSync(path.join(groupDir, 'deploy_key_app.pub'), 'utf-8').split(' ').slice(0, 2).join(' ');
+    const priv = fs.readFileSync(path.join(groupDir, 'deploy_key_app'), 'utf-8');
+
+    const key = await setDeployKeyTarget('ag-1', 'app', 'deploy@192.0.2.10');
+
+    expect(key.target).toBe('deploy@192.0.2.10');
+    const after = fs.readFileSync(path.join(groupDir, 'deploy_key_app.pub'), 'utf-8');
+    expect(after.split(' ').slice(0, 2).join(' ')).toBe(before);
+    expect(fs.readFileSync(path.join(groupDir, 'deploy_key_app'), 'utf-8')).toBe(priv);
+  });
+});

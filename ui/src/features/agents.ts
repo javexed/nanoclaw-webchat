@@ -1300,6 +1300,7 @@ function mountAgentKeyList(): void {
   agentKeysApp ??= mountIsland('#agent-keys-list', () =>
     createApp(AgentKeyList, {
       onRemove: (r: { key: unknown }) => void removeAgentKey(agentKeysGroupId, r.key),
+      onSaveTarget: (name: string, target: string) => saveAgentKeyTarget(agentKeysGroupId, name, target),
     }),
   );
 }
@@ -1322,6 +1323,7 @@ async function renderAgentKeys(agentGroupId?: any) {
   agentKeyRows.value = keys.map((k: any) => ({
     name: k.name,
     meta: k.target ? `ssh -i ${k.path} ${k.target}` : `${k.path} · no login target set`,
+    target: k.target || '',
     publicKey: k.publicKey,
     key: k,
   }));
@@ -1360,6 +1362,27 @@ async function createAgentKey() {
     showToast((err as any)?.body?.error || 'Could not create key', { kind: 'error' });
   } finally {
     btn!.disabled = false;
+  }
+}
+
+/**
+ * Re-point an existing key at a new user@host. The server re-stamps the
+ * target in the key's public half and refreshes the agent's credential note;
+ * the key material is unchanged, so the far end keeps trusting it. True when
+ * saved.
+ */
+export async function saveAgentKeyTarget(agentGroupId: any, name: string, target: string): Promise<boolean> {
+  try {
+    await apiJson(`/api/deploy-keys?agentGroupId=${encodeURIComponent(agentGroupId ?? '')}`, {
+      method: 'POST',
+      body: { name, target },
+    });
+    showToast(`Saved ${name}`);
+    await renderAgentKeys(agentGroupId);
+    return true;
+  } catch (err) {
+    showToast((err as any)?.body?.error || 'Could not save', { kind: 'error' });
+    return false;
   }
 }
 

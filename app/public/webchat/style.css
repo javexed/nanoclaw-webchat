@@ -8409,6 +8409,11 @@ body {
   gap: 6px;
   flex: 0 0 auto;
 }
+/* Deploy key: editing its target in place of the meta line. */
+.agent-key-edit input {
+  width: 100%;
+  margin-top: 4px;
+}
 
 /* Icon button — a compact, label-less control for a single row action, most
    often "copy this value" (CopyIconButton). A documented role (DESIGN.md §2),
