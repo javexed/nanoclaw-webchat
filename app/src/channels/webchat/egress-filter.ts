@@ -68,6 +68,75 @@ export interface EgressFilterDeps {
   direct?: (host: string, port: number) => Promise<net.Socket>;
   /** The install allowlist alone, which direct tunnels need (global admins); default: none, so no direct tunnels. */
   installAllowlist?: () => Promise<string[]>;
+  /** This agent's own private service addresses as CIDRs (its workload stacks), dialled directly; default: none. */
+  ownNetworks?: (agentGroupId: string) => Promise<string[]>;
+  /** Registries this agent's builds may reach on top of its own policy (an owner's opt-in); default: none. */
+  buildRegistries?: (agentGroupId: string) => Promise<string[]>;
+}
+
+/**
+ * Where an agent's own networks come from: a module that gives an agent a
+ * private network (workloads) registers here, so the filter does not import it.
+ * The container is already on that network; this only lets its proxy client
+ * reach it too, since HTTP clients send everything to the proxy.
+ */
+const ownNetworkResolvers: Array<(agentGroupId: string) => Promise<string[]>> = [];
+export function registerOwnNetworks(fn: (agentGroupId: string) => Promise<string[]>): void {
+  ownNetworkResolvers.push(fn);
+}
+async function ownNetworksFor(agentGroupId: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const fn of ownNetworkResolvers) out.push(...(await fn(agentGroupId).catch(() => [])));
+  return out;
+}
+
+/**
+ * An agent's workload builder (modules/workloads/builder.ts) is registered
+ * under this session id. Its traffic is held to the agent's policy like the
+ * agent's own, plus only the registries an owner opted this agent into
+ * (registerBuildRegistries) — there is no install-wide registry list, since
+ * a registry a build can pull from is one it can push to. It never goes
+ * through the credential gateway (a build gets no secrets injected) and
+ * connects directly, refusing this machine and private addresses
+ * (connectDirect); it never reaches the agent's own workload addresses.
+ */
+export const BUILD_SESSION = 'workload-build';
+const buildRegistryResolvers: Array<(agentGroupId: string) => Promise<string[]>> = [];
+export function registerBuildRegistries(fn: (agentGroupId: string) => Promise<string[]>): void {
+  buildRegistryResolvers.push(fn);
+}
+async function buildRegistriesFor(agentGroupId: string): Promise<string[]> {
+  const out: string[] = [];
+  for (const fn of buildRegistryResolvers) out.push(...(await fn(agentGroupId).catch(() => [])));
+  return out;
+}
+
+/** Is a literal IPv4 address inside one of these CIDRs? Names never are: no lookup can move them in. */
+export function inOwnNetwork(host: string, cidrs: string[]): boolean {
+  if (!net.isIPv4(host) || !cidrs.length) return false;
+  const list = new net.BlockList();
+  let any = false;
+  for (const c of cidrs) {
+    const [addr, bits] = c.split('/');
+    const n = Number(bits);
+    if (net.isIPv4(addr) && Number.isInteger(n) && n >= 8 && n <= 32) {
+      list.addSubnet(addr, n, 'ipv4');
+      any = true;
+    }
+  }
+  return any && list.check(host, 'ipv4');
+}
+
+/** Pipe a client to a socket this filter opened itself (no gateway in between). */
+function spliceDirect(client: ProxyClient, req: ParsedRequest, rest: Buffer, upstream: net.Socket): void {
+  upstream.on('error', () => client.destroy());
+  client.on('error', () => upstream.destroy());
+  if (req.kind === 'connect') client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+  else upstream.write(req.originHead!);
+  if (rest.length) upstream.write(rest);
+  client.pipe(upstream);
+  upstream.pipe(client);
+  client.resume();
 }
 
 /** A model listener: a host-local model's port, or the relay to a model on another machine (`remote`). */
@@ -95,6 +164,11 @@ async function connectDirect(host: string, port: number): Promise<net.Socket> {
     throw new Error(
       `${host} resolves to ${address}, which is not allowed directly (a private address: list the address itself)`,
     );
+  return connectTcp(address, port);
+}
+
+/** A TCP connection to a literal address, with the direct-connect timeout. */
+function connectTcp(address: string, port: number): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     const sock = net.connect({ host: address, port });
     const timer = setTimeout(() => {
@@ -256,12 +330,45 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
       'blocked by NanoClaw network policy: this container is not known to NanoClaw',
     );
   }
+  const building = caller.sessionId === BUILD_SESSION;
+  // The agent's own workload services: on its own network, so dialled directly
+  // whatever its policy (they are its own), never through the gateway.
+  if (!building && deps.ownNetworks && inOwnNetwork(req.host, await deps.ownNetworks(caller.agentGroupId))) {
+    let own: net.Socket;
+    try {
+      own = await connectTcp(req.host, req.port);
+    } catch (err) {
+      return answer(
+        client,
+        '502 Bad Gateway',
+        `could not reach ${req.host}:${req.port}: ${String((err as Error).message).slice(0, 200)}`,
+      );
+    }
+    return spliceDirect(client, req, head.rest, own);
+  }
   const mode = await deps.mode(caller.agentGroupId);
-  const always = deps.always ? await deps.always(caller.agentGroupId) : undefined;
+  const alwaysBase = deps.always ? await deps.always(caller.agentGroupId) : undefined;
+  const always =
+    building && deps.buildRegistries
+      ? [...(alwaysBase ?? []), ...(await deps.buildRegistries(caller.agentGroupId))]
+      : alwaysBase;
   const allowlist = await deps.allowlist(caller.agentGroupId);
   if (!egressAllowed(mode, req.host, req.port, allowlist, always)) {
     recordBlocked(req.host, req.port, caller.agentGroupId, caller.sessionId, mode);
     return answer(client, '403 Forbidden', blockedMessage(req.host, req.port, mode));
+  }
+  if (building) {
+    let upstream: net.Socket;
+    try {
+      upstream = await (deps.direct ?? connectDirect)(req.host, req.port);
+    } catch (err) {
+      return answer(
+        client,
+        '502 Bad Gateway',
+        `could not reach ${req.host}:${req.port}: ${String((err as Error).message).slice(0, 200)}`,
+      );
+    }
+    return spliceDirect(client, req, head.rest, upstream);
   }
   let upstream: net.Socket;
   const install = deps.installAllowlist ? await deps.installAllowlist() : [];
@@ -546,5 +653,7 @@ export function defaultFilterDeps(network: string, gateway: () => { host: string
     installAllowlist: getRunnerEgressAllowlist,
     always: modelHostsFor,
     ownModels: ownModelTargetsFor,
+    ownNetworks: ownNetworksFor,
+    buildRegistries: buildRegistriesFor,
   };
 }

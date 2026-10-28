@@ -121,6 +121,9 @@ to the OneCLI vault; the host never holds them.
   credential types a room allows.
 - **Workspace policy** — a default mode and the permitted credential types
   (out of the box: Anthropic key only).
+- **Connecting** — from the **@handle** menu (top right): one button per method the
+  workspace allows (**Sign in**, **API key**), or **Disconnect**. A `required` room
+  also shows a connect banner, since nothing runs there until the member connects.
 - **Safety** — onboarding is bound to the authenticated user (never body-supplied),
   room-access + CSRF gated, and rate-limited.
 

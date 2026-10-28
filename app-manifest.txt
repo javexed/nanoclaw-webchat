@@ -152,6 +152,8 @@ container/agent-runner/src/reply-preview.ts
 container/agent-runner/src/reply-preview.test.ts
 container/agent-runner/src/limit-reset.ts
 container/agent-runner/src/limit-reset.test.ts
+container/agent-runner/src/limit-notice.ts
+container/agent-runner/src/limit-notice.test.ts
 src/modules/group-context
 container/agent-runner/src/context-snapshot.ts
 container/agent-runner/src/context-snapshot.test.ts
@@ -169,3 +171,5 @@ src/mailbox-busy.ts
 src/mailbox-busy.test.ts
 container/agent-runner/src/providers/claude.served-model.test.ts
 container/agent-runner/src/providers/claude.tool-result-guard.test.ts
+src/modules/workloads
+container/skills/workloads

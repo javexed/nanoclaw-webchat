@@ -1,0 +1,29 @@
+diff --git a/src/cli/crud.ts b/src/cli/crud.ts
+index 481857d6..734035bf 100644
+--- a/src/cli/crud.ts
++++ b/src/cli/crud.ts
+@@ -15,6 +15,7 @@ import { renderVerbHelp } from './help-render.js';
+ import { register } from './registry.js';
+ import type { Access } from './registry.js';
+ import type { CallerContext } from './frame.js';
++import type { PrecheckResult } from './registry.js';
+ 
+ // ---------------------------------------------------------------------------
+ // Types
+@@ -55,6 +56,8 @@ export interface CustomOperation {
+   /** Operator-only: never runnable from inside a container (see CommandDef.hostOnly). */
+   hostOnly?: boolean;
+   handler: (args: Record<string, unknown>, ctx: CallerContext) => Promise<unknown>;
++  /** Approval verbs: checked before a card is made — see CommandDef.precheck. */
++  precheck?: (args: Record<string, unknown>, ctx: CallerContext) => Promise<void | PrecheckResult>;
+   /** Presentational renderer for human mode — see CommandDef.formatHuman. */
+   formatHuman?: (data: unknown) => string;
+ }
+@@ -535,6 +538,7 @@ export function registerResource(def: ResourceDef): void {
+             }
+           : (raw) => normalizeArgs(raw),
+         handler: async (args, ctx) => op.handler(args as Record<string, unknown>, ctx),
++        precheck: op.precheck ? async (args, ctx) => op.precheck!(args as Record<string, unknown>, ctx) : undefined,
+         formatHuman: op.formatHuman,
+       });
+     }

@@ -131,6 +131,10 @@ describe('never-list', () => {
       'groups-config-remove-mcp-server',
       'groups-config-add-mount',
       'groups-config-remove-mount',
+      'workloads-up',
+      'workloads-delete',
+      'workloads-restore',
+      'workloads-expose',
     ]) {
       expect(isNeverAutoApprovable('cli_command', real(command)), command).toBe(true);
       expect(heuristicFlags('cli_command', real(command)), command).not.toHaveLength(0);

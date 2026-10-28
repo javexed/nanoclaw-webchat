@@ -1,5 +1,5 @@
 import { marked } from "/marked.min.js";
-import { Fragment, Teleport, computed, createApp, createBlock, createCommentVNode, createElementBlock, createElementVNode, createTextVNode, createVNode, defineComponent, guardReactiveProps, inject, isRef, mergeProps, nextTick, normalizeClass, normalizeProps, normalizeStyle, onBeforeUnmount, onMounted, onUnmounted, openBlock, reactive, ref, renderList, resolveComponent, resolveDynamicComponent, shallowReactive, toDisplayString, toHandlers, unref, useTemplateRef, vModelSelect, vModelText, watch, watchEffect, withCtx, withDirectives, withKeys, withModifiers } from "/vue.runtime.min.js";
+import { Fragment, Teleport, computed, createApp, createBlock, createCommentVNode, createElementBlock, createElementVNode, createTextVNode, createVNode, defineComponent, guardReactiveProps, inject, isRef, mergeProps, nextTick, normalizeClass, normalizeProps, normalizeStyle, onBeforeUnmount, onMounted, onUnmounted, openBlock, reactive, ref, renderList, resolveComponent, resolveDynamicComponent, shallowReactive, shallowRef, toDisplayString, toHandlers, unref, useTemplateRef, vModelSelect, vModelText, watch, watchEffect, withCtx, withDirectives, withKeys, withModifiers } from "/vue.runtime.min.js";
 import DOMPurify from "/dompurify.min.js";
 //#region src/features/modals-state.ts
 /** Is the image lightbox open? Gates the global key handlers it installs. */
@@ -428,6 +428,20 @@ async function apiJson(url, { method = "GET", body, headers } = {}) {
 	return data;
 }
 //#endregion
+//#region src/features/approval-card-text.ts
+/** The text the approver reads, or '' when the card has none. */
+function approvalCardText(a) {
+	if (typeof a.question === "string" && a.question) return a.question;
+	return typeof a.payload === "string" ? a.payload : "";
+}
+/** The raw request for the Details block, or null when it adds nothing beyond the text. */
+function approvalRawPayload(a) {
+	const p = a.payload;
+	if (p === void 0 || p === null || p === "") return null;
+	if (typeof p === "string") return approvalCardText(a) === p ? null : p;
+	return p;
+}
+//#endregion
 //#region src/features/approvals-state.ts
 /** Pending approvals, as the panel list renders them. */
 var approvalRows = ref([]);
@@ -439,25 +453,30 @@ var approvalBusy = ref(/* @__PURE__ */ new Set());
 var approvalErrors = ref({});
 //#endregion
 //#region src/features/ApprovalCard.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$80 = ["data-question-id"];
-var _hoisted_2$69 = { class: "approval-title" };
-var _hoisted_3$65 = {
+var _hoisted_1$82 = ["data-question-id"];
+var _hoisted_2$71 = { class: "approval-title" };
+var _hoisted_3$67 = {
 	key: 0,
 	class: "approval-triage"
 };
-var _hoisted_4$54 = ["title"];
-var _hoisted_5$44 = {
+var _hoisted_4$56 = ["title"];
+var _hoisted_5$46 = {
 	key: 0,
 	class: "triage-note"
 };
-var _hoisted_6$35 = {
+var _hoisted_6$37 = {
 	key: 1,
-	class: "approval-payload"
+	class: "approval-text"
 };
-var _hoisted_7$28 = { class: "approval-actions" };
-var _hoisted_8$19 = ["disabled", "onClick"];
-var _hoisted_9$15 = {
+var _hoisted_7$30 = {
 	key: 2,
+	class: "approval-details"
+};
+var _hoisted_8$21 = { class: "approval-payload" };
+var _hoisted_9$17 = { class: "approval-actions" };
+var _hoisted_10$16 = ["disabled", "onClick"];
+var _hoisted_11$11 = {
+	key: 3,
 	class: "approval-error"
 };
 //#endregion
@@ -513,31 +532,34 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 		}];
 		const options = () => Array.isArray(props.approval.options) && props.approval.options.length ? props.approval.options : FALLBACK;
 		const payloadText = (p) => typeof p === "string" ? p : JSON.stringify(p, null, 2);
+		const cardText = () => approvalCardText(props.approval);
+		const rawPayload = () => approvalRawPayload(props.approval);
 		const btnClass = (v) => v === "approve" ? "approve" : v === "reject" ? "reject" : "";
 		return (_ctx, _cache) => {
 			return openBlock(), createElementBlock("li", {
 				class: "approval-card",
 				"data-question-id": __props.approval.questionId
 			}, [
-				createElementVNode("div", _hoisted_2$69, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1),
-				triageChips().length || triageNote() ? (openBlock(), createElementBlock("div", _hoisted_3$65, [(openBlock(true), createElementBlock(Fragment, null, renderList(triageChips(), (c) => {
+				createElementVNode("div", _hoisted_2$71, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1),
+				triageChips().length || triageNote() ? (openBlock(), createElementBlock("div", _hoisted_3$67, [(openBlock(true), createElementBlock(Fragment, null, renderList(triageChips(), (c) => {
 					return openBlock(), createElementBlock("span", {
 						key: c.flag,
 						class: normalizeClass(["triage-flag", { authoritative: c.authoritative }]),
 						title: chipTitle(c.authoritative)
-					}, toDisplayString(c.flag), 11, _hoisted_4$54);
-				}), 128)), triageNote() ? (openBlock(), createElementBlock("span", _hoisted_5$44, toDisplayString(triageNote()), 1)) : createCommentVNode("", true)])) : createCommentVNode("", true),
-				__props.approval.payload ? (openBlock(), createElementBlock("pre", _hoisted_6$35, toDisplayString(payloadText(__props.approval.payload)), 1)) : createCommentVNode("", true),
-				createElementVNode("div", _hoisted_7$28, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
+					}, toDisplayString(c.flag), 11, _hoisted_4$56);
+				}), 128)), triageNote() ? (openBlock(), createElementBlock("span", _hoisted_5$46, toDisplayString(triageNote()), 1)) : createCommentVNode("", true)])) : createCommentVNode("", true),
+				cardText() ? (openBlock(), createElementBlock("p", _hoisted_6$37, toDisplayString(cardText()), 1)) : createCommentVNode("", true),
+				rawPayload() ? (openBlock(), createElementBlock("details", _hoisted_7$30, [_cache[0] || (_cache[0] = createElementVNode("summary", null, "Details", -1)), createElementVNode("pre", _hoisted_8$21, toDisplayString(payloadText(rawPayload())), 1)])) : createCommentVNode("", true),
+				createElementVNode("div", _hoisted_9$17, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 					return openBlock(), createElementBlock("button", {
 						key: i,
 						class: normalizeClass(btnClass(o.value)),
 						disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
 						onClick: ($event) => props.onRespond(__props.approval.questionId, o.value)
-					}, toDisplayString(o.label || o.value), 11, _hoisted_8$19);
+					}, toDisplayString(o.label || o.value), 11, _hoisted_10$16);
 				}), 128))]),
-				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_9$15, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
-			], 8, _hoisted_1$80);
+				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_11$11, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
+			], 8, _hoisted_1$82);
 		};
 	}
 });
@@ -564,9 +586,9 @@ var ApprovalsList_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/ApprovalToast.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$79 = { class: "approval-title" };
-var _hoisted_2$68 = { class: "approval-actions" };
-var _hoisted_3$64 = ["disabled", "onClick"];
+var _hoisted_1$81 = { class: "approval-title" };
+var _hoisted_2$70 = { class: "approval-actions" };
+var _hoisted_3$66 = ["disabled", "onClick"];
 //#endregion
 //#region src/features/ApprovalToast.vue
 var ApprovalToast_default = /* @__PURE__ */ defineComponent({
@@ -593,13 +615,13 @@ var ApprovalToast_default = /* @__PURE__ */ defineComponent({
 		const options = () => Array.isArray(props.approval.options) && props.approval.options.length ? props.approval.options : FALLBACK;
 		const btnClass = (v) => v === "approve" ? "approve" : v === "reject" ? "reject" : "";
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [createElementVNode("div", _hoisted_1$79, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1), createElementVNode("div", _hoisted_2$68, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
+			return openBlock(), createElementBlock(Fragment, null, [createElementVNode("div", _hoisted_1$81, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1), createElementVNode("div", _hoisted_2$70, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 				return openBlock(), createElementBlock("button", {
 					key: i,
 					class: normalizeClass(btnClass(o.value)),
 					disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
 					onClick: ($event) => props.onRespond(__props.approval.questionId, o.value)
-				}, toDisplayString(o.label || o.value), 11, _hoisted_3$64);
+				}, toDisplayString(o.label || o.value), 11, _hoisted_3$66);
 			}), 128))])], 64);
 		};
 	}
@@ -862,19 +884,19 @@ function forgetTrace(messageId) {
 }
 //#endregion
 //#region src/features/TraceView.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$78 = { class: "trace-view" };
-var _hoisted_2$67 = {
+var _hoisted_1$80 = { class: "trace-view" };
+var _hoisted_2$69 = {
 	key: 0,
 	class: "trace-meta"
 };
-var _hoisted_3$63 = ["aria-label"];
-var _hoisted_4$53 = { class: "trace-tool-name" };
-var _hoisted_5$43 = ["title"];
-var _hoisted_6$34 = {
+var _hoisted_3$65 = ["aria-label"];
+var _hoisted_4$55 = { class: "trace-tool-name" };
+var _hoisted_5$45 = ["title"];
+var _hoisted_6$36 = {
 	key: 2,
 	class: "trace-tool-ms"
 };
-var _hoisted_7$27 = {
+var _hoisted_7$29 = {
 	key: 3,
 	class: "trace-truncated"
 };
@@ -897,8 +919,8 @@ var TraceView_default = /* @__PURE__ */ defineComponent({
 		const props = __props;
 		const meta = computed(() => metaLine(props.view));
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock("div", _hoisted_1$78, [
-				meta.value ? (openBlock(), createElementBlock("div", _hoisted_2$67, toDisplayString(meta.value), 1)) : createCommentVNode("", true),
+			return openBlock(), createElementBlock("div", _hoisted_1$80, [
+				meta.value ? (openBlock(), createElementBlock("div", _hoisted_2$69, toDisplayString(meta.value), 1)) : createCommentVNode("", true),
 				__props.view.tools.length ? (openBlock(), createElementBlock("ul", {
 					key: 1,
 					class: "trace-tools",
@@ -913,14 +935,14 @@ var TraceView_default = /* @__PURE__ */ defineComponent({
 							class: normalizeClass(t.ok ? "trace-tool-ok" : "trace-tool-failed"),
 							role: "img",
 							"aria-label": t.ok ? OK : FAILED$3
-						}, toDisplayString(t.ok ? "✓" : "✗"), 11, _hoisted_3$63)) : createCommentVNode("", true),
-						createElementVNode("span", _hoisted_4$53, toDisplayString(t.name), 1),
+						}, toDisplayString(t.ok ? "✓" : "✗"), 11, _hoisted_3$65)) : createCommentVNode("", true),
+						createElementVNode("span", _hoisted_4$55, toDisplayString(t.name), 1),
 						t.target ? (openBlock(), createElementBlock("span", {
 							key: 1,
 							class: "trace-tool-target",
 							title: t.target
-						}, toDisplayString(t.target), 9, _hoisted_5$43)) : createCommentVNode("", true),
-						t.ms !== null ? (openBlock(), createElementBlock("span", _hoisted_6$34, toDisplayString(unref(formatMs)(t.ms)), 1)) : createCommentVNode("", true)
+						}, toDisplayString(t.target), 9, _hoisted_5$45)) : createCommentVNode("", true),
+						t.ms !== null ? (openBlock(), createElementBlock("span", _hoisted_6$36, toDisplayString(unref(formatMs)(t.ms)), 1)) : createCommentVNode("", true)
 					]);
 				}), 128))])) : createCommentVNode("", true),
 				(openBlock(true), createElementBlock(Fragment, null, renderList(__props.view.notes, (n, i) => {
@@ -940,24 +962,24 @@ var TraceView_default = /* @__PURE__ */ defineComponent({
 						class: "trace-reasoning-line"
 					}, toDisplayString(l), 1);
 				}), 128))])) : createCommentVNode("", true),
-				__props.view.truncated ? (openBlock(), createElementBlock("div", _hoisted_7$27, toDisplayString(TRUNCATED$1))) : createCommentVNode("", true)
+				__props.view.truncated ? (openBlock(), createElementBlock("div", _hoisted_7$29, toDisplayString(TRUNCATED$1))) : createCommentVNode("", true)
 			]);
 		};
 	}
 });
 //#endregion
 //#region src/features/ThinkingBubble.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$77 = ["data-agent"];
-var _hoisted_2$66 = { class: "sender" };
-var _hoisted_3$62 = { class: "thinking-verb" };
-var _hoisted_4$52 = { class: "thinking-elapsed" };
-var _hoisted_5$42 = ["aria-expanded"];
-var _hoisted_6$33 = { class: "bubble" };
-var _hoisted_7$26 = ["hidden"];
-var _hoisted_8$18 = ["hidden"];
-var _hoisted_9$14 = ["hidden"];
-var _hoisted_10$13 = ["hidden"];
-var _hoisted_11$8 = {
+var _hoisted_1$79 = ["data-agent"];
+var _hoisted_2$68 = { class: "sender" };
+var _hoisted_3$64 = { class: "thinking-verb" };
+var _hoisted_4$54 = { class: "thinking-elapsed" };
+var _hoisted_5$44 = ["aria-expanded"];
+var _hoisted_6$35 = { class: "bubble" };
+var _hoisted_7$28 = ["hidden"];
+var _hoisted_8$20 = ["hidden"];
+var _hoisted_9$16 = ["hidden"];
+var _hoisted_10$15 = ["hidden"];
+var _hoisted_11$10 = {
 	ref: "trace",
 	class: "thinking-fulltrace"
 };
@@ -1005,14 +1027,14 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 			return openBlock(), createElementBlock("div", mergeProps({
 				class: __props.turn.expanded ? "msg agent thinking-bubble expanded" : "msg agent thinking-bubble",
 				"data-agent": __props.turn.name
-			}, __props.turn.statusLive ? { "data-status-live": "1" } : {}, { onClick }), [createElementVNode("div", _hoisted_2$66, [
+			}, __props.turn.statusLive ? { "data-status-live": "1" } : {}, { onClick }), [createElementVNode("div", _hoisted_2$68, [
 				_cache[4] || (_cache[4] = createElementVNode("svg", {
 					class: "icon",
 					"aria-hidden": "true"
 				}, [createElementVNode("use", { href: "#i-bot" })], -1)),
 				createTextVNode(toDisplayString(` ${__props.turn.name} — `), 1),
-				createElementVNode("span", _hoisted_3$62, toDisplayString(__props.turn.verb), 1),
-				createElementVNode("span", _hoisted_4$52, toDisplayString(__props.turn.elapsed), 1),
+				createElementVNode("span", _hoisted_3$64, toDisplayString(__props.turn.verb), 1),
+				createElementVNode("span", _hoisted_4$54, toDisplayString(__props.turn.elapsed), 1),
 				createElementVNode("button", {
 					type: "button",
 					class: "thinking-chevron",
@@ -1023,7 +1045,7 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 				}, [..._cache[2] || (_cache[2] = [createElementVNode("svg", {
 					class: "icon",
 					"aria-hidden": "true"
-				}, [createElementVNode("use", { href: "#i-chevron-right" })], -1)])], 8, _hoisted_5$42),
+				}, [createElementVNode("use", { href: "#i-chevron-right" })], -1)])], 8, _hoisted_5$44),
 				createElementVNode("button", {
 					type: "button",
 					class: "thinking-stop",
@@ -1034,15 +1056,15 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 					class: "stop-square",
 					"aria-hidden": "true"
 				}, null, -1)), createTextVNode(toDisplayString(STOP))])
-			]), createElementVNode("div", _hoisted_6$33, [
+			]), createElementVNode("div", _hoisted_6$35, [
 				createElementVNode("div", {
 					class: "thinking-milestone",
 					hidden: !__props.turn.milestone
-				}, toDisplayString(__props.turn.milestone), 9, _hoisted_7$26),
+				}, toDisplayString(__props.turn.milestone), 9, _hoisted_7$28),
 				createElementVNode("div", {
 					class: "thinking-target",
 					hidden: !__props.turn.detail
-				}, toDisplayString(__props.turn.detail), 9, _hoisted_8$18),
+				}, toDisplayString(__props.turn.detail), 9, _hoisted_8$20),
 				createElementVNode("div", {
 					ref: "feed",
 					class: "thinking-feed",
@@ -1052,12 +1074,12 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 						key: l.key,
 						class: normalizeClass(l.fading ? "thinking-feed-line fading" : "thinking-feed-line")
 					}, toDisplayString(l.text), 3);
-				}), 128))], 8, _hoisted_9$14),
+				}), 128))], 8, _hoisted_9$16),
 				createElementVNode("div", {
 					class: "thinking-preview",
 					hidden: !__props.turn.preview
-				}, toDisplayString(__props.turn.preview), 9, _hoisted_10$13),
-				createElementVNode("div", _hoisted_11$8, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
+				}, toDisplayString(__props.turn.preview), 9, _hoisted_10$15),
+				createElementVNode("div", _hoisted_11$10, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
 					key: 0,
 					view: liveView.value
 				}, null, 8, ["view"])) : createCommentVNode("", true)], 512),
@@ -1066,7 +1088,7 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 					createElementVNode("span"),
 					createElementVNode("span")
 				], -1))
-			])], 16, _hoisted_1$77);
+			])], 16, _hoisted_1$79);
 		};
 	}
 });
@@ -1762,7 +1784,7 @@ function isDictationActive() {
 }
 //#endregion
 //#region src/features/TtsButton.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$76 = [
+var _hoisted_1$78 = [
 	"aria-label",
 	"title",
 	"innerHTML"
@@ -1799,7 +1821,7 @@ var TtsButton_default = /* @__PURE__ */ defineComponent({
 				title: title.value,
 				innerHTML: phase.value === "playing" ? SQUARE : VOLUME,
 				onClick: _cache[0] || (_cache[0] = withModifiers(($event) => unref(toggleTts)(props.msgKey, props.getText), ["stop"]))
-			}, null, 10, _hoisted_1$76);
+			}, null, 10, _hoisted_1$78);
 		};
 	}
 });
@@ -2490,26 +2512,26 @@ function attachmentDrawerPopstate(state) {
 }
 //#endregion
 //#region src/features/MessageBubble.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$75 = { class: "file-bubble" };
-var _hoisted_2$65 = ["src", "alt"];
-var _hoisted_3$61 = { class: "file-info" };
-var _hoisted_4$51 = ["innerHTML"];
-var _hoisted_5$41 = ["title"];
-var _hoisted_6$32 = {
+var _hoisted_1$77 = { class: "file-bubble" };
+var _hoisted_2$67 = ["src", "alt"];
+var _hoisted_3$63 = { class: "file-info" };
+var _hoisted_4$53 = ["innerHTML"];
+var _hoisted_5$43 = ["title"];
+var _hoisted_6$34 = {
 	key: 1,
 	class: "file-name"
 };
-var _hoisted_7$25 = { class: "file-size" };
-var _hoisted_8$17 = [
+var _hoisted_7$27 = { class: "file-size" };
+var _hoisted_8$19 = [
 	"href",
 	"download",
 	"aria-label"
 ];
-var _hoisted_9$13 = {
+var _hoisted_9$15 = {
 	key: 0,
 	class: "file-caption"
 };
-var _hoisted_10$12 = ["innerHTML"];
+var _hoisted_10$14 = ["innerHTML"];
 var DOWNLOAD = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-download\"></use></svg>";
 var IMAGE = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-image\"></use></svg>";
 var FILE_TEXT = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-file-text\"></use></svg>";
@@ -2560,26 +2582,26 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 				ref_key: "bubbleEl",
 				ref: bubbleEl,
 				class: "bubble"
-			}, [createElementVNode("div", _hoisted_1$75, [__props.row.file.mime?.startsWith("image/") ? (openBlock(), createElementBlock("img", {
+			}, [createElementVNode("div", _hoisted_1$77, [__props.row.file.mime?.startsWith("image/") ? (openBlock(), createElementBlock("img", {
 				key: 0,
 				src: __props.row.file.url,
 				alt: __props.row.file.filename,
 				class: "file-image-preview",
 				loading: "lazy",
 				onClick: _cache[0] || (_cache[0] = ($event) => props.onOpenLightbox(__props.row.file.url, __props.row.file.filename))
-			}, null, 8, _hoisted_2$65)) : createCommentVNode("", true), createElementVNode("div", _hoisted_3$61, [
+			}, null, 8, _hoisted_2$67)) : createCommentVNode("", true), createElementVNode("div", _hoisted_3$63, [
 				createElementVNode("span", {
 					class: "file-icon",
 					innerHTML: fileIcon(__props.row.file)
-				}, null, 8, _hoisted_4$51),
+				}, null, 8, _hoisted_4$53),
 				previewable(__props.row.file) ? (openBlock(), createElementBlock("button", {
 					key: 0,
 					type: "button",
 					class: "file-name file-open",
 					title: __props.row.file.filename,
 					onClick: openPreview
-				}, toDisplayString(__props.row.file.filename), 9, _hoisted_5$41)) : (openBlock(), createElementBlock("span", _hoisted_6$32, toDisplayString(__props.row.file.filename), 1)),
-				createElementVNode("span", _hoisted_7$25, toDisplayString(fileSize(__props.row.file.size)), 1),
+				}, toDisplayString(__props.row.file.filename), 9, _hoisted_5$43)) : (openBlock(), createElementBlock("span", _hoisted_6$34, toDisplayString(__props.row.file.filename), 1)),
+				createElementVNode("span", _hoisted_7$27, toDisplayString(fileSize(__props.row.file.size)), 1),
 				createElementVNode("a", {
 					href: __props.row.file.url,
 					download: __props.row.file.filename,
@@ -2587,13 +2609,13 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 					title: DOWNLOAD_TITLE,
 					"aria-label": `${DOWNLOAD_TITLE} ${__props.row.file.filename}`,
 					innerHTML: DOWNLOAD
-				}, null, 8, _hoisted_8$17)
-			])]), __props.row.caption ? (openBlock(), createElementBlock("div", _hoisted_9$13, toDisplayString(__props.row.caption), 1)) : createCommentVNode("", true)], 512)) : __props.row.html ? (openBlock(), createElementBlock("div", {
+				}, null, 8, _hoisted_8$19)
+			])]), __props.row.caption ? (openBlock(), createElementBlock("div", _hoisted_9$15, toDisplayString(__props.row.caption), 1)) : createCommentVNode("", true)], 512)) : __props.row.html ? (openBlock(), createElementBlock("div", {
 				key: 1,
 				ref: bind,
 				class: "bubble",
 				innerHTML: __props.row.html
-			}, null, 8, _hoisted_10$12)) : (openBlock(), createElementBlock("div", {
+			}, null, 8, _hoisted_10$14)) : (openBlock(), createElementBlock("div", {
 				key: 2,
 				ref: bind,
 				class: "bubble"
@@ -2797,47 +2819,47 @@ var roomSkillsReviewing = ref(/* @__PURE__ */ new Set());
 var draftAction = ref({});
 //#endregion
 //#region src/features/SkillDraftCard.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$74 = {
+var _hoisted_1$76 = {
 	key: 0,
 	class: "skill-draft-card resolved"
 };
-var _hoisted_2$64 = { class: "skill-head" };
-var _hoisted_3$60 = { class: "skill-name" };
-var _hoisted_4$50 = { class: "skill-draft-actions" };
-var _hoisted_5$40 = ["disabled"];
-var _hoisted_6$31 = {
+var _hoisted_2$66 = { class: "skill-head" };
+var _hoisted_3$62 = { class: "skill-name" };
+var _hoisted_4$52 = { class: "skill-draft-actions" };
+var _hoisted_5$42 = ["disabled"];
+var _hoisted_6$33 = {
 	key: 1,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_7$24 = ["disabled"];
-var _hoisted_8$16 = {
+var _hoisted_7$26 = ["disabled"];
+var _hoisted_8$18 = {
 	key: 2,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_9$12 = {
+var _hoisted_9$14 = {
 	key: 3,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_10$11 = {
+var _hoisted_10$13 = {
 	key: 4,
 	class: "skill-draft-card"
 };
-var _hoisted_11$7 = { class: "skill-head" };
-var _hoisted_12$7 = { class: "skill-name" };
-var _hoisted_13$7 = { class: "skill-desc" };
-var _hoisted_14$7 = { class: "skill-draft-actions" };
-var _hoisted_15$7 = ["onClick"];
-var _hoisted_16$7 = {
+var _hoisted_11$9 = { class: "skill-head" };
+var _hoisted_12$9 = { class: "skill-name" };
+var _hoisted_13$9 = { class: "skill-desc" };
+var _hoisted_14$9 = { class: "skill-draft-actions" };
+var _hoisted_15$9 = ["onClick"];
+var _hoisted_16$9 = {
 	key: 1,
 	class: "skill-draft-actions"
 };
-var _hoisted_17$6 = [
+var _hoisted_17$8 = [
 	"title",
 	"data-draft-id",
 	"disabled"
 ];
-var _hoisted_18$5 = ["disabled"];
-var _hoisted_19$4 = {
+var _hoisted_18$7 = ["disabled"];
+var _hoisted_19$6 = {
 	key: 2,
 	class: "import-warning"
 };
@@ -2888,13 +2910,13 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 			return p?.phase === "undoing" ? p.from : p;
 		});
 		return (_ctx, _cache) => {
-			return shown.value?.phase === "kept" ? (openBlock(), createElementBlock("div", _hoisted_1$74, [createElementVNode("div", _hoisted_2$64, [createElementVNode("span", _hoisted_3$60, "✅ " + toDisplayString(shown.value.patched ? "Updated" : "Kept as") + " " + toDisplayString(shown.value.name), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
+			return shown.value?.phase === "kept" ? (openBlock(), createElementBlock("div", _hoisted_1$76, [createElementVNode("div", _hoisted_2$66, [createElementVNode("span", _hoisted_3$62, "✅ " + toDisplayString(shown.value.patched ? "Updated" : "Kept as") + " " + toDisplayString(shown.value.name), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
 				key: 0,
 				origin: {
 					label: `wired to ${__props.agentName}`,
 					official: false
 				}
-			}, null, 8, ["origin"])) : createCommentVNode("", true)]), createElementVNode("div", _hoisted_4$50, [createElementVNode("button", {
+			}, null, 8, ["origin"])) : createCommentVNode("", true)]), createElementVNode("div", _hoisted_4$52, [createElementVNode("button", {
 				type: "button",
 				class: "btn btn-ghost",
 				onClick: _cache[0] || (_cache[0] = ($event) => props.onView())
@@ -2907,7 +2929,7 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 				busy: undoing.value,
 				label: UNDO$1,
 				"busy-label": UNDOING
-			}, null, 8, ["busy"])], 8, _hoisted_5$40)])])) : shown.value?.phase === "discarded" ? (openBlock(), createElementBlock("div", _hoisted_6$31, [createElementVNode("span", null, "🗑 " + toDisplayString(shown.value.skillName || __props.title) + " — discarded", 1), createElementVNode("button", {
+			}, null, 8, ["busy"])], 8, _hoisted_5$42)])])) : shown.value?.phase === "discarded" ? (openBlock(), createElementBlock("div", _hoisted_6$33, [createElementVNode("span", null, "🗑 " + toDisplayString(shown.value.skillName || __props.title) + " — discarded", 1), createElementVNode("button", {
 				type: "button",
 				class: "btn btn-ghost",
 				disabled: undoing.value || void 0,
@@ -2916,21 +2938,21 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 				busy: undoing.value,
 				label: UNDO$1,
 				"busy-label": UNDOING
-			}, null, 8, ["busy"])], 8, _hoisted_7$24)])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_8$16, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_9$12, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_10$11, [
-				createElementVNode("div", _hoisted_11$7, [createElementVNode("span", _hoisted_12$7, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
+			}, null, 8, ["busy"])], 8, _hoisted_7$26)])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_8$18, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_9$14, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_10$13, [
+				createElementVNode("div", _hoisted_11$9, [createElementVNode("span", _hoisted_12$9, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
 					key: 0,
 					origin: {
 						label: `loads in every ${__props.agentName} session`,
 						official: false
 					}
 				}, null, 8, ["origin"])) : createCommentVNode("", true)]),
-				createElementVNode("div", _hoisted_13$7, toDisplayString(__props.desc), 1),
+				createElementVNode("div", _hoisted_13$9, toDisplayString(__props.desc), 1),
 				unref(draftAction)[__props.draftId]?.phase === "overlaps" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(draftAction)[__props.draftId].overlaps, (o) => {
 					return openBlock(), createElementBlock("div", {
 						key: o.name,
 						class: "import-warning"
 					}, " ⚠ " + toDisplayString(o.name) + " (" + toDisplayString(o.source === "pending-draft" ? "pending draft" : o.source) + ") — " + toDisplayString(o.reason), 1);
-				}), 128)), createElementVNode("div", _hoisted_14$7, [
+				}), 128)), createElementVNode("div", _hoisted_14$9, [
 					(openBlock(true), createElementBlock(Fragment, null, renderList(unref(draftAction)[__props.draftId].overlaps.filter((x) => x.source !== "pending-draft"), (o) => {
 						return openBlock(), createElementBlock("button", {
 							key: o.name,
@@ -2940,7 +2962,7 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 								action: "update",
 								target: o.name
 							})
-						}, " Update " + toDisplayString(o.name), 9, _hoisted_15$7);
+						}, " Update " + toDisplayString(o.name), 9, _hoisted_15$9);
 					}), 128)),
 					createElementVNode("button", {
 						type: "button",
@@ -2952,7 +2974,7 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 						class: "skill-delete",
 						onClick: _cache[4] || (_cache[4] = ($event) => props.onOverlapChoice({ action: "discard" }))
 					}, toDisplayString(DISCARD$2))
-				])], 64)) : (openBlock(), createElementBlock("div", _hoisted_16$7, [
+				])], 64)) : (openBlock(), createElementBlock("div", _hoisted_16$9, [
 					createElementVNode("button", {
 						type: "button",
 						class: "btn btn-ghost",
@@ -2969,7 +2991,7 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 						busy: unref(draftAction)[__props.draftId]?.phase === "saving" || unref(draftAction)[__props.draftId]?.phase === "checking",
 						label: KEEP$2,
 						"busy-label": keepBusyLabel.value
-					}, null, 8, ["busy", "busy-label"])], 8, _hoisted_17$6),
+					}, null, 8, ["busy", "busy-label"])], 8, _hoisted_17$8),
 					createElementVNode("button", {
 						type: "button",
 						class: "skill-delete",
@@ -2979,35 +3001,35 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 						busy: unref(draftAction)[__props.draftId]?.phase === "discarding",
 						label: DISCARD$2,
 						"busy-label": DISCARDING
-					}, null, 8, ["busy"])], 8, _hoisted_18$5)
+					}, null, 8, ["busy"])], 8, _hoisted_18$7)
 				])),
-				unref(draftAction)[__props.draftId]?.phase === "error" ? (openBlock(), createElementBlock("div", _hoisted_19$4, " ⚠ " + toDisplayString(unref(draftAction)[__props.draftId].error), 1)) : createCommentVNode("", true)
+				unref(draftAction)[__props.draftId]?.phase === "error" ? (openBlock(), createElementBlock("div", _hoisted_19$6, " ⚠ " + toDisplayString(unref(draftAction)[__props.draftId].error), 1)) : createCommentVNode("", true)
 			]));
 		};
 	}
 });
 //#endregion
 //#region src/features/TurnThoughts.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$73 = {
+var _hoisted_1$75 = {
 	key: 0,
 	class: "thoughts-preview"
 };
-var _hoisted_2$63 = ["aria-busy"];
-var _hoisted_3$59 = {
+var _hoisted_2$65 = ["aria-busy"];
+var _hoisted_3$61 = {
 	key: 0,
 	class: "thoughts-line"
 };
-var _hoisted_4$49 = {
+var _hoisted_4$51 = {
 	key: 0,
 	class: "btn-spinner",
 	"aria-hidden": "true"
 };
-var _hoisted_5$39 = {
+var _hoisted_5$41 = {
 	key: 2,
 	class: "thoughts-line"
 };
 var THOUGHTS = "Thoughts";
-var LOADING$4 = "Loading…";
+var LOADING$5 = "Loading…";
 var UNAVAILABLE = "Activity unavailable";
 var NO_ACTIVITY = "No reasoning captured for this turn";
 //#endregion
@@ -3052,7 +3074,7 @@ var TurnThoughts_default = /* @__PURE__ */ defineComponent({
 		});
 		const status = computed(() => {
 			const s = load.value?.status;
-			if (s === "loading" && !traceHasContent(view.value)) return LOADING$4;
+			if (s === "loading" && !traceHasContent(view.value)) return LOADING$5;
 			if ((s === "none" || s === "error") && !traceHasContent(view.value)) return UNAVAILABLE;
 			return "";
 		});
@@ -3080,19 +3102,19 @@ var TurnThoughts_default = /* @__PURE__ */ defineComponent({
 					"aria-hidden": "true"
 				}, [createElementVNode("use", { href: "#i-sparkles" })], -1)),
 				createTextVNode(toDisplayString(` ${THOUGHTS}${count.value}`), 1),
-				preview.value ? (openBlock(), createElementBlock("span", _hoisted_1$73, toDisplayString(preview.value), 1)) : createCommentVNode("", true)
+				preview.value ? (openBlock(), createElementBlock("span", _hoisted_1$75, toDisplayString(preview.value), 1)) : createCommentVNode("", true)
 			]), createElementVNode("div", {
 				class: "thoughts-body",
 				tabindex: "0",
 				"aria-busy": load.value?.status === "loading" ? "true" : void 0
 			}, [
-				status.value ? (openBlock(), createElementBlock("div", _hoisted_3$59, [status.value === LOADING$4 ? (openBlock(), createElementBlock("span", _hoisted_4$49)) : createCommentVNode("", true), createTextVNode(toDisplayString(status.value), 1)])) : createCommentVNode("", true),
+				status.value ? (openBlock(), createElementBlock("div", _hoisted_3$61, [status.value === LOADING$5 ? (openBlock(), createElementBlock("span", _hoisted_4$51)) : createCommentVNode("", true), createTextVNode(toDisplayString(status.value), 1)])) : createCommentVNode("", true),
 				view.value && (unref(traceHasContent)(view.value) || empty.value) ? (openBlock(), createBlock(TraceView_default, {
 					key: 1,
 					view: view.value
 				}, null, 8, ["view"])) : createCommentVNode("", true),
-				empty.value ? (openBlock(), createElementBlock("div", _hoisted_5$39, toDisplayString(NO_ACTIVITY))) : createCommentVNode("", true)
-			], 8, _hoisted_2$63)], 32)) : createCommentVNode("", true);
+				empty.value ? (openBlock(), createElementBlock("div", _hoisted_5$41, toDisplayString(NO_ACTIVITY))) : createCommentVNode("", true)
+			], 8, _hoisted_2$65)], 32)) : createCommentVNode("", true);
 		};
 	}
 });
@@ -3137,14 +3159,14 @@ function conflictRetry(body) {
 }
 //#endregion
 //#region src/features/LimitRetry.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$72 = {
+var _hoisted_1$74 = {
 	key: 0,
 	class: "limit-retry",
 	"aria-live": "polite"
 };
-var _hoisted_2$62 = ["disabled"];
-var _hoisted_3$58 = { class: "limit-retry-at" };
-var _hoisted_4$48 = ["disabled"];
+var _hoisted_2$64 = ["disabled"];
+var _hoisted_3$60 = { class: "limit-retry-at" };
+var _hoisted_4$50 = ["disabled"];
 //#endregion
 //#region src/features/LimitRetry.vue
 var LimitRetry_default = /* @__PURE__ */ defineComponent({
@@ -3206,19 +3228,19 @@ var LimitRetry_default = /* @__PURE__ */ defineComponent({
 			}
 		}
 		return (_ctx, _cache) => {
-			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$72, [view.value === "offer" ? (openBlock(), createElementBlock("button", {
+			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$74, [view.value === "offer" ? (openBlock(), createElementBlock("button", {
 				key: 0,
 				type: "button",
 				class: "btn btn-secondary",
 				disabled: busy.value,
 				onClick: schedule
-			}, toDisplayString(label.value), 9, _hoisted_2$62)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("span", _hoisted_3$58, toDisplayString(label.value), 1), canCancel.value ? (openBlock(), createElementBlock("button", {
+			}, toDisplayString(label.value), 9, _hoisted_2$64)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("span", _hoisted_3$60, toDisplayString(label.value), 1), canCancel.value ? (openBlock(), createElementBlock("button", {
 				key: 0,
 				type: "button",
 				class: "btn btn-ghost",
 				disabled: busy.value,
 				onClick: cancel
-			}, "Cancel", 8, _hoisted_4$48)) : createCommentVNode("", true)], 64))])) : createCommentVNode("", true);
+			}, "Cancel", 8, _hoisted_4$50)) : createCommentVNode("", true)], 64))])) : createCommentVNode("", true);
 		};
 	}
 });
@@ -3230,30 +3252,30 @@ function servedModelShown(row, settings) {
 }
 //#endregion
 //#region src/features/Transcript.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$71 = {
+var _hoisted_1$73 = {
 	key: 0,
 	class: "empty-state"
 };
-var _hoisted_2$61 = {
+var _hoisted_2$63 = {
 	key: 0,
 	class: "msg system"
 };
-var _hoisted_3$57 = ["data-question-id"];
-var _hoisted_4$47 = {
+var _hoisted_3$59 = ["data-question-id"];
+var _hoisted_4$49 = {
 	key: 0,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_5$38 = {
+var _hoisted_5$40 = {
 	key: 2,
 	class: "approval-inroom-note"
 };
-var _hoisted_6$30 = ["data-draft-id"];
-var _hoisted_7$23 = {
+var _hoisted_6$32 = ["data-draft-id"];
+var _hoisted_7$25 = {
 	key: 0,
 	class: "msg-body"
 };
-var _hoisted_8$15 = ["title"];
-var _hoisted_9$11 = {
+var _hoisted_8$17 = ["title"];
+var _hoisted_9$13 = {
 	key: 0,
 	class: "served-model"
 };
@@ -3279,23 +3301,23 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 		*/
 		const props = __props;
 		return (_ctx, _cache) => {
-			return unref(transcriptEmpty) && !unref(messages).length && !unref(thinkingTurns).length ? (openBlock(), createElementBlock("div", _hoisted_1$71, toDisplayString(unref(transcriptEmpty)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(messages), (row) => {
-				return openBlock(), createElementBlock(Fragment, { key: row.key }, [row.kind === "system" ? (openBlock(), createElementBlock("div", _hoisted_2$61, toDisplayString(row.text), 1)) : row.kind === "divider" ? (openBlock(), createElementBlock("div", {
+			return unref(transcriptEmpty) && !unref(messages).length && !unref(thinkingTurns).length ? (openBlock(), createElementBlock("div", _hoisted_1$73, toDisplayString(unref(transcriptEmpty)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(messages), (row) => {
+				return openBlock(), createElementBlock(Fragment, { key: row.key }, [row.kind === "system" ? (openBlock(), createElementBlock("div", _hoisted_2$63, toDisplayString(row.text), 1)) : row.kind === "divider" ? (openBlock(), createElementBlock("div", {
 					key: 1,
 					class: normalizeClass(["context-divider", row.cls])
 				}, [createElementVNode("span", null, toDisplayString(row.text), 1)], 2)) : row.kind === "approval" ? (openBlock(), createElementBlock("div", {
 					key: 2,
 					class: "msg approval-msg",
 					"data-question-id": row.id || ""
-				}, [row.approvalState === "resolved" ? (openBlock(), createElementBlock("div", _hoisted_4$47, toDisplayString(row.note), 1)) : row.approvalState === "eligible" ? (openBlock(), createBlock(ApprovalCard_default, {
+				}, [row.approvalState === "resolved" ? (openBlock(), createElementBlock("div", _hoisted_4$49, toDisplayString(row.note), 1)) : row.approvalState === "eligible" ? (openBlock(), createBlock(ApprovalCard_default, {
 					key: 1,
 					approval: row.payload,
 					"on-respond": props.onApprovalRespond
-				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", _hoisted_5$38, toDisplayString(row.note), 1))], 8, _hoisted_3$57)) : row.kind === "draft" ? (openBlock(), createElementBlock("div", {
+				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", _hoisted_5$40, toDisplayString(row.note), 1))], 8, _hoisted_3$59)) : row.kind === "draft" ? (openBlock(), createElementBlock("div", {
 					key: 3,
 					class: "msg skill-draft-msg",
 					"data-draft-id": row.id || ""
-				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_6$30)) : (openBlock(), createElementBlock("div", mergeProps({
+				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_6$32)) : (openBlock(), createElementBlock("div", mergeProps({
 					key: 4,
 					class: row.cls
 				}, { ref_for: true }, row.id ? { "data-message-id": row.id } : {}, { style: row.isA2a ? { "--a2a-accent": row.a2aAccent } : void 0 }), [
@@ -3309,7 +3331,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						class: "icon",
 						"aria-hidden": "true"
 					}, [createElementVNode("use", { href: "#i-bot" })], -1)), createTextVNode(toDisplayString(" " + row.sender), 1)], 64)) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [createTextVNode(toDisplayString(row.isMine ? "You" : row.sender), 1)], 64))], 2),
-					row.body ? (openBlock(), createElementBlock("div", _hoisted_7$23, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
+					row.body ? (openBlock(), createElementBlock("div", _hoisted_7$25, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
 						key: 0,
 						"message-id": row.id
 					}, null, 8, ["message-id"])) : createCommentVNode("", true), createVNode(MessageBubble_default, {
@@ -3346,7 +3368,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						key: 4,
 						class: "timestamp",
 						title: row.timeTitle || void 0
-					}, [createTextVNode(toDisplayString(row.timeStr), 1), unref(servedModelShown)(row, unref(state).settings) ? (openBlock(), createElementBlock("span", _hoisted_9$11, toDisplayString(" · " + unref(servedModelShown)(row, unref(state).settings)), 1)) : createCommentVNode("", true)], 8, _hoisted_8$15)) : createCommentVNode("", true),
+					}, [createTextVNode(toDisplayString(row.timeStr), 1), unref(servedModelShown)(row, unref(state).settings) ? (openBlock(), createElementBlock("span", _hoisted_9$13, toDisplayString(" · " + unref(servedModelShown)(row, unref(state).settings)), 1)) : createCommentVNode("", true)], 8, _hoisted_8$17)) : createCommentVNode("", true),
 					row.isMine && row.status ? (openBlock(), createElementBlock("div", {
 						key: 5,
 						class: normalizeClass(row.status === "✓✓" ? "status delivered" : "status")
@@ -3369,7 +3391,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/CodeToolbar.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$70 = {
+var _hoisted_1$72 = {
 	key: 0,
 	class: "code-lang"
 };
@@ -3418,7 +3440,7 @@ var CodeToolbar_default = /* @__PURE__ */ defineComponent({
 		}
 		return (_ctx, _cache) => {
 			return openBlock(), createElementBlock(Fragment, null, [
-				__props.lang ? (openBlock(), createElementBlock("span", _hoisted_1$70, toDisplayString(__props.lang), 1)) : createCommentVNode("", true),
+				__props.lang ? (openBlock(), createElementBlock("span", _hoisted_1$72, toDisplayString(__props.lang), 1)) : createCommentVNode("", true),
 				createElementVNode("button", {
 					type: "button",
 					class: normalizeClass(wrapping.value ? "code-btn wrap-code-btn active" : "code-btn wrap-code-btn"),
@@ -4083,14 +4105,14 @@ function applyMarketplaceNav() {
 var toolSecretRows = ref([]);
 //#endregion
 //#region src/features/ToolSecretList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$69 = {
+var _hoisted_1$71 = {
 	key: 0,
 	class: "skill-desc"
 };
-var _hoisted_2$60 = { class: "skill-info" };
-var _hoisted_3$56 = { class: "skill-head" };
-var _hoisted_4$46 = ["onClick"];
-var _hoisted_5$37 = ["onClick"];
+var _hoisted_2$62 = { class: "skill-info" };
+var _hoisted_3$58 = { class: "skill-head" };
+var _hoisted_4$48 = ["onClick"];
+var _hoisted_5$39 = ["onClick"];
 var EMPTY$18 = "No all-agents secrets yet";
 var SHARED = "all agents";
 var REMOVE$7 = "Remove";
@@ -4111,22 +4133,22 @@ var ToolSecretList_default = /* @__PURE__ */ defineComponent({
 		*/
 		const props = __props;
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [unref(toolSecretRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$69, toDisplayString(EMPTY$18))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(toolSecretRows), (s, i) => {
+			return openBlock(), createElementBlock(Fragment, null, [unref(toolSecretRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$71, toDisplayString(EMPTY$18))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(toolSecretRows), (s, i) => {
 				return openBlock(), createElementBlock("li", {
 					key: i,
 					class: "skill-source-row secret-row"
 				}, [
-					createElementVNode("div", _hoisted_2$60, [createElementVNode("div", _hoisted_3$56, [createElementVNode("span", null, toDisplayString(s.hostPattern), 1), createElementVNode("span", { class: "skill-badge secret-scope" }, toDisplayString(SHARED))])]),
+					createElementVNode("div", _hoisted_2$62, [createElementVNode("div", _hoisted_3$58, [createElementVNode("span", null, toDisplayString(s.hostPattern), 1), createElementVNode("span", { class: "skill-badge secret-scope" }, toDisplayString(SHARED))])]),
 					createElementVNode("button", {
 						class: "btn btn-secondary",
 						type: "button",
 						onClick: ($event) => props.onUpdate(s)
-					}, toDisplayString(UPDATE$2), 8, _hoisted_4$46),
+					}, toDisplayString(UPDATE$2), 8, _hoisted_4$48),
 					createElementVNode("button", {
 						class: "btn btn-danger",
 						type: "button",
 						onClick: ($event) => props.onRemove(s)
-					}, toDisplayString(REMOVE$7), 8, _hoisted_5$37)
+					}, toDisplayString(REMOVE$7), 8, _hoisted_5$39)
 				]);
 			}), 128))], 64);
 		};
@@ -4275,21 +4297,21 @@ var permsCreateChannelTouched = ref(false);
 var roomWiredRows = ref([]);
 //#endregion
 //#region src/features/RoomWiredAgents.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$68 = [
+var _hoisted_1$70 = [
 	"title",
 	"innerHTML",
 	"onClick"
 ];
-var _hoisted_2$59 = [
+var _hoisted_2$61 = [
 	"title",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_3$55 = {
+var _hoisted_3$57 = {
 	key: 0,
 	class: "room-wired-prime-badge"
 };
-var _hoisted_4$45 = [
+var _hoisted_4$47 = [
 	"title",
 	"disabled",
 	"innerHTML",
@@ -4324,7 +4346,7 @@ var RoomWiredAgents_default = /* @__PURE__ */ defineComponent({
 						title: primeTitle(agent),
 						innerHTML: starIcon(agent.is_prime),
 						onClick: ($event) => emit("prime", agent)
-					}, null, 10, _hoisted_1$68),
+					}, null, 10, _hoisted_1$70),
 					createElementVNode("span", {
 						class: "room-wired-name room-wired-name-link",
 						role: "button",
@@ -4332,7 +4354,7 @@ var RoomWiredAgents_default = /* @__PURE__ */ defineComponent({
 						title: `Open ${agent.name} settings`,
 						onClick: ($event) => emit("open", agent),
 						onKeydown: [withKeys(withModifiers(($event) => emit("open", agent), ["prevent"]), ["enter"]), withKeys(withModifiers(($event) => emit("open", agent), ["prevent"]), ["space"])]
-					}, [createTextVNode(toDisplayString(agent.name ?? ""), 1), agent.is_prime ? (openBlock(), createElementBlock("span", _hoisted_3$55, " default")) : createCommentVNode("", true)], 40, _hoisted_2$59),
+					}, [createTextVNode(toDisplayString(agent.name ?? ""), 1), agent.is_prime ? (openBlock(), createElementBlock("span", _hoisted_3$57, " default")) : createCommentVNode("", true)], 40, _hoisted_2$61),
 					createElementVNode("button", {
 						type: "button",
 						class: "room-wired-remove",
@@ -4340,7 +4362,7 @@ var RoomWiredAgents_default = /* @__PURE__ */ defineComponent({
 						disabled: onlyOne(),
 						innerHTML: unref(xIcon),
 						onClick: ($event) => emit("remove", agent)
-					}, null, 8, _hoisted_4$45)
+					}, null, 8, _hoisted_4$47)
 				]);
 			}), 128);
 		};
@@ -4348,25 +4370,25 @@ var RoomWiredAgents_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/AgentList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$67 = [
+var _hoisted_1$69 = [
 	"data-agent-id",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_2$58 = ["innerHTML"];
-var _hoisted_3$54 = { class: "agent-info" };
-var _hoisted_4$44 = { class: "agent-info-name" };
-var _hoisted_5$36 = {
+var _hoisted_2$60 = ["innerHTML"];
+var _hoisted_3$56 = { class: "agent-info" };
+var _hoisted_4$46 = { class: "agent-info-name" };
+var _hoisted_5$38 = {
 	key: 1,
 	class: "agent-harness-badge",
 	title: "Runs on the OpenCode harness"
 };
-var _hoisted_6$29 = {
+var _hoisted_6$31 = {
 	key: 2,
 	class: "agent-harness-badge",
 	title: "Runs on the Grok harness"
 };
-var _hoisted_7$22 = {
+var _hoisted_7$24 = {
 	key: 3,
 	class: "agent-harness-badge",
 	title: "Runs on GitHub Copilot"
@@ -4405,14 +4427,14 @@ var AgentList_default = /* @__PURE__ */ defineComponent({
 				}), [createElementVNode("span", {
 					class: "agent-icon",
 					innerHTML: unref(botIcon)
-				}, null, 8, _hoisted_2$58), createElementVNode("span", _hoisted_3$54, [
-					createElementVNode("span", _hoisted_4$44, toDisplayString(agent.name ?? ""), 1),
+				}, null, 8, _hoisted_2$60), createElementVNode("span", _hoisted_3$56, [
+					createElementVNode("span", _hoisted_4$46, toDisplayString(agent.name ?? ""), 1),
 					(agent.status || "active") !== "active" ? (openBlock(), createElementBlock("span", {
 						key: 0,
 						class: normalizeClass(["agent-status-badge", "status-" + (agent.status || "active")])
 					}, toDisplayString(agent.status), 3)) : createCommentVNode("", true),
-					agent.provider === "opencode" ? (openBlock(), createElementBlock("span", _hoisted_5$36, "OpenCode")) : agent.provider === "grok" ? (openBlock(), createElementBlock("span", _hoisted_6$29, "Grok")) : agent.provider === "copilot" ? (openBlock(), createElementBlock("span", _hoisted_7$22, "Copilot")) : createCommentVNode("", true)
-				])], 16, _hoisted_1$67);
+					agent.provider === "opencode" ? (openBlock(), createElementBlock("span", _hoisted_5$38, "OpenCode")) : agent.provider === "grok" ? (openBlock(), createElementBlock("span", _hoisted_6$31, "Grok")) : agent.provider === "copilot" ? (openBlock(), createElementBlock("span", _hoisted_7$24, "Copilot")) : createCommentVNode("", true)
+				])], 16, _hoisted_1$69);
 			}), 128);
 		};
 	}
@@ -4516,20 +4538,20 @@ var archivedAgentsCount = ref(0);
 var turnElapsedTimer = ref(null);
 //#endregion
 //#region src/features/AgentWiredRooms.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$66 = {
+var _hoisted_1$68 = {
 	key: 0,
 	class: "empty-note"
 };
-var _hoisted_2$57 = [
+var _hoisted_2$59 = [
 	"title",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_3$53 = {
+var _hoisted_3$55 = {
 	key: 0,
 	class: "room-wired-prime-badge"
 };
-var _hoisted_4$43 = [
+var _hoisted_4$45 = [
 	"title",
 	"disabled",
 	"innerHTML",
@@ -4570,7 +4592,7 @@ var AgentWiredRooms_default = /* @__PURE__ */ defineComponent({
 			}
 		}
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$66, toDisplayString(EMPTY$17))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
+			return openBlock(), createElementBlock(Fragment, null, [rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$68, toDisplayString(EMPTY$17))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", { key: r.id }, [createElementVNode("span", {
 					class: "room-wired-name room-wired-name-link",
 					role: "button",
@@ -4578,7 +4600,7 @@ var AgentWiredRooms_default = /* @__PURE__ */ defineComponent({
 					title: r.openTitle,
 					onClick: ($event) => props.onOpenRoom(r.id),
 					onKeydown: ($event) => onKey($event, r.id)
-				}, [createTextVNode(toDisplayString(r.name), 1), r.isPrime ? (openBlock(), createElementBlock("span", _hoisted_3$53, " default")) : createCommentVNode("", true)], 40, _hoisted_2$57), unref(canManageRooms) ? (openBlock(), createElementBlock("button", {
+				}, [createTextVNode(toDisplayString(r.name), 1), r.isPrime ? (openBlock(), createElementBlock("span", _hoisted_3$55, " default")) : createCommentVNode("", true)], 40, _hoisted_2$59), unref(canManageRooms) ? (openBlock(), createElementBlock("button", {
 					key: 0,
 					type: "button",
 					class: "room-wired-remove",
@@ -4586,30 +4608,30 @@ var AgentWiredRooms_default = /* @__PURE__ */ defineComponent({
 					disabled: r.onlyAgent,
 					innerHTML: unref(XICON),
 					onClick: ($event) => props.onRemoveRoom(r.id, r.name)
-				}, null, 8, _hoisted_4$43)) : createCommentVNode("", true)]);
+				}, null, 8, _hoisted_4$45)) : createCommentVNode("", true)]);
 			}), 128))], 64);
 		};
 	}
 });
 //#endregion
 //#region src/features/AgentSessions.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$65 = {
+var _hoisted_1$67 = {
 	key: 0,
 	class: "agent-session-row muted"
 };
-var _hoisted_2$56 = {
+var _hoisted_2$58 = {
 	key: 1,
 	class: "agent-session-row muted"
 };
-var _hoisted_3$52 = {
+var _hoisted_3$54 = {
 	key: 2,
 	class: "agent-session-row muted"
 };
-var _hoisted_4$42 = { class: "agent-session-meta" };
-var _hoisted_5$35 = { class: "agent-session-label" };
-var _hoisted_6$28 = { class: "agent-session-sub" };
-var _hoisted_7$21 = ["onClick"];
-var LOADING$3 = "Loading…";
+var _hoisted_4$44 = { class: "agent-session-meta" };
+var _hoisted_5$37 = { class: "agent-session-label" };
+var _hoisted_6$30 = { class: "agent-session-sub" };
+var _hoisted_7$23 = ["onClick"];
+var LOADING$4 = "Loading…";
 var EMPTY$16 = "No active sessions.";
 var RESET_TITLE = "Reset this session (inject /clear — drops context, next turn starts fresh)";
 /** Bound, not template text: template text carries the surrounding newlines. */
@@ -4635,33 +4657,33 @@ var AgentSessions_default = /* @__PURE__ */ defineComponent({
 			props.onReset(id, e.currentTarget);
 		}
 		return (_ctx, _cache) => {
-			return unref(sessionsPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$65, [_cache[0] || (_cache[0] = createElementVNode("span", {
+			return unref(sessionsPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$67, [_cache[0] || (_cache[0] = createElementVNode("span", {
 				class: "btn-spinner",
 				"aria-hidden": "true"
-			}, null, -1)), createTextVNode(toDisplayString(LOADING$3))])) : unref(sessionsPhase) === "error" ? (openBlock(), createElementBlock("li", _hoisted_2$56, toDisplayString(unref(sessionsError)), 1)) : rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_3$52, toDisplayString(EMPTY$16))) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(rows.value, (r) => {
+			}, null, -1)), createTextVNode(toDisplayString(LOADING$4))])) : unref(sessionsPhase) === "error" ? (openBlock(), createElementBlock("li", _hoisted_2$58, toDisplayString(unref(sessionsError)), 1)) : rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_3$54, toDisplayString(EMPTY$16))) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", {
 					key: r.id,
 					class: "agent-session-row"
-				}, [createElementVNode("div", _hoisted_4$42, [createElementVNode("span", _hoisted_5$35, toDisplayString(r.label), 1), createElementVNode("span", _hoisted_6$28, toDisplayString(r.sub), 1)]), createElementVNode("button", {
+				}, [createElementVNode("div", _hoisted_4$44, [createElementVNode("span", _hoisted_5$37, toDisplayString(r.label), 1), createElementVNode("span", _hoisted_6$30, toDisplayString(r.sub), 1)]), createElementVNode("button", {
 					type: "button",
 					class: "btn btn-ghost agent-session-reset",
 					title: RESET_TITLE,
 					onClick: ($event) => reset(r.id, $event)
-				}, toDisplayString(RESET_LABEL), 8, _hoisted_7$21)]);
+				}, toDisplayString(RESET_LABEL), 8, _hoisted_7$23)]);
 			}), 128));
 		};
 	}
 });
 //#endregion
 //#region src/features/AddAgentPicker.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$64 = {
+var _hoisted_1$66 = {
 	key: 0,
 	class: "empty-note"
 };
-var _hoisted_2$55 = ["value", "id"];
-var _hoisted_3$51 = ["for"];
-var _hoisted_4$41 = { class: "room-add-agent-name" };
-var _hoisted_5$34 = { class: "room-add-agent-sub" };
+var _hoisted_2$57 = ["value", "id"];
+var _hoisted_3$53 = ["for"];
+var _hoisted_4$43 = { class: "room-add-agent-name" };
+var _hoisted_5$36 = { class: "room-add-agent-sub" };
 var EMPTY$15 = "No unwired agents — switch to \"New\" to create one.";
 //#endregion
 //#region src/features/AddAgentPicker.vue
@@ -4682,7 +4704,7 @@ var AddAgentPicker_default = /* @__PURE__ */ defineComponent({
 			sub: a.folder || a.id
 		})));
 		return (_ctx, _cache) => {
-			return rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$64, toDisplayString(EMPTY$15))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (r) => {
+			return rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$66, toDisplayString(EMPTY$15))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", {
 					key: r.id,
 					class: "room-add-agent-row"
@@ -4691,22 +4713,22 @@ var AddAgentPicker_default = /* @__PURE__ */ defineComponent({
 					value: r.id,
 					id: r.cbId,
 					onChange: _cache[0] || (_cache[0] = ($event) => props.onToggle())
-				}, null, 40, _hoisted_2$55), createElementVNode("label", {
+				}, null, 40, _hoisted_2$57), createElementVNode("label", {
 					for: r.cbId,
 					class: "room-add-agent-label"
-				}, [createElementVNode("span", _hoisted_4$41, toDisplayString(r.name), 1), createElementVNode("span", _hoisted_5$34, toDisplayString(r.sub), 1)], 8, _hoisted_3$51)]);
+				}, [createElementVNode("span", _hoisted_4$43, toDisplayString(r.name), 1), createElementVNode("span", _hoisted_5$36, toDisplayString(r.sub), 1)], 8, _hoisted_3$53)]);
 			}), 128));
 		};
 	}
 });
 //#endregion
 //#region src/features/RoomCreateAgentChecklist.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$63 = {
+var _hoisted_1$65 = {
 	key: 0,
 	class: "empty-note"
 };
-var _hoisted_2$54 = ["value", "id"];
-var _hoisted_3$50 = ["for"];
+var _hoisted_2$56 = ["value", "id"];
+var _hoisted_3$52 = ["for"];
 var EMPTY$14 = "No agents yet — create one inline below.";
 //#endregion
 //#region src/features/RoomCreateAgentChecklist.vue
@@ -4726,43 +4748,43 @@ var RoomCreateAgentChecklist_default = /* @__PURE__ */ defineComponent({
 			label: a.name ?? ""
 		})));
 		return (_ctx, _cache) => {
-			return !unref(createAgentAnyExist) ? (openBlock(), createElementBlock("li", _hoisted_1$63, toDisplayString(EMPTY$14))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (r) => {
+			return !unref(createAgentAnyExist) ? (openBlock(), createElementBlock("li", _hoisted_1$65, toDisplayString(EMPTY$14))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", { key: r.id }, [createElementVNode("input", {
 					type: "checkbox",
 					value: r.id,
 					id: r.cbId
-				}, null, 8, _hoisted_2$54), createElementVNode("label", { for: r.cbId }, toDisplayString(r.label), 9, _hoisted_3$50)]);
+				}, null, 8, _hoisted_2$56), createElementVNode("label", { for: r.cbId }, toDisplayString(r.label), 9, _hoisted_3$52)]);
 			}), 128));
 		};
 	}
 });
 //#endregion
 //#region src/features/AgentSecretList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$62 = {
+var _hoisted_1$64 = {
 	key: 0,
 	class: "secret-effective"
 };
-var _hoisted_2$53 = {
+var _hoisted_2$55 = {
 	key: 1,
 	class: "skill-desc"
 };
-var _hoisted_3$49 = { class: "secret-section-head" };
-var _hoisted_4$40 = { class: "skill-info" };
-var _hoisted_5$33 = { class: "skill-head" };
-var _hoisted_6$27 = {
+var _hoisted_3$51 = { class: "secret-section-head" };
+var _hoisted_4$42 = { class: "skill-info" };
+var _hoisted_5$35 = { class: "skill-head" };
+var _hoisted_6$29 = {
 	key: 0,
 	class: "skill-badge secret-scope"
 };
-var _hoisted_7$20 = {
+var _hoisted_7$22 = {
 	key: 1,
 	class: "skill-badge secret-scope skill-badge-user"
 };
-var _hoisted_8$14 = {
+var _hoisted_8$16 = {
 	key: 0,
 	class: "skill-desc"
 };
-var _hoisted_9$10 = ["onClick"];
-var _hoisted_10$10 = ["onClick"];
+var _hoisted_9$12 = ["onClick"];
+var _hoisted_10$12 = ["onClick"];
 var REMOVE$6 = "Remove";
 var UPDATE$1 = "Update";
 var EMPTY$13 = "No secrets yet";
@@ -4807,22 +4829,22 @@ var AgentSecretList_default = /* @__PURE__ */ defineComponent({
 		})).filter((s) => s.rows.length > 0));
 		return (_ctx, _cache) => {
 			return openBlock(), createElementBlock(Fragment, null, [
-				unref(agentSecretEffective) ? (openBlock(), createElementBlock("li", _hoisted_1$62, toDisplayString(unref(agentSecretEffective)), 1)) : createCommentVNode("", true),
-				sections.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_2$53, toDisplayString(EMPTY$13))) : createCommentVNode("", true),
+				unref(agentSecretEffective) ? (openBlock(), createElementBlock("li", _hoisted_1$64, toDisplayString(unref(agentSecretEffective)), 1)) : createCommentVNode("", true),
+				sections.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_2$55, toDisplayString(EMPTY$13))) : createCommentVNode("", true),
 				(openBlock(true), createElementBlock(Fragment, null, renderList(sections.value, (s) => {
-					return openBlock(), createElementBlock(Fragment, { key: s.reach }, [createElementVNode("li", _hoisted_3$49, toDisplayString(s.title), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(s.rows, (r) => {
+					return openBlock(), createElementBlock(Fragment, { key: s.reach }, [createElementVNode("li", _hoisted_3$51, toDisplayString(s.title), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(s.rows, (r) => {
 						return openBlock(), createElementBlock("li", {
 							key: r.key,
 							class: "skill-source-row secret-row"
-						}, [createElementVNode("div", _hoisted_4$40, [createElementVNode("div", _hoisted_5$33, [createElementVNode("span", null, toDisplayString(r.host), 1), r.reach === "other" ? (openBlock(), createElementBlock("span", _hoisted_6$27, toDisplayString(r.ownerLabel), 1)) : r.reach === "mine" ? (openBlock(), createElementBlock("span", _hoisted_7$20, toDisplayString(MINE))) : createCommentVNode("", true)]), r.note ? (openBlock(), createElementBlock("span", _hoisted_8$14, toDisplayString(r.note), 1)) : createCommentVNode("", true)]), r.canRemove ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
+						}, [createElementVNode("div", _hoisted_4$42, [createElementVNode("div", _hoisted_5$35, [createElementVNode("span", null, toDisplayString(r.host), 1), r.reach === "other" ? (openBlock(), createElementBlock("span", _hoisted_6$29, toDisplayString(r.ownerLabel), 1)) : r.reach === "mine" ? (openBlock(), createElementBlock("span", _hoisted_7$22, toDisplayString(MINE))) : createCommentVNode("", true)]), r.note ? (openBlock(), createElementBlock("span", _hoisted_8$16, toDisplayString(r.note), 1)) : createCommentVNode("", true)]), r.canRemove ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
 							class: "btn btn-secondary",
 							type: "button",
 							onClick: ($event) => props.onUpdate(r)
-						}, toDisplayString(UPDATE$1), 8, _hoisted_9$10), createElementVNode("button", {
+						}, toDisplayString(UPDATE$1), 8, _hoisted_9$12), createElementVNode("button", {
 							class: "btn btn-danger",
 							type: "button",
 							onClick: ($event) => props.onRemove(r)
-						}, toDisplayString(REMOVE$6), 8, _hoisted_10$10)], 64)) : createCommentVNode("", true)]);
+						}, toDisplayString(REMOVE$6), 8, _hoisted_10$12)], 64)) : createCommentVNode("", true)]);
 					}), 128))], 64);
 				}), 128))
 			], 64);
@@ -4831,7 +4853,7 @@ var AgentSecretList_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/AgentEnvList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$61 = ["disabled", "onClick"];
+var _hoisted_1$63 = ["disabled", "onClick"];
 var REMOVE$5 = "Remove";
 //#endregion
 //#region src/features/AgentEnvList.vue
@@ -4855,19 +4877,19 @@ var AgentEnvList_default = /* @__PURE__ */ defineComponent({
 					type: "button",
 					disabled: unref(agentEnvDeleting).has(name) || void 0,
 					onClick: ($event) => props.onRemove(name)
-				}, toDisplayString(REMOVE$5), 8, _hoisted_1$61)]);
+				}, toDisplayString(REMOVE$5), 8, _hoisted_1$63)]);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/CopyIconButton.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$60 = ["aria-label", "title"];
-var _hoisted_2$52 = {
+var _hoisted_1$62 = ["aria-label", "title"];
+var _hoisted_2$54 = {
 	class: "icon",
 	"aria-hidden": "true"
 };
-var _hoisted_3$48 = ["href"];
+var _hoisted_3$50 = ["href"];
 //#endregion
 //#region src/features/CopyIconButton.vue
 var CopyIconButton_default = /* @__PURE__ */ defineComponent({
@@ -4905,17 +4927,17 @@ var CopyIconButton_default = /* @__PURE__ */ defineComponent({
 				"aria-label": aria(),
 				title: aria(),
 				onClick: copy
-			}, [(openBlock(), createElementBlock("svg", _hoisted_2$52, [createElementVNode("use", { href: state.value === "copied" ? "#i-check" : "#i-copy" }, null, 8, _hoisted_3$48)]))], 10, _hoisted_1$60);
+			}, [(openBlock(), createElementBlock("svg", _hoisted_2$54, [createElementVNode("use", { href: state.value === "copied" ? "#i-check" : "#i-copy" }, null, 8, _hoisted_3$50)]))], 10, _hoisted_1$62);
 		};
 	}
 });
 //#endregion
 //#region src/features/AgentKeyList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$59 = { class: "skill-info" };
-var _hoisted_2$51 = { class: "skill-head" };
-var _hoisted_3$47 = { class: "skill-desc" };
-var _hoisted_4$39 = { class: "secret-actions" };
-var _hoisted_5$32 = ["onClick"];
+var _hoisted_1$61 = { class: "skill-info" };
+var _hoisted_2$53 = { class: "skill-head" };
+var _hoisted_3$49 = { class: "skill-desc" };
+var _hoisted_4$41 = { class: "secret-actions" };
+var _hoisted_5$34 = ["onClick"];
 var REMOVE$4 = "Remove";
 //#endregion
 //#region src/features/AgentKeyList.vue
@@ -4935,14 +4957,14 @@ var AgentKeyList_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("li", {
 					key: r.name,
 					class: "skill-source-row secret-row"
-				}, [createElementVNode("div", _hoisted_1$59, [createElementVNode("div", _hoisted_2$51, toDisplayString(r.name), 1), createElementVNode("span", _hoisted_3$47, toDisplayString(r.meta), 1)]), createElementVNode("div", _hoisted_4$39, [createVNode(CopyIconButton_default, {
+				}, [createElementVNode("div", _hoisted_1$61, [createElementVNode("div", _hoisted_2$53, toDisplayString(r.name), 1), createElementVNode("span", _hoisted_3$49, toDisplayString(r.meta), 1)]), createElementVNode("div", _hoisted_4$41, [createVNode(CopyIconButton_default, {
 					text: r.publicKey,
 					label: "Copy public key"
 				}, null, 8, ["text"]), createElementVNode("button", {
 					class: "btn btn-danger",
 					type: "button",
 					onClick: ($event) => props.onRemove(r)
-				}, toDisplayString(REMOVE$4), 8, _hoisted_5$32)])]);
+				}, toDisplayString(REMOVE$4), 8, _hoisted_5$34)])]);
 			}), 128);
 		};
 	}
@@ -4965,302 +4987,140 @@ function buttonBusy(btn, busyLabel) {
 	};
 }
 //#endregion
-//#region src/features/probe-results-state.ts
-/** One row per advertised model: the id and its default display name. */
-var probeRows = ref([]);
-/** Pre-check when the endpoint advertises exactly one model. */
-var probeSingle = ref(false);
-/** Empty-state copy — differs when the endpoint is credential-gated. */
-var probeEmptyNote = ref("");
-//#endregion
-//#region src/features/ProbeResults.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$58 = {
-	key: 0,
-	class: "empty-note"
-};
-var _hoisted_2$50 = ["value", "checked"];
-var _hoisted_3$46 = ["data-model-id"];
-var NAME_PLACEHOLDER = "Display name";
-//#endregion
-//#region src/features/ProbeResults.vue
-var ProbeResults_default = /* @__PURE__ */ defineComponent({
-	__name: "ProbeResults",
-	setup(__props) {
-		/**
-		* The endpoint probe's model checklist, mounted into <ul id="model-probe-list">.
-		* Checkboxes and name inputs keep their state in the DOM because the submit path reads
-		* them there. A single advertised model is pre-checked — the common case.
-		*/
-		const FLEX = { flex: "1" };
-		/** Assigned as a property, not bound (a bound `value` renders an attribute); uncontrolled. */
-		function setName(el, name) {
-			if (el && el.value === "") el.value = name;
-		}
-		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [unref(probeRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$58, toDisplayString(unref(probeEmptyNote)), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(probeRows), (r) => {
-				return openBlock(), createElementBlock("li", { key: r.modelId }, [createElementVNode("label", null, [createElementVNode("input", {
-					type: "checkbox",
-					value: r.modelId,
-					checked: unref(probeSingle)
-				}, null, 8, _hoisted_2$50), createElementVNode("span", { style: FLEX }, toDisplayString(r.modelId), 1)]), createElementVNode("input", {
-					type: "text",
-					ref_for: true,
-					ref: (el) => setName(el, r.name),
-					placeholder: NAME_PLACEHOLDER,
-					"data-model-id": r.modelId
-				}, null, 8, _hoisted_3$46)]);
-			}), 128))], 64);
-		};
-	}
-});
-//#endregion
-//#region src/features/model-picker-state.ts
-/** Rows in display order — the Default row is always first. */
-var pickerRows = ref([]);
-/** The model id currently assigned, '' for Default. */
-var pickerSelected = ref("");
-/** Empty-state copy, or '' when rows should show. */
-var pickerEmptyNote = ref("");
-//#endregion
-//#region src/features/ModelPicker.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$57 = [
-	"data-model-id",
-	"onClick",
-	"onKeydown"
+//#region src/features/apps-state.ts
+/** Narrowest first. */
+var WHO_ORDER = [
+	"only-me",
+	"specific",
+	"agent-members",
+	"signed-in"
 ];
-var _hoisted_2$49 = { class: "model-picker-row-top" };
-var _hoisted_3$45 = { class: "model-picker-row-name" };
-var _hoisted_4$38 = { class: "model-picker-row-sub" };
-var _hoisted_5$31 = {
-	key: 0,
-	class: "model-picker-empty"
-};
-//#endregion
-//#region src/features/ModelPicker.vue
-var ModelPicker_default = /* @__PURE__ */ defineComponent({
-	__name: "ModelPicker",
-	props: { onPick: { type: Function } },
-	setup(__props) {
-		/**
-		* The agent's model picker, mounted into <ul id="model-picker-list">. The Default row is
-		* pinned at the top and NEVER filtered out — the user may be searching to confirm that
-		* nothing matches. The empty note renders between Default and the matches, because "no
-		* matches" is about the registered models.
-		*/
-		const props = __props;
-		function rowClass(r) {
-			const parts = ["model-picker-row"];
-			if (r.isDefault) parts.push("is-default");
-			if ((r.id || "") === pickerSelected.value) parts.push("selected");
-			return parts.join(" ");
-		}
-		function onKey(e, id) {
-			if (e.key === "Enter" || e.key === " ") {
-				e.preventDefault();
-				props.onPick(id);
-			}
-		}
-		return (_ctx, _cache) => {
-			return openBlock(true), createElementBlock(Fragment, null, renderList(unref(pickerRows), (r) => {
-				return openBlock(), createElementBlock(Fragment, { key: r.key }, [createElementVNode("li", {
-					class: normalizeClass(rowClass(r)),
-					tabindex: "0",
-					"data-model-id": r.id || "",
-					onClick: ($event) => props.onPick(r.id || ""),
-					onKeydown: ($event) => onKey($event, r.id || "")
-				}, [createElementVNode("div", _hoisted_2$49, [createElementVNode("span", _hoisted_3$45, toDisplayString(r.name), 1), createElementVNode("span", { class: normalizeClass(r.badgeClass) }, toDisplayString(r.badgeText), 3)]), createElementVNode("div", _hoisted_4$38, toDisplayString(r.sub), 1)], 42, _hoisted_1$57), r.isDefault && unref(pickerEmptyNote) ? (openBlock(), createElementBlock("li", _hoisted_5$31, toDisplayString(unref(pickerEmptyNote)), 1)) : createCommentVNode("", true)], 64);
-			}), 128);
-		};
-	}
-});
-//#endregion
-//#region src/features/reachability-state.ts
-/** 'checking' while the probe runs, then 'error' or 'outcome'. */
-var reachPhase = ref("checking");
-/** Message for the error phase. */
-var reachError = ref("");
-/** Verdict line, plus the copy-paste fix when there is one. */
-var reachOutcome = ref(null);
-//#endregion
-//#region src/features/Reachability.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$56 = {
-	key: 0,
-	class: "model-reachability-result"
-};
-var _hoisted_2$48 = {
-	key: 1,
-	class: "model-reachability-result warn"
-};
-var _hoisted_3$44 = { class: "model-reachability-verdict" };
-var _hoisted_4$37 = { class: "model-reachability-fix" };
-var CHECKING = "Checking reachability…";
-var COPY$1 = "Copy fix";
-var COPIED$1 = "Copied";
-//#endregion
-//#region src/features/Reachability.vue
-var Reachability_default = /* @__PURE__ */ defineComponent({
-	__name: "Reachability",
-	props: { onCopy: { type: Function } },
-	setup(__props) {
-		/**
-		* The model endpoint reachability verdict, mounted into #model-reachability-panel, which
-		* models.ts creates after #model-live-facts and shows only for endpoints an agent dials
-		* directly. Three phases: wait line, transport/HTTP error, verdict. The fix block is a
-		* copy-paste command, so Copy is how the operator applies the remedy.
-		*/
-		const props = __props;
-		const copyLabel = ref(COPY$1);
-		let timer = null;
-		async function copy(fix) {
-			if (!await props.onCopy(fix)) return;
-			copyLabel.value = COPIED$1;
-			if (timer) clearTimeout(timer);
-			timer = setTimeout(() => copyLabel.value = COPY$1, 1500);
-		}
-		return (_ctx, _cache) => {
-			return unref(reachPhase) === "checking" ? (openBlock(), createElementBlock("div", _hoisted_1$56, [_cache[1] || (_cache[1] = createElementVNode("span", {
-				class: "btn-spinner",
-				"aria-hidden": "true"
-			}, null, -1)), createTextVNode(toDisplayString(CHECKING))])) : unref(reachPhase) === "error" ? (openBlock(), createElementBlock("div", _hoisted_2$48, toDisplayString(unref(reachError)), 1)) : unref(reachOutcome) ? (openBlock(), createElementBlock("div", {
-				key: 2,
-				class: normalizeClass(unref(reachOutcome).warn ? "model-reachability-result warn" : "model-reachability-result")
-			}, [createElementVNode("div", _hoisted_3$44, toDisplayString(`${unref(reachOutcome).warn ? "✕" : "✓"} ${unref(reachOutcome).label} — ${unref(reachOutcome).detail}`), 1), unref(reachOutcome).fix ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("pre", _hoisted_4$37, toDisplayString(unref(reachOutcome).fix), 1), createElementVNode("button", {
-				type: "button",
-				class: "btn btn-ghost",
-				onClick: _cache[0] || (_cache[0] = ($event) => copy(unref(reachOutcome).fix))
-			}, toDisplayString(copyLabel.value), 1)], 64)) : createCommentVNode("", true)], 2)) : createCommentVNode("", true);
-		};
-	}
-});
-//#endregion
-//#region src/features/ollama-cards-state.ts
-/** Configured hosts, in the order /api/ollama/hosts returned them. */
-var hosts = ref([]);
-/** host → its model list. Keyed by host because the fetches race. */
-var hostModels = ref({});
-/** host → its in-flight or last-finished pull. Absent means no line shown. */
-var hostPulls = ref({});
-/**
-* host → what pulling the currently-typed ref would cost, or null for "say
-* nothing". Null is the resting state and the honest answer whenever the size
-* cannot be read; only a real measurement earns a line.
-*/
-var hostPullPreview = ref({});
-/**
-* Which cards are expanded. Backed by localStorage under `serverCardOpen:<host>`;
-* held as a Set so the template does not touch localStorage on every patch.
-*/
-var openCards = ref(/* @__PURE__ */ new Set());
-function isCardOpen(host) {
-	return localStorage.getItem("serverCardOpen:" + host) === "1";
+/** Does `next` let in anyone `prev` did not? Mirrors publish.ts widensAccess. */
+function widensAccess(prev, next) {
+	if (next.who === "specific" && prev.who === "specific") return next.emails.some((e) => !prev.emails.includes(e));
+	if (next.who === "specific") return prev.who === "only-me";
+	if (prev.who === "specific") return next.who !== "only-me";
+	return WHO_ORDER.indexOf(next.who) > WHO_ORDER.indexOf(prev.who);
 }
-function setCardOpen(host, open) {
-	localStorage.setItem("serverCardOpen:" + host, open ? "1" : "0");
-	const next = new Set(openCards.value);
-	if (open) next.add(host);
-	else next.delete(host);
-	openCards.value = next;
+/** Narrow (applies at once), widen (approval card), or nothing. Mirrors gui.ts classifyChange. */
+function classifyChange(prev, next) {
+	if (next.route === "off") return prev.route === "off" ? "none" : "narrow";
+	if (prev.route === "off" || prev.route !== next.route) return "widen";
+	if (prev.who === next.who && prev.emails.length === next.emails.length && prev.emails.every((e) => next.emails.includes(e))) return "none";
+	return widensAccess(prev, next) ? "widen" : "narrow";
 }
-/** Seed the open-set from storage for a freshly loaded host list. */
-function syncOpenCards(list) {
-	openCards.value = new Set(list.filter(isCardOpen));
+var ROUTE_LABEL = {
+	off: "Off",
+	tailnet: "Tailnet",
+	cloudflare: "Cloudflare"
+};
+/** Off, plus the routes that are on — and the row's own route even when it was switched off since. */
+function routeOptions(enabled, current) {
+	const kinds = ["tailnet", "cloudflare"].filter((k) => enabled.includes(k) || k === current);
+	return [{
+		value: "off",
+		label: ROUTE_LABEL.off
+	}, ...kinds.map((k) => ({
+		value: k,
+		label: ROUTE_LABEL[k]
+	}))];
 }
-/** host → its last health check (GET /api/models/hosts). Absent = not checked yet. */
-var hostHealth = ref({});
-/** The GPU fits running or just finished, newest last. */
-var fitJobs = ref([]);
-/** The owner's "Fit context to GPU" setting; null until loaded. */
-var fitContext = ref(null);
-//#endregion
-//#region src/features/ModelList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$55 = {
-	key: 0,
-	style: {
-		cursor: "default",
-		opacity: .6
-	}
+var WHO_LABEL = {
+	"only-me": "Only me",
+	"agent-members": "Agent members",
+	"signed-in": "Anyone signed in",
+	specific: "Specific people…"
 };
-var _hoisted_2$47 = [
-	"data-model-id",
-	"onClick",
-	"onKeydown"
-];
-var _hoisted_3$43 = { class: "model-row-name" };
-var _hoisted_4$36 = {
-	key: 0,
-	class: "model-row-hint"
+/** Who can open it, for a route: Cloudflare adds Specific people…. None while Off. */
+function whoOptions(route) {
+	if (route === "off") return [];
+	return (route === "cloudflare" ? [
+		"only-me",
+		"agent-members",
+		"signed-in",
+		"specific"
+	] : [
+		"only-me",
+		"agent-members",
+		"signed-in"
+	]).map((value) => ({
+		value,
+		label: WHO_LABEL[value]
+	}));
+}
+var STATE_LABEL = {
+	running: "Running",
+	stopped: "Stopped",
+	"needs-approval": "Needs approval"
 };
-var _hoisted_5$30 = {
-	key: 1,
-	class: "model-row-host"
-};
-var _hoisted_6$26 = {
-	key: 2,
-	class: "model-row-uses"
-};
-var _hoisted_7$19 = ["onClick"];
-var REMOVE_GLYPH$1 = "−";
-var EMPTY$12 = "No models selected yet — use + on a server below, or “Add model endpoint…” for anything else.";
-var DOWN$1 = "Unreachable";
-//#endregion
-//#region src/features/ModelList.vue
-var ModelList_default = /* @__PURE__ */ defineComponent({
-	__name: "ModelList",
-	emits: ["pick", "remove"],
-	setup(__props, { emit: __emit }) {
-		/**
-		* The model list, mounted into <ul id="model-list">. The − remove button disables itself
-		* through the event target, not per-row state: it is feedback for one in-flight request.
-		*/
-		const emit = __emit;
-		function onRemove(ev, id) {
-			ev.stopPropagation();
-			emit("remove", id, ev.currentTarget);
-		}
-		return (_ctx, _cache) => {
-			return unref(modelRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$55, toDisplayString(EMPTY$12))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(modelRows), (row) => {
-				return openBlock(), createElementBlock("li", mergeProps({
-					key: row.id,
-					"data-model-id": row.id
-				}, { ref_for: true }, row.active ? { class: "active" } : {}, {
-					role: "button",
-					tabindex: "0",
-					onClick: ($event) => emit("pick", row.id),
-					onKeydown: [withKeys(withModifiers(($event) => emit("pick", row.id), ["prevent"]), ["enter"]), withKeys(withModifiers(($event) => emit("pick", row.id), ["prevent"]), ["space"])]
-				}), [
-					createElementVNode("span", { class: normalizeClass(`model-kind-badge kind-${row.badgeKind}`) }, toDisplayString(row.badgeText), 3),
-					createElementVNode("span", _hoisted_3$43, toDisplayString(row.title), 1),
-					row.hint ? (openBlock(), createElementBlock("span", _hoisted_4$36, toDisplayString(row.hint), 1)) : row.host ? (openBlock(), createElementBlock("span", _hoisted_5$30, [row.healthKey && unref(hostHealth)[row.healthKey]?.status === "down" ? (openBlock(), createElementBlock("span", {
-						key: 0,
-						class: "host-dot down",
-						role: "img",
-						title: DOWN$1,
-						"aria-label": DOWN$1
-					})) : createCommentVNode("", true), createTextVNode(toDisplayString(row.host), 1)])) : createCommentVNode("", true),
-					row.uses > 0 ? (openBlock(), createElementBlock("span", _hoisted_6$26, toDisplayString(row.uses) + "×", 1)) : createCommentVNode("", true),
-					createElementVNode("button", {
-						type: "button",
-						class: "btn btn-ghost select-toggle on",
-						title: "Remove from selectable models",
-						"aria-label": "Remove from selectable models",
-						onClick: ($event) => onRemove($event, row.id)
-					}, toDisplayString(REMOVE_GLYPH$1), 8, _hoisted_7$19)
-				], 16, _hoisted_2$47);
-			}), 128));
-		};
-	}
-});
+/** What a route change asks for: the row's rule where the new route takes it, else Only me. */
+function nextForRoute(row, route) {
+	if (route === "off") return {
+		route,
+		who: row.who,
+		emails: row.emails
+	};
+	if (row.route === "off") return {
+		route,
+		who: "only-me",
+		emails: []
+	};
+	if (row.who === "specific" && route !== "cloudflare") return {
+		route,
+		who: "only-me",
+		emails: []
+	};
+	return {
+		route,
+		who: row.who,
+		emails: row.who === "specific" ? row.emails : []
+	};
+}
+var EMAIL = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
+/** A typed list of addresses: split on commas, semicolons or spaces; lowercased, deduplicated, sorted. Bad ones listed apart. */
+function parseEmailList(text) {
+	const ok = /* @__PURE__ */ new Set();
+	const bad = [];
+	for (const raw of text.split(/[\s,;]+/).filter(Boolean)) if (EMAIL.test(raw)) ok.add(raw.toLowerCase());
+	else bad.push(raw);
+	return {
+		emails: [...ok].sort(),
+		bad
+	};
+}
+/** The row's identity in the list: its app name, or its workload while unpublished. */
+var rowKey = (r) => r.app ? `app:${r.app}` : `w:${r.workload}`;
+/** "1.2 GB of 20 GB". */
+function diskText(d) {
+	if (!d) return "";
+	const n = (v) => v >= 10 ? String(Math.round(v)) : String(Math.round(v * 10) / 10);
+	return `${n(d.usedGb)} GB of ${n(d.quotaGb)} GB`;
+}
+var appsView = shallowRef(null);
+var appsAgentId = ref(null);
+/** The row whose ⋯ menu is open. */
+var appsMenuKey = ref(null);
+/** One drawer open at a time: logs, restore or the people list, for one row. */
+var appsDrawer = shallowRef(null);
+/** A refused change, shown on its row until the next change there. */
+var appsErrors = ref(/* @__PURE__ */ new Map());
+/** Unpublished rows with several services: the one picked. */
+var appsService = ref(/* @__PURE__ */ new Map());
+/** The row whose ⓘ is open. */
+var appsInfoKey = ref(null);
+/** Rows with a request in flight. */
+var appsBusy = ref(/* @__PURE__ */ new Set());
 //#endregion
 //#region src/features/file-preview-state.ts
 var previewRows = ref([]);
 //#endregion
 //#region src/features/FilePreview.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$54 = ["data-id"];
-var _hoisted_2$46 = ["src"];
-var _hoisted_3$42 = ["innerHTML"];
-var _hoisted_4$35 = { class: "file-preview-name" };
-var _hoisted_5$29 = { class: "file-preview-size" };
-var _hoisted_6$25 = [
+var _hoisted_1$60 = ["data-id"];
+var _hoisted_2$52 = ["src"];
+var _hoisted_3$48 = ["innerHTML"];
+var _hoisted_4$40 = { class: "file-preview-name" };
+var _hoisted_5$33 = { class: "file-preview-size" };
+var _hoisted_6$28 = [
 	"data-remove-id",
 	"innerHTML",
 	"onClick"
@@ -5291,35 +5151,35 @@ var FilePreview_default = /* @__PURE__ */ defineComponent({
 						src: r.thumbUrl,
 						class: "file-preview-thumb",
 						alt: ""
-					}, null, 8, _hoisted_2$46)) : (openBlock(), createElementBlock("span", {
+					}, null, 8, _hoisted_2$52)) : (openBlock(), createElementBlock("span", {
 						key: 1,
 						class: "file-preview-icon",
 						innerHTML: unref(clipIcon)
-					}, null, 8, _hoisted_3$42)),
-					createElementVNode("span", _hoisted_4$35, toDisplayString(r.name), 1),
-					createElementVNode("span", _hoisted_5$29, toDisplayString(r.size), 1),
+					}, null, 8, _hoisted_3$48)),
+					createElementVNode("span", _hoisted_4$40, toDisplayString(r.name), 1),
+					createElementVNode("span", _hoisted_5$33, toDisplayString(r.size), 1),
 					createElementVNode("button", {
 						class: "file-preview-remove",
 						"data-remove-id": r.id,
 						innerHTML: unref(xIcon),
 						onClick: ($event) => emit("remove", r.id)
-					}, null, 8, _hoisted_6$25)
-				], 8, _hoisted_1$54);
+					}, null, 8, _hoisted_6$28)
+				], 8, _hoisted_1$60);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/AttachPicker.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$53 = {
+var _hoisted_1$59 = {
 	key: 0,
 	class: "model-picker-empty"
 };
-var _hoisted_2$45 = ["onClick", "onKeydown"];
-var _hoisted_3$41 = { class: "model-picker-row-top" };
-var _hoisted_4$34 = { class: "model-picker-row-name" };
-var _hoisted_5$28 = { class: "attach-picker-toggle" };
-var _hoisted_6$24 = {
+var _hoisted_2$51 = ["onClick", "onKeydown"];
+var _hoisted_3$47 = { class: "model-picker-row-top" };
+var _hoisted_4$39 = { class: "model-picker-row-name" };
+var _hoisted_5$32 = { class: "attach-picker-toggle" };
+var _hoisted_6$27 = {
 	key: 0,
 	class: "model-picker-row-sub"
 };
@@ -5342,14 +5202,14 @@ var AttachPicker_default = /* @__PURE__ */ defineComponent({
 			emit("toggle", r.key, r.attached, li);
 		}
 		return (_ctx, _cache) => {
-			return unref(attachRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$53, toDisplayString(unref(attachEmptyText)), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(attachRows), (r) => {
+			return unref(attachRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$59, toDisplayString(unref(attachEmptyText)), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(attachRows), (r) => {
 				return openBlock(), createElementBlock("li", {
 					key: r.key,
 					class: normalizeClass("model-picker-row attach-picker-row" + (r.attached ? " selected" : "")),
 					tabindex: "0",
 					onClick: ($event) => act($event, r),
 					onKeydown: [withKeys(withModifiers(($event) => act($event, r), ["prevent"]), ["enter"]), withKeys(withModifiers(($event) => act($event, r), ["prevent"]), ["space"])]
-				}, [createElementVNode("div", _hoisted_3$41, [createElementVNode("span", _hoisted_4$34, toDisplayString(r.name), 1), createElementVNode("span", _hoisted_5$28, toDisplayString(r.attached ? "−" : "+"), 1)]), r.meta ? (openBlock(), createElementBlock("div", _hoisted_6$24, toDisplayString(r.meta), 1)) : createCommentVNode("", true)], 42, _hoisted_2$45);
+				}, [createElementVNode("div", _hoisted_3$47, [createElementVNode("span", _hoisted_4$39, toDisplayString(r.name), 1), createElementVNode("span", _hoisted_5$32, toDisplayString(r.attached ? "−" : "+"), 1)]), r.meta ? (openBlock(), createElementBlock("div", _hoisted_6$27, toDisplayString(r.meta), 1)) : createCommentVNode("", true)], 42, _hoisted_2$51);
 			}), 128));
 		};
 	}
@@ -5359,20 +5219,20 @@ var AttachPicker_default = /* @__PURE__ */ defineComponent({
 var searchRows = ref([]);
 //#endregion
 //#region src/features/SearchResults.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$52 = {
+var _hoisted_1$58 = {
 	key: 0,
 	class: "search-empty"
 };
-var _hoisted_2$44 = [
+var _hoisted_2$50 = [
 	"data-room-id",
 	"data-room-name",
 	"data-message-id"
 ];
-var _hoisted_3$40 = { class: "search-result-head" };
-var _hoisted_4$33 = { class: "search-result-room" };
-var _hoisted_5$27 = { class: "search-result-time" };
-var _hoisted_6$23 = ["innerHTML"];
-var EMPTY$11 = "No matches";
+var _hoisted_3$46 = { class: "search-result-head" };
+var _hoisted_4$38 = { class: "search-result-room" };
+var _hoisted_5$31 = { class: "search-result-time" };
+var _hoisted_6$26 = ["innerHTML"];
+var EMPTY$12 = "No matches";
 //#endregion
 //#region src/features/SearchResults.vue
 var SearchResults_default = /* @__PURE__ */ defineComponent({
@@ -5385,17 +5245,17 @@ var SearchResults_default = /* @__PURE__ */ defineComponent({
 		* the XSS guarantee, so it stays next to the escaping; this component never builds HTML.
 		*/
 		return (_ctx, _cache) => {
-			return unref(searchRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$52, toDisplayString(EMPTY$11))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(searchRows), (r) => {
+			return unref(searchRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$58, toDisplayString(EMPTY$12))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(searchRows), (r) => {
 				return openBlock(), createElementBlock("li", {
 					key: r.id,
 					class: "search-result",
 					"data-room-id": r.roomId,
 					"data-room-name": r.roomName,
 					"data-message-id": r.id
-				}, [createElementVNode("div", _hoisted_3$40, [createElementVNode("span", _hoisted_4$33, "#" + toDisplayString(r.roomName), 1), createElementVNode("span", _hoisted_5$27, toDisplayString(r.time), 1)]), createElementVNode("div", {
+				}, [createElementVNode("div", _hoisted_3$46, [createElementVNode("span", _hoisted_4$38, "#" + toDisplayString(r.roomName), 1), createElementVNode("span", _hoisted_5$31, toDisplayString(r.time), 1)]), createElementVNode("div", {
 					class: "search-result-snip",
 					innerHTML: r.snipHtml
-				}, null, 8, _hoisted_6$23)], 8, _hoisted_2$44);
+				}, null, 8, _hoisted_6$26)], 8, _hoisted_2$50);
 			}), 128));
 		};
 	}
@@ -5440,20 +5300,20 @@ function userCredsWords(provider) {
 }
 //#endregion
 //#region src/features/MembersList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$51 = {
+var _hoisted_1$57 = {
 	key: 0,
 	class: "member-empty"
 };
-var _hoisted_2$43 = { class: "member-name" };
-var _hoisted_3$39 = {
+var _hoisted_2$49 = { class: "member-name" };
+var _hoisted_3$45 = {
 	key: 0,
 	class: "member-tag"
 };
-var _hoisted_4$32 = {
+var _hoisted_4$37 = {
 	key: 1,
 	class: "member-handle"
 };
-var EMPTY$10 = "No members match.";
+var EMPTY$11 = "No members match.";
 //#endregion
 //#region src/features/MembersList.vue
 var MembersList_default = /* @__PURE__ */ defineComponent({
@@ -5473,11 +5333,11 @@ var MembersList_default = /* @__PURE__ */ defineComponent({
 		/** The member's identity, with a " (you)" suffix for the viewer. */
 		const label = (m) => m.identity === state.myIdentity ? `${m.identity} (you)` : m.identity;
 		return (_ctx, _cache) => {
-			return sorted.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$51, toDisplayString(EMPTY$10))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(sorted.value, (m) => {
+			return sorted.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$57, toDisplayString(EMPTY$11))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(sorted.value, (m) => {
 				return openBlock(), createElementBlock("li", { key: m.identity }, [
 					createElementVNode("span", { class: normalizeClass(`member-dot ${m.identity_type}`) }, null, 2),
-					createElementVNode("span", _hoisted_2$43, toDisplayString(label(m)), 1),
-					m.identity_type === "agent" ? (openBlock(), createElementBlock("span", _hoisted_3$39, "AGENT")) : m.handle ? (openBlock(), createElementBlock("span", _hoisted_4$32, "@" + toDisplayString(m.handle), 1)) : createCommentVNode("", true)
+					createElementVNode("span", _hoisted_2$49, toDisplayString(label(m)), 1),
+					m.identity_type === "agent" ? (openBlock(), createElementBlock("span", _hoisted_3$45, "AGENT")) : m.handle ? (openBlock(), createElementBlock("span", _hoisted_4$37, "@" + toDisplayString(m.handle), 1)) : createCommentVNode("", true)
 				]);
 			}), 128));
 		};
@@ -5485,24 +5345,24 @@ var MembersList_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/PermsUserList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$50 = {
+var _hoisted_1$56 = {
 	key: 0,
 	class: "perms-empty"
 };
-var _hoisted_2$42 = {
+var _hoisted_2$48 = {
 	key: 1,
 	class: "perms-empty",
 	style: { "padding": "16px" }
 };
-var _hoisted_3$38 = ["onClick", "onKeydown"];
-var _hoisted_4$31 = { class: "perms-user-name" };
-var _hoisted_5$26 = { class: "perms-name-text" };
-var _hoisted_6$22 = {
+var _hoisted_3$44 = ["onClick", "onKeydown"];
+var _hoisted_4$36 = { class: "perms-user-name" };
+var _hoisted_5$30 = { class: "perms-name-text" };
+var _hoisted_6$25 = {
 	key: 0,
 	class: "perms-you-tag"
 };
-var _hoisted_7$18 = { class: "perms-user-id-sub" };
-var _hoisted_8$13 = { class: "perms-user-summary" };
+var _hoisted_7$21 = { class: "perms-user-id-sub" };
+var _hoisted_8$15 = { class: "perms-user-summary" };
 var NO_USERS = "No users yet — anyone who authenticates will appear here.";
 var NO_MATCH$2 = "No users match.";
 //#endregion
@@ -5545,7 +5405,7 @@ var PermsUserList_default = /* @__PURE__ */ defineComponent({
 			}
 		}
 		return (_ctx, _cache) => {
-			return unref(usersError) ? (openBlock(), createElementBlock("li", _hoisted_1$50, toDisplayString(unref(usersError)), 1)) : rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_2$42, toDisplayString(emptyText.value), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 2 }, renderList(rows.value, (u) => {
+			return unref(usersError) ? (openBlock(), createElementBlock("li", _hoisted_1$56, toDisplayString(unref(usersError)), 1)) : rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_2$48, toDisplayString(emptyText.value), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 2 }, renderList(rows.value, (u) => {
 				return openBlock(), createElementBlock("li", mergeProps({
 					key: u.id,
 					tabindex: "0"
@@ -5553,10 +5413,10 @@ var PermsUserList_default = /* @__PURE__ */ defineComponent({
 					onClick: ($event) => activate(u),
 					onKeydown: ($event) => onKey($event, u)
 				}), [
-					createElementVNode("div", _hoisted_4$31, [createElementVNode("span", _hoisted_5$26, toDisplayString(unref(userDisplayName)(u)), 1), u.id === unref(permsMyUserId) ? (openBlock(), createElementBlock("span", _hoisted_6$22, "YOU")) : createCommentVNode("", true)]),
-					createElementVNode("div", _hoisted_7$18, toDisplayString(u.id), 1),
-					createElementVNode("div", _hoisted_8$13, toDisplayString(unref(userRoleSummary)(u)), 1)
-				], 16, _hoisted_3$38);
+					createElementVNode("div", _hoisted_4$36, [createElementVNode("span", _hoisted_5$30, toDisplayString(unref(userDisplayName)(u)), 1), u.id === unref(permsMyUserId) ? (openBlock(), createElementBlock("span", _hoisted_6$25, "YOU")) : createCommentVNode("", true)]),
+					createElementVNode("div", _hoisted_7$21, toDisplayString(u.id), 1),
+					createElementVNode("div", _hoisted_8$15, toDisplayString(unref(userRoleSummary)(u)), 1)
+				], 16, _hoisted_3$44);
 			}), 128));
 		};
 	}
@@ -5608,6 +5468,10 @@ async function updateUserCredsBanner(roomId) {
 		updateHandleCreds();
 		renderHandleChip();
 		if (connected) {
+			banner.hidden = true;
+			return;
+		}
+		if (mode !== "required") {
 			banner.hidden = true;
 			return;
 		}
@@ -5735,27 +5599,36 @@ async function deleteUser(targetUserId) {
 function wireMembersPanel() {
 	$("#handle-creds-action")?.addEventListener("click", async () => {
 		if (!userCredsState.value) return;
-		closeHandlePopover();
 		if (userCredsState.value.connected) {
+			closeHandlePopover();
 			if (await showConfirmModal({
 				title: `Disconnect ${userCredsWords(userCredsState.value?.provider).name}?`,
 				confirmLabel: "Disconnect",
 				destructive: true
 			})) await disconnectUserCreds();
-		} else if (userCredsState.value.oauthAllowed) $("#user-creds-oauth-btn")?.click();
-		else {
-			const banner = $("#user-creds-banner");
-			if (banner) {
-				banner.hidden = false;
-				banner.scrollIntoView({
-					behavior: "smooth",
-					block: "nearest"
-				});
-				banner.classList.add("user-creds-banner-flash");
-				setTimeout(() => banner.classList.remove("user-creds-banner-flash"), 1200);
-			}
-			$("#user-creds-connect-btn")?.click();
+		} else if (userCredsState.value.oauthAllowed) {
+			closeHandlePopover();
+			$("#user-creds-oauth-btn")?.click();
 		}
+	});
+	$("#handle-creds-key-btn")?.addEventListener("click", () => {
+		const row = $("#handle-creds-key");
+		if (!row) return;
+		row.hidden = !row.hidden;
+		if (!row.hidden) $("#handle-creds-key-input")?.focus();
+	});
+	const saveMenuKey = async () => {
+		const input = $("#handle-creds-key-input");
+		const apiKey = input?.value.trim();
+		if (!input || !apiKey) return;
+		if (await saveUserCredsKey(apiKey, $("#handle-creds-key-save"))) {
+			input.value = "";
+			closeHandlePopover();
+		}
+	};
+	$("#handle-creds-key-save")?.addEventListener("click", () => void saveMenuKey());
+	$("#handle-creds-key-input")?.addEventListener("keydown", (e) => {
+		if (e.key === "Enter") saveMenuKey();
 	});
 	$("#user-creds-connect-btn")?.addEventListener("click", async (e) => {
 		const input = $("#user-creds-key-input");
@@ -5767,24 +5640,7 @@ function wireMembersPanel() {
 		}
 		const apiKey = input.value.trim();
 		if (!apiKey) return;
-		const btn = e.currentTarget;
-		btn.disabled = true;
-		try {
-			await apiJson("/api/user-credentials/credential", {
-				method: "POST",
-				headers: { "X-Webchat-CSRF": "1" },
-				body: {
-					roomId: state.currentRoom,
-					apiKey
-				}
-			});
-			showToast(`Connected your ${userCredsWords(userCredsProvider.value).keyWord}.`, { kind: "success" });
-			await updateUserCredsBanner(state.currentRoom);
-		} catch (err) {
-			showToast("Failed to connect key: " + (err?.message || "network error"), { kind: "error" });
-		} finally {
-			btn.disabled = false;
-		}
+		await saveUserCredsKey(apiKey, e.currentTarget);
 	});
 	$("#user-creds-key-input")?.addEventListener("keydown", (e) => {
 		if (e.key === "Enter") $("#user-creds-connect-btn")?.click();
@@ -5834,7 +5690,41 @@ function updateHandleCreds() {
 		statusEl.textContent = `${name} — ${userCredsState.value.connected ? "connected" : "not connected"}`;
 		statusEl.classList.toggle("is-connected", !!userCredsState.value?.connected);
 	}
-	if (actionBtn) actionBtn.textContent = userCredsState.value.connected ? "Disconnect" : "Connect";
+	const connected = !!userCredsState.value.connected;
+	const oauth = !!userCredsState.value.oauthAllowed;
+	const api = !!userCredsState.value.apiOffered;
+	if (actionBtn) {
+		actionBtn.hidden = !connected && !oauth;
+		actionBtn.textContent = connected ? "Disconnect" : "Sign in";
+	}
+	const keyBtn = $("#handle-creds-key-btn");
+	if (keyBtn) keyBtn.hidden = connected || !api;
+	const keyRow = $("#handle-creds-key");
+	if (keyRow && (connected || !api)) keyRow.hidden = true;
+	const keyInput = $("#handle-creds-key-input");
+	if (keyInput) keyInput.placeholder = userCredsWords(userCredsState.value.provider).keyPlaceholder;
+}
+/** Store the member's API key for the open room's provider (menu or banner). */
+async function saveUserCredsKey(apiKey, btn) {
+	if (btn) btn.disabled = true;
+	try {
+		await apiJson("/api/user-credentials/credential", {
+			method: "POST",
+			headers: { "X-Webchat-CSRF": "1" },
+			body: {
+				roomId: state.currentRoom,
+				apiKey
+			}
+		});
+		showToast(`Connected your ${userCredsWords(userCredsProvider.value).keyWord}.`, { kind: "success" });
+		await updateUserCredsBanner(state.currentRoom);
+		return true;
+	} catch (err) {
+		showToast("Failed to connect key: " + (err?.message || "network error"), { kind: "error" });
+		return false;
+	} finally {
+		if (btn) btn.disabled = false;
+	}
 }
 function renderHandleChip() {
 	const chip = $("#handle-chip");
@@ -5885,10 +5775,10 @@ async function saveHandle() {
 var agentMcpRows = ref([]);
 //#endregion
 //#region src/features/AgentMcpList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$49 = { class: "agent-mcp-info" };
-var _hoisted_2$41 = { class: "agent-mcp-name" };
-var _hoisted_3$37 = { class: "agent-mcp-meta" };
-var _hoisted_4$30 = [
+var _hoisted_1$55 = { class: "agent-mcp-info" };
+var _hoisted_2$47 = { class: "agent-mcp-name" };
+var _hoisted_3$43 = { class: "agent-mcp-meta" };
+var _hoisted_4$35 = [
 	"aria-label",
 	"innerHTML",
 	"onClick"
@@ -5910,34 +5800,34 @@ var AgentMcpList_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("li", {
 					key: s.id,
 					class: "agent-mcp-row"
-				}, [createElementVNode("div", _hoisted_1$49, [createElementVNode("span", _hoisted_2$41, toDisplayString(s.name), 1), createElementVNode("span", _hoisted_3$37, toDisplayString(s.transport) + " · " + toDisplayString(s.target), 1)]), createElementVNode("button", {
+				}, [createElementVNode("div", _hoisted_1$55, [createElementVNode("span", _hoisted_2$47, toDisplayString(s.name), 1), createElementVNode("span", _hoisted_3$43, toDisplayString(s.transport) + " · " + toDisplayString(s.target), 1)]), createElementVNode("button", {
 					type: "button",
 					class: "agent-mcp-remove",
 					"aria-label": `Detach ${s.name}`,
 					innerHTML: unref(xIcon),
 					onClick: ($event) => emit("detach", s)
-				}, null, 8, _hoisted_4$30)]);
+				}, null, 8, _hoisted_4$35)]);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/McpList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$48 = {
+var _hoisted_1$54 = {
 	key: 0,
 	style: {
 		cursor: "default",
 		opacity: .6
 	}
 };
-var _hoisted_2$40 = [
+var _hoisted_2$46 = [
 	"data-mcp-id",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_3$36 = ["title"];
-var _hoisted_4$29 = { class: "model-row-name" };
-var _hoisted_5$25 = {
+var _hoisted_3$42 = ["title"];
+var _hoisted_4$34 = { class: "model-row-name" };
+var _hoisted_5$29 = {
 	key: 1,
 	class: "model-row-uses"
 };
@@ -5963,7 +5853,7 @@ var McpList_default = /* @__PURE__ */ defineComponent({
 			return `Unreachable${h.reason ? `: ${h.reason}` : ""}`;
 		}
 		return (_ctx, _cache) => {
-			return sorted.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$48, toDisplayString(emptyMessage))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(sorted.value, (server) => {
+			return sorted.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$54, toDisplayString(emptyMessage))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(sorted.value, (server) => {
 				return openBlock(), createElementBlock("li", mergeProps({
 					key: server.id,
 					"data-mcp-id": server.id
@@ -5978,10 +5868,10 @@ var McpList_default = /* @__PURE__ */ defineComponent({
 						key: 0,
 						class: normalizeClass(`mcp-health-dot mcp-health-${server.health.status}`),
 						title: healthTitle(server.health)
-					}, null, 10, _hoisted_3$36)) : createCommentVNode("", true),
-					createElementVNode("span", _hoisted_4$29, toDisplayString(server.name), 1),
-					server.agents_assigned > 0 ? (openBlock(), createElementBlock("span", _hoisted_5$25, toDisplayString(server.agents_assigned) + "×", 1)) : createCommentVNode("", true)
-				], 16, _hoisted_2$40);
+					}, null, 10, _hoisted_3$42)) : createCommentVNode("", true),
+					createElementVNode("span", _hoisted_4$34, toDisplayString(server.name), 1),
+					server.agents_assigned > 0 ? (openBlock(), createElementBlock("span", _hoisted_5$29, toDisplayString(server.agents_assigned) + "×", 1)) : createCommentVNode("", true)
+				], 16, _hoisted_2$46);
 			}), 128));
 		};
 	}
@@ -6004,10 +5894,10 @@ var mcpCatalogPhase = ref("loading");
 var mcpCatalogQuery = ref("");
 //#endregion
 //#region src/features/McpSources.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$47 = { class: "skill-info" };
-var _hoisted_2$39 = { class: "skill-head" };
-var _hoisted_3$35 = { class: "skill-desc" };
-var _hoisted_4$28 = ["onClick"];
+var _hoisted_1$53 = { class: "skill-info" };
+var _hoisted_2$45 = { class: "skill-head" };
+var _hoisted_3$41 = { class: "skill-desc" };
+var _hoisted_4$33 = ["onClick"];
 var BUILT_IN$1 = "built-in";
 var REMOVED_NOTE = "Removed from Add MCP server";
 //#endregion
@@ -6044,13 +5934,13 @@ var McpSources_default = /* @__PURE__ */ defineComponent({
 					key: r.id,
 					class: normalizeClass(r.off ? "skill-source-row source-disabled" : "skill-source-row")
 				}, [
-					createElementVNode("div", _hoisted_1$47, [createElementVNode("div", _hoisted_2$39, [createVNode(OriginBadge_default, { origin: r.origin }, null, 8, ["origin"])]), createElementVNode("span", _hoisted_3$35, toDisplayString(r.meta), 1)]),
+					createElementVNode("div", _hoisted_1$53, [createElementVNode("div", _hoisted_2$45, [createVNode(OriginBadge_default, { origin: r.origin }, null, 8, ["origin"])]), createElementVNode("span", _hoisted_3$41, toDisplayString(r.meta), 1)]),
 					createElementVNode("span", { class: "skill-badge" }, toDisplayString(BUILT_IN$1)),
 					createElementVNode("button", {
 						type: "button",
 						class: normalizeClass(r.toggleClass),
 						onClick: ($event) => props.onToggle(r.id, r.off)
-					}, toDisplayString(r.toggleLabel), 11, _hoisted_4$28)
+					}, toDisplayString(r.toggleLabel), 11, _hoisted_4$33)
 				], 2);
 			}), 128);
 		};
@@ -6058,11 +5948,11 @@ var McpSources_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/McpProbeTools.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$46 = {
+var _hoisted_1$52 = {
 	key: 0,
 	class: "empty-note"
 };
-var EMPTY$9 = "Connected, but the server advertises no tools.";
+var EMPTY$10 = "Connected, but the server advertises no tools.";
 //#endregion
 //#region src/features/McpProbeTools.vue
 var McpProbeTools_default = /* @__PURE__ */ defineComponent({
@@ -6079,7 +5969,7 @@ var McpProbeTools_default = /* @__PURE__ */ defineComponent({
 			desc: t.description ? ` — ${t.description}` : ""
 		})));
 		return (_ctx, _cache) => {
-			return rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$46, toDisplayString(EMPTY$9))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (r) => {
+			return rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$52, toDisplayString(EMPTY$10))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", { key: r.key }, [createElementVNode("b", null, toDisplayString(r.name), 1), r.desc ? (openBlock(), createElementBlock("span", {
 					key: 0,
 					style: DIM
@@ -6090,21 +5980,21 @@ var McpProbeTools_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/McpHardening.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$45 = {
+var _hoisted_1$51 = {
 	key: 1,
 	class: "mcp-drift-banner"
 };
-var _hoisted_2$38 = { key: 2 };
-var _hoisted_3$34 = { class: "form-label" };
-var _hoisted_4$27 = { class: "mcp-tools-list" };
-var _hoisted_5$24 = [
+var _hoisted_2$44 = { key: 2 };
+var _hoisted_3$40 = { class: "form-label" };
+var _hoisted_4$32 = { class: "mcp-tools-list" };
+var _hoisted_5$28 = [
 	"checked",
 	"data-tool",
 	"disabled"
 ];
-var _hoisted_6$21 = ["title"];
-var _hoisted_7$17 = ["disabled"];
-var _hoisted_8$12 = {
+var _hoisted_6$24 = ["title"];
+var _hoisted_7$20 = ["disabled"];
+var _hoisted_8$14 = {
 	key: 4,
 	class: "room-prime-note"
 };
@@ -6168,7 +6058,7 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 					key: 0,
 					class: normalizeClass(`room-prime-note mcp-health-text-${s.value.health.status}`)
 				}, toDisplayString(healthText.value), 3)) : createCommentVNode("", true),
-				s.value.drift ? (openBlock(), createElementBlock("div", _hoisted_1$45, [
+				s.value.drift ? (openBlock(), createElementBlock("div", _hoisted_1$51, [
 					createElementVNode("div", { style: BOLD }, toDisplayString(DRIFT_HEAD)),
 					createElementVNode("div", null, toDisplayString(driftParts.value.join(" · ")), 1),
 					unref(isWorkspaceAdminView) ? (openBlock(), createElementBlock("button", {
@@ -6178,9 +6068,9 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 						onClick: _cache[0] || (_cache[0] = ($event) => props.onApprove())
 					}, toDisplayString(APPROVE))) : createCommentVNode("", true)
 				])) : createCommentVNode("", true),
-				tools.value ? (openBlock(), createElementBlock("div", _hoisted_2$38, [
-					createElementVNode("span", _hoisted_3$34, "Tools (" + toDisplayString(tools.value.length) + ")", 1),
-					createElementVNode("div", _hoisted_4$27, [(openBlock(true), createElementBlock(Fragment, null, renderList(tools.value, (t) => {
+				tools.value ? (openBlock(), createElementBlock("div", _hoisted_2$44, [
+					createElementVNode("span", _hoisted_3$40, "Tools (" + toDisplayString(tools.value.length) + ")", 1),
+					createElementVNode("div", _hoisted_4$32, [(openBlock(true), createElementBlock(Fragment, null, renderList(tools.value, (t) => {
 						return openBlock(), createElementBlock("label", {
 							key: t.name,
 							class: "mcp-tool-row"
@@ -6189,7 +6079,7 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 							checked: t.checked,
 							"data-tool": t.name,
 							disabled: !unref(isWorkspaceAdminView) || void 0
-						}, null, 8, _hoisted_5$24), createElementVNode("span", { title: t.desc }, toDisplayString(t.name), 9, _hoisted_6$21)]);
+						}, null, 8, _hoisted_5$28), createElementVNode("span", { title: t.desc }, toDisplayString(t.name), 9, _hoisted_6$24)]);
 					}), 128))]),
 					unref(isWorkspaceAdminView) ? (openBlock(), createElementBlock("button", {
 						key: 0,
@@ -6204,24 +6094,24 @@ var McpHardening_default = /* @__PURE__ */ defineComponent({
 					class: "btn btn-ghost",
 					disabled: unref(oauthBusy) || void 0,
 					onClick: _cache[2] || (_cache[2] = ($event) => props.onOauth())
-				}, toDisplayString(oauthLabel.value), 9, _hoisted_7$17)) : createCommentVNode("", true),
-				s.value.auth ? (openBlock(), createElementBlock("p", _hoisted_8$12, toDisplayString(authNote.value), 1)) : createCommentVNode("", true)
+				}, toDisplayString(oauthLabel.value), 9, _hoisted_7$20)) : createCommentVNode("", true),
+				s.value.auth ? (openBlock(), createElementBlock("p", _hoisted_8$14, toDisplayString(authNote.value), 1)) : createCommentVNode("", true)
 			], 64)) : createCommentVNode("", true);
 		};
 	}
 });
 //#endregion
 //#region src/features/McpCatalog.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$44 = {
+var _hoisted_1$50 = {
 	key: 0,
 	class: "skills-empty"
 };
-var _hoisted_2$37 = { class: "mcp-catalog-head" };
-var _hoisted_3$33 = { class: "mcp-catalog-title" };
-var _hoisted_4$26 = { class: "mcp-catalog-desc" };
-var _hoisted_5$23 = { class: "mcp-catalog-target" };
-var _hoisted_6$20 = { class: "mcp-catalog-actions" };
-var _hoisted_7$16 = ["onClick"];
+var _hoisted_2$43 = { class: "mcp-catalog-head" };
+var _hoisted_3$39 = { class: "mcp-catalog-title" };
+var _hoisted_4$31 = { class: "mcp-catalog-desc" };
+var _hoisted_5$27 = { class: "mcp-catalog-target" };
+var _hoisted_6$23 = { class: "mcp-catalog-actions" };
+var _hoisted_7$19 = ["onClick"];
 var USE = "Use";
 //#endregion
 //#region src/features/McpCatalog.vue
@@ -6237,7 +6127,7 @@ var McpCatalog_default = /* @__PURE__ */ defineComponent({
 		const props = __props;
 		const waitLabel = computed(() => mcpCatalogQuery.value ? "Searching…" : "Loading catalog…");
 		return (_ctx, _cache) => {
-			return unref(mcpCatalogPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$44, [_cache[0] || (_cache[0] = createElementVNode("span", {
+			return unref(mcpCatalogPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$50, [_cache[0] || (_cache[0] = createElementVNode("span", {
 				class: "btn-spinner",
 				"aria-hidden": "true"
 			}, null, -1)), createTextVNode(toDisplayString(waitLabel.value), 1)])) : unref(mcpCatalogPhase) === "ready" ? (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(mcpCatalog), (s, i) => {
@@ -6245,21 +6135,21 @@ var McpCatalog_default = /* @__PURE__ */ defineComponent({
 					key: i,
 					class: "mcp-catalog-row"
 				}, [
-					createElementVNode("div", _hoisted_2$37, [
-						createElementVNode("span", _hoisted_3$33, toDisplayString(s.title), 1),
+					createElementVNode("div", _hoisted_2$43, [
+						createElementVNode("span", _hoisted_3$39, toDisplayString(s.title), 1),
 						s.origin ? (openBlock(), createBlock(OriginBadge_default, {
 							key: 0,
 							origin: s.origin
 						}, null, 8, ["origin"])) : createCommentVNode("", true),
 						createElementVNode("span", { class: normalizeClass(s.kindClass) }, toDisplayString(s.kindText), 3)
 					]),
-					createElementVNode("div", _hoisted_4$26, toDisplayString(s.desc), 1),
-					createElementVNode("div", _hoisted_5$23, toDisplayString(s.target), 1),
-					createElementVNode("div", _hoisted_6$20, [createElementVNode("button", {
+					createElementVNode("div", _hoisted_4$31, toDisplayString(s.desc), 1),
+					createElementVNode("div", _hoisted_5$27, toDisplayString(s.target), 1),
+					createElementVNode("div", _hoisted_6$23, [createElementVNode("button", {
 						type: "button",
 						class: "btn btn-secondary",
 						onClick: ($event) => props.onUse(s.raw)
-					}, toDisplayString(USE), 8, _hoisted_7$16)])
+					}, toDisplayString(USE), 8, _hoisted_7$19)])
 				]);
 			}), 128)) : createCommentVNode("", true);
 		};
@@ -6825,7 +6715,7 @@ function firstUnreadIndex(msgs, lastReadAt, me) {
 }
 //#endregion
 //#region src/features/ThreadNameInput.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$43 = ["aria-label"];
+var _hoisted_1$49 = ["aria-label"];
 //#endregion
 //#region src/features/ThreadNameInput.vue
 var ThreadNameInput_default = /* @__PURE__ */ defineComponent({
@@ -6895,14 +6785,14 @@ var ThreadNameInput_default = /* @__PURE__ */ defineComponent({
 				onClick: _cache[0] || (_cache[0] = withModifiers(() => {}, ["stop"])),
 				onKeydown: onKey,
 				onBlur: _cache[1] || (_cache[1] = ($event) => __props.blurSubmits ? submit() : cancel())
-			}), null, 16, _hoisted_1$43);
+			}), null, 16, _hoisted_1$49);
 		};
 	}
 });
 //#endregion
 //#region src/features/ThreadSwitcher.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$42 = ["onClick"];
-var _hoisted_2$36 = { class: "thread-switcher-label" };
+var _hoisted_1$48 = ["onClick"];
+var _hoisted_2$42 = { class: "thread-switcher-label" };
 var NEW_THREAD$2 = "+ New thread";
 //#endregion
 //#region src/features/ThreadSwitcher.vue
@@ -6936,7 +6826,7 @@ var ThreadSwitcher_default = /* @__PURE__ */ defineComponent({
 					key: 0,
 					class: "thread-switcher-dot",
 					style: normalizeStyle({ background: r.color })
-				}, null, 4)) : createCommentVNode("", true), createElementVNode("span", _hoisted_2$36, toDisplayString(r.label), 1)], 10, _hoisted_1$42);
+				}, null, 4)) : createCommentVNode("", true), createElementVNode("span", _hoisted_2$42, toDisplayString(r.label), 1)], 10, _hoisted_1$48);
 			}), 128)), creating.value ? (openBlock(), createBlock(ThreadNameInput_default, {
 				key: 0,
 				"aria-label": "New thread name",
@@ -7216,9 +7106,9 @@ var threadActions = {
 };
 //#endregion
 //#region src/features/UndoTimer.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$41 = { class: "undo-timer" };
-var _hoisted_2$35 = { class: "undo-timer-label" };
-var _hoisted_3$32 = { class: "undo-timer-bar" };
+var _hoisted_1$47 = { class: "undo-timer" };
+var _hoisted_2$41 = { class: "undo-timer-label" };
+var _hoisted_3$38 = { class: "undo-timer-bar" };
 var UNDO = "Undo";
 //#endregion
 //#region src/features/UndoTimer.vue
@@ -7256,9 +7146,9 @@ var UndoTimer_default = /* @__PURE__ */ defineComponent({
 			emit("undo");
 		}
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock("span", _hoisted_1$41, [
-				createElementVNode("span", _hoisted_2$35, toDisplayString(__props.label), 1),
-				createElementVNode("span", _hoisted_3$32, [createElementVNode("span", {
+			return openBlock(), createElementBlock("span", _hoisted_1$47, [
+				createElementVNode("span", _hoisted_2$41, toDisplayString(__props.label), 1),
+				createElementVNode("span", _hoisted_3$38, [createElementVNode("span", {
 					ref_key: "fill",
 					ref: fill
 				}, null, 512)]),
@@ -7273,33 +7163,33 @@ var UndoTimer_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/ThreadRows.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$40 = {
+var _hoisted_1$46 = {
 	key: 0,
 	class: "thread-loading"
 };
-var _hoisted_2$34 = ["data-thread-id"];
-var _hoisted_3$31 = [
+var _hoisted_2$40 = ["data-thread-id"];
+var _hoisted_3$37 = [
 	"data-thread-id",
 	"aria-label",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_4$25 = {
+var _hoisted_4$30 = {
 	class: "thread-glyph",
 	"aria-hidden": "true"
 };
-var _hoisted_5$22 = { class: "thread-label" };
-var _hoisted_6$19 = {
+var _hoisted_5$26 = { class: "thread-label" };
+var _hoisted_6$22 = {
 	key: 0,
 	class: "unread-badge thread-unread"
 };
-var _hoisted_7$15 = ["onClick", "innerHTML"];
-var _hoisted_8$11 = {
+var _hoisted_7$18 = ["onClick", "innerHTML"];
+var _hoisted_8$13 = {
 	key: 3,
 	class: "thread-menu"
 };
-var _hoisted_9$9 = ["onClick"];
-var _hoisted_10$9 = ["onClick"];
+var _hoisted_9$11 = ["onClick"];
+var _hoisted_10$11 = ["onClick"];
 var RENAME = "Rename";
 var DELETE = "Delete";
 /** Read after the count by screen readers ("3 unread"). */
@@ -7347,7 +7237,7 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 			if (e.target?.closest("button")) e.stopPropagation();
 		}
 		return (_ctx, _cache) => {
-			return rows.value === null ? (openBlock(), createElementBlock("div", _hoisted_1$40, [..._cache[1] || (_cache[1] = [createElementVNode("span", {
+			return rows.value === null ? (openBlock(), createElementBlock("div", _hoisted_1$46, [..._cache[1] || (_cache[1] = [createElementVNode("span", {
 				class: "btn-spinner",
 				"aria-hidden": "true"
 			}, null, -1), createTextVNode("Loading…", -1)])])) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (t, i) => {
@@ -7366,7 +7256,7 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 					"value",
 					"onSubmit",
 					"onCancel"
-				])], 12, _hoisted_2$34)) : (openBlock(), createElementBlock("div", mergeProps({
+				])], 12, _hoisted_2$40)) : (openBlock(), createElementBlock("div", mergeProps({
 					key: 1,
 					class: [__props.active && t.thread_id === unref(state).currentThread ? "thread-row active" : "thread-row", unref(threadUndo)[t.thread_id] ? "deleting" : ""],
 					"data-thread-id": t.thread_id,
@@ -7399,9 +7289,9 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 					"onCommit",
 					"onUndo"
 				])) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [
-					createElementVNode("span", _hoisted_4$25, toDisplayString(__props.active ? glyph(t.kind) : "#"), 1),
-					createElementVNode("span", _hoisted_5$22, toDisplayString(t.title ?? ""), 1),
-					__props.active && t.thread_id !== unref(state).currentThread && unref(state).threadUnread.has(t.thread_id) ? (openBlock(), createElementBlock("span", _hoisted_6$19, [createTextVNode(toDisplayString(unref(formatUnreadCount)(unref(state).threadUnread.get(t.thread_id))), 1), createElementVNode("span", { class: "visually-hidden" }, toDisplayString(UNREAD$1))])) : createCommentVNode("", true),
+					createElementVNode("span", _hoisted_4$30, toDisplayString(__props.active ? glyph(t.kind) : "#"), 1),
+					createElementVNode("span", _hoisted_5$26, toDisplayString(t.title ?? ""), 1),
+					__props.active && t.thread_id !== unref(state).currentThread && unref(state).threadUnread.has(t.thread_id) ? (openBlock(), createElementBlock("span", _hoisted_6$22, [createTextVNode(toDisplayString(unref(formatUnreadCount)(unref(state).threadUnread.get(t.thread_id))), 1), createElementVNode("span", { class: "visually-hidden" }, toDisplayString(UNREAD$1))])) : createCommentVNode("", true),
 					__props.active && t.kind !== "main" ? (openBlock(), createElementBlock("button", {
 						key: 1,
 						class: "thread-kebab",
@@ -7409,7 +7299,7 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 						"aria-label": "Thread actions",
 						onClick: withModifiers(($event) => __props.onMenu(t.thread_id), ["stop"]),
 						innerHTML: unref(KEBAB)
-					}, null, 8, _hoisted_7$15)) : createCommentVNode("", true),
+					}, null, 8, _hoisted_7$18)) : createCommentVNode("", true),
 					__props.active && !unref(state).threadCreating && i === rows.value.length - 1 ? (openBlock(), createElementBlock("button", {
 						key: 2,
 						class: "thread-add-inline",
@@ -7418,12 +7308,12 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 						"aria-label": NEW_THREAD$1,
 						onClick: _cache[0] || (_cache[0] = withModifiers((...args) => __props.onStartCreate && __props.onStartCreate(...args), ["stop"]))
 					}, toDisplayString(PLUS$1))) : createCommentVNode("", true),
-					__props.active && unref(openThreadMenuId) === t.thread_id ? (openBlock(), createElementBlock("div", _hoisted_8$11, [createElementVNode("button", { onClick: withModifiers(($event) => __props.onStartRename(t.thread_id), ["stop"]) }, toDisplayString(RENAME), 8, _hoisted_9$9), unref(state).isOwnerView ? (openBlock(), createElementBlock("button", {
+					__props.active && unref(openThreadMenuId) === t.thread_id ? (openBlock(), createElementBlock("div", _hoisted_8$13, [createElementVNode("button", { onClick: withModifiers(($event) => __props.onStartRename(t.thread_id), ["stop"]) }, toDisplayString(RENAME), 8, _hoisted_9$11), unref(state).isOwnerView ? (openBlock(), createElementBlock("button", {
 						key: 0,
 						class: "danger",
 						onClick: withModifiers(($event) => __props.onDelete(t.thread_id), ["stop"])
-					}, toDisplayString(DELETE), 8, _hoisted_10$9)) : createCommentVNode("", true)])) : createCommentVNode("", true)
-				], 64))], 16, _hoisted_3$31))], 64);
+					}, toDisplayString(DELETE), 8, _hoisted_10$11)) : createCommentVNode("", true)])) : createCommentVNode("", true)
+				], 64))], 16, _hoisted_3$37))], 64);
 			}), 128)), __props.active && unref(state).threadCreating ? (openBlock(), createBlock(ThreadNameInput_default, {
 				key: 0,
 				"aria-label": "New thread name",
@@ -7435,16 +7325,16 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/RoomList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$39 = {
+var _hoisted_1$45 = {
 	key: 0,
 	class: "room-list-empty"
 };
-var _hoisted_2$33 = {
+var _hoisted_2$39 = {
 	key: 0,
 	class: "room-divider",
 	role: "separator"
 };
-var _hoisted_3$30 = [
+var _hoisted_3$36 = [
 	"data-room-id",
 	"draggable",
 	"onClick",
@@ -7454,50 +7344,50 @@ var _hoisted_3$30 = [
 	"onDragleave",
 	"onDrop"
 ];
-var _hoisted_4$24 = [
+var _hoisted_4$29 = [
 	"title",
 	"aria-label",
 	"aria-expanded",
 	"onClick"
 ];
-var _hoisted_5$21 = { class: "room-row-name" };
-var _hoisted_6$18 = {
+var _hoisted_5$25 = { class: "room-row-name" };
+var _hoisted_6$21 = {
 	key: 1,
 	class: "mention-dot",
 	title: "You were mentioned here"
 };
-var _hoisted_7$14 = {
+var _hoisted_7$17 = {
 	key: 2,
 	class: "unread-badge"
 };
-var _hoisted_8$10 = ["innerHTML"];
-var _hoisted_9$8 = {
+var _hoisted_8$12 = ["innerHTML"];
+var _hoisted_9$10 = {
 	key: 4,
 	class: "thread-list"
 };
-var _hoisted_10$8 = { class: "room-actions" };
-var _hoisted_11$6 = ["onClick", "innerHTML"];
-var _hoisted_12$6 = ["aria-label", "onClick"];
-var _hoisted_13$6 = {
+var _hoisted_10$10 = { class: "room-actions" };
+var _hoisted_11$8 = ["onClick", "innerHTML"];
+var _hoisted_12$8 = ["aria-label", "onClick"];
+var _hoisted_13$8 = {
 	key: 5,
 	class: "thread-list"
 };
-var _hoisted_14$6 = {
+var _hoisted_14$8 = {
 	key: 6,
 	class: "room-menu"
 };
-var _hoisted_15$6 = ["onClick"];
-var _hoisted_16$6 = ["onClick"];
-var _hoisted_17$5 = ["onClick"];
-var _hoisted_18$4 = ["onClick"];
-var _hoisted_19$3 = ["onClick"];
+var _hoisted_15$8 = ["onClick"];
+var _hoisted_16$8 = ["onClick"];
+var _hoisted_17$7 = ["onClick"];
+var _hoisted_18$6 = ["onClick"];
+var _hoisted_19$5 = ["onClick"];
 var PLUS = "+";
 var NEW_THREAD = "New thread";
 var MENTION = "@";
 /** Read after the count by screen readers ("3 unread"); the badge itself is a bare number. */
 var UNREAD = " unread";
 /** Empty list: a label, not an explanation (DESIGN.md's label-only default). */
-var EMPTY$8 = "No rooms yet.";
+var EMPTY$9 = "No rooms yet.";
 /** A filter that matches nothing is a different state from an empty install. */
 var NO_MATCH$1 = "No rooms match.";
 /** Bound, never template text — template text carries surrounding newlines. */
@@ -7647,8 +7537,8 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 		/** The active room's "+" moves onto the last thread row once threads exist. */
 		const activeHasThreads = computed(() => (state.threadCache.get(state.currentRoom) ?? []).some((t) => t.kind !== "main"));
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [rendered.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$39, toDisplayString(unref(roomFilter).trim() ? NO_MATCH$1 : EMPTY$8), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rendered.value, (room) => {
-				return openBlock(), createElementBlock(Fragment, { key: room.id }, [showDivider.value && room.id === groups.value.unpinned[0]?.id ? (openBlock(), createElementBlock("li", _hoisted_2$33)) : createCommentVNode("", true), createElementVNode("li", mergeProps({
+			return openBlock(), createElementBlock(Fragment, null, [rendered.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$45, toDisplayString(unref(roomFilter).trim() ? NO_MATCH$1 : EMPTY$9), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rendered.value, (room) => {
+				return openBlock(), createElementBlock(Fragment, { key: room.id }, [showDivider.value && room.id === groups.value.unpinned[0]?.id ? (openBlock(), createElementBlock("li", _hoisted_2$39)) : createCommentVNode("", true), createElementVNode("li", mergeProps({
 					"data-room-id": room.id,
 					draggable: !room.archived || void 0,
 					role: "button",
@@ -7671,17 +7561,17 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 						"aria-label": `${expanded(room) ? "Collapse" : "Show"} ${room.thread_count} thread${room.thread_count === 1 ? "" : "s"}`,
 						"aria-expanded": expanded(room) ? "true" : "false",
 						onClick: withModifiers(($event) => __props.onToggleThreads(room.id), ["stop"])
-					}, toDisplayString(expanded(room) ? "▾" : "▸"), 9, _hoisted_4$24)) : createCommentVNode("", true),
-					createElementVNode("span", _hoisted_5$21, "#" + toDisplayString(room.id), 1),
-					unref(state).mentionedRooms.has(room.id) ? (openBlock(), createElementBlock("span", _hoisted_6$18, toDisplayString(MENTION))) : createCommentVNode("", true),
-					unref(state).unreadRooms.has(room.id) ? (openBlock(), createElementBlock("span", _hoisted_7$14, [createTextVNode(toDisplayString(unref(formatUnreadCount)(unref(state).unreadRooms.get(room.id))), 1), createElementVNode("span", { class: "visually-hidden" }, toDisplayString(UNREAD))])) : createCommentVNode("", true),
+					}, toDisplayString(expanded(room) ? "▾" : "▸"), 9, _hoisted_4$29)) : createCommentVNode("", true),
+					createElementVNode("span", _hoisted_5$25, "#" + toDisplayString(room.id), 1),
+					unref(state).mentionedRooms.has(room.id) ? (openBlock(), createElementBlock("span", _hoisted_6$21, toDisplayString(MENTION))) : createCommentVNode("", true),
+					unref(state).unreadRooms.has(room.id) ? (openBlock(), createElementBlock("span", _hoisted_7$17, [createTextVNode(toDisplayString(unref(formatUnreadCount)(unref(state).unreadRooms.get(room.id))), 1), createElementVNode("span", { class: "visually-hidden" }, toDisplayString(UNREAD))])) : createCommentVNode("", true),
 					room.pinned ? (openBlock(), createElementBlock("span", {
 						key: 3,
 						class: "room-pin-indicator",
 						"aria-label": "Pinned",
 						innerHTML: unref(PIN_ICON)
-					}, null, 8, _hoisted_8$10)) : createCommentVNode("", true),
-					adding(room) ? (openBlock(), createElementBlock("div", _hoisted_9$8, [createVNode(ThreadNameInput_default, {
+					}, null, 8, _hoisted_8$12)) : createCommentVNode("", true),
+					adding(room) ? (openBlock(), createElementBlock("div", _hoisted_9$10, [createVNode(ThreadNameInput_default, {
 						"aria-label": `New thread in #${room.id}`,
 						onSubmit: (title) => __props.onCreateThread(room.id, title),
 						onCancel: __props.onCancelAddThread
@@ -7690,20 +7580,20 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 						"onSubmit",
 						"onCancel"
 					])])) : createCommentVNode("", true),
-					createElementVNode("span", _hoisted_10$8, [createElementVNode("button", {
+					createElementVNode("span", _hoisted_10$10, [createElementVNode("button", {
 						class: "room-kebab",
 						type: "button",
 						"aria-label": "Room actions",
 						onClick: withModifiers(($event) => toggleMenu(room), ["stop"]),
 						innerHTML: unref(KEBAB)
-					}, null, 8, _hoisted_11$6), room.id !== unref(state).currentRoom && !adding(room) ? (openBlock(), createElementBlock("button", {
+					}, null, 8, _hoisted_11$8), room.id !== unref(state).currentRoom && !adding(room) ? (openBlock(), createElementBlock("button", {
 						key: 0,
 						class: "thread-add-inline",
 						type: "button",
 						title: NEW_THREAD,
 						"aria-label": `New thread in #${room.id}`,
 						onClick: withModifiers(($event) => __props.onStartAddThread(room.id), ["stop"])
-					}, toDisplayString(PLUS), 8, _hoisted_12$6)) : room.id === unref(state).currentRoom && expanded(room) && !unref(state).threadCreating && !activeHasThreads.value ? (openBlock(), createElementBlock("button", {
+					}, toDisplayString(PLUS), 8, _hoisted_12$8)) : room.id === unref(state).currentRoom && expanded(room) && !unref(state).threadCreating && !activeHasThreads.value ? (openBlock(), createElementBlock("button", {
 						key: 1,
 						class: "thread-add-inline",
 						type: "button",
@@ -7711,7 +7601,7 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 						"aria-label": "New thread",
 						onClick: _cache[0] || (_cache[0] = withModifiers(($event) => __props.thread.startCreate(), ["stop"]))
 					}, toDisplayString(PLUS))) : createCommentVNode("", true)]),
-					expanded(room) ? (openBlock(), createElementBlock("div", _hoisted_13$6, [createVNode(ThreadRows_default, {
+					expanded(room) ? (openBlock(), createElementBlock("div", _hoisted_13$8, [createVNode(ThreadRows_default, {
 						"room-id": room.id,
 						active: room.id === unref(state).currentRoom,
 						color: __props.color,
@@ -7742,7 +7632,7 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 						"undo-seconds",
 						"on-undo-delete"
 					])])) : createCommentVNode("", true),
-					unref(openMenuRoomId) === room.id ? (openBlock(), createElementBlock("div", _hoisted_14$6, [
+					unref(openMenuRoomId) === room.id ? (openBlock(), createElementBlock("div", _hoisted_14$8, [
 						room.pinned || unref(coarsePointer) ? (openBlock(), createElementBlock("button", {
 							key: 0,
 							type: "button",
@@ -7750,7 +7640,7 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 								openMenuRoomId.value = null;
 								__props.onPin(room.id, !room.pinned);
 							}, ["stop"])
-						}, toDisplayString(room.pinned ? "Unpin" : "Pin"), 9, _hoisted_15$6)) : createCommentVNode("", true),
+						}, toDisplayString(room.pinned ? "Unpin" : "Pin"), 9, _hoisted_15$8)) : createCommentVNode("", true),
 						room.pinned && groups.value.pinned.length > 1 && pinIndex(room.id) > 0 ? (openBlock(), createElementBlock("button", {
 							key: 1,
 							type: "button",
@@ -7758,7 +7648,7 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 								openMenuRoomId.value = null;
 								__props.onMovePin(room.id, -1);
 							}, ["stop"])
-						}, toDisplayString(MOVE_UP), 8, _hoisted_16$6)) : createCommentVNode("", true),
+						}, toDisplayString(MOVE_UP), 8, _hoisted_16$8)) : createCommentVNode("", true),
 						room.pinned && groups.value.pinned.length > 1 && pinIndex(room.id) < groups.value.pinned.length - 1 ? (openBlock(), createElementBlock("button", {
 							key: 2,
 							type: "button",
@@ -7766,14 +7656,14 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 								openMenuRoomId.value = null;
 								__props.onMovePin(room.id, 1);
 							}, ["stop"])
-						}, toDisplayString(MOVE_DOWN), 8, _hoisted_17$5)) : createCommentVNode("", true),
+						}, toDisplayString(MOVE_DOWN), 8, _hoisted_17$7)) : createCommentVNode("", true),
 						createElementVNode("button", {
 							type: "button",
 							onClick: withModifiers(($event) => {
 								openMenuRoomId.value = null;
 								__props.onHide(room.id, !room.hidden);
 							}, ["stop"])
-						}, toDisplayString(room.hidden ? "Unhide" : "Hide"), 9, _hoisted_18$4),
+						}, toDisplayString(room.hidden ? "Unhide" : "Hide"), 9, _hoisted_18$6),
 						room.canArchive ? (openBlock(), createElementBlock("button", {
 							key: 3,
 							type: "button",
@@ -7781,9 +7671,9 @@ var RoomList_default = /* @__PURE__ */ defineComponent({
 								openMenuRoomId.value = null;
 								__props.onArchive(room.id, !room.archived);
 							}, ["stop"])
-						}, toDisplayString(room.archived ? "Unarchive" : "Archive"), 9, _hoisted_19$3)) : createCommentVNode("", true)
+						}, toDisplayString(room.archived ? "Unarchive" : "Archive"), 9, _hoisted_19$5)) : createCommentVNode("", true)
 					])) : createCommentVNode("", true)
-				], 16, _hoisted_3$30)], 64);
+				], 16, _hoisted_3$36)], 64);
 			}), 128))], 64);
 		};
 	}
@@ -8742,9 +8632,9 @@ var slashRows = ref([]);
 var slashActiveIndex = ref(0);
 //#endregion
 //#region src/features/SlashMenu.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$38 = ["onMousedown"];
-var _hoisted_2$32 = { class: "slash-cmd" };
-var _hoisted_3$29 = { class: "slash-desc" };
+var _hoisted_1$44 = ["onMousedown"];
+var _hoisted_2$38 = { class: "slash-cmd" };
+var _hoisted_3$35 = { class: "slash-desc" };
 //#endregion
 //#region src/features/SlashMenu.vue
 var SlashMenu_default = /* @__PURE__ */ defineComponent({
@@ -8770,7 +8660,7 @@ var SlashMenu_default = /* @__PURE__ */ defineComponent({
 					class: normalizeClass(i === unref(slashActiveIndex) ? "slash-item active" : "slash-item"),
 					role: "option",
 					onMousedown: ($event) => pick($event, i)
-				}, [createElementVNode("span", _hoisted_2$32, toDisplayString(c.cmd), 1), createElementVNode("span", _hoisted_3$29, toDisplayString(c.desc), 1)], 42, _hoisted_1$38);
+				}, [createElementVNode("span", _hoisted_2$38, toDisplayString(c.cmd), 1), createElementVNode("span", _hoisted_3$35, toDisplayString(c.desc), 1)], 42, _hoisted_1$44);
 			}), 128);
 		};
 	}
@@ -9195,3006 +9085,291 @@ var WizardOllamaModels_default = /* @__PURE__ */ defineComponent({
 	}
 });
 //#endregion
-//#region src/features/installers.ts
-var deps$11 = {};
-/** Wire the composition-root helpers these runners call. Call once at startup. */
-function provideInstallerDeps(provided) {
-	Object.assign(deps$11, provided);
-}
-var CODEX_WIZARD_ELS = {
-	btn: "#wizard-codex-install",
-	log: "#wizard-codex-install-log",
-	doneMsg: "Codex loaded — connect your credentials below."
-};
-var OPENCODE_WIZARD_ELS = {
-	btn: "#wizard-opencode-install",
-	log: "#wizard-opencode-install-log",
-	doneMsg: "OpenCode installed — your local agent can now use it (Agent → Harness)."
-};
-var GROK_WIZARD_ELS = {
-	btn: "#wizard-grok-install",
-	log: "#wizard-grok-install-log",
-	doneMsg: "Grok installed — sign in with a device code below."
-};
-var COPILOT_WIZARD_ELS = {
-	btn: "#wizard-copilot-install",
-	log: "#wizard-copilot-install-log",
-	doneMsg: "GitHub Copilot installed — connect it below."
-};
-var HARNESS_NAME = {
-	codex: "Codex",
-	opencode: "OpenCode",
-	pi: "pi",
-	grok: "Grok",
-	copilot: "GitHub Copilot"
-};
-/** Install a harness through /api/install/:feature, rendering into `els`. */
-async function runInstall(feature, els) {
-	const url = `/api/install/${feature}`;
-	const name = HARNESS_NAME[feature] ?? feature;
-	const btn = $(els.btn);
-	const log = $(els.log);
-	if (!btn || harnessInstallActive.value) return;
-	harnessInstallActive.value = true;
-	deps$11.refreshWizardNextGate();
-	const progress = els.progress ? $(els.progress) : null;
-	if (progress) progress.hidden = false;
-	log.hidden = false;
-	log.textContent = "Installing…";
-	let done = deps$11.wizardBusy(btn, "Installing…");
-	const finish = () => {
-		log.textContent = els.doneMsg || name + " installed.";
-		showToast(name + " installed", { kind: "success" });
-		deps$11.refreshWizardCredState?.();
-	};
-	try {
-		const res = await authFetch(url, { method: "POST" });
-		if (!res.ok && res.status !== 202) {
-			const err = await res.json().catch(() => ({}));
-			if (err.code === "already-installed") {
-				finish();
-				return;
-			}
-			log.textContent = "Install failed: " + (err.error || res.status);
-			showToast(err.error || name + " install failed", { kind: "error" });
-			return;
-		}
-		let restarting = false;
-		for (;;) {
-			await new Promise((r) => setTimeout(r, 2500));
-			let st;
-			try {
-				st = await (await authFetch(url)).json();
-			} catch {
-				restarting = true;
-				break;
-			}
-			const text = installLogText(st);
-			if (text) log.textContent = text;
-			if (st.installed) {
-				finish();
-				return;
-			}
-			if (!st.running && st.exitCode === 0) {
-				restarting = true;
-				break;
-			}
-			if (!st.running && st.exitCode != null && st.exitCode !== 0) {
-				log.textContent = "Install failed — see log:\n" + (st.lines || []).slice(-14).join("\n");
-				showToast(name + " install failed — see log", { kind: "error" });
-				return;
-			}
-		}
-		if (restarting) {
-			done();
-			done = deps$11.wizardBusy(btn, "Restarting…");
-			log.textContent = "Restarting…";
-			const deadline = Date.now() + 15e4;
-			let sawResponsive = false;
-			for (;;) {
-				await new Promise((r) => setTimeout(r, 2500));
-				let st = null;
-				try {
-					st = await (await authFetch(url)).json();
-					sawResponsive = true;
-				} catch {
-					st = null;
-				}
-				if (st?.installed) {
-					finish();
-					return;
-				}
-				if (Date.now() > deadline) {
-					log.textContent = sawResponsive ? name + " didn’t load — restart the service, then reopen setup." : "Server didn’t come back — restart it, then reopen setup.";
-					showToast(name + " built — restart the server to finish", { kind: "error" });
-					return;
-				}
-			}
-		}
-	} catch (err) {
-		log.textContent = "Install error: " + err.message;
-		showToast(name + " install error", { kind: "error" });
-	} finally {
-		done();
-		harnessInstallActive.value = false;
-		deps$11.refreshWizardNextGate();
-		deps$11.renderWizardOpencodeInstall();
-		deps$11.refreshWizardCredState();
-		deps$11.renderCredentialsSettings();
-		deps$11.fetchAgents();
-	}
-}
-var TTS_SETTINGS_ELS = {
-	btn: "#tts-install-btn",
-	log: "#tts-install-log",
-	progress: "#tts-install-progress"
-};
-/** The shared speech-stack install-poll loop; differences between stacks are PollSpec fields. */
-async function pollInstall(spec) {
-	if (spec.isActive()) return;
-	spec.setActive(true);
-	const btn = $(spec.els.btn);
-	const log = $(spec.els.log);
-	const progress = $(spec.els.progress);
-	if (progress) progress.hidden = false;
-	const done = btn && !btn.querySelector(".btn-spinner") ? deps$11.wizardBusy(btn, "Installing…") : null;
-	try {
-		for (;;) {
-			const st = await (await authFetch(spec.endpoint)).json();
-			if (log) {
-				log.textContent = installLogText(st, 12);
-				log.scrollTop = log.scrollHeight;
-			}
-			if (!st.running) {
-				if (st.exitCode === 0) {
-					showToast(spec.successMsg, { kind: "success" });
-					if (spec.onSuccess) await spec.onSuccess();
-				} else showToast(spec.failMsg, { kind: "error" });
-				break;
-			}
-			await new Promise((r) => setTimeout(r, 2e3));
-		}
-	} catch (err) {
-		showToast(spec.errPrefix + err?.message, { kind: "error" });
-	} finally {
-		done?.();
-		spec.setActive(false);
-		if (spec.onFinally) spec.onFinally();
-	}
-}
-async function pollTtsInstall(els = TTS_SETTINGS_ELS) {
-	await pollInstall({
-		els,
-		endpoint: "/api/webchat/tts/install",
-		isActive: () => ttsInstallActive.value,
-		setActive: (v) => ttsInstallActive.value = v,
-		successMsg: "Read aloud installed — Kokoro voices are live",
-		failMsg: "Read aloud install failed — see log",
-		errPrefix: "Read aloud install error: ",
-		onSuccess: () => loadTtsConfig(),
-		onFinally: () => {
-			deps$11.renderTtsSetupSettings();
-			deps$11.renderWizardFeatures();
-		}
-	});
-}
-async function runTtsInstall(els = TTS_SETTINGS_ELS) {
-	const btn = $(els.btn);
-	const log = $(els.log);
-	const progress = $(els.progress);
-	if (progress) progress.hidden = false;
-	const done = btn ? deps$11.wizardBusy(btn, "Installing…") : null;
-	if (log) log.textContent = "Starting…";
-	try {
-		const res = await authFetch("/api/webchat/tts/install", { method: "POST" });
-		if (!res.ok && res.status !== 202) {
-			const err = await res.json().catch(() => ({}));
-			if (log) log.textContent = "Install failed: " + (err.error || res.status);
-			showToast("Read aloud install failed", { kind: "error" });
-			done?.();
-			return;
-		}
-		pollTtsInstall(els);
-	} catch (err) {
-		if (log) log.textContent = "Install failed: " + err.message;
-		done?.();
-	}
-}
-var STT_SETTINGS_ELS = {
-	btn: "#stt-install-btn",
-	log: "#stt-install-log",
-	progress: "#stt-install-progress"
-};
-async function pollSttInstall(els = STT_SETTINGS_ELS, onDone) {
-	await pollInstall({
-		els,
-		endpoint: "/api/webchat/stt/install",
-		isActive: () => sttInstallActive.value,
-		setActive: (v) => sttInstallActive.value = v,
-		successMsg: "Voice dictation installed — the mic is live",
-		failMsg: "Voice dictation install failed — see log",
-		errPrefix: "Voice dictation install error: ",
-		onSuccess: () => initSttFeature(),
-		onFinally: () => {
-			deps$11.renderSttSetupSettings();
-			if (onDone) onDone();
-		}
-	});
-}
-async function runSttInstall(payload, els = STT_SETTINGS_ELS, onDone) {
-	const btn = $(els.btn);
-	const log = $(els.log);
-	const progress = $(els.progress);
-	if (progress) progress.hidden = false;
-	const done = btn ? deps$11.wizardBusy(btn, "Installing…") : null;
-	if (log) log.textContent = "Starting…";
-	try {
-		const res = await authFetch("/api/webchat/stt/install", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(payload)
-		});
-		if (!res.ok && res.status !== 202) {
-			const err = await res.json().catch(() => ({}));
-			if (log) log.textContent = "Install failed: " + (err.error || res.status);
-			showToast("Voice dictation install failed", { kind: "error" });
-			done?.();
-			return;
-		}
-		pollSttInstall(els, onDone);
-	} catch (err) {
-		if (log) log.textContent = "Install failed: " + err.message;
-		done?.();
-	}
-}
-var ROUTING_ELS_SETTINGS = {
-	log: "#routing-install-log",
-	bar: "#routing-pull-bar",
-	label: "#routing-pull-label"
-};
-function renderRoutingInstallProgress(st, els = ROUTING_ELS_SETTINGS) {
-	const log = $(els.log);
-	const bar = $(els.bar);
-	const label = $(els.label);
-	log.textContent = installLogText(st, 12);
-	log.scrollTop = log.scrollHeight;
-	const pull = st.pull;
-	if (pull) {
-		bar.hidden = false;
-		label.hidden = false;
-		const pct = pull.total > 0 ? Math.min(100, Math.round(100 * pull.completed / pull.total)) : 0;
-		bar.querySelector("span").style.width = pct + "%";
-		if (pull.status === "pulling") label.textContent = "Classifier model: " + (pull.detail || "downloading…") + " (" + pct + "%)";
-		else if (pull.status === "success") label.textContent = "Classifier model ready.";
-		else label.textContent = "Classifier model pull failed: " + (pull.error || "");
-	} else {
-		bar.hidden = true;
-		label.hidden = true;
-	}
-}
-async function pollRoutingInstall() {
-	if (routingInstallActive.value) return;
-	routingInstallActive.value = true;
-	const btn = $("#routing-install-btn");
-	$("#routing-install-progress").hidden = false;
-	btn.disabled = true;
-	let chainHandled = false;
-	try {
-		while (true) {
-			const st = await (await authFetch("/api/router/install")).json();
-			renderRoutingInstallProgress(st);
-			if (!st.running && !chainHandled) {
-				chainHandled = true;
-				if (st.exitCode === 0) {
-					try {
-						await apiJson("/api/router/routes", {
-							method: "PUT",
-							body: { live: { enabled: true } }
-						});
-					} catch {}
-					await deps$11.fetchModels();
-					showToast("Auto routing installed and live — assign the “auto” model to an agent.", { kind: "success" });
-					await deps$11.probeRoutingAvailability();
-				} else {
-					showToast("Auto routing setup failed — see log", { kind: "error" });
-					break;
-				}
-			}
-			const pullDone = !st.pull || st.pull.status !== "pulling";
-			if (!st.running && pullDone) break;
-			await new Promise((r) => setTimeout(r, 2e3));
-		}
-	} catch (err) {
-		showToast("Auto routing setup error: " + err.message, { kind: "error" });
-	} finally {
-		routingInstallActive.value = false;
-		deps$11.renderRoutingSetup();
-	}
-}
-async function installLitellmPhase(els = ROUTING_ELS_SETTINGS) {
-	const log = $(els.log);
-	$(els.label).hidden = true;
-	log.textContent = "";
-	let res;
-	try {
-		res = await authFetch("/api/router/litellm-install", { method: "POST" });
-	} catch (err) {
-		log.textContent = "LiteLLM install failed: " + err.message;
-		showToast("LiteLLM install failed", { kind: "error" });
-		return false;
-	}
-	if (!res.ok && res.status !== 202) {
-		log.textContent = "LiteLLM install failed: " + ((await res.json().catch(() => ({}))).error || res.status);
-		showToast("LiteLLM install failed", { kind: "error" });
-		return false;
-	}
-	while (true) {
-		const st = await (await authFetch("/api/router/litellm-install")).json();
-		log.textContent = installLogText(st, 12);
-		if (!st.running) {
-			if (st.exitCode === 0) {
-				showToast("LiteLLM router installed", { kind: "success" });
-				return true;
-			}
-			showToast("LiteLLM install failed — see log", { kind: "error" });
-			return false;
-		}
-		await new Promise((r) => setTimeout(r, 2e3));
-	}
-}
-async function runRoutingInstall() {
-	const btn = $("#routing-install-btn");
-	const log = $("#routing-install-log");
-	$("#routing-install-progress").hidden = false;
-	const done = deps$11.wizardBusy(btn, "Installing…");
-	log.textContent = "";
-	try {
-		if (!(await (await authFetch("/api/router/install")).json().catch(() => ({}))).litellmReady) {
-			if (!await installLitellmPhase(ROUTING_ELS_SETTINGS)) {
-				done();
-				return;
-			}
-		}
-		await apiJson("/api/router/install", { method: "POST" });
-		pollRoutingInstall();
-	} catch (err) {
-		log.textContent = "Install failed: " + err.message;
-		showToast("Auto routing setup failed", { kind: "error" });
-		done();
-	}
-}
-/** Debounce handles for the live pull preview, one per host. */
-var previewTimers = {};
-/**
-* What pulling the currently-typed ref would cost, shown UNDER the box as it
-* is typed, so the pull needs no confirm step. A ref whose size cannot be read
-* clears the line; any failure here leaves the pull unaffected.
-*/
-function previewOllamaPull(host, model) {
-	clearTimeout(previewTimers[host]);
-	const ref = (model || "").trim();
-	if (!ref) {
-		hostPullPreview.value = {
-			...hostPullPreview.value,
-			[host]: null
-		};
-		return;
-	}
-	previewTimers[host] = setTimeout(async () => {
-		try {
-			const pre = await apiJson("/api/ollama/prepull?model=" + encodeURIComponent(ref));
-			if (pre.sizeBytes == null) {
-				hostPullPreview.value = {
-					...hostPullPreview.value,
-					[host]: null
-				};
-				return;
-			}
-			const parts = [`${mmFmtGB(pre.sizeBytes)} download`];
-			if (pre.vramFit === "fits") parts.push(`✓ should fit in VRAM (~${mmFmtGB(pre.estFootprintBytes)} est.)`);
-			else if (pre.vramFit === "spills") parts.push(`⚠ likely spills to CPU (~${mmFmtGB(pre.estFootprintBytes)} est.) — slow`);
-			hostPullPreview.value = {
-				...hostPullPreview.value,
-				[host]: {
-					model: ref,
-					text: parts.join(" · "),
-					warn: pre.vramFit === "spills"
-				}
-			};
-		} catch {
-			hostPullPreview.value = {
-				...hostPullPreview.value,
-				[host]: null
-			};
-		}
-	}, 400);
-}
-/** Stop a pull that is already running. */
-async function cancelOllamaPull(host, model) {
-	try {
-		await apiJson("/api/ollama/pull/cancel", {
-			method: "POST",
-			body: {
-				host,
-				model
-			}
-		});
-	} catch {}
-}
-async function startOllamaPull(host, model, input, btn) {
-	if (!model) return;
-	btn.disabled = true;
-	clearTimeout(previewTimers[host]);
-	hostPullPreview.value = {
-		...hostPullPreview.value,
-		[host]: null
-	};
-	try {
-		await apiJson("/api/ollama/pull", {
-			method: "POST",
-			body: {
-				host,
-				model
-			}
-		});
-		input.value = "";
-		pollOllamaPulls();
-	} catch (err) {
-		showToast("Pull failed to start: " + err.message, { kind: "error" });
-	} finally {
-		btn.disabled = false;
-	}
-}
-/** One-model fitness verdict, attached to the host card's pull status. */
-async function attachPullVerdict(host, model) {
-	try {
-		const inv = await apiJson("/api/models/manage?endpoint=" + encodeURIComponent(host));
-		const tag = String(model).toLowerCase();
-		const m = (inv.models || []).find((x) => String(x.tag).toLowerCase().startsWith(tag));
-		if (!m) return;
-		const lines = [];
-		const spec = [
-			m.paramSize,
-			m.quant,
-			m.sizeBytes ? mmFmtGB(m.sizeBytes) : null
-		].filter(Boolean).join(" · ");
-		if (spec) lines.push(spec);
-		const ctxTxt = `context ${Math.round(m.configuredCtx / 1024)}k${m.maxContext ? ` of ${Math.round(m.maxContext / 1024)}k max` : ""}`;
-		lines.push(m.fit?.context === "fits" ? `✓ ${ctxTxt} — agent prompt fits` : `⚠ ${ctxTxt} — agent prompt truncates`);
-		if (m.fit?.vram !== "unknown") lines.push(m.fit?.vram === "fits" ? `✓ VRAM fits (~${mmFmtGB(m.fit.estFootprintBytes)} est.)` : `⚠ spills to CPU (~${mmFmtGB(m.fit.estFootprintBytes)} est.) — slow`);
-		const entry = hostPulls.value[host];
-		if (entry && entry.model === model) hostPulls.value = {
-			...hostPulls.value,
-			[host]: {
-				...entry,
-				verdict: lines
-			}
-		};
-	} catch {}
-}
-function renderOllamaPulls(pulls) {
-	for (const job of pulls) {
-		const pct = job.total > 0 ? Math.min(100, Math.round(100 * job.completed / job.total)) : 0;
-		const prev = hostPulls.value[job.host];
-		hostPulls.value[job.host] = {
-			status: job.status,
-			model: job.model,
-			detail: job.detail,
-			error: job.error || "",
-			pct,
-			verdict: prev && prev.model === job.model ? prev.verdict : void 0
-		};
-		if (job.status === "pulling") pullsDone.delete(job.host + "\0" + job.model);
-		if (job.status !== "pulling" && !pullsDone.has(job.host + "\0" + job.model)) {
-			pullsDone.add(job.host + "\0" + job.model);
-			if (job.status === "cancelled") showToast("Cancelled pull of " + job.model);
-			if (job.status === "success") {
-				showToast("Pulled " + job.model, { kind: "success" });
-				deps$11.loadOllamaHostModels(job.host);
-				attachPullVerdict(job.host, job.model);
-			}
-		}
-	}
-}
-/** host\0model pairs whose finish has already been announced. */
-var pullsDone = /* @__PURE__ */ new Set();
-async function pollOllamaPulls() {
-	if (ollamaPullPoller.value) return;
-	const tick = async () => {
-		try {
-			const { pulls } = await apiJson("/api/ollama/pulls");
-			renderOllamaPulls(pulls);
-			if (pulls.some((p) => p.status === "pulling")) ollamaPullPoller.value = setTimeout(tick, 1500);
-			else ollamaPullPoller.value = null;
-		} catch {
-			ollamaPullPoller.value = null;
-		}
-	};
-	ollamaPullPoller.value = setTimeout(tick, 0);
-}
+//#region src/features/probe-results-state.ts
+/** One row per advertised model: the id and its default display name. */
+var probeRows = ref([]);
+/** Pre-check when the endpoint advertises exactly one model. */
+var probeSingle = ref(false);
+/** Empty-state copy — differs when the endpoint is credential-gated. */
+var probeEmptyNote = ref("");
 //#endregion
-//#region src/features/copilot-state.ts
-/** "Copilot connected — octo · business · api.business.githubcopilot.com". */
-function copilotConnectedText(s) {
-	let host;
-	try {
-		host = s.apiUrl ? new URL(s.apiUrl).host : void 0;
-	} catch {
-		host = void 0;
-	}
-	const parts = [
-		s.login,
-		s.plan,
-		host
-	].filter((p) => !!p);
-	return parts.length ? `Copilot connected — ${parts.join(" · ")}` : "Copilot connected";
-}
-/** The status line under the card: progress while it runs, the reason when it did not complete, else nothing. */
-function copilotStatusLine(p) {
-	if (!p) return null;
-	if (p.running) return p.message ?? null;
-	if (p.outcome && p.outcome !== "complete") return p.error || "The sign-in did not complete.";
-	return null;
-}
-//#endregion
-//#region src/features/wizard.ts
-var deps$10 = {};
-/** Wire the composition-root helpers this module calls. Call once, before the wizard opens. */
-function provideWizardDeps(provided) {
-	Object.assign(deps$10, provided);
-}
-var wizardBtnWired = false;
-async function renderSettingsWizardButton() {
-	const wizardSection = $("#settings-wizard");
-	if (!wizardSection) return;
-	let ok = false;
-	try {
-		await apiJson("/api/workspace-credential");
-		ok = true;
-	} catch {
-		ok = false;
-	}
-	wizardSection.hidden = !ok;
-	if (!ok || wizardBtnWired) return;
-	wizardBtnWired = true;
-	$("#wizard-open-btn")?.addEventListener("click", () => {
-		deps$10.closeSettings();
-		openWizard();
-	});
-}
-var WIZARD_STEPS = 3;
-var wizardStep = 0;
-var wizardWired = false;
-var wizardOllamaProbe = null;
-var wizardEngine = "claude";
-var wizardCodexAvailable = false;
-var wizardCred = null;
-var OPENCODE_RECOMMENDED = "Recommended: small local models follow tools far better on OpenCode. Rebuilds and restarts NanoClaw — a few minutes.";
-var opencodeReloadBusy = null;
-var opencodeReloadVerb = null;
-async function renderWizardOpencodeInstall() {
-	const row = $("#wizard-opencode-install-row");
-	const hint = $("#wizard-opencode-hint");
-	if (!row) return;
-	if (!!($("#wizard-ollama-connected")?.hidden ?? true)) {
-		row.hidden = true;
-		if (hint) hint.hidden = true;
-		return;
-	}
-	let st = {};
-	try {
-		st = await apiJson("/api/install/opencode");
-	} catch {}
-	const installed = !!st.installed;
-	const running = !!st.running;
-	const restarting = !!st.restartPending && Date.now() - (st.startedAt ?? Date.now()) < 9e5;
-	const badge = $("#wizard-opencode-installed-badge");
-	const btn = $("#wizard-opencode-install");
-	row.hidden = false;
-	if (badge) badge.hidden = !installed;
-	if (btn && !opencodeInstallActive.value) {
-		btn.hidden = installed;
-		const verb = restarting ? "Restarting…" : running ? "Installing…" : null;
-		if (verb !== opencodeReloadVerb) {
-			opencodeReloadBusy?.();
-			opencodeReloadBusy = verb ? wizardBusy(btn, verb) : null;
-			opencodeReloadVerb = verb;
-		}
-		const log = $("#wizard-opencode-install-log");
-		if (log && running) {
-			log.hidden = false;
-			log.textContent = installLogText(st);
-		}
-	}
-	if (hint) {
-		hint.hidden = installed || running && !opencodeInstallActive.value;
-		if (!opencodeInstallActive.value) hint.textContent = restarting ? "Installed — restarting to load it." : OPENCODE_RECOMMENDED;
-	}
-	opencodeGateFromServer.value = running || restarting;
-	refreshWizardNextGate();
-	if (running || restarting) {
-		clearTimeout(opencodeGatePoll.value ?? void 0);
-		opencodeGatePoll.value = setTimeout(renderWizardOpencodeInstall, 3e3);
-	}
-}
-var RESUME_KEY = "nanoclaw-wizard-resume";
-var WIZARD_ENGINES = [
-	"claude",
-	"codex",
-	"grok",
-	"copilot",
-	"ollama"
-];
-function saveResume() {
-	try {
-		sessionStorage.setItem(RESUME_KEY, JSON.stringify({
-			engine: wizardEngine,
-			step: wizardStep,
-			at: Date.now()
-		}));
-	} catch {}
-}
-function consumeResume() {
-	try {
-		const raw = sessionStorage.getItem(RESUME_KEY);
-		if (!raw) return null;
-		const r = JSON.parse(raw);
-		if (!r.at || Date.now() - r.at > 36e5) return null;
-		return {
-			engine: WIZARD_ENGINES.includes(r.engine ?? "") ? r.engine : "claude",
-			step: Number(r.step) || 0
-		};
-	} catch {
-		return null;
-	}
-}
-function clearResume() {
-	try {
-		sessionStorage.removeItem(RESUME_KEY);
-	} catch {}
-}
-/** Make `engine` the step-0 choice: radio, body, and the Ollama probe it implies. */
-function selectWizardEngine(engine) {
-	wizardEngine = engine;
-	const radio = document.querySelector(`input[name="wizard-engine"][value="${engine}"]`);
-	if (radio) radio.checked = true;
-	syncWizardEngineBodies();
-	if (engine === "ollama") wizardCheckLocalOllama();
-	saveResume();
-}
-function buildWizardDots() {
-	const dots = $("#wizard-dots");
-	if (!dots) return;
-	dots.innerHTML = "";
-	for (let i = 0; i < WIZARD_STEPS; i++) {
-		const d = document.createElement("span");
-		d.className = "wizard-dot";
-		dots.appendChild(d);
-	}
-}
-/**
-* Reflect live credential state on the engine list: connected engines swap
-* their connect controls for a prominent ✓ card (standard OAuth-connect UX —
-* the action you completed disappears), and the radio chips update without a
-* wizard reopen. Also greys Codex out when its provider isn't installed.
-*/
-async function refreshWizardCredState() {
-	let s;
-	try {
-		s = await apiJson("/api/workspace-credential");
-	} catch {
-		return;
-	}
-	wizardCred = s;
-	wizardCodexAvailable = !!s.codexAvailable;
-	const credWord = (t) => t === "oauth_token" ? "subscription" : "API key";
-	const claudeChip = $("#wizard-chip-claude");
-	if (claudeChip) {
-		claudeChip.hidden = false;
-		claudeChip.textContent = s.connected ? "✓ connected" : "not connected";
-		claudeChip.classList.toggle("ok", !!s.connected);
-	}
-	$("#wizard-claude-connect").hidden = !!s.connected;
-	$("#wizard-claude-connected").hidden = !s.connected;
-	if (s.connected) $("#wizard-claude-connected-text").textContent = s.external ? "Claude connected" : `Claude connected — ${credWord(s.credType)}`;
-	$("#wizard-claude-disconnect").hidden = !!s.external;
-	const codexChip = $("#wizard-chip-codex");
-	if (codexChip) {
-		codexChip.hidden = false;
-		codexChip.textContent = s.codex?.connected ? "✓ connected" : wizardCodexAvailable ? "not connected" : "not installed";
-		codexChip.classList.toggle("ok", !!s.codex?.connected);
-	}
-	const codexInstallRow = $("#wizard-codex-install-row");
-	if (codexInstallRow && !codexInstallActive.value) codexInstallRow.hidden = wizardCodexAvailable;
-	$("#wizard-codex-connect").hidden = !wizardCodexAvailable || !!s.codex?.connected;
-	$("#wizard-codex-connected").hidden = !s.codex?.connected;
-	if (s.codex?.connected) $("#wizard-codex-connected-text").textContent = s.codex.external ? "Codex connected" : `Codex connected — ${credWord(s.codex.credType)}`;
-	const codexDisconnect = $("#wizard-codex-disconnect");
-	if (codexDisconnect) codexDisconnect.hidden = !!s.codex?.external;
-	const grokChip = $("#wizard-chip-grok");
-	const grok = s.grok;
-	if (grokChip) {
-		grokChip.hidden = false;
-		grokChip.textContent = grok?.connected ? "✓ connected" : !grok?.available ? "not installed" : grok?.expired ? "expired" : "not connected";
-		grokChip.classList.toggle("ok", !!grok?.connected);
-	}
-	const grokInstalled = grok?.available === true;
-	const grokInstallRow = $("#wizard-grok-install-row");
-	if (grokInstallRow && !opencodeInstallActive.value) grokInstallRow.hidden = grokInstalled;
-	$("#wizard-grok-connect").hidden = !grokInstalled || !!grok?.connected;
-	$("#wizard-grok-connected").hidden = !grok?.connected;
-	const grokStatusLine = $("#wizard-grok-status");
-	if (grokStatusLine) {
-		const why = grok?.available && grok?.expired ? "That Grok sign-in has expired. Sign in again to refresh it." : "";
-		grokStatusLine.textContent = why;
-		grokStatusLine.hidden = !why;
-	}
-	if (grok?.connected) $("#wizard-grok-connected-text").textContent = grok.email ? `Grok connected — ${grok.email}` : "Grok connected — subscription";
-	const copilot = s.copilot;
-	const copilotInstalled = copilot?.available === true;
-	const copilotChip = $("#wizard-chip-copilot");
-	if (copilotChip) {
-		copilotChip.hidden = false;
-		copilotChip.textContent = copilot?.connected ? "✓ connected" : copilotInstalled ? "not connected" : "not installed";
-		copilotChip.classList.toggle("ok", !!copilot?.connected);
-	}
-	const copilotInstallRow = $("#wizard-copilot-install-row");
-	if (copilotInstallRow && !opencodeInstallActive.value) copilotInstallRow.hidden = copilotInstalled;
-	$("#wizard-copilot-connect").hidden = !copilotInstalled || !!copilot?.connected;
-	$("#wizard-copilot-connected").hidden = !copilot?.connected;
-	if (copilot?.connected) $("#wizard-copilot-connected-text").textContent = copilotConnectedText(copilot);
-	const ollamaSet = s.defaultModelKind === "ollama" && !!s.defaultModelId;
-	const ollamaModel = s.defaultModelModelId || s.defaultModelName;
-	const ollamaChip = $("#wizard-chip-ollama");
-	if (ollamaChip) {
-		ollamaChip.hidden = false;
-		ollamaChip.textContent = ollamaSet ? `✓ ${ollamaModel}` : "no model";
-		ollamaChip.classList.toggle("ok", ollamaSet);
-	}
-	const ollamaCard = $("#wizard-ollama-connected");
-	const ollamaSetup = $("#wizard-ollama-setup");
-	if (ollamaCard && ollamaSetup) {
-		ollamaCard.hidden = !ollamaSet;
-		ollamaSetup.hidden = ollamaSet;
-		if (ollamaSet) $("#wizard-ollama-connected-text").textContent = `${ollamaModel} · default`;
-	}
-	renderWizardOpencodeInstall();
-}
-/** Reveal the wizard's install-Ollama row when nothing answers locally (Linux
-*  only), or prefill the endpoint when a local Ollama is already running. */
-async function wizardCheckLocalOllama() {
-	try {
-		const st = await apiJson("/api/ollama/local");
-		if (st.reachable) {
-			const url = $("#wizard-ollama-url");
-			if (url && !url.value) url.value = "http://localhost:11434";
-			$("#wizard-ollama-install-row").hidden = true;
-			$("#wizard-ollama-dl-row").hidden = false;
-			wizardLoadRecommendation();
-			wizardReattachPull();
-		} else $("#wizard-ollama-install-row").hidden = !st.canInstall;
-	} catch {}
-}
-async function wizardFollowPull(host, model) {
-	const btn = $("#wizard-ollama-dl");
-	const bar = $("#wizard-ollama-pull-bar");
-	let done = wizardBusy(btn, "Downloading…");
-	$("#wizard-ollama-dl-status").hidden = true;
-	bar.hidden = false;
-	try {
-		for (;;) {
-			await new Promise((resolve) => setTimeout(resolve, 1500));
-			const { pulls } = await (await authFetch("/api/ollama/pulls")).json();
-			const job = (pulls || []).find((j) => j.model === model && j.host === host);
-			if (!job) continue;
-			const pct = job.total > 0 ? Math.round(job.completed / job.total * 100) : 0;
-			bar.querySelector("span").style.width = pct + "%";
-			if (job.status === "success") {
-				bar.hidden = true;
-				done();
-				done = wizardBusy(btn, "Setting default…");
-				const probed = await wizardProbeOllama();
-				if (probed && (probed.models || []).some((m) => String(m) === model)) {
-					wizardOllamaSelected.value = model;
-					await wizardSelectOllamaModel(model);
-					wizardSetStatus("#wizard-ollama-dl-status", `${model} downloaded and set as the workspace default.`, "ok");
-				} else wizardSetStatus("#wizard-ollama-dl-status", `${model} downloaded — pick it above to set the default.`, "ok");
-				return;
-			}
-			if (job.status === "error") {
-				bar.hidden = true;
-				return wizardSetStatus("#wizard-ollama-dl-status", job.error || "Pull failed.", "err");
-			}
-		}
-	} finally {
-		done();
-	}
-}
-var wizardOllamaApp = null;
-function mountWizardOllamaModels() {
-	wizardOllamaApp ??= mountIsland("#wizard-ollama-list", () => createApp(WizardOllamaModels_default));
-}
-async function wizardProbeOllama() {
-	const url = ($("#wizard-ollama-url")?.value || "").trim() || "http://localhost:11434";
-	const done = wizardBusy($("#wizard-ollama-probe"), "Probing…");
-	$("#wizard-ollama-status").hidden = true;
-	try {
-		const r = await authFetch("/api/models/probe", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ url })
-		});
-		const body = await r.json().catch(() => ({}));
-		if (!r.ok) {
-			wizardSetStatus("#wizard-ollama-status", body.error || `Probe failed (${r.status}).`, "err");
-			return null;
-		}
-		if (!body.kind || !(body.models || []).length) {
-			wizardSetStatus("#wizard-ollama-status", body.reason || "No models found at that endpoint.", "err");
-			return null;
-		}
-		wizardOllamaProbe = body;
-		wizardOllamaModels.value = body.models.map((m) => String(m));
-		mountWizardOllamaModels();
-		$("#wizard-ollama-results").hidden = false;
-		$("#wizard-ollama-dl-row").hidden = false;
-		wizardLoadRecommendation();
-		const n = wizardOllamaModels.value.length;
-		wizardSetStatus("#wizard-ollama-status", `Found ${n} model${n === 1 ? "" : "s"} at ${body.endpoint || url}`, "ok");
-		await nextTick();
-		$("#wizard-ollama-results")?.scrollIntoView({
-			block: "nearest",
-			behavior: "smooth"
-		});
-		return body;
-	} finally {
-		done();
-	}
-}
-async function wizardSelectOllamaModel(modelId, control) {
-	if (!wizardOllamaProbe || !modelId) return;
-	const endpoint = String(wizardOllamaProbe.endpoint || "").replace(/\/+$/, "");
-	const host = (() => {
-		try {
-			return new URL(wizardOllamaProbe.endpoint).host;
-		} catch {
-			return wizardOllamaProbe.endpoint;
-		}
-	})();
-	$("#wizard-ollama-status").hidden = true;
-	const done = control ? wizardBusy(control, "Setting default…") : null;
-	try {
-		let id = null;
-		try {
-			const roster = await apiJson("/api/models");
-			id = (Array.isArray(roster) ? roster : []).find((m) => m.kind === "ollama" && String(m.endpoint || "").replace(/\/+$/, "") === endpoint && m.model_id === modelId)?.id ?? null;
-		} catch {}
-		if (!id) {
-			const r = await authFetch("/api/models/bulk", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ models: [{
-					name: `${host} · ${modelId}`,
-					kind: wizardOllamaProbe.kind,
-					endpoint: wizardOllamaProbe.endpoint,
-					model_id: modelId
-				}] })
-			});
-			const out = await r.json().catch(() => ({}));
-			const created = out.created?.[0];
-			if (!r.ok || !created) {
-				wizardSetStatus("#wizard-ollama-status", out.error || out.failed?.[0]?.error || "Add failed.", "err");
-				return;
-			}
-			id = created.id;
-		}
-		const dr = await authFetch("/api/workspace-model", {
-			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ modelId: id })
-		});
-		if (!dr.ok) {
-			wizardSetStatus("#wizard-ollama-status", "Setting the default failed: " + ((await dr.json().catch(() => ({}))).error || dr.statusText), "err");
-			return;
-		}
-		$("#wizard-ollama-status").hidden = true;
-		await refreshWizardCredState();
-	} catch {
-		wizardSetStatus("#wizard-ollama-status", "Setting the default failed.", "err");
-	} finally {
-		done?.();
-	}
-}
-async function wizardClearOllamaDefault() {
-	if (wizardCred?.defaultModelKind !== "ollama" || !wizardCred?.defaultModelId) return;
-	try {
-		await authFetch("/api/workspace-model", {
-			method: "PUT",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ modelId: null })
-		});
-		await refreshWizardCredState();
-	} catch {}
-}
-var wizardRecLoaded = false;
-async function wizardLoadRecommendation() {
-	if (wizardRecLoaded) return;
-	const hint = $("#wizard-ollama-rec");
-	const input = $("#wizard-ollama-dl-model");
-	try {
-		const r = await authFetch("/api/ollama/recommend");
-		if (!r.ok) return;
-		const { recommendation: rec, remoteOllama } = await r.json();
-		wizardRecLoaded = true;
-		if (input && !input.value) input.value = rec.model.id;
-		if (hint) {
-			const remote = remoteOllama?.present === true;
-			const fit = remote ? "remote Ollama" : rec.tight ? "tight fit" : rec.basis === "gpu" ? "GPU" : "good fit";
-			hint.hidden = false;
-			hint.textContent = `Recommended: ${rec.model.id} · ${fit}`;
-			hint.title = remote ? `Runs on your remote Ollama (${remoteOllama.endpoint}). ${rec.detected}` : rec.detected;
-			hint.classList.toggle("err", !remote && !!rec.tight);
-		}
-	} catch {
-		if (input && !input.value) input.value = "qwen3:1.7b";
-	}
-}
-async function wizardReattachPull() {
-	try {
-		const host = ($("#wizard-ollama-url")?.value || "").trim() || "http://localhost:11434";
-		const { pulls } = await apiJson("/api/ollama/pulls");
-		const job = (pulls || []).find((j) => j.host === host && j.status === "pulling");
-		if (!job) return;
-		$("#wizard-ollama-dl-model").value = job.model;
-		await wizardFollowPull(host, job.model);
-	} catch {}
-}
-function syncWizardEngineBodies() {
-	document.querySelectorAll(".wizard-engine-body").forEach((b) => {
-		b.hidden = b.dataset.engine !== wizardEngine;
-	});
-}
-function wizardEngineConnected() {
-	const s = wizardCred || {};
-	if (wizardEngine === "codex") return !!s.codex?.connected;
-	if (wizardEngine === "grok") return !!s.grok?.connected;
-	if (wizardEngine === "copilot") return !!s.copilot?.connected;
-	if (wizardEngine === "ollama") return !!s.defaultModelId;
-	return !!s.connected;
-}
-function showWizardStep(i) {
-	wizardStep = Math.max(0, Math.min(2, i));
-	document.querySelectorAll(".wizard-step").forEach((s) => {
-		const step = s;
-		step.hidden = Number(step.dataset.step) !== wizardStep;
-	});
-	if (wizardStep === 0) syncWizardEngineBodies();
-	if (wizardStep === 1) renderWizardAccess();
-	if (wizardStep === 2) renderWizardFeatures();
-	document.querySelectorAll("#wizard-dots .wizard-dot").forEach((d, idx) => {
-		d.classList.toggle("active", idx === wizardStep);
-		d.classList.toggle("done", idx < wizardStep);
-	});
-	$("#wizard-back").hidden = wizardStep === 0;
-	const isLast = wizardStep === 2;
-	$("#wizard-next").textContent = isLast ? "Finish" : "Next";
-	saveResume();
-	refreshWizardNextGate();
-}
-var nextGateBusy = null;
-function refreshWizardNextGate() {
-	const btn = $("#wizard-next");
-	if (!btn) return;
-	if (opencodeInstallActive.value || opencodeGateFromServer.value) {
-		btn.dataset.gated = "1";
-		if (!btn.querySelector(".btn-spinner")) nextGateBusy = wizardBusy(btn, "Installing OpenCode…");
-		btn.title = "Hang tight — finishing now would interrupt your first message when the harness restarts.";
-	} else if (btn.dataset.gated) {
-		delete btn.dataset.gated;
-		nextGateBusy?.();
-		nextGateBusy = null;
-		btn.disabled = false;
-		btn.title = "";
-		btn.textContent = wizardStep === 2 ? "Finish" : "Next";
-	}
-}
-async function openWizard() {
-	wireWizard();
-	buildWizardDots();
-	const resume = consumeResume();
-	if (resume) selectWizardEngine(resume.engine);
-	showWizardStep(resume?.step ?? 0);
-	await refreshWizardCredState();
-	$("#wizard-overlay").hidden = false;
-}
-function closeWizard() {
-	$("#wizard-overlay").hidden = true;
-	clearResume();
-}
-async function finishWizard() {
-	try {
-		await apiJson("/api/webchat/onboarding", {
-			method: "PUT",
-			body: { complete: true }
-		});
-	} catch {}
-	wizardStopTsPoll();
-	closeWizard();
-}
-/**
-* Put an async wizard button into a busy state: disabled, label swapped, and a
-* small inline spinner — the "doing something" signal lives ON the control the
-* user just pressed. Returns a restore function for the finally block.
-*/
-function wizardBusy(btn, busyLabel) {
-	return buttonBusy(btn, busyLabel);
-}
-function wizardSetStatus(id, text, kind) {
-	const el = $(id);
-	if (!el) return;
-	el.hidden = false;
-	el.textContent = text;
-	el.classList.toggle("ok", kind === "ok");
-	el.classList.toggle("err", kind === "err");
-}
-async function wizardProbeHttps() {
-	const row = $("#wizard-https-row");
-	if (!row) return;
-	let state = null;
-	try {
-		state = await apiJson("/api/webchat/tailscale-https");
-	} catch {
-		state = null;
-	}
-	if (state && state.available && !state.active) {
-		row.hidden = false;
-		wizardSetStatus("#wizard-https-status", "", null);
-		$("#wizard-https-status").hidden = true;
-	} else if (state && state.active) {
-		row.hidden = false;
-		$("#wizard-https-btn").hidden = true;
-		wizardSetStatus("#wizard-https-status", "HTTPS is already on.", "ok");
-		if (state.url) $("#wizard-https-status").innerHTML = `HTTPS is on — reach this at <a href="${esc(state.url)}" target="_blank" rel="noopener">${esc(state.url)}</a>`;
-	} else row.hidden = true;
-}
-async function wizardEnableHttps() {
-	const btn = $("#wizard-https-btn");
-	const done = wizardBusy(btn, "Enabling…");
-	try {
-		const r = await authFetch("/api/webchat/tailscale-https", {
-			method: "POST",
-			headers: { "X-Webchat-CSRF": "1" }
-		});
-		const data = await r.json().catch(() => ({}));
-		if (r.ok && data.ok) {
-			btn.hidden = true;
-			wizardSetStatus("#wizard-https-status", data.url ? `HTTPS on — reach this at ${data.url}` : "HTTPS enabled.", "ok");
-			if (data.url) $("#wizard-https-status").innerHTML = `HTTPS on — reach this at <a href="${esc(data.url)}" target="_blank" rel="noopener">${esc(data.url)}</a>`;
-			showToast("HTTPS enabled over Tailscale", { kind: "success" });
-		} else {
-			const msg = [data.error, data.hint].filter(Boolean).join(" ") || "Could not enable HTTPS";
-			wizardSetStatus("#wizard-https-status", msg, "err");
-			if (data.hintUrl) {
-				const el = $("#wizard-https-status");
-				el.innerHTML = `${esc(msg)} <a href="${esc(data.hintUrl)}" target="_blank" rel="noopener">Open admin console</a>`;
-			}
-			showToast(data.error || "Could not enable HTTPS", {
-				kind: "error",
-				timeout: 9e3
-			});
-		}
-	} catch {
-		wizardSetStatus("#wizard-https-status", "Connection failed.", "err");
-	} finally {
-		done();
-	}
-}
-function syncWizardAccessBodies() {
-	const sel = document.querySelector("input[name=\"wizard-access\"]:checked")?.value || "bearer";
-	document.querySelectorAll(".wizard-engine-body[data-access]").forEach((b) => {
-		b.hidden = b.dataset.access !== sel;
-	});
-	if (sel === "tailscale") wizardProbeHttps();
-	wizardStartTsPollIfNeeded();
-}
-var wizardTtsWired = false;
-var WIZARD_TTS_ELS = {
-	btn: "#wizard-tts-install",
-	log: "#wizard-tts-log",
-	progress: "#wizard-tts-progress"
-};
-var wizardSttWired = false;
-var wizardSttBackend = "local";
-var WIZARD_STT_ELS = {
-	btn: "#wizard-stt-install",
-	log: "#wizard-stt-log",
-	progress: "#wizard-stt-log"
-};
-async function renderWizardDictation() {
-	const section = $("#wizard-stt-section");
-	if (!section) return;
-	let st = null;
-	try {
-		st = await apiJson("/api/webchat/stt/install");
-	} catch {
-		st = null;
-	}
-	if (!st) {
-		section.hidden = true;
-		return;
-	}
-	section.hidden = false;
-	const enable = $("#wizard-stt-enable");
-	if (enable) enable.checked = !!st.enabled;
-	if (!wizardSttWired) {
-		wizardSttWired = true;
-		enable?.addEventListener("change", async () => {
-			const on = enable.checked;
-			if (!(await authFetch("/api/stt/config", {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ enabled: on })
-			})).ok) {
-				enable.checked = !on;
-				showToast("Could not update voice dictation", { kind: "error" });
-				return;
-			}
-			renderWizardDictation();
-		});
-		document.querySelectorAll("#wizard-stt-backend input[type=\"radio\"]").forEach((b) => {
-			b.addEventListener("change", () => {
-				if (!b.checked) return;
-				wizardSttBackend = b.value;
-				renderWizardDictation();
-			});
-		});
-		$("#wizard-stt-install")?.addEventListener("click", () => runSttInstall({ provider: "local" }, WIZARD_STT_ELS, renderWizardDictation));
-		$("#wizard-stt-connect")?.addEventListener("click", () => {
-			const key = ($("#wizard-stt-key")?.value || "").trim();
-			if (!key) {
-				showToast("Enter the ElevenLabs API key first", { kind: "error" });
-				return;
-			}
-			runSttInstall({
-				provider: "elevenlabs",
-				apiKey: key
-			}, WIZARD_STT_ELS, renderWizardDictation);
-			$("#wizard-stt-key").value = "";
-		});
-	}
-	const group = $("#wizard-stt-group");
-	if (group) group.hidden = !st.enabled;
-	if (!st.enabled) return;
-	const installed = !!st.installed;
-	const backend = installed ? st.provider || wizardSttBackend : wizardSttBackend;
-	document.querySelectorAll("#wizard-stt-backend input[type=\"radio\"]").forEach((b) => {
-		b.checked = b.value === backend;
-	});
-	const local = backend === "local";
-	const badge = $("#wizard-stt-installed");
-	if (badge) badge.hidden = !installed;
-	const badgeText = $("#wizard-stt-installed-text");
-	if (badgeText) badgeText.textContent = local ? "Whisper installed" : "ElevenLabs connected";
-	const installRow = $("#wizard-stt-install-row");
-	if (installRow) installRow.hidden = installed || !local || !st.installerPresent;
-	const keyRow = $("#wizard-stt-key-row");
-	if (keyRow) keyRow.hidden = installed || local;
-	if (st.running) pollSttInstall(WIZARD_STT_ELS, renderWizardDictation);
-}
-async function renderWizardFeatures() {
-	renderWizardDictation();
-	const mkt = $("#wizard-marketplace");
-	if (mkt) mkt.checked = state.marketplaceEnabled === true;
-	const ttsDefault = $("#wizard-tts-default");
-	if (ttsDefault) ttsDefault.checked = getTtsReadAloudEnabled();
-	if (!wizardTtsWired) {
-		wizardTtsWired = true;
-		ttsDefault?.addEventListener("change", async () => {
-			const on = ttsDefault.checked;
-			try {
-				await apiJson("/api/tts/config", {
-					method: "PUT",
-					body: { readAloud: on }
-				});
-				setTtsReadAloudEnabled(on);
-				if (!on) stopTts();
-				renderWizardFeatures();
-			} catch {
-				ttsDefault.checked = !on;
-				showToast("Failed to save Read aloud", { kind: "error" });
-			}
-		});
-		$("#wizard-tts-install")?.addEventListener("click", () => runTtsInstall(WIZARD_TTS_ELS));
-		$("#wizard-autolearn")?.addEventListener("change", async () => {
-			const on = $("#wizard-autolearn").checked;
-			try {
-				await apiJson("/api/learning/config", {
-					method: "PUT",
-					body: { enabled: on }
-				});
-				state.learningMasterEnabled = on;
-				deps$10.applyLearningMaster();
-			} catch {
-				$("#wizard-autolearn").checked = !on;
-				showToast("Failed to save auto-learn", { kind: "error" });
-			}
-		});
-	}
-	const alBox = $("#wizard-autolearn");
-	if (alBox) alBox.checked = state.learningMasterEnabled;
-	const row = $("#wizard-tts-install-row");
-	const badge = $("#wizard-tts-installed");
-	const progress = $("#wizard-tts-progress");
-	const btn = $("#wizard-tts-install");
-	const ttsOn = !!ttsDefault?.checked;
-	let st = null;
-	try {
-		st = await apiJson("/api/webchat/tts/install");
-	} catch {
-		st = null;
-	}
-	if (!st || !ttsOn) {
-		if (row) row.hidden = true;
-		if (badge) badge.hidden = true;
-		if (progress) progress.hidden = !(st && st.running);
-		if (st && st.running) pollTtsInstall(WIZARD_TTS_ELS);
-		return;
-	}
-	if (st.installed) {
-		if (row) row.hidden = true;
-		if (badge) badge.hidden = false;
-		if (progress) progress.hidden = !st.running;
-		if (btn) btn.textContent = "Install Kokoro…";
-		if (st.running) pollTtsInstall(WIZARD_TTS_ELS);
-		return;
-	}
-	if (badge) badge.hidden = true;
-	if (row) row.hidden = !st.installerPresent;
-	if (st.running) pollTtsInstall(WIZARD_TTS_ELS);
-	else if (btn) {
-		btn.disabled = false;
-		btn.textContent = "Install Kokoro…";
-	}
-}
-var wizardAuthInfo = null;
-async function wizardAccessReady() {
-	const sel = document.querySelector("input[name=\"wizard-access\"]:checked")?.value || "bearer";
-	if (sel === "bearer" || sel === "localhost") return true;
-	let info = wizardAuthInfo;
-	try {
-		info = await apiJson("/api/webchat/auth");
-		wizardAuthInfo = info;
-	} catch {}
-	if (sel === "tailscale") return !!(info && info.tailscale && info.tailscale.healthy);
-	if (sel === "sso") return !!(info && info.proxy);
-	return true;
-}
-async function runTailscaleInstall() {
-	const btn = $("#wizard-ts-install-btn");
-	const log = $("#wizard-ts-install-log");
-	if (log) {
-		log.hidden = false;
-		log.textContent = "Starting…";
-	}
-	const done = btn ? wizardBusy(btn, "Installing…") : null;
-	try {
-		const res = await authFetch("/api/webchat/tailscale/install", {
-			method: "POST",
-			headers: { "X-Webchat-CSRF": "1" }
-		});
-		if (!res.ok && res.status !== 202) {
-			const err = await res.json().catch(() => ({}));
-			if (log) log.textContent = err.error || "Install failed to start.";
-			showToast(err.error || "Tailscale install failed", {
-				kind: "error",
-				timeout: 9e3
-			});
-			done?.();
-			return;
-		}
-		done?.();
-		pollTailscaleInstall();
-	} catch (err) {
-		if (log) log.textContent = "Install failed: " + err?.message;
-		done?.();
-	}
-}
-async function pollTailscaleInstall() {
-	if (tailscaleInstallActive.value) return;
-	tailscaleInstallActive.value = true;
-	const btn = $("#wizard-ts-install-btn");
-	const log = $("#wizard-ts-install-log");
-	if (log) log.hidden = false;
-	const done = btn ? wizardBusy(btn, "Installing…") : null;
-	try {
-		for (;;) {
-			const st = await (await authFetch("/api/webchat/tailscale/install")).json();
-			if (log) {
-				log.textContent = installLogText(st);
-				log.scrollTop = log.scrollHeight;
-			}
-			if (!st.running) {
-				if (st.exitCode === 0) showToast("Tailscale is up — first tailnet sign-in becomes owner", { kind: "success" });
-				else showToast("Tailscale install/sign-in didn’t finish — see the log", {
-					kind: "error",
-					timeout: 9e3
-				});
-				break;
-			}
-			await new Promise((r) => setTimeout(r, 2e3));
-		}
-	} catch (err) {
-		showToast("Tailscale install error: " + err?.message, { kind: "error" });
-	} finally {
-		tailscaleInstallActive.value = false;
-		done?.();
-		renderWizardAccess();
-	}
-}
-async function runCloudflaredBinaryInstall() {
-	const btn = $("#wizard-cf-install-btn");
-	const log = $("#wizard-cf-install-log");
-	if (log) {
-		log.hidden = false;
-		log.textContent = "Starting…";
-	}
-	const done = btn ? wizardBusy(btn, "Installing…") : null;
-	try {
-		const res = await authFetch("/api/webchat/cloudflared/install", {
-			method: "POST",
-			headers: { "X-Webchat-CSRF": "1" }
-		});
-		if (!res.ok && res.status !== 202) {
-			const err = await res.json().catch(() => ({}));
-			if (log) log.textContent = err.error || "Install failed to start.";
-			showToast(err.error || "cloudflared install failed", {
-				kind: "error",
-				timeout: 9e3
-			});
-			done?.();
-			return;
-		}
-		done?.();
-		pollCloudflared({
-			btn: "#wizard-cf-install-btn",
-			verb: "Installing…",
-			success: "cloudflared installed — paste your tunnel token"
-		});
-	} catch (err) {
-		if (log) log.textContent = "Install failed: " + err?.message;
-		done?.();
-	}
-}
-async function runCloudflaredConnect() {
-	const btn = $("#wizard-cf-connect-btn");
-	const log = $("#wizard-cf-install-log");
-	const tokenEl = $("#wizard-cf-token");
-	const token = (tokenEl?.value || "").trim();
-	if (!token) {
-		showToast("Paste the tunnel token first", { kind: "error" });
-		return;
-	}
-	if (log) {
-		log.hidden = false;
-		log.textContent = "Starting…";
-	}
-	const done = btn ? wizardBusy(btn, "Connecting…") : null;
-	try {
-		const res = await authFetch("/api/webchat/cloudflared/connect", {
-			method: "POST",
-			headers: {
-				"X-Webchat-CSRF": "1",
-				"Content-Type": "application/json"
-			},
-			body: JSON.stringify({ token })
-		});
-		if (!res.ok && res.status !== 202) {
-			const err = await res.json().catch(() => ({}));
-			if (log) log.textContent = err.error || "Connect failed to start.";
-			showToast(err.error || "Cloudflare Tunnel connect failed", {
-				kind: "error",
-				timeout: 9e3
-			});
-			done?.();
-			return;
-		}
-		if (tokenEl) tokenEl.value = "";
-		done?.();
-		pollCloudflared({
-			btn: "#wizard-cf-connect-btn",
-			verb: "Connecting…",
-			success: "Cloudflare Tunnel connected"
-		});
-	} catch (err) {
-		if (log) log.textContent = "Connect failed: " + err?.message;
-		done?.();
-	}
-}
-async function pollCloudflared({ btn: btnSel, verb, success }) {
-	if (cloudflaredInstallActive.value) return;
-	cloudflaredInstallActive.value = true;
-	const btn = btnSel ? $(btnSel) : null;
-	const log = $("#wizard-cf-install-log");
-	if (log) log.hidden = false;
-	const done = btn ? wizardBusy(btn, verb) : null;
-	try {
-		for (;;) {
-			const st = await (await authFetch("/api/webchat/cloudflared")).json();
-			if (log) {
-				log.textContent = installLogText(st);
-				log.scrollTop = log.scrollHeight;
-			}
-			if (!st.running) {
-				if (st.exitCode === 0) showToast(success, { kind: "success" });
-				else showToast("cloudflared step didn’t finish — see the log", {
-					kind: "error",
-					timeout: 9e3
-				});
-				break;
-			}
-			await new Promise((r) => setTimeout(r, 2e3));
-		}
-	} catch (err) {
-		showToast("cloudflared error: " + err?.message, { kind: "error" });
-	} finally {
-		cloudflaredInstallActive.value = false;
-		done?.();
-		renderWizardAccess();
-	}
-}
-var wizardAccessDefaulted = false;
-var wizardBearerPendingRestart = false;
-var wizardTsPoll = null;
-function wizardStopTsPoll() {
-	if (wizardTsPoll) {
-		clearInterval(wizardTsPoll);
-		wizardTsPoll = null;
-	}
-}
-function wizardStartTsPollIfNeeded() {
-	const sel = document.querySelector("input[name=\"wizard-access\"]:checked")?.value;
-	const healthy = !!(wizardAuthInfo && wizardAuthInfo.tailscale && wizardAuthInfo.tailscale.healthy);
-	if (sel !== "tailscale" || healthy) {
-		wizardStopTsPoll();
-		return;
-	}
-	if (wizardTsPoll) return;
-	wizardTsPoll = setInterval(async () => {
-		try {
-			const info = await apiJson("/api/webchat/auth");
-			if (info && info.tailscale && info.tailscale.healthy) {
-				wizardStopTsPoll();
-				renderWizardAccess();
-			}
-		} catch {}
-	}, 4e3);
-}
-async function renderWizardAccess() {
-	const stateEl = $("#wizard-access-state");
-	let info = null;
-	try {
-		info = await apiJson("/api/webchat/auth");
-	} catch {
-		info = null;
-	}
-	wizardAuthInfo = info;
-	const tsHealthy = !!(info && info.tailscale && info.tailscale.healthy);
-	const tsAuthActive = !!(info && info.tailscale && info.tailscale.enabled && info.tailscale.healthy);
-	const proxyOn = !!(info && info.proxy);
-	const bearerOn = !!(info && info.bearerActive);
-	const localhostOnly = !!(info && info.loopback) && !bearerOn && !tsAuthActive && !proxyOn;
-	const chip = (id, text, ok) => {
-		const el = $(id);
-		if (!el) return;
-		el.hidden = !info;
-		el.textContent = text;
-		el.classList.toggle("ok", ok);
-	};
-	chip("#wizard-access-localhost-chip", localhostOnly ? "active" : "off", localhostOnly);
-	chip("#wizard-access-bearer-chip", bearerOn ? "active" : "off", bearerOn);
-	chip("#wizard-access-ts-chip", tsHealthy ? "✓ up" : "not detected", tsHealthy);
-	chip("#wizard-access-sso-chip", proxyOn ? "✓ active" : "not configured", proxyOn);
-	if (!wizardAccessDefaulted && info) {
-		wizardAccessDefaulted = true;
-		if (localhostOnly) {
-			const r = document.querySelector("input[name=\"wizard-access\"][value=\"localhost\"]");
-			if (r) r.checked = true;
-		}
-	}
-	const tsHelper = $("#wizard-ts-helper");
-	const tsRow = $("#wizard-ts-install-row");
-	const tsManual = $("#wizard-ts-manual");
-	if (tsHealthy) {
-		if (tsHelper) tsHelper.hidden = true;
-		if (tsRow) tsRow.hidden = true;
-		if (tsManual) tsManual.hidden = true;
-	} else {
-		let ts = null;
-		try {
-			ts = await apiJson("/api/webchat/tailscale/install");
-		} catch {
-			ts = null;
-		}
-		const canInstall = !!(ts && ts.canInstall);
-		const tunPresent = !!(ts && ts.tunPresent);
-		const isRoot = !!(ts && ts.isRoot);
-		if (tsRow) tsRow.hidden = !canInstall;
-		if (tsManual) tsManual.hidden = !(!canInstall && tunPresent && !isRoot);
-		if (tsHelper) tsHelper.hidden = !(!canInstall && !tunPresent);
-		if (canInstall && ts.running) pollTailscaleInstall();
-	}
-	let cf = null;
-	try {
-		cf = await apiJson("/api/webchat/cloudflared");
-	} catch {
-		cf = null;
-	}
-	const cfService = !!(cf && cf.serviceInstalled);
-	const cfBinary = !!(cf && cf.installed);
-	const cfCanInstall = !!(cf && cf.canInstall);
-	chip("#wizard-access-cf-chip", cfService ? "✓ running" : cfBinary ? "installed" : "not set up", cfService);
-	const cfReady = $("#wizard-cf-ready");
-	if (cfReady) cfReady.hidden = !cfService;
-	const cfHelper = $("#wizard-cf-helper");
-	if (cfHelper) cfHelper.hidden = cfService || cfCanInstall;
-	const cfInstallRow = $("#wizard-cf-install-row");
-	if (cfInstallRow) cfInstallRow.hidden = cfService || !cfCanInstall || cfBinary;
-	const cfConnect = $("#wizard-cf-connect");
-	if (cfConnect) cfConnect.hidden = cfService || !cfCanInstall || !cfBinary;
-	if (cfCanInstall && cf.running) pollCloudflared({
-		btn: null,
-		success: "cloudflared step complete"
-	});
-	const retireRow = $("#wizard-retire-row");
-	if (retireRow) retireRow.hidden = !(info && info.canDisableBearer);
-	const bearerUnset = !!(info && !info.bearerConfigured);
-	const bearerGenRow = $("#wizard-bearer-gen-row");
-	if (bearerGenRow && !wizardBearerPendingRestart) bearerGenRow.hidden = !bearerUnset || !state.isOwnerView;
-	if (stateEl) {
-		if (!info) {
-			stateEl.textContent = "Access settings are available to the owner.";
-			stateEl.hidden = false;
-		} else {
-			const methods = [];
-			if (tsAuthActive) methods.push("Tailscale identity");
-			if (proxyOn) methods.push("reverse-proxy SSO");
-			if (bearerOn) methods.push("a bearer token");
-			stateEl.textContent = methods.length ? `Secured by ${methods.join(" + ")}.` : "";
-			stateEl.hidden = !methods.length;
-		}
-	}
-	syncWizardAccessBodies();
-}
-async function wizardRetireBearer() {
-	const done = wizardBusy($("#wizard-retire-btn"), "Retiring…");
-	try {
-		const r = await authFetch("/api/webchat/auth/bearer", {
-			method: "PUT",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify({ active: false })
-		});
-		const data = await r.json().catch(() => ({}));
-		if (r.ok) {
-			showToast("Bearer token retired — access is via Tailscale/SSO", { kind: "success" });
-			await renderWizardAccess();
-		} else wizardSetStatus("#wizard-retire-status", data.error || "Could not retire the token", "err");
-	} catch {
-		wizardSetStatus("#wizard-retire-status", "Connection failed.", "err");
-	} finally {
-		done();
-	}
-}
-async function wizardGenerateBearer() {
-	const done = wizardBusy($("#wizard-bearer-gen"), "Generating…");
-	try {
-		const r = await authFetch("/api/webchat/auth/bearer/generate", {
-			method: "POST",
-			headers: { "X-Webchat-CSRF": "1" }
-		});
-		const data = await r.json().catch(() => ({}));
-		if (!r.ok || !data.token) {
-			showToast(data.error || "Could not generate a token", {
-				kind: "error",
-				timeout: 8e3
-			});
-			return;
-		}
-		setAuthToken(data.token);
-		sessionStorage.setItem("nanoclaw-token", data.token);
-		const field = $("#wizard-bearer-token");
-		if (field) field.value = data.token;
-		if ($("#wizard-bearer-result")) $("#wizard-bearer-result").hidden = false;
-		if ($("#wizard-bearer-gen-row")) $("#wizard-bearer-gen-row").hidden = true;
-		wizardBearerPendingRestart = true;
-	} catch {
-		showToast("Connection failed.", { kind: "error" });
-	} finally {
-		done();
-	}
-}
-async function wizardCopyBearerToken() {
-	const field = $("#wizard-bearer-token");
-	const value = field?.value || "";
-	if (!value) return;
-	try {
-		await navigator.clipboard.writeText(value);
-		showToast("Token copied", { kind: "success" });
-	} catch {
-		field?.select();
-		try {
-			document.execCommand("copy");
-			showToast("Token copied", { kind: "success" });
-		} catch {
-			showToast("Copy failed — select the token and copy manually", { kind: "error" });
-		}
-	}
-}
-async function wizardCopyText(selector, okMsg) {
-	const el = $(selector);
-	const text = String((el && "value" in el ? el.value : el?.textContent) || "").trim();
-	if (!text) return;
-	try {
-		await navigator.clipboard.writeText(text);
-		showToast(okMsg || "Copied", { kind: "success" });
-	} catch {
-		el?.select?.();
-		showToast("Copy failed — select and copy manually", { kind: "error" });
-	}
-}
-async function wizardTriggerRestart() {
-	const overlay = $("#restart-overlay");
-	const titleEl = $("#restart-title");
-	const statusEl = $("#restart-status");
-	const reloadBtn = $("#restart-reload-btn");
-	const setStatus = (t) => {
-		if (statusEl) statusEl.textContent = t;
-	};
-	if (overlay) overlay.hidden = false;
-	reloadBtn?.addEventListener("click", () => location.reload(), { once: true });
-	const readUptime = async () => {
-		try {
-			const r = await fetch("/health", { cache: "no-store" });
-			if (!r.ok) return null;
-			const b = await r.json();
-			return typeof b.uptime === "number" ? b.uptime : null;
-		} catch {
-			return null;
-		}
-	};
-	const baseUptime = await readUptime() ?? Infinity;
-	try {
-		await apiJson("/api/webchat/restart", {
-			method: "POST",
-			headers: { "X-Webchat-CSRF": "1" }
-		});
-	} catch {}
-	const started = Date.now();
-	const DEADLINE_MS = 9e4;
-	while (Date.now() - started < DEADLINE_MS) {
-		await new Promise((r) => setTimeout(r, 1500));
-		const up = await readUptime();
-		if (up !== null && up < baseUptime) {
-			setStatus("Back online — reloading…");
-			await new Promise((r) => setTimeout(r, 700));
-			location.reload();
-			return;
-		}
-		setStatus("Restarting the server…");
-	}
-	if (titleEl) titleEl.textContent = "Still restarting…";
-	setStatus("This is taking longer than usual. Reload once you can reach the server.");
-	if (reloadBtn) reloadBtn.hidden = false;
-}
-function wireWizard() {
-	if (wizardWired) return;
-	wizardWired = true;
-	wireGrokLogin();
-	wireCopilotLogin();
-	resumeGrokLogin();
-	resumeCopilotLogin();
-	$("#wizard-next")?.addEventListener("click", async () => {
-		if (!!document.querySelector(`.wizard-step[data-step="${wizardStep}"] input[name="wizard-access"]`) && !await wizardAccessReady()) {
-			const sel = document.querySelector("input[name=\"wizard-access\"]:checked")?.value;
-			showToast(sel === "tailscale" ? "Connect Tailscale first — sign in over your tailnet (install it above if needed), then continue." : "Configure the reverse proxy first — set WEBCHAT_TRUSTED_PROXY_IPS and restart, then continue.", {
-				kind: "info",
-				timeout: 8e3
-			});
-			return;
-		}
-		if (wizardStep === 2) {
-			wizardCreateAndFinish();
-			return;
-		}
-		if (wizardStep === 0 && !wizardEngineConnected()) {
-			showToast(`Finish this engine first — ${wizardEngine === "ollama" ? "set a default Ollama model" : wizardEngine === "grok" ? "authenticate Grok from a terminal (the command is on the card), then reload" : wizardEngine === "copilot" ? wizardCred?.copilot?.available ? "connect GitHub Copilot" : "install then connect GitHub Copilot" : wizardEngine === "codex" && !wizardCodexAvailable ? "install then connect Codex" : `connect ${wizardEngine === "codex" ? "Codex" : "Claude"}`} above.`, {
-				kind: "info",
-				timeout: 6e3
-			});
-			return;
-		}
-		showWizardStep(wizardStep + 1);
-	});
-	$("#wizard-back")?.addEventListener("click", () => showWizardStep(wizardStep - 1));
-	$("#wizard-skip")?.addEventListener("click", () => {
-		if (wizardStep === 2) finishWizard();
-		else showWizardStep(wizardStep + 1);
-	});
-	$("#wizard-close")?.addEventListener("click", () => finishWizard());
-	document.querySelectorAll("input[name=\"wizard-access\"]").forEach((radio) => {
-		radio.addEventListener("change", () => syncWizardAccessBodies());
-	});
-	$("#wizard-https-btn")?.addEventListener("click", () => wizardEnableHttps());
-	$("#wizard-ts-install-btn")?.addEventListener("click", () => runTailscaleInstall());
-	$("#wizard-cf-install-btn")?.addEventListener("click", () => runCloudflaredBinaryInstall());
-	$("#wizard-cf-connect-btn")?.addEventListener("click", () => runCloudflaredConnect());
-	$("#wizard-retire-btn")?.addEventListener("click", () => wizardRetireBearer());
-	$("#wizard-bearer-gen")?.addEventListener("click", () => wizardGenerateBearer());
-	$("#wizard-bearer-copy")?.addEventListener("click", () => wizardCopyBearerToken());
-	$("#wizard-ts-manual-copy")?.addEventListener("click", () => wizardCopyText("#wizard-ts-manual-cmd", "Copied"));
-	document.querySelectorAll("input[name=\"wizard-engine\"]").forEach((radio) => {
-		radio.addEventListener("change", () => {
-			selectWizardEngine(radio.value);
-			if (wizardEngine !== "ollama") wizardClearOllamaDefault();
-		});
-	});
-	$("#wizard-claude-oauth")?.addEventListener("click", () => deps$10.openOauthMintModal("workspace"));
-	$("#wizard-codex-install")?.addEventListener("click", () => runInstall("codex", CODEX_WIZARD_ELS));
-	$("#wizard-grok-install")?.addEventListener("click", () => runInstall("grok", GROK_WIZARD_ELS));
-	$("#wizard-copilot-install")?.addEventListener("click", () => runInstall("copilot", COPILOT_WIZARD_ELS));
-	$("#wizard-codex-oauth")?.addEventListener("click", () => deps$10.openOauthMintModal("workspace-codex"));
-	$("#wizard-codex-save")?.addEventListener("click", async () => {
-		const key = ($("#wizard-codex-key")?.value || "").trim();
-		if (!/^sk-/.test(key)) return wizardSetStatus("#wizard-codex-status", "Expected an OpenAI API key (sk-…).", "err");
-		const done = wizardBusy($("#wizard-codex-save"), "Saving…");
-		try {
-			const r = await authFetch("/api/workspace-credential", {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					provider: "codex",
-					type: "api_key",
-					apiKey: key
-				})
-			});
-			const out = await r.json().catch(() => ({}));
-			if (!r.ok) return wizardSetStatus("#wizard-codex-status", out.error || "Save failed.", "err");
-			$("#wizard-codex-key").value = "";
-			await refreshWizardCredState();
-		} finally {
-			done();
-		}
-	});
-	$("#wizard-claude-save")?.addEventListener("click", async () => {
-		const key = ($("#wizard-claude-key")?.value || "").trim();
-		if (!/^sk-ant-/.test(key)) return wizardSetStatus("#wizard-claude-status", "Expected an Anthropic API key (sk-ant-…) or setup token (sk-ant-oat…).", "err");
-		const isOauth = /^sk-ant-oat/.test(key);
-		const done = wizardBusy($("#wizard-claude-save"), "Saving…");
-		try {
-			const r = await authFetch("/api/workspace-credential", {
-				method: "PUT",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(isOauth ? {
-					type: "oauth_token",
-					token: key
-				} : {
-					type: "api_key",
-					apiKey: key
-				})
-			});
-			const out = await r.json().catch(() => ({}));
-			if (!r.ok) return wizardSetStatus("#wizard-claude-status", out.error || "Save failed.", "err");
-			$("#wizard-claude-key").value = "";
-			await refreshWizardCredState();
-		} finally {
-			done();
-		}
-	});
-	$("#wizard-claude-disconnect")?.addEventListener("click", async () => {
-		const r = await authFetch("/api/workspace-credential", { method: "DELETE" });
-		if (!r.ok) {
-			showToast("Failed to disconnect: " + ((await r.json().catch(() => ({}))).error || r.statusText), { kind: "error" });
-			return;
-		}
-		await refreshWizardCredState();
-	});
-	$("#wizard-codex-disconnect")?.addEventListener("click", async () => {
-		const r = await authFetch("/api/workspace-credential?provider=codex", { method: "DELETE" });
-		if (!r.ok) {
-			showToast("Failed to disconnect: " + ((await r.json().catch(() => ({}))).error || r.statusText), { kind: "error" });
-			return;
-		}
-		await refreshWizardCredState();
-	});
-	$("#wizard-ollama-probe")?.addEventListener("click", () => void wizardProbeOllama());
-	$("#wizard-ollama-list")?.addEventListener("change", (e) => {
-		const t = e.target;
-		if (t && t.name === "wizard-ollama-model" && t.value) {
-			wizardOllamaSelected.value = t.value;
-			wizardSelectOllamaModel(t.value, t.parentElement?.querySelector("span"));
-		}
-	});
-	$("#wizard-ollama-change")?.addEventListener("click", () => {
-		$("#wizard-ollama-connected").hidden = true;
-		$("#wizard-ollama-setup").hidden = false;
-	});
-	$("#wizard-ollama-install")?.addEventListener("click", async () => {
-		const done = wizardBusy($("#wizard-ollama-install"), "Installing…");
-		const log = $("#wizard-ollama-install-log");
-		log.hidden = false;
-		log.textContent = "Starting…";
-		try {
-			const r = await authFetch("/api/ollama/install", { method: "POST" });
-			if (!r.ok) {
-				const err = await r.json().catch(() => ({}));
-				if (err.error !== "already-running") {
-					log.textContent = err.error || "Install failed to start.";
-					return;
-				}
-				log.textContent = "Resuming the install already in progress…";
-			}
-			for (;;) {
-				await new Promise((resolve) => setTimeout(resolve, 2e3));
-				const st = await (await authFetch("/api/ollama/local")).json();
-				log.textContent = installLogText(st);
-				log.scrollTop = log.scrollHeight;
-				if (!st.running) {
-					if (st.exitCode === 0 && st.reachable) {
-						$("#wizard-ollama-install-row").hidden = true;
-						$("#wizard-ollama-url").value = "http://localhost:11434";
-						wizardSetStatus("#wizard-ollama-status", "Ollama installed and running — download a model below.", "ok");
-						$("#wizard-ollama-dl-row").hidden = false;
-						wizardLoadRecommendation();
-					} else wizardSetStatus("#wizard-ollama-status", "Install failed — see the log above.", "err");
-					return;
-				}
-			}
-		} finally {
-			done();
-		}
-	});
-	$("#wizard-ollama-dl")?.addEventListener("click", async () => {
-		const model = ($("#wizard-ollama-dl-model")?.value || "").trim() || "qwen3:1.7b";
-		const host = ($("#wizard-ollama-url")?.value || "").trim() || "http://localhost:11434";
-		const r = await authFetch("/api/ollama/pull", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				host,
-				model
-			})
-		});
-		if (!r.ok) return wizardSetStatus("#wizard-ollama-dl-status", (await r.json().catch(() => ({}))).error || "Pull failed to start.", "err");
-		await wizardFollowPull(host, model);
-	});
-}
-async function wizardCreateAndFinish() {
-	const roomName = ($("#wizard-room-name")?.value || "").trim() || "General";
-	const agentName = ($("#wizard-agent-name")?.value || "").trim() || "Assistant";
-	if (wizardEngine !== "ollama") await wizardClearOllamaDefault();
-	const mktEnabled = $("#wizard-marketplace")?.checked !== false;
-	try {
-		await authFetch("/api/webchat/features", {
-			method: "PUT",
-			headers: {
-				"Content-Type": "application/json",
-				"X-Webchat-CSRF": "1"
-			},
-			body: JSON.stringify({ marketplaceEnabled: mktEnabled })
-		});
-		state.marketplaceEnabled = mktEnabled;
-		applyMarketplaceNav();
-	} catch {}
-	if (state.isOwnerView) try {
-		await apiJson("/api/webchat/tailscale-owner", {
-			method: "PUT",
-			headers: { "X-Webchat-CSRF": "1" },
-			body: { armed: document.querySelector("input[name=\"wizard-access\"]:checked")?.value === "tailscale" }
-		});
-	} catch {}
-	const done = wizardBusy($("#wizard-next"), "Creating…");
-	try {
-		const agentRef = {
-			kind: "new",
-			name: agentName
-		};
-		agentRef.provider = wizardEngine === "ollama" ? "claude" : wizardEngine;
-		const r = await authFetch("/api/rooms", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				name: roomName,
-				agents: [agentRef]
-			})
-		});
-		const out = await r.json().catch(() => ({}));
-		if (!r.ok) {
-			if (r.status === 409) {
-				wizardSetStatus("#wizard-room-status", "Already set up — finishing…", "ok");
-				await finishWizard();
-				if (wizardBearerPendingRestart) await wizardTriggerRestart();
-				return;
-			}
-			return wizardSetStatus("#wizard-room-status", out.error || "Create failed.", "err");
-		}
-		if (out?.room?.id) deps$10.joinRoom(out.room.id, out.room.name);
-		wizardSetStatus("#wizard-room-status", "Created. Finishing…", "ok");
-		await finishWizard();
-		if (wizardBearerPendingRestart) await wizardTriggerRestart();
-		if (typeof deps$10.fetchAgents === "function") deps$10.fetchAgents().catch(() => {});
-		if ([
-			"claude",
-			"codex",
-			"grok",
-			"copilot"
-		].includes(wizardEngine)) try {
-			await apiJson("/api/workspace-provider", {
-				method: "PUT",
-				headers: { "X-Webchat-CSRF": "1" },
-				body: { provider: wizardEngine }
-			});
-		} catch {}
-	} finally {
-		done();
-	}
-}
-async function maybeAutoOpenWizard() {
-	try {
-		const s = await apiJson("/api/webchat/onboarding");
-		if (s.canEdit && !s.complete) openWizard();
-	} catch {}
-}
-var grokPollTimer = null;
-function stopGrokPoll() {
-	if (grokPollTimer) clearInterval(grokPollTimer);
-	grokPollTimer = null;
-}
-function renderGrokLogin(p) {
-	const device = $("#wizard-grok-device");
-	const row = $("#wizard-grok-login-row");
-	const status = $("#wizard-grok-status");
-	if (!device || !row) return;
-	device.hidden = !p?.running;
-	row.hidden = !!p?.running;
-	if (p?.running) {
-		const url = $("#wizard-grok-url");
-		if (url && p.verificationUrl) {
-			url.textContent = p.verificationUrl;
-			url.href = p.verificationUrl;
-		}
-		$("#wizard-grok-code").textContent = p.userCode ?? "waiting for a code…";
-	}
-	if (status && p && !p.running && p.outcome && p.outcome !== "complete") {
-		status.textContent = p.error ?? "The login did not complete.";
-		status.hidden = false;
-	}
-}
-async function pollGrokLogin() {
-	const r = await authFetch("/api/workspace-credential/grok");
-	if (!r.ok) return stopGrokPoll();
-	const p = await r.json();
-	renderGrokLogin(p);
-	if (!p.running) {
-		stopGrokPoll();
-		if (p.outcome === "complete") await refreshWizardCredState();
-	}
-}
-function startGrokPoll() {
-	stopGrokPoll();
-	pollGrokLogin();
-	grokPollTimer = setInterval(() => void pollGrokLogin(), 2e3);
-}
-function wireGrokLogin() {
-	$("#wizard-grok-login")?.addEventListener("click", async () => {
-		const btn = $("#wizard-grok-login");
-		if (btn) btn.disabled = true;
-		const status = $("#wizard-grok-status");
-		if (status) status.hidden = true;
-		try {
-			const r = await authFetch("/api/workspace-credential/grok/start", { method: "POST" });
-			const p = await r.json();
-			if (!r.ok) {
-				if (status) {
-					status.textContent = p?.error ?? "Could not start the login.";
-					status.hidden = false;
-				}
-				return;
-			}
-			renderGrokLogin(p);
-			startGrokPoll();
-		} finally {
-			if (btn) btn.disabled = false;
-		}
-	});
-	$("#wizard-grok-cancel")?.addEventListener("click", async () => {
-		await authFetch("/api/workspace-credential/grok/cancel", { method: "POST" });
-		stopGrokPoll();
-		pollGrokLogin();
-	});
-}
-/** Resume a login that was started before this page loaded (or in another tab). */
-async function resumeGrokLogin() {
-	try {
-		const p = await apiJson("/api/workspace-credential/grok");
-		if (p.running) {
-			renderGrokLogin(p);
-			startGrokPoll();
-		}
-	} catch {}
-}
-var copilotPollTimer = null;
-function stopCopilotPoll() {
-	if (copilotPollTimer) clearInterval(copilotPollTimer);
-	copilotPollTimer = null;
-}
-function renderCopilotLogin(p) {
-	const device = $("#wizard-copilot-device");
-	const row = $("#wizard-copilot-login-row");
-	if (!device || !row) return;
-	device.hidden = !p?.running;
-	row.hidden = !!p?.running;
-	if (p?.running) {
-		const url = $("#wizard-copilot-url");
-		if (url && p.verificationUrl) {
-			url.textContent = p.verificationUrl;
-			url.href = p.verificationUrl;
-		}
-		$("#wizard-copilot-code").textContent = p.userCode ?? "waiting for a code…";
-	}
-	const line = copilotStatusLine(p);
-	const status = $("#wizard-copilot-status");
-	if (status) {
-		status.textContent = line ?? "";
-		status.hidden = !line;
-	}
-}
-async function pollCopilotLogin() {
-	const r = await authFetch("/api/workspace-credential/copilot");
-	if (!r.ok) return stopCopilotPoll();
-	const p = await r.json();
-	renderCopilotLogin(p);
-	if (!p.running) {
-		stopCopilotPoll();
-		if (p.outcome === "complete") await refreshWizardCredState();
-	}
-}
-function startCopilotPoll() {
-	stopCopilotPoll();
-	pollCopilotLogin();
-	copilotPollTimer = setInterval(() => void pollCopilotLogin(), 2e3);
-}
-function wireCopilotLogin() {
-	$("#wizard-copilot-login")?.addEventListener("click", async () => {
-		const btn = $("#wizard-copilot-login");
-		const done = btn ? buttonBusy(btn, "Starting…") : () => {};
-		try {
-			const r = await authFetch("/api/workspace-credential/copilot/start", { method: "POST" });
-			const p = await r.json().catch(() => ({}));
-			if (!r.ok) {
-				renderCopilotLogin({
-					outcome: "failed",
-					error: p?.error ?? "Could not start the sign-in."
-				});
-				return;
-			}
-			renderCopilotLogin(p);
-			startCopilotPoll();
-		} finally {
-			done();
-		}
-	});
-	$("#wizard-copilot-cancel")?.addEventListener("click", async () => {
-		await authFetch("/api/workspace-credential/copilot/cancel", { method: "POST" });
-		stopCopilotPoll();
-		pollCopilotLogin();
-	});
-	$("#wizard-copilot-disconnect")?.addEventListener("click", async () => {
-		const r = await authFetch("/api/workspace-credential/copilot/disconnect", { method: "POST" });
-		if (!r.ok) {
-			showToast("Failed to disconnect: " + ((await r.json().catch(() => ({}))).error || r.statusText), { kind: "error" });
-			return;
-		}
-		await refreshWizardCredState();
-	});
-}
-/** Resume a sign-in started before this page loaded (or in another tab). */
-async function resumeCopilotLogin() {
-	try {
-		const p = await apiJson("/api/workspace-credential/copilot");
-		if (p.running) {
-			renderCopilotLogin(p);
-			startCopilotPoll();
-		}
-	} catch {}
-}
-//#endregion
-//#region src/features/ConfirmInput.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$37 = ["placeholder"];
-var _hoisted_2$31 = ["hidden"];
-//#endregion
-//#region src/features/ConfirmInput.vue
-var ConfirmInput_default = /* @__PURE__ */ defineComponent({
-	__name: "ConfirmInput",
-	setup(__props) {
-		/**
-		* The text field showConfirmModal borrows as its body; one app per call. State comes
-		* through provide(), not props: root props never update, and a module ref would let two
-		* open instances collide. The input is uncontrolled (the caller reads input.value at
-		* confirm time), and @input binds only when a validator is supplied.
-		*/
-		const s = inject("confirmInput");
-		function capture(el) {
-			if (!el) return;
-			s.el = el;
-			el.value = s.initial;
-		}
-		function onInput() {
-			s.error = "";
-			s.invalid = false;
-		}
-		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [createElementVNode("input", mergeProps({
-				type: "text",
-				class: ["confirm-input", unref(s).invalid ? "invalid" : void 0],
-				placeholder: unref(s).placeholder,
-				autocomplete: "off",
-				ref: capture
-			}, toHandlers(unref(s).validate ? { input: onInput } : {}, true)), null, 16, _hoisted_1$37), unref(s).validate ? (openBlock(), createElementBlock("div", {
-				key: 0,
-				class: "confirm-input-error",
-				hidden: !unref(s).error
-			}, toDisplayString(unref(s).error), 9, _hoisted_2$31)) : createCommentVNode("", true)], 64);
-		};
-	}
-});
-//#endregion
-//#region src/features/ConfirmToggle.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$36 = {
+//#region src/features/ProbeResults.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$43 = {
 	key: 0,
-	class: "import-note"
+	class: "empty-note"
 };
+var _hoisted_2$37 = ["value", "checked"];
+var _hoisted_3$34 = ["data-model-id"];
+var NAME_PLACEHOLDER = "Display name";
 //#endregion
-//#region src/features/ConfirmToggle.vue
-var ConfirmToggle_default = /* @__PURE__ */ defineComponent({
-	__name: "ConfirmToggle",
+//#region src/features/ProbeResults.vue
+var ProbeResults_default = /* @__PURE__ */ defineComponent({
+	__name: "ProbeResults",
 	setup(__props) {
 		/**
-		* The toggle(s) showConfirmModal borrows as its body; per-instance and provide()-injected
-		* like ConfirmInput. The checkbox is uncontrolled and read from the captured element at
-		* confirm time (nothing here re-renders). The optional note comes after the label.
+		* The endpoint probe's model checklist, mounted into <ul id="model-probe-list">.
+		* Checkboxes and name inputs keep their state in the DOM because the submit path reads
+		* them there. A single advertised model is pre-checked — the common case.
 		*/
-		const s = inject("confirmToggle");
-		function capture(el, i) {
-			if (el) s.els[Number(i)] = el;
+		const FLEX = { flex: "1" };
+		/** Assigned as a property, not bound (a bound `value` renders an attribute); uncontrolled. */
+		function setName(el, name) {
+			if (el && el.value === "") el.value = name;
 		}
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(s).labels, (label, i) => {
-				return openBlock(), createElementBlock("label", {
-					key: i,
-					class: "setting-toggle"
-				}, [createElementVNode("span", null, toDisplayString(label), 1), createElementVNode("input", {
+			return openBlock(), createElementBlock(Fragment, null, [unref(probeRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$43, toDisplayString(unref(probeEmptyNote)), 1)) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(probeRows), (r) => {
+				return openBlock(), createElementBlock("li", { key: r.modelId }, [createElementVNode("label", null, [createElementVNode("input", {
 					type: "checkbox",
+					value: r.modelId,
+					checked: unref(probeSingle)
+				}, null, 8, _hoisted_2$37), createElementVNode("span", { style: FLEX }, toDisplayString(r.modelId), 1)]), createElementVNode("input", {
+					type: "text",
 					ref_for: true,
-					ref: (el) => capture(el, i)
-				}, null, 512)]);
-			}), 128)), unref(s).note ? (openBlock(), createElementBlock("div", _hoisted_1$36, toDisplayString(unref(s).note), 1)) : createCommentVNode("", true)], 64);
+					ref: (el) => setName(el, r.name),
+					placeholder: NAME_PLACEHOLDER,
+					"data-model-id": r.modelId
+				}, null, 8, _hoisted_3$34)]);
+			}), 128))], 64);
 		};
 	}
 });
 //#endregion
-//#region src/features/ConfirmModal.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$35 = { class: "modal-header" };
-var _hoisted_2$30 = {
+//#region src/features/model-picker-state.ts
+/** Rows in display order — the Default row is always first. */
+var pickerRows = ref([]);
+/** The model id currently assigned, '' for Default. */
+var pickerSelected = ref("");
+/** Empty-state copy, or '' when rows should show. */
+var pickerEmptyNote = ref("");
+//#endregion
+//#region src/features/ModelPicker.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$42 = [
+	"data-model-id",
+	"onClick",
+	"onKeydown"
+];
+var _hoisted_2$36 = { class: "model-picker-row-top" };
+var _hoisted_3$33 = { class: "model-picker-row-name" };
+var _hoisted_4$28 = { class: "model-picker-row-sub" };
+var _hoisted_5$24 = {
 	key: 0,
-	class: "modal-body"
+	class: "model-picker-empty"
 };
-var _hoisted_3$28 = { class: "confirm-actions" };
-var _hoisted_4$23 = ["onClick"];
 //#endregion
-//#region src/features/ConfirmModal.vue
-var ConfirmModal_default = /* @__PURE__ */ defineComponent({
-	__name: "ConfirmModal",
-	props: {
-		title: {},
-		body: {},
-		confirmLabel: {},
-		cancelLabel: {},
-		destructive: { type: Boolean },
-		extraActions: {},
-		onPick: { type: Function },
-		onConfirm: { type: Function }
-	},
-	setup(__props) {
-		/**
-		* The confirm dialog, one app per overlay created by showConfirmModal. `body` may be a
-		* string or a live HTMLElement; an element is APPENDED, not rendered, because callers read
-		* its value after the promise resolves. No focus trap, unlike the skill editor. Focus goes
-		* to Cancel for destructive actions so a stray Enter does not delete.
-		*/
-		const props = __props;
-		const message = ref(null);
-		const cancelEl = ref(null);
-		const confirmEl = ref(null);
-		const isEl = computed(() => props.body instanceof HTMLElement);
-		const hasBody = computed(() => !!props.body);
-		const modalClass = computed(() => "modal confirm-modal" + (props.body ? "" : " confirm-modal--titleonly"));
-		function onKey(e) {
-			if (e.key === "Escape") props.onPick(false);
-			else if (e.key === "Enter" && !(e.target instanceof HTMLButtonElement)) props.onConfirm();
-		}
-		onMounted(() => {
-			if (isEl.value && message.value) message.value.appendChild(props.body);
-			document.addEventListener("keydown", onKey);
-			(props.destructive ? cancelEl.value : confirmEl.value)?.focus();
-		});
-		onUnmounted(() => document.removeEventListener("keydown", onKey));
-		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock("div", { class: normalizeClass(modalClass.value) }, [
-				createElementVNode("div", _hoisted_1$35, [createElementVNode("span", null, toDisplayString(__props.title || "Confirm"), 1)]),
-				hasBody.value ? (openBlock(), createElementBlock("div", _hoisted_2$30, [createElementVNode("div", {
-					ref_key: "message",
-					ref: message,
-					class: "confirm-message"
-				}, toDisplayString(isEl.value ? "" : __props.body), 513)])) : createCommentVNode("", true),
-				createElementVNode("div", _hoisted_3$28, [
-					createElementVNode("button", {
-						ref_key: "cancelEl",
-						ref: cancelEl,
-						type: "button",
-						class: "btn-cancel",
-						onClick: _cache[0] || (_cache[0] = ($event) => props.onPick(false))
-					}, toDisplayString(__props.cancelLabel), 513),
-					(openBlock(true), createElementBlock(Fragment, null, renderList(__props.extraActions, (a) => {
-						return openBlock(), createElementBlock("button", {
-							key: a.label,
-							type: "button",
-							class: normalizeClass(a.className || "btn btn-secondary"),
-							onClick: ($event) => props.onPick(a.value)
-						}, toDisplayString(a.label), 11, _hoisted_4$23);
-					}), 128)),
-					createElementVNode("button", {
-						ref_key: "confirmEl",
-						ref: confirmEl,
-						type: "button",
-						class: normalizeClass(__props.destructive ? "btn btn-danger" : "btn btn-primary"),
-						onClick: _cache[1] || (_cache[1] = ($event) => props.onConfirm())
-					}, toDisplayString(__props.confirmLabel), 3)
-				])
-			], 2);
-		};
-	}
-});
-//#endregion
-//#region src/features/mention-popover-state.ts
-/** Candidate agents/people for the @-token being typed. */
-var mentionMatches = ref([]);
-/** Which candidate is highlighted — driven by arrow keys in the composer. */
-var mentionSelectedIndex = ref(0);
-//#endregion
-//#region src/features/MentionPopover.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$34 = ["onMousedown", "onTouchstart"];
-var _hoisted_2$29 = { class: "mention-popover-slug" };
-var _hoisted_3$27 = {
-	key: 0,
-	class: "mention-popover-name"
-};
-var _hoisted_4$22 = {
-	key: 1,
-	class: "mention-popover-person"
-};
-var _hoisted_5$20 = {
-	key: 2,
-	class: "mention-popover-prime"
-};
-var PERSON = "person";
-var DEFAULT_AGENT = "default";
-//#endregion
-//#region src/features/MentionPopover.vue
-var MentionPopover_default = /* @__PURE__ */ defineComponent({
-	__name: "MentionPopover",
+//#region src/features/ModelPicker.vue
+var ModelPicker_default = /* @__PURE__ */ defineComponent({
+	__name: "ModelPicker",
 	props: { onPick: { type: Function } },
 	setup(__props) {
 		/**
-		* The @-mention autocomplete popover, mounted into the element ensureMentionPopover()
-		* creates. mousedown and touchstart, NOT click: the composer's blur dismisses the popover
-		* before click fires, and on iOS synthesized mouse events can land after the dismiss
-		* timer. preventDefault keeps the input focused. Placement is pure CSS.
+		* The agent's model picker, mounted into <ul id="model-picker-list">. The Default row is
+		* pinned at the top and NEVER filtered out — the user may be searching to confirm that
+		* nothing matches. The empty note renders between Default and the matches, because "no
+		* matches" is about the registered models.
 		*/
 		const props = __props;
-		const nameLabel = (a) => ` — ${a.name}`;
-		function pick(e, i) {
-			e.preventDefault();
-			props.onPick(i);
+		function rowClass(r) {
+			const parts = ["model-picker-row"];
+			if (r.isDefault) parts.push("is-default");
+			if ((r.id || "") === pickerSelected.value) parts.push("selected");
+			return parts.join(" ");
+		}
+		function onKey(e, id) {
+			if (e.key === "Enter" || e.key === " ") {
+				e.preventDefault();
+				props.onPick(id);
+			}
 		}
 		return (_ctx, _cache) => {
-			return openBlock(true), createElementBlock(Fragment, null, renderList(unref(mentionMatches), (agent, i) => {
-				return openBlock(), createElementBlock("div", {
-					key: agent.folder ?? i,
-					class: normalizeClass(i === unref(mentionSelectedIndex) ? "mention-popover-item active" : "mention-popover-item"),
-					onMousedown: ($event) => pick($event, i),
-					onTouchstart: withModifiers(($event) => pick($event, i), ["prevent"])
-				}, [
-					createElementVNode("span", _hoisted_2$29, "@" + toDisplayString(agent.folder), 1),
-					agent.name && agent.name !== agent.folder ? (openBlock(), createElementBlock("span", _hoisted_3$27, toDisplayString(nameLabel(agent)), 1)) : createCommentVNode("", true),
-					agent.isUser ? (openBlock(), createElementBlock("span", _hoisted_4$22, toDisplayString(PERSON))) : agent.is_prime ? (openBlock(), createElementBlock("span", _hoisted_5$20, toDisplayString(DEFAULT_AGENT))) : createCommentVNode("", true)
-				], 42, _hoisted_1$34);
+			return openBlock(true), createElementBlock(Fragment, null, renderList(unref(pickerRows), (r) => {
+				return openBlock(), createElementBlock(Fragment, { key: r.key }, [createElementVNode("li", {
+					class: normalizeClass(rowClass(r)),
+					tabindex: "0",
+					"data-model-id": r.id || "",
+					onClick: ($event) => props.onPick(r.id || ""),
+					onKeydown: ($event) => onKey($event, r.id || "")
+				}, [createElementVNode("div", _hoisted_2$36, [createElementVNode("span", _hoisted_3$33, toDisplayString(r.name), 1), createElementVNode("span", { class: normalizeClass(r.badgeClass) }, toDisplayString(r.badgeText), 3)]), createElementVNode("div", _hoisted_4$28, toDisplayString(r.sub), 1)], 42, _hoisted_1$42), r.isDefault && unref(pickerEmptyNote) ? (openBlock(), createElementBlock("li", _hoisted_5$24, toDisplayString(unref(pickerEmptyNote)), 1)) : createCommentVNode("", true)], 64);
 			}), 128);
 		};
 	}
 });
 //#endregion
-//#region src/features/codex-code-state.ts
-/** The device code to enter at the sign-in page. Empty when there is none. */
-var codexUserCode = ref("");
-/** true when the flow is Codex at all — otherwise the line renders nothing. */
-var codexActive = ref(false);
+//#region src/features/reachability-state.ts
+/** 'checking' while the probe runs, then 'error' or 'outcome'. */
+var reachPhase = ref("checking");
+/** Message for the error phase. */
+var reachError = ref("");
+/** Verdict line, plus the copy-paste fix when there is one. */
+var reachOutcome = ref(null);
 //#endregion
-//#region src/features/CodexPairingCode.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$33 = {
-	class: "icon",
-	"aria-hidden": "true"
+//#region src/features/Reachability.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$41 = {
+	key: 0,
+	class: "model-reachability-result"
 };
-var _hoisted_2$28 = ["href"];
-var PREFIX$1 = "Pairing code: ";
-var NO_CODE = "Open the link, then approve the sign-in.";
-var COPY_TITLE = "Copy";
-var COPY_LABEL = "Copy pairing code";
+var _hoisted_2$35 = {
+	key: 1,
+	class: "model-reachability-result warn"
+};
+var _hoisted_3$32 = { class: "model-reachability-verdict" };
+var _hoisted_4$27 = { class: "model-reachability-fix" };
+var CHECKING = "Checking reachability…";
+var COPY$1 = "Copy fix";
+var COPIED$1 = "Copied";
 //#endregion
-//#region src/features/CodexPairingCode.vue
-var CodexPairingCode_default = /* @__PURE__ */ defineComponent({
-	__name: "CodexPairingCode",
+//#region src/features/Reachability.vue
+var Reachability_default = /* @__PURE__ */ defineComponent({
+	__name: "Reachability",
 	props: { onCopy: { type: Function } },
 	setup(__props) {
 		/**
-		* The Codex device pairing code, mounted into <p id="user-creds-oauth-codex-code">; the
-		* mint modal owns its hidden flag. Copy exists because the operator must TYPE this code at
-		* the ChatGPT sign-in page; on success the icon shows a check for 1500ms.
+		* The model endpoint reachability verdict, mounted into #model-reachability-panel, which
+		* models.ts creates after #model-live-facts and shows only for endpoints an agent dials
+		* directly. Three phases: wait line, transport/HTTP error, verdict. The fix block is a
+		* copy-paste command, so Copy is how the operator applies the remedy.
 		*/
 		const props = __props;
-		const copied = ref(false);
+		const copyLabel = ref(COPY$1);
 		let timer = null;
-		async function copy() {
-			if (!await props.onCopy(codexUserCode.value)) return;
-			copied.value = true;
+		async function copy(fix) {
+			if (!await props.onCopy(fix)) return;
+			copyLabel.value = COPIED$1;
 			if (timer) clearTimeout(timer);
-			timer = setTimeout(() => copied.value = false, 1500);
+			timer = setTimeout(() => copyLabel.value = COPY$1, 1500);
 		}
-		onUnmounted(() => {
-			if (timer) clearTimeout(timer);
-		});
 		return (_ctx, _cache) => {
-			return unref(codexActive) && unref(codexUserCode) ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [
-				createTextVNode(toDisplayString(PREFIX$1)),
-				createElementVNode("code", null, toDisplayString(unref(codexUserCode)), 1),
-				createElementVNode("button", {
-					type: "button",
-					class: normalizeClass(copied.value ? "codex-code-copy copied" : "codex-code-copy"),
-					title: COPY_TITLE,
-					"aria-label": COPY_LABEL,
-					onClick: copy
-				}, [(openBlock(), createElementBlock("svg", _hoisted_1$33, [createElementVNode("use", { href: copied.value ? "#i-check" : "#i-copy" }, null, 8, _hoisted_2$28)]))], 2)
-			], 64)) : unref(codexActive) ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createTextVNode(toDisplayString(NO_CODE))], 64)) : createCommentVNode("", true);
+			return unref(reachPhase) === "checking" ? (openBlock(), createElementBlock("div", _hoisted_1$41, [_cache[1] || (_cache[1] = createElementVNode("span", {
+				class: "btn-spinner",
+				"aria-hidden": "true"
+			}, null, -1)), createTextVNode(toDisplayString(CHECKING))])) : unref(reachPhase) === "error" ? (openBlock(), createElementBlock("div", _hoisted_2$35, toDisplayString(unref(reachError)), 1)) : unref(reachOutcome) ? (openBlock(), createElementBlock("div", {
+				key: 2,
+				class: normalizeClass(unref(reachOutcome).warn ? "model-reachability-result warn" : "model-reachability-result")
+			}, [createElementVNode("div", _hoisted_3$32, toDisplayString(`${unref(reachOutcome).warn ? "✕" : "✓"} ${unref(reachOutcome).label} — ${unref(reachOutcome).detail}`), 1), unref(reachOutcome).fix ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("pre", _hoisted_4$27, toDisplayString(unref(reachOutcome).fix), 1), createElementVNode("button", {
+				type: "button",
+				class: "btn btn-ghost",
+				onClick: _cache[0] || (_cache[0] = ($event) => copy(unref(reachOutcome).fix))
+			}, toDisplayString(copyLabel.value), 1)], 64)) : createCommentVNode("", true)], 2)) : createCommentVNode("", true);
 		};
 	}
 });
 //#endregion
-//#region src/features/modals.ts
-var deps$9 = {};
-/** Wire the composition-root helpers this module calls. Call once at startup. */
-function provideModalsDeps(provided) {
-	Object.assign(deps$9, provided);
-}
-function openHandlePopover() {
-	const pop = $("#handle-popover");
-	const input = $("#handle-input");
-	const status = $("#handle-status");
-	if (!pop) return;
-	if (input) input.value = state.myHandle || "";
-	if (status) {
-		status.hidden = true;
-		status.textContent = "";
-		status.classList.remove("ok", "err");
-	}
-	deps$9.updateHandleCreds();
-	pop.hidden = false;
-	$("#handle-chip")?.setAttribute("aria-expanded", "true");
-	if (input) input.focus();
-}
-function closeHandlePopover() {
-	const pop = $("#handle-popover");
-	if (!pop || pop.hidden) return;
-	pop.hidden = true;
-	$("#handle-chip")?.setAttribute("aria-expanded", "false");
-}
-var lightboxImages = [];
-var lightboxIndex = 0;
-var prevBodyOverflow = "";
-var lightboxCloseTimer = null;
-function applyLightboxTransform() {
-	const img = $("#lightbox-img");
-	img.style.transform = `translate(${lightboxXf.x}px, ${lightboxXf.y}px) scale(${lightboxXf.scale})`;
-}
-function resetLightboxTransform() {
-	lightboxXf.scale = 1;
-	lightboxXf.x = 0;
-	lightboxXf.y = 0;
-	applyLightboxTransform();
-}
-function setLightboxImage(idx) {
-	if (idx < 0 || idx >= lightboxImages.length) return;
-	lightboxIndex = idx;
-	const { url, alt } = lightboxImages[idx];
-	const img = $("#lightbox-img");
-	const spinner = $("#lightbox-spinner");
-	resetLightboxTransform();
-	spinner.hidden = false;
-	img.style.visibility = "hidden";
-	img.onload = img.onerror = () => {
-		spinner.hidden = true;
-		img.style.visibility = "";
-	};
-	img.src = url;
-	img.alt = alt;
-	const dl = $("#lightbox-download");
-	dl.href = url;
-	try {
-		const tail = new URL(url, location.href).pathname.split("/").pop();
-		if (tail) dl.setAttribute("download", tail);
-	} catch {
-		dl.setAttribute("download", "");
-	}
-	$("#lightbox-prev").hidden = idx <= 0;
-	$("#lightbox-next").hidden = idx >= lightboxImages.length - 1;
-}
-function openLightbox(url, alt) {
-	if (lightboxCloseTimer) {
-		clearTimeout(lightboxCloseTimer);
-		lightboxCloseTimer = null;
-	}
-	lightboxImages = snapshotRoomImages();
-	let idx = lightboxImages.findIndex((it) => it.url === url);
-	if (idx === -1) {
-		lightboxImages = [{
-			url,
-			alt: alt || ""
-		}];
-		idx = 0;
-	}
-	const overlay = $("#lightbox");
-	overlay.classList.remove("closing");
-	overlay.hidden = false;
-	lightboxOpen.value = true;
-	prevBodyOverflow = document.body.style.overflow;
-	document.body.style.overflow = "hidden";
-	setLightboxImage(idx);
-	history.pushState({ lightbox: true }, "");
-	requestAnimationFrame(() => $("#lightbox-close").focus());
-}
-function closeLightbox(fromPopstate = false) {
-	if (!lightboxOpen.value) return;
-	const overlay = $("#lightbox");
-	lightboxOpen.value = false;
-	overlay.classList.add("closing");
-	document.body.style.overflow = prevBodyOverflow;
-	lightboxCloseTimer = setTimeout(() => {
-		lightboxCloseTimer = null;
-		overlay.hidden = true;
-		overlay.classList.remove("closing");
-		$("#lightbox-img").src = "";
-		$("#lightbox-img").style.transform = "";
-		$("#lightbox-img").style.visibility = "";
-	}, 150);
-	if (!fromPopstate && history.state && history.state.lightbox) history.back();
-}
-function navigateLightbox(delta) {
-	const next = lightboxIndex + delta;
-	if (next < 0 || next >= lightboxImages.length) return;
-	setLightboxImage(next);
-}
-function blockingOverlayOpen() {
-	if (document.querySelector(".modal-overlay:not([hidden])")) return true;
-	return [
-		"model-picker",
-		"lightbox",
-		"attachment-drawer",
-		"members-overlay",
-		"handle-popover",
-		"overflow-menu",
-		"search-results",
-		"learn-menu"
-	].some((id) => {
-		const el = document.getElementById(id);
-		return el && !el.hidden;
-	});
-}
+//#region src/features/ollama-cards-state.ts
+/** Configured hosts, in the order /api/ollama/hosts returned them. */
+var hosts = ref([]);
+/** host → its model list. Keyed by host because the fetches race. */
+var hostModels = ref({});
+/** host → its in-flight or last-finished pull. Absent means no line shown. */
+var hostPulls = ref({});
 /**
-* Member Grok device login.
-*
-* Two polls, not one: the first waits for the CLI to print a URL and code, the
-* second waits for the member to approve on whatever device they opened it on.
-* `grokMintToken` is the cancellation signal — reopening or closing the modal
-* bumps it, and any in-flight loop notices and stops rather than writing into
-* a dialog that has moved on.
+* host → what pulling the currently-typed ref would cost, or null for "say
+* nothing". Null is the resting state and the honest answer whenever the size
+* cannot be read; only a real measurement earns a line.
 */
-var grokMintToken = 0;
-function cancelGrokMint() {
-	grokMintToken++;
-}
-async function openGrokMintModal(modal) {
-	const token = ++grokMintToken;
-	const alive = () => token === grokMintToken && !modal.hidden;
-	const status = (msg, kind = "") => userCredsOauthStatus(msg, kind);
-	const title = $("#user-creds-oauth-title");
-	if (title) title.textContent = "Connect to Grok";
-	$("#user-creds-oauth-step2").hidden = true;
-	$("#user-creds-oauth-submit").hidden = true;
-	$("#user-creds-oauth-spinner").hidden = false;
-	const code = $("#user-creds-oauth-code");
-	if (code) code.hidden = true;
-	const codeLabel = $("#user-creds-oauth-code-label");
-	if (codeLabel) codeLabel.hidden = true;
-	userCredsOauthReturnFocus.value = document.activeElement;
-	modal.hidden = false;
-	$("#user-creds-oauth-close")?.focus();
-	status("Starting sign-in…");
-	const poll = () => apiJson("/api/user-credentials/grok/status");
-	const wait = (ms) => new Promise((res) => setTimeout(res, ms));
-	try {
-		let d = await apiJson("/api/user-credentials/grok/start", {
-			method: "POST",
-			headers: { "X-Webchat-CSRF": "1" },
-			body: { roomId: state.currentRoom }
-		});
-		for (let i = 0; alive() && !d.verificationUrl && d.outcome !== "error" && i < 40; i++) {
-			await wait(750);
-			if (!alive()) return;
-			d = await poll();
-		}
-		if (!alive()) return;
-		if (d.outcome === "error") throw new Error(d.error || "Sign-in failed.");
-		if (!d.verificationUrl) throw new Error("Timed out waiting for the sign-in link.");
-		const link = $("#user-creds-oauth-link");
-		if (link) {
-			link.href = d.verificationUrl;
-			link.textContent = "Open Grok sign-in ↗";
-		}
-		codexActive.value = true;
-		codexUserCode.value = d.userCode || "";
-		const codexCode = $("#user-creds-oauth-codex-code");
-		if (codexCode) codexCode.hidden = false;
-		mountCodexCode();
-		$("#user-creds-oauth-spinner").hidden = true;
-		$("#user-creds-oauth-step2").hidden = false;
-		status("Open the link and approve — this page finishes on its own.");
-		link?.focus();
-		while (alive() && d.outcome === "pending") {
-			await wait(2e3);
-			if (!alive()) return;
-			d = await poll();
-		}
-		if (!alive()) return;
-		if (d.outcome !== "complete") throw new Error(d.error || "Sign-in was not completed.");
-		grokMintToken++;
-		codexActive.value = false;
-		showToast("Connected your Grok subscription.", { kind: "success" });
-		modal.hidden = true;
-		await updateUserCredsBanner(state.currentRoom);
-	} catch (err) {
-		if (!alive()) return;
-		$("#user-creds-oauth-spinner").hidden = true;
-		status(err?.message || "Could not start sign-in.", "error");
-	}
-}
-async function openOauthMintModal(target) {
-	userCredsOauthTarget.value = target;
-	const modal = $("#user-creds-oauth-modal");
-	if (!modal) return;
-	const isWorkspace = target.startsWith("workspace");
-	if (!isWorkspace && userCredsProvider.value === "grok") return openGrokMintModal(modal);
-	const isCodex = target === "workspace-codex" || !isWorkspace && userCredsProvider.value === "codex";
-	const title = $("#user-creds-oauth-title");
-	if (title) title.textContent = isWorkspace ? `Connect ${isCodex ? "ChatGPT" : "Claude"} (workspace default)` : `Connect to ${userCredsWords(userCredsProvider.value).name}`;
-	$("#user-creds-oauth-step2").hidden = true;
-	$("#user-creds-oauth-submit").hidden = true;
-	$("#user-creds-oauth-spinner").hidden = false;
-	const code = $("#user-creds-oauth-code");
-	if (code) code.value = "";
-	const codexCode = $("#user-creds-oauth-codex-code");
-	userCredsOauthReturnFocus.value = document.activeElement;
-	modal.hidden = false;
-	$("#user-creds-oauth-close")?.focus();
-	userCredsOauthStatus("Preparing sign-in…", "");
-	try {
-		const data = await apiJson(isWorkspace ? isCodex ? "/api/workspace-credential/codex/start" : "/api/workspace-credential/oauth/start" : isCodex ? "/api/user-credentials/codex/start" : "/api/user-credentials/oauth/start", {
-			method: "POST",
-			headers: { "X-Webchat-CSRF": "1" },
-			body: isWorkspace ? {} : { roomId: state.currentRoom }
-		});
-		userCredsOauthSessionId.value = data.sessionId;
-		const link = $("#user-creds-oauth-link");
-		if (link) {
-			link.href = data.url;
-			link.textContent = isWorkspace ? `Open ${isCodex ? "ChatGPT" : "Claude"} sign-in ↗` : `Open ${userCredsWords(userCredsProvider.value).name} sign-in ↗`;
-		}
-		if (code) code.hidden = isCodex;
-		const codeLabel = $("#user-creds-oauth-code-label");
-		if (codeLabel) codeLabel.hidden = isCodex;
-		if (codexCode) {
-			codexCode.hidden = !isCodex;
-			codexActive.value = isCodex;
-			codexUserCode.value = isCodex ? data.userCode || "" : "";
-			mountCodexCode();
-		}
-		const submit = $("#user-creds-oauth-submit");
-		if (submit) submit.textContent = isCodex ? "I’ve approved — connect" : "Connect";
-		$("#user-creds-oauth-spinner").hidden = true;
-		$("#user-creds-oauth-step2").hidden = false;
-		$("#user-creds-oauth-submit").hidden = false;
-		userCredsOauthStatus(isCodex ? "Open the link, enter the code, and approve — then click connect." : "", "");
-		$("#user-creds-oauth-link").focus();
-	} catch (err) {
-		$("#user-creds-oauth-spinner").hidden = true;
-		userCredsOauthStatus(err?.message || "Could not start sign-in.", "error");
-	}
-}
+var hostPullPreview = ref({});
 /**
-* Promise-based confirmation modal. Resolves true on confirm, false on
-* cancel / backdrop / Escape. `body` may be a string or an HTMLElement (use an
-* element when the message contains user-supplied text, so it stays escaped).
-* `destructive` styles the confirm button as a delete action and focuses
-* Cancel by default.
+* Which cards are expanded. Backed by localStorage under `serverCardOpen:<host>`;
+* held as a Set so the template does not touch localStorage on every patch.
 */
-function showConfirmModal({ title, body, confirmLabel = "Confirm", cancelLabel = "Cancel", destructive = false, extraActions = [], beforeConfirm = null }) {
-	return new Promise((resolve) => {
-		const overlay = document.createElement("div");
-		overlay.className = "modal-overlay confirm-overlay";
-		document.body.appendChild(overlay);
-		let settled = false;
-		let app = null;
-		const close = (result) => {
-			if (settled) return;
-			settled = true;
-			app?.unmount();
-			app = null;
-			overlay.remove();
-			resolve(result);
-		};
-		const confirm = () => {
-			if (beforeConfirm && beforeConfirm() === false) return;
-			close(true);
-		};
-		app = createApp(ConfirmModal_default, {
-			title,
-			body,
-			confirmLabel,
-			cancelLabel,
-			destructive: !!destructive,
-			extraActions,
-			onPick: close,
-			onConfirm: confirm
-		});
-		app.mount(overlay);
-		overlay.addEventListener("click", (e) => {
-			if (e.target === overlay) close(false);
-		});
-	});
+var openCards = ref(/* @__PURE__ */ new Set());
+function isCardOpen(host) {
+	return localStorage.getItem("serverCardOpen:" + host) === "1";
 }
-/** Single-line text prompt in the app's modal chrome — replaces native prompt()
-* (unstylable, ESC-inconsistent, blocked in some PWA contexts). Returns the
-* trimmed value, or null on cancel/empty.
-* `validate(trimmedValue)` (optional): return an error string to keep the modal
-* open with that message inline (DESIGN §5 — field validation is inline text),
-* or null/undefined to accept. */
-async function showInputModal({ title, placeholder = "", value = "", confirmLabel = "Create", validate = null }) {
-	const wrap = document.createElement("div");
-	const s = reactive({
-		placeholder,
-		initial: value,
-		validate,
-		error: "",
-		invalid: false,
-		el: null
-	});
-	const app = createApp(ConfirmInput_default);
-	app.provide("confirmInput", s);
-	app.mount(wrap);
-	let beforeConfirm = null;
-	if (validate) beforeConfirm = () => {
-		const msg = validate((s.el?.value ?? "").trim());
-		if (!msg) return true;
-		s.error = msg;
-		s.invalid = true;
-		s.el?.focus();
-		return false;
-	};
-	const done = showConfirmModal({
-		title,
-		body: wrap,
-		confirmLabel,
-		beforeConfirm
-	});
-	s.el?.focus();
-	const out = await done ? (s.el?.value ?? "").trim() || null : null;
-	app.unmount();
-	return out;
+function setCardOpen(host, open) {
+	localStorage.setItem("serverCardOpen:" + host, open ? "1" : "0");
+	const next = new Set(openCards.value);
+	if (open) next.add(host);
+	else next.delete(host);
+	openCards.value = next;
 }
-var mentionPopover = null;
-function ensureMentionPopover() {
-	if (mentionPopover) return mentionPopover;
-	const el = document.createElement("div");
-	el.id = "mention-popover";
-	el.className = "mention-popover";
-	el.hidden = true;
-	$("#message-form").appendChild(el);
-	mentionPopover = el;
-	return el;
+/** Seed the open-set from storage for a freshly loaded host list. */
+function syncOpenCards(list) {
+	openCards.value = new Set(list.filter(isCardOpen));
 }
-function dismissMentionPopover() {
-	setMentionStart(-1);
-	setMentionMatches([]);
-	if (mentionPopover) mentionPopover.hidden = true;
-}
-var codexCodeApp = null;
-function mountCodexCode() {
-	codexCodeApp ??= mountIsland("#user-creds-oauth-codex-code", () => createApp(CodexPairingCode_default, { onCopy: (code) => deps$9.copyTextToClipboard(code) }));
-}
-var mentionApp = null;
-function renderMentionPopover(input) {
-	const el = ensureMentionPopover();
-	if (getMentionMatches().length === 0) {
-		el.hidden = true;
-		return;
+/** host → its last health check (GET /api/models/hosts). Absent = not checked yet. */
+var hostHealth = ref({});
+/** The GPU fits running or just finished, newest last. */
+var fitJobs = ref([]);
+/** The owner's "Fit context to GPU" setting; null until loaded. */
+var fitContext = ref(null);
+//#endregion
+//#region src/features/ModelList.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$40 = {
+	key: 0,
+	style: {
+		cursor: "default",
+		opacity: .6
 	}
-	mentionMatches.value = getMentionMatches();
-	mentionSelectedIndex.value = getMentionSelectedIndex();
-	if (!mentionApp) {
-		mentionApp = createApp(MentionPopover_default, { onPick: (i) => {
-			setMentionSelectedIndex(i);
-			deps$9.acceptMention(input);
-		} });
-		mentionApp.mount(el);
-	}
-	el.hidden = false;
-}
-async function inspectAndConfirmImport(importBody, displayName, community) {
-	let insp = null;
-	try {
-		insp = await apiJson("/api/skills/inspect", {
-			method: "POST",
-			body: {
-				...importBody,
-				official: !community
-			}
-		});
-	} catch {}
-	if (!insp) return showConfirmModal({
-		title: `Import ${displayName}?`,
-		body: community ? "This is a community skill — its instructions and scripts will run in your agents. Review it first." : void 0,
-		confirmLabel: "Import",
-		destructive: !!community
-	});
-	const el = document.createElement("div");
-	const line = (text, cls) => {
-		const d = document.createElement("div");
-		if (cls) d.className = cls;
-		d.textContent = text;
-		el.appendChild(d);
-	};
-	const kb = Math.max(1, Math.round(insp.totalBytes / 1024));
-	line(`${insp.files} file${insp.files === 1 ? "" : "s"} · ${kb} KB · SKILL.md ≈ ${insp.skillMdTokens.toLocaleString()} tokens of agent context`);
-	line(insp.scripts.length ? `Scripts: ${insp.scripts.slice(0, 5).join(", ")}${insp.scripts.length > 5 ? ` +${insp.scripts.length - 5} more` : ""}` : "No scripts — instructions only");
-	if (insp.externalHosts.length) line(`Links out to: ${insp.externalHosts.slice(0, 6).join(", ")}`);
-	for (const w of insp.warnings) line(`⚠ ${w}`, "import-warning");
-	if (community) line("Community skill — unvetted. Its instructions and any scripts run in your agents.", "import-note");
-	return showConfirmModal({
-		title: `Import ${displayName}?`,
-		body: el,
-		confirmLabel: "Import",
-		destructive: !!community || insp.warnings.length > 0
-	});
-}
-/** Confirm modal with one switch option — the modal twin of .setting-toggle
-* (DESIGN.md §2b: binary choices are switches, never raw checkboxes). */
-async function confirmWithToggle({ title, toggleLabel, toggleLabels, note, confirmLabel }) {
-	const el = document.createElement("div");
-	const labels = toggleLabels ?? [toggleLabel];
-	const s = reactive({
-		labels,
-		note,
-		els: []
-	});
-	const app = createApp(ConfirmToggle_default);
-	app.provide("confirmToggle", s);
-	app.mount(el);
-	const ok = await showConfirmModal({
-		title,
-		body: el,
-		confirmLabel
-	});
-	const checks = labels.map((_, i) => !!s.els[i]?.checked);
-	app.unmount();
-	return {
-		ok,
-		checked: checks[0],
-		checks
-	};
-}
-function wireModalsPanel() {
-	$("#handle-chip")?.addEventListener("click", (e) => {
-		e.stopPropagation();
-		const pop = $("#handle-popover");
-		if (pop && pop.hidden) openHandlePopover();
-		else closeHandlePopover();
-	});
-	$("#handle-popover-close")?.addEventListener("click", closeHandlePopover);
-	document.addEventListener("click", (e) => {
-		const pop = $("#handle-popover");
-		if (!pop || pop.hidden) return;
-		if (pop.contains(e.target) || e.target === $("#handle-chip")) return;
-		closeHandlePopover();
-	});
-	document.addEventListener("keydown", (e) => {
-		if (e.key === "Escape") closeHandlePopover();
-	});
-	applySettings();
-	document.addEventListener("click", (e) => {
-		const btn = e.target?.closest(".feature-info-btn");
-		if (!btn) return;
-		const controls = btn.getAttribute("aria-controls");
-		const info = controls ? document.getElementById(controls) : null;
-		if (!info) return;
-		const open = info.hidden;
-		info.hidden = !open;
-		btn.setAttribute("aria-expanded", String(open));
-	});
-	$("#lightbox-close")?.addEventListener("click", () => closeLightbox());
-	$("#lightbox-prev")?.addEventListener("click", (e) => {
-		e.stopPropagation();
-		navigateLightbox(-1);
-	});
-	$("#lightbox-next")?.addEventListener("click", (e) => {
-		e.stopPropagation();
-		navigateLightbox(1);
-	});
-	$("#lightbox-download")?.addEventListener("click", (e) => e.stopPropagation());
-	$("#lightbox")?.addEventListener("click", (e) => {
-		if (e.target === $("#lightbox")) closeLightbox();
-	});
-	document.addEventListener("keydown", (e) => {
-		if (!lightboxOpen.value) return;
-		if (e.key === "Escape") closeLightbox();
-		else if (e.key === "ArrowLeft") navigateLightbox(-1);
-		else if (e.key === "ArrowRight") navigateLightbox(1);
-	});
-}
-var lightboxXf = {
-	scale: 1,
-	x: 0,
-	y: 0
 };
-var lightboxGesture = {
-	startScale: 1,
-	startDist: 0,
-	startX: 0,
-	startY: 0,
-	startTouchX: 0,
-	startTouchY: 0,
-	mode: null
+var _hoisted_2$34 = [
+	"data-model-id",
+	"onClick",
+	"onKeydown"
+];
+var _hoisted_3$31 = { class: "model-row-name" };
+var _hoisted_4$26 = {
+	key: 0,
+	class: "model-row-hint"
 };
-function getTouchDist(touches) {
-	const dx = touches[0].clientX - touches[1].clientX;
-	const dy = touches[0].clientY - touches[1].clientY;
-	return Math.hypot(dx, dy);
-}
-var lightboxImg = $("#lightbox-img");
-/** Pinch-zoom and pan gestures on the lightbox image. */
-function wireLightbox() {
-	if (!lightboxImg) return;
-	lightboxImg.addEventListener("touchstart", (e) => {
-		if (e.touches.length === 2) {
-			e.preventDefault();
-			lightboxGesture.mode = "pinch";
-			lightboxGesture.startScale = lightboxXf.scale;
-			lightboxGesture.startDist = getTouchDist(e.touches);
-			lightboxGesture.startX = lightboxXf.x;
-			lightboxGesture.startY = lightboxXf.y;
-			lightboxImg.classList.add("dragging");
-		} else if (e.touches.length === 1 && lightboxXf.scale > 1) {
-			e.preventDefault();
-			lightboxGesture.mode = "pan";
-			lightboxGesture.startTouchX = e.touches[0].clientX;
-			lightboxGesture.startTouchY = e.touches[0].clientY;
-			lightboxGesture.startX = lightboxXf.x;
-			lightboxGesture.startY = lightboxXf.y;
-			lightboxImg.classList.add("dragging");
+var _hoisted_5$23 = {
+	key: 1,
+	class: "model-row-host"
+};
+var _hoisted_6$20 = {
+	key: 2,
+	class: "model-row-uses"
+};
+var _hoisted_7$16 = ["onClick"];
+var REMOVE_GLYPH$1 = "−";
+var EMPTY$8 = "No models selected yet — use + on a server below, or “Add model endpoint…” for anything else.";
+var DOWN$1 = "Unreachable";
+//#endregion
+//#region src/features/ModelList.vue
+var ModelList_default = /* @__PURE__ */ defineComponent({
+	__name: "ModelList",
+	emits: ["pick", "remove"],
+	setup(__props, { emit: __emit }) {
+		/**
+		* The model list, mounted into <ul id="model-list">. The − remove button disables itself
+		* through the event target, not per-row state: it is feedback for one in-flight request.
+		*/
+		const emit = __emit;
+		function onRemove(ev, id) {
+			ev.stopPropagation();
+			emit("remove", id, ev.currentTarget);
 		}
-	}, { passive: false });
-	lightboxImg.addEventListener("touchmove", (e) => {
-		if (lightboxGesture.mode === "pinch" && e.touches.length === 2) {
-			e.preventDefault();
-			const ratio = getTouchDist(e.touches) / lightboxGesture.startDist;
-			lightboxXf.scale = Math.max(.5, Math.min(4, lightboxGesture.startScale * ratio));
-			applyLightboxTransform();
-		} else if (lightboxGesture.mode === "pan" && e.touches.length === 1) {
-			e.preventDefault();
-			lightboxXf.x = lightboxGesture.startX + (e.touches[0].clientX - lightboxGesture.startTouchX);
-			lightboxXf.y = lightboxGesture.startY + (e.touches[0].clientY - lightboxGesture.startTouchY);
-			applyLightboxTransform();
-		}
-	}, { passive: false });
-	lightboxImg.addEventListener("touchend", () => {
-		lightboxGesture.mode = null;
-		lightboxImg.classList.remove("dragging");
-		if (lightboxXf.scale < 1.05) resetLightboxTransform();
-	});
-}
-/** The OAuth mint modal: code submission, spinner and step transitions. */
-function wireUserCredsOauth() {
-	$("#user-creds-oauth-submit")?.addEventListener("click", async () => {
-		const isWorkspace = (userCredsOauthTarget.value ?? "").startsWith("workspace");
-		const isCodex = (userCredsOauthTarget.value ?? "") === "workspace-codex" || !isWorkspace && userCredsProvider.value === "codex";
-		const code = ($("#user-creds-oauth-code")?.value || "").trim();
-		if (!userCredsOauthSessionId.value) return;
-		if (!isCodex && !code) return;
-		const btn = $("#user-creds-oauth-submit");
-		const step2 = $("#user-creds-oauth-step2");
-		const spinner = $("#user-creds-oauth-spinner");
-		const modal = $("#user-creds-oauth-modal");
-		if (!btn || !step2 || !spinner || !modal) return;
-		btn.disabled = true;
-		step2.hidden = true;
-		spinner.hidden = false;
-		const { subWord } = userCredsWords(userCredsProvider.value);
-		userCredsOauthStatus("Connecting…", "");
-		try {
-			await apiJson(isWorkspace ? isCodex ? "/api/workspace-credential/codex/finish" : "/api/workspace-credential/oauth/code" : isCodex ? "/api/user-credentials/codex/finish" : "/api/user-credentials/oauth/code", {
-				method: "POST",
-				headers: { "X-Webchat-CSRF": "1" },
-				body: isWorkspace ? isCodex ? { sessionId: userCredsOauthSessionId.value } : {
-					sessionId: userCredsOauthSessionId.value,
-					code
-				} : isCodex ? {
-					roomId: state.currentRoom,
-					sessionId: userCredsOauthSessionId.value
-				} : {
-					roomId: state.currentRoom,
-					sessionId: userCredsOauthSessionId.value,
-					code
-				}
-			});
-			userCredsOauthSessionId.value = null;
-			if (isWorkspace) {
-				showToast(`Workspace default ${isCodex ? "ChatGPT" : "Claude"} subscription connected.`, { kind: "success" });
-				modal.hidden = true;
-				refreshWizardCredState();
-			} else {
-				showToast(`Connected your ${subWord}.`, { kind: "success" });
-				modal.hidden = true;
-				await updateUserCredsBanner(state.currentRoom);
-			}
-		} catch (err) {
-			spinner.hidden = true;
-			step2.hidden = false;
-			userCredsOauthStatus(err.message || "Could not connect.", "error");
-		} finally {
-			btn.disabled = false;
-		}
-	});
-}
-/** The OAuth modal's status line (#user-creds-oauth-status). */
-function userCredsOauthStatus(msg, kind) {
-	const el = $("#user-creds-oauth-status");
-	if (!el) return;
-	if (!msg) {
-		el.hidden = true;
-		return;
+		return (_ctx, _cache) => {
+			return unref(modelRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$40, toDisplayString(EMPTY$8))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(modelRows), (row) => {
+				return openBlock(), createElementBlock("li", mergeProps({
+					key: row.id,
+					"data-model-id": row.id
+				}, { ref_for: true }, row.active ? { class: "active" } : {}, {
+					role: "button",
+					tabindex: "0",
+					onClick: ($event) => emit("pick", row.id),
+					onKeydown: [withKeys(withModifiers(($event) => emit("pick", row.id), ["prevent"]), ["enter"]), withKeys(withModifiers(($event) => emit("pick", row.id), ["prevent"]), ["space"])]
+				}), [
+					createElementVNode("span", { class: normalizeClass(`model-kind-badge kind-${row.badgeKind}`) }, toDisplayString(row.badgeText), 3),
+					createElementVNode("span", _hoisted_3$31, toDisplayString(row.title), 1),
+					row.hint ? (openBlock(), createElementBlock("span", _hoisted_4$26, toDisplayString(row.hint), 1)) : row.host ? (openBlock(), createElementBlock("span", _hoisted_5$23, [row.healthKey && unref(hostHealth)[row.healthKey]?.status === "down" ? (openBlock(), createElementBlock("span", {
+						key: 0,
+						class: "host-dot down",
+						role: "img",
+						title: DOWN$1,
+						"aria-label": DOWN$1
+					})) : createCommentVNode("", true), createTextVNode(toDisplayString(row.host), 1)])) : createCommentVNode("", true),
+					row.uses > 0 ? (openBlock(), createElementBlock("span", _hoisted_6$20, toDisplayString(row.uses) + "×", 1)) : createCommentVNode("", true),
+					createElementVNode("button", {
+						type: "button",
+						class: "btn btn-ghost select-toggle on",
+						title: "Remove from selectable models",
+						"aria-label": "Remove from selectable models",
+						onClick: ($event) => onRemove($event, row.id)
+					}, toDisplayString(REMOVE_GLYPH$1), 8, _hoisted_7$16)
+				], 16, _hoisted_2$34);
+			}), 128));
+		};
 	}
-	el.hidden = false;
-	el.textContent = msg;
-	el.className = "user-creds-oauth-status" + (kind ? " " + kind : "");
-}
+});
 //#endregion
 //#region src/features/fit-context-offer.ts
 function hostOf(endpoint) {
@@ -12242,9 +9417,9 @@ async function offerFitContext(added) {
 }
 //#endregion
 //#region src/features/select-toggle.ts
-var deps$8 = {};
+var deps$11 = {};
 function provideSelectToggleDeps(provided) {
-	Object.assign(deps$8, provided);
+	Object.assign(deps$11, provided);
 }
 /**
 * The registered selectable matching this server row, if there is one. Endpoints
@@ -12300,8 +9475,8 @@ async function toggleSelectable(kind, endpoint, modelId, displayName, setBusy) {
 			showToast("Added to selectable models", { kind: "success" });
 			added = out?.model ?? null;
 		}
-		await deps$8.fetchModels();
-		deps$8.refreshRouterRoster();
+		await deps$11.fetchModels();
+		deps$11.refreshRouterRoster();
 		if (added) offerFitContext([added]);
 	} catch (err) {
 		showToast(String(err.message || err), { kind: "error" });
@@ -12314,7 +9489,7 @@ async function toggleSelectable(kind, endpoint, modelId, displayName, setBusy) {
 var modelAssignees = ref([]);
 //#endregion
 //#region src/features/ModelUsage.vue?vue&type=script&setup=true&lang.ts
-var PREFIX = "Assigned to: ";
+var PREFIX$1 = "Assigned to: ";
 var NONE = "Not assigned to any agent yet.";
 //#endregion
 //#region src/features/ModelUsage.vue
@@ -12327,7 +9502,7 @@ var ModelUsage_default = /* @__PURE__ */ defineComponent({
 		* markup. The prefix is bound, not template text, so no newlines surround it.
 		*/
 		return (_ctx, _cache) => {
-			return unref(modelAssignees).length ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createTextVNode(toDisplayString(PREFIX)), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(modelAssignees), (n, i) => {
+			return unref(modelAssignees).length ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createTextVNode(toDisplayString(PREFIX$1)), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(modelAssignees), (n, i) => {
 				return openBlock(), createElementBlock("span", {
 					key: i,
 					class: "model-assignee-chip"
@@ -12350,22 +9525,22 @@ var routeSuggestions = ref([]);
 var routeSuggestBusy = ref(/* @__PURE__ */ new Set());
 //#endregion
 //#region src/features/RouteList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$32 = {
+var _hoisted_1$39 = {
 	key: 0,
 	class: "ollama-muted"
 };
-var _hoisted_2$27 = ["onClick", "onKeydown"];
-var _hoisted_3$26 = { class: "route-row-top" };
-var _hoisted_4$21 = { class: "model-row-name" };
-var _hoisted_5$19 = {
+var _hoisted_2$33 = ["onClick", "onKeydown"];
+var _hoisted_3$30 = { class: "route-row-top" };
+var _hoisted_4$25 = { class: "model-row-name" };
+var _hoisted_5$22 = {
 	key: 0,
 	class: "model-kind-badge model-default-badge"
 };
-var _hoisted_6$17 = {
+var _hoisted_6$19 = {
 	key: 1,
 	class: "model-row-uses"
 };
-var _hoisted_7$13 = { class: "model-row-host" };
+var _hoisted_7$15 = { class: "model-row-host" };
 var EMPTY$7 = "No routes yet — add one, or a suggestion will offer to.";
 var NO_DESC = "No description — click to add the rule";
 var DEFAULT_CHIP = "default";
@@ -12390,7 +9565,7 @@ var RouteList_default = /* @__PURE__ */ defineComponent({
 			}
 		}
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [unref(routeRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$32, toDisplayString(EMPTY$7))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(routeRows), (r, i) => {
+			return openBlock(), createElementBlock(Fragment, null, [unref(routeRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$39, toDisplayString(EMPTY$7))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(routeRows), (r, i) => {
 				return openBlock(), createElementBlock("li", {
 					key: r.name,
 					class: normalizeClass(i === unref(routeSelectedIdx) ? "route-row active" : "route-row"),
@@ -12398,20 +9573,20 @@ var RouteList_default = /* @__PURE__ */ defineComponent({
 					tabindex: "0",
 					onClick: ($event) => props.onActivate(i),
 					onKeydown: ($event) => onKey($event, i)
-				}, [createElementVNode("div", _hoisted_3$26, [
-					createElementVNode("span", _hoisted_4$21, toDisplayString(r.name), 1),
-					unref(routeDefaultName) === r.name ? (openBlock(), createElementBlock("span", _hoisted_5$19, toDisplayString(DEFAULT_CHIP))) : createCommentVNode("", true),
-					r.pinned ? (openBlock(), createElementBlock("span", _hoisted_6$17, toDisplayString(PINNED))) : createCommentVNode("", true),
-					createElementVNode("span", _hoisted_7$13, toDisplayString(r.model || ""), 1)
-				]), createElementVNode("div", { class: normalizeClass(r.description ? "route-row-desc" : "route-row-desc empty") }, toDisplayString(r.description || NO_DESC), 3)], 42, _hoisted_2$27);
+				}, [createElementVNode("div", _hoisted_3$30, [
+					createElementVNode("span", _hoisted_4$25, toDisplayString(r.name), 1),
+					unref(routeDefaultName) === r.name ? (openBlock(), createElementBlock("span", _hoisted_5$22, toDisplayString(DEFAULT_CHIP))) : createCommentVNode("", true),
+					r.pinned ? (openBlock(), createElementBlock("span", _hoisted_6$19, toDisplayString(PINNED))) : createCommentVNode("", true),
+					createElementVNode("span", _hoisted_7$15, toDisplayString(r.model || ""), 1)
+				]), createElementVNode("div", { class: normalizeClass(r.description ? "route-row-desc" : "route-row-desc empty") }, toDisplayString(r.description || NO_DESC), 3)], 42, _hoisted_2$33);
 			}), 128))], 64);
 		};
 	}
 });
 //#endregion
 //#region src/features/RouteSuggestions.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$31 = { class: "route-suggestion-text" };
-var _hoisted_2$26 = ["disabled", "onClick"];
+var _hoisted_1$38 = { class: "route-suggestion-text" };
+var _hoisted_2$32 = ["disabled", "onClick"];
 //#endregion
 //#region src/features/RouteSuggestions.vue
 var RouteSuggestions_default = /* @__PURE__ */ defineComponent({
@@ -12430,7 +9605,7 @@ var RouteSuggestions_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("div", {
 					key: s.capability,
 					class: "route-suggestion"
-				}, [createElementVNode("span", _hoisted_1$31, [
+				}, [createElementVNode("span", _hoisted_1$38, [
 					createElementVNode("strong", null, toDisplayString(s.model), 1),
 					_cache[0] || (_cache[0] = createTextVNode(" can do ", -1)),
 					createElementVNode("strong", null, toDisplayString(s.capability), 1),
@@ -12440,7 +9615,7 @@ var RouteSuggestions_default = /* @__PURE__ */ defineComponent({
 					type: "button",
 					disabled: unref(routeSuggestBusy).has(s.capability) || void 0,
 					onClick: ($event) => props.onCreate(s)
-				}, "Create " + toDisplayString(s.capability) + " route", 9, _hoisted_2$26)]);
+				}, "Create " + toDisplayString(s.capability) + " route", 9, _hoisted_2$32)]);
 			}), 128);
 		};
 	}
@@ -12456,15 +9631,15 @@ var decisionsPhase = ref("rows");
 var decisionsRouter = ref("auto");
 //#endregion
 //#region src/features/RoutingDecisions.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$30 = {
+var _hoisted_1$37 = {
 	key: 0,
 	class: "ollama-muted"
 };
-var _hoisted_2$25 = {
+var _hoisted_2$31 = {
 	key: 1,
 	class: "ollama-muted"
 };
-var _hoisted_3$25 = ["title"];
+var _hoisted_3$29 = ["title"];
 var ERROR_TEXT = "Log unavailable";
 //#endregion
 //#region src/features/RoutingDecisions.vue
@@ -12492,12 +9667,12 @@ var RoutingDecisions_default = /* @__PURE__ */ defineComponent({
 			};
 		}));
 		return (_ctx, _cache) => {
-			return unref(decisionsPhase) === "error" ? (openBlock(), createElementBlock("div", _hoisted_1$30, toDisplayString(ERROR_TEXT))) : unref(decisionsPhase) === "empty" ? (openBlock(), createElementBlock("div", _hoisted_2$25, toDisplayString(emptyText.value), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 2 }, renderList(rows.value, (r) => {
+			return unref(decisionsPhase) === "error" ? (openBlock(), createElementBlock("div", _hoisted_1$37, toDisplayString(ERROR_TEXT))) : unref(decisionsPhase) === "empty" ? (openBlock(), createElementBlock("div", _hoisted_2$31, toDisplayString(emptyText.value), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 2 }, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("div", {
 					key: r.key,
 					class: normalizeClass(r.err ? "routing-decision-row err" : "routing-decision-row"),
 					title: r.title
-				}, toDisplayString(r.text), 11, _hoisted_3$25);
+				}, toDisplayString(r.text), 11, _hoisted_3$29);
 			}), 128));
 		};
 	}
@@ -13620,14 +10795,14 @@ var agentSkillRows = ref([]);
 var agentSkillsEnabled = ref(/* @__PURE__ */ new Set());
 //#endregion
 //#region src/features/AgentSkillsList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$29 = {
+var _hoisted_1$36 = {
 	key: 0,
 	class: "agent-mcp-empty"
 };
-var _hoisted_2$24 = ["onClick", "onKeydown"];
-var _hoisted_3$24 = { class: "agent-mcp-name" };
-var _hoisted_4$20 = { class: "agent-mcp-meta" };
-var _hoisted_5$18 = [
+var _hoisted_2$30 = ["onClick", "onKeydown"];
+var _hoisted_3$28 = { class: "agent-mcp-name" };
+var _hoisted_4$24 = { class: "agent-mcp-meta" };
+var _hoisted_5$21 = [
 	".checked",
 	"data-skill",
 	"aria-label"
@@ -13647,7 +10822,7 @@ var AgentSkillsList_default = /* @__PURE__ */ defineComponent({
 		*/
 		const emit = __emit;
 		return (_ctx, _cache) => {
-			return unref(agentSkillRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$29, toDisplayString(EMPTY$6))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(agentSkillRows), (s) => {
+			return unref(agentSkillRows).length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$36, toDisplayString(EMPTY$6))) : (openBlock(true), createElementBlock(Fragment, { key: 1 }, renderList(unref(agentSkillRows), (s) => {
 				return openBlock(), createElementBlock("li", {
 					key: s.name,
 					class: "agent-skill-row"
@@ -13659,14 +10834,14 @@ var AgentSkillsList_default = /* @__PURE__ */ defineComponent({
 					title: "View skill details",
 					onClick: ($event) => emit("view", s.name),
 					onKeydown: [withKeys(withModifiers(($event) => emit("view", s.name), ["prevent"]), ["enter"]), withKeys(withModifiers(($event) => emit("view", s.name), ["prevent"]), ["space"])]
-				}, [createElementVNode("span", _hoisted_3$24, toDisplayString(s.name ?? ""), 1), createElementVNode("span", _hoisted_4$20, toDisplayString(s.description || ""), 1)], 40, _hoisted_2$24), createElementVNode("input", {
+				}, [createElementVNode("span", _hoisted_3$28, toDisplayString(s.name ?? ""), 1), createElementVNode("span", _hoisted_4$24, toDisplayString(s.description || ""), 1)], 40, _hoisted_2$30), createElementVNode("input", {
 					type: "checkbox",
 					class: "agent-skill-toggle",
 					".checked": unref(agentSkillsEnabled).has(s.name),
 					"data-skill": s.name,
 					"aria-label": `Enable skill ${s.name}`,
 					onChange: _cache[0] || (_cache[0] = ($event) => emit("dirty"))
-				}, null, 40, _hoisted_5$18)]);
+				}, null, 40, _hoisted_5$21)]);
 			}), 128));
 		};
 	}
@@ -13684,15 +10859,15 @@ var learnAutoTrigger = ref(false);
 var learnAutoKeep = ref(false);
 //#endregion
 //#region src/features/LearnMenu.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$28 = ["onClick"];
-var _hoisted_2$23 = {
+var _hoisted_1$35 = ["onClick"];
+var _hoisted_2$29 = {
 	class: "icon",
 	"aria-hidden": "true"
 };
-var _hoisted_3$23 = ["href"];
-var _hoisted_4$19 = { class: "learn-menu-key" };
-var _hoisted_5$17 = ["aria-checked"];
-var _hoisted_6$16 = ["aria-checked"];
+var _hoisted_3$27 = ["href"];
+var _hoisted_4$23 = { class: "learn-menu-key" };
+var _hoisted_5$20 = ["aria-checked"];
+var _hoisted_6$18 = ["aria-checked"];
 var AUTO_TRIGGER = "Auto-distill busy turns (this room)";
 var AUTO_KEEP = "Auto-keep drafts (this room)";
 //#endregion
@@ -13744,32 +10919,32 @@ var LearnMenu_default = /* @__PURE__ */ defineComponent({
 					class: "learn-menu-item",
 					role: "menuitem",
 					onClick: ($event) => fire(it.key)
-				}, [(openBlock(), createElementBlock("svg", _hoisted_2$23, [createElementVNode("use", { href: `#${it.icon}` }, null, 8, _hoisted_3$23)])), createElementVNode("span", _hoisted_4$19, toDisplayString(it.label), 1)], 8, _hoisted_1$28);
+				}, [(openBlock(), createElementBlock("svg", _hoisted_2$29, [createElementVNode("use", { href: `#${it.icon}` }, null, 8, _hoisted_3$27)])), createElementVNode("span", _hoisted_4$23, toDisplayString(it.label), 1)], 8, _hoisted_1$35);
 			}), 64)), unref(learnTogglesVisible) ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
 				type: "button",
 				class: "learn-menu-item",
 				role: "menuitemcheckbox",
 				"aria-checked": unref(learnAutoTrigger),
 				onClick: _cache[0] || (_cache[0] = ($event) => props.onAutoTrigger(!unref(learnAutoTrigger)))
-			}, [createElementVNode("span", null, toDisplayString(AUTO_TRIGGER)), createElementVNode("span", { class: normalizeClass(unref(learnAutoTrigger) ? "learn-menu-state on" : "learn-menu-state") }, toDisplayString(unref(learnAutoTrigger) ? "on" : "off"), 3)], 8, _hoisted_5$17), createElementVNode("button", {
+			}, [createElementVNode("span", null, toDisplayString(AUTO_TRIGGER)), createElementVNode("span", { class: normalizeClass(unref(learnAutoTrigger) ? "learn-menu-state on" : "learn-menu-state") }, toDisplayString(unref(learnAutoTrigger) ? "on" : "off"), 3)], 8, _hoisted_5$20), createElementVNode("button", {
 				type: "button",
 				class: "learn-menu-item",
 				role: "menuitemcheckbox",
 				"aria-checked": unref(learnAutoKeep),
 				onClick: _cache[1] || (_cache[1] = ($event) => props.onAutoKeep(!unref(learnAutoKeep)))
-			}, [createElementVNode("span", null, toDisplayString(AUTO_KEEP)), createElementVNode("span", { class: normalizeClass(unref(learnAutoKeep) ? "learn-menu-state on" : "learn-menu-state") }, toDisplayString(unref(learnAutoKeep) ? "on" : "off"), 3)], 8, _hoisted_6$16)], 64)) : createCommentVNode("", true)], 64);
+			}, [createElementVNode("span", null, toDisplayString(AUTO_KEEP)), createElementVNode("span", { class: normalizeClass(unref(learnAutoKeep) ? "learn-menu-state on" : "learn-menu-state") }, toDisplayString(unref(learnAutoKeep) ? "on" : "off"), 3)], 8, _hoisted_6$18)], 64)) : createCommentVNode("", true)], 64);
 		};
 	}
 });
 //#endregion
 //#region src/features/LearnTargetPicker.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$27 = [
+var _hoisted_1$34 = [
 	"^value",
 	"disabled",
 	"title"
 ];
-var _hoisted_2$22 = ["hidden"];
-var _hoisted_3$22 = ["value"];
+var _hoisted_2$28 = ["hidden"];
+var _hoisted_3$26 = ["value"];
 //#endregion
 //#region src/features/LearnTargetPicker.vue
 var LearnTargetPicker_default = /* @__PURE__ */ defineComponent({
@@ -13809,7 +10984,7 @@ var LearnTargetPicker_default = /* @__PURE__ */ defineComponent({
 					"^value": a.id,
 					disabled: (unref(s).roomsByAgent.get(a.id) || []).length === 0 || void 0,
 					title: (unref(s).roomsByAgent.get(a.id) || []).length === 0 ? "No room" : void 0
-				}, toDisplayString(a.name), 9, _hoisted_1$27);
+				}, toDisplayString(a.name), 9, _hoisted_1$34);
 			}), 128))], 544), createElementVNode("select", {
 				class: "confirm-input",
 				"aria-label": "Room",
@@ -13819,17 +10994,17 @@ var LearnTargetPicker_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("option", {
 					key: r.id,
 					value: r.id
-				}, toDisplayString(r.name), 9, _hoisted_3$22);
-			}), 128))], 8, _hoisted_2$22)], 64);
+				}, toDisplayString(r.name), 9, _hoisted_3$26);
+			}), 128))], 8, _hoisted_2$28)], 64);
 		};
 	}
 });
 //#endregion
 //#region src/features/learn.ts
-var deps$7 = {};
+var deps$10 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideLearnDeps(provided) {
-	Object.assign(deps$7, provided);
+	Object.assign(deps$10, provided);
 }
 function applyLearningMaster() {
 	const learnBtn = document.getElementById("learn-btn");
@@ -13966,7 +11141,7 @@ function triggerLearn(command = "/learn") {
 	if (!input || input.disabled || !state.currentRoom) return;
 	hideLearnNudge();
 	input.value = command;
-	deps$7.sendCurrentMessage();
+	deps$10.sendCurrentMessage();
 }
 function learnSourceFirstToken(value) {
 	return value.trim().split(/\s+/)[0] || "";
@@ -14101,11 +11276,11 @@ function wireLearnPanel() {
 }
 //#endregion
 //#region src/features/SkillDuplicates.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$26 = { class: "skill-info" };
-var _hoisted_2$21 = { class: "skill-head" };
-var _hoisted_3$21 = { class: "skill-name" };
-var _hoisted_4$18 = { class: "skill-desc" };
-var _hoisted_5$16 = ["disabled", "onClick"];
+var _hoisted_1$33 = { class: "skill-info" };
+var _hoisted_2$27 = { class: "skill-head" };
+var _hoisted_3$25 = { class: "skill-name" };
+var _hoisted_4$22 = { class: "skill-desc" };
+var _hoisted_5$19 = ["disabled", "onClick"];
 var PROMOTE = "Promote";
 //#endregion
 //#region src/features/SkillDuplicates.vue
@@ -14131,30 +11306,30 @@ var SkillDuplicates_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("li", {
 					key: r.name,
 					class: "skill-row"
-				}, [createElementVNode("div", _hoisted_1$26, [createElementVNode("div", _hoisted_2$21, [createElementVNode("span", _hoisted_3$21, toDisplayString(r.name), 1), createElementVNode("span", {
+				}, [createElementVNode("div", _hoisted_1$33, [createElementVNode("div", _hoisted_2$27, [createElementVNode("span", _hoisted_3$25, toDisplayString(r.name), 1), createElementVNode("span", {
 					class: "skill-badge skill-badge-origin",
 					style: DUP_HUE
-				}, toDisplayString(r.badge), 1)]), createElementVNode("span", _hoisted_4$18, toDisplayString(r.agents), 1)]), createElementVNode("button", {
+				}, toDisplayString(r.badge), 1)]), createElementVNode("span", _hoisted_4$22, toDisplayString(r.agents), 1)]), createElementVNode("button", {
 					type: "button",
 					class: "btn btn-secondary skill-catalog-add",
 					disabled: unref(promotingSkills).has(r.name),
 					onClick: ($event) => props.onPromote(r.name)
-				}, toDisplayString(PROMOTE), 8, _hoisted_5$16)]);
+				}, toDisplayString(PROMOTE), 8, _hoisted_5$19)]);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/AgentScopedSkills.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$25 = {
+var _hoisted_1$32 = {
 	key: 0,
 	class: "agent-mcp-empty"
 };
-var _hoisted_2$20 = ["onClick", "onKeydown"];
-var _hoisted_3$20 = { class: "skill-head" };
-var _hoisted_4$17 = { class: "agent-mcp-name" };
-var _hoisted_5$15 = { class: "agent-mcp-meta" };
-var _hoisted_6$15 = ["onClick"];
+var _hoisted_2$26 = ["onClick", "onKeydown"];
+var _hoisted_3$24 = { class: "skill-head" };
+var _hoisted_4$21 = { class: "agent-mcp-name" };
+var _hoisted_5$18 = { class: "agent-mcp-meta" };
+var _hoisted_6$17 = ["onClick"];
 var EMPTY$5 = "None yet — import one below (this agent only).";
 var REMOVE$3 = "Remove";
 var OPEN_TITLE = "View / edit this skill";
@@ -14185,7 +11360,7 @@ var AgentScopedSkills_default = /* @__PURE__ */ defineComponent({
 			}
 		}
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$25, toDisplayString(EMPTY$5))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
+			return openBlock(), createElementBlock(Fragment, null, [rows.value.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_1$32, toDisplayString(EMPTY$5))) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
 				return openBlock(), createElementBlock("li", {
 					key: r.name,
 					class: "agent-skill-row"
@@ -14197,26 +11372,26 @@ var AgentScopedSkills_default = /* @__PURE__ */ defineComponent({
 					title: OPEN_TITLE,
 					onClick: ($event) => props.onOpen(r.name),
 					onKeydown: ($event) => onKey($event, r.name)
-				}, [createElementVNode("div", _hoisted_3$20, [createElementVNode("span", _hoisted_4$17, toDisplayString(r.name), 1), r.origin ? (openBlock(), createBlock(OriginBadge_default, {
+				}, [createElementVNode("div", _hoisted_3$24, [createElementVNode("span", _hoisted_4$21, toDisplayString(r.name), 1), r.origin ? (openBlock(), createBlock(OriginBadge_default, {
 					key: 0,
 					origin: r.origin
-				}, null, 8, ["origin"])) : createCommentVNode("", true)]), createElementVNode("span", _hoisted_5$15, toDisplayString(r.desc), 1)], 40, _hoisted_2$20), createElementVNode("button", {
+				}, null, 8, ["origin"])) : createCommentVNode("", true)]), createElementVNode("span", _hoisted_5$18, toDisplayString(r.desc), 1)], 40, _hoisted_2$26), createElementVNode("button", {
 					type: "button",
 					class: "skill-delete",
 					onClick: ($event) => props.onRemove(r.name, $event.currentTarget)
-				}, toDisplayString(REMOVE$3), 8, _hoisted_6$15)]);
+				}, toDisplayString(REMOVE$3), 8, _hoisted_6$17)]);
 			}), 128))], 64);
 		};
 	}
 });
 //#endregion
 //#region src/features/SkillSources.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$24 = { class: "skill-info" };
-var _hoisted_2$19 = { class: "skill-head" };
-var _hoisted_3$19 = { class: "skill-desc" };
-var _hoisted_4$16 = ["onClick"];
-var _hoisted_5$14 = ["onClick"];
-var _hoisted_6$14 = ["onClick"];
+var _hoisted_1$31 = { class: "skill-info" };
+var _hoisted_2$25 = { class: "skill-head" };
+var _hoisted_3$23 = { class: "skill-desc" };
+var _hoisted_4$20 = ["onClick"];
+var _hoisted_5$17 = ["onClick"];
+var _hoisted_6$16 = ["onClick"];
 var EDIT = "Edit";
 var REMOVE$2 = "Remove";
 var ADD$2 = "Add";
@@ -14243,61 +11418,61 @@ var SkillSources_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("li", {
 					key: r.key,
 					class: normalizeClass(r.disabled ? "skill-source-row source-disabled" : "skill-source-row")
-				}, [createElementVNode("div", _hoisted_1$24, [createElementVNode("div", _hoisted_2$19, [createVNode(OriginBadge_default, { origin: r.origin }, null, 8, ["origin"])]), createElementVNode("span", _hoisted_3$19, toDisplayString(r.meta), 1)]), r.kind === "source" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
+				}, [createElementVNode("div", _hoisted_1$31, [createElementVNode("div", _hoisted_2$25, [createVNode(OriginBadge_default, { origin: r.origin }, null, 8, ["origin"])]), createElementVNode("span", _hoisted_3$23, toDisplayString(r.meta), 1)]), r.kind === "source" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("button", {
 					type: "button",
 					class: "btn btn-ghost",
 					onClick: ($event) => props.onEdit(r)
-				}, toDisplayString(EDIT), 8, _hoisted_4$16), createElementVNode("button", {
+				}, toDisplayString(EDIT), 8, _hoisted_4$20), createElementVNode("button", {
 					type: "button",
 					class: "skill-delete",
 					onClick: ($event) => props.onRemove(r)
-				}, toDisplayString(REMOVE$2), 8, _hoisted_5$14)], 64)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("span", { class: "skill-badge" }, toDisplayString(BUILT_IN)), createElementVNode("button", {
+				}, toDisplayString(REMOVE$2), 8, _hoisted_5$17)], 64)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("span", { class: "skill-badge" }, toDisplayString(BUILT_IN)), createElementVNode("button", {
 					type: "button",
 					class: normalizeClass(r.disabled ? "btn btn-ghost" : "skill-delete"),
 					onClick: ($event) => props.onToggleBuiltin(r)
-				}, toDisplayString(r.disabled ? ADD$2 : REMOVE$2), 11, _hoisted_6$14)], 64))], 2);
+				}, toDisplayString(r.disabled ? ADD$2 : REMOVE$2), 11, _hoisted_6$16)], 64))], 2);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/SkillsRegistry.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$23 = {
+var _hoisted_1$30 = {
 	key: 0,
 	class: "skills-empty"
 };
-var _hoisted_2$18 = {
+var _hoisted_2$24 = {
 	key: 1,
 	class: "skills-empty"
 };
-var _hoisted_3$18 = [
+var _hoisted_3$22 = [
 	"data-section-head",
 	"hidden",
 	"aria-expanded",
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_4$15 = { class: "skills-section-label" };
-var _hoisted_5$13 = {
+var _hoisted_4$19 = { class: "skills-section-label" };
+var _hoisted_5$16 = {
 	key: 0,
 	class: "skill-badge skill-badge-scope"
 };
-var _hoisted_6$13 = { class: "skills-section-count" };
-var _hoisted_7$12 = [
+var _hoisted_6$15 = { class: "skills-section-count" };
+var _hoisted_7$14 = [
 	"data-section",
 	"data-search",
 	"hidden"
 ];
-var _hoisted_8$9 = ["onClick", "onKeydown"];
-var _hoisted_9$7 = { class: "skill-head" };
-var _hoisted_10$7 = { class: "skill-name" };
-var _hoisted_11$5 = { class: "skill-desc" };
-var _hoisted_12$5 = ["disabled", "onClick"];
-var _hoisted_13$5 = ["onClick"];
-var _hoisted_14$5 = ["onClick"];
-var _hoisted_15$5 = ["onClick"];
-var _hoisted_16$5 = ["hidden"];
-var LOADING$2 = "Loading…";
+var _hoisted_8$11 = ["onClick", "onKeydown"];
+var _hoisted_9$9 = { class: "skill-head" };
+var _hoisted_10$9 = { class: "skill-name" };
+var _hoisted_11$7 = { class: "skill-desc" };
+var _hoisted_12$7 = ["disabled", "onClick"];
+var _hoisted_13$7 = ["onClick"];
+var _hoisted_14$7 = ["onClick"];
+var _hoisted_15$7 = ["onClick"];
+var _hoisted_16$7 = ["hidden"];
+var LOADING$3 = "Loading…";
 var EMPTY$4 = "No skills yet — import one above.";
 var NO_MATCH = "No matching skills";
 var REMOVE$1 = "Remove";
@@ -14340,10 +11515,10 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 		});
 		const anyMatch = computed(() => !!skillsFilter.value && view.value.some((s) => !s.headHidden));
 		return (_ctx, _cache) => {
-			return unref(skillsPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$23, [_cache[0] || (_cache[0] = createElementVNode("span", {
+			return unref(skillsPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$30, [_cache[0] || (_cache[0] = createElementVNode("span", {
 				class: "btn-spinner",
 				"aria-hidden": "true"
-			}, null, -1)), createTextVNode(toDisplayString(LOADING$2))])) : unref(skillsPhase) === "empty" ? (openBlock(), createElementBlock("li", _hoisted_2$18, toDisplayString(EMPTY$4))) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(view.value, (s) => {
+			}, null, -1)), createTextVNode(toDisplayString(LOADING$3))])) : unref(skillsPhase) === "empty" ? (openBlock(), createElementBlock("li", _hoisted_2$24, toDisplayString(EMPTY$4))) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(view.value, (s) => {
 				return openBlock(), createElementBlock(Fragment, { key: s.key }, [createElementVNode("li", {
 					class: normalizeClass(s.open ? "skills-section-head open" : "skills-section-head"),
 					"data-section-head": s.key,
@@ -14360,10 +11535,10 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 					}
 				}, [
 					createElementVNode("span", { class: "skills-section-chevron" }, toDisplayString(CHEVRON$1)),
-					createElementVNode("span", _hoisted_4$15, toDisplayString(s.label), 1),
-					s.roomName ? (openBlock(), createElementBlock("span", _hoisted_5$13, toDisplayString(s.roomName), 1)) : createCommentVNode("", true),
-					createElementVNode("span", _hoisted_6$13, toDisplayString(s.rows.length), 1)
-				], 42, _hoisted_3$18), (openBlock(true), createElementBlock(Fragment, null, renderList(s.rows, (r) => {
+					createElementVNode("span", _hoisted_4$19, toDisplayString(s.label), 1),
+					s.roomName ? (openBlock(), createElementBlock("span", _hoisted_5$16, toDisplayString(s.roomName), 1)) : createCommentVNode("", true),
+					createElementVNode("span", _hoisted_6$15, toDisplayString(s.rows.length), 1)
+				], 42, _hoisted_3$22), (openBlock(true), createElementBlock(Fragment, null, renderList(s.rows, (r) => {
 					return openBlock(), createElementBlock("li", mergeProps({
 						key: r.key,
 						class: "skill-row"
@@ -14383,8 +11558,8 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 								props.onOpen(r);
 							}
 						}
-					}, [createElementVNode("div", _hoisted_9$7, [
-						createElementVNode("span", _hoisted_10$7, toDisplayString(r.name), 1),
+					}, [createElementVNode("div", _hoisted_9$9, [
+						createElementVNode("span", _hoisted_10$9, toDisplayString(r.name), 1),
 						r.badge.kind === "origin" ? (openBlock(), createBlock(OriginBadge_default, {
 							key: 0,
 							origin: r.badge.origin
@@ -14396,7 +11571,7 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 							key: 2,
 							origin: r.extraOrigin
 						}, null, 8, ["origin"])) : createCommentVNode("", true)
-					]), createElementVNode("span", _hoisted_11$5, toDisplayString(r.desc), 1)], 40, _hoisted_8$9), r.source === "user" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [unref(skillUpdates)[r.name] ? (openBlock(), createElementBlock("button", {
+					]), createElementVNode("span", _hoisted_11$7, toDisplayString(r.desc), 1)], 40, _hoisted_8$11), r.source === "user" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [unref(skillUpdates)[r.name] ? (openBlock(), createElementBlock("button", {
 						key: 0,
 						type: "button",
 						class: "btn btn-secondary skill-update-btn",
@@ -14407,43 +11582,43 @@ var SkillsRegistry_default = /* @__PURE__ */ defineComponent({
 						busy: unref(skillUpdating).has(r.name),
 						label: UPDATE,
 						"busy-label": UPDATING
-					}, null, 8, ["busy"])], 8, _hoisted_12$5)) : createCommentVNode("", true), createElementVNode("button", {
+					}, null, 8, ["busy"])], 8, _hoisted_12$7)) : createCommentVNode("", true), createElementVNode("button", {
 						type: "button",
 						class: "skill-delete",
 						onClick: ($event) => props.onDelete(r)
-					}, toDisplayString(REMOVE$1), 8, _hoisted_13$5)], 64)) : r.source === "scoped" ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("button", {
+					}, toDisplayString(REMOVE$1), 8, _hoisted_13$7)], 64)) : r.source === "scoped" ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("button", {
 						type: "button",
 						class: "btn btn-ghost skill-history-btn",
 						onClick: ($event) => props.onHistory(r)
-					}, toDisplayString(HISTORY), 8, _hoisted_14$5), createElementVNode("button", {
+					}, toDisplayString(HISTORY), 8, _hoisted_14$7), createElementVNode("button", {
 						type: "button",
 						class: "skill-delete",
 						onClick: ($event) => props.onDelete(r)
-					}, toDisplayString(REMOVE$1), 8, _hoisted_15$5)], 64)) : createCommentVNode("", true)], 16, _hoisted_7$12);
+					}, toDisplayString(REMOVE$1), 8, _hoisted_15$7)], 64)) : createCommentVNode("", true)], 16, _hoisted_7$14);
 				}), 128))], 64);
 			}), 128)), createElementVNode("li", {
 				id: "skills-no-match",
 				class: "skills-empty",
 				hidden: !unref(skillsFilter) || anyMatch.value
-			}, toDisplayString(NO_MATCH), 8, _hoisted_16$5)], 64));
+			}, toDisplayString(NO_MATCH), 8, _hoisted_16$7)], 64));
 		};
 	}
 });
 //#endregion
 //#region src/features/SkillDrafts.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$22 = ["data-draft-id"];
-var _hoisted_2$17 = ["onClick"];
-var _hoisted_3$17 = { class: "skill-head" };
-var _hoisted_4$14 = { class: "skill-name" };
-var _hoisted_5$12 = { class: "skill-desc" };
-var _hoisted_6$12 = ["onClick"];
-var _hoisted_7$11 = [
+var _hoisted_1$29 = ["data-draft-id"];
+var _hoisted_2$23 = ["onClick"];
+var _hoisted_3$21 = { class: "skill-head" };
+var _hoisted_4$18 = { class: "skill-name" };
+var _hoisted_5$15 = { class: "skill-desc" };
+var _hoisted_6$14 = ["onClick"];
+var _hoisted_7$13 = [
 	"title",
 	"data-draft-id",
 	"disabled",
 	"onClick"
 ];
-var _hoisted_8$8 = ["onClick"];
+var _hoisted_8$10 = ["onClick"];
 var KEEP$1 = "Keep";
 var DISCARD$1 = "Discard";
 var REVIEWING$1 = "Checking for overlaps…";
@@ -14490,14 +11665,14 @@ var SkillDrafts_default = /* @__PURE__ */ defineComponent({
 					class: "skill-info",
 					style: { cursor: "pointer" },
 					onClick: ($event) => props.onOpen(r.id)
-				}, [createElementVNode("div", _hoisted_3$17, [createElementVNode("span", _hoisted_4$14, toDisplayString(r.name), 1), createElementVNode("span", {
+				}, [createElementVNode("div", _hoisted_3$21, [createElementVNode("span", _hoisted_4$18, toDisplayString(r.name), 1), createElementVNode("span", {
 					class: "skill-badge skill-badge-origin",
 					style: LEARNED_HUE
-				}, toDisplayString(r.badge), 1)]), createElementVNode("span", _hoisted_5$12, [createTextVNode(toDisplayString(r.desc), 1), r.roomId ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createTextVNode(toDisplayString(SPACE)), createElementVNode("a", {
+				}, toDisplayString(r.badge), 1)]), createElementVNode("span", _hoisted_5$15, [createTextVNode(toDisplayString(r.desc), 1), r.roomId ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createTextVNode(toDisplayString(SPACE)), createElementVNode("a", {
 					href: "#",
 					class: "skill-draft-source",
 					onClick: withModifiers(($event) => props.onSource(r.roomId), ["stop", "prevent"])
-				}, toDisplayString(SOURCE), 8, _hoisted_6$12)], 64)) : createCommentVNode("", true)])], 8, _hoisted_2$17), createElementVNode("span", mergeProps({ class: "skill-draft-actions" }, { ref_for: true }, unref(draftUndo)[r.id]?.width ? { style: { width: unref(draftUndo)[r.id].width } } : {}), [unref(draftUndo)[r.id] ? (openBlock(), createBlock(UndoTimer_default, {
+				}, toDisplayString(SOURCE), 8, _hoisted_6$14)], 64)) : createCommentVNode("", true)])], 8, _hoisted_2$23), createElementVNode("span", mergeProps({ class: "skill-draft-actions" }, { ref_for: true }, unref(draftUndo)[r.id]?.width ? { style: { width: unref(draftUndo)[r.id].width } } : {}), [unref(draftUndo)[r.id] ? (openBlock(), createBlock(UndoTimer_default, {
 					key: 0,
 					label: unref(draftUndo)[r.id].label,
 					seconds: __props.undoSeconds,
@@ -14519,39 +11694,39 @@ var SkillDrafts_default = /* @__PURE__ */ defineComponent({
 					busy: unref(draftsReviewing).has(r.id),
 					label: KEEP$1,
 					"busy-label": REVIEWING$1
-				}, null, 8, ["busy"])], 8, _hoisted_7$11), createElementVNode("button", {
+				}, null, 8, ["busy"])], 8, _hoisted_7$13), createElementVNode("button", {
 					type: "button",
 					class: "skill-delete",
 					onClick: ($event) => props.onDiscard(r)
-				}, toDisplayString(DISCARD$1), 8, _hoisted_8$8)], 64))], 16)], 8, _hoisted_1$22);
+				}, toDisplayString(DISCARD$1), 8, _hoisted_8$10)], 64))], 16)], 8, _hoisted_1$29);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/SkillPool.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$21 = {
+var _hoisted_1$28 = {
 	key: 0,
 	class: "skills-empty"
 };
-var _hoisted_2$16 = {
+var _hoisted_2$22 = {
 	key: 1,
 	class: "skills-empty"
 };
-var _hoisted_3$16 = {
+var _hoisted_3$20 = {
 	key: 2,
 	class: "skills-empty"
 };
-var _hoisted_4$13 = { class: "skill-info" };
-var _hoisted_5$11 = { class: "skill-head" };
-var _hoisted_6$11 = { class: "skill-name" };
-var _hoisted_7$10 = { class: "skill-desc" };
-var _hoisted_8$7 = ["href"];
-var _hoisted_9$6 = {
+var _hoisted_4$17 = { class: "skill-info" };
+var _hoisted_5$14 = { class: "skill-head" };
+var _hoisted_6$13 = { class: "skill-name" };
+var _hoisted_7$12 = { class: "skill-desc" };
+var _hoisted_8$9 = ["href"];
+var _hoisted_9$8 = {
 	key: 1,
 	class: "skill-badge skill-badge-user"
 };
-var _hoisted_10$6 = ["onClick"];
+var _hoisted_10$8 = ["onClick"];
 var FAILED$1 = "Couldn’t load skills — import by URL below.";
 var REVIEW = "Review ↗";
 var ADDED = "added";
@@ -14572,28 +11747,28 @@ var SkillPool_default = /* @__PURE__ */ defineComponent({
 		const waitLabel = computed(() => skillPoolQuery.value ? "Searching…" : "Loading skills…");
 		const emptyLabel = computed(() => skillPoolQuery.value ? "No matches." : "Nothing here yet.");
 		return (_ctx, _cache) => {
-			return unref(skillPoolPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$21, [_cache[0] || (_cache[0] = createElementVNode("span", {
+			return unref(skillPoolPhase) === "loading" ? (openBlock(), createElementBlock("li", _hoisted_1$28, [_cache[0] || (_cache[0] = createElementVNode("span", {
 				class: "btn-spinner",
 				"aria-hidden": "true"
-			}, null, -1)), createTextVNode(toDisplayString(waitLabel.value), 1)])) : unref(skillPoolPhase) === "error" ? (openBlock(), createElementBlock("li", _hoisted_2$16, toDisplayString(FAILED$1))) : unref(skillPoolPhase) === "empty" ? (openBlock(), createElementBlock("li", _hoisted_3$16, toDisplayString(emptyLabel.value), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(unref(skillPool), (s) => {
+			}, null, -1)), createTextVNode(toDisplayString(waitLabel.value), 1)])) : unref(skillPoolPhase) === "error" ? (openBlock(), createElementBlock("li", _hoisted_2$22, toDisplayString(FAILED$1))) : unref(skillPoolPhase) === "empty" ? (openBlock(), createElementBlock("li", _hoisted_3$20, toDisplayString(emptyLabel.value), 1)) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(unref(skillPool), (s) => {
 				return openBlock(), createElementBlock("li", {
 					key: s.name,
 					class: "skill-row"
 				}, [
-					createElementVNode("div", _hoisted_4$13, [createElementVNode("div", _hoisted_5$11, [createElementVNode("span", _hoisted_6$11, toDisplayString(s.name ?? ""), 1), createVNode(OriginBadge_default, { origin: s.origin }, null, 8, ["origin"])]), createElementVNode("span", _hoisted_7$10, toDisplayString(s.description || ""), 1)]),
+					createElementVNode("div", _hoisted_4$17, [createElementVNode("div", _hoisted_5$14, [createElementVNode("span", _hoisted_6$13, toDisplayString(s.name ?? ""), 1), createVNode(OriginBadge_default, { origin: s.origin }, null, 8, ["origin"])]), createElementVNode("span", _hoisted_7$12, toDisplayString(s.description || ""), 1)]),
 					unref(skillPoolCommunity) && s.review ? (openBlock(), createElementBlock("a", {
 						key: 0,
 						class: "skill-review",
 						href: s.review,
 						target: "_blank",
 						rel: "noopener noreferrer"
-					}, toDisplayString(REVIEW), 8, _hoisted_8$7)) : createCommentVNode("", true),
-					s.installed ? (openBlock(), createElementBlock("span", _hoisted_9$6, toDisplayString(ADDED))) : (openBlock(), createElementBlock("button", {
+					}, toDisplayString(REVIEW), 8, _hoisted_8$9)) : createCommentVNode("", true),
+					s.installed ? (openBlock(), createElementBlock("span", _hoisted_9$8, toDisplayString(ADDED))) : (openBlock(), createElementBlock("button", {
 						key: 2,
 						type: "button",
 						class: "btn btn-secondary skill-catalog-add",
 						onClick: ($event) => props.onAdd(s)
-					}, toDisplayString(ADD$1), 8, _hoisted_10$6))
+					}, toDisplayString(ADD$1), 8, _hoisted_10$8))
 				]);
 			}), 128));
 		};
@@ -14601,15 +11776,15 @@ var SkillPool_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/SkillSuggestions.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$20 = { class: "skill-info" };
-var _hoisted_2$15 = { class: "skill-head" };
-var _hoisted_3$15 = { class: "skill-name" };
-var _hoisted_4$12 = { class: "skill-desc" };
-var _hoisted_5$10 = {
+var _hoisted_1$27 = { class: "skill-info" };
+var _hoisted_2$21 = { class: "skill-head" };
+var _hoisted_3$19 = { class: "skill-name" };
+var _hoisted_4$16 = { class: "skill-desc" };
+var _hoisted_5$13 = {
 	key: 0,
 	class: "skill-badge"
 };
-var _hoisted_6$10 = [
+var _hoisted_6$12 = [
 	"data-url",
 	"data-name",
 	"aria-label"
@@ -14631,58 +11806,58 @@ var SkillSuggestions_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("li", {
 					key: s.name,
 					class: "agent-create-skill-row"
-				}, [createElementVNode("div", _hoisted_1$20, [createElementVNode("div", _hoisted_2$15, [createElementVNode("span", _hoisted_3$15, toDisplayString(s.name ?? ""), 1)]), createElementVNode("span", _hoisted_4$12, toDisplayString(s.description || ""), 1)]), s.source === "installed" ? (openBlock(), createElementBlock("span", _hoisted_5$10, toDisplayString(AVAILABLE))) : (openBlock(), createElementBlock("input", {
+				}, [createElementVNode("div", _hoisted_1$27, [createElementVNode("div", _hoisted_2$21, [createElementVNode("span", _hoisted_3$19, toDisplayString(s.name ?? ""), 1)]), createElementVNode("span", _hoisted_4$16, toDisplayString(s.description || ""), 1)]), s.source === "installed" ? (openBlock(), createElementBlock("span", _hoisted_5$13, toDisplayString(AVAILABLE))) : (openBlock(), createElementBlock("input", {
 					key: 1,
 					type: "checkbox",
 					class: "agent-create-skill-check",
 					"data-url": s.url,
 					"data-name": s.name,
 					"aria-label": `Add skill ${s.name} (${s.source})`
-				}, null, 8, _hoisted_6$10))]);
+				}, null, 8, _hoisted_6$12))]);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/RoomSkills.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$19 = {
+var _hoisted_1$26 = {
 	key: 0,
 	class: "room-skill-row proposed"
 };
-var _hoisted_2$14 = { class: "room-skill-head" };
-var _hoisted_3$14 = { class: "room-skill-name" };
-var _hoisted_4$11 = { class: "room-skill-desc" };
-var _hoisted_5$9 = ["onClick"];
-var _hoisted_6$9 = [
+var _hoisted_2$20 = { class: "room-skill-head" };
+var _hoisted_3$18 = { class: "room-skill-name" };
+var _hoisted_4$15 = { class: "room-skill-desc" };
+var _hoisted_5$12 = ["onClick"];
+var _hoisted_6$11 = [
 	"title",
 	"data-draft-id",
 	"disabled",
 	"onClick"
 ];
-var _hoisted_7$9 = ["onClick"];
-var _hoisted_8$6 = {
+var _hoisted_7$11 = ["onClick"];
+var _hoisted_8$8 = {
 	key: 1,
 	class: "room-skill-row"
 };
-var _hoisted_9$5 = { class: "room-skill-head" };
-var _hoisted_10$5 = { class: "room-skill-name" };
-var _hoisted_11$4 = {
+var _hoisted_9$7 = { class: "room-skill-head" };
+var _hoisted_10$7 = { class: "room-skill-name" };
+var _hoisted_11$6 = {
 	key: 1,
 	class: "room-skill-agent"
 };
-var _hoisted_12$4 = {
+var _hoisted_12$6 = {
 	key: 2,
 	class: "room-skill-agent"
 };
-var _hoisted_13$4 = ["onClick"];
-var _hoisted_14$4 = ["title", "onClick"];
-var _hoisted_15$4 = {
+var _hoisted_13$6 = ["onClick"];
+var _hoisted_14$6 = ["title", "onClick"];
+var _hoisted_15$6 = {
 	key: 2,
 	class: "room-skill-row room-skill-archived"
 };
-var _hoisted_16$4 = { class: "room-skill-head" };
-var _hoisted_17$4 = { class: "room-skill-name" };
-var _hoisted_18$3 = ["onClick"];
+var _hoisted_16$6 = { class: "room-skill-head" };
+var _hoisted_17$6 = { class: "room-skill-name" };
+var _hoisted_18$5 = ["onClick"];
 var VIEW = "View";
 var KEEP = "Keep";
 var REVIEWING = "Checking for overlaps…";
@@ -14717,9 +11892,9 @@ var RoomSkills_default = /* @__PURE__ */ defineComponent({
 		const rows = computed(() => roomSkillRows.value);
 		return (_ctx, _cache) => {
 			return openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
-				return openBlock(), createElementBlock(Fragment, { key: r.key }, [r.kind === "proposed" ? (openBlock(), createElementBlock("li", _hoisted_1$19, [
-					createElementVNode("div", _hoisted_2$14, [createElementVNode("span", _hoisted_3$14, toDisplayString(r.name), 1), createVNode(OriginBadge_default, { origin: r.origin }, null, 8, ["origin"])]),
-					createElementVNode("div", _hoisted_4$11, toDisplayString(r.desc), 1),
+				return openBlock(), createElementBlock(Fragment, { key: r.key }, [r.kind === "proposed" ? (openBlock(), createElementBlock("li", _hoisted_1$26, [
+					createElementVNode("div", _hoisted_2$20, [createElementVNode("span", _hoisted_3$18, toDisplayString(r.name), 1), createVNode(OriginBadge_default, { origin: r.origin }, null, 8, ["origin"])]),
+					createElementVNode("div", _hoisted_4$15, toDisplayString(r.desc), 1),
 					createElementVNode("div", mergeProps({ class: "room-skill-actions" }, { ref_for: true }, unref(roomSkillUndo)[r.id]?.width ? { style: { width: unref(roomSkillUndo)[r.id].width } } : {}), [unref(roomSkillUndo)[r.id] ? (openBlock(), createBlock(UndoTimer_default, {
 						key: 0,
 						label: unref(roomSkillUndo)[r.id].label,
@@ -14736,7 +11911,7 @@ var RoomSkills_default = /* @__PURE__ */ defineComponent({
 							type: "button",
 							class: "btn btn-ghost",
 							onClick: ($event) => props.onView(r.id)
-						}, toDisplayString(VIEW), 8, _hoisted_5$9),
+						}, toDisplayString(VIEW), 8, _hoisted_5$12),
 						createElementVNode("button", {
 							type: "button",
 							class: "btn btn-primary",
@@ -14748,54 +11923,54 @@ var RoomSkills_default = /* @__PURE__ */ defineComponent({
 							busy: unref(roomSkillsReviewing).has(r.id),
 							label: KEEP,
 							"busy-label": REVIEWING
-						}, null, 8, ["busy"])], 8, _hoisted_6$9),
+						}, null, 8, ["busy"])], 8, _hoisted_6$11),
 						createElementVNode("button", {
 							type: "button",
 							class: "skill-delete",
 							onClick: ($event) => props.onDiscard(r)
-						}, toDisplayString(DISCARD), 8, _hoisted_7$9)
+						}, toDisplayString(DISCARD), 8, _hoisted_7$11)
 					], 64))], 16)
-				])) : r.kind === "learned" ? (openBlock(), createElementBlock("li", _hoisted_8$6, [createElementVNode("div", _hoisted_9$5, [
-					createElementVNode("span", _hoisted_10$5, toDisplayString(r.name), 1),
+				])) : r.kind === "learned" ? (openBlock(), createElementBlock("li", _hoisted_8$8, [createElementVNode("div", _hoisted_9$7, [
+					createElementVNode("span", _hoisted_10$7, toDisplayString(r.name), 1),
 					r.origin ? (openBlock(), createBlock(OriginBadge_default, {
 						key: 0,
 						origin: r.origin
 					}, null, 8, ["origin"])) : createCommentVNode("", true),
-					r.who ? (openBlock(), createElementBlock("span", _hoisted_11$4, toDisplayString(r.who), 1)) : createCommentVNode("", true),
-					r.uses ? (openBlock(), createElementBlock("span", _hoisted_12$4, toDisplayString(r.uses), 1)) : createCommentVNode("", true),
+					r.who ? (openBlock(), createElementBlock("span", _hoisted_11$6, toDisplayString(r.who), 1)) : createCommentVNode("", true),
+					r.uses ? (openBlock(), createElementBlock("span", _hoisted_12$6, toDisplayString(r.uses), 1)) : createCommentVNode("", true),
 					r.hasHistory ? (openBlock(), createElementBlock("button", {
 						key: 3,
 						type: "button",
 						class: "btn btn-ghost",
 						title: REVERT_TITLE,
 						onClick: ($event) => props.onRevert(r)
-					}, toDisplayString(REVERT$1), 8, _hoisted_13$4)) : createCommentVNode("", true)
+					}, toDisplayString(REVERT$1), 8, _hoisted_13$6)) : createCommentVNode("", true)
 				]), createElementVNode("button", {
 					type: "button",
 					class: "skill-delete",
 					title: r.removeTitle,
 					onClick: ($event) => props.onRemove(r)
-				}, toDisplayString(REMOVE_GLYPH), 8, _hoisted_14$4)])) : (openBlock(), createElementBlock("li", _hoisted_15$4, [createElementVNode("div", _hoisted_16$4, [createElementVNode("span", _hoisted_17$4, toDisplayString(r.name), 1), createElementVNode("span", { class: "room-skill-agent" }, toDisplayString(ARCHIVED_TAG))]), createElementVNode("button", {
+				}, toDisplayString(REMOVE_GLYPH), 8, _hoisted_14$6)])) : (openBlock(), createElementBlock("li", _hoisted_15$6, [createElementVNode("div", _hoisted_16$6, [createElementVNode("span", _hoisted_17$6, toDisplayString(r.name), 1), createElementVNode("span", { class: "room-skill-agent" }, toDisplayString(ARCHIVED_TAG))]), createElementVNode("button", {
 					type: "button",
 					class: "btn btn-ghost",
 					onClick: ($event) => props.onRestore(r)
-				}, toDisplayString(RESTORE), 8, _hoisted_18$3)]))], 64);
+				}, toDisplayString(RESTORE), 8, _hoisted_18$5)]))], 64);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/SkillEditorModal.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$18 = { class: "modal-header" };
-var _hoisted_2$13 = {
+var _hoisted_1$25 = { class: "modal-header" };
+var _hoisted_2$19 = {
 	key: 0,
 	class: "skill-badge skill-badge-user"
 };
-var _hoisted_3$13 = { class: "modal-body" };
-var _hoisted_4$10 = ["readonly"];
-var _hoisted_5$8 = { class: "confirm-actions" };
-var _hoisted_6$8 = ["onClick"];
-var _hoisted_7$8 = ["disabled"];
+var _hoisted_3$17 = { class: "modal-body" };
+var _hoisted_4$14 = ["readonly"];
+var _hoisted_5$11 = { class: "confirm-actions" };
+var _hoisted_6$10 = ["onClick"];
+var _hoisted_7$10 = ["disabled"];
 var SAVING = "Saving…";
 var SAVE = "Save";
 var TITLE_ID = "skill-edit-modal-title";
@@ -14868,15 +12043,15 @@ var SkillEditorModal_default = /* @__PURE__ */ defineComponent({
 				"aria-modal": "true",
 				"aria-labelledby": TITLE_ID
 			}, [
-				createElementVNode("div", _hoisted_1$18, [createElementVNode("span", { id: TITLE_ID }, toDisplayString(__props.name), 1), __props.badgeText ? (openBlock(), createElementBlock("span", _hoisted_2$13, toDisplayString(__props.badgeText), 1)) : createCommentVNode("", true)]),
-				createElementVNode("div", _hoisted_3$13, [createElementVNode("textarea", {
+				createElementVNode("div", _hoisted_1$25, [createElementVNode("span", { id: TITLE_ID }, toDisplayString(__props.name), 1), __props.badgeText ? (openBlock(), createElementBlock("span", _hoisted_2$19, toDisplayString(__props.badgeText), 1)) : createCommentVNode("", true)]),
+				createElementVNode("div", _hoisted_3$17, [createElementVNode("textarea", {
 					ref_key: "ta",
 					ref: ta,
 					class: "skill-edit-textarea",
 					readonly: !__props.editable,
 					spellcheck: "false"
-				}, null, 8, _hoisted_4$10)]),
-				createElementVNode("div", _hoisted_5$8, [
+				}, null, 8, _hoisted_4$14)]),
+				createElementVNode("div", _hoisted_5$11, [
 					(openBlock(true), createElementBlock(Fragment, null, renderList(__props.actions, (a) => {
 						return openBlock(), createElementBlock("button", {
 							key: a.label,
@@ -14886,7 +12061,7 @@ var SkillEditorModal_default = /* @__PURE__ */ defineComponent({
 								props.onClose();
 								a.onClick();
 							}
-						}, toDisplayString(a.label), 9, _hoisted_6$8);
+						}, toDisplayString(a.label), 9, _hoisted_6$10);
 					}), 128)),
 					createElementVNode("button", {
 						type: "button",
@@ -14903,7 +12078,7 @@ var SkillEditorModal_default = /* @__PURE__ */ defineComponent({
 						busy: saving.value,
 						label: SAVE,
 						"busy-label": SAVING
-					}, null, 8, ["busy"])], 8, _hoisted_7$8)) : createCommentVNode("", true)
+					}, null, 8, ["busy"])], 8, _hoisted_7$10)) : createCommentVNode("", true)
 				])
 			], 512);
 		};
@@ -14911,10 +12086,10 @@ var SkillEditorModal_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/skills.ts
-var deps$6 = {};
+var deps$9 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideSkillsDeps(provided) {
-	Object.assign(deps$6, provided);
+	Object.assign(deps$9, provided);
 }
 /** The in-flight editor draft. Read-only to the outside. */
 function getSkillEditorDraft() {
@@ -14981,7 +12156,7 @@ function mountSkillDrafts() {
 		onOpen: (id) => openSkillDraft(id),
 		onSource: (roomId) => {
 			const room = state.lastRoomsList.find((r) => r.id === roomId);
-			deps$6.joinRoom(roomId, room ? room.name : roomId);
+			deps$9.joinRoom(roomId, room ? room.name : roomId);
 		},
 		onKeep: (r) => void keepSkillDraft(r.raw),
 		onDiscard: (r) => armDraftUndo(r.id, `Discarding ${r.raw.skillName}…`, () => discardSkillDraft(r.id)),
@@ -15067,7 +12242,7 @@ async function openScopedSkillEditor(agentId, name) {
 		badgeText: data.editable ? "learned · editable (this agent)" : "read-only",
 		actions: [{
 			label: "History",
-			onClick: () => deps$6.openJourney({
+			onClick: () => deps$9.openJourney({
 				agentGroupId: agentId,
 				skill: name
 			})
@@ -15116,7 +12291,7 @@ async function openSkillDraft(id) {
 		};
 		const draft = skillEditorDraft;
 		if ($("#manage").hidden || $("#mtab-skills").hidden) {
-			deps$6.openManage("skills");
+			deps$9.openManage("skills");
 			setTimeout(() => {
 				skillEditorDraft = draft;
 				renderDraftEditor();
@@ -15367,7 +12542,7 @@ function mountSkillDuplicates() {
 /** Promote one copy to the shared pool. The pending set (keyed by name) keeps a
 *  double-click from promoting twice. */
 async function promoteSkill(name) {
-	if (!await deps$6.showConfirmModal({
+	if (!await deps$9.showConfirmModal({
 		title: `Promote ${name} to the shared pool?`,
 		body: `The newest copy serves every agent; each agent's own copy moves to its archive.`,
 		confirmLabel: "Promote"
@@ -15409,7 +12584,7 @@ function mountSkillsRegistry() {
 			setSkillsSectionOpen(key, next.has(key));
 		},
 		onDelete: (r) => r.source === "scoped" ? removeAgentScopedSkill(r.agentGroupId, r.name, null, renderSkillsRegistry) : deleteSkill(r.name),
-		onHistory: (r) => deps$6.openJourney({
+		onHistory: (r) => deps$9.openJourney({
 			agentGroupId: r.agentGroupId,
 			agentName: r.agentName,
 			skill: r.name
@@ -15418,7 +12593,7 @@ function mountSkillsRegistry() {
 	}));
 }
 async function updateSkillFromSource(name) {
-	if (!await deps$6.showConfirmModal({
+	if (!await deps$9.showConfirmModal({
 		title: `Update ${name}?`,
 		body: "Re-imports from its source at the latest commit. The current version is kept in history.",
 		confirmLabel: "Update"
@@ -15551,7 +12726,7 @@ function showSkillEditor(show) {
 	if (show) {
 		skillEditorClosing = false;
 		showSkillsView("editor");
-		if (!viewStack.some((v) => v.name === "skill-editor")) deps$6.openView("skill-editor", () => {
+		if (!viewStack.some((v) => v.name === "skill-editor")) deps$9.openView("skill-editor", () => {
 			skillEditorClosing = false;
 			resetSkillEditorState();
 			showSkillsView("browse");
@@ -15561,7 +12736,7 @@ function showSkillEditor(show) {
 	if (viewStack.some((v) => v.name === "skill-editor")) {
 		if (!skillEditorClosing) {
 			skillEditorClosing = true;
-			deps$6.closeView("skill-editor");
+			deps$9.closeView("skill-editor");
 		}
 		return;
 	}
@@ -15590,7 +12765,7 @@ async function setSkillTrust(mode) {
 }
 var poolApp = null;
 function mountSkillPool() {
-	poolApp ??= mountIsland("#skills-catalog-list", () => createApp(SkillPool_default, { onAdd: (s) => deps$6.openWireToAgentsPicker({
+	poolApp ??= mountIsland("#skills-catalog-list", () => createApp(SkillPool_default, { onAdd: (s) => deps$9.openWireToAgentsPicker({
 		...s.ref,
 		origin: s.origin
 	}, s.name, { community: skillPoolCommunity.value }) }));
@@ -15704,7 +12879,7 @@ function mountSkillSources() {
 			save.dataset.editId = s.id;
 		},
 		onRemove: async (r) => {
-			if (!await deps$6.showConfirmModal({
+			if (!await deps$9.showConfirmModal({
 				title: `Remove ${r.origin.label}?`,
 				body: "The collection disappears from the Skills catalog. Already-imported skills are unaffected.",
 				confirmLabel: "Remove",
@@ -15768,10 +12943,10 @@ function importSkill() {
 	if (!url) return;
 	const label = url.replace(/^https?:\/\/github\.com\//, "").replace(/\/tree\/.*$/, "");
 	input.value = "";
-	deps$6.openWireToAgentsPicker({ url }, label || "skill", { community: true });
+	deps$9.openWireToAgentsPicker({ url }, label || "skill", { community: true });
 }
 async function deleteSkill(name) {
-	if (!await deps$6.showConfirmModal({
+	if (!await deps$9.showConfirmModal({
 		title: `Delete ${name}?`,
 		body: "Removes this imported skill. Agents that use it lose it on their next spawn.",
 		confirmLabel: "Delete",
@@ -15859,7 +13034,7 @@ async function importAgentScopedSkill(agentId, btn, urlInput) {
 	}
 }
 async function removeAgentScopedSkill(agentId, name, btn, onDone) {
-	if (!await deps$6.showConfirmModal({
+	if (!await deps$9.showConfirmModal({
 		title: `Remove ${name}?`,
 		body: "Unwires it from this agent.",
 		confirmLabel: "Remove",
@@ -15992,7 +13167,7 @@ function mountRoomSkills() {
 		}),
 		onUndo: (id) => clearRoomSkillUndo(id),
 		onRevert: async (r) => {
-			if (!await deps$6.showConfirmModal({
+			if (!await deps$9.showConfirmModal({
 				title: `Revert ${r.name}?`,
 				body: "Back to the previous revision. The current version stays in history — a revert can itself be reverted.",
 				confirmLabel: "Revert"
@@ -16006,7 +13181,7 @@ function mountRoomSkills() {
 			}
 		},
 		onRemove: async (r) => {
-			if (!await deps$6.showConfirmModal({
+			if (!await deps$9.showConfirmModal({
 				title: `Remove ${r.name}?`,
 				body: `It will no longer be available to ${r.agentLabel}.`,
 				confirmLabel: "Remove",
@@ -16151,8 +13326,8 @@ function renderDistillButton(agents) {
 	btn.textContent = "Distill a skill…";
 	btn.title = "Review this session and draft a skill if it taught something worth keeping";
 	btn.addEventListener("click", () => {
-		deps$6.closeRoomDetail();
-		deps$6.triggerLearn();
+		deps$9.closeRoomDetail();
+		deps$9.triggerLearn();
 	});
 	host.appendChild(btn);
 }
@@ -16414,7 +13589,7 @@ var UsageTable_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/UsageSpark.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$17 = ["title"];
+var _hoisted_1$24 = ["title"];
 //#endregion
 //#region src/features/UsageSpark.vue
 var UsageSpark_default = /* @__PURE__ */ defineComponent({
@@ -16431,7 +13606,7 @@ var UsageSpark_default = /* @__PURE__ */ defineComponent({
 					class: "usage-bar",
 					style: normalizeStyle({ height: b.height }),
 					title: b.title
-				}, null, 12, _hoisted_1$17);
+				}, null, 12, _hoisted_1$24);
 			}), 128);
 		};
 	}
@@ -16464,13 +13639,13 @@ var matrixAgents = ref([]);
 var matrixEdges = ref(/* @__PURE__ */ new Set());
 //#endregion
 //#region src/features/WiringMatrix.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$16 = {
+var _hoisted_1$23 = {
 	key: 1,
 	class: "matrix-table"
 };
-var _hoisted_2$12 = { class: "matrix-agent-name" };
-var _hoisted_3$12 = { class: "matrix-room-head" };
-var _hoisted_4$9 = [
+var _hoisted_2$18 = { class: "matrix-agent-name" };
+var _hoisted_3$16 = { class: "matrix-room-head" };
+var _hoisted_4$13 = [
 	"data-room",
 	"data-agent",
 	"title"
@@ -16491,20 +13666,20 @@ var WiringMatrix_default = /* @__PURE__ */ defineComponent({
 		const empty = computed(() => matrixRooms.value.length === 0 || matrixAgents.value.length === 0);
 		const isOn = (roomId, agentId) => matrixEdges.value.has(`${roomId}|${agentId}`);
 		return (_ctx, _cache) => {
-			return empty.value ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createTextVNode(toDisplayString(EMPTY$3))], 64)) : (openBlock(), createElementBlock("table", _hoisted_1$16, [createElementVNode("thead", null, [createElementVNode("tr", null, [createElementVNode("th", { class: "matrix-corner" }, toDisplayString(CORNER)), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(matrixAgents), (a) => {
+			return empty.value ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createTextVNode(toDisplayString(EMPTY$3))], 64)) : (openBlock(), createElementBlock("table", _hoisted_1$23, [createElementVNode("thead", null, [createElementVNode("tr", null, [createElementVNode("th", { class: "matrix-corner" }, toDisplayString(CORNER)), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(matrixAgents), (a) => {
 				return openBlock(), createElementBlock("th", {
 					key: a.id,
 					class: "matrix-agent-head"
-				}, [createElementVNode("div", _hoisted_2$12, toDisplayString(a.name), 1), createElementVNode("div", { class: normalizeClass(a.modelName ? "matrix-model-chip" : "matrix-model-chip none") }, toDisplayString(a.modelName || NO_MODEL), 3)]);
+				}, [createElementVNode("div", _hoisted_2$18, toDisplayString(a.name), 1), createElementVNode("div", { class: normalizeClass(a.modelName ? "matrix-model-chip" : "matrix-model-chip none") }, toDisplayString(a.modelName || NO_MODEL), 3)]);
 			}), 128))])]), createElementVNode("tbody", null, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(matrixRooms), (room) => {
-				return openBlock(), createElementBlock("tr", { key: room.id }, [createElementVNode("th", _hoisted_3$12, toDisplayString(room.name), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(matrixAgents), (a) => {
+				return openBlock(), createElementBlock("tr", { key: room.id }, [createElementVNode("th", _hoisted_3$16, toDisplayString(room.name), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(matrixAgents), (a) => {
 					return openBlock(), createElementBlock("td", {
 						key: a.id,
 						class: normalizeClass(isOn(room.id, a.id) ? "matrix-cell on" : "matrix-cell"),
 						"data-room": room.id,
 						"data-agent": a.id,
 						title: `${room.name} ↔ ${a.name}`
-					}, null, 10, _hoisted_4$9);
+					}, null, 10, _hoisted_4$13);
 				}), 128))]);
 			}), 128))])]));
 		};
@@ -16524,12 +13699,12 @@ var journeyFilter = ref({
 });
 //#endregion
 //#region src/features/JourneyList.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$15 = {
+var _hoisted_1$22 = {
 	key: 2,
 	class: "journey-empty"
 };
-var _hoisted_2$11 = ["hidden"];
-var _hoisted_3$11 = [
+var _hoisted_2$17 = ["hidden"];
+var _hoisted_3$15 = [
 	"data-kind",
 	"data-agent",
 	"data-skill",
@@ -16538,12 +13713,12 @@ var _hoisted_3$11 = [
 	"onClick",
 	"onKeydown"
 ];
-var _hoisted_4$8 = { class: "journey-skill" };
-var _hoisted_5$7 = { class: "skill-badge skill-badge-scope" };
-var _hoisted_6$7 = { class: "journey-meta" };
-var _hoisted_7$7 = { class: "journey-time" };
-var _hoisted_8$5 = ["onClick"];
-var LOADING$1 = "Loading…";
+var _hoisted_4$12 = { class: "journey-skill" };
+var _hoisted_5$10 = { class: "skill-badge skill-badge-scope" };
+var _hoisted_6$9 = { class: "journey-meta" };
+var _hoisted_7$9 = { class: "journey-time" };
+var _hoisted_8$7 = ["onClick"];
+var LOADING$2 = "Loading…";
 var FAILED = "Could not load the timeline.";
 var EMPTY$2 = "Nothing learned yet.";
 var REVERT = "Revert";
@@ -16617,11 +13792,11 @@ var JourneyList_default = /* @__PURE__ */ defineComponent({
 			return unref(journeyPhase) === "loading" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [_cache[0] || (_cache[0] = createElementVNode("span", {
 				class: "btn-spinner",
 				"aria-hidden": "true"
-			}, null, -1)), createTextVNode(toDisplayString(LOADING$1))], 64)) : unref(journeyPhase) === "error" ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createTextVNode(toDisplayString(FAILED))], 64)) : unref(journeyPhase) === "empty" ? (openBlock(), createElementBlock("div", _hoisted_1$15, toDisplayString(EMPTY$2))) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(days.value, (d) => {
+			}, null, -1)), createTextVNode(toDisplayString(LOADING$2))], 64)) : unref(journeyPhase) === "error" ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createTextVNode(toDisplayString(FAILED))], 64)) : unref(journeyPhase) === "empty" ? (openBlock(), createElementBlock("div", _hoisted_1$22, toDisplayString(EMPTY$2))) : (openBlock(true), createElementBlock(Fragment, { key: 3 }, renderList(days.value, (d) => {
 				return openBlock(), createElementBlock(Fragment, { key: d.key }, [createElementVNode("div", {
 					class: "journey-day",
 					hidden: d.rows.every((r) => !visible(r.ev))
-				}, toDisplayString(d.label), 9, _hoisted_2$11), (openBlock(true), createElementBlock(Fragment, null, renderList(d.rows, (r) => {
+				}, toDisplayString(d.label), 9, _hoisted_2$17), (openBlock(true), createElementBlock(Fragment, null, renderList(d.rows, (r) => {
 					return openBlock(), createElementBlock("div", mergeProps({
 						key: r.key,
 						class: r.linked ? "journey-row journey-linked" : "journey-row",
@@ -16638,17 +13813,17 @@ var JourneyList_default = /* @__PURE__ */ defineComponent({
 						onKeydown: ($event) => r.linked ? onKey($event, r.ev) : void 0
 					}), [
 						createElementVNode("span", { class: normalizeClass(`journey-verb journey-verb-${r.ev.kind}`) }, toDisplayString(r.verb), 3),
-						createElementVNode("span", _hoisted_4$8, toDisplayString(r.ev.skillName), 1),
-						createElementVNode("span", _hoisted_5$7, toDisplayString(r.ev.agentName), 1),
-						createElementVNode("span", _hoisted_6$7, toDisplayString(r.meta), 1),
-						createElementVNode("span", _hoisted_7$7, toDisplayString(r.time), 1),
+						createElementVNode("span", _hoisted_4$12, toDisplayString(r.ev.skillName), 1),
+						createElementVNode("span", _hoisted_5$10, toDisplayString(r.ev.agentName), 1),
+						createElementVNode("span", _hoisted_6$9, toDisplayString(r.meta), 1),
+						createElementVNode("span", _hoisted_7$9, toDisplayString(r.time), 1),
 						r.ev.canRevert ? (openBlock(), createElementBlock("button", {
 							key: 0,
 							type: "button",
 							class: "btn btn-secondary",
 							onClick: withModifiers(($event) => props.onRevert(r.ev), ["stop"])
-						}, toDisplayString(REVERT), 8, _hoisted_8$5)) : createCommentVNode("", true)
-					], 16, _hoisted_3$11);
+						}, toDisplayString(REVERT), 8, _hoisted_8$7)) : createCommentVNode("", true)
+					], 16, _hoisted_3$15);
 				}), 128))], 64);
 			}), 128));
 		};
@@ -16656,10 +13831,10 @@ var JourneyList_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/views.ts
-var deps$5 = {};
+var deps$8 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideViewsDeps(provided) {
-	Object.assign(deps$5, provided);
+	Object.assign(deps$8, provided);
 }
 function openView(name, teardown) {
 	viewStack.push({
@@ -16674,9 +13849,9 @@ function closeView(name) {
 	history.go(-(viewStack.length - idx));
 }
 function openFullView(fn) {
-	if (deps$5.getDetailRouterOpen()) {
-		deps$5.setAfterDetailClose(fn);
-		deps$5.closeAllDetailDrawers();
+	if (deps$8.getDetailRouterOpen()) {
+		deps$8.setAfterDetailClose(fn);
+		deps$8.closeAllDetailDrawers();
 		return;
 	}
 	fn();
@@ -16691,7 +13866,7 @@ function openManage(tab = "agents") {
 		$("#overflow-btn")?.classList.add("active");
 		switchManageTab(tab);
 		if (!viewStack.some((v) => v.name === "manage")) openView("manage", teardownManage);
-		deps$5.probeRoutingAvailability();
+		deps$8.probeRoutingAvailability();
 	});
 }
 function teardownManage() {
@@ -16738,7 +13913,7 @@ function switchManageTab(tab) {
 	} else if (tab === "routing") {
 		if (!routingAvailable.value && !state.isOwnerView) return switchManageTab("agents");
 		renderRoutingSetup();
-		if (routingAvailable.value) deps$5.loadRoutingTab();
+		if (routingAvailable.value) deps$8.loadRoutingTab();
 	}
 }
 var dashboardActive = false;
@@ -17318,7 +14493,7 @@ async function refreshDashboard() {
 	}
 	renderHealthStrip(snap);
 	renderMetrics(snap);
-	deps$5.refreshRouterMetrics();
+	deps$8.refreshRouterMetrics();
 }
 function syncManageSortIcon() {
 	const btn = $("#manage-sort-az");
@@ -17723,7 +14898,7 @@ function toggleHelp() {
 }
 //#endregion
 //#region src/features/SelectToggle.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$14 = [
+var _hoisted_1$21 = [
 	"title",
 	"aria-label",
 	"disabled"
@@ -17761,7 +14936,7 @@ var SelectToggle_default = /* @__PURE__ */ defineComponent({
 				"aria-label": p.value.title,
 				disabled: busy.value || void 0,
 				onClick
-			}, toDisplayString(p.value.label), 11, _hoisted_1$14);
+			}, toDisplayString(p.value.label), 11, _hoisted_1$21);
 		};
 	}
 });
@@ -17782,12 +14957,12 @@ var rosterSystem = ref([]);
 var rosterUnreachable = ref(true);
 //#endregion
 //#region src/features/RouterRoster.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$13 = {
+var _hoisted_1$20 = {
 	key: 0,
 	class: "ollama-muted"
 };
-var _hoisted_2$10 = { class: "ollama-model-name" };
-var _hoisted_3$10 = { class: "ollama-model-name" };
+var _hoisted_2$16 = { class: "ollama-model-name" };
+var _hoisted_3$14 = { class: "ollama-model-name" };
 var UNREACHABLE = "Router not reachable right now…";
 var SYS_HEADING$1 = "System — not selectable";
 var CLASSIFIER$1 = "classifier";
@@ -17802,8 +14977,8 @@ var RouterRoster_default = /* @__PURE__ */ defineComponent({
 		* covers both "router not answering" and "answered with no models".
 		*/
 		return (_ctx, _cache) => {
-			return unref(rosterUnreachable) ? (openBlock(), createElementBlock("li", _hoisted_1$13, toDisplayString(UNREACHABLE))) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(rosterSelectable), (id) => {
-				return openBlock(), createElementBlock("li", { key: id }, [createElementVNode("span", _hoisted_2$10, toDisplayString(id), 1), createVNode(SelectToggle_default, {
+			return unref(rosterUnreachable) ? (openBlock(), createElementBlock("li", _hoisted_1$20, toDisplayString(UNREACHABLE))) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(rosterSelectable), (id) => {
+				return openBlock(), createElementBlock("li", { key: id }, [createElementVNode("span", _hoisted_2$16, toDisplayString(id), 1), createVNode(SelectToggle_default, {
 					kind: "openai-compatible",
 					endpoint: unref(rosterEndpoint),
 					"model-id": id,
@@ -17814,7 +14989,7 @@ var RouterRoster_default = /* @__PURE__ */ defineComponent({
 					"display-name"
 				])]);
 			}), 128)), unref(rosterSystem).length ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("li", { class: "ollama-model-sysheading" }, toDisplayString(SYS_HEADING$1)), (openBlock(true), createElementBlock(Fragment, null, renderList(unref(rosterSystem), (id) => {
-				return openBlock(), createElementBlock("li", { key: id }, [createElementVNode("span", _hoisted_3$10, toDisplayString(id), 1), createElementVNode("span", {
+				return openBlock(), createElementBlock("li", { key: id }, [createElementVNode("span", _hoisted_3$14, toDisplayString(id), 1), createElementVNode("span", {
 					class: "ollama-model-systag",
 					title: CLASSIFIER_TITLE$1
 				}, toDisplayString(CLASSIFIER$1))]);
@@ -18229,16 +15404,16 @@ function closeRouteDetail() {
 }
 //#endregion
 //#region src/features/OllamaPullStatus.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$12 = ["hidden"];
-var _hoisted_2$9 = { class: "ollama-pull-line progress" };
-var _hoisted_3$9 = { class: "ollama-pull-text" };
-var _hoisted_4$7 = { class: "ollama-pull-bar" };
-var _hoisted_5$6 = { class: "ollama-pull-line ok" };
-var _hoisted_6$6 = {
+var _hoisted_1$19 = ["hidden"];
+var _hoisted_2$15 = { class: "ollama-pull-line progress" };
+var _hoisted_3$13 = { class: "ollama-pull-text" };
+var _hoisted_4$11 = { class: "ollama-pull-bar" };
+var _hoisted_5$9 = { class: "ollama-pull-line ok" };
+var _hoisted_6$8 = {
 	key: 2,
 	class: "ollama-pull-line"
 };
-var _hoisted_7$6 = {
+var _hoisted_7$8 = {
 	key: 3,
 	class: "ollama-pull-line err"
 };
@@ -18262,61 +15437,61 @@ var OllamaPullStatus_default = /* @__PURE__ */ defineComponent({
 			return openBlock(), createElementBlock("div", {
 				class: "ollama-pull-status",
 				hidden: !props.pull
-			}, [props.pull ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [props.pull.status === "pulling" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("div", _hoisted_2$9, [createElementVNode("span", _hoisted_3$9, "Pulling " + toDisplayString(props.pull.model) + " — " + toDisplayString(props.pull.detail), 1), createElementVNode("button", {
+			}, [props.pull ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [props.pull.status === "pulling" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("div", _hoisted_2$15, [createElementVNode("span", _hoisted_3$13, "Pulling " + toDisplayString(props.pull.model) + " — " + toDisplayString(props.pull.detail), 1), createElementVNode("button", {
 				class: "ollama-pull-cancel",
 				type: "button",
 				onClick: _cache[0] || (_cache[0] = ($event) => props.onCancel(props.pull.model))
-			}, toDisplayString(CANCEL))]), createElementVNode("div", _hoisted_4$7, [createElementVNode("span", { style: normalizeStyle({ width: props.pull.pct + "%" }) }, null, 4)])], 64)) : props.pull.status === "success" ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("div", _hoisted_5$6, "Pulled " + toDisplayString(props.pull.model), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(props.pull.verdict || [], (v) => {
+			}, toDisplayString(CANCEL))]), createElementVNode("div", _hoisted_4$11, [createElementVNode("span", { style: normalizeStyle({ width: props.pull.pct + "%" }) }, null, 4)])], 64)) : props.pull.status === "success" ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createElementVNode("div", _hoisted_5$9, "Pulled " + toDisplayString(props.pull.model), 1), (openBlock(true), createElementBlock(Fragment, null, renderList(props.pull.verdict || [], (v) => {
 				return openBlock(), createElementBlock("div", {
 					key: v,
 					class: "ollama-pull-line pull-verdict"
 				}, toDisplayString(v), 1);
-			}), 128))], 64)) : props.pull.status === "cancelled" ? (openBlock(), createElementBlock("div", _hoisted_6$6, " Cancelled pull of " + toDisplayString(props.pull.model), 1)) : (openBlock(), createElementBlock("div", _hoisted_7$6, "Pull of " + toDisplayString(props.pull.model) + " failed: " + toDisplayString(props.pull.error), 1))], 64)) : createCommentVNode("", true)], 8, _hoisted_1$12);
+			}), 128))], 64)) : props.pull.status === "cancelled" ? (openBlock(), createElementBlock("div", _hoisted_6$8, " Cancelled pull of " + toDisplayString(props.pull.model), 1)) : (openBlock(), createElementBlock("div", _hoisted_7$8, "Pull of " + toDisplayString(props.pull.model) + " failed: " + toDisplayString(props.pull.error), 1))], 64)) : createCommentVNode("", true)], 8, _hoisted_1$19);
 		};
 	}
 });
 //#endregion
 //#region src/features/OllamaHostCards.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$11 = {
+var _hoisted_1$18 = {
 	key: 0,
 	class: "setting-group install-row"
 };
-var _hoisted_2$8 = { class: "setting-toggle" };
-var _hoisted_3$8 = ["checked"];
-var _hoisted_4$6 = ["id", "data-host"];
-var _hoisted_5$5 = ["onClick"];
-var _hoisted_6$5 = ["title", "aria-label"];
-var _hoisted_7$5 = { class: "ollama-host-name" };
-var _hoisted_8$4 = ["hidden"];
-var _hoisted_9$4 = ["hidden"];
-var _hoisted_10$4 = { class: "ollama-model-list" };
-var _hoisted_11$3 = {
+var _hoisted_2$14 = { class: "setting-toggle" };
+var _hoisted_3$12 = ["checked"];
+var _hoisted_4$10 = ["id", "data-host"];
+var _hoisted_5$8 = ["onClick"];
+var _hoisted_6$7 = ["title", "aria-label"];
+var _hoisted_7$7 = { class: "ollama-host-name" };
+var _hoisted_8$6 = ["hidden"];
+var _hoisted_9$6 = ["hidden"];
+var _hoisted_10$6 = { class: "ollama-model-list" };
+var _hoisted_11$5 = {
 	key: 0,
 	class: "ollama-muted"
 };
-var _hoisted_12$3 = {
+var _hoisted_12$5 = {
 	key: 1,
 	class: "ollama-muted"
 };
-var _hoisted_13$3 = {
+var _hoisted_13$5 = {
 	key: 2,
 	class: "ollama-muted"
 };
-var _hoisted_14$3 = { class: "ollama-model-name" };
-var _hoisted_15$3 = { class: "ollama-model-meta" };
-var _hoisted_16$3 = ["title"];
-var _hoisted_17$3 = ["aria-label", "onClick"];
-var _hoisted_18$2 = { class: "ollama-model-name" };
-var _hoisted_19$2 = { class: "ollama-model-meta" };
-var _hoisted_20$2 = ["title"];
-var _hoisted_21$1 = { class: "ollama-pull-row" };
-var _hoisted_22 = ["onKeydown", "onInput"];
-var _hoisted_23 = ["onClick"];
-var _hoisted_24 = {
+var _hoisted_14$5 = { class: "ollama-model-name" };
+var _hoisted_15$5 = { class: "ollama-model-meta" };
+var _hoisted_16$5 = ["title"];
+var _hoisted_17$5 = ["aria-label", "onClick"];
+var _hoisted_18$4 = { class: "ollama-model-name" };
+var _hoisted_19$4 = { class: "ollama-model-meta" };
+var _hoisted_20$4 = ["title"];
+var _hoisted_21$3 = { class: "ollama-pull-row" };
+var _hoisted_22$2 = ["onKeydown", "onInput"];
+var _hoisted_23$2 = ["onClick"];
+var _hoisted_24$2 = {
 	key: 0,
 	class: "ollama-pull-status"
 };
-var LOADING = "Loading…";
+var LOADING$1 = "Loading…";
 var NO_MODELS = "No models installed";
 var SYS_HEADING = "System — not selectable";
 var CLASSIFIER = "classifier";
@@ -18422,12 +15597,12 @@ var OllamaHostCards_default = /* @__PURE__ */ defineComponent({
 			props.onPreview(host, e.target.value);
 		}
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock(Fragment, null, [unref(fitContext) !== null ? (openBlock(), createElementBlock("div", _hoisted_1$11, [createElementVNode("span", { class: "setting-label" }, toDisplayString(FIT_LABEL)), createElementVNode("label", _hoisted_2$8, [createElementVNode("input", {
+			return openBlock(), createElementBlock(Fragment, null, [unref(fitContext) !== null ? (openBlock(), createElementBlock("div", _hoisted_1$18, [createElementVNode("span", { class: "setting-label" }, toDisplayString(FIT_LABEL)), createElementVNode("label", _hoisted_2$14, [createElementVNode("input", {
 				type: "checkbox",
 				checked: unref(fitContext),
 				"aria-label": FIT_LABEL,
 				onChange: _cache[0] || (_cache[0] = ($event) => props.onFitContext($event.target.checked))
-			}, null, 40, _hoisted_3$8)])])) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(cards.value, (c) => {
+			}, null, 40, _hoisted_3$12)])])) : createCommentVNode("", true), (openBlock(true), createElementBlock(Fragment, null, renderList(cards.value, (c) => {
 				return openBlock(), createElementBlock("div", {
 					key: c.host,
 					class: "ollama-host-card",
@@ -18447,26 +15622,26 @@ var OllamaHostCards_default = /* @__PURE__ */ defineComponent({
 							role: "img",
 							title: c.healthTitle,
 							"aria-label": c.healthTitle
-						}, null, 10, _hoisted_6$5)) : createCommentVNode("", true),
-						createElementVNode("span", _hoisted_7$5, toDisplayString(c.label), 1),
+						}, null, 10, _hoisted_6$7)) : createCommentVNode("", true),
+						createElementVNode("span", _hoisted_7$7, toDisplayString(c.label), 1),
 						createElementVNode("span", {
 							class: "ollama-card-summary",
 							hidden: c.open
-						}, toDisplayString(c.summary), 9, _hoisted_8$4)
-					], 8, _hoisted_5$5),
+						}, toDisplayString(c.summary), 9, _hoisted_8$6)
+					], 8, _hoisted_5$8),
 					createElementVNode("div", { hidden: !c.open }, [
-						createElementVNode("ul", _hoisted_10$4, [c.phase === "loading" ? (openBlock(), createElementBlock("li", _hoisted_11$3, [_cache[1] || (_cache[1] = createElementVNode("span", {
+						createElementVNode("ul", _hoisted_10$6, [c.phase === "loading" ? (openBlock(), createElementBlock("li", _hoisted_11$5, [_cache[1] || (_cache[1] = createElementVNode("span", {
 							class: "btn-spinner",
 							"aria-hidden": "true"
-						}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : c.phase === "error" ? (openBlock(), createElementBlock("li", _hoisted_12$3, toDisplayString(c.error), 1)) : c.selectable.length === 0 && c.system.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_13$3, toDisplayString(NO_MODELS))) : (openBlock(), createElementBlock(Fragment, { key: 3 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(c.selectable, (m) => {
+						}, null, -1)), createTextVNode(toDisplayString(LOADING$1))])) : c.phase === "error" ? (openBlock(), createElementBlock("li", _hoisted_12$5, toDisplayString(c.error), 1)) : c.selectable.length === 0 && c.system.length === 0 ? (openBlock(), createElementBlock("li", _hoisted_13$5, toDisplayString(NO_MODELS))) : (openBlock(), createElementBlock(Fragment, { key: 3 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(c.selectable, (m) => {
 							return openBlock(), createElementBlock("li", { key: m.name }, [
-								createElementVNode("span", _hoisted_14$3, toDisplayString(m.name), 1),
-								createElementVNode("span", _hoisted_15$3, toDisplayString(m.meta), 1),
+								createElementVNode("span", _hoisted_14$5, toDisplayString(m.name), 1),
+								createElementVNode("span", _hoisted_15$5, toDisplayString(m.meta), 1),
 								m.loaded ? (openBlock(), createElementBlock("span", {
 									key: 0,
 									class: "ollama-loaded-badge",
 									title: m.vram
-								}, "in memory", 8, _hoisted_16$3)) : createCommentVNode("", true),
+								}, "in memory", 8, _hoisted_16$5)) : createCommentVNode("", true),
 								createVNode(SelectToggle_default, {
 									kind: "ollama",
 									endpoint: c.host,
@@ -18483,45 +15658,45 @@ var OllamaHostCards_default = /* @__PURE__ */ defineComponent({
 									"aria-label": `Remove ${m.name} from this server`,
 									title: "Remove from server…",
 									onClick: ($event) => props.onRemove(c.host, m.name)
-								}, "✕", 8, _hoisted_17$3)
+								}, "✕", 8, _hoisted_17$5)
 							]);
 						}), 128)), c.system.length ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("li", { class: "ollama-model-sysheading" }, toDisplayString(SYS_HEADING)), (openBlock(true), createElementBlock(Fragment, null, renderList(c.system, (m) => {
 							return openBlock(), createElementBlock("li", { key: m.name }, [
-								createElementVNode("span", _hoisted_18$2, toDisplayString(m.name), 1),
-								createElementVNode("span", _hoisted_19$2, toDisplayString(m.meta), 1),
+								createElementVNode("span", _hoisted_18$4, toDisplayString(m.name), 1),
+								createElementVNode("span", _hoisted_19$4, toDisplayString(m.meta), 1),
 								m.loaded ? (openBlock(), createElementBlock("span", {
 									key: 0,
 									class: "ollama-loaded-badge",
 									title: m.vram
-								}, "in memory", 8, _hoisted_20$2)) : createCommentVNode("", true),
+								}, "in memory", 8, _hoisted_20$4)) : createCommentVNode("", true),
 								createElementVNode("span", {
 									class: "ollama-model-systag",
 									title: CLASSIFIER_TITLE
 								}, toDisplayString(CLASSIFIER))
 							]);
 						}), 128))], 64)) : createCommentVNode("", true)], 64))]),
-						createElementVNode("div", _hoisted_21$1, [createElementVNode("input", {
+						createElementVNode("div", _hoisted_21$3, [createElementVNode("input", {
 							type: "text",
 							placeholder: PULL_PLACEHOLDER,
 							class: "ollama-pull-input",
 							onKeydown: ($event) => pullKey(c.host, $event),
 							onInput: ($event) => preview(c.host, $event)
-						}, null, 40, _hoisted_22), createElementVNode("button", {
+						}, null, 40, _hoisted_22$2), createElementVNode("button", {
 							class: "btn btn-secondary",
 							type: "button",
 							onClick: ($event) => pull(c.host, $event)
-						}, toDisplayString(PULL), 8, _hoisted_23)]),
+						}, toDisplayString(PULL), 8, _hoisted_23$2)]),
 						c.preview ? (openBlock(), createElementBlock("div", {
 							key: 0,
 							class: normalizeClass(["ollama-pull-preview", { warn: c.preview.warn }])
 						}, toDisplayString(c.preview.text), 3)) : createCommentVNode("", true)
-					], 8, _hoisted_9$4),
-					c.fit ? (openBlock(), createElementBlock("div", _hoisted_24, [createElementVNode("div", { class: normalizeClass(`ollama-pull-line ${c.fit.cls}`) }, toDisplayString(c.fit.text), 3)])) : createCommentVNode("", true),
+					], 8, _hoisted_9$6),
+					c.fit ? (openBlock(), createElementBlock("div", _hoisted_24$2, [createElementVNode("div", { class: normalizeClass(`ollama-pull-line ${c.fit.cls}`) }, toDisplayString(c.fit.text), 3)])) : createCommentVNode("", true),
 					createVNode(OllamaPullStatus_default, {
 						pull: c.pull,
 						"on-cancel": (m) => props.onCancel(c.host, m)
 					}, null, 8, ["pull", "on-cancel"])
-				], 8, _hoisted_4$6);
+				], 8, _hoisted_4$10);
 			}), 128))], 64);
 		};
 	}
@@ -18653,10 +15828,10 @@ async function setFitContext(on) {
 }
 //#endregion
 //#region src/features/models.ts
-var deps$4 = {};
+var deps$7 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
 function provideModelsDeps(provided) {
-	Object.assign(deps$4, provided);
+	Object.assign(deps$7, provided);
 }
 function sttPopulateModelSelect(st) {
 	const select = $("#stt-model-select");
@@ -18750,7 +15925,7 @@ function mountModelList() {
 	modelListApp = createApp(ModelList_default, {
 		onPick: (id) => {
 			if (allModels.value.find((m) => m.id === id)?.model_id === "auto") {
-				if (routingAvailable.value) deps$4.switchManageTab("routing");
+				if (routingAvailable.value) deps$7.switchManageTab("routing");
 				else openModelDetail(id);
 				return;
 			}
@@ -18811,7 +15986,7 @@ async function openModelDetail(id) {
 	if (!model) return;
 	selectedModelId.value = id;
 	renderModels();
-	if (typeof deps$4.closeRouteDetail === "function") deps$4.closeRouteDetail();
+	if (typeof deps$7.closeRouteDetail === "function") deps$7.closeRouteDetail();
 	closeAgentDetail();
 	closeRoomDetail();
 	closeMcpDetail();
@@ -19404,6 +16579,3544 @@ async function runProbe() {
 	}
 }
 //#endregion
+//#region src/features/installers.ts
+var deps$6 = {};
+/** Wire the composition-root helpers these runners call. Call once at startup. */
+function provideInstallerDeps(provided) {
+	Object.assign(deps$6, provided);
+}
+var CODEX_WIZARD_ELS = {
+	btn: "#wizard-codex-install",
+	log: "#wizard-codex-install-log",
+	doneMsg: "Codex loaded — connect your credentials below."
+};
+var OPENCODE_WIZARD_ELS = {
+	btn: "#wizard-opencode-install",
+	log: "#wizard-opencode-install-log",
+	doneMsg: "OpenCode installed — your local agent can now use it (Agent → Harness)."
+};
+var GROK_WIZARD_ELS = {
+	btn: "#wizard-grok-install",
+	log: "#wizard-grok-install-log",
+	doneMsg: "Grok installed — sign in with a device code below."
+};
+var COPILOT_WIZARD_ELS = {
+	btn: "#wizard-copilot-install",
+	log: "#wizard-copilot-install-log",
+	doneMsg: "GitHub Copilot installed — connect it below."
+};
+var HARNESS_NAME = {
+	codex: "Codex",
+	opencode: "OpenCode",
+	pi: "pi",
+	grok: "Grok",
+	copilot: "GitHub Copilot"
+};
+/** Install a harness through /api/install/:feature, rendering into `els`. */
+async function runInstall(feature, els) {
+	const url = `/api/install/${feature}`;
+	const name = HARNESS_NAME[feature] ?? feature;
+	const btn = $(els.btn);
+	const log = $(els.log);
+	if (!btn || harnessInstallActive.value) return;
+	harnessInstallActive.value = true;
+	deps$6.refreshWizardNextGate();
+	const progress = els.progress ? $(els.progress) : null;
+	if (progress) progress.hidden = false;
+	log.hidden = false;
+	log.textContent = "Installing…";
+	let done = deps$6.wizardBusy(btn, "Installing…");
+	const finish = () => {
+		log.textContent = els.doneMsg || name + " installed.";
+		showToast(name + " installed", { kind: "success" });
+		deps$6.refreshWizardCredState?.();
+	};
+	try {
+		const res = await authFetch(url, { method: "POST" });
+		if (!res.ok && res.status !== 202) {
+			const err = await res.json().catch(() => ({}));
+			if (err.code === "already-installed") {
+				finish();
+				return;
+			}
+			log.textContent = "Install failed: " + (err.error || res.status);
+			showToast(err.error || name + " install failed", { kind: "error" });
+			return;
+		}
+		let restarting = false;
+		for (;;) {
+			await new Promise((r) => setTimeout(r, 2500));
+			let st;
+			try {
+				st = await (await authFetch(url)).json();
+			} catch {
+				restarting = true;
+				break;
+			}
+			const text = installLogText(st);
+			if (text) log.textContent = text;
+			if (st.installed) {
+				finish();
+				return;
+			}
+			if (!st.running && st.exitCode === 0) {
+				restarting = true;
+				break;
+			}
+			if (!st.running && st.exitCode != null && st.exitCode !== 0) {
+				log.textContent = "Install failed — see log:\n" + (st.lines || []).slice(-14).join("\n");
+				showToast(name + " install failed — see log", { kind: "error" });
+				return;
+			}
+		}
+		if (restarting) {
+			done();
+			done = deps$6.wizardBusy(btn, "Restarting…");
+			log.textContent = "Restarting…";
+			const deadline = Date.now() + 15e4;
+			let sawResponsive = false;
+			for (;;) {
+				await new Promise((r) => setTimeout(r, 2500));
+				let st = null;
+				try {
+					st = await (await authFetch(url)).json();
+					sawResponsive = true;
+				} catch {
+					st = null;
+				}
+				if (st?.installed) {
+					finish();
+					return;
+				}
+				if (Date.now() > deadline) {
+					log.textContent = sawResponsive ? name + " didn’t load — restart the service, then reopen setup." : "Server didn’t come back — restart it, then reopen setup.";
+					showToast(name + " built — restart the server to finish", { kind: "error" });
+					return;
+				}
+			}
+		}
+	} catch (err) {
+		log.textContent = "Install error: " + err.message;
+		showToast(name + " install error", { kind: "error" });
+	} finally {
+		done();
+		harnessInstallActive.value = false;
+		deps$6.refreshWizardNextGate();
+		deps$6.renderWizardOpencodeInstall();
+		deps$6.refreshWizardCredState();
+		deps$6.renderCredentialsSettings();
+		deps$6.fetchAgents();
+	}
+}
+var TTS_SETTINGS_ELS = {
+	btn: "#tts-install-btn",
+	log: "#tts-install-log",
+	progress: "#tts-install-progress"
+};
+/** The shared speech-stack install-poll loop; differences between stacks are PollSpec fields. */
+async function pollInstall(spec) {
+	if (spec.isActive()) return;
+	spec.setActive(true);
+	const btn = $(spec.els.btn);
+	const log = $(spec.els.log);
+	const progress = $(spec.els.progress);
+	if (progress) progress.hidden = false;
+	const done = btn && !btn.querySelector(".btn-spinner") ? deps$6.wizardBusy(btn, "Installing…") : null;
+	try {
+		for (;;) {
+			const st = await (await authFetch(spec.endpoint)).json();
+			if (log) {
+				log.textContent = installLogText(st, 12);
+				log.scrollTop = log.scrollHeight;
+			}
+			if (!st.running) {
+				if (st.exitCode === 0) {
+					showToast(spec.successMsg, { kind: "success" });
+					if (spec.onSuccess) await spec.onSuccess();
+				} else showToast(spec.failMsg, { kind: "error" });
+				break;
+			}
+			await new Promise((r) => setTimeout(r, 2e3));
+		}
+	} catch (err) {
+		showToast(spec.errPrefix + err?.message, { kind: "error" });
+	} finally {
+		done?.();
+		spec.setActive(false);
+		if (spec.onFinally) spec.onFinally();
+	}
+}
+async function pollTtsInstall(els = TTS_SETTINGS_ELS) {
+	await pollInstall({
+		els,
+		endpoint: "/api/webchat/tts/install",
+		isActive: () => ttsInstallActive.value,
+		setActive: (v) => ttsInstallActive.value = v,
+		successMsg: "Read aloud installed — Kokoro voices are live",
+		failMsg: "Read aloud install failed — see log",
+		errPrefix: "Read aloud install error: ",
+		onSuccess: () => loadTtsConfig(),
+		onFinally: () => {
+			deps$6.renderTtsSetupSettings();
+			deps$6.renderWizardFeatures();
+		}
+	});
+}
+async function runTtsInstall(els = TTS_SETTINGS_ELS) {
+	const btn = $(els.btn);
+	const log = $(els.log);
+	const progress = $(els.progress);
+	if (progress) progress.hidden = false;
+	const done = btn ? deps$6.wizardBusy(btn, "Installing…") : null;
+	if (log) log.textContent = "Starting…";
+	try {
+		const res = await authFetch("/api/webchat/tts/install", { method: "POST" });
+		if (!res.ok && res.status !== 202) {
+			const err = await res.json().catch(() => ({}));
+			if (log) log.textContent = "Install failed: " + (err.error || res.status);
+			showToast("Read aloud install failed", { kind: "error" });
+			done?.();
+			return;
+		}
+		pollTtsInstall(els);
+	} catch (err) {
+		if (log) log.textContent = "Install failed: " + err.message;
+		done?.();
+	}
+}
+var STT_SETTINGS_ELS = {
+	btn: "#stt-install-btn",
+	log: "#stt-install-log",
+	progress: "#stt-install-progress"
+};
+async function pollSttInstall(els = STT_SETTINGS_ELS, onDone) {
+	await pollInstall({
+		els,
+		endpoint: "/api/webchat/stt/install",
+		isActive: () => sttInstallActive.value,
+		setActive: (v) => sttInstallActive.value = v,
+		successMsg: "Voice dictation installed — the mic is live",
+		failMsg: "Voice dictation install failed — see log",
+		errPrefix: "Voice dictation install error: ",
+		onSuccess: () => initSttFeature(),
+		onFinally: () => {
+			deps$6.renderSttSetupSettings();
+			if (onDone) onDone();
+		}
+	});
+}
+async function runSttInstall(payload, els = STT_SETTINGS_ELS, onDone) {
+	const btn = $(els.btn);
+	const log = $(els.log);
+	const progress = $(els.progress);
+	if (progress) progress.hidden = false;
+	const done = btn ? deps$6.wizardBusy(btn, "Installing…") : null;
+	if (log) log.textContent = "Starting…";
+	try {
+		const res = await authFetch("/api/webchat/stt/install", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify(payload)
+		});
+		if (!res.ok && res.status !== 202) {
+			const err = await res.json().catch(() => ({}));
+			if (log) log.textContent = "Install failed: " + (err.error || res.status);
+			showToast("Voice dictation install failed", { kind: "error" });
+			done?.();
+			return;
+		}
+		pollSttInstall(els, onDone);
+	} catch (err) {
+		if (log) log.textContent = "Install failed: " + err.message;
+		done?.();
+	}
+}
+var ROUTING_ELS_SETTINGS = {
+	log: "#routing-install-log",
+	bar: "#routing-pull-bar",
+	label: "#routing-pull-label"
+};
+function renderRoutingInstallProgress(st, els = ROUTING_ELS_SETTINGS) {
+	const log = $(els.log);
+	const bar = $(els.bar);
+	const label = $(els.label);
+	log.textContent = installLogText(st, 12);
+	log.scrollTop = log.scrollHeight;
+	const pull = st.pull;
+	if (pull) {
+		bar.hidden = false;
+		label.hidden = false;
+		const pct = pull.total > 0 ? Math.min(100, Math.round(100 * pull.completed / pull.total)) : 0;
+		bar.querySelector("span").style.width = pct + "%";
+		if (pull.status === "pulling") label.textContent = "Classifier model: " + (pull.detail || "downloading…") + " (" + pct + "%)";
+		else if (pull.status === "success") label.textContent = "Classifier model ready.";
+		else label.textContent = "Classifier model pull failed: " + (pull.error || "");
+	} else {
+		bar.hidden = true;
+		label.hidden = true;
+	}
+}
+async function pollRoutingInstall() {
+	if (routingInstallActive.value) return;
+	routingInstallActive.value = true;
+	const btn = $("#routing-install-btn");
+	$("#routing-install-progress").hidden = false;
+	btn.disabled = true;
+	let chainHandled = false;
+	try {
+		while (true) {
+			const st = await (await authFetch("/api/router/install")).json();
+			renderRoutingInstallProgress(st);
+			if (!st.running && !chainHandled) {
+				chainHandled = true;
+				if (st.exitCode === 0) {
+					try {
+						await apiJson("/api/router/routes", {
+							method: "PUT",
+							body: { live: { enabled: true } }
+						});
+					} catch {}
+					await deps$6.fetchModels();
+					showToast("Auto routing installed and live — assign the “auto” model to an agent.", { kind: "success" });
+					await deps$6.probeRoutingAvailability();
+				} else {
+					showToast("Auto routing setup failed — see log", { kind: "error" });
+					break;
+				}
+			}
+			const pullDone = !st.pull || st.pull.status !== "pulling";
+			if (!st.running && pullDone) break;
+			await new Promise((r) => setTimeout(r, 2e3));
+		}
+	} catch (err) {
+		showToast("Auto routing setup error: " + err.message, { kind: "error" });
+	} finally {
+		routingInstallActive.value = false;
+		deps$6.renderRoutingSetup();
+	}
+}
+async function installLitellmPhase(els = ROUTING_ELS_SETTINGS) {
+	const log = $(els.log);
+	$(els.label).hidden = true;
+	log.textContent = "";
+	let res;
+	try {
+		res = await authFetch("/api/router/litellm-install", { method: "POST" });
+	} catch (err) {
+		log.textContent = "LiteLLM install failed: " + err.message;
+		showToast("LiteLLM install failed", { kind: "error" });
+		return false;
+	}
+	if (!res.ok && res.status !== 202) {
+		log.textContent = "LiteLLM install failed: " + ((await res.json().catch(() => ({}))).error || res.status);
+		showToast("LiteLLM install failed", { kind: "error" });
+		return false;
+	}
+	while (true) {
+		const st = await (await authFetch("/api/router/litellm-install")).json();
+		log.textContent = installLogText(st, 12);
+		if (!st.running) {
+			if (st.exitCode === 0) {
+				showToast("LiteLLM router installed", { kind: "success" });
+				return true;
+			}
+			showToast("LiteLLM install failed — see log", { kind: "error" });
+			return false;
+		}
+		await new Promise((r) => setTimeout(r, 2e3));
+	}
+}
+async function runRoutingInstall() {
+	const btn = $("#routing-install-btn");
+	const log = $("#routing-install-log");
+	$("#routing-install-progress").hidden = false;
+	const done = deps$6.wizardBusy(btn, "Installing…");
+	log.textContent = "";
+	try {
+		if (!(await (await authFetch("/api/router/install")).json().catch(() => ({}))).litellmReady) {
+			if (!await installLitellmPhase(ROUTING_ELS_SETTINGS)) {
+				done();
+				return;
+			}
+		}
+		await apiJson("/api/router/install", { method: "POST" });
+		pollRoutingInstall();
+	} catch (err) {
+		log.textContent = "Install failed: " + err.message;
+		showToast("Auto routing setup failed", { kind: "error" });
+		done();
+	}
+}
+/** Debounce handles for the live pull preview, one per host. */
+var previewTimers = {};
+/**
+* What pulling the currently-typed ref would cost, shown UNDER the box as it
+* is typed, so the pull needs no confirm step. A ref whose size cannot be read
+* clears the line; any failure here leaves the pull unaffected.
+*/
+function previewOllamaPull(host, model) {
+	clearTimeout(previewTimers[host]);
+	const ref = (model || "").trim();
+	if (!ref) {
+		hostPullPreview.value = {
+			...hostPullPreview.value,
+			[host]: null
+		};
+		return;
+	}
+	previewTimers[host] = setTimeout(async () => {
+		try {
+			const pre = await apiJson("/api/ollama/prepull?model=" + encodeURIComponent(ref));
+			if (pre.sizeBytes == null) {
+				hostPullPreview.value = {
+					...hostPullPreview.value,
+					[host]: null
+				};
+				return;
+			}
+			const parts = [`${mmFmtGB(pre.sizeBytes)} download`];
+			if (pre.vramFit === "fits") parts.push(`✓ should fit in VRAM (~${mmFmtGB(pre.estFootprintBytes)} est.)`);
+			else if (pre.vramFit === "spills") parts.push(`⚠ likely spills to CPU (~${mmFmtGB(pre.estFootprintBytes)} est.) — slow`);
+			hostPullPreview.value = {
+				...hostPullPreview.value,
+				[host]: {
+					model: ref,
+					text: parts.join(" · "),
+					warn: pre.vramFit === "spills"
+				}
+			};
+		} catch {
+			hostPullPreview.value = {
+				...hostPullPreview.value,
+				[host]: null
+			};
+		}
+	}, 400);
+}
+/** Stop a pull that is already running. */
+async function cancelOllamaPull(host, model) {
+	try {
+		await apiJson("/api/ollama/pull/cancel", {
+			method: "POST",
+			body: {
+				host,
+				model
+			}
+		});
+	} catch {}
+}
+async function startOllamaPull(host, model, input, btn) {
+	if (!model) return;
+	btn.disabled = true;
+	clearTimeout(previewTimers[host]);
+	hostPullPreview.value = {
+		...hostPullPreview.value,
+		[host]: null
+	};
+	try {
+		await apiJson("/api/ollama/pull", {
+			method: "POST",
+			body: {
+				host,
+				model
+			}
+		});
+		input.value = "";
+		pollOllamaPulls();
+	} catch (err) {
+		showToast("Pull failed to start: " + err.message, { kind: "error" });
+	} finally {
+		btn.disabled = false;
+	}
+}
+/** One-model fitness verdict, attached to the host card's pull status. */
+async function attachPullVerdict(host, model) {
+	try {
+		const inv = await apiJson("/api/models/manage?endpoint=" + encodeURIComponent(host));
+		const tag = String(model).toLowerCase();
+		const m = (inv.models || []).find((x) => String(x.tag).toLowerCase().startsWith(tag));
+		if (!m) return;
+		const lines = [];
+		const spec = [
+			m.paramSize,
+			m.quant,
+			m.sizeBytes ? mmFmtGB(m.sizeBytes) : null
+		].filter(Boolean).join(" · ");
+		if (spec) lines.push(spec);
+		const ctxTxt = `context ${Math.round(m.configuredCtx / 1024)}k${m.maxContext ? ` of ${Math.round(m.maxContext / 1024)}k max` : ""}`;
+		lines.push(m.fit?.context === "fits" ? `✓ ${ctxTxt} — agent prompt fits` : `⚠ ${ctxTxt} — agent prompt truncates`);
+		if (m.fit?.vram !== "unknown") lines.push(m.fit?.vram === "fits" ? `✓ VRAM fits (~${mmFmtGB(m.fit.estFootprintBytes)} est.)` : `⚠ spills to CPU (~${mmFmtGB(m.fit.estFootprintBytes)} est.) — slow`);
+		const entry = hostPulls.value[host];
+		if (entry && entry.model === model) hostPulls.value = {
+			...hostPulls.value,
+			[host]: {
+				...entry,
+				verdict: lines
+			}
+		};
+	} catch {}
+}
+function renderOllamaPulls(pulls) {
+	for (const job of pulls) {
+		const pct = job.total > 0 ? Math.min(100, Math.round(100 * job.completed / job.total)) : 0;
+		const prev = hostPulls.value[job.host];
+		hostPulls.value[job.host] = {
+			status: job.status,
+			model: job.model,
+			detail: job.detail,
+			error: job.error || "",
+			pct,
+			verdict: prev && prev.model === job.model ? prev.verdict : void 0
+		};
+		if (job.status === "pulling") pullsDone.delete(job.host + "\0" + job.model);
+		if (job.status !== "pulling" && !pullsDone.has(job.host + "\0" + job.model)) {
+			pullsDone.add(job.host + "\0" + job.model);
+			if (job.status === "cancelled") showToast("Cancelled pull of " + job.model);
+			if (job.status === "success") {
+				showToast("Pulled " + job.model, { kind: "success" });
+				deps$6.loadOllamaHostModels(job.host);
+				attachPullVerdict(job.host, job.model);
+			}
+		}
+	}
+}
+/** host\0model pairs whose finish has already been announced. */
+var pullsDone = /* @__PURE__ */ new Set();
+async function pollOllamaPulls() {
+	if (ollamaPullPoller.value) return;
+	const tick = async () => {
+		try {
+			const { pulls } = await apiJson("/api/ollama/pulls");
+			renderOllamaPulls(pulls);
+			if (pulls.some((p) => p.status === "pulling")) ollamaPullPoller.value = setTimeout(tick, 1500);
+			else ollamaPullPoller.value = null;
+		} catch {
+			ollamaPullPoller.value = null;
+		}
+	};
+	ollamaPullPoller.value = setTimeout(tick, 0);
+}
+//#endregion
+//#region src/features/copilot-state.ts
+/** "Copilot connected — octo · business · api.business.githubcopilot.com". */
+function copilotConnectedText(s) {
+	let host;
+	try {
+		host = s.apiUrl ? new URL(s.apiUrl).host : void 0;
+	} catch {
+		host = void 0;
+	}
+	const parts = [
+		s.login,
+		s.plan,
+		host
+	].filter((p) => !!p);
+	return parts.length ? `Copilot connected — ${parts.join(" · ")}` : "Copilot connected";
+}
+/** The status line under the card: progress while it runs, the reason when it did not complete, else nothing. */
+function copilotStatusLine(p) {
+	if (!p) return null;
+	if (p.running) return p.message ?? null;
+	if (p.outcome && p.outcome !== "complete") return p.error || "The sign-in did not complete.";
+	return null;
+}
+//#endregion
+//#region src/features/wizard.ts
+var deps$5 = {};
+/** Wire the composition-root helpers this module calls. Call once, before the wizard opens. */
+function provideWizardDeps(provided) {
+	Object.assign(deps$5, provided);
+}
+var wizardBtnWired = false;
+async function renderSettingsWizardButton() {
+	const wizardSection = $("#settings-wizard");
+	if (!wizardSection) return;
+	let ok = false;
+	try {
+		await apiJson("/api/workspace-credential");
+		ok = true;
+	} catch {
+		ok = false;
+	}
+	wizardSection.hidden = !ok;
+	if (!ok || wizardBtnWired) return;
+	wizardBtnWired = true;
+	$("#wizard-open-btn")?.addEventListener("click", () => {
+		deps$5.closeSettings();
+		openWizard();
+	});
+}
+var WIZARD_STEPS = 3;
+var wizardStep = 0;
+var wizardWired = false;
+var wizardOllamaProbe = null;
+var wizardEngine = "claude";
+var wizardCodexAvailable = false;
+var wizardCred = null;
+var OPENCODE_RECOMMENDED = "Recommended: small local models follow tools far better on OpenCode. Rebuilds and restarts NanoClaw — a few minutes.";
+var opencodeReloadBusy = null;
+var opencodeReloadVerb = null;
+async function renderWizardOpencodeInstall() {
+	const row = $("#wizard-opencode-install-row");
+	const hint = $("#wizard-opencode-hint");
+	if (!row) return;
+	if (!!($("#wizard-ollama-connected")?.hidden ?? true)) {
+		row.hidden = true;
+		if (hint) hint.hidden = true;
+		return;
+	}
+	let st = {};
+	try {
+		st = await apiJson("/api/install/opencode");
+	} catch {}
+	const installed = !!st.installed;
+	const running = !!st.running;
+	const restarting = !!st.restartPending && Date.now() - (st.startedAt ?? Date.now()) < 9e5;
+	const badge = $("#wizard-opencode-installed-badge");
+	const btn = $("#wizard-opencode-install");
+	row.hidden = false;
+	if (badge) badge.hidden = !installed;
+	if (btn && !opencodeInstallActive.value) {
+		btn.hidden = installed;
+		const verb = restarting ? "Restarting…" : running ? "Installing…" : null;
+		if (verb !== opencodeReloadVerb) {
+			opencodeReloadBusy?.();
+			opencodeReloadBusy = verb ? wizardBusy(btn, verb) : null;
+			opencodeReloadVerb = verb;
+		}
+		const log = $("#wizard-opencode-install-log");
+		if (log && running) {
+			log.hidden = false;
+			log.textContent = installLogText(st);
+		}
+	}
+	if (hint) {
+		hint.hidden = installed || running && !opencodeInstallActive.value;
+		if (!opencodeInstallActive.value) hint.textContent = restarting ? "Installed — restarting to load it." : OPENCODE_RECOMMENDED;
+	}
+	opencodeGateFromServer.value = running || restarting;
+	refreshWizardNextGate();
+	if (running || restarting) {
+		clearTimeout(opencodeGatePoll.value ?? void 0);
+		opencodeGatePoll.value = setTimeout(renderWizardOpencodeInstall, 3e3);
+	}
+}
+var RESUME_KEY = "nanoclaw-wizard-resume";
+var WIZARD_ENGINES = [
+	"claude",
+	"codex",
+	"grok",
+	"copilot",
+	"ollama"
+];
+function saveResume() {
+	try {
+		sessionStorage.setItem(RESUME_KEY, JSON.stringify({
+			engine: wizardEngine,
+			step: wizardStep,
+			at: Date.now()
+		}));
+	} catch {}
+}
+function consumeResume() {
+	try {
+		const raw = sessionStorage.getItem(RESUME_KEY);
+		if (!raw) return null;
+		const r = JSON.parse(raw);
+		if (!r.at || Date.now() - r.at > 36e5) return null;
+		return {
+			engine: WIZARD_ENGINES.includes(r.engine ?? "") ? r.engine : "claude",
+			step: Number(r.step) || 0
+		};
+	} catch {
+		return null;
+	}
+}
+function clearResume() {
+	try {
+		sessionStorage.removeItem(RESUME_KEY);
+	} catch {}
+}
+/** Make `engine` the step-0 choice: radio, body, and the Ollama probe it implies. */
+function selectWizardEngine(engine) {
+	wizardEngine = engine;
+	const radio = document.querySelector(`input[name="wizard-engine"][value="${engine}"]`);
+	if (radio) radio.checked = true;
+	syncWizardEngineBodies();
+	if (engine === "ollama") wizardCheckLocalOllama();
+	saveResume();
+}
+function buildWizardDots() {
+	const dots = $("#wizard-dots");
+	if (!dots) return;
+	dots.innerHTML = "";
+	for (let i = 0; i < WIZARD_STEPS; i++) {
+		const d = document.createElement("span");
+		d.className = "wizard-dot";
+		dots.appendChild(d);
+	}
+}
+/**
+* Reflect live credential state on the engine list: connected engines swap
+* their connect controls for a prominent ✓ card (standard OAuth-connect UX —
+* the action you completed disappears), and the radio chips update without a
+* wizard reopen. Also greys Codex out when its provider isn't installed.
+*/
+async function refreshWizardCredState() {
+	let s;
+	try {
+		s = await apiJson("/api/workspace-credential");
+	} catch {
+		return;
+	}
+	wizardCred = s;
+	wizardCodexAvailable = !!s.codexAvailable;
+	const credWord = (t) => t === "oauth_token" ? "subscription" : "API key";
+	const claudeChip = $("#wizard-chip-claude");
+	if (claudeChip) {
+		claudeChip.hidden = false;
+		claudeChip.textContent = s.connected ? "✓ connected" : "not connected";
+		claudeChip.classList.toggle("ok", !!s.connected);
+	}
+	$("#wizard-claude-connect").hidden = !!s.connected;
+	$("#wizard-claude-connected").hidden = !s.connected;
+	if (s.connected) $("#wizard-claude-connected-text").textContent = s.external ? "Claude connected" : `Claude connected — ${credWord(s.credType)}`;
+	$("#wizard-claude-disconnect").hidden = !!s.external;
+	const codexChip = $("#wizard-chip-codex");
+	if (codexChip) {
+		codexChip.hidden = false;
+		codexChip.textContent = s.codex?.connected ? "✓ connected" : wizardCodexAvailable ? "not connected" : "not installed";
+		codexChip.classList.toggle("ok", !!s.codex?.connected);
+	}
+	const codexInstallRow = $("#wizard-codex-install-row");
+	if (codexInstallRow && !codexInstallActive.value) codexInstallRow.hidden = wizardCodexAvailable;
+	$("#wizard-codex-connect").hidden = !wizardCodexAvailable || !!s.codex?.connected;
+	$("#wizard-codex-connected").hidden = !s.codex?.connected;
+	if (s.codex?.connected) $("#wizard-codex-connected-text").textContent = s.codex.external ? "Codex connected" : `Codex connected — ${credWord(s.codex.credType)}`;
+	const codexDisconnect = $("#wizard-codex-disconnect");
+	if (codexDisconnect) codexDisconnect.hidden = !!s.codex?.external;
+	const grokChip = $("#wizard-chip-grok");
+	const grok = s.grok;
+	if (grokChip) {
+		grokChip.hidden = false;
+		grokChip.textContent = grok?.connected ? "✓ connected" : !grok?.available ? "not installed" : grok?.expired ? "expired" : "not connected";
+		grokChip.classList.toggle("ok", !!grok?.connected);
+	}
+	const grokInstalled = grok?.available === true;
+	const grokInstallRow = $("#wizard-grok-install-row");
+	if (grokInstallRow && !opencodeInstallActive.value) grokInstallRow.hidden = grokInstalled;
+	$("#wizard-grok-connect").hidden = !grokInstalled || !!grok?.connected;
+	$("#wizard-grok-connected").hidden = !grok?.connected;
+	const grokStatusLine = $("#wizard-grok-status");
+	if (grokStatusLine) {
+		const why = grok?.available && grok?.expired ? "That Grok sign-in has expired. Sign in again to refresh it." : "";
+		grokStatusLine.textContent = why;
+		grokStatusLine.hidden = !why;
+	}
+	if (grok?.connected) $("#wizard-grok-connected-text").textContent = grok.email ? `Grok connected — ${grok.email}` : "Grok connected — subscription";
+	const copilot = s.copilot;
+	const copilotInstalled = copilot?.available === true;
+	const copilotChip = $("#wizard-chip-copilot");
+	if (copilotChip) {
+		copilotChip.hidden = false;
+		copilotChip.textContent = copilot?.connected ? "✓ connected" : copilotInstalled ? "not connected" : "not installed";
+		copilotChip.classList.toggle("ok", !!copilot?.connected);
+	}
+	const copilotInstallRow = $("#wizard-copilot-install-row");
+	if (copilotInstallRow && !opencodeInstallActive.value) copilotInstallRow.hidden = copilotInstalled;
+	$("#wizard-copilot-connect").hidden = !copilotInstalled || !!copilot?.connected;
+	$("#wizard-copilot-connected").hidden = !copilot?.connected;
+	if (copilot?.connected) $("#wizard-copilot-connected-text").textContent = copilotConnectedText(copilot);
+	const ollamaSet = s.defaultModelKind === "ollama" && !!s.defaultModelId;
+	const ollamaModel = s.defaultModelModelId || s.defaultModelName;
+	const ollamaChip = $("#wizard-chip-ollama");
+	if (ollamaChip) {
+		ollamaChip.hidden = false;
+		ollamaChip.textContent = ollamaSet ? `✓ ${ollamaModel}` : "no model";
+		ollamaChip.classList.toggle("ok", ollamaSet);
+	}
+	const ollamaCard = $("#wizard-ollama-connected");
+	const ollamaSetup = $("#wizard-ollama-setup");
+	if (ollamaCard && ollamaSetup) {
+		ollamaCard.hidden = !ollamaSet;
+		ollamaSetup.hidden = ollamaSet;
+		if (ollamaSet) $("#wizard-ollama-connected-text").textContent = `${ollamaModel} · default`;
+	}
+	renderWizardOpencodeInstall();
+}
+/** Reveal the wizard's install-Ollama row when nothing answers locally (Linux
+*  only), or prefill the endpoint when a local Ollama is already running. */
+async function wizardCheckLocalOllama() {
+	try {
+		const st = await apiJson("/api/ollama/local");
+		if (st.reachable) {
+			const url = $("#wizard-ollama-url");
+			if (url && !url.value) url.value = "http://localhost:11434";
+			$("#wizard-ollama-install-row").hidden = true;
+			$("#wizard-ollama-dl-row").hidden = false;
+			wizardLoadRecommendation();
+			wizardReattachPull();
+		} else $("#wizard-ollama-install-row").hidden = !st.canInstall;
+	} catch {}
+}
+async function wizardFollowPull(host, model) {
+	const btn = $("#wizard-ollama-dl");
+	const bar = $("#wizard-ollama-pull-bar");
+	let done = wizardBusy(btn, "Downloading…");
+	$("#wizard-ollama-dl-status").hidden = true;
+	bar.hidden = false;
+	try {
+		for (;;) {
+			await new Promise((resolve) => setTimeout(resolve, 1500));
+			const { pulls } = await (await authFetch("/api/ollama/pulls")).json();
+			const job = (pulls || []).find((j) => j.model === model && j.host === host);
+			if (!job) continue;
+			const pct = job.total > 0 ? Math.round(job.completed / job.total * 100) : 0;
+			bar.querySelector("span").style.width = pct + "%";
+			if (job.status === "success") {
+				bar.hidden = true;
+				done();
+				done = wizardBusy(btn, "Setting default…");
+				const probed = await wizardProbeOllama();
+				if (probed && (probed.models || []).some((m) => String(m) === model)) {
+					wizardOllamaSelected.value = model;
+					await wizardSelectOllamaModel(model);
+					wizardSetStatus("#wizard-ollama-dl-status", `${model} downloaded and set as the workspace default.`, "ok");
+				} else wizardSetStatus("#wizard-ollama-dl-status", `${model} downloaded — pick it above to set the default.`, "ok");
+				return;
+			}
+			if (job.status === "error") {
+				bar.hidden = true;
+				return wizardSetStatus("#wizard-ollama-dl-status", job.error || "Pull failed.", "err");
+			}
+		}
+	} finally {
+		done();
+	}
+}
+var wizardOllamaApp = null;
+function mountWizardOllamaModels() {
+	wizardOllamaApp ??= mountIsland("#wizard-ollama-list", () => createApp(WizardOllamaModels_default));
+}
+async function wizardProbeOllama() {
+	const url = ($("#wizard-ollama-url")?.value || "").trim() || "http://localhost:11434";
+	const done = wizardBusy($("#wizard-ollama-probe"), "Probing…");
+	$("#wizard-ollama-status").hidden = true;
+	try {
+		const r = await authFetch("/api/models/probe", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ url })
+		});
+		const body = await r.json().catch(() => ({}));
+		if (!r.ok) {
+			wizardSetStatus("#wizard-ollama-status", body.error || `Probe failed (${r.status}).`, "err");
+			return null;
+		}
+		if (!body.kind || !(body.models || []).length) {
+			wizardSetStatus("#wizard-ollama-status", body.reason || "No models found at that endpoint.", "err");
+			return null;
+		}
+		wizardOllamaProbe = body;
+		wizardOllamaModels.value = body.models.map((m) => String(m));
+		mountWizardOllamaModels();
+		$("#wizard-ollama-results").hidden = false;
+		$("#wizard-ollama-dl-row").hidden = false;
+		wizardLoadRecommendation();
+		const n = wizardOllamaModels.value.length;
+		wizardSetStatus("#wizard-ollama-status", `Found ${n} model${n === 1 ? "" : "s"} at ${body.endpoint || url}`, "ok");
+		await nextTick();
+		$("#wizard-ollama-results")?.scrollIntoView({
+			block: "nearest",
+			behavior: "smooth"
+		});
+		return body;
+	} finally {
+		done();
+	}
+}
+async function wizardSelectOllamaModel(modelId, control) {
+	if (!wizardOllamaProbe || !modelId) return;
+	const endpoint = String(wizardOllamaProbe.endpoint || "").replace(/\/+$/, "");
+	const host = (() => {
+		try {
+			return new URL(wizardOllamaProbe.endpoint).host;
+		} catch {
+			return wizardOllamaProbe.endpoint;
+		}
+	})();
+	$("#wizard-ollama-status").hidden = true;
+	const done = control ? wizardBusy(control, "Setting default…") : null;
+	try {
+		let id = null;
+		try {
+			const roster = await apiJson("/api/models");
+			id = (Array.isArray(roster) ? roster : []).find((m) => m.kind === "ollama" && String(m.endpoint || "").replace(/\/+$/, "") === endpoint && m.model_id === modelId)?.id ?? null;
+		} catch {}
+		if (!id) {
+			const r = await authFetch("/api/models/bulk", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ models: [{
+					name: `${host} · ${modelId}`,
+					kind: wizardOllamaProbe.kind,
+					endpoint: wizardOllamaProbe.endpoint,
+					model_id: modelId
+				}] })
+			});
+			const out = await r.json().catch(() => ({}));
+			const created = out.created?.[0];
+			if (!r.ok || !created) {
+				wizardSetStatus("#wizard-ollama-status", out.error || out.failed?.[0]?.error || "Add failed.", "err");
+				return;
+			}
+			id = created.id;
+		}
+		const dr = await authFetch("/api/workspace-model", {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ modelId: id })
+		});
+		if (!dr.ok) {
+			wizardSetStatus("#wizard-ollama-status", "Setting the default failed: " + ((await dr.json().catch(() => ({}))).error || dr.statusText), "err");
+			return;
+		}
+		$("#wizard-ollama-status").hidden = true;
+		await refreshWizardCredState();
+	} catch {
+		wizardSetStatus("#wizard-ollama-status", "Setting the default failed.", "err");
+	} finally {
+		done?.();
+	}
+}
+async function wizardClearOllamaDefault() {
+	if (wizardCred?.defaultModelKind !== "ollama" || !wizardCred?.defaultModelId) return;
+	try {
+		await authFetch("/api/workspace-model", {
+			method: "PUT",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ modelId: null })
+		});
+		await refreshWizardCredState();
+	} catch {}
+}
+var wizardRecLoaded = false;
+async function wizardLoadRecommendation() {
+	if (wizardRecLoaded) return;
+	const hint = $("#wizard-ollama-rec");
+	const input = $("#wizard-ollama-dl-model");
+	try {
+		const r = await authFetch("/api/ollama/recommend");
+		if (!r.ok) return;
+		const { recommendation: rec, remoteOllama } = await r.json();
+		wizardRecLoaded = true;
+		if (input && !input.value) input.value = rec.model.id;
+		if (hint) {
+			const remote = remoteOllama?.present === true;
+			const fit = remote ? "remote Ollama" : rec.tight ? "tight fit" : rec.basis === "gpu" ? "GPU" : "good fit";
+			hint.hidden = false;
+			hint.textContent = `Recommended: ${rec.model.id} · ${fit}`;
+			hint.title = remote ? `Runs on your remote Ollama (${remoteOllama.endpoint}). ${rec.detected}` : rec.detected;
+			hint.classList.toggle("err", !remote && !!rec.tight);
+		}
+	} catch {
+		if (input && !input.value) input.value = "qwen3:1.7b";
+	}
+}
+async function wizardReattachPull() {
+	try {
+		const host = ($("#wizard-ollama-url")?.value || "").trim() || "http://localhost:11434";
+		const { pulls } = await apiJson("/api/ollama/pulls");
+		const job = (pulls || []).find((j) => j.host === host && j.status === "pulling");
+		if (!job) return;
+		$("#wizard-ollama-dl-model").value = job.model;
+		await wizardFollowPull(host, job.model);
+	} catch {}
+}
+function syncWizardEngineBodies() {
+	document.querySelectorAll(".wizard-engine-body").forEach((b) => {
+		b.hidden = b.dataset.engine !== wizardEngine;
+	});
+}
+function wizardEngineConnected() {
+	const s = wizardCred || {};
+	if (wizardEngine === "codex") return !!s.codex?.connected;
+	if (wizardEngine === "grok") return !!s.grok?.connected;
+	if (wizardEngine === "copilot") return !!s.copilot?.connected;
+	if (wizardEngine === "ollama") return !!s.defaultModelId;
+	return !!s.connected;
+}
+function showWizardStep(i) {
+	wizardStep = Math.max(0, Math.min(2, i));
+	document.querySelectorAll(".wizard-step").forEach((s) => {
+		const step = s;
+		step.hidden = Number(step.dataset.step) !== wizardStep;
+	});
+	if (wizardStep === 0) syncWizardEngineBodies();
+	if (wizardStep === 1) renderWizardAccess();
+	if (wizardStep === 2) renderWizardFeatures();
+	document.querySelectorAll("#wizard-dots .wizard-dot").forEach((d, idx) => {
+		d.classList.toggle("active", idx === wizardStep);
+		d.classList.toggle("done", idx < wizardStep);
+	});
+	$("#wizard-back").hidden = wizardStep === 0;
+	const isLast = wizardStep === 2;
+	$("#wizard-next").textContent = isLast ? "Finish" : "Next";
+	saveResume();
+	refreshWizardNextGate();
+}
+var nextGateBusy = null;
+function refreshWizardNextGate() {
+	const btn = $("#wizard-next");
+	if (!btn) return;
+	if (opencodeInstallActive.value || opencodeGateFromServer.value) {
+		btn.dataset.gated = "1";
+		if (!btn.querySelector(".btn-spinner")) nextGateBusy = wizardBusy(btn, "Installing OpenCode…");
+		btn.title = "Hang tight — finishing now would interrupt your first message when the harness restarts.";
+	} else if (btn.dataset.gated) {
+		delete btn.dataset.gated;
+		nextGateBusy?.();
+		nextGateBusy = null;
+		btn.disabled = false;
+		btn.title = "";
+		btn.textContent = wizardStep === 2 ? "Finish" : "Next";
+	}
+}
+async function openWizard() {
+	wireWizard();
+	buildWizardDots();
+	const resume = consumeResume();
+	if (resume) selectWizardEngine(resume.engine);
+	showWizardStep(resume?.step ?? 0);
+	await refreshWizardCredState();
+	$("#wizard-overlay").hidden = false;
+}
+function closeWizard() {
+	$("#wizard-overlay").hidden = true;
+	clearResume();
+}
+async function finishWizard() {
+	try {
+		await apiJson("/api/webchat/onboarding", {
+			method: "PUT",
+			body: { complete: true }
+		});
+	} catch {}
+	wizardStopTsPoll();
+	closeWizard();
+}
+/**
+* Put an async wizard button into a busy state: disabled, label swapped, and a
+* small inline spinner — the "doing something" signal lives ON the control the
+* user just pressed. Returns a restore function for the finally block.
+*/
+function wizardBusy(btn, busyLabel) {
+	return buttonBusy(btn, busyLabel);
+}
+function wizardSetStatus(id, text, kind) {
+	const el = $(id);
+	if (!el) return;
+	el.hidden = false;
+	el.textContent = text;
+	el.classList.toggle("ok", kind === "ok");
+	el.classList.toggle("err", kind === "err");
+}
+async function wizardProbeHttps() {
+	const row = $("#wizard-https-row");
+	if (!row) return;
+	let state = null;
+	try {
+		state = await apiJson("/api/webchat/tailscale-https");
+	} catch {
+		state = null;
+	}
+	if (state && state.available && !state.active) {
+		row.hidden = false;
+		wizardSetStatus("#wizard-https-status", "", null);
+		$("#wizard-https-status").hidden = true;
+	} else if (state && state.active) {
+		row.hidden = false;
+		$("#wizard-https-btn").hidden = true;
+		wizardSetStatus("#wizard-https-status", "HTTPS is already on.", "ok");
+		if (state.url) $("#wizard-https-status").innerHTML = `HTTPS is on — reach this at <a href="${esc(state.url)}" target="_blank" rel="noopener">${esc(state.url)}</a>`;
+	} else row.hidden = true;
+}
+async function wizardEnableHttps() {
+	const btn = $("#wizard-https-btn");
+	const done = wizardBusy(btn, "Enabling…");
+	try {
+		const r = await authFetch("/api/webchat/tailscale-https", {
+			method: "POST",
+			headers: { "X-Webchat-CSRF": "1" }
+		});
+		const data = await r.json().catch(() => ({}));
+		if (r.ok && data.ok) {
+			btn.hidden = true;
+			wizardSetStatus("#wizard-https-status", data.url ? `HTTPS on — reach this at ${data.url}` : "HTTPS enabled.", "ok");
+			if (data.url) $("#wizard-https-status").innerHTML = `HTTPS on — reach this at <a href="${esc(data.url)}" target="_blank" rel="noopener">${esc(data.url)}</a>`;
+			showToast("HTTPS enabled over Tailscale", { kind: "success" });
+		} else {
+			const msg = [data.error, data.hint].filter(Boolean).join(" ") || "Could not enable HTTPS";
+			wizardSetStatus("#wizard-https-status", msg, "err");
+			if (data.hintUrl) {
+				const el = $("#wizard-https-status");
+				el.innerHTML = `${esc(msg)} <a href="${esc(data.hintUrl)}" target="_blank" rel="noopener">Open admin console</a>`;
+			}
+			showToast(data.error || "Could not enable HTTPS", {
+				kind: "error",
+				timeout: 9e3
+			});
+		}
+	} catch {
+		wizardSetStatus("#wizard-https-status", "Connection failed.", "err");
+	} finally {
+		done();
+	}
+}
+function syncWizardAccessBodies() {
+	const sel = document.querySelector("input[name=\"wizard-access\"]:checked")?.value || "bearer";
+	document.querySelectorAll(".wizard-engine-body[data-access]").forEach((b) => {
+		b.hidden = b.dataset.access !== sel;
+	});
+	if (sel === "tailscale") wizardProbeHttps();
+	wizardStartTsPollIfNeeded();
+}
+var wizardTtsWired = false;
+var WIZARD_TTS_ELS = {
+	btn: "#wizard-tts-install",
+	log: "#wizard-tts-log",
+	progress: "#wizard-tts-progress"
+};
+var wizardSttWired = false;
+var wizardSttBackend = "local";
+var WIZARD_STT_ELS = {
+	btn: "#wizard-stt-install",
+	log: "#wizard-stt-log",
+	progress: "#wizard-stt-log"
+};
+async function renderWizardDictation() {
+	const section = $("#wizard-stt-section");
+	if (!section) return;
+	let st = null;
+	try {
+		st = await apiJson("/api/webchat/stt/install");
+	} catch {
+		st = null;
+	}
+	if (!st) {
+		section.hidden = true;
+		return;
+	}
+	section.hidden = false;
+	const enable = $("#wizard-stt-enable");
+	if (enable) enable.checked = !!st.enabled;
+	if (!wizardSttWired) {
+		wizardSttWired = true;
+		enable?.addEventListener("change", async () => {
+			const on = enable.checked;
+			if (!(await authFetch("/api/stt/config", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ enabled: on })
+			})).ok) {
+				enable.checked = !on;
+				showToast("Could not update voice dictation", { kind: "error" });
+				return;
+			}
+			renderWizardDictation();
+		});
+		document.querySelectorAll("#wizard-stt-backend input[type=\"radio\"]").forEach((b) => {
+			b.addEventListener("change", () => {
+				if (!b.checked) return;
+				wizardSttBackend = b.value;
+				renderWizardDictation();
+			});
+		});
+		$("#wizard-stt-install")?.addEventListener("click", () => runSttInstall({ provider: "local" }, WIZARD_STT_ELS, renderWizardDictation));
+		$("#wizard-stt-connect")?.addEventListener("click", () => {
+			const key = ($("#wizard-stt-key")?.value || "").trim();
+			if (!key) {
+				showToast("Enter the ElevenLabs API key first", { kind: "error" });
+				return;
+			}
+			runSttInstall({
+				provider: "elevenlabs",
+				apiKey: key
+			}, WIZARD_STT_ELS, renderWizardDictation);
+			$("#wizard-stt-key").value = "";
+		});
+	}
+	const group = $("#wizard-stt-group");
+	if (group) group.hidden = !st.enabled;
+	if (!st.enabled) return;
+	const installed = !!st.installed;
+	const backend = installed ? st.provider || wizardSttBackend : wizardSttBackend;
+	document.querySelectorAll("#wizard-stt-backend input[type=\"radio\"]").forEach((b) => {
+		b.checked = b.value === backend;
+	});
+	const local = backend === "local";
+	const badge = $("#wizard-stt-installed");
+	if (badge) badge.hidden = !installed;
+	const badgeText = $("#wizard-stt-installed-text");
+	if (badgeText) badgeText.textContent = local ? "Whisper installed" : "ElevenLabs connected";
+	const installRow = $("#wizard-stt-install-row");
+	if (installRow) installRow.hidden = installed || !local || !st.installerPresent;
+	const keyRow = $("#wizard-stt-key-row");
+	if (keyRow) keyRow.hidden = installed || local;
+	if (st.running) pollSttInstall(WIZARD_STT_ELS, renderWizardDictation);
+}
+async function renderWizardFeatures() {
+	renderWizardDictation();
+	const mkt = $("#wizard-marketplace");
+	if (mkt) mkt.checked = state.marketplaceEnabled === true;
+	const ttsDefault = $("#wizard-tts-default");
+	if (ttsDefault) ttsDefault.checked = getTtsReadAloudEnabled();
+	if (!wizardTtsWired) {
+		wizardTtsWired = true;
+		ttsDefault?.addEventListener("change", async () => {
+			const on = ttsDefault.checked;
+			try {
+				await apiJson("/api/tts/config", {
+					method: "PUT",
+					body: { readAloud: on }
+				});
+				setTtsReadAloudEnabled(on);
+				if (!on) stopTts();
+				renderWizardFeatures();
+			} catch {
+				ttsDefault.checked = !on;
+				showToast("Failed to save Read aloud", { kind: "error" });
+			}
+		});
+		$("#wizard-tts-install")?.addEventListener("click", () => runTtsInstall(WIZARD_TTS_ELS));
+		$("#wizard-autolearn")?.addEventListener("change", async () => {
+			const on = $("#wizard-autolearn").checked;
+			try {
+				await apiJson("/api/learning/config", {
+					method: "PUT",
+					body: { enabled: on }
+				});
+				state.learningMasterEnabled = on;
+				deps$5.applyLearningMaster();
+			} catch {
+				$("#wizard-autolearn").checked = !on;
+				showToast("Failed to save auto-learn", { kind: "error" });
+			}
+		});
+	}
+	const alBox = $("#wizard-autolearn");
+	if (alBox) alBox.checked = state.learningMasterEnabled;
+	const row = $("#wizard-tts-install-row");
+	const badge = $("#wizard-tts-installed");
+	const progress = $("#wizard-tts-progress");
+	const btn = $("#wizard-tts-install");
+	const ttsOn = !!ttsDefault?.checked;
+	let st = null;
+	try {
+		st = await apiJson("/api/webchat/tts/install");
+	} catch {
+		st = null;
+	}
+	if (!st || !ttsOn) {
+		if (row) row.hidden = true;
+		if (badge) badge.hidden = true;
+		if (progress) progress.hidden = !(st && st.running);
+		if (st && st.running) pollTtsInstall(WIZARD_TTS_ELS);
+		return;
+	}
+	if (st.installed) {
+		if (row) row.hidden = true;
+		if (badge) badge.hidden = false;
+		if (progress) progress.hidden = !st.running;
+		if (btn) btn.textContent = "Install Kokoro…";
+		if (st.running) pollTtsInstall(WIZARD_TTS_ELS);
+		return;
+	}
+	if (badge) badge.hidden = true;
+	if (row) row.hidden = !st.installerPresent;
+	if (st.running) pollTtsInstall(WIZARD_TTS_ELS);
+	else if (btn) {
+		btn.disabled = false;
+		btn.textContent = "Install Kokoro…";
+	}
+}
+var wizardAuthInfo = null;
+async function wizardAccessReady() {
+	const sel = document.querySelector("input[name=\"wizard-access\"]:checked")?.value || "bearer";
+	if (sel === "bearer" || sel === "localhost") return true;
+	let info = wizardAuthInfo;
+	try {
+		info = await apiJson("/api/webchat/auth");
+		wizardAuthInfo = info;
+	} catch {}
+	if (sel === "tailscale") return !!(info && info.tailscale && info.tailscale.healthy);
+	if (sel === "sso") return !!(info && info.proxy);
+	return true;
+}
+async function runTailscaleInstall() {
+	const btn = $("#wizard-ts-install-btn");
+	const log = $("#wizard-ts-install-log");
+	if (log) {
+		log.hidden = false;
+		log.textContent = "Starting…";
+	}
+	const done = btn ? wizardBusy(btn, "Installing…") : null;
+	try {
+		const res = await authFetch("/api/webchat/tailscale/install", {
+			method: "POST",
+			headers: { "X-Webchat-CSRF": "1" }
+		});
+		if (!res.ok && res.status !== 202) {
+			const err = await res.json().catch(() => ({}));
+			if (log) log.textContent = err.error || "Install failed to start.";
+			showToast(err.error || "Tailscale install failed", {
+				kind: "error",
+				timeout: 9e3
+			});
+			done?.();
+			return;
+		}
+		done?.();
+		pollTailscaleInstall();
+	} catch (err) {
+		if (log) log.textContent = "Install failed: " + err?.message;
+		done?.();
+	}
+}
+async function pollTailscaleInstall() {
+	if (tailscaleInstallActive.value) return;
+	tailscaleInstallActive.value = true;
+	const btn = $("#wizard-ts-install-btn");
+	const log = $("#wizard-ts-install-log");
+	if (log) log.hidden = false;
+	const done = btn ? wizardBusy(btn, "Installing…") : null;
+	try {
+		for (;;) {
+			const st = await (await authFetch("/api/webchat/tailscale/install")).json();
+			if (log) {
+				log.textContent = installLogText(st);
+				log.scrollTop = log.scrollHeight;
+			}
+			if (!st.running) {
+				if (st.exitCode === 0) showToast("Tailscale is up — first tailnet sign-in becomes owner", { kind: "success" });
+				else showToast("Tailscale install/sign-in didn’t finish — see the log", {
+					kind: "error",
+					timeout: 9e3
+				});
+				break;
+			}
+			await new Promise((r) => setTimeout(r, 2e3));
+		}
+	} catch (err) {
+		showToast("Tailscale install error: " + err?.message, { kind: "error" });
+	} finally {
+		tailscaleInstallActive.value = false;
+		done?.();
+		renderWizardAccess();
+	}
+}
+async function runCloudflaredBinaryInstall() {
+	const btn = $("#wizard-cf-install-btn");
+	const log = $("#wizard-cf-install-log");
+	if (log) {
+		log.hidden = false;
+		log.textContent = "Starting…";
+	}
+	const done = btn ? wizardBusy(btn, "Installing…") : null;
+	try {
+		const res = await authFetch("/api/webchat/cloudflared/install", {
+			method: "POST",
+			headers: { "X-Webchat-CSRF": "1" }
+		});
+		if (!res.ok && res.status !== 202) {
+			const err = await res.json().catch(() => ({}));
+			if (log) log.textContent = err.error || "Install failed to start.";
+			showToast(err.error || "cloudflared install failed", {
+				kind: "error",
+				timeout: 9e3
+			});
+			done?.();
+			return;
+		}
+		done?.();
+		pollCloudflared({
+			btn: "#wizard-cf-install-btn",
+			verb: "Installing…",
+			success: "cloudflared installed — paste your tunnel token"
+		});
+	} catch (err) {
+		if (log) log.textContent = "Install failed: " + err?.message;
+		done?.();
+	}
+}
+async function runCloudflaredConnect() {
+	const btn = $("#wizard-cf-connect-btn");
+	const log = $("#wizard-cf-install-log");
+	const tokenEl = $("#wizard-cf-token");
+	const token = (tokenEl?.value || "").trim();
+	if (!token) {
+		showToast("Paste the tunnel token first", { kind: "error" });
+		return;
+	}
+	if (log) {
+		log.hidden = false;
+		log.textContent = "Starting…";
+	}
+	const done = btn ? wizardBusy(btn, "Connecting…") : null;
+	try {
+		const res = await authFetch("/api/webchat/cloudflared/connect", {
+			method: "POST",
+			headers: {
+				"X-Webchat-CSRF": "1",
+				"Content-Type": "application/json"
+			},
+			body: JSON.stringify({ token })
+		});
+		if (!res.ok && res.status !== 202) {
+			const err = await res.json().catch(() => ({}));
+			if (log) log.textContent = err.error || "Connect failed to start.";
+			showToast(err.error || "Cloudflare Tunnel connect failed", {
+				kind: "error",
+				timeout: 9e3
+			});
+			done?.();
+			return;
+		}
+		if (tokenEl) tokenEl.value = "";
+		done?.();
+		pollCloudflared({
+			btn: "#wizard-cf-connect-btn",
+			verb: "Connecting…",
+			success: "Cloudflare Tunnel connected"
+		});
+	} catch (err) {
+		if (log) log.textContent = "Connect failed: " + err?.message;
+		done?.();
+	}
+}
+async function pollCloudflared({ btn: btnSel, verb, success }) {
+	if (cloudflaredInstallActive.value) return;
+	cloudflaredInstallActive.value = true;
+	const btn = btnSel ? $(btnSel) : null;
+	const log = $("#wizard-cf-install-log");
+	if (log) log.hidden = false;
+	const done = btn ? wizardBusy(btn, verb) : null;
+	try {
+		for (;;) {
+			const st = await (await authFetch("/api/webchat/cloudflared")).json();
+			if (log) {
+				log.textContent = installLogText(st);
+				log.scrollTop = log.scrollHeight;
+			}
+			if (!st.running) {
+				if (st.exitCode === 0) showToast(success, { kind: "success" });
+				else showToast("cloudflared step didn’t finish — see the log", {
+					kind: "error",
+					timeout: 9e3
+				});
+				break;
+			}
+			await new Promise((r) => setTimeout(r, 2e3));
+		}
+	} catch (err) {
+		showToast("cloudflared error: " + err?.message, { kind: "error" });
+	} finally {
+		cloudflaredInstallActive.value = false;
+		done?.();
+		renderWizardAccess();
+	}
+}
+var wizardAccessDefaulted = false;
+var wizardBearerPendingRestart = false;
+var wizardTsPoll = null;
+function wizardStopTsPoll() {
+	if (wizardTsPoll) {
+		clearInterval(wizardTsPoll);
+		wizardTsPoll = null;
+	}
+}
+function wizardStartTsPollIfNeeded() {
+	const sel = document.querySelector("input[name=\"wizard-access\"]:checked")?.value;
+	const healthy = !!(wizardAuthInfo && wizardAuthInfo.tailscale && wizardAuthInfo.tailscale.healthy);
+	if (sel !== "tailscale" || healthy) {
+		wizardStopTsPoll();
+		return;
+	}
+	if (wizardTsPoll) return;
+	wizardTsPoll = setInterval(async () => {
+		try {
+			const info = await apiJson("/api/webchat/auth");
+			if (info && info.tailscale && info.tailscale.healthy) {
+				wizardStopTsPoll();
+				renderWizardAccess();
+			}
+		} catch {}
+	}, 4e3);
+}
+async function renderWizardAccess() {
+	const stateEl = $("#wizard-access-state");
+	let info = null;
+	try {
+		info = await apiJson("/api/webchat/auth");
+	} catch {
+		info = null;
+	}
+	wizardAuthInfo = info;
+	const tsHealthy = !!(info && info.tailscale && info.tailscale.healthy);
+	const tsAuthActive = !!(info && info.tailscale && info.tailscale.enabled && info.tailscale.healthy);
+	const proxyOn = !!(info && info.proxy);
+	const bearerOn = !!(info && info.bearerActive);
+	const localhostOnly = !!(info && info.loopback) && !bearerOn && !tsAuthActive && !proxyOn;
+	const chip = (id, text, ok) => {
+		const el = $(id);
+		if (!el) return;
+		el.hidden = !info;
+		el.textContent = text;
+		el.classList.toggle("ok", ok);
+	};
+	chip("#wizard-access-localhost-chip", localhostOnly ? "active" : "off", localhostOnly);
+	chip("#wizard-access-bearer-chip", bearerOn ? "active" : "off", bearerOn);
+	chip("#wizard-access-ts-chip", tsHealthy ? "✓ up" : "not detected", tsHealthy);
+	chip("#wizard-access-sso-chip", proxyOn ? "✓ active" : "not configured", proxyOn);
+	if (!wizardAccessDefaulted && info) {
+		wizardAccessDefaulted = true;
+		if (localhostOnly) {
+			const r = document.querySelector("input[name=\"wizard-access\"][value=\"localhost\"]");
+			if (r) r.checked = true;
+		}
+	}
+	const tsHelper = $("#wizard-ts-helper");
+	const tsRow = $("#wizard-ts-install-row");
+	const tsManual = $("#wizard-ts-manual");
+	if (tsHealthy) {
+		if (tsHelper) tsHelper.hidden = true;
+		if (tsRow) tsRow.hidden = true;
+		if (tsManual) tsManual.hidden = true;
+	} else {
+		let ts = null;
+		try {
+			ts = await apiJson("/api/webchat/tailscale/install");
+		} catch {
+			ts = null;
+		}
+		const canInstall = !!(ts && ts.canInstall);
+		const tunPresent = !!(ts && ts.tunPresent);
+		const isRoot = !!(ts && ts.isRoot);
+		if (tsRow) tsRow.hidden = !canInstall;
+		if (tsManual) tsManual.hidden = !(!canInstall && tunPresent && !isRoot);
+		if (tsHelper) tsHelper.hidden = !(!canInstall && !tunPresent);
+		if (canInstall && ts.running) pollTailscaleInstall();
+	}
+	let cf = null;
+	try {
+		cf = await apiJson("/api/webchat/cloudflared");
+	} catch {
+		cf = null;
+	}
+	const cfService = !!(cf && cf.serviceInstalled);
+	const cfBinary = !!(cf && cf.installed);
+	const cfCanInstall = !!(cf && cf.canInstall);
+	chip("#wizard-access-cf-chip", cfService ? "✓ running" : cfBinary ? "installed" : "not set up", cfService);
+	const cfReady = $("#wizard-cf-ready");
+	if (cfReady) cfReady.hidden = !cfService;
+	const cfHelper = $("#wizard-cf-helper");
+	if (cfHelper) cfHelper.hidden = cfService || cfCanInstall;
+	const cfInstallRow = $("#wizard-cf-install-row");
+	if (cfInstallRow) cfInstallRow.hidden = cfService || !cfCanInstall || cfBinary;
+	const cfConnect = $("#wizard-cf-connect");
+	if (cfConnect) cfConnect.hidden = cfService || !cfCanInstall || !cfBinary;
+	if (cfCanInstall && cf.running) pollCloudflared({
+		btn: null,
+		success: "cloudflared step complete"
+	});
+	const retireRow = $("#wizard-retire-row");
+	if (retireRow) retireRow.hidden = !(info && info.canDisableBearer);
+	const bearerUnset = !!(info && !info.bearerConfigured);
+	const bearerGenRow = $("#wizard-bearer-gen-row");
+	if (bearerGenRow && !wizardBearerPendingRestart) bearerGenRow.hidden = !bearerUnset || !state.isOwnerView;
+	if (stateEl) {
+		if (!info) {
+			stateEl.textContent = "Access settings are available to the owner.";
+			stateEl.hidden = false;
+		} else {
+			const methods = [];
+			if (tsAuthActive) methods.push("Tailscale identity");
+			if (proxyOn) methods.push("reverse-proxy SSO");
+			if (bearerOn) methods.push("a bearer token");
+			stateEl.textContent = methods.length ? `Secured by ${methods.join(" + ")}.` : "";
+			stateEl.hidden = !methods.length;
+		}
+	}
+	syncWizardAccessBodies();
+}
+async function wizardRetireBearer() {
+	const done = wizardBusy($("#wizard-retire-btn"), "Retiring…");
+	try {
+		const r = await authFetch("/api/webchat/auth/bearer", {
+			method: "PUT",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Webchat-CSRF": "1"
+			},
+			body: JSON.stringify({ active: false })
+		});
+		const data = await r.json().catch(() => ({}));
+		if (r.ok) {
+			showToast("Bearer token retired — access is via Tailscale/SSO", { kind: "success" });
+			await renderWizardAccess();
+		} else wizardSetStatus("#wizard-retire-status", data.error || "Could not retire the token", "err");
+	} catch {
+		wizardSetStatus("#wizard-retire-status", "Connection failed.", "err");
+	} finally {
+		done();
+	}
+}
+async function wizardGenerateBearer() {
+	const done = wizardBusy($("#wizard-bearer-gen"), "Generating…");
+	try {
+		const r = await authFetch("/api/webchat/auth/bearer/generate", {
+			method: "POST",
+			headers: { "X-Webchat-CSRF": "1" }
+		});
+		const data = await r.json().catch(() => ({}));
+		if (!r.ok || !data.token) {
+			showToast(data.error || "Could not generate a token", {
+				kind: "error",
+				timeout: 8e3
+			});
+			return;
+		}
+		setAuthToken(data.token);
+		sessionStorage.setItem("nanoclaw-token", data.token);
+		const field = $("#wizard-bearer-token");
+		if (field) field.value = data.token;
+		if ($("#wizard-bearer-result")) $("#wizard-bearer-result").hidden = false;
+		if ($("#wizard-bearer-gen-row")) $("#wizard-bearer-gen-row").hidden = true;
+		wizardBearerPendingRestart = true;
+	} catch {
+		showToast("Connection failed.", { kind: "error" });
+	} finally {
+		done();
+	}
+}
+async function wizardCopyBearerToken() {
+	const field = $("#wizard-bearer-token");
+	const value = field?.value || "";
+	if (!value) return;
+	try {
+		await navigator.clipboard.writeText(value);
+		showToast("Token copied", { kind: "success" });
+	} catch {
+		field?.select();
+		try {
+			document.execCommand("copy");
+			showToast("Token copied", { kind: "success" });
+		} catch {
+			showToast("Copy failed — select the token and copy manually", { kind: "error" });
+		}
+	}
+}
+async function wizardCopyText(selector, okMsg) {
+	const el = $(selector);
+	const text = String((el && "value" in el ? el.value : el?.textContent) || "").trim();
+	if (!text) return;
+	try {
+		await navigator.clipboard.writeText(text);
+		showToast(okMsg || "Copied", { kind: "success" });
+	} catch {
+		el?.select?.();
+		showToast("Copy failed — select and copy manually", { kind: "error" });
+	}
+}
+async function wizardTriggerRestart() {
+	const overlay = $("#restart-overlay");
+	const titleEl = $("#restart-title");
+	const statusEl = $("#restart-status");
+	const reloadBtn = $("#restart-reload-btn");
+	const setStatus = (t) => {
+		if (statusEl) statusEl.textContent = t;
+	};
+	if (overlay) overlay.hidden = false;
+	reloadBtn?.addEventListener("click", () => location.reload(), { once: true });
+	const readUptime = async () => {
+		try {
+			const r = await fetch("/health", { cache: "no-store" });
+			if (!r.ok) return null;
+			const b = await r.json();
+			return typeof b.uptime === "number" ? b.uptime : null;
+		} catch {
+			return null;
+		}
+	};
+	const baseUptime = await readUptime() ?? Infinity;
+	try {
+		await apiJson("/api/webchat/restart", {
+			method: "POST",
+			headers: { "X-Webchat-CSRF": "1" }
+		});
+	} catch {}
+	const started = Date.now();
+	const DEADLINE_MS = 9e4;
+	while (Date.now() - started < DEADLINE_MS) {
+		await new Promise((r) => setTimeout(r, 1500));
+		const up = await readUptime();
+		if (up !== null && up < baseUptime) {
+			setStatus("Back online — reloading…");
+			await new Promise((r) => setTimeout(r, 700));
+			location.reload();
+			return;
+		}
+		setStatus("Restarting the server…");
+	}
+	if (titleEl) titleEl.textContent = "Still restarting…";
+	setStatus("This is taking longer than usual. Reload once you can reach the server.");
+	if (reloadBtn) reloadBtn.hidden = false;
+}
+function wireWizard() {
+	if (wizardWired) return;
+	wizardWired = true;
+	wireGrokLogin();
+	wireCopilotLogin();
+	resumeGrokLogin();
+	resumeCopilotLogin();
+	$("#wizard-next")?.addEventListener("click", async () => {
+		if (!!document.querySelector(`.wizard-step[data-step="${wizardStep}"] input[name="wizard-access"]`) && !await wizardAccessReady()) {
+			const sel = document.querySelector("input[name=\"wizard-access\"]:checked")?.value;
+			showToast(sel === "tailscale" ? "Connect Tailscale first — sign in over your tailnet (install it above if needed), then continue." : "Configure the reverse proxy first — set WEBCHAT_TRUSTED_PROXY_IPS and restart, then continue.", {
+				kind: "info",
+				timeout: 8e3
+			});
+			return;
+		}
+		if (wizardStep === 2) {
+			wizardCreateAndFinish();
+			return;
+		}
+		if (wizardStep === 0 && !wizardEngineConnected()) {
+			showToast(`Finish this engine first — ${wizardEngine === "ollama" ? "set a default Ollama model" : wizardEngine === "grok" ? "authenticate Grok from a terminal (the command is on the card), then reload" : wizardEngine === "copilot" ? wizardCred?.copilot?.available ? "connect GitHub Copilot" : "install then connect GitHub Copilot" : wizardEngine === "codex" && !wizardCodexAvailable ? "install then connect Codex" : `connect ${wizardEngine === "codex" ? "Codex" : "Claude"}`} above.`, {
+				kind: "info",
+				timeout: 6e3
+			});
+			return;
+		}
+		showWizardStep(wizardStep + 1);
+	});
+	$("#wizard-back")?.addEventListener("click", () => showWizardStep(wizardStep - 1));
+	$("#wizard-skip")?.addEventListener("click", () => {
+		if (wizardStep === 2) finishWizard();
+		else showWizardStep(wizardStep + 1);
+	});
+	$("#wizard-close")?.addEventListener("click", () => finishWizard());
+	document.querySelectorAll("input[name=\"wizard-access\"]").forEach((radio) => {
+		radio.addEventListener("change", () => syncWizardAccessBodies());
+	});
+	$("#wizard-https-btn")?.addEventListener("click", () => wizardEnableHttps());
+	$("#wizard-ts-install-btn")?.addEventListener("click", () => runTailscaleInstall());
+	$("#wizard-cf-install-btn")?.addEventListener("click", () => runCloudflaredBinaryInstall());
+	$("#wizard-cf-connect-btn")?.addEventListener("click", () => runCloudflaredConnect());
+	$("#wizard-retire-btn")?.addEventListener("click", () => wizardRetireBearer());
+	$("#wizard-bearer-gen")?.addEventListener("click", () => wizardGenerateBearer());
+	$("#wizard-bearer-copy")?.addEventListener("click", () => wizardCopyBearerToken());
+	$("#wizard-ts-manual-copy")?.addEventListener("click", () => wizardCopyText("#wizard-ts-manual-cmd", "Copied"));
+	document.querySelectorAll("input[name=\"wizard-engine\"]").forEach((radio) => {
+		radio.addEventListener("change", () => {
+			selectWizardEngine(radio.value);
+			if (wizardEngine !== "ollama") wizardClearOllamaDefault();
+		});
+	});
+	$("#wizard-claude-oauth")?.addEventListener("click", () => deps$5.openOauthMintModal("workspace"));
+	$("#wizard-codex-install")?.addEventListener("click", () => runInstall("codex", CODEX_WIZARD_ELS));
+	$("#wizard-grok-install")?.addEventListener("click", () => runInstall("grok", GROK_WIZARD_ELS));
+	$("#wizard-copilot-install")?.addEventListener("click", () => runInstall("copilot", COPILOT_WIZARD_ELS));
+	$("#wizard-codex-oauth")?.addEventListener("click", () => deps$5.openOauthMintModal("workspace-codex"));
+	$("#wizard-codex-save")?.addEventListener("click", async () => {
+		const key = ($("#wizard-codex-key")?.value || "").trim();
+		if (!/^sk-/.test(key)) return wizardSetStatus("#wizard-codex-status", "Expected an OpenAI API key (sk-…).", "err");
+		const done = wizardBusy($("#wizard-codex-save"), "Saving…");
+		try {
+			const r = await authFetch("/api/workspace-credential", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					provider: "codex",
+					type: "api_key",
+					apiKey: key
+				})
+			});
+			const out = await r.json().catch(() => ({}));
+			if (!r.ok) return wizardSetStatus("#wizard-codex-status", out.error || "Save failed.", "err");
+			$("#wizard-codex-key").value = "";
+			await refreshWizardCredState();
+		} finally {
+			done();
+		}
+	});
+	$("#wizard-claude-save")?.addEventListener("click", async () => {
+		const key = ($("#wizard-claude-key")?.value || "").trim();
+		if (!/^sk-ant-/.test(key)) return wizardSetStatus("#wizard-claude-status", "Expected an Anthropic API key (sk-ant-…) or setup token (sk-ant-oat…).", "err");
+		const isOauth = /^sk-ant-oat/.test(key);
+		const done = wizardBusy($("#wizard-claude-save"), "Saving…");
+		try {
+			const r = await authFetch("/api/workspace-credential", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(isOauth ? {
+					type: "oauth_token",
+					token: key
+				} : {
+					type: "api_key",
+					apiKey: key
+				})
+			});
+			const out = await r.json().catch(() => ({}));
+			if (!r.ok) return wizardSetStatus("#wizard-claude-status", out.error || "Save failed.", "err");
+			$("#wizard-claude-key").value = "";
+			await refreshWizardCredState();
+		} finally {
+			done();
+		}
+	});
+	$("#wizard-claude-disconnect")?.addEventListener("click", async () => {
+		const r = await authFetch("/api/workspace-credential", { method: "DELETE" });
+		if (!r.ok) {
+			showToast("Failed to disconnect: " + ((await r.json().catch(() => ({}))).error || r.statusText), { kind: "error" });
+			return;
+		}
+		await refreshWizardCredState();
+	});
+	$("#wizard-codex-disconnect")?.addEventListener("click", async () => {
+		const r = await authFetch("/api/workspace-credential?provider=codex", { method: "DELETE" });
+		if (!r.ok) {
+			showToast("Failed to disconnect: " + ((await r.json().catch(() => ({}))).error || r.statusText), { kind: "error" });
+			return;
+		}
+		await refreshWizardCredState();
+	});
+	$("#wizard-ollama-probe")?.addEventListener("click", () => void wizardProbeOllama());
+	$("#wizard-ollama-list")?.addEventListener("change", (e) => {
+		const t = e.target;
+		if (t && t.name === "wizard-ollama-model" && t.value) {
+			wizardOllamaSelected.value = t.value;
+			wizardSelectOllamaModel(t.value, t.parentElement?.querySelector("span"));
+		}
+	});
+	$("#wizard-ollama-change")?.addEventListener("click", () => {
+		$("#wizard-ollama-connected").hidden = true;
+		$("#wizard-ollama-setup").hidden = false;
+	});
+	$("#wizard-ollama-install")?.addEventListener("click", async () => {
+		const done = wizardBusy($("#wizard-ollama-install"), "Installing…");
+		const log = $("#wizard-ollama-install-log");
+		log.hidden = false;
+		log.textContent = "Starting…";
+		try {
+			const r = await authFetch("/api/ollama/install", { method: "POST" });
+			if (!r.ok) {
+				const err = await r.json().catch(() => ({}));
+				if (err.error !== "already-running") {
+					log.textContent = err.error || "Install failed to start.";
+					return;
+				}
+				log.textContent = "Resuming the install already in progress…";
+			}
+			for (;;) {
+				await new Promise((resolve) => setTimeout(resolve, 2e3));
+				const st = await (await authFetch("/api/ollama/local")).json();
+				log.textContent = installLogText(st);
+				log.scrollTop = log.scrollHeight;
+				if (!st.running) {
+					if (st.exitCode === 0 && st.reachable) {
+						$("#wizard-ollama-install-row").hidden = true;
+						$("#wizard-ollama-url").value = "http://localhost:11434";
+						wizardSetStatus("#wizard-ollama-status", "Ollama installed and running — download a model below.", "ok");
+						$("#wizard-ollama-dl-row").hidden = false;
+						wizardLoadRecommendation();
+					} else wizardSetStatus("#wizard-ollama-status", "Install failed — see the log above.", "err");
+					return;
+				}
+			}
+		} finally {
+			done();
+		}
+	});
+	$("#wizard-ollama-dl")?.addEventListener("click", async () => {
+		const model = ($("#wizard-ollama-dl-model")?.value || "").trim() || "qwen3:1.7b";
+		const host = ($("#wizard-ollama-url")?.value || "").trim() || "http://localhost:11434";
+		const r = await authFetch("/api/ollama/pull", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				host,
+				model
+			})
+		});
+		if (!r.ok) return wizardSetStatus("#wizard-ollama-dl-status", (await r.json().catch(() => ({}))).error || "Pull failed to start.", "err");
+		await wizardFollowPull(host, model);
+	});
+}
+async function wizardCreateAndFinish() {
+	const roomName = ($("#wizard-room-name")?.value || "").trim() || "General";
+	const agentName = ($("#wizard-agent-name")?.value || "").trim() || "Assistant";
+	if (wizardEngine !== "ollama") await wizardClearOllamaDefault();
+	const mktEnabled = $("#wizard-marketplace")?.checked !== false;
+	try {
+		await authFetch("/api/webchat/features", {
+			method: "PUT",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Webchat-CSRF": "1"
+			},
+			body: JSON.stringify({ marketplaceEnabled: mktEnabled })
+		});
+		state.marketplaceEnabled = mktEnabled;
+		applyMarketplaceNav();
+	} catch {}
+	if (state.isOwnerView) try {
+		await apiJson("/api/webchat/tailscale-owner", {
+			method: "PUT",
+			headers: { "X-Webchat-CSRF": "1" },
+			body: { armed: document.querySelector("input[name=\"wizard-access\"]:checked")?.value === "tailscale" }
+		});
+	} catch {}
+	const done = wizardBusy($("#wizard-next"), "Creating…");
+	try {
+		const agentRef = {
+			kind: "new",
+			name: agentName
+		};
+		agentRef.provider = wizardEngine === "ollama" ? "claude" : wizardEngine;
+		const r = await authFetch("/api/rooms", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				name: roomName,
+				agents: [agentRef]
+			})
+		});
+		const out = await r.json().catch(() => ({}));
+		if (!r.ok) {
+			if (r.status === 409) {
+				wizardSetStatus("#wizard-room-status", "Already set up — finishing…", "ok");
+				await finishWizard();
+				if (wizardBearerPendingRestart) await wizardTriggerRestart();
+				return;
+			}
+			return wizardSetStatus("#wizard-room-status", out.error || "Create failed.", "err");
+		}
+		if (out?.room?.id) deps$5.joinRoom(out.room.id, out.room.name);
+		wizardSetStatus("#wizard-room-status", "Created. Finishing…", "ok");
+		await finishWizard();
+		if (wizardBearerPendingRestart) await wizardTriggerRestart();
+		if (typeof deps$5.fetchAgents === "function") deps$5.fetchAgents().catch(() => {});
+		if ([
+			"claude",
+			"codex",
+			"grok",
+			"copilot"
+		].includes(wizardEngine)) try {
+			await apiJson("/api/workspace-provider", {
+				method: "PUT",
+				headers: { "X-Webchat-CSRF": "1" },
+				body: { provider: wizardEngine }
+			});
+		} catch {}
+	} finally {
+		done();
+	}
+}
+async function maybeAutoOpenWizard() {
+	try {
+		const s = await apiJson("/api/webchat/onboarding");
+		if (s.canEdit && !s.complete) openWizard();
+	} catch {}
+}
+var grokPollTimer = null;
+function stopGrokPoll() {
+	if (grokPollTimer) clearInterval(grokPollTimer);
+	grokPollTimer = null;
+}
+function renderGrokLogin(p) {
+	const device = $("#wizard-grok-device");
+	const row = $("#wizard-grok-login-row");
+	const status = $("#wizard-grok-status");
+	if (!device || !row) return;
+	device.hidden = !p?.running;
+	row.hidden = !!p?.running;
+	if (p?.running) {
+		const url = $("#wizard-grok-url");
+		if (url && p.verificationUrl) {
+			url.textContent = p.verificationUrl;
+			url.href = p.verificationUrl;
+		}
+		$("#wizard-grok-code").textContent = p.userCode ?? "waiting for a code…";
+	}
+	if (status && p && !p.running && p.outcome && p.outcome !== "complete") {
+		status.textContent = p.error ?? "The login did not complete.";
+		status.hidden = false;
+	}
+}
+async function pollGrokLogin() {
+	const r = await authFetch("/api/workspace-credential/grok");
+	if (!r.ok) return stopGrokPoll();
+	const p = await r.json();
+	renderGrokLogin(p);
+	if (!p.running) {
+		stopGrokPoll();
+		if (p.outcome === "complete") await refreshWizardCredState();
+	}
+}
+function startGrokPoll() {
+	stopGrokPoll();
+	pollGrokLogin();
+	grokPollTimer = setInterval(() => void pollGrokLogin(), 2e3);
+}
+function wireGrokLogin() {
+	$("#wizard-grok-login")?.addEventListener("click", async () => {
+		const btn = $("#wizard-grok-login");
+		if (btn) btn.disabled = true;
+		const status = $("#wizard-grok-status");
+		if (status) status.hidden = true;
+		try {
+			const r = await authFetch("/api/workspace-credential/grok/start", { method: "POST" });
+			const p = await r.json();
+			if (!r.ok) {
+				if (status) {
+					status.textContent = p?.error ?? "Could not start the login.";
+					status.hidden = false;
+				}
+				return;
+			}
+			renderGrokLogin(p);
+			startGrokPoll();
+		} finally {
+			if (btn) btn.disabled = false;
+		}
+	});
+	$("#wizard-grok-cancel")?.addEventListener("click", async () => {
+		await authFetch("/api/workspace-credential/grok/cancel", { method: "POST" });
+		stopGrokPoll();
+		pollGrokLogin();
+	});
+}
+/** Resume a login that was started before this page loaded (or in another tab). */
+async function resumeGrokLogin() {
+	try {
+		const p = await apiJson("/api/workspace-credential/grok");
+		if (p.running) {
+			renderGrokLogin(p);
+			startGrokPoll();
+		}
+	} catch {}
+}
+var copilotPollTimer = null;
+function stopCopilotPoll() {
+	if (copilotPollTimer) clearInterval(copilotPollTimer);
+	copilotPollTimer = null;
+}
+function renderCopilotLogin(p) {
+	const device = $("#wizard-copilot-device");
+	const row = $("#wizard-copilot-login-row");
+	if (!device || !row) return;
+	device.hidden = !p?.running;
+	row.hidden = !!p?.running;
+	if (p?.running) {
+		const url = $("#wizard-copilot-url");
+		if (url && p.verificationUrl) {
+			url.textContent = p.verificationUrl;
+			url.href = p.verificationUrl;
+		}
+		$("#wizard-copilot-code").textContent = p.userCode ?? "waiting for a code…";
+	}
+	const line = copilotStatusLine(p);
+	const status = $("#wizard-copilot-status");
+	if (status) {
+		status.textContent = line ?? "";
+		status.hidden = !line;
+	}
+}
+async function pollCopilotLogin() {
+	const r = await authFetch("/api/workspace-credential/copilot");
+	if (!r.ok) return stopCopilotPoll();
+	const p = await r.json();
+	renderCopilotLogin(p);
+	if (!p.running) {
+		stopCopilotPoll();
+		if (p.outcome === "complete") await refreshWizardCredState();
+	}
+}
+function startCopilotPoll() {
+	stopCopilotPoll();
+	pollCopilotLogin();
+	copilotPollTimer = setInterval(() => void pollCopilotLogin(), 2e3);
+}
+function wireCopilotLogin() {
+	$("#wizard-copilot-login")?.addEventListener("click", async () => {
+		const btn = $("#wizard-copilot-login");
+		const done = btn ? buttonBusy(btn, "Starting…") : () => {};
+		try {
+			const r = await authFetch("/api/workspace-credential/copilot/start", { method: "POST" });
+			const p = await r.json().catch(() => ({}));
+			if (!r.ok) {
+				renderCopilotLogin({
+					outcome: "failed",
+					error: p?.error ?? "Could not start the sign-in."
+				});
+				return;
+			}
+			renderCopilotLogin(p);
+			startCopilotPoll();
+		} finally {
+			done();
+		}
+	});
+	$("#wizard-copilot-cancel")?.addEventListener("click", async () => {
+		await authFetch("/api/workspace-credential/copilot/cancel", { method: "POST" });
+		stopCopilotPoll();
+		pollCopilotLogin();
+	});
+	$("#wizard-copilot-disconnect")?.addEventListener("click", async () => {
+		const r = await authFetch("/api/workspace-credential/copilot/disconnect", { method: "POST" });
+		if (!r.ok) {
+			showToast("Failed to disconnect: " + ((await r.json().catch(() => ({}))).error || r.statusText), { kind: "error" });
+			return;
+		}
+		await refreshWizardCredState();
+	});
+}
+/** Resume a sign-in started before this page loaded (or in another tab). */
+async function resumeCopilotLogin() {
+	try {
+		const p = await apiJson("/api/workspace-credential/copilot");
+		if (p.running) {
+			renderCopilotLogin(p);
+			startCopilotPoll();
+		}
+	} catch {}
+}
+//#endregion
+//#region src/features/ConfirmInput.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$17 = ["placeholder"];
+var _hoisted_2$13 = ["hidden"];
+//#endregion
+//#region src/features/ConfirmInput.vue
+var ConfirmInput_default = /* @__PURE__ */ defineComponent({
+	__name: "ConfirmInput",
+	setup(__props) {
+		/**
+		* The text field showConfirmModal borrows as its body; one app per call. State comes
+		* through provide(), not props: root props never update, and a module ref would let two
+		* open instances collide. The input is uncontrolled (the caller reads input.value at
+		* confirm time), and @input binds only when a validator is supplied.
+		*/
+		const s = inject("confirmInput");
+		function capture(el) {
+			if (!el) return;
+			s.el = el;
+			el.value = s.initial;
+		}
+		function onInput() {
+			s.error = "";
+			s.invalid = false;
+		}
+		return (_ctx, _cache) => {
+			return openBlock(), createElementBlock(Fragment, null, [createElementVNode("input", mergeProps({
+				type: "text",
+				class: ["confirm-input", unref(s).invalid ? "invalid" : void 0],
+				placeholder: unref(s).placeholder,
+				autocomplete: "off",
+				ref: capture
+			}, toHandlers(unref(s).validate ? { input: onInput } : {}, true)), null, 16, _hoisted_1$17), unref(s).validate ? (openBlock(), createElementBlock("div", {
+				key: 0,
+				class: "confirm-input-error",
+				hidden: !unref(s).error
+			}, toDisplayString(unref(s).error), 9, _hoisted_2$13)) : createCommentVNode("", true)], 64);
+		};
+	}
+});
+//#endregion
+//#region src/features/ConfirmToggle.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$16 = {
+	key: 0,
+	class: "import-note"
+};
+//#endregion
+//#region src/features/ConfirmToggle.vue
+var ConfirmToggle_default = /* @__PURE__ */ defineComponent({
+	__name: "ConfirmToggle",
+	setup(__props) {
+		/**
+		* The toggle(s) showConfirmModal borrows as its body; per-instance and provide()-injected
+		* like ConfirmInput. The checkbox is uncontrolled and read from the captured element at
+		* confirm time (nothing here re-renders). The optional note comes after the label.
+		*/
+		const s = inject("confirmToggle");
+		function capture(el, i) {
+			if (el) s.els[Number(i)] = el;
+		}
+		return (_ctx, _cache) => {
+			return openBlock(), createElementBlock(Fragment, null, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(s).labels, (label, i) => {
+				return openBlock(), createElementBlock("label", {
+					key: i,
+					class: "setting-toggle"
+				}, [createElementVNode("span", null, toDisplayString(label), 1), createElementVNode("input", {
+					type: "checkbox",
+					ref_for: true,
+					ref: (el) => capture(el, i)
+				}, null, 512)]);
+			}), 128)), unref(s).note ? (openBlock(), createElementBlock("div", _hoisted_1$16, toDisplayString(unref(s).note), 1)) : createCommentVNode("", true)], 64);
+		};
+	}
+});
+//#endregion
+//#region src/features/ConfirmModal.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$15 = { class: "modal-header" };
+var _hoisted_2$12 = {
+	key: 0,
+	class: "modal-body"
+};
+var _hoisted_3$11 = { class: "confirm-actions" };
+var _hoisted_4$9 = ["onClick"];
+//#endregion
+//#region src/features/ConfirmModal.vue
+var ConfirmModal_default = /* @__PURE__ */ defineComponent({
+	__name: "ConfirmModal",
+	props: {
+		title: {},
+		body: {},
+		confirmLabel: {},
+		cancelLabel: {},
+		destructive: { type: Boolean },
+		extraActions: {},
+		onPick: { type: Function },
+		onConfirm: { type: Function }
+	},
+	setup(__props) {
+		/**
+		* The confirm dialog, one app per overlay created by showConfirmModal. `body` may be a
+		* string or a live HTMLElement; an element is APPENDED, not rendered, because callers read
+		* its value after the promise resolves. No focus trap, unlike the skill editor. Focus goes
+		* to Cancel for destructive actions so a stray Enter does not delete.
+		*/
+		const props = __props;
+		const message = ref(null);
+		const cancelEl = ref(null);
+		const confirmEl = ref(null);
+		const isEl = computed(() => props.body instanceof HTMLElement);
+		const hasBody = computed(() => !!props.body);
+		const modalClass = computed(() => "modal confirm-modal" + (props.body ? "" : " confirm-modal--titleonly"));
+		function onKey(e) {
+			if (e.key === "Escape") props.onPick(false);
+			else if (e.key === "Enter" && !(e.target instanceof HTMLButtonElement)) props.onConfirm();
+		}
+		onMounted(() => {
+			if (isEl.value && message.value) message.value.appendChild(props.body);
+			document.addEventListener("keydown", onKey);
+			(props.destructive ? cancelEl.value : confirmEl.value)?.focus();
+		});
+		onUnmounted(() => document.removeEventListener("keydown", onKey));
+		return (_ctx, _cache) => {
+			return openBlock(), createElementBlock("div", { class: normalizeClass(modalClass.value) }, [
+				createElementVNode("div", _hoisted_1$15, [createElementVNode("span", null, toDisplayString(__props.title || "Confirm"), 1)]),
+				hasBody.value ? (openBlock(), createElementBlock("div", _hoisted_2$12, [createElementVNode("div", {
+					ref_key: "message",
+					ref: message,
+					class: "confirm-message"
+				}, toDisplayString(isEl.value ? "" : __props.body), 513)])) : createCommentVNode("", true),
+				createElementVNode("div", _hoisted_3$11, [
+					createElementVNode("button", {
+						ref_key: "cancelEl",
+						ref: cancelEl,
+						type: "button",
+						class: "btn-cancel",
+						onClick: _cache[0] || (_cache[0] = ($event) => props.onPick(false))
+					}, toDisplayString(__props.cancelLabel), 513),
+					(openBlock(true), createElementBlock(Fragment, null, renderList(__props.extraActions, (a) => {
+						return openBlock(), createElementBlock("button", {
+							key: a.label,
+							type: "button",
+							class: normalizeClass(a.className || "btn btn-secondary"),
+							onClick: ($event) => props.onPick(a.value)
+						}, toDisplayString(a.label), 11, _hoisted_4$9);
+					}), 128)),
+					createElementVNode("button", {
+						ref_key: "confirmEl",
+						ref: confirmEl,
+						type: "button",
+						class: normalizeClass(__props.destructive ? "btn btn-danger" : "btn btn-primary"),
+						onClick: _cache[1] || (_cache[1] = ($event) => props.onConfirm())
+					}, toDisplayString(__props.confirmLabel), 3)
+				])
+			], 2);
+		};
+	}
+});
+//#endregion
+//#region src/features/mention-popover-state.ts
+/** Candidate agents/people for the @-token being typed. */
+var mentionMatches = ref([]);
+/** Which candidate is highlighted — driven by arrow keys in the composer. */
+var mentionSelectedIndex = ref(0);
+//#endregion
+//#region src/features/MentionPopover.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$14 = ["onMousedown", "onTouchstart"];
+var _hoisted_2$11 = { class: "mention-popover-slug" };
+var _hoisted_3$10 = {
+	key: 0,
+	class: "mention-popover-name"
+};
+var _hoisted_4$8 = {
+	key: 1,
+	class: "mention-popover-person"
+};
+var _hoisted_5$7 = {
+	key: 2,
+	class: "mention-popover-prime"
+};
+var PERSON = "person";
+var DEFAULT_AGENT = "default";
+//#endregion
+//#region src/features/MentionPopover.vue
+var MentionPopover_default = /* @__PURE__ */ defineComponent({
+	__name: "MentionPopover",
+	props: { onPick: { type: Function } },
+	setup(__props) {
+		/**
+		* The @-mention autocomplete popover, mounted into the element ensureMentionPopover()
+		* creates. mousedown and touchstart, NOT click: the composer's blur dismisses the popover
+		* before click fires, and on iOS synthesized mouse events can land after the dismiss
+		* timer. preventDefault keeps the input focused. Placement is pure CSS.
+		*/
+		const props = __props;
+		const nameLabel = (a) => ` — ${a.name}`;
+		function pick(e, i) {
+			e.preventDefault();
+			props.onPick(i);
+		}
+		return (_ctx, _cache) => {
+			return openBlock(true), createElementBlock(Fragment, null, renderList(unref(mentionMatches), (agent, i) => {
+				return openBlock(), createElementBlock("div", {
+					key: agent.folder ?? i,
+					class: normalizeClass(i === unref(mentionSelectedIndex) ? "mention-popover-item active" : "mention-popover-item"),
+					onMousedown: ($event) => pick($event, i),
+					onTouchstart: withModifiers(($event) => pick($event, i), ["prevent"])
+				}, [
+					createElementVNode("span", _hoisted_2$11, "@" + toDisplayString(agent.folder), 1),
+					agent.name && agent.name !== agent.folder ? (openBlock(), createElementBlock("span", _hoisted_3$10, toDisplayString(nameLabel(agent)), 1)) : createCommentVNode("", true),
+					agent.isUser ? (openBlock(), createElementBlock("span", _hoisted_4$8, toDisplayString(PERSON))) : agent.is_prime ? (openBlock(), createElementBlock("span", _hoisted_5$7, toDisplayString(DEFAULT_AGENT))) : createCommentVNode("", true)
+				], 42, _hoisted_1$14);
+			}), 128);
+		};
+	}
+});
+//#endregion
+//#region src/features/codex-code-state.ts
+/** The device code to enter at the sign-in page. Empty when there is none. */
+var codexUserCode = ref("");
+/** true when the flow is Codex at all — otherwise the line renders nothing. */
+var codexActive = ref(false);
+//#endregion
+//#region src/features/CodexPairingCode.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$13 = {
+	class: "icon",
+	"aria-hidden": "true"
+};
+var _hoisted_2$10 = ["href"];
+var PREFIX = "Pairing code: ";
+var NO_CODE = "Open the link, then approve the sign-in.";
+var COPY_TITLE = "Copy";
+var COPY_LABEL = "Copy pairing code";
+//#endregion
+//#region src/features/CodexPairingCode.vue
+var CodexPairingCode_default = /* @__PURE__ */ defineComponent({
+	__name: "CodexPairingCode",
+	props: { onCopy: { type: Function } },
+	setup(__props) {
+		/**
+		* The Codex device pairing code, mounted into <p id="user-creds-oauth-codex-code">; the
+		* mint modal owns its hidden flag. Copy exists because the operator must TYPE this code at
+		* the ChatGPT sign-in page; on success the icon shows a check for 1500ms.
+		*/
+		const props = __props;
+		const copied = ref(false);
+		let timer = null;
+		async function copy() {
+			if (!await props.onCopy(codexUserCode.value)) return;
+			copied.value = true;
+			if (timer) clearTimeout(timer);
+			timer = setTimeout(() => copied.value = false, 1500);
+		}
+		onUnmounted(() => {
+			if (timer) clearTimeout(timer);
+		});
+		return (_ctx, _cache) => {
+			return unref(codexActive) && unref(codexUserCode) ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [
+				createTextVNode(toDisplayString(PREFIX)),
+				createElementVNode("code", null, toDisplayString(unref(codexUserCode)), 1),
+				createElementVNode("button", {
+					type: "button",
+					class: normalizeClass(copied.value ? "codex-code-copy copied" : "codex-code-copy"),
+					title: COPY_TITLE,
+					"aria-label": COPY_LABEL,
+					onClick: copy
+				}, [(openBlock(), createElementBlock("svg", _hoisted_1$13, [createElementVNode("use", { href: copied.value ? "#i-check" : "#i-copy" }, null, 8, _hoisted_2$10)]))], 2)
+			], 64)) : unref(codexActive) ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [createTextVNode(toDisplayString(NO_CODE))], 64)) : createCommentVNode("", true);
+		};
+	}
+});
+//#endregion
+//#region src/features/modals.ts
+var deps$4 = {};
+/** Wire the composition-root helpers this module calls. Call once at startup. */
+function provideModalsDeps(provided) {
+	Object.assign(deps$4, provided);
+}
+function openHandlePopover() {
+	const pop = $("#handle-popover");
+	const input = $("#handle-input");
+	const status = $("#handle-status");
+	if (!pop) return;
+	if (input) input.value = state.myHandle || "";
+	if (status) {
+		status.hidden = true;
+		status.textContent = "";
+		status.classList.remove("ok", "err");
+	}
+	deps$4.updateHandleCreds();
+	pop.hidden = false;
+	$("#handle-chip")?.setAttribute("aria-expanded", "true");
+	if (input) input.focus();
+}
+function closeHandlePopover() {
+	const pop = $("#handle-popover");
+	if (!pop || pop.hidden) return;
+	pop.hidden = true;
+	$("#handle-chip")?.setAttribute("aria-expanded", "false");
+}
+var lightboxImages = [];
+var lightboxIndex = 0;
+var prevBodyOverflow = "";
+var lightboxCloseTimer = null;
+function applyLightboxTransform() {
+	const img = $("#lightbox-img");
+	img.style.transform = `translate(${lightboxXf.x}px, ${lightboxXf.y}px) scale(${lightboxXf.scale})`;
+}
+function resetLightboxTransform() {
+	lightboxXf.scale = 1;
+	lightboxXf.x = 0;
+	lightboxXf.y = 0;
+	applyLightboxTransform();
+}
+function setLightboxImage(idx) {
+	if (idx < 0 || idx >= lightboxImages.length) return;
+	lightboxIndex = idx;
+	const { url, alt } = lightboxImages[idx];
+	const img = $("#lightbox-img");
+	const spinner = $("#lightbox-spinner");
+	resetLightboxTransform();
+	spinner.hidden = false;
+	img.style.visibility = "hidden";
+	img.onload = img.onerror = () => {
+		spinner.hidden = true;
+		img.style.visibility = "";
+	};
+	img.src = url;
+	img.alt = alt;
+	const dl = $("#lightbox-download");
+	dl.href = url;
+	try {
+		const tail = new URL(url, location.href).pathname.split("/").pop();
+		if (tail) dl.setAttribute("download", tail);
+	} catch {
+		dl.setAttribute("download", "");
+	}
+	$("#lightbox-prev").hidden = idx <= 0;
+	$("#lightbox-next").hidden = idx >= lightboxImages.length - 1;
+}
+function openLightbox(url, alt) {
+	if (lightboxCloseTimer) {
+		clearTimeout(lightboxCloseTimer);
+		lightboxCloseTimer = null;
+	}
+	lightboxImages = snapshotRoomImages();
+	let idx = lightboxImages.findIndex((it) => it.url === url);
+	if (idx === -1) {
+		lightboxImages = [{
+			url,
+			alt: alt || ""
+		}];
+		idx = 0;
+	}
+	const overlay = $("#lightbox");
+	overlay.classList.remove("closing");
+	overlay.hidden = false;
+	lightboxOpen.value = true;
+	prevBodyOverflow = document.body.style.overflow;
+	document.body.style.overflow = "hidden";
+	setLightboxImage(idx);
+	history.pushState({ lightbox: true }, "");
+	requestAnimationFrame(() => $("#lightbox-close").focus());
+}
+function closeLightbox(fromPopstate = false) {
+	if (!lightboxOpen.value) return;
+	const overlay = $("#lightbox");
+	lightboxOpen.value = false;
+	overlay.classList.add("closing");
+	document.body.style.overflow = prevBodyOverflow;
+	lightboxCloseTimer = setTimeout(() => {
+		lightboxCloseTimer = null;
+		overlay.hidden = true;
+		overlay.classList.remove("closing");
+		$("#lightbox-img").src = "";
+		$("#lightbox-img").style.transform = "";
+		$("#lightbox-img").style.visibility = "";
+	}, 150);
+	if (!fromPopstate && history.state && history.state.lightbox) history.back();
+}
+function navigateLightbox(delta) {
+	const next = lightboxIndex + delta;
+	if (next < 0 || next >= lightboxImages.length) return;
+	setLightboxImage(next);
+}
+function blockingOverlayOpen() {
+	if (document.querySelector(".modal-overlay:not([hidden])")) return true;
+	return [
+		"model-picker",
+		"lightbox",
+		"attachment-drawer",
+		"members-overlay",
+		"handle-popover",
+		"overflow-menu",
+		"search-results",
+		"learn-menu"
+	].some((id) => {
+		const el = document.getElementById(id);
+		return el && !el.hidden;
+	});
+}
+/**
+* Member Grok device login.
+*
+* Two polls, not one: the first waits for the CLI to print a URL and code, the
+* second waits for the member to approve on whatever device they opened it on.
+* `grokMintToken` is the cancellation signal — reopening or closing the modal
+* bumps it, and any in-flight loop notices and stops rather than writing into
+* a dialog that has moved on.
+*/
+var grokMintToken = 0;
+function cancelGrokMint() {
+	grokMintToken++;
+}
+async function openGrokMintModal(modal) {
+	const token = ++grokMintToken;
+	const alive = () => token === grokMintToken && !modal.hidden;
+	const status = (msg, kind = "") => userCredsOauthStatus(msg, kind);
+	const title = $("#user-creds-oauth-title");
+	if (title) title.textContent = "Connect to Grok";
+	$("#user-creds-oauth-step2").hidden = true;
+	$("#user-creds-oauth-submit").hidden = true;
+	$("#user-creds-oauth-spinner").hidden = false;
+	const code = $("#user-creds-oauth-code");
+	if (code) code.hidden = true;
+	const codeLabel = $("#user-creds-oauth-code-label");
+	if (codeLabel) codeLabel.hidden = true;
+	userCredsOauthReturnFocus.value = document.activeElement;
+	modal.hidden = false;
+	$("#user-creds-oauth-close")?.focus();
+	status("Starting sign-in…");
+	const poll = () => apiJson("/api/user-credentials/grok/status");
+	const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+	try {
+		let d = await apiJson("/api/user-credentials/grok/start", {
+			method: "POST",
+			headers: { "X-Webchat-CSRF": "1" },
+			body: { roomId: state.currentRoom }
+		});
+		for (let i = 0; alive() && !d.verificationUrl && d.outcome !== "error" && i < 40; i++) {
+			await wait(750);
+			if (!alive()) return;
+			d = await poll();
+		}
+		if (!alive()) return;
+		if (d.outcome === "error") throw new Error(d.error || "Sign-in failed.");
+		if (!d.verificationUrl) throw new Error("Timed out waiting for the sign-in link.");
+		const link = $("#user-creds-oauth-link");
+		if (link) {
+			link.href = d.verificationUrl;
+			link.textContent = "Open Grok sign-in ↗";
+		}
+		codexActive.value = true;
+		codexUserCode.value = d.userCode || "";
+		const codexCode = $("#user-creds-oauth-codex-code");
+		if (codexCode) codexCode.hidden = false;
+		mountCodexCode();
+		$("#user-creds-oauth-spinner").hidden = true;
+		$("#user-creds-oauth-step2").hidden = false;
+		status("Open the link and approve — this page finishes on its own.");
+		link?.focus();
+		while (alive() && d.outcome === "pending") {
+			await wait(2e3);
+			if (!alive()) return;
+			d = await poll();
+		}
+		if (!alive()) return;
+		if (d.outcome !== "complete") throw new Error(d.error || "Sign-in was not completed.");
+		grokMintToken++;
+		codexActive.value = false;
+		showToast("Connected your Grok subscription.", { kind: "success" });
+		modal.hidden = true;
+		await updateUserCredsBanner(state.currentRoom);
+	} catch (err) {
+		if (!alive()) return;
+		$("#user-creds-oauth-spinner").hidden = true;
+		status(err?.message || "Could not start sign-in.", "error");
+	}
+}
+async function openOauthMintModal(target) {
+	userCredsOauthTarget.value = target;
+	const modal = $("#user-creds-oauth-modal");
+	if (!modal) return;
+	const isWorkspace = target.startsWith("workspace");
+	if (!isWorkspace && userCredsProvider.value === "grok") return openGrokMintModal(modal);
+	const isCodex = target === "workspace-codex" || !isWorkspace && userCredsProvider.value === "codex";
+	const title = $("#user-creds-oauth-title");
+	if (title) title.textContent = isWorkspace ? `Connect ${isCodex ? "ChatGPT" : "Claude"} (workspace default)` : `Connect to ${userCredsWords(userCredsProvider.value).name}`;
+	$("#user-creds-oauth-step2").hidden = true;
+	$("#user-creds-oauth-submit").hidden = true;
+	$("#user-creds-oauth-spinner").hidden = false;
+	const code = $("#user-creds-oauth-code");
+	if (code) code.value = "";
+	const codexCode = $("#user-creds-oauth-codex-code");
+	userCredsOauthReturnFocus.value = document.activeElement;
+	modal.hidden = false;
+	$("#user-creds-oauth-close")?.focus();
+	userCredsOauthStatus("Preparing sign-in…", "");
+	try {
+		const data = await apiJson(isWorkspace ? isCodex ? "/api/workspace-credential/codex/start" : "/api/workspace-credential/oauth/start" : isCodex ? "/api/user-credentials/codex/start" : "/api/user-credentials/oauth/start", {
+			method: "POST",
+			headers: { "X-Webchat-CSRF": "1" },
+			body: isWorkspace ? {} : { roomId: state.currentRoom }
+		});
+		userCredsOauthSessionId.value = data.sessionId;
+		const link = $("#user-creds-oauth-link");
+		if (link) {
+			link.href = data.url;
+			link.textContent = isWorkspace ? `Open ${isCodex ? "ChatGPT" : "Claude"} sign-in ↗` : `Open ${userCredsWords(userCredsProvider.value).name} sign-in ↗`;
+		}
+		if (code) code.hidden = isCodex;
+		const codeLabel = $("#user-creds-oauth-code-label");
+		if (codeLabel) codeLabel.hidden = isCodex;
+		if (codexCode) {
+			codexCode.hidden = !isCodex;
+			codexActive.value = isCodex;
+			codexUserCode.value = isCodex ? data.userCode || "" : "";
+			mountCodexCode();
+		}
+		const submit = $("#user-creds-oauth-submit");
+		if (submit) submit.textContent = isCodex ? "I’ve approved — connect" : "Connect";
+		$("#user-creds-oauth-spinner").hidden = true;
+		$("#user-creds-oauth-step2").hidden = false;
+		$("#user-creds-oauth-submit").hidden = false;
+		userCredsOauthStatus(isCodex ? "Open the link, enter the code, and approve — then click connect." : "", "");
+		$("#user-creds-oauth-link").focus();
+	} catch (err) {
+		$("#user-creds-oauth-spinner").hidden = true;
+		userCredsOauthStatus(err?.message || "Could not start sign-in.", "error");
+	}
+}
+/**
+* Promise-based confirmation modal. Resolves true on confirm, false on
+* cancel / backdrop / Escape. `body` may be a string or an HTMLElement (use an
+* element when the message contains user-supplied text, so it stays escaped).
+* `destructive` styles the confirm button as a delete action and focuses
+* Cancel by default.
+*/
+function showConfirmModal({ title, body, confirmLabel = "Confirm", cancelLabel = "Cancel", destructive = false, extraActions = [], beforeConfirm = null }) {
+	return new Promise((resolve) => {
+		const overlay = document.createElement("div");
+		overlay.className = "modal-overlay confirm-overlay";
+		document.body.appendChild(overlay);
+		let settled = false;
+		let app = null;
+		const close = (result) => {
+			if (settled) return;
+			settled = true;
+			app?.unmount();
+			app = null;
+			overlay.remove();
+			resolve(result);
+		};
+		const confirm = () => {
+			if (beforeConfirm && beforeConfirm() === false) return;
+			close(true);
+		};
+		app = createApp(ConfirmModal_default, {
+			title,
+			body,
+			confirmLabel,
+			cancelLabel,
+			destructive: !!destructive,
+			extraActions,
+			onPick: close,
+			onConfirm: confirm
+		});
+		app.mount(overlay);
+		overlay.addEventListener("click", (e) => {
+			if (e.target === overlay) close(false);
+		});
+	});
+}
+/** Single-line text prompt in the app's modal chrome — replaces native prompt()
+* (unstylable, ESC-inconsistent, blocked in some PWA contexts). Returns the
+* trimmed value, or null on cancel/empty.
+* `validate(trimmedValue)` (optional): return an error string to keep the modal
+* open with that message inline (DESIGN §5 — field validation is inline text),
+* or null/undefined to accept. */
+async function showInputModal({ title, placeholder = "", value = "", confirmLabel = "Create", validate = null }) {
+	const wrap = document.createElement("div");
+	const s = reactive({
+		placeholder,
+		initial: value,
+		validate,
+		error: "",
+		invalid: false,
+		el: null
+	});
+	const app = createApp(ConfirmInput_default);
+	app.provide("confirmInput", s);
+	app.mount(wrap);
+	let beforeConfirm = null;
+	if (validate) beforeConfirm = () => {
+		const msg = validate((s.el?.value ?? "").trim());
+		if (!msg) return true;
+		s.error = msg;
+		s.invalid = true;
+		s.el?.focus();
+		return false;
+	};
+	const done = showConfirmModal({
+		title,
+		body: wrap,
+		confirmLabel,
+		beforeConfirm
+	});
+	s.el?.focus();
+	const out = await done ? (s.el?.value ?? "").trim() || null : null;
+	app.unmount();
+	return out;
+}
+var mentionPopover = null;
+function ensureMentionPopover() {
+	if (mentionPopover) return mentionPopover;
+	const el = document.createElement("div");
+	el.id = "mention-popover";
+	el.className = "mention-popover";
+	el.hidden = true;
+	$("#message-form").appendChild(el);
+	mentionPopover = el;
+	return el;
+}
+function dismissMentionPopover() {
+	setMentionStart(-1);
+	setMentionMatches([]);
+	if (mentionPopover) mentionPopover.hidden = true;
+}
+var codexCodeApp = null;
+function mountCodexCode() {
+	codexCodeApp ??= mountIsland("#user-creds-oauth-codex-code", () => createApp(CodexPairingCode_default, { onCopy: (code) => deps$4.copyTextToClipboard(code) }));
+}
+var mentionApp = null;
+function renderMentionPopover(input) {
+	const el = ensureMentionPopover();
+	if (getMentionMatches().length === 0) {
+		el.hidden = true;
+		return;
+	}
+	mentionMatches.value = getMentionMatches();
+	mentionSelectedIndex.value = getMentionSelectedIndex();
+	if (!mentionApp) {
+		mentionApp = createApp(MentionPopover_default, { onPick: (i) => {
+			setMentionSelectedIndex(i);
+			deps$4.acceptMention(input);
+		} });
+		mentionApp.mount(el);
+	}
+	el.hidden = false;
+}
+async function inspectAndConfirmImport(importBody, displayName, community) {
+	let insp = null;
+	try {
+		insp = await apiJson("/api/skills/inspect", {
+			method: "POST",
+			body: {
+				...importBody,
+				official: !community
+			}
+		});
+	} catch {}
+	if (!insp) return showConfirmModal({
+		title: `Import ${displayName}?`,
+		body: community ? "This is a community skill — its instructions and scripts will run in your agents. Review it first." : void 0,
+		confirmLabel: "Import",
+		destructive: !!community
+	});
+	const el = document.createElement("div");
+	const line = (text, cls) => {
+		const d = document.createElement("div");
+		if (cls) d.className = cls;
+		d.textContent = text;
+		el.appendChild(d);
+	};
+	const kb = Math.max(1, Math.round(insp.totalBytes / 1024));
+	line(`${insp.files} file${insp.files === 1 ? "" : "s"} · ${kb} KB · SKILL.md ≈ ${insp.skillMdTokens.toLocaleString()} tokens of agent context`);
+	line(insp.scripts.length ? `Scripts: ${insp.scripts.slice(0, 5).join(", ")}${insp.scripts.length > 5 ? ` +${insp.scripts.length - 5} more` : ""}` : "No scripts — instructions only");
+	if (insp.externalHosts.length) line(`Links out to: ${insp.externalHosts.slice(0, 6).join(", ")}`);
+	for (const w of insp.warnings) line(`⚠ ${w}`, "import-warning");
+	if (community) line("Community skill — unvetted. Its instructions and any scripts run in your agents.", "import-note");
+	return showConfirmModal({
+		title: `Import ${displayName}?`,
+		body: el,
+		confirmLabel: "Import",
+		destructive: !!community || insp.warnings.length > 0
+	});
+}
+/** Confirm modal with one switch option — the modal twin of .setting-toggle
+* (DESIGN.md §2b: binary choices are switches, never raw checkboxes). */
+async function confirmWithToggle({ title, toggleLabel, toggleLabels, note, confirmLabel }) {
+	const el = document.createElement("div");
+	const labels = toggleLabels ?? [toggleLabel];
+	const s = reactive({
+		labels,
+		note,
+		els: []
+	});
+	const app = createApp(ConfirmToggle_default);
+	app.provide("confirmToggle", s);
+	app.mount(el);
+	const ok = await showConfirmModal({
+		title,
+		body: el,
+		confirmLabel
+	});
+	const checks = labels.map((_, i) => !!s.els[i]?.checked);
+	app.unmount();
+	return {
+		ok,
+		checked: checks[0],
+		checks
+	};
+}
+function wireModalsPanel() {
+	$("#handle-chip")?.addEventListener("click", (e) => {
+		e.stopPropagation();
+		const pop = $("#handle-popover");
+		if (pop && pop.hidden) openHandlePopover();
+		else closeHandlePopover();
+	});
+	$("#handle-popover-close")?.addEventListener("click", closeHandlePopover);
+	document.addEventListener("click", (e) => {
+		const pop = $("#handle-popover");
+		if (!pop || pop.hidden) return;
+		if (pop.contains(e.target) || e.target === $("#handle-chip")) return;
+		closeHandlePopover();
+	});
+	document.addEventListener("keydown", (e) => {
+		if (e.key === "Escape") closeHandlePopover();
+	});
+	applySettings();
+	document.addEventListener("click", (e) => {
+		const btn = e.target?.closest(".feature-info-btn");
+		if (!btn) return;
+		const controls = btn.getAttribute("aria-controls");
+		const info = controls ? document.getElementById(controls) : null;
+		if (!info) return;
+		const open = info.hidden;
+		info.hidden = !open;
+		btn.setAttribute("aria-expanded", String(open));
+	});
+	$("#lightbox-close")?.addEventListener("click", () => closeLightbox());
+	$("#lightbox-prev")?.addEventListener("click", (e) => {
+		e.stopPropagation();
+		navigateLightbox(-1);
+	});
+	$("#lightbox-next")?.addEventListener("click", (e) => {
+		e.stopPropagation();
+		navigateLightbox(1);
+	});
+	$("#lightbox-download")?.addEventListener("click", (e) => e.stopPropagation());
+	$("#lightbox")?.addEventListener("click", (e) => {
+		if (e.target === $("#lightbox")) closeLightbox();
+	});
+	document.addEventListener("keydown", (e) => {
+		if (!lightboxOpen.value) return;
+		if (e.key === "Escape") closeLightbox();
+		else if (e.key === "ArrowLeft") navigateLightbox(-1);
+		else if (e.key === "ArrowRight") navigateLightbox(1);
+	});
+}
+var lightboxXf = {
+	scale: 1,
+	x: 0,
+	y: 0
+};
+var lightboxGesture = {
+	startScale: 1,
+	startDist: 0,
+	startX: 0,
+	startY: 0,
+	startTouchX: 0,
+	startTouchY: 0,
+	mode: null
+};
+function getTouchDist(touches) {
+	const dx = touches[0].clientX - touches[1].clientX;
+	const dy = touches[0].clientY - touches[1].clientY;
+	return Math.hypot(dx, dy);
+}
+var lightboxImg = $("#lightbox-img");
+/** Pinch-zoom and pan gestures on the lightbox image. */
+function wireLightbox() {
+	if (!lightboxImg) return;
+	lightboxImg.addEventListener("touchstart", (e) => {
+		if (e.touches.length === 2) {
+			e.preventDefault();
+			lightboxGesture.mode = "pinch";
+			lightboxGesture.startScale = lightboxXf.scale;
+			lightboxGesture.startDist = getTouchDist(e.touches);
+			lightboxGesture.startX = lightboxXf.x;
+			lightboxGesture.startY = lightboxXf.y;
+			lightboxImg.classList.add("dragging");
+		} else if (e.touches.length === 1 && lightboxXf.scale > 1) {
+			e.preventDefault();
+			lightboxGesture.mode = "pan";
+			lightboxGesture.startTouchX = e.touches[0].clientX;
+			lightboxGesture.startTouchY = e.touches[0].clientY;
+			lightboxGesture.startX = lightboxXf.x;
+			lightboxGesture.startY = lightboxXf.y;
+			lightboxImg.classList.add("dragging");
+		}
+	}, { passive: false });
+	lightboxImg.addEventListener("touchmove", (e) => {
+		if (lightboxGesture.mode === "pinch" && e.touches.length === 2) {
+			e.preventDefault();
+			const ratio = getTouchDist(e.touches) / lightboxGesture.startDist;
+			lightboxXf.scale = Math.max(.5, Math.min(4, lightboxGesture.startScale * ratio));
+			applyLightboxTransform();
+		} else if (lightboxGesture.mode === "pan" && e.touches.length === 1) {
+			e.preventDefault();
+			lightboxXf.x = lightboxGesture.startX + (e.touches[0].clientX - lightboxGesture.startTouchX);
+			lightboxXf.y = lightboxGesture.startY + (e.touches[0].clientY - lightboxGesture.startTouchY);
+			applyLightboxTransform();
+		}
+	}, { passive: false });
+	lightboxImg.addEventListener("touchend", () => {
+		lightboxGesture.mode = null;
+		lightboxImg.classList.remove("dragging");
+		if (lightboxXf.scale < 1.05) resetLightboxTransform();
+	});
+}
+/** The OAuth mint modal: code submission, spinner and step transitions. */
+function wireUserCredsOauth() {
+	$("#user-creds-oauth-submit")?.addEventListener("click", async () => {
+		const isWorkspace = (userCredsOauthTarget.value ?? "").startsWith("workspace");
+		const isCodex = (userCredsOauthTarget.value ?? "") === "workspace-codex" || !isWorkspace && userCredsProvider.value === "codex";
+		const code = ($("#user-creds-oauth-code")?.value || "").trim();
+		if (!userCredsOauthSessionId.value) return;
+		if (!isCodex && !code) return;
+		const btn = $("#user-creds-oauth-submit");
+		const step2 = $("#user-creds-oauth-step2");
+		const spinner = $("#user-creds-oauth-spinner");
+		const modal = $("#user-creds-oauth-modal");
+		if (!btn || !step2 || !spinner || !modal) return;
+		btn.disabled = true;
+		step2.hidden = true;
+		spinner.hidden = false;
+		const { subWord } = userCredsWords(userCredsProvider.value);
+		userCredsOauthStatus("Connecting…", "");
+		try {
+			await apiJson(isWorkspace ? isCodex ? "/api/workspace-credential/codex/finish" : "/api/workspace-credential/oauth/code" : isCodex ? "/api/user-credentials/codex/finish" : "/api/user-credentials/oauth/code", {
+				method: "POST",
+				headers: { "X-Webchat-CSRF": "1" },
+				body: isWorkspace ? isCodex ? { sessionId: userCredsOauthSessionId.value } : {
+					sessionId: userCredsOauthSessionId.value,
+					code
+				} : isCodex ? {
+					roomId: state.currentRoom,
+					sessionId: userCredsOauthSessionId.value
+				} : {
+					roomId: state.currentRoom,
+					sessionId: userCredsOauthSessionId.value,
+					code
+				}
+			});
+			userCredsOauthSessionId.value = null;
+			if (isWorkspace) {
+				showToast(`Workspace default ${isCodex ? "ChatGPT" : "Claude"} subscription connected.`, { kind: "success" });
+				modal.hidden = true;
+				refreshWizardCredState();
+			} else {
+				showToast(`Connected your ${subWord}.`, { kind: "success" });
+				modal.hidden = true;
+				await updateUserCredsBanner(state.currentRoom);
+			}
+		} catch (err) {
+			spinner.hidden = true;
+			step2.hidden = false;
+			userCredsOauthStatus(err.message || "Could not connect.", "error");
+		} finally {
+			btn.disabled = false;
+		}
+	});
+}
+/** The OAuth modal's status line (#user-creds-oauth-status). */
+function userCredsOauthStatus(msg, kind) {
+	const el = $("#user-creds-oauth-status");
+	if (!el) return;
+	if (!msg) {
+		el.hidden = true;
+		return;
+	}
+	el.hidden = false;
+	el.textContent = msg;
+	el.className = "user-creds-oauth-status" + (kind ? " " + kind : "");
+}
+//#endregion
+//#region src/features/apps-actions.ts
+var base = () => `/api/agents/${encodeURIComponent(appsAgentId.value ?? "")}`;
+var nameOf = (r) => r.app ?? r.workload;
+/** Load the agent's apps into the accordion, or hide it (not an admin, or workloads unused here). */
+async function loadAgentApps(agentId) {
+	const host = $("#agent-apps");
+	const accordion = host?.closest("details");
+	if (!host) return;
+	appsAgentId.value = agentId;
+	appsMenuKey.value = null;
+	appsDrawer.value = null;
+	let view = null;
+	try {
+		view = await apiJson(`${base()}/apps`);
+	} catch {
+		view = null;
+	}
+	if (appsAgentId.value !== agentId) return;
+	if (!Array.isArray(view?.apps)) view = null;
+	appsView.value = view;
+	const count = $("#agent-apps-count");
+	if (count) count.textContent = view?.apps.length ? String(view.apps.length) : "";
+	if (accordion) accordion.hidden = !view || !view.available && view.apps.length === 0;
+}
+async function reload() {
+	if (appsAgentId.value) await loadAgentApps(appsAgentId.value);
+}
+function setError(key, message) {
+	const next = new Map(appsErrors.value);
+	if (message) next.set(key, message);
+	else next.delete(key);
+	appsErrors.value = next;
+}
+/** Run a row's request; a refusal shows on the row (its controls already show what is live). */
+async function busy(r, fn) {
+	const key = rowKey(r);
+	if (appsBusy.value.has(key)) return void 0;
+	appsBusy.value = /* @__PURE__ */ new Set([...appsBusy.value, key]);
+	setError(key, null);
+	try {
+		return await fn();
+	} catch (err) {
+		setError(key, err?.message || "That did not work");
+		return;
+	} finally {
+		const next = new Set(appsBusy.value);
+		next.delete(key);
+		appsBusy.value = next;
+	}
+}
+/** Send a change; the server applies a narrowing or raises a card for a widening. */
+async function send$1(r, next) {
+	if (classifyChange({
+		route: r.route,
+		who: r.who,
+		emails: r.emails
+	}, next) === "none") return;
+	if (next.route === "off") {
+		if (!await showConfirmModal({
+			title: `Unpublish ${nameOf(r)}?`,
+			body: "Publishing it again needs an approval.",
+			confirmLabel: "Unpublish",
+			destructive: true
+		})) return;
+	}
+	const out = await busy(r, () => apiJson(`${base()}/apps`, {
+		method: "PUT",
+		body: {
+			workload: r.workload,
+			app: r.app,
+			route: next.route,
+			who: next.who,
+			emails: next.emails,
+			...r.app ? {} : { service: appsService.value.get(rowKey(r)) ?? r.services[0] }
+		}
+	}));
+	if (out?.pending) showToast("Sent for approval");
+	else if (out?.applied) showToast(next.route === "off" ? "Unpublished" : "Saved", { kind: "success" });
+	await reload();
+}
+function onRouteChange(r, route) {
+	send$1(r, nextForRoute(r, route));
+}
+function onWhoChange(r, who) {
+	if (who === "specific") {
+		appsDrawer.value = {
+			key: rowKey(r),
+			kind: "people"
+		};
+		return;
+	}
+	send$1(r, {
+		route: r.route,
+		who,
+		emails: []
+	});
+}
+function savePeople(r, emails) {
+	appsDrawer.value = null;
+	send$1(r, {
+		route: r.route,
+		who: "specific",
+		emails
+	});
+}
+function openPeople(r) {
+	appsDrawer.value = {
+		key: rowKey(r),
+		kind: "people"
+	};
+}
+function closeMenu() {
+	appsMenuKey.value = null;
+}
+function pickService(r, service) {
+	appsService.value = new Map(appsService.value).set(rowKey(r), service);
+}
+function toggleInfo(r) {
+	appsInfoKey.value = appsInfoKey.value === rowKey(r) ? null : rowKey(r);
+}
+function closeDrawer() {
+	appsDrawer.value = null;
+}
+function toggleMenu(r) {
+	appsMenuKey.value = appsMenuKey.value === rowKey(r) ? null : rowKey(r);
+}
+var workloadUrl = (r, verb = "") => `${base()}/workloads/${encodeURIComponent(r.workload)}${verb ? `/${verb}` : ""}`;
+async function startStop(r) {
+	appsMenuKey.value = null;
+	const verb = r.running ? "stop" : "start";
+	if (await busy(r, () => apiJson(workloadUrl(r, verb), { method: "POST" }))) showToast(verb === "stop" ? "Stopped" : "Started", { kind: "success" });
+	await reload();
+}
+async function openLogs(r) {
+	appsMenuKey.value = null;
+	const key = rowKey(r);
+	appsDrawer.value = {
+		key,
+		kind: "logs",
+		text: null
+	};
+	const out = await busy(r, () => apiJson(workloadUrl(r, "logs")));
+	if (appsDrawer.value?.key !== key) return;
+	appsDrawer.value = out ? {
+		key,
+		kind: "logs",
+		text: String(out.logs ?? "")
+	} : null;
+}
+async function openRestore(r) {
+	appsMenuKey.value = null;
+	const key = rowKey(r);
+	appsDrawer.value = {
+		key,
+		kind: "restore",
+		backups: null
+	};
+	const out = await busy(r, () => apiJson(workloadUrl(r, "backups")));
+	if (appsDrawer.value?.key !== key) return;
+	appsDrawer.value = out ? {
+		key,
+		kind: "restore",
+		backups: out.backups ?? []
+	} : null;
+}
+async function restore(r, stamp, at) {
+	if (!await showConfirmModal({
+		title: `Restore ${r.workload}?`,
+		body: `Its data is replaced with the backup of ${at}. The current data is lost.`,
+		confirmLabel: "Restore",
+		destructive: true
+	})) return;
+	appsDrawer.value = null;
+	if (await busy(r, () => apiJson(workloadUrl(r, "restore"), {
+		method: "POST",
+		body: { backup: stamp }
+	}))) showToast("Restored", { kind: "success" });
+	await reload();
+}
+async function remove(r) {
+	appsMenuKey.value = null;
+	if (!await showConfirmModal({
+		title: `Delete ${r.workload}?`,
+		body: "Its containers and data are removed. This can’t be undone.",
+		confirmLabel: "Delete",
+		destructive: true
+	})) return;
+	if (await busy(r, () => apiJson(workloadUrl(r), { method: "DELETE" }))) showToast("Deleted", { kind: "success" });
+	await reload();
+}
+//#endregion
+//#region src/features/AgentApps.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$12 = {
+	key: 0,
+	class: "apps"
+};
+var _hoisted_2$9 = {
+	key: 1,
+	class: "apps-empty"
+};
+var _hoisted_3$9 = {
+	key: 2,
+	class: "apps-list"
+};
+var _hoisted_4$7 = ["aria-busy"];
+var _hoisted_5$6 = { class: "app-row-head" };
+var _hoisted_6$6 = { class: "app-name" };
+var _hoisted_7$6 = {
+	key: 0,
+	class: "btn-spinner",
+	"aria-hidden": "true"
+};
+var _hoisted_8$5 = ["href"];
+var _hoisted_9$5 = [
+	"aria-label",
+	"aria-expanded",
+	"onClick",
+	"innerHTML"
+];
+var _hoisted_10$5 = {
+	key: 0,
+	class: "app-row-controls"
+};
+var _hoisted_11$4 = [
+	"value",
+	"disabled",
+	"onChange"
+];
+var _hoisted_12$4 = ["value"];
+var _hoisted_13$4 = [
+	"value",
+	"disabled",
+	"onChange"
+];
+var _hoisted_14$4 = ["value"];
+var _hoisted_15$4 = [
+	"aria-expanded",
+	"onClick",
+	"innerHTML"
+];
+var _hoisted_16$4 = [
+	"value",
+	"disabled",
+	"onChange"
+];
+var _hoisted_17$4 = ["value"];
+var _hoisted_18$3 = ["onClick"];
+var _hoisted_19$3 = {
+	key: 1,
+	class: "cred-hint"
+};
+var _hoisted_20$3 = {
+	key: 2,
+	class: "cred-hint err",
+	role: "alert"
+};
+var _hoisted_21$2 = {
+	key: 3,
+	class: "app-menu",
+	role: "menu"
+};
+var _hoisted_22$1 = ["onClick"];
+var _hoisted_23$1 = ["onClick"];
+var _hoisted_24$1 = ["onClick"];
+var _hoisted_25$1 = ["onClick"];
+var _hoisted_26$1 = {
+	key: 0,
+	class: "app-drawer"
+};
+var _hoisted_27$1 = { class: "app-drawer-head" };
+var _hoisted_28$1 = {
+	key: 0,
+	class: "apps-empty"
+};
+var _hoisted_29$1 = {
+	key: 1,
+	class: "app-logs"
+};
+var _hoisted_30$1 = {
+	key: 1,
+	class: "app-drawer"
+};
+var _hoisted_31$1 = { class: "app-drawer-head" };
+var _hoisted_32$1 = {
+	key: 0,
+	class: "apps-empty"
+};
+var _hoisted_33$1 = {
+	key: 1,
+	class: "apps-empty"
+};
+var _hoisted_34$1 = {
+	key: 2,
+	class: "app-drawer-row"
+};
+var _hoisted_35$1 = ["value"];
+var _hoisted_36$1 = ["onClick"];
+var _hoisted_37 = {
+	key: 2,
+	class: "app-drawer"
+};
+var _hoisted_38 = { class: "app-drawer-head" };
+var _hoisted_39 = { class: "app-drawer-row" };
+var _hoisted_40 = ["onKeydown"];
+var _hoisted_41 = ["disabled", "onClick"];
+var _hoisted_42 = {
+	key: 0,
+	class: "cred-hint err"
+};
+var NO_SERVICE = "None of its services declares a port to publish, so the agent publishes it with ncl workloads expose.";
+var LOADING = "Loading…";
+var NO_LOGS = "No logs yet";
+//#endregion
+//#region src/features/AgentApps.vue
+var AgentApps_default = /* @__PURE__ */ defineComponent({
+	__name: "AgentApps",
+	setup(__props) {
+		/**
+		* An agent's apps, mounted into <div id="agent-apps"> (apps.ts). One row per app
+		* (or per unpublished workload): name, state, route, who can open it, Open ↗ and
+		* a ⋯ menu. Renders from apps-state.ts; every action lives in apps-actions.ts.
+		*/
+		const KEBAB = lucide("ellipsis");
+		const INFO = lucide("info");
+		const onDocClick = () => closeMenu();
+		const onKey = (e) => {
+			if (e.key === "Escape" && appsMenuKey.value) closeMenu();
+		};
+		onMounted(() => {
+			document.addEventListener("click", onDocClick);
+			document.addEventListener("keydown", onKey);
+		});
+		onUnmounted(() => {
+			document.removeEventListener("click", onDocClick);
+			document.removeEventListener("keydown", onKey);
+		});
+		const view = computed(() => appsView.value);
+		const disk = computed(() => diskText(view.value?.disk ?? null));
+		const busy = (r) => appsBusy.value.has(rowKey(r));
+		const drawerOf = (r) => appsDrawer.value?.key === rowKey(r) ? appsDrawer.value : null;
+		const peopleText = ref("");
+		watch(() => appsDrawer.value, (d) => {
+			if (d?.kind !== "people") return;
+			const row = view.value?.apps.find((a) => rowKey(a) === d.key);
+			peopleText.value = row?.who === "specific" ? row.emails.join(", ") : "";
+		});
+		const people = computed(() => parseEmailList(peopleText.value));
+		const restoreStamp = ref("");
+		watch(() => appsDrawer.value, (d) => {
+			if (d?.kind === "restore") restoreStamp.value = d.backups?.[0]?.stamp ?? "";
+		});
+		function doRestore(r, backups) {
+			const b = backups.find((x) => x.stamp === restoreStamp.value);
+			if (b) restore(r, b.stamp, b.at);
+		}
+		function routeChanged(r, e) {
+			const el = e.target;
+			const v = el.value;
+			el.value = r.route;
+			onRouteChange(r, v);
+		}
+		function whoChanged(r, e) {
+			const el = e.target;
+			const v = el.value;
+			el.value = r.who;
+			onWhoChange(r, v);
+		}
+		return (_ctx, _cache) => {
+			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$12, [disk.value ? (openBlock(), createElementBlock("div", {
+				key: 0,
+				class: normalizeClass(["apps-disk", `apps-disk-${view.value.disk?.level}`])
+			}, toDisplayString(disk.value), 3)) : createCommentVNode("", true), !view.value.apps.length ? (openBlock(), createElementBlock("p", _hoisted_2$9, "No apps yet")) : (openBlock(), createElementBlock("ul", _hoisted_3$9, [(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.apps, (r) => {
+				return openBlock(), createElementBlock("li", {
+					key: unref(rowKey)(r),
+					class: "app-row",
+					"aria-busy": busy(r) || void 0
+				}, [
+					createElementVNode("div", _hoisted_5$6, [
+						createElementVNode("span", _hoisted_6$6, toDisplayString(r.app ?? r.workload), 1),
+						busy(r) ? (openBlock(), createElementBlock("span", _hoisted_7$6)) : createCommentVNode("", true),
+						createElementVNode("span", { class: normalizeClass(["app-state", `app-state-${r.state}`]) }, toDisplayString(unref(STATE_LABEL)[r.state]), 3),
+						r.url ? (openBlock(), createElementBlock("a", {
+							key: 1,
+							class: "app-open",
+							href: r.url,
+							target: "_blank",
+							rel: "noopener noreferrer"
+						}, "Open ↗", 8, _hoisted_8$5)) : createCommentVNode("", true),
+						r.deployed ? (openBlock(), createElementBlock("button", {
+							key: 2,
+							class: "app-kebab",
+							type: "button",
+							"aria-label": `Actions for ${r.app ?? r.workload}`,
+							"aria-expanded": unref(appsMenuKey) === unref(rowKey)(r),
+							onClick: withModifiers(($event) => unref(toggleMenu)(r), ["stop"]),
+							innerHTML: unref(KEBAB)
+						}, null, 8, _hoisted_9$5)) : createCommentVNode("", true)
+					]),
+					r.deployed ? (openBlock(), createElementBlock("div", _hoisted_10$5, [
+						createElementVNode("select", {
+							value: r.route,
+							"aria-label": "Route",
+							disabled: busy(r) || r.route === "off" && !r.canPublish || void 0,
+							onChange: ($event) => routeChanged(r, $event)
+						}, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(routeOptions)(view.value.routes, r.route), (o) => {
+							return openBlock(), createElementBlock("option", {
+								key: o.value,
+								value: o.value
+							}, toDisplayString(o.label), 9, _hoisted_12$4);
+						}), 128))], 40, _hoisted_11$4),
+						!r.app && r.services.length > 1 ? (openBlock(), createElementBlock("select", {
+							key: 0,
+							value: unref(appsService).get(unref(rowKey)(r)) ?? r.services[0],
+							"aria-label": "Service",
+							disabled: busy(r) || void 0,
+							onChange: ($event) => unref(pickService)(r, $event.target.value)
+						}, [(openBlock(true), createElementBlock(Fragment, null, renderList(r.services, (sv) => {
+							return openBlock(), createElementBlock("option", {
+								key: sv,
+								value: sv
+							}, toDisplayString(sv), 9, _hoisted_14$4);
+						}), 128))], 40, _hoisted_13$4)) : createCommentVNode("", true),
+						!r.app && !r.canPublish ? (openBlock(), createElementBlock("button", {
+							key: 1,
+							class: "feature-info-btn",
+							type: "button",
+							"aria-expanded": unref(appsInfoKey) === unref(rowKey)(r),
+							"aria-label": "Why it can’t be published here",
+							onClick: ($event) => unref(toggleInfo)(r),
+							innerHTML: unref(INFO)
+						}, null, 8, _hoisted_15$4)) : createCommentVNode("", true),
+						r.route !== "off" ? (openBlock(), createElementBlock("select", {
+							key: 2,
+							value: r.who,
+							"aria-label": "Who can open",
+							disabled: busy(r) || void 0,
+							onChange: ($event) => whoChanged(r, $event)
+						}, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(whoOptions)(r.route), (o) => {
+							return openBlock(), createElementBlock("option", {
+								key: o.value,
+								value: o.value
+							}, toDisplayString(o.label), 9, _hoisted_17$4);
+						}), 128))], 40, _hoisted_16$4)) : createCommentVNode("", true),
+						r.who === "specific" && r.route === "cloudflare" ? (openBlock(), createElementBlock("button", {
+							key: 3,
+							class: "btn btn-ghost",
+							type: "button",
+							onClick: ($event) => unref(openPeople)(r)
+						}, toDisplayString(r.emails.length === 1 ? "1 person" : `${r.emails.length} people`), 9, _hoisted_18$3)) : createCommentVNode("", true)
+					])) : createCommentVNode("", true),
+					!r.app && !r.canPublish && unref(appsInfoKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("p", _hoisted_19$3, toDisplayString(NO_SERVICE))) : createCommentVNode("", true),
+					unref(appsErrors).get(unref(rowKey)(r)) ? (openBlock(), createElementBlock("p", _hoisted_20$3, toDisplayString(unref(appsErrors).get(unref(rowKey)(r))), 1)) : createCommentVNode("", true),
+					unref(appsMenuKey) === unref(rowKey)(r) ? (openBlock(), createElementBlock("div", _hoisted_21$2, [
+						createElementVNode("button", {
+							type: "button",
+							role: "menuitem",
+							onClick: withModifiers(($event) => unref(startStop)(r), ["stop"])
+						}, toDisplayString(r.running ? "Stop" : "Start"), 9, _hoisted_22$1),
+						createElementVNode("button", {
+							type: "button",
+							role: "menuitem",
+							onClick: withModifiers(($event) => unref(openLogs)(r), ["stop"])
+						}, "Logs", 8, _hoisted_23$1),
+						createElementVNode("button", {
+							type: "button",
+							role: "menuitem",
+							onClick: withModifiers(($event) => unref(openRestore)(r), ["stop"])
+						}, "Restore backup…", 8, _hoisted_24$1),
+						createElementVNode("button", {
+							type: "button",
+							role: "menuitem",
+							class: "app-menu-danger",
+							onClick: withModifiers(($event) => unref(remove)(r), ["stop"])
+						}, "Delete…", 8, _hoisted_25$1)
+					])) : createCommentVNode("", true),
+					drawerOf(r) ? (openBlock(), createElementBlock(Fragment, { key: 4 }, [drawerOf(r).kind === "logs" ? (openBlock(), createElementBlock("div", _hoisted_26$1, [createElementVNode("div", _hoisted_27$1, [_cache[5] || (_cache[5] = createElementVNode("span", { class: "form-label" }, "Logs", -1)), createElementVNode("button", {
+						class: "btn btn-ghost",
+						type: "button",
+						onClick: _cache[0] || (_cache[0] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
+					}, "Close")]), drawerOf(r).text === null ? (openBlock(), createElementBlock("p", _hoisted_28$1, [_cache[6] || (_cache[6] = createElementVNode("span", {
+						class: "btn-spinner",
+						"aria-hidden": "true"
+					}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : (openBlock(), createElementBlock("pre", _hoisted_29$1, toDisplayString(drawerOf(r).text || NO_LOGS), 1))])) : drawerOf(r).kind === "restore" ? (openBlock(), createElementBlock("div", _hoisted_30$1, [createElementVNode("div", _hoisted_31$1, [_cache[7] || (_cache[7] = createElementVNode("span", { class: "form-label" }, "Restore backup", -1)), createElementVNode("button", {
+						class: "btn btn-ghost",
+						type: "button",
+						onClick: _cache[1] || (_cache[1] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
+					}, "Close")]), drawerOf(r).backups === null ? (openBlock(), createElementBlock("p", _hoisted_32$1, [_cache[8] || (_cache[8] = createElementVNode("span", {
+						class: "btn-spinner",
+						"aria-hidden": "true"
+					}, null, -1)), createTextVNode(toDisplayString(LOADING))])) : !drawerOf(r).backups.length ? (openBlock(), createElementBlock("p", _hoisted_33$1, "No backups yet")) : (openBlock(), createElementBlock("div", _hoisted_34$1, [withDirectives(createElementVNode("select", {
+						"onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => restoreStamp.value = $event),
+						"aria-label": "Backup"
+					}, [(openBlock(true), createElementBlock(Fragment, null, renderList(drawerOf(r).backups, (b) => {
+						return openBlock(), createElementBlock("option", {
+							key: b.stamp,
+							value: b.stamp
+						}, toDisplayString(b.at), 9, _hoisted_35$1);
+					}), 128))], 512), [[vModelSelect, restoreStamp.value]]), createElementVNode("button", {
+						class: "btn btn-danger",
+						type: "button",
+						onClick: ($event) => doRestore(r, drawerOf(r).backups)
+					}, " Restore ", 8, _hoisted_36$1)]))])) : (openBlock(), createElementBlock("div", _hoisted_37, [
+						createElementVNode("div", _hoisted_38, [_cache[9] || (_cache[9] = createElementVNode("span", { class: "form-label" }, "Specific people", -1)), createElementVNode("button", {
+							class: "btn btn-ghost",
+							type: "button",
+							onClick: _cache[3] || (_cache[3] = (...args) => unref(closeDrawer) && unref(closeDrawer)(...args))
+						}, "Close")]),
+						createElementVNode("div", _hoisted_39, [withDirectives(createElementVNode("input", {
+							"onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => peopleText.value = $event),
+							onKeydown: withKeys(withModifiers(($event) => people.value.emails.length && !people.value.bad.length && unref(savePeople)(r, people.value.emails), ["prevent"]), ["enter"]),
+							type: "text",
+							inputmode: "email",
+							autocomplete: "off",
+							spellcheck: "false",
+							placeholder: "name@example.com, …",
+							"aria-label": "Email addresses"
+						}, null, 40, _hoisted_40), [[vModelText, peopleText.value]]), createElementVNode("button", {
+							class: "btn btn-primary",
+							type: "button",
+							disabled: !people.value.emails.length || people.value.bad.length > 0 || void 0,
+							onClick: ($event) => unref(savePeople)(r, people.value.emails)
+						}, " Save ", 8, _hoisted_41)]),
+						people.value.bad.length ? (openBlock(), createElementBlock("p", _hoisted_42, "Not an email address: " + toDisplayString(people.value.bad.join(", ")), 1)) : createCommentVNode("", true)
+					]))], 64)) : createCommentVNode("", true)
+				], 8, _hoisted_4$7);
+			}), 128))]))])) : createCommentVNode("", true);
+		};
+	}
+});
+//#endregion
+//#region src/features/apps.ts
+var appsApp = null;
+async function renderAgentApps(agentId) {
+	await loadAgentApps(agentId);
+	appsApp ??= mountIsland("#agent-apps", () => createApp(AgentApps_default));
+}
+//#endregion
 //#region src/features/agents.ts
 var deps$3 = {};
 /** Wire the composition-root helpers this module calls. Call once at startup. */
@@ -19667,6 +20380,7 @@ async function openAgentDetail(id) {
 	renderAgentSkills(id);
 	renderAgentSecrets(id);
 	renderAgentKeys(id);
+	renderAgentApps(id);
 	renderAgentSessions(id);
 	captureAgentDetailBaseline();
 	$("#agent-detail").hidden = false;
@@ -21193,7 +21907,7 @@ var prejudgeRows = ref([]);
 var prejudgeModelOptions = ref([]);
 //#endregion
 //#region src/features/PrejudgeActions.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$10 = [
+var _hoisted_1$11 = [
 	"data-action",
 	"checked",
 	"disabled",
@@ -21224,23 +21938,23 @@ var PrejudgeActions_default = /* @__PURE__ */ defineComponent({
 					checked: r.checked,
 					disabled: r.never || void 0,
 					onChange: ($event) => r.never ? void 0 : props.onToggle($event.target)
-				}, null, 40, _hoisted_1$10)], 16);
+				}, null, 40, _hoisted_1$11)], 16);
 			}), 128);
 		};
 	}
 });
 //#endregion
 //#region src/features/MyCredentials.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$9 = { class: "my-cred-head" };
-var _hoisted_2$7 = { class: "form-label" };
-var _hoisted_3$7 = ["onClick"];
-var _hoisted_4$5 = { class: "secret-effective" };
-var _hoisted_5$4 = { class: "skill-sources-list" };
-var _hoisted_6$4 = { class: "skill-info" };
-var _hoisted_7$4 = { class: "skill-head" };
-var _hoisted_8$3 = ["onClick"];
-var _hoisted_9$3 = { class: "secret-form" };
-var _hoisted_10$3 = ["disabled", "onClick"];
+var _hoisted_1$10 = { class: "my-cred-head" };
+var _hoisted_2$8 = { class: "form-label" };
+var _hoisted_3$8 = ["onClick"];
+var _hoisted_4$6 = { class: "secret-effective" };
+var _hoisted_5$5 = { class: "skill-sources-list" };
+var _hoisted_6$5 = { class: "skill-info" };
+var _hoisted_7$5 = { class: "skill-head" };
+var _hoisted_8$4 = ["onClick"];
+var _hoisted_9$4 = { class: "secret-form" };
+var _hoisted_10$4 = ["disabled", "onClick"];
 var ADD = "Add secret";
 var REMOVE = "Remove";
 var OPEN = "Open agent";
@@ -21284,23 +21998,23 @@ var MyCredentials_default = /* @__PURE__ */ defineComponent({
 					key: g.agentGroupId,
 					class: "my-cred-group"
 				}, [
-					createElementVNode("div", _hoisted_1$9, [createElementVNode("span", _hoisted_2$7, toDisplayString(g.name), 1), createElementVNode("button", {
+					createElementVNode("div", _hoisted_1$10, [createElementVNode("span", _hoisted_2$8, toDisplayString(g.name), 1), createElementVNode("button", {
 						class: "btn btn-ghost",
 						type: "button",
 						onClick: ($event) => props.onOpenAgent(g)
-					}, toDisplayString(OPEN), 8, _hoisted_3$7)]),
-					createElementVNode("p", _hoisted_4$5, toDisplayString(forYou(g)), 1),
-					createElementVNode("ul", _hoisted_5$4, [(openBlock(true), createElementBlock(Fragment, null, renderList(g.secrets, (sec, i) => {
+					}, toDisplayString(OPEN), 8, _hoisted_3$8)]),
+					createElementVNode("p", _hoisted_4$6, toDisplayString(forYou(g)), 1),
+					createElementVNode("ul", _hoisted_5$5, [(openBlock(true), createElementBlock(Fragment, null, renderList(g.secrets, (sec, i) => {
 						return openBlock(), createElementBlock("li", {
 							key: i,
 							class: "skill-source-row secret-row"
-						}, [createElementVNode("div", _hoisted_6$4, [createElementVNode("div", _hoisted_7$4, [createElementVNode("span", null, toDisplayString(sec.hostPattern), 1), createElementVNode("span", { class: "skill-badge secret-scope skill-badge-user" }, toDisplayString(BADGE))])]), createElementVNode("button", {
+						}, [createElementVNode("div", _hoisted_6$5, [createElementVNode("div", _hoisted_7$5, [createElementVNode("span", null, toDisplayString(sec.hostPattern), 1), createElementVNode("span", { class: "skill-badge secret-scope skill-badge-user" }, toDisplayString(BADGE))])]), createElementVNode("button", {
 							class: "btn btn-danger",
 							type: "button",
 							onClick: ($event) => props.onRemove(g, sec)
-						}, toDisplayString(REMOVE), 8, _hoisted_8$3)]);
+						}, toDisplayString(REMOVE), 8, _hoisted_8$4)]);
 					}), 128))]),
-					createElementVNode("div", _hoisted_9$3, [
+					createElementVNode("div", _hoisted_9$4, [
 						createElementVNode("label", { class: "secret-field" }, [createElementVNode("span", { class: "form-label" }, toDisplayString(HOST_LABEL)), createElementVNode("input", {
 							type: "text",
 							placeholder: HOST_PLACEHOLDER,
@@ -21318,7 +22032,7 @@ var MyCredentials_default = /* @__PURE__ */ defineComponent({
 							type: "button",
 							disabled: unref(myCredSaving).has(g.agentGroupId) || void 0,
 							onClick: ($event) => add(g, $event)
-						}, toDisplayString(ADD), 8, _hoisted_10$3)
+						}, toDisplayString(ADD), 8, _hoisted_10$4)
 					])
 				]);
 			}), 128);
@@ -21327,9 +22041,9 @@ var MyCredentials_default = /* @__PURE__ */ defineComponent({
 });
 //#endregion
 //#region src/features/Preflight.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$8 = { class: "preflight-check-head" };
-var _hoisted_2$6 = { class: "preflight-fix" };
-var _hoisted_3$6 = ["onClick"];
+var _hoisted_1$9 = { class: "preflight-check-head" };
+var _hoisted_2$7 = { class: "preflight-fix" };
+var _hoisted_3$7 = ["onClick"];
 var COPY = "Copy fix";
 var COPIED = "Copied";
 //#endregion
@@ -21357,11 +22071,11 @@ var Preflight_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("div", {
 					key: i,
 					class: normalizeClass(`preflight-check status-${c.status}`)
-				}, [createElementVNode("div", _hoisted_1$8, toDisplayString(c.head), 1), c.fix ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("pre", _hoisted_2$6, toDisplayString(c.fix), 1), createElementVNode("button", {
+				}, [createElementVNode("div", _hoisted_1$9, toDisplayString(c.head), 1), c.fix ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("pre", _hoisted_2$7, toDisplayString(c.fix), 1), createElementVNode("button", {
 					type: "button",
 					class: "btn btn-ghost",
 					onClick: ($event) => copy(c.fix)
-				}, toDisplayString(copied.value === c.fix ? COPIED : COPY), 9, _hoisted_3$6)], 64)) : createCommentVNode("", true)], 2);
+				}, toDisplayString(copied.value === c.fix ? COPIED : COPY), 9, _hoisted_3$7)], 64)) : createCommentVNode("", true)], 2);
 			}), 128));
 		};
 	}
@@ -21572,7 +22286,7 @@ async function connect$1() {
 }
 //#endregion
 //#region src/features/PrejudgeModelOptions.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$7 = ["value"];
+var _hoisted_1$8 = ["value"];
 var OFF = "Off";
 //#endregion
 //#region src/features/PrejudgeModelOptions.vue
@@ -21590,7 +22304,7 @@ var PrejudgeModelOptions_default = /* @__PURE__ */ defineComponent({
 				return openBlock(), createElementBlock("option", {
 					key: m.id,
 					value: m.id
-				}, toDisplayString(m.label), 9, _hoisted_1$7);
+				}, toDisplayString(m.label), 9, _hoisted_1$8);
 			}), 128))], 64);
 		};
 	}
@@ -23573,35 +24287,35 @@ var auditLoading = ref(false);
 var auditError = ref("");
 //#endregion
 //#region src/features/AuditLog.vue?vue&type=script&setup=true&lang.ts
-var _hoisted_1$6 = { class: "audit-log" };
-var _hoisted_2$5 = { class: "audit-filters" };
-var _hoisted_3$5 = ["value"];
-var _hoisted_4$4 = ["value"];
-var _hoisted_5$3 = {
+var _hoisted_1$7 = { class: "audit-log" };
+var _hoisted_2$6 = { class: "audit-filters" };
+var _hoisted_3$6 = ["value"];
+var _hoisted_4$5 = ["value"];
+var _hoisted_5$4 = {
 	key: 0,
 	class: "cred-hint err"
 };
-var _hoisted_6$3 = {
+var _hoisted_6$4 = {
 	key: 1,
 	class: "cred-hint"
 };
-var _hoisted_7$3 = { class: "audit-rows" };
-var _hoisted_8$2 = { class: "audit-row-head" };
-var _hoisted_9$2 = { class: "audit-when" };
-var _hoisted_10$2 = { class: "audit-type" };
-var _hoisted_11$2 = {
+var _hoisted_7$4 = { class: "audit-rows" };
+var _hoisted_8$3 = { class: "audit-row-head" };
+var _hoisted_9$3 = { class: "audit-when" };
+var _hoisted_10$3 = { class: "audit-type" };
+var _hoisted_11$3 = {
 	key: 0,
 	class: "audit-action"
 };
-var _hoisted_12$2 = { class: "audit-row-meta" };
-var _hoisted_13$2 = { class: "audit-actor" };
-var _hoisted_14$2 = {
+var _hoisted_12$3 = { class: "audit-row-meta" };
+var _hoisted_13$3 = { class: "audit-actor" };
+var _hoisted_14$3 = {
 	key: 0,
 	class: "audit-detail"
 };
-var _hoisted_15$2 = { class: "audit-more" };
-var _hoisted_16$2 = ["disabled"];
-var _hoisted_17$2 = {
+var _hoisted_15$3 = { class: "audit-more" };
+var _hoisted_16$3 = ["disabled"];
+var _hoisted_17$3 = {
 	key: 1,
 	class: "cred-hint"
 };
@@ -23652,8 +24366,8 @@ var AuditLog_default = /* @__PURE__ */ defineComponent({
 			detail: detailOf(r)
 		})));
 		return (_ctx, _cache) => {
-			return openBlock(), createElementBlock("div", _hoisted_1$6, [
-				createElementVNode("div", _hoisted_2$5, [withDirectives(createElementVNode("select", {
+			return openBlock(), createElementBlock("div", _hoisted_1$7, [
+				createElementVNode("div", _hoisted_2$6, [withDirectives(createElementVNode("select", {
 					"onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => isRef(auditFilterType) ? auditFilterType.value = $event : null),
 					"aria-label": "Filter by event type",
 					onChange: _cache[1] || (_cache[1] = ($event) => props.onFilter())
@@ -23661,7 +24375,7 @@ var AuditLog_default = /* @__PURE__ */ defineComponent({
 					return openBlock(), createElementBlock("option", {
 						key: t,
 						value: t
-					}, toDisplayString(t), 9, _hoisted_3$5);
+					}, toDisplayString(t), 9, _hoisted_3$6);
 				}), 128))], 544), [[vModelSelect, unref(auditFilterType)]]), withDirectives(createElementVNode("select", {
 					"onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => isRef(auditFilterEffect) ? auditFilterEffect.value = $event : null),
 					"aria-label": "Filter by outcome",
@@ -23670,30 +24384,30 @@ var AuditLog_default = /* @__PURE__ */ defineComponent({
 					return openBlock(), createElementBlock("option", {
 						key: e,
 						value: e
-					}, toDisplayString(e), 9, _hoisted_4$4);
+					}, toDisplayString(e), 9, _hoisted_4$5);
 				}), 128))], 544), [[vModelSelect, unref(auditFilterEffect)]])]),
-				unref(auditError) ? (openBlock(), createElementBlock("p", _hoisted_5$3, toDisplayString(unref(auditError)), 1)) : !rows.value.length && !unref(auditLoading) ? (openBlock(), createElementBlock("p", _hoisted_6$3, toDisplayString(EMPTY$1))) : createCommentVNode("", true),
-				createElementVNode("ul", _hoisted_7$3, [(openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
+				unref(auditError) ? (openBlock(), createElementBlock("p", _hoisted_5$4, toDisplayString(unref(auditError)), 1)) : !rows.value.length && !unref(auditLoading) ? (openBlock(), createElementBlock("p", _hoisted_6$4, toDisplayString(EMPTY$1))) : createCommentVNode("", true),
+				createElementVNode("ul", _hoisted_7$4, [(openBlock(true), createElementBlock(Fragment, null, renderList(rows.value, (r) => {
 					return openBlock(), createElementBlock("li", {
 						key: r.key,
 						class: normalizeClass({ warn: r.warn })
-					}, [createElementVNode("div", _hoisted_8$2, [
-						createElementVNode("span", _hoisted_9$2, toDisplayString(r.when), 1),
-						createElementVNode("span", _hoisted_10$2, toDisplayString(r.type), 1),
-						r.action ? (openBlock(), createElementBlock("span", _hoisted_11$2, toDisplayString(r.action), 1)) : createCommentVNode("", true),
+					}, [createElementVNode("div", _hoisted_8$3, [
+						createElementVNode("span", _hoisted_9$3, toDisplayString(r.when), 1),
+						createElementVNode("span", _hoisted_10$3, toDisplayString(r.type), 1),
+						r.action ? (openBlock(), createElementBlock("span", _hoisted_11$3, toDisplayString(r.action), 1)) : createCommentVNode("", true),
 						r.effect ? (openBlock(), createElementBlock("span", {
 							key: 1,
 							class: normalizeClass(["audit-effect", { warn: r.warn }])
 						}, toDisplayString(r.effect), 3)) : createCommentVNode("", true)
-					]), createElementVNode("div", _hoisted_12$2, [createElementVNode("span", _hoisted_13$2, toDisplayString(r.actor), 1), r.detail ? (openBlock(), createElementBlock("span", _hoisted_14$2, toDisplayString(r.detail), 1)) : createCommentVNode("", true)])], 2);
+					]), createElementVNode("div", _hoisted_12$3, [createElementVNode("span", _hoisted_13$3, toDisplayString(r.actor), 1), r.detail ? (openBlock(), createElementBlock("span", _hoisted_14$3, toDisplayString(r.detail), 1)) : createCommentVNode("", true)])], 2);
 				}), 128))]),
-				createElementVNode("div", _hoisted_15$2, [unref(auditHasMore) ? (openBlock(), createElementBlock("button", {
+				createElementVNode("div", _hoisted_15$3, [unref(auditHasMore) ? (openBlock(), createElementBlock("button", {
 					key: 0,
 					class: "btn btn-secondary",
 					type: "button",
 					disabled: unref(auditLoading),
 					onClick: _cache[4] || (_cache[4] = ($event) => props.onOlder())
-				}, toDisplayString(OLDER), 8, _hoisted_16$2)) : unref(auditTruncated) ? (openBlock(), createElementBlock("span", _hoisted_17$2, toDisplayString(TRUNCATED))) : createCommentVNode("", true)])
+				}, toDisplayString(OLDER), 8, _hoisted_16$3)) : unref(auditTruncated) ? (openBlock(), createElementBlock("span", _hoisted_17$3, toDisplayString(TRUNCATED))) : createCommentVNode("", true)])
 			]);
 		};
 	}
@@ -23746,6 +24460,427 @@ async function loadAuditLog(opts = {}) {
 	}
 }
 //#endregion
+//#region src/features/publishing-state.ts
+var publishingView = shallowRef(null);
+/** The Connect button: Reconnect once the credential is in place. */
+function connectLabel(status) {
+	return status.needsConnect ? "Connect…" : "Reconnect…";
+}
+/** The fields that differ from what is saved, trimmed; empty when nothing changed. */
+function changedFields(saved, typed) {
+	const out = {};
+	for (const k of [
+		"domain",
+		"accountId",
+		"zoneId",
+		"teamDomain"
+	]) {
+		const v = typed[k].trim();
+		if (v !== saved[k]) out[k] = v;
+	}
+	return out;
+}
+/** A refusal's field, as the server names it, or '' for one shown under the form. */
+function errorField(err) {
+	const f = err?.body?.field;
+	return typeof f === "string" ? f : "";
+}
+//#endregion
+//#region src/features/publishing-actions.ts
+/** PUT a route's settings or switch; the answer is the whole fresh view. Throws the server's refusal. */
+async function saveRoute(kind, body) {
+	publishingView.value = await apiJson(`/api/publishing/${kind}`, {
+		method: "PUT",
+		body
+	});
+}
+/** Hand a credential to the vault. Throws the server's refusal. */
+async function connectRoute(kind, body) {
+	publishingView.value = await apiJson(`/api/publishing/${kind}/connect`, {
+		method: "POST",
+		body
+	});
+}
+//#endregion
+//#region src/features/PublishingPanel.vue?vue&type=script&setup=true&lang.ts
+var _hoisted_1$6 = {
+	key: 0,
+	class: "publishing"
+};
+var _hoisted_2$5 = ["title"];
+var _hoisted_3$5 = { class: "publishing-route" };
+var _hoisted_4$4 = { class: "setting-group install-row" };
+var _hoisted_5$3 = { class: "setting-toggle" };
+var _hoisted_6$3 = ["checked", "disabled"];
+var _hoisted_7$3 = {
+	key: 0,
+	class: "cred-hint err"
+};
+var _hoisted_8$2 = ["title"];
+var _hoisted_9$2 = ["title"];
+var _hoisted_10$2 = { class: "secret-form" };
+var _hoisted_11$2 = { class: "secret-field" };
+var _hoisted_12$2 = ["disabled"];
+var _hoisted_13$2 = {
+	key: 0,
+	class: "cred-hint err"
+};
+var _hoisted_14$2 = { class: "secret-form" };
+var _hoisted_15$2 = { class: "secret-field" };
+var _hoisted_16$2 = { class: "secret-field" };
+var _hoisted_17$2 = {
+	key: 0,
+	class: "cred-hint err"
+};
+var _hoisted_18$2 = { class: "publishing-actions" };
+var _hoisted_19$2 = ["disabled"];
+var _hoisted_20$2 = { class: "publishing-route" };
+var _hoisted_21$1 = { class: "setting-group install-row" };
+var _hoisted_22 = { class: "setting-toggle" };
+var _hoisted_23 = ["checked", "disabled"];
+var _hoisted_24 = {
+	key: 0,
+	class: "cred-hint err"
+};
+var _hoisted_25 = ["title"];
+var _hoisted_26 = ["title"];
+var _hoisted_27 = { class: "publishing-fields" };
+var _hoisted_28 = { class: "form-label" };
+var _hoisted_29 = ["onUpdate:modelValue", "placeholder"];
+var _hoisted_30 = {
+	key: 0,
+	class: "cred-hint err"
+};
+var _hoisted_31 = ["disabled"];
+var _hoisted_32 = { class: "secret-form" };
+var _hoisted_33 = { class: "secret-field" };
+var _hoisted_34 = {
+	key: 0,
+	class: "cred-hint err"
+};
+var _hoisted_35 = { class: "publishing-actions" };
+var _hoisted_36 = ["disabled"];
+//#endregion
+//#region src/features/PublishingPanel.vue
+var PublishingPanel_default = /* @__PURE__ */ defineComponent({
+	__name: "PublishingPanel",
+	setup(__props) {
+		/**
+		* Admin → Publishing, mounted into <div id="publishing-panel"> (publishing.ts).
+		* Per route: a switch, its settings (only while on), Connect and a status line
+		* that reads Connected or names the one thing missing. Secrets typed here are
+		* sent once and cleared; nothing reads them back.
+		*/
+		const view = computed(() => publishingView.value);
+		const tsDomain = ref("");
+		const cf = reactive({
+			domain: "",
+			accountId: "",
+			zoneId: "",
+			teamDomain: ""
+		});
+		watch(view, (v) => {
+			if (!v) return;
+			tsDomain.value = v.tailnet.domain;
+			Object.assign(cf, {
+				domain: v.cloudflare.domain,
+				accountId: v.cloudflare.accountId,
+				zoneId: v.cloudflare.zoneId,
+				teamDomain: v.cloudflare.teamDomain
+			});
+		}, { immediate: true });
+		const CF_FIELDS = [
+			{
+				key: "domain",
+				label: "App domain",
+				placeholder: "example-apps.net"
+			},
+			{
+				key: "teamDomain",
+				label: "Team domain",
+				placeholder: "myteam.cloudflareaccess.com"
+			},
+			{
+				key: "accountId",
+				label: "Account ID",
+				placeholder: ""
+			},
+			{
+				key: "zoneId",
+				label: "Zone ID",
+				placeholder: ""
+			}
+		];
+		const errors = reactive({});
+		const busy = ref("");
+		const connecting = ref("");
+		const secret = reactive({
+			clientId: "",
+			clientSecret: "",
+			token: ""
+		});
+		function clearErrors(prefix) {
+			for (const k of Object.keys(errors)) if (k.startsWith(prefix)) delete errors[k];
+		}
+		async function run(what, prefix, fn) {
+			busy.value = what;
+			clearErrors(prefix);
+			try {
+				await fn();
+				return true;
+			} catch (err) {
+				const field = errorField(err);
+				errors[`${prefix}${field || "form"}`] = err?.message || "That did not work";
+				return false;
+			} finally {
+				busy.value = "";
+			}
+		}
+		async function toggle(kind, e) {
+			const el = e.target;
+			const on = el.checked;
+			el.checked = !on;
+			if (!on) {
+				if (!await showConfirmModal({
+					title: `Turn off ${kind === "tailnet" ? "Tailnet" : "Cloudflare"}?`,
+					body: "Apps published on it stop opening.",
+					confirmLabel: "Turn off",
+					destructive: true
+				})) return;
+			}
+			await run(`${kind}-switch`, `${kind}.`, () => saveRoute(kind, { on }));
+		}
+		const tsDirty = computed(() => !!view.value && tsDomain.value.trim() !== view.value.tailnet.domain);
+		const cfChanged = computed(() => view.value ? changedFields(view.value.cloudflare, cf) : {});
+		const cfDirty = computed(() => Object.keys(cfChanged.value).length > 0);
+		async function saveTailnet() {
+			if (await run("tailnet-save", "tailnet.", () => saveRoute("tailnet", { domain: tsDomain.value.trim() }))) showToast("Saved", { kind: "success" });
+		}
+		async function saveCloudflare() {
+			if (await run("cloudflare-save", "cloudflare.", () => saveRoute("cloudflare", { ...cfChanged.value }))) showToast("Saved", { kind: "success" });
+		}
+		function openConnect(kind) {
+			connecting.value = kind;
+			clearErrors(`${kind}.`);
+		}
+		function cancelConnect() {
+			connecting.value = "";
+			Object.assign(secret, {
+				clientId: "",
+				clientSecret: "",
+				token: ""
+			});
+		}
+		async function connect(kind) {
+			const body = kind === "tailnet" ? {
+				clientId: secret.clientId,
+				clientSecret: secret.clientSecret
+			} : { token: secret.token };
+			const ok = await run(`${kind}-connect`, `${kind}.`, () => connectRoute(kind, body));
+			Object.assign(secret, {
+				clientId: "",
+				clientSecret: "",
+				token: ""
+			});
+			if (ok) {
+				connecting.value = "";
+				showToast("Connected", { kind: "success" });
+			}
+		}
+		return (_ctx, _cache) => {
+			return view.value ? (openBlock(), createElementBlock("div", _hoisted_1$6, [
+				view.value.gate ? (openBlock(), createElementBlock("p", {
+					key: 0,
+					class: "cred-hint err publishing-gate",
+					title: view.value.gate.detail || void 0
+				}, toDisplayString(view.value.gate.text), 9, _hoisted_2$5)) : createCommentVNode("", true),
+				createElementVNode("div", _hoisted_3$5, [
+					createElementVNode("div", _hoisted_4$4, [_cache[10] || (_cache[10] = createElementVNode("span", { class: "setting-label" }, "Tailnet", -1)), createElementVNode("label", _hoisted_5$3, [createElementVNode("input", {
+						type: "checkbox",
+						"aria-label": "Tailnet",
+						checked: view.value.tailnet.on,
+						disabled: busy.value === "tailnet-switch" || void 0,
+						onChange: _cache[0] || (_cache[0] = ($event) => toggle("tailnet", $event))
+					}, null, 40, _hoisted_6$3)])]),
+					errors["tailnet.on"] || errors["tailnet.form"] ? (openBlock(), createElementBlock("p", _hoisted_7$3, toDisplayString(errors["tailnet.on"] || errors["tailnet.form"]), 1)) : createCommentVNode("", true),
+					view.value.tailnet.on ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [
+						createElementVNode("p", {
+							class: normalizeClass(["publishing-status", { ok: view.value.tailnet.status.ok }]),
+							title: view.value.tailnet.status.detail || void 0
+						}, [_cache[11] || (_cache[11] = createElementVNode("span", {
+							class: "publishing-dot",
+							"aria-hidden": "true"
+						}, null, -1)), createTextVNode(toDisplayString(view.value.tailnet.status.text), 1)], 10, _hoisted_8$2),
+						(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.tailnet.status.warnings, (w) => {
+							return openBlock(), createElementBlock("p", {
+								key: w.detail,
+								class: "cred-hint",
+								title: w.detail
+							}, toDisplayString(w.text), 9, _hoisted_9$2);
+						}), 128)),
+						createElementVNode("div", _hoisted_10$2, [createElementVNode("label", _hoisted_11$2, [_cache[12] || (_cache[12] = createElementVNode("span", { class: "form-label" }, "Tailnet name", -1)), withDirectives(createElementVNode("input", {
+							"onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => tsDomain.value = $event),
+							type: "text",
+							placeholder: "tail1234.ts.net",
+							autocomplete: "off",
+							autocapitalize: "none",
+							spellcheck: "false"
+						}, null, 512), [[vModelText, tsDomain.value]])]), createElementVNode("button", {
+							class: "btn btn-secondary",
+							type: "button",
+							disabled: !tsDirty.value || busy.value === "tailnet-save" || void 0,
+							onClick: saveTailnet
+						}, [createVNode(BusyLabel_default, {
+							busy: busy.value === "tailnet-save",
+							label: "Save",
+							"busy-label": "Saving…"
+						}, null, 8, ["busy"])], 8, _hoisted_12$2)]),
+						errors["tailnet.domain"] ? (openBlock(), createElementBlock("p", _hoisted_13$2, toDisplayString(errors["tailnet.domain"]), 1)) : createCommentVNode("", true),
+						connecting.value !== "tailnet" ? (openBlock(), createElementBlock("button", {
+							key: 1,
+							class: "btn btn-secondary publishing-connect",
+							type: "button",
+							onClick: _cache[2] || (_cache[2] = ($event) => openConnect("tailnet"))
+						}, toDisplayString(unref(connectLabel)(view.value.tailnet.status)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [
+							createElementVNode("div", _hoisted_14$2, [createElementVNode("label", _hoisted_15$2, [_cache[13] || (_cache[13] = createElementVNode("span", { class: "form-label" }, "Client ID", -1)), withDirectives(createElementVNode("input", {
+								"onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => secret.clientId = $event),
+								type: "text",
+								autocomplete: "off",
+								autocapitalize: "none",
+								spellcheck: "false"
+							}, null, 512), [[vModelText, secret.clientId]])]), createElementVNode("label", _hoisted_16$2, [_cache[14] || (_cache[14] = createElementVNode("span", { class: "form-label" }, "Client secret", -1)), withDirectives(createElementVNode("input", {
+								"onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => secret.clientSecret = $event),
+								type: "password",
+								placeholder: "tskey-client-…",
+								autocomplete: "new-password",
+								spellcheck: "false"
+							}, null, 512), [[vModelText, secret.clientSecret]])])]),
+							errors["tailnet.clientId"] || errors["tailnet.clientSecret"] ? (openBlock(), createElementBlock("p", _hoisted_17$2, toDisplayString(errors["tailnet.clientId"] || errors["tailnet.clientSecret"]), 1)) : createCommentVNode("", true),
+							_cache[15] || (_cache[15] = createElementVNode("p", { class: "cred-hint" }, "Never shown again", -1)),
+							createElementVNode("div", _hoisted_18$2, [createElementVNode("button", {
+								class: "btn btn-primary",
+								type: "button",
+								disabled: !secret.clientId || !secret.clientSecret || busy.value === "tailnet-connect" || void 0,
+								onClick: _cache[5] || (_cache[5] = ($event) => connect("tailnet"))
+							}, [createVNode(BusyLabel_default, {
+								busy: busy.value === "tailnet-connect",
+								label: "Connect",
+								"busy-label": "Connecting…"
+							}, null, 8, ["busy"])], 8, _hoisted_19$2), createElementVNode("button", {
+								class: "btn btn-secondary",
+								type: "button",
+								onClick: cancelConnect
+							}, "Cancel")])
+						], 64))
+					], 64)) : createCommentVNode("", true)
+				]),
+				createElementVNode("div", _hoisted_20$2, [
+					createElementVNode("div", _hoisted_21$1, [_cache[16] || (_cache[16] = createElementVNode("span", { class: "setting-label" }, "Cloudflare", -1)), createElementVNode("label", _hoisted_22, [createElementVNode("input", {
+						type: "checkbox",
+						"aria-label": "Cloudflare",
+						checked: view.value.cloudflare.on,
+						disabled: busy.value === "cloudflare-switch" || void 0,
+						onChange: _cache[6] || (_cache[6] = ($event) => toggle("cloudflare", $event))
+					}, null, 40, _hoisted_23)])]),
+					errors["cloudflare.on"] || errors["cloudflare.form"] ? (openBlock(), createElementBlock("p", _hoisted_24, toDisplayString(errors["cloudflare.on"] || errors["cloudflare.form"]), 1)) : createCommentVNode("", true),
+					view.value.cloudflare.on ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [
+						createElementVNode("p", {
+							class: normalizeClass(["publishing-status", { ok: view.value.cloudflare.status.ok }]),
+							title: view.value.cloudflare.status.detail || void 0
+						}, [_cache[17] || (_cache[17] = createElementVNode("span", {
+							class: "publishing-dot",
+							"aria-hidden": "true"
+						}, null, -1)), createTextVNode(toDisplayString(view.value.cloudflare.status.text), 1)], 10, _hoisted_25),
+						(openBlock(true), createElementBlock(Fragment, null, renderList(view.value.cloudflare.status.warnings, (w) => {
+							return openBlock(), createElementBlock("p", {
+								key: w.detail,
+								class: "cred-hint",
+								title: w.detail
+							}, toDisplayString(w.text), 9, _hoisted_26);
+						}), 128)),
+						createElementVNode("div", _hoisted_27, [(openBlock(), createElementBlock(Fragment, null, renderList(CF_FIELDS, (f) => {
+							return createElementVNode("label", {
+								key: f.key,
+								class: "publishing-field"
+							}, [
+								createElementVNode("span", _hoisted_28, toDisplayString(f.label), 1),
+								withDirectives(createElementVNode("input", {
+									"onUpdate:modelValue": ($event) => cf[f.key] = $event,
+									type: "text",
+									placeholder: f.placeholder,
+									autocomplete: "off",
+									autocapitalize: "none",
+									spellcheck: "false"
+								}, null, 8, _hoisted_29), [[vModelText, cf[f.key]]]),
+								errors[`cloudflare.${f.key}`] ? (openBlock(), createElementBlock("span", _hoisted_30, toDisplayString(errors[`cloudflare.${f.key}`]), 1)) : createCommentVNode("", true)
+							]);
+						}), 64)), createElementVNode("button", {
+							class: "btn btn-secondary publishing-save",
+							type: "button",
+							disabled: !cfDirty.value || busy.value === "cloudflare-save" || void 0,
+							onClick: saveCloudflare
+						}, [createVNode(BusyLabel_default, {
+							busy: busy.value === "cloudflare-save",
+							label: "Save",
+							"busy-label": "Saving…"
+						}, null, 8, ["busy"])], 8, _hoisted_31)]),
+						connecting.value !== "cloudflare" ? (openBlock(), createElementBlock("button", {
+							key: 0,
+							class: "btn btn-secondary publishing-connect",
+							type: "button",
+							onClick: _cache[7] || (_cache[7] = ($event) => openConnect("cloudflare"))
+						}, toDisplayString(unref(connectLabel)(view.value.cloudflare.status)), 1)) : (openBlock(), createElementBlock(Fragment, { key: 1 }, [
+							createElementVNode("div", _hoisted_32, [createElementVNode("label", _hoisted_33, [_cache[18] || (_cache[18] = createElementVNode("span", { class: "form-label" }, "API token", -1)), withDirectives(createElementVNode("input", {
+								"onUpdate:modelValue": _cache[8] || (_cache[8] = ($event) => secret.token = $event),
+								type: "password",
+								autocomplete: "new-password",
+								spellcheck: "false"
+							}, null, 512), [[vModelText, secret.token]])])]),
+							errors["cloudflare.token"] ? (openBlock(), createElementBlock("p", _hoisted_34, toDisplayString(errors["cloudflare.token"]), 1)) : createCommentVNode("", true),
+							_cache[19] || (_cache[19] = createElementVNode("p", { class: "cred-hint" }, "Never shown again", -1)),
+							createElementVNode("div", _hoisted_35, [createElementVNode("button", {
+								class: "btn btn-primary",
+								type: "button",
+								disabled: !secret.token || busy.value === "cloudflare-connect" || void 0,
+								onClick: _cache[9] || (_cache[9] = ($event) => connect("cloudflare"))
+							}, [createVNode(BusyLabel_default, {
+								busy: busy.value === "cloudflare-connect",
+								label: "Connect",
+								"busy-label": "Connecting…"
+							}, null, 8, ["busy"])], 8, _hoisted_36), createElementVNode("button", {
+								class: "btn btn-secondary",
+								type: "button",
+								onClick: cancelConnect
+							}, "Cancel")])
+						], 64))
+					], 64)) : createCommentVNode("", true)
+				])
+			])) : createCommentVNode("", true);
+		};
+	}
+});
+//#endregion
+//#region src/features/publishing.ts
+var panelApp = null;
+async function renderPublishingSettings() {
+	const section = $("#settings-publishing");
+	if (!section) return;
+	section.hidden = !state.isOwnerView;
+	if (!state.isOwnerView) return;
+	let view = null;
+	try {
+		view = await apiJson("/api/publishing");
+	} catch {
+		view = null;
+	}
+	if (!view?.tailnet || !view.cloudflare) {
+		section.hidden = true;
+		return;
+	}
+	publishingView.value = view;
+	panelApp ??= mountIsland("#publishing-panel", () => createApp(PublishingPanel_default));
+}
+//#endregion
 //#region src/features/admin.ts
 /**
 * Hide a group whose every block hid itself, so a scoped admin never sees
@@ -23774,6 +24909,7 @@ function openAdmin() {
 		Promise.allSettled([
 			renderSelfTest(),
 			renderToolSecrets(),
+			renderPublishingSettings(),
 			renderAutoLearnSetting(),
 			renderAuditSettings(),
 			renderAgentActivitySettings(),

@@ -6,7 +6,14 @@ import net from 'net';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { parseProxyHead, serveModelPort, serveProxyClient, type EgressFilterDeps } from './egress-filter.js';
+import {
+  BUILD_SESSION,
+  inOwnNetwork,
+  parseProxyHead,
+  serveModelPort,
+  serveProxyClient,
+  type EgressFilterDeps,
+} from './egress-filter.js';
 import { __resetRunnerEgressForTest, __setRunnerEgressForTest, allowlistFor, listBlocked } from './egress-policy.js';
 
 let gateway: net.Server;
@@ -254,6 +261,79 @@ describe('egress filter', () => {
     expect(parseProxyHead(smuggled)).toHaveProperty('error');
     expect(parseProxyHead(smuggled)).not.toHaveProperty('kind');
     expect(parseProxyHead('GET http://a_b!c/ HTTP/1.1')).toMatchObject({ status: '400 Bad Request' });
+  });
+});
+
+describe('the agent’s own workload addresses', () => {
+  it('matches literal addresses in its CIDRs only', () => {
+    expect(inOwnNetwork('198.18.3.12', ['198.18.3.12/32'])).toBe(true);
+    expect(inOwnNetwork('198.18.3.13', ['198.18.3.12/32'])).toBe(false);
+    expect(inOwnNetwork('198.18.4.12', ['198.18.3.0/24'])).toBe(false);
+    expect(inOwnNetwork('web.example', ['198.18.3.0/24'])).toBe(false);
+    expect(inOwnNetwork('198.18.3.12', [])).toBe(false);
+    expect(inOwnNetwork('10.0.0.1', ['0.0.0.0/0'])).toBe(false);
+  });
+
+  it('dials them directly, even when the mode allows nothing, and never via the gateway', async () => {
+    const svc = net.createServer((sock) =>
+      sock.once('data', (d) => sock.end(`HTTP/1.1 200 OK\r\n\r\nsvc:${d.toString().split('\r\n')[0]}echo:`)),
+    );
+    const port = await new Promise<number>((r) =>
+      svc.listen(0, '127.0.0.1', () => r((svc.address() as net.AddressInfo).port)),
+    );
+    deps.mode = async () => 'none';
+    deps.ownNetworks = async () => ['127.0.0.1/32'];
+    const got = await ask(`GET http://127.0.0.1:${port}/health HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n${cred}\r\n\r\n`);
+    expect(got).toContain('svc:GET /health HTTP/1.1');
+    expect(seen).toEqual([]);
+    deps.ownNetworks = async () => ['127.0.1.0/24'];
+    expect(await ask(`GET http://127.0.0.1:${port}/ HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
+    svc.close();
+  });
+
+  it('is not open to the agent’s builder', async () => {
+    deps.identify = async () => ({ agentGroupId: 'ag-1', sessionId: BUILD_SESSION });
+    deps.mode = async () => 'none';
+    deps.ownNetworks = async () => ['127.0.0.1/32'];
+    expect(await ask(`GET http://127.0.0.1:9/ HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
+  });
+});
+
+describe('an agent’s workload builds', () => {
+  beforeEach(() => {
+    deps.identify = async () => ({ agentGroupId: 'ag-1', sessionId: BUILD_SESSION });
+    deps.mode = async () => 'none';
+  });
+
+  it('reach no registry unless an owner opted this agent in: there is no install-wide list', async () => {
+    deps.buildRegistries = async () => [];
+    expect(await ask(`CONNECT ghcr.io:443 HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
+    expect(await ask(`CONNECT registry-1.docker.io:443 HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
+    expect(seen).toEqual([]);
+  });
+
+  it('reach an opted-in registry directly, never through the credential gateway', async () => {
+    const dialled: string[] = [];
+    const upstream = net.createServer((sock) =>
+      sock.on('data', (d) => sock.write(Buffer.concat([Buffer.from('echo:'), d]))),
+    );
+    const port = await new Promise<number>((r) =>
+      upstream.listen(0, '127.0.0.1', () => r((upstream.address() as net.AddressInfo).port)),
+    );
+    deps.buildRegistries = async (g) => (g === 'ag-1' ? ['registry.example'] : []);
+    deps.direct = async (host, p) => {
+      dialled.push(`${host}:${p}`);
+      return net.connect(port, '127.0.0.1');
+    };
+    const got = await ask(`CONNECT registry.example:443 HTTP/1.1\r\n${cred}\r\n\r\n`, 'blob');
+    expect(got).toContain('200 Connection Established');
+    expect(got).toContain('echo:blob');
+    expect(dialled).toEqual(['registry.example:443']);
+    expect(seen).toEqual([]);
+    // Opted in for builds only: the agent itself is still held to its own policy.
+    deps.identify = async () => ({ agentGroupId: 'ag-1', sessionId: 's1' });
+    expect(await ask(`CONNECT registry.example:443 HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
+    upstream.close();
   });
 });
 

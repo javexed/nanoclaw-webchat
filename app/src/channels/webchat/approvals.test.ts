@@ -49,6 +49,7 @@ async function insertPendingApproval(opts: {
   status?: string;
   action?: string;
   title?: string;
+  question?: string;
 }): Promise<void> {
   // Insert the approval row exactly the way trunk's requestApproval would
   // — without the platform_id stamp (those columns stay NULL on real
@@ -57,17 +58,18 @@ async function insertPendingApproval(opts: {
     `INSERT INTO pending_approvals
          (approval_id, session_id, request_id, action, payload, created_at,
           agent_group_id, channel_type, platform_id, platform_message_id,
-          expires_at, status, title, options_json)
+          expires_at, status, title, options_json, question)
        VALUES
          (@approval_id, NULL, @approval_id, @action, '{}', @created_at,
           NULL, NULL, NULL, NULL,
-          NULL, @status, @title, '[]')`,
+          NULL, @status, @title, '[]', @question)`,
     {
       approval_id: opts.approvalId,
       action: opts.action ?? 'install_packages',
       created_at: new Date().toISOString(),
       status: opts.status ?? 'pending',
       title: opts.title ?? 'Test Approval',
+      question: opts.question ?? '',
     },
   );
   // If a platformId is provided, simulate the webchat deliver() path
@@ -128,6 +130,17 @@ describe('getWebchatPendingApprovalsForUser', () => {
 
     const rows = await getWebchatPendingApprovalsForUser(userId);
     expect(rows.map((r) => r.approval_id)).toEqual(['a-pending']);
+  });
+
+  it("carries the card's text (question), empty when the row has none", async () => {
+    await insertPendingApproval({ approvalId: 'a-text', platformId, question: 'Install curl for the agent?' });
+    await insertPendingApproval({ approvalId: 'a-bare', platformId });
+
+    const rows = await getWebchatPendingApprovalsForUser(userId);
+    expect(Object.fromEntries(rows.map((r) => [r.approval_id, r.question]))).toEqual({
+      'a-text': 'Install curl for the agent?',
+      'a-bare': '',
+    });
   });
 
   it('returns nothing for non-webchat users', async () => {

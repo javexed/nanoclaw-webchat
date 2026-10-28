@@ -13,6 +13,7 @@ docs cover the harder subsystems in depth:
 - Threads and context sync: [threads.md](threads.md), [threads-qa.md](threads-qa.md)
 - User credentials (per-member): [user-credentials.md](user-credentials.md)
 - GitHub Copilot as an agent harness: [copilot.md](copilot.md)
+- Agent workloads (an agent’s own Compose stacks) and publishing their apps, operator setup: [workloads.md](workloads.md)
 - Local-model routing: [llm-router.md](design/llm-router.md), [auto-routing.md](design/auto-routing.md)
 
 Ships **disabled by default** — the adapter factory returns `null` unless

@@ -6,6 +6,7 @@ import { MockProvider } from './providers/mock.js';
 import { classifyRateLimitEvent } from './providers/claude.js';
 import { runPollLoop } from './poll-loop.js';
 import { LIMIT_RESETS_AT_FIELD, limitResetsAt } from './limit-reset.js';
+import { resetLimitNotices } from './limit-notice.js';
 
 describe('limitResetsAt', () => {
   it('reads the reset the rate-limit classifier writes', () => {
@@ -22,6 +23,8 @@ describe('limitResetsAt', () => {
 
 describe('poll loop — rate-limit notice carries the reset', () => {
   beforeEach(() => {
+    // Each case is a fresh account: one notice per reset would hold back the next.
+    resetLimitNotices();
     initTestSessionDb();
     getInboundDb()
       .prepare(
@@ -30,7 +33,10 @@ describe('poll loop — rate-limit notice carries the reset', () => {
       )
       .run();
   });
-  afterEach(() => closeSessionDb());
+  afterEach(() => {
+    closeSessionDb();
+    resetLimitNotices();
+  });
 
   async function noticeFor(error: { message: string; classification: string }): Promise<Record<string, unknown>> {
     getInboundDb()

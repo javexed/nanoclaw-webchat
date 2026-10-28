@@ -58,6 +58,7 @@ import {
 import { buttonBusy } from '../core/busy.js';
 import { $, esc } from '../core/dom.js';
 import { mountIsland } from '../core/island.js';
+import { renderAgentApps } from './apps.js';
 import { closeModelDetail, openModelPicker } from './models.js';
 import { confirmWithToggle, showConfirmModal } from './modals.js';
 import { showToast, toastError } from '../core/toast.js';
@@ -452,6 +453,8 @@ export async function openAgentDetail(id?: any) {
   // Credentials scoped to this agent (needs isolation to mean anything).
   void renderAgentSecrets(id);
   void renderAgentKeys(id);
+  // Apps the agent runs and publishes (admins only; hides itself otherwise).
+  void renderAgentApps(id);
 
   // Active sessions — reset a stuck one (incl. background a2a sessions).
   renderAgentSessions(id);

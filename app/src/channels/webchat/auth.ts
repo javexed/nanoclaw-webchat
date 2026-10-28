@@ -360,13 +360,13 @@ export async function verifyOidcTokenDetailed(token: string, opts: { nonce?: str
   return { ok: true, identity: { identity, displayName: name } };
 }
 
-type JwtResult = { ok: true; claims: Record<string, unknown> } | Extract<OidcResult, { ok: false }>;
+export type JwtResult = { ok: true; claims: Record<string, unknown> } | Extract<OidcResult, { ok: false }>;
 
 /**
  * Signature (RS256/ES256 pinned to the key's type) plus exp/nbf/iss/aud, against
  * the key set at `jwksUri`. Shared by OIDC sign-in and Cloudflare Access.
  */
-async function verifyJwt(
+export async function verifyJwt(
   token: string,
   cfg: { issuer: string; audience: string; jwksUri: string },
 ): Promise<JwtResult> {

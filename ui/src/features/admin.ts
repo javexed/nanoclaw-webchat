@@ -11,6 +11,7 @@ import { renderSettingsWizardButton } from './wizard.js';
 import { renderAutoLearnSetting } from './learn.js';
 import { renderToolSecrets } from './agents.js';
 import { loadAuditLog } from './audit-log.js';
+import { renderPublishingSettings } from './publishing.js';
 import {
   renderAboutSettings,
   renderAgentActivitySettings,
@@ -55,6 +56,7 @@ function openAdmin(): void {
     void Promise.allSettled([
       renderSelfTest(),
       renderToolSecrets(),
+      renderPublishingSettings(),
       renderAutoLearnSetting(),
       renderAuditSettings(),
       renderAgentActivitySettings(),

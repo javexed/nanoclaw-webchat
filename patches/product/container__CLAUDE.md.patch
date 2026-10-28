@@ -1,0 +1,13 @@
+diff --git a/container/CLAUDE.md b/container/CLAUDE.md
+index 642a4c86..17d22dd4 100644
+--- a/container/CLAUDE.md
++++ b/container/CLAUDE.md
+@@ -26,6 +26,8 @@ Standing role, persona, and behavioral instructions belong in `/workspace/agent/
+ 
+ The `conversations/` folder in your workspace holds searchable transcripts of past sessions with this group. Use it to recall prior context when a request references something that happened before. For structured long-lived data, prefer dedicated files (`customers.md`, `preferences.md`, etc.); split any file over ~500 lines into a folder with an index.
+ 
++Before you say you have no record of an earlier message, request, decision or conversation, search `conversations/` for it (for example `grep -ril '<a phrase from it>' conversations/`). A restart clears your working memory, not the history.
++
+ 
+ ## Connecting external accounts
+ 

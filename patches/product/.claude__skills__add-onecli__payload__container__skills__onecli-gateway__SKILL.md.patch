@@ -1,5 +1,5 @@
 diff --git a/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md b/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
-index 2e77d450..116471e7 100644
+index 2e77d450..d3a08778 100644
 --- a/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
 +++ b/.claude/skills/add-onecli/payload/container/skills/onecli-gateway/SKILL.md
 @@ -6,7 +6,8 @@ description: >-
@@ -12,7 +12,7 @@ index 2e77d450..116471e7 100644
  compatibility: Requires HTTPS_PROXY set in environment (automatic when launched via `onecli run`)
  metadata:
    author: onecli
-@@ -66,18 +67,81 @@ error response:
+@@ -66,18 +67,90 @@ error response:
  If there is no `connect_url` in the error, tell the user to open the
  OneCLI dashboard and connect the service there.
  
@@ -26,6 +26,15 @@ index 2e77d450..116471e7 100644
 +(for example `Authorization` with `Token {value}` for InfluxDB). Never put the
 +value in your message, and never use a token you found elsewhere as the
 +secret's value without telling the user where it came from.
++
++**`access_restricted` is different again: never pass on its `manage_url`.**
++A `401` with `"error": "access_restricted"` means a credential for that host
++exists in the gateway, but this agent may not use it. Its `manage_url` is the
++gateway's internal admin address, which no browser in the room can open. Say
++that a credential for `<host>` exists but this agent cannot use it, and ask a
++room admin to add one in **Agents → (this agent) → Secrets** with that host,
++reaching "Everyone on this agent", or ask the credential's owner to share it
++under "All agents". Then retry.
 +
  **Step 2 — Retry after the user connects.** Let the user know you will
  retry once they have connected. When they confirm, retry the original

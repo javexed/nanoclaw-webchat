@@ -1310,3 +1310,132 @@ export const moduleWebchatServedModel: Migration = {
     await db.exec(`ALTER TABLE webchat_messages ADD COLUMN served_model TEXT;`);
   },
 };
+
+/**
+ * Agent workloads (modules/workloads): Compose stacks that run under an agent.
+ * One internal network per agent at a fixed /24 (`idx` picks it), the stacks
+ * with their checked definition, and each agent's quota.
+ */
+export const moduleWebchatWorkloads: Migration = {
+  version: 228,
+  name: 'webchat-workloads',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS workload_networks (
+        agent_group_id TEXT PRIMARY KEY,
+        idx            INTEGER NOT NULL UNIQUE,
+        network        TEXT NOT NULL,
+        created_at     INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS workloads (
+        id                 TEXT PRIMARY KEY,
+        agent_group_id     TEXT NOT NULL,
+        name               TEXT NOT NULL,
+        node               TEXT NOT NULL DEFAULT 'local',
+        state              TEXT NOT NULL,
+        compose_text       TEXT NOT NULL,
+        stack_json         TEXT NOT NULL,
+        addresses_json     TEXT NOT NULL DEFAULT '{}',
+        memory_mb          INTEGER NOT NULL,
+        cpus               REAL NOT NULL,
+        approved_memory_mb INTEGER NOT NULL,
+        approved_cpus      REAL NOT NULL,
+        last_error         TEXT,
+        expires_at         INTEGER,
+        created_by         TEXT,
+        created_at         INTEGER NOT NULL,
+        updated_at         INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_workloads_group_name_live
+        ON workloads (agent_group_id, name) WHERE state <> 'deleted';
+      CREATE TABLE IF NOT EXISTS workload_quotas (
+        agent_group_id TEXT PRIMARY KEY,
+        memory_mb      INTEGER NOT NULL,
+        cpus           REAL NOT NULL,
+        disk_gb        INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL
+      );
+    `);
+  },
+};
+
+/**
+ * What an owner approved for a workload (images with their digests, build
+ * folders with Dockerfile and build-arg hashes, added capabilities): a
+ * redeploy that changes it needs a new card.
+ */
+export const moduleWebchatWorkloadShape: Migration = {
+  version: 229,
+  name: 'webchat-workload-shape',
+  async up(db) {
+    await db.exec(`ALTER TABLE workloads ADD COLUMN approved_shape TEXT;`);
+  },
+};
+
+/**
+ * Workload builds: when each build started without a card ran (the hourly
+ * limit holds across restarts), and the registries an owner lets an agent's
+ * builds reach on top of its own egress policy.
+ */
+export const moduleWebchatWorkloadBuilds: Migration = {
+  version: 230,
+  name: 'webchat-workload-builds',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS workload_builds (
+        agent_group_id TEXT NOT NULL,
+        at             INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_workload_builds_group_at ON workload_builds (agent_group_id, at);
+      CREATE TABLE IF NOT EXISTS workload_build_registries (
+        agent_group_id TEXT PRIMARY KEY,
+        hosts_json     TEXT NOT NULL,
+        updated_at     INTEGER NOT NULL
+      );
+    `);
+  },
+};
+
+/**
+ * Published workload apps (modules/workloads/routes.ts): an app name, the
+ * workload service and port it serves, the publishing route kind (tailnet or
+ * cloudflare) and who can open it. `owner_user_id` is the person "only me"
+ * means; `ticket` ties an agent's approved expose to its approval.
+ */
+export const moduleWebchatWorkloadAppRoutes: Migration = {
+  version: 231,
+  name: 'webchat-workload-app-routes',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS workload_app_routes (
+        id             TEXT PRIMARY KEY,
+        app            TEXT NOT NULL UNIQUE,
+        workload_id    TEXT NOT NULL,
+        agent_group_id TEXT NOT NULL,
+        service        TEXT NOT NULL,
+        port           INTEGER NOT NULL,
+        kind           TEXT NOT NULL,
+        who            TEXT NOT NULL,
+        owner_user_id  TEXT,
+        ticket         TEXT,
+        created_by     TEXT,
+        created_at     INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_workload_app_routes_group ON workload_app_routes (agent_group_id);
+      CREATE INDEX IF NOT EXISTS idx_workload_app_routes_workload ON workload_app_routes (workload_id);
+    `);
+  },
+};
+
+/**
+ * Published apps for named people (Cloudflare's "specific people"): the email
+ * addresses that may open the app, as a JSON array; NULL for every other rule.
+ */
+export const moduleWebchatWorkloadAppRouteEmails: Migration = {
+  version: 232,
+  name: 'webchat-workload-app-route-emails',
+  async up(db) {
+    await db.exec(`ALTER TABLE workload_app_routes ADD COLUMN emails TEXT;`);
+  },
+};
