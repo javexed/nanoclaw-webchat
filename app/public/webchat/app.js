@@ -10395,7 +10395,7 @@ function renderList$1() {
 	const list = $("#runner-list");
 	if (!list || !data$1) return;
 	if (data$1.machines.length === 0) {
-		list.innerHTML = "<li style=\"cursor:default;opacity:.6\">No machines.</li>";
+		list.innerHTML = "<li style=\"cursor:default;opacity:.6\">No runners.</li>";
 		return;
 	}
 	list.innerHTML = data$1.machines.map((m) => {
@@ -10571,7 +10571,7 @@ function wire$3() {
 		const m = data$1?.machines.find((x) => x.fingerprint === fp);
 		(async () => {
 			if (!await showConfirmModal({
-				title: `Revoke ${m?.hostname ?? "this machine"}?`,
+				title: `Revoke ${m?.hostname ?? "this runner"}?`,
 				body: "Its agents stop and it must be approved again to come back.",
 				confirmLabel: "Revoke",
 				destructive: true
@@ -26036,7 +26036,7 @@ async function refreshStatus() {
 	}
 	const m = machines[0];
 	line.hidden = !m;
-	if (m) line.textContent = `${m.hostname || "This machine"}: ${m.status === "pending" ? "waiting for approval" : "approved"}`;
+	if (m) line.textContent = `${m.hostname || "This runner"}: ${m.status === "pending" ? "waiting for approval" : "approved"}`;
 }
 function show(on) {
 	const card = $("#vscode-start");

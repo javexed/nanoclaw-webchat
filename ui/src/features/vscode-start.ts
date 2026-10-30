@@ -35,7 +35,7 @@ async function refreshStatus(): Promise<void> {
   }
   const m = machines[0];
   line.hidden = !m;
-  if (m) line.textContent = `${m.hostname || 'This machine'}: ${m.status === 'pending' ? 'waiting for approval' : 'approved'}`;
+  if (m) line.textContent = `${m.hostname || 'This runner'}: ${m.status === 'pending' ? 'waiting for approval' : 'approved'}`;
 }
 
 function show(on: boolean): void {
