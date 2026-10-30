@@ -1524,3 +1524,47 @@ export const moduleWebchatMachines: Migration = {
     `);
   },
 };
+
+/**
+ * Machines that joined NanoClaw (modules/machines/members.ts): one-time join
+ * tokens, and the machines themselves with their certificate, health and the
+ * capacity NanoClaw may use on them (Scaling design: Machines).
+ */
+export const moduleWebchatMachineMembers: Migration = {
+  version: 237,
+  name: 'webchat-machine-members',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS machine_join_tokens (
+        token_hash  TEXT PRIMARY KEY,
+        role        TEXT NOT NULL,
+        created_by  TEXT,
+        created_at  INTEGER NOT NULL,
+        expires_at  INTEGER NOT NULL,
+        used_at     INTEGER,
+        machine_id  TEXT
+      );
+      CREATE TABLE IF NOT EXISTS machine_members (
+        id               TEXT PRIMARY KEY,
+        name             TEXT NOT NULL,
+        role             TEXT NOT NULL,
+        provider         TEXT NOT NULL,
+        state            TEXT NOT NULL,
+        facts_json       TEXT NOT NULL DEFAULT '{}',
+        health_json      TEXT,
+        peaks_json       TEXT NOT NULL DEFAULT '{}',
+        last_report      INTEGER,
+        cert_fp          TEXT,
+        cert_expires     INTEGER,
+        prev_cert_fp     TEXT,
+        prev_cert_expires INTEGER,
+        cap_memory_mb    INTEGER,
+        cap_cpus         REAL,
+        created_by       TEXT,
+        created_at       INTEGER NOT NULL,
+        updated_at       INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_machine_members_fp ON machine_members (cert_fp);
+    `);
+  },
+};

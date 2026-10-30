@@ -453,6 +453,14 @@ import {
   rPublishingWorkloadsPut,
 } from './server/routes-workloads.js';
 import { handleAccountRoutes, handlePreAuthSignin } from './server/routes-signin.js';
+import {
+  rScalingCapPut,
+  rScalingDrainPost,
+  rScalingJoinPost,
+  rScalingMachineDelete,
+  rScalingMachinesGet,
+  rScalingRevokePost,
+} from './server/routes-scaling.js';
 import { handleSigninSettings } from './server/routes-signin-settings.js';
 
 const DEFAULT_HOST = '127.0.0.1';
@@ -1012,6 +1020,10 @@ interface ApiRoute {
 }
 
 const RE_ROOM_ID = /^\/api\/rooms\/([^/]+)$/;
+const RE_SCALING_MACHINE = /^\/api\/scaling\/machines\/([^/]+)$/;
+const RE_SCALING_DRAIN = /^\/api\/scaling\/machines\/([^/]+)\/drain$/;
+const RE_SCALING_REVOKE = /^\/api\/scaling\/machines\/([^/]+)\/revoke$/;
+const RE_SCALING_CAP = /^\/api\/scaling\/machines\/([^/]+)\/cap$/;
 // Parameterised paths must be RegExp: a STRING path is compared with `===`,
 // so a pattern written as a string silently never matches (404).
 const RE_AGENT_EXPORT_TEMPLATE = /^\/api\/agents\/([^/]+)\/export-template$/;
@@ -3077,6 +3089,37 @@ const API_ROUTES: ApiRoute[] = [
     guards: ['csrf', 'owner'],
     h: rPublishingCloudflareConnect,
     audit: 'publishing.cloudflare.connect',
+  },
+  // Admin → Scaling → Machines (server/routes-scaling.ts).
+  { method: 'GET', path: '/api/scaling/machines', guards: ['globalAdmin'], h: rScalingMachinesGet },
+  {
+    method: 'POST',
+    path: '/api/scaling/machines/join',
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingJoinPost,
+    audit: 'machine.token',
+  },
+  {
+    method: 'POST',
+    path: RE_SCALING_DRAIN,
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingDrainPost,
+    audit: 'machine.drain',
+  },
+  {
+    method: 'POST',
+    path: RE_SCALING_REVOKE,
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingRevokePost,
+    audit: 'machine.revoke',
+  },
+  { method: 'PUT', path: RE_SCALING_CAP, guards: ['csrf', 'globalAdmin'], h: rScalingCapPut, audit: 'machine.cap' },
+  {
+    method: 'DELETE',
+    path: RE_SCALING_MACHINE,
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingMachineDelete,
+    audit: 'machine.remove',
   },
   // Install-wide egress allowlist (server/routes-egress.ts).
   { method: 'GET', path: '/api/egress', guards: ['globalAdmin'], h: rEgressGet },

@@ -127,6 +127,7 @@ describe('moduleWebchat migration', () => {
       'webchat-fit-context',
       'webchat-initial',
       'webchat-limit-retries',
+      'webchat-machine-members',
       'webchat-machines',
       'webchat-marketplace-toggle',
       'webchat-mcp-hardening',

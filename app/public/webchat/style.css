@@ -10067,3 +10067,13 @@ button[data-draft-id] {
 .app-row > .cred-hint {
   margin: 0;
 }
+/* Admin → Scaling → Machines (MachinesPanel.vue) */
+#machines-panel .model-kind-badge.kind-ready { background: color-mix(in srgb, var(--success) 15%, transparent); color: var(--success); }
+#machines-panel .model-kind-badge.kind-draining { background: color-mix(in srgb, var(--warning) 15%, transparent); color: var(--warning); }
+#machines-panel .model-kind-badge.kind-offline { background: color-mix(in srgb, var(--danger) 15%, transparent); color: var(--danger); }
+#machines-panel .model-kind-badge.kind-revoked { background: color-mix(in srgb, var(--border) 60%, transparent); color: inherit; opacity: .7; }
+#machines-panel .machine-row .skill-info { flex-direction: column; align-items: flex-start; }
+#machines-panel .machine-cap { display: flex; gap: 8px; margin-top: 4px; }
+#machines-panel .machine-cap input { width: 6em; }
+#machines-panel .machine-command { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+#machines-panel .machine-command pre { white-space: pre-wrap; overflow-wrap: anywhere; }
