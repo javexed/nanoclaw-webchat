@@ -11,7 +11,7 @@ import { apiJson } from '../core/api.js';
 import { showToast } from '../core/toast.js';
 import { copyTextToClipboard } from '../boot.js';
 import { showConfirmModal } from './modals.js';
-import { ago, availableLine, capForm, statusOf, usageLine, type MachineRow } from './machines-view.js';
+import { ago, availableLine, capForm, needsWorker, placedLine, statusOf, usageLine, type MachineRow } from './machines-view.js';
 import SshJoin from './SshJoin.vue';
 
 const T = {
@@ -33,11 +33,15 @@ const T = {
   capCpu: 'CPUs',
   uses: 'NanoClaw may use',
   reported: 'reported',
+  linked: 'linked',
+  noLink: 'no worker link',
+  workerRun: 'Run once on the machine:',
 };
 
 const listener = ref<{ address: string; port: number } | null>(null);
 const machines = ref<MachineRow[]>([]);
 const command = ref<string | null>(null);
+const workerCommand = ref('');
 const ssh = ref(false);
 const capping = ref<string | null>(null);
 const cap = reactive({ memGb: '', cpus: '' });
@@ -51,6 +55,7 @@ async function load(): Promise<void> {
     const d = await apiJson('/api/scaling/machines');
     listener.value = d.listener;
     machines.value = d.machines;
+    workerCommand.value = d.workerCommand ?? '';
   } catch (err) {
     fail(err);
   }
@@ -125,7 +130,20 @@ defineExpose({ load });
             {{ m.name }} <span :class="['model-kind-badge', `kind-${statusOf(m)}`]">{{ statusOf(m) }}</span>
           </div>
           <span class="skill-desc">{{ usageLine(m) }} · {{ T.reported }} {{ ago(m.lastReport) }}</span>
-          <span class="skill-desc">{{ T.uses }}: {{ availableLine(m) }}</span>
+          <span class="skill-desc"
+            >{{ T.uses }}: {{ availableLine(m)
+            }}<template v-if="m.role === 'worker' && m.linked !== undefined">
+              · {{ m.linked ? T.linked : T.noLink }}</template
+            ></span
+          >
+          <span v-for="p in m.placed ?? []" :key="p.name" class="skill-desc">{{ placedLine(p) }}</span>
+          <div v-if="needsWorker(m) && workerCommand" class="machine-command">
+            <span class="setting-hint">{{ T.workerRun }}</span>
+            <pre class="roster-refresh-log">{{ workerCommand }}</pre>
+            <button class="btn btn-secondary" type="button" @click="copyTextToClipboard(workerCommand)">
+              {{ T.copy }}
+            </button>
+          </div>
           <form v-if="capping === m.id" class="machine-cap" @submit.prevent="saveCap(m)">
             <input v-model="cap.memGb" inputmode="decimal" :placeholder="T.capMem" :aria-label="T.capMem" />
             <input v-model="cap.cpus" inputmode="decimal" :placeholder="T.capCpu" :aria-label="T.capCpu" />

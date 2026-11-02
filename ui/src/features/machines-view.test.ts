@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ago, availableLine, capForm, statusOf, usageLine, type MachineRow } from './machines-view.js';
+import { ago, availableLine, capForm, needsWorker, placedLine, statusOf, usageLine, type MachineRow } from './machines-view.js';
 
 const row = (over: Partial<MachineRow> = {}): MachineRow => ({
   id: 'm-1',
@@ -47,5 +47,20 @@ describe('a machine row', () => {
   it('cap form: empty means none', () => {
     expect(capForm(row())).toEqual({ memGb: '', cpus: '' });
     expect(capForm(row({ cap: { memMb: 6144, cpus: 1.5 } }))).toEqual({ memGb: '6', cpus: '1.5' });
+  });
+
+  it('asks for the worker service only for a reporting worker without a link', () => {
+    expect(needsWorker(row({ linked: false }))).toBe(true);
+    expect(needsWorker(row({ linked: true }))).toBe(false);
+    expect(needsWorker(row({ linked: false, healthy: false }))).toBe(false);
+    expect(needsWorker(row({ linked: false, state: 'revoked' }))).toBe(false);
+    expect(needsWorker(row())).toBe(false);
+  });
+
+  it('reads a placed workload with its reason', () => {
+    expect(placedLine({ name: 'demo', state: 'running', memoryMb: 2048, reason: 'M-A: most free memory' })).toBe(
+      'demo · 2 GB · running — M-A: most free memory',
+    );
+    expect(placedLine({ name: 'x', state: 'stopped', memoryMb: 512, reason: null })).toBe('x · 0.5 GB · stopped');
   });
 });

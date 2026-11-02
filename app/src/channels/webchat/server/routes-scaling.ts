@@ -5,7 +5,7 @@
  * these routes create join tokens and drain, revoke, remove or cap machines.
  */
 import { audit, auditActor } from '../../../audit.js';
-import { installCommand } from '../../../modules/machines/agent-scripts.js';
+import { installCommand, workerUpgradeCommand } from '../../../modules/machines/agent-scripts.js';
 import { listenerInfo } from '../../../modules/machines/listener.js';
 import {
   createJoinToken,
@@ -19,7 +19,8 @@ import {
   setMemberState,
   type Role,
 } from '../../../modules/machines/members.js';
-import { dropLink } from '../../../modules/machines/links.js';
+import { dropLink, isLinked } from '../../../modules/machines/links.js';
+import { listWorkloads } from '../../../modules/workloads/store.js';
 import { joinHost, probeHost, type JoinEvent } from '../../../modules/machines/ssh-join.js';
 import type { RouteCtx } from '../server.js';
 import { userCredsRateLimited } from './rate-limit.js';
@@ -28,9 +29,18 @@ import { json, readJsonObject } from './http.js';
 export async function rScalingMachinesGet(ctx: RouteCtx, _m: RegExpMatchArray): Promise<void> {
   const info = listenerInfo();
   const now = Date.now();
+  const placed = await listWorkloads().catch(() => []);
   return json(ctx.res, 200, {
     listener: info ? { address: info.address, port: info.port } : null,
-    machines: (await listMembers()).map((m) => publicView(m, now)),
+    // For a machine that joined before the worker service existed: run once on it.
+    workerCommand: workerUpgradeCommand(),
+    machines: (await listMembers()).map((m) => ({
+      ...publicView(m, now),
+      linked: isLinked(m.id),
+      placed: placed
+        .filter((w) => w.node === m.id)
+        .map((w) => ({ name: w.name, state: w.state, memoryMb: w.approvedMemoryMb, reason: w.placementReason })),
+    })),
   });
 }
 

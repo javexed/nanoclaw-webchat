@@ -19,6 +19,19 @@ export interface MachineRow {
   lastReport: number | null;
   cap: { memMb: number | null; cpus: number | null };
   available: { memMb: number; cpus: number; memBy: 'auto' | 'cap'; cpusBy: 'auto' | 'cap' };
+  /** Worker role: is its worker service linked to central now (Scaling phase 3). */
+  linked?: boolean;
+  /** Workloads placed on it, with the one-line reason. */
+  placed?: Array<{ name: string; state: string; memoryMb: number; reason: string | null }>;
+}
+
+/** A worker that reports but has no link: its worker service is missing or down. */
+export const needsWorker = (m: MachineRow): boolean =>
+  m.role === 'worker' && m.state !== 'revoked' && m.healthy && m.linked === false;
+
+/** "demo · 2 GB · running — M-A: most free memory; …" */
+export function placedLine(p: NonNullable<MachineRow['placed']>[number]): string {
+  return `${p.name} · ${Math.round((p.memoryMb / 1024) * 10) / 10} GB · ${p.state}${p.reason ? ` — ${p.reason}` : ''}`;
 }
 
 /** The one status word a row shows. */
