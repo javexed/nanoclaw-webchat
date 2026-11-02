@@ -16,6 +16,7 @@ import { log } from '../../../log.js';
 import { canAccessAgentGroup } from '../../permissions/access.js';
 import { isOwner } from '../../permissions/db/user-roles.js';
 import { getUser } from '../../permissions/db/users.js';
+import { noteOpened } from '../opened.js';
 import { getRoute, routesReady } from '../routes.js';
 import { applyConfig, ensureContainer, removeContainer, renderCaddyfile } from './caddy.js';
 import { gatewaySettings, type GatewayConfig } from './config.js';
@@ -49,6 +50,7 @@ const deps = {
   userExists: async (id: string) => Boolean(await getUser(id)),
   isOwner,
   canAccessAgentGroup: async (u: string, g: string) => (await canAccessAgentGroup(u, g)).allowed,
+  opened: (r: { id: string }) => noteOpened(r.id),
 };
 
 async function listen(cfg: GatewayConfig): Promise<void> {

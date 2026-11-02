@@ -239,7 +239,32 @@ function workloadSummary(verb: string): Summarizer {
   };
 }
 
-registerApprovedSummary('workloads-up', workloadSummary('Deployed'));
+/** An address as people read it: no trailing slash. */
+const shortUrl = (u: string): string => u.replace(/\/$/, '');
+
+/**
+ * `up --publish`: one line that says it runs and where people open it, e.g.
+ * "homeboard is running · open it at https://homeboard.example.ts.net (only you)".
+ * A deploy that ran but did not publish is a failure with the publish's cause.
+ */
+function deployAndPublishSummary(data: unknown): Summary | undefined {
+  const v = rec(data);
+  const p = rec(v.published);
+  if (!v.name || !v.published) return undefined;
+  const name = String(v.name);
+  if (typeof p.error === 'string') return { text: `${name} is running, but publishing it failed`, failed: p.error };
+  const forWhom = typeof p.open_for === 'string' && p.open_for ? ` (${p.open_for})` : '';
+  if (typeof p.url === 'string' && p.url)
+    return { text: `${name} is running · open it at ${shortUrl(p.url)}${forWhom}` };
+  return {
+    text: `${name} is running · its address isn't reachable yet (${String(p.state ?? 'starting')}); \`ncl workloads routes\` shows the link once it is live`,
+  };
+}
+
+const deployed = workloadSummary('Deployed');
+registerApprovedSummary('workloads-up', (d, args) =>
+  rec(d).published ? deployAndPublishSummary(d) : deployed(d, args),
+);
 registerApprovedSummary('workloads-redeploy', workloadSummary('Redeployed'));
 registerApprovedSummary('workloads-start', workloadSummary('Started'));
 registerApprovedSummary('workloads-restore', workloadSummary('Restored'));

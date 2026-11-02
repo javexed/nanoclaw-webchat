@@ -87,7 +87,8 @@ At most 20 builds an hour per agent run without a card (kept in the database).
 ## 4. Publishing: the app gateway (optional)
 
 An agent publishes one of its services as an app with
-`ncl workloads expose`. People open it at the app's own address — never under
+`ncl workloads expose`, or deploys and publishes in one step with
+`ncl workloads up --publish <route>` (one card for both). People open it at the app's own address — never under
 NanoClaw's own — signed in by the publishing route the app is on:
 
 - **tailnet** — a Tailscale sidecar per app, `<app>.<tailnet>.ts.net`;
@@ -95,8 +96,9 @@ NanoClaw's own — signed in by the publishing route the app is on:
 
 The routes themselves are set up separately (the tailnet in section 5,
 Cloudflare in section 6). Until one is
-on, `expose` is refused with "no publishing route is on", and nothing is
-published. Both routes reach the same gateway, set up here.
+on, `expose` is refused with "no publishing route is on" (`up --publish`
+with "the tailnet route is not on…", and the hint to deploy without
+`--publish`), and nothing is published. Both routes reach the same gateway, set up here.
 
 The gateway is a Caddy container (`nanoclaw-workload-gateway-<install>`, the
 image pinned by digest) on the host network. It routes each app's hostname to
@@ -156,6 +158,33 @@ it to another route, is another card. The approvals pre-judge never
 approves it. `unexpose` is immediate. Apps of a stopped workload, or on a
 route that is switched off, answer 404 at the gateway; a deleted workload's
 apps are removed.
+
+**Deploy and publish on one card.** `ncl workloads up --name <n> --file <f>
+--reason <r> --publish tailnet|cloudflare [--who …] [--emails …] [--service …]
+[--port …] [--app …]` asks once for both. The card says what runs (each image
+by digest, Dockerfile hashes, the size) and where people will open it (the
+address, the service and port, who can open it, and who could before). It pins
+everything `up` pins and everything `expose` pins, plus the address itself.
+The service defaults to the one service that declares an `expose:` port, and
+the port to its first. The publish half is refused before any card on the
+same grounds as `expose`, and when its route is off the refusal names the
+switch in Admin → Publishing and says the agent can deploy without
+`--publish`. On approve:
+
+1. the publish is planned again (route on, gateway usable, app name free, the
+   same address): if anything moved, nothing runs;
+2. the stack is deployed, held to the pinned Compose hash, digests and
+   Dockerfiles, as `up` always is;
+3. the app is published through the same path as `expose`, with the pinned
+   route, rule and name; the approver becomes its "only me".
+
+The agent, and the card in the room, read one line:
+`homeboard is running · open it at https://homeboard.<tailnet>.ts.net (only you)`.
+The publish step waits for the route's edge as `expose` does (the tailnet
+sidecar serving, the Cloudflare Access application and DNS record); when it is
+not ready in time the line says so and `ncl workloads routes` gives the link
+once it is live. A deploy that ran but could not be published reads as a
+failure with the publish's cause; the workload keeps running.
 
 `ncl workloads routes --group <id>` lists an agent's apps from the host.
 The gateway's key and secret are under `data/workload-gateway/` (0600).
@@ -439,7 +468,8 @@ state (Running, Stopped, or Needs approval while a card for it waits, the
 agent's or a person's), the route (Off, or a route that is on), who can open it
 (Only me, Agent members, Anyone signed in; on Cloudflare also Specific
 people…), Open ↗ while it is live, its expiry (`Expires 1 Dec`; a warning
-three days before, `Expired …` once stopped), and a ⋯ menu: Start or Stop,
+three days before, `Expired …` once stopped; a published app reads
+`Renews while used` until those last three days), and a ⋯ menu: Start or Stop,
 Redeploy, Extend, Logs, Restore backup…, Delete…. The header shows the agent's
 disk use against its quota. There is no Compose or build editing here: that is
 the agent's job. While workloads are off on the host, a line says so and
@@ -503,6 +533,15 @@ who administers it does not need one.
   database across restarts; extending re-arms it), asking it to tell the room
   that an admin can extend it here. At the expiry it is stopped and the agent
   told again.
+- **Renews while used.** A published app people open does not expire. The
+  gateway's check records when an app was last opened (`last_opened_at`, at
+  most once every 10 minutes per app, after the answer, so it never slows a
+  request). When a running workload reaches the last three days before its
+  expiry, and one of its apps was opened in the last 7 days, the sweep extends
+  it exactly as Extend does (30 days from that day, audited as
+  `workload.extend` by `system:renew-while-used`), and no reminder goes out.
+  An unpublished workload, or an app nobody opened in a week, is never renewed:
+  it gets the reminder and stops at its expiry as before.
 
 ## Settings (`.env`)
 

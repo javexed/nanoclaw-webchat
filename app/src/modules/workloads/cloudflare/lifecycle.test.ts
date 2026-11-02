@@ -63,6 +63,7 @@ const route = (app: string, id: string, who: AppRoute['who'] = 'agent-members', 
   createdBy: 'agent:ag-1',
   createdAt: 0,
   updatedAt: 0,
+  lastOpenedAt: null,
 });
 const NOTES = route('notes', '0b0f7c3e-5a8e-4d3b-9a43-2f1d9c3b7e11');
 const WIKI = route('wiki', '1c1f7c3e-5a8e-4d3b-9a43-2f1d9c3b7e22', 'specific', ['carol@example.org']);

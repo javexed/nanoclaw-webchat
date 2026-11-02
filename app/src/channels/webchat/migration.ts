@@ -1452,3 +1452,16 @@ export const moduleWebchatWorkloadExpiryNotice: Migration = {
     await db.exec(`ALTER TABLE workloads ADD COLUMN expiry_notice_for INTEGER;`);
   },
 };
+
+/**
+ * When a published app was last opened through the gateway (modules/
+ * workloads/opened.ts, written at most every few minutes per app): an app
+ * people use is renewed before it expires (reconcile.ts).
+ */
+export const moduleWebchatWorkloadAppRouteOpened: Migration = {
+  version: 234,
+  name: 'webchat-workload-app-route-opened',
+  async up(db) {
+    await db.exec(`ALTER TABLE workload_app_routes ADD COLUMN last_opened_at INTEGER;`);
+  },
+};

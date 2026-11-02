@@ -71,7 +71,8 @@ onUnmounted(() => {
 });
 const view = computed(() => appsView.value);
 const builds = computed(() => view.value?.builds ?? null);
-const expiry = (r: AppRow) => (r.deployed ? expiryText(r.expiresAt) : null);
+const expiry = (r: AppRow) =>
+  r.deployed ? expiryText(r.expiresAt, Date.now(), undefined, r.renewsWhileUsed === true) : null;
 
 function dockerHubChanged(e: Event): void {
   const el = e.target as HTMLInputElement;

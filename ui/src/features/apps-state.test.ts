@@ -134,6 +134,17 @@ describe('expiryText: a row says when it stops', () => {
     expect(expiryText(now + EXPIRY_SOON_MS + DAY, now, 'en-GB')?.level).toBe('ok');
     expect(expiryText(now - DAY, now, 'en-GB')).toEqual({ text: 'Expired 1 Nov', level: 'past' });
   });
+
+  it('a published app renews while used, and shows its date only once it is close', () => {
+    expect(expiryText(Date.UTC(2026, 11, 1, 12), now, 'en-GB', true)).toEqual({
+      text: 'Renews while used',
+      level: 'ok',
+    });
+    // Inside the last three days it was not used enough to renew: the date is the warning.
+    expect(expiryText(now + EXPIRY_SOON_MS, now, 'en-GB', true)?.text).toMatch(/^Expires /);
+    expect(expiryText(now - DAY, now, 'en-GB', true)?.level).toBe('past');
+    expect(expiryText(null, now, 'en-GB', true)).toBeNull();
+  });
 });
 
 describe('anyChecking: Admin → Publishing asks again only while a line reads Checking…', () => {

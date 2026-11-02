@@ -395,6 +395,36 @@ describe('the list', () => {
     await updateWorkload(w.id, { expiresAt: Date.UTC(2026, 11, 1) });
     const v = await gui.appsOf('ag-1');
     expect(v.apps[0].expiresAt).toBe(Date.UTC(2026, 11, 1));
+    // Not published: it is not renewed while used.
+    expect(v.apps[0].renewsWhileUsed).toBe(false);
+  });
+
+  it('a published app with an expiry renews while used', async () => {
+    const r = await published('notes', 'tailnet', 'only-me');
+    await updateWorkload(r.workloadId, { expiresAt: Date.UTC(2026, 11, 1) });
+    expect((await gui.appsOf('ag-1')).apps[0]).toMatchObject({ app: 'notes', renewsWhileUsed: true });
+  });
+
+  it('a deploy-and-publish card waiting shows its app as Needs approval', async () => {
+    await createPendingApproval({
+      approval_id: 'appr-launch',
+      session_id: null,
+      request_id: 'appr-launch',
+      action: 'cli_command',
+      payload: JSON.stringify({
+        frame: { command: 'workloads-up', args: { name: 'board', publish: 'tailnet', app: 'homeboard' } },
+        callerContext: { caller: 'agent', agentGroupId: 'ag-1' },
+      }),
+      created_at: new Date().toISOString(),
+      instance: null,
+      title: 't',
+      question: 'q',
+      options_json: '[]',
+      approver_user_id: null,
+    } as never);
+    const p = await gui.pendingFor('ag-1');
+    expect([...p.workloads]).toEqual(['board']);
+    expect([...p.apps]).toEqual(['homeboard']);
   });
 });
 

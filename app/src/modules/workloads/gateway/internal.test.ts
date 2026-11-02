@@ -40,9 +40,11 @@ const route: AppRoute = {
   createdBy: 'agent:ag-1',
   createdAt: 0,
   updatedAt: 0,
+  lastOpenedAt: null,
 };
 let live = true;
 let routeOn = true;
+const opened: string[] = [];
 
 const server = http.createServer(
   internalHandler(() => SECRET, {
@@ -51,6 +53,7 @@ const server = http.createServer(
     userExists: async (u) => u.startsWith('webchat:tailscale:'),
     isOwner: async () => false,
     canAccessAgentGroup: async (u) => u === 'webchat:tailscale:alice@x.example',
+    opened: async (r) => void opened.push(r.app),
   }),
 );
 let base = '';
@@ -68,6 +71,7 @@ beforeEach(() => {
   live = true;
   routeOn = true;
   audits.length = 0;
+  opened.length = 0;
   __clearPublishingRoutesForTest();
   registerPublishingRoute({
     kind: 'tailnet',
@@ -97,6 +101,15 @@ const check = (headers: Record<string, string>, p = '/gateway/check', method = '
   });
 
 describe('gateway check', () => {
+  it('reports an app as opened only when it let someone in', async () => {
+    expect((await check({ 'Tailscale-User-Login': 'carol3@x.example' })).status).toBe(403);
+    expect((await check({})).status).toBe(401);
+    expect(opened).toEqual([]);
+    expect((await check({ 'Tailscale-User-Login': 'alice@x.example' })).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(opened).toEqual(['notes']);
+  });
+
   it('lets a member in with a signed identity for this app only', async () => {
     const r = await check({ 'Tailscale-User-Login': 'alice@x.example' });
     expect(r.status).toBe(200);
