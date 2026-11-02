@@ -8,7 +8,9 @@
  * less than 12 hours are left. A revoked machine is told so on its next
  * report and switches the timer off.
  *
- * Phase 3 replaces the timer with the worker service's lasting connection.
+ * A machine with the worker role also gets the worker service (Scaling phase
+ * 3; worker-main.ts on the machine's Node), which holds the lasting link; the
+ * timer stays as a fallback report and renews the certificate.
  */
 
 export const AGENT_VERSION = '1';
@@ -23,6 +25,14 @@ function fetchInstaller(host: string, port: number, pin: string): string {
     `${curl} ${url}/install.sh -o /tmp/nanoclaw-machine.sh || ` +
     `{ echo "Can't reach NanoClaw at ${host}:${port}. Add an inbound rule on its network security group: ` +
     `source $(hostname -I | cut -d' ' -f1), destination ${host}, TCP ${port}"; false; }`
+  );
+}
+
+/** For a machine that joined before the worker service existed: run once, as root, on the machine. */
+export function workerUpgradeCommand(): string {
+  return (
+    `sudo sh -c '. /etc/nanoclaw-machine/config && curl -fsS -k --pinnedpubkey "sha256//$PIN" ` +
+    `--cert /etc/nanoclaw-machine/cert.pem --key /etc/nanoclaw-machine/key.pem "https://$HOST:$PORT/worker/install.sh" | sh'`
   );
 }
 
@@ -98,6 +108,60 @@ if grep -q renew "$DIR/reply" 2>/dev/null || ! openssl x509 -checkend 43200 -noo
   fi
 fi
 `;
+
+const WORKER_UNIT = `[Unit]
+Description=NanoClaw worker service (lasting link to NanoClaw)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/env node /usr/local/lib/nanoclaw-machine/worker/worker-main.js
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
+`;
+
+/**
+ * worker-install.sh, served to a joined machine (its certificate) and run as
+ * root: Node 18+ if missing (the distribution's package), the worker's two
+ * files, and its systemd unit. Safe to run again: it refreshes the files.
+ */
+export function workerInstallScript(host: string, port: number, pin: string): string {
+  return `#!/bin/sh
+# NanoClaw worker service installer (${host}:${port}).
+set -eu
+[ "$(id -u)" = 0 ] || { echo "Run as root (sudo)."; exit 1; }
+DIR=/etc/nanoclaw-machine
+LIB=/usr/local/lib/nanoclaw-machine/worker
+TLS="-fsS --max-time 60 -k --pinnedpubkey sha256//${pin} --cert $DIR/cert.pem --key $DIR/key.pem"
+URL=${shQuote(`https://${host}:${port}`)}
+major() { node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0; }
+if ! command -v node >/dev/null || [ "$(major)" -lt 18 ]; then
+  echo "Installing Node.js (the worker service runs on it)."
+  if command -v apt-get >/dev/null; then
+    apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nodejs >/dev/null
+  elif command -v dnf >/dev/null; then dnf install -y -q nodejs
+  else echo "Install Node.js 18 or later, then run this again."; exit 1
+  fi
+fi
+[ "$(major)" -ge 18 ] || { echo "Node.js 18 or later is needed (found $(node -v 2>/dev/null))."; exit 1; }
+command -v docker >/dev/null || { echo "Docker is needed."; exit 1; }
+mkdir -p "$LIB" /var/lib/nanoclaw-worker
+chmod 700 /var/lib/nanoclaw-worker
+curl $TLS -o "$LIB/mux.js" "$URL/worker/mux.js"
+curl $TLS -o "$LIB/worker-main.js" "$URL/worker/worker-main.js"
+printf '{"type":"module"}\n' > "$LIB/package.json"
+cat > /etc/systemd/system/nanoclaw-worker.service <<'NC_WUNIT'
+${WORKER_UNIT}NC_WUNIT
+systemctl daemon-reload
+systemctl enable nanoclaw-worker.service >/dev/null
+systemctl restart nanoclaw-worker.service
+echo "NanoClaw worker service running."
+`;
+}
 
 const UNIT = `[Unit]
 Description=NanoClaw machine agent (health report, certificate renewal)
@@ -176,6 +240,11 @@ systemctl daemon-reload
 systemctl enable --now nanoclaw-machine.timer >/dev/null
 "$LIB/report.sh" || true
 echo "Joined NanoClaw as $JOINED."
+ROLE=$(printf '%s\n' "$REPLY" | sed -n 's/^role //p')
+if [ "$ROLE" = worker ]; then
+  curl -fsS --max-time 30 $PINNED --cert "$DIR/cert.pem" --key "$DIR/key.pem" -o /tmp/nanoclaw-worker.sh "$URL/worker/install.sh" \
+    && sh /tmp/nanoclaw-worker.sh || echo "The worker service did not install; run the worker command from NanoClaw's Machines page."
+fi
 `;
 }
 

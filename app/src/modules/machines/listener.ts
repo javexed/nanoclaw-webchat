@@ -8,6 +8,8 @@
  *   POST /enroll      one-time token + certificate request + facts → certificate
  *   POST /report      health, every minute (client certificate)
  *   POST /renew       a fresh certificate (client certificate)
+ *   GET  /worker/…    the worker service's files, and worker-install.sh (client certificate)
+ *   GET  /link        upgraded to the worker's lasting link (client certificate, worker role)
  *
  * Machines pin this listener's key; the listener knows a machine by its client
  * certificate's fingerprint, and refuses a revoked one at once.
@@ -16,12 +18,14 @@ import fs from 'fs';
 import https from 'https';
 import type { IncomingMessage, ServerResponse } from 'http';
 import os from 'os';
+import type { Duplex } from 'stream';
 import type { TLSSocket } from 'tls';
 
 import { audit } from '../../audit.js';
 import { log } from '../../log.js';
-import { installScript } from './agent-scripts.js';
+import { installScript, workerInstallScript } from './agent-scripts.js';
 import { caPaths, ensureCa, issueMachineCert, publicKeyPin, RENEW_BEFORE_MS, type CaPaths } from './ca.js';
+import { attachLink } from './links.js';
 import {
   addMember,
   memberByCert,
@@ -84,6 +88,10 @@ function readBody(req: IncomingMessage): Promise<string | null> {
 /** The joined machine behind this request's client certificate, unless revoked. */
 async function caller(req: IncomingMessage): Promise<Member | null> {
   const socket = req.socket as TLSSocket;
+  return callerOf(socket);
+}
+
+async function callerOf(socket: TLSSocket): Promise<Member | null> {
   if (!socket.authorized) return null;
   const fp = socket.getPeerCertificate()?.fingerprint256;
   const m = fp ? await memberByCert(fp) : null;
@@ -98,6 +106,18 @@ function enrollLimited(ip: string, now = Date.now()): boolean {
   return recent.length > ENROLL_PER_MINUTE;
 }
 
+/** The worker service's files, as compiled beside this module (absent under the test runner). */
+const WORKER_FILES: Record<string, string> = { 'mux.js': 'mux.js', 'worker-main.js': 'worker-main.js' };
+function workerFile(name: string): string | null {
+  const file = WORKER_FILES[name];
+  if (!file) return null;
+  try {
+    return fs.readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 export function machineHandler(cfg: ListenerConfig, paths: CaPaths) {
   const pin = publicKeyPin(fs.readFileSync(paths.serverCert, 'utf8'));
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -107,6 +127,14 @@ export function machineHandler(cfg: ListenerConfig, paths: CaPaths) {
       if (req.method === 'GET' && url === '/healthz') return send(res, 200, 'ok');
       if (req.method === 'GET' && url === '/install.sh')
         return send(res, 200, installScript(cfg.address, cfg.port, pin), 'text/x-shellscript');
+      if (req.method === 'GET' && url.startsWith('/worker/')) {
+        const m = await caller(req);
+        if (!m) return send(res, 403, 'revoked or unknown');
+        if (url === '/worker/install.sh')
+          return send(res, 200, workerInstallScript(cfg.address, cfg.port, pin), 'text/x-shellscript');
+        const body = workerFile(url.slice('/worker/'.length));
+        return body === null ? send(res, 404, 'not found') : send(res, 200, body, 'text/javascript');
+      }
       if (req.method !== 'POST') return send(res, 404, 'not found');
       if (!(await membersReady())) return send(res, 503, 'not ready');
 
@@ -134,7 +162,7 @@ export function machineHandler(cfg: ListenerConfig, paths: CaPaths) {
         const m = await addMember(String(body.token), role, body.facts ?? { cpus: 0, memTotalMb: 0 }, cert);
         audit({ type: 'machine.join', effect: 'allow', detail: { machineId: m.id, name: m.name, role, ip } });
         log.info('Machine joined', { machineId: m.id, name: m.name, role });
-        return send(res, 200, `id ${m.id}\nname ${m.name}\n${cert.cert}`);
+        return send(res, 200, `id ${m.id}\nname ${m.name}\nrole ${m.role}\n${cert.cert}`);
       }
 
       const m = await caller(req);
@@ -201,10 +229,34 @@ export function startMachineListener(env = process.env): void {
     },
     (req, res) => void handler(req, res),
   );
+  server.on('upgrade', (req: IncomingMessage, socket: Duplex) => void upgradeLink(req, socket as TLSSocket));
   server.on('error', (err) => log.error('Machine listener error', { err: String(err) }));
   server.listen(cfg.port, cfg.bind, () =>
     log.info('Machine listener on', { port: cfg.port, bind: cfg.bind, address: cfg.address }),
   );
+}
+
+/** `GET /link` with `Upgrade: nanoclaw-link`: a worker's lasting link (links.ts). */
+export async function upgradeLink(req: IncomingMessage, socket: TLSSocket): Promise<void> {
+  const refuse = (code: string) => {
+    socket.end(`HTTP/1.1 ${code}\r\nConnection: close\r\n\r\n`);
+  };
+  try {
+    if (
+      (req.url ?? '').split('?')[0] !== '/link' ||
+      String(req.headers.upgrade ?? '').toLowerCase() !== 'nanoclaw-link'
+    )
+      return refuse('404 Not Found');
+    if (!(await membersReady())) return refuse('503 Service Unavailable');
+    const m = await callerOf(socket);
+    if (!m) return refuse('403 Forbidden');
+    if (m.role !== 'worker') return refuse('403 Forbidden');
+    socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: nanoclaw-link\r\nConnection: Upgrade\r\n\r\n');
+    attachLink(m.id, socket);
+  } catch (err) {
+    log.error('Worker link refused', { err: String(err) });
+    socket.destroy();
+  }
 }
 
 export function stopMachineListener(): void {

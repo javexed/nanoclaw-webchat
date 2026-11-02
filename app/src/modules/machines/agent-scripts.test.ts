@@ -2,7 +2,13 @@ import { spawnSync } from 'child_process';
 
 import { describe, expect, it } from 'vitest';
 
-import { installCommand, installScript, reportScript } from './agent-scripts.js';
+import {
+  installCommand,
+  installScript,
+  reportScript,
+  workerInstallScript,
+  workerUpgradeCommand,
+} from './agent-scripts.js';
 
 const shOk = (script: string): { ok: boolean; err: string } => {
   const r = spawnSync('sh', ['-n'], { input: script, encoding: 'utf8' });
@@ -13,6 +19,17 @@ describe('the machine scripts', () => {
   it('are valid sh', () => {
     expect(shOk(installScript('10.0.0.4', 7443, 'abc+/=='))).toEqual({ ok: true, err: '' });
     expect(shOk(reportScript())).toEqual({ ok: true, err: '' });
+    expect(shOk(workerInstallScript('10.0.0.4', 7443, 'abc+/=='))).toEqual({ ok: true, err: '' });
+    expect(shOk(workerUpgradeCommand()).ok).toBe(true);
+  });
+
+  it('a worker join also installs the worker service; it fetches its files with the machine certificate', () => {
+    expect(installScript('10.0.0.4', 7443, 'PIN')).toMatch(/ROLE=.*\n.*if \[ "\$ROLE" = worker \]/s);
+    const w = workerInstallScript('10.0.0.4', 7443, 'PIN');
+    expect(w).toContain('--cert $DIR/cert.pem --key $DIR/key.pem');
+    expect(w).toContain('/worker/worker-main.js');
+    expect(w).toContain('apt-get install -y -qq nodejs');
+    expect(w).toContain('systemctl restart nanoclaw-worker.service');
   });
 
   it('the one-line command names the inbound rule needed when central is unreachable', () => {

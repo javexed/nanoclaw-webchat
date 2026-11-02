@@ -177,7 +177,7 @@ describe('a machine joining and reporting', () => {
   it('joins with a token, once', async () => {
     const { token, r } = await join();
     expect(r.status).toBe(200);
-    expect(r.text).toMatch(/^id m-[0-9a-f]{8}\nname app1\n-----BEGIN CERTIFICATE/);
+    expect(r.text).toMatch(/^id m-[0-9a-f]{8}\nname app1\nrole worker\n-----BEGIN CERTIFICATE/);
     const again = await call('POST', '/enroll', JSON.stringify({ token, csr: 'x', facts: {} }));
     expect(again.status).toBe(403);
   });

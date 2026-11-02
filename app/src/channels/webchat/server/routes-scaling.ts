@@ -19,6 +19,7 @@ import {
   setMemberState,
   type Role,
 } from '../../../modules/machines/members.js';
+import { dropLink } from '../../../modules/machines/links.js';
 import { joinHost, probeHost, type JoinEvent } from '../../../modules/machines/ssh-join.js';
 import type { RouteCtx } from '../server.js';
 import { userCredsRateLimited } from './rate-limit.js';
@@ -70,6 +71,7 @@ export async function rScalingRevokePost(ctx: RouteCtx, m: RegExpMatchArray): Pr
   const id = await target(ctx, m);
   if (!id) return;
   await revokeMember(id);
+  dropLink(id);
   return json(ctx.res, 200, { ok: true });
 }
 
