@@ -15,16 +15,38 @@ export const AGENT_VERSION = '1';
 
 const shQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`;
 
-/** The one line an admin runs on the machine. */
-export function installCommand(host: string, port: number, pin: string, token: string): string {
+/** Fetch install.sh, or say which inbound rule is missing. */
+function fetchInstaller(host: string, port: number, pin: string): string {
   const url = `https://${host}:${port}`;
   const curl = `curl -fsS --connect-timeout 5 -k --pinnedpubkey ${shQuote(`sha256//${pin}`)}`;
   return (
     `${curl} ${url}/install.sh -o /tmp/nanoclaw-machine.sh || ` +
     `{ echo "Can't reach NanoClaw at ${host}:${port}. Add an inbound rule on its network security group: ` +
-    `source $(hostname -I | cut -d' ' -f1), destination ${host}, TCP ${port}"; false; } && ` +
-    `sudo NC_TOKEN=${shQuote(token)} sh /tmp/nanoclaw-machine.sh`
+    `source $(hostname -I | cut -d' ' -f1), destination ${host}, TCP ${port}"; false; }`
   );
+}
+
+/** The one line an admin runs on the machine. */
+export function installCommand(host: string, port: number, pin: string, token: string): string {
+  return `${fetchInstaller(host, port, pin)} && sudo NC_TOKEN=${shQuote(token)} sh /tmp/nanoclaw-machine.sh`;
+}
+
+/**
+ * The same, run by NanoClaw over SSH (ssh-join.ts). 'password': sudo reads the
+ * password from stdin (`-S -p ''`), never argv; 'none': `sudo -n`, which fails
+ * with "a password is required" rather than waiting. Either way the installer
+ * itself gets /dev/null as stdin, so nothing after sudo can read the password.
+ */
+export function sshInstallCommand(
+  host: string,
+  port: number,
+  pin: string,
+  token: string,
+  sudo: 'password' | 'none',
+): string {
+  const inner = `exec </dev/null; NC_TOKEN=${shQuote(token)} exec sh /tmp/nanoclaw-machine.sh`;
+  const su = sudo === 'password' ? "sudo -S -p ''" : 'sudo -n';
+  return `${fetchInstaller(host, port, pin)} && ${su} sh -c ${shQuote(inner)}`;
 }
 
 const REPORT = `#!/bin/sh

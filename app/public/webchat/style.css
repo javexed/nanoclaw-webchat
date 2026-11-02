@@ -10077,3 +10077,10 @@ button[data-draft-id] {
 #machines-panel .machine-cap input { width: 6em; }
 #machines-panel .machine-command { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 #machines-panel .machine-command pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+#machines-panel .machine-ssh { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+#machines-panel .machine-ssh-form { display: flex; flex-direction: column; gap: 8px; max-width: 480px; }
+#machines-panel .machine-ssh-port { width: 6em; }
+#machines-panel .machine-ssh-fp { overflow-wrap: anywhere; }
+#machines-panel .machine-ssh-check { display: flex; align-items: center; gap: 8px; }
+#machines-panel .machine-ssh-out { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+#machines-panel .machine-ssh-error { color: var(--danger); }

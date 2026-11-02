@@ -460,6 +460,8 @@ import {
   rScalingMachineDelete,
   rScalingMachinesGet,
   rScalingRevokePost,
+  rScalingSshJoinPost,
+  rScalingSshProbePost,
 } from './server/routes-scaling.js';
 import { handleSigninSettings } from './server/routes-signin-settings.js';
 
@@ -3099,6 +3101,15 @@ const API_ROUTES: ApiRoute[] = [
     h: rScalingJoinPost,
     audit: 'machine.token',
   },
+  {
+    method: 'POST',
+    path: '/api/scaling/machines/ssh/probe',
+    guards: ['csrf', 'globalAdmin'],
+    h: rScalingSshProbePost,
+    audit: 'machine.ssh-probe',
+  },
+  // Audits itself (who, host, username, role, result — never the secrets).
+  { method: 'POST', path: '/api/scaling/machines/ssh/join', guards: ['csrf', 'globalAdmin'], h: rScalingSshJoinPost },
   {
     method: 'POST',
     path: RE_SCALING_DRAIN,

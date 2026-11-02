@@ -12,11 +12,13 @@ import { showToast } from '../core/toast.js';
 import { copyTextToClipboard } from '../boot.js';
 import { showConfirmModal } from './modals.js';
 import { ago, availableLine, capForm, statusOf, usageLine, type MachineRow } from './machines-view.js';
+import SshJoin from './SshJoin.vue';
 
 const T = {
   off: 'Off: NANOCLAW_MACHINE_PORT is not set',
   empty: 'No machines',
   add: 'Add machine',
+  ssh: 'Join over SSH',
   run: 'Run on the machine (valid 1 hour, once):',
   copy: 'Copy',
   done: 'Done',
@@ -36,6 +38,7 @@ const T = {
 const listener = ref<{ address: string; port: number } | null>(null);
 const machines = ref<MachineRow[]>([]);
 const command = ref<string | null>(null);
+const ssh = ref(false);
 const capping = ref<string | null>(null);
 const cap = reactive({ memGb: '', cpus: '' });
 
@@ -161,6 +164,16 @@ defineExpose({ load });
         {{ T.done }}
       </button>
     </div>
-    <button v-else class="btn btn-secondary" type="button" @click="add">{{ T.add }}</button>
+    <SshJoin
+      v-else-if="ssh"
+      @close="
+        ssh = false;
+        load();
+      "
+    />
+    <div v-else class="secret-actions">
+      <button class="btn btn-secondary" type="button" @click="add">{{ T.add }}</button>
+      <button class="btn btn-secondary" type="button" @click="ssh = true">{{ T.ssh }}</button>
+    </div>
   </template>
 </template>

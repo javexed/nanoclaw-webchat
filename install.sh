@@ -411,8 +411,8 @@ PNPMFILE
 fi
 
 say "Installing webchat dependencies"
-pnpm add ws@8.21.1 busboy@1.6.0 web-push@3.6.7 undici@7.29.0 @modelcontextprotocol/sdk@1.30.0
-pnpm add -D @types/ws@8.18.1 @types/busboy@1.5.4 @types/web-push@3.6.4
+pnpm add ws@8.21.1 busboy@1.6.0 web-push@3.6.7 undici@7.29.0 @modelcontextprotocol/sdk@1.30.0 ssh2@1.17.0
+pnpm add -D @types/ws@8.18.1 @types/busboy@1.5.4 @types/web-push@3.6.4 @types/ssh2@1.15.5
 
 if [ "${SKIP_SQLITE_VERIFY:-0}" != "1" ]; then
   say "Verifying better-sqlite3 native binding"
