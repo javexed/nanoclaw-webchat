@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyChange,
   diskText,
+  expiryText,
+  EXPIRY_SOON_MS,
   nextForRoute,
   parseEmailList,
   routeOptions,
@@ -10,7 +12,7 @@ import {
   widensAccess,
   type AppSetting,
 } from './apps-state.js';
-import { changedFields, connectLabel, errorField } from './publishing-state.js';
+import { anyChecking, changedFields, connectLabel, errorField, type HostStatus } from './publishing-state.js';
 
 const s = (route: AppSetting['route'], who: AppSetting['who'] = 'only-me', emails: string[] = []): AppSetting => ({
   route,
@@ -119,5 +121,33 @@ describe('publishing panel decisions', () => {
   it('reads the refused field from the server’s answer', () => {
     expect(errorField({ body: { field: 'domain' } })).toBe('domain');
     expect(errorField(new Error('x'))).toBe('');
+  });
+});
+
+describe('expiryText: a row says when it stops', () => {
+  const now = Date.UTC(2026, 10, 2, 12);
+  const DAY = 86_400_000;
+  it('quiet until three days before, a warning inside them, past once it stopped', () => {
+    expect(expiryText(null, now)).toBeNull();
+    expect(expiryText(Date.UTC(2026, 11, 1, 12), now, 'en-GB')).toEqual({ text: 'Expires 1 Dec', level: 'ok' });
+    expect(expiryText(now + EXPIRY_SOON_MS, now, 'en-GB')?.level).toBe('soon');
+    expect(expiryText(now + EXPIRY_SOON_MS + DAY, now, 'en-GB')?.level).toBe('ok');
+    expect(expiryText(now - DAY, now, 'en-GB')).toEqual({ text: 'Expired 1 Nov', level: 'past' });
+  });
+});
+
+describe('anyChecking: Admin → Publishing asks again only while a line reads Checking…', () => {
+  const line = (checking: boolean): HostStatus => ({ text: '', ok: false, checking, fix: '', detail: '' });
+  it('a switched-on line still being checked', () => {
+    expect(anyChecking(null)).toBe(false);
+    expect(
+      anyChecking({ workloads: { on: true, status: line(true) }, builds: { on: false, status: line(false) } }),
+    ).toBe(true);
+    expect(
+      anyChecking({ workloads: { on: false, status: line(true) }, builds: { on: false, status: line(false) } }),
+    ).toBe(false);
+    expect(
+      anyChecking({ workloads: { on: true, status: line(false) }, builds: { on: true, status: line(false) } }),
+    ).toBe(false);
   });
 });

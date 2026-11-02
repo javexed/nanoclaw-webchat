@@ -432,10 +432,12 @@ import { closeDb } from '../../db/connection.js';
 import { rEgressGet, rEgressPut } from './server/routes-egress.js';
 import {
   RE_AGENT_APPS,
+  RE_AGENT_BUILD_REGISTRIES,
   RE_AGENT_WORKLOAD,
   RE_AGENT_WORKLOAD_ACTION,
   rAgentAppsGet,
   rAgentAppsPut,
+  rAgentBuildRegistriesPut,
   rAgentWorkloadAction,
   rAgentWorkloadDelete,
   rPublishingCloudflareConnect,
@@ -443,6 +445,7 @@ import {
   rPublishingGet,
   rPublishingTailnetConnect,
   rPublishingTailnetPut,
+  rPublishingWorkloadsPut,
 } from './server/routes-workloads.js';
 import { handleAccountRoutes, handlePreAuthSignin } from './server/routes-signin.js';
 import { handleSigninSettings } from './server/routes-signin-settings.js';
@@ -2740,6 +2743,13 @@ const API_ROUTES: ApiRoute[] = [
   // Agent → Apps (server/routes-workloads.ts): the agent's admins; widening raises a card.
   { method: 'GET', path: RE_AGENT_APPS, h: rAgentAppsGet },
   { method: 'PUT', path: RE_AGENT_APPS, guards: ['csrf'], h: rAgentAppsPut, audit: 'workload.app.change' },
+  {
+    method: 'PUT',
+    path: RE_AGENT_BUILD_REGISTRIES,
+    guards: ['csrf'],
+    h: rAgentBuildRegistriesPut,
+    audit: 'workload.build_registries.change',
+  },
   { method: 'GET', path: RE_AGENT_WORKLOAD_ACTION, h: rAgentWorkloadAction },
   {
     method: 'POST',
@@ -2970,6 +2980,13 @@ const API_ROUTES: ApiRoute[] = [
   { method: 'GET', path: '/api/users', h: rUsersGet },
   // Admin → Publishing (server/routes-workloads.ts): owner only.
   { method: 'GET', path: '/api/publishing', guards: ['owner'], h: rPublishingGet },
+  {
+    method: 'PUT',
+    path: '/api/publishing/workloads',
+    guards: ['csrf', 'owner'],
+    h: rPublishingWorkloadsPut,
+    audit: 'publishing.workloads.set',
+  },
   {
     method: 'PUT',
     path: '/api/publishing/tailnet',

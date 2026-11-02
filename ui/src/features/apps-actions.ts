@@ -7,12 +7,16 @@
 // A change that narrows (unpublish, a narrower rule, fewer people) applies at
 // once; one that widens or moves route goes to an approval card, whoever asks
 // (server: modules/workloads/gui.ts). The row reverts to what is live and
-// shows Needs approval until the card is answered.
+// shows Needs approval until the card is answered. "Allow Docker Hub for
+// builds" follows the same rule: on is a card, off applies. Extend and
+// Redeploy keep what was approved, so they apply directly.
 import { apiJson } from '../core/api.js';
 import { $ } from '../core/dom.js';
 import { showToast } from '../core/toast.js';
 import {
   appsAgentId,
+  appsBuildsBusy,
+  appsBuildsError,
   appsBusy,
   appsDrawer,
   appsErrors,
@@ -23,6 +27,7 @@ import {
   classifyChange,
   nextForRoute,
   rowKey,
+  shortDay,
   type AppRow,
   type AppSetting,
   type AppsView,
@@ -42,6 +47,7 @@ export async function loadAgentApps(agentId: string): Promise<void> {
   appsAgentId.value = agentId;
   appsMenuKey.value = null;
   appsDrawer.value = null;
+  appsBuildsError.value = '';
   let view: AppsView | null = null;
   try {
     view = await apiJson(`${base()}/apps`);
@@ -212,5 +218,40 @@ export async function remove(r: AppRow): Promise<void> {
   if (!ok) return;
   const out = await busy(r, () => apiJson(workloadUrl(r), { method: 'DELETE' }));
   if (out) showToast('Deleted', { kind: 'success' });
+  await reload();
+}
+
+/** Redeploy the approved stack (rebuilt from the agent's current folder). No card: nothing new is approved. */
+export async function redeploy(r: AppRow): Promise<void> {
+  appsMenuKey.value = null;
+  const out = await busy(r, () => apiJson(workloadUrl(r, 'redeploy'), { method: 'POST' }));
+  await reload();
+  // A deploy that ran and failed answers with its error: shown on the row, like a refusal.
+  if (out?.state === 'failed') setError(rowKey(r), String(out.error || 'Redeploy failed'));
+  else if (out) showToast('Redeployed', { kind: 'success' });
+}
+
+/** Keep it 30 days from today. No card: it keeps what was approved. */
+export async function extend(r: AppRow): Promise<void> {
+  appsMenuKey.value = null;
+  const out = await busy(r, () => apiJson(workloadUrl(r, 'extend'), { method: 'POST' }));
+  if (out && typeof out.expiresAt === 'number') showToast(`Expires ${shortDay(out.expiresAt)}`, { kind: 'success' });
+  await reload();
+}
+
+/** "Allow Docker Hub for builds": on goes to an approval card, off applies at once. */
+export async function setDockerHub(on: boolean): Promise<void> {
+  if (appsBuildsBusy.value) return;
+  appsBuildsBusy.value = true;
+  appsBuildsError.value = '';
+  try {
+    const out = await apiJson(`${base()}/apps/build-registries`, { method: 'PUT', body: { on } });
+    if (out?.pending) showToast('Sent for approval');
+    else if (out?.applied) showToast('Saved', { kind: 'success' });
+  } catch (err) {
+    appsBuildsError.value = (err as Error)?.message || 'That did not work';
+  } finally {
+    appsBuildsBusy.value = false;
+  }
   await reload();
 }

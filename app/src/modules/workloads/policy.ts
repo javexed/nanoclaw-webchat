@@ -330,7 +330,7 @@ export function checkStack(text: string, groupDir: string, quota: Quota, opts: C
       errors.push(`${svcName}: image must be a plain image reference like nginx:1.27 or ghcr.io/org/app:1.0`);
     if (svc.build !== undefined && !opts.allowBuild)
       errors.push(
-        `${svcName}: build is not available on this host (builds need confined builders); use a published image`,
+        `${svcName}: build is not available on this host (an owner can turn on confined builds in Admin → Publishing); use a published image`,
       );
     const buildRel =
       svc.build !== undefined && opts.allowBuild ? checkBuild(svc.build, groupDir, composeDir, svcName, errors) : null;

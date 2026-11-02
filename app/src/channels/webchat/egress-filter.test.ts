@@ -308,7 +308,10 @@ describe('an agent’s workload builds', () => {
   it('reach no registry unless an owner opted this agent in: there is no install-wide list', async () => {
     deps.buildRegistries = async () => [];
     expect(await ask(`CONNECT ghcr.io:443 HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
-    expect(await ask(`CONNECT registry-1.docker.io:443 HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
+    const refused = await ask(`CONNECT registry-1.docker.io:443 HTTP/1.1\r\n${cred}\r\n\r\n`);
+    expect(refused).toContain('403');
+    // Says where a person turns it on, not a host command.
+    expect(refused).toContain('an admin can allow Docker Hub for builds in Agent → Apps');
     expect(seen).toEqual([]);
   });
 

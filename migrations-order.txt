@@ -58,3 +58,4 @@ moduleWebchatWorkloadShape
 moduleWebchatWorkloadBuilds
 moduleWebchatWorkloadAppRoutes
 moduleWebchatWorkloadAppRouteEmails
+moduleWebchatWorkloadExpiryNotice

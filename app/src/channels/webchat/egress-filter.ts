@@ -111,6 +111,12 @@ async function buildRegistriesFor(agentGroupId: string): Promise<string[]> {
   return out;
 }
 
+/** A build's refusal: where a person turns it on (Agent → Apps), not a host command. */
+function buildBlockedMessage(host: string, port: number): string {
+  const where = port === 443 || port === 80 ? host : `${host}:${port}`;
+  return `blocked by NanoClaw network policy: this build may not reach ${where} — an admin can allow Docker Hub for builds in Agent → Apps, or allow ${where} on this agent's Network list`;
+}
+
 /** Is a literal IPv4 address inside one of these CIDRs? Names never are: no lookup can move them in. */
 export function inOwnNetwork(host: string, cidrs: string[]): boolean {
   if (!net.isIPv4(host) || !cidrs.length) return false;
@@ -355,7 +361,11 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
   const allowlist = await deps.allowlist(caller.agentGroupId);
   if (!egressAllowed(mode, req.host, req.port, allowlist, always)) {
     recordBlocked(req.host, req.port, caller.agentGroupId, caller.sessionId, mode);
-    return answer(client, '403 Forbidden', blockedMessage(req.host, req.port, mode));
+    return answer(
+      client,
+      '403 Forbidden',
+      building ? buildBlockedMessage(req.host, req.port) : blockedMessage(req.host, req.port, mode),
+    );
   }
   if (building) {
     let upstream: net.Socket;

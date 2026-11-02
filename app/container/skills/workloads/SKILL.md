@@ -15,9 +15,11 @@ A workload is a Docker Compose stack that NanoClaw runs **for you**, on its own
 host: you write `compose.yml` in your workspace, NanoClaw checks it and runs
 it. You do not get a Docker socket or a VM — `ncl workloads` is the interface.
 
-Workloads are off unless the operator turned them on for this host. If a
-command says "workloads are off on this host" (or names something missing on
-the host), tell the person that; do not try to work around it.
+Workloads are off unless an owner turned them on for this host. If a command
+says "workloads are off on this host", tell the person: an owner turns them on
+in **Admin → Publishing** (the Workloads switch), which also says what is
+missing on the host and the command that fixes it. Do not try to work around
+it.
 
 ## Deploy
 
@@ -40,15 +42,21 @@ The name is 2–30 lowercase letters, digits and hyphens.
 
 ## Builds
 
-`build:` works only where the operator turned on confined builds; otherwise
-the check says so — use a published image instead (configuration in
-`environment`, data in a volume). Where builds are on:
+`build:` works only where an owner turned on confined builds (**Admin →
+Publishing**, the Confined builds switch); otherwise the check says so. Then
+either tell the person that, or use a published image (configuration in
+`environment`, data in a volume). Do not pack app code into environment
+values or commands to get around a missing build: ask for builds instead.
+Where builds are on:
 - the build folder must be inside your workspace;
 - app code in it may change freely; a changed Dockerfile or changed build
   args need `up` (a new card), and the Dockerfile is checked again right
   before each build;
-- builds run with your own network access (plus any registries an owner
-  allowed for your builds) through `HTTP(S)_PROXY`, and get no credentials;
+- builds run with your own network access (plus any registries allowed for
+  your builds) through `HTTP(S)_PROXY`, and get no credentials. Base images
+  from Docker Hub (`FROM node:22`) need **Allow Docker Hub for builds**, which
+  an admin of this agent turns on in **Agent → Apps** (an owner approves it).
+  If a build is refused reaching a registry, tell the person that;
 - at most 20 builds an hour without a card.
 
 ## What a stack may contain
@@ -127,7 +135,11 @@ publish; the address is HTTPS for people.
   keeps data. `start` runs the approved images and Dockerfiles.
 - `ncl workloads delete --name myapp` — removes data too (approval).
 
-A workload expires after 30 days and is stopped; ask an owner to extend it.
+A workload expires after 30 days and is stopped. A few days before, you get
+a `[System]` notice: tell the people in the room. An admin of this agent
+extends it in **Agent → Apps** (Extend, 30 days from that day), or you ask
+with `ncl workloads extend --name myapp` (approval). After it stopped, extend
+it and `start` it again. `ncl workloads list` shows `expires`.
 
 ## Disk, backups, restore
 

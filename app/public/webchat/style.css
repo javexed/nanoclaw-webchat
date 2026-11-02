@@ -9702,6 +9702,30 @@ button[data-draft-id] {
 .apps-disk-over {
   color: var(--danger);
 }
+.apps-gate {
+  margin: 0;
+}
+/* "Allow Docker Hub for builds": one switch row above the list. */
+.apps-builds {
+  gap: 8px;
+}
+.apps-builds .setting-label {
+  flex: 1;
+  min-width: 0;
+}
+/* "Expires 1 Dec" on a row: quiet until three days before, then a warning. */
+.app-expiry {
+  flex-shrink: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.app-expiry-soon {
+  color: var(--warning-strong);
+}
+.app-expiry-past {
+  color: var(--danger);
+}
 .apps-empty {
   margin: 0;
   font-size: var(--fs-sm);
@@ -9868,7 +9892,7 @@ button[data-draft-id] {
   overflow-wrap: anywhere;
 }
 
-/* Admin → Publishing (PublishingPanel.vue): one block per route. */
+/* Admin → Publishing (PublishingPanel.vue): Workloads, then one block per route. */
 .publishing {
   display: flex;
   flex-direction: column;
@@ -9876,6 +9900,31 @@ button[data-draft-id] {
 }
 .publishing-gate {
   margin: 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+/* The command that fixes what the status line names: one copyable line. */
+.publishing-fix {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  min-width: 0;
+}
+.publishing-fix code {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.publishing-fix .btn-icon {
+  flex-shrink: 0;
 }
 .publishing-route {
   display: flex;

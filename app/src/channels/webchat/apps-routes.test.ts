@@ -18,6 +18,7 @@ const fx = vi.hoisted(() => ({
   env: [] as Array<[string, string | null]>,
   connected: [] as string[][],
   control: [] as string[],
+  checks: 0,
 }));
 
 vi.mock('../../modules/approvals/sessionless.js', () => ({
@@ -46,6 +47,19 @@ vi.mock('../../modules/workloads/control.js', () => ({
   logsWorkload: async () => 'web-1  | listening on 8080',
   backupsOf: async () => [{ stamp: '20261026T010000Z', at: '2026-10-26 01:00 UTC', volumes: [] }],
   restoreWorkload: async (_g: string, n: string, b: string) => (fx.control.push(`restore ${n} ${b}`), {}),
+  redeployApproved: async (_g: string, n: string) => (fx.control.push(`redeploy ${n}`), { state: 'running' }),
+  extendWorkload: async (_g: string, n: string, by: string) => (
+    fx.control.push(`extend ${n} ${by}`),
+    { expiresAt: Date.UTC(2026, 11, 2) }
+  ),
+}));
+// The host check starts containers: switching workloads on here only counts that it was asked for.
+vi.mock('../../modules/workloads/preflight.js', async (orig) => ({
+  ...(await orig<typeof import('../../modules/workloads/preflight.js')>()),
+  runPreflight: async () => {
+    fx.checks++;
+    return { ok: false, reason: 'stood in', isolationOpen: false, at: 0 };
+  },
 }));
 
 afterEach(resetServerModules);
@@ -76,7 +90,11 @@ describe('Agent → Apps and Admin → Publishing', () => {
     fx.env = [];
     fx.connected = [];
     fx.control = [];
+    fx.checks = 0;
     vi.stubEnv('NANOCLAW_WORKLOAD_GATEWAY_PORT', '8470');
+    // Restored after each test: the Workloads switch writes these to the process's environment.
+    vi.stubEnv('NANOCLAW_WORKLOADS', '');
+    vi.stubEnv('NANOCLAW_WORKLOAD_CONFINED_BUILDS', '');
     ({ server, wc, port } = await startServer(PROXY_ENV, seed));
     const pub = await import('../../modules/workloads/gateway/publishing.js');
     pub.registerPublishingRoute({
@@ -231,10 +249,61 @@ describe('Agent → Apps and Admin → Publishing', () => {
           .status,
       ).toBe(200);
       expect((await req('DELETE', '/api/agents/ag-a/workloads/notes', 'admina')).status).toBe(200);
-      expect(fx.control).toEqual(['stop notes', 'start notes', 'restore notes 20261026T010000Z', 'delete notes']);
+      expect((await req('POST', '/api/agents/ag-a/workloads/notes/redeploy', 'admina', {})).status).toBe(200);
+      const ext = await req('POST', '/api/agents/ag-a/workloads/notes/extend', 'admina', {});
+      expect(ext.status).toBe(200);
+      expect(JSON.parse(ext.body)).toEqual({ expiresAt: Date.UTC(2026, 11, 2) });
+      expect(fx.control).toEqual([
+        'stop notes',
+        'start notes',
+        'restore notes 20261026T010000Z',
+        'delete notes',
+        'redeploy notes',
+        'extend notes human:webchat:admina',
+      ]);
+      expect((await req('POST', '/api/agents/ag-a/workloads/notes/extend', 'member', {})).status).toBe(403);
+      expect((await req('POST', '/api/agents/ag-a/workloads/notes/redeploy', 'admina', {}, false)).status).toBe(403);
+      expect((await req('POST', '/api/agents/ag-b/workloads/notes/extend', 'admina', {})).status).toBe(403);
       expect((await req('POST', '/api/agents/ag-a/workloads/notes/stop', 'member', {})).status).toBe(403);
       expect((await req('GET', '/api/agents/ag-a/workloads/notes/logs', 'member')).status).toBe(403);
       expect((await req('POST', '/api/agents/ag-a/workloads/notes/logs', 'admina', {})).status).toBe(405);
+    });
+  });
+
+  describe('Allow Docker Hub for builds', () => {
+    const put = (who: string, on: unknown, csrf = true) =>
+      req('PUT', '/api/agents/ag-a/apps/build-registries', who, { on }, csrf);
+    const hosts = async () => (await import('../../modules/workloads/store.js')).buildRegistries('ag-a');
+
+    it('the agent’s admins only, with the CSRF header', async () => {
+      vi.stubEnv('NANOCLAW_WORKLOAD_CONFINED_BUILDS', '1');
+      expect((await put('member', true)).status).toBe(403);
+      expect((await req('PUT', '/api/agents/ag-b/apps/build-registries', 'admina', { on: true })).status).toBe(403);
+      expect((await put('admina', true, false)).status).toBe(403);
+      expect(fx.cards).toEqual([]);
+    });
+
+    it('on is a card (202), never applied; refused while builds are off', async () => {
+      expect((await put('admina', true)).status).toBe(400);
+      vi.stubEnv('NANOCLAW_WORKLOAD_CONFINED_BUILDS', '1');
+      const r = await put('owner', true);
+      expect(r.status).toBe(202);
+      expect(JSON.parse(r.body)).toEqual({ change: 'widen', applied: false, pending: true });
+      expect(fx.cards).toHaveLength(1);
+      expect(fx.cards[0]).toMatchObject({ action: 'workloads_build_registries' });
+      expect(await hosts()).toEqual([]);
+      const v = JSON.parse((await req('GET', '/api/agents/ag-a/apps', 'admina')).body);
+      expect(v.builds).toMatchObject({ on: true, dockerHub: false });
+    });
+
+    it('off applies at once', async () => {
+      const store = await import('../../modules/workloads/store.js');
+      await store.setBuildRegistries('ag-a', ['registry-1.docker.io']);
+      const r = await put('admina', false);
+      expect(r.status).toBe(200);
+      expect(JSON.parse(r.body)).toEqual({ change: 'narrow', applied: true, pending: false });
+      expect(await hosts()).toEqual([]);
+      expect(fx.cards).toEqual([]);
     });
   });
 
@@ -259,6 +328,24 @@ describe('Agent → Apps and Admin → Publishing', () => {
       expect(typeof v.tailnet.status.text).toBe('string');
       expect((await req('PUT', '/api/publishing/tailnet', 'owner', { on: false })).status).toBe(200);
       expect(fx.env.at(-1)).toEqual(['NANOCLAW_WORKLOAD_TAILNET', null]);
+    });
+
+    it('the Workloads and Confined builds switches: owner only, their .env keys, and a host check', async () => {
+      expect((await req('PUT', '/api/publishing/workloads', 'admina', { on: true })).status).toBe(403);
+      expect((await req('PUT', '/api/publishing/workloads', 'owner', { on: true }, false)).status).toBe(403);
+      const before = JSON.parse((await req('GET', '/api/publishing', 'owner')).body);
+      expect(before.workloads).toEqual({ on: false, status: expect.objectContaining({ text: 'Off' }) });
+      expect(before.builds.status.text).toBe('Off');
+      const r = await req('PUT', '/api/publishing/workloads', 'owner', { on: true });
+      expect(r.status).toBe(200);
+      expect(fx.env).toEqual([['NANOCLAW_WORKLOADS', '1']]);
+      expect(fx.checks).toBeGreaterThanOrEqual(1);
+      expect(JSON.parse(r.body).workloads.on).toBe(true);
+      const bad = await req('PUT', '/api/publishing/workloads', 'owner', { confinedBuilds: 'yes' });
+      expect(bad.status).toBe(400);
+      expect(JSON.parse(bad.body).field).toBe('confinedBuilds');
+      expect((await req('PUT', '/api/publishing/workloads', 'owner', { on: false })).status).toBe(200);
+      expect(fx.env.at(-1)).toEqual(['NANOCLAW_WORKLOADS', null]);
     });
 
     it('refuses a Cloudflare app domain on NanoClaw’s own site, inline', async () => {

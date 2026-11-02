@@ -1,8 +1,9 @@
 /**
  * `ncl workloads …` — an agent's own Compose stacks. Group-scoped: inside a
  * container the agent group always comes from the caller. `up` (a first
- * deploy, a new shape, or more resources), `delete` (removes data) and
- * `restore` (replaces data) wait for an owner's card; `redeploy` within the
+ * deploy, a new shape, or more resources), `delete` (removes data),
+ * `restore` (replaces data) and `extend` (keeps it running longer) wait for
+ * an owner's card; `redeploy` within the
  * approved size and shape, and everything that only looks or restarts, runs
  * at once.
  *
@@ -24,8 +25,10 @@ import {
   backupsOf,
   checkWorkload,
   deleteWorkload,
+  DEFAULT_DAYS,
   downWorkload,
   execWorkload,
+  extendWorkload,
   logsWorkload,
   psWorkload,
   redeployWorkload,
@@ -45,6 +48,7 @@ import {
   WHO_WORDS,
   type ExposeInput,
 } from './publish.js';
+import { dayText } from './notify.js';
 import { describeShape, decodeApproved } from './shape.js';
 import {
   buildRegistries,
@@ -318,6 +322,32 @@ registerResource({
         };
       },
       handler: async (args, ctx) => view(await deleteWorkload(groupOf(args, ctx), str(args.name, 'name'))),
+    },
+    extend: {
+      access: 'approval',
+      description: `Keep a workload running for ${DEFAULT_DAYS} days from today, past its expiry (needs an owner approval; an admin can also extend it in Agent → Apps).`,
+      args: [GROUP, NAME],
+      precheck: async (args, ctx) => {
+        const w = await findWorkload(groupOf(args, ctx), str(args.name, 'name'));
+        if (!w) throw new Error(`you have no workload named "${String(args.name)}"`);
+        if (w.expiresAt === null) throw new Error(`${w.name} does not expire`);
+        const to = Math.max(w.expiresAt, Date.now() + DEFAULT_DAYS * 86_400_000);
+        // Less than a day to gain is not worth a card.
+        if (to - w.expiresAt < 86_400_000) throw new Error(`${w.name} already runs until ${dayText(w.expiresAt)}`);
+        return {
+          title: `Extend workload ${w.name}`,
+          summary: `{agent} wants to keep the workload ${quoteForCard(w.name)} running for ${DEFAULT_DAYS} more days.`,
+          detail: `Expires: ${dayText(w.expiresAt)} → ${dayText(to)}. Nothing else changes.`,
+        };
+      },
+      handler: async (args, ctx) =>
+        view(
+          await extendWorkload(
+            groupOf(args, ctx),
+            str(args.name, 'name'),
+            ctx.caller === 'agent' ? `agent:${ctx.agentGroupId}` : 'host',
+          ),
+        ),
     },
     expose: {
       access: 'approval',

@@ -1,7 +1,8 @@
 // ── Admin → Publishing ──────────────────────────────────────────────────────
-// The tailnet and Cloudflare publishing routes: a switch, settings, Connect
-// (the credential goes straight to the OneCLI vault and is never shown again)
-// and a status line each. Owner only: hidden for everyone else, and the GET
+// The Workloads and Confined builds switches with this host's readiness (and
+// the command that fixes what is missing), then the tailnet and Cloudflare
+// publishing routes: a switch, settings, Connect (the credential goes straight
+// to the OneCLI vault and is never shown again) and a status line each. Owner only: hidden for everyone else, and the GET
 // answers 403 to them anyway.
 import { createApp } from 'vue';
 import { apiJson } from '../core/api.js';
@@ -24,7 +25,7 @@ export async function renderPublishingSettings(): Promise<void> {
   } catch {
     view = null;
   }
-  if (!view?.tailnet || !view.cloudflare) {
+  if (!view?.tailnet || !view.cloudflare || !view.workloads) {
     section.hidden = true; // 403, or not this server's shape
     return;
   }
