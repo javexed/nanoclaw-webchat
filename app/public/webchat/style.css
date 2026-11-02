@@ -6038,6 +6038,7 @@ a.skill-badge-origin:hover {
 }
 .msg.approval-msg .approval-card {
   margin: 0;
+  list-style: none;
   border-left: 3px solid var(--agent);
 }
 .approval-inroom-note {
@@ -6052,6 +6053,68 @@ a.skill-badge-origin:hover {
 .approval-inroom-note.resolved {
   border-style: solid;
   opacity: 0.8;
+}
+/* An approval that ran: its one-line outcome, with the redacted details folded. */
+.approval-inroom-note .approval-result {
+  margin-top: 4px;
+  font-style: normal;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.approval-inroom-note.failed {
+  border-color: var(--delete-color);
+  opacity: 1;
+}
+.approval-inroom-note .approval-details {
+  margin-top: 4px;
+  font-style: normal;
+}
+.approval-inroom-note .approval-details > summary {
+  cursor: pointer;
+  font-size: var(--fs-xs);
+}
+.approval-inroom-note .approval-payload {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: var(--fs-xs);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* A reminder or an expiry, with "Send again" on an expired request. */
+.approval-inroom-note.approval-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-style: normal;
+}
+.approval-inroom-note.approval-notice.reminder {
+  border-color: var(--warning);
+}
+.approval-notice .approval-notice-done {
+  color: var(--text-dim);
+}
+.approval-error {
+  color: var(--delete-strong);
+  font-size: var(--fs-xs);
+  margin-top: 4px;
+}
+/* "Reject with reason…": the reason is typed on the card itself. */
+.approval-card .approval-reason input {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--fs-sm);
 }
 .approval-card .approval-title {
   font-weight: 600;

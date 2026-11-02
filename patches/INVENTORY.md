@@ -365,6 +365,11 @@ src/cli/registry.ts
     text above the command line, and pins values (hashes, digests) into the
     approved arguments. Used by `ncl workloads up|delete|restore`. A seam
     registry for card text would retire the three cli patches.
+    Also registerApprovalWords: an installed surface's words for the agent
+    around an approval-gated command (who can approve it and where, while it
+    waits; a readable, redacted outcome once it ran). With none installed, or
+    one that throws, dispatch keeps its own text. Webchat's lives in
+    app/src/modules/approvals/words.ts.
 src/cli/crud.ts
     passes a custom operation's `precheck` through registerResource
 src/cli/dispatch.ts
@@ -373,11 +378,15 @@ src/cli/dispatch.ts
     by the approved replay); the precheck's title/summary/detail go above the
     unchanged command line through a spread-last override of title/question,
     with its own card-length check
+    asks the approval words (registry.ts) for the held reply and for the
+    approved outcome before its own text; insertions only, the original lines
+    still run when no words are installed
 src/cli/dispatch.test.ts
     tests for the precheck: refusal before a card, words above the full
     command line, pinned args overriding the agent's own
 src/modules/approvals/index.ts
     approval-TTL expiry on the sweep seam
+    loads the approval words (words.ts) so they register on the CLI seam
     re-exports checkApprovalClick for channels that answer their caller
 src/modules/index.ts
     module barrel registrations

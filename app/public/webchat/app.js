@@ -473,12 +473,24 @@ var _hoisted_7$30 = {
 	class: "approval-details"
 };
 var _hoisted_8$21 = { class: "approval-payload" };
-var _hoisted_9$17 = { class: "approval-actions" };
-var _hoisted_10$16 = ["disabled", "onClick"];
-var _hoisted_11$11 = {
-	key: 3,
+var _hoisted_9$17 = ["disabled"];
+var _hoisted_10$17 = {
+	key: 4,
+	class: "approval-actions"
+};
+var _hoisted_11$12 = ["disabled", "onClick"];
+var _hoisted_12$11 = {
+	key: 5,
 	class: "approval-error"
 };
+/**
+* Triage — why this request is in front of a human. Chips are checkable CLAIMS, never
+* a risk level or confidence score: the triage model cannot withhold a review, so it
+* must not be trusted to reassure either. Never-list chips are authoritative
+* (deterministic) and render beside model chips so a disagreement stays visible. The
+* note makes ABSENCE legible: "no chips" must never read as "screened, nothing found".
+*/
+var REJECT_WITH_REASON = "reject_with_reason";
 //#endregion
 //#region src/features/ApprovalCard.vue
 var ApprovalCard_default = /* @__PURE__ */ defineComponent({
@@ -523,6 +535,20 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 		};
 		const chipTitle = (authoritative) => authoritative ? "Always requires a human" : "Proposed by the triage model — check it against the payload";
 		const props = __props;
+		/** "Reject with reason…" asks for the reason right on the card, then rejects with it. */
+		const askingReason = ref(false);
+		const reason = ref("");
+		const pick = (value) => {
+			if (value === REJECT_WITH_REASON) {
+				askingReason.value = true;
+				return;
+			}
+			props.onRespond(props.approval.questionId, value);
+		};
+		const sendReason = () => {
+			const r = reason.value.trim();
+			if (r) props.onRespond(props.approval.questionId, REJECT_WITH_REASON, r);
+		};
 		const FALLBACK = [{
 			label: "Approve",
 			value: "approve"
@@ -549,16 +575,39 @@ var ApprovalCard_default = /* @__PURE__ */ defineComponent({
 					}, toDisplayString(c.flag), 11, _hoisted_4$56);
 				}), 128)), triageNote() ? (openBlock(), createElementBlock("span", _hoisted_5$46, toDisplayString(triageNote()), 1)) : createCommentVNode("", true)])) : createCommentVNode("", true),
 				cardText() ? (openBlock(), createElementBlock("p", _hoisted_6$37, toDisplayString(cardText()), 1)) : createCommentVNode("", true),
-				rawPayload() ? (openBlock(), createElementBlock("details", _hoisted_7$30, [_cache[0] || (_cache[0] = createElementVNode("summary", null, "Details", -1)), createElementVNode("pre", _hoisted_8$21, toDisplayString(payloadText(rawPayload())), 1)])) : createCommentVNode("", true),
-				createElementVNode("div", _hoisted_9$17, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
+				rawPayload() ? (openBlock(), createElementBlock("details", _hoisted_7$30, [_cache[3] || (_cache[3] = createElementVNode("summary", null, "Details", -1)), createElementVNode("pre", _hoisted_8$21, toDisplayString(payloadText(rawPayload())), 1)])) : createCommentVNode("", true),
+				askingReason.value ? (openBlock(), createElementBlock("form", {
+					key: 3,
+					class: "approval-actions approval-reason",
+					onSubmit: withModifiers(sendReason, ["prevent"])
+				}, [
+					withDirectives(createElementVNode("input", {
+						"onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => reason.value = $event),
+						type: "text",
+						maxlength: "500",
+						placeholder: "Reason",
+						"aria-label": "Reason",
+						autofocus: "",
+						onKeydown: _cache[1] || (_cache[1] = withKeys(($event) => askingReason.value = false, ["esc"]))
+					}, null, 544), [[vModelText, reason.value]]),
+					createElementVNode("button", {
+						type: "button",
+						onClick: _cache[2] || (_cache[2] = ($event) => askingReason.value = false)
+					}, "Cancel"),
+					createElementVNode("button", {
+						type: "submit",
+						class: "reject",
+						disabled: !reason.value.trim() || unref(approvalBusy).has(__props.approval.questionId) || void 0
+					}, "Reject", 8, _hoisted_9$17)
+				], 32)) : (openBlock(), createElementBlock("div", _hoisted_10$17, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
 					return openBlock(), createElementBlock("button", {
 						key: i,
 						class: normalizeClass(btnClass(o.value)),
 						disabled: unref(approvalBusy).has(__props.approval.questionId) || void 0,
-						onClick: ($event) => props.onRespond(__props.approval.questionId, o.value)
-					}, toDisplayString(o.label || o.value), 11, _hoisted_10$16);
-				}), 128))]),
-				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_11$11, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
+						onClick: ($event) => pick(o.value)
+					}, toDisplayString(o.label || o.value), 11, _hoisted_11$12);
+				}), 128))])),
+				unref(approvalErrors)[__props.approval.questionId] ? (openBlock(), createElementBlock("div", _hoisted_12$11, toDisplayString(unref(approvalErrors)[__props.approval.questionId]), 1)) : createCommentVNode("", true)
 			], 8, _hoisted_1$82);
 		};
 	}
@@ -612,7 +661,7 @@ var ApprovalToast_default = /* @__PURE__ */ defineComponent({
 			label: "Reject",
 			value: "reject"
 		}];
-		const options = () => Array.isArray(props.approval.options) && props.approval.options.length ? props.approval.options : FALLBACK;
+		const options = () => (Array.isArray(props.approval.options) && props.approval.options.length ? props.approval.options : FALLBACK).filter((o) => o.value !== "reject_with_reason");
 		const btnClass = (v) => v === "approve" ? "approve" : v === "reject" ? "reject" : "";
 		return (_ctx, _cache) => {
 			return openBlock(), createElementBlock(Fragment, null, [createElementVNode("div", _hoisted_1$81, toDisplayString(__props.approval.title || __props.approval.action || "Approval requested"), 1), createElementVNode("div", _hoisted_2$70, [(openBlock(true), createElementBlock(Fragment, null, renderList(options(), (o, i) => {
@@ -652,7 +701,7 @@ function setApprovalsBanner(count) {
 }
 var approvalsApp = null;
 function mountApprovalsList() {
-	approvalsApp ??= mountIsland("#approval-list", () => createApp(ApprovalsList_default, { onRespond: (questionId, value) => respondToApproval(questionId, value, null) }));
+	approvalsApp ??= mountIsland("#approval-list", () => createApp(ApprovalsList_default, { onRespond: (questionId, value, reason) => respondToApproval(questionId, value, null, reason) }));
 }
 function renderApprovalsList() {
 	if ($("#approval-list")) {
@@ -696,14 +745,6 @@ function handleApprovalResolvedEvent(msg) {
 	pendingApprovals = pendingApprovals.filter((a) => a.questionId !== approvalId);
 	renderApprovalsList();
 	document.querySelectorAll(`.approval-toast[data-question-id="${approvalId}"]`).forEach((el) => el.remove());
-	document.querySelectorAll(`.approval-msg[data-question-id="${approvalId}"]`).forEach((el) => {
-		const who = msg.resolvedBy ? " by " + (String(msg.resolvedBy).split(":").pop() ?? "").split("@")[0] : "";
-		el.innerHTML = "";
-		const note = document.createElement("div");
-		note.className = "approval-inroom-note resolved";
-		note.textContent = `🔒 Approval — resolved${who}`;
-		el.appendChild(note);
-	});
 }
 function handleApprovalEvent(msg) {
 	showApprovalToast(msg);
@@ -712,7 +753,7 @@ function handleApprovalEvent(msg) {
 		new Notification(msg.title || "Approval requested", { body: msg.question || "" });
 	} catch {}
 }
-async function respondToApproval(questionId, value, cardEl) {
+async function respondToApproval(questionId, value, cardEl, reason) {
 	const setBusy = (on) => {
 		const next = new Set(approvalBusy.value);
 		if (on) next.add(questionId);
@@ -736,7 +777,10 @@ async function respondToApproval(questionId, value, cardEl) {
 				"Content-Type": "application/json",
 				"X-Webchat-CSRF": "1"
 			},
-			body: JSON.stringify({ value })
+			body: JSON.stringify(reason ? {
+				value,
+				reason
+			} : { value })
 		});
 		if (!r.ok) {
 			const body = await r.json().catch(() => ({}));
@@ -756,6 +800,44 @@ async function respondToApproval(questionId, value, cardEl) {
 		toastEl?.querySelectorAll("button").forEach((b) => b.disabled = false);
 	}
 }
+/**
+* "Send again" on an expired request's notice. Busy and error state ride the
+* approval maps under `resend:<id>`; the server re-broadcasts the notice as
+* sent again, and the new card arrives as its own message.
+*/
+async function resendApproval(questionId) {
+	const key = `resend:${questionId}`;
+	approvalBusy.value = /* @__PURE__ */ new Set([...approvalBusy.value, key]);
+	const errors = { ...approvalErrors.value };
+	delete errors[key];
+	approvalErrors.value = errors;
+	try {
+		const r = await authFetch(`/api/approvals/${encodeURIComponent(questionId)}/resend`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Webchat-CSRF": "1"
+			},
+			body: "{}"
+		});
+		if (!r.ok) {
+			const body = await r.json().catch(() => ({}));
+			approvalErrors.value = {
+				...approvalErrors.value,
+				[key]: body.error || `Couldn't send it again (${r.status})`
+			};
+		}
+	} catch {
+		approvalErrors.value = {
+			...approvalErrors.value,
+			[key]: "Couldn't send it again"
+		};
+	} finally {
+		const next = new Set(approvalBusy.value);
+		next.delete(key);
+		approvalBusy.value = next;
+	}
+}
 var approvalsBannerToggle = $("#approvals-banner-toggle");
 function wireApprovalsPanel() {
 	if (approvalsBannerToggle) approvalsBannerToggle.addEventListener("click", () => {
@@ -766,6 +848,110 @@ function wireApprovalsPanel() {
 		list.hidden = !expanded;
 		approvalsBannerToggle.setAttribute("aria-expanded", String(expanded));
 	});
+}
+//#endregion
+//#region src/features/approval-row.ts
+function parse(content) {
+	if (content && typeof content === "object") return content;
+	try {
+		const v = JSON.parse(String(content ?? "{}"));
+		return v && typeof v === "object" ? v : {};
+	} catch {
+		return {};
+	}
+}
+/** The short name of a user id: "webchat:tailscale:bob@x.com" → "bob". */
+function shortName(userId) {
+	return (String(userId ?? "").split(":").pop() ?? "").split("@")[0];
+}
+/** Names without their "(owner)"/"(admin)" role, joined with "or". */
+function waitingFor(names) {
+	const list = Array.isArray(names) ? names.map((n) => String(n).replace(/ \((owner|admin)\)$/, "")) : [];
+	return list.length ? list.join(" or ") : "an admin";
+}
+/**
+* May this viewer act on the card? The client knows its viewer by identity
+* (the name it signed in with), so the card lists its approvers' identities;
+* a card stored before that matches the identity its approver ids end with.
+* The server checks every click either way.
+*/
+function canActOn(approvers, identities, myIdentity) {
+	if (!myIdentity) return false;
+	if (Array.isArray(identities) && identities.includes(myIdentity)) return true;
+	return Array.isArray(approvers) && approvers.some((a) => String(a).split(":").pop() === myIdentity);
+}
+function roomApprovalView(msg, myIdentity) {
+	const data = parse(msg.content);
+	const questionId = String(data.questionId || msg.id || "");
+	const title = String(data.title || "Approval");
+	const card = {
+		questionId,
+		title: data.title,
+		payload: data.question,
+		options: data.options
+	};
+	const resolved = msg.message_type === "approval_resolved" || !!data.resolvedBy;
+	const by = String(data.resolvedByName || shortName(data.resolvedBy));
+	const r = data.result;
+	const line = r && typeof r.outcome === "string" ? r.outcome : r && typeof r.line === "string" ? r.line : null;
+	const result = line !== null ? {
+		line,
+		details: String(r.details || ""),
+		failed: !!r.failed
+	} : null;
+	if (resolved) {
+		if (data.outcome === "expired") return {
+			questionId,
+			state: "expired",
+			note: `⏱ ${title} — expired`,
+			result: null,
+			card
+		};
+		if (data.outcome === "approved") return {
+			questionId,
+			state: "approved",
+			note: `✅ ${title} — approved${by ? ` by ${by}` : ""}`,
+			result,
+			card
+		};
+		if (data.outcome === "rejected") return {
+			questionId,
+			state: "rejected",
+			note: `❌ ${title} — rejected${by ? ` by ${by}` : ""}`,
+			result: null,
+			card
+		};
+		return {
+			questionId,
+			state: "resolved",
+			note: `🔒 ${title} — resolved${by ? ` by ${by}` : ""}`,
+			result: null,
+			card
+		};
+	}
+	if (canActOn(data.approvers, data.approverIdentities, myIdentity)) return {
+		questionId,
+		state: "eligible",
+		note: "",
+		result: null,
+		card
+	};
+	return {
+		questionId,
+		state: "awaiting",
+		note: `🔒 ${title} — waiting for ${waitingFor(data.approverNames)}`,
+		result: null,
+		card
+	};
+}
+function approvalNoticeView(msg) {
+	const data = parse(msg.content);
+	return {
+		questionId: String(data.questionId || ""),
+		kind: data.kind === "expired" ? "expired" : "reminder",
+		text: String(data.text || ""),
+		resentByName: data.resentBy ? String(data.resentByName || shortName(data.resentBy)) : null
+	};
 }
 //#endregion
 //#region src/features/transcript-state.ts
@@ -978,8 +1164,8 @@ var _hoisted_6$35 = { class: "bubble" };
 var _hoisted_7$28 = ["hidden"];
 var _hoisted_8$20 = ["hidden"];
 var _hoisted_9$16 = ["hidden"];
-var _hoisted_10$15 = ["hidden"];
-var _hoisted_11$10 = {
+var _hoisted_10$16 = ["hidden"];
+var _hoisted_11$11 = {
 	ref: "trace",
 	class: "thinking-fulltrace"
 };
@@ -1078,8 +1264,8 @@ var ThinkingBubble_default = /* @__PURE__ */ defineComponent({
 				createElementVNode("div", {
 					class: "thinking-preview",
 					hidden: !__props.turn.preview
-				}, toDisplayString(__props.turn.preview), 9, _hoisted_10$15),
-				createElementVNode("div", _hoisted_11$10, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
+				}, toDisplayString(__props.turn.preview), 9, _hoisted_10$16),
+				createElementVNode("div", _hoisted_11$11, [createTextVNode(toDisplayString(traceEmpty.value), 1), liveView.value && !traceEmpty.value ? (openBlock(), createBlock(TraceView_default, {
 					key: 0,
 					view: liveView.value
 				}, null, 8, ["view"])) : createCommentVNode("", true)], 512),
@@ -2531,7 +2717,7 @@ var _hoisted_9$15 = {
 	key: 0,
 	class: "file-caption"
 };
-var _hoisted_10$14 = ["innerHTML"];
+var _hoisted_10$15 = ["innerHTML"];
 var DOWNLOAD = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-download\"></use></svg>";
 var IMAGE = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-image\"></use></svg>";
 var FILE_TEXT = "<svg class=\"icon\" aria-hidden=\"true\"><use href=\"#i-file-text\"></use></svg>";
@@ -2615,7 +2801,7 @@ var MessageBubble_default = /* @__PURE__ */ defineComponent({
 				ref: bind,
 				class: "bubble",
 				innerHTML: __props.row.html
-			}, null, 8, _hoisted_10$14)) : (openBlock(), createElementBlock("div", {
+			}, null, 8, _hoisted_10$15)) : (openBlock(), createElementBlock("div", {
 				key: 2,
 				ref: bind,
 				class: "bubble"
@@ -2840,14 +3026,14 @@ var _hoisted_9$14 = {
 	key: 3,
 	class: "approval-inroom-note resolved"
 };
-var _hoisted_10$13 = {
+var _hoisted_10$14 = {
 	key: 4,
 	class: "skill-draft-card"
 };
-var _hoisted_11$9 = { class: "skill-head" };
-var _hoisted_12$9 = { class: "skill-name" };
-var _hoisted_13$9 = { class: "skill-desc" };
-var _hoisted_14$9 = { class: "skill-draft-actions" };
+var _hoisted_11$10 = { class: "skill-head" };
+var _hoisted_12$10 = { class: "skill-name" };
+var _hoisted_13$10 = { class: "skill-desc" };
+var _hoisted_14$10 = { class: "skill-draft-actions" };
 var _hoisted_15$9 = ["onClick"];
 var _hoisted_16$9 = {
 	key: 1,
@@ -2938,21 +3124,21 @@ var SkillDraftCard_default = /* @__PURE__ */ defineComponent({
 				busy: undoing.value,
 				label: UNDO$1,
 				"busy-label": UNDOING
-			}, null, 8, ["busy"])], 8, _hoisted_7$26)])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_8$18, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_9$14, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_10$13, [
-				createElementVNode("div", _hoisted_11$9, [createElementVNode("span", _hoisted_12$9, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
+			}, null, 8, ["busy"])], 8, _hoisted_7$26)])) : unref(draftAction)[__props.draftId]?.phase === "undone" ? (openBlock(), createElementBlock("div", _hoisted_8$18, " ↩ " + toDisplayString(unref(draftAction)[__props.draftId].name) + " — undone ", 1)) : __props.resolved ? (openBlock(), createElementBlock("div", _hoisted_9$14, toDisplayString(__props.status === "kept" ? `✅ ${__props.title} — kept` : `🗑 ${__props.title} — discarded`), 1)) : (openBlock(), createElementBlock("div", _hoisted_10$14, [
+				createElementVNode("div", _hoisted_11$10, [createElementVNode("span", _hoisted_12$10, toDisplayString(__props.title), 1), __props.agentName ? (openBlock(), createBlock(OriginBadge_default, {
 					key: 0,
 					origin: {
 						label: `loads in every ${__props.agentName} session`,
 						official: false
 					}
 				}, null, 8, ["origin"])) : createCommentVNode("", true)]),
-				createElementVNode("div", _hoisted_13$9, toDisplayString(__props.desc), 1),
+				createElementVNode("div", _hoisted_13$10, toDisplayString(__props.desc), 1),
 				unref(draftAction)[__props.draftId]?.phase === "overlaps" ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [(openBlock(true), createElementBlock(Fragment, null, renderList(unref(draftAction)[__props.draftId].overlaps, (o) => {
 					return openBlock(), createElementBlock("div", {
 						key: o.name,
 						class: "import-warning"
 					}, " ⚠ " + toDisplayString(o.name) + " (" + toDisplayString(o.source === "pending-draft" ? "pending draft" : o.source) + ") — " + toDisplayString(o.reason), 1);
-				}), 128)), createElementVNode("div", _hoisted_14$9, [
+				}), 128)), createElementVNode("div", _hoisted_14$10, [
 					(openBlock(true), createElementBlock(Fragment, null, renderList(unref(draftAction)[__props.draftId].overlaps.filter((x) => x.source !== "pending-draft"), (o) => {
 						return openBlock(), createElementBlock("button", {
 							key: o.name,
@@ -3263,19 +3449,30 @@ var _hoisted_2$63 = {
 var _hoisted_3$59 = ["data-question-id"];
 var _hoisted_4$49 = {
 	key: 0,
-	class: "approval-inroom-note resolved"
+	class: "approval-result"
 };
 var _hoisted_5$40 = {
-	key: 2,
-	class: "approval-inroom-note"
+	key: 1,
+	class: "approval-details"
 };
-var _hoisted_6$32 = ["data-draft-id"];
-var _hoisted_7$25 = {
+var _hoisted_6$32 = { class: "approval-payload" };
+var _hoisted_7$25 = ["data-message-id"];
+var _hoisted_8$17 = {
+	key: 0,
+	class: "approval-notice-done"
+};
+var _hoisted_9$13 = ["disabled", "onClick"];
+var _hoisted_10$13 = {
+	key: 2,
+	class: "approval-error"
+};
+var _hoisted_11$9 = ["data-draft-id"];
+var _hoisted_12$9 = {
 	key: 0,
 	class: "msg-body"
 };
-var _hoisted_8$17 = ["title"];
-var _hoisted_9$13 = {
+var _hoisted_13$9 = ["title"];
+var _hoisted_14$9 = {
 	key: 0,
 	class: "served-model"
 };
@@ -3309,29 +3506,53 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 					key: 2,
 					class: "msg approval-msg",
 					"data-question-id": row.id || ""
-				}, [row.approvalState === "resolved" ? (openBlock(), createElementBlock("div", _hoisted_4$49, toDisplayString(row.note), 1)) : row.approvalState === "eligible" ? (openBlock(), createBlock(ApprovalCard_default, {
-					key: 1,
+				}, [row.approvalState === "eligible" ? (openBlock(), createBlock(ApprovalCard_default, {
+					key: 0,
 					approval: row.payload,
 					"on-respond": props.onApprovalRespond
-				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", _hoisted_5$40, toDisplayString(row.note), 1))], 8, _hoisted_3$59)) : row.kind === "draft" ? (openBlock(), createElementBlock("div", {
+				}, null, 8, ["approval", "on-respond"])) : (openBlock(), createElementBlock("div", {
+					key: 1,
+					class: normalizeClass(["approval-inroom-note", {
+						resolved: row.approvalState !== "awaiting",
+						failed: row.approvalResult?.failed
+					}])
+				}, [
+					createElementVNode("div", null, toDisplayString(row.note), 1),
+					row.approvalResult ? (openBlock(), createElementBlock("div", _hoisted_4$49, toDisplayString(row.approvalResult.line), 1)) : createCommentVNode("", true),
+					row.approvalResult?.details ? (openBlock(), createElementBlock("details", _hoisted_5$40, [_cache[0] || (_cache[0] = createElementVNode("summary", null, "Details", -1)), createElementVNode("pre", _hoisted_6$32, toDisplayString(row.approvalResult.details), 1)])) : createCommentVNode("", true)
+				], 2))], 8, _hoisted_3$59)) : row.kind === "approval-notice" && row.notice ? (openBlock(), createElementBlock("div", {
 					key: 3,
+					class: "msg approval-msg",
+					"data-message-id": row.id || ""
+				}, [createElementVNode("div", { class: normalizeClass(["approval-inroom-note approval-notice", row.notice.kind]) }, [
+					createElementVNode("span", null, toDisplayString(row.notice.text), 1),
+					row.notice.resentByName ? (openBlock(), createElementBlock("span", _hoisted_8$17, "Sent again by " + toDisplayString(row.notice.resentByName), 1)) : row.notice.kind === "expired" ? (openBlock(), createElementBlock("button", {
+						key: 1,
+						type: "button",
+						class: "btn btn-secondary",
+						disabled: unref(approvalBusy).has(`resend:${row.notice.questionId}`) || void 0,
+						onClick: ($event) => unref(resendApproval)(row.notice.questionId)
+					}, "Send again", 8, _hoisted_9$13)) : createCommentVNode("", true),
+					unref(approvalErrors)[`resend:${row.notice.questionId}`] ? (openBlock(), createElementBlock("span", _hoisted_10$13, toDisplayString(unref(approvalErrors)[`resend:${row.notice.questionId}`]), 1)) : createCommentVNode("", true)
+				], 2)], 8, _hoisted_7$25)) : row.kind === "draft" ? (openBlock(), createElementBlock("div", {
+					key: 4,
 					class: "msg skill-draft-msg",
 					"data-draft-id": row.id || ""
-				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_6$32)) : (openBlock(), createElementBlock("div", mergeProps({
-					key: 4,
+				}, [createVNode(SkillDraftCard_default, mergeProps({ ref_for: true }, row.payload), null, 16)], 8, _hoisted_11$9)) : (openBlock(), createElementBlock("div", mergeProps({
+					key: 5,
 					class: row.cls
 				}, { ref_for: true }, row.id ? { "data-message-id": row.id } : {}, { style: row.isA2a ? { "--a2a-accent": row.a2aAccent } : void 0 }), [
 					createElementVNode("div", { class: normalizeClass(row.isA2a ? "sender a2a-label" : "sender") }, [row.isA2a ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [createElementVNode("span", {
 						class: "a2a-agent",
 						style: normalizeStyle({ color: row.senderColor })
-					}, toDisplayString(row.sender), 5), row.a2aTo ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [_cache[0] || (_cache[0] = createElementVNode("span", { class: "a2a-arrow" }, "→", -1)), createElementVNode("span", {
+					}, toDisplayString(row.sender), 5), row.a2aTo ? (openBlock(), createElementBlock(Fragment, { key: 0 }, [_cache[1] || (_cache[1] = createElementVNode("span", { class: "a2a-arrow" }, "→", -1)), createElementVNode("span", {
 						class: "a2a-agent",
 						style: normalizeStyle({ color: row.toColor })
-					}, toDisplayString(row.a2aTo), 5)], 64)) : createCommentVNode("", true)], 64)) : row.isAgent ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [_cache[1] || (_cache[1] = createElementVNode("svg", {
+					}, toDisplayString(row.a2aTo), 5)], 64)) : createCommentVNode("", true)], 64)) : row.isAgent ? (openBlock(), createElementBlock(Fragment, { key: 1 }, [_cache[2] || (_cache[2] = createElementVNode("svg", {
 						class: "icon",
 						"aria-hidden": "true"
 					}, [createElementVNode("use", { href: "#i-bot" })], -1)), createTextVNode(toDisplayString(" " + row.sender), 1)], 64)) : (openBlock(), createElementBlock(Fragment, { key: 2 }, [createTextVNode(toDisplayString(row.isMine ? "You" : row.sender), 1)], 64))], 2),
-					row.body ? (openBlock(), createElementBlock("div", _hoisted_7$25, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
+					row.body ? (openBlock(), createElementBlock("div", _hoisted_12$9, [row.id ? (openBlock(), createBlock(MsgDeleteButton_default, {
 						key: 0,
 						"message-id": row.id
 					}, null, 8, ["message-id"])) : createCommentVNode("", true), createVNode(MessageBubble_default, {
@@ -3368,7 +3589,7 @@ var Transcript_default = /* @__PURE__ */ defineComponent({
 						key: 4,
 						class: "timestamp",
 						title: row.timeTitle || void 0
-					}, [createTextVNode(toDisplayString(row.timeStr), 1), unref(servedModelShown)(row, unref(state).settings) ? (openBlock(), createElementBlock("span", _hoisted_9$13, toDisplayString(" · " + unref(servedModelShown)(row, unref(state).settings)), 1)) : createCommentVNode("", true)], 8, _hoisted_8$17)) : createCommentVNode("", true),
+					}, [createTextVNode(toDisplayString(row.timeStr), 1), unref(servedModelShown)(row, unref(state).settings) ? (openBlock(), createElementBlock("span", _hoisted_14$9, toDisplayString(" · " + unref(servedModelShown)(row, unref(state).settings)), 1)) : createCommentVNode("", true)], 8, _hoisted_13$9)) : createCommentVNode("", true),
 					row.isMine && row.status ? (openBlock(), createElementBlock("div", {
 						key: 5,
 						class: normalizeClass(row.status === "✓✓" ? "status delivered" : "status")
@@ -3527,12 +3748,13 @@ function formatTime(ts) {
 * reads state gone by the next render (see transcript-state.ts).
 */
 function appendMessage(msg, statusText, prepend) {
-	if (msg?.id) {
+	if (msg?.id && !String(msg.message_type || "").startsWith("approval")) {
 		const existing = messages.value.find((r) => r.id === msg.id);
 		if (existing) return existing;
 	}
 	if (msg.type === "system") return appendSystem(msg.message);
 	if (msg.message_type === "approval" || msg.message_type === "approval_resolved") return pushRow(approvalRow(msg), prepend);
+	if (msg.message_type === "approval_notice") return pushRow(noticeRow(msg), prepend);
 	if (msg.message_type === "skill_draft") return pushRow(deps$16.skillDraftRow(msg), prepend);
 	if (msg.message_type === "context-divider") return pushRow({
 		key: nextKey(),
@@ -3656,31 +3878,28 @@ function pushRow(row, prepend) {
 function removeRow(row) {
 	messages.value = messages.value.filter((r) => r.key !== row.key);
 }
-/** In-room approval card. Actionable for eligible approvers; others see a
-*  read-only note, and a resolved card is a static note. */
+/** In-room approval card (approval-row.ts decides its state). Keyed by the
+*  approval, so the resolve re-broadcast replaces the card in place. */
 function approvalRow(msg) {
-	let data = {};
-	try {
-		data = JSON.parse(msg.content ?? "{}") || {};
-	} catch {
-		data = {};
-	}
-	const questionId = data.questionId || msg.id || "";
-	const resolved = msg.message_type === "approval_resolved" || !!data.resolvedBy;
-	const eligible = Array.isArray(data.approvers) && data.approvers.includes(state.myIdentity);
-	const who = data.resolvedBy ? " by " + (String(data.resolvedBy).split(":").pop() ?? "").split("@")[0] : "";
+	const v = roomApprovalView(msg, state.myIdentity);
 	return {
-		key: nextKey(),
+		key: `appr:${v.questionId}`,
 		kind: "approval",
-		id: questionId,
-		approvalState: resolved ? "resolved" : eligible ? "eligible" : "awaiting",
-		note: resolved ? `🔒 ${data.title || "Approval"} — resolved${who}` : `🔒 ${data.title || "Approval requested"} — awaiting an admin`,
-		payload: {
-			questionId,
-			title: data.title,
-			payload: data.question,
-			options: data.options
-		}
+		id: v.questionId,
+		approvalState: v.state,
+		note: v.note,
+		approvalResult: v.result,
+		payload: v.card
+	};
+}
+/** A reminder or expired notice for an approval card. */
+function noticeRow(msg) {
+	const notice = approvalNoticeView(msg);
+	return {
+		key: `appr-notice:${msg.id}`,
+		kind: "approval-notice",
+		id: msg.id,
+		notice
 	};
 }
 function appendSystem(text) {
@@ -3852,7 +4071,7 @@ function mountTranscript() {
 			decorateMentions(bubble);
 		},
 		clampA2a: (bubble, container) => applyA2aClamp(bubble, container),
-		onApprovalRespond: (questionId, value) => respondToApproval(questionId, value),
+		onApprovalRespond: (questionId, value, reason) => respondToApproval(questionId, value, null, reason),
 		onOpenLightbox: (url, filename) => deps$16.openLightbox(url, filename),
 		onStopAgent: (name) => deps$16.interruptAgent(name),
 		onToggleTurn: (name) => deps$16.toggleThinkingExpanded(name)
@@ -23751,7 +23970,7 @@ function connect() {
 					break;
 				}
 				const wasNearBottom = isNearBottom();
-				if (state.settings?.notifications && document.hidden && msg.sender !== state.myIdentity && msg.message_type !== "a2a" && msg.sender_type !== "a2a") try {
+				if (state.settings?.notifications && document.hidden && msg.sender !== state.myIdentity && msg.message_type !== "a2a" && msg.sender_type !== "a2a" && !String(msg.message_type || "").startsWith("approval")) try {
 					const mentioned = messageMentionsMe(msg.content);
 					new Notification(mentioned ? `${msg.sender} mentioned you` : `${msg.sender}`, {
 						body: msg.content.slice(0, 100),

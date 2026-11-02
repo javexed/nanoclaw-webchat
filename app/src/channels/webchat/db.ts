@@ -43,7 +43,15 @@ export interface WebchatMessage {
   sender: string;
   sender_type: string;
   content: string;
-  message_type: 'text' | 'file' | 'a2a' | 'approval' | 'approval_resolved' | 'context-divider' | 'skill_draft';
+  message_type:
+    | 'text'
+    | 'file'
+    | 'a2a'
+    | 'approval'
+    | 'approval_resolved'
+    | 'approval_notice'
+    | 'context-divider'
+    | 'skill_draft';
   file_meta?: FileMeta | null;
   created_at: number;
   /** Provenance for thread context sync: null=native, 'pulled' (from main),
@@ -55,14 +63,14 @@ export interface WebchatMessage {
   served_model?: string;
 }
 
-interface WebchatMessageRow {
+export interface WebchatMessageRow {
   id: string;
   room_id: string;
   thread_id: string;
   sender: string;
   sender_type: string;
   content: string;
-  message_type: 'text' | 'file' | 'a2a' | 'approval' | 'approval_resolved' | 'skill_draft';
+  message_type: 'text' | 'file' | 'a2a' | 'approval' | 'approval_resolved' | 'approval_notice' | 'skill_draft';
   file_meta: string | null;
   created_at: number;
   /** Stable user id of a human sender (null for agents, system rows, and rows stored before it existed). */
@@ -798,7 +806,7 @@ export async function getEffectiveRoomMode(roomId: string): Promise<CredentialMo
 
 // ── Messages ──
 
-function rowToMessage(row: WebchatMessageRow): WebchatMessage {
+export function rowToMessage(row: WebchatMessageRow): WebchatMessage {
   // sender_user_id is the delete-ownership key, not a display field: it stays server-side.
   const { sender_user_id: _senderUserId, limit_resets_at: limitResetsAt, served_model: servedModel, ...rest } = row;
   return {

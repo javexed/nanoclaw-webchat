@@ -14,8 +14,11 @@ const FALLBACK = [
   { label: 'Reject', value: 'reject' },
 ];
 
+// A reason needs room to type: the toast offers the quick answers, the card the rest.
 const options = () =>
-  Array.isArray(props.approval.options) && props.approval.options.length ? props.approval.options : FALLBACK;
+  (Array.isArray(props.approval.options) && props.approval.options.length ? props.approval.options : FALLBACK).filter(
+    (o: { value: string }) => o.value !== 'reject_with_reason',
+  );
 
 const btnClass = (v: string) => (v === 'approve' ? 'approve' : v === 'reject' ? 'reject' : '');
 </script>

@@ -1,16 +1,17 @@
 diff --git a/src/cli/dispatch.ts b/src/cli/dispatch.ts
-index b59f4808..aaf70deb 100644
+index b59f4808..b2c4ac1d 100644
 --- a/src/cli/dispatch.ts
 +++ b/src/cli/dispatch.ts
-@@ -27,6 +27,7 @@ import { localizeIsoTimestamps } from './format.js';
+@@ -27,6 +27,8 @@ import { localizeIsoTimestamps } from './format.js';
  import { getResource } from './crud.js';
  import { listVerbs, renderVerbHelp } from './help-render.js';
  import { commandGuard, listCommands, lookup } from './registry.js';
 +import type { PrecheckResult } from './registry.js';
++import { approvalPendingWords, approvedResultWords } from './registry.js';
  
  type DispatchOptions = {
    /** Verified approval row when a command is replayed after approval. */
-@@ -154,6 +155,19 @@ export async function dispatch(
+@@ -154,6 +156,19 @@ export async function dispatch(
        // fail closed rather than card a ghost.
        return err(req.id, 'forbidden', decision.reason);
      }
@@ -30,7 +31,7 @@ index b59f4808..aaf70deb 100644
      const session = await getSession(ctx.sessionId);
      if (!session) {
        return err(req.id, 'handler-error', 'Session not found.');
-@@ -174,6 +188,14 @@ export async function dispatch(
+@@ -174,6 +189,14 @@ export async function dispatch(
      // carding a command that can't be shown in full.
      const tooLong = cardQuestionTooLong(title, question);
      if (tooLong) return err(req.id, 'invalid-args', `${tooLong}. Shorten the arguments and try again.`);
@@ -45,11 +46,30 @@ index b59f4808..aaf70deb 100644
  
      await requestApproval({
        session,
-@@ -182,6 +204,7 @@ export async function dispatch(
+@@ -182,8 +205,12 @@ export async function dispatch(
        payload: { frame: { id: req.id, command: req.command, args: req.args }, callerContext: ctx },
        title,
        question,
 +      ...(precheck ? { title: cardTitle, question: cardQuestion } : {}),
      });
  
++    // An installed surface may say who can approve it, and where.
++    const pendingNote = await approvalPendingWords(ctx);
++    if (pendingNote) return err(req.id, 'approval-pending', pendingNote);
      return err(req.id, 'approval-pending', 'Approval request sent to admin. You will be notified of the result.');
+   }
+ 
+@@ -257,6 +284,13 @@ registerApprovalHandler('cli_command', async ({ payload, approval, notify }) =>
+   const callerContext = parseCallerContext(payload.callerContext) ?? { caller: 'host' };
+   const response = await dispatch(frame, callerContext, { grant: approval });
+ 
++  // An installed surface may word the outcome (a summary, secrets redacted).
++  const worded = approvedResultWords({ approvalId: approval.approval_id, frame, response });
++  if (worded !== undefined) {
++    await notify(worded);
++    return;
++  }
++
+   if (response.ok) {
+     const localized = localizeIsoTimestamps(response.data);
+     const data = typeof localized === 'string' ? localized : JSON.stringify(localized, null, 2);
