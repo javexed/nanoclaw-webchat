@@ -101,6 +101,23 @@ A published app gets its own address (e.g. `https://notes.<tailnet>.ts.net/`)
 on a publishing route an owner turned on for this host, and only the people
 its "who can open" rule allows get in; NanoClaw signs them in.
 
+**An app meant for people: deploy and publish in one step.** Prefer this over
+`up` followed by `expose` — the owner sees one card, not two:
+
+- `ncl workloads up --name myapp --file myapp/compose.yml --publish tailnet --reason "<what people use it for>"`
+  — the card shows what runs and where people open it. `--publish` is the
+  route (`tailnet` or `cloudflare`). Options as for `expose`: `--who`,
+  `--emails`, `--app`; `--service`/`--port` only when NanoClaw cannot tell
+  (it serves the one service that declares an `expose:` port, on that port —
+  so declare one, e.g. `expose: ["8080"]`).
+- When it is approved you are told one line, e.g. `myapp is running · open it
+  at https://myapp.<tailnet>.ts.net (only you)`: pass that link on as it is.
+- If it says the route is not on, tell the person: an owner turns it on in
+  Admin → Publishing. You can still deploy now without `--publish` and publish
+  later with `expose`.
+
+To publish a workload that already runs:
+
 - `ncl workloads expose --name myapp --service web --port 8080 --reason "<what people use it for>"`
   — asks an owner (approval card). Options: `--app <name>` (the first part of
   its address; default the workload's name), `--route tailnet|cloudflare`
@@ -135,8 +152,10 @@ publish; the address is HTTPS for people.
   keeps data. `start` runs the approved images and Dockerfiles.
 - `ncl workloads delete --name myapp` — removes data too (approval).
 
-A workload expires after 30 days and is stopped. A few days before, you get
-a `[System]` notice: tell the people in the room. An admin of this agent
+A workload expires after 30 days and is stopped. A published app that people
+opened in the last week is renewed automatically before then (you are not
+told). Otherwise, a few days before, you get a `[System]` notice: tell the
+people in the room. An admin of this agent
 extends it in **Agent → Apps** (Extend, 30 days from that day), or you ask
 with `ncl workloads extend --name myapp` (approval). After it stopped, extend
 it and `start` it again. `ncl workloads list` shows `expires`.

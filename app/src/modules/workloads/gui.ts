@@ -31,7 +31,7 @@ import { getUser } from '../permissions/db/users.js';
 import { diskLevel, diskUsed, gb, type DiskLevel } from './disk.js';
 import { syncGateway } from './gateway/index.js';
 import { enabledRoutes, isRouteKind, publishingRoute, type RouteKind } from './gateway/publishing.js';
-import { exposeApp, parseEmails, planExpose, routeView, unexposeApp, widensAccess } from './publish.js';
+import { declaredPort, exposeApp, parseEmails, planExpose, routeView, unexposeApp, widensAccess } from './publish.js';
 import { findRouteByApp, isWho, listRoutes, updateRoute, type AppRoute, type Who } from './routes.js';
 import { notifyWorkloadAgent } from './notify.js';
 import { confinedBuildsOn, workloadsSwitchedOn } from './settings.js';
@@ -91,11 +91,7 @@ export function exposable(w: Pick<Workload, 'stack' | 'addresses'>): Array<{ ser
   const found: Array<{ service: string; port: number }> = [];
   for (const [service, def] of Object.entries(w.stack.compose.services)) {
     if (!w.addresses[service]) continue;
-    const ex = Array.isArray(def.expose) ? def.expose : [];
-    const port = ex
-      .map((x) => /^(\d{1,5})(\/tcp)?$/.exec(String(x))?.[1])
-      .map(Number)
-      .find((n) => Number.isInteger(n) && n >= 1 && n <= 65535);
+    const port = declaredPort(def);
     if (port) found.push({ service, port });
   }
   return found.sort((a, b) => a.service.localeCompare(b.service));
@@ -160,7 +156,9 @@ export async function pendingFor(agentGroupId: string): Promise<Pending> {
     if ((caller.agentGroupId ?? a.agent_group_id) !== agentGroupId) continue;
     const name = typeof frame.args?.name === 'string' ? frame.args.name : '';
     if (name) out.workloads.add(name);
-    if (frame.command === 'workloads-expose') out.apps.add(String(frame.args?.app || name).toLowerCase());
+    // An expose, or a deploy that publishes (`up --publish`), waits on the app too.
+    if (frame.command === 'workloads-expose' || (frame.command === 'workloads-up' && frame.args?.publish))
+      out.apps.add(String(frame.args?.app || name).toLowerCase());
   }
   return out;
 }
@@ -189,6 +187,8 @@ export interface AppRow {
   running: boolean;
   /** When it is stopped (ms), unless extended; null: it does not expire. */
   expiresAt: number | null;
+  /** Published: renewed near its expiry while people open it (reconcile.ts). */
+  renewsWhileUsed: boolean;
 }
 
 export interface AppsView {
@@ -238,6 +238,7 @@ export async function appsOf(agentGroupId: string): Promise<AppsView> {
         deployed: true,
         running: w.state === 'running',
         expiresAt: w.expiresAt,
+        renewsWhileUsed: w.expiresAt !== null,
       });
     }
     if (!mine.length)
@@ -254,6 +255,7 @@ export async function appsOf(agentGroupId: string): Promise<AppsView> {
         deployed: true,
         running: w.state === 'running',
         expiresAt: w.expiresAt,
+        renewsWhileUsed: false,
       });
   }
   // A first deploy waiting for its card has no workload row yet.
@@ -272,6 +274,7 @@ export async function appsOf(agentGroupId: string): Promise<AppsView> {
         deployed: false,
         running: false,
         expiresAt: null,
+        renewsWhileUsed: false,
       });
   const used = diskUsed(agentGroupId);
   return {

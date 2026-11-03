@@ -18,6 +18,7 @@ import {
 import { DEFAULT_DAYS, extendWorkload } from './control.js';
 import { __resetDiskForTest } from './disk.js';
 import { claimNetwork, insertWorkload, listWorkloads, setQuota, updateWorkload } from './store.js';
+import { insertRoute, noteRouteOpened } from './routes.js';
 
 const stack: CheckedStack = {
   compose: { services: { web: { image: 'nginx:1.27' } } },
@@ -150,6 +151,74 @@ describe('reconciling workloads', () => {
     const n = log.find((l) => l.includes('passed its expiry'))!;
     expect(n).toContain('Agent → Apps');
     expect(n).toContain('ncl workloads extend --name old');
+  });
+});
+
+describe('renewing an app while people use it', () => {
+  const DAY = 86_400_000;
+  const t0 = Date.UTC(2026, 10, 28, 12);
+  const publish = async (workloadId: string, app: string) =>
+    insertRoute({
+      app,
+      workloadId,
+      agentGroupId: 'ag-1',
+      service: 'web',
+      port: 8080,
+      kind: 'tailnet',
+      who: 'only-me',
+      ownerUserId: null,
+      ticket: null,
+      createdBy: 'host',
+    });
+  const expiry = async (id: string) => (await listWorkloads()).find((x) => x.id === id)?.expiresAt;
+  const notices = () => log.filter((l) => l.includes('expires on'));
+
+  it('renews a published app opened in the last week, near its expiry, as an Extend would', async () => {
+    const w = await running('ag-1', 'notes', t0 + 2 * DAY);
+    const r = await publish(w.id, 'notes');
+    await noteRouteOpened(r.id, t0 - 6 * DAY);
+    await reconcileWorkloads(t0, deps);
+    expect(await expiry(w.id)).toBe(t0 + DEFAULT_DAYS * DAY);
+    // Renewed, so nothing to remind anyone of.
+    expect(notices()).toEqual([]);
+  });
+
+  it('leaves it alone while its expiry is still far off', async () => {
+    const w = await running('ag-1', 'notes', t0 + 10 * DAY);
+    const r = await publish(w.id, 'notes');
+    await noteRouteOpened(r.id, t0 - DAY);
+    await reconcileWorkloads(t0, deps);
+    expect(await expiry(w.id)).toBe(t0 + 10 * DAY);
+  });
+
+  it('never renews an app nobody opened lately, or a workload that is not published', async () => {
+    const unused = await running('ag-1', 'old', t0 + 2 * DAY);
+    const r = await publish(unused.id, 'old');
+    await noteRouteOpened(r.id, t0 - 8 * DAY);
+    const never = await running('ag-1', 'never', t0 + 2 * DAY);
+    await publish(never.id, 'never');
+    const hidden = await running('ag-1', 'hidden', t0 + 2 * DAY);
+    await reconcileWorkloads(t0, deps);
+    for (const w of [unused, never, hidden]) expect(await expiry(w.id)).toBe(t0 + 2 * DAY);
+    // They get the reminder instead.
+    expect(notices()).toHaveLength(3);
+  });
+
+  it('keeps a used app that just passed its expiry running', async () => {
+    const w = await running('ag-1', 'notes', t0 - 60_000);
+    const r = await publish(w.id, 'notes');
+    await noteRouteOpened(r.id, t0 - DAY);
+    await reconcileWorkloads(t0, deps);
+    expect(log.filter((l) => l.startsWith('stop'))).toEqual([]);
+    expect(await expiry(w.id)).toBe(t0 + DEFAULT_DAYS * DAY);
+  });
+
+  it('leaves a workload without an expiry without one', async () => {
+    const w = await running('ag-1', 'forever', null);
+    const r = await publish(w.id, 'forever');
+    await noteRouteOpened(r.id, t0);
+    await reconcileWorkloads(t0, deps);
+    expect(await expiry(w.id)).toBeNull();
   });
 });
 

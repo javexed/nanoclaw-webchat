@@ -5320,17 +5320,29 @@ var shortDay = (ms, locale) => new Date(ms).toLocaleDateString(locale, {
 	day: "numeric",
 	month: "short"
 });
-/** "Expires 1 Dec" (soon: within three days) or "Expired 1 Dec"; null when it does not expire. */
-function expiryText(expiresAt, now = Date.now(), locale) {
+/**
+* "Expires 1 Dec" (soon: within three days) or "Expired 1 Dec"; null when it
+* does not expire. A published app is renewed while people open it, so until
+* it is close (then it was not used: the date is the warning) it says
+* "Renews while used".
+*/
+function expiryText(expiresAt, now = Date.now(), locale, renewsWhileUsed = false) {
 	if (expiresAt === null) return null;
 	const day = shortDay(expiresAt, locale);
 	if (expiresAt <= now) return {
 		text: `Expired ${day}`,
 		level: "past"
 	};
-	return {
+	if (expiresAt - now <= 2592e5) return {
 		text: `Expires ${day}`,
-		level: expiresAt - now <= 2592e5 ? "soon" : "ok"
+		level: "soon"
+	};
+	return renewsWhileUsed ? {
+		text: "Renews while used",
+		level: "ok"
+	} : {
+		text: `Expires ${day}`,
+		level: "ok"
 	};
 }
 var appsView = shallowRef(null);
@@ -20227,7 +20239,7 @@ var AgentApps_default = /* @__PURE__ */ defineComponent({
 		});
 		const view = computed(() => appsView.value);
 		const builds = computed(() => view.value?.builds ?? null);
-		const expiry = (r) => r.deployed ? expiryText(r.expiresAt) : null;
+		const expiry = (r) => r.deployed ? expiryText(r.expiresAt, Date.now(), void 0, r.renewsWhileUsed === true) : null;
 		function dockerHubChanged(e) {
 			const el = e.target;
 			const on = el.checked;

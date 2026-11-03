@@ -26,6 +26,8 @@ export interface AppRow {
   running: boolean;
   /** When it stops unless extended (ms); null: it does not expire. */
   expiresAt: number | null;
+  /** Published: renewed near its expiry while people open it. Absent from an older server. */
+  renewsWhileUsed?: boolean;
 }
 
 export interface AppsView {
@@ -139,16 +141,23 @@ export const EXPIRY_SOON_MS = 3 * DAY_MS;
 export const shortDay = (ms: number, locale?: string): string =>
   new Date(ms).toLocaleDateString(locale, { day: 'numeric', month: 'short' });
 
-/** "Expires 1 Dec" (soon: within three days) or "Expired 1 Dec"; null when it does not expire. */
+/**
+ * "Expires 1 Dec" (soon: within three days) or "Expired 1 Dec"; null when it
+ * does not expire. A published app is renewed while people open it, so until
+ * it is close (then it was not used: the date is the warning) it says
+ * "Renews while used".
+ */
 export function expiryText(
   expiresAt: number | null,
   now = Date.now(),
   locale?: string,
+  renewsWhileUsed = false,
 ): { text: string; level: 'ok' | 'soon' | 'past' } | null {
   if (expiresAt === null) return null;
   const day = shortDay(expiresAt, locale);
   if (expiresAt <= now) return { text: `Expired ${day}`, level: 'past' };
-  return { text: `Expires ${day}`, level: expiresAt - now <= EXPIRY_SOON_MS ? 'soon' : 'ok' };
+  if (expiresAt - now <= EXPIRY_SOON_MS) return { text: `Expires ${day}`, level: 'soon' };
+  return renewsWhileUsed ? { text: 'Renews while used', level: 'ok' } : { text: `Expires ${day}`, level: 'ok' };
 }
 
 // Reactive state the island renders from (apps.ts fills it).

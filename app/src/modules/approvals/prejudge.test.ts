@@ -140,6 +140,10 @@ describe('never-list', () => {
       expect(heuristicFlags('cli_command', real(command)), command).not.toHaveLength(0);
     }
     expect(isNeverAutoApprovable('cli_command', real('groups-update', { 'cli-scope': 'global' }))).toBe(true);
+    // A deploy that also publishes is a deploy: never auto-approved either.
+    expect(isNeverAutoApprovable('cli_command', real('workloads-up', { publish: 'tailnet', who: 'signed-in' }))).toBe(
+      true,
+    );
     expect(isNeverAutoApprovable('cli_command', real('tasks-create', { prompt: 'daily digest' }))).toBe(false);
     expect(isNeverAutoApprovable('cli_command', real('destinations-add', { name: 'ops' }))).toBe(false);
   });

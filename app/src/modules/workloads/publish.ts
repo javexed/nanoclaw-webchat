@@ -8,6 +8,7 @@
  * "only me". Unexpose is immediate for the agent and for people. Nothing can
  * be exposed until an owner turns a route on.
  */
+import { quoteForCard } from '../../card-text.js';
 import { registerApprovalResolvedHandler } from '../approvals/primitive.js';
 import { normalizeEmail } from './gateway/access.js';
 import { HOSTNAME_RE, validTarget } from './gateway/caddy.js';
@@ -56,6 +57,8 @@ export interface ExposeInput {
   who?: string;
   /** For --who specific: comma-separated email addresses. */
   emails?: string;
+  /** The address an approval card showed: refused when the route would now give another. */
+  hostname?: string;
 }
 
 /** The most people one app can name (each is a rule in its Access policy). */
@@ -81,48 +84,58 @@ export function widensAccess(prev: { who: Who; emails: string[] }, next: { who: 
   return WHO.indexOf(next.who) > WHO.indexOf(prev.who);
 }
 
-export interface ExposePlan {
-  workload: Workload;
+/** Where to publish and who may open it: everything about a publish but the service it serves. */
+export interface AccessPlan {
   app: string;
   route: PublishingRoute;
   who: Who;
   /** For `specific`: who, by email. */
   emails: string[];
   hostname: string;
-  target: string;
   existing: AppRoute | null;
   /** True when this widens who can open it, or moves it to another route. */
   widens: boolean;
 }
 
-/** Everything that can be refused before an owner sees a card; re-run right before the change. */
-export async function planExpose(agentGroupId: string, i: ExposeInput): Promise<ExposePlan> {
+export interface ExposePlan extends AccessPlan {
+  workload: Workload;
+  target: string;
+}
+
+/** How Admin → Publishing names a route kind, for "an owner can turn on …". */
+const ROUTE_SWITCH: Record<string, string> = { tailnet: 'Tailnet', cloudflare: 'Cloudflare' };
+
+/** The publishing route to use: the one asked for, or the only one that is on. Refused while it is off. */
+export async function pickRoute(asked?: string): Promise<PublishingRoute> {
+  if (asked !== undefined && !isRouteKind(asked)) throw new Error('--route must be tailnet or cloudflare');
   const on = await enabledRoutes();
+  if (asked && !on.some((r) => r.kind === asked))
+    throw new Error(
+      `the ${asked} route is not on on this host: an owner can turn on ${ROUTE_SWITCH[asked]} in Admin → Publishing`,
+    );
   if (!on.length)
-    throw new Error('no publishing route is on on this host: an owner turns one on in Admin → Publishing');
+    throw new Error('no publishing route is on on this host: an owner can turn one on in Admin → Publishing');
   const g = gatewayState();
   if (!g.ok) throw new Error(`publishing is not available: ${g.reason}`);
-  let route: PublishingRoute | undefined;
-  if (i.route) {
-    if (!isRouteKind(i.route)) throw new Error('--route must be tailnet or cloudflare');
-    route = on.find((r) => r.kind === i.route);
-    if (!route) throw new Error(`the ${i.route} route is not on on this host`);
-  } else if (on.length === 1) {
-    route = on[0];
-  } else {
-    throw new Error(`--route is required: ${on.map((r) => r.kind).join(' or ')}`);
-  }
-  const w = await findWorkload(agentGroupId, i.name);
-  if (!w) throw new Error(`you have no workload named "${i.name}"`);
-  const addr = w.addresses[i.service];
-  if (!addr)
-    throw new Error(`no service "${i.service}" in ${w.name}${w.state === 'running' ? '' : ' (deploy it first)'}`);
-  if (!Number.isInteger(i.port) || i.port < 1 || i.port > 65535) throw new Error('--port must be 1–65535');
-  const target = `${addr}:${i.port}`;
-  if (!validTarget(target)) throw new Error(`${i.service} has no workload address`);
-  const app = checkAppName(i.app || w.name);
+  if (asked) return on.find((r) => r.kind === asked)!;
+  if (on.length === 1) return on[0];
+  throw new Error(`--route is required: ${on.map((r) => r.kind).join(' or ')}`);
+}
+
+/**
+ * The app name, rule and address on `route`, for a workload that may not
+ * exist yet (`workloadId` null: a first deploy that publishes). Shared by
+ * expose and a deploy that publishes, so both refuse the same things.
+ */
+export async function planAccess(
+  route: PublishingRoute,
+  workloadName: string,
+  workloadId: string | null,
+  i: Pick<ExposeInput, 'app' | 'who' | 'emails' | 'hostname'>,
+): Promise<AccessPlan> {
+  const app = checkAppName(i.app || workloadName);
   const existing = await findRouteByApp(app);
-  if (existing && existing.workloadId !== w.id)
+  if (existing && existing.workloadId !== workloadId)
     throw new Error(`the app name ${app} is taken: pick another with --app`);
   const whoRaw = i.who ?? existing?.who ?? 'only-me';
   if (!isWho(whoRaw)) throw new Error(`--who must be one of ${WHO.join(', ')}`);
@@ -137,12 +150,96 @@ export async function planExpose(agentGroupId: string, i: ExposeInput): Promise<
   const hostname = await route.hostnameFor(app);
   if (!hostname || !HOSTNAME_RE.test(hostname))
     throw new Error(`the ${route.kind} route cannot give ${app} an address yet`);
+  if (i.hostname !== undefined && i.hostname !== hostname)
+    throw new Error(`${app}'s address changed after the approval (now ${hostname}): ask again for a new card`);
   const widens =
     !existing ||
     existing.kind !== route.kind ||
     widensAccess({ who: existing.who, emails: existing.emails }, { who: whoRaw, emails });
-  return { workload: w, app, route, who: whoRaw, emails, hostname, target, existing, widens };
+  return { app, route, who: whoRaw, emails, hostname, existing, widens };
 }
+
+/** Everything that can be refused before an owner sees a card; re-run right before the change. */
+export async function planExpose(agentGroupId: string, i: ExposeInput): Promise<ExposePlan> {
+  const route = await pickRoute(i.route);
+  const w = await findWorkload(agentGroupId, i.name);
+  if (!w) throw new Error(`you have no workload named "${i.name}"`);
+  const addr = w.addresses[i.service];
+  if (!addr)
+    throw new Error(`no service "${i.service}" in ${w.name}${w.state === 'running' ? '' : ' (deploy it first)'}`);
+  if (!Number.isInteger(i.port) || i.port < 1 || i.port > 65535) throw new Error('--port must be 1–65535');
+  const target = `${addr}:${i.port}`;
+  if (!validTarget(target)) throw new Error(`${i.service} has no workload address`);
+  return { ...(await planAccess(route, w.name, w.id, i)), workload: w, target };
+}
+
+/** The first port a service declares under `expose:`, or null. */
+export function declaredPort(def: { expose?: unknown }): number | null {
+  const ex = Array.isArray(def.expose) ? def.expose : [];
+  const port = ex
+    .map((x) => /^(\d{1,5})(\/tcp)?$/.exec(String(x))?.[1])
+    .map(Number)
+    .find((n) => Number.isInteger(n) && n >= 1 && n <= 65535);
+  return port ?? null;
+}
+
+/**
+ * Which service and port a deploy that publishes serves, from the stack
+ * itself (it has no addresses yet): the one asked for, or the only service
+ * that declares an `expose:` port. Pure.
+ */
+export function publishTarget(
+  services: Record<string, { expose?: unknown }>,
+  service?: string,
+  port?: number,
+): { service: string; port: number } {
+  if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535))
+    throw new Error('--port must be 1–65535');
+  if (service) {
+    const def = services[service];
+    if (!def) throw new Error(`no service "${service}" in the stack`);
+    const p = port ?? declaredPort(def);
+    if (!p) throw new Error(`--port is required: ${service} declares no \`expose:\` port`);
+    return { service, port: p };
+  }
+  const found = Object.entries(services)
+    .map(([name, def]) => ({ service: name, port: declaredPort(def) }))
+    .filter((t): t is { service: string; port: number } => t.port !== null);
+  if (found.length === 1) return { service: found[0].service, port: port ?? found[0].port };
+  if (!found.length)
+    throw new Error('--service is required: no service declares an `expose:` port (or add one, e.g. expose: ["8080"])');
+  throw new Error(`--service is required: ${found.map((t) => t.service).join(' or ')}`);
+}
+
+/** "only you", "2 named people": who can open it, as a card says it. */
+export function whoText(p: { who: Who; emails: string[] }): string {
+  return p.who === 'specific'
+    ? `${p.emails.length} named ${p.emails.length === 1 ? 'person' : 'people'}`
+    : WHO_WORDS[p.who];
+}
+
+/** The lines a card shows for a publish: address, what it serves, who can open it (and who could before). */
+export function accessCardLines(p: AccessPlan, serves: string): string[] {
+  const was = p.existing
+    ? `${p.existing.who === 'specific' ? `${p.existing.emails.length} named` : WHO_WORDS[p.existing.who]}${p.existing.kind !== p.route.kind ? `, on ${p.existing.kind}` : ''}`
+    : '';
+  return [
+    `Address: https://${p.hostname}/`,
+    `Serves: ${serves}`,
+    `Who can open: ${whoText(p)}${p.existing ? ` (was: ${was})` : ''}`,
+    ...(p.who === 'specific' ? [`People: ${p.emails.map((e) => quoteForCard(e)).join(', ')}`] : []),
+  ];
+}
+
+/** What a card pins for a publish: the route, rule, name and address it showed, and the approver's ticket. */
+export const accessPin = (p: AccessPlan, ticket: string): Record<string, string> => ({
+  route: p.route.kind,
+  who: p.who,
+  app: p.app,
+  hostname: p.hostname,
+  ...(p.who === 'specific' ? { emails: p.emails.join(',') } : {}),
+  ticket,
+});
 
 export interface Exposer {
   /** The person exposing it, or null for an agent (its approver is filled in by ticket) or the host. */
@@ -271,9 +368,12 @@ export async function pruneRoutes(): Promise<number> {
   return n;
 }
 
+/** The commands whose card carries a publish ticket: expose, and a deploy that publishes. */
+const TICKET_COMMANDS = new Set(['workloads-expose', 'workloads-up']);
+
 /**
- * The person who approves an agent's expose card is who "only me" means for
- * it. An automatic approval (the pre-judge) names no person and is ignored;
+ * The person who approves an agent's expose card (or its deploy-and-publish
+ * card) is who "only me" means for it. An automatic approval (the pre-judge) names no person and is ignored;
  * workloads expose is never auto-approved anyway (approvals/prejudge.ts).
  */
 export function approverOf(event: {
@@ -285,7 +385,8 @@ export function approverOf(event: {
   if (!/^[a-z][a-z0-9-]*:./.test(event.userId) || event.userId.startsWith('prejudge:')) return null;
   try {
     const p = JSON.parse(event.approval.payload) as { frame?: { command?: unknown; args?: Record<string, unknown> } };
-    const ticket = p.frame?.command === 'workloads-expose' ? p.frame.args?.ticket : undefined;
+    const command = p.frame?.command;
+    const ticket = typeof command === 'string' && TICKET_COMMANDS.has(command) ? p.frame?.args?.ticket : undefined;
     return typeof ticket === 'string' && /^[0-9a-f-]{36}$/.test(ticket) ? { ticket, userId: event.userId } : null;
   } catch {
     return null;

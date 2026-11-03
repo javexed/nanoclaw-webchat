@@ -9,7 +9,9 @@
  *   - every two minutes: a running stack whose containers have gone is
  *     recorded as failed, expired stacks are stopped and their agent told,
  *     and an agent is reminded once, a few days before, that a stack expires
- *     (so it can tell its room: an admin extends it in Agent → Apps);
+ *     (so it can tell its room: an admin extends it in Agent → Apps); a
+ *     stack whose published app people opened in the last week is renewed
+ *     instead (opened.ts), the same as an Extend;
  *   - every ten minutes disk use is measured against each agent's quota
  *     (disk.ts);
  *   - once a night each stack's volumes are backed up (backup.ts), and the
@@ -19,10 +21,11 @@ import fs from 'fs';
 
 import { log } from '../../log.js';
 import { backupRoot, backupWorkload, listBackups, removeBackups, stampTime } from './backup.js';
-import { parsePs, serviceImages, stopWorkload } from './control.js';
+import { extendWorkload, parsePs, serviceImages, stopWorkload } from './control.js';
 import { diskLevel, gb, measureDisk, recordUsage, type DiskLevel } from './disk.js';
 import { compose, joinAgentContainers } from './docker.js';
 import { dayText, notifyWorkloadAgent } from './notify.js';
+import { lastOpened, USED_WITHIN_MS } from './opened.js';
 import { preflightDue, runPreflight, type PreflightResult } from './preflight.js';
 import { allNetworks, listWorkloads, quotaFor, updateWorkload, type Workload } from './store.js';
 
@@ -146,9 +149,10 @@ export async function reconcileWorkloads(now = Date.now(), deps: ReconcileDeps =
   }
   if (now - last < EVERY_MS) return;
   last = now;
-  for (const w of await listWorkloads()) {
+  for (let w of await listWorkloads()) {
     if (w.state !== 'running') continue;
     try {
+      w = await renewIfUsed(w, now);
       if (w.expiresAt !== null && w.expiresAt <= now) {
         await deps.stop(w.agentGroupId, w.name, 'expired');
         await deps.notify(
@@ -171,6 +175,18 @@ export async function reconcileWorkloads(now = Date.now(), deps: ReconcileDeps =
       log.warn('Workload reconcile failed', { workloadId: w.id, err: String(err).slice(0, 200) });
     }
   }
+}
+
+/**
+ * Near its expiry (when the reminder would go out), a workload whose
+ * published app was opened in the last week is kept for DEFAULT_DAYS more,
+ * as an Extend would. Unpublished or unused ones are left to the reminder.
+ */
+export async function renewIfUsed(w: Workload, now = Date.now()): Promise<Workload> {
+  if (w.expiresAt === null || w.expiresAt - now > EXPIRY_NOTICE_MS) return w;
+  const opened = await lastOpened(w.id);
+  if (opened === null || now - opened > USED_WITHIN_MS) return w;
+  return extendWorkload(w.agentGroupId, w.name, 'system:renew-while-used', now);
 }
 
 export function __resetWorkloadReconcileForTest(): void {
