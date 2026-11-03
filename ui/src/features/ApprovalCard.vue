@@ -6,6 +6,8 @@
  * request with no options, or an empty array, falls back to Approve/Reject.
  */
 import { approvalCardText, approvalRawPayload } from './approval-card-text.js';
+import { ref } from 'vue';
+
 import { approvalBusy, approvalErrors } from './approvals-state.js';
 
 /**
@@ -48,7 +50,26 @@ const triageNote = (): string => {
 const chipTitle = (authoritative: boolean) =>
   authoritative ? 'Always requires a human' : 'Proposed by the triage model — check it against the payload';
 
-const props = defineProps<{ approval: any; onRespond: (questionId: string, value: string) => void }>();
+const props = defineProps<{
+  approval: any;
+  onRespond: (questionId: string, value: string, reason?: string) => void;
+}>();
+
+/** "Reject with reason…" asks for the reason right on the card, then rejects with it. */
+const REJECT_WITH_REASON = 'reject_with_reason';
+const askingReason = ref(false);
+const reason = ref('');
+const pick = (value: string) => {
+  if (value === REJECT_WITH_REASON) {
+    askingReason.value = true;
+    return;
+  }
+  props.onRespond(props.approval.questionId, value);
+};
+const sendReason = () => {
+  const r = reason.value.trim();
+  if (r) props.onRespond(props.approval.questionId, REJECT_WITH_REASON, r);
+};
 
 const FALLBACK = [
   { label: 'Approve', value: 'approve' },
@@ -82,13 +103,30 @@ const btnClass = (v: string) => (v === 'approve' ? 'approve' : v === 'reject' ? 
       <summary>Details</summary>
       <pre class="approval-payload">{{ payloadText(rawPayload()) }}</pre>
     </details>
-    <div class="approval-actions">
+    <form v-if="askingReason" class="approval-actions approval-reason" @submit.prevent="sendReason">
+      <input
+        v-model="reason"
+        type="text"
+        maxlength="500"
+        placeholder="Reason"
+        aria-label="Reason"
+        autofocus
+        @keydown.esc="askingReason = false"
+      />
+      <button type="button" @click="askingReason = false">Cancel</button>
+      <button
+        type="submit"
+        class="reject"
+        :disabled="!reason.trim() || approvalBusy.has(approval.questionId) || undefined"
+      >Reject</button>
+    </form>
+    <div v-else class="approval-actions">
       <button
         v-for="(o, i) in options()"
         :key="i"
         :class="btnClass(o.value)"
         :disabled="approvalBusy.has(approval.questionId) || undefined"
-        @click="props.onRespond(approval.questionId, o.value)"
+        @click="pick(o.value)"
       >{{ o.label || o.value }}</button>
     </div>
     <div v-if="approvalErrors[approval.questionId]" class="approval-error">{{

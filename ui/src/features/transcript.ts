@@ -5,6 +5,7 @@
 // message counter).
 import { marked } from '/marked.min.js';
 import { respondToApproval } from './approvals.js';
+import { approvalNoticeView, roomApprovalView } from './approval-row.js';
 import DOMPurify from '/dompurify.min.js';
 import { createApp } from 'vue';
 import Transcript from './Transcript.vue';
@@ -118,13 +119,18 @@ export function appendMessage(msg?: any, statusText?: any, prepend?: boolean): M
   // (or a read-sync refetch) can deliver the same message twice; the second
   // arrival must not become a second row. Optimistic rows have no id yet and
   // are upgraded in place by the ws handler, so they are unaffected.
-  if (msg?.id) {
+  // Approval cards and notices are keyed by what they are about, so a server
+  // update (resolved, sent again) replaces the row in place instead.
+  if (msg?.id && !String(msg.message_type || '').startsWith('approval')) {
     const existing = messages.value.find((r) => r.id === msg.id);
     if (existing) return existing;
   }
   if (msg.type === 'system') return appendSystem(msg.message);
   if (msg.message_type === 'approval' || msg.message_type === 'approval_resolved') {
     return pushRow(approvalRow(msg), prepend);
+  }
+  if (msg.message_type === 'approval_notice') {
+    return pushRow(noticeRow(msg), prepend);
   }
   if (msg.message_type === 'skill_draft') {
     return pushRow(deps.skillDraftRow(msg), prepend);
@@ -293,29 +299,25 @@ export function removeRow(row: MsgRow): void {
   messages.value = messages.value.filter((r) => r.key !== row.key);
 }
 
-/** In-room approval card. Actionable for eligible approvers; others see a
- *  read-only note, and a resolved card is a static note. */
+/** In-room approval card (approval-row.ts decides its state). Keyed by the
+ *  approval, so the resolve re-broadcast replaces the card in place. */
 function approvalRow(msg: any): MsgRow {
-  let data: any = {};
-  try {
-    data = JSON.parse(msg.content ?? '{}') || {};
-  } catch {
-    data = {};
-  }
-  const questionId = data.questionId || msg.id || '';
-  const resolved = msg.message_type === 'approval_resolved' || !!data.resolvedBy;
-  const eligible = Array.isArray(data.approvers) && data.approvers.includes(state.myIdentity);
-  const who = data.resolvedBy ? ' by ' + (String(data.resolvedBy).split(':').pop() ?? '').split('@')[0] : '';
+  const v = roomApprovalView(msg, state.myIdentity);
   return {
-    key: nextKey(),
+    key: `appr:${v.questionId}`,
     kind: 'approval',
-    id: questionId,
-    approvalState: resolved ? 'resolved' : eligible ? 'eligible' : 'awaiting',
-    note: resolved
-      ? `🔒 ${data.title || 'Approval'} — resolved${who}`
-      : `🔒 ${data.title || 'Approval requested'} — awaiting an admin`,
-    payload: { questionId, title: data.title, payload: data.question, options: data.options },
+    id: v.questionId,
+    approvalState: v.state,
+    note: v.note,
+    approvalResult: v.result,
+    payload: v.card,
   };
+}
+
+/** A reminder or expired notice for an approval card. */
+function noticeRow(msg: any): MsgRow {
+  const notice = approvalNoticeView(msg);
+  return { key: `appr-notice:${msg.id}`, kind: 'approval-notice', id: msg.id, notice };
 }
 
 export function appendSystem(text?: any): MsgRow {
@@ -535,7 +537,8 @@ export function mountTranscript(): void {
         decorateMentions(bubble);
       },
       clampA2a: (bubble: HTMLElement, container: HTMLElement) => applyA2aClamp(bubble, container),
-      onApprovalRespond: (questionId: string, value: string) => respondToApproval(questionId, value),
+      onApprovalRespond: (questionId: string, value: string, reason?: string) =>
+        respondToApproval(questionId, value, null, reason),
       onOpenLightbox: (url: string, filename: string) => deps.openLightbox(url, filename),
       onStopAgent: (name: string) => deps.interruptAgent(name),
       onToggleTurn: (name: string) => deps.toggleThinkingExpanded(name),

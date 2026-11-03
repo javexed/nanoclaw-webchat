@@ -61,6 +61,21 @@ surface both in the requesting agent's room and in per-approver DM "inboxes"
 (synthetic `approvals:<handle>` messaging groups). Cards clear live on first
 response.
 
+In the room, the card is actionable for the people who may approve it (Approve,
+Reject, Reject with reason… typed on the card) and read-only for everyone else
+("waiting for <name>"). It resolves in place: who approved or rejected it, and
+for an approved command its one-line result with the redacted output under
+Details. About an hour before an unanswered card expires the room gets a
+reminder; on expiry a notice says so (not "rejected") and **Send again**
+re-issues the identical request through the guard, the command's precheck and
+the same approver rules (`inroom-approvals.ts`, `modules/approvals/resend.ts`).
+
+The requesting agent is told the same facts: while it waits, whether someone
+who can approve it is in its room or the card went to Admin → Approvals; once
+it ran, a summary per command, known failures as cause and fix, with signed
+URLs, long base64 and token-looking strings redacted
+(`modules/approvals/words.ts`, on the `registerApprovalWords` CLI seam).
+
 ## Feature catalog
 
 ### Chat

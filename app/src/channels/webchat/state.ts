@@ -240,7 +240,7 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string,
     isMessage &&
     !['a2a', 'approval', 'approval_resolved'].includes((msg as { message_type?: string }).message_type ?? '')
   ) {
-    const m = msg as { sender?: string; content?: string; id?: string };
+    const m = msg as { sender?: string; content?: string; id?: string; message_type?: string };
     const room = await getWebchatRoom(roomId);
     await sendPushForMessage({
       roomId,
@@ -248,10 +248,23 @@ export async function broadcast(roomId: string, msg: object, excludeId?: string,
       sender: m.sender || 'unknown',
       // Subscriptions are keyed by user id; `sender` is a display name.
       senderUserId: senderUserId ?? (excludeId ? clients.get(excludeId)?.userId : undefined),
-      content: redactSensitiveData(m.content || ''),
+      content: redactSensitiveData(pushText(m)),
       messageId: m.id,
     }).catch((err) => log.warn('sendPushForMessage failed', { err: err instanceof Error ? err.message : err }));
   }
+}
+
+/** A message's push text: an approval notice pushes its sentence, not its JSON. */
+export function pushText(m: { content?: string; message_type?: string }): string {
+  if (m.message_type === 'approval_notice') {
+    try {
+      const t = (JSON.parse(m.content || '{}') as { text?: unknown }).text;
+      if (typeof t === 'string') return t;
+    } catch {
+      /* fall through */
+    }
+  }
+  return m.content || '';
 }
 
 /**

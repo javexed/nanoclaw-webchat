@@ -256,6 +256,7 @@ import { getDb } from '../../db/connection.js';
 import { log } from '../../log.js';
 import { getAgentGroup, getAllAgentGroups } from '../../db/agent-groups.js';
 import { getPendingApproval, getSession } from '../../db/sessions.js';
+import type { PendingApproval } from '../../types.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
 import { restartAgentGroupContainersWhenIdle } from '../../container-restart-idle.js';
 import type { InboundMessage, OutboundFile } from '../adapter.js';
@@ -330,6 +331,10 @@ import {
   NEVER_AUTO_APPROVE_PATTERNS,
 } from '../../modules/approvals/prejudge.js';
 import { checkApprovalClick } from '../../modules/approvals/index.js';
+import { finalizeReject } from '../../modules/approvals/finalize.js';
+import { REJECT_WITH_REASON_VALUE } from '../../modules/approvals/primitive.js';
+import { resendExpiredApproval } from '../../modules/approvals/resend.js';
+import { canResendApproval, markNoticeResent } from './inroom-approvals.js';
 import { listRegisteredApprovalActions } from '../../seam/index.js';
 import { hostAllowed } from './request-guard.js';
 import { maybeHandleTts, ttsEndpoint } from './tts.js';
@@ -1089,6 +1094,7 @@ const RE_ROUTER_DEL = /^\/api\/router\/routers\/([^/]+)$/;
 const RE_MODEL_ID = /^\/api\/models\/([^/]+)$/;
 const RE_MODEL_TEST = /^\/api\/models\/([^/]+)\/test$/;
 const RE_APPROVE = /^\/api\/approvals\/([^/]+)\/respond$/;
+const RE_APPROVE_RESEND = /^\/api\/approvals\/([^/]+)\/resend$/;
 const RE_USER_ID = /^\/api\/users\/([^/]+)$/;
 
 // ── Overview ──────────────────────────────────────────────────────────
@@ -2553,11 +2559,12 @@ async function rApprovePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   if (!expectedPlatformId || !(await isWebchatApprovalIndexedFor(approvalId, expectedPlatformId))) {
     return json(res, 403, { error: 'Not the intended approver for this request' });
   }
-  const body = await readJsonObject<{ value?: unknown }>(req, res);
+  const body = await readJsonObject<{ value?: unknown; reason?: unknown }>(req, res);
   if (body === undefined) return;
   const value = typeof body.value === 'string' ? body.value : '';
+  if (value === REJECT_WITH_REASON_VALUE) return rejectWithReason(ctx, pending, body.reason, expectedPlatformId);
   if (value !== 'approve' && value !== 'reject') {
-    return json(res, 400, { error: 'value must be "approve" or "reject"' });
+    return json(res, 400, { error: 'value must be "approve", "reject" or "reject_with_reason"' });
   }
   // Ask the approvals module whether this click will be accepted BEFORE handing
   // off: onAction is fire-and-forget, so after a 200 the client could never
@@ -2577,6 +2584,61 @@ async function rApprovePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
   // handleApprovalsResponse owns the lifecycle (status update + delete).
   hooks.onAction(approvalId, value, userId);
   return json(res, 200, { ok: true });
+}
+
+/** Longest reason relayed to the agent from a "Reject with reason…". */
+const REJECT_REASON_MAX = 500;
+
+/**
+ * "Reject with reason…" from a card: the reason comes with the click (the
+ * card asks for it inline), so the reject finalizes at once with it, instead
+ * of the chat channels' capture of the approver's next message.
+ */
+async function rejectWithReason(
+  ctx: RouteCtx,
+  pending: PendingApproval,
+  rawReason: unknown,
+  platformId: string,
+): Promise<void> {
+  const { res, userId, hooks } = ctx;
+  const reason = (typeof rawReason === 'string' ? rawReason : '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, REJECT_REASON_MAX);
+  if (!reason) return json(res, 400, { error: 'reason is required' });
+  const check = await checkApprovalClick({
+    questionId: pending.approval_id,
+    value: 'reject',
+    userId,
+    channelType: 'webchat',
+    platformId,
+    threadId: null,
+  });
+  if (!check.ok) return json(res, 403, { error: check.reason ?? 'Not authorized to decide this request' });
+  const session = pending.session_id ? await getSession(pending.session_id) : undefined;
+  if (!session) {
+    // No agent to tell (a session-less request): a plain reject.
+    hooks.onAction(pending.approval_id, 'reject', userId);
+    return json(res, 200, { ok: true });
+  }
+  if (!(await finalizeReject(pending, session, userId, reason))) {
+    return json(res, 404, { error: 'Approval not found or already resolved' });
+  }
+  return json(res, 200, { ok: true });
+}
+
+/** "Send again" on an expired request: re-issue it as it was first asked (resend.ts). */
+async function rApproveResendPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const { res, userId } = ctx;
+  const approvalId = decodeURIComponent(m[1]);
+  if (!(await canResendApproval(userId, approvalId))) {
+    return json(res, 404, { error: 'Approval not found' });
+  }
+  const r = await resendExpiredApproval(approvalId, userId);
+  if (!r.ok) return json(res, 409, { error: r.reason });
+  const notice = await markNoticeResent(approvalId, userId);
+  if (notice) await broadcast(notice.room_id, { type: 'message', ...notice });
+  return json(res, 200, { ok: true, note: r.note });
 }
 
 // ── Push ──────────────────────────────────────────────────────────────
@@ -2967,6 +3029,7 @@ const API_ROUTES: ApiRoute[] = [
     audit: 'policy.prejudge',
   },
   { method: 'POST', path: RE_APPROVE, guards: ['csrf'], h: rApprovePost },
+  { method: 'POST', path: RE_APPROVE_RESEND, guards: ['csrf'], h: rApproveResendPost, audit: 'approval.resend' },
   { method: 'GET', path: '/api/users', h: rUsersGet },
   // Admin → Publishing (server/routes-workloads.ts): owner only.
   { method: 'GET', path: '/api/publishing', guards: ['owner'], h: rPublishingGet },

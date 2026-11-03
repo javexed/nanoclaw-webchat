@@ -345,7 +345,9 @@ export function connect() {
           document.hidden &&
           msg.sender !== state.myIdentity &&
           msg.message_type !== 'a2a' &&
-          msg.sender_type !== 'a2a'
+          msg.sender_type !== 'a2a' &&
+          // Approval cards and notices carry JSON; the server's push covers them.
+          !String(msg.message_type || '').startsWith('approval')
         ) {
           try {
             const mentioned = messageMentionsMe(msg.content);

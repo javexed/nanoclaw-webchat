@@ -173,3 +173,7 @@ container/agent-runner/src/providers/claude.served-model.test.ts
 container/agent-runner/src/providers/claude.tool-result-guard.test.ts
 src/modules/workloads
 container/skills/workloads
+src/modules/approvals/words.ts
+src/modules/approvals/words.test.ts
+src/modules/approvals/resend.ts
+src/modules/approvals/resend.test.ts
