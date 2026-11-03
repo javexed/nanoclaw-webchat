@@ -1439,3 +1439,16 @@ export const moduleWebchatWorkloadAppRouteEmails: Migration = {
     await db.exec(`ALTER TABLE workload_app_routes ADD COLUMN emails TEXT;`);
   },
 };
+
+/**
+ * The expiry a workload's agent was last reminded of (modules/workloads/
+ * reconcile.ts): the reminder a few days before goes out once per expiry,
+ * across restarts; extending sets a new expiry and so re-arms it.
+ */
+export const moduleWebchatWorkloadExpiryNotice: Migration = {
+  version: 233,
+  name: 'webchat-workload-expiry-notice',
+  async up(db) {
+    await db.exec(`ALTER TABLE workloads ADD COLUMN expiry_notice_for INTEGER;`);
+  },
+};

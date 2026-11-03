@@ -78,7 +78,7 @@ export async function runtimeAvailable(name = builderRuntime()): Promise<boolean
 export async function ensureBuilder(agentGroupId: string): Promise<Builder> {
   if (!(await runtimeAvailable()))
     throw new Error(
-      `confined builds need the ${builderRuntime()} runtime registered with Docker (deploy/install-gvisor.sh); ask an owner`,
+      `confined builds need the ${builderRuntime()} runtime (gVisor) on this host: an owner finds the command that adds it in Admin → Publishing`,
     );
   let ep: ReturnType<typeof filterEndpointForBuilds>;
   try {

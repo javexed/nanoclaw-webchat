@@ -166,6 +166,7 @@ describe('moduleWebchat migration', () => {
       'webchat-workload-app-route-emails',
       'webchat-workload-app-routes',
       'webchat-workload-builds',
+      'webchat-workload-expiry-notice',
       'webchat-workload-shape',
       'webchat-workloads',
     ]);

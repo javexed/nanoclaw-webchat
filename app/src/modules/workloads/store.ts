@@ -24,6 +24,8 @@ export interface Workload {
   approvedShape: string | null;
   lastError: string | null;
   expiresAt: number | null;
+  /** The expiry its agent was last reminded of (reconcile.ts); a new expiry re-arms the reminder. */
+  expiryNoticeFor: number | null;
   createdBy: string | null;
   createdAt: number;
   updatedAt: number;
@@ -45,6 +47,7 @@ interface Row {
   approved_shape?: string | null;
   last_error: string | null;
   expires_at: number | null;
+  expiry_notice_for?: number | null;
   created_by: string | null;
   created_at: number;
   updated_at: number;
@@ -66,6 +69,7 @@ const toWorkload = (r: Row): Workload => ({
   approvedShape: r.approved_shape ?? null,
   lastError: r.last_error,
   expiresAt: r.expires_at,
+  expiryNoticeFor: r.expiry_notice_for ?? null,
   createdBy: r.created_by,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -144,6 +148,7 @@ export async function updateWorkload(
       | 'addresses'
       | 'lastError'
       | 'expiresAt'
+      | 'expiryNoticeFor'
       | 'approvedMemoryMb'
       | 'approvedCpus'
       | 'approvedShape'
@@ -167,6 +172,7 @@ export async function updateWorkload(
   if (patch.addresses !== undefined) put('addresses_json', JSON.stringify(patch.addresses));
   if ('lastError' in patch) put('last_error', patch.lastError);
   if ('expiresAt' in patch) put('expires_at', patch.expiresAt);
+  if ('expiryNoticeFor' in patch) put('expiry_notice_for', patch.expiryNoticeFor);
   if (patch.approvedMemoryMb !== undefined) put('approved_memory_mb', patch.approvedMemoryMb);
   if (patch.approvedCpus !== undefined) put('approved_cpus', patch.approvedCpus);
   if (patch.approvedShape !== undefined) put('approved_shape', patch.approvedShape);

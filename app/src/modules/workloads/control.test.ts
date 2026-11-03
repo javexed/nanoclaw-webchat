@@ -219,3 +219,46 @@ describe('the rest of a workload’s life', () => {
     expect(control.parsePs('')).toEqual([]);
   });
 });
+
+describe('a person’s Redeploy and Extend (Agent → Apps)', () => {
+  it('redeploys what is on record, whatever the file on disk says, and refuses while workloads are off', async () => {
+    const c = await control.checkWorkload('ag-1', 'notes', 'compose.yml');
+    await control.upWorkload('ag-1', 'notes', 'compose.yml', 'agent:ag-1', control.approvalPin(c));
+    write('services:\n  web:\n    image: evil.example/web:1\n');
+    calls.compose = [];
+    const w = await control.redeployApproved('ag-1', 'notes');
+    expect(w.state).toBe('running');
+    expect(stackFile(w.id).services.web.image).toBe(`nginx:1.27@${D1}`);
+    expect(calls.compose.some((a) => a[0] === 'up')).toBe(true);
+    vi.stubEnv('NANOCLAW_WORKLOADS', '');
+    await expect(control.redeployApproved('ag-1', 'notes')).rejects.toThrow(/workloads are off/);
+  });
+
+  it('`ncl workloads extend`: an agent asks with a card that says the dates; the host extends at once', async () => {
+    const { lookup } = await import('../../cli/registry.js');
+    await import('./cli.js');
+    const c = await control.checkWorkload('ag-1', 'notes', 'compose.yml');
+    await control.upWorkload('ag-1', 'notes', 'compose.yml', 'agent:ag-1', control.approvalPin(c));
+    const ext = lookup('workloads-extend')!;
+    expect(ext.access).toBe('approval');
+    const agent = { caller: 'agent' as const, sessionId: 's1', agentGroupId: 'ag-1', messagingGroupId: 'mg1' };
+    // Fresh from up: already 30 days out, so there is nothing to ask for.
+    await expect(ext.precheck!(ext.parseArgs({ name: 'notes' }), agent)).rejects.toThrow(/already runs until/);
+    const w = (await findWorkload('ag-1', 'notes'))!;
+    const { updateWorkload } = await import('./store.js');
+    await updateWorkload(w.id, { expiresAt: Date.now() + 2 * 86_400_000 });
+    const card = (await ext.precheck!(ext.parseArgs({ name: 'notes', group: 'ag-other' }), agent)) as {
+      title: string;
+      summary: string;
+      detail: string;
+    };
+    expect(card.title).toBe('Extend workload notes');
+    expect(card.summary).toBe('{agent} wants to keep the workload "notes" running for 30 more days.');
+    expect(card.detail).toMatch(/^Expires: \d{1,2} \w{3} → \d{1,2} \w{3}\. Nothing else changes\.$/);
+    await expect(ext.precheck!(ext.parseArgs({ name: 'ghost' }), agent)).rejects.toThrow(/no workload named/);
+    const out = (await ext.handler(ext.parseArgs({ name: 'notes', group: 'ag-1' }), { caller: 'host' } as never)) as {
+      expires: string;
+    };
+    expect(new Date(out.expires).getTime()).toBeGreaterThan(Date.now() + 29 * 86_400_000);
+  });
+});

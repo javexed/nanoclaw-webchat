@@ -9,7 +9,8 @@ Workloads are **off** until all of the following hold. NanoClaw checks them at
 startup and every half hour (the preflight) and refuses every verb that starts
 something, with the reason, until they do.
 
-1. `NANOCLAW_WORKLOADS=1` in `.env`.
+1. `NANOCLAW_WORKLOADS=1` in `.env` (the Workloads switch in Admin → Publishing
+   writes it, see 7).
 2. The workload slice exists with a memory ceiling.
 3. The host rules are in place (checked by trying, see below).
 4. `docker compose` and `docker buildx` are installed.
@@ -55,7 +56,8 @@ workload is stopped** until the rules are back.
 ## 3. Confined builds (optional)
 
 Without them, `build:` is refused and only published images run. With
-`NANOCLAW_WORKLOAD_CONFINED_BUILDS=1`, each agent builds in its own rootless
+`NANOCLAW_WORKLOAD_CONFINED_BUILDS=1` (the Confined builds switch in Admin →
+Publishing), each agent builds in its own rootless
 BuildKit container inside gVisor, on the egress lockdown network behind the
 agent's egress filter:
 
@@ -70,7 +72,9 @@ A build:
 - reaches the agent's own allowlist plus the registries an owner opts the
   agent into — there is no install-wide registry list, since a registry a
   build can pull from is one it can push to:
-  `ncl workloads build-registries --group <id> --hosts '["registry-1.docker.io","auth.docker.io","production.cloudflare.docker.com"]'`;
+  `ncl workloads build-registries --group <id> --hosts '["registry-1.docker.io","auth.docker.io","production.cloudflare.docker.com"]'`,
+  or, for Docker Hub, **Allow Docker Hub for builds** in the agent's Apps
+  (an approval card, see 7);
 - runs with an empty Docker config (no registry logins reach it) and never
   through the credential gateway;
 - hands back an image file, which a helper container repacks to hold one
@@ -379,13 +383,29 @@ The route is on only when all of the above holds; its status reads
 
 ### Admin → Publishing (owner)
 
-One block per route: a switch, its settings while it is on, **Connect**, and
+First, **Workloads**: a switch (`NANOCLAW_WORKLOADS`) and the preflight's
+result in a few words: `Ready`, `Checking…`, `Host rules missing`,
+`Slice missing`, `Docker Compose missing`, … When something is missing on the
+host, the line under it is the one command that fixes it, with this install's
+path filled in, and a copy button (the page cannot run it: it needs root). The
+full reason is in the status line's tooltip. Switching workloads on checks the
+host at once, and a failed check is run again when the page is opened a minute
+or more later, so the line turns `Ready` soon after the command was run.
+Switching them off asks first: published apps stop opening, and agents cannot
+start apps (running stacks are left alone).
+
+While workloads are on, **Confined builds** (`NANOCLAW_WORKLOAD_CONFINED_BUILDS`):
+a switch and `Ready`, or `gVisor missing` with `deploy/install-gvisor.sh` as
+the command.
+
+Then one block per route: a switch, its settings while it is on, **Connect**, and
 a status line that reads `Connected`, `Not connected`, or the one thing missing
 in a few words (the same check as `tailnetStatus()` / `cloudflareStatus()`,
-with any warnings under it). Above them, one line says why workloads cannot run on this host when
-they cannot (switched off, the preflight's reason, or the gateway's).
+with any warnings under it). Above them, one line says when the app gateway
+is not running (section 4).
 
-- **The switches and fields are the `.env` keys** of sections 5 and 6:
+- **The switches and fields are the `.env` keys** of sections 5 and 6 (and
+  the Workloads and Confined builds switches are those of sections 1–3):
   turning a route on writes `NANOCLAW_WORKLOAD_TAILNET=1` (or `…_CLOUDFLARE=1`)
   to `.env` and to the running process, the way Admin → Sign-in writes its
   keys, so the page, a hand edit and a restart all see one value. There is no
@@ -403,7 +423,7 @@ they cannot (switched off, the preflight's reason, or the gateway's).
   injected on). NanoClaw never stores it, the page clears it after sending,
   and no answer or error carries it back.
 
-Owner only: the endpoints (`GET /api/publishing`, `PUT /api/publishing/{tailnet,cloudflare}`,
+Owner only: the endpoints (`GET /api/publishing`, `PUT /api/publishing/{workloads,tailnet,cloudflare}`,
 `POST /api/publishing/{tailnet,cloudflare}/connect`) refuse everyone else, and
 writes carry the CSRF header. Every change is in the audit log.
 
@@ -418,9 +438,19 @@ One row per app — or per workload that is not published yet: the name, its
 state (Running, Stopped, or Needs approval while a card for it waits, the
 agent's or a person's), the route (Off, or a route that is on), who can open it
 (Only me, Agent members, Anyone signed in; on Cloudflare also Specific
-people…), Open ↗ while it is live, and a ⋯ menu: Start or Stop, Logs, Restore
-backup…, Delete…. The header shows the agent's disk use against its quota.
-There is no Compose or build editing here: that is the agent's job.
+people…), Open ↗ while it is live, its expiry (`Expires 1 Dec`; a warning
+three days before, `Expired …` once stopped), and a ⋯ menu: Start or Stop,
+Redeploy, Extend, Logs, Restore backup…, Delete…. The header shows the agent's
+disk use against its quota. There is no Compose or build editing here: that is
+the agent's job. While workloads are off on the host, a line says so and
+where an owner turns them on.
+
+Above the list, while confined builds are on: **Allow Docker Hub for builds**,
+a switch over the agent's build registries (`registry-1.docker.io`,
+`auth.docker.io`, `production.cloudflare.docker.com`,
+`production.cloudfront.docker.com`; the same list `ncl workloads
+build-registries` sets). While builds are off, a line says so instead. Its
+element id, `agent-apps-docker-hub`, is stable for a link to it.
 
 **A person can always narrow; widening is a card.** A change is compared with
 the app as it is now:
@@ -431,6 +461,8 @@ the app as it is now:
 | A narrower "who can open", fewer named people | Applied at once |
 | Off to a route, one route to the other | An approval card |
 | A wider "who can open", anyone named who was not | An approval card |
+| Allow Docker Hub for builds: on | An approval card (a registry a build pulls from is one it can send to) |
+| Allow Docker Hub for builds: off | Applied at once (it clears the agent's build registries) |
 
 The card goes to the owners and global admins, **whoever asks, owners
 included**: the card is the confirmation and the record, the same for
@@ -453,18 +485,32 @@ in Admin → Publishing are a few words (`Connected`, `Not connected`,
 `Host rules missing`, …); the full reason, with the setting or command that
 fixes it, is in the line's tooltip and the log.
 
-Start, Stop, Restore and Delete are a person's own actions on the agent's
-workloads and apply directly (Restore and Delete after a confirm): an agent
-asks for a restore or delete with a card, a person who administers it does not
-need one.
+Start, Stop, Redeploy, Extend, Restore and Delete are a person's own actions
+on the agent's workloads and apply directly (Restore and Delete after a
+confirm): an agent asks for a restore, delete or extend with a card, a person
+who administers it does not need one.
+
+- **Redeploy** runs the stack on record again: the approved images by digest,
+  and builds rebuilt from the agent's current folder, held to the approved
+  Dockerfiles and args like any start (it counts toward the 20 builds an hour).
+  A changed Compose file still needs the agent's `ncl workloads up`.
+- **Extend** keeps the workload for 30 days from that day. It never shortens
+  an expiry and never stacks past 30 days, so it keeps what was approved
+  rather than approving more. An agent asks with `ncl workloads extend --name
+  <name>` (a card that shows the old and new date).
+- **Expiry.** Three days before a running workload expires, its agent gets a
+  `[System]` line in its most recent conversation, once per expiry (kept in the
+  database across restarts; extending re-arms it), asking it to tell the room
+  that an admin can extend it here. At the expiry it is stopped and the agent
+  told again.
 
 ## Settings (`.env`)
 
 | Key | Default | |
 |---|---|---|
-| `NANOCLAW_WORKLOADS` | off | `1` turns workloads on (subject to the preflight). |
+| `NANOCLAW_WORKLOADS` | off | `1` turns workloads on (subject to the preflight); Admin → Publishing's Workloads switch. |
 | `NANOCLAW_WORKLOAD_SLICE` | `nanoclaw-wl-<install>.slice` | The slice all workload containers run under. |
-| `NANOCLAW_WORKLOAD_CONFINED_BUILDS` | off | `1` allows `build:` in confined builders. |
+| `NANOCLAW_WORKLOAD_CONFINED_BUILDS` | off | `1` allows `build:` in confined builders; Admin → Publishing's Confined builds switch. |
 | `NANOCLAW_WORKLOAD_BUILDER_RUNTIME` | `runsc` | The Docker runtime confined builders run in. |
 | `NANOCLAW_WORKLOAD_HELPER_IMAGE` | pinned Alpine | A mirror for the helper image; must name a digest. |
 | `NANOCLAW_WORKLOAD_BUILDKIT_IMAGE` | pinned rootless BuildKit | A mirror for BuildKit; must name a digest. |
@@ -495,7 +541,7 @@ need one.
   `NET_BIND_SERVICE`, `KILL`), `no-new-privileges`, pids, memory and CPU
   limits, the slice, rotated logs, a fixed address on the agent's own
   internal `/24`.
-- **Approval.** `up`, `delete` and `restore` need an owner's card. The card
+- **Approval.** `up`, `delete`, `restore` and `extend` need an owner's card. The card
   says in words what will run — each image with the digest it resolved to,
   each build with its Dockerfile and build-arg hashes, added capabilities and
   the size — under the agent's reason (one line, quoted) and the full command
