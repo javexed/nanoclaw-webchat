@@ -72,7 +72,7 @@ A build:
 - reaches the agent's own allowlist plus the registries an owner opts the
   agent into — there is no install-wide registry list, since a registry a
   build can pull from is one it can push to:
-  `ncl workloads build-registries --group <id> --hosts '["registry-1.docker.io","auth.docker.io","production.cloudflare.docker.com"]'`,
+  `ncl workloads build-registries --group <id> --hosts '["registry-1.docker.io","auth.docker.io","production.cloudflare.docker.com","production.cloudfront.docker.com"]'`,
   or, for Docker Hub, **Allow Docker Hub for builds** in the agent's Apps
   (an approval card, see 7);
 - runs with an empty Docker config (no registry logins reach it) and never

@@ -629,7 +629,7 @@ registerResource({
           name: 'hosts',
           type: 'json',
           description:
-            'Host patterns as a JSON array, e.g. ["registry-1.docker.io","auth.docker.io","production.cloudflare.docker.com"].',
+            'Host patterns as a JSON array, e.g. ["registry-1.docker.io","auth.docker.io","production.cloudflare.docker.com","production.cloudfront.docker.com"].',
           required: true,
         },
       ],
