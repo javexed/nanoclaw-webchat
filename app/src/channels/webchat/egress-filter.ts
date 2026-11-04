@@ -66,7 +66,7 @@ export interface EgressFilterDeps {
   /** This agent's own model on another machine, as host:port; default: none. */
   ownModels?: (agentGroupId: string) => Promise<string[]>;
   /** Open a direct tunnel (directTunnel in egress-policy.ts); default: a TCP connection from here. */
-  direct?: (host: string, port: number) => Promise<net.Socket>;
+  direct?: (host: string, port: number, pinned?: string) => Promise<net.Socket>;
   /** The install allowlist alone, which direct tunnels need (global admins); default: none, so no direct tunnels. */
   installAllowlist?: () => Promise<string[]>;
   /** This agent's own private service addresses as CIDRs (its workload stacks), dialled directly; default: none. */
@@ -164,9 +164,10 @@ const DIRECT_CONNECT_TIMEOUT_MS = 10_000;
  * point there), and connect to that same address, so a second lookup cannot
  * swap it.
  */
-async function connectDirect(host: string, port: number): Promise<net.Socket> {
+async function connectDirect(host: string, port: number, pinned?: string): Promise<net.Socket> {
   const bare = host.replace(/^\[|\]$/g, '');
-  const { address } = await dns.lookup(bare);
+  // Already resolved (ollamaPin): that answer is the one checked, so it is the one dialled.
+  const address = pinned ?? (await dns.lookup(bare)).address;
   if (!directAddressAllowed(address, net.isIP(bare) !== 0))
     throw new Error(
       `${host} resolves to ${address}, which is not allowed directly (a private address: list the address itself)`,
@@ -345,14 +346,28 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
       'blocked by NanoClaw network policy: this container is not known to NanoClaw',
     );
   }
-  if (await isOllamaTarget(req.host, req.port)) {
+  // On an Ollama port the name is resolved once, here, and every connection
+  // below goes to that address: a second lookup (the gateway's, or a direct
+  // dial's) could answer with the Ollama server this one did not.
+  const ollama = await ollamaPin(req.host, req.port);
+  if ('refused' in ollama) {
     log.warn('Egress filter: Ollama refused through the proxy (model port only)', {
       agentGroupId: caller.agentGroupId,
       host: req.host,
       port: req.port,
+      reason: ollama.refused,
     });
-    return answer(client, '403 Forbidden', 'Ollama is reachable only through its model port');
+    return answer(
+      client,
+      '403 Forbidden',
+      ollama.refused === 'unresolved'
+        ? `${req.host} could not be resolved`
+        : 'Ollama is reachable only through its model port',
+    );
   }
+  const pinned = ollama.pin ?? undefined;
+  /** Where a connection goes: the pinned address when there is one, else the name. */
+  const dialHost = pinned ?? req.host;
   const building = caller.sessionId === BUILD_SESSION;
   // The agent's own workload services: on its own network, so dialled directly
   // whatever its policy (they are its own), never through the gateway.
@@ -387,7 +402,7 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
   if (building) {
     let upstream: net.Socket;
     try {
-      upstream = await (deps.direct ?? connectDirect)(req.host, req.port);
+      upstream = await (deps.direct ?? connectDirect)(req.host, req.port, pinned);
     } catch (err) {
       return answer(
         client,
@@ -401,7 +416,7 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
   const install = deps.installAllowlist ? await deps.installAllowlist() : [];
   if (req.kind === 'connect' && directTunnel(mode, req.host, req.port, install)) {
     try {
-      upstream = await (deps.direct ?? connectDirect)(req.host, req.port);
+      upstream = await (deps.direct ?? connectDirect)(req.host, req.port, pinned);
     } catch (err) {
       return answer(
         client,
@@ -426,7 +441,8 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
     const auth = Buffer.from(`${req.username}:${req.password}`).toString('base64');
     upstream.on('error', () => client.destroy());
     client.on('error', () => upstream.destroy());
-    upstream.write(`${req.gatewayHead!}Proxy-Authorization: Basic ${auth}\r\n\r\n`);
+    const gatewayHead = pinned ? pinGatewayHead(req.gatewayHead!, req.host, pinned) : req.gatewayHead!;
+    upstream.write(`${gatewayHead}Proxy-Authorization: Basic ${auth}\r\n\r\n`);
     upstream.pipe(client);
     if (req.bodyLength === null || req.bodyLength === undefined) {
       if (head.rest.length) upstream.write(head.rest);
@@ -458,7 +474,7 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
       const gw = deps.gateway();
       upstream = await connectThroughGateway(
         { host: gw.host, port: gw.port, username: req.username, password: req.password },
-        req.host,
+        dialHost,
         req.port,
       );
     } catch (err) {
@@ -572,36 +588,79 @@ const isLocal = (host: string, own: Set<string>): boolean => {
   return LOCAL_NAMES.has(h) || h === '::1' || h.startsWith('127.') || own.has(h);
 };
 
+type Resolver = (host: string) => Promise<string[]>;
+const systemResolver: Resolver = async (host) => (await dns.lookup(host, { all: true })).map((a) => a.address);
+let resolveAll: Resolver = systemResolver;
+
+/** Tests: answer lookups from `fn` (null: the system resolver again). */
+export function __setResolverForTest(fn: Resolver | null): void {
+  resolveAll = fn ?? systemResolver;
+}
+
 async function addressesOf(host: string): Promise<string[]> {
   if (net.isIP(host)) return [host];
   try {
-    return (await dns.lookup(host, { all: true })).map((a) => a.address);
+    return await resolveAll(host);
   } catch {
     return [];
   }
 }
 
-/** Whether a proxy request names an Ollama server (by name, address, or as this host for a local one). */
-export async function isOllamaTarget(
+/**
+ * Whether a proxy request may go on, for Ollama's sake: refused when it names
+ * an Ollama server (by name, by address, or as this host for a local one), or
+ * when its port is an Ollama server's and its name does not resolve. Else the
+ * address to dial: on an Ollama port a name is resolved here once and the
+ * connection pinned to that answer (null: nothing to pin — another port, or a
+ * literal address).
+ */
+export async function ollamaPin(
   host: string,
   port: number,
   targets: Array<{ host: string; port: number }> = [...ollamaTargets.values()].flat(),
   own: Set<string> = hostOwnAddresses(),
-): Promise<boolean> {
+): Promise<{ pin: string | null } | { refused: 'ollama' | 'unresolved' }> {
   const same = targets.filter((t) => t.port === port);
-  if (!same.length) return false;
-  const h = host.toLowerCase().replace(/\.$/, '');
+  if (!same.length) return { pin: null };
+  const h = host
+    .toLowerCase()
+    .replace(/\.$/, '')
+    .replace(/^\[|\]$/g, '');
   for (const t of same) {
-    if (t.host.toLowerCase() === h) return true;
-    if (isLocal(t.host, own) && isLocal(h, own)) return true;
+    if (t.host.toLowerCase() === h) return { refused: 'ollama' };
+    if (isLocal(t.host, own) && isLocal(h, own)) return { refused: 'ollama' };
   }
-  const mine = await addressesOf(h);
-  if (same.some((t) => isLocal(t.host, own)) && mine.some((a) => isLocal(a, own))) return true;
+  const literal = net.isIP(h) !== 0;
+  const mine = literal ? [h] : await addressesOf(h);
+  if (!mine.length) return { refused: 'unresolved' };
+  if (same.some((t) => isLocal(t.host, own)) && mine.some((a) => isLocal(a, own))) return { refused: 'ollama' };
   for (const t of same) {
     const theirs = await addressesOf(t.host);
-    if (mine.some((a) => theirs.includes(a))) return true;
+    if (mine.some((a) => theirs.includes(a))) return { refused: 'ollama' };
   }
-  return false;
+  return { pin: literal ? null : mine[0] };
+}
+
+/** Whether a proxy request names an Ollama server (see ollamaPin). */
+export async function isOllamaTarget(
+  host: string,
+  port: number,
+  targets?: Array<{ host: string; port: number }>,
+  own?: Set<string>,
+): Promise<boolean> {
+  const r = await ollamaPin(host, port, targets, own);
+  return 'refused' in r && r.refused === 'ollama';
+}
+
+/**
+ * The gateway's request head sent to the pinned address: the request line's
+ * authority becomes the address, the Host header keeps the name.
+ */
+function pinGatewayHead(head: string, host: string, pinned: string): string {
+  const addr = net.isIPv6(pinned) ? `[${pinned}]` : pinned;
+  const end = head.indexOf('\r\n');
+  const line = head.slice(0, end).replace(`http://${host}`, `http://${addr}`);
+  return line + head.slice(end);
 }
 
 /** Model listeners by bridge (port → target), so one whose model was removed or moved is closed at the next spawn. */

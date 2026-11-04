@@ -8,9 +8,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   __setOllamaTargetsForTest,
+  __setResolverForTest,
   BUILD_SESSION,
   inOwnNetwork,
   isOllamaTarget,
+  ollamaPin,
   parseProxyHead,
   serveModelPort,
   serveProxyClient,
@@ -64,6 +66,7 @@ afterEach(() => {
   gateway.close();
   __resetRunnerEgressForTest();
   __setOllamaTargetsForTest([]);
+  __setResolverForTest(null);
 });
 
 const cred = `Proxy-Authorization: Basic ${Buffer.from('x:aoc_tok').toString('base64')}`;
@@ -665,5 +668,74 @@ describe('Ollama through the general proxy', () => {
     );
     expect(viaHttp).toMatch(/^HTTP\/1.1 403 Forbidden/);
     expect(seen).toEqual([]);
+  });
+  describe('a name that resolves differently each time (DNS rebinding)', () => {
+    // First answer an ordinary address, then the Ollama server's: the check
+    // and the connection must use the same answer.
+    const rebinding = (answers: string[]) => {
+      const calls: string[] = [];
+      __setResolverForTest(async (host) => {
+        calls.push(host);
+        return [answers[Math.min(calls.length - 1, answers.length - 1)]];
+      });
+      return calls;
+    };
+
+    beforeEach(() => {
+      __setOllamaTargetsForTest(remote);
+      deps.mode = async () => 'host-only';
+      deps.allowlist = async () => ['rebind.example:11434'];
+    });
+
+    it('resolves once and sends the gateway the address it checked, for CONNECT', async () => {
+      const calls = rebinding(['198.51.100.7', '192.0.2.50']);
+      const got = await ask(`CONNECT rebind.example:11434 HTTP/1.1\r\n${cred}\r\n\r\n`, 'hi');
+      expect(got).toContain('200 Connection Established');
+      expect(calls).toEqual(['rebind.example']);
+      expect(seen[0]).toContain('CONNECT 198.51.100.7:11434 HTTP/1.1');
+    });
+
+    it('resolves once and pins plain HTTP too, keeping the name in Host', async () => {
+      rebinding(['198.51.100.7', '192.0.2.50']);
+      await ask(`GET http://rebind.example:11434/api/tags HTTP/1.1\r\nHost: rebind.example:11434\r\n${cred}\r\n\r\n`);
+      expect(seen[0]).toMatch(/^GET http:\/\/198\.51\.100\.7:11434\/api\/tags HTTP\/1\.1\r\n/);
+      expect(seen[0]).toContain('Host: rebind.example:11434');
+    });
+
+    it('refuses when the one answer is the Ollama server', async () => {
+      rebinding(['192.0.2.50', '198.51.100.7']);
+      const got = await ask(`CONNECT rebind.example:11434 HTTP/1.1\r\n${cred}\r\n\r\n`);
+      expect(got).toMatch(/^HTTP\/1.1 403 Forbidden/);
+      expect(seen).toEqual([]);
+    });
+
+    it('refuses a name on an Ollama port that does not resolve', async () => {
+      __setResolverForTest(async () => {
+        throw new Error('ENOTFOUND');
+      });
+      const got = await ask(`CONNECT rebind.example:11434 HTTP/1.1\r\n${cred}\r\n\r\n`);
+      expect(got).toMatch(/^HTTP\/1.1 403 Forbidden/);
+      expect(got).toContain('could not be resolved');
+      expect(seen).toEqual([]);
+    });
+
+    it('hands a direct tunnel the pinned address', async () => {
+      rebinding(['198.51.100.7', '192.0.2.50']);
+      const dialled: Array<[string, number, string | undefined]> = [];
+      deps.installAllowlist = async () => ['rebind.example:11434'];
+      deps.direct = async (host, port, pinned) => {
+        dialled.push([host, port, pinned]);
+        throw new Error('stop here');
+      };
+      await ask(`CONNECT rebind.example:11434 HTTP/1.1\r\n${cred}\r\n\r\n`);
+      expect(dialled).toEqual([['rebind.example', 11434, '198.51.100.7']]);
+    });
+
+    it('pins nothing on other ports, and nothing for a literal address', async () => {
+      const calls = rebinding(['192.0.2.50']);
+      expect(await ollamaPin('rebind.example', 443, remote, own)).toEqual({ pin: null });
+      expect(await ollamaPin('198.51.100.9', 11434, remote, own)).toEqual({ pin: null });
+      expect(calls).toEqual([]);
+    });
   });
 });
