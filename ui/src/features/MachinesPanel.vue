@@ -8,6 +8,7 @@
 import { onMounted, reactive, ref } from 'vue';
 
 import { apiJson } from '../core/api.js';
+import { lucide } from '../core/dom.js';
 import { showToast } from '../core/toast.js';
 import { copyTextToClipboard } from '../boot.js';
 import { showConfirmModal } from './modals.js';
@@ -15,6 +16,7 @@ import {
   ago,
   availableLine,
   capForm,
+  isolationLine,
   needsWorker,
   placedLine,
   statusOf,
@@ -45,12 +47,18 @@ const T = {
   linked: 'linked',
   noLink: 'no worker link',
   workerRun: 'Run once on the machine:',
+  runHere: 'Run workloads here',
+  fixInfo: 'How to fix',
+  fixRun: 'Run on the machine as root:',
 };
+const INFO = lucide('info');
 
 const listener = ref<{ address: string; port: number } | null>(null);
 const machines = ref<MachineRow[]>([]);
 const command = ref<string | null>(null);
 const workerCommand = ref('');
+const hostRulesCommand = ref('');
+const fixOpen = ref<string | null>(null);
 const ssh = ref(false);
 const capping = ref<string | null>(null);
 const cap = reactive({ memGb: '', cpus: '' });
@@ -65,6 +73,7 @@ async function load(): Promise<void> {
     listener.value = d.listener;
     machines.value = d.machines;
     workerCommand.value = d.workerCommand ?? '';
+    hostRulesCommand.value = d.hostRulesCommand ?? '';
   } catch (err) {
     fail(err);
   }
@@ -85,6 +94,10 @@ async function act(m: MachineRow, path: string, body: unknown = {}): Promise<voi
   } catch (err) {
     fail(err);
   }
+}
+
+async function setRunHere(m: MachineRow): Promise<void> {
+  await act(m, 'workloads', { on: !m.workloadsOn });
 }
 
 async function revoke(m: MachineRow): Promise<void> {
@@ -145,6 +158,36 @@ defineExpose({ load });
               · {{ m.linked ? T.linked : T.noLink }}</template
             ></span
           >
+          <span v-if="isolationLine(m)" :class="['skill-desc', 'machine-isolation', isolationLine(m)!.tone]"
+            >{{ isolationLine(m)!.text
+            }}<button
+              v-if="isolationLine(m)!.fix && hostRulesCommand"
+              class="feature-info-btn"
+              type="button"
+              :aria-expanded="fixOpen === m.id"
+              :aria-label="T.fixInfo"
+              @click="fixOpen = fixOpen === m.id ? null : m.id"
+              v-html="INFO"
+            ></button
+          ></span>
+          <div v-if="fixOpen === m.id && isolationLine(m)?.fix" class="machine-command">
+            <span class="setting-hint">{{ T.fixRun }}</span>
+            <pre class="roster-refresh-log">{{ hostRulesCommand }}</pre>
+            <button class="btn btn-secondary" type="button" @click="copyTextToClipboard(hostRulesCommand)">
+              {{ T.copy }}
+            </button>
+          </div>
+          <div v-if="m.role === 'worker' && m.state !== 'revoked'" class="machine-run-here">
+            <span>{{ T.runHere }}</span>
+            <button
+              type="button"
+              :class="['perms-switch', { on: m.workloadsOn }]"
+              role="switch"
+              :aria-checked="m.workloadsOn ? 'true' : 'false'"
+              :aria-label="T.runHere"
+              @click="setRunHere(m)"
+            ></button>
+          </div>
           <span v-for="p in m.placed ?? []" :key="p.name" class="skill-desc">{{ placedLine(p) }}</span>
           <div v-if="needsWorker(m) && workerCommand" class="machine-command">
             <span class="setting-hint">{{ T.workerRun }}</span>

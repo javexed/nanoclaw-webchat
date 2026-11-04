@@ -456,6 +456,7 @@ import { handleAccountRoutes, handlePreAuthSignin } from './server/routes-signin
 import {
   rScalingCapPut,
   rScalingDrainPost,
+  rScalingWorkloadsPost,
   rScalingJoinPost,
   rScalingMachineDelete,
   rScalingMachinesGet,
@@ -1026,6 +1027,7 @@ const RE_SCALING_MACHINE = /^\/api\/scaling\/machines\/([^/]+)$/;
 const RE_SCALING_DRAIN = /^\/api\/scaling\/machines\/([^/]+)\/drain$/;
 const RE_SCALING_REVOKE = /^\/api\/scaling\/machines\/([^/]+)\/revoke$/;
 const RE_SCALING_CAP = /^\/api\/scaling\/machines\/([^/]+)\/cap$/;
+const RE_SCALING_WORKLOADS = /^\/api\/scaling\/machines\/([^/]+)\/workloads$/;
 // Parameterised paths must be RegExp: a STRING path is compared with `===`,
 // so a pattern written as a string silently never matches (404).
 const RE_AGENT_EXPORT_TEMPLATE = /^\/api\/agents\/([^/]+)\/export-template$/;
@@ -3125,6 +3127,14 @@ const API_ROUTES: ApiRoute[] = [
     audit: 'machine.revoke',
   },
   { method: 'PUT', path: RE_SCALING_CAP, guards: ['csrf', 'globalAdmin'], h: rScalingCapPut, audit: 'machine.cap' },
+  // "Run workloads here": an owner's choice, like the Workloads switch itself.
+  {
+    method: 'POST',
+    path: RE_SCALING_WORKLOADS,
+    guards: ['csrf', 'owner'],
+    h: rScalingWorkloadsPost,
+    audit: 'machine.workloads',
+  },
   {
     method: 'DELETE',
     path: RE_SCALING_MACHINE,

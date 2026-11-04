@@ -12,7 +12,7 @@ import { GROUPS_DIR } from '../../config.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
 import { log } from '../../log.js';
 import { isPlainFile, readNoFollow } from '../../no-follow-fs.js';
-import { availableOn, getMember } from '../machines/members.js';
+import { availableOn, getMember, isolationRefusal } from '../machines/members.js';
 import { backupWorkload, listBackups, restoreVolumes, type Backup } from './backup.js';
 import { buildImage, ensureBuilder, removeBuilder } from './builder.js';
 import { assertDiskRoom } from './disk.js';
@@ -159,6 +159,9 @@ export async function checkWorkload(
         `this host's workload memory (${slice.memoryMaxMb} MB) would be exceeded (${nodeMem} MB); ask an owner`,
       );
   } else if (existing) {
+    const m = await getMember(existing.node);
+    const refused = m ? isolationRefusal(m) : null;
+    if (refused) throw new Error(`${name} runs on a worker, and ${refused}; ask an owner`);
     const room = (await workerRooms(undefined, existing.id, { draining: true })).find(
       (x) => x.machine.id === existing.node,
     );
@@ -288,6 +291,9 @@ async function deploy(w: Workload, agentGroupId: string): Promise<Workload> {
   if (remote) {
     const m = await getMember(w.node);
     if (!m) throw new Error(`${w.name}'s worker is gone (${w.node}); ask an owner`);
+    // Never start anything on a worker a workload could break out of to the machine itself.
+    const refused = isolationRefusal(m);
+    if (refused) throw new Error(`${w.name} runs on a worker, and ${refused}; ask an owner`);
     await sizeWorkerSlice(w.node, availableOn(m));
   }
   const net = await claimNetwork(agentGroupId, networkName, MAX_NETWORKS, await foreignIndexes(w.node));

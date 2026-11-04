@@ -10082,5 +10082,9 @@ button[data-draft-id] {
 #machines-panel .machine-ssh-port { width: 6em; }
 #machines-panel .machine-ssh-fp { overflow-wrap: anywhere; }
 #machines-panel .machine-ssh-check { display: flex; align-items: center; gap: 8px; }
+#machines-panel .machine-run-here { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+#machines-panel .machine-isolation { display: inline-flex; align-items: center; gap: 4px; }
+#machines-panel .machine-isolation.ok { color: var(--success); }
+#machines-panel .machine-isolation.bad { color: var(--danger); }
 #machines-panel .machine-ssh-out { max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 #machines-panel .machine-ssh-error { color: var(--danger); }

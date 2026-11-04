@@ -5,7 +5,11 @@
  * these routes create join tokens and drain, revoke, remove or cap machines.
  */
 import { audit, auditActor } from '../../../audit.js';
-import { installCommand, workerUpgradeCommand } from '../../../modules/machines/agent-scripts.js';
+import {
+  installCommand,
+  workerHostRulesCommand,
+  workerUpgradeCommand,
+} from '../../../modules/machines/agent-scripts.js';
 import { listenerInfo } from '../../../modules/machines/listener.js';
 import {
   createJoinToken,
@@ -17,6 +21,7 @@ import {
   ROLES,
   setCap,
   setMemberState,
+  setWorkloadsOn,
   type Role,
 } from '../../../modules/machines/members.js';
 import { dropLink, isLinked } from '../../../modules/machines/links.js';
@@ -34,12 +39,20 @@ export async function rScalingMachinesGet(ctx: RouteCtx, _m: RegExpMatchArray): 
     listener: info ? { address: info.address, port: info.port } : null,
     // For a machine that joined before the worker service existed: run once on it.
     workerCommand: workerUpgradeCommand(),
+    // For a worker whose isolation check got through: puts the host rules back.
+    hostRulesCommand: workerHostRulesCommand(),
     machines: (await listMembers()).map((m) => ({
       ...publicView(m, now),
       linked: isLinked(m.id),
       placed: placed
         .filter((w) => w.node === m.id)
-        .map((w) => ({ name: w.name, state: w.state, memoryMb: w.approvedMemoryMb, reason: w.placementReason })),
+        .map((w) => ({
+          name: w.name,
+          state: w.state,
+          memoryMb: w.approvedMemoryMb,
+          reason: w.placementReason,
+          error: w.lastError,
+        })),
     })),
   });
 }
@@ -75,6 +88,19 @@ export async function rScalingDrainPost(ctx: RouteCtx, m: RegExpMatchArray): Pro
   if (cur?.state === 'revoked') return json(ctx.res, 409, { error: 'Revoked' });
   await setMemberState(id, body.on === false ? 'ready' : 'draining');
   return json(ctx.res, 200, { ok: true });
+}
+
+/** "Run workloads here" on or off: whether placement may put new stacks on this worker. */
+export async function rScalingWorkloadsPost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {
+  const id = await target(ctx, m);
+  if (!id) return;
+  const body = await readJsonObject<{ on?: unknown }>(ctx.req, ctx.res);
+  if (body === undefined) return;
+  if (typeof body.on !== 'boolean') return json(ctx.res, 400, { error: 'on: true or false' });
+  const cur = await getMember(id);
+  if (cur?.state === 'revoked') return json(ctx.res, 409, { error: 'Revoked' });
+  await setWorkloadsOn(id, body.on);
+  return json(ctx.res, 200, publicView((await getMember(id))!));
 }
 
 export async function rScalingRevokePost(ctx: RouteCtx, m: RegExpMatchArray): Promise<void> {

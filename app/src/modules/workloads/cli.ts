@@ -46,6 +46,8 @@ import {
   withinApproval,
 } from './control.js';
 import { diskUsed, gb } from './disk.js';
+import { isLinked } from '../machines/links.js';
+import { getMember, isolationStatus, listMembers, setWorkloadsOn } from '../machines/members.js';
 import {
   accessCardLines,
   accessPin,
@@ -638,7 +640,7 @@ registerResource({
       access: 'open',
       hostOnly: true,
       description:
-        "Keep an agent's new workloads on one node (a worker machine's id, or `local` for central); `--node none` removes the pin (host only).",
+        "Keep an agent's new workloads on one node (a worker machine's id, or `local` for central); `--node none` removes the pin (host only). A pin to a worker counts even with its Run workloads here off, never while its isolation check fails.",
       args: [
         { name: 'group', type: 'string', description: 'Agent group id.', required: true },
         { name: 'node', type: 'string', required: true, description: 'Machine id (m-…), `local`, or `none`.' },
@@ -651,6 +653,59 @@ registerResource({
         await setPin(group, node === 'none' ? null : node, 'host');
         audit({ type: 'workload.pin', actor: 'host', effect: 'allow', detail: { agentGroupId: group, node } });
         return { ok: true, group, node };
+      },
+    },
+    workers: {
+      access: 'open',
+      hostOnly: true,
+      description:
+        'Worker machines and workloads (host only): whether each runs workloads, its isolation check, and the stacks on it.',
+      args: [],
+      handler: async () => {
+        const now = Date.now();
+        const all = await listWorkloads();
+        return (await listMembers())
+          .filter((m) => m.role === 'worker' && m.state !== 'revoked')
+          .map((m) => ({
+            id: m.id,
+            name: m.name,
+            runsWorkloads: m.workloadsOn,
+            linked: isLinked(m.id),
+            isolation: isolationStatus(m, now),
+            checkedAt: m.isolationAt ? new Date(m.isolationAt).toISOString() : null,
+            stacks: all
+              .filter((w) => w.node === m.id)
+              .map((w) => `${w.name} (${w.state}${w.lastError ? `: ${w.lastError}` : ''})`),
+          }));
+      },
+      formatHuman: (rows) =>
+        (rows as Array<Record<string, unknown>>).length
+          ? (rows as Array<Record<string, unknown>>)
+              .map(
+                (r) =>
+                  `${String(r.name)} (${String(r.id)})  workloads ${r.runsWorkloads ? 'on' : 'off'}  ${r.linked ? 'linked' : 'not linked'}  isolation ${String(r.isolation)}${(r.stacks as string[]).length ? `\n  ${(r.stacks as string[]).join('\n  ')}` : ''}`,
+              )
+              .join('\n')
+          : 'No workers.',
+    },
+    'worker-set': {
+      access: 'open',
+      hostOnly: true,
+      description:
+        'Turn "Run workloads here" on or off for a worker machine (host only). New stacks go only to workers with it on, or to the worker an agent is pinned to, and only while its isolation check passes.',
+      args: [
+        { name: 'id', type: 'string', description: 'Machine id (m-…).', required: true },
+        { name: 'workloads', type: 'string', description: 'on | off', required: true },
+      ],
+      handler: async (args) => {
+        const id = str(args.id, 'id');
+        const v = str(args.workloads, 'workloads');
+        if (v !== 'on' && v !== 'off') throw new Error('--workloads must be on or off');
+        const m = await getMember(id);
+        if (!m || m.role !== 'worker' || m.state === 'revoked') throw new Error(`no worker ${id}`);
+        await setWorkloadsOn(id, v === 'on');
+        audit({ type: 'machine.workloads', actor: 'host', effect: 'allow', detail: { machineId: id, on: v === 'on' } });
+        return { id, name: m.name, runsWorkloads: v === 'on', isolation: isolationStatus(m) };
       },
     },
     'build-registries': {

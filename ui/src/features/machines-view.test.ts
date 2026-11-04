@@ -4,6 +4,7 @@ import {
   ago,
   availableLine,
   capForm,
+  isolationLine,
   needsWorker,
   placedLine,
   statusOf,
@@ -71,5 +72,40 @@ describe('a machine row', () => {
       'demo · 2 GB · running — M-A: most free memory',
     );
     expect(placedLine({ name: 'x', state: 'stopped', memoryMb: 512, reason: null })).toBe('x · 0.5 GB · stopped');
+  });
+});
+
+describe('a worker row: isolation', () => {
+  it('one short line per state; the host-rules fix only when it got through', () => {
+    const at = Date.now();
+    expect(isolationLine(row({ isolation: { status: 'ok', at } }))).toEqual({
+      text: 'Isolated',
+      tone: 'ok',
+      fix: false,
+    });
+    expect(isolationLine(row({ isolation: { status: 'open', at } }))).toEqual({
+      text: 'Not isolated — host rules missing',
+      tone: 'bad',
+      fix: true,
+    });
+    expect(isolationLine(row({ isolation: { status: 'unknown', at: null } }))?.text).toBe('Not checked yet');
+    expect(isolationLine(row({ isolation: { status: 'stale', at } }))?.text).toBe('Not checked recently');
+  });
+
+  it('counts the stacks the worker stopped', () => {
+    const r = row({
+      isolation: { status: 'open', at: Date.now() },
+      placed: [
+        { name: 'a', state: 'stopped', memoryMb: 512, reason: null, error: 'stopped on its worker' },
+        { name: 'b', state: 'stopped', memoryMb: 512, reason: null, error: null },
+        { name: 'c', state: 'running', memoryMb: 512, reason: null },
+      ],
+    });
+    expect(isolationLine(r)?.text).toBe('Not isolated — host rules missing · 1 stopped');
+  });
+
+  it('none for a revoked machine or a server without the field', () => {
+    expect(isolationLine(row({ state: 'revoked', isolation: { status: 'open', at: 1 } }))).toBeNull();
+    expect(isolationLine(row())).toBeNull();
   });
 });

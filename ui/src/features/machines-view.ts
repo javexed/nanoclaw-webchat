@@ -19,10 +19,37 @@ export interface MachineRow {
   lastReport: number | null;
   cap: { memMb: number | null; cpus: number | null };
   available: { memMb: number; cpus: number; memBy: 'auto' | 'cap'; cpusBy: 'auto' | 'cap' };
-  /** Worker role: is its worker service linked to central now (Scaling phase 3). */
+  /** Worker role: is its worker service linked to central now. */
   linked?: boolean;
+  /** "Run workloads here": an owner lets placement put new stacks on it. */
+  workloadsOn?: boolean;
+  /** Its workload isolation check (members.ts isolationStatus). */
+  isolation?: { status: 'ok' | 'open' | 'stale' | 'unknown'; at: number | null };
   /** Workloads placed on it, with the one-line reason. */
-  placed?: Array<{ name: string; state: string; memoryMb: number; reason: string | null }>;
+  placed?: Array<{ name: string; state: string; memoryMb: number; reason: string | null; error?: string | null }>;
+}
+
+/**
+ * The isolation line of a worker row: "Isolated", "Not isolated — host rules
+ * missing" (with the fix behind the ⓘ), "Not checked yet" or "Not checked
+ * recently" (its last pass is too old to count). `fix` says
+ * whether the row offers the host-rules command.
+ */
+export function isolationLine(m: MachineRow): { text: string; tone: 'ok' | 'bad' | 'dim'; fix: boolean } | null {
+  if (m.role !== 'worker' || m.state === 'revoked' || !m.isolation) return null;
+  switch (m.isolation.status) {
+    case 'ok':
+      return { text: 'Isolated', tone: 'ok', fix: false };
+    case 'open': {
+      const stopped = (m.placed ?? []).filter((p) => p.state === 'stopped' && p.error).length;
+      const tail = stopped ? ` · ${stopped} stopped` : '';
+      return { text: `Not isolated — host rules missing${tail}`, tone: 'bad', fix: true };
+    }
+    case 'stale':
+      return { text: 'Not checked recently', tone: 'dim', fix: false };
+    default:
+      return { text: 'Not checked yet', tone: 'dim', fix: false };
+  }
 }
 
 /** A worker that reports but has no link: its worker service is missing or down. */
