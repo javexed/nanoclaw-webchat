@@ -22,7 +22,7 @@ import { __resetLinksForTest, callWorker, dropLink, isLinked } from './links.js'
 import { machineHandler, upgradeLink } from './listener.js';
 import { addMember, createJoinToken, getMember, revokeMember } from './members.js';
 import { Mux, STREAM_WINDOW } from './mux.js';
-import { connect, health, refuseDocker, workloadAddress } from './worker-main.js';
+import { connect, health, refuseDocker, serve, workloadAddress } from './worker-main.js';
 
 const until = async (ok: () => boolean | Promise<boolean>, ms = 5000): Promise<void> => {
   const end = Date.now() + ms;
@@ -170,6 +170,22 @@ describe('a workload reached over the link', () => {
     central.close();
     app.close();
   });
+
+  it('the worker refuses volume streams for volumes outside the project, and unknown file jobs', async () => {
+    const [a, b] = await socketPair();
+    const central = new Mux(a, 'central');
+    serve(new Mux(b, 'worker'));
+    const bad = [
+      { kind: 'vol-out', project: 'nc-x-y-demo', volume: 'other_data', image: 'alpine:3.21' },
+      { kind: 'vol-in', project: 'evil', volume: 'evil_data', image: 'alpine:3.21' },
+      { kind: 'vol-out', project: 'nc-x-y-demo', volume: 'nc-x-y-demo_data', image: 'Bad Image' },
+    ];
+    for (const meta of bad) {
+      const s = central.open(meta);
+      await expect(new Promise((_r, j) => s.once('error', j))).rejects.toThrow(/refused/);
+    }
+    central.close();
+  });
 });
 
 describe("the worker's fixed jobs", () => {
@@ -222,7 +238,7 @@ describe("the worker's fixed jobs", () => {
     expect(h.memTotalMb).toBe(16000);
     expect(h.memUsedMb).toBe(10000);
     expect(h.memNanoclawMb).toBe(0);
-    expect(h.agentVersion).toBe('3');
+    expect(h.agentVersion).toBe('4');
   });
 });
 

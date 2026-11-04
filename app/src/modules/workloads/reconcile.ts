@@ -17,9 +17,9 @@
  *   - once a night each stack's volumes are backed up (backup.ts), and the
  *     backups of a workload deleted a week ago are removed.
  *
- * The preflight, network joins, disk and backups are central's: stacks on
- * workers are left out of them here (a worker's own isolation is its host
- * rules; its stacks are reached over its link).
+ * The preflight and network joins are central's: stacks on workers are left
+ * out of them (a worker's own isolation is its host rules; its stacks are
+ * reached over its link). Their backups are streamed here over the link.
  */
 import fs from 'fs';
 
@@ -80,8 +80,8 @@ async function stopAllRunning(deps: ReconcileDeps): Promise<void> {
 }
 
 async function checkDisk(deps: ReconcileDeps): Promise<void> {
-  // This measures central's disk; a worker's own is in its health reports.
-  const live = (await listWorkloads()).filter((w) => w.state !== 'deleted' && w.node === LOCAL_NODE);
+  // Every node's stacks count toward the agent's quota (disk.ts: Docker's use on central, backups for all).
+  const live = (await listWorkloads()).filter((w) => w.state !== 'deleted');
   if (!live.length) return;
   const byAgent = recordUsage(live, await deps.measure(live, (w) => Object.values(serviceImages(w))));
   for (const [agent, bytes] of byAgent) {
@@ -125,7 +125,10 @@ async function nightlyBackups(now: Date, deps: ReconcileDeps): Promise<void> {
     if (w.state === 'stopped') return at < w.updatedAt;
     return now.getTime() - at > BACKUP_AGE_MS;
   };
-  for (const w of all.filter((x) => (x.state === 'running' || x.state === 'stopped') && x.node === LOCAL_NODE)) {
+  // A stack on a worker is backed up over its link, when that worker is linked.
+  for (const w of all.filter(
+    (x) => (x.state === 'running' || x.state === 'stopped') && (x.node === LOCAL_NODE || isLinked(x.node)),
+  )) {
     if (!due(w)) continue;
     await deps
       .backup(w)

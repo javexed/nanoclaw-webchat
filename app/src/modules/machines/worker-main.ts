@@ -10,6 +10,7 @@
  *   slice    size the workloads systemd slice to NanoClaw's share of this machine
  *   rmdir    remove a workload's folder
  *   tcp      a byte stream to a workload's address (198.18.0.0/15) on this machine
+ *   vol-out / vol-in   a workload volume as a tar stream (backups, restores)
  *   image    an image central sends (docker save on central, loaded here as
  *            is); hasImage says which one a tag holds now. A stack's images
  *            are pulled or built on central (behind its egress filter) and
@@ -29,7 +30,7 @@ import tls from 'tls';
 
 import { Mux, type Message } from './mux.js';
 
-export const WORKER_VERSION = '3';
+export const WORKER_VERSION = '4';
 const CONF_DIR = process.env.NC_MACHINE_DIR || '/etc/nanoclaw-machine';
 const WORK = process.env.NC_WORKER_DIR || '/var/lib/nanoclaw-worker';
 const MAX_OUT = 20_000;
@@ -194,6 +195,97 @@ function onImageLoad(meta: Record<string, unknown>, stream: Duplex): void {
   p.on('close', (code) => (code === 0 ? stream.end() : stream.destroy(new Error(err.trim() || `exit ${code}`))));
 }
 
+// ── files and volumes as streams ──────────────────────────────────────────────
+
+/** `docker run --rm -i` of the helper image with fixed limits and no network. */
+function helper(args: string[]) {
+  return spawn(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '-i',
+      '--pull',
+      'never',
+      '--network',
+      'none',
+      '--log-driver',
+      'none',
+      '--memory',
+      '512m',
+      '--pids-limit',
+      '64',
+      '--security-opt',
+      'no-new-privileges:true',
+      ...args,
+    ],
+    {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    },
+  );
+}
+
+/** Wire a helper to a link stream: `into` feeds the stream to its stdin, else its stdout feeds the stream. */
+function pipeHelper(stream: Duplex, p: ReturnType<typeof helper>, into: boolean): void {
+  let err = '';
+  p.stderr.on('data', (d: Buffer) => (err = (err + d.toString()).slice(-2000)));
+  p.on('error', (e) => stream.destroy(e));
+  if (into) {
+    p.stdin.on('error', () => undefined);
+    stream.pipe(p.stdin);
+    p.stdout.resume();
+  } else {
+    p.stdin.end();
+    p.stdout.pipe(stream, { end: false });
+  }
+  stream.on('error', () => p.kill('SIGKILL'));
+  p.on('close', (code) => (code === 0 ? stream.end() : stream.destroy(new Error(err.trim() || `exit ${code}`))));
+}
+
+function volumeOk(project: unknown, volume: unknown): boolean {
+  return (
+    typeof project === 'string' &&
+    NAME.test(project) &&
+    typeof volume === 'string' &&
+    volume.startsWith(`${project}_`) &&
+    /^[A-Za-z0-9_.-]{1,200}$/.test(volume)
+  );
+}
+
+/** A volume as a tar stream, out (backup) or in (restore), in a throwaway helper container. */
+function onVolumeStream(meta: Record<string, unknown>, stream: Duplex): void {
+  if (!IMAGE.test(String(meta.image ?? ''))) return void stream.destroy(new Error('refused: bad image'));
+  if (!volumeOk(meta.project, meta.volume))
+    return void stream.destroy(new Error('refused: not a volume of that project'));
+  const image = String(meta.image);
+  if (meta.kind === 'vol-out')
+    return pipeHelper(
+      stream,
+      helper(['-v', `${String(meta.volume)}:/v:ro`, image, 'tar', 'czf', '-', '-C', '/v', '.']),
+      false,
+    );
+  return pipeHelper(
+    stream,
+    helper(['-v', `${String(meta.volume)}:/v`, image, 'sh', '-c', 'find /v -mindepth 1 -delete && tar xzf - -C /v']),
+    true,
+  );
+}
+
+async function volumesOp(msg: Message) {
+  const project = String(msg.project ?? '');
+  if (!NAME.test(project)) throw new Error('refused: bad project');
+  const r = await run('docker', [
+    'volume',
+    'ls',
+    '--filter',
+    `label=com.docker.compose.project=${project}`,
+    '--format',
+    '{{.Name}}\t{{.Label "com.docker.compose.volume"}}',
+  ]);
+  if (r.code !== 0) throw new Error(r.stderr.slice(0, 300));
+  return r.stdout;
+}
+
 function rmdirOp(msg: Message) {
   if (typeof msg.dir !== 'string' || !DIR.test(msg.dir)) throw new Error('refused: bad folder');
   fs.rmSync(path.join(WORK, 'wl', msg.dir), { recursive: true, force: true });
@@ -355,8 +447,10 @@ export function serve(mux: Mux): void {
   mux.handle('slice', sliceOp);
   mux.handle('rmdir', rmdirOp);
   mux.handle('hasImage', hasImageOp);
+  mux.handle('volumes', volumesOp);
   mux.onStream((meta, stream) => {
     if (meta.kind === 'image-load') return onImageLoad(meta, stream);
+    if (meta.kind === 'vol-out' || meta.kind === 'vol-in') return onVolumeStream(meta, stream);
     const port = Number(meta.port);
     if (meta.kind !== 'tcp' || !workloadAddress(meta.host) || !Number.isInteger(port) || port < 1 || port > 65535)
       return void stream.destroy(new Error('refused: only workload addresses'));

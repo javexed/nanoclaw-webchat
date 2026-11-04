@@ -4,6 +4,10 @@
  * their owners inside the archive and the host never needs root. The stack is
  * paused while it is copied, so a database's files are consistent. Nightly
  * from the reconcile loop; the newest KEEP are kept per workload.
+ *
+ * A stack on a worker is backed up the same way there, the archive streamed
+ * over the link (worker-main.ts vol-out / vol-in) and kept on central, so a
+ * stack whose worker is gone can be restored on another one.
  */
 import { execFile, spawn } from 'child_process';
 import fs from 'fs';
@@ -13,7 +17,8 @@ import { promisify } from 'util';
 import { DATA_DIR } from '../../config.js';
 import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
 import { log } from '../../log.js';
-import { compose, dockerEnv, projectName, sliceName } from './docker.js';
+import { callWorker, openWorkerStream } from '../machines/links.js';
+import { compose, dockerEnv, LOCAL_NODE, projectName, shipImage, sliceName } from './docker.js';
 import { HELPER_IMAGE } from './images.js';
 import type { Workload } from './store.js';
 
@@ -75,18 +80,23 @@ function prune(id: string, keep = KEEP): void {
 
 /** The stack's named volumes: compose short name → docker volume name. */
 export async function stackVolumes(w: Workload): Promise<Record<string, string>> {
-  const { stdout } = await run(
-    CONTAINER_RUNTIME_BIN,
-    [
-      'volume',
-      'ls',
-      '--filter',
-      `label=com.docker.compose.project=${projectName(w)}`,
-      '--format',
-      '{{.Name}}\t{{.Label "com.docker.compose.volume"}}',
-    ],
-    { env: dockerEnv() },
-  );
+  const stdout =
+    w.node === LOCAL_NODE
+      ? (
+          await run(
+            CONTAINER_RUNTIME_BIN,
+            [
+              'volume',
+              'ls',
+              '--filter',
+              `label=com.docker.compose.project=${projectName(w)}`,
+              '--format',
+              '{{.Name}}\t{{.Label "com.docker.compose.volume"}}',
+            ],
+            { env: dockerEnv() },
+          )
+        ).stdout
+      : String(await callWorker(w.node, 'volumes', { project: projectName(w) }));
   const out: Record<string, string> = {};
   for (const line of stdout.trim().split('\n').filter(Boolean)) {
     const [name, short] = line.split('\t');
@@ -150,6 +160,49 @@ function helper(args: string[], io: { toFile?: string; fromFile?: string }, time
   });
 }
 
+/** A volume of a stack on a worker, out to a file here or in from one (worker-main.ts vol-out / vol-in). */
+function workerVolume(
+  w: Workload,
+  volume: string,
+  io: { toFile?: string; fromFile?: string },
+  timeoutMs = 3_600_000,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const s = openWorkerStream(w.node, {
+      kind: io.toFile ? 'vol-out' : 'vol-in',
+      project: projectName(w),
+      volume,
+      image: HELPER_IMAGE(),
+    });
+    const timer = setTimeout(() => s.destroy(new Error('timed out')), timeoutMs);
+    const done = (err?: Error): void => {
+      clearTimeout(timer);
+      if (err) reject(err);
+      else resolve();
+    };
+    s.on('error', (e: Error) => done(e));
+    if (io.toFile) {
+      const out = fs.createWriteStream(io.toFile, { mode: 0o600 });
+      out.on('error', (e) => (s.destroy(), done(e)));
+      // The worker ends the stream only when its tar succeeded; a failure resets it.
+      out.on('finish', () => done());
+      s.pipe(out);
+    } else {
+      const src = fs.createReadStream(io.fromFile!);
+      src.on('error', (e) => (s.destroy(), done(e)));
+      s.on('end', () => done());
+      s.resume();
+      src.pipe(s);
+    }
+  });
+}
+
+/** The helper image where the copy runs: here, or sent to the worker (it never pulls). */
+async function helperOn(node: string): Promise<void> {
+  await ensureHelperImage();
+  if (node !== LOCAL_NODE) await shipImage(node, HELPER_IMAGE());
+}
+
 export async function ensureHelperImage(): Promise<void> {
   const image = HELPER_IMAGE();
   const have = await run(CONTAINER_RUNTIME_BIN, ['image', 'inspect', image], { env: dockerEnv() }).then(
@@ -166,7 +219,7 @@ export async function backupWorkload(w: Workload, now = new Date()): Promise<Bac
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const free = fs.statfsSync(root);
   if (free.bavail * free.bsize < MIN_FREE_BYTES) throw new Error('not enough free disk on this host for a backup');
-  await ensureHelperImage();
+  await helperOn(w.node);
   const dir = path.join(root, stampOf(now));
   fs.mkdirSync(dir, { mode: 0o700 });
   const paused =
@@ -177,9 +230,10 @@ export async function backupWorkload(w: Workload, now = new Date()): Promise<Bac
     ));
   try {
     for (const [short, name] of Object.entries(vols)) {
-      await helper(['-v', `${name}:/v:ro`, HELPER_IMAGE(), 'tar', 'czf', '-', '-C', '/v', '.'], {
-        toFile: path.join(dir, `${short}.tar.gz`),
-      });
+      const file = path.join(dir, `${short}.tar.gz`);
+      if (w.node === LOCAL_NODE)
+        await helper(['-v', `${name}:/v:ro`, HELPER_IMAGE(), 'tar', 'czf', '-', '-C', '/v', '.'], { toFile: file });
+      else await workerVolume(w, name, { toFile: file });
     }
   } catch (err) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -200,14 +254,17 @@ export async function restoreVolumes(w: Workload, stamp: string): Promise<string
   const b = listBackups(w.id).find((x) => x.stamp === stamp);
   if (!b) throw new Error(`no backup ${stamp}: see ncl workloads backups`);
   const vols = await stackVolumes(w);
-  await ensureHelperImage();
+  await helperOn(w.node);
   const done: string[] = [];
   for (const { volume } of b.volumes) {
     const name = vols[volume];
     if (!name) continue;
-    await helper(['-v', `${name}:/v`, HELPER_IMAGE(), 'sh', '-c', 'find /v -mindepth 1 -delete && tar xzf - -C /v'], {
-      fromFile: path.join(backupRoot(w.id), stamp, `${volume}.tar.gz`),
-    });
+    const file = path.join(backupRoot(w.id), stamp, `${volume}.tar.gz`);
+    if (w.node === LOCAL_NODE)
+      await helper(['-v', `${name}:/v`, HELPER_IMAGE(), 'sh', '-c', 'find /v -mindepth 1 -delete && tar xzf - -C /v'], {
+        fromFile: file,
+      });
+    else await workerVolume(w, name, { fromFile: file });
     done.push(volume);
   }
   return done;
