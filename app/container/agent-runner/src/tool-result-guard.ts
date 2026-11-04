@@ -19,12 +19,13 @@
  * What it does with a hit is deliberately small:
  *   - credentials are REDACTED in place (`[REDACTED:<type>]`) through
  *     `updatedToolOutput`, keeping the tool_response's shape; nothing else is
- *     ever rewritten. Object keys are never rewritten (only flagged), and the
- *     file tools' results (FLAG_ONLY_TOOLS) are only flagged: a redacted
- *     `Read` would have the agent write the marker back over the real secret,
- *     and an `Edit` whose old_string carries it would never match;
- *   - a write that would put a marker into a file is refused
- *     (`refuseRedactedWrite`, the Claude provider's PreToolUse hook);
+ *     ever rewritten. Object keys are never rewritten (only flagged). File
+ *     tools are redacted like any other: a secret in a workspace file must
+ *     not reach the model in clear any more than one in `cat`'s output;
+ *   - a write that would put a marker into a file, or an edit that looks for
+ *     one the file does not hold, is refused (`refuseRedactedWrite`, the
+ *     Claude provider's PreToolUse hook), so a redacted Read is never written
+ *     back over the real secret and a stale old_string fails with a reason;
  *   - anything flagged adds an advisory to the model's context, written
  *     entirely from the fixed vocabulary above. Matched text and detector
  *     detail never reach the model: echoing an injection back is how it lands.
@@ -517,8 +518,6 @@ export interface ScreenResult extends Verdict {
 }
 
 export interface ScreenOptions {
-  /** Flag credentials but rewrite nothing (file tools). */
-  flagOnly?: boolean;
   /** Absolute ms timestamp the scan must stop by. Default: now + TIME_BUDGET_MS. */
   deadline?: number;
   /** Characters to scan before the remainder is reported unscreened. */
@@ -617,9 +616,8 @@ export function screenToolResponse(response: unknown, opts: ScreenOptions = {}):
     return text + tail;
   };
 
-  const redact = !opts.flagOnly;
   const walk = (value: unknown, depth: number): unknown => {
-    if (typeof value === 'string') return screenString(value, redact);
+    if (typeof value === 'string') return screenString(value, true);
     if (value === null || typeof value !== 'object') return value;
     if (depth >= MAX_DEPTH) {
       flags.add('unscreened');
@@ -734,22 +732,22 @@ function logFlagged(toolName: string, result: Pick<ScreenResult, 'flags' | 'reda
   }
 }
 
-/**
- * Tools whose result is a workspace file's own text (or its edit): flagged,
- * never rewritten, so what the agent reads back is what is on disk.
- */
-export const FLAG_ONLY_TOOLS: ReadonlySet<string> = new Set(['Read', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
-
 const REDACTION_MARKER = /\[REDACTED:[a-z_]{1,40}\]/g;
 const countMarkers = (s: unknown): number => (typeof s === 'string' ? (s.match(REDACTION_MARKER)?.length ?? 0) : 0);
 
 export const REDACTED_WRITE_REFUSAL =
   'Blocked: [REDACTED:…] hides a secret; it is not the value. Keep the original text.';
 
+export const REDACTED_EDIT_REFUSAL =
+  'Blocked: old_string contains [REDACTED:…], which is not in the file (a secret was hidden from you). ' +
+  'Choose an old_string that leaves that part out.';
+
 /**
  * PreToolUse check: the refusal when a file write would add a redaction
- * marker the file does not already carry, else null. Counted, not just
- * matched, so a file that documents the marker can still be edited.
+ * marker the file does not already carry, or an edit's old_string looks for
+ * more markers than the file holds (it was copied from a redacted Read, so
+ * it cannot match), else null. Counted, not just matched, so a file that
+ * documents the marker can still be edited.
  */
 export function refuseRedactedWrite(
   toolName: string,
@@ -770,6 +768,29 @@ export function refuseRedactedWrite(
     const n = countMarkers(next);
     return n > 0 && n > before();
   };
+  // Only judged when the file can be read: an unreadable path fails in the tool itself.
+  const seeksHidden = (path: unknown, olds: unknown[]): boolean => {
+    const wanted = Math.max(0, ...olds.map(countMarkers));
+    if (wanted === 0 || typeof path !== 'string') return false;
+    try {
+      return wanted > countMarkers(readFile(path));
+    } catch {
+      return false;
+    }
+  };
+  const edits = (): Array<Record<string, unknown>> =>
+    Array.isArray(i.edits)
+      ? (i.edits.filter((e) => e !== null && typeof e === 'object') as Array<Record<string, unknown>>)
+      : [];
+  if (toolName === 'Edit' && seeksHidden(i.file_path, [i.old_string])) return REDACTED_EDIT_REFUSAL;
+  if (
+    toolName === 'MultiEdit' &&
+    seeksHidden(
+      i.file_path,
+      edits().map((e) => e.old_string),
+    )
+  )
+    return REDACTED_EDIT_REFUSAL;
   let refused = false;
   switch (toolName) {
     case 'Write':
@@ -782,16 +803,7 @@ export function refuseRedactedWrite(
       refused = adds(i.new_string, () => countMarkers(i.old_string));
       break;
     case 'MultiEdit':
-      refused =
-        Array.isArray(i.edits) &&
-        i.edits.some(
-          (e) =>
-            e !== null &&
-            typeof e === 'object' &&
-            adds((e as Record<string, unknown>).new_string, () =>
-              countMarkers((e as Record<string, unknown>).old_string),
-            ),
-        );
+      refused = edits().some((e) => adds(e.new_string, () => countMarkers(e.old_string)));
       break;
   }
   return refused ? REDACTED_WRITE_REFUSAL : null;
@@ -803,7 +815,7 @@ export function handleHookInput(raw: string, opts: ScreenOptions = {}): HookOutp
   try {
     const input = JSON.parse(raw) as { tool_name?: unknown; tool_response?: unknown };
     if (typeof input.tool_name === 'string') toolName = input.tool_name;
-    const result = screenToolResponse(input.tool_response, { flagOnly: FLAG_ONLY_TOOLS.has(toolName), ...opts });
+    const result = screenToolResponse(input.tool_response, opts);
     if (result.flags.size > 0) logFlagged(toolName, result);
     return buildHookOutput(result);
   } catch {
