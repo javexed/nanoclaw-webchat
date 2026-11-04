@@ -170,7 +170,12 @@ describe('thread endpoints — HTTP/authz', () => {
       res = await fetch(base);
       const list = (await res.json()) as Array<{ thread_id: string; can_delete: boolean }>;
       const can = Object.fromEntries(list.map((t) => [t.thread_id, t.can_delete]));
-      expect(can).toMatchObject({ main: false, [mine.thread_id]: true, [theirs.thread_id]: false, [old.thread_id]: false });
+      expect(can).toMatchObject({
+        main: false,
+        [mine.thread_id]: true,
+        [theirs.thread_id]: false,
+        [old.thread_id]: false,
+      });
 
       res = await fetch(`${base}/${theirs.thread_id}`, { method: 'DELETE', headers: CSRF });
       expect(res.status).toBe(403);
