@@ -54,7 +54,8 @@ export async function reconcileMachine(m: Machine, site: Site): Promise<void> {
     return;
   }
   if (obs.state === 'error') {
-    if (m.state !== 'failed') await updateMachine(m.id, { state: 'failed', lastError: obs.detail ?? 'backend reports an error' });
+    if (m.state !== 'failed')
+      await updateMachine(m.id, { state: 'failed', lastError: obs.detail ?? 'backend reports an error' });
     return;
   }
   if (m.state === 'provisioning') {

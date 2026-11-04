@@ -170,13 +170,12 @@ describe('a workload reached over the link', () => {
     central.close();
     app.close();
   });
-
 });
 
 describe("the worker's fixed jobs", () => {
   it('allows only NanoClaw Compose projects, its networks and images', () => {
     const ok = [
-      ['compose', '-p', 'nc-2e60-abc-demo', '-f', 'stack.yml', '-f', 'override.yml', 'up', '-d'],
+      ['compose', '-p', 'nc-2e60-abc-demo', '-f', 'stack.yml', '-f', 'override.yml', 'up', '-d', '--pull', 'never'],
       ['compose', '-p', 'nc-x-y', '-f', 'stack.yml', '-f', 'override.yml', 'exec', '-T', 'web', 'ls'],
       ['network', 'create', '--internal', '--subnet', '198.18.1.0/24', 'nc-wl-2e60-1'],
       ['network', 'inspect', 'bridge'],
@@ -190,6 +189,8 @@ describe("the worker's fixed jobs", () => {
       ['run', '--privileged', 'alpine'],
       ['exec', 'x', 'sh'],
       ['compose', '-p', 'evil', '-f', 'stack.yml', 'up'],
+      ['compose', '-p', 'nc-x', '-f', 'stack.yml', 'up', '-d'],
+      ['compose', '-p', 'nc-x', '-f', 'stack.yml', 'pull'],
       ['compose', '-p', 'nc-x', '-f', '/etc/passwd', 'up'],
       ['compose', '-p', 'nc-x', '-f', 'stack.yml', 'build'],
       ['compose', '-p', 'nc-x', '--project-directory', '/', 'up'],
@@ -221,7 +222,7 @@ describe("the worker's fixed jobs", () => {
     expect(h.memTotalMb).toBe(16000);
     expect(h.memUsedMb).toBe(10000);
     expect(h.memNanoclawMb).toBe(0);
-    expect(h.agentVersion).toBe('2');
+    expect(h.agentVersion).toBe('3');
   });
 });
 

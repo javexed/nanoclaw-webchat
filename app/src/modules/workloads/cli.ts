@@ -21,6 +21,7 @@
  */
 import { randomUUID } from 'crypto';
 
+import { audit } from '../../audit.js';
 import { quoteForCard } from '../../card-text.js';
 import { registerResource } from '../../cli/crud.js';
 import type { CallerContext } from '../../cli/frame.js';
@@ -68,6 +69,7 @@ import {
   listWorkloads,
   quotaFor,
   setBuildRegistries,
+  setPin,
   setQuota,
   type Workload,
 } from './store.js';
@@ -239,6 +241,7 @@ registerResource({
           limits: r.stack.limits,
           total: r.stack.total,
           replaces: Boolean(r.existing),
+          where: r.placement.node === 'local' ? `central (${r.placement.reason})` : r.placement.reason,
           // Whether `redeploy` would run without a card.
           redeploy_needs_card:
             !r.existing ||
@@ -318,6 +321,9 @@ registerResource({
           'Runs:',
           ...describeShape(c.shape, decodeApproved(c.existing?.approvedShape ?? null)),
           `Size: ${was && was !== now ? `${was} → ${now}` : now}`,
+          ...(c.existing
+            ? []
+            : [`Where: ${c.placement.node === 'local' ? `central — ${c.placement.reason}` : c.placement.reason}`]),
         ];
         const verb = c.existing ? 'update' : 'deploy';
         if (!pub || !route)
@@ -616,6 +622,25 @@ registerResource({
           throw new Error('memory_mb, cpus and disk_gb must be numbers ≥ 0');
         await setQuota(String(args.group), q);
         return quotaFor(String(args.group));
+      },
+    },
+    pin: {
+      access: 'open',
+      hostOnly: true,
+      description:
+        "Keep an agent's new workloads on one node (a worker machine's id, or `local` for central); `--node none` removes the pin (host only).",
+      args: [
+        { name: 'group', type: 'string', description: 'Agent group id.', required: true },
+        { name: 'node', type: 'string', required: true, description: 'Machine id (m-…), `local`, or `none`.' },
+      ],
+      handler: async (args) => {
+        const group = str(args.group, 'group');
+        const node = str(args.node, 'node');
+        if (node !== 'none' && node !== 'local' && !/^m-[0-9a-f]{8}$/.test(node))
+          throw new Error('node must be a machine id (m-…), local, or none');
+        await setPin(group, node === 'none' ? null : node, 'host');
+        audit({ type: 'workload.pin', actor: 'host', effect: 'allow', detail: { agentGroupId: group, node } });
+        return { ok: true, group, node };
       },
     },
     'build-registries': {

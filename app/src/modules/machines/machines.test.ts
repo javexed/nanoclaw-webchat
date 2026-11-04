@@ -6,7 +6,9 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { ROOT } = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const nfs = require('fs') as typeof fs, npath = require('path') as typeof path, nos = require('os') as typeof os;
+  const nfs = require('fs') as typeof fs,
+    npath = require('path') as typeof path,
+    nos = require('os') as typeof os;
   return { ROOT: nfs.mkdtempSync(npath.join(nos.tmpdir(), 'machines-')) };
 });
 const notices: Array<{ group: string; text: string }> = [];
@@ -139,7 +141,17 @@ describe('reconciliation', () => {
     await reconcileAll();
     expect((await getMachine(m.id))!.state).toBe('stopped');
     // A machine NanoClaw never made, tagged with this install.
-    editFake((rows) => [...rows, { handle: 'stray', opId: 'x', state: 'running', privateIp: '10.0.9.9', sizeName: 'small', tags: { 'nanoclaw-install': 'test-install' } }]);
+    editFake((rows) => [
+      ...rows,
+      {
+        handle: 'stray',
+        opId: 'x',
+        state: 'running',
+        privateIp: '10.0.9.9',
+        sizeName: 'small',
+        tags: { 'nanoclaw-install': 'test-install' },
+      },
+    ]);
     // Deleted out of band.
     editFake((rows) => rows.filter((r) => r.handle !== m.handle));
     __resetReconcileForTest();

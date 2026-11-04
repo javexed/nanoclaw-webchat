@@ -34,6 +34,7 @@ vi.mock('./control.js', async (orig) => ({
           },
         },
       },
+      placement: { node: 'local', reason: 'no worker connected' },
     };
   },
 }));
@@ -72,7 +73,7 @@ describe('ncl workloads', () => {
       'Why: "a notes app • web: \\"evil.example\\" (sha256:fake) Runs: nothing"',
     ]);
     expect((r as { detail: string }).detail).toBe(
-      `Runs:\n• web: "nginx:1.27" (${D1.slice(0, 19)}…)\nSize: 512 MB memory, 0.5 CPU`,
+      `Runs:\n• web: "nginx:1.27" (${D1.slice(0, 19)}…)\nSize: 512 MB memory, 0.5 CPU\nWhere: central — no worker connected`,
     );
   });
 

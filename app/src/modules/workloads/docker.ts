@@ -1,13 +1,16 @@
 /**
- * The node side of workloads on this host: the systemd slice, per-agent
- * internal networks, the files Compose runs from, and `docker compose` itself.
+ * The node side of workloads: the systemd slice, per-agent internal networks,
+ * the files Compose runs from, and `docker compose` itself. A workload's node
+ * is central ('local') or a worker machine; on a worker every step runs there
+ * over its link (dockerOn: the worker allows a fixed set, worker-main.ts),
+ * with images pulled or built here and sent (shipImage).
  *
  * Every Docker call made for a workload runs with NanoClaw's own Docker
  * config folder (dockerEnv): no registry logins, no credential helpers, no
  * contexts from the operator's ~/.docker. A stack pulls public images only,
  * and nothing it builds can be handed the host's registry credentials.
  */
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { createHash } from 'crypto';
 import fs from 'fs';
 import os from 'os';
@@ -19,6 +22,7 @@ import { stringify } from 'yaml';
 import { DATA_DIR, INSTALL_SLUG } from '../../config.js';
 import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
 import { log } from '../../log.js';
+import { callWorker, openWorkerStream } from '../machines/links.js';
 import { HELPER_IMAGE } from './images.js';
 import { buildOverride, overlappingIndexes, subnetFor } from './override.js';
 import { workloadSetting } from './settings.js';
@@ -28,6 +32,48 @@ const run = promisify(execFile);
 const MAX_OUTPUT = 20_000;
 
 export const sha256 = (v: string): string => createHash('sha256').update(v).digest('hex');
+
+/** Central itself, as a workload's node. */
+export const LOCAL_NODE = 'local';
+
+/**
+ * `docker <args>` on a node: here (with NanoClaw's own Docker config,
+ * dockerEnv), or on a worker over its link (worker-main.ts runs it from its
+ * allowlist, in its own folder `dir`, with the Compose files given). Rejects
+ * like execFile does, with stdout/stderr on the error.
+ */
+export async function dockerOn(
+  node: string,
+  args: string[],
+  opts: {
+    cwd?: string;
+    timeoutMs?: number;
+    maxBuffer?: number;
+    files?: Record<string, string>;
+    dir?: string;
+  } = {},
+): Promise<{ stdout: string; stderr: string }> {
+  if (node === LOCAL_NODE)
+    return run(CONTAINER_RUNTIME_BIN, args, {
+      cwd: opts.cwd,
+      timeout: opts.timeoutMs,
+      maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
+      env: dockerEnv(),
+    });
+  const timeoutMs = opts.timeoutMs ?? 600_000;
+  const r = (await callWorker(
+    node,
+    'docker',
+    { args, ...(opts.dir ? { dir: opts.dir, files: opts.files ?? {} } : {}), timeoutMs },
+    timeoutMs + 30_000,
+  )) as { code: number; stdout: string; stderr: string };
+  if (r.code !== 0)
+    throw Object.assign(new Error((r.stderr || r.stdout || `docker exited ${r.code}`).trim()), {
+      stdout: r.stdout,
+      stderr: r.stderr,
+    });
+  return { stdout: r.stdout, stderr: r.stderr };
+}
 
 export const sliceName = (): string =>
   workloadSetting('NANOCLAW_WORKLOAD_SLICE') || `nanoclaw-wl-${INSTALL_SLUG}.slice`;
@@ -81,15 +127,15 @@ export function projectName(w: Pick<Workload, 'agentGroupId' | 'name'>): string 
  * anything else on the host). A failed listing returns none — the create then
  * fails loudly as before, rather than guessing.
  */
-export async function foreignIndexes(): Promise<Set<number>> {
+export async function foreignIndexes(node = LOCAL_NODE): Promise<Set<number>> {
   try {
-    const { stdout: names } = await run(CONTAINER_RUNTIME_BIN, ['network', 'ls', '--format', '{{.Name}}']);
+    const { stdout: names } = await dockerOn(node, ['network', 'ls', '--format', '{{.Name}}']);
     const others = names
       .split('\n')
       .map((n) => n.trim())
       .filter((n) => n && !n.startsWith(`nc-wl-${INSTALL_SLUG}-`));
     if (!others.length) return new Set();
-    const { stdout } = await run(CONTAINER_RUNTIME_BIN, [
+    const { stdout } = await dockerOn(node, [
       'network',
       'inspect',
       '--format',
@@ -107,46 +153,39 @@ export async function foreignIndexes(): Promise<Set<number>> {
 export const builtImageName = (w: Pick<Workload, 'agentGroupId' | 'name'>, service: string): string =>
   `${projectName(w)}-${service}:built`;
 
-async function createInternalNetwork(name: string, idx: number, bridge: string): Promise<void> {
+async function createInternalNetwork(name: string, idx: number, bridge: string, node = LOCAL_NODE): Promise<void> {
   const { subnet, ipRange, gateway } = subnetFor(idx);
-  await run(
-    CONTAINER_RUNTIME_BIN,
-    [
-      'network',
-      'create',
-      '--internal',
-      '--subnet',
-      subnet,
-      // Explicit: Docker would otherwise give the host the first address of the ip-range.
-      '--gateway',
-      gateway,
-      '--ip-range',
-      ipRange,
-      '-o',
-      `com.docker.network.bridge.name=${bridge}`,
-      '--label',
-      `nanoclaw-workloads=${INSTALL_SLUG}`,
-      name,
-    ],
-    { env: dockerEnv() },
-  );
+  await dockerOn(node, [
+    'network',
+    'create',
+    '--internal',
+    '--subnet',
+    subnet,
+    // Explicit: Docker would otherwise give the host the first address of the ip-range.
+    '--gateway',
+    gateway,
+    '--ip-range',
+    ipRange,
+    '-o',
+    `com.docker.network.bridge.name=${bridge}`,
+    '--label',
+    `nanoclaw-workloads=${INSTALL_SLUG}`,
+    name,
+  ]);
 }
 
 /** The bridge and host address a network actually uses, or null when it does not exist. */
 export async function networkInfo(
   name: string,
+  node = LOCAL_NODE,
 ): Promise<{ bridge: string; gateway: string; internal: boolean } | null> {
-  return run(
-    CONTAINER_RUNTIME_BIN,
-    [
-      'network',
-      'inspect',
-      name,
-      '--format',
-      '{{index .Options "com.docker.network.bridge.name"}} {{range .IPAM.Config}}{{.Gateway}}{{end}} {{.Internal}}',
-    ],
-    { env: dockerEnv() },
-  ).then(
+  return dockerOn(node, [
+    'network',
+    'inspect',
+    name,
+    '--format',
+    '{{index .Options "com.docker.network.bridge.name"}} {{range .IPAM.Config}}{{.Gateway}}{{end}} {{.Internal}}',
+  ]).then(
     (r) => {
       const [bridge = '', gateway = '', internal = ''] = r.stdout.trim().split(' ');
       return { bridge, gateway, internal: internal === 'true' };
@@ -159,12 +198,12 @@ export async function networkInfo(
 const shaped = (info: { bridge: string; gateway: string; internal: boolean }, idx: number, bridge: string): boolean =>
   info.bridge === bridge && info.gateway === subnetFor(idx).gateway && info.internal;
 
-export async function ensureNetwork(idx: number): Promise<string> {
+export async function ensureNetwork(idx: number, node = LOCAL_NODE): Promise<string> {
   const name = networkName(idx);
-  const info = await networkInfo(name);
+  const info = await networkInfo(name, node);
   if (info === null) {
-    await createInternalNetwork(name, idx, bridgeName(idx));
-    log.info('Workload network created', { network: name, subnet: subnetFor(idx).subnet });
+    await createInternalNetwork(name, idx, bridgeName(idx), node);
+    log.info('Workload network created', { network: name, subnet: subnetFor(idx).subnet, node });
   } else if (!shaped(info, idx, bridgeName(idx))) {
     // The host rules match the bridge name: a network under any other name, or not internal, is unprotected.
     throw new Error(
@@ -371,21 +410,19 @@ const clip = (s: string): string => (s.length > MAX_OUTPUT ? `…${s.slice(-MAX_
 /** `docker compose` for one workload. Output is clipped; errors carry the tail of stderr. */
 export async function compose(w: Workload, args: string[], timeoutMs = 600_000): Promise<string> {
   const dir = workDir(w.id);
+  const argv = ['compose', '-p', projectName(w), '-f', 'stack.yml', '-f', 'override.yml', ...args];
   try {
-    const { stdout, stderr } = await run(
-      CONTAINER_RUNTIME_BIN,
-      [
-        'compose',
-        '-p',
-        projectName(w),
-        '-f',
-        path.join(dir, 'stack.yml'),
-        '-f',
-        path.join(dir, 'override.yml'),
-        ...args,
-      ],
-      { cwd: dir, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, env: dockerEnv() },
-    );
+    const { stdout, stderr } =
+      w.node === LOCAL_NODE
+        ? await dockerOn(LOCAL_NODE, argv, { cwd: dir, timeoutMs })
+        : await dockerOn(w.node, argv, {
+            timeoutMs,
+            dir: w.id,
+            files: {
+              'stack.yml': fs.readFileSync(path.join(dir, 'stack.yml'), 'utf8'),
+              'override.yml': fs.readFileSync(path.join(dir, 'override.yml'), 'utf8'),
+            },
+          });
     return clip(`${stdout}${stderr}`.trim());
   } catch (err) {
     const e = err as { stderr?: string; stdout?: string; message?: string };
@@ -443,13 +480,74 @@ export async function refuseReservedImageLabels(images: string[]): Promise<void>
 
 /** Drop this stack's replaced (untagged) images: they would only fill the disk. */
 export async function pruneOldImages(w: Workload): Promise<void> {
-  await run(
-    CONTAINER_RUNTIME_BIN,
-    ['image', 'prune', '-f', '--filter', `label=com.docker.compose.project=${projectName(w)}`],
-    { env: dockerEnv() },
-  ).catch(() => undefined);
+  await dockerOn(w.node, [
+    'image',
+    'prune',
+    '-f',
+    '--filter',
+    `label=com.docker.compose.project=${projectName(w)}`,
+  ]).catch(() => undefined);
 }
 
 export function removeFiles(id: string): void {
   fs.rmSync(workDir(id), { recursive: true, force: true });
+}
+
+/** A workload's files here and, on a worker, its folder there too. */
+export async function removeWorkloadFiles(w: Pick<Workload, 'id' | 'node'>): Promise<void> {
+  removeFiles(w.id);
+  if (w.node !== LOCAL_NODE)
+    await callWorker(w.node, 'rmdir', { dir: w.id }).catch((err) =>
+      log.warn('Workload folder on worker not removed', { workloadId: w.id, node: w.node, err: String(err) }),
+    );
+}
+
+/**
+ * Size the workloads slice on a worker to NanoClaw's share of it (members.ts
+ * availableOn), the slice every one of its containers runs under (override.yml).
+ */
+export async function sizeWorkerSlice(node: string, share: { memMb: number; cpus: number }): Promise<void> {
+  await callWorker(node, 'slice', { name: sliceName(), memoryMb: share.memMb, cpus: share.cpus });
+}
+
+/** The tag a pulled service's image is sent to a worker under: `docker save` keeps tags, not digests. */
+export const pulledImageName = (w: Pick<Workload, 'agentGroupId' | 'name'>, service: string): string =>
+  `${projectName(w)}-${service}:pulled`;
+
+/** Pull an image reference here (a digest-pinned one: what was approved). */
+export async function pullHere(ref: string): Promise<void> {
+  await dockerOn(LOCAL_NODE, ['pull', '--quiet', ref], { timeoutMs: 1_200_000 });
+}
+
+/** Tag an image here under another name (the name a worker gets it as). */
+export async function tagHere(ref: string, as: string): Promise<void> {
+  await dockerOn(LOCAL_NODE, ['tag', ref, as]);
+}
+
+/**
+ * Give a worker an image from central's own copy (docker save → worker-main.ts
+ * image-load), unless the tag there already holds the same image: the worker
+ * never pulls from a registry, and never builds.
+ */
+export async function shipImage(node: string, image: string): Promise<void> {
+  const here = (await dockerOn(LOCAL_NODE, ['image', 'inspect', '--format', '{{.Id}}', image])).stdout.trim();
+  if (here && (await callWorker(node, 'hasImage', { image })) === here) return;
+  await new Promise<void>((resolve, reject) => {
+    const save = spawn(CONTAINER_RUNTIME_BIN, ['save', image], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: dockerEnv(),
+    });
+    const up = openWorkerStream(node, { kind: 'image-load', image });
+    let err = '';
+    save.stderr.on('data', (d: Buffer) => (err = (err + d.toString()).slice(-500)));
+    save.on('error', reject);
+    save.on('close', (code) => code !== 0 && (up.destroy(), reject(new Error(`save ${image}: ${err.trim() || code}`))));
+    up.on('error', (e: Error) => reject(new Error(`send ${image}: ${e.message}`)));
+    // The worker ends its side once the load has finished.
+    up.on('end', () => resolve());
+    up.resume();
+    save.stdout.pipe(up);
+  });
+  const there = await callWorker(node, 'hasImage', { image });
+  if (there !== here) throw new Error(`${image} did not arrive intact on the worker`);
 }

@@ -1,4 +1,4 @@
-// Agent workloads: Compose stacks that run under an agent on this host.
+// Agent workloads: Compose stacks that run under an agent, on this host or a worker machine.
 // Registers `ncl workloads`, the reconcile loop (preflight, network joins,
 // expiry, disk, backups), the agent's own service addresses with the egress
 // filter (so its proxied HTTP reaches its own services) and the registries
@@ -6,8 +6,10 @@
 // apps to people. Nothing starts unless NANOCLAW_WORKLOADS=1 and the
 // preflight passes (preflight.ts); the gateway also needs its own settings.
 import { registerBuildRegistries, registerOwnNetworks } from '../../channels/webchat/egress-filter.js';
+import { registerWorkloadTunnel } from '../../channels/webchat/workload-tunnel.js';
 import { log } from '../../log.js';
 import { registerModuleSweep } from '../../module-sweep.js';
+import { isLinked, openWorkerTcp } from '../machines/links.js';
 import './cli.js';
 import { tickGateway } from './gateway/index.js';
 import { tickCloudflare } from './cloudflare/index.js';
@@ -29,6 +31,15 @@ registerModuleSweep('workloads-reconcile', async () => {
 registerOwnNetworks(async (agentGroupId) => {
   if (!(await workloadsReady())) return [];
   return (await listWorkloads({ agentGroupId })).flatMap((w) => Object.values(w.addresses).map((a) => `${a}/32`));
+});
+
+// A stack on a worker: its addresses exist there only, so the agent's proxy
+// (egress filter) reaches them over the link.
+registerWorkloadTunnel(async (host, port) => {
+  if (!(await workloadsReady())) return null;
+  const w = (await listWorkloads()).find((x) => Object.values(x.addresses).includes(host));
+  if (!w || w.node === 'local' || !isLinked(w.node)) return null;
+  return () => openWorkerTcp(w.node, host, port);
 });
 
 registerBuildRegistries(buildRegistries);

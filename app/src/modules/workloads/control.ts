@@ -10,7 +10,9 @@ import path from 'path';
 import { audit } from '../../audit.js';
 import { GROUPS_DIR } from '../../config.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
+import { log } from '../../log.js';
 import { isPlainFile, readNoFollow } from '../../no-follow-fs.js';
+import { availableOn, getMember } from '../machines/members.js';
 import { backupWorkload, listBackups, restoreVolumes, type Backup } from './backup.js';
 import { buildImage, ensureBuilder, removeBuilder } from './builder.js';
 import { assertDiskRoom } from './disk.js';
@@ -21,19 +23,26 @@ import {
   ensureNetwork,
   foreignIndexes,
   joinAgentContainers,
+  LOCAL_NODE,
   networkName,
   pinRef,
   plainSegments,
   pruneOldImages,
+  pulledImageName,
+  pullHere,
   refuseReservedImageLabels,
-  removeFiles,
+  removeWorkloadFiles,
   resolveDigest,
   sha256,
+  shipImage,
+  sizeWorkerSlice,
   sliceStatus,
+  tagHere,
   workDir,
   writeFiles,
 } from './docker.js';
 import { MAX_NETWORKS, serviceAddresses, subnetFor } from './override.js';
+import { placeWorkload, workerRooms, type Placement } from './placement.js';
 import { checkStack, type CheckedStack } from './policy.js';
 import { requireWorkloads } from './preflight.js';
 import { confinedBuildsOn } from './settings.js';
@@ -101,11 +110,13 @@ export interface Checked {
   existing: Workload | null;
   shape: StackShape;
   composeHash: string;
+  /** Where it runs: a new stack is placed now (placement.ts); an existing one stays put. */
+  placement: Placement;
 }
 
 /**
  * Check a stack against the policy, what is left of the agent's quota
- * (excluding the stack being replaced) and the host's ceiling, and work out
+ * (excluding the stack being replaced) and its node's ceiling, and work out
  * its shape: image services resolve to digests here, unless their reference is
  * unchanged since `approved` (then the approved digest stands).
  */
@@ -118,8 +129,6 @@ export async function checkWorkload(
   if (!WORKLOAD_NAME_RE.test(name))
     throw new Error('name must be 2–30 lowercase letters, digits and hyphens, starting with a letter');
   requireWorkloads();
-  const slice = await sliceStatus();
-  if (!slice.ok) throw new Error(slice.reason);
   const dir = await groupDir(agentGroupId);
   const text = readCompose(dir, file);
   const existing = await findWorkload(agentGroupId, name);
@@ -135,15 +144,33 @@ export async function checkWorkload(
     { composeDir: path.dirname(path.join(dir, relOf(file))), allowBuild: confinedBuildsOn() },
   );
   if (!r.ok) throw new Error(`the stack was refused:\n- ${r.errors.join('\n- ')}`);
-  // The node's ceiling across every agent.
-  const all = (await listWorkloads()).filter((w) => w.id !== existing?.id);
-  const nodeMem = all.reduce((a, w) => a + w.approvedMemoryMb, 0) + r.stack.total.memoryMb;
-  if (nodeMem > slice.memoryMaxMb)
-    throw new Error(
-      `this host's workload memory (${slice.memoryMaxMb} MB) would be exceeded (${nodeMem} MB); ask an owner`,
+  // A workload stays where it was placed; a new one is placed now (placement.ts).
+  const placement: Placement = existing
+    ? { node: existing.node, reason: existing.placementReason ?? '' }
+    : await placeWorkload(agentGroupId, r.stack.total);
+  if (placement.node === LOCAL_NODE) {
+    const slice = await sliceStatus();
+    if (!slice.ok) throw new Error(slice.reason);
+    // The node's ceiling across every agent.
+    const all = (await listWorkloads()).filter((w) => w.id !== existing?.id && w.node === LOCAL_NODE);
+    const nodeMem = all.reduce((a, w) => a + w.approvedMemoryMb, 0) + r.stack.total.memoryMb;
+    if (nodeMem > slice.memoryMaxMb)
+      throw new Error(
+        `this host's workload memory (${slice.memoryMaxMb} MB) would be exceeded (${nodeMem} MB); ask an owner`,
+      );
+  } else if (existing) {
+    const room = (await workerRooms(undefined, existing.id, { draining: true })).find(
+      (x) => x.machine.id === existing.node,
     );
+    if (!room)
+      throw new Error(`${name} runs on a worker that is not connected now (${existing.node}); try again later`);
+    if (room.freeMemMb < r.stack.total.memoryMb)
+      throw new Error(
+        `${name}'s worker ${room.machine.name} has ${room.freeMemMb} MB free for it, and this asks for ${r.stack.total.memoryMb} MB`,
+      );
+  }
   const shape = await stackShape(dir, r.stack, resolver, approved);
-  return { text, stack: r.stack, existing, shape, composeHash: sha256(text).slice(0, 32) };
+  return { text, stack: r.stack, existing, shape, composeHash: sha256(text).slice(0, 32), placement };
 }
 
 /** What an approval card pins for `up`: this exact Compose file and shape (digests, Dockerfiles, args). */
@@ -210,12 +237,44 @@ async function buildService(
   );
 }
 
+/**
+ * The images a stack on a worker runs, sent from here: each pulled image by
+ * its approved digest, then tagged under NanoClaw's name (pulledImageName;
+ * `docker save` keeps tags, not digests), and each built one under its own.
+ * The worker never pulls from a registry or builds (worker-main.ts).
+ */
+async function shipImages(
+  w: Workload,
+  images: Record<string, string>,
+  builds: string[],
+): Promise<Record<string, string>> {
+  const sent: Record<string, string> = {};
+  for (const [name, ref] of Object.entries(images)) {
+    if (builds.includes(name)) sent[name] = ref;
+    else {
+      await pullHere(ref);
+      sent[name] = pulledImageName(w, name);
+      await tagHere(ref, sent[name]);
+    }
+  }
+  // Checked here, before anything is sent: the labels are what the image carries.
+  await refuseReservedImageLabels(Object.values(sent));
+  for (const image of new Set(Object.values(sent))) await shipImage(w.node, image);
+  return sent;
+}
+
 async function deploy(w: Workload, agentGroupId: string): Promise<Workload> {
   requireWorkloads();
   const approved = decodeApproved(w.approvedShape);
   if (!approved) throw new Error(`${w.name} has no approval on record: run \`ncl workloads up\``);
-  const net = await claimNetwork(agentGroupId, networkName, MAX_NETWORKS, await foreignIndexes());
-  const network = await ensureNetwork(net.idx);
+  const remote = w.node !== LOCAL_NODE;
+  if (remote) {
+    const m = await getMember(w.node);
+    if (!m) throw new Error(`${w.name}'s worker is gone (${w.node}); ask an owner`);
+    await sizeWorkerSlice(w.node, availableOn(m));
+  }
+  const net = await claimNetwork(agentGroupId, networkName, MAX_NETWORKS, await foreignIndexes(w.node));
+  const network = await ensureNetwork(net.idx, w.node);
   const taken = (await listWorkloads({ agentGroupId }))
     .filter((o) => o.id !== w.id)
     .flatMap((o) => Object.values(o.addresses));
@@ -238,23 +297,27 @@ async function deploy(w: Workload, agentGroupId: string): Promise<Workload> {
       for (const name of builds) await buildService(w, dir, name, approved, builder);
     }
     const images = serviceImages(w);
-    writeFiles(w, network, images);
-    const pulled = Object.keys(w.stack.compose.services).filter((n) => !builds.includes(n));
-    if (pulled.length) await compose(w, ['pull', '--quiet', ...pulled], 1_200_000);
-    // An image may not carry NanoClaw's labels (they mark agent containers), whatever its Dockerfile says.
-    await refuseReservedImageLabels(Object.values(images));
+    if (remote) writeFiles(w, network, await shipImages(w, images, builds));
+    else {
+      writeFiles(w, network, images);
+      const pulled = Object.keys(w.stack.compose.services).filter((n) => !builds.includes(n));
+      if (pulled.length) await compose(w, ['pull', '--quiet', ...pulled], 1_200_000);
+      // An image may not carry NanoClaw's labels (they mark agent containers), whatever its Dockerfile says.
+      await refuseReservedImageLabels(Object.values(images));
+    }
     await compose(w, ['up', '-d', '--remove-orphans', '--no-build', '--pull', 'never'], 600_000);
     await pruneOldImages(w);
   } catch (err) {
     audit({ type: 'workload.deploy', actor: actor(agentGroupId), effect: 'failed', detail: { workload: w.id } });
     return updateWorkload(w.id, { state: 'failed', lastError: String((err as Error).message ?? err).slice(-2000) });
   }
-  await joinAgentContainers(agentGroupId, network).catch(() => 0);
+  // On a worker the agent reaches its stack through its proxy over the link (index.ts).
+  if (!remote) await joinAgentContainers(agentGroupId, network).catch(() => 0);
   audit({
     type: 'workload.deploy',
     actor: actor(agentGroupId),
     effect: 'allow',
-    detail: { workload: w.id, memoryMb: w.memoryMb, shape: approved.hash },
+    detail: { workload: w.id, memoryMb: w.memoryMb, shape: approved.hash, node: w.node },
   });
   return updateWorkload(w.id, { state: 'running' });
 }
@@ -273,7 +336,7 @@ export async function upWorkload(
 ): Promise<Workload> {
   // A card asks the registries afresh: an owner approving `up` approves today's digests.
   const checked = await checkWorkload(agentGroupId, name, file);
-  const { text, stack, existing, shape } = checked;
+  const { text, stack, existing, shape, placement } = checked;
   // From a card: the stack must still be the one the owner saw (file, digests, Dockerfiles, args).
   if (approved !== undefined && approved !== approvalPin(checked))
     throw new Error(
@@ -296,7 +359,8 @@ export async function upWorkload(
         expiresAt: Date.now() + DEFAULT_DAYS * 86_400_000,
         createdBy,
         approvedShape: encodeApproved(shape),
-      });
+      }).then((n) => updateWorkload(n.id, { node: placement.node, placementReason: placement.reason }));
+  if (!existing) log.info('Workload placed', { workloadId: w.id, node: placement.node, reason: placement.reason });
   return deploy(w, agentGroupId);
 }
 
@@ -458,7 +522,7 @@ export async function deleteWorkload(agentGroupId: string, name: string): Promis
     await compose(w, ['down', '--volumes', '--remove-orphans', '--rmi', 'local'], 300_000).catch((err) => {
       throw new Error(`could not remove ${name}: ${String((err as Error).message).slice(-500)}`);
     });
-  removeFiles(w.id);
+  await removeWorkloadFiles(w);
   audit({ type: 'workload.delete', actor: actor(agentGroupId), effect: 'allow', detail: { workload: w.id } });
   const gone = await updateWorkload(w.id, { state: 'deleted' });
   if (!(await listWorkloads({ agentGroupId })).length) await removeBuilder(agentGroupId);

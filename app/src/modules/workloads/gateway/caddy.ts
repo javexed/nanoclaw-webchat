@@ -30,6 +30,7 @@ import { log } from '../../../log.js';
 import { dockerEnv } from '../docker.js';
 import type { GatewayConfig } from './config.js';
 import { gatewayDir } from './keys.js';
+import { isRelayTarget } from './relay.js';
 
 const run = promisify(execFile);
 
@@ -50,12 +51,13 @@ export interface GatewaySite {
   /** The route's id: how the check finds the app. */
   id: string;
   hostname: string;
-  /** address:port on the workload network. */
+  /** address:port on the workload network, or a relay to a stack on a worker (relay.ts). */
   target: string;
 }
 
 export function validSite(s: GatewaySite): boolean {
-  return UUID_RE.test(s.id) && HOSTNAME_RE.test(s.hostname) && validTarget(s.target);
+  // A stack on a worker is reached through a loopback relay over its link (relay.ts).
+  return UUID_RE.test(s.id) && HOSTNAME_RE.test(s.hostname) && (validTarget(s.target) || isRelayTarget(s.target));
 }
 
 /**

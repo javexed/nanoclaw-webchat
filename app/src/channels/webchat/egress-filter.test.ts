@@ -5,6 +5,7 @@
 import net from 'net';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { __resetWorkloadTunnelsForTest, registerWorkloadTunnel } from './workload-tunnel.js';
 
 import {
   __setOllamaTargetsForTest,
@@ -384,6 +385,31 @@ describe('an agent’s workload builds', () => {
     deps.identify = async () => ({ agentGroupId: 'ag-1', sessionId: 's1' });
     expect(await ask(`CONNECT registry.example:443 HTTP/1.1\r\n${cred}\r\n\r\n`)).toContain('403');
     upstream.close();
+  });
+});
+
+describe('the agent\u2019s own stack on a worker', () => {
+  afterEach(() => __resetWorkloadTunnelsForTest());
+
+  it('is reached through the worker link, not a connection from this host', async () => {
+    const svc = net.createServer((sock) =>
+      sock.once('data', (d) => sock.end(`HTTP/1.1 200 OK\r\n\r\nremote:${d.toString().split('\r\n')[0]}`)),
+    );
+    const port = await new Promise<number>((r) =>
+      svc.listen(0, '127.0.0.1', () => r((svc.address() as net.AddressInfo).port)),
+    );
+    const asked: string[] = [];
+    // The stack's address (198.18.1.10) exists on the worker only; the "link" here is a TCP connection to svc.
+    registerWorkloadTunnel(async (host, p) =>
+      host === '198.18.1.10' ? () => (asked.push(`${host}:${p}`), net.connect(port, '127.0.0.1')) : null,
+    );
+    deps.mode = async () => 'none';
+    deps.ownNetworks = async () => ['198.18.1.10/32'];
+    const got = await ask(`GET http://198.18.1.10:8080/health HTTP/1.1\r\nHost: 198.18.1.10:8080\r\n${cred}\r\n\r\n`);
+    expect(got).toContain('remote:GET /health HTTP/1.1');
+    expect(asked).toEqual(['198.18.1.10:8080']);
+    expect(seen).toEqual([]);
+    svc.close();
   });
 });
 

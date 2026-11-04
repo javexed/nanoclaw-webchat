@@ -13,6 +13,17 @@ import { Mux, type Message, type Socketish } from './mux.js';
 
 const links = new Map<string, Mux>();
 
+/** Streams a worker opens (e.g. a workload's egress), by kind; modules register what they accept. */
+export type WorkerStreamHandler = (
+  machineId: string,
+  meta: Record<string, unknown>,
+  stream: Duplex,
+) => void | Promise<void>;
+const streamHandlers = new Map<string, WorkerStreamHandler>();
+export function registerWorkerStream(kind: string, fn: WorkerStreamHandler): void {
+  streamHandlers.set(kind, fn);
+}
+
 export function attachLink(machineId: string, socket: Socketish): Mux {
   links.get(machineId)?.close(new Error('replaced by a newer link'));
   const mux = new Mux(socket, 'central');
@@ -25,11 +36,20 @@ export function attachLink(machineId: string, socket: Socketish): Mux {
       await recordHealth(machineId, (msg.data ?? {}) as Record<string, unknown>);
     })().catch((err) => log.warn('Worker health not recorded', { machineId, err: String(err) }));
   });
+  mux.onStream((meta, stream) => {
+    const fn = streamHandlers.get(String(meta.kind ?? ''));
+    if (!fn) return void stream.destroy(new Error('refused: unknown stream'));
+    void Promise.resolve(fn(machineId, meta, stream)).catch((err) => stream.destroy(err as Error));
+  });
   mux.once('close', (err: Error) => {
     if (links.get(machineId) === mux) links.delete(machineId);
     log.info('Worker link closed', { machineId, why: String(err?.message ?? err) });
   });
   log.info('Worker linked', { machineId });
+  for (const fn of onLinked)
+    void Promise.resolve(fn(machineId)).catch((err) =>
+      log.warn('Worker link hook failed', { machineId, err: String(err) }),
+    );
   return mux;
 }
 
@@ -54,6 +74,17 @@ export async function callWorker(
   timeoutMs = 60_000,
 ): Promise<unknown> {
   return linkOf(machineId).request(op, payload, timeoutMs);
+}
+
+/** A stream to one of a worker's stream jobs (worker-main.ts: image-load, vol-out, vol-in). */
+export function openWorkerStream(machineId: string, meta: Record<string, unknown>): Duplex {
+  return linkOf(machineId).open(meta);
+}
+
+/** Called once each time a worker links (workloads clean up what is no longer theirs there). */
+const onLinked: Array<(machineId: string) => void | Promise<void>> = [];
+export function whenLinked(fn: (machineId: string) => void | Promise<void>): void {
+  onLinked.push(fn);
 }
 
 /** A TCP stream to a workload's address on a worker, carried over its link. */

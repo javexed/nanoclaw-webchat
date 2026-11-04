@@ -1568,3 +1568,24 @@ export const moduleWebchatMachineMembers: Migration = {
     `);
   },
 };
+
+/**
+ * Scaling, placement: an owner's pin of an agent's workloads to one node (a
+ * worker machine's id, or 'local' for central), and the one-line reason a
+ * workload sits where it does (shown on its card and in Admin → Machines).
+ */
+export const moduleWebchatWorkloadPlacement: Migration = {
+  version: 238,
+  name: 'webchat-workload-placement',
+  async up(db) {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS workload_pins (
+        agent_group_id TEXT PRIMARY KEY,
+        node           TEXT NOT NULL,
+        set_by         TEXT,
+        set_at         INTEGER NOT NULL
+      );
+      ALTER TABLE workloads ADD COLUMN placement_reason TEXT;
+    `);
+  },
+};

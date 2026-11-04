@@ -113,11 +113,21 @@ export async function createMachine(
       m.opId,
     );
     const out = await updateMachine(m.id, { handle });
-    audit({ type: 'machine.create', actor: actor(agentGroupId), effect: 'allow', detail: { machine: m.id, site: site.id, size: req.size } });
+    audit({
+      type: 'machine.create',
+      actor: actor(agentGroupId),
+      effect: 'allow',
+      detail: { machine: m.id, site: site.id, size: req.size },
+    });
     return out;
   } catch (err) {
     const out = await updateMachine(m.id, { state: 'failed', lastError: String(err).slice(0, 500) });
-    audit({ type: 'machine.create', actor: actor(agentGroupId), effect: 'failed', detail: { machine: m.id, site: site.id } });
+    audit({
+      type: 'machine.create',
+      actor: actor(agentGroupId),
+      effect: 'failed',
+      detail: { machine: m.id, site: site.id },
+    });
     log.warn('Machine create failed', { machineId: m.id, err: String(err) });
     return out;
   }

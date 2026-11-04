@@ -45,6 +45,7 @@ import {
 } from './egress-policy.js';
 import { connectThroughGateway, connectToGateway } from './gateway-connect.js';
 import { serveOllamaFiltered } from './ollama-filter.js';
+import { workloadTunnel } from './workload-tunnel.js';
 
 const MAX_HEAD = 64 * 1024;
 const IP_MAP_TTL_MS = 2_000;
@@ -135,7 +136,7 @@ export function inOwnNetwork(host: string, cidrs: string[]): boolean {
 }
 
 /** Pipe a client to a socket this filter opened itself (no gateway in between). */
-function spliceDirect(client: ProxyClient, req: ParsedRequest, rest: Buffer, upstream: net.Socket): void {
+function spliceDirect(client: ProxyClient, req: ParsedRequest, rest: Buffer, upstream: Duplex): void {
   upstream.on('error', () => client.destroy());
   client.on('error', () => upstream.destroy());
   if (req.kind === 'connect') client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
@@ -381,9 +382,11 @@ export async function serveProxyClient(client: ProxyClient, deps: EgressFilterDe
   // The agent's own workload services: on its own network, so dialled directly
   // whatever its policy (they are its own), never through the gateway.
   if (!building && deps.ownNetworks && inOwnNetwork(req.host, await deps.ownNetworks(caller.agentGroupId))) {
-    let own: net.Socket;
+    let own: Duplex;
     try {
-      own = await connectTcp(req.host, req.port);
+      // A stack on a worker is reached over that worker's link (workload-tunnel.ts).
+      const tunnel = await workloadTunnel(req.host, req.port);
+      own = tunnel ? tunnel() : await connectTcp(req.host, req.port);
     } catch (err) {
       return answer(
         client,

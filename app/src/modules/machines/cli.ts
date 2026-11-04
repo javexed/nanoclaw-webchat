@@ -43,11 +43,18 @@ const view = (m: Machine) => ({
 function table(rows: ReturnType<typeof view>[]): string {
   if (!rows.length) return 'No machines.';
   return rows
-    .map((r) => `${r.name}  ${r.state}  ${r.site}/${r.size}  ${r.ip ?? '-'}  expires ${r.expires ?? '-'}${r.ssh ? `  (${r.ssh})` : ''}${r.error ? `  error: ${r.error}` : ''}`)
+    .map(
+      (r) =>
+        `${r.name}  ${r.state}  ${r.site}/${r.size}  ${r.ip ?? '-'}  expires ${r.expires ?? '-'}${r.ssh ? `  (${r.ssh})` : ''}${r.error ? `  error: ${r.error}` : ''}`,
+    )
     .join('\n');
 }
 
-const GROUP_ARG = { name: 'group', type: 'string' as const, description: 'Agent group id (host only; inside a container it is always your own).' };
+const GROUP_ARG = {
+  name: 'group',
+  type: 'string' as const,
+  description: 'Agent group id (host only; inside a container it is always your own).',
+};
 const NAME_ARG = { name: 'name', type: 'string' as const, description: 'Machine name.', required: true };
 
 registerResource({
@@ -79,7 +86,9 @@ registerResource({
           .map((s) => ({
             site: s.id,
             label: s.label,
-            sizes: Object.fromEntries(Object.entries(s.sizes).map(([k, v]) => [k, `${v.vcpu} vCPU / ${v.memoryGb} GB`])),
+            sizes: Object.fromEntries(
+              Object.entries(s.sizes).map(([k, v]) => [k, `${v.vcpu} vCPU / ${v.memoryGb} GB`]),
+            ),
             yours: mine.filter((m) => m.siteId === s.id).length,
             limit: s.perAgentCap,
             dailyStop: s.autoStopAt,
@@ -89,7 +98,12 @@ registerResource({
     check: {
       access: 'open',
       description: 'Check a create would be accepted (size, site, limits) before asking for approval.',
-      args: [GROUP_ARG, NAME_ARG, { name: 'size', type: 'string', description: 'A size from `ncl machines sites`.', required: true }, { name: 'site', type: 'string', description: 'Site id; optional when there is only one.' }],
+      args: [
+        GROUP_ARG,
+        NAME_ARG,
+        { name: 'size', type: 'string', description: 'A size from `ncl machines sites`.', required: true },
+        { name: 'site', type: 'string', description: 'Site id; optional when there is only one.' },
+      ],
       handler: async (args, ctx) => {
         const { site, spec } = await checkCreate(groupOf(args, ctx), {
           name: str(args.name, 'name'),
@@ -140,7 +154,11 @@ registerResource({
     resize: {
       access: 'approval',
       description: 'Move a machine to another size (needs an owner approval).',
-      args: [GROUP_ARG, NAME_ARG, { name: 'size', type: 'string', description: 'A size from `ncl machines sites`.', required: true }],
+      args: [
+        GROUP_ARG,
+        NAME_ARG,
+        { name: 'size', type: 'string', description: 'A size from `ncl machines sites`.', required: true },
+      ],
       handler: async (args, ctx) =>
         view(await resizeMachine(groupOf(args, ctx), str(args.name, 'name'), str(args.size, 'size'))),
     },
@@ -158,7 +176,12 @@ registerResource({
         { name: 'id', type: 'string', description: 'Site id.', required: true },
         { name: 'backend', type: 'string', description: 'fake | azure | proxmox', required: true },
         { name: 'label', type: 'string', description: 'Shown to agents.', required: true },
-        { name: 'sizes', type: 'json', description: '{"small":{"vcpu":2,"memoryGb":8,"backendSize":"…"}}', required: true },
+        {
+          name: 'sizes',
+          type: 'json',
+          description: '{"small":{"vcpu":2,"memoryGb":8,"backendSize":"…"}}',
+          required: true,
+        },
         { name: 'config', type: 'json', description: 'Backend settings (never a credential).' },
         { name: 'per_agent_cap', type: 'number', description: 'Default 2.' },
         { name: 'install_cap', type: 'number', description: 'Default 6.' },

@@ -10,21 +10,26 @@
  *   slice    size the workloads systemd slice to NanoClaw's share of this machine
  *   rmdir    remove a workload's folder
  *   tcp      a byte stream to a workload's address (198.18.0.0/15) on this machine
+ *   image    an image central sends (docker save on central, loaded here as
+ *            is); hasImage says which one a tag holds now. A stack's images
+ *            are pulled or built on central (behind its egress filter) and
+ *            sent here: this machine never pulls from a registry or builds
  *
  * There is no general shell. Health goes to central every minute over the link.
  * Built-ins only (and ./mux.js): it is served by central and run as is.
  */
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
 import net from 'net';
 import os from 'os';
 import path from 'path';
+import type { Duplex } from 'stream';
 import tls from 'tls';
 
 import { Mux, type Message } from './mux.js';
 
-export const WORKER_VERSION = '2';
+export const WORKER_VERSION = '3';
 const CONF_DIR = process.env.NC_MACHINE_DIR || '/etc/nanoclaw-machine';
 const WORK = process.env.NC_WORKER_DIR || '/var/lib/nanoclaw-worker';
 const MAX_OUT = 20_000;
@@ -36,7 +41,6 @@ const RECYCLE_MS = 12 * 3600_000;
 const COMPOSE_SUB = new Set([
   'up',
   'down',
-  'pull',
   'ps',
   'logs',
   'exec',
@@ -51,6 +55,7 @@ const COMPOSE_FILES = new Set(['stack.yml', 'override.yml']);
 const NAME = /^nc-[a-z0-9_.-]{1,120}$/;
 const DIR = /^[A-Za-z0-9-]{1,80}$/;
 const SLICE = /^nanoclaw[A-Za-z0-9_.-]{0,100}\.slice$/;
+const IMAGE = /^[a-z0-9][a-z0-9./:@_-]{0,200}$/;
 
 /** Why these docker arguments are refused, or null when they are allowed. */
 export function refuseDocker(args: unknown): string | null {
@@ -71,6 +76,11 @@ export function refuseDocker(args: unknown): string | null {
     }
     if (!NAME.test(project)) return 'a NanoClaw project (-p nc-…) is required';
     if (!COMPOSE_SUB.has(a[i] ?? '')) return `compose ${a[i] ?? ''} not allowed`;
+    // Images come from central (image-load), never straight from a registry.
+    if (a[i] === 'up') {
+      const p = a.indexOf('--pull', i);
+      if (p < 0 || a[p + 1] !== 'never') return 'compose up needs --pull never';
+    }
     return null;
   }
   if (cmd === 'network') {
@@ -158,6 +168,30 @@ async function sliceOp(msg: Message) {
   const r = await run('systemctl', ['set-property', name, ...props]);
   if (r.code !== 0) throw new Error(`slice: ${r.stderr.slice(0, 300)}`);
   return { name, memoryMb: mem, cpus };
+}
+
+/** The image ID a tag holds here now, or null (central sends what is missing or different: image-load). */
+async function hasImageOp(msg: Message) {
+  const image = String(msg.image ?? '');
+  if (!IMAGE.test(image)) throw new Error('refused: bad image');
+  const r = await run('docker', ['image', 'inspect', '--format', '{{.Id}}', image]);
+  return r.code === 0 ? r.stdout.trim() || null : null;
+}
+
+/** An image central sends (docker save): loaded as is; nothing else is run. */
+function onImageLoad(meta: Record<string, unknown>, stream: Duplex): void {
+  if (!IMAGE.test(String(meta.image ?? ''))) return void stream.destroy(new Error('refused: bad image'));
+  const p = spawn('docker', ['load', '--quiet'], {
+    env: { PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin', HOME: process.env.HOME ?? '/root' },
+  });
+  let err = '';
+  p.stderr.on('data', (d: Buffer) => (err = (err + d.toString()).slice(-2000)));
+  p.on('error', (e) => stream.destroy(e));
+  p.stdin.on('error', () => undefined);
+  stream.pipe(p.stdin);
+  p.stdout.resume();
+  stream.on('error', () => p.kill('SIGKILL'));
+  p.on('close', (code) => (code === 0 ? stream.end() : stream.destroy(new Error(err.trim() || `exit ${code}`))));
 }
 
 function rmdirOp(msg: Message) {
@@ -320,7 +354,9 @@ export function serve(mux: Mux): void {
   mux.handle('docker', dockerOp);
   mux.handle('slice', sliceOp);
   mux.handle('rmdir', rmdirOp);
+  mux.handle('hasImage', hasImageOp);
   mux.onStream((meta, stream) => {
+    if (meta.kind === 'image-load') return onImageLoad(meta, stream);
     const port = Number(meta.port);
     if (meta.kind !== 'tcp' || !workloadAddress(meta.host) || !Number.isInteger(port) || port < 1 || port > 65535)
       return void stream.destroy(new Error('refused: only workload addresses'));

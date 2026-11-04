@@ -109,7 +109,9 @@ export async function putSite(s: Site, now = Date.now()): Promise<Site> {
 
 // ── machines ──────────────────────────────────────────────────────────────────
 
-export async function listMachines(filter: { agentGroupId?: string; includeDeleted?: boolean } = {}): Promise<Machine[]> {
+export async function listMachines(
+  filter: { agentGroupId?: string; includeDeleted?: boolean } = {},
+): Promise<Machine[]> {
   if (!(await machinesReady())) return [];
   const where: string[] = [];
   const args: unknown[] = [];
