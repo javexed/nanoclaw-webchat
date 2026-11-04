@@ -277,6 +277,32 @@ describe('egress filter', () => {
     expect(h('Transfer-Encoding: chunked')).toMatchObject({ kind: 'absolute', bodyLength: null });
   });
 
+  it('accepts chunked as the only transfer coding, and nothing else', () => {
+    const h = (extra: string) =>
+      parseProxyHead(`POST http://registry.npmjs.org/x HTTP/1.1\r\nProxy-Authorization: Basic eDp5\r\n${extra}`);
+    for (const te of ['gzip', 'gzip, chunked', 'chunked, gzip', 'identity', 'xchunked', 'chunked;q=1', '']) {
+      expect(h(`Transfer-Encoding: ${te}`)).toMatchObject({
+        error: 'ambiguous body length',
+        status: '400 Bad Request',
+      });
+    }
+    expect(h('transfer-encoding:  CHUNKED ')).toMatchObject({ kind: 'absolute', bodyLength: null });
+  });
+
+  it('refuses a folded header or one with space before its colon', () => {
+    const h = (extra: string) =>
+      parseProxyHead(`POST http://registry.npmjs.org/x HTTP/1.1\r\nProxy-Authorization: Basic eDp5\r\n${extra}`);
+    for (const extra of [
+      'Transfer-Encoding : chunked',
+      'Transfer-Encoding\t: chunked',
+      'X-A: b\r\n Transfer-Encoding: chunked',
+      'Content-Length: 5\r\n\tx',
+    ]) {
+      expect(h(extra)).toMatchObject({ error: 'malformed request head', status: '400 Bad Request' });
+    }
+    expect(h('User-Agent: a :b')).toMatchObject({ kind: 'absolute' });
+  });
+
   it('refuses a destination that would smuggle a second line into the gateway request', () => {
     const smuggled = 'CONNECT [10.0.0.5:22 HTTP/1.1\nX: a.githubusercontent.com]:443 HTTP/1.1';
     expect(parseProxyHead(smuggled)).toHaveProperty('error');

@@ -254,6 +254,11 @@ export function parseProxyHead(head: string): ParsedRequest | { error: string; s
     if (/^proxy-(connection|authorization):/i.test(l)) continue;
     if (l) kept.push(l);
   }
+  // A header folded onto a second line, or with space before its colon, is one
+  // the checks below would not see but a lenient parser downstream might
+  // (RFC 9112 rejects both): refuse it rather than guess.
+  if (kept.some((l) => /^[ \t]/.test(l) || /^[^:]*[ \t]:/.test(l)))
+    return { error: 'malformed request head', status: '400 Bad Request' };
   const bad = { error: 'bad destination host', status: '400 Bad Request' };
   const connect = /^CONNECT\s+(\[[0-9a-f:.]+\]|[^\s:]+):(\d{1,5})\s+HTTP\/1\.[01]$/i.exec(first);
   if (connect) {
@@ -280,7 +285,11 @@ export function parseProxyHead(head: string): ParsedRequest | { error: string; s
     const framing = { error: 'ambiguous body length', status: '400 Bad Request' };
     if (lengths.length > 1 || encodings.length > 1 || (lengths.length && encodings.length)) return framing;
     if (lengths.length && !/^content-length:\s*\d+\s*$/i.test(lengths[0])) return framing;
-    const chunked = encodings.some((l) => /chunked/i.test(l));
+    // Chunked alone. Any other coding ("gzip", "gzip, chunked", "chunked,
+    // gzip") leaves the body's end to a decoder this side does not run, and
+    // RFC 9112 makes a request whose last coding is not chunked a 400.
+    if (encodings.length && !/^transfer-encoding:[ \t]*chunked[ \t]*$/i.test(encodings[0])) return framing;
+    const chunked = encodings.length > 0;
     const length = /^content-length:\s*(\d+)\s*$/im.exec(headers.join('\n'));
     const forGateway = headers.filter((l) => !/^connection:/i.test(l));
     return {
