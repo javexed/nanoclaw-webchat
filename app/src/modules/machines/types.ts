@@ -1,7 +1,6 @@
 /**
  * Agent machines: VMs an agent can have NanoClaw build for it, on pluggable
- * backends. Design: the "NanoClaw Agent Machines" doc (Backends, Machine
- * model, Agent commands and guardrails).
+ * backends.
  *
  * The control plane (control.ts) never calls a cloud or hypervisor API
  * itself: each backend is a MachineDriver, and a site pairs a driver with its

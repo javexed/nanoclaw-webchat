@@ -1,6 +1,6 @@
 /**
- * NanoClaw's own certificate authority for machines (Scaling design: joining
- * and identity). Kept in DATA_DIR/machines-ca, 0700, keys 0600:
+ * NanoClaw's own certificate authority for machines (joining and identity).
+ * Kept in DATA_DIR/machines-ca, 0700, keys 0600:
  *
  *   ca.key / ca.crt          — signs machine certificates (10 years)
  *   server.key / server.crt  — the machine listener's TLS certificate

@@ -1,5 +1,5 @@
 /**
- * How much of a machine NanoClaw may use (Scaling design: Machines). A machine
+ * How much of a machine NanoClaw may use. A machine
  * may run other things too — the first worker can be an existing app server —
  * so the share is worked out from what those other things use, not set by hand:
  *

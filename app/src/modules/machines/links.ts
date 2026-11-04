@@ -1,5 +1,5 @@
 /**
- * Central's side of worker links (Scaling phase 3): one live link per machine,
+ * Central's side of worker links: one live link per machine,
  * attached when a worker connects to the machine listener (`GET /link`,
  * upgraded), dropped when the machine is revoked or the socket goes. Health
  * arriving over the link is recorded as a report; a revoked machine's link is

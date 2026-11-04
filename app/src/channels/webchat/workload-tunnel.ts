@@ -1,5 +1,5 @@
 /**
- * Reaching a workload that runs on a worker (Scaling phase 3). A workload's
+ * Reaching a workload that runs on a worker. A workload's
  * service address (198.18.x.y) exists on its worker only; central's `/apps/`
  * proxy, its WebSocket relay and the egress filter (an agent's own stack)
  * ask here first, and get a stream over the worker's link instead of a TCP

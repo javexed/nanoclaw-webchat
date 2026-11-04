@@ -1,5 +1,5 @@
 /**
- * The machine link's wire format (Scaling phase 3): one mutual-TLS socket
+ * The machine link's wire format: one mutual-TLS socket
  * between central and a worker, carrying JSON messages and many byte streams
  * at once. Built-ins only, because the worker runs this same file on the
  * machine's plain Node (18 or later), with nothing installed beside it.
