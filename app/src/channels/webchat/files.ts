@@ -834,7 +834,8 @@ export function handleFileServe(
     // is safe because the type comes from the .pdf extension, never the
     // upload, and nosniff holds it: the browser hands the bytes to its PDF
     // viewer or nothing, so they never run as a page in the app's origin.
-    'Content-Security-Policy': mime === 'application/pdf' ? "frame-ancestors 'self'" : "sandbox; frame-ancestors 'self'",
+    'Content-Security-Policy':
+      mime === 'application/pdf' ? "frame-ancestors 'self'" : "sandbox; frame-ancestors 'self'",
     'X-Frame-Options': 'SAMEORIGIN',
     'X-Content-Type-Options': 'nosniff',
     // Media players (iOS Safari will not play an mp4 without this) seek by

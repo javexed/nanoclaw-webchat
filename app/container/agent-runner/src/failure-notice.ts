@@ -14,10 +14,7 @@ export const GENERIC_FAILURE = 'The agent run failed. Check the logs for details
  * Anthropic APIs alike) "model 'x' not found"; the LiteLLM router "Invalid
  * model name passed in model=x".
  */
-const MODEL_GONE = [
-  /model ['"\\]*([^'"\\\s]+)['"\\]* not found/i,
-  /invalid model name passed in model=([^\s'"\\,]+)/i,
-];
+const MODEL_GONE = [/model ['"\\]*([^'"\\\s]+)['"\\]* not found/i, /invalid model name passed in model=([^\s'"\\,]+)/i];
 
 /** A specific notice for this failure, or null when the generic one applies. */
 export function failureNotice(detail: string | undefined | null): string | null {
