@@ -1,4 +1,8 @@
 import { spawnSync } from 'child_process';
+import crypto from 'crypto';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import { describe, expect, it } from 'vitest';
 
@@ -6,6 +10,8 @@ import {
   installCommand,
   installScript,
   reportScript,
+  WORKER_HOST_RULES,
+  workerHostRulesCommand,
   workerInstallScript,
   workerUpgradeCommand,
 } from './agent-scripts.js';
@@ -59,5 +65,62 @@ describe('the machine scripts', () => {
     expect(r).toContain('"memNanoclawMb"');
     expect(r).toContain('"cpuNanoclaw"');
     expect(r).toContain('systemctl disable --now nanoclaw-machine.timer');
+  });
+});
+
+describe('the worker installer and the workload host rules', () => {
+  const H = 'a'.repeat(64);
+  const hashes = { 'mux.js': H, 'worker-main.js': 'b'.repeat(64), 'workloads-host-rules.sh': 'c'.repeat(64) };
+
+  it('fetches each file, checks it against the hash central computed, and only then uses it', () => {
+    const w = workerInstallScript('10.0.0.4', 7443, 'PIN', hashes);
+    expect(shOk(w)).toEqual({ ok: true, err: '' });
+    expect(w).toContain(`fetch mux.js ${H}`);
+    expect(w).toContain(`fetch workloads-host-rules.sh ${'c'.repeat(64)}`);
+    expect(w).toContain('sha256sum -c --status');
+    expect(w.indexOf('fetch workloads-host-rules.sh')).toBeLessThan(
+      w.indexOf('workloads-host-rules.sh" --install-unit'),
+    );
+  });
+
+  it('installs the same host rules as central, with their boot unit, before the worker service starts', () => {
+    const w = workerInstallScript('10.0.0.4', 7443, 'PIN', hashes);
+    expect(w).toContain('bash "$LIB/workloads-host-rules.sh" --install-unit');
+    expect(w.indexOf('--install-unit')).toBeLessThan(w.indexOf('systemctl restart nanoclaw-worker.service'));
+    expect(w).toContain('apt-get install -y -qq iptables');
+    expect(workerHostRulesCommand()).toBe(`sudo bash ${WORKER_HOST_RULES} --install-unit`);
+  });
+
+  it('stops when central could not hash a file (or a hash is not one)', () => {
+    const w = workerInstallScript('10.0.0.4', 7443, 'PIN', { 'mux.js': H, 'worker-main.js': 'nope' });
+    expect(w).toContain('fetch worker-main.js missing');
+    expect(w).toContain('fetch workloads-host-rules.sh missing');
+    expect(w).toContain('NanoClaw could not serve $1');
+  });
+
+  it('the fetch step refuses a file whose hash does not match', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nc-fetch-'));
+    try {
+      fs.writeFileSync(path.join(dir, 'served'), 'hello\n');
+      const good = crypto.createHash('sha256').update('hello\n').digest('hex');
+      const w = workerInstallScript('h', 1, 'p', hashes);
+      const fn = w.slice(w.indexOf('fetch() {'), w.indexOf('\n}\n', w.indexOf('fetch() {')) + 3);
+      // curl stands in for the download: it copies the served file to the -o path.
+      const run = (hash: string) =>
+        spawnSync(
+          'sh',
+          ['-c', `set -eu\nLIB=${dir}\nTLS=\nURL=\ncurl() { cp ${dir}/served "$2"; }\n${fn}\nfetch x.js ${hash}`],
+          { encoding: 'utf8' },
+        );
+      const bad = run('0'.repeat(64));
+      expect(bad.status).not.toBe(0);
+      expect(bad.stdout).toContain('x.js did not arrive intact.');
+      expect(fs.existsSync(path.join(dir, 'x.js'))).toBe(false);
+      const ok = run(good);
+      expect(ok.status).toBe(0);
+      expect(fs.readFileSync(path.join(dir, 'x.js'), 'utf8')).toBe('hello\n');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

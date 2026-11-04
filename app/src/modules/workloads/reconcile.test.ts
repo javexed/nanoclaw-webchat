@@ -43,6 +43,7 @@ const deps: ReconcileDeps = {
   join: async (g, network) => (log.push(`join ${g} ${network}`), 0),
   measure: async (ws) => new Map(ws.map((w) => [w.id, usage])),
   backup: async () => null,
+  workers: async () => undefined,
 };
 
 async function running(agentGroupId: string, name: string, expiresAt: number | null = null) {

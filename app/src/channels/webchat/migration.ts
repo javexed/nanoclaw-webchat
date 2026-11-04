@@ -1528,7 +1528,7 @@ export const moduleWebchatMachines: Migration = {
 /**
  * Machines that joined NanoClaw (modules/machines/members.ts): one-time join
  * tokens, and the machines themselves with their certificate, health and the
- * capacity NanoClaw may use on them (Scaling design: Machines).
+ * capacity NanoClaw may use on them.
  */
 export const moduleWebchatMachineMembers: Migration = {
   version: 237,
@@ -1586,6 +1586,25 @@ export const moduleWebchatWorkloadPlacement: Migration = {
         set_at         INTEGER NOT NULL
       );
       ALTER TABLE workloads ADD COLUMN placement_reason TEXT;
+    `);
+  },
+};
+
+/**
+ * Workers that run workloads: whether an owner turned workloads on for the
+ * machine (off for every machine, so nothing moves to a worker by itself),
+ * and its latest workload isolation check — 'ok', 'open' or 'unknown' — with
+ * when it ran (members.ts recordHealth). Placement uses a worker only while
+ * that check is 'ok' and recent.
+ */
+export const moduleWebchatMachineIsolation: Migration = {
+  version: 239,
+  name: 'webchat-machine-isolation',
+  async up(db) {
+    await db.exec(`
+      ALTER TABLE machine_members ADD COLUMN workloads_on INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE machine_members ADD COLUMN isolation TEXT;
+      ALTER TABLE machine_members ADD COLUMN isolation_at INTEGER;
     `);
   },
 };

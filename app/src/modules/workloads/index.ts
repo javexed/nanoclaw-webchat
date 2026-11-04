@@ -9,7 +9,7 @@ import { registerBuildRegistries, registerOwnNetworks } from '../../channels/web
 import { registerWorkloadTunnel } from '../../channels/webchat/workload-tunnel.js';
 import { log } from '../../log.js';
 import { registerModuleSweep } from '../../module-sweep.js';
-import { isLinked, openWorkerTcp } from '../machines/links.js';
+import { isLinked, openWorkerTcp, whenLinked } from '../machines/links.js';
 import './cli.js';
 import { tickGateway } from './gateway/index.js';
 import { tickCloudflare } from './cloudflare/index.js';
@@ -19,6 +19,7 @@ import { reconcileWorkloads } from './reconcile.js';
 import { workloadsSwitchedOn } from './settings.js';
 import { buildRegistries, listWorkloads, workloadsReady } from './store.js';
 import { ensureWatcher } from './watch.js';
+import { askWorkerProbe } from './worker-isolation.js';
 
 registerModuleSweep('workloads-reconcile', async () => {
   if (!workloadsSwitchedOn() || !(await workloadsReady())) return;
@@ -43,6 +44,15 @@ registerWorkloadTunnel(async (host, port) => {
 });
 
 registerBuildRegistries(buildRegistries);
+
+// A worker that links runs its isolation check with the helper image sent from
+// here; until it passes, nothing is placed on it (placement.ts).
+whenLinked(async (machineId) => {
+  if (!workloadsSwitchedOn() || !(await workloadsReady())) return;
+  await askWorkerProbe(machineId).catch((err) =>
+    log.warn('Worker isolation check could not be asked for', { machineId, err: String(err).slice(0, 300) }),
+  );
+});
 
 // The inbound gateway for published apps (gateway/): started, kept in step
 // with the published apps, or taken down when switched off.

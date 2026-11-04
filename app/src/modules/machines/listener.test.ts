@@ -14,19 +14,24 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { getDb, initTestDb } from '../../db/connection.js';
-import { moduleWebchatMachineMembers } from '../../channels/webchat/migration.js';
+import { moduleWebchatMachineIsolation, moduleWebchatMachineMembers } from '../../channels/webchat/migration.js';
 import { caPaths, certFingerprint, ensureCa, issueMachineCert, publicKeyPin } from './ca.js';
-import { machineHandler } from './listener.js';
+import { machineHandler, workerHashes } from './listener.js';
 import {
   addMember,
   availableOn,
   createJoinToken,
   getMember,
+  isolationRefusal,
+  isolationStatus,
+  ISOLATION_FRESH_MS,
   memberByCert,
+  publicView,
   recordHealth,
   removeMember,
   revokeMember,
   setCap,
+  setWorkloadsOn,
   spendJoinToken,
   TOKEN_TTL_MS,
 } from './members.js';
@@ -98,6 +103,7 @@ afterAll(() => {
 beforeEach(async () => {
   await initTestDb();
   await moduleWebchatMachineMembers.up(getDb() as never);
+  await moduleWebchatMachineIsolation.up(getDb() as never);
   await getDb().exec('DELETE FROM machine_members; DELETE FROM machine_join_tokens;');
 });
 
@@ -270,5 +276,62 @@ describe('health records', () => {
     await recordHealth(m.id, { memUsedMb: 5000, memNanoclawMb: 4000, cpuUsed: 1, cpuNanoclaw: 1 });
     const after = (await getMember(m.id))!;
     expect(Object.values(after.peaks)[0]).toEqual({ memMb: 1000, cpus: 0 });
+  });
+});
+
+describe('a worker\'s isolation check and "Run workloads here"', () => {
+  async function worker() {
+    const { token } = await createJoinToken('worker', null);
+    await spendJoinToken(token);
+    return addMember(
+      token,
+      'worker',
+      { hostname: 'w', cpus: 2, memTotalMb: 8000 },
+      { fingerprint: `fp-${Math.random()}`, expiresAt: Date.now() + 1e7 },
+    );
+  }
+
+  it('a newly joined worker runs no workloads and has no isolation result', async () => {
+    const m = await worker();
+    expect(m.workloadsOn).toBe(false);
+    expect(m.isolation).toBeNull();
+    expect(isolationStatus(m)).toBe('unknown');
+    expect(isolationRefusal(m)).toMatch(/worker w hasn't passed the isolation check/);
+    expect(publicView(m)).toMatchObject({ workloadsOn: false, isolation: { status: 'unknown', at: null } });
+    await setWorkloadsOn(m.id, true);
+    expect((await getMember(m.id))!.workloadsOn).toBe(true);
+  });
+
+  it("health carries the result; its time is central's clock minus the age the worker gives", async () => {
+    const m = await worker();
+    const now = 1_800_000_000_000;
+    await recordHealth(m.id, { memUsedMb: 1, isolation: 'ok', isolationAgeMs: 120_000 }, now);
+    let after = (await getMember(m.id))!;
+    expect(after).toMatchObject({ isolation: 'ok', isolationAt: now - 120_000 });
+    expect(isolationStatus(after, now)).toBe('ok');
+    expect(isolationStatus(after, now - 120_000 + ISOLATION_FRESH_MS)).toBe('stale');
+    // report.sh sends no isolation: the last result stands.
+    await recordHealth(m.id, { memUsedMb: 2 }, now + 60_000);
+    expect((await getMember(m.id))!.isolation).toBe('ok');
+    // The check got through: open, however recent.
+    await recordHealth(m.id, { isolation: 'open', isolationAgeMs: 0 }, now + 120_000);
+    after = (await getMember(m.id))!;
+    expect(isolationStatus(after, now + 120_000)).toBe('open');
+    expect(isolationRefusal(after, now + 120_000)).toMatch(/host rules are missing/);
+    // No usable age: it counts as never run, so it cannot pass.
+    for (const age of [undefined, -5, 'soon', 30 * 86_400_000]) {
+      await recordHealth(m.id, { isolation: 'ok', isolationAgeMs: age as never }, now);
+      expect(isolationStatus((await getMember(m.id))!, now)).toBe('stale');
+    }
+    // Anything else is ignored.
+    await recordHealth(m.id, { isolation: 'fine' as never, isolationAgeMs: 0 }, now);
+    expect((await getMember(m.id))!.isolation).toBe('ok');
+  });
+
+  it('central hashes every file the worker installer fetches; a missing one has no hash', () => {
+    const h = workerHashes((n) => (n === 'mux.js' ? 'x' : n === 'workloads-host-rules.sh' ? '#!/bin/sh\n' : null));
+    expect(h['mux.js']).toBe('2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881');
+    expect(h['workloads-host-rules.sh']).toMatch(/^[0-9a-f]{64}$/);
+    expect(h['worker-main.js']).toBeUndefined();
   });
 });

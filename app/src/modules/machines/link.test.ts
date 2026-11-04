@@ -1,5 +1,5 @@
 /**
- * The worker link (Scaling phase 3): the wire format over a real socket pair,
+ * The worker link: the wire format over a real socket pair,
  * the worker's fixed jobs, and the link end to end over real mutual TLS —
  * a joined worker links, central asks it things, a revoke cuts it off.
  */
@@ -22,7 +22,18 @@ import { __resetLinksForTest, callWorker, dropLink, isLinked } from './links.js'
 import { machineHandler, upgradeLink } from './listener.js';
 import { addMember, createJoinToken, getMember, revokeMember } from './members.js';
 import { Mux, STREAM_WINDOW } from './mux.js';
-import { connect, health, refuseDocker, serve, workloadAddress } from './worker-main.js';
+import {
+  __setIsolationForTest,
+  connect,
+  health,
+  probeArgs,
+  readProbe,
+  refuseDocker,
+  refuseWhileUnisolated,
+  serve,
+  tcpAllowed,
+  workloadAddress,
+} from './worker-main.js';
 
 const until = async (ok: () => boolean | Promise<boolean>, ms = 5000): Promise<void> => {
   const end = Date.now() + ms;
@@ -226,6 +237,72 @@ describe("the worker's fixed jobs", () => {
       expect(workloadAddress(h)).toBe(false);
   });
 
+  it("tunnels only to a workload service's own address: never the gateway .1, nothing not running here", () => {
+    const held = new Set(['198.18.1.10', '198.18.1.11']);
+    expect(tcpAllowed('198.18.1.10', 80, held)).toBe(true);
+    expect(tcpAllowed('198.18.1.11', 5432, held)).toBe(true);
+    for (const [h, p] of [
+      ['198.18.1.1', 22], // the gateway: this machine itself
+      ['198.18.1.1', 80],
+      ['198.18.1.12', 80], // in the range, but no service of ours holds it
+      ['198.18.1.200', 80], // a dynamic joiner's range
+      ['198.18.1.10', 0],
+      ['198.18.1.10', 70000],
+      ['10.0.0.1', 80],
+    ] as const)
+      expect(tcpAllowed(h, p, new Set([...held, '198.18.1.1', '198.18.1.200']))).toBe(false);
+  });
+
+  it('the tcp job refuses the gateway even when asked over the link', async () => {
+    const [a, b] = await socketPair();
+    const central = new Mux(a, 'central');
+    serve(new Mux(b, 'worker'));
+    const s = central.open({ kind: 'tcp', host: '198.18.1.1', port: 22 });
+    await expect(new Promise((_r, j) => s.once('error', j))).rejects.toThrow(/refused/);
+    central.close();
+  });
+
+  it('refuses compose up/start/restart until the isolation check passes; the rest still runs', () => {
+    const up = ['compose', '-p', 'nc-x-y', '-f', 'stack.yml', '-f', 'override.yml', 'up', '-d', '--pull', 'never'];
+    const start = ['compose', '-p', 'nc-x-y', '-f', 'stack.yml', 'start'];
+    const restart = ['compose', '-p', 'nc-x-y', '-f', 'stack.yml', 'restart'];
+    expect(refuseWhileUnisolated(up, 'open')).toMatch(/host rules/);
+    expect(refuseWhileUnisolated(up, 'unknown')).toMatch(/has not passed/);
+    expect(refuseWhileUnisolated(start, 'open')).not.toBeNull();
+    expect(refuseWhileUnisolated(restart, 'unknown')).not.toBeNull();
+    expect(refuseWhileUnisolated(up, 'ok')).toBeNull();
+    for (const args of [
+      ['compose', '-p', 'nc-x-y', '-f', 'stack.yml', 'stop'],
+      ['compose', '-p', 'nc-x-y', '-f', 'stack.yml', 'down', '--remove-orphans'],
+      ['compose', '-p', 'nc-x-y', '-f', 'stack.yml', 'ps', '--all'],
+      ['network', 'ls'],
+    ])
+      expect(refuseWhileUnisolated(args, 'open')).toBeNull();
+  });
+
+  it('the docker job itself refuses compose up while the check has not passed', async () => {
+    const [a, b] = await socketPair();
+    const central = new Mux(a, 'central');
+    serve(new Mux(b, 'worker'));
+    const args = ['compose', '-p', 'nc-x-y', '-f', 'stack.yml', '-f', 'override.yml', 'up', '-d', '--pull', 'never'];
+    __setIsolationForTest('open');
+    await expect(central.request('docker', { args }, 5000)).rejects.toThrow(/refused: workloads are stopped/);
+    __setIsolationForTest('unknown');
+    await expect(central.request('docker', { args }, 5000)).rejects.toThrow(/refused: the workload isolation check/);
+    central.close();
+  });
+
+  it('reads the probe container: the token back means open, a failed request means blocked', () => {
+    expect(readProbe('abc123 rc=0\n', 'abc123')).toBe('open');
+    expect(readProbe(' rc=1\n', 'abc123')).toBe('blocked');
+    expect(readProbe(' rc=4\n', 'abc123')).toBe('blocked');
+    expect(readProbe('docker: no such image\n', 'abc123')).toBeNull();
+    const args = probeArgs('nc-worker-probe', 'busybox:1', 'http://198.19.255.1:4242/');
+    expect(args.slice(0, 4)).toEqual(['run', '--rm', '--pull', 'never']);
+    expect(args).toEqual(expect.arrayContaining(['--cap-drop', 'ALL', '--network', 'nc-worker-probe']));
+    expect(args.at(-1)).toContain('http://198.19.255.1:4242/');
+  });
+
   it("reports health as the report script does, NanoClaw's slices apart", () => {
     const files: Record<string, string> = {
       '/proc/meminfo': 'MemTotal:       16384000 kB\nMemAvailable:    6144000 kB\n',
@@ -238,7 +315,15 @@ describe("the worker's fixed jobs", () => {
     expect(h.memTotalMb).toBe(16000);
     expect(h.memUsedMb).toBe(10000);
     expect(h.memNanoclawMb).toBe(0);
-    expect(h.agentVersion).toBe('4');
+    expect(h.agentVersion).toBe('5');
+    __setIsolationForTest('ok', Date.now() - 90_000);
+    const h2 = health((p) => {
+      if (p in files) return files[p];
+      throw new Error('no such file');
+    });
+    expect(h2.isolation).toBe('ok');
+    expect(h2.isolationAgeMs).toBeGreaterThanOrEqual(90_000);
+    expect(h2.isolationAgeMs).toBeLessThan(100_000);
   });
 });
 

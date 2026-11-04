@@ -18,8 +18,9 @@
  *     backups of a workload deleted a week ago are removed.
  *
  * The preflight and network joins are central's: stacks on workers are left
- * out of them (a worker's own isolation is its host rules; its stacks are
- * reached over its link). Their backups are streamed here over the link.
+ * out of them (a worker checks its own host rules: worker-isolation.ts; its
+ * stacks are reached over its link). Their backups are streamed here over
+ * the link.
  */
 import fs from 'fs';
 
@@ -33,6 +34,7 @@ import { dayText, notifyWorkloadAgent } from './notify.js';
 import { lastOpened, USED_WITHIN_MS } from './opened.js';
 import { preflightDue, runPreflight, type PreflightResult } from './preflight.js';
 import { allNetworks, listWorkloads, quotaFor, updateWorkload, type Workload } from './store.js';
+import { reconcileWorkerIsolation } from './worker-isolation.js';
 
 const EVERY_MS = 2 * 60_000;
 const DISK_EVERY_MS = 10 * 60_000;
@@ -56,6 +58,7 @@ export interface ReconcileDeps {
   join: typeof joinAgentContainers;
   measure: typeof measureDisk;
   backup: typeof backupWorkload;
+  workers: (now: number) => Promise<void>;
 }
 
 const defaults: ReconcileDeps = {
@@ -66,6 +69,7 @@ const defaults: ReconcileDeps = {
   join: joinAgentContainers,
   measure: measureDisk,
   backup: backupWorkload,
+  workers: (now) => reconcileWorkerIsolation(now),
 };
 
 /** Stop every running stack on this host: it is reachable from workload networks. */
@@ -141,6 +145,8 @@ export async function reconcileWorkloads(now = Date.now(), deps: ReconcileDeps =
     const pre = await deps.preflight();
     if (pre.isolationOpen) await stopAllRunning(deps);
   }
+  // Workers check their own isolation; central asks for a check when one is missing and records what they stopped.
+  await deps.workers(now).catch((err) => log.warn('Worker isolation sweep failed', { err: String(err).slice(0, 200) }));
   // Every sweep: cheap, and a freshly started agent container cannot reach its own stacks until it has joined.
   // Only agents with a stack here: the network of a stack on a worker exists on that worker only.
   const here = new Set(

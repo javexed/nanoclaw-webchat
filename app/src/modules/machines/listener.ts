@@ -1,5 +1,5 @@
 /**
- * The machine listener (Scaling design: joining, identity and network): a TLS
+ * The machine listener (docs/webchat/scaling.md): a TLS
  * port of its own, separate from webchat, that machines reach over the private
  * network or Tailscale. Off unless NANOCLAW_MACHINE_PORT is set.
  *
@@ -14,16 +14,18 @@
  * Machines pin this listener's key; the listener knows a machine by its client
  * certificate's fingerprint, and refuses a revoked one at once.
  */
+import crypto from 'crypto';
 import fs from 'fs';
 import https from 'https';
 import type { IncomingMessage, ServerResponse } from 'http';
 import os from 'os';
+import path from 'path';
 import type { Duplex } from 'stream';
 import type { TLSSocket } from 'tls';
 
 import { audit } from '../../audit.js';
 import { log } from '../../log.js';
-import { installScript, workerInstallScript } from './agent-scripts.js';
+import { installScript, WORKER_FETCHED, workerInstallScript, type WorkerHashes } from './agent-scripts.js';
 import { caPaths, ensureCa, issueMachineCert, publicKeyPin, RENEW_BEFORE_MS, type CaPaths } from './ca.js';
 import { attachLink } from './links.js';
 import {
@@ -106,16 +108,34 @@ function enrollLimited(ip: string, now = Date.now()): boolean {
   return recent.length > ENROLL_PER_MINUTE;
 }
 
-/** The worker service's files, as compiled beside this module (absent under the test runner). */
-const WORKER_FILES: Record<string, string> = { 'mux.js': 'mux.js', 'worker-main.js': 'worker-main.js' };
+/**
+ * The files a worker fetches: the service as compiled beside this module
+ * (absent under the test runner), and the workload host rules from this
+ * install's deploy/ folder, the same script central's own host runs.
+ */
+const WORKER_FILES: Record<string, () => URL | string> = {
+  'mux.js': () => new URL('./mux.js', import.meta.url),
+  'worker-main.js': () => new URL('./worker-main.js', import.meta.url),
+  'workloads-host-rules.sh': () => path.join(process.cwd(), 'deploy', 'workloads-host-rules.sh'),
+};
 function workerFile(name: string): string | null {
-  const file = WORKER_FILES[name];
+  const file = Object.hasOwn(WORKER_FILES, name) ? WORKER_FILES[name] : null;
   if (!file) return null;
   try {
-    return fs.readFileSync(new URL(`./${file}`, import.meta.url), 'utf8');
+    return fs.readFileSync(file(), 'utf8');
   } catch {
     return null;
   }
+}
+
+/** sha256 of each file worker-install.sh fetches; a file that is missing here has none (the script then stops). */
+export function workerHashes(read: (name: string) => string | null = workerFile): WorkerHashes {
+  const out: WorkerHashes = {};
+  for (const f of WORKER_FETCHED) {
+    const body = read(f);
+    if (body !== null) out[f] = crypto.createHash('sha256').update(body, 'utf8').digest('hex');
+  }
+  return out;
 }
 
 export function machineHandler(cfg: ListenerConfig, paths: CaPaths) {
@@ -131,9 +151,11 @@ export function machineHandler(cfg: ListenerConfig, paths: CaPaths) {
         const m = await caller(req);
         if (!m) return send(res, 403, 'revoked or unknown');
         if (url === '/worker/install.sh')
-          return send(res, 200, workerInstallScript(cfg.address, cfg.port, pin), 'text/x-shellscript');
-        const body = workerFile(url.slice('/worker/'.length));
-        return body === null ? send(res, 404, 'not found') : send(res, 200, body, 'text/javascript');
+          return send(res, 200, workerInstallScript(cfg.address, cfg.port, pin, workerHashes()), 'text/x-shellscript');
+        const name = url.slice('/worker/'.length);
+        const body = workerFile(name);
+        if (body === null) return send(res, 404, 'not found');
+        return send(res, 200, body, name.endsWith('.sh') ? 'text/x-shellscript' : 'text/javascript');
       }
       if (req.method !== 'POST') return send(res, 404, 'not found');
       if (!(await membersReady())) return send(res, 503, 'not ready');

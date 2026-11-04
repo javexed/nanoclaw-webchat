@@ -1,5 +1,5 @@
 /**
- * The worker service (Scaling phase 3): runs on a machine with the worker
+ * The worker service (docs/webchat/scaling.md): runs on a machine with the worker
  * role, as root under systemd, on the machine's own Node (18 or later). It
  * keeps ONE mutual-TLS link to central (mux.ts) with the machine's key and
  * certificate from joining, and does only what central asks from a fixed set:
@@ -9,7 +9,8 @@
  *            central sends, in this worker's own folder
  *   slice    size the workloads systemd slice to NanoClaw's share of this machine
  *   rmdir    remove a workload's folder
- *   tcp      a byte stream to a workload's address (198.18.0.0/15) on this machine
+ *   probe    run the workload isolation check now, with the helper image central sent
+ *   tcp      a byte stream to a service address of a workload on this machine
  *   vol-out / vol-in   a workload volume as a tar stream (backups, restores)
  *   image    an image central sends (docker save on central, loaded here as
  *            is); hasImage says which one a tag holds now. A stack's images
@@ -18,10 +19,23 @@
  *
  * There is no general shell. Health goes to central every minute over the link.
  * Built-ins only (and ./mux.js): it is served by central and run as is.
+ *
+ * Isolation. Workload networks are internal, but Docker does not filter
+ * traffic addressed to this machine itself: from a workload container every
+ * service listening here answers at its network's gateway address. The host
+ * rules (workloads-host-rules.sh, installed with this service) drop that.
+ * This service checks they work by trying, as central does for itself: a
+ * throwaway container on a probe network shaped like a workload network asks
+ * a listener on the gateway address. At start and every half hour; the
+ * result goes to central with each health report. Until it passes, compose
+ * up/start/restart are refused here; when it gets through, every running
+ * workload here is stopped. Central places nothing on a worker whose recent
+ * check did not pass.
  */
 import { execFile, spawn } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
+import http from 'http';
 import net from 'net';
 import os from 'os';
 import path from 'path';
@@ -30,7 +44,7 @@ import tls from 'tls';
 
 import { Mux, type Message } from './mux.js';
 
-export const WORKER_VERSION = '4';
+export const WORKER_VERSION = '5';
 const CONF_DIR = process.env.NC_MACHINE_DIR || '/etc/nanoclaw-machine';
 const WORK = process.env.NC_WORKER_DIR || '/var/lib/nanoclaw-worker';
 const MAX_OUT = 20_000;
@@ -106,6 +120,218 @@ export function workloadAddress(host: unknown): boolean {
   return a === 198 && (b === 18 || b === 19);
 }
 
+/** Services hold .10–.127 of their network (override.ts); .1 is this machine itself. */
+const FIRST_SERVICE = 10;
+const LAST_SERVICE = 127;
+
+/**
+ * May a tcp stream go to host:port? Only to the address of a workload
+ * service that runs here now (`held`, from Docker): never the gateway .1
+ * (this machine), nor any other address in the range.
+ */
+export function tcpAllowed(host: unknown, port: unknown, held: ReadonlySet<string>): boolean {
+  const p = Number(port);
+  if (!workloadAddress(host) || !Number.isInteger(p) || p < 1 || p > 65535) return false;
+  const last = Number(String(host).split('.')[3]);
+  return last >= FIRST_SERVICE && last <= LAST_SERVICE && held.has(String(host));
+}
+
+/** Compose verbs that start containers: refused here until the isolation check passes. */
+const STARTS = new Set(['up', 'start', 'restart']);
+
+/** Why these (already allowed) docker arguments must wait for the isolation check, or null. */
+export function refuseWhileUnisolated(args: string[], state: IsolationState): string | null {
+  if (state === 'ok' || args[0] !== 'compose') return null;
+  let i = 1;
+  while (i < args.length && args[i].startsWith('-')) i += 2;
+  if (!STARTS.has(args[i] ?? '')) return null;
+  return state === 'open'
+    ? 'workloads are stopped on this machine: a workload could reach the machine itself (install the host rules: workloads-host-rules.sh --install-unit)'
+    : 'the workload isolation check has not passed on this machine yet';
+}
+
+// ── isolation ─────────────────────────────────────────────────────────────────
+
+export type IsolationState = 'ok' | 'open' | 'unknown';
+export const PROBE_EVERY_MS = 30 * 60_000;
+/** The probe network: internal, its bridge named ncw… like every workload bridge (the host rules match ncw+). */
+const PROBE_NET = 'nc-worker-probe';
+const PROBE_BRIDGE = 'ncwprobe';
+/** 198.19.255.0/24: the range's last /24, which no workload network takes. */
+const PROBE_PREFIX = /^198\.1[89]\.\d{1,3}$/.test(process.env.NC_PROBE_PREFIX ?? '')
+  ? String(process.env.NC_PROBE_PREFIX)
+  : '198.19.255';
+const PROBE_IMAGE_FILE = () => path.join(WORK, 'probe-image');
+
+let isolation: { state: IsolationState; at: number; detail: string } = { state: 'unknown', at: Date.now(), detail: '' };
+let probing: Promise<IsolationState> | null = null;
+
+export const isolationNow = () => isolation;
+
+/** What the probe container printed: the token came back (open), the request failed (blocked), or neither. */
+export function readProbe(stdout: string, token: string): 'open' | 'blocked' | null {
+  if (stdout.includes(token)) return 'open';
+  if (/ rc=\d+/.test(stdout)) return 'blocked';
+  return null;
+}
+
+/** The probe container: no capabilities, small, no logs, only a wget to the listener. */
+export function probeArgs(network: string, image: string, url: string): string[] {
+  return [
+    'run',
+    '--rm',
+    '--pull',
+    'never',
+    '--network',
+    network,
+    '--log-driver',
+    'none',
+    '--cap-drop',
+    'ALL',
+    '--security-opt',
+    'no-new-privileges:true',
+    '--memory',
+    '64m',
+    '--pids-limit',
+    '16',
+    image,
+    'sh',
+    '-c',
+    `wget -q -T 4 -O- ${url} 2>/dev/null; echo " rc=$?"`,
+  ];
+}
+
+async function ensureProbeNetwork(): Promise<void> {
+  const gw = `${PROBE_PREFIX}.1`;
+  const r = await run('docker', [
+    'network',
+    'inspect',
+    PROBE_NET,
+    '--format',
+    '{{index .Options "com.docker.network.bridge.name"}} {{range .IPAM.Config}}{{.Gateway}}{{end}} {{.Internal}}',
+  ]);
+  if (r.code === 0 && r.stdout.trim() === `${PROBE_BRIDGE} ${gw} true`) return;
+  if (r.code === 0) await run('docker', ['network', 'rm', PROBE_NET]);
+  const c = await run('docker', [
+    'network',
+    'create',
+    '--internal',
+    '--subnet',
+    `${PROBE_PREFIX}.0/24`,
+    '--gateway',
+    gw,
+    '-o',
+    `com.docker.network.bridge.name=${PROBE_BRIDGE}`,
+    PROBE_NET,
+  ]);
+  if (c.code !== 0) throw new Error(`probe network: ${c.stderr.slice(0, 300)}`);
+}
+
+/** One check: can a container on a workload-shaped network reach this machine? */
+async function probeOnce(image: string): Promise<'open' | 'blocked'> {
+  if (!IMAGE.test(image)) throw new Error('no usable probe image');
+  await ensureProbeNetwork();
+  const gw = `${PROBE_PREFIX}.1`;
+  const token = crypto.randomBytes(12).toString('hex');
+  const server = http.createServer((_req, res) => res.end(token));
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, gw, () => resolve());
+  });
+  try {
+    const port = (server.address() as net.AddressInfo).port;
+    const r = await run('docker', probeArgs(PROBE_NET, image, `http://${gw}:${port}/`), { timeoutMs: 60_000 });
+    const seen = readProbe(r.stdout, token);
+    if (!seen) throw new Error(`the probe gave no answer: ${(r.stderr || r.stdout).slice(0, 200)}`);
+    return seen;
+  } finally {
+    server.close();
+  }
+}
+
+/** Stop every running container of a NanoClaw Compose project here. */
+async function stopAllWorkloads(): Promise<number> {
+  const r = await run('docker', [
+    'ps',
+    '--filter',
+    'label=com.docker.compose.project',
+    '--format',
+    '{{.ID}} {{.Label "com.docker.compose.project"}}',
+  ]);
+  const ids = r.stdout
+    .split('\n')
+    .map((l) => l.trim().split(' '))
+    .filter(([id, project]) => id && NAME.test(project ?? ''))
+    .map(([id]) => id);
+  if (ids.length) await run('docker', ['stop', ...ids], { timeoutMs: 300_000 });
+  return ids.length;
+}
+
+/**
+ * Run the isolation check (one at a time) with `image`, or the image central
+ * last sent. The result is kept and reported; when it gets through, every
+ * workload here is stopped at once.
+ */
+export function runProbe(image?: string): Promise<IsolationState> {
+  const given = !!image && IMAGE.test(image);
+  if (given) fs.writeFileSync(PROBE_IMAGE_FILE(), image, { mode: 0o600 });
+  // A check already under way may predate the image just given: run once more after it.
+  if (probing) return given ? probing.then(() => runProbe()) : probing;
+  probing = (async (): Promise<IsolationState> => {
+    const img = fs.existsSync(PROBE_IMAGE_FILE()) ? fs.readFileSync(PROBE_IMAGE_FILE(), 'utf8').trim() : '';
+    try {
+      if (!img) throw new Error('central has not sent the probe image yet');
+      const seen = await probeOnce(img);
+      isolation = { state: seen === 'open' ? 'open' : 'ok', at: Date.now(), detail: '' };
+    } catch (err) {
+      isolation = { state: 'unknown', at: Date.now(), detail: String((err as Error).message ?? err).slice(0, 300) };
+    }
+    if (isolation.state === 'open') {
+      const n = await stopAllWorkloads().catch(() => 0);
+      console.error(`Workload isolation check got through: host rules missing. Stopped ${n} container(s).`);
+    }
+    return isolation.state;
+  })().finally(() => {
+    probing = null;
+  });
+  return probing;
+}
+
+/** For tests: set the isolation state the docker job checks against. */
+export function __setIsolationForTest(state: IsolationState, at = Date.now()): void {
+  isolation = { state, at, detail: '' };
+}
+
+// ── the addresses workload services hold here ─────────────────────────────────
+
+let heldCache: { at: number; set: Set<string> } | null = null;
+
+/** Service addresses of NanoClaw's Compose projects running here (cached a few seconds). */
+async function heldAddresses(): Promise<Set<string>> {
+  if (heldCache && Date.now() - heldCache.at < 5_000) return heldCache.set;
+  const set = new Set<string>();
+  const nets = await run('docker', ['network', 'ls', '--filter', 'label=nanoclaw-workloads', '--format', '{{.Name}}']);
+  const names = nets.stdout
+    .split('\n')
+    .map((n) => n.trim())
+    .filter((n) => NAME.test(n));
+  if (names.length) {
+    const r = await run('docker', [
+      'network',
+      'inspect',
+      '--format',
+      '{{range .Containers}}{{.Name}} {{.IPv4Address}}\n{{end}}',
+      ...names,
+    ]);
+    for (const line of r.stdout.split('\n')) {
+      const [name = '', cidr = ''] = line.trim().split(' ');
+      if (NAME.test(name)) set.add(cidr.split('/')[0]);
+    }
+  }
+  heldCache = { at: Date.now(), set };
+  return set;
+}
+
 function run(file: string, args: string[], opts: { cwd?: string; timeoutMs?: number } = {}) {
   return new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
     execFile(
@@ -135,7 +361,7 @@ function run(file: string, args: string[], opts: { cwd?: string; timeoutMs?: num
 }
 
 async function dockerOp(msg: Message) {
-  const why = refuseDocker(msg.args);
+  const why = refuseDocker(msg.args) ?? refuseWhileUnisolated(msg.args as string[], isolation.state);
   if (why) throw new Error(`refused: ${why}`);
   let cwd: string | undefined;
   if (msg.dir !== undefined) {
@@ -357,6 +583,8 @@ export function health(read: (p: string) => string = (p) => fs.readFileSync(p, '
     diskFreeGb,
     load1: os.loadavg()[0],
     agentVersion: WORKER_VERSION,
+    isolation: isolation.state,
+    isolationAgeMs: Math.max(0, now - isolation.at),
   };
 }
 
@@ -448,21 +676,32 @@ export function serve(mux: Mux): void {
   mux.handle('rmdir', rmdirOp);
   mux.handle('hasImage', hasImageOp);
   mux.handle('volumes', volumesOp);
+  mux.handle('probe', async (msg) => ({ isolation: await runProbe(String(msg.image ?? '')), ...isolationNow() }));
   mux.onStream((meta, stream) => {
     if (meta.kind === 'image-load') return onImageLoad(meta, stream);
     if (meta.kind === 'vol-out' || meta.kind === 'vol-in') return onVolumeStream(meta, stream);
-    const port = Number(meta.port);
-    if (meta.kind !== 'tcp' || !workloadAddress(meta.host) || !Number.isInteger(port) || port < 1 || port > 65535)
-      return void stream.destroy(new Error('refused: only workload addresses'));
-    const up = net.connect({ host: String(meta.host), port });
-    up.on('error', (err) => stream.destroy(err));
-    stream.on('error', () => up.destroy());
-    stream.pipe(up);
-    up.pipe(stream);
+    if (meta.kind !== 'tcp') return void stream.destroy(new Error('refused: unknown stream'));
+    const refuse = () => void stream.destroy(new Error("refused: only a workload service's own address"));
+    // The address's shape first (never .1, only the service range), then whether a service of ours holds it.
+    if (!tcpAllowed(meta.host, meta.port, new Set([String(meta.host)]))) return refuse();
+    stream.on('error', () => undefined);
+    void heldAddresses()
+      .catch(() => new Set<string>())
+      .then((held) => {
+        if (!tcpAllowed(meta.host, meta.port, held)) return refuse();
+        const up = net.connect({ host: String(meta.host), port: Number(meta.port) });
+        up.on('error', (err) => stream.destroy(err));
+        stream.on('error', () => up.destroy());
+        stream.pipe(up);
+        up.pipe(stream);
+      });
   });
 }
 
 async function main(): Promise<void> {
+  // The isolation check at start (with the image central sent before) and every half hour.
+  void runProbe();
+  setInterval(() => void runProbe(), PROBE_EVERY_MS).unref();
   let backoff = 2000;
   for (;;) {
     try {

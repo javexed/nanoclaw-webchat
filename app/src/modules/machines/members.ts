@@ -1,6 +1,6 @@
 /**
  * Machines that joined NanoClaw, and the one-time tokens they join with
- * (Scaling design: Machines; joining and identity). The rules live here too —
+ * (docs/webchat/scaling.md). The rules live here too —
  * there is little of it: spend a token once, recognise a machine by its
  * certificate fingerprint, fold health reports into the capacity it offers.
  */
@@ -17,6 +17,16 @@ export type MemberState = 'ready' | 'draining' | 'revoked';
 export const TOKEN_TTL_MS = 3600_000;
 /** A machine that has not reported for 3 minutes is unhealthy (it reports every minute). */
 export const UNHEALTHY_AFTER_MS = 3 * 60_000;
+/**
+ * A worker runs its isolation check at start and every half hour; a passing
+ * result older than this no longer counts, so a worker that stopped checking
+ * takes no new stacks.
+ */
+export const ISOLATION_FRESH_MS = 45 * 60_000;
+
+/** A worker's own workload isolation check (worker-main.ts): could a workload reach that machine? */
+export type Isolation = 'ok' | 'open' | 'unknown';
+export const ISOLATIONS: readonly Isolation[] = ['ok', 'open', 'unknown'];
 
 export interface Facts {
   hostname?: string;
@@ -38,6 +48,10 @@ export interface Health {
   diskFreeGb: number;
   load1?: number;
   agentVersion?: string;
+  /** Sent by the worker service only (worker-main.ts); report.sh leaves it out. */
+  isolation?: Isolation;
+  /** How long ago the worker ran that check. */
+  isolationAgeMs?: number;
 }
 
 export interface Member {
@@ -56,6 +70,11 @@ export interface Member {
   prevCertExpires: number | null;
   capMemoryMb: number | null;
   capCpus: number | null;
+  /** An owner turned "Run workloads here" on: new stacks may be placed here. */
+  workloadsOn: boolean;
+  /** The latest isolation check the worker reported, and when it ran (central's clock). */
+  isolation: Isolation | null;
+  isolationAt: number | null;
   createdBy: string | null;
   createdAt: number;
   updatedAt: number;
@@ -77,6 +96,9 @@ interface Row {
   prev_cert_expires: number | null;
   cap_memory_mb: number | null;
   cap_cpus: number | null;
+  workloads_on?: number | null;
+  isolation?: string | null;
+  isolation_at?: number | null;
   created_by: string | null;
   created_at: number;
   updated_at: number;
@@ -107,6 +129,9 @@ const toMember = (r: Row): Member => ({
   prevCertExpires: r.prev_cert_expires,
   capMemoryMb: r.cap_memory_mb,
   capCpus: r.cap_cpus,
+  workloadsOn: r.workloads_on === 1,
+  isolation: ISOLATIONS.includes(r.isolation as Isolation) ? (r.isolation as Isolation) : null,
+  isolationAt: r.isolation_at ?? null,
   createdBy: r.created_by,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -227,7 +252,20 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) && n >= 0 ? n : 0;
 };
 
-/** Fold a health report in: latest health, daily peaks of non-NanoClaw use. */
+/**
+ * The isolation part of a report: the state, and when the check ran by
+ * central's clock (now minus the age the worker gives, so the two clocks need
+ * not agree). Without a usable age it counts as never run: it cannot pass
+ * placement's freshness test. Null when the report has none (report.sh).
+ */
+export function isolationOf(raw: Partial<Health>, now: number): { state: Isolation; at: number | null } | null {
+  if (!ISOLATIONS.includes(raw.isolation as Isolation)) return null;
+  const age = Number(raw.isolationAgeMs);
+  const at = Number.isFinite(age) && age >= 0 && age <= 7 * 86_400_000 ? now - Math.round(age) : null;
+  return { state: raw.isolation as Isolation, at };
+}
+
+/** Fold a health report in: latest health, daily peaks of non-NanoClaw use, the worker's isolation check. */
 export async function recordHealth(id: string, raw: Partial<Health>, now = Date.now()): Promise<Member | null> {
   const m = await getMember(id);
   if (!m) return null;
@@ -243,6 +281,9 @@ export async function recordHealth(id: string, raw: Partial<Health>, now = Date.
     load1: raw.load1 === undefined ? undefined : num(raw.load1),
     agentVersion: typeof raw.agentVersion === 'string' ? raw.agentVersion.slice(0, 40) : undefined,
   };
+  const iso = isolationOf(raw, now);
+  if (iso)
+    await getDb().run(`UPDATE machine_members SET isolation = ?, isolation_at = ? WHERE id = ?`, iso.state, iso.at, id);
   const peaks = updatePeaks(m.peaks, { memMb: h.memUsedMb - h.memNanoclawMb, cpus: h.cpuUsed - h.cpuNanoclaw }, now);
   await getDb().run(
     `UPDATE machine_members SET health_json = ?, peaks_json = ?, last_report = ?, updated_at = ? WHERE id = ?`,
@@ -272,6 +313,17 @@ export async function rotateCert(
 
 export async function setMemberState(id: string, state: MemberState, now = Date.now()): Promise<boolean> {
   const r = await getDb().run(`UPDATE machine_members SET state = ?, updated_at = ? WHERE id = ?`, state, now, id);
+  return r.changes === 1;
+}
+
+/** "Run workloads here": new stacks may be placed on this machine (placement.ts). Off by default. */
+export async function setWorkloadsOn(id: string, on: boolean, now = Date.now()): Promise<boolean> {
+  const r = await getDb().run(
+    `UPDATE machine_members SET workloads_on = ?, updated_at = ? WHERE id = ?`,
+    on ? 1 : 0,
+    now,
+    id,
+  );
   return r.changes === 1;
 }
 
@@ -319,6 +371,34 @@ export function availableOn(m: Member): Available {
 export const isHealthy = (m: Member, now = Date.now()): boolean =>
   m.state !== 'revoked' && m.lastReport !== null && now - m.lastReport < UNHEALTHY_AFTER_MS;
 
+/**
+ * Where a worker's isolation stands for placement: 'ok' only for a passing
+ * check that is recent; 'open' when the last check got through (whatever its
+ * age); 'stale' for a pass that is too old; 'unknown' when it never reported one.
+ */
+export type IsolationStatus = 'ok' | 'open' | 'stale' | 'unknown';
+export function isolationStatus(m: Pick<Member, 'isolation' | 'isolationAt'>, now = Date.now()): IsolationStatus {
+  if (m.isolation === 'open') return 'open';
+  if (m.isolation !== 'ok') return 'unknown';
+  return m.isolationAt !== null && now - m.isolationAt < ISOLATION_FRESH_MS ? 'ok' : 'stale';
+}
+
+/** Why a worker may not take workloads now, or null when its isolation check passed recently. */
+export function isolationRefusal(
+  m: Pick<Member, 'name' | 'isolation' | 'isolationAt'>,
+  now = Date.now(),
+): string | null {
+  const s = isolationStatus(m, now);
+  if (s === 'ok') return null;
+  const why =
+    s === 'open'
+      ? 'a workload there could reach the machine itself: its host rules are missing'
+      : s === 'stale'
+        ? 'its last check is too old'
+        : 'it has not reported one yet';
+  return `worker ${m.name} hasn't passed the isolation check (${why})`;
+}
+
 /** Shown to admins: no fingerprints. */
 export function publicView(m: Member, now = Date.now()) {
   return {
@@ -334,6 +414,8 @@ export function publicView(m: Member, now = Date.now()) {
     certExpires: m.certExpires,
     cap: { memMb: m.capMemoryMb, cpus: m.capCpus },
     available: availableOn(m),
+    workloadsOn: m.workloadsOn,
+    isolation: { status: isolationStatus(m, now), at: m.isolationAt },
     createdAt: m.createdAt,
   };
 }

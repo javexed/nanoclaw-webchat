@@ -18,7 +18,7 @@ import { DATA_DIR } from '../../config.js';
 import { CONTAINER_RUNTIME_BIN } from '../../container-runtime.js';
 import { log } from '../../log.js';
 import { callWorker, openWorkerStream } from '../machines/links.js';
-import { compose, dockerEnv, LOCAL_NODE, projectName, shipImage, sliceName } from './docker.js';
+import { compose, dockerEnv, LOCAL_NODE, projectName, shipImage, sliceName, tagHere } from './docker.js';
 import { HELPER_IMAGE } from './images.js';
 import type { Workload } from './store.js';
 
@@ -172,7 +172,7 @@ function workerVolume(
       kind: io.toFile ? 'vol-out' : 'vol-in',
       project: projectName(w),
       volume,
-      image: HELPER_IMAGE(),
+      image: workerHelperTag(),
     });
     const timer = setTimeout(() => s.destroy(new Error('timed out')), timeoutMs);
     const done = (err?: Error): void => {
@@ -197,10 +197,22 @@ function workerVolume(
   });
 }
 
-/** The helper image where the copy runs: here, or sent to the worker (it never pulls). */
-async function helperOn(node: string): Promise<void> {
+/**
+ * The name the helper image goes by on a worker: a tag of NanoClaw's own.
+ * `docker save` of a digest reference loads as a bare image ID on the other
+ * end, so the reference would not resolve there; a tag is kept.
+ */
+export const workerHelperTag = (): string =>
+  `nanoclaw-workload-helper:${(HELPER_IMAGE().split('@sha256:')[1] ?? 'latest').slice(0, 16)}`;
+
+/** The helper image where the copy (or a worker's isolation check) runs: here, or sent to the worker (it never pulls). Its name there. */
+export async function helperOn(node: string): Promise<string> {
   await ensureHelperImage();
-  if (node !== LOCAL_NODE) await shipImage(node, HELPER_IMAGE());
+  if (node === LOCAL_NODE) return HELPER_IMAGE();
+  const tag = workerHelperTag();
+  await tagHere(HELPER_IMAGE(), tag);
+  await shipImage(node, tag);
+  return tag;
 }
 
 export async function ensureHelperImage(): Promise<void> {

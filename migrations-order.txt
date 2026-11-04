@@ -64,3 +64,4 @@ moduleWebchatThreadCreator
 moduleWebchatMachines
 moduleWebchatMachineMembers
 moduleWebchatWorkloadPlacement
+moduleWebchatMachineIsolation

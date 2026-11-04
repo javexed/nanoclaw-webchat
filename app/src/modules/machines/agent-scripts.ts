@@ -1,5 +1,5 @@
 /**
- * What runs on a machine (Scaling design: joining). Plain sh + curl + openssl,
+ * What runs on a machine (docs/webchat/scaling.md). Plain sh + curl + openssl,
  * which every Linux VM has, so joining installs nothing but Docker (when it is
  * missing). install.sh is served by the machine listener with central's
  * address and key pin filled in; it generates the machine's key locally,
@@ -8,9 +8,11 @@
  * less than 12 hours are left. A revoked machine is told so on its next
  * report and switches the timer off.
  *
- * A machine with the worker role also gets the worker service (Scaling phase
- * 3; worker-main.ts on the machine's Node), which holds the lasting link; the
- * timer stays as a fallback report and renews the certificate.
+ * A machine with the worker role also gets the worker service (worker-main.ts
+ * on the machine's Node), which holds the lasting link, and the workload host
+ * rules (deploy/workloads-host-rules.sh, the same as central's, with their
+ * boot unit); the timer stays as a fallback report and renews the
+ * certificate.
  */
 
 export const AGENT_VERSION = '1';
@@ -72,7 +74,7 @@ CPUS=$(nproc)
 MT=$(awk '/^MemTotal:/{print int($2/1024)}' /proc/meminfo)
 MA=$(awk '/^MemAvailable:/{print int($2/1024)}' /proc/meminfo)
 MU=$((MT - MA))
-# NanoClaw's own use: the nanoclaw*.slice cgroups (phase 3 runs its work there).
+# NanoClaw's own use: the nanoclaw*.slice cgroups (workloads run there).
 NCM=0; NCU=0
 for s in /sys/fs/cgroup/nanoclaw*.slice; do
   [ -d "$s" ] || continue
@@ -124,12 +126,26 @@ User=root
 WantedBy=multi-user.target
 `;
 
+/** The files worker-install.sh fetches, each checked against the sha256 central computed. */
+export const WORKER_FETCHED = ['mux.js', 'worker-main.js', 'workloads-host-rules.sh'] as const;
+export type WorkerHashes = Partial<Record<(typeof WORKER_FETCHED)[number], string>>;
+
+/** Where the host rules land on a worker; the owner runs this to put them back. */
+export const WORKER_HOST_RULES = '/usr/local/lib/nanoclaw-machine/worker/workloads-host-rules.sh';
+export const workerHostRulesCommand = (): string => `sudo bash ${WORKER_HOST_RULES} --install-unit`;
+
 /**
  * worker-install.sh, served to a joined machine (its certificate) and run as
- * root: Node 18+ if missing (the distribution's package), the worker's two
- * files, and its systemd unit. Safe to run again: it refreshes the files.
+ * root: Node 18+ if missing (the distribution's package), iptables if
+ * missing, the worker's files (each hash-checked), the workload host rules
+ * with their boot unit, and the worker's systemd unit. Safe to run again: it
+ * refreshes the files and the rules.
  */
-export function workerInstallScript(host: string, port: number, pin: string): string {
+export function workerInstallScript(host: string, port: number, pin: string, hashes: WorkerHashes = {}): string {
+  const fetch = WORKER_FETCHED.map((f) => {
+    const h = /^[0-9a-f]{64}$/.test(hashes[f] ?? '') ? hashes[f] : '';
+    return `fetch ${f} ${h || 'missing'}`;
+  }).join('\n');
   return `#!/bin/sh
 # NanoClaw worker service installer (${host}:${port}).
 set -eu
@@ -151,9 +167,25 @@ fi
 command -v docker >/dev/null || { echo "Docker is needed."; exit 1; }
 mkdir -p "$LIB" /var/lib/nanoclaw-worker
 chmod 700 /var/lib/nanoclaw-worker
-curl $TLS -o "$LIB/mux.js" "$URL/worker/mux.js"
-curl $TLS -o "$LIB/worker-main.js" "$URL/worker/worker-main.js"
+# Each file is checked against the hash NanoClaw computed for it before it is used.
+fetch() {
+  [ "$2" != missing ] || { echo "NanoClaw could not serve $1; update NanoClaw and run this again."; exit 1; }
+  curl $TLS -o "$LIB/$1.new" "$URL/worker/$1"
+  echo "$2  $LIB/$1.new" | sha256sum -c --status || { rm -f "$LIB/$1.new"; echo "$1 did not arrive intact."; exit 1; }
+  mv "$LIB/$1.new" "$LIB/$1"
+}
+${fetch}
 printf '{"type":"module"}\n' > "$LIB/package.json"
+# Workload host rules: a workload container must not reach this machine's own
+# services through its network's gateway address. The worker checks they work
+# and takes no workloads until they do.
+if ! command -v iptables >/dev/null; then
+  if command -v apt-get >/dev/null; then DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables >/dev/null
+  elif command -v dnf >/dev/null; then dnf install -y -q iptables
+  fi
+fi
+bash "$LIB/workloads-host-rules.sh" --install-unit \
+  || echo "The workload host rules did not install; this machine takes no workloads until they do: ${workerHostRulesCommand()}"
 cat > /etc/systemd/system/nanoclaw-worker.service <<'NC_WUNIT'
 ${WORKER_UNIT}NC_WUNIT
 systemctl daemon-reload
