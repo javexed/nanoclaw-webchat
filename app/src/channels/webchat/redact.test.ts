@@ -95,6 +95,14 @@ describe('redactSensitiveData — false-positive guards', () => {
     ])
       expect(redactSensitiveData(t)).toBe(t);
     expect(redactSensitiveData('my password is Hunter2!')).not.toContain('Hunter2');
+    for (const [t, secret] of [
+      ['password is hunter2', 'hunter2'],
+      ['the password is sunshine', 'sunshine'],
+      ['my password is letmein.', 'letmein'],
+      ['the client secret is swordfish', 'swordfish'],
+      ["password is 'dragon'", 'dragon'],
+    ])
+      expect(redactSensitiveData(t)).not.toContain(secret);
     expect(redactSensitiveData('password: sunshine')).not.toContain('sunshine');
   });
 

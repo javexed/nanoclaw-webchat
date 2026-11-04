@@ -79,8 +79,14 @@ const PATTERNS: RedactPattern[] = [
 const REFERENCE =
   /^(?:\$\{?[A-Za-z_]\w*\}?|\$\(.*|\$env:[A-Za-z_]\w*|%[A-Za-z_]\w*%|\{\{.*\}\}|<[^<>]*>?)['"]?[,;)]?$/i;
 
-/** "the password is blank": after "is", a plain lowercase word is prose, not a password. */
-const PROSE_WORD = /^[a-z]+[^\w\s]*$/;
+/**
+ * "the password is blank": after "is", a common descriptive word is prose,
+ * not a password. Any other word ("password is letmein") is still masked:
+ * a short list plus English adjective/participle endings, never "any
+ * lowercase word".
+ */
+const PROSE_WORD =
+  /^(?:a|an|the|not|now|still|also|only|just|too|in|on|off|set|unset|blank|empty|gone|real|wrong|right|null|none|nil|ok|okay|fine|same|new|old|short|long|weak|strong|known|unknown|valid|invalid|correct|incorrect|stale|bad|good|true|false|safe|unsafe|current|default|plain|optional|mandatory|private|there|here|what|which|where|this|that|it|[a-z]+(?:ed|ing|ly|able|ible|less|ous|ive|ent|ant))[^\w\s]*$/;
 
 function maskValue(value: string, label: string, keep?: { prefix?: number; suffix?: number }): string {
   const prefix = keep?.prefix ?? 0;
