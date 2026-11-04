@@ -11,7 +11,16 @@ import { apiJson } from '../core/api.js';
 import { showToast } from '../core/toast.js';
 import { copyTextToClipboard } from '../boot.js';
 import { showConfirmModal } from './modals.js';
-import { ago, availableLine, capForm, needsWorker, placedLine, statusOf, usageLine, type MachineRow } from './machines-view.js';
+import {
+  ago,
+  availableLine,
+  capForm,
+  needsWorker,
+  placedLine,
+  statusOf,
+  usageLine,
+  type MachineRow,
+} from './machines-view.js';
 import SshJoin from './SshJoin.vue';
 
 const T = {

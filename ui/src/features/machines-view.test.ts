@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { ago, availableLine, capForm, needsWorker, placedLine, statusOf, usageLine, type MachineRow } from './machines-view.js';
+import {
+  ago,
+  availableLine,
+  capForm,
+  needsWorker,
+  placedLine,
+  statusOf,
+  usageLine,
+  type MachineRow,
+} from './machines-view.js';
 
 const row = (over: Partial<MachineRow> = {}): MachineRow => ({
   id: 'm-1',
