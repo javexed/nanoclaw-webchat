@@ -7181,6 +7181,8 @@ function updateThreadSyncControls() {
 	}
 	const sync = $("#thread-sync");
 	if (sync) sync.hidden = !inThread;
+	const del = $("#thread-delete");
+	if (del) del.hidden = !(roomThreads().find((t) => t.thread_id === state.currentThread)?.can_delete ?? state.isOwnerView);
 	const crumb = $("#thread-crumb");
 	if (crumb) {
 		crumb.hidden = !inThread;
@@ -7575,7 +7577,7 @@ var ThreadRows_default = /* @__PURE__ */ defineComponent({
 						"aria-label": NEW_THREAD$1,
 						onClick: _cache[0] || (_cache[0] = withModifiers((...args) => __props.onStartCreate && __props.onStartCreate(...args), ["stop"]))
 					}, toDisplayString(PLUS$1))) : createCommentVNode("", true),
-					__props.active && unref(openThreadMenuId) === t.thread_id ? (openBlock(), createElementBlock("div", _hoisted_8$13, [createElementVNode("button", { onClick: withModifiers(($event) => __props.onStartRename(t.thread_id), ["stop"]) }, toDisplayString(RENAME), 8, _hoisted_9$11), unref(state).isOwnerView ? (openBlock(), createElementBlock("button", {
+					__props.active && unref(openThreadMenuId) === t.thread_id ? (openBlock(), createElementBlock("div", _hoisted_8$13, [createElementVNode("button", { onClick: withModifiers(($event) => __props.onStartRename(t.thread_id), ["stop"]) }, toDisplayString(RENAME), 8, _hoisted_9$11), t.can_delete ?? unref(state).isOwnerView ? (openBlock(), createElementBlock("button", {
 						key: 0,
 						class: "danger",
 						onClick: withModifiers(($event) => __props.onDelete(t.thread_id), ["stop"])
