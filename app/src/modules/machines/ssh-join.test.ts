@@ -111,15 +111,7 @@ beforeEach(() => __resetProbesForTest());
 
 describe('where Join over SSH may connect', () => {
   it('private ranges only: RFC 1918, the tailnet range, unique-local IPv6', () => {
-    for (const a of [
-      '10.0.0.5',
-      '172.16.0.0',
-      '172.17.0.1',
-      '10.0.0.10',
-      '100.64.0.0',
-      '100.96.1.2',
-      'fd12::1',
-    ])
+    for (const a of ['10.0.0.5', '172.16.0.0', '172.17.0.1', '10.0.0.10', '100.64.0.0', '100.96.1.2', 'fd12::1'])
       expect(isPrivateTarget(a)).toBe(true);
     for (const a of ['8.8.8.8', '172.32.0.1', '100.128.0.1', '169.254.169.254', '2001:db8::1', '1.1.1.1'])
       expect(isPrivateTarget(a)).toBe(false);
