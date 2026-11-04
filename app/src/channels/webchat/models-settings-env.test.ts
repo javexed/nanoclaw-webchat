@@ -128,3 +128,31 @@ describe('env keys this writer owns', () => {
     expect(settingsEnv()).not.toHaveProperty('CLAUDE_CODE_MAX_OUTPUT_TOKENS');
   });
 });
+
+describe('links planted in the agent-writable folder', () => {
+  it('replaces a linked settings.json without reading or writing the file it names', async () => {
+    const outside = path.join(env.dataDir, 'host-file');
+    fs.writeFileSync(outside, 'HOST_SECRET=keep\n');
+    fs.symlinkSync(outside, settingsPath);
+
+    await assignModelToAgent(GROUP, 'cloud');
+    await writeAgentSettingsForAssignedModel(GROUP);
+
+    expect(fs.readFileSync(outside, 'utf8')).toBe('HOST_SECRET=keep\n');
+    expect(fs.lstatSync(settingsPath).isFile()).toBe(true);
+    expect(fs.readFileSync(settingsPath, 'utf8')).not.toContain('HOST_SECRET');
+    expect(settingsEnv()).toMatchObject({ CLAUDE_CODE_MAX_OUTPUT_TOKENS: '8192' });
+  });
+
+  it('replaces a linked ownership record the same way', async () => {
+    const outside = path.join(env.dataDir, 'host-file');
+    fs.writeFileSync(outside, 'untouched\n');
+    fs.symlinkSync(outside, path.join(path.dirname(settingsPath), 'model-env-owned.json'));
+
+    await assignModelToAgent(GROUP, 'cloud');
+    await writeAgentSettingsForAssignedModel(GROUP);
+
+    expect(fs.readFileSync(outside, 'utf8')).toBe('untouched\n');
+    expect(fs.lstatSync(path.join(path.dirname(settingsPath), 'model-env-owned.json')).isFile()).toBe(true);
+  });
+});
