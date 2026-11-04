@@ -3,7 +3,10 @@
  * The model list, mounted into <ul id="model-list">. The − remove button disables itself
  * through the event target, not per-row state: it is feedback for one in-flight request.
  */
+import { computed } from 'vue';
+import { agentFilter } from './agent-list-state.js';
 import { modelRows } from './model-list-state.js';
+import { NO_MATCH, filterList } from '../core/list-filter.js';
 import { hostHealth } from './ollama-cards-state.js';
 
 const emit = defineEmits<{ (e: 'pick', id: string): void; (e: 'remove', id: string, btn: HTMLButtonElement): void }>();
@@ -15,6 +18,8 @@ const REMOVE_GLYPH = '\u2212';
 const EMPTY = 'No models selected yet — use + on a server below, or “Add model endpoint…” for anything else.';
 const DOWN = 'Unreachable';
 
+const rows = computed(() => filterList(modelRows.value, agentFilter.value, (r) => `${r.title} ${r.host ?? ''}`));
+
 function onRemove(ev: MouseEvent, id: string) {
   ev.stopPropagation();
   emit('remove', id, ev.currentTarget as HTMLButtonElement);
@@ -22,10 +27,10 @@ function onRemove(ev: MouseEvent, id: string) {
 </script>
 
 <template>
-  <li v-if="modelRows.length === 0" :style="{ cursor: 'default', opacity: 0.6 }">{{ EMPTY }}</li>
+  <li v-if="rows.length === 0" :style="{ cursor: 'default', opacity: 0.6 }">{{ modelRows.length ? NO_MATCH : EMPTY }}</li>
   <template v-else>
     <li
-      v-for="row in modelRows"
+      v-for="row in rows"
       :key="row.id"
       :data-model-id="row.id"
       v-bind="row.active ? { class: 'active' } : {}"

@@ -733,6 +733,16 @@
                       </div>
                     </div>
                     <span class="form-label">Shared skills</span>
+                    <div class="list-search-wrap">
+                      <input
+                        id="agent-skills-search"
+                        class="model-picker-search"
+                        type="search"
+                        placeholder="Search skills…"
+                        autocomplete="off"
+                        aria-label="Search skills"
+                      />
+                    </div>
                     <ul id="agent-skills-list" class="agent-skills-list"></ul>
                     <button type="button" id="agent-skills-save" class="btn btn-primary" disabled>Save skills</button>
                   </div>
@@ -1076,6 +1086,16 @@
                       <button type="button" class="room-agent-picker-tab" data-picker="new">New</button>
                     </div>
                     <div id="room-add-agent-existing" class="room-agent-picker-pane">
+                      <div class="list-search-wrap">
+                        <input
+                          id="room-add-agent-search"
+                          class="model-picker-search"
+                          type="search"
+                          placeholder="Search agents…"
+                          autocomplete="off"
+                          aria-label="Search agents"
+                        />
+                      </div>
                       <ul id="room-add-agent-list" class="room-create-agent-checklist"></ul>
                       <button type="button" id="room-add-agent-existing-submit" class="btn btn-primary" disabled>
                         Wire selected
@@ -1138,6 +1158,16 @@
                 </label>
                 <div>
                   <span class="form-label">Wire existing agents</span>
+                  <div class="list-search-wrap">
+                    <input
+                      id="room-create-agent-search"
+                      class="model-picker-search"
+                      type="search"
+                      placeholder="Search agents…"
+                      autocomplete="off"
+                      aria-label="Search agents"
+                    />
+                  </div>
                   <ul id="room-create-existing-agents" class="room-create-agent-checklist"></ul>
                 </div>
                 <div>
@@ -1582,7 +1612,7 @@
             </button>
           </div>
           <input id="agent-filter" class="manage-filter" type="search" autocomplete="off" spellcheck="false"
-                 placeholder="Filter agents…" aria-label="Filter agents by name" hidden />
+                 placeholder="Filter agents…" aria-label="Filter agents" hidden />
           <button id="manage-sort-az" class="sort-icon-btn" type="button" aria-pressed="false" title="Sort A–Z" aria-label="Sort A–Z">
             <svg class="icon" aria-hidden="true"><use href="#i-sort"></use></svg>
           </button>
@@ -1883,6 +1913,16 @@
                 <div class="perms-section-title">Global</div>
                 <div id="perms-global-toggles" class="perms-toggle-list"></div>
                 <div class="perms-section-title">Per agent group</div>
+                <div class="list-search-wrap">
+                  <input
+                    id="perms-group-search"
+                    class="model-picker-search"
+                    type="search"
+                    placeholder="Search agents…"
+                    autocomplete="off"
+                    aria-label="Search agents"
+                  />
+                </div>
                 <div class="perms-matrix-header">
                   <span class="perms-matrix-name">Group</span>
                   <span class="perms-matrix-cell-label">Admin</span>

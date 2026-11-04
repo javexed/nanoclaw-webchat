@@ -5,7 +5,8 @@
  * input:checked, and a missed reader would fail silently (a submit that wires nothing).
  */
 import { computed } from 'vue';
-import { addAgentCandidates } from './agent-lists-state.js';
+import { addAgentCandidates, addAgentQuery } from './agent-lists-state.js';
+import { NO_MATCH, matchesQuery } from '../core/list-filter.js';
 
 const props = defineProps<{ onToggle: () => void }>();
 
@@ -21,12 +22,16 @@ const rows = computed(() =>
       sub: a.folder || a.id,
     })),
 );
+/** Hidden, not removed: the ticks live in the DOM, so a filtered-out tick still counts. */
+const shown = (r: { name: string; sub: string }) => matchesQuery(addAgentQuery.value, r.name, r.sub);
+const noMatch = computed(() => rows.value.length > 0 && !rows.value.some(shown));
 </script>
 
 <template>
   <li v-if="rows.length === 0" class="empty-note">{{ EMPTY }}</li>
   <template v-else>
-    <li v-for="r in rows" :key="r.id" class="room-add-agent-row">
+    <li v-if="noMatch" class="empty-note">{{ NO_MATCH }}</li>
+    <li v-for="r in rows" v-show="shown(r)" :key="r.id" class="room-add-agent-row">
       <input type="checkbox" :value="r.id" :id="r.cbId" @change="props.onToggle()" />
       <label :for="r.cbId" class="room-add-agent-label">
         <span class="room-add-agent-name">{{ r.name }}</span

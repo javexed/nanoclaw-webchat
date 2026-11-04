@@ -69,7 +69,10 @@ import {
   wirePermsCreate,
   wirePermsNew,
 } from './features/perms.js';
-import { permsCreateChannelTouched, permsSelectedUserId, permsUserFilter } from './features/perms-list-state.js';
+import { permsCreateChannelTouched, permsGroupFilter, permsSelectedUserId, permsUserFilter } from './features/perms-list-state.js';
+import { wireListSearch } from './core/list-filter.js';
+import { addAgentQuery, createAgentQuery } from './features/agent-lists-state.js';
+import { agentSkillsQuery } from './features/agent-skills-state.js';
 
 import {
   closeAttachPicker,
@@ -551,6 +554,10 @@ $('#perms-user-search')?.addEventListener('input', (e) => {
   permsUserFilter.value = (e.target as HTMLInputElement).value.trim().toLowerCase();
   renderPermsUserList();
 });
+wireListSearch('#perms-group-search', permsGroupFilter);
+wireListSearch('#room-add-agent-search', addAgentQuery);
+wireListSearch('#room-create-agent-search', createAgentQuery);
+wireListSearch('#agent-skills-search', agentSkillsQuery);
 
 // Permissions / admin / sign-in view chrome.
 $('#perms-exit')!.addEventListener('click', togglePermissions);

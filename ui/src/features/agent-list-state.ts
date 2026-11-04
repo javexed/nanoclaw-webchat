@@ -2,7 +2,7 @@
 // Agent-list values that are NOT in the reactive `state` object.
 import { ref } from 'vue';
 
-/** Live agent-name filter, driven by the Manage toolbar's filter box. */
+/** Live filter from the Manage toolbar's filter box: agents on Agents, models on Models. */
 export const agentFilter = ref('');
 
 /** Restored from the session, so the A–Z preference survives a reload. */

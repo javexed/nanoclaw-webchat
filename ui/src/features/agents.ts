@@ -35,10 +35,12 @@ import AgentEnvList from './AgentEnvList.vue';
 import AgentKeyList from './AgentKeyList.vue';
 import {
   addAgentCandidates,
+  addAgentQuery,
   agentKeyRows,
   agentSecretRows,
   createAgentAnyExist,
   createAgentCandidates,
+  createAgentQuery,
   agentEnvNames,
   agentEnvDeleting,
 } from './agent-lists-state.js';
@@ -57,6 +59,7 @@ import {
 } from './agent-detail-state.js';
 import { buttonBusy } from '../core/busy.js';
 import { $, esc } from '../core/dom.js';
+import { clearListSearch } from '../core/list-filter.js';
 import { mountIsland } from '../core/island.js';
 import { renderAgentApps } from './apps.js';
 import { closeModelDetail, openModelPicker } from './models.js';
@@ -874,6 +877,7 @@ async function populateAddAgentSelect() {
   const wiredIds = new Set(roomDetailWiredAgents.value.map((a: any) => a.id));
   // Never offer archived agents for wiring (even if the list toggle is on).
   addAgentCandidates.value = state.allAgents.filter((a: Agent) => !wiredIds.has(a.id) && a.status !== 'archived');
+  clearListSearch('#room-add-agent-search', addAgentQuery);
   mountAddAgentPicker();
   // Once here; the per-checkbox change listener keeps it in step after that.
   updateAddAgentSubmitLabel();
@@ -970,6 +974,7 @@ export function renderRoomCreateAgentChecklist() {
   // (see createAgentAnyExist).
   createAgentAnyExist.value = state.allAgents.length > 0;
   createAgentCandidates.value = state.allAgents.filter((a: Agent) => a.status !== 'archived');
+  clearListSearch('#room-create-agent-search', createAgentQuery);
   mountRoomCreateAgentChecklist();
 }
 

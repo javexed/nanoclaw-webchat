@@ -11,8 +11,9 @@ import { selectedRoomId } from './room-list-state.js';
 import { roomDetailWiredAgents } from './agent-detail-state.js';
 import { selectedAgentId } from './agent-list-state.js';
 import AgentSkillsList from './AgentSkillsList.vue';
-import { agentSkillRows, agentSkillsEnabled } from './agent-skills-state.js';
+import { agentSkillRows, agentSkillsEnabled, agentSkillsQuery } from './agent-skills-state.js';
 import { $ } from '../core/dom.js';
+import { clearListSearch } from '../core/list-filter.js';
 import { mountIsland } from '../core/island.js';
 import { closeAgentDetail, fetchAgents } from './agents.js';
 import { joinRoom } from './rooms.js';
@@ -1175,6 +1176,8 @@ function mountAgentSkillsList(): void {
 // this agent loads it. Changes batch behind Save (one PUT → one respawn) rather
 // than restarting the agent on every toggle.
 export async function renderAgentSkills(agentId?: any): Promise<void> {
+  // Another agent's list starts unfiltered; a refresh of the same one keeps the query.
+  if (agentId !== currentAgentSkillsId) clearListSearch('#agent-skills-search', agentSkillsQuery);
   currentAgentSkillsId = agentId;
   const saveBtn = $<HTMLInputElement>('#agent-skills-save');
   let data: any = { available: [], enabled: [] };
